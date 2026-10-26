@@ -77,6 +77,36 @@ and the folder must be mu-next's own: if any segment in it opens with a
 reads or writes anything. Unset or change `MU_SYNC_DIR` in a shell that
 also runs 3.x.
 
+## Switch to mu-next
+
+There is no flag day. Each machine switches when its human decides:
+
+1. Install mu-next beside 3.x. Its default state dir is its own, so the
+   two DBs, sockets and worktrees never meet. Give it a separate
+   `MU_SYNC_DIR`, or none.
+2. Move workstreams one at a time, from the machine that holds each
+   one, with the [Move recipe](../mu-next/skill-draft/recipes/move.md).
+   Only open tasks move. Owners, agents and history stay behind.
+3. The 3.x DB stays as a read-only archive. 3.x keeps running whatever
+   has not moved. The recipe's only 3.x write is the last step, which
+   parks each moved task with `--why "moved to mu-next"` so nobody
+   works it twice.
+
+Rollback: stop using mu-next and go back to 3.x. There is nothing to
+convert. For a workstream you already moved, `mu task unpark <id> -w <ws>`
+on 3.x for each of its tasks. Anything done in mu-next since the move
+stays in mu-next's DB.
+
+Before you switch a machine or change models, compare a new model to
+the stored baseline. From the checkout, run:
+
+```bash
+node tools/eval/main.ts matrix --surface "$PWD:next" --model <model> --reps 3 --out docs/mu-next/eval/models.jsonl
+```
+
+The release gate (the full matrix diffed against the baseline) is
+`v_eval_next`.
+
 ## Run mu from a checkout
 
 ```bash
