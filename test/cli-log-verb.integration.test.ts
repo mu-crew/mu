@@ -214,3 +214,41 @@ describe("the latestSeq invariant (bit twice: R4 and R7)", () => {
     }
   });
 });
+
+// bug_log_tail_n_writes: --tail is a boolean, so a guessed `--tail 20` made 20 the text of a WRITE.
+describe("a read flag never turns a positional into a write", () => {
+  const count = (): number => {
+    const db = openDb({ path: dbPath });
+    try {
+      return latestSeq(db);
+    } finally {
+      db.close();
+    }
+  };
+
+  it.each([
+    [["log", "-w", "demo", "--tail", "20"], "--tail"],
+    [["log", "--tail", "20", "-w", "demo"], "--tail"],
+    [["log", "-w", "demo", "-n", "5", "note"], "-n"],
+    [["log", "--all", "note"], "--all"],
+    [["log", "-w", "demo", "--since", "0", "note"], "--since"],
+  ])("%j refuses and writes nothing", async (args, flag) => {
+    const before = count();
+    const r = await runCli(args, dbPath);
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr).toContain(flag);
+    expect(count()).toBe(before);
+  });
+
+  it("names the likely spelling for an integer", async () => {
+    const r = await runCli(["log", "-w", "demo", "--tail", "20"], dbPath);
+    expect(r.stderr).toContain("did you mean -n 20?");
+  });
+
+  it("a plain write still writes", async () => {
+    const before = count();
+    const r = await runCli(["log", "-w", "demo", "20"], dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(count()).toBeGreaterThan(before);
+  });
+});

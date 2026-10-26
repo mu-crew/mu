@@ -101,6 +101,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   function`, because `optsWithGlobals()` let the root's raw array overwrite the verb's `-w`. The
   forwarding hook now settles the root to what the verb holds. A test walks every verb with a `-w`.
 
+- **`mu log --tail 20` no longer writes** (`bug_log_tail_n_writes`): `--tail` is a boolean, so the
+  guessed `20` was logged as text. A positional with a read flag (`--tail`, `--all`, `--since`,
+  `--after`, `--seq`, `-n`, `--source`, `--intent`, `--group`) now exits 2 and writes nothing; an
+  integer gets "did you mean -n 20?".
+
 ### Removed
 
 - **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**
