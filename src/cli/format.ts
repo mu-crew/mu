@@ -13,10 +13,10 @@
 import { type RuntimeState, UNKNOWN_REASON } from "../agent-state.js";
 import type { LiveAgent } from "../agents.js";
 import { agentStateGlyph, GLYPH } from "../glyphs.js";
-import { muTable, pc, renderBoxTable } from "../output.js";
+import { muTable, pc } from "../output.js";
 import { RESULT_BYTES } from "../output-contract.js";
 import { formatPair, type TaskPair } from "../tasks/status.js";
-import type { TaskNoteRow, TaskRow } from "../tasks.js";
+import type { TaskNoteRow } from "../tasks.js";
 
 // ─── Status colours / icons ────────────────────────────────────────────
 
@@ -181,160 +181,6 @@ export function formatAgentsTable(agents: readonly LiveAgent[]): string {
   return needsMurmur
     ? `${table.toString()}\n${pc.dim("agent state needs murmur (see mu doctor)")}`
     : table.toString();
-}
-
-export function formatReadyTable(tasks: readonly TaskRow[]): string {
-  if (tasks.length === 0) return pc.dim("  (no ready tasks)");
-  // Sort by ROI descending.
-  const sorted = [...tasks].sort((a, b) => b.impact / b.effortDays - a.impact / a.effortDays);
-  // Same title-truncation treatment as formatTaskListTable so the
-  // ready-task table doesn't blow out terminal width.
-  let idW = "name".length;
-  let impactW = "impact".length;
-  let effortW = "effort".length;
-  let roiW = "ROI".length;
-  let ownerW = "owner".length;
-  for (const t of sorted) {
-    idW = Math.max(idW, t.name.length);
-    impactW = Math.max(impactW, String(t.impact).length);
-    effortW = Math.max(effortW, String(t.effortDays).length);
-    const roi = (t.impact / t.effortDays).toFixed(1);
-    roiW = Math.max(roiW, roi.length);
-    ownerW = Math.max(ownerW, (t.ownerName ?? "").length);
-  }
-  const padding = 6 * 3 + 1; // 6 cols
-  const titleBudget = Math.max(
-    20,
-    terminalWidth() - (idW + impactW + effortW + roiW + ownerW) - padding,
-  );
-
-  // Title is pre-truncated above; use muTable so wordWrap:false acts
-  // as a safety belt for any other cell we don't pre-trim.
-  const table = muTable({
-    head: [
-      pc.bold("name"),
-      pc.bold("title"),
-      pc.bold("impact"),
-      pc.bold("effort"),
-      pc.bold("ROI"),
-      pc.bold("owner"),
-    ],
-    style: { head: [] },
-  });
-  for (const t of sorted) {
-    const roi = (t.impact / t.effortDays).toFixed(1);
-    table.push([
-      t.name,
-      truncate(t.title, titleBudget),
-      String(t.impact),
-      String(t.effortDays),
-      roi,
-      t.ownerName ?? "",
-    ]);
-  }
-  return table.toString();
-}
-
-export function formatTaskListTable(
-  tasks: readonly TaskRow[],
-  opts: { withWorkstream?: boolean; relTimeBasis?: "updatedAt" | "createdAt" } = {},
-): string {
-  if (tasks.length === 0) return pc.dim("  (no tasks)");
-  // The optional relative-time column is appended at the end; header
-  // mirrors the timestamp basis ("updated" / "created") so a glance
-  // says which sort key is live.
-  const timeHeader =
-    opts.relTimeBasis === "updatedAt"
-      ? "updated"
-      : opts.relTimeBasis === "createdAt"
-        ? "created"
-        : null;
-  const baseHead = opts.withWorkstream
-    ? ["name", "workstream", "status", "title", "impact", "effort", "ROI", "owner"]
-    : ["name", "status", "title", "impact", "effort", "ROI", "owner"];
-  const head = timeHeader === null ? baseHead : [...baseHead, timeHeader];
-
-  // Pre-compute the relative-time strings (relative to NOW) so column
-  // width and row text agree.
-  const now = Date.now();
-  const timeCells: string[] = [];
-  if (opts.relTimeBasis !== undefined) {
-    const basis = opts.relTimeBasis;
-    for (const t of tasks) {
-      const ts = basis === "updatedAt" ? t.updatedAt : t.createdAt;
-      const ms = now - new Date(ts).getTime();
-      timeCells.push(relTime(ms));
-    }
-  }
-
-  // Compute a budget for the title column so the table fits the terminal.
-  // Other columns are mostly short fixed-shape values; figure out how
-  // wide they actually are, sum them up, and give title the leftover.
-  const otherCols = opts.withWorkstream
-    ? (["localId", "workstream", "status", "impact", "effortDays", "roi", "owner"] as const)
-    : (["localId", "status", "impact", "effortDays", "roi", "owner"] as const);
-  const widths = new Map<string, number>();
-  for (const col of otherCols) widths.set(col, col.length); // header is the floor
-  for (const t of tasks) {
-    widths.set("localId", Math.max(widths.get("localId") ?? 0, t.name.length));
-    if (opts.withWorkstream) {
-      widths.set("workstream", Math.max(widths.get("workstream") ?? 0, t.workstreamName.length));
-    }
-    widths.set("status", Math.max(widths.get("status") ?? 0, formatPair(t).length));
-    widths.set("impact", Math.max(widths.get("impact") ?? 0, String(t.impact).length));
-    widths.set("effortDays", Math.max(widths.get("effortDays") ?? 0, String(t.effortDays).length));
-    const roi = t.effortDays > 0 ? (t.impact / t.effortDays).toFixed(1) : "∞";
-    widths.set("roi", Math.max(widths.get("roi") ?? 0, roi.length));
-    widths.set("owner", Math.max(widths.get("owner") ?? 0, (t.ownerName ?? "—").length));
-  }
-  let timeWidth = 0;
-  if (timeHeader !== null) {
-    timeWidth = timeHeader.length;
-    for (const cell of timeCells) timeWidth = Math.max(timeWidth, cell.length);
-  }
-  // cli-table3 adds 2 chars of padding per cell + 1 char border per
-  // column. Account for that to find the title budget.
-  const numCols = head.length;
-  const otherTotal = otherCols.reduce((acc, c) => acc + (widths.get(c) ?? 0), 0) + timeWidth;
-  const padding = numCols * 3 + 1;
-  const titleBudget = Math.max(20, terminalWidth() - otherTotal - padding);
-
-  // Title is pre-truncated to titleBudget above. renderBoxTable, not
-  // cli-table3: its layout pass is quadratic in rows
-  // (f_tasklist_table_render).
-  const rows: string[][] = [];
-  for (let i = 0; i < tasks.length; i++) {
-    const t = tasks[i];
-    if (!t) continue; // noUncheckedIndexedAccess
-    const roi = t.effortDays > 0 ? (t.impact / t.effortDays).toFixed(1) : "∞";
-    const title = truncate(t.title, titleBudget);
-    const baseRow = opts.withWorkstream
-      ? [
-          t.name,
-          t.workstreamName,
-          colorPair(t),
-          title,
-          String(t.impact),
-          String(t.effortDays),
-          roi,
-          t.ownerName ?? pc.dim("—"),
-        ]
-      : [
-          t.name,
-          colorPair(t),
-          title,
-          String(t.impact),
-          String(t.effortDays),
-          roi,
-          t.ownerName ?? pc.dim("—"),
-        ];
-    const row = timeHeader === null ? baseRow : [...baseRow, pc.dim(timeCells[i] ?? "")];
-    rows.push(row);
-  }
-  return renderBoxTable(
-    head.map((h) => pc.bold(h)),
-    rows,
-  );
 }
 
 // ─── Note records ──────────────────────────────────────────────────────

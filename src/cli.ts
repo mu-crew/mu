@@ -70,8 +70,6 @@ import {
 export {
   colorPair,
   formatAgentsTable,
-  formatReadyTable,
-  formatTaskListTable,
   IDLE_GLYPH,
   relTime,
   statusIcon,
@@ -418,8 +416,8 @@ export function parseSortOption(raw: string, flag = "--sort"): TaskSortKey {
 
 /**
  * Decorate a TaskRow (or array of them) with a computed `roi` field for
- * JSON output. ROI is a CLI-rendering concern (the table view computes
- * it inline; see formatTaskListTable) but JSON consumers were getting
+ * JSON output. ROI is a CLI-rendering concern (the old table view computed
+ * it inline) but JSON consumers were getting
  * raw rows with no ROI at all, which broke `mu task next --json | jq
  * 'sort_by(.roi)'` and similar. We keep `TaskRow` itself ROI-free so
  * the SDK contract stays minimal; the decorator lives only in the JSON
