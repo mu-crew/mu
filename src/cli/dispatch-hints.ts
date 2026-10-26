@@ -9,15 +9,11 @@
 // --interrupt and `mu agent abort` get taught.
 
 import { type AgentRow, expectsCtl } from "../agents.js";
+import { agentRefOf, dispatchPrompt } from "../next-hints.js";
 import type { NextStep } from "../output.js";
 import { shellQuote, shellWord } from "../shell-quote.js";
 
 export type HintAgent = Pick<AgentRow, "name" | "cli" | "workstreamName">;
-
-/** The prompt that hands a claimed task to its owner. */
-function dispatchText(task: { id: string; workstream: string }): string {
-  return `Claim done: work on ${task.id}. Read: mu task notes ${task.id} -w ${task.workstream}`;
-}
 
 /**
  * The ONE hint after a send: `mu wait` on exactly the run it started, as one
@@ -49,15 +45,6 @@ export function gateWaitHint(agent: Pick<HintAgent, "name" | "workstreamName">):
   };
 }
 
-/** `agent:<ws>/<name>[@<runs>][#<incarnation>]`: the typed ref a wait takes. */
-export function agentRefOf(
-  agent: Pick<HintAgent, "name" | "workstreamName">,
-  runs?: number,
-  incarnation?: string,
-): string {
-  return `agent:${agent.workstreamName}/${agent.name}${runs === undefined ? "" : `@${runs}`}${incarnation === undefined ? "" : `#${incarnation}`}`;
-}
-
 /**
  * "Send work" for an agent about to get a new task. pi agents get
  * `--fresh`; non-pi agents get a plain send.
@@ -67,7 +54,7 @@ export function dispatchHint(
   opts: { task?: { id: string; workstream: string } } = {},
 ): NextStep {
   const ws = agent.workstreamName;
-  const text = opts.task === undefined ? "'...'" : shellQuote(dispatchText(opts.task));
+  const text = opts.task === undefined ? "'...'" : shellQuote(dispatchPrompt(opts.task));
   if (!expectsCtl(agent)) {
     return { intent: "Send work", command: `mu agent send ${agent.name} ${text} -w ${ws}` };
   }
@@ -86,6 +73,6 @@ export function nextDispatchHint(agent: HintAgent, ws: string): NextStep | null 
   const forRef = agent.workstreamName === ws ? agent.name : `${agent.workstreamName}/${agent.name}`;
   return {
     intent: `Dispatch the next task to ${agent.name} (pick one with mu task next; fresh session)`,
-    command: `mu task claim <id> --for ${forRef} -w ${ws} && mu agent send ${agent.name} --fresh ${shellQuote(dispatchText({ id: "<id>", workstream: ws }))} -w ${agent.workstreamName}`,
+    command: `mu task claim <id> --for ${forRef} -w ${ws} && mu agent send ${agent.name} --fresh ${shellQuote(dispatchPrompt({ id: "<id>", workstream: ws }))} -w ${agent.workstreamName}`,
   };
 }

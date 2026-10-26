@@ -52,6 +52,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`computeNext`: one read-only rule set for `next`** (`v_hint_rules`, slice A of `v_hints`; SDK
+  only, results still print `next: null` until `v_hint_wire`). `src/next-hints.ts` computes a
+  `NextPlan` from current state plus what the verb did: the exact `mu wait 'agent:<ws>/<n>@<runs>#<inc>'`
+  a delivered send owes (the send's own baseline), `mu agent check <a> <msgId>` for an unknown delivery
+  (only while the registry row it went to stands: the check has no `--inc`; never a resend), a gate's
+  wait, the `--fresh` brief a `claim --for` owes, a preview's apply with `--if <rev>`, the stored
+  `mu wait --resume <id>`; then `mu next -w <ws>` when work is authorised here and the bare `mu wait`
+  over owned refs, both withheld while a caller has an open human need. Reads are never suggested; a
+  refused delegate call (reissued by the pi tool) never is. Every command is rendered from argv with
+  POSIX quoting (a test runs each through `sh`); an unguarded destructive move throws; `capPlan` drops
+  an oversized `seq` whole. `agentRefOf`, the claim prompt and `resumeCommand` now come from this one
+  builder. Exported: `computeNext`, `renderArgv`, `renderPlan`, `capPlan`, `NextPlan`.
+
 - **Remote command gates** (`v_remote_gates`, core; SDK only). `spawnAgent` with `host` and an
   explicit `--command` that is not pi (argv0 not `pi`/`pi-meta`, `cli` not explicitly `pi`) is a
   *gate*: a foreground remote command whose exact numeric exit `mu wait agent:<ws>/<name>` returns

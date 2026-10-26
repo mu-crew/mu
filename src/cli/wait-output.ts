@@ -9,8 +9,8 @@
 
 import type { VerdictTally } from "../delegates.js";
 import type { HumanNeeded } from "../human-needed.js";
+import { renderArgv, resumeArgv } from "../next-hints.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../output-contract.js";
-import { shellWord } from "../shell-quote.js";
 import type { WaitEvent, WaitRef, WaitResult, WaitSnapshot } from "../wait-types.js";
 import { pageRecords } from "./tasks/records.js";
 
@@ -68,7 +68,7 @@ export function owedRefs(
 
 /** The one-line resume a result prints: the stored handle (the condition set lives in `wait_resumes`). */
 export function resumeCommand(id: string, scope: string | undefined): string {
-  return `mu wait --resume ${id}${scope !== undefined ? ` -w ${shellWord(scope)}` : ""}`;
+  return renderArgv(resumeArgv(id, scope));
 }
 
 /** `6/12 CONFIRMED, 2 REFUTED, 1 UNVERIFIED, 3 pending`: the wave in one line. */

@@ -333,11 +333,22 @@ export {
   type NextResult,
 } from "./next.js";
 export {
+  capPlan,
+  computeNext,
+  type HintMove,
+  type NextContext,
+  type NextOutcome,
+  renderArgv,
+  renderPlan,
+  UnguardedMoveError,
+} from "./next-hints.js";
+export {
   currentOpContext,
   type OpContext,
   withCaptureSuppressed,
   withOpContext,
 } from "./op-context.js";
+export type { NextPlan } from "./output-contract.js";
 export {
   type MigrateEntry,
   type MigrateResult,
