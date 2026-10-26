@@ -16,8 +16,8 @@ Agents in tmux/herdr panes, coordinated by a SQLite task DAG. **`mu --help` and
 show` do not); workers: injected.
 
 `--json` returns `{ok,data,next}`; errors come on stdout as
-`{ok:false,error,message,next,exit}`. TODO(v_hints): `next` is null today; hints
-are in `data.nextSteps` (errors: top-level `nextSteps`). Collections are
+`{ok:false,error,message,next,exit}`. `next` is null today; hints are in
+`data.nextSteps` (errors: top-level `nextSteps`). Collections are
 `{items,count}`; `agent list` is `{workstreamName,agents,orphans}`. Keys are SQL
 column names; `id` is the task's name. A capped reader names its way back
 (`more=N next=<command>`).
@@ -43,7 +43,7 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch.
 These hold even if you skip it:
 
 - **Claim before work is sent.** `agent spawn --task <id> --send ...` does both.
-- **Wait with `mu task wait`, never `sleep` loops** (flags and exits:
+- **Wait with `mu wait`, never `sleep` loops** (exits:
   [orchestrator-loop](recipes/orchestrator-loop.md)).
 - **A send that timed out is unknown, never resent**: `mu agent check <a> <msgId>`.
 - **New work to pi: `send --fresh`.** A running worker never sees a note: send

@@ -22,5 +22,5 @@ EVIDENCE: <file:line or command + result>   (3-6 lines)
 
 - **Issue every call of a step in one turn**; one at a time runs in series. Past `MU_DELEGATE_MAX` (16) they queue, then are refused and reissuable.
 
-Outside pi, use `scratch`: `mu agent spawn r1 -w scratch`; `mu agent send r1 -w scratch --fresh --json -` (keep `runs`, `incarnation`); `mu agent wait r1 -w scratch --after-runs <runs> --inc <incarnation> --json`, whose `lastText` is the answer. Write it on the task as `REFUTER <n> (<agent>): <verdict lines>`, or `REFUTER <n>: no verdict (<outcome>)`. Then `mu agent close r1 -w scratch --if <rev>`.
+Outside pi, use `scratch`: `mu agent spawn r1 -w scratch`; `mu agent send r1 -w scratch --fresh --json -` (keep `runs`, `incarnation`); `mu wait 'agent:r1@<runs>#<incarnation>' -w scratch`, whose snapshot `lastText` is the answer. Write it on the task as `REFUTER <n> (<agent>): <verdict lines>`, or `REFUTER <n>: no verdict (<outcome>)`. Then `mu agent close r1 -w scratch --if <rev>`.
 
