@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
 import { addTask, closeTask } from "../src/tasks.js";
+import { loadResume } from "../src/wait-resume.js";
 import { ensureWorkstream } from "../src/workstream.js";
 
 const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
@@ -77,6 +78,17 @@ const run = (args: string[]): Ran => {
   }
 };
 
+/** The stored wait behind a printed `mu wait --resume <id> [-w ws]`. */
+const stored = (resume: string) => {
+  const id = /--resume (\w+)/.exec(resume)?.[1] ?? "";
+  const db = openDb({ path: dbPath });
+  try {
+    return loadResume(db, id);
+  } finally {
+    db.close();
+  }
+};
+
 /** Poll until the wait has really started (its registration or the process age), not a fixed sleep. */
 const started = async (ms = 400): Promise<void> => {
   await new Promise((r) => setTimeout(r, ms));
@@ -127,7 +139,14 @@ describe.skipIf(!built)("mu wait: signals print one honest snapshot", () => {
       );
       expect(states).toEqual({ a: "CLOSED", b: "OPEN" });
       // Nothing was consumed by the interrupted wait: the resume still names both.
-      expect(doc.data.resume).toBe("mu wait task:w/a task:w/b --all -w w");
+      expect(doc.data.resume).toMatch(/^mu wait --resume [0-9a-f]{10} -w w$/);
+      expect(stored(doc.data.resume).spec).toMatchObject({
+        mode: "all",
+        refs: [
+          { kind: "task", id: "a" },
+          { kind: "task", id: "b" },
+        ],
+      });
       expect(r.stderr).not.toMatch(/Error|at .*\.js/);
     });
   }
@@ -162,7 +181,8 @@ describe.skipIf(!built)("mu wait: signals print one honest snapshot", () => {
     ]);
     const r = await first.done;
     const resume = JSON.parse(r.stdout).data.resume as string;
-    expect(resume).toBe("mu wait task:w/a task:w/b -w w --stuck-after 30 --timeout 0.3");
+    expect(resume).toMatch(/^mu wait --resume [0-9a-f]{10} -w w$/);
+    expect(stored(resume).spec).toMatchObject({ stuckAfter: 30, timeout: 0.3 });
     const db = openDb({ path: dbPath });
     closeTask(db, "b", { workstream: "w", evidence: "e" });
     db.close();
@@ -208,4 +228,36 @@ describe.skipIf(!built)("mu wait: signals print one honest snapshot", () => {
     expect(r.stderr).toBe("");
     expect(r.stdout.trim().split("\n")).toHaveLength(1);
   });
+});
+
+describe.skipIf(!built)("mu wait: a signal while setup is blocked is still an envelope", () => {
+  for (const [name, code] of [
+    ["SIGTERM", 143],
+    ["SIGINT", 130],
+  ] as const) {
+    it(`${name} lands while the DB open is blocked on a writer lock: listeners already installed`, async () => {
+      // Setup is stalled for real: a writer holds the lock, so the child sits inside openDb()
+      // (not in the engine). Node is long since loaded, so the signal can only be absorbed by
+      // listeners installed BEFORE that open; a late install dies by the signal with no stdout.
+      const lock = openDb({ path: dbPath });
+      lock.exec("BEGIN IMMEDIATE");
+      try {
+        const { child, done } = start(["wait", "task:a", "-w", "w"]);
+        await started(900);
+        child.kill(name);
+        await started(300);
+        lock.exec("ROLLBACK");
+        const r = await done;
+        expect(r.signal).toBeNull();
+        expect(r.code).toBe(code);
+        expect(r.stdout.trim().split("\n")).toHaveLength(1);
+        expect(JSON.parse(r.stdout).data).toMatchObject({ interrupted: true, signal: name });
+      } finally {
+        try {
+          lock.exec("ROLLBACK");
+        } catch {}
+        lock.close();
+      }
+    });
+  }
 });

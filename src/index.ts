@@ -699,6 +699,7 @@ export {
   WaitRegistrationError,
   type WaitRegistrationState,
 } from "./wait-registration.js";
+export { loadResume, saveResume, WaitResumeNotFoundError } from "./wait-resume.js";
 export {
   ensureWorkstream,
   isValidWorkstreamName,

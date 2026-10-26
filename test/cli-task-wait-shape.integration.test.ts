@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, closeTask } from "../src/tasks.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
+import { loadResume } from "../src/wait-resume.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -22,6 +23,17 @@ interface WaitJsonPayload {
   snapshots: Array<{ ref: string; fired: boolean }>;
   resume: string;
 }
+
+/** The refs the stored wait behind a printed resume handle still owes. */
+const storedRefs = (resume: string, dbPath: string): string[] => {
+  const id = /--resume (\w+)/.exec(resume)?.[1] ?? "";
+  const db = openDb({ path: dbPath });
+  try {
+    return loadResume(db, id).spec.refs.map((r) => `${r.workstream}/${r.id}`);
+  } finally {
+    db.close();
+  }
+};
 
 describe("mu task wait — --any vs --first output shape", () => {
   let tempDir: string;
@@ -69,8 +81,7 @@ describe("mu task wait — --any vs --first output shape", () => {
       expect(o.exit).toBe(0);
       expect(o.timedOut).toBe(false);
       // b is still open: the resume command waits for it, not for a.
-      expect(o.resume).toContain("task:test/b");
-      expect(o.resume).not.toContain("task:test/a");
+      expect(storedRefs(o.resume, dbPath)).toEqual(["test/b"]);
     }
   });
 
@@ -101,6 +112,6 @@ describe("mu task wait — --any vs --first output shape", () => {
     expect(payload).toMatchObject({ timedOut: true, exit: 0 });
     expect(payload.firing).toEqual({ kind: "heartbeat", ref: null });
     expect(payload.snapshots.map((s) => s.ref)).toEqual(["task:test/b"]);
-    expect(payload.resume).toContain("task:test/b");
+    expect(storedRefs(payload.resume, dbPath)).toEqual(["test/b"]);
   });
 });

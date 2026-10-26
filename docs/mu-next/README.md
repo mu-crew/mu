@@ -341,7 +341,8 @@ event (`kind`, `ref`, `incarnation`, `runs`), embeds its `exit`, and
 gives the next move; a timeout is `ok:true` with `timedOut`. Output is
 never empty on SIGINT or SIGTERM; SIGKILL cannot print and is not
 promised. Also in scope: `--until-idle`, `--until-text <re>` (a bounded
-regex over authoritative `lastText` or the report, never pane text),
+regex over authoritative `lastText` or the report, never pane text for a settle;
+an agent with no ctl socket ends the wait as the distinct `pane-text` event),
 `--stuck-after` with explicit `--on-stall exit|steer|release` (only on
 `auto` tasks on this `dispatch_host`), `dispatch --wait` /
 `claim --and-wait`, and a durable registered wait so plain spawn, send

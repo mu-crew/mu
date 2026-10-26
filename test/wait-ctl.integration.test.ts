@@ -8,6 +8,7 @@ import { mkdirSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { insertAgent } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { getTask } from "../src/tasks.js";
@@ -16,11 +17,15 @@ import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { readCursors, recordCursors } from "../src/wait-cursor.js";
 import { readWaitRegistration, registerOwnedWait } from "../src/wait-registration.js";
 import { helloReply, INC } from "./_ctl-ext.js";
+import { installMux, type MuxHarness } from "./_mux.js";
 import { agentRef, answer, mkDelegate, mkOwnedTask, taskRef, useWaitDb } from "./_wait-fixtures.js";
 
 const env = useWaitDb();
 const servers: Server[] = [];
+let mux: MuxHarness | undefined;
 afterEach(() => {
+  mux?.restore();
+  mux = undefined;
   for (const s of servers.splice(0)) s.close();
 });
 
@@ -242,5 +247,41 @@ describe("waitForEvents with the ctl hooks", () => {
       // The watch itself counted past the consumed run (not the older baseline).
       expect(pi.waitAfter[0]).toBe(1);
     });
+  });
+});
+
+describe("--until-text reads a pane only where no ctl text exists", () => {
+  const PANE = "build ok\nGATE-READY-7\n";
+
+  it("a pi agent whose socket answers is NEVER read from its pane (its lastText is authoritative)", async () => {
+    mux = installMux("tmux", [
+      ["list-panes", "%7\t\t\n%8\t\t\n"],
+      ["capture-pane", PANE],
+    ]);
+    insertAgent(env.db, { name: "w1", workstream: "w", paneId: "%8", cli: "pi" });
+    await fakePi("w1", "busy");
+    const read = await ctlAgentHooks(env.db, { paneText: true }).readAgents(
+      [agentRef("w1")],
+      new AbortController().signal,
+    );
+    expect(read.get("w/w1")).toMatchObject({ status: "busy", ctl: "ok" });
+    expect(read.get("w/w1")?.textSource).toBeUndefined();
+    expect(read.get("w/w1")?.lastText ?? "").not.toContain("GATE-READY");
+    expect(mux.calls.filter((c) => c.includes("capture-pane"))).toEqual([]);
+  });
+
+  it("an agent with no answering socket is read from its pane, and the reading says so", async () => {
+    mux = installMux("tmux", [
+      ["list-panes", "%7\t\t\n%8\t\t\n"],
+      ["capture-pane", PANE],
+    ]);
+    insertAgent(env.db, { name: "gate", workstream: "w", paneId: "%7", cli: "sh" });
+    const read = await ctlAgentHooks(env.db, { paneText: true }).readAgents(
+      [agentRef("gate")],
+      new AbortController().signal,
+    );
+    expect(read.get("w/gate")).toMatchObject({ textSource: "pane" });
+    expect(read.get("w/gate")?.lastText).toContain("GATE-READY-7");
+    expect(mux.calls.some((c) => c.includes("capture-pane"))).toBe(true);
   });
 });

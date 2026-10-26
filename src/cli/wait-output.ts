@@ -4,97 +4,71 @@
 //
 // Pure: no DB, no I/O. cmdWait (src/cli/wait.ts) builds a WaitResult and hands
 // it here. The shape is the README's: `firing` (alias `event`), `exit`,
-// `timedOut`, `snapshots`, `cursor`, `resume`.
+// `timedOut`, `snapshots`, `cursor`, `resume` (the stored handle, see
+// src/wait-resume.ts; null with `resumeWhy` when nothing is left to wait for).
 
 import type { VerdictTally } from "../delegates.js";
+import type { HumanNeeded } from "../human-needed.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../output-contract.js";
 import { shellWord } from "../shell-quote.js";
 import type { WaitEvent, WaitRef, WaitResult, WaitSnapshot } from "../wait-types.js";
+import { pageRecords } from "./tasks/records.js";
 
 /** `task:<ws>/<id>`, `agent:<ws>/<name>`, `delegate:<call id>`: a ref a later `mu wait` can take as is. */
 export function refString(ref: WaitRef): string {
   return ref.kind === "delegate" ? `delegate:${ref.id}` : `${ref.kind}:${ref.workstream}/${ref.id}`;
 }
 
-/** One ref of a resume command: typed, qualified, shell-quoted; an agent keeps its run baseline. */
-function resumeRef(ref: WaitRef, afterRuns: number | undefined): string {
-  const base = refString(ref);
-  const runs = ref.kind === "agent" && afterRuns !== undefined ? `@${afterRuns}` : "";
-  const inc = ref.kind === "agent" && ref.incarnation !== undefined ? `#${ref.incarnation}` : "";
-  return shellWord(`${base}${runs}${inc}`);
-}
-
-/** What a `mu wait` call asked for, kept so its resume command repeats every condition. */
-export interface WaitConditions {
-  /** The verb a resume runs (`mu wait`). */
-  mode: "first" | "all";
-  scope?: string;
-  status?: string;
-  untilText?: string;
-  stuckAfter?: number;
-  onStall?: string;
-  wave?: string;
-  blockersOf?: string;
-  /** Seconds the caller asked for; absent = the default. */
-  timeout?: number;
-}
-
-/** At most this many refs are spelled in a resume; the rest are owed implicitly. */
-const RESUME_REFS_MAX = 24;
-
 /**
- * The command that continues this wait: every condition repeated with its real
- * value, the refs still owed typed and qualified, POSIX-quoted. A real event
- * leaves out what it delivered; a timeout or an interrupt delivered nothing,
- * so every watched ref is named.
+ * The explicit refs a resume must still wait on, each with the run baseline and pi
+ * incarnation it was last SEEN at (the observed one wins over the ref as typed, so a
+ * pi that restarted meanwhile is refused on resume, never miscounted). A real event
+ * leaves out what it delivered; a timeout or an interrupt delivered nothing, so every
+ * ref stays. Refs the wait discovered itself (a caller's owned work, a wave, the
+ * blockers) are not listed: the stored callers and filters find them again. Never
+ * truncated: they live in the stored handle, not in the printed line.
  */
-export function resumeCommand(
+export function owedRefs(
   result: WaitResult,
-  conditions: WaitConditions,
+  mode: "first" | "all",
   explicit: readonly WaitRef[],
-): string {
+): WaitRef[] {
   const delivered = (s: WaitSnapshot): boolean => {
     if (result.event.kind === "heartbeat" || result.event.kind === "interrupted") return false;
-    if (conditions.mode === "all") return s.fired;
+    if (mode === "all") return s.fired;
     const e = result.event.ref;
     return (
       e !== null && e.kind === s.ref.kind && e.workstream === s.ref.workstream && e.id === s.ref.id
     );
   };
   const seen = new Set<string>();
-  const refs: string[] = [];
-  const add = (ref: WaitRef, runs: number | undefined): void => {
+  const out: WaitRef[] = [];
+  for (const ref of explicit) {
     const key = refString(ref);
-    if (seen.has(key)) return;
+    if (seen.has(key)) continue;
     seen.add(key);
-    refs.push(resumeRef(ref, runs));
-  };
-  for (const s of result.refs) {
-    if (delivered(s)) continue;
-    add(s.ref, s.afterRuns ?? s.ref.afterRuns);
-  }
-  for (const r of explicit) {
-    const snap = result.refs.find((s) => refString(s.ref) === refString(r));
+    const snap = result.refs.find((s) => refString(s.ref) === key);
     if (snap !== undefined && delivered(snap)) continue;
-    add(r, r.afterRuns);
+    if (ref.kind !== "agent") {
+      out.push({ kind: ref.kind, workstream: ref.workstream, id: ref.id });
+      continue;
+    }
+    const runs = snap?.afterRuns ?? ref.afterRuns;
+    const inc = snap?.incarnation ?? ref.incarnation;
+    out.push({
+      kind: "agent",
+      workstream: ref.workstream,
+      id: ref.id,
+      ...(runs !== undefined ? { afterRuns: runs } : {}),
+      ...(inc !== undefined ? { incarnation: inc } : {}),
+    });
   }
-  const shown = refs.slice(0, RESUME_REFS_MAX);
-  const parts = ["mu wait", ...shown];
-  if (conditions.mode === "all") parts.push("--all");
-  if (conditions.scope !== undefined) parts.push("-w", shellWord(conditions.scope));
-  if (conditions.status !== undefined) parts.push("--status", shellWord(conditions.status));
-  if (conditions.untilText !== undefined)
-    parts.push("--until-text", shellWord(conditions.untilText));
-  if (conditions.stuckAfter !== undefined)
-    parts.push("--stuck-after", String(conditions.stuckAfter));
-  if (conditions.onStall !== undefined && conditions.onStall !== "exit") {
-    parts.push("--on-stall", conditions.onStall);
-  }
-  if (conditions.wave !== undefined) parts.push("--wave", shellWord(conditions.wave));
-  if (conditions.blockersOf !== undefined)
-    parts.push("--blockers-of", shellWord(conditions.blockersOf));
-  if (conditions.timeout !== undefined) parts.push("--timeout", String(conditions.timeout));
-  return parts.join(" ");
+  return out;
+}
+
+/** The one-line resume a result prints: the stored handle (the condition set lives in `wait_resumes`). */
+export function resumeCommand(id: string, scope: string | undefined): string {
+  return `mu wait --resume ${id}${scope !== undefined ? ` -w ${shellWord(scope)}` : ""}`;
 }
 
 /** `6/12 CONFIRMED, 2 REFUTED, 1 UNVERIFIED, 3 pending`: the wave in one line. */
@@ -189,8 +163,10 @@ export interface WaitDataInput {
   result: WaitResult;
   /** The exit the process returns (a signal exit replaces the engine's 130). */
   exit: number;
-  conditions: WaitConditions;
-  explicit: readonly WaitRef[];
+  /** The one-line handle (`mu wait --resume <id>`), or null when nothing is left to wait for. */
+  resume: string | null;
+  /** Why `resume` is null. */
+  resumeWhy?: string;
   signal?: string;
   /** The words for a non-routine event: why it ended the wait. */
   reason?: string;
@@ -199,15 +175,34 @@ export interface WaitDataInput {
   warning?: string;
 }
 
+/** What one shrink step keeps. */
+interface Shape {
+  /** Each snapshot's `lastText` is clipped to this many characters (0 = dropped). */
+  text: number;
+  nextSteps: number;
+  humanNeeds: number;
+  /** Each human need's reason is clipped to NEED_CHARS. */
+  clipNeeds: boolean;
+  /** The wave's per-finding rows in full. */
+  findings: boolean;
+}
+
+/** A human need's reason is clipped to this once the result is shrinking. */
+const NEED_CHARS = 200;
+/** The tally keeps this many refused names once its rows are cut. */
+const REFUSED_KEPT = 3;
+
 /**
- * The result document, bounded to RESULT_BYTES. The firing event, exit,
- * timedOut, interrupted, resume and open count are never cut. What is cut, in
- * order: each snapshot's `lastText` (tail kept), the tally's per-finding rows,
- * the cursor to the refs shown, then the least important snapshots; every cut
- * says how many it took and `retrieve` names how to read the rest.
+ * The result document, bounded to RESULT_BYTES on its FINAL bytes (envelope, `nextSteps`,
+ * `humanNeeds` and `resume` included; the measure of the shared pager,
+ * src/cli/page-records.ts). The firing event, exit, timedOut, interrupted, resume and
+ * the open count are never cut. What is cut, in order: each snapshot's `lastText` (tail
+ * kept), the hints and human needs, the tally's per-finding rows, then the least
+ * important snapshots (`pageRecords`); every cut says how many it took, and `retrieve`
+ * names how to read the rest.
  */
 export function waitData(input: WaitDataInput): Record<string, unknown> {
-  const { result, exit, conditions, explicit } = input;
+  const { result, exit } = input;
   const event = eventRecord(result.event);
   const fired = (s: WaitSnapshot): boolean => {
     const e = result.event.ref;
@@ -219,16 +214,13 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       Number(fired(b)) - Number(fired(a)) || Number(a.fired || a.dead) - Number(b.fired || b.dead),
   );
   const open = result.refs.filter((s) => !s.fired && !s.dead).length;
-  const resume = resumeCommand(result, conditions, explicit);
   const tallyFull =
     result.tally === undefined
       ? undefined
       : { summary: tallySummary(result.tally), ...result.tally };
-  const build = (
-    textCap: number,
-    shown: number,
-    withFindings: boolean,
-  ): Record<string, unknown> => {
+  const steps = input.nextSteps ?? [];
+  const needs: readonly HumanNeeded[] = result.humanNeeds;
+  const build = (shape: Shape, shown: number): Record<string, unknown> => {
     const snaps = ordered.slice(0, shown);
     const keys = new Set(snaps.map((s) => `${s.ref.kind}:${s.ref.workstream}/${s.ref.id}`));
     const cursor = Object.fromEntries(
@@ -240,6 +232,14 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
     );
     const cut = ordered.length - snaps.length;
     const cursorCut = Object.keys(result.cursor).length - Object.keys(cursor).length;
+    const keptSteps = steps.slice(0, shape.nextSteps);
+    const keptNeeds = needs
+      .slice(0, shape.humanNeeds)
+      .map((n) =>
+        !shape.clipNeeds || n.reason.length <= NEED_CHARS
+          ? n
+          : { ...n, reason: `${n.reason.slice(0, NEED_CHARS)}…` },
+      );
     return {
       firing: event,
       event,
@@ -249,7 +249,7 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
       ...(input.reason !== undefined ? { reason: input.reason } : {}),
       open,
-      snapshots: snaps.map((s) => snapshotRecord(s, textCap)),
+      snapshots: snaps.map((s) => snapshotRecord(s, shape.text)),
       ...(cut > 0
         ? {
             snapshotsCut: cut,
@@ -258,50 +258,61 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
         : {}),
       ...(tallyFull === undefined
         ? {}
-        : withFindings
+        : shape.findings
           ? { tally: tallyFull }
           : {
               tally: {
                 summary: tallyFull.summary,
                 queued: tallyFull.queued,
                 running: tallyFull.running,
-                refused: tallyFull.refused,
+                refused: tallyFull.refused.slice(0, REFUSED_KEPT),
+                ...(tallyFull.refused.length > REFUSED_KEPT
+                  ? { refusedCut: tallyFull.refused.length - REFUSED_KEPT }
+                  : {}),
                 findingsCut: tallyFull.findings.length,
               },
             }),
-      ...(result.humanNeeds.length > 0 ? { humanNeeds: result.humanNeeds } : {}),
+      ...(keptNeeds.length > 0 ? { humanNeeds: keptNeeds } : {}),
+      ...(needs.length > keptNeeds.length
+        ? { humanNeedsCut: needs.length - keptNeeds.length }
+        : {}),
       cursor,
       ...(cursorCut > 0 ? { cursorCut } : {}),
-      resume,
+      resume: input.resume,
+      ...(input.resumeWhy !== undefined ? { resumeWhy: input.resumeWhy } : {}),
       ...(result.drained === true ? { drained: true } : {}),
       ...(result.superseded === true ? { superseded: true } : {}),
       ...(result.action !== undefined ? { action: result.action } : {}),
-      ...(input.nextSteps !== undefined && input.nextSteps.length > 0
-        ? { nextSteps: input.nextSteps }
-        : {}),
+      ...(keptSteps.length > 0 ? { nextSteps: keptSteps } : {}),
+      ...(steps.length > keptSteps.length ? { nextStepsCut: steps.length - keptSteps.length } : {}),
       ...(input.warning !== undefined ? { warning: input.warning } : {}),
     };
   };
   const fits = (d: Record<string, unknown>): boolean =>
     Buffer.byteLength(encodeEnvelope(okEnvelope(d))) <= RESULT_BYTES;
-  const n = ordered.length;
-  // What shrinks first: the texts, then the least important snapshots (the tally's findings
-  // are what a wave is read for), and only then the findings themselves.
-  for (const cap of [1500, 800, 300, 120, 0]) {
-    const d = build(cap, n, true);
+  const every = Number.POSITIVE_INFINITY;
+  // The texts shrink first (a CLOSE block and its report end a message, so the tail stays).
+  for (const text of [1500, 800, 300, 120, 0]) {
+    const d = build(
+      { text, nextSteps: every, humanNeeds: every, clipNeeds: false, findings: true },
+      ordered.length,
+    );
     if (fits(d)) return d;
   }
-  for (let shown = n - 1; shown >= 1; shown--) {
-    const d = build(0, shown, true);
+  // Then the hints; the snapshots are paged on final bytes, the findings kept while they can be.
+  for (const findings of [true, false]) {
+    const shape: Shape = { text: 0, nextSteps: 3, humanNeeds: 3, clipNeeds: true, findings };
+    const page = pageRecords(
+      ordered,
+      (p) => Buffer.byteLength(encodeEnvelope(okEnvelope(build(shape, p.shown.length)))),
+      RESULT_BYTES,
+      1,
+    );
+    const d = build(shape, page.shown.length);
     if (fits(d)) return d;
   }
-  for (const cap of [300, 120, 0]) {
-    const d = build(cap, n, false);
-    if (fits(d)) return d;
-  }
-  for (let shown = n - 1; shown >= 1; shown--) {
-    const d = build(0, shown, false);
-    if (fits(d)) return d;
-  }
-  return build(0, Math.min(1, n), false);
+  return build(
+    { text: 0, nextSteps: 0, humanNeeds: 1, clipNeeds: true, findings: false },
+    Math.min(1, ordered.length),
+  );
 }

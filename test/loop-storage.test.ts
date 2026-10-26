@@ -68,6 +68,7 @@ const NEW_TABLES = [
   "wait_action_receipts",
   "wait_cursors",
   "wait_registrations",
+  "wait_resumes",
 ] as const;
 
 let dir: string;
@@ -762,7 +763,7 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(25);
+    expect(EXPECTED_TABLES).toHaveLength(26);
     expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
   });
 

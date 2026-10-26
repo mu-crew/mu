@@ -183,7 +183,7 @@ interface AgentTrack {
   needWatch: boolean;
   result: AgentReading | undefined;
   reading: AgentReading | undefined;
-  latched: { kind: "settled" | "dead" | "input"; reading: AgentReading } | undefined;
+  latched: { kind: "settled" | "dead" | "input" | "pane-text"; reading: AgentReading } | undefined;
   close: CloseOutcome | undefined;
   /** The dialog already returned once is still open: not news again until it changes. */
   muted: boolean;
@@ -586,8 +586,8 @@ export async function waitForEvents(
       matcher.test(r.lastText)
     ) {
       // A non-pi pane has no settle and no ctl text: what it printed is the only condition
-      // there is. It matches once (the tail), and it never closes a task (settled stays unset).
-      t.latched = { kind: "settled", reading: r };
+      // there is. It is its OWN event, never `settled` (no run finished), and it never closes a task.
+      t.latched = { kind: "pane-text", reading: r };
     } else if (fromWatch) {
       // No settle seen (`unknown`): the watch ends and the agent is polled instead.
       if (r.status === "unknown") t.handle = undefined;
@@ -691,7 +691,7 @@ export async function waitForEvents(
       ...(t.baseline !== undefined ? { afterRuns: t.baseline } : {}),
       wasBusy: t.wasBusy,
       ...(t.unknownBaseline ? { unknownBaseline: true } : {}),
-      fired: t.latched?.kind === "settled",
+      fired: t.latched?.kind === "settled" || t.latched?.kind === "pane-text",
       dead: t.latched?.kind === "dead",
       ...(t.close !== undefined ? { close: t.close } : {}),
     };
@@ -935,7 +935,7 @@ export async function waitForEvents(
       target: isTarget,
       suppressible: !t.explicit,
       order,
-      done: l?.kind === "settled" || l?.kind === "dead",
+      done: l?.kind === "settled" || l?.kind === "pane-text" || l?.kind === "dead",
       ready: false,
       ...(l !== undefined ? { kind: l.kind } : {}),
       ...(token !== undefined ? { token } : {}),
@@ -1375,6 +1375,7 @@ export async function waitForEvents(
         (i) =>
           i.kind === "closed" ||
           i.kind === "settled" ||
+          i.kind === "pane-text" ||
           i.kind === "delegate" ||
           (i.kind === "dead" && i.ref.kind === "agent"),
       );
