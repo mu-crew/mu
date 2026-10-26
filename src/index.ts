@@ -78,6 +78,8 @@ export {
   type SendResult,
   type SpawnAgentOptions,
   SpawnAttemptBusyError,
+  SpawnAttemptFailedError,
+  SpawnAttemptGuardError,
   type SpawnReceipt,
   SpawnReceiptConflictError,
   SpawnTaskStateError,
@@ -87,6 +89,7 @@ export {
   setCommandResolverForTests,
   settledCloseInput,
   spawnAgent,
+  spawnAutoAttempt,
   spawnForTask,
   type TaskSpawnOutcome,
   type TaskSpawnRequest,
@@ -103,6 +106,14 @@ export {
   OpEntityNotSyncedError,
   OpKeyMalformedError,
 } from "./apply.js";
+export {
+  type AttemptPlan,
+  type AttemptRecord,
+  attemptName,
+  pendingAttempts,
+  planAttempt,
+  reserveAttempt,
+} from "./auto-attempt.js";
 export {
   CAPTURE_TRIGGER_DDL,
   CAPTURE_VERSION,
@@ -325,6 +336,15 @@ export {
   tmuxBackend,
 } from "./mux.js";
 export {
+  DEFAULT_NEXT_CAP,
+  type ExecuteNextOptions,
+  executeNext,
+  MAX_NEXT_CAP,
+  NextArgError,
+  type NextMove,
+  type NextResult,
+} from "./next.js";
+export {
   currentOpContext,
   type OpContext,
   withCaptureSuppressed,
@@ -466,6 +486,13 @@ export {
   TaskAutoArgError,
   TaskAutoRefusedError,
 } from "./task-auto.js";
+export {
+  buildTaskBrief,
+  type TaskBrief,
+  TaskBriefMissingError,
+  type TaskBriefOptions,
+  type TaskBriefPin,
+} from "./task-brief.js";
 export {
   type AddNoteOptions,
   type AddNoteResult,

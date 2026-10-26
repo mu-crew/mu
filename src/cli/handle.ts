@@ -52,6 +52,8 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   SpawnAttemptBusyError,
+  SpawnAttemptFailedError,
+  SpawnAttemptGuardError,
   SpawnReceiptConflictError,
   SpawnTaskStateError,
   SpawnTrustDialogError,
@@ -91,6 +93,7 @@ import {
   NoMultiplexerError,
   PaneNotFoundError,
 } from "../mux.js";
+import { NextArgError } from "../next.js";
 import {
   hasNextSteps,
   isJsonMode,
@@ -118,6 +121,7 @@ import {
 } from "../sync.js";
 import { assertSyncDirV2, SyncDirForeignError } from "../sync-dir-guard.js";
 import { TaskAutoArgError, TaskAutoRefusedError } from "../task-auto.js";
+import { TaskBriefMissingError } from "../task-brief.js";
 import { candidateTaskIds } from "../tasks/id.js";
 import {
   ClaimerNotRegisteredError,
@@ -327,6 +331,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (
     err instanceof UsageError ||
     err instanceof TaskAutoArgError ||
+    err instanceof NextArgError ||
     // `mu log --kind task|note|...`: a tag naming a projectable entity.
     err instanceof LogKindReservedError ||
     // abort on a non-pi agent: there is no control socket to carry it.
@@ -395,6 +400,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
     err instanceof TaskAutoRefusedError ||
+    err instanceof TaskBriefMissingError ||
     err instanceof DelegateCallConflictError ||
     err instanceof DelegateStateError ||
     err instanceof TaskAlreadyOwnedError ||
@@ -510,6 +516,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentReplacedError ||
     err instanceof AgentLockBusyError ||
     err instanceof SpawnAttemptBusyError ||
+    err instanceof SpawnAttemptFailedError ||
+    err instanceof SpawnAttemptGuardError ||
     err instanceof SpawnTaskStateError ||
     err instanceof SpawnReceiptConflictError
   ) {
