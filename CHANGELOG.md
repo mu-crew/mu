@@ -38,6 +38,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   with the action. `ctlRequest` gains an opt-in `beforeWrite` fence (`CtlWriteVetoedError`) and an
   abort after a side-effecting write is now `CtlDeliveryUnknownError`; `sendViaTransport` gains
   `ctlGuard` (signal, timeout, fence). Defaults unchanged. Receipts allow `sending -> refused`.
+  A probe-confirmed earlier steer whose run already settled (receipt runs below the owner's) returns
+  the stall ("nudged earlier, owner idle again") instead of a silent continue; a fence on a
+  session-command text (`/new`, …) is refused, not skipped.
 
 ### Changed
 

@@ -302,6 +302,33 @@ describe("steer: crash at each state", () => {
     expect(ext.sends).toHaveLength(0);
   });
 
+  it("same name and pane but a NEW registry row is never probed or resent", async () => {
+    const s = await setup();
+    plant(s, "sending");
+    ext.accepted.set("m-old", 1);
+    env.db.exec("PRAGMA foreign_keys = OFF");
+    env.db.exec("UPDATE agents SET id = id + 100 WHERE name = 'w1'");
+    expect((await steer(ctxOf(s))).state).toBe("unknown");
+    expect(ext.sends).toHaveLength(0);
+  });
+
+  it.each(["sending", "unknown"] as const)(
+    "a probe-confirmed steer (%s) whose run already settled returns the stall, not a continue",
+    async (planted) => {
+      const s = await setup();
+      plant(s, planted);
+      ext.accepted.set("m-old", 2);
+      const r = await steer(ctxOf(s, { owner: { ...ctxOf(s).owner, runs: 5 } }));
+      expect(r).toMatchObject({
+        state: "sent",
+        disposition: "return",
+        reason: "nudged earlier, owner idle again",
+      });
+      expect(row(s)?.state).toBe("sent");
+      expect(ext.sends).toHaveLength(0);
+    },
+  );
+
   it("SENDING with a lost msgId can only be unknown", async () => {
     const s = await setup();
     plant(s, "sending", null);
@@ -576,6 +603,23 @@ describe("steer through the engine", () => {
     expect(r.timedOut).toBe(true);
     expect(r.event.kind).not.toBe("stall");
     expect(ext.sends).toHaveLength(1);
+  });
+
+  it("an earlier steer confirmed by probe whose run already settled surfaces the stall", async () => {
+    const s = await setup();
+    plant(s, "sending");
+    ext.accepted.set("m-old", 2);
+    const table = stalledTable();
+    const w1 = table.get("w/w1") as AgentReading;
+    table.set("w/w1", { ...w1, runs: 5 });
+    const r = await waitWithActions(env.db, [taskRef("t1")], {
+      ...base,
+      callers: [CALLER],
+      onStall: "steer",
+      ...scriptedAgents(table),
+    });
+    expect(r.event.kind).toBe("stall");
+    expect(ext.sends).toHaveLength(0);
   });
 
   it("the default onStall exit never steers", async () => {
