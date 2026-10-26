@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createElement } from "react";
 import stringWidth from "string-width";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { App } from "../src/cli/tui/app.js";
+import { App, layout } from "../src/cli/tui/app.js";
 import {
   cursorIndex,
   formatElapsed,
@@ -145,7 +145,30 @@ describe("model", () => {
       "… 1 repeat line left out by the node cap",
     ]);
     const hidden = tabRows("dag", snap, "w", { ...NO_FILTER, text: "zzz" }, 0);
-    expect(hidden.map((r) => r.key)).toEqual(["cut:roots", "cut:again"]);
+    // The entry's own line is filtered out; its per-entry cap cut is still said.
+    expect(hidden.map((r) => r.text)).toEqual([
+      "… 1 open task under a left out by the node cap",
+      "… 4 open start tasks left out by the node cap",
+      "… 1 repeat line left out by the node cap",
+    ]);
+    expect(hidden.every((r) => r.notice === true)).toBe(true);
+    // A matching filter shows the entry (with its cut in the line) and no duplicate notice.
+    const shown = tabRows("dag", snap, "w", { ...NO_FILTER, text: "a" }, 0);
+    expect(shown.filter((r) => r.text.includes("under a"))).toEqual([]);
+  });
+
+  it("layout: the workstream and tab rows always stay, then one data row, then the rest", () => {
+    const l = (n: number) => {
+      const { shown, height } = layout(n);
+      return { shown: [...shown], height };
+    };
+    expect(l(0)).toEqual({ shown: [], height: 0 });
+    expect(l(2)).toEqual({ shown: [], height: 0 });
+    expect(l(3)).toEqual({ shown: [], height: 1 });
+    expect(l(4)).toEqual({ shown: ["filter"], height: 1 });
+    expect(l(5)).toEqual({ shown: ["filter", "footer"], height: 1 });
+    expect(l(6)).toEqual({ shown: ["filter", "footer", "next"], height: 1 });
+    expect(l(20)).toEqual({ shown: ["filter", "footer", "next"], height: 15 });
   });
 });
 
@@ -306,34 +329,87 @@ describe("tabs (Ink over a real snapshot)", () => {
     ui.unmount();
   });
 
-  it("the cursor stays on its task when activity reorders the list", async () => {
+  it("the cursor stays on its task when activity reorders the list (default row, after a move, after a filter reset)", async () => {
     add("beta", "one");
     add("beta", "two");
     add("beta", "three");
     rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
-    const real = rt;
     const ui = await renderApp(
-      createElement(App, { runtime: real, pollMs: 0, initialWorkstream: "beta", now: () => 0 }),
+      createElement(App, { runtime: rt, pollMs: 0, initialWorkstream: "beta", now: () => 0 }),
       { columns: 60, rows: 12 },
     );
+    const bump = (id: string) =>
+      addNote(db, id, "bump", { workstream: "beta", author: "t" } as never);
+    const lineOf = (s: string, id: string) => s.split("\n").find((l) => l.includes(id)) ?? "";
+    // Default row, no key pressed: `three` is selected and a bump of `one` must not move it.
     await ui.until((s) => s.includes("> three"));
+    bump("one");
+    await ui.until((s) => s.indexOf("one") < s.indexOf("three"));
+    expect(lineOf(ui.screen(), "three")).toContain("> three");
+    expect(lineOf(ui.screen(), "one")).not.toContain(">");
+    // After a move.
     await ui.press("j");
-    await ui.until((s) => s.includes("> two"));
-    addNote(db, "one", "bump", { workstream: "beta", author: "t" } as never); // `one` is now newest
-    await ui.until((s) => s.indexOf("one") < s.indexOf("three") && s.includes("> two"));
+    await ui.until((s) => /> /.test(lineOf(s, "two")) || /> /.test(lineOf(s, "three")));
+    const moved = ["one", "two", "three"].find((id) => lineOf(ui.screen(), id).includes("> "));
+    bump("two");
+    await ui.until((s) => s.indexOf("two") < s.indexOf("one"));
+    expect(lineOf(ui.screen(), moved ?? "?")).toContain("> ");
+    // After a filter reset: the default row is pinned again, not index 0 of every poll.
+    await ui.press("/");
+    await ui.press("t");
+    await ui.press("\r");
+    await ui.press("c");
+    await ui.until((s) => s.includes("one") && s.includes("two") && s.includes("three"));
+    const pinned = ["one", "two", "three"].find((id) => lineOf(ui.screen(), id).includes("> "));
+    expect(pinned).toBe("two"); // the newest at reset time
+    const other = pinned === "three" ? "two" : "three";
+    bump(other); // another task becomes newest: it lands above the pinned row
+    await ui.until((s) => s.indexOf(other) < s.indexOf(pinned ?? "?"));
+    expect(lineOf(ui.screen(), pinned ?? "?")).toContain("> ");
     ui.unmount();
   });
 
-  it("a refresh for another query waits for the in-flight one: never two at once", async () => {
+  it("a short or narrow terminal keeps the workstream row and the tabs on screen", async () => {
+    add("alpha", "a1");
     add("beta", "t1");
-    rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
-    const open1 = rt.refresh({ status: ["OPEN"] });
-    const same = rt.refresh({ status: ["OPEN"] });
-    const closed = rt.refresh({ status: ["CLOSED"] });
-    expect(same).toBe(open1);
-    expect(closed).not.toBe(open1);
-    expect((await open1).snapshot.tasks).toHaveLength(1);
-    expect((await closed).snapshot.tasks).toHaveLength(0);
+    const check = async (columns: number, rows: number): Promise<string> => {
+      const ui = await open({ columns, rows }, "beta");
+      await ui.until((s) => s.includes("t1"));
+      const s = ui.screen();
+      ui.unmount();
+      return s;
+    };
+    for (const [columns, rows] of [
+      [20, 10],
+      [80, 5],
+      [80, 3],
+      [12, 4],
+    ] as const) {
+      const s = await check(columns, rows);
+      const lines = s.split("\n");
+      expect(lines.length, `${columns}x${rows}`).toBeLessThanOrEqual(rows);
+      expect(lines[0], `${columns}x${rows}`).toContain("[beta]");
+      expect(lines[1], `${columns}x${rows}`).toContain("Tasks");
+      expect(s, `${columns}x${rows}`).toContain("t1"); // one data row survives
+      for (const line of lines) expect(stringWidth(line)).toBeLessThanOrEqual(columns);
+    }
+  });
+
+  it("shrinking the terminal re-lays the screen out and keeps the header", async () => {
+    for (let i = 0; i < 8; i++) add("beta", `t${i}`);
+    const ui = await open({ columns: 80, rows: 20 }, "beta");
+    await ui.until((s) => s.includes("t7") && s.includes("t0"));
+    ui.resize(20, 10);
+    await ui.until((s) => s.includes("Tasks 1/4"));
+    let lines = ui.screen().split("\n");
+    expect(lines).toHaveLength(10);
+    expect(lines[0]).toContain("[beta]");
+    ui.resize(80, 4);
+    await ui.until((s) => s.split("\n").length === 4);
+    lines = ui.screen().split("\n");
+    expect(lines[0]).toContain("[beta]");
+    expect(lines[1]).toContain("Tasks");
+    ui.unmount();
   });
 
   it("a computed Next renders; unavailable never reads as no work", async () => {

@@ -43,11 +43,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **Dashboard tabs** (`v_dashboard_shell`, slice S2): the dashboard shows a workstream row and
   four tabs: Tasks (newest activity first, CLOSED hidden, owner on IN_PROGRESS), DAG (the open
-  frontier; its root and repeat cuts always listed), Agents and Log (every workstream, scratch
+  frontier; root, repeat and per-entry cap cuts always listed, even when a text filter hides the
+  entry), Agents and Log (every workstream, scratch
   marked `*`). Starts on `-w`, else the mux session's workstream, else the most recently active one
   (never the alphabetical first). Status (`s`) and text (`/`) filters persist per tab and
   workstream; the cursor follows its row key, not its index, so activity reordering never moves
-  it. Next reads `unavailable` until the Next slice computes it (never "no authorised work");
+  it, including the default row on first view and after a filter reset. A short or narrow
+  terminal keeps the workstream row and tabs (then one data row, filter, hint, Next); tabs
+  collapse to the active one when four labels do not fit. Next reads `unavailable` until the Next slice computes it (never "no authorised work");
   an agent whose tool is not reported shows `tool ?`. The runtime now runs one refresh at a time
   across queries: a changed query waits for the in-flight one. Read-only; drill (Enter, `a`) is the
   next unit.

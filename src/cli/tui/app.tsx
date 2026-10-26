@@ -1,5 +1,5 @@
 // The dashboard: a workstream row, four tabs (Tasks, DAG, Agents, Log), one
-// filter line, a viewport of rows, and a footer (Next, then error/hints).
+// filter line, a viewport of rows, and Next plus a hint/error line.
 // Read-only. Drill (Enter, a) is the next unit. Plain text only: every line is
 // cleaned and cut/padded by visual width (text.ts), never ANSI inside <Text>.
 
@@ -36,8 +36,21 @@ export interface AppProps {
   now?: () => number;
 }
 
-const HEADER_LINES = 3;
-const FOOTER_LINES = 2;
+// Every screen line is one row tall (cut by width), so the layout is exactly `rows`
+// lines at any size. A short terminal drops lines in this order of importance: the
+// workstream row and tab row always stay, then ONE data row, then the filter line,
+// the hint/error line and Next last.
+const FIXED_BY_PRIORITY = ["filter", "footer", "next"] as const;
+type FixedLine = (typeof FIXED_BY_PRIORITY)[number];
+const TOP_LINES = 2;
+
+/** Which optional fixed lines fit in `rows` screen lines, and how many data rows remain. */
+export function layout(rows: number): { shown: ReadonlySet<FixedLine>; height: number } {
+  const spare = Math.max(0, rows - TOP_LINES - 1); // one line kept for data
+  const shown = new Set(FIXED_BY_PRIORITY.slice(0, spare));
+  return { shown, height: Math.max(0, rows - TOP_LINES - shown.size) };
+}
+
 const HINT = "←/→ tab  [/] workstream  j/k PgUp/PgDn g/G move  s status  / filter  c clear  q quit";
 
 /** The workstream labels as one line of `width` columns, scrolled so the selected one shows. */
@@ -86,17 +99,35 @@ export function App({ runtime, initialWorkstream, pollMs, now = Date.now }: AppP
 
   const view = viewOf(tab, ws);
   const all: Row[] = snap ? tabRows(tab, snap, ws, view.filter, now()) : [];
-  const height = Math.max(1, screenRows - HEADER_LINES - FOOTER_LINES);
+  const { shown, height } = layout(screenRows);
   const sel = cursorIndex(all, view.cursor, tab);
   const scope = scopeKey(tab, ws);
   const top = scrollTop(tops.current[scope] ?? 0, sel, all.length, height);
   tops.current[scope] = top;
 
   const patch = (change: Partial<View>, t: TabId = tab): void =>
-    setViews((v) => ({ ...v, [scopeKey(t, ws)]: { ...viewOf(t, ws), ...change } }));
+    setViews((v) => {
+      const k = scopeKey(t, ws);
+      return { ...v, [k]: { filter: NO_FILTER, cursor: null, ...v[k], ...change } };
+    });
   const setFilter = (change: Partial<Filter>): void =>
     patch({ filter: { ...view.filter, ...change }, cursor: null });
   const move = (delta: number): void => patch({ cursor: moveCursor(all, view.cursor, tab, delta) });
+  // Pin the default row: with no cursor yet (first view, or a filter just reset it) the
+  // cursor is index 0 of whatever is listed NOW, and a later poll that reorders by
+  // activity must not carry it to another task. Log keeps null: its default is the
+  // newest row, so it follows the tail until you move. A stale snapshot (a status
+  // filter just changed) is not pinned: its rows are about to be replaced.
+  useEffect(() => {
+    const key = all[sel]?.key;
+    if (view.cursor === null && tab !== "log" && !state.stale && key !== undefined)
+      setViews((v) => {
+        const k = scopeKey(tab, ws);
+        // Only if nothing (a key press) set a cursor since this render.
+        if (v[k]?.cursor != null) return v;
+        return { ...v, [k]: { filter: NO_FILTER, ...v[k], cursor: key } };
+      });
+  });
   const cycle = (list: readonly string[], cur: string | null, d: number): string | null =>
     list.length === 0
       ? null
@@ -151,6 +182,8 @@ export function App({ runtime, initialWorkstream, pollMs, now = Date.now }: AppP
   ]
     .filter((p) => p !== "")
     .join("   ");
+  const tabIndex = TABS.findIndex((t) => t.id === tab);
+  const tabsFit = TABS.reduce((n, t) => n + t.label.length + 2, 0) <= columns;
   const wsLabels = names.map(workstreamLabel);
   const wsIndex = Math.max(
     0,
@@ -178,32 +211,46 @@ export function App({ runtime, initialWorkstream, pollMs, now = Date.now }: AppP
       <Text wrap="truncate">
         {text(wsLabels.length > 0 ? workstreamLine(wsLabels, wsIndex, columns) : "no workstreams")}
       </Text>
-      <Box>
-        {TABS.map((t) => (
-          <Text key={t.id} inverse={t.id === tab} bold={t.id === tab}>
-            {` ${t.label} `}
-          </Text>
-        ))}
-      </Box>
-      <Text wrap="truncate" dimColor>
-        {text(filterLine)}
-      </Text>
+      {tabsFit ? (
+        <Box>
+          {TABS.map((t) => (
+            <Text key={t.id} inverse={t.id === tab} bold={t.id === tab}>
+              {` ${t.label} `}
+            </Text>
+          ))}
+        </Box>
+      ) : (
+        // Too narrow for four labels (they would wrap onto a second row): show the
+        // active one and its place.
+        <Text wrap="truncate" inverse bold>
+          {cell(` ${TABS[tabIndex]?.label ?? ""} ${tabIndex + 1}/${TABS.length}`, columns)}
+        </Text>
+      )}
+      {shown.has("filter") ? (
+        <Text wrap="truncate" dimColor>
+          {text(filterLine)}
+        </Text>
+      ) : null}
       {visible.map((r, i) => (
         <Text key={r.key} wrap="truncate" inverse={top + i === sel} dimColor={r.notice === true}>
           {text(lineOf(r, top + i))}
         </Text>
       ))}
-      {empty !== "" ? (
+      {empty !== "" && height > 0 ? (
         <Text wrap="truncate" dimColor>
           {text(`  ${empty}`)}
         </Text>
       ) : null}
-      <Text wrap="truncate" dimColor>
-        {text(snap ? nextLine(snap) : "next: unavailable")}
-      </Text>
-      <Text wrap="truncate" color={footer.color} dimColor={footer.color === undefined}>
-        {text(footer.text)}
-      </Text>
+      {shown.has("next") ? (
+        <Text wrap="truncate" dimColor>
+          {text(snap ? nextLine(snap) : "next: unavailable")}
+        </Text>
+      ) : null}
+      {shown.has("footer") ? (
+        <Text wrap="truncate" color={footer.color} dimColor={footer.color === undefined}>
+          {text(footer.text)}
+        </Text>
+      ) : null}
     </Box>
   );
 }
