@@ -7,8 +7,9 @@ import {
   parsePiJson,
   systemPrompt,
 } from "../../tools/eval/cold-guess.ts";
+import { neutralityLeaks, optionNames, subcommands } from "../../tools/eval/cold-help.ts";
 import { INTENTS } from "../../tools/eval/cold-intents.ts";
-import { reachLabel, toColdMarkdown } from "../../tools/eval/cold-report.ts";
+import { reachLabel, toColdMarkdown, versus } from "../../tools/eval/cold-report.ts";
 
 describe("extractCommand", () => {
   it("takes the fenced block and drops $ prompts and comments", () => {
@@ -112,9 +113,55 @@ describe("intents", () => {
   });
 });
 
+describe("neutral wording", () => {
+  const vocab = { a: new Set(["collect", "agent", "tail", "human", "needed"]) };
+  it("flags a request that uses a verb, a noun or a flag name of a surface", () => {
+    const leaks = neutralityLeaks(
+      [
+        { id: "x", text: "Collect worker-2's commits." },
+        { id: "y", text: "Print the entries; --tail 20" },
+        { id: "z", text: "What is human-needed here?" },
+        { id: "ok", text: "Bring worker-2's work home." },
+      ],
+      vocab,
+    );
+    expect(leaks.map((l) => `${l.intent}:${l.word}`).sort()).toEqual([
+      "x:collect",
+      "y:tail",
+      "z:human",
+      "z:needed",
+    ]);
+  });
+  it("matches plurals, ignores grammar words and the quoted payload", () => {
+    const l = neutralityLeaks(
+      [
+        { id: "p", text: "List the agents for me" },
+        { id: "q", text: "Run: SELECT collect FROM agent", payload: "SELECT collect FROM agent" },
+      ],
+      vocab,
+    );
+    expect(l.map((x) => x.word)).toEqual(["agents"]);
+  });
+  it("reads subcommands and long flags from commander help", () => {
+    const help =
+      "Usage: mu task\n\nOptions:\n  -h, --help  x\n  --note <n>  y\n\nCommands:\n  add [options]  a\n  help [cmd]  h\n  tree <id>  t\n";
+    expect(subcommands(help)).toEqual(["add", "tree"]);
+    expect(optionNames(help)).toEqual(["help", "note"]);
+  });
+  // The lint over the REAL surfaces runs in cold-guess.integration.test.ts (it needs the builds).
+  it("every intent has a role, and only controls are outside the headline", () => {
+    for (const i of INTENTS) expect(["headline", "control"]).toContain(i.role);
+    expect(INTENTS.filter((i) => i.role === "control").map((i) => i.id)).toEqual([
+      "spawn_remote_named",
+      "add_three_titled",
+    ]);
+  });
+});
+
 const row = (o: Partial<ColdRow>): ColdRow => ({
   intent: "owner_of",
   group: "tasks",
+  role: "headline",
   surface: "next",
   family: "next",
   version: "x",
@@ -154,11 +201,27 @@ describe("report", () => {
   ];
   const md = toColdMarkdown(rows);
   it("has the per-surface, per-intent and per-group tables", () => {
-    expect(md).toContain("## Hit rate per surface and model");
+    expect(md).toContain("## Headline: the 1 pre-registered intents");
     expect(md).toContain("## Hit rate per intent");
     expect(md).toContain("## Hit rate per verb group");
     expect(md).toContain("50% (1/2)");
     expect(md).toContain("100% (1/1)");
+  });
+  it("headline counts pre-registered intents only; controls are a separate table", () => {
+    const withControl = toColdMarkdown([
+      ...rows,
+      row({ intent: "add_three_titled", role: "control" }),
+      row({
+        intent: "add_three_titled",
+        role: "control",
+        surface: "3.13.3",
+        family: "3x",
+        hit: false,
+      }),
+    ]);
+    expect(withControl).toContain("## Headline: the 1 pre-registered intents");
+    expect(withControl).toContain("## Controls");
+    expect(withControl).toMatch(/\| add_three_titled \| 100% \(1\/1\) \| 0% \(0\/1\) \|/);
   });
   it("ranks the wrong guesses with their first reach", () => {
     expect(md).toContain("## Top wrong guesses");
@@ -171,5 +234,28 @@ describe("report", () => {
       ),
     ).toBe("task list --status");
     expect(reachLabel(row({ reach: null, command: null }))).toBe("(no command)");
+  });
+});
+
+describe("versus", () => {
+  const rs = (surface: string, intent: string, hits: boolean[]): ColdRow[] =>
+    hits.map((hit, k) => row({ surface, intent, hit, rep: k + 1 }));
+  const rows = [
+    ...rs("n", "big", [true, true, true]),
+    ...rs("x", "big", [false, false, true]),
+    ...rs("n", "one", [true, false, false]),
+    ...rs("x", "one", [false, false, false]),
+    ...rs("n", "lose", [false, false, false]),
+    ...rs("x", "lose", [true, true, false]),
+    ...rs("n", "ctl", [true, true, true]),
+    ...rs("x", "ctl", [false, false, false]),
+  ].map((r) => (r.intent === "ctl" ? { ...r, role: "control" as const } : r));
+  it("needs a gap of two hits to call a win or a loss, and skips controls", () => {
+    expect(versus(rows, "n", "x", "headline").map((v) => `${v.intent}:${v.result}`)).toEqual([
+      "big:win",
+      "one:tie",
+      "lose:loss",
+    ]);
+    expect(versus(rows, "n", "x", "control").map((v) => v.result)).toEqual(["win"]);
   });
 });

@@ -2,10 +2,10 @@
 // on the built checkout (the `next` family). Skips without dist/ or tmux. Zero model cost.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { execGuess, guessEffect } from "../../tools/eval/cold-guess.ts";
+import { execGuess, guessEffect, intentLeaks } from "../../tools/eval/cold-guess.ts";
 import { INTENTS } from "../../tools/eval/cold-intents.ts";
 import { createSandbox } from "../../tools/eval/sandbox.ts";
 import { surfaceFromDir } from "../../tools/eval/surface.ts";
@@ -51,6 +51,20 @@ describe.skipIf(!ready)("cold-guess judges on the built checkout", () => {
     expect(r.effect.hit).toBe(false);
     expect(r.effect.why.join(";")).toContain("LOST WORK");
   }, 90_000);
+});
+
+// the 3.13.3 build `prepare` left in the eval cache (absent in CI): the lint then runs on next alone
+const x3 = join(homedir(), ".cache", "mu", "eval", "surfaces", "3.13.3");
+describe.skipIf(!ready)("intent wording is neutral", () => {
+  it("no request names a command, subcommand or flag of either surface", () => {
+    const surfaces = [{ label: "next", surface: surface() }];
+    if (existsSync(join(x3, "dist", "cli.js")))
+      surfaces.push({
+        label: "3.13.3",
+        surface: { ...surfaceFromDir("3.13.3", x3), family: "3x" as never },
+      });
+    expect(intentLeaks(surfaces)).toEqual([]);
+  }, 120_000);
 });
 
 describe.skipIf(!ready)("execGuess", () => {

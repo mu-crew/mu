@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { helpBundle, neutralityLeaks, surfaceVocab } from "./cold-help.ts";
 import {
   ANSI,
   type ColdCtx,
@@ -113,17 +114,9 @@ export function muInText(cmd: string): string[] {
 
 // ---- the model ----------------------------------------------------------------------------------
 
+/** What the model reads: `mu --help` and every namespace's `--help`, the same depth on every surface. */
 export function helpText(surface: Surface): string {
-  return execFileSync("node", [surface.cli, "--help"], {
-    encoding: "utf8",
-    env: {
-      PATH: process.env.PATH ?? "",
-      HOME: tmpdir(),
-      MU_SYNC_DIR: "",
-      MU_DB_PATH: join(tmpdir(), `cold-help-${process.pid}.db`),
-      MU_STATE_DIR: join(tmpdir(), `cold-help-${process.pid}`),
-    },
-  });
+  return helpBundle(surface);
 }
 
 /** `<mu --version>` plus the short sha: the checkout's HEAD, or the .ref `prepare` stamped on an exported surface. */
@@ -147,7 +140,7 @@ export function buildId(surface: Surface): string {
 
 export function systemPrompt(help: string): string {
   return [
-    "You orchestrate a crew of AI agents with a command-line tool called `mu`. You have never used it. Below is the complete output of `mu --help`; it is the only documentation you have.",
+    "You orchestrate a crew of AI agents with a command-line tool called `mu`. You have never used it. Below is the output of `mu --help` followed by the `--help` of each command group (task, agent, and so on); it is the only documentation you have.",
     "",
     "<help>",
     help.trimEnd(),
@@ -300,6 +293,8 @@ export function execGuess(
 export interface ColdRow {
   intent: string;
   group: string;
+  /** Pre-registered (counted in the headline) or a control (reported apart). */
+  role: "headline" | "control";
   surface: string;
   family: Family;
   version: string;
@@ -380,6 +375,7 @@ export async function runJob(job: ColdJob): Promise<ColdRow> {
   const row: ColdRow = {
     intent: job.intent.id,
     group: job.intent.group,
+    role: job.intent.role,
     surface: job.label,
     family,
     version: job.version,
@@ -467,7 +463,18 @@ export function readRows(file: string): ColdRow[] {
     .map((l) => JSON.parse(l) as ColdRow);
 }
 
+/** Intent requests that name a command, subcommand or flag of any surface in the run. */
+export function intentLeaks(surfaces: ColdSurface[]): string[] {
+  const vocab = Object.fromEntries(surfaces.map((s) => [s.label, surfaceVocab(s.surface)]));
+  return neutralityLeaks(INTENTS, vocab).map(
+    (l) => `${l.intent}: "${l.word}" is a name on ${l.surfaces.join(", ")}`,
+  );
+}
+
 export async function runCold(o: ColdRunOptions): Promise<ColdRow[]> {
+  const leaks = intentLeaks(o.surfaces);
+  if (leaks.length > 0)
+    throw new Error(`intent wording leaks a surface's names:\n  ${leaks.join("\n  ")}`);
   const done = new Set(readRows(o.out).map(keyOf));
   const queue: ColdJob[] = [];
   for (const { label, surface } of o.surfaces) {

@@ -40,6 +40,36 @@ function modal(xs: string[]): { value: string; n: number } {
   return best;
 }
 
+/** Per intent, a surface wins when it hits at least this many more of the guesses (a 1-guess gap is noise: reps are correlated). */
+export const DECISIVE = 2;
+
+export interface Versus {
+  intent: string;
+  a: { hit: number; n: number };
+  b: { hit: number; n: number };
+  /** `win` = the first surface hits DECISIVE or more guesses over the second. */
+  result: "win" | "loss" | "tie";
+}
+
+/** Per intent every surface ran, `a` against `b`, over both models and all reps. */
+export function versus(rows: ColdRow[], a: string, b: string, role: ColdRow["role"]): Versus[] {
+  const ids = uniq(rows.filter((r) => r.role === role).map((r) => r.intent));
+  const out: Versus[] = [];
+  for (const intent of ids) {
+    const ra = rows.filter((r) => r.intent === intent && r.surface === a);
+    const rb = rows.filter((r) => r.intent === intent && r.surface === b);
+    if (ra.length === 0 || rb.length === 0) continue;
+    const d = hits(ra) - hits(rb);
+    out.push({
+      intent,
+      a: { hit: hits(ra), n: ra.length },
+      b: { hit: hits(rb), n: rb.length },
+      result: d >= DECISIVE ? "win" : d <= -DECISIVE ? "loss" : "tie",
+    });
+  }
+  return out;
+}
+
 export function toColdMarkdown(rows: ColdRow[], opts: { topWrong?: number } = {}): string {
   const surfaces = uniq(rows.map((r) => r.surface));
   const models = uniq(rows.map((r) => r.model));
@@ -52,7 +82,7 @@ export function toColdMarkdown(rows: ColdRow[], opts: { topWrong?: number } = {}
   out.push(
     "## Method (from the rows)",
     "",
-    `${rows.length} guesses; builds: ${builds.join("; ")}; models: ${models.map(short).join(", ")}; ${uniq(rows.map((r) => r.rep)).length} reps. The model got only \`mu --help\` (no skill, no tools) and one sentence; its single command ran in a fresh seeded sandbox. **Hit** = the state or the command's own output shows the effect, with no stray write (judged by state, never spelling). **Partial** = a miss that was the right first step (a close preview whose \`--if\` apply was not run).`,
+    `${rows.length} guesses; builds: ${builds.join("; ")}; models: ${models.map(short).join(", ")}; ${uniq(rows.map((r) => r.rep)).length} reps. The model got only the bundled help (\`mu --help\` plus \`mu <group> --help\` of every group, the same depth on every surface; no skill, no tools) and one sentence; its single command ran in a fresh seeded sandbox. **Hit** = the state or the command's own output shows the effect, with no stray write (judged by state, never spelling). **Partial** = a miss that was the right first step (a close preview whose \`--if\` apply was not run).`,
     "",
   );
   out.push("## Intents", "");
@@ -66,65 +96,103 @@ export function toColdMarkdown(rows: ColdRow[], opts: { topWrong?: number } = {}
     ),
     "",
   );
-  out.push("## Hit rate per surface and model", "");
+  // the headline: pre-registered intents every surface ran; controls and one-surface intents are reported apart
+  const shared = (role: ColdRow["role"]): string[] =>
+    intents.filter(
+      (i) =>
+        of((r) => r.intent === i)[0]?.role === role &&
+        surfaces.every((s) => of((r) => r.intent === i && r.surface === s).length > 0),
+    );
+  const headline = shared("headline");
+  const controls = shared("control");
+  const only = intents.filter(
+    (i) =>
+      !headline.includes(i) &&
+      !controls.includes(i) &&
+      of((r) => r.intent === i)[0]?.role === "headline",
+  );
+  const rowsOf = (ids: string[], s: string, m: string | null): ColdRow[] =>
+    of((r) => ids.includes(r.intent) && r.surface === s && (m === null || r.model === m));
+  const [first, second] = surfaces;
+  out.push(`## Headline: the ${headline.length} pre-registered intents every surface ran`, "");
   out.push(
     table(
       [
         "Surface",
-        "Version",
         "Model",
-        "Hit",
+        `Hit (${headline.length} intents)`,
         "Parsed",
         "Exit 0",
-        "Partial",
         "Destructive",
         "Stray ops",
         "Mean tokens",
       ],
       surfaces.flatMap((s) =>
-        models
-          .map((m) => {
-            const rs = of((r) => r.surface === s && r.model === m);
-            if (rs.length === 0) return null;
-            const n = rs.length;
-            return [
-              s,
-              rs[0]?.version ?? "",
-              short(m),
-              pct(hits(rs), n),
-              pct(rs.filter((r) => r.parsed).length, n),
-              pct(rs.filter((r) => r.exit === 0).length, n),
-              String(rs.filter((r) => r.partial).length),
-              String(rs.filter((r) => r.destructive).length),
-              String(rs.filter((r) => r.stray.length > 0).length),
-              String(Math.round(rs.reduce((a, r) => a + r.tokens, 0) / n)),
-            ];
-          })
-          .filter((r): r is string[] => r !== null),
-      ),
-    ),
-    "",
-  );
-
-  // the comparison that matters: intents every surface ran (an intent one surface cannot express at all is not a shape comparison)
-  const common = intents.filter((i) =>
-    surfaces.every((s) => of((r) => r.intent === i && r.surface === s).length > 0),
-  );
-  out.push("## Hit rate on the intents every surface ran", "");
-  out.push(
-    table(
-      ["Surface", "Model", `Hit (${common.length} intents)`],
-      surfaces.flatMap((s) =>
         [...models, null].map((m) => {
-          const rs = of(
-            (r) => common.includes(r.intent) && r.surface === s && (m === null || r.model === m),
-          );
-          return [s, m === null ? "both" : short(m), pct(hits(rs), rs.length)];
+          const rs = rowsOf(headline, s, m);
+          const n = rs.length;
+          return [
+            s,
+            m === null ? "both" : short(m),
+            pct(hits(rs), n),
+            pct(rs.filter((r) => r.parsed).length, n),
+            pct(rs.filter((r) => r.exit === 0).length, n),
+            String(rs.filter((r) => r.destructive).length),
+            String(rs.filter((r) => r.stray.length > 0).length),
+            n === 0 ? "-" : String(Math.round(rs.reduce((a, r) => a + r.tokens, 0) / n)),
+          ];
         }),
       ),
     ),
     "",
   );
+  if (first !== undefined && second !== undefined) {
+    const v = versus(rows, first, second, "headline");
+    const count = (k: Versus["result"]): number => v.filter((x) => x.result === k).length;
+    out.push(
+      `**Per intent, ${first} vs ${second}: ${count("win")} wins, ${count("loss")} losses, ${count("tie")} ties.** The intent, not the guess, is the unit: reps and models of one intent share a cause, so the guess-level percentage above is not an interval. A win or loss needs a gap of at least ${DECISIVE} hits (of ${v[0]?.a.n ?? 0} guesses); a smaller gap is a tie.`,
+      "",
+    );
+    out.push(
+      table(
+        ["Intent", `${first} hit`, `${second} hit`, "Result"],
+        v.map((x) => [
+          x.intent,
+          `${x.a.hit}/${x.a.n}`,
+          `${x.b.hit}/${x.b.n}`,
+          x.result === "win" ? `${first} wins` : x.result === "loss" ? `${second} wins` : "tie",
+        ]),
+      ),
+      "",
+    );
+  }
+  if (only.length > 0)
+    out.push(
+      `Pre-registered but run on one surface only (not in the headline): ${only
+        .map(
+          (i) =>
+            `${i} (${surfaces
+              .map((s) => rate(of((r) => r.intent === i && r.surface === s)))
+              .filter((x) => x !== "-")
+              .join("; ")})`,
+        )
+        .join(", ")}.`,
+      "",
+    );
+  if (controls.length > 0) {
+    out.push("## Controls (added after the first pass; not in the headline)", "");
+    out.push(
+      table(
+        ["Control", ...surfaces.map((s) => `${s} hit`)],
+        controls.map((i) => [
+          i,
+          ...surfaces.map((s) => rate(of((r) => r.intent === i && r.surface === s))),
+        ]),
+      ),
+      "",
+    );
+  }
+
   out.push("## Hit rate per intent", "");
   out.push(
     "Each cell: hits/guesses over both models and all reps; then the modal first reach of the misses. `-` = the surface has no way to do it.",
@@ -135,6 +203,7 @@ export function toColdMarkdown(rows: ColdRow[], opts: { topWrong?: number } = {}
       [
         "Intent",
         "Group",
+        "Role",
         ...surfaces.map((s) => `${s} hit`),
         ...surfaces.map((s) => `${s} modal miss`),
       ],
@@ -143,6 +212,7 @@ export function toColdMarkdown(rows: ColdRow[], opts: { topWrong?: number } = {}
         return [
           i,
           g,
+          of((r) => r.intent === i)[0]?.role ?? "",
           ...surfaces.map((s) => rate(of((r) => r.intent === i && r.surface === s))),
           ...surfaces.map((s) => {
             const miss = of((r) => r.intent === i && r.surface === s && !r.hit);
@@ -173,14 +243,14 @@ export function toColdMarkdown(rows: ColdRow[], opts: { topWrong?: number } = {}
     "",
   );
 
-  out.push("## Hit rate per verb group", "");
+  out.push("## Hit rate per verb group (headline intents)", "");
   out.push(
     table(
       ["Group", ...surfaces.map((s) => `${s} hit`)],
       groups.map((g) => [
         g,
         ...surfaces.map((s) => {
-          const rs = of((r) => r.group === g && r.surface === s);
+          const rs = of((r) => r.group === g && r.surface === s && headline.includes(r.intent));
           return pct(hits(rs), rs.length);
         }),
       ]),
