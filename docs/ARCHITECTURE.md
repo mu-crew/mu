@@ -176,9 +176,9 @@ are re-export hubs.
 | `src/tasks/queries.ts`, `sort.ts` | list, next, owned-by; `selectTaskNotes` (default notes view), `listNotes` (full history); ROI, recency, age and id sorts |
 | `src/tasks/edit.ts`, `edges.ts` | add and edit; block, unblock, reparent, delete with cycle check |
 | `src/task-auto.ts` | `mu task auto`: `authorizeTasks` (one op-context transaction: local `task_auto` row + synced `dispatch_host`), `autoPermitted`, `authorisedReady`, `openBlockersClosure`; never DELETEs a `task_auto` row |
-| `src/auto-attempt.ts` | the executor's attempt accounting: `planAttempt` (read-only, also the dry run), `reserveAttempt` (charge one run + `task_auto.last_spawn` + `reserved` receipt `auto:<n>` in one immediate transaction that re-plans first), `pendingAttempts` (stored attempts to resume before anything new) |
-| `src/task-brief.ts` | `buildTaskBrief`: first brief verbatim + latest report + one task/CLOSE footer, pinned by note `n` so a replay rebuilds the identical prompt; `TaskBriefMissingError` |
-| `src/next.ts` | `executeNext` (slice A, dispatch): resume stored attempts, then spawn authorised ready tasks through `spawnAutoAttempt`; finite effect cap; dry run; stops on this caller's human need. Recovery, `--hold` and the CLI are slice B |
+| `src/auto-attempt.ts` | the executor's attempt accounting: `planAttempt` (read-only, also the dry run), `reserveAttempt` (charge one run + `task_auto.last_spawn` + `reserved` receipt `auto:<n>` in one immediate transaction that re-plans first), `endAttempt` (terminal `abandoned` / `needs_human`), `pendingAttempts` (un-ended stored attempts to resume before anything new); `last_spawn` stores the exact prompt |
+| `src/task-brief.ts` | `buildTaskBrief`: first brief verbatim + latest report + one task/CLOSE footer, the executor stores its text so a replay never rebuilds; `TaskBriefMissingError` |
+| `src/next.ts` | `executeNext` (slice A, dispatch): resume stored attempts, then spawn authorised ready tasks through `spawnAutoAttempt`; finite effect cap (counts every effect, incl. a spawn rolled back by the guard); ends unreconcilable attempts once; dry run; this caller's human need is checked before each spawn and send. Recovery, `--hold` and the CLI are slice B |
 | `src/tasks/claim.ts` | atomic claim and release; `resolveWorkerIdentity` |
 | `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |
 | `src/tasks/wait.ts`, `errors.ts` | `waitForTasks`; typed task errors |

@@ -491,7 +491,6 @@ export {
   type TaskBrief,
   TaskBriefMissingError,
   type TaskBriefOptions,
-  type TaskBriefPin,
 } from "./task-brief.js";
 export {
   type AddNoteOptions,

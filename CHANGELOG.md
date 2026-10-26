@@ -365,6 +365,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   receipt probe or write; tested on a readonly DB handle). This caller's open human need stops
   dispatch. New errors: `SpawnAttemptFailedError`, `SpawnAttemptGuardError` (exit 4),
   `TaskBriefMissingError` (4), `NextArgError` (2).
+  Round 2: `last_spawn` stores the EXACT prompt and a replay sends those bytes (no rebuild, no
+  pins, no drift). Every stored attempt reaches a terminal state on the first `mu next` that
+  sees it unreconcilable (task closed, agent gone, receipt that disagrees with its stored
+  request, UNKNOWN the one probe cannot confirm): `abandoned` (nothing was sent) or `needs_human`
+  (the prompt may have landed: never resent; a one-line human need is recorded for the caller).
+  An ended attempt is never replayed and never counted again. The cap counts every external
+  effect, including a spawn the send guard rolled back (`rolled_back`). This caller's human
+  need is checked right before each spawn and send, not only at the top of the loop.
 - **`mu task auto <ids…> | --blockers-of <u> --cli <key> [--worktree] [--max N] | --off`:
   explicit, host-fenced permission for `mu next`.** Ready is never permission.
   `auto` stores the cli key, worktree mode and run ceiling in the machine-local
