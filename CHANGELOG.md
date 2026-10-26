@@ -64,6 +64,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   POSIX quoting (a test runs each through `sh`); an unguarded destructive move throws; `capPlan` drops
   an oversized `seq` whole. `agentRefOf`, the claim prompt and `resumeCommand` now come from this one
   builder. Exported: `computeNext`, `renderArgv`, `renderPlan`, `capPlan`, `NextPlan`.
+- **Switch note** (`v_cutover_runbook`, docs only). `docs/guide/upgrade.md` "Switch to mu-next" covers
+  the per-machine switch with no flag day: install beside 3.x, move workstreams with the Move recipe,
+  keep 3.x as a read-only archive, and roll back by going back to 3.x (`task unpark` for a moved
+  workstream). It also gives the one-line new-model bench (`tools/eval/main.ts matrix ... --out
+  docs/mu-next/eval/models.jsonl`) and points to `v_eval_next` for the release gate.
+- **Dogfood 2** (`dogfood_after_v_wait_cli`): `docs/mu-next/eval/dogfood-2.md`, an isolated loop on
+  `mu wait`.
 
 - **Remote command gates** (`v_remote_gates`, core; SDK only). `spawnAgent` with `host` and an
   explicit `--command` that is not pi (argv0 not `pi`/`pi-meta`, `cli` not explicitly `pi`) is a
