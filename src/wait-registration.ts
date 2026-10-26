@@ -27,7 +27,7 @@ import { isValidAgentName } from "./agents.js";
 import { compareStrings } from "./compare.js";
 import type { Db } from "./db.js";
 import { isValidTaskId } from "./tasks/id.js";
-import { cursorKey } from "./wait-cursor.js";
+import { cursorKey, doneKey } from "./wait-cursor.js";
 import { isValidWorkstreamName } from "./workstream.js";
 
 export const WAIT_REF_KINDS = ["task", "agent", "delegate"] as const;
@@ -285,6 +285,9 @@ export function registerOwnedWait(
           `wait registration: at most ${WAIT_REGISTRATION_MAX_REFS} refs may be owed at once (${caller} would owe ${merged.length})`,
         );
       }
+      // New work for an agent: whatever DONE mark it held no longer holds.
+      const unmark = db.prepare("DELETE FROM wait_cursors WHERE caller = ? AND ref = ?");
+      for (const r of add) if (r.kind === "agent") unmark.run(caller, doneKey(r.workstream, r.id));
       const baselines: Record<string, RefBaseline> = { ...(old?.baselines ?? {}) };
       for (const [k, b] of incoming) baselines[k] = mergeBaseline(baselines[k], b);
       const now = new Date().toISOString();
@@ -335,28 +338,39 @@ export function fenceAgentRef(
   }).immediate();
 }
 
-/**
- * A DELIBERATE close of an agent (`mu agent close`) settles what every caller owed for it: drop the
- * agent ref and its unconsumed fence from every registration. Without this the next wait sees an
- * owned agent whose row is gone and reports it `dead`, though nobody lost anything. Refs to its
- * TASKS stay (a task it left unfinished is still owed). Not for a death: a reaped ghost stays owed
- * so the wait reports it. Touches neither `state` nor `generation`.
- */
-export function dischargeAgent(db: Db, workstream: string, name: string): void {
-  const key = cursorKey("agent", workstream, name);
-  db.transaction(() => {
-    const rows = db.prepare("SELECT caller FROM wait_registrations").all() as { caller: string }[];
-    for (const { caller } of rows) {
+/** Every caller whose registration holds `ref`. */
+export function callersOwing(db: Db, ref: RegisteredRef): string[] {
+  const rows = db.prepare("SELECT caller FROM wait_registrations").all() as { caller: string }[];
+  return rows
+    .filter(({ caller }) => {
       const row = select(db, caller);
-      if (row === undefined) continue;
-      const reg = parse(row);
-      const left = reg.refs.filter((r) => !(r.kind === "agent" && refKeyOf(r) === key));
-      if (left.length === reg.refs.length) continue;
-      const kept = Object.fromEntries(Object.entries(reg.baselines).filter(([k]) => k !== key));
-      db.prepare(
-        "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, updated_at = ? WHERE caller = ?",
-      ).run(JSON.stringify(left), JSON.stringify(kept), new Date().toISOString(), caller);
-    }
+      return row !== undefined && parse(row).refs.some((r) => keyOf(r) === keyOf(ref));
+    })
+    .map((r) => r.caller);
+}
+
+/**
+ * Remove `refs` from `caller`'s registration, each agent ref's fence and DONE mark with it. For refs
+ * the engine found DONE (src/wait-owed.ts), never for a delivered event (that is `endWait`). Touches
+ * neither `state` nor `generation`, so it never disturbs a wait in flight. A no-op for a ref that is
+ * not registered.
+ */
+export function dropOwnedRefs(db: Db, caller: string, refs: readonly RegisteredRef[]): void {
+  const gone = new Set(refs.map(keyOf));
+  db.transaction(() => {
+    const row = select(db, caller);
+    if (row === undefined) return;
+    const reg = parse(row);
+    const left = reg.refs.filter((r) => !gone.has(keyOf(r)));
+    if (left.length === reg.refs.length) return;
+    const kept = Object.fromEntries(
+      Object.entries(reg.baselines).filter(([k]) => left.some((r) => refKeyOf(r) === k)),
+    );
+    db.prepare(
+      "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, updated_at = ? WHERE caller = ?",
+    ).run(JSON.stringify(left), JSON.stringify(kept), new Date().toISOString(), caller);
+    const clear = db.prepare("DELETE FROM wait_cursors WHERE caller = ? AND ref = ?");
+    for (const r of refs) if (r.kind === "agent") clear.run(caller, doneKey(r.workstream, r.id));
   }).immediate();
 }
 
