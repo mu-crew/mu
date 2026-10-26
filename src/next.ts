@@ -1,19 +1,30 @@
 // mu — `executeNext`: the executor, slice A (dispatch).
 //
 // `mu next` performs the judgement-free moves for tasks the orchestrator
-// authorised HERE (`mu task auto`): it resumes stored attempts, then spawns,
-// claims and briefs ready ones. It never grants or widens permission
-// (`authorizeTasks` is not called; `autoPermitted` is only read), never
-// decides recovery, acceptance or merge. Recovery of a dead or API-errored
-// worker, `--hold` and signals are slice B (v_exec_recover).
+// authorised HERE (`mu task auto`): it recovers dead and API-errored workers,
+// resumes stored attempts, then spawns, claims and briefs ready ones. It never
+// grants or widens permission (`authorizeTasks` is not called; `autoPermitted`
+// is only read), never decides acceptance, merge or teardown.
 //
-// One loop, one ordered rule per iteration (cap check, then ingest, then this
+// One pass, one ordered rule per iteration (cap check, signal, ingest, this
 // caller's human needs, then selection from FRESH state):
+//   0. once per pass, a scan of the in-flight workers (src/next-recover.ts): a
+//      DEAD local one is reaped through `deleteAgent`'s id + pane CAS (its task
+//      reopens and falls to rule 2 as a retried attempt); a LIVE one whose last
+//      run ended in an API error is retried IN PLACE (one run charged, the same
+//      pane, a reserved msgId bound to pi's incarnation). A remote worker's
+//      tree is never touched; what cannot be acted on is an `attention` move;
 //   1. a stored attempt in flight (reserved … unknown) of a permitted task is
 //      RESUMED under its own key, even at its run ceiling (`pendingAttempts`);
 //   2. else the first `authorisedReady` task gets a NEW attempt: the run is
 //      charged and the attempt reserved in one transaction (src/auto-attempt.ts),
 //      then spawned through the guarded `spawnAutoAttempt`.
+// `hold` then waits (waitWithActions, bounded) for the first event on the
+// in-flight workers: a death or an API-errored settle is the executor's own
+// (recover, then wait again, all inside the cap and deadline); any other event
+// is the orchestrator's and ends the invocation. `signal` stops it between
+// effects: an effect in flight finishes (it is journaled, never half-done) and
+// the one result says `interrupted`.
 // Every stored attempt reaches a terminal state on the FIRST invocation that
 // sees it unreconcilable (`endAttempt`): `abandoned` (task closed, agent gone
 // before anything was sent) or `needs_human` (the prompt may have landed and
@@ -26,9 +37,14 @@
 // the shared read-only planner: no ingest, lock, mux call, receipt probe or
 // write.
 
-import { SpawnAttemptBusyError, SpawnAttemptGuardError } from "./agents/errors.js";
+import {
+  AgentRestartedError,
+  SpawnAttemptBusyError,
+  SpawnAttemptGuardError,
+} from "./agents/errors.js";
 import { getReceipt, type SpawnReceipt } from "./agents/receipts.js";
 import { savedIdentity, spawnAutoAttempt, type TaskSpawnOutcome } from "./agents/task-spawn.js";
+import { deleteAgent, getAgent as getAgentRow } from "./agents.js";
 import {
   type AttemptEnd,
   type AttemptRecord,
@@ -38,14 +54,33 @@ import {
   planAttempt,
   readAttempt,
   reserveAttempt,
+  reserveRetry,
 } from "./auto-attempt.js";
 import type { Db } from "./db.js";
 import { type HumanNeeded, openHumanNeeds, recordHumanNeeded } from "./human-needed.js";
 import { NoMultiplexerError } from "./mux/types.js";
+import {
+  exhaustedAfterDeath,
+  inFlightWorkers,
+  OBSERVE_MS,
+  type ObserveWorkers,
+  observeWorkers,
+  type RecoveryAction,
+  scanRecovery,
+  workerKey,
+} from "./next-recover.js";
 import { ambientIngest } from "./sync.js";
 import { authorisedReady, autoPermitted } from "./task-auto.js";
 import { taskIdFor } from "./tasks/core.js";
 import { getTask, listReady } from "./tasks/queries.js";
+import { waitWithActions } from "./wait-actions.js";
+import { ctlAgentHooks } from "./wait-ctl.js";
+import {
+  WAIT_HEARTBEAT_CAP_MS,
+  type WaitOptions,
+  type WaitRef,
+  type WaitResult,
+} from "./wait-types.js";
 
 /** Bad `--cap`: exit 2, nothing done. */
 export class NextArgError extends Error {
@@ -67,6 +102,17 @@ export interface ExecuteNextOptions {
   cap?: number;
   /** Pull peer state before each effect. Default: the ambient sync ingest. */
   ingest?: () => Promise<unknown>;
+  /** After the pass, wait (bounded) for the first event on the in-flight workers; recover and go on while the event is the executor's own. */
+  hold?: boolean;
+  /** `hold`'s total deadline in ms (default and cap: the wait heartbeat, 1500 s). */
+  timeoutMs?: number;
+  /** `hold`: what a stall does (default `exit`: the stall ends the invocation). */
+  onStall?: "exit" | "warn" | "steer" | "release";
+  /** Stop between effects; an effect in flight finishes. The result says `interrupted`. */
+  signal?: AbortSignal;
+  /** Test seams: the worker reader and the wait. */
+  observe?: ObserveWorkers;
+  wait?: (db: Db, refs: readonly WaitRef[], o: WaitOptions) => Promise<WaitResult>;
 }
 
 export interface NextMove {
@@ -75,9 +121,22 @@ export interface NextMove {
    * done), `failed` (unsent), `rolled_back` (a pane was spawned, then the guard
    * stopped the send: undone, charged), `abandoned` (a stored attempt ended:
    * nothing left to do), `needs_human` (a stored attempt that may have landed
-   * and cannot be confirmed: never resent, a human need recorded).
+   * and cannot be confirmed: never resent, a human need recorded), `retry`
+   * (a live worker that stopped on an API error was sent its brief again, in
+   * place), `reap` (a dead worker's row was removed; its task is open again),
+   * `attention` (something that needs the orchestrator and was NOT acted on).
    */
-  kind: "spawn" | "replay" | "skip" | "failed" | "rolled_back" | "abandoned" | "needs_human";
+  kind:
+    | "spawn"
+    | "replay"
+    | "retry"
+    | "reap"
+    | "attention"
+    | "skip"
+    | "failed"
+    | "rolled_back"
+    | "abandoned"
+    | "needs_human";
   task: string;
   attempt?: number;
   key?: string;
@@ -98,9 +157,23 @@ export interface NextResult {
   /** Effects counted against the cap. */
   used: number;
   moves: NextMove[];
-  /** Why the loop ended early: the cap with work left, this caller's human need, or an unsent failure. */
-  stopped?: "cap" | "human" | "failed";
+  /** Why the loop ended early: the cap with work left, this caller's human need, an unsent failure, or a signal. */
+  stopped?: "cap" | "human" | "failed" | "interrupted";
+  /** Dry only: the in-flight workers a live run would observe (a dry run reads no pane and no socket). */
+  inFlight?: string[];
   human_needed?: HumanNeeded[];
+  /** `hold`: the wait(s) that ended the invocation. */
+  held?: {
+    /** Waits taken (each recovered event starts another pass). */
+    waits: number;
+    /** The event that ended the hold: the engine's kind, or `none` (nothing in flight). */
+    event: string;
+    ref: string | null;
+    exit: 0 | 6 | 7 | 130;
+    timedOut: boolean;
+    /** The ended wait's snapshots of the in-flight workers, cut to what a reader needs. */
+    open: { ref: string; status: string | null; lastError?: string }[];
+  };
 }
 
 function checkCap(cap: number | undefined): number {
@@ -109,6 +182,14 @@ function checkCap(cap: number | undefined): number {
     throw new NextArgError(`--cap must be an integer from 1 to ${MAX_NEXT_CAP} (got ${cap})`);
   }
   return cap;
+}
+
+function checkTimeout(ms: number | undefined): number {
+  if (ms === undefined) return WAIT_HEARTBEAT_CAP_MS;
+  if (!Number.isFinite(ms) || ms < 0) {
+    throw new NextArgError(`--timeout must be a number of seconds, 0 or more (got ${ms / 1000})`);
+  }
+  return ms === 0 ? WAIT_HEARTBEAT_CAP_MS : Math.min(ms, WAIT_HEARTBEAT_CAP_MS);
 }
 
 /** The first candidate not yet handled this invocation: stored attempts, then fresh ready work. */
@@ -125,7 +206,7 @@ function select(
 
 /** Does this move cost an external effect (a spawn, send, probe or rollback)? */
 function counts(m: NextMove): boolean {
-  if (m.kind === "skip" || m.kind === "abandoned") return false;
+  if (m.kind === "skip" || m.kind === "abandoned" || m.kind === "attention") return false;
   if (m.kind === "needs_human") return m.checked !== undefined;
   return true;
 }
@@ -139,8 +220,26 @@ interface Ctx {
   humanStop: () => boolean;
 }
 
+/** Thrown out of a hold's `beforePoll` when this caller's human need opened mid-wait. */
+class HoldHumanStop extends Error {}
+
+const DEAD_OR_ERRORED = (r: WaitResult): boolean => {
+  const e = r.event;
+  if (e.kind === "dead") return true;
+  if (e.kind !== "settled" || e.ref === null) return false;
+  const snap = r.refs.find(
+    (s) =>
+      s.ref.kind === e.ref?.kind && s.ref.workstream === e.ref.workstream && s.ref.id === e.ref.id,
+  );
+  return snap?.lastError !== undefined && snap.close?.applied !== true;
+};
+
+const refText = (r: WaitRef): string =>
+  r.kind === "delegate" ? `delegate:${r.id}` : `${r.kind}:${r.workstream}/${r.id}`;
+
 export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<NextResult> {
   const cap = checkCap(opts.cap);
+  const timeoutMs = checkTimeout(opts.timeoutMs);
   const ws = opts.workstream;
   const out: NextResult = { workstream: ws, dry: opts.dry === true, cap, used: 0, moves: [] };
   const done = new Set<string>();
@@ -153,28 +252,163 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
     return true;
   };
   const ctx: Ctx = { db, ws, caller: opts.caller, humanStop };
+  const observe = opts.observe ?? observeWorkers(db);
+  const deadline = Date.now() + timeoutMs;
+  const aborted = (): boolean => {
+    if (opts.signal?.aborted !== true) return false;
+    out.stopped = "interrupted";
+    return true;
+  };
 
-  for (;;) {
-    if (out.used >= cap) {
-      if (out.stopped === undefined && select(db, ws, done) !== undefined) out.stopped = "cap";
+  /** What is left that only the orchestrator can fix: a dead worker whose task has no run left. Once per task per invocation. */
+  const told = new Set<string>();
+  const tell = (task: string, reason: string, agent?: string): void => {
+    if (told.has(`${task}|${reason}`)) return;
+    told.add(`${task}|${reason}`);
+    out.moves.push({ kind: "attention", task, ...(agent !== undefined ? { agent } : {}), reason });
+  };
+  const attend = (): void => {
+    for (const a of exhaustedAfterDeath(db, ws)) tell(a.task, a.reason);
+  };
+
+  /** One pass: recover, resume, then allocate, until nothing is left, the cap, a human need, a failure or a signal. */
+  const pass = async (): Promise<void> => {
+    let actions: Extract<RecoveryAction, { kind: "reap" | "retry" }>[] | undefined;
+    for (;;) {
+      if (aborted()) return;
+      if (out.used >= cap) {
+        if (
+          out.stopped === undefined &&
+          (select(db, ws, done) !== undefined || (actions?.length ?? 0) > 0)
+        ) {
+          out.stopped = "cap";
+        }
+        return;
+      }
+      if (!out.dry) await ingest();
+      if (aborted()) return;
+      if (humanStop()) return;
+      if (actions === undefined) {
+        // One scan per pass, after the first ingest: attention is free, effects are queued.
+        const found: RecoveryAction[] = out.dry
+          ? []
+          : await scanRecovery(
+              db,
+              ws,
+              observe,
+              opts.signal !== undefined ? { signal: opts.signal } : {},
+            );
+        if (aborted()) return;
+        if (out.dry) out.inFlight = inFlightWorkers(db, ws).map((w) => w.task);
+        actions = [];
+        for (const a of found) {
+          if (a.kind === "attention") tell(a.task, a.reason, a.agent);
+          else actions.push(a);
+        }
+      }
+      const act = actions.shift();
+      if (act !== undefined && !out.dry) {
+        const move = await recover(ctx, act, observe, opts.signal);
+        // A retried worker is done for this pass: its own unknown send is probed by the NEXT invocation.
+        if (act.kind === "retry") done.add(act.task);
+        out.moves.push(move);
+        if (counts(move)) out.used++;
+        if (move.kind === "failed") {
+          out.stopped = "failed";
+          return;
+        }
+        continue;
+      }
+      const next = select(db, ws, done);
+      if (next === undefined) {
+        attend();
+        return;
+      }
+      done.add(next.task);
+      const move = out.dry
+        ? planMove(db, ws, next.task, next.resume)
+        : next.resume
+          ? await resume(ctx, next.task)
+          : await allocate(ctx, next.task);
+      out.moves.push(move);
+      if (counts(move)) out.used++;
+      if (move.kind === "failed" && !out.dry) {
+        out.stopped = "failed";
+        return;
+      }
+    }
+  };
+
+  for (let waits = 0; ; ) {
+    const before = out.used;
+    await pass();
+    if (opts.hold !== true || out.dry || out.stopped !== undefined) return out;
+    if (waits > 0 && out.used === before) return out; // the event was the executor's, and it could do nothing
+    const workers = inFlightWorkers(db, ws);
+    if (workers.length === 0) {
+      out.held = { waits, event: "none", ref: null, exit: 0, timedOut: false, open: [] };
       return out;
     }
-    if (!out.dry) await ingest();
-    if (humanStop()) return out;
-    const next = select(db, ws, done);
-    if (next === undefined) return out;
-    done.add(next.task);
-    const move = out.dry
-      ? planMove(db, ws, next.task, next.resume)
-      : next.resume
-        ? await resume(ctx, next.task)
-        : await allocate(ctx, next.task);
-    out.moves.push(move);
-    if (counts(move)) out.used++;
-    if (move.kind === "failed" && !out.dry) {
-      out.stopped = "failed";
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      out.held = { waits, event: "heartbeat", ref: null, exit: 0, timedOut: true, open: [] };
       return out;
     }
+    const refs: WaitRef[] = workers.flatMap((w): WaitRef[] => [
+      { kind: "task", workstream: ws, id: w.task },
+      {
+        kind: "agent",
+        workstream: w.agent.workstreamName,
+        id: w.agent.name,
+        ...(w.runs !== null ? { afterRuns: w.runs } : {}),
+        ...(w.incarnation !== null ? { incarnation: w.incarnation } : {}),
+      },
+    ]);
+    waits++;
+    let res: WaitResult;
+    try {
+      res = await (opts.wait ?? waitWithActions)(db, refs, {
+        callers: opts.caller === "" ? [] : [opts.caller],
+        mode: "first",
+        eventScope: "refs",
+        timeoutMs: left,
+        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+        onStall: opts.onStall ?? "exit",
+        ...ctlAgentHooks(db),
+        beforePoll: async () => {
+          if (humanStop()) throw new HoldHumanStop();
+        },
+      });
+    } catch (err) {
+      if (err instanceof HoldHumanStop) return out;
+      if (err instanceof AgentRestartedError) {
+        out.moves.push({ kind: "attention", task: "", reason: err.message });
+        out.held = { waits, event: "restarted", ref: null, exit: 7, timedOut: false, open: [] };
+        return out;
+      }
+      throw err;
+    }
+    out.held = {
+      waits,
+      event: res.event.kind,
+      ref: res.event.ref === null ? null : refText(res.event.ref),
+      exit: res.exit,
+      timedOut: res.timedOut,
+      open: res.refs
+        .filter((x) => !x.fired && !x.dead)
+        .slice(0, 8)
+        .map((x) => ({
+          ref: refText(x.ref),
+          status: x.status,
+          ...(x.lastError !== undefined ? { lastError: x.lastError.slice(0, 200) } : {}),
+        })),
+    };
+    if (res.interrupted) {
+      out.stopped = "interrupted";
+      return out;
+    }
+    if (res.event.kind === "heartbeat" || !DEAD_OR_ERRORED(res)) return out;
+    done.clear();
   }
 }
 
@@ -239,7 +473,8 @@ function unreconcilable(
  * is a no-op), so a crash between the two leaves the attempt retryable.
  */
 function park(ctx: Ctx, task: string, record: AttemptRecord, end: AttemptEnd): NextMove {
-  if (end.state === "needs_human") {
+  // A caller with no identity (a plain shell) has no human-need record to keep: the move says it.
+  if (end.state === "needs_human" && ctx.caller !== "") {
     recordHumanNeeded(ctx.db, {
       workstream: ctx.ws,
       caller: ctx.caller,
@@ -279,7 +514,7 @@ function guardOf(ctx: Ctx, task: string, key: string) {
 }
 
 function outcomeMove(
-  kind: "spawn" | "replay",
+  kind: "spawn" | "replay" | "retry",
   task: string,
   rec: Pick<AttemptRecord, "attempt" | "key" | "cli">,
   out: TaskSpawnOutcome,
@@ -303,7 +538,7 @@ function outcomeMove(
 async function drive(
   ctx: Ctx,
   task: string,
-  kind: "spawn" | "replay",
+  kind: "spawn" | "replay" | "retry",
   rec: AttemptRecord,
 ): Promise<NextMove> {
   const { db, ws } = ctx;
@@ -314,6 +549,7 @@ async function drive(
       text: rec.text,
       key: rec.key,
       guard: g.guard,
+      ...(rec.inPlace === true ? { keepAgent: true } : {}),
       spawn: {
         name: rec.name,
         workstream: ws,
@@ -383,4 +619,70 @@ async function allocate(ctx: Ctx, task: string): Promise<NextMove> {
     };
   }
   return drive(ctx, task, "spawn", reserved.plan);
+}
+
+/**
+ * One recovery effect, re-validated at the effect (the scan was a moment ago).
+ *   reap   the saved registry id + pane compare-and-swap of `deleteAgent` (a
+ *          replaced name is kept); the task reopens with the reaper's note and
+ *          is allocated again by the same pass, with the brief saying the
+ *          previous attempt died. Local workers only.
+ *   retry  re-read the worker (still idle on the same pi, at the errored run,
+ *          nothing pending, no dialog), then one transaction charges the run
+ *          and reserves the in-place attempt, then the guarded journaled send.
+ */
+async function recover(
+  ctx: Ctx,
+  act: Extract<RecoveryAction, { kind: "reap" | "retry" }>,
+  observe: ObserveWorkers,
+  signal: AbortSignal | undefined,
+): Promise<NextMove> {
+  const { db, ws } = ctx;
+  const skip = (reason: string): NextMove => ({ kind: "skip", task: act.task, reason });
+  if (ctx.humanStop()) return skip("this caller has an open human need");
+  const taskId = taskIdFor(db, act.task, ws);
+  if (taskId === null || !autoPermitted(db, taskId)) {
+    return skip("it is no longer authorised for this machine");
+  }
+  if (act.kind === "reap") {
+    // The CAS is the scan's saved id + pane (a replaced name is kept); the host is read NOW:
+    // a worker that became remote since the scan is not ours to reap.
+    const a = act.agent;
+    const now = getAgentRow(db, a.name, a.workstreamName);
+    if (now?.host != null) return skip("a remote worker is never reaped from here");
+    const deleted = deleteAgent(db, a.name, a.workstreamName, {
+      paneId: a.paneId,
+      incarnation: a.incarnation,
+    });
+    return deleted
+      ? { kind: "reap", task: act.task, agent: a.name, reason: act.why }
+      : skip("the worker was replaced before it could be reaped");
+  }
+  const { agent } = act.target;
+  const row = getAgentRow(db, agent.name, ws);
+  if (row === undefined) return skip("the worker is gone");
+  const now = (
+    await observe([row], { ms: OBSERVE_MS, ...(signal !== undefined ? { signal } : {}) })
+  ).get(workerKey(row));
+  if (
+    now === undefined ||
+    now.status !== "needs_input" ||
+    now.ctl !== "ok" ||
+    now.pending === true ||
+    now.blocked !== undefined ||
+    now.incarnation !== act.target.pi ||
+    now.runs !== act.target.errorRuns ||
+    now.lastError === undefined
+  ) {
+    return skip("the worker is no longer idle at the errored run: left to the wait");
+  }
+  const reserved = reserveRetry(db, ws, act.task, act.target);
+  if (!reserved.ok) {
+    return skip(
+      `retry ${reserved.code === "ceiling" ? "ceiling" : reserved.code}: ${reserved.reason}`,
+    );
+  }
+  const { task: _t, taskId: _i, workstream: _w, revision: _r, ...rec } = reserved.plan;
+  const move = await drive(ctx, act.task, "retry", rec);
+  return { ...move, reason: move.reason ?? `API error: ${act.error.slice(0, 200)}` };
 }

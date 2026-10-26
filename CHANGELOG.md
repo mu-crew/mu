@@ -554,6 +554,34 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `UPDATE ... RETURNING` prints its rows whole with no `retrieve`. Callers of the bare array
   (`.data[0]`) read `.data.items[0]`.
 
+- **Executor slice B: `mu next`, dead versus live-error recovery, bounded `--hold`, signals
+  (`v_exec_recover`).** `mu next [--dry] [--hold] [--cap N] [--timeout s] [--on-stall
+  exit|warn|steer|release] [-w ws]` prints ONE JSON envelope (`data.moves`, `used`, `stopped`,
+  `held`, `exit`; 4 KB on final bytes, moves cut from the end with `movesCut`). Exit 0 done or
+  capped, 1 an unsent spawn failed, 6 a worker died with nothing more to do, 7 a stall, a dialog or
+  this caller's human need, 130/143 a signal. Recovery splits on what the pane says. A worker whose
+  PANE IS GONE (`status null`) is reaped through `deleteAgent`'s registry-id + pane compare-and-swap
+  (no new reaper) and its task, reopened with the reaper's note, is allocated again as a new attempt
+  whose brief says the previous one died; a task a human reopened (no reaper note) is never
+  re-dispatched. A LIVE worker whose last settled run ended in an API error is never reaped or
+  duplicated: it is retried IN PLACE (`reserveRetry`, auto-attempt.ts: one run charged, a new
+  `auto:<n>` receipt starting at `claimed` on the saved identity) over the same journaled
+  `spawnAutoAttempt` send, with a reserved msgId and `expectIncarnation` bound to the pi that
+  errored; an unsent failure (`keepAgent`) fails the receipt and keeps the worker, its claim and its
+  worktree; a send that may have landed is probed once and never resent. The error is read over a
+  ctl `wait` past `runs-1` (a status read does not carry it), bounded by 3 s and the signal. A busy,
+  dialog-blocked, pending, unreadable or merely idle worker is left to the wait. A remote worker's
+  tree is never reaped, retried or collected from here; an error or death at the run ceiling is an
+  `attention` move that says what to raise. `--hold` dispatches once, then waits
+  (`waitWithActions`, `eventScope: refs`, bounded by `--timeout`, default and cap 1500 s) for the
+  first event on the in-flight workers, each worker's agent ref bound to its delivered run count and
+  pi incarnation; a death or an API-errored settle is recovered and the wait goes on, anything else
+  (closed, a clean settle, a stall, a dialog, a heartbeat) is returned. `--dry` reads no pane or
+  socket and writes nothing. SIGINT/SIGTERM are installed before the DB opens and stop between
+  effects; the one result says `interrupted`. The cap counts reaps and retries. `buildTaskBrief`
+  takes `retry: true | "error"`. `casReceipt` (receipts.ts) is the compare-and-set a send fence
+  needs. Eval: tier 1 and tier 2 on `fanout_gates` and `api_outage_resume`
+  (`docs/mu-next/eval/units/v_exec_recover.jsonl`).
 - **Executor slice A: attempt reservation, `buildTaskBrief`, guarded replay, dry run and cap
   (`v_exec_dispatch`; SDK only, the `mu next` verb, recovery and `--hold` are slice B).**
   `executeNext(db, {workstream, caller, dry?, cap?})` resumes stored attempts, then spawns, claims

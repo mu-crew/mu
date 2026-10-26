@@ -132,8 +132,16 @@ function task(id: string, o: { max?: number; brief?: boolean; auth?: boolean } =
     });
   }
 }
+/** Every worker alive and busy: slice A's tests are about dispatch, not recovery. */
+const alive: import("../src/next-recover.js").ObserveWorkers = async (agents) =>
+  new Map(
+    agents.map((a) => [
+      `${a.workstreamName}/${a.name}`,
+      { status: "busy" as const, ctl: "ok" as const },
+    ]),
+  );
 const run = (o: Partial<Parameters<typeof executeNext>[1]> = {}, handle: Db = db) =>
-  executeNext(handle, { workstream: "d", caller: "orch", ingest: noIngest, ...o });
+  executeNext(handle, { workstream: "d", caller: "orch", ingest: noIngest, observe: alive, ...o });
 const runsOf = (id: string) =>
   (db.prepare("SELECT runs FROM task_auto WHERE task_id = ?").get(tid(id)) as { runs: number })
     .runs;
