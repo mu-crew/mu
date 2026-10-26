@@ -260,19 +260,69 @@ describe("mu_delegate", () => {
     expect(mu.calls.some((c) => c[1] === "spawn")).toBe(false);
   });
 
-  it("workspace: true spawns with --worktree (no --cwd) and reports the worktree path", async () => {
+  it("workspace: true spawns with --worktree --root <cwd> (no --cwd) and reports the worktree path", async () => {
     const mu = fakeMu({ workspace: "/ws/scratch/delegate-2" });
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    const res = await tool(p).execute("t", { task: "x", workspace: true, cwd: "/ignored" });
+    const res = await tool(p).execute("t", { task: "x", workspace: true, cwd: "/tmp" });
     const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
-    expect(spawn).toContain("--worktree");
+    expect(spawn.slice(spawn.indexOf("--worktree"), spawn.indexOf("--worktree") + 3)).toEqual([
+      "--worktree",
+      "--root",
+      "/tmp",
+    ]);
     expect(spawn).not.toContain("--cwd");
     expect(res.content[0]?.text).toContain("Workspace: /ws/scratch/delegate-2");
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "edited" }] }));
     await flush();
     await flush();
     expect(sentText(p)).toContain("Workspace: /ws/scratch/delegate-2");
+  });
+
+  it("workspace without cwd: a bare --worktree (the caller's cwd is the repo)", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("t", { task: "x", workspace: true });
+    const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
+    expect(spawn).toContain("--worktree");
+    expect(spawn).not.toContain("--root");
+    expect(spawn).not.toContain("--cwd");
+  });
+
+  it("workspace with a cwd that is not a dir refuses before anything registers", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await expect(
+      tool(p).execute("t", { task: "x", workspace: true, cwd: "/nonexistent-mu-dir" }),
+    ).rejects.toThrow(/not a directory/);
+    expect(mu.calls).toEqual([]);
+  });
+
+  it("a non-repo worktree refusal is final: names the fix, never 'reissue', recorded as failed", async () => {
+    const refusal = JSON.stringify({
+      ok: false,
+      error: "WorktreeVcsRequiredError",
+      message: "--worktree requires a git repository; /tmp is not inside one",
+      exit: 4,
+    });
+    const mu = fakeMu({
+      on: { spawn: () => Promise.resolve({ code: 4, stdout: refusal, stderr: "" }) },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const err = await tool(p)
+      .execute("t", { task: "x", workspace: true, cwd: "/tmp" })
+      .then(
+        () => undefined,
+        (e: unknown) => (e instanceof Error ? e.message : String(e)),
+      );
+    expect(err).toContain("--worktree requires a git repository; /tmp is not inside one");
+    expect(err).toContain("Pass cwd: <a git repo>");
+    expect(err).toContain("as failed");
+    expect(err).not.toMatch(/reissue/i);
+    expect(mu.calls.map((c) => c[1])).toEqual(["register", "spawn", "finish"]);
   });
 
   it("parallel calls get distinct names", async () => {
@@ -454,6 +504,26 @@ describe("mu_delegate", () => {
       const notify = vi.fn();
       for (const h of p.shutdown) await h({}, { hasUI: true, ui: { notify } });
       expect(notify.mock.calls[0]?.[0]).toContain("queued, never started: queued-1");
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("a queued workspace call keeps its root when it starts", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      const mu = fakeMu();
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      await tool(p).execute("a", { task: "one" });
+      const q = await tool(p).execute("b", { task: "two", workspace: true, cwd: "/tmp" });
+      expect(q.details).toMatchObject({ queued: true });
+      mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "y" }] }));
+      for (let i = 0; i < 5; i++) await flush();
+      const second = mu.calls.filter((x) => x[1] === "spawn")[1] ?? [];
+      expect(second[second.indexOf("--root") + 1]).toBe("/tmp");
+      expect(second).not.toContain("--cwd");
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];

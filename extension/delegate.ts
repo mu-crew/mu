@@ -414,7 +414,7 @@ export function registerDelegate(
   class SpawnFail extends Error {
     constructor(
       message: string,
-      readonly kind: "unsent" | "kept" | "unknown" | "aborted",
+      readonly kind: "unsent" | "kept" | "unknown" | "aborted" | "refused",
     ) {
       super(message);
     }
@@ -462,7 +462,8 @@ export function registerDelegate(
       text,
       "--json",
     ];
-    if (req.workspace === true) args.push("--worktree");
+    // With a workspace, cwd names the git repo the worktree is made from.
+    if (req.workspace === true) args.push("--worktree", ...(req.cwd ? ["--root", req.cwd] : []));
     else if (cwd) args.push("--cwd", cwd);
     const cli = req.cli ? req.cli : undefined;
     if (cli) args.push("--cli", cli);
@@ -477,8 +478,13 @@ export function registerDelegate(
       );
     const spawned = (out?.agent as { name?: unknown } | undefined)?.name;
     // No agent in the reply: the spawn itself failed, nothing is up.
-    if (typeof spawned !== "string")
-      throw new SpawnFail(failure("mu agent spawn", r).message, "unsent");
+    if (typeof spawned !== "string") {
+      const msg = failure("mu agent spawn", r).message;
+      // A refusal that fails the same on every reissue is final, not 'reissue'.
+      if (out?.error === "WorktreeVcsRequiredError")
+        throw new SpawnFail(`${msg}. Pass cwd: <a git repo>`, "refused");
+      throw new SpawnFail(msg, out?.error === "UsageError" ? "refused" : "unsent");
+    }
     const name = spawned;
     // The agent record's SQL keys: `id` is the registry incarnation.
     const row = out?.agent as { pane_id?: unknown; id?: unknown; cwd?: unknown } | undefined;
@@ -955,7 +961,7 @@ export function registerDelegate(
         cwd: {
           type: "string",
           description:
-            "Working directory for the delegate (default: yours; ignored with workspace)",
+            "Working directory for the delegate (default: yours); with workspace, the git repo the worktree is made from",
         },
         timeout: {
           type: "number",
@@ -965,7 +971,7 @@ export function registerDelegate(
         workspace: {
           type: "boolean",
           description:
-            "For tasks that edit files: its own git worktree branched from the current commit. The result and follow-up name the path; changes stay there until you merge them. This isolates repository edits only: the subagent runs as you, with your files, environment and network.",
+            "For tasks that edit files: its own git worktree branched from the current commit of the repo at cwd (default: yours). The result and follow-up name the path; changes stay there until you merge them. This isolates repository edits only: the subagent runs as you, with your files, environment and network.",
         },
         cli: {
           type: "string",
@@ -1013,12 +1019,13 @@ export function registerDelegate(
         throw new Error(
           `mu_delegate: timeout must be a positive number of seconds (got ${JSON.stringify(t)})`,
         );
+      // With workspace, cwd is only what the caller named: the repo to branch.
       const callCwd =
-        params.workspace !== true
-          ? typeof params.cwd === "string" && params.cwd
-            ? params.cwd
-            : (ctx?.cwd ?? process.cwd())
-          : undefined;
+        typeof params.cwd === "string" && params.cwd
+          ? params.cwd
+          : params.workspace !== true
+            ? (ctx?.cwd ?? process.cwd())
+            : undefined;
       if (callCwd !== undefined && !isDir(callCwd))
         throw new Error(`mu_delegate: cwd ${callCwd} is not a directory`);
       let model: string | undefined;
