@@ -1,0 +1,29 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task note c1 -w eval 'VERDICT: CONFIRMED claim-1 (looked myself)'"
+      },
+      {
+        "bash": "mu task note c2 -w eval 'VERDICT: REFUTED claim-2 (looked myself)'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "v=$(mu task notes c1 -w eval | grep -o 'VERDICT: [A-Z]*' | tail -1); case \"$v\" in *CONFIRMED) mu task close c1 -w eval --evidence \"checked: $v\" ;; esac"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "v=$(mu task notes c2 -w eval | grep -o 'VERDICT: [A-Z]*' | tail -1); case \"$v\" in *REFUTED) mu task close c2 -w eval --as rejected --why 'claim refuted' --evidence \"checked: $v\" ;; esac"
+      }
+    ]
+  },
+  {
+    "text": "Checked both myself."
+  }
+]

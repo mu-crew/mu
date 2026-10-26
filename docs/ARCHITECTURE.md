@@ -169,7 +169,7 @@ are re-export hubs.
 | `src/delegate-verdict.ts` | `parseVerdict`, `recordNote`, `formatElapsed`: a delegate answer as a verdict. Pure and dependency-free, shared with the standalone extension |
 | `src/delegate-process.ts` | the mux-free delegate runner: `runDelegateProcess` runs one `queued`/`starting` call in a child `pi --mode rpc` (ctl socket, log, session and an attempt receipt derived from the call id; send once with a stable msgId and expected incarnation; `unknown` is never resent; `workspace` through `src/worktree.ts`) and finishes it with `finishDelegate`. No pane, no agents row |
 | `src/cli/delegates.ts` | `mu delegates` (list, show, tally, register, mark, finish, run; `reissue` refuses and names the tool) |
-| `extension/delegate.ts` | pi extension, parent side: `mu_delegate` / `mu_delegate_reissue` / `mu_delegate_cancel`: admission (running, queued, refused), spawn through `agent spawn --task`, the wait, delivery and the arriving/stub/resend machinery; all state changes go through `mu delegates` |
+| `extension/delegate.ts` | pi extension, parent side: `mu_delegate` / `mu_delegate_reissue` / `mu_delegate_cancel`: admission (running, queued, refused), spawn through `agent spawn --task` (on `NoMultiplexerError` only: `mu delegates run <call-id>`, a child pi with no pane), the wait, delivery and the arriving/stub/resend machinery; all state changes go through `mu delegates` |
 | `extension/delegate-calls.ts` | the extension's wrappers over `mu delegates register / mark / finish / show` |
 | `extension/delegate-format.ts`, `delegate-args.ts`, `delegate-trace.ts`, `mu-run.ts` | pure wording of the follow-up and the dropped-answers note; label and model arguments; the `MU_DELEGATE_TRACE` log; the `mu` runner seam (per-call env, opt-in SIGTERM drain on abort) and envelope readers |
 | `extension/nudge.ts` | pi extension: the keep-driving **settle wait** and the close nudge. Every completed `agent_before_settle` reads the caller identities' open human needs (`mu state --me`, one per identity) and runs `mu wait --first --on-stall exit --json` as this session (managed identity + `PI_SESSION_ID` through the runner's per-call env); an event continues the turn with the wait's result under the SKILL.md rule. Esc, input, a dialog, shutdown or a delegate answer (`DelegateHandle.onAnswer`) aborts only that wait, which drains through SIGTERM. Close nudge: a worker settles owning a task. `parallelSettle` runs the settle checks in parallel behind one handler and merges their entries (a consumed wait result survives a late hold); `mu log` breadcrumbs are not awaited |
@@ -234,11 +234,6 @@ are re-export hubs.
 | `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
 | `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 
-## Not yet merged
-
-One unit is still landing and has no row above: `v_delegate_nomux`
-part 2 (routing `mu_delegate` through `src/delegate-process.ts`).
-<!-- TODO(v_delegate_nomux): replace this section with its rows from the merged code. -->
 The shipped contract is
 [mu-next/surface-contract.md](mu-next/surface-contract.md).
 

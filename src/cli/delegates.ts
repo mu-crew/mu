@@ -238,14 +238,21 @@ export async function cmdDelegatesFinish(
  * answer; a refused, unknown, failed or cancelled call exits 1 and says why.
  * `keep` holds the live child (its stdin is its lifeline) until Ctrl-C.
  */
-export async function cmdDelegatesRun(db: Db, callId: string, opts: WsOpt): Promise<void> {
+export async function cmdDelegatesRun(
+  db: Db,
+  callId: string,
+  opts: WsOpt & { keep?: boolean },
+): Promise<void> {
   const ac = new AbortController();
   const onSignal = () => ac.abort();
   process.once("SIGINT", onSignal);
   process.once("SIGTERM", onSignal);
   let r: DelegateRunResult;
   try {
-    r = await runDelegateProcess(db, callId, { signal: ac.signal });
+    r = await runDelegateProcess(db, callId, {
+      signal: ac.signal,
+      ...(opts.keep === false ? { keep: false } : {}),
+    });
     const { live, ...shown } = r;
     if (opts.json) emitJson(shown);
     else {
@@ -384,9 +391,10 @@ export function wireDelegatesCommands(program: Command): void {
     .description(
       "Run a queued or starting call in a foreground child `pi --mode rpc`, no mux needed: send once, wait, record verdict, report and close. No pane or agent row. SIGINT cancels; an unknown delivery is never resent.",
     )
+    .option("--no-keep", "stop the child after the answer even when the call asked for keep")
     .option(...JSON_OPT)
     .action(function (callId: string) {
-      const opts = (this as Command).optsWithGlobals() as WsOpt;
+      const opts = (this as Command).optsWithGlobals() as WsOpt & { keep?: boolean };
       return handle((db) => cmdDelegatesRun(db, callId, opts), this as Command)();
     });
   d.command("reissue <call-id>")

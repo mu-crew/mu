@@ -62,10 +62,12 @@ their guarantees:
   the user cancels, or the wait fails. A cancelled wait drains through
   `MuRunOpts.drainMs`. Skipped under `MU_REMOTE=1` and in a nested pi.
 
-**TODO(v_delegate_nomux).** `mu delegates run` ships; `mu_delegate`
-still refuses to register without tmux or herdr on `PATH` and spawns
-through `mu agent spawn`. The hookup that routes the tool through the
-runner has not merged.
+- **Delegates without a multiplexer.** `mu_delegate` registers in any
+  unmanaged pi. A spawn that fails `NoMultiplexerError` (only that error)
+  runs the call through `mu delegates run <call-id>`: one child
+  `pi --mode rpc`, no pane, no agents row, `transport: process`,
+  `attach: null`. Admission, record and cancel are unchanged; `keep` is
+  dropped; `/reload` leaves the run going; quit cancels it.
 
 ## Fixed contract
 
