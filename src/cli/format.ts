@@ -63,18 +63,6 @@ export function colorPair(pair: TaskPair): string {
 
 // ─── Width / truncation helpers ───────────────────────────────────────
 
-/**
- * Default fallback when stdout isn't a TTY (e.g. output is piped to
- * less/jq) and `process.stdout.columns` is undefined. 100 fits an 80-col
- * terminal with some breathing room; 100 is wide enough to keep most
- * rows on one line.
- */
-const DEFAULT_TERMINAL_WIDTH = 100;
-
-export function terminalWidth(): number {
-  return process.stdout.columns ?? DEFAULT_TERMINAL_WIDTH;
-}
-
 /** Truncate `s` to fit `max` columns (counting display width as length;
  *  good enough for ASCII titles, undercount for emoji/CJK — acceptable
  *  trade-off given the terminal will visually clip anyway). Adds an

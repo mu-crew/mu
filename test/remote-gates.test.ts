@@ -16,6 +16,7 @@ import {
   closeAgent,
   getAgent,
   insertAgent,
+  readLiveAgents,
   resetCommandResolverForTests,
   setCommandResolverForTests,
   spawnAgent,
@@ -345,6 +346,13 @@ describe("the channel (max-sessions 1)", () => {
     );
     expect(channels()).toHaveLength(1);
     expect((await waitForEvents(db, [ref("g1")], waitOpts())).exit).toBe(0);
+  });
+
+  it("agent list reads a gate from its pane: exited shows its status, never 'murmur has no row'", async () => {
+    await spawnGate({ command: "exit 23" });
+    const [live] = await readLiveAgents(db, "auth");
+    expect(live?.state).toBe("unknown");
+    expect(live?.reason).toBe("exited 23");
   });
 
   it("an unknown probe keeps the lease and reads unknown, never dead or a result", async () => {

@@ -274,10 +274,59 @@ async function readHerdrStates(
  * whose socket does not answer reads `unknown` with reason `ctl missing`
  * or `ctl refused`, never a murmur reading, so the gap stays visible.
  * `stateDir` roots the derived socket path (spawn uses the DB's directory).
+ * A remote command gate has neither: it reads from its pane (see `readGatePanes`).
  */
 export async function readAgentStates(
   agents: readonly StateAgentRef[],
   opts: { now?: number; stateDir?: string } = {},
+): Promise<Map<string, StateReading>> {
+  const gates = agents.filter((a) => a.gateToken !== undefined && a.gateToken !== null);
+  if (gates.length === 0) return readNonGateStates(agents, opts);
+  const readings = await readNonGateStates(
+    agents.filter((a) => !gates.includes(a)),
+    opts,
+  );
+  for (const [key, reading] of await readGatePanes(gates)) readings.set(key, reading);
+  return readings;
+}
+
+/**
+ * A gate's display reading, from its pane alone (never a host exec): running
+ * reads busy; an ended or gone pane reads unknown with the reason. The wait
+ * path reads the exit code itself (`readGate`).
+ */
+async function readGatePanes(gates: readonly StateAgentRef[]): Promise<Map<string, StateReading>> {
+  const readings = new Map<string, StateReading>();
+  let mux: Awaited<ReturnType<typeof activeMux>> | undefined;
+  let failure = "the multiplexer cannot report a pane's exit";
+  try {
+    mux = await activeMux();
+  } catch (error) {
+    failure = `mux: ${error instanceof Error ? error.message : String(error)}`;
+  }
+  for (const gate of gates) {
+    const key = agentKey(gate);
+    try {
+      const pane = await mux?.paneResult?.(gate.paneId);
+      if (pane === undefined) readings.set(key, unknown(failure));
+      else if (pane.state === "running") {
+        readings.set(key, { state: "busy", source: "none", since: null, alive: true });
+      } else if (pane.state === "absent")
+        readings.set(key, unknown(UNKNOWN_REASON.paneGone, false));
+      else {
+        const how = pane.code !== null ? `exited ${pane.code}` : `killed by signal ${pane.signal}`;
+        readings.set(key, unknown(how, false));
+      }
+    } catch (error) {
+      readings.set(key, unknown(`mux: ${error instanceof Error ? error.message : String(error)}`));
+    }
+  }
+  return readings;
+}
+
+async function readNonGateStates(
+  agents: readonly StateAgentRef[],
+  opts: { now?: number; stateDir?: string },
 ): Promise<Map<string, StateReading>> {
   const ctlAgents = agents.filter(
     (a) =>

@@ -101,7 +101,6 @@ export {
   type CloseTaskResult,
   closeTask,
   type EvidenceOption,
-  evidenceSuffix,
   openTask,
   type ParkTaskOptions,
   parkTask,

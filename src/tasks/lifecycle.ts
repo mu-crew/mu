@@ -93,14 +93,6 @@ export function recordEvidenceNote(
   addNote(db, localId, `${label}: ${opts.evidence}`, noteOpts);
 }
 
-/** Render the optional `--evidence "<text>"` payload as the trailing
- *  ' evidence="..."' on every state-changing event. Exported because
- *  claimTask/releaseTask in src/tasks/claim.ts also use it. */
-export function evidenceSuffix(opts: EvidenceOption | undefined): string {
-  if (!opts || opts.evidence === undefined) return "";
-  return ` evidence=${JSON.stringify(opts.evidence)}`;
-}
-
 export interface SetStatusOptions extends EvidenceOption {
   workstream: string;
   /** Substate to land on; defaults to DEFAULT_SUBSTATE[status]. A pair
