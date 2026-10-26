@@ -34,3 +34,6 @@ watch_*
 
 # eval candidate scenario roots (tournament private .next proofs)
 tools/eval/candidates/
+
+# eval matrix transcripts (commit only the jsonl + report)
+docs/mu-next/eval/matrix-pre-settle/
