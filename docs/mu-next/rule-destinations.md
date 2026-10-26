@@ -105,7 +105,7 @@ its absence (README, Prose budget, rule 7 "Promote back").
 | Claim before sending | C+K | `spawn --task --send` in step 3 |
 | Ceiling written on the umbrella so a resume keeps it | K* | step 2 (one line, no numbers) |
 | Delegate concurrency 10-20, start at 8; `MU_DELEGATE_MAX`, queue 4×, refuse | C | extension admission; recipe says nothing about the numbers |
-| Answers arrive when you stop; `followUpMode: "all"` | K* | **superseded when v_settle ships** (README "never stop, never starve"), not before: answers still arrive only as follow-ups (`extension/delegate.ts:921`). Delegate waves says so and adds the wave's delegate task ids to the `task wait --first` (`task wait` on a `kind=delegate` task verified: exit 0, `firing` set). `followUpMode` and the batch-reading advice dropped |
+| Answers arrive when you stop; `followUpMode: "all"` | K* | **superseded by v_settle** (README "never stop, never starve"): answers arrive through the settle wait, a wave's as one summary; the pi message is only a wake. Before it shipped, answers arrived only as follow-ups. Delegate waves says so and adds the wave's delegate task ids to the `task wait --first` (`task wait` on a `kind=delegate` task verified: exit 0, `firing` set). `followUpMode` and the batch-reading advice dropped |
 | Workers with worktrees: one per CPU core | D | unmeasured; the ceiling is the orchestrator's note |
 | Stream dispatch; codemode driver for batches | D | drivers are cut (§2 codemode-driver) |
 | Waiting: `--first --on-stall exit`; exit 6/7; the exit's `Next:` leads with `agent wait --after-runs` | K | step 4 (exit codes). The `Next:` text is code (v_hints TODO) |

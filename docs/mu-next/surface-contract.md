@@ -61,6 +61,11 @@ their guarantees:
   event. It stops when nothing is owed, a `mu human-needed` stop is open,
   the user cancels, or the wait fails. A cancelled wait drains through
   `MuRunOpts.drainMs`. Skipped under `MU_REMOTE=1` and in a nested pi.
+  Delegate answers arrive through it (`v_settle_delivery`): a `delegate`
+  event's continuation carries that call's report (capped, with the
+  `mu task notes` pointer); a wave's waits for its siblings and shows ONE
+  summary. The pi message is only a **wake** (a pointer, no answer text)
+  when no settle wait will show an answer.
 
 - **Delegates without a multiplexer.** `mu_delegate` registers in any
   unmanaged pi. A spawn that fails `NoMultiplexerError` (only that error)

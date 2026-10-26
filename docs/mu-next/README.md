@@ -16,8 +16,7 @@ over one at a time by a model-run recipe (see Move).
 what ships. Shipped behaviour is in [ARCHITECTURE](../ARCHITECTURE.md),
 [VOCABULARY](../VOCABULARY.md) and the [CHANGELOG](../../CHANGELOG.md);
 the contract as built is
-[surface-contract.md](surface-contract.md), which also names the
-units still landing (the rest of `v_settle`). Where this page and
+[surface-contract.md](surface-contract.md). Where this page and
 the shipped docs disagree, the shipped docs win.
 
 Revision 2 (2026-10-23) folds in an ultrathink run over revision 1:
