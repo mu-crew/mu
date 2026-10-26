@@ -1,17 +1,19 @@
 // Schema 13 (v_loop_storage): the loop's storage.
 //
-//   1. A real populated v12 DB (test/fixtures/v12-populated.db.gz) upgrades
-//      in ONE transaction: columns, tables, capture triggers and both stamps
-//      together; a failure or a newer stamp leaves the old file as it was.
+//   1. A real populated v13 DB (test/fixtures/v13-populated.db.gz) that lacks
+//      later additions is completed in ONE transaction: columns, tables, capture
+//      triggers and both stamps together; a failure or a newer stamp leaves the
+//      file as it was. Older (v12) files are refused.
 //   2. tasks.kind / tasks.wave are portable: captured, folded per field,
 //      applied in any arrival order, rebuilt, drift-checked; v1 lines cannot
 //      carry them; an unknown kind never wedges ingest.
 //   3. The four tables and agents.spawner/host/collected_head are machine-local.
 //
-// The fixture is a vacuumed copy of a DB written by the schema-12 build
-// (ed5038a) through the real CLI: 2 workstreams, 4 tasks (one claimed and
-// one closed-able), an edge, a note, an agent, a worktree row, a task_auto
-// row, 11 ops, capture revision 2, 31 capture triggers.
+// The fixture is a vacuumed copy of a DB first written by the schema-12 build
+// (ed5038a) through the real CLI and opened once by this build: 2 workstreams,
+// 4 tasks (one claimed and one closed-able), an edge, a note, an agent, a
+// worktree row, a task_auto row, 11 ops, schema 13, the current capture
+// revision.
 
 import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +23,7 @@ import Database from "better-sqlite3";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getAgent, insertAgent } from "../src/agents.js";
 import type { Op } from "../src/apply.js";
-import { CAPTURE_TRIGGERS, CAPTURE_VERSION, captureTriggersCurrent } from "../src/capture.js";
+import { CAPTURE_VERSION, captureTriggersCurrent } from "../src/capture.js";
 import {
   CURRENT_SCHEMA_VERSION,
   type Db,
@@ -78,9 +80,24 @@ let open: Db[] = [];
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "mu-loop-storage-"));
   writeFileSync(
-    join(dir, "v12.db"),
-    gunzipSync(readFileSync(join(__dirname, "fixtures", "v12-populated.db.gz"))),
+    join(dir, "v13.db"),
+    gunzipSync(readFileSync(join(__dirname, "fixtures", "v13-populated.db.gz"))),
   );
+  // A current file that lacks later additions, as an earlier schema-13 build left it:
+  // tasks.wave, agents.collected_head, delegate_calls, and an older capture stamp.
+  copyFileSync(join(dir, "v13.db"), join(dir, "stale.db"));
+  raw(join(dir, "stale.db"), (r) => {
+    r.pragma("legacy_alter_table = ON"); // DROP COLUMN otherwise re-parses every trigger (~2s)
+    // A column a trigger names cannot be dropped; the older capture stamp makes open reinstall them.
+    for (const t of r.prepare("SELECT name FROM sqlite_master WHERE type = 'trigger'").all() as {
+      name: string;
+    }[])
+      r.exec(`DROP TRIGGER "${t.name}"`);
+    r.exec("ALTER TABLE tasks DROP COLUMN wave");
+    r.exec("ALTER TABLE agents DROP COLUMN collected_head");
+    r.exec("DROP TABLE delegate_calls");
+    r.exec("UPDATE schema_version SET capture_version = 3");
+  });
 });
 afterAll(() => rmFixtureDir(dir));
 afterEach(() => {
@@ -92,10 +109,16 @@ afterEach(() => {
   open = [];
 });
 
-/** A private copy of the populated v12 DB, not yet opened by mu. */
-function v12Copy(): string {
+/** A private copy of the populated v13 DB. */
+function v13Copy(): string {
   const p = join(dir, `copy-${++n}.db`);
-  copyFileSync(join(dir, "v12.db"), p);
+  copyFileSync(join(dir, "v13.db"), p);
+  return p;
+}
+/** A private copy of the populated v13 DB that still lacks later additions. */
+function staleCopy(): string {
+  const p = join(dir, `copy-${++n}.db`);
+  copyFileSync(join(dir, "stale.db"), p);
   return p;
 }
 const track = (d: Db): Db => {
@@ -166,81 +189,9 @@ function failingOn(db: Database.Database, when: (sql: string) => boolean, err = 
 
 // ─── 1. The upgrade ───────────────────────────────────────────────────
 
-describe("a populated v12 DB upgrades to v13", () => {
-  it("the fixture really is a v12 / capture-2 file with the data in it", () => {
-    const p = v12Copy();
-    expect(stamps(p)).toEqual({ version: 12, capture: 2 });
-    expect(columns(p, "tasks")).not.toContain("kind");
-    expect(columns(p, "agents")).not.toContain("spawner");
-    expect(tables(p)).not.toContain("delegate_calls");
-    expect(raw(p, (r) => r.prepare("SELECT COUNT(*) AS c FROM tasks").get())).toEqual({ c: 4 });
-  });
-
-  it("one open raises both stamps, adds columns and tables, swaps the triggers, keeps every row", () => {
-    const p = v12Copy();
-    const before = raw(p, (r) => ({
-      ops: r.prepare("SELECT * FROM ops ORDER BY seq").all(),
-      tasks: r.prepare("SELECT id, local_id, title, status, owner_id FROM tasks ORDER BY id").all(),
-      notes: r.prepare("SELECT * FROM task_notes").all(),
-      agents: r.prepare("SELECT name, pane_id FROM agents").all(),
-      worktrees: r.prepare("SELECT * FROM worktrees").all(),
-      auto: r.prepare("SELECT * FROM task_auto").all(),
-      edges: r.prepare("SELECT * FROM task_edges").all(),
-    }));
-    const db = track(openDb({ path: p }));
-
-    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
-    expect(CURRENT_SCHEMA_VERSION).toBe(13);
-    expect(columns(p, "tasks")).toEqual(expect.arrayContaining(["kind", "wave"]));
-    expect(columns(p, "agents")).toEqual(
-      expect.arrayContaining(["spawner", "host", "collected_head", "gate_token", "cwd", "base"]),
-    );
-    expect(tables(p)).toEqual([...EXPECTED_TABLES].sort());
-    expect(captureTriggersCurrent(db)).toBe(true);
-    for (const t of CAPTURE_TRIGGERS) expect(triggers(p)[t.name]).toBe(t.sql);
-
-    // Nothing the user had was changed or lost, and the upgrade wrote no op.
-    const after = raw(p, (r) => ({
-      ops: r.prepare("SELECT * FROM ops ORDER BY seq").all(),
-      tasks: r.prepare("SELECT id, local_id, title, status, owner_id FROM tasks ORDER BY id").all(),
-      notes: r.prepare("SELECT * FROM task_notes").all(),
-      agents: r.prepare("SELECT name, pane_id FROM agents").all(),
-      worktrees: r.prepare("SELECT * FROM worktrees").all(),
-      auto: r.prepare("SELECT * FROM task_auto").all(),
-      edges: r.prepare("SELECT * FROM task_edges").all(),
-    }));
-    // The one change: a pre-existing task_auto row gains enabled = 1 (permission stays on).
-    expect(columns(p, "task_auto")).toContain("enabled");
-    expect(after).toEqual({
-      ...before,
-      auto: (before.auto as object[]).map((r) => ({ ...r, enabled: 1 })),
-    });
-
-    // Defaults: every old task is kind 'work', no wave; the old agent has no spawner.
-    expect(listTasks(db).map((t) => [t.kind, t.wave])).toEqual(Array(4).fill(["work", null]));
-    expect(getAgent(db, "w1", "alpha")).toMatchObject({
-      spawner: null,
-      host: null,
-      collectedHead: null,
-    });
-    for (const t of NEW_TABLES) {
-      expect(db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get()).toEqual({ c: 0 });
-    }
-    expect(checkDrift(db).clean).toBe(true);
-  });
-
-  it("an upgraded file enforces the same constraints as a fresh one (ALTERed kind keeps its CHECK and default)", () => {
-    const p = v12Copy();
-    const db = track(openDb({ path: p }));
-    expect(() => db.prepare("UPDATE tasks SET kind = 'bogus'").run()).toThrow(/CHECK/i);
-    const info = db.prepare("SELECT * FROM pragma_table_info('tasks') WHERE name = 'kind'").get();
-    expect(info).toMatchObject({ type: "TEXT", notnull: 1, dflt_value: "'work'" });
-    for (const k of TASK_KINDS)
-      expect(() => db.prepare("UPDATE tasks SET kind = ?").run(k)).not.toThrow();
-  });
-
-  it("the upgraded file captures kind and wave under the new triggers", () => {
-    const p = v12Copy();
+describe("a populated v13 DB is completed in place", () => {
+  it("the fixture captures kind and wave under the new triggers", () => {
+    const p = v13Copy();
     const db = track(openDb({ path: p }));
     const before = (db.prepare("SELECT MAX(seq) AS s FROM ops").get() as { s: number }).s;
     db.prepare("UPDATE tasks SET kind = 'delegate', wave = 'r1' WHERE local_id = 't1'").run();
@@ -250,7 +201,7 @@ describe("a populated v12 DB upgrades to v13", () => {
   });
 
   it("a second open does no DDL and takes no write lock", () => {
-    const p = v12Copy();
+    const p = v13Copy();
     track(openDb({ path: p })).close();
     const cookie = raw(p, (r) => r.pragma("schema_version", { simple: true }));
     const holder = new Database(p);
@@ -266,25 +217,24 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(raw(p, (r) => r.pragma("schema_version", { simple: true }))).toBe(cookie);
   });
 
-  it("an already-v13 file missing one addition gets exactly that column", () => {
-    const p = v12Copy();
-    // Everything of v13 except tasks.wave: as an earlier schema-13 build left it.
-    raw(p, (r) => {
-      r.exec(
-        "ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','delegate','human'))",
-      );
-      r.exec("UPDATE schema_version SET version = 13");
-    });
+  it("a stale v13 file gets its missing columns, table and capture stamp, rows intact", () => {
+    const p = staleCopy();
+    expect(columns(p, "tasks")).not.toContain("wave");
+    expect(tables(p)).not.toContain("delegate_calls");
     const db = track(openDb({ path: p }));
     expect(columns(p, "tasks").filter((c) => c === "kind")).toHaveLength(1);
     expect(columns(p, "tasks")).toContain("wave");
+    expect(columns(p, "agents")).toContain("collected_head");
+    expect(tables(p)).toEqual([...EXPECTED_TABLES].sort());
     expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
     expect(captureTriggersCurrent(db)).toBe(true);
     expect(getTask(db, "t1", "alpha")).toMatchObject({ kind: "work", wave: null });
+    expect(listTasks(db)).toHaveLength(4);
+    expect(checkDrift(db).clean).toBe(true);
   });
 
   it("an otherwise-current v13 file missing only task_auto.enabled is repaired, ledger intact", () => {
-    const p = v12Copy();
+    const p = v13Copy();
     track(openDb({ path: p })).close();
     const snap = () =>
       raw(p, (r) => ({
@@ -314,7 +264,7 @@ describe("a populated v12 DB upgrades to v13", () => {
   });
 
   it("an already-v13 file without spawn_receipts gets the table, rows intact (no version bump)", () => {
-    const p = v12Copy();
+    const p = v13Copy();
     const first = track(openDb({ path: p }));
     first.close();
     raw(p, (r) => r.exec("DROP TABLE spawn_receipts"));
@@ -326,7 +276,7 @@ describe("a populated v12 DB upgrades to v13", () => {
   });
 
   it("an already-v13 file without remote_recovery gets the table, no version bump, no foreign key", () => {
-    const p = v12Copy();
+    const p = v13Copy();
     track(openDb({ path: p })).close();
     raw(p, (r) => r.exec("DROP TABLE remote_recovery"));
     const db = track(openDb({ path: p }));
@@ -338,7 +288,7 @@ describe("a populated v12 DB upgrades to v13", () => {
   });
 
   it("an already-v13 file without human_needs gets the table, no version bump, rows cascade", () => {
-    const p = v12Copy();
+    const p = v13Copy();
     track(openDb({ path: p })).close();
     raw(p, (r) => r.exec("DROP TABLE human_needs"));
     const db = track(openDb({ path: p }));
@@ -354,7 +304,7 @@ describe("a populated v12 DB upgrades to v13", () => {
   });
 
   it("a v13 file whose wait_registrations predates baselines_json gains the column, rows intact, no version bump", () => {
-    const p = v12Copy();
+    const p = v13Copy();
     track(openDb({ path: p })).close();
     raw(p, (r) => {
       r.exec("DROP TABLE wait_registrations");
@@ -386,7 +336,7 @@ describe("a populated v12 DB upgrades to v13", () => {
   });
 
   it("an already-v13 file without wait_registrations gets the table, wait_cursors rows intact (no version bump)", () => {
-    const p = v12Copy();
+    const p = v13Copy();
     track(openDb({ path: p })).close();
     raw(p, (r) => {
       r.exec("INSERT INTO wait_cursors (caller, ref, incarnation, runs) VALUES ('c','r','i',2)");
@@ -420,7 +370,7 @@ describe("a populated v12 DB upgrades to v13", () => {
   });
 
   it("an already-v13 file without host_channels gets the table, host_profiles rows intact (no version bump)", () => {
-    const p = v12Copy();
+    const p = v13Copy();
     track(openDb({ path: p })).close();
     raw(p, (r) => {
       r.exec(
@@ -433,24 +383,6 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(db.prepare("SELECT COUNT(*) AS c FROM host_channels").get()).toEqual({ c: 0 });
     expect(db.prepare("SELECT name FROM host_profiles").all()).toEqual([{ name: "h" }]);
     expect(getAgent(db, "w1", "alpha")).toBeDefined();
-  });
-
-  it("an already-v13 file missing only agents.collected_head gets it back, rows intact", () => {
-    const p = v12Copy();
-    raw(p, (r) => {
-      r.exec("ALTER TABLE agents ADD COLUMN spawner TEXT; ALTER TABLE agents ADD COLUMN host TEXT");
-      r.exec("UPDATE agents SET spawner = 'alpha/orch'");
-      r.exec("UPDATE schema_version SET version = 13");
-    });
-    const db = track(openDb({ path: p }));
-    expect(columns(p, "agents")).toContain("collected_head");
-    expect(columns(p, "agents")).toContain("gate_token");
-    expect(getAgent(db, "w1", "alpha")).toMatchObject({
-      spawner: "alpha/orch",
-      collectedHead: null,
-      gateToken: null,
-    });
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
   });
 
   it("still refuses v11 untouched, and a newer schema or capture stamp untouched", () => {
@@ -468,7 +400,7 @@ describe("a populated v12 DB upgrades to v13", () => {
       ["version", CURRENT_SCHEMA_VERSION + 1],
       ["capture_version", CAPTURE_VERSION + 1],
     ] as const) {
-      const p = v12Copy();
+      const p = v13Copy();
       raw(p, (r) => r.prepare(`UPDATE schema_version SET ${col} = ?`).run(value));
       const bytes = readFileSync(p);
       expect(() => openDb({ path: p })).toThrow(SchemaTooNewError);
@@ -481,7 +413,7 @@ describe("a populated v12 DB upgrades to v13", () => {
       ["version", CURRENT_SCHEMA_VERSION + 1],
       ["capture_version", CAPTURE_VERSION + 1],
     ] as const) {
-      const p = v12Copy();
+      const p = staleCopy();
       const mine = new Database(p);
       mine.pragma("busy_timeout = 5000");
       const racing = new Proxy(mine, {
@@ -501,14 +433,14 @@ describe("a populated v12 DB upgrades to v13", () => {
       expect(() => upgradeSchema(racing)).toThrow(SchemaTooNewError);
       expect(mine.inTransaction).toBe(false);
       mine.close();
-      expect(columns(p, "tasks")).not.toContain("kind");
+      expect(columns(p, "tasks")).not.toContain("wave");
       expect(tables(p)).not.toContain("delegate_calls");
-      expect(triggers(p)).toEqual(triggers(v12Fixture()));
+      expect(triggers(p)).toEqual(triggers(join(dir, "stale.db")));
     }
   });
 
   it("a failure while installing the triggers rolls back columns, tables, triggers and stamps together", () => {
-    const p = v12Copy();
+    const p = staleCopy();
     const oldTriggers = triggers(p);
     const mine = new Database(p);
     mine.pragma("busy_timeout = 0");
@@ -517,9 +449,9 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(mine.inTransaction).toBe(false);
     mine.close();
 
-    expect(stamps(p)).toEqual({ version: 12, capture: 2 }); // old stamps...
-    expect(columns(p, "tasks")).not.toContain("kind"); // ...old columns...
-    expect(columns(p, "agents")).not.toContain("spawner");
+    expect(stamps(p)).toEqual({ version: 13, capture: 3 }); // old stamps...
+    expect(columns(p, "tasks")).not.toContain("wave"); // ...old columns...
+    expect(columns(p, "agents")).not.toContain("collected_head");
     expect(tables(p)).not.toContain("delegate_calls");
     expect(triggers(p)).toEqual(oldTriggers); // ...and the old triggers, together.
     // No lock is left behind, and the file still opens and upgrades afterwards.
@@ -532,23 +464,27 @@ describe("a populated v12 DB upgrades to v13", () => {
   });
 
   it("a failure while adding a column also leaves no trace of the earlier DDL", () => {
-    const p = v12Copy();
+    const p = staleCopy();
     const mine = new Database(p);
-    const db = failingOn(mine, (sql) => sql.startsWith("ALTER TABLE agents ADD COLUMN host"));
+    const db = failingOn(mine, (sql) =>
+      sql.startsWith("ALTER TABLE agents ADD COLUMN collected_head"),
+    );
     expect(() => upgradeSchema(db)).toThrow("disk full");
     mine.close();
-    expect(stamps(p)).toEqual({ version: 12, capture: 2 });
-    expect(columns(p, "tasks")).not.toContain("kind");
-    expect(columns(p, "agents")).not.toContain("spawner");
+    expect(stamps(p)).toEqual({ version: 13, capture: 3 });
+    expect(columns(p, "tasks")).not.toContain("wave");
+    expect(columns(p, "agents")).not.toContain("collected_head");
+    expect(tables(p)).not.toContain("delegate_calls");
+  });
+
+  it("refuses a v12 file untouched", () => {
+    const p = v13Copy();
+    raw(p, (r) => r.exec("UPDATE schema_version SET version = 12"));
+    const bytes = readFileSync(p);
+    expect(() => openDb({ path: p })).toThrow(SchemaTooOldError);
+    expect(readFileSync(p).equals(bytes)).toBe(true);
   });
 });
-
-let fixturePath: string | undefined;
-/** The untouched fixture, for comparing trigger text against. */
-function v12Fixture(): string {
-  fixturePath ??= join(dir, "v12.db");
-  return fixturePath;
-}
 
 // ─── 2. Portable: kind and wave ───────────────────────────────────────
 

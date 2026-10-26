@@ -255,6 +255,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Removed
 
+- **Leftovers (`k_cut_now`).** Segment lines are v2 only: the v1 reader, the encoder's
+  v1 field guard and the keep-other-versions repair (`entriesOf`, `repairKeepingLines`,
+  `opsBetween`) are gone, and a v1 line is refused like any unknown version. `openDb`
+  accepts only schema 13 (v12 is `SchemaTooOldError`); the `vcs_workspaces` migration
+  (`migrateLegacyWorkspaces`) and the missing-`capture_version` repair are gone. SDK/test-only
+  exports removed: `capRecords`, `formatReadyTable`, `formatTaskListTable`, `boundedCommand`,
+  `COMMAND_MAX_BYTES`, `showAllCommand`, `taskItem`, `taskRecord`, `tryResolveTaskId`,
+  `tryResolveAgentId`, `isUnscheduled`, `UNSCHEDULED_SUBSTATES`, `cmdMe`,
+  `getActiveCommandForTest`, `clearActiveCommandForTest`.
+
 - **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**
   A host profile's shell template carries the forward and the env now
   (`mu host init <host> --ssh` prints a starter). `mu state` reads remote

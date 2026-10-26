@@ -921,12 +921,6 @@ export function installCaptureLocked(db: CaptureDb): void {
   const locked = storedCaptureVersion(db);
   if (locked !== null && locked > CAPTURE_VERSION) throw new CaptureTooNewError(locked);
   if (locked === CAPTURE_VERSION) return;
-  const cols = db.prepare("SELECT name FROM pragma_table_info('schema_version')").all() as {
-    name: string;
-  }[];
-  if (!cols.some((c) => c.name === "capture_version")) {
-    db.exec("ALTER TABLE schema_version ADD COLUMN capture_version INTEGER NOT NULL DEFAULT 0");
-  }
   const old = db.prepare(STORED_TRIGGERS_SQL).all() as { name: string }[];
   for (const t of old) db.exec(`DROP TRIGGER IF EXISTS "${t.name}"`);
   for (const t of CAPTURE_TRIGGERS) db.exec(t.sql);

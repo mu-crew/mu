@@ -30,8 +30,8 @@ export class SyncDirForeignError extends Error {
  *  does not block the dir. */
 const VERSION_PREFIX = /^\{"v":(\d+)[,}]/;
 
-/** Test seam: the v1-reader tests deliberately write and read v1 segments to
- *  exercise the kept reader. Never set outside a test. */
+/** Test seam: the foreign-version tests deliberately write v1 and v3 segments
+ *  into the dir. Never set outside a test. */
 let guardOffForTests = false;
 export function setSyncDirGuardForTests(off: boolean): void {
   guardOffForTests = off;

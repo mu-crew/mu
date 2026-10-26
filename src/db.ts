@@ -52,12 +52,12 @@
 // surrogate id, which is exactly why keys don't collide across
 // machines.
 //
-// IMPORTANT: v12 was never published, so there is no migration ladder.
-// openDb accepts MIN_ACCEPTED_SCHEMA_VERSION (12) through
-// CURRENT_SCHEMA_VERSION (13) and upgrades a v12 DB in ONE transaction
-// (upgradeSchema: columns, tables, triggers and both stamps together).
-// Every pre-v12 DB is rejected with SchemaTooOldError (exit 4), and a DB
-// newer than this build with SchemaTooNewError (exit 4).
+// IMPORTANT: there is no migration ladder. openDb accepts only
+// CURRENT_SCHEMA_VERSION (13) and completes a v13 file that lacks later
+// additions in ONE transaction (upgradeSchema: columns, tables, triggers
+// and both stamps together). Every older DB is rejected with
+// SchemaTooOldError (exit 4), and a DB newer than this build with
+// SchemaTooNewError (exit 4).
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -526,7 +526,7 @@ function refuseUnusableStamps(version: number | null, capture: number | null): v
  * they were.
  *
  * Idempotent: tables use CREATE TABLE IF NOT EXISTS; views are dropped and
- * recreated so the latest definition wins; a column a v12 DB lacks is
+ * recreated so the latest definition wins; a column a v13 DB lacks is
  * added by ALTER (ADDED_COLUMNS). `BEGIN IMMEDIATE` takes the write lock
  * first (paired with busy_timeout in openDb), so two processes opening
  * one fresh DB cannot interleave a DROP VIEW between the other's DROP and
@@ -543,7 +543,7 @@ export function upgradeSchema(db: Db): void {
     refuseUnusableStamps(version, storedCaptureVersion(db));
     if (version !== CURRENT_SCHEMA_VERSION || !schemaIsCurrent(db)) applySchemaDdl(db);
     // Stamp after the DDL, in the same transaction. A fresh DB gets its
-    // row here; an older one (v12) is raised to this build.
+    // row here; an older capture stamp is raised to this build.
     db.prepare(
       `INSERT INTO schema_version (id, version) VALUES (1, ?)
          ON CONFLICT (id) DO UPDATE SET version = excluded.version`,
@@ -566,15 +566,10 @@ export function upgradeSchema(db: Db): void {
 /** The DDL half of upgradeSchema; the caller owns the transaction. */
 function applySchemaDdl(db: Db): void {
   db.exec(CURRENT_SCHEMA);
-  // Columns a v12 DB written before they existed still lacks.
+  // Columns a v13 DB written before they existed still lacks.
   for (const [table, column, ddl] of ADDED_COLUMNS) {
     if (!hasColumn(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
   }
-  // vcs_workspaces (machine-local) is superseded by `worktrees`: carry its
-  // rows over, then drop it, in this one transaction. Idempotent;
-  // schemaIsCurrent reports a DB that still has it as not current.
-  migrateLegacyWorkspaces(db);
-  db.exec("DROP TABLE IF EXISTS vcs_workspaces");
   // Seed the legal (status, substate) pairs from code. INSERT OR
   // IGNORE keeps it idempotent; the table is machine-local and never
   // synced, so every machine derives it from the same constant.
@@ -583,57 +578,6 @@ function applySchemaDdl(db: Db): void {
   );
   for (const [status, substate, isDefault] of TASK_SUBSTATE_ROWS) {
     seed.run(status, substate, isDefault);
-  }
-}
-
-/**
- * Carry the legacy `vcs_workspaces` rows of `source` (a schema name: `main`
- * for the in-place upgrade, or an ATTACHed 3.x / pre-worktree DB for the
- * import) into the `worktrees` registry, and point the owning agent's
- * `cwd`/`base` at the workspace. Without the registry row a dirty legacy
- * workspace would close without the guard and its base would be lost.
- *
- * Only git rows carry (the one backend left). `root` is "" (unknown): the
- * close rule finds the owning repo from the worktree's own git pointer.
- * Idempotent (`INSERT OR IGNORE`, `cwd IS NULL`); a source without the
- * table is a no-op. Does not open a transaction: the caller owns it.
- */
-export function migrateLegacyWorkspaces(db: Db, source = "main"): void {
-  if (!/^[A-Za-z_]\w*$/.test(source)) throw new Error(`bad schema name: ${source}`);
-  const has = db
-    .prepare(
-      `SELECT 1 FROM ${source}.sqlite_master WHERE type = 'table' AND name = 'vcs_workspaces'`,
-    )
-    .get();
-  if (has === undefined) return;
-  const rows = db
-    .prepare(
-      `SELECT v.path AS path, a.name AS agent, w.name AS workstream,
-              COALESCE(v.parent_ref, '') AS base, v.created_at AS createdAt
-         FROM ${source}.vcs_workspaces v
-         JOIN ${source}.agents a ON a.id = v.agent_id
-         JOIN ${source}.workstreams w ON w.id = v.workstream_id
-        WHERE v.backend = 'git'`,
-    )
-    .all() as {
-    path: string;
-    agent: string;
-    workstream: string;
-    base: string;
-    createdAt: string;
-  }[];
-  const insert = db.prepare(
-    `INSERT OR IGNORE INTO main.worktrees (path, agent, workstream, root, base, created_at)
-     VALUES (?, ?, ?, '', ?, ?)`,
-  );
-  const point = db.prepare(
-    `UPDATE main.agents SET cwd = ?, base = ?
-      WHERE name = ? AND cwd IS NULL
-        AND workstream_id = (SELECT id FROM main.workstreams WHERE name = ?)`,
-  );
-  for (const r of rows) {
-    insert.run(r.path, r.agent, r.workstream, r.base, r.createdAt);
-    point.run(r.path, r.base === "" ? null : r.base, r.agent, r.workstream);
   }
 }
 
@@ -714,7 +658,7 @@ export const SPAWN_RECEIPT_STATES = [
 export type SpawnReceiptState = (typeof SPAWN_RECEIPT_STATES)[number];
 
 /**
- * Columns added to a table after a v12 DB may already exist, as
+ * Columns added to a table after a v13 DB may already exist, as
  * `[table, column, DDL]`. `CREATE TABLE IF NOT EXISTS` leaves an existing
  * table alone, so applySchema adds each missing one with `ALTER TABLE ADD
  * COLUMN` (idempotent, inside the schema transaction), and schemaIsCurrent
@@ -760,7 +704,6 @@ function schemaIsCurrent(db: Db): boolean {
   }[];
   const have = new Map(rows.map((r) => [`${r.type}:${r.name}`, r.sql]));
   const expected = expectedObjects();
-  if (have.has("table:vcs_workspaces")) return false;
   if (expected.tables.some((t) => !have.has(`table:${t}`))) return false;
   if (expected.triggers.some((t) => !have.has(`trigger:${t}`))) return false;
   if (ADDED_COLUMNS.some(([t, c]) => !hasColumn(db, t, c))) return false;
@@ -786,11 +729,10 @@ function schemaIsCurrent(db: Db): boolean {
  *  machine-local tables). See CHANGELOG.md. */
 export const CURRENT_SCHEMA_VERSION = 13;
 
-/** The lowest schema version `openDb` will accept. v12 was never
- *  published, so it upgrades in place (upgradeSchema) with no ladder;
+/** The lowest schema version `openDb` will accept. There is no ladder:
  *  anything older throws `SchemaTooOldError` (exit 4) and is left
  *  untouched on disk. */
-const MIN_ACCEPTED_SCHEMA_VERSION = 12;
+const MIN_ACCEPTED_SCHEMA_VERSION = 13;
 
 /** The note kinds (`task_notes.kind`). Set once at INSERT, never changed:
  *  a local UPDATE of it raises, and a peer's update cannot match a row. */

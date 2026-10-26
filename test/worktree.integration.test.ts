@@ -7,7 +7,6 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { withSpawnLock } from "../src/agents/spawn-lock.js";
 import {
@@ -21,7 +20,7 @@ import {
   spawnAgent,
 } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
-import { type Db, migrateLegacyWorkspaces, openDb } from "../src/db.js";
+import { type Db, openDb } from "../src/db.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import {
@@ -693,145 +692,3 @@ gitDescribe("workstream teardown", () => {
     expect(listWorktrees(db).map((w) => w.agent)).toEqual(["worker-1"]);
   });
 });
-
-const LEGACY_DDL = `
-CREATE TABLE vcs_workspaces (
-  id            INTEGER PRIMARY KEY AUTOINCREMENT,
-  agent_id      INTEGER NOT NULL UNIQUE REFERENCES agents (id) ON DELETE CASCADE,
-  workstream_id INTEGER NOT NULL REFERENCES workstreams (id) ON DELETE CASCADE,
-  backend       TEXT NOT NULL CHECK (backend IN ('jj', 'sl', 'git', 'none')),
-  path          TEXT NOT NULL UNIQUE,
-  parent_ref    TEXT,
-  created_at    TEXT NOT NULL
-);
-CREATE INDEX idx_vcs_workspaces_workstream ON vcs_workspaces (workstream_id);`;
-
-const tableNames = (d: Db) =>
-  (d.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as { name: string }[]).map(
-    (t) => t.name,
-  );
-
-gitDescribe("schema: vcs_workspaces is migrated into worktrees", () => {
-  /** What the pre-worktree build wrote: a live agent, a git workspace row, agents.cwd/base unset. */
-  async function legacyDb(): Promise<{ path: string; ws: string; base: string }> {
-    const path = join(tmp, "old.db");
-    const ws = join(stateDir, "workspaces", "smoke", "legacy-1");
-    const base = gitIn(root, "rev-parse", "HEAD");
-    execFileSync("mkdir", ["-p", join(stateDir, "workspaces", "smoke")]);
-    gitIn(root, "worktree", "add", "--detach", ws);
-    const first = openDb({ path });
-    first.exec(LEGACY_DDL);
-    ensureWorkstreamRow(first, "smoke");
-    insertAgentRow(first, "smoke", "legacy-1");
-    const wsId = (
-      first.prepare("SELECT id FROM workstreams WHERE name='smoke'").get() as { id: number }
-    ).id;
-    const agentId = (
-      first.prepare("SELECT id FROM agents WHERE name='legacy-1'").get() as { id: number }
-    ).id;
-    first
-      .prepare(
-        "INSERT INTO vcs_workspaces (agent_id, workstream_id, backend, path, parent_ref, created_at) VALUES (?, ?, 'git', ?, ?, '2026-10-01T00:00:00.000Z')",
-      )
-      .run(agentId, wsId, ws, base);
-    first.close();
-    return { path, ws, base };
-  }
-
-  it("a dirty legacy workspace is registered, and close still refuses it before killing the pane", async () => {
-    const { path, ws, base } = await legacyDb();
-    writeFileSync(join(ws, "precious.txt"), "do not lose");
-    const migrated = openDb({ path });
-    try {
-      expect(tableNames(migrated)).not.toContain("vcs_workspaces");
-      expect(getWorktreeAt(migrated, ws)).toMatchObject({
-        agent: "legacy-1",
-        workstream: "smoke",
-        base,
-        createdAt: "2026-10-01T00:00:00.000Z",
-      });
-      expect(getAgent(migrated, "legacy-1", "smoke")).toMatchObject({ cwd: ws, base });
-      await expect(
-        closeAgent(migrated, "legacy-1", { workstream: "smoke" }),
-      ).rejects.toBeInstanceOf(WorktreeDirtyError);
-      expect(getAgent(migrated, "legacy-1", "smoke")).toBeDefined();
-      expect(mux.calls.some((c) => c[0] === "kill-pane")).toBe(false);
-      expect(existsSync(join(ws, "precious.txt"))).toBe(true);
-      // the registry outlives the agent
-      deleteAgent(migrated, "legacy-1", "smoke");
-      expect(getWorktreeAt(migrated, ws)).toBeDefined();
-    } finally {
-      migrated.close();
-    }
-  });
-
-  it("a clean legacy workspace closes and is removed; a second open writes nothing", async () => {
-    const { path, ws } = await legacyDb();
-    const first = openDb({ path });
-    const cookie = first.pragma("schema_version", { simple: true });
-    first.close();
-    const second = openDb({ path });
-    try {
-      expect(second.pragma("schema_version", { simple: true })).toBe(cookie);
-      expect(listWorktrees(second)).toHaveLength(1);
-      const r = await closeAgent(second, "legacy-1", { workstream: "smoke" });
-      expect(r.worktree).toMatchObject({ action: "removed", path: ws });
-      expect(existsSync(ws)).toBe(false);
-    } finally {
-      second.close();
-    }
-  });
-
-  it("v11 source (attached, no agents.cwd/base): rows are carried and a dirty orphan close refuses", async () => {
-    const ws = join(stateDir, "workspaces", "smoke", "legacy-1");
-    execFileSync("mkdir", ["-p", join(stateDir, "workspaces", "smoke")]);
-    gitIn(root, "worktree", "add", "--detach", ws);
-    const base = gitIn(root, "rev-parse", "HEAD");
-    writeFileSync(join(ws, "precious.txt"), "do not lose");
-    const v11 = join(tmp, "v11.db");
-    const src = new Database(v11);
-    src.exec(`
-      CREATE TABLE workstreams (id INTEGER PRIMARY KEY, name TEXT);
-      CREATE TABLE agents (id INTEGER PRIMARY KEY, workstream_id INTEGER, name TEXT);
-      ${LEGACY_DDL}
-      INSERT INTO workstreams VALUES (1, 'smoke');
-      INSERT INTO agents VALUES (1, 1, 'legacy-1');
-      INSERT INTO vcs_workspaces (agent_id, workstream_id, backend, path, parent_ref, created_at)
-        VALUES (1, 1, 'git', '${ws}', '${base}', '2026-10-01T00:00:00.000Z');
-      INSERT INTO agents VALUES (2, 1, 'jj-1');
-      INSERT INTO vcs_workspaces (agent_id, workstream_id, backend, path, parent_ref, created_at)
-        VALUES (2, 1, 'jj', '/nope/jj-1', 'abc', '2026-10-01T00:00:00.000Z');`);
-    src.close();
-    db.exec(`ATTACH '${v11}' AS old`);
-    migrateLegacyWorkspaces(db, "old");
-    db.exec("DETACH old");
-    expect(listWorktrees(db).map((w) => [w.agent, w.workstream, w.path, w.base])).toEqual([
-      ["legacy-1", "smoke", ws, base],
-    ]);
-    await expect(closeAgent(db, "legacy-1", { workstream: "smoke" })).rejects.toBeInstanceOf(
-      WorktreeDirtyError,
-    );
-    expect(existsSync(join(ws, "precious.txt"))).toBe(true);
-  });
-
-  it("a DB with an empty old table just loses it, then opens without a write", () => {
-    const path = join(tmp, "empty.db");
-    const first = openDb({ path });
-    first.exec(LEGACY_DDL);
-    first.close();
-    const second = openDb({ path });
-    expect(tableNames(second)).not.toContain("vcs_workspaces");
-    const cookie = second.pragma("schema_version", { simple: true });
-    second.close();
-    const third = openDb({ path });
-    expect(third.pragma("schema_version", { simple: true })).toBe(cookie);
-    third.close();
-  });
-});
-
-function ensureWorkstreamRow(d: Db, name: string): void {
-  ensureWorkstream(d, name);
-}
-function insertAgentRow(d: Db, workstream: string, name: string): void {
-  insertAgent(d, { name, workstream, paneId: "%1" });
-}

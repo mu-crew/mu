@@ -223,7 +223,7 @@ describe("openDb", () => {
 
   it("refuses a v10 DB with SchemaTooOldError (openDb runs no migration)", () => {
     // The version gate runs before schema application, so a minimal
-    // version-stamped fixture proves the breaking v10 → v12 boundary.
+    // version-stamped fixture proves the breaking v10 → v13 boundary.
     {
       const raw = new Database(dbPath);
       raw.exec(
@@ -242,7 +242,7 @@ describe("openDb", () => {
     expect(thrown).toBeInstanceOf(SchemaTooOldError);
     if (!(thrown instanceof SchemaTooOldError)) throw new Error("expected SchemaTooOldError");
     expect(thrown.detectedVersion).toBe(10);
-    expect(thrown.requiredVersion).toBe(12);
+    expect(thrown.requiredVersion).toBe(13);
     // Typed-error → exit-code map: 4 (conflict).
     expect(classifyError(thrown)).toEqual({ label: "conflict", exitCode: 4 });
     // The v10 DB is left untouched — no v12 tables were created under it.

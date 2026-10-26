@@ -533,9 +533,9 @@ No mechanical import and no flag day. mu-next and 3.x never share state:
 4. Budgets: per-command overhead measured against 3.x
    (`co_resume_perf`).
 
-No longer required (the code stays): reading v1 segment lines and
-accepting a v12 DB; they mattered only for an in-place import. The v1
-reader is never reached from a guarded sync dir.
+Cut: reading v1 segment lines, accepting a v12 DB and the `vcs_workspaces`
+migration; they mattered only for an in-place import. A v1 line is refused
+like any unknown segment version.
 
 ## Decisions during the build
 

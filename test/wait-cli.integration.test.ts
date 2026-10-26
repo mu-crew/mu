@@ -22,7 +22,7 @@ import { ensureWorkstream } from "../src/workstream.js";
 
 const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
 const built = existsSync(CLI);
-const V12 = join(import.meta.dirname, "fixtures", "v12-populated.db.gz");
+const V13 = join(import.meta.dirname, "fixtures", "v13-populated.db.gz");
 
 interface Ran {
   code: number | null;
@@ -239,11 +239,14 @@ describe.skipIf(!built)("mu wait: a signal while setup is blocked is still an en
     ["SIGINT", 130],
   ] as const) {
     it(`${name} lands while openDb is stalled on a schema-upgrade lock: listeners already installed`, async () => {
-      // Setup is stalled for real. A v12 file needs an upgrade WRITE on open (a WAL reader alone is
+      // Setup is stalled for real. A stale file needs an upgrade WRITE on open (a WAL reader alone is
       // never blocked), and a raw connection holds the write lock, so the child sits inside openDb()
       // with node long since loaded. A listener installed after the open (or in the engine) leaves
       // the default SIGTERM/SIGINT action: the process dies by the signal with an empty stdout.
-      writeFileSync(dbPath, gunzipSync(readFileSync(V12)));
+      writeFileSync(dbPath, gunzipSync(readFileSync(V13)));
+      const stale = new Database(dbPath);
+      stale.exec("UPDATE schema_version SET capture_version = 3"); // an older capture stamp: open must rewrite
+      stale.close();
       const lock = new Database(dbPath);
       lock.pragma("busy_timeout = 0");
       lock.exec("BEGIN IMMEDIATE");

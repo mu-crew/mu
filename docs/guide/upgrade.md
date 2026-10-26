@@ -60,9 +60,9 @@ agents.
 
 ## Old DBs
 
-A schema v12 DB upgrades to v13 on its first open, in one
+A v13 DB missing a later addition is completed on its first open, in one
 transaction: it either completes or leaves the file as it was. mu
-refuses a DB older than v12 with `SchemaTooOldError`, and a newer one
+refuses a DB older than v13 with `SchemaTooOldError`, and a newer one
 with `SchemaTooNewError`. Both exit 4 and leave the file alone. Back up an old DB and move it aside. mu-next does not import a 3.x DB:
 it runs beside 3.x with its own DB, and workstreams move by a recipe
 (docs/mu-next/README.md, Move).
