@@ -12,7 +12,9 @@
 //
 // States and their edges (anything else throws; history is never rewritten):
 //   reserved -> sending | refused | released
-//   sending  -> sent | unknown      (sending is "the write MAY have happened")
+//   sending  -> sent | unknown | refused
+//                                   (sending is "the write MAY have happened";
+//                                    refused = pi answered ok:false, so it did not)
 //   unknown  -> sent                (a receipt probe on the SAME saved registry,
 //                                    pane and incarnation confirmed it)
 // Pure SQL: no mux, no ctl, no transaction of its own (each call is one
@@ -90,7 +92,7 @@ const fromRaw = (r: Raw): ActionReceipt => ({
 
 const EDGES: Record<WaitActionState, readonly WaitActionState[]> = {
   reserved: ["sending", "refused", "released"],
-  sending: ["sent", "unknown"],
+  sending: ["sent", "unknown", "refused"],
   unknown: ["sent"],
   sent: [],
   refused: [],
@@ -116,15 +118,18 @@ export function getActionReceipt(db: Db, key: ActionKey): ActionReceipt | undefi
 export function reserveActionReceipt(
   db: Db,
   key: ActionKey,
-  info: ActionInfo,
+  info: ActionInfo & {
+    /** The id a ctl send will carry: reserved WITH the row, so a resumer reuses it and a crash leaves one to probe. */
+    msgId?: string;
+  },
 ): { created: boolean; receipt: ActionReceipt } {
   const now = new Date().toISOString();
   const res = db
     .prepare(
       `INSERT OR IGNORE INTO wait_action_receipts
          (task_id, owner_id, incarnation, action, caller, task_ref, owner_ref, pane_id,
-          preview_revision, state, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?)`,
+          preview_revision, msg_id, state, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'reserved', ?, ?)`,
     )
     .run(
       key.taskId,
@@ -136,6 +141,7 @@ export function reserveActionReceipt(
       info.ownerRef,
       info.paneId,
       info.previewRevision,
+      info.msgId ?? null,
       now,
       now,
     );

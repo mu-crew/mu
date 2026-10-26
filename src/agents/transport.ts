@@ -16,6 +16,7 @@ import {
   CtlDeliveryUnknownError,
   CtlUnknownOpError,
   CtlVersionError,
+  CtlWriteVetoedError,
   ctlRequest,
   ctlServes,
   errCode,
@@ -99,7 +100,24 @@ export type TransportSendOptions = SendOptions & {
    * atomically with the dispatch (`expectIncarnation`). ctl send/fresh only.
    */
   expectIncarnation?: string;
+  /**
+   * Internal, opt-in (a stall action): bound the ctl round trips and fence the
+   * write. `signal` aborts the hello and the request (an abort before the
+   * write writes nothing; after it the delivery is indeterminate and probed,
+   * never resent); `timeoutMs` bounds each ctl request; `beforeWrite` runs
+   * synchronously on connect, immediately before the one write: false or a
+   * throw writes nothing and the send throws CtlWriteVetoedError. ctl
+   * send only; a route that cannot honour it (mux) refuses rather than skip it.
+   */
+  ctlGuard?: CtlGuard;
 };
+
+/** See TransportSendOptions.ctlGuard. */
+export interface CtlGuard {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  beforeWrite?: () => boolean;
+}
 
 /** The agent's derived control socket, rooted at the DB's directory (as spawn does). */
 export function agentCtlSocket(db: Db, agent: AgentRow): string {
@@ -233,8 +251,10 @@ export async function requireFeature(
   agent: AgentRow,
   sock: string,
   feature: CtlFeature,
+  guard?: CtlGuard,
 ): Promise<string | undefined> {
-  const hello = await ctlRequestFor(agent, sock, { op: "hello" });
+  // The write fence is for the send alone: the hello is a read.
+  const hello = await ctlRequestFor(agent, sock, { op: "hello" }, withGuard(guard, false));
   if (!hello.ok) throw new Error(`control socket refused hello: ${hello.error}`);
   if (ctlServes(hello, feature)) return hello.incarnation;
   throw new AgentExtensionOutdatedError(
@@ -257,13 +277,20 @@ export async function ctlRequestFor(
   agent: AgentRow,
   sock: string,
   req: CtlRequest,
+  guard?: Pick<CtlGuard, "signal" | "timeoutMs">,
 ): Promise<CtlReply> {
   try {
-    return await ctlRequest(sock, req);
+    return await ctlRequest(sock, req, withGuard(guard));
   } catch (e) {
     throw await ctlFailure(agent, sock, e);
   }
 }
+
+const withGuard = (g?: CtlGuard, fence = true) => ({
+  ...(g?.signal !== undefined ? { signal: g.signal } : {}),
+  ...(g?.timeoutMs !== undefined ? { timeoutMs: g.timeoutMs } : {}),
+  ...(fence && g?.beforeWrite !== undefined ? { beforeWrite: g.beforeWrite } : {}),
+});
 
 /** The error ctlRequestFor raises for a failed ctl request (see there). */
 export async function ctlFailure(
@@ -359,6 +386,7 @@ export async function ctlSendWithReceipt(
   incarnation?: string,
   /** A msgId the caller reserved before the send (see TransportSendOptions.msgId). */
   reservedMsgId?: string,
+  guard?: CtlGuard,
 ): Promise<{
   reply?: Extract<CtlReply, { ok: true }> | { ok: false; error: string };
   msgId: string;
@@ -366,12 +394,15 @@ export async function ctlSendWithReceipt(
 }> {
   const msgId = reservedMsgId ?? newMsgId();
   try {
-    return { reply: await ctlRequest(sock, { ...req, msgId }), msgId };
+    return { reply: await ctlRequest(sock, { ...req, msgId }, withGuard(guard)), msgId };
   } catch (e) {
+    // The fence said no before the write: nothing was sent, and it is not a link failure.
+    if (e instanceof CtlWriteVetoedError) throw e;
     if (!(e instanceof CtlDeliveryUnknownError)) {
       throw await ctlFailure(agent, sock, e, msgId, incarnation);
     }
-    const check = await checkMessage(sock, msgId);
+    // The probe is its own bounded request: an abort of the send must not skip it.
+    const check = await checkMessage(sock, msgId, guard?.timeoutMs);
     if (check.state === "accepted") return { msgId, confirmed: check };
     throw await ctlFailure(agent, sock, e, msgId, incarnation);
   }
@@ -426,6 +457,9 @@ export async function sendViaTransport(
 ): Promise<SendResult> {
   const sock = opts.socket;
   if (!expectsCtl(agent, sock)) {
+    if (opts.ctlGuard?.beforeWrite !== undefined) {
+      throw new AgentSendUnsupportedError(agent.name, agent.workstreamName, agent.cli);
+    }
     if (opts.fresh) throw new AgentFreshNeedsCtlError(agent.name, agent.workstreamName, agent.cli);
     // Load-bearing: a send that cannot reach a pane is a failed send.
     const mux = await activeMux();
@@ -449,7 +483,7 @@ export async function sendViaTransport(
     }
   }
   // Receipts need an extension that remembers msgIds: refuse before writing.
-  const inc = await requireFeature(agent, sock, "msgId");
+  const inc = await requireFeature(agent, sock, "msgId", opts.ctlGuard);
   const expect = opts.expectIncarnation;
   // The hello already names another pi (or none): refuse before any write.
   if (expect !== undefined && inc !== expect) {
@@ -464,6 +498,7 @@ export async function sendViaTransport(
       : { op: "send", text, mode: opts.mode ?? "followUp", ...bound },
     inc,
     opts.msgId,
+    opts.ctlGuard,
   );
   const { reply, msgId } = sent;
   if (reply !== undefined && !reply.ok) {

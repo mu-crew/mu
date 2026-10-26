@@ -186,8 +186,16 @@ describe("transition: compare-and-set along the legal edges only", () => {
     reserveActionReceipt(db, key(), info());
     transitionActionReceipt(db, key(), "reserved", "sending");
     expect(() => transitionActionReceipt(db, key(), "sending", "reserved")).toThrow(/illegal/);
-    expect(() => transitionActionReceipt(db, key(), "sending", "refused")).toThrow(/illegal/);
+    expect(() => transitionActionReceipt(db, key(), "sending", "released")).toThrow(/illegal/);
     expect(getActionReceipt(db, key())?.state).toBe("sending");
+  });
+
+  it("sending -> refused is legal (pi answered ok:false: it did not act); a reserved msgId is stored", () => {
+    reserveActionReceipt(db, key(), { ...info(), msgId: "m-1" });
+    expect(getActionReceipt(db, key())?.msgId).toBe("m-1");
+    transitionActionReceipt(db, key(), "reserved", "sending");
+    expect(transitionActionReceipt(db, key(), "sending", "refused", { detail: "busy" })).toBe(true);
+    expect(getActionReceipt(db, key())).toMatchObject({ state: "refused", msgId: "m-1" });
   });
 
   it("a missing row is false, not a throw", () => {

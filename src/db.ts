@@ -9,8 +9,8 @@
 //                      task_notes, worktrees
 //   - 1 machine-local table: task_auto (per-task auto-dispatch state); v13
 //     adds delegate_calls, wait_cursors, agent_settles, host_profiles,
-//     host_channels, spawn_receipts, human_needs, wait_registrations and
-//     remote_recovery
+//     host_channels, spawn_receipts, human_needs, wait_registrations,
+//     wait_action_receipts and remote_recovery
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
 //   - 2 sync tables:   sync_peers (per-peer watermarks),

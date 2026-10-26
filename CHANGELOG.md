@@ -25,6 +25,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   incarnation is `budget-exhausted`. The engine keeps reporting a handled `return` stall even
   though the release removed its condition.
 
+- **Crash-safe stall steer** (`v_wait_steer`, slice C2 of the wait core). `steerStall(db, ctx)` /
+  `steerStallHandler` implement `handleStall` for `onStall: 'steer'`; `waitWithActions(db, refs,
+  opts)` is `waitForEvents` plus the handler `onStall` names (steer or release). One fixed plain-text
+  reminder per task + owner + ctl incarnation, shared by callers, restarts and generations: the
+  receipt is reserved with its msgId, then a synchronous final fence (`beforeWrite`, on connect,
+  right before the write) re-runs every guard and compare-and-sets `reserved -> sending`; only the
+  winner writes. The extension remembers msgIds but does not dedupe sends, so SQLite, not the msgId,
+  is the exclusion. A crash at `sending` is `unknown`: probed (same registry id, pane and
+  incarnation), never resent, never turned into a release. An accepted nudge continues the same
+  wait from the receipt's run baseline; refused, unknown, aborted or exhausted returns the stall
+  with the action. `ctlRequest` gains an opt-in `beforeWrite` fence (`CtlWriteVetoedError`) and an
+  abort after a side-effecting write is now `CtlDeliveryUnknownError`; `sendViaTransport` gains
+  `ctlGuard` (signal, timeout, fence). Defaults unchanged. Receipts allow `sending -> refused`.
+
 ### Changed
 
 - **Dashboard shell boot** (`v_dashboard_boot`): bare `mu` on a TTY (stdin and stdout, no `--json`)

@@ -4,13 +4,25 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const releaseSpy = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+const releaseSpy = vi.hoisted(() => ({
+  calls: [] as unknown[][],
+  /** When set, replaces the release result (the real one is NOT run). */
+  override: undefined as { changed: false } | undefined,
+}));
 vi.mock("../src/tasks/claim.js", async (orig) => {
   const real = await orig<typeof import("../src/tasks/claim.js")>();
   return {
     ...real,
     releaseTask: (...a: Parameters<typeof real.releaseTask>) => {
       releaseSpy.calls.push(a);
+      if (releaseSpy.override !== undefined) {
+        return {
+          previousOwnerName: null,
+          previousStatus: "IN_PROGRESS",
+          status: "IN_PROGRESS",
+          ...releaseSpy.override,
+        };
+      }
       return real.releaseTask(...a);
     },
   };
@@ -42,7 +54,10 @@ const base = { pollMs: 1, sync: false, timeoutMs: 1000 } as const;
 beforeEach(() => {
   setCommandResolverForTests(async (c) => ({ ok: true, binary: c, resolvedPath: `/bin/${c}` }));
 });
-afterEach(() => resetCommandResolverForTests());
+afterEach(() => {
+  resetCommandResolverForTests();
+  releaseSpy.override = undefined;
+});
 
 const stalled = (over: Partial<AgentReading> = {}): AgentReading => ({
   status: "needs_input",
@@ -301,18 +316,15 @@ describe("releaseStall: every guard refuses with no effect", () => {
     await refused(s, ctx, [CALLER], /revision/i);
   });
 
-  it("an open human stop of ANY caller in the set (both producers)", async () => {
-    for (const stopper of [CALLER, "w/boss"]) {
-      const s = await setup({ id: `h-${stopper.length}`, agent: `h${stopper.length}` });
+  // One DB per stopper (one `it` each): in a shared DB the first stopper's need stays open
+  // and would mask a guard that only looked at ctx.caller.
+  for (const stopper of [CALLER, "w/boss"]) {
+    it(`an open human stop of ${stopper} alone (any caller in the set blocks, both producers)`, async () => {
+      const s = await setup();
       recordHumanNeeded(env.db, { workstream: "w", caller: stopper, reason: "need the owner" });
-      await refused(
-        s,
-        ctxOf(s, {}, `h-${stopper.length}`, `h${stopper.length}`),
-        [CALLER, "w/boss"],
-        /human/i,
-      );
-    }
-  });
+      await refused(s, ctxOf(s), [CALLER, "w/boss"], /human/i);
+    });
+  }
 
   it("another caller's human stop does not block", async () => {
     const s = await setup();
@@ -428,6 +440,76 @@ describe("releaseStall: no transaction spans an await, failures are honest", () 
     expect(env.db.inTransaction).toBe(false);
     await release(ctxOf(s));
     expect(env.db.inTransaction).toBe(false);
+  });
+
+  it("every guard read runs inside the transaction that does the release", async () => {
+    const s = await setup();
+    const seen: boolean[] = [];
+    const real = env.db.prepare.bind(env.db);
+    vi.spyOn(env.db, "prepare").mockImplementation(((sql: string) => {
+      const st = real(sql);
+      if (/task_auto/.test(sql) && /enabled/.test(sql)) {
+        const get = st.get.bind(st);
+        st.get = ((...a: unknown[]) => {
+          seen.push(env.db.inTransaction);
+          return get(...a);
+        }) as typeof st.get;
+      }
+      return st;
+    }) as typeof env.db.prepare);
+    expect((await release(ctxOf(s))).state).toBe("released");
+    expect(seen).toEqual([true]);
+  });
+
+  it("another connection cannot change a guarded fact between the check and the write", async () => {
+    const s = await setup();
+    const other = openDb({ path: env.db.name });
+    other.pragma("busy_timeout = 1");
+    let blocked: unknown;
+    const real = env.db.prepare.bind(env.db);
+    vi.spyOn(env.db, "prepare").mockImplementation(((sql: string) => {
+      const st = real(sql);
+      if (/task_auto/.test(sql) && /enabled/.test(sql)) {
+        const get = st.get.bind(st);
+        st.get = ((...a: unknown[]) => {
+          // mid-guard: the permission is revoked by someone else
+          try {
+            other.exec("UPDATE task_auto SET enabled = 0");
+          } catch (e) {
+            blocked = e;
+          }
+          return get(...a);
+        }) as typeof st.get;
+      }
+      return st;
+    }) as typeof env.db.prepare);
+    try {
+      expect((await release(ctxOf(s))).state).toBe("released");
+      expect(String(blocked)).toMatch(/locked|busy/i);
+    } finally {
+      other.close();
+    }
+  });
+
+  it("a receipt insert that fails AFTER the release rolls the release back", async () => {
+    const s = await setup();
+    env.db.exec(
+      `CREATE TRIGGER no_receipt BEFORE INSERT ON wait_action_receipts
+         BEGIN SELECT RAISE(ABORT, 'disk full'); END`,
+    );
+    const calls = releaseSpy.calls.length;
+    const r = await release(ctxOf(s));
+    expect(r).toMatchObject({ state: "refused", reason: expect.stringMatching(/disk full/) });
+    expect(releaseSpy.calls).toHaveLength(calls + 1); // it did get as far as releasing
+    expect(state()).toEqual({ status: "IN_PROGRESS", owner: "w1" });
+    expect(receipts()).toEqual([]);
+    expect(env.db.inTransaction).toBe(false);
+  });
+
+  it("a release that changes nothing is refused and leaves no receipt (the defence stays pinned)", async () => {
+    const s = await setup();
+    releaseSpy.override = { changed: false };
+    await refused(s, ctxOf(s), [CALLER], /changed nothing/);
   });
 
   it("a storage failure rolls everything back and reports refused, never a half release", async () => {

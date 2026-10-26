@@ -46,6 +46,21 @@ export class CtlVersionError extends Error {
   }
 }
 
+/**
+ * The `beforeWrite` fence of a request said no (or threw): NOTHING was written,
+ * so unlike CtlDeliveryUnknownError this is a definite "not delivered".
+ */
+export class CtlWriteVetoedError extends Error {
+  constructor(override readonly cause?: unknown) {
+    super(
+      `control socket write vetoed before it happened${
+        cause instanceof Error ? `: ${cause.message}` : ""
+      }`,
+    );
+    this.name = "CtlWriteVetoedError";
+  }
+}
+
 export class CtlTimeoutError extends Error {
   constructor(readonly timeoutMs: number) {
     super(`control socket did not reply within ${timeoutMs}ms`);
@@ -106,12 +121,16 @@ function parseReply(line: string): CtlReply {
  * error (its `code` intact), CtlTimeoutError, CtlDeliveryUnknownError
  * (side-effecting op failed after the write), CtlVersionError, or
  * CtlUnknownOpError (an ok:false "unknown op" reply).
- * Aborting `signal` closes the connection and rejects.
+ * Aborting `signal` closes the connection and rejects (CtlDeliveryUnknownError
+ * when a side-effecting request was already written: an abort is not an undo).
+ * `beforeWrite` (opt-in) runs synchronously on connect, right before the one
+ * write: returning false or throwing writes nothing and rejects with
+ * CtlWriteVetoedError. Nothing awaits between the fence and the write.
  */
 export function ctlRequest(
   sock: string,
   req: CtlRequest,
-  opts?: { timeoutMs?: number; signal?: AbortSignal },
+  opts?: { timeoutMs?: number; signal?: AbortSignal; beforeWrite?: () => boolean },
 ): Promise<CtlReply> {
   const timeoutMs = clientTimeout(req, opts?.timeoutMs);
   return new Promise((resolve, reject) => {
@@ -135,12 +154,28 @@ export function ctlRequest(
         ? undefined
         : setTimeout(() => finish(ambiguous(new CtlTimeoutError(timeoutMs))), timeoutMs);
     const signal = opts?.signal;
-    if (signal?.aborted) finish(new Error("control socket request aborted"));
-    signal?.addEventListener("abort", () => finish(new Error("control socket request aborted")), {
-      once: true,
-    });
+    if (signal?.aborted) finish(ambiguous(new Error("control socket request aborted")));
+    signal?.addEventListener(
+      "abort",
+      () => finish(ambiguous(new Error("control socket request aborted"))),
+      { once: true },
+    );
     conn.setEncoding("utf8");
     conn.on("connect", () => {
+      if (done) return;
+      if (opts?.beforeWrite !== undefined) {
+        let go = false;
+        try {
+          go = opts.beforeWrite();
+        } catch (e) {
+          finish(new CtlWriteVetoedError(e));
+          return;
+        }
+        if (!go) {
+          finish(new CtlWriteVetoedError());
+          return;
+        }
+      }
       written = true;
       conn.write(encode(req));
     });
