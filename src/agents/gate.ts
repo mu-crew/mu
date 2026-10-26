@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRow } from "../agents.js";
 import type { Db } from "../db.js";
-import { getHost, releaseHostChannelsForAgent, runHostTemplate } from "../hosts.js";
+import { getHost, runHostTemplate } from "../hosts.js";
 import { activeMux } from "../mux.js";
 import { localPaneAlive } from "../remote-agent.js";
 import { shellQuote } from "../shell-quote.js";
@@ -112,9 +112,9 @@ const unknown = (reason: string): GateReading => ({ kind: "unknown", reason });
 /**
  * Read one gate: running, exited with the remote command's numeric status,
  * dead (final failure: no usable record, or the pane is gone) or unknown
- * (retry: the mux or the host could not answer). On a proven exit the pane's
- * channel is freed by registry id + pane BEFORE the result read; an unknown
- * probe frees nothing.
+ * (retry: the mux or the host could not answer). A proven exit frees the pane's
+ * channel through the result read's own admission (see `localPaneAlive`); an
+ * unknown probe frees nothing.
  */
 export async function readGate(db: Db, agent: AgentRow): Promise<GateReading> {
   const token = agent.gateToken;
@@ -130,9 +130,8 @@ export async function readGate(db: Db, agent: AgentRow): Promise<GateReading> {
   }
   if (pane.state === "running") return { kind: "running" };
   if (pane.state === "absent") return { kind: "dead", reason: "pane gone" };
-  // The transport exited: it no longer holds a channel on the host.
+  // The transport exited: `localPaneAlive` reads it as dead, so the exec reclaims its channel.
   if (!sameRow(db, agent)) return { kind: "dead", reason: "the agent was replaced" };
-  releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
   let run: Awaited<ReturnType<typeof runHostTemplate>>;
   try {
     run = await runHostTemplate(

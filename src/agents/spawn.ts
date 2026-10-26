@@ -1388,11 +1388,6 @@ const AUTH_ERROR_PATTERNS: readonly RegExp[] = [
 const EXEC_FAILURE_PATTERN =
   /^(?:.*: )?(?:command not found|No such file or directory)(?::\s*\S+)?$/i;
 
-/** True when `line` reads as a shell exec failure, not a provider/auth error. */
-export function isExecFailureLine(line: string): boolean {
-  return EXEC_FAILURE_PATTERN.test(line);
-}
-
 /**
  * Number of trailing lines of the post-liveness scrollback to scan for
  * the startup-error patterns. The capture is `lines: 50`; tailing the last

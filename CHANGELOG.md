@@ -12,6 +12,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Removed
 
+- **Dead-code sweep on the merged tree (`k_cut_leftovers`).** knip over `src/` and `extension/`
+  found no unused file and no orphan beyond `terminalWidth`, `evidenceSuffix` and
+  `isExecFailureLine`; all three are deleted. Doctor's human and `--json` collectors stay
+  separate: a shared collector measured +7 code lines.
+
 - **Legacy `nextSteps` hints are deleted, not wrapped; every result's `next` is computed once**
   (`v_hint_wire`, slice B of `v_hints`; README "Next contract"). `handle()` finalises `next` for
   success JSON (`emitJson`), failure JSON (`emitError`, `CliExitError` partial failures) and human
@@ -48,6 +53,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   The tests that guarded the old adapters now guard the engine (`test/wait-events.test.ts`).
 
 ### Fixed
+
+- **A remote command gate no longer lists as `unknown: murmur has no row`.** `mu agent list`,
+  `mu agent show` and `mu state` read a gate from its pane (running reads `busy`, an ended one
+  `unknown` with `exited <n>`), never through a host exec. `readGate` drops its pre-read channel
+  release: the result read's admission already reclaims a dead pane's channel.
 
 - **A worker that dies between two waits is `dead` (exit 6), not a heartbeat**
   (`df2_wait_dead_after_reap`, dogfood-2 F1). A wait used to see a reaper flip only if one of its own
