@@ -17,6 +17,7 @@
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
+import { say } from "../messages.js";
 import { TASK_SUBSTATES, type TaskStatus, type TaskSubstate } from "./status.js";
 
 export class TaskNotFoundError extends Error {
@@ -32,7 +33,7 @@ export class TaskNotFoundError extends Error {
      *  operator's qualified spelling (`ws/id`). Defaults to `taskId`. */
     public readonly lookupId: string = taskId,
   ) {
-    super(`no such task: ${taskId}`);
+    super(say("task.not_found", taskId));
   }
 }
 
@@ -45,14 +46,14 @@ export class TaskNotFoundError extends Error {
 export class TaskIdInvalidError extends Error {
   override readonly name = "TaskIdInvalidError";
   constructor(public readonly attempted: string) {
-    super(`invalid task id: ${JSON.stringify(attempted)} (expected /^[a-z][a-z0-9_-]{0,63}$/)`);
+    super(say("task.id_invalid", attempted));
   }
 }
 
 export class TaskExistsError extends Error {
   override readonly name = "TaskExistsError";
   constructor(public readonly taskId: string) {
-    super(`task already exists: ${taskId}`);
+    super(say("task.exists", taskId));
   }
 }
 
@@ -70,7 +71,7 @@ export class TaskNotInWorkstreamError extends Error {
     public readonly expectedWorkstream: string,
     public readonly actualWorkstream: string,
   ) {
-    super(`task ${taskId} is in workstream ${actualWorkstream}, not ${expectedWorkstream}`);
+    super(say("task.not_in_workstream", taskId, expectedWorkstream, actualWorkstream));
   }
 }
 
@@ -82,11 +83,7 @@ export class TaskAlreadyOwnedError extends Error {
     public readonly taskId = "<id>",
     public readonly currentOwner = "<owner>",
   ) {
-    super(
-      taskId === "<id>"
-        ? "a claim in this SQL would take an owned task; release it first: mu task release <id> -w <ws>"
-        : `task ${taskId} is already owned by ${currentOwner}`,
-    );
+    super(taskId === "<id>" ? say("task.owned_sql") : say("task.owned", taskId, currentOwner));
   }
 }
 
@@ -107,10 +104,7 @@ export class ClaimerNotRegisteredError extends Error {
     public readonly agentName: string,
     public readonly paneId: string | null,
   ) {
-    const paneHint = paneId !== null ? ` (pane ${paneId})` : "";
-    super(
-      `claimer '${agentName}'${paneHint} is not a registered mu agent (no row in agents table)`,
-    );
+    super(say("task.claimer_unregistered", agentName, paneId));
   }
 }
 
@@ -123,11 +117,7 @@ export class CycleError extends Error {
     public readonly path: readonly string[] = [],
     public readonly workstream?: string,
   ) {
-    super(
-      path.length > 1
-        ? `adding edge ${from} -> ${to} would create a cycle: ${[from, ...path].join(" -> ")}`
-        : `adding edge ${from} -> ${to} would create a cycle`,
-    );
+    super(say("task.cycle", from, to, path));
   }
 }
 
@@ -140,7 +130,7 @@ export class CrossWorkstreamEdgeError extends Error {
     public readonly dependentWorkstream: string,
   ) {
     super(
-      `cross-workstream edge: blocker '${blocker}' is in workstream '${blockerWorkstream}', dependent '${dependent}' is in workstream '${dependentWorkstream}'`,
+      say("task.cross_workstream_edge", blocker, blockerWorkstream, dependent, dependentWorkstream),
     );
   }
 }
@@ -157,11 +147,7 @@ export class SubstateReasonRequiredError extends Error {
     public readonly substate: TaskSubstate,
     public readonly taskId: string,
   ) {
-    super(
-      verb === "close"
-        ? `closing ${taskId} as ${substate} needs a reason (--why "...")`
-        : `parking ${taskId} needs a reason (--why "...")`,
-    );
+    super(say("task.close_reason_needed", verb, taskId, substate));
   }
 }
 
@@ -180,8 +166,8 @@ export class CloseNeedsEvidenceError extends Error {
   ) {
     super(
       taskId === "<id>"
-        ? 'a close in this SQL has no close note; close with: mu task close <id> -w <ws> --evidence "<command + result>"'
-        : `closing ${taskId} needs evidence (--evidence "<command + result>")`,
+        ? say("task.close_needs_evidence_sql")
+        : say("task.close_needs_evidence", taskId),
     );
   }
 }
@@ -203,8 +189,8 @@ export class TaskHasOpenBlockersError extends Error {
   ) {
     super(
       taskId === "<id>"
-        ? "a task in this SQL closed as done with open blockers; inspect with: mu task tree <id> -w <ws>"
-        : `task ${taskId} has open blockers: ${blockerIds.join(", ")}`,
+        ? say("task.open_blockers_sql")
+        : say("task.open_blockers", taskId, blockerIds),
     );
   }
 }
@@ -221,11 +207,7 @@ export class TaskParkStateError extends Error {
     public readonly status: "IN_PROGRESS" | "CLOSED",
     public readonly workstream: string,
   ) {
-    super(
-      status === "IN_PROGRESS"
-        ? `cannot park ${taskId}: it is IN_PROGRESS (release it first)`
-        : `cannot park ${taskId}: it is CLOSED (open it first)`,
-    );
+    super(say("task.park_state", taskId, status));
   }
 }
 
@@ -240,7 +222,7 @@ export class TaskInTriageError extends Error {
     public readonly taskId: string,
     public readonly workstream: string,
   ) {
-    super(`task ${taskId} is in triage (OPEN/triage); accept it or claim with --force`);
+    super(say("task.in_triage", taskId));
   }
 }
 
@@ -254,7 +236,7 @@ export class TaskParkedError extends Error {
     public readonly taskId: string,
     public readonly workstream: string,
   ) {
-    super(`task ${taskId} is parked (OPEN/parked); unpark it or claim with --force`);
+    super(say("task.parked", taskId));
   }
 }
 
@@ -271,9 +253,7 @@ export class HumanTaskError extends Error {
     public readonly workstream: string,
     action: string,
   ) {
-    super(
-      `task ${taskId} is a human task: ${action} refused; it resolves only by an explicit \`mu task close ${taskId} -w ${workstream}\``,
-    );
+    super(say("task.human", taskId, workstream, action));
   }
 }
 
@@ -289,9 +269,7 @@ export class InvalidSubstateError extends Error {
     public readonly status: TaskStatus,
     public readonly substate: string,
   ) {
-    super(
-      `invalid substate for ${status}: ${JSON.stringify(substate)} (expected one of: ${TASK_SUBSTATES[status].join(", ")})`,
-    );
+    super(say("task.invalid_substate", status, substate, TASK_SUBSTATES[status]));
   }
 }
 
@@ -304,10 +282,6 @@ export class TaskNoteRangeError extends Error {
     public readonly n: number,
     public readonly total: number,
   ) {
-    super(
-      total === 0
-        ? `${taskId} has no notes; note ${n} does not exist`
-        : `note ${n} is not one of ${taskId}'s notes (1..${total})`,
-    );
+    super(say("task.note_range", taskId, n, total));
   }
 }
