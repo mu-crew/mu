@@ -88,6 +88,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu next --refute`: an opt-in durable checker per closed attempt** (`v_exec_refute`, slice C of
+  `v_executor`; `src/next-refute.ts`). For each authorised task a worker closed as `done`, one
+  delegate call (`refute:<ws>:<task>:<attempt key>`, workstream `scratch`, wave `refute-<ws>`) is
+  registered `starting` BEFORE any pane, then launched through the journaled `spawnForTask` (the
+  checker's pinned brief + the worker's report, note numbers named) and marked `running`. A later
+  `mu next --refute` reads its settled run once (bounded) and `finishDelegate` records: the verdict
+  note lands on the judged task, then the call's report and close. A dead checker, a hung one (30 min)
+  or one that could not start is recorded `failed` (UNVERIFIED), never retried; a first send that may
+  have landed is probed once and never resent. Never accepts, reopens or closes the judged work and
+  never grants auto permission; a wontfix/rejected close gets no checker; only this caller's calls are
+  touched. Needs a caller identity (exit 2 without) and a ctl cli (`--refute-cli`, default the task's
+  own). `--hold` also waits on running checkers. Every launch, read and record counts against `--cap`;
+  `--dry` lists the owed checks. `pinnedNotes` is the shared brief/report lookup of `buildTaskBrief`.
+
 - **`computeNext`: one read-only rule set for `next`** (`v_hint_rules`, slice A of `v_hints`; SDK
   only, results still print `next: null` until `v_hint_wire`). `src/next-hints.ts` computes a
   `NextPlan` from current state plus what the verb did: the exact `mu wait 'agent:<ws>/<n>@<runs>#<inc>'`

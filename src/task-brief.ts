@@ -34,13 +34,15 @@ export interface TaskBrief {
   text: string;
 }
 
-/** Build the prompt of one attempt for `task` (see the file header). */
-export function buildTaskBrief(
+/**
+ * The pinned notes of a task: the 1-based number of its FIRST `brief` note and
+ * of its LATEST `report` note (0 = none). A checker is briefed from the same two.
+ */
+export function pinnedNotes(
   db: Db,
   workstream: string,
   task: string,
-  opts: TaskBriefOptions = {},
-): TaskBrief {
+): { briefN: number; reportN: number } {
   const taskId = taskIdFor(db, task, workstream);
   if (taskId === null) throw new TaskNotFoundError(task, workstream);
   const kinds = (
@@ -48,8 +50,17 @@ export function buildTaskBrief(
       kind: string;
     }[]
   ).map((r) => r.kind);
-  const briefN = kinds.indexOf("brief") + 1;
-  const reportN = kinds.lastIndexOf("report") + 1;
+  return { briefN: kinds.indexOf("brief") + 1, reportN: kinds.lastIndexOf("report") + 1 };
+}
+
+/** Build the prompt of one attempt for `task` (see the file header). */
+export function buildTaskBrief(
+  db: Db,
+  workstream: string,
+  task: string,
+  opts: TaskBriefOptions = {},
+): TaskBrief {
+  const { briefN, reportN } = pinnedNotes(db, workstream, task);
   if (briefN < 1) {
     throw new TaskBriefMissingError(task, workstream, "it has no brief note (kind brief)");
   }

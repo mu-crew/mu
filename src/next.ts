@@ -25,6 +25,9 @@
 // is the orchestrator's and ends the invocation. `signal` stops it between
 // effects: an effect in flight finishes (it is journaled, never half-done) and
 // the one result says `interrupted`.
+// `refute` (opt-in, src/next-refute.ts) adds one more rule after dispatch: ONE
+// checker per CLOSED/done attempt, launched and recorded with the delegate
+// writers (verdict before the call closes); it never accepts, reopens or closes.
 // Every stored attempt reaches a terminal state on the FIRST invocation that
 // sees it unreconcilable (`endAttempt`): `abandoned` (task closed, agent gone
 // before anything was sent) or `needs_human` (the prompt may have landed and
@@ -71,6 +74,14 @@ import {
   scanRecovery,
   workerKey,
 } from "./next-recover.js";
+import {
+  checkerRefs,
+  nextCheck,
+  planCheck,
+  type ReadChecker,
+  readChecker,
+  runCheck,
+} from "./next-refute.js";
 import { ambientIngest } from "./sync.js";
 import { authorisedReady, autoPermitted } from "./task-auto.js";
 import { taskIdFor } from "./tasks/core.js";
@@ -119,8 +130,17 @@ export interface ExecuteNextOptions {
   onStall?: "exit" | "warn" | "steer" | "release";
   /** Stop between effects; an effect in flight finishes. The result says `interrupted`. */
   signal?: AbortSignal;
-  /** Test seams: the worker reader and the wait. */
+  /**
+   * Opt in to ONE checker per CLOSED/done attempt of an authorised task (a
+   * delegate call in `scratch`, src/next-refute.ts); its verdict is recorded
+   * on the judged task before the call closes. Never accepts, reopens or closes.
+   */
+  refute?: boolean;
+  /** The checker's cli key. Default: the judged task's stored key (it must speak ctl). */
+  refuteCli?: string;
+  /** Test seams: the worker reader, the checker reader and the wait. */
   observe?: ObserveWorkers;
+  readChecker?: ReadChecker;
   wait?: (db: Db, refs: readonly WaitRef[], o: WaitOptions) => Promise<WaitResult>;
 }
 
@@ -133,12 +153,14 @@ export interface NextMove {
    * and cannot be confirmed: never resent, a human need recorded), `retry`
    * (a live worker that stopped on an API error was sent its brief again, in
    * place), `reap` (a dead worker's row was removed; its task is open again),
-   * `attention` (something that needs the orchestrator and was NOT acted on).
+   * `attention` (something that needs the orchestrator and was NOT acted on),
+   * `refute` (a checker launched, read or recorded: `state` is its call's).
    */
   kind:
     | "spawn"
     | "replay"
     | "retry"
+    | "refute"
     | "reap"
     | "attention"
     | "skip"
@@ -154,6 +176,8 @@ export interface NextMove {
   /** `sent`, `unknown`, or (dry replay) the receipt state it would resume from. */
   state?: string;
   reason?: string;
+  /** `refute`: the checker's parsed verdict, once recorded. */
+  verdict?: string;
   stale?: "deleted" | "replaced";
   /** The one receipt probe a replay made, when it made one. */
   checked?: "accepted" | "not-accepted" | "unreachable";
@@ -268,6 +292,12 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
   const cap = checkCap(opts.cap);
   const timeoutMs = checkTimeout(opts.timeoutMs);
   const workers = checkWorkers(opts.workers);
+  const refute = opts.refute === true;
+  if (refute && opts.caller === "") {
+    throw new NextArgError(
+      "--refute needs a caller identity (a managed agent, or PI_SESSION_ID): a checker belongs to the caller that launched it",
+    );
+  }
   const ws = opts.workstream;
   const out: NextResult = { workstream: ws, dry: opts.dry === true, cap, used: 0, moves: [] };
   const done = new Set<string>();
@@ -307,7 +337,9 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
       if (out.used >= cap) {
         if (
           out.stopped === undefined &&
-          (select(db, ws, done) !== undefined || (actions?.length ?? 0) > 0)
+          (select(db, ws, done) !== undefined ||
+            (actions?.length ?? 0) > 0 ||
+            (refute && nextCheck(db, ws, opts.caller, done) !== undefined))
         ) {
           out.stopped = "cap";
         }
@@ -349,6 +381,26 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
       }
       const next = select(db, ws, done);
       if (next === undefined) {
+        // Dispatch first; a checker is the last thing a pass does.
+        const check = refute ? nextCheck(db, ws, opts.caller, done) : undefined;
+        if (check !== undefined) {
+          done.add(check.callId);
+          const move = out.dry
+            ? planCheck(check)
+            : await runCheck(db, check, {
+                caller: opts.caller,
+                read: opts.readChecker ?? readChecker,
+                ...(opts.refuteCli !== undefined ? { cli: opts.refuteCli } : {}),
+                ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+              });
+          out.moves.push(move);
+          if (counts(move)) out.used++;
+          if (move.kind === "failed" && !out.dry) {
+            out.stopped = "failed";
+            return;
+          }
+          continue;
+        }
         attend();
         return;
       }
@@ -384,7 +436,8 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
     if (opts.hold !== true || out.dry || (out.stopped !== undefined && !atCeiling)) return out;
     if (waits > 0 && out.used === before) return out; // the event was the executor's, and it could do nothing
     const inFlight = inFlightWorkers(db, ws);
-    if (inFlight.length === 0) {
+    const checkers = refute ? checkerRefs(db, ws, opts.caller) : [];
+    if (inFlight.length === 0 && checkers.length === 0) {
       out.held = { waits, event: "none", ref: null, exit: 0, timedOut: false, open: [] };
       return out;
     }
@@ -393,16 +446,18 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
       out.held = { waits, event: "heartbeat", ref: null, exit: 0, timedOut: true, open: [] };
       return out;
     }
-    const refs: WaitRef[] = inFlight.flatMap((w): WaitRef[] => [
-      { kind: "task", workstream: ws, id: w.task },
-      {
-        kind: "agent",
-        workstream: w.agent.workstreamName,
-        id: w.agent.name,
-        ...(w.runs !== null ? { afterRuns: w.runs } : {}),
-        ...(w.incarnation !== null ? { incarnation: w.incarnation } : {}),
-      },
-    ]);
+    const refs: WaitRef[] = checkers.concat(
+      inFlight.flatMap((w): WaitRef[] => [
+        { kind: "task", workstream: ws, id: w.task },
+        {
+          kind: "agent",
+          workstream: w.agent.workstreamName,
+          id: w.agent.name,
+          ...(w.runs !== null ? { afterRuns: w.runs } : {}),
+          ...(w.incarnation !== null ? { incarnation: w.incarnation } : {}),
+        },
+      ]),
+    );
     waits++;
     let res: WaitResult;
     try {
@@ -447,7 +502,13 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
       return out;
     }
     const freed = atCeiling && res.event.kind === "closed";
-    if (res.event.kind === "heartbeat" || (!DEAD_OR_ERRORED(res) && !freed)) return out;
+    // A checker settling or dying is the executor's own: read and record it, then wait again.
+    const checkerEvent = checkers.some(
+      (c) => res.event.ref?.kind === "agent" && res.event.ref.id === c.id,
+    );
+    if (res.event.kind === "heartbeat" || (!DEAD_OR_ERRORED(res) && !freed && !checkerEvent)) {
+      return out;
+    }
     if (atCeiling) out.stopped = undefined;
     done.clear();
   }

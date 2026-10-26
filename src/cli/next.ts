@@ -1,6 +1,6 @@
 // mu — `mu next`: the executor's verb (src/next.ts).
 //
-//   mu next [--dry] [--hold] [--cap N] [--timeout s] [--on-stall exit|warn|steer|release] [-w ws]
+//   mu next [--dry] [--hold] [--cap N] [--refute [--refute-cli key]] [--timeout s] [--on-stall exit|warn|steer|release] [-w ws]
 //
 // stdout is ONE JSON envelope for every outcome, success or interrupted, bounded
 // to 4 KB (`moves` are cut on a record boundary with `movesCut`, never the
@@ -33,6 +33,8 @@ interface NextOpts {
   hold?: boolean;
   cap?: number;
   workers?: number;
+  refute?: boolean;
+  refuteCli?: string;
   timeout?: number;
   onStall?: string;
   workstream?: string | string[];
@@ -104,6 +106,8 @@ export async function cmdNext(db: Db, o: NextOpts, sig: WaitSignals): Promise<vo
     ...(o.hold === true ? { hold: true } : {}),
     ...(o.cap !== undefined ? { cap: o.cap } : {}),
     ...(o.workers !== undefined ? { workers: o.workers } : {}),
+    ...(o.refute === true ? { refute: true } : {}),
+    ...(o.refuteCli !== undefined ? { refuteCli: o.refuteCli } : {}),
     ...(o.timeout !== undefined ? { timeoutMs: Math.round(o.timeout * 1000) } : {}),
     onStall: parseOnStall(o.onStall),
   };
@@ -122,7 +126,7 @@ export function wireNextCommand(program: Command): void {
       [
         "Do the judgement-free moves for tasks authorised HERE (`mu task auto`): retry dead and API-errored workers, resume stored attempts, spawn+claim+brief ready ones. Prints ONE JSON result (`data.moves`, `data.used`, `data.stopped`, `data.exit`).",
         "Never grants permission, accepts, merges or tears down. A dead local worker is reaped (its task reopens and is retried as a new attempt); a LIVE worker whose run ended in an API error is sent its brief again IN PLACE (same pane, never duplicated); a remote worker's tree is never touched (`attention`). Every retry costs one run of the task's ceiling; an `attention` move needs you.",
-        "--dry plans with zero writes (no pane, socket or receipt read). --cap bounds effects (default 5, max 100; replays, probes, retries and reaps count). --hold then waits (bounded by --timeout, default 1500 s) for the first event on its workers: a death or API error is recovered and the wait goes on, anything else (a worker finishing, a stall, a dialog) returns it. SIGINT/SIGTERM stop between effects and print the one result.",
+        "--refute (opt-in) launches ONE checker per CLOSED/done task and records its verdict on the task; it never accepts, reopens or closes. --dry plans with zero writes (no pane, socket or receipt read). --cap bounds effects (default 5, max 100; replays, probes, retries and reaps count). --hold then waits (bounded by --timeout, default 1500 s) for the first event on its workers: a death or API error is recovered and the wait goes on, anything else (a worker finishing, a stall, a dialog) returns it. SIGINT/SIGTERM stop between effects and print the one result.",
       ].join(" "),
     )
     .option("--dry", "plan only: zero writes, no mux, no ctl")
@@ -139,6 +143,14 @@ export function wireNextCommand(program: Command): void {
       "--workers <n>",
       "worker ceiling: no new pane while n workers are working (an IN_PROGRESS task or an attempt in flight); a worker whose task is CLOSED is free. Default: none",
       parsePositiveInt,
+    )
+    .option(
+      "--refute",
+      "opt in: ONE checker (a delegate in scratch) per CLOSED/done attempt of an authorised task, briefed from its pinned brief and report; its verdict is recorded on the task. Never accepts, reopens or closes. Needs a caller identity (PI_SESSION_ID or a managed agent)",
+    )
+    .option(
+      "--refute-cli <key>",
+      "--refute: the checker's cli key (default: the task's own; it must speak ctl). Choose another model family here",
     )
     .option(
       "--timeout <seconds>",
