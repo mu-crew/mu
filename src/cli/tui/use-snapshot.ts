@@ -15,6 +15,8 @@ export interface SnapshotState {
   /** The last good snapshot, kept across a failed refresh. */
   snapshot: DashboardSnapshot | null;
   warnings: readonly string[];
+  /** The snapshot was read for an older query than the current one (a filter just changed). */
+  stale: boolean;
   /** Refresh now (shares an in-flight refresh instead of stacking one). */
   refresh(): void;
 }
@@ -24,11 +26,12 @@ export function useSnapshot(
   query: DashboardQuery,
   pollMs: number | null,
 ): SnapshotState {
-  const [state, setState] = useState<Omit<SnapshotState, "refresh">>({
+  const [state, setState] = useState<Omit<SnapshotState, "refresh" | "stale"> & { key: string }>({
     loading: true,
     error: null,
     snapshot: null,
     warnings: [],
+    key: "",
   });
   // The query is a value, not an identity: re-run only when its content changes.
   const queryKey = JSON.stringify(query);
@@ -43,7 +46,13 @@ export function useSnapshot(
         try {
           const r = await runtime.refresh(q);
           if (cancelled) return;
-          setState({ loading: false, error: null, snapshot: r.snapshot, warnings: r.warnings });
+          setState({
+            loading: false,
+            error: null,
+            snapshot: r.snapshot,
+            warnings: r.warnings,
+            key: queryKey,
+          });
         } catch (err) {
           if (cancelled) return;
           const error = err instanceof Error ? err.message : String(err);
@@ -66,5 +75,6 @@ export function useSnapshot(
   }, [runtime, queryKey, pollMs]);
 
   const refresh = useCallback(() => wake.current?.(), []);
-  return { ...state, refresh };
+  const { key, ...rest } = state;
+  return { ...rest, stale: state.snapshot !== null && key !== queryKey, refresh };
 }

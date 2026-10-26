@@ -6,6 +6,7 @@ import { type Instance, render } from "ink";
 import { createElement } from "react";
 import { spawnerFromEnv } from "../../agents/spawn.js";
 import type { Db } from "../../db.js";
+import { resolveMuxSessionWorkstreamName } from "../../workstream.js";
 import type { Shutdown } from "../dashboard-shutdown.js";
 import { App } from "./app.js";
 import { createRuntime } from "./runtime.js";
@@ -16,6 +17,7 @@ export interface RunDashboardOptions {
   syncDb: Db;
   /** The launcher's teardown; this registers render and runtime steps on it. */
   shutdown: Shutdown;
+  /** `-w`; else the mux session's workstream; else the most recently active one. */
   initialWorkstream?: string;
   /** Poll gap in ms (default 2000). */
   pollMs?: number;
@@ -38,7 +40,8 @@ export async function runDashboard(opts: RunDashboardOptions): Promise<void> {
   app = render(
     createElement(App, {
       runtime,
-      initialWorkstream: opts.initialWorkstream,
+      initialWorkstream:
+        opts.initialWorkstream ?? (await resolveMuxSessionWorkstreamName()) ?? undefined,
       pollMs: opts.pollMs ?? 2000,
     }),
     { alternateScreen: true, interactive: true },
