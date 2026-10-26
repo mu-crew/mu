@@ -24,8 +24,10 @@ import {
 } from "../../cli.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../../db.js";
 import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { getTaskOwner } from "../../tasks/queries.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../../tasks.js";
 import type { WaitRef, WaitResult } from "../../wait.js";
+import { currentCallers } from "../../wait-callers.js";
 import { getWorktreeFor, upstreamRefs } from "../../worktree.js";
 import { dispatchHint, nextDispatchHint } from "../dispatch-hints.js";
 import {
@@ -36,6 +38,7 @@ import {
   type WaitSpec,
   waitMode,
 } from "../wait.js";
+import { agentRef, armWait, taskRef } from "../wait-arm.js";
 
 export async function cmdTaskRelease(
   db: Db,
@@ -94,11 +97,19 @@ export async function cmdClaim(
     json?: boolean;
     force?: boolean;
     if?: number;
+    /** After a `--for` dispatch, wait for the task (one JSON result; `data.claimed` is the claim). */
+    andWait?: boolean;
   },
+  sig?: WaitSignals,
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveWorkstream(opts.workstream);
+  if (opts.andWait === true && opts.for === undefined) {
+    throw new UsageError(
+      "--and-wait needs --for <worker>: a dispatch has something to wait on; --self and a worker's own claim would wait on the caller's own work",
+    );
+  }
   if (opts.self === true && opts.for !== undefined) {
     throw new UsageError("--self and --for are mutually exclusive");
   }
@@ -149,6 +160,47 @@ export async function cmdClaim(
   // worker's (the SDK defaults it to the claimer).
   if (opts.evidence && forName !== undefined) sdkOpts.author = await resolveActorIdentity();
   const result = await claimTask(db, localId, sdkOpts);
+  // A `--for` dispatch owes a wait: the task, in ITS workstream, and the agent that now owns
+  // it (read from the task's owner_id, not from the label or the task's namespace). --self
+  // (owner NULL) and a worker's own claim arm nothing: the caller would wait on its own work.
+  const warnings: string[] = [];
+  if (opts.for !== undefined && result.ownerName !== null) {
+    const o = getTaskOwner(db, localId, ws);
+    const ownerRow = o === undefined ? undefined : getAgent(db, o.name, o.workstreamName);
+    const armed = armWait(db, [
+      taskRef(ws, localId),
+      ...(ownerRow !== undefined && `${o?.workstreamName}/${o?.name}` !== currentCallers()[0]
+        ? [agentRef(ownerRow)]
+        : []),
+    ]);
+    if (armed.warning !== undefined) warnings.push(armed.warning);
+  }
+  if (opts.andWait === true && sig !== undefined) {
+    return runWait(
+      db,
+      {
+        refs: [taskRef(ws, localId) as WaitRef],
+        mode: "all",
+        onStall: "exit",
+        verb: "mu task claim --and-wait",
+        scope: ws,
+      },
+      sig,
+      {
+        extraData: {
+          claimed: {
+            task: localId,
+            workstream: ws,
+            ownerName: result.ownerName,
+            previousStatus: result.previousStatus,
+            status: result.status,
+          },
+          ...(warnings.length > 0 ? { warnings } : {}),
+        },
+      },
+    );
+  }
+  if (!opts.json) for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
   const nextSteps: NextStep[] = [];
   // claim-before-send: a --for claim is the moment of dispatch, so the
   // first hint is the send that hands the task over.
@@ -172,7 +224,7 @@ export async function cmdClaim(
     { intent: "Release if blocked", command: `mu task release ${localId} -w ${ws}` },
   );
   if (opts.json) {
-    emitJson({ ...result, nextSteps });
+    emitJson({ ...result, ...(warnings.length > 0 ? { warnings } : {}), nextSteps });
     return;
   }
   if (result.ownerName === null) {

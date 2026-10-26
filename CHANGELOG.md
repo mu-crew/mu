@@ -51,6 +51,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `release` and every non-sent outcome end it with exit 7. Both act only on workers the caller
   spawned and on tasks permitted with `mu task auto`. `--resume` replays the action. The usage
   error for an unknown value names all four.
+- **Producer arming and the one wait hint** (`v_wait_arming`, slice B of `v_wait_cli`). A producer
+  that did something registers what it owes the next `mu wait` (`wait_registrations`), so a bare
+  `mu wait` or the settle hook owns it without parsing a shell line. Armed: `agent spawn --send`
+  (plain and `--next-free`, for the ACTUAL returned agent, once the prompt is delivered),
+  `spawn --task` (the task and the agent, from the saved receipt; a replay re-registers the same
+  refs; a stale identity arms nothing), `agent send` and `send --interrupt` (a delivered prompt),
+  and `task claim --for` (the task in its OWN workstream plus the owner agent read from
+  `owner_id`, so cross-workstream works). Not armed: `claim --self` and a worker's own claim
+  (the caller would wait on its own work), a slash command, an undelivered or failed or UNKNOWN
+  send, a plain shell with no identity. The caller is the managed `<ws>/<agent>`, else
+  `pi:<session>`. An agent ref carries the UNCONSUMED fence the producer measured BEFORE its
+  effect (ctl runs, pi incarnation, registry id; the earliest run of one process wins on a repeat
+  send; a replacement agent gets its own), so a run that settles before any wait starts is still
+  delivered. A registration that cannot be stored (the 256-ref cap, a vanished entity) never
+  rolls the committed effect back: it is `warnings` in the producer's document. Direct SDK calls
+  (`spawnAgent`, `sendToAgent`, `claimTask`, `spawnForTask`) do not arm: the verbs do, and the
+  engine's provenance discovery covers the rest.
+- `mu agent send --wait` and `mu task claim --for <w> --and-wait` enter the wait after the
+  producer: one JSON document, the wait's (`firing`, `exit`, `snapshots`, `resume`; SIGINT/SIGTERM
+  print a snapshot), with the producer's receipt as `data.sent` / `data.claimed`. Errors are JSON
+  too. `--and-wait` needs `--for`; `--wait` refuses a slash command; an undelivered send waits for
+  nothing.
 
 - **Guarded stall release and action receipts** (`v_wait_release`, slice C1 of the wait core; SDK
   only, no CLI flags yet). New machine-local table `wait_action_receipts` (25 tables; additive,
@@ -83,6 +105,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   session-command text (`/new`, …) is refused, not skipped.
 
 ### Changed
+
+- **One wait hint.** The `Next:` line after a send, `spawn --send`, `spawn --task` and
+  `send --interrupt` is now `mu wait 'agent:<ws>/<name>@<runs>#<incarnation>'` (one POSIX-quoted
+  typed ref, no `--json`: `mu wait` always prints JSON, the answer is `snapshots[].lastText`),
+  replacing `mu agent wait <a> -w <ws> --after-runs <n> --inc <i> --json`.
 
 - **Dashboard drills** (`v_dashboard_drill`): Enter opens a read-only full-screen body: Tasks the
   task's notes (the CLI's default selection, pinned notes marked `*`; `A` shows all, whole), Agents

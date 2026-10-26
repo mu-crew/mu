@@ -150,7 +150,7 @@ describe("mu agent send --interrupt", () => {
     expect(body).toMatchObject({ transport: "ctl", wasBusy: true, pending: true, runs: 4 });
     expect(body).toMatchObject({ incarnation: INC, msgId: expect.any(String) });
     expect(body.nextSteps.map((s) => s.command)).toContain(
-      `mu agent wait worker-1 -w auth --after-runs 4 --inc ${INC} --json`,
+      `mu wait 'agent:auth/worker-1@4#${INC}'`,
     );
     expect(pasted()).toBe(false);
   });

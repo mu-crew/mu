@@ -823,9 +823,7 @@ describe("mu agent spawn (CLI)", () => {
       incarnation: INC,
       msgId: expect.any(String),
     });
-    expect(out.nextSteps[0]?.command).toBe(
-      `mu agent wait worker-1 -w auth --after-runs 0 --inc ${INC} --json`,
-    );
+    expect(out.nextSteps[0]?.command).toBe(`mu wait 'agent:auth/worker-1@0#${INC}'`);
   });
 
   it("--send to a pi whose socket never answered keeps the pane and exits non-zero", async () => {

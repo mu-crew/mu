@@ -58,9 +58,12 @@ socket. Pick the mode by what the agent is doing:
   pastes nothing.
 - A send's `--json` carries `msgId`, `incarnation` and `delivery`
   (`delivered`, or `unknown` in the error JSON of a send that got no
-  reply). Its `Next:` block is ONE line, the exact wait: `mu agent wait <a> -w <ws> --after-runs <n>
-  --inc <i> --json`. `--inc` refuses (exit 4) when the agent restarted:
-  its run is gone, so re-send the brief.
+  reply). Its `Next:` block is ONE line, the exact wait: `mu wait 'agent:<ws>/<a>@<n>#<inc>'`.
+  The `#<inc>` pin refuses (exit 4) when the agent restarted: its run is gone, so
+  re-send the brief. `--wait` enters that wait at once: one JSON document, the wait's, with the
+  send's receipt as `data.sent`. A delivered send (also `spawn --send`, `spawn --task`,
+  `send --interrupt`, `task claim --for`) is registered for the caller, so a bare `mu wait`
+  finds it with no ref; `mu task claim <id> --for <w> --and-wait` dispatches and waits.
 - A send written to the socket but never answered is checked, not
   repeated: mu asks once for the `msgId` and either reports success
   (`receipt: confirmed-after-timeout`) or exits 1 naming

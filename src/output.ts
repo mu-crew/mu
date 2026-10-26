@@ -313,14 +313,21 @@ export function isStateVerbArgv(argv: readonly string[]): boolean {
 }
 
 /**
- * Is this invocation `mu wait` or its alias `mu task wait`? The wait prints one JSON
+ * Is this invocation `mu wait`, its alias `mu task wait`, or a producer that enters
+ * the wait (`mu agent send --wait`, `mu task claim --and-wait`)? The wait prints one JSON
  * document for every outcome, errors and parse-time errors included, with no
  * `--json` needed. Found the way the parser finds the verb, so `mu -w x task list`
  * is not a wait and `mu -w x wait` is.
  */
 export function isWaitVerbArgv(argv: readonly string[]): boolean {
   const [first, second] = verbWords(argv);
-  return first === "wait" || (first === "task" && second === "wait");
+  return (
+    first === "wait" ||
+    (first === "task" && second === "wait") ||
+    // `send --wait` / `claim --and-wait` enter the same wait: one JSON document too.
+    (first === "agent" && second === "send" && argv.includes("--wait")) ||
+    (first === "task" && second === "claim" && argv.includes("--and-wait"))
+  );
 }
 
 /**
