@@ -32,6 +32,7 @@ interface NextOpts {
   dry?: boolean;
   hold?: boolean;
   cap?: number;
+  workers?: number;
   timeout?: number;
   onStall?: string;
   workstream?: string | string[];
@@ -102,6 +103,7 @@ export async function cmdNext(db: Db, o: NextOpts, sig: WaitSignals): Promise<vo
     ...(o.dry === true ? { dry: true } : {}),
     ...(o.hold === true ? { hold: true } : {}),
     ...(o.cap !== undefined ? { cap: o.cap } : {}),
+    ...(o.workers !== undefined ? { workers: o.workers } : {}),
     ...(o.timeout !== undefined ? { timeoutMs: Math.round(o.timeout * 1000) } : {}),
     onStall: parseOnStall(o.onStall),
   };
@@ -131,6 +133,11 @@ export function wireNextCommand(program: Command): void {
     .option(
       "--cap <n>",
       "effects this invocation may perform (default 5, max 100)",
+      parsePositiveInt,
+    )
+    .option(
+      "--workers <n>",
+      "worker ceiling: no new pane while n workers are working (an IN_PROGRESS task or an attempt in flight); a worker whose task is CLOSED is free. Default: none",
       parsePositiveInt,
     )
     .option(

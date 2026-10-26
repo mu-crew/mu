@@ -62,6 +62,7 @@ import { NoMultiplexerError } from "./mux/types.js";
 import {
   exhaustedAfterDeath,
   inFlightWorkers,
+  liveWorkers,
   OBSERVE_MS,
   type ObserveWorkers,
   observeWorkers,
@@ -100,6 +101,13 @@ export interface ExecuteNextOptions {
   dry?: boolean;
   /** Effect budget, an integer 1..100 (default 5). */
   cap?: number;
+  /**
+   * Worker ceiling: no new pane while this many workers are working (an
+   * IN_PROGRESS task, or an attempt in flight); a worker whose task is CLOSED
+   * is free. Default: none. Recovery in place and replays that need no pane
+   * are never held back.
+   */
+  workers?: number;
   /** Pull peer state before each effect. Default: the ambient sync ingest. */
   ingest?: () => Promise<unknown>;
   /** After the pass, wait (bounded) for the first event on the in-flight workers; recover and go on while the event is the executor's own. */
@@ -158,7 +166,7 @@ export interface NextResult {
   used: number;
   moves: NextMove[];
   /** Why the loop ended early: the cap with work left, this caller's human need, an unsent failure, or a signal. */
-  stopped?: "cap" | "human" | "failed" | "interrupted";
+  stopped?: "cap" | "human" | "failed" | "interrupted" | "workers";
   /** Dry only: the in-flight workers a live run would observe (a dry run reads no pane and no socket). */
   inFlight?: string[];
   human_needed?: HumanNeeded[];
@@ -184,6 +192,14 @@ function checkCap(cap: number | undefined): number {
   return cap;
 }
 
+function checkWorkers(n: number | undefined): number | undefined {
+  if (n === undefined) return undefined;
+  if (!Number.isInteger(n) || n < 1 || n > MAX_NEXT_CAP) {
+    throw new NextArgError(`--workers must be an integer from 1 to ${MAX_NEXT_CAP} (got ${n})`);
+  }
+  return n;
+}
+
 function checkTimeout(ms: number | undefined): number {
   if (ms === undefined) return WAIT_HEARTBEAT_CAP_MS;
   if (!Number.isFinite(ms) || ms < 0) {
@@ -204,6 +220,14 @@ function select(
   return ready === undefined ? undefined : { task: ready.name, resume: false };
 }
 
+/** Would running this candidate create a pane? A fresh attempt, or a stored one that never got one. */
+function needsPane(db: Db, ws: string, c: { task: string; resume: boolean }): boolean {
+  if (!c.resume) return true;
+  const id = taskIdFor(db, c.task, ws);
+  const receipt = id === null ? undefined : readAttempt(db, id).receipt;
+  return receipt?.state === "reserved";
+}
+
 /** Does this move cost an external effect (a spawn, send, probe or rollback)? */
 function counts(m: NextMove): boolean {
   if (m.kind === "skip" || m.kind === "abandoned" || m.kind === "attention") return false;
@@ -218,6 +242,8 @@ interface Ctx {
   caller: string;
   /** This caller's open human need? Records the stop on the result when so. */
   humanStop: () => boolean;
+  /** The worker ceiling, when one was given. */
+  workers: number | undefined;
 }
 
 /** Thrown out of a hold's `beforePoll` when this caller's human need opened mid-wait. */
@@ -240,6 +266,7 @@ const refText = (r: WaitRef): string =>
 export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<NextResult> {
   const cap = checkCap(opts.cap);
   const timeoutMs = checkTimeout(opts.timeoutMs);
+  const workers = checkWorkers(opts.workers);
   const ws = opts.workstream;
   const out: NextResult = { workstream: ws, dry: opts.dry === true, cap, used: 0, moves: [] };
   const done = new Set<string>();
@@ -251,7 +278,7 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
     out.human_needed = needs;
     return true;
   };
-  const ctx: Ctx = { db, ws, caller: opts.caller, humanStop };
+  const ctx: Ctx = { db, ws, caller: opts.caller, humanStop, workers };
   const observe = opts.observe ?? observeWorkers(db);
   const deadline = Date.now() + timeoutMs;
   const aborted = (): boolean => {
@@ -324,6 +351,15 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
         attend();
         return;
       }
+      if (workers !== undefined && needsPane(db, ws, next) && liveWorkers(db, ws) >= workers) {
+        // Nothing reserved, nothing charged: a slot frees when a worker's task closes.
+        tell(
+          next.task,
+          `worker ceiling ${workers} reached (${liveWorkers(db, ws)} working): no new pane until one finishes`,
+        );
+        out.stopped = "workers";
+        return;
+      }
       done.add(next.task);
       const move = out.dry
         ? planMove(db, ws, next.task, next.resume)
@@ -342,10 +378,12 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
   for (let waits = 0; ; ) {
     const before = out.used;
     await pass();
-    if (opts.hold !== true || out.dry || out.stopped !== undefined) return out;
+    // A ceiling stop is what `--hold` is for: a worker closing frees the slot.
+    const atCeiling = out.stopped === "workers";
+    if (opts.hold !== true || out.dry || (out.stopped !== undefined && !atCeiling)) return out;
     if (waits > 0 && out.used === before) return out; // the event was the executor's, and it could do nothing
-    const workers = inFlightWorkers(db, ws);
-    if (workers.length === 0) {
+    const inFlight = inFlightWorkers(db, ws);
+    if (inFlight.length === 0) {
       out.held = { waits, event: "none", ref: null, exit: 0, timedOut: false, open: [] };
       return out;
     }
@@ -354,7 +392,7 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
       out.held = { waits, event: "heartbeat", ref: null, exit: 0, timedOut: true, open: [] };
       return out;
     }
-    const refs: WaitRef[] = workers.flatMap((w): WaitRef[] => [
+    const refs: WaitRef[] = inFlight.flatMap((w): WaitRef[] => [
       { kind: "task", workstream: ws, id: w.task },
       {
         kind: "agent",
@@ -407,7 +445,9 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
       out.stopped = "interrupted";
       return out;
     }
-    if (res.event.kind === "heartbeat" || !DEAD_OR_ERRORED(res)) return out;
+    const freed = atCeiling && res.event.kind === "closed";
+    if (res.event.kind === "heartbeat" || (!DEAD_OR_ERRORED(res) && !freed)) return out;
+    if (atCeiling) out.stopped = undefined;
     done.clear();
   }
 }
@@ -508,6 +548,13 @@ function guardOf(ctx: Ctx, task: string, key: string) {
     }
     if (phase === "spawn" && !listReady(ctx.db, ctx.ws).some((t) => t.name === task)) {
       stop("it is no longer ready");
+    }
+    if (
+      phase === "spawn" &&
+      ctx.workers !== undefined &&
+      liveWorkers(ctx.db, ctx.ws) >= ctx.workers
+    ) {
+      stop(`the worker ceiling ${ctx.workers} is reached`);
     }
   };
   return { guard, refusedAt: () => refusedAt };

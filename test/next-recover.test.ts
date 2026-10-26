@@ -67,16 +67,17 @@ vi.mock("../src/agents/transport.js", async (importOriginal) => {
   };
 });
 
-import { getReceipt } from "../src/agents/receipts.js";
+import { getReceipt, updateReceipt } from "../src/agents/receipts.js";
 import { deleteAgent, getAgent, insertAgent } from "../src/agents.js";
-import { readAttempt, reserveRetry } from "../src/auto-attempt.js";
+import { readAttempt, reserveAttempt, reserveRetry } from "../src/auto-attempt.js";
 import { type Db, openDb } from "../src/db.js";
 import { openHumanNeeds, recordHumanNeeded } from "../src/human-needed.js";
 import { executeNext, type NextResult } from "../src/next.js";
-import type { ObserveWorkers, WorkerFacts } from "../src/next-recover.js";
+import { liveWorkers, type ObserveWorkers, type WorkerFacts } from "../src/next-recover.js";
 import { authorizeTasks } from "../src/task-auto.js";
 import { taskIdFor } from "../src/tasks/core.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
+import { closeTask } from "../src/tasks/lifecycle.js";
 import { getTask } from "../src/tasks.js";
 import type { WaitOptions, WaitRef, WaitResult } from "../src/wait-types.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -655,9 +656,13 @@ describe("--hold: bounded wait over the in-flight workers", () => {
   it("the deadline bounds the whole invocation: a spent timeout never starts a wait", async () => {
     await dispatched();
     const seen = { refs: [] as WaitRef[][], opts: [] as WaitOptions[] };
-    const r = await run({ hold: true, timeoutMs: 1, wait: waiting([], seen) });
-    await new Promise((x) => setTimeout(x, 5));
-    expect(r.held === undefined || r.held.event === "heartbeat" || r.held.waits >= 0).toBe(true);
+    const slow: ObserveWorkers = async (agents, o) => {
+      await new Promise((x) => setTimeout(x, 15)); // the pass spends the 1 ms deadline
+      return observe(agents, o);
+    };
+    const r = await run({ hold: true, timeoutMs: 1, observe: slow, wait: waiting([], seen) });
+    expect(r.held).toMatchObject({ waits: 0, event: "heartbeat", timedOut: true });
+    expect(seen.refs).toEqual([]);
     const r2 = await run({
       hold: true,
       timeoutMs: 1_000_000,
@@ -693,6 +698,151 @@ describe("--hold: bounded wait over the in-flight workers", () => {
     const r = await run({ hold: true, dry: true, wait: waiting([], seen) });
     expect(r.held).toBeUndefined();
     expect(seen.refs).toEqual([]);
+  });
+});
+
+describe("worker ceiling (--workers): the slot is what is working, not what still has a pane", () => {
+  const closeIdle = (id: string) => closeTask(db, id, { workstream: "d", evidence: "done" });
+
+  it("no new pane while the ceiling is reached; nothing reserved or charged; stopped = workers", async () => {
+    task("a");
+    task("b");
+    task("c");
+    const r = await run({ workers: 2 });
+    expect(kinds(r)).toEqual(["spawn:a", "spawn:b", "attention:c"]);
+    expect(r.stopped).toBe("workers");
+    expect(r.moves[2]?.reason).toMatch(/worker ceiling 2 reached \(2 working\)/);
+    expect(hook.spawns).toEqual(["a-1", "b-1"]);
+    expect(runsOf("c")).toBe(0);
+    expect(receiptOf("c", "auto:1")).toBeUndefined();
+    expect(r.used).toBe(2); // the refusal is free
+  });
+
+  it("an idle worker whose task is CLOSED does not count: the slot is free (df1)", async () => {
+    task("a");
+    task("b");
+    task("c");
+    await run({ workers: 2, cap: 2 });
+    closeIdle("a"); // a-1's pane still exists, its close was just applied
+    expect(getAgent(db, "a-1", "d")).toBeDefined();
+    const r = await run({ workers: 2 });
+    expect(kinds(r)).toEqual(["spawn:c"]);
+    expect(hook.spawns).toEqual(["a-1", "b-1", "c-1"]);
+    expect(runsOf("c")).toBe(1);
+  });
+
+  it("an attempt that has its pane but no claim yet (a crash) holds a slot until its task closes", async () => {
+    task("a");
+    expect(reserveAttempt(db, "d", "a").ok).toBe(true);
+    const agent = insertAgent(db, { name: "a-1", workstream: "d", paneId: "%77" });
+    updateReceipt(db, tid("a"), "auto:1", {
+      state: "pane",
+      agentId: agent.incarnation,
+      paneId: "%77",
+    });
+    expect(liveWorkers(db, "d")).toBe(1);
+    closeIdle("a");
+    expect(liveWorkers(db, "d")).toBe(0);
+  });
+
+  it("another process taking the last slot between the check and the pane stops at the guard: nothing spawned, resumable", async () => {
+    task("a");
+    addTask(db, { workstream: "d", localId: "other", title: "other" });
+    // A peer's idle worker (no task: a free slot) takes a task as THIS attempt is reserved:
+    // after the loop's check, before the pane.
+    const peer = insertAgent(db, { name: "peer", workstream: "d", paneId: "%peer" });
+    expect(liveWorkers(db, "d")).toBe(0);
+    db.exec(`CREATE TRIGGER peer AFTER INSERT ON spawn_receipts WHEN NEW.task_id != ${tid("other")} BEGIN
+      INSERT INTO spawn_receipts (task_id, attempt_key, name, workstream, request_sha, msg_id, agent_id, pane_id, state, created_at, updated_at)
+      VALUES (${tid("other")}, 'auto:9', 'peer', 'd', 'x', 'm', ${peer.incarnation}, '%peer', 'pane', 'x', 'x'); END`);
+    const r = await run({ workers: 1, cap: 1 });
+    db.exec("DROP TRIGGER peer");
+    expect(r.moves[0]).toMatchObject({ kind: "skip", task: "a" });
+    expect(r.moves[0]?.reason).toMatch(/worker ceiling 1 is reached/);
+    expect(hook.spawns).toEqual([]);
+    expect(receiptOf("a", "auto:1")?.state).toBe("reserved");
+  });
+
+  it("without --workers there is no ceiling", async () => {
+    for (const t of ["a", "b", "c"]) task(t);
+    const r = await run();
+    expect(kinds(r)).toEqual(["spawn:a", "spawn:b", "spawn:c"]);
+  });
+
+  it("a ceiling reached between reservation and pane stops at the guard: rolled back unsent, resumable", async () => {
+    task("a");
+    task("b");
+    await run({ workers: 1, cap: 1 });
+    // b is not ready for a pane while a works; a reservation made earlier is resumed only when a slot is free.
+    const r = await run({ workers: 1 });
+    expect(r.stopped).toBe("workers");
+    expect(hook.spawns).toEqual(["a-1"]);
+    expect(runsOf("b")).toBe(0);
+  });
+
+  it("a stored attempt that needs a pane waits for a slot; one that has its pane is replayed regardless", async () => {
+    task("a");
+    task("b");
+    await run({ workers: 1, cap: 1 });
+    reserveAttempt(db, "d", "b"); // reserved: no pane yet (a crash before spawn)
+    const held = await run({ workers: 1 });
+    expect(held.stopped).toBe("workers");
+    expect(hook.spawns).toEqual(["a-1"]);
+    closeIdle("a");
+    const freed = await run({ workers: 1 });
+    expect(kinds(freed)).toEqual(["replay:b"]);
+    expect(runsOf("b")).toBe(1);
+  });
+
+  it("an API-errored worker is retried in place even at the ceiling (no new pane)", async () => {
+    await dispatched();
+    hook.sendRuns = 1;
+    facts["a-1"] = ERRORED;
+    const r = await run({ workers: 1 });
+    expect(kinds(r)).toEqual(["retry:a"]);
+    expect(hook.spawns).toEqual(["a-1"]);
+  });
+
+  it("--dry shows the ceiling stop without writing", async () => {
+    task("a");
+    task("b");
+    await run({ workers: 1, cap: 1 });
+    const r = await run({ workers: 1, dry: true });
+    expect(r.stopped).toBe("workers");
+    expect(r.moves[0]).toMatchObject({ kind: "attention", task: "b" });
+    expect(runsOf("b")).toBe(0);
+  });
+
+  it("--hold at the ceiling waits; a closed task frees the slot and the pass dispatches", async () => {
+    task("a");
+    task("b");
+    let waits = 0;
+    const w = async (): Promise<WaitResult> => {
+      waits++;
+      if (waits === 1) closeIdle("a");
+      return {
+        event:
+          waits === 1
+            ? { kind: "closed", ref: { kind: "task", workstream: "d", id: "a" } }
+            : { kind: "heartbeat", ref: null },
+        refs: [],
+        timedOut: false,
+        interrupted: false,
+        exit: 0,
+        cursor: {},
+        humanNeeds: [],
+      };
+    };
+    const r = await run({ workers: 1, hold: true, wait: w });
+    expect(waits).toBe(2); // the second is the freed slot's new worker
+    expect(kinds(r)).toEqual(["spawn:a", "attention:b", "spawn:b"]);
+    expect(r.stopped).toBeUndefined();
+    expect(hook.spawns).toEqual(["a-1", "b-1"]);
+  });
+
+  it("--workers must be a whole number from 1 to 100", async () => {
+    await expect(run({ workers: 0 })).rejects.toThrow(/--workers/);
+    await expect(run({ workers: 1.5 })).rejects.toThrow(/--workers/);
   });
 });
 
