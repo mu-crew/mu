@@ -237,11 +237,6 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
   );
 }
 
-/** `mu me`: the very same read as `mu state --me`. */
-export function cmdMe(db: Db): Promise<void> {
-  return cmdState(db, { me: true });
-}
-
 // ─── commander wiring ──────────────────────────────────────────────
 
 export function wireStateCommands(program: Command): void {

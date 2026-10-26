@@ -89,15 +89,6 @@ export function resolvePair(status: string, substate: unknown): TaskPair | null 
   return { status, substate: DEFAULT_SUBSTATE[status] };
 }
 
-/** OPEN substates that keep a task out of `ready`, `next` and `claim`. */
-export const UNSCHEDULED_SUBSTATES: readonly TaskSubstate[] = ["parked", "triage"];
-
-export function isUnscheduled(pair: { status: string; substate: string }): boolean {
-  return (
-    pair.status === "OPEN" && (UNSCHEDULED_SUBSTATES as readonly string[]).includes(pair.substate)
-  );
-}
-
 /** "OPEN" for default pairs, "OPEN/parked" otherwise. Shared by CLI + TUI. */
 export function formatPair(pair: TaskPair): string {
   return pair.substate === DEFAULT_SUBSTATE[pair.status]

@@ -260,17 +260,8 @@ function refuseUserDbDuringTests(path: string): void {
 //   id + agent name). Internal helpers take surrogate ids. Resolution
 //   happens at the public-function entry, exactly once.
 //
-// `resolveWorkstreamId` is the only resolve helper that throws a typed
-// error from this leaf module — `WorkstreamNotFoundError` is defined
-// here, so there is no cycle. The task / agent resolvers RETURN
-// `number | null` (`tryResolveTaskId` / `tryResolveAgentId`) and let
-// SDK callers in `src/tasks/*.ts` / `src/agents.ts` throw the typed
-// `TaskNotFoundError` / `AgentNotFoundError` they own. That keeps
-// `cli/handle.ts`'s `instanceof`-based exit-code map (3 = not-found)
-// honest: a leaf throwing a plain `Error` whose `.name` was monkey-
-// patched to `"TaskNotFoundError"` flunks `instanceof TaskNotFoundError`
-// and falls through to the generic exit 1
-// (review_substrate_resolve_id_anonymous_errors).
+// `resolveWorkstreamId` throws a typed error from this leaf module —
+// `WorkstreamNotFoundError` is defined here, so there is no cycle.
 
 export class WorkstreamNotFoundError extends Error implements HasNextSteps {
   override readonly name: string = "WorkstreamNotFoundError";
@@ -357,34 +348,6 @@ export function tryResolveLiveWorkstreamId(db: Db, workstream: string): number |
   if (!row) return null;
   if (row.torn_down_at !== null) throw new WorkstreamTornDownError(workstream, row.torn_down_at);
   return row.id;
-}
-
-/** Resolve a (workstream_id, local_id) pair to the task's surrogate
- *  id, returning `null` on miss. SDK callers in `src/tasks/*.ts`
- *  wrap the null return in `TaskNotFoundError` so the CLI's typed-
- *  error → exit-code map (3 = not-found) fires. The leaf intentionally
- *  does NOT throw a typed error (it would either pull in a cyclic
- *  import or — as before — fake the `.name` and silently flunk
- *  `instanceof TaskNotFoundError`, falling through to exit 1).
- *  Renamed from `resolveTaskId` in
- *  review_substrate_resolve_id_anonymous_errors. */
-export function tryResolveTaskId(db: Db, workstreamId: number, localId: string): number | null {
-  const row = db
-    .prepare("SELECT id FROM tasks WHERE workstream_id = ? AND local_id = ?")
-    .get(workstreamId, localId) as { id: number } | undefined;
-  return row ? row.id : null;
-}
-
-/** Resolve a (workstream_id, agent_name) pair to the agent's surrogate
- *  id, returning `null` on miss. SDK callers in `src/agents.ts` wrap
- *  the null return in `AgentNotFoundError` so the CLI's typed-error →
- *  exit-code map (3 = not-found) fires. See `tryResolveTaskId` for the
- *  full rationale (review_substrate_resolve_id_anonymous_errors). */
-export function tryResolveAgentId(db: Db, workstreamId: number, name: string): number | null {
-  const row = db
-    .prepare("SELECT id FROM agents WHERE workstream_id = ? AND name = ?")
-    .get(workstreamId, name) as { id: number } | undefined;
-  return row ? row.id : null;
 }
 
 /**

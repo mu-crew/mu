@@ -7,8 +7,7 @@
 // `whoami` / `my-tasks` / `my-next` were merged into `mu me` /
 // `mu me tasks` / `mu me next` in audit_merge_self_verbs_into_mu_me
 // (audit_cleanups_post_schema_v5_wave). The three old verbs are
-// gone; the three cmd functions (`cmdMe`, `cmdMyTasks`, `cmdMyNext`)
-// stayed (with `cmdMe` formerly `cmdWhoami`).
+// gone; `cmdMyTasks` and `cmdMyNext` stayed.
 
 import { dirname } from "node:path";
 import { agentToOutput, liveAgentToOutput, workstreamIdOf } from "../agent-output.js";

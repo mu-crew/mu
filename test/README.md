@@ -58,7 +58,7 @@ helpers in `test/_mux.ts`:
 | Backend | Gate | Isolation |
 | --- | --- | --- |
 | tmux | `tmuxIntegrationAvailable()` (i.e. `$TMUX` is set) | **Structural** — `MU_TMUX_SOCKET` points the suite at a private `-L <socket>` server (see `_global-teardown.ts`) |
-| herdr | `await herdrIntegrationAvailable()` — server RUNNING *and* protocol COMPATIBLE, not merely installed | **Explicit** — `MU_HERDR_SESSION` names a private session; there is no private-socket equivalent |
+| herdr | none — herdr tests are explicit-only | **Explicit** — `MU_HERDR_SESSION` names a private session; there is no private-socket equivalent |
 
 ### ⚠️ The herdr blast shield
 

@@ -235,16 +235,6 @@ export function failureWithData(err: unknown, data: unknown): CliExitError {
 
 let activeCommand: Command | undefined;
 
-/** Test-only: introspect the current active command. */
-export function getActiveCommandForTest(): Command | undefined {
-  return activeCommand;
-}
-
-/** Test-only: clear stale state between vitest cases. */
-export function clearActiveCommandForTest(): void {
-  activeCommand = undefined;
-}
-
 /** Map a commander.CommanderError to (exitCode, label). The codes that
  *  represent successful early-exits (--help, --version) are mapped to
  *  exitCode 0 and a sentinel label so emitError can short-circuit
