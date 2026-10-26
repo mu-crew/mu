@@ -25,6 +25,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A worker that dies between two waits is `dead` (exit 6), not a heartbeat**
+  (`df2_wait_dead_after_reap`, dogfood-2 F1). A wait used to see a reaper flip only if one of its own
+  ticks had seen the owner first (in memory), so a wait started after the death, or a `mu wait
+  --resume` run after it, got a heartbeat with the task OPEN. The flip is now read from the ops log:
+  a watched task whose latest status change is the reaper's (`task.reap`) is dead when the flip came
+  after the wait's anchor. The anchor is the ops head when the wait starts; `--resume` replays the
+  stored one (`wait_resumes.spec.since`); a ref a caller registered owes every flip until its cursor
+  consumes it. A later claim, release, park or close is a decision and is not reported dead.
+- **A dead agent ref no longer hints `mu task show <agent name>`** (`df2_dead_hint_agent_ref`,
+  dogfood-2 F2). The hint now names the reaper's log lines, `mu log -w <ws> --source reaper -n 10`,
+  which list the tasks it reopened.
+
 - **`mu_delegate` with `workspace: true` honours `cwd` as the repo** (`bug_delegate_workspace_root`).
   It spawns `--worktree --root <cwd>`, so a pi session in a parent of several repos can name the one
   to branch; without `cwd` the caller's directory stays the repo. A queued or reissued call replays

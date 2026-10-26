@@ -30,6 +30,8 @@ export interface ResumeSpec {
   blockersOf?: { workstream: string; id: string };
   /** Seconds as the caller gave them; absent = the default. */
   timeout?: number;
+  /** The reaper-flip anchor (ops seq) of the wait that saved it: a worker that died since is still dead. */
+  since?: number;
 }
 
 export interface StoredResume {

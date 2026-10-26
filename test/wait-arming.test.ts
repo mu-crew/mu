@@ -671,6 +671,80 @@ describe("df1_wait_stale_dead: a deliberate close of a finished worker is not a 
   });
 });
 
+describe("df2_wait_dead_after_reap: a death between two waits is still dead (CLI)", () => {
+  /** worker-1 owns t1 (IN_PROGRESS); its pane then dies and the next mu call reaps it. */
+  function ownedThenPaneDies(): void {
+    liveMux();
+    seedAgent();
+    seedTask("t1");
+  }
+  const killPane = (): void => {
+    // The pane is gone: the fake mux lists none, so the next reconcile reaps the row.
+    mux.restore();
+    mux = installMux("tmux", async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+  };
+
+  it("(c) heartbeat while alive, pane dies, `mu wait --resume`: dead, exit 6 (not a heartbeat)", async () => {
+    ownedThenPaneDies();
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    const hb = await as({}, ["wait", "task:auth/t1", "-w", "auth", "--timeout", "0.2"]);
+    expect(hb.data).toMatchObject({ firing: { kind: "heartbeat" }, exit: 0 });
+    const id = /--resume (\w+)/.exec(String((hb.data as { resume: string }).resume))?.[1] ?? "";
+    killPane();
+    // Another mu call reaps it first (`mu state` reconciles): only the stored anchor can tell the
+    // resume that the flip is news; its own first read sees an OPEN, ownerless task.
+    await as({}, ["state", "-w", "auth", "--json"]);
+    expect(db.prepare("SELECT status FROM tasks WHERE local_id = 't1'").get()).toEqual({
+      status: "OPEN",
+    });
+    const r = await as({}, ["wait", "--resume", id, "-w", "auth"]);
+    expect(r.exitCode).toBe(6);
+    expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "task:auth/t1" }, exit: 6 });
+  });
+
+  it("(b) pane dies, then a typed-ref wait: its own first read reaps, and the flip is after its anchor: dead", async () => {
+    ownedThenPaneDies();
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    killPane();
+    const r = await as({}, ["wait", "task:auth/t1", "-w", "auth", "--timeout", "2"]);
+    expect(r.exitCode).toBe(6);
+    expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "task:auth/t1" } });
+  });
+
+  it("a release between the heartbeat and the resume is not a death", async () => {
+    ownedThenPaneDies();
+    await as(SESSION, ["task", "claim", "t1", "--for", "worker-1", "-w", "auth", "--json"]);
+    const hb = await as({}, ["wait", "task:auth/t1", "-w", "auth", "--timeout", "0.2"]);
+    const id = /--resume (\w+)/.exec(String((hb.data as { resume: string }).resume))?.[1] ?? "";
+    await as(SESSION, ["task", "release", "t1", "-w", "auth", "--json"]);
+    const stored = db.prepare("SELECT spec_json FROM wait_resumes WHERE id = ?").get(id) as {
+      spec_json: string;
+    };
+    // The resume is short: re-store it with a 0.2 s timeout so the heartbeat comes quickly.
+    db.prepare("UPDATE wait_resumes SET spec_json = ? WHERE id = ?").run(
+      JSON.stringify({ ...JSON.parse(stored.spec_json), timeout: 0.2 }),
+      id,
+    );
+    const r = await as({}, ["wait", "--resume", id, "-w", "auth"]);
+    expect(r.exitCode).toBeNull();
+    expect(r.data).toMatchObject({ firing: { kind: "heartbeat" }, exit: 0 });
+  });
+
+  it("df2_dead_hint_agent_ref: a dead AGENT ref never hints `task show <agent name>`", async () => {
+    ownedThenPaneDies();
+    await serve("worker-1");
+    await as(SESSION, ["agent", "send", "worker-1", "go", "-w", "auth", "--json"]);
+    killPane();
+    const r = await as(SESSION, ["wait", "-w", "auth", "--timeout", "2"]);
+    expect(r.exitCode).toBe(6);
+    const data = r.data as { firing: { ref: string }; nextSteps: { command: string }[] };
+    const hints = data.nextSteps.map((s) => s.command);
+    expect(hints.some((c) => /task show worker-1/.test(c))).toBe(false);
+    expect(data.firing.ref).toBe("agent:auth/worker-1");
+    expect(hints).toContain("mu log -w auth --source reaper -n 10");
+  });
+});
+
 describe("owed vs done: an agent ref is owed only while it owns open work or an unsettled run", () => {
   beforeEach(liveMux);
 

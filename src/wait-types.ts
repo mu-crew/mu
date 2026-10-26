@@ -165,6 +165,8 @@ export interface WaitResult {
   superseded?: boolean;
   /** Everything watched is done and was already delivered: nothing is owed. */
   drained?: boolean;
+  /** The reaper-flip anchor this wait used: a resume of it keeps it. */
+  sinceSeq?: number;
 }
 
 /** What an agent read or watch reports; an AgentObservation satisfies it. */
@@ -233,6 +235,8 @@ export interface WaitOptions {
   until?: "idle" | { text: string };
   /** Default and cap WAIT_HEARTBEAT_CAP_MS; 0 means the cap. */
   timeoutMs?: number;
+  /** Ops seq a reaper flip must come after to be a death this wait reports (default: the ops head at start; a resume passes the stored one). */
+  sinceSeq?: number;
   pollMs?: number;
   signal?: AbortSignal;
   /**
