@@ -346,8 +346,10 @@ describe("--until-text on a non-pi pane (no ctl text exists for it)", () => {
           });
       },
     });
-    expect(r.event).toMatchObject({ kind: "settled", ref: { kind: "agent", id: "gate" } });
+    expect(r.event).toMatchObject({ kind: "pane-text", ref: { kind: "agent", id: "gate" } });
     expect(r.refs[0]).toMatchObject({ fired: true, textSource: "pane" });
+    // No run finished: never `settled`, never a close.
+    expect(r.refs[0]?.settled).toBeUndefined();
     expect(r.refs[0]?.close).toBeUndefined();
   });
 

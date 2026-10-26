@@ -145,6 +145,7 @@ import {
   TaskParkStateError,
   TaskTitleSlugEmptyError,
 } from "../tasks.js";
+import { WaitResumeNotFoundError } from "../wait-resume.js";
 import {
   WorkstreamExistsError,
   WorkstreamHasAgentsError,
@@ -373,6 +374,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (
     err instanceof AgentNotFoundError ||
     err instanceof DelegateNotFoundError ||
+    err instanceof WaitResumeNotFoundError ||
     err instanceof TaskNotFoundError ||
     err instanceof TaskNoteRangeError ||
     err instanceof HostNotFoundError ||

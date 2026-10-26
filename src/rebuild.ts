@@ -147,6 +147,8 @@ const UNREBUILDABLE_TABLES = [
   "delegate_calls",
   "wait_cursors",
   "wait_registrations",
+  // The condition sets behind `mu wait --resume <id>`: a handle is worthless on a rebuilt DB.
+  "wait_resumes",
   "agent_settles",
   "host_profiles",
   "host_channels",

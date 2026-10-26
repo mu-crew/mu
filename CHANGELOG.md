@@ -100,16 +100,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (a bare word is refused with the spelling that works). No refs: the wait owns what the caller
   started (the agents it spawned, by `agents.spawner`, and their tasks; its delegate calls).
   `data` is `firing` (= `event`: `kind`, `ref`, `incarnation`, `runs`; `closed settled input dead
-  stall delegate heartbeat interrupted`), `exit` (0, 6 dead, 7 input or stall, 130/143 signal),
+  stall delegate pane-text heartbeat interrupted`), `exit` (0, 6 dead, 7 input or stall, 130/143 signal),
   `timedOut`, `interrupted`, `open`, `snapshots`, `tally` (with a `6/12 CONFIRMED` summary),
   `cursor`, `resume`. A timeout is `ok:true`, `timedOut`, exit 0. SIGINT/SIGTERM print the final
   snapshot (the state read at that moment) and `resume`, then exit 130/143; SIGKILL cannot print.
-  The result is bounded to 4096 bytes: texts shrink first (tail kept, `lastTextCut`), then
-  snapshots (`snapshotsCut`, `retrieve`); firing, exit and resume are never cut. `resume` repeats
-  every condition with its real value, refs typed, POSIX-quoted. Flags: `--first`/`--first-of`
+  The result is bounded to 4096 bytes on its FINAL bytes, `nextSteps`, `humanNeeds` and `warning`
+  included: texts shrink first (tail kept, `lastTextCut`), then the hints (`nextStepsCut`) and
+  human needs (`humanNeedsCut`), the tally's findings, and the snapshots (`snapshotsCut`,
+  `retrieve`; the shared `pageRecords`); firing, exit, open and resume are never cut. `resume` is a
+  stored handle, `mu wait --resume <id>` (+ `-w`): the new machine-local `wait_resumes` table holds
+  the refs still owed (each agent with the run baseline and pi incarnation it was last SEEN at, so a
+  restarted pi is refused, not miscounted), mode, every filter, the deadline as given and the
+  callers the wait ran for, so a resume is lossless whatever its size (30 refs, 24 was the old
+  silent cut) and runs for the same caller from any shell. `--resume` takes nothing else (a flag or
+  ref beside it is a usage error); an unknown or older-than-14-days handle is exit 3. With nothing
+  left to wait for and no caller (a plain shell whose named refs all fired) `resume` is `null` with
+  `resumeWhy`, never a command that fails. Flags: `--first`/`--first-of`
   (default), `--all`/`--all-of`, `--until-idle`, `--until-text <re>` (the bounded regex; a pi
-  agent's ctl `lastText`, or the tail of a non-pi pane whose socket does not answer, marked
-  `textSource: pane` and never a CLOSE source), `--status`, `--stuck-after`, `--on-stall exit|warn`
+  agent's ctl `lastText`, never its pane. A non-pi pane (no answering socket) has no run to settle:
+  its tail is matched and the wait ends as the distinct `pane-text` event, `textSource: pane`, never
+  `settled` and never a CLOSE source), `--status`, `--stuck-after`, `--on-stall exit|warn`
   (`steer`/`release` arrive with the stall-action units and are refused by name), `--wave`,
   `--blockers-of`, `--timeout` (default and cap 1500 s; 0 = the cap; one warning when below 300 s),
   `--after-runs`, `--inc`. One stderr heartbeat line a minute; never ANSI. The engine gains

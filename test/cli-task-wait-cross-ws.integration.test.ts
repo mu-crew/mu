@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { setWaitSleepForTests } from "../src/tasks/wait.js";
 import { addTask, closeTask } from "../src/tasks.js";
+import { loadResume } from "../src/wait-resume.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -25,9 +26,19 @@ interface WaitOut {
   exit: number;
   timedOut: boolean;
   snapshots: { ref: string; workstream: string; id: string; status: string; fired: boolean }[];
-  resume: string;
+  resume: string | null;
   nextSteps?: { intent: string; command: string }[];
 }
+
+const storedRefs = (resume: string | null, dbPath: string): string[] => {
+  const id = /--resume (\w+)/.exec(resume ?? "")?.[1] ?? "";
+  const db = openDb({ path: dbPath });
+  try {
+    return loadResume(db, id).spec.refs.map((r) => `${r.workstream}/${r.id}`);
+  } finally {
+    db.close();
+  }
+};
 
 describe("mu task wait — cross-workstream qualified refs + --first", () => {
   let tempDir: string;
@@ -77,7 +88,8 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
       fired: true,
     });
     expect(out.snapshots[1]).toMatchObject({ workstream: "wsb", id: "bar", fired: false });
-    expect(out.resume).toBe("mu wait task:wsb/bar --timeout 5");
+    expect(out.resume).toMatch(/^mu wait --resume [0-9a-f]{10}$/);
+    expect(storedRefs(out.resume, dbPath)).toEqual(["wsb/bar"]);
   });
 
   it("mixed bare + qualified: bare uses -w, qualified uses its prefix", async () => {
@@ -116,10 +128,11 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     expect(out.firing.kind).toBe("closed");
     expect(out.snapshots).toHaveLength(2);
     expect(out.snapshots.every((s) => s.fired)).toBe(true);
-    expect(out.resume).toBe("mu wait --all --timeout 5");
+    // Everything was delivered and no caller owns more: no command that would fail.
+    expect(out.resume).toBeNull();
   });
 
-  it("--all partial timeout: ok:true, timedOut, exit 0; resume names only the unmet ref", async () => {
+  it("--all partial timeout: ok:true, timedOut, exit 0; the stored resume keeps every ref", async () => {
     addTask(db, { localId: "foo", workstream: "wsa", title: "Foo", impact: 50, effortDays: 1 });
     addTask(db, { localId: "bar", workstream: "wsb", title: "Bar", impact: 50, effortDays: 1 });
     // foo CLOSED, bar OPEN → --all times out with partial progress.
@@ -137,7 +150,8 @@ describe("mu task wait — cross-workstream qualified refs + --first", () => {
     expect(out.firing).toEqual({ kind: "heartbeat", ref: null });
     expect(out.snapshots.filter((s) => s.fired).map((s) => s.ref)).toEqual(["task:wsa/foo"]);
     expect(out.snapshots.filter((s) => !s.fired).map((s) => s.ref)).toEqual(["task:wsb/bar"]);
-    expect(out.resume).toContain("task:wsb/bar");
+    // A timeout delivered nothing: the stored --all wait still names both (foo stays fired on resume).
+    expect(storedRefs(out.resume, dbPath)).toEqual(["wsa/foo", "wsb/bar"]);
   });
 
   // ─── Bad ref handling ──────────────────────────────────────────────

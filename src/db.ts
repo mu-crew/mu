@@ -10,7 +10,7 @@
 //   - 1 machine-local table: task_auto (per-task auto-dispatch state); v13
 //     adds delegate_calls, wait_cursors, agent_settles, host_profiles,
 //     host_channels, spawn_receipts, human_needs, wait_registrations,
-//     wait_action_receipts and remote_recovery
+//     wait_action_receipts, wait_resumes and remote_recovery
 //   - 1 ops log:       ops        (the single append-only record of
 //                                  every change — VISION.md § 2b)
 //   - 2 sync tables:   sync_peers (per-peer watermarks),
@@ -20,7 +20,7 @@
 //   - 1 lookup table:  task_substates (legal (status, substate) pairs,
 //                                      seeded from code when missing)
 //   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 15 entries at v12 (25 at v13: see there).
+//   => EXPECTED_TABLES is exactly 15 entries at v12 (26 at v13: see there).
 //
 // v12 is additive over v11: workstreams.torn_down_at (soft teardown),
 // agents.cwd / agents.base (worktree path and the commit it forked
@@ -842,7 +842,7 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 25 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 26 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
@@ -867,6 +867,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "wait_action_receipts",
   "wait_cursors",
   "wait_registrations",
+  "wait_resumes",
   "workstreams",
   "worktrees",
 ];
@@ -952,6 +953,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    host_profiles    ssh-free command templates per remote host.
  *    host_channels    the connection slots a host's `max_sessions` counts:
  *                     one row per live holder (invocation pid or agent pane).
+ *    wait_resumes     one row per `mu wait` result that left something owed:
+ *                     the full condition set behind `mu wait --resume <id>`.
  *    wait_action_receipts one row per stall action a wait took on a task
  *                     (task id, owner registry id, ctl incarnation, action):
  *                     the exclusion that keeps a nudge to ONE and the record
@@ -997,6 +1000,7 @@ export const MACHINE_LOCAL_TABLES = [
   "wait_action_receipts",
   "wait_cursors",
   "wait_registrations",
+  "wait_resumes",
   "worktrees",
 ] as const;
 
@@ -1380,6 +1384,19 @@ CREATE TABLE IF NOT EXISTS spawn_receipts (
   created_at  TEXT NOT NULL,
   updated_at  TEXT NOT NULL,
   PRIMARY KEY (task_id, attempt_key)
+);
+
+-- wait_resumes: the stored condition set of a wait that ended with something
+-- still owed (machine-local; src/wait-resume.ts owns the JSON shape). The
+-- result prints only 'mu wait --resume <id>': the refs (with the run baseline
+-- and pi incarnation each was seen at), mode, filters, deadline and the callers
+-- it ran for live here, so a resume is lossless and its size does not grow with
+-- the wait. No foreign keys: a handle outlives the tasks and agents it names.
+CREATE TABLE IF NOT EXISTS wait_resumes (
+  id         TEXT PRIMARY KEY,
+  callers_json TEXT NOT NULL,
+  spec_json  TEXT NOT NULL,
+  created_at TEXT NOT NULL
 );
 
 -- wait_action_receipts: one row per stall action a wait took (machine-local,

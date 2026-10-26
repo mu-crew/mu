@@ -9,6 +9,10 @@
 // agents it spawned and their tasks, its delegate calls). `mu task wait` is
 // the same core over `task:` refs (src/cli/tasks/claim.ts).
 //
+// `mu wait --resume <id>` continues a wait from its stored condition set (src/wait-resume.ts):
+// every result that leaves something to wait for prints that one short handle, so the resume
+// is lossless (no ref, incarnation or caller is dropped) whatever the size of the wait.
+//
 // stdout is ONE JSON envelope for every terminal outcome: an event, a heartbeat
 // timeout (ok:true, timedOut), SIGINT/SIGTERM (a final snapshot and a resume
 // command), and every error. SIGKILL cannot print and is not promised.
@@ -43,27 +47,17 @@ import { type WaitRef, type WaitResult, type WaitSnapshot, waitForEvents } from 
 import { currentCallers } from "../wait-callers.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
 import { compileTextMatcher } from "../wait-regex.js";
+import { loadResume, type ResumeSpec, saveResume } from "../wait-resume.js";
 import { CliExitError } from "./handle.js";
-import { type WaitConditions, waitData } from "./wait-output.js";
+import { owedRefs, resumeCommand, waitData } from "./wait-output.js";
 
 /** Heartbeat to stderr every this many ms while a wait is open. */
 const HEARTBEAT_MS = 60_000;
 /** The default `--timeout` (the engine's heartbeat cap), in seconds. */
 export const WAIT_DEFAULT_TIMEOUT_S = 1500;
 
-/** What a wait verb asks of the core, whatever spelling it came in. */
-export interface WaitSpec {
-  refs: WaitRef[];
-  mode: "first" | "all";
-  scope?: string;
-  status?: string;
-  untilText?: string;
-  stuckAfter?: number;
-  onStall: "exit" | "warn";
-  wave?: string;
-  blockersOf?: { workstream: string; id: string };
-  /** Seconds, as the caller gave them; absent = the default. */
-  timeout?: number;
+/** What a wait verb asks of the core, whatever spelling it came in (the stored shape plus the verb's name). */
+export interface WaitSpec extends ResumeSpec {
   /** The words of the verb, for messages. */
   verb: string;
 }
@@ -248,6 +242,8 @@ function reasonOf(result: WaitResult, signal: string | undefined, open: number):
       return `${who} is ${snap?.status ?? "CLOSED"}${snap?.substate !== undefined && snap.substate !== "done" ? `/${snap.substate}` : ""}`;
     case "settled":
       return `${who} finished its run${snap?.runs !== undefined ? ` (run ${snap.runs})` : ""}`;
+    case "pane-text":
+      return `${who}'s pane printed the awaited text (no control socket: this is pane output, not a finished run)`;
     case "input":
       return `${who} is blocked on a dialog${snap?.blocked !== undefined ? ` (${snap.blocked.kind})` : ""}; its run is not finished`;
     case "dead":
@@ -363,9 +359,11 @@ export async function runWait(
   sig: WaitSignals,
   opts: {
     extraNextSteps?: (result: WaitResult) => Promise<{ intent: string; command: string }[]>;
+    /** A resume runs for the callers the stored wait ran for, not for whoever types it. */
+    callers?: readonly string[];
   } = {},
 ): Promise<void> {
-  const callers = currentCallers();
+  const callers = opts.callers !== undefined ? [...opts.callers] : currentCallers();
   if (spec.refs.length === 0 && spec.wave === undefined && spec.blockersOf === undefined) {
     if (callers.length === 0) {
       throw new UsageError(
@@ -391,19 +389,6 @@ export async function runWait(
   }
   const status = spec.status !== undefined ? parseStatusOption(spec.status) : undefined;
   const timeoutS = spec.timeout ?? WAIT_DEFAULT_TIMEOUT_S;
-  const conditions: WaitConditions = {
-    mode: spec.mode,
-    ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
-    ...(status !== undefined ? { status } : {}),
-    ...(spec.untilText !== undefined ? { untilText: spec.untilText } : {}),
-    ...(spec.stuckAfter !== undefined ? { stuckAfter: spec.stuckAfter } : {}),
-    ...(spec.onStall !== "exit" ? { onStall: spec.onStall } : {}),
-    ...(spec.wave !== undefined ? { wave: spec.wave } : {}),
-    ...(spec.blockersOf !== undefined
-      ? { blockersOf: `${spec.blockersOf.workstream}/${spec.blockersOf.id}` }
-      : {}),
-    ...(spec.timeout !== undefined ? { timeout: spec.timeout } : {}),
-  };
 
   let open = 0;
   let last: readonly WaitSnapshot[] = [];
@@ -461,18 +446,48 @@ export async function runWait(
   const signal = sig.which();
   const exit = result.interrupted ? (signal === "SIGTERM" ? 143 : 130) : result.exit;
   const openNow = result.refs.filter((s) => !s.fired && !s.dead).length;
+  // The handle: what is still owed, stored; the printed line stays tiny. With no caller there is
+  // nothing to discover, so no owed ref (and no wave or blockers) means nothing to resume.
+  const owed = owedRefs(result, spec.mode, spec.refs);
+  const resumable =
+    owed.length > 0 ||
+    callers.length > 0 ||
+    spec.wave !== undefined ||
+    spec.blockersOf !== undefined;
+  const resume = resumable
+    ? resumeCommand(
+        saveResume(db, callers, {
+          refs: owed,
+          mode: spec.mode,
+          onStall: spec.onStall,
+          ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
+          ...(status !== undefined ? { status } : {}),
+          ...(spec.untilText !== undefined ? { untilText: spec.untilText } : {}),
+          ...(spec.stuckAfter !== undefined ? { stuckAfter: spec.stuckAfter } : {}),
+          ...(spec.wave !== undefined ? { wave: spec.wave } : {}),
+          ...(spec.blockersOf !== undefined ? { blockersOf: spec.blockersOf } : {}),
+          ...(spec.timeout !== undefined ? { timeout: spec.timeout } : {}),
+        }),
+        spec.scope,
+      )
+    : null;
   const extra = opts.extraNextSteps === undefined ? [] : await opts.extraNextSteps(result);
   const nextSteps = [...extra, ...nextStepsOf(result, spec.scope)];
   const short =
     result.timedOut && spec.timeout !== undefined && spec.timeout > 0 && spec.timeout < 300
-      ? `--timeout ${spec.timeout} is below the ${WAIT_DEFAULT_TIMEOUT_S}s default: the wait ended at your deadline, not on an event; re-run the resume command`
+      ? `--timeout ${spec.timeout} is below the ${WAIT_DEFAULT_TIMEOUT_S}s default: the wait ended at your deadline, not on an event; run the resume command`
       : undefined;
   emitJson(
     waitData({
       result,
       exit,
-      conditions,
-      explicit: spec.refs,
+      resume,
+      ...(resume === null
+        ? {
+            resumeWhy:
+              "everything named was delivered and no caller owns more: nothing left to wait for",
+          }
+        : {}),
       ...(signal !== undefined ? { signal } : {}),
       reason: reasonOf(result, signal, openNow),
       nextSteps,
@@ -500,6 +515,7 @@ interface WaitOpts {
   timeout?: number;
   afterRuns?: number;
   inc?: string;
+  resume?: string;
   workstream?: string | string[];
 }
 
@@ -559,6 +575,7 @@ export async function cmdWait(
   o: WaitOpts,
   sig: WaitSignals,
 ): Promise<void> {
+  if (o.resume !== undefined) return cmdWaitResume(db, rawRefs, o, sig);
   const mode = waitMode(o);
   if (o.untilIdle === true && o.untilText !== undefined) {
     throw new UsageError("--until-idle and --until-text are two different conditions: pass one", {
@@ -595,6 +612,55 @@ export async function cmdWait(
   await runWait(db, spec, sig);
 }
 
+/**
+ * `mu wait --resume <id>`: the stored wait, whole. Nothing else may be named (a flag or a
+ * ref beside the handle would be a second, silently different wait); the callers are the
+ * ones the stored wait ran for. `-w` is a guard: it must name the stored scope.
+ */
+async function cmdWaitResume(
+  db: Db,
+  rawRefs: readonly string[],
+  o: WaitOpts,
+  sig: WaitSignals,
+): Promise<void> {
+  const id = o.resume ?? "";
+  const extras = (
+    [
+      ["refs", rawRefs.length > 0],
+      [
+        "--first/--all",
+        o.first === true || o.firstOf === true || o.all === true || o.allOf === true,
+      ],
+      ["--until-idle", o.untilIdle === true],
+      ["--until-text", o.untilText !== undefined],
+      ["--status", o.status !== undefined],
+      ["--stuck-after", o.stuckAfter !== undefined],
+      ["--on-stall", o.onStall !== undefined],
+      ["--wave", o.wave !== undefined],
+      ["--blockers-of", o.blockersOf !== undefined],
+      ["--timeout", o.timeout !== undefined],
+      ["--after-runs/--inc", o.afterRuns !== undefined || o.inc !== undefined],
+    ] as const
+  )
+    .filter(([, given]) => given)
+    .map(([name]) => name);
+  if (extras.length > 0) {
+    throw new UsageError(
+      `--resume ${id} replays the stored wait as it was: do not also pass ${extras.join(", ")} (to change the wait, name the refs again without --resume)`,
+      { showHelp: false },
+    );
+  }
+  const stored = loadResume(db, id);
+  const scope = normalizeInheritedWorkstream(o.workstream);
+  if (scope !== undefined && scope !== stored.spec.scope) {
+    throw new UsageError(
+      `--resume ${id}: -w ${scope} does not match the stored wait (${stored.spec.scope === undefined ? "no workstream" : `-w ${stored.spec.scope}`})`,
+      { showHelp: false },
+    );
+  }
+  await runWait(db, { ...stored.spec, verb: "mu wait --resume" }, sig, { callers: stored.callers });
+}
+
 export function wireWaitCommand(program: Command): void {
   program
     .command("wait [refs...]")
@@ -604,7 +670,7 @@ export function wireWaitCommand(program: Command): void {
         `Refs are typed: ${TYPED_FORMS}. No refs: the wait owns what this caller started (agents it spawned and their tasks, its delegate calls).`,
         "An event is a task closing, an owner dying (exit 6), an agent finishing its run, a dialog or stall needing you (exit 7), a delegate answer, or the heartbeat cap (--timeout, default 1500 s; ok:true with timedOut, exit 0). SIGINT/SIGTERM print the final snapshot and `resume` (exit 130/143); SIGKILL cannot.",
         "Delegate answers (`mu_delegate`) arrive here: your delegate calls end the wait as `delegate` events, and `--wave <name>` waits on a wave and returns `data.tally` (`6/12 CONFIRMED, ...`) instead of N follow-ups.",
-        "Read `data.firing.kind` and `data.exit`; to keep waiting run `data.resume`. First event is the default; --all waits for every ref. Parse it: `mu wait task:a task:b | jq -r .data.firing.ref`.",
+        "Read `data.firing.kind` and `data.exit`; to keep waiting run `data.resume` (`mu wait --resume <id>`, a stored handle; null when nothing is left). First event is the default; --all waits for every ref. Parse it: `mu wait task:a task:b | jq -r .data.firing.ref`.",
       ].join(" "),
     )
     .option("--first", "end on the first event (default)")
@@ -614,7 +680,7 @@ export function wireWaitCommand(program: Command): void {
     .option("--until-idle", "a run ending is the event (default for agents)")
     .option(
       "--until-text <regex>",
-      "a settled run's final text (or a done task's report) must match: bounded regex, at most 200 chars, no backreferences or lookaround. A pi agent's text is its ctl lastText (never its pane); a non-pi pane has no ctl, so its tail is the text (snapshot textSource:pane)",
+      "a settled run's final text (or a done task's report) must match: bounded regex, at most 200 chars, no backreferences or lookaround. A pi agent's text is its ctl lastText (never its pane); a non-pi pane has no ctl and no run to settle: its tail is matched and the wait ends as the distinct `pane-text` event (textSource:pane), never `settled`",
     )
     .option(
       "--status <status>",
@@ -654,6 +720,10 @@ export function wireWaitCommand(program: Command): void {
       },
     )
     .option("--inc <incarnation>", "agent refs: pin the pi process; another one is refused")
+    .option(
+      "--resume <id>",
+      "continue the wait a result's `resume` handle names, with every stored condition (refs with their run baseline and pi incarnation, mode, filters, deadline, callers); nothing else may be passed",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (refs: string[]) {

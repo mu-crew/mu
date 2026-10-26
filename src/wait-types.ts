@@ -37,6 +37,8 @@ export type WaitEventKind =
   | "stall"
   | "delegate"
   | "pane-exit"
+  /** An agent with no control socket: its pane tail matched `until.text`. Never a settled run. */
+  | "pane-text"
   | "heartbeat"
   | "interrupted";
 
