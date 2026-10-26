@@ -96,6 +96,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   stays a read-only archive and workstreams move one at a time
   (docs/mu-next/README.md, Move). Docs only.
 
+- **Root `-w` reaches every verb as its own shape** (`bug_delegates_global_w_not_a_string`):
+  `mu -w auth delegates tally --wave w1` (and `delegates register`) died `value.trim is not a
+  function`, because `optsWithGlobals()` let the root's raw array overwrite the verb's `-w`. The
+  forwarding hook now settles the root to what the verb holds. A test walks every verb with a `-w`.
+
 ### Removed
 
 - **`mu agent remote-env` and the `REMOTE:` / `REMOTE_BASE:` note convention.**
