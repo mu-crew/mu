@@ -140,13 +140,13 @@ export interface DrillProps {
   runtime: DashboardRuntime;
   /** Lines to show above the body (an attach failure and the outside-client line). */
   notice: readonly string[];
-  /** False while the terminal belongs to an attach: no key is read. */
-  active: boolean;
+  /** True while the terminal belongs to an attach: a key is ignored (the hook stays active). */
+  busy: { readonly current: boolean };
   onClose(): void;
   onAttach(target: Extract<DrillTarget, { kind: "scrollback" }>): void;
 }
 
-export function Drill({ target, runtime, notice, active, onClose, onAttach }: DrillProps) {
+export function Drill({ target, runtime, notice, busy, onClose, onAttach }: DrillProps) {
   const { columns, rows } = useWindowSize();
   const yank = useYank();
   const [all, setAll] = useState(false);
@@ -221,24 +221,22 @@ export function Drill({ target, runtime, notice, active, onClose, onAttach }: Dr
         ? "j/k PgUp/PgDn g/G scroll  r reload  a attach  y copy cmd  Esc back"
         : "j/k PgUp/PgDn g/G scroll  y copy cmd  Esc back";
 
-  useInput(
-    (input, key) => {
-      setFlash(null);
-      const at = topSeen.current;
-      if (key.escape || input === "q") return onClose();
-      if (key.downArrow || input === "j") setTop(at + 1);
-      else if (key.upArrow || input === "k") setTop(Math.max(0, at - 1));
-      else if (key.pageDown || input === " ") setTop(at + Math.max(1, height));
-      else if (key.pageUp) setTop(Math.max(0, at - Math.max(1, height)));
-      else if (input === "g" || key.home) setTop(0);
-      else if (input === "G" || key.end) setTop(END);
-      else if (input === "r") setReload((n) => n + 1);
-      else if (input === "A" && target.kind === "notes") setAll((a) => !a);
-      else if (input === "a" && target.kind === "scrollback") onAttach(target);
-      else if (input === "y") void yank(target, all).then(setFlash);
-    },
-    { isActive: active },
-  );
+  useInput((input, key) => {
+    if (busy.current) return;
+    setFlash(null);
+    const at = topSeen.current;
+    if (key.escape || input === "q") return onClose();
+    if (key.downArrow || input === "j") setTop(at + 1);
+    else if (key.upArrow || input === "k") setTop(Math.max(0, at - 1));
+    else if (key.pageDown || input === " ") setTop(at + Math.max(1, height));
+    else if (key.pageUp) setTop(Math.max(0, at - Math.max(1, height)));
+    else if (input === "g" || key.home) setTop(0);
+    else if (input === "G" || key.end) setTop(END);
+    else if (input === "r") setReload((n) => n + 1);
+    else if (input === "A" && target.kind === "notes") setAll((a) => !a);
+    else if (input === "a" && target.kind === "scrollback") onAttach(target);
+    else if (input === "y") void yank(target, all).then(setFlash);
+  });
 
   const visible = all_.slice(first, first + height);
   const noticeCount = lines.head.length;
