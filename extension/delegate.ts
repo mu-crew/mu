@@ -2,8 +2,12 @@
  * mu pi extension, parent side: the `mu_delegate` tool.
  *
  * A delegate is a scratch agent started for one task. The tool spawns it,
- * hands it the task, returns at once, and posts the answer back into this
- * conversation as a follow-up when the delegate's run settles.
+ * hands it the task and returns at once. When the delegate's run settles its
+ * answer is recorded (`mu delegates finish`: verdict note, report, close) and
+ * the parent's settle wait shows it to the model (nudge.ts). The one identity
+ * is the call id; the pi message this side sends is only a WAKE, a one-line
+ * pointer that starts a turn when pi is idle and nothing else will. Losing or
+ * repeating a wake loses or repeats no answer.
  *
  * Everything is the `mu` CLI (spawn / send / wait --json / read / abort /
  * close): the tool only orders the calls and formats the result, so a
@@ -18,30 +22,25 @@
  * that one serves a pi mu spawned; this one runs in a pi that is not.
  */
 import { randomBytes } from "node:crypto";
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { statSync } from "node:fs";
 import { qualifiedRefProblem, workstreamNameProblem } from "../src/workstream-scope.js";
 import { labelStem, modelCommand, normalizeModel } from "./delegate-args.js";
 import { type CallInfo, callsApi, type FinishResult, type RecordTarget } from "./delegate-calls.js";
 import {
   DELEGATE_TIMEOUT_S,
   DELEGATE_WORKSTREAM,
-  type DroppedAnswer,
+  type DroppedWake,
   delegateMessage,
-  droppedAnswersDir,
   droppedNote,
   evidenceLines,
   lastAssistantTextIn,
   type MessageExtras,
   type PaneFate,
   type WaitAgent,
+  type WakeAnswer,
+  wakeText,
 } from "./delegate-format.js";
-import {
-  type ProcessRun,
-  processFailedText,
-  processMessage,
-  processStarted,
-} from "./delegate-process-format.js";
+import { type ProcessRun, processFailedText, processStarted } from "./delegate-process-format.js";
 import { delegateTraceOn, TRACE_EVENTS, trace, traceFields } from "./delegate-trace.js";
 import {
   defaultRunner,
@@ -56,15 +55,16 @@ export { labelStem, modelCommand, normalizeModel } from "./delegate-args.js";
 export {
   DELEGATE_TIMEOUT_S,
   DELEGATE_WORKSTREAM,
-  type DroppedAnswer,
+  type DroppedWake,
   delegateMessage,
-  droppedAnswersDir,
   droppedNote,
   formatElapsed,
   lastAssistantTextIn,
   type MessageExtras,
   type PaneFate,
   type WaitAgent,
+  type WakeAnswer,
+  wakeText,
 } from "./delegate-format.js";
 export { delegateTraceOn, delegateTracePath } from "./delegate-trace.js";
 export {
@@ -209,21 +209,20 @@ function piSessionId(ctx: DelegateCtx | undefined): string | undefined {
 
 /** What the rest of the extension may ask the delegate side. */
 export interface DelegateHandle {
-  /** A delegate answer is being delivered or waits in pi's follow-up
-   *  queue: it will resume the agent itself. pi's hasPendingMessages()
-   *  does not count custom follow-ups, so this is the only signal. */
+  /** A wake is being delivered or waits in pi's follow-up queue: its own turn
+   *  runs the settle wait. pi's hasPendingMessages() does not count custom
+   *  follow-ups, so this is the only signal. */
   answerPending(): boolean;
-  /** Call `onWake` each time an answer starts on its way; returns the unsubscribe.
-   *  The settle wait cancels on it, and the answer's own settle waits again. */
-  onAnswer(onWake: () => void): () => void;
+  /** The settle showed these answers (call ids), or found nothing owed by a wait
+   *  started at epoch ms `before`: no wake is owed for them. */
+  delivered(shown: readonly string[] | { before: number }): void;
 }
 
 export function registerDelegate(
   pi: MuDelegateApi,
   run: MuRunner = defaultRunner(),
 ): DelegateHandle {
-  if (!delegateEnabled()) return { answerPending: () => false, onAnswer: () => () => {} };
-  const wakes = new Set<() => void>();
+  if (!delegateEnabled()) return { answerPending: () => false, delivered: () => {} };
   if (delegateTraceOn())
     for (const ev of TRACE_EVENTS)
       pi.on(ev, (e, ctx) => {
@@ -235,14 +234,14 @@ export function registerDelegate(
     options: Parameters<MuDelegateApi["sendMessage"]>[1],
     why: string,
   ): void | Promise<void> => {
-    const d = message.details as { delivery?: unknown; name?: unknown } | undefined;
-    const a = typeof d?.delivery === "number" ? arriving.get(d.delivery) : undefined;
+    const d = message.details as { wake?: unknown; calls?: unknown } | undefined;
+    const a = typeof d?.wake === "number" ? arriving.get(d.wake) : undefined;
     if (a && options) {
       options = { ...options };
       a.message = message;
       a.opts = [...(a.opts ?? []), options];
     }
-    const at = { why, delivery: d?.delivery, name: d?.name, ...options };
+    const at = { why, wake: d?.wake, calls: d?.calls, ...options };
     trace("sendMessage", { ...at, arriving: arriving.size });
     try {
       const r = pi.sendMessage(message, options);
@@ -259,33 +258,30 @@ export function registerDelegate(
   /** Calls past the cap, FIFO, at most `DELEGATE_QUEUE_FACTOR * delegateMax()` long. */
   const queue: Queued[] = [];
   let queueSeq = 0;
-  /** Delegates that finished whose follow-up has not entered the
-   *  conversation: being delivered, or queued behind a running turn.
-   *  Keyed by a per-delivery id carried in the message's details, and
-   *  cleared on that message's message_start. `sent` says whether
-   *  pi.sendMessage has returned: pi accepted it, which says nothing
-   *  about where it sits. The rest is what a dropped note needs. */
+  /** Answers recorded here that no settle has shown yet and no wake has
+   *  carried into the conversation, by call id. */
+  const owed = new Map<string, WakeAnswer & { at: number }>();
+  /** Wakes that have not entered the conversation: being delivered, or queued
+   *  behind a running turn. Keyed by a per-wake id carried in the message's
+   *  details, cleared on its message_start. `sent`: pi.sendMessage returned (pi
+   *  accepted it, which says nothing about where it sits). */
   const arriving = new Map<
     number,
     {
       sent: boolean;
-      name: string;
-      content?: string;
-      /** The follow-up as sent, to send again if pi's queue loses it. */
+      calls: string[];
+      /** The wake as sent, to send again if pi's queue loses it. */
       message?: Parameters<MuDelegateApi["sendMessage"]>[0];
       /** Sent again after pi lost it; one more loss drops it. */
       resent?: boolean;
-      /** Every options object handed to pi for it: pi reads one lazily
-       *  when it runs a send it deferred, so a dropped answer is
-       *  defused through them. */
+      /** Every options object handed to pi for it: pi reads one lazily when it
+       *  runs a send it deferred, so a dropped wake is defused through them. */
       opts?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" }[];
-    } & Omit<DroppedAnswer, "copy">
+    }
   >();
-  let deliverySeq = 0;
-  /** Deliveries that reached the conversation, or were dropped with a copy:
-   *  a later message_start for one is a duplicate, which cannot be unsent
-   *  and is shown as a stub. */
-  const seen = new Set<number>();
+  let wakeSeq = 0;
+  /** A pi run is active (agent_start .. agent_settled): its settle will look. */
+  let busy = false;
   let settleCheck: ReturnType<typeof setImmediate> | undefined;
   let closed = false;
   let lastPending = 0;
@@ -301,29 +297,43 @@ export function registerDelegate(
       // a listener's fault must not cost a delegate its answer
     }
   };
-  /** pi accepted the follow-up for `delivery`. */
-  const markSent = (delivery: number) => {
-    const a = arriving.get(delivery);
-    if (a) a.sent = true;
+  /** Wake pi for every owed answer no wake covers yet: ONE message, a pointer per
+   *  answer; its turn's settle delivers the reports. */
+  const wake = (why: string) => {
+    const covered = new Set([...arriving.values()].flatMap((a) => a.calls));
+    const due = [...owed.values()].filter((a) => !covered.has(a.callId));
+    if (due.length === 0 || closed) return;
+    const id = ++wakeSeq;
+    const ids = due.map((a) => a.callId);
+    arriving.set(id, { sent: false, calls: ids });
+    void Promise.resolve(
+      send(
+        {
+          customType: DELEGATE_MESSAGE_TYPE,
+          content: wakeText(due),
+          display: true,
+          details: { wake: id, calls: ids },
+        },
+        { deliverAs: "followUp", triggerTurn: true },
+        why,
+      ),
+    ).then(
+      () => {
+        const a = arriving.get(id);
+        if (a) a.sent = true;
+      },
+      () => arriving.delete(id), // nothing will arrive; the next settle looks again
+    );
   };
-  /** Copy a dropped answer under the mu cache dir; undefined if that fails. */
-  const saveCopy = (name: string, content: string, kind = ""): string | undefined => {
-    try {
-      const dir = droppedAnswersDir();
-      mkdirSync(dir, { recursive: true });
-      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const path = join(dir, `${stamp}_${name}${kind}.md`);
-      writeFileSync(path, `${content}\n`);
-      return path;
-    } catch {
-      return undefined;
-    }
-  };
-  /** Copy a delegate's last assistant text so far (from its session
-   *  file) next to the dropped answers; undefined when it wrote none. */
-  const partialCopy = (name: string, sessionFile: string): string | undefined => {
-    const text = lastAssistantTextIn(sessionFile);
-    return text ? saveCopy(name, text, ".partial") : undefined;
+  let wakeSoon: ReturnType<typeof setImmediate> | undefined;
+  /** An answer recorded while pi is idle: nothing will settle and show it, so
+   *  wake now (batched: answers recorded in one tick share one wake). */
+  const wakeIfIdle = () => {
+    if (wakeSoon !== undefined) return;
+    wakeSoon = setImmediate(() => {
+      wakeSoon = undefined;
+      if (!busy) wake("wake");
+    });
   };
   const calls = callsApi(run);
   /** Per runtime: two reloads of one session never reuse a call id. */
@@ -616,44 +626,25 @@ export function registerDelegate(
     return { workstream: t.workstream, task: t.id };
   }
 
-  /** The report of a run with no answer: what is known of it, uncapped. */
-  const gapDetail = (
-    agent: WaitAgent | undefined,
-    sessionFile: string | undefined,
-    tail: string | undefined,
-  ): string => {
-    const partial =
-      sessionFile && agent?.outcome !== "blocked" ? lastAssistantTextIn(sessionFile) : undefined;
-    return [
-      agent?.lastError ? `error: ${agent.lastError}` : undefined,
-      sessionFile ? `Session: ${sessionFile}` : undefined,
-      partial ? `Partial answer so far:\n${partial}` : undefined,
-      tail?.trim() ? `Pane tail:\n${tail.trimEnd()}` : undefined,
-    ]
-      .filter((v) => v !== undefined)
-      .join("\n\n");
-  };
+  /** The follow-up's line about where the answer is durable (a failed record only). */
+  const recordedLine = (call: CallInfo, err: string): string =>
+    `Recording failed: ${err}. The call ${call.callId} is still open; its answer is in this message. Record it yourself.`;
 
-  /** The follow-up's line about where the answer is durable. */
-  const recordedLine = (call: CallInfo, fin: FinishResult | undefined, err?: string): string => {
-    const where = call.record ? `${call.record.workstream}/${call.record.task}` : undefined;
-    const taskRef = `${call.workstream}/${call.task}`;
-    if (fin === undefined)
-      return `Recording failed: ${err ?? "unknown error"}. The call ${call.callId} is still open; its answer is in this message. Record it yourself.`;
-    if (fin.state === "failed" && fin.error)
-      return `${fin.error}. The answer is kept as the report of ${taskRef}; record it yourself.`;
-    if (where && fin.recorded)
-      return `Recorded on ${where} as a note. Full answer: mu task notes ${call.task} -w ${call.workstream} (report of ${taskRef}).`;
-    return `Full answer: mu task notes ${call.task} -w ${call.workstream} (report of ${taskRef}).`;
-  };
-
+  /**
+   * Record one finished wait, then let the settle show it. The result is made
+   * durable FIRST: the verdict on the judged task, then the delegate's report
+   * and close, in one op group (`mu delegates finish`). A run with no final
+   * answer records what the follow-up used to say (outcome, error, what to do,
+   * session, partial text, pane tail). Only a `done` call may then lose its
+   * pane. A record that failed leaves nothing for a wait to find: that answer
+   * alone is sent whole, as a follow-up.
+   */
   async function deliver(
     call: CallInfo,
     name: string,
     wait: MuResult,
     keep: boolean,
     extras: MessageExtras,
-    delivery: number,
     identity?: DelegateIdentity,
   ) {
     const ws = call.workstream;
@@ -664,15 +655,41 @@ export function registerDelegate(
         ? undefined
         : (await mu(["agent", "read", name, "-n", "50", "-w", ws])).stdout;
     const sessionFile = agent?.sessionFile ?? extras.sessionFile;
-    // The call's result is made durable FIRST: the verdict on the judged
-    // task, then the delegate's report and close, in one op group (mu
-    // delegates finish). Only a `done` call may then lose its pane.
+    const x: MessageExtras = {
+      ...extras,
+      workstream: ws,
+      ...(sessionFile ? { sessionFile } : {}),
+      ...(tail ? { tail } : {}),
+    };
+    // A blocked run is mid-flight: no partial text, which could read as its answer.
+    const partial =
+      outcome !== "done" && outcome !== "blocked" && sessionFile
+        ? lastAssistantTextIn(sessionFile)
+        : undefined;
+    // What a gap records: its own wording (the pane is kept for every outcome but
+    // empty, and the pane line is the only difference), plus what it wrote so far.
+    const kept: PaneFate = {
+      closed: false,
+      why: outcome === "blocked" ? "waiting on a dialog" : "kept as evidence",
+    };
+    const gap = () =>
+      [
+        delegateMessage(
+          name,
+          agent,
+          outcome === "empty" ? ({ closed: !keep } as PaneFate) : kept,
+          x,
+        ),
+        partial ? `Partial answer so far:\n${partial}` : undefined,
+      ]
+        .filter((v) => v !== undefined)
+        .join("\n\n");
     let fin: FinishResult | undefined;
-    let finErr: string | undefined;
+    let finErr = "unknown error";
     try {
       fin = await calls.finish(call.callId, {
         outcome: outcome ?? "no result",
-        text: outcome === "done" ? (agent?.lastText ?? "") : gapDetail(agent, sessionFile, tail),
+        text: outcome === "done" ? (agent?.lastText ?? "") : gap(),
         ...(extras.elapsedMs !== undefined ? { elapsedMs: extras.elapsedMs } : {}),
         author: name,
       });
@@ -682,62 +699,43 @@ export function registerDelegate(
     // Close only after a clean finish that is on record: a died or timed-out
     // pane, or one whose record failed, is evidence.
     let pane: PaneFate = { closed: false, why: "keep: true" };
-    if (outcome === "blocked") pane = { closed: false, why: "waiting on a dialog" };
-    else if (outcome !== "done" && outcome !== "empty")
-      pane = { closed: false, why: "kept as evidence" };
+    if (outcome === "blocked") pane = kept;
+    else if (outcome !== "done" && outcome !== "empty") pane = kept;
     else if (fin?.state !== "done" && outcome === "done")
       pane = { closed: false, why: "its result is not recorded" };
     else if (!keep) pane = await closeDelegate(name, identity, ws);
-    // No final answer: point at the transcript, and copy what it wrote so
-    // far. A blocked run is mid-flight: no partial copy, which could read
-    // as its answer.
-    if (outcome !== "done") {
-      const partial =
-        sessionFile && outcome !== "blocked" ? partialCopy(name, sessionFile) : undefined;
-      extras = {
-        ...extras,
-        ...(sessionFile ? { sessionFile } : {}),
-        ...(partial ? { partial } : {}),
-      };
-    }
-    const message = delegateMessage(name, agent, pane, {
-      ...extras,
-      workstream: ws,
-      ...(tail ? { tail } : {}),
-    });
-    const content = `${message}\n\n${recordedLine(call, fin, finErr)}`;
-    const a = arriving.get(delivery);
-    if (a)
-      Object.assign(a, {
-        content,
-        workstream: ws,
-        ...(outcome ? { outcome } : {}),
-        ...(extras.elapsedMs !== undefined ? { elapsedMs: extras.elapsedMs } : {}),
-        ...(agent?.sessionFile ? { sessionFile: agent.sessionFile } : {}),
-      });
-    await send(
-      {
-        customType: DELEGATE_MESSAGE_TYPE,
-        content,
-        display: true,
-        details: {
-          name,
-          workstream: ws,
-          task: `${ws}/${call.task}`,
-          call_id: call.callId,
-          outcome: outcome ?? null,
-          closed: pane.closed,
-          answer: outcome === "done" ? (agent?.lastText ?? null) : null,
-          elapsedMs: extras.elapsedMs ?? null,
-          workspace: extras.workspace ?? null,
-          sessionFile: agent?.sessionFile ?? extras.sessionFile ?? null,
-          partial: extras.partial ?? null,
-          delivery,
+    if (fin === undefined) {
+      // Nothing durable for the settle to show: the whole answer, once, here.
+      await send(
+        {
+          customType: DELEGATE_MESSAGE_TYPE,
+          content: `${delegateMessage(name, agent, pane, x)}\n\n${recordedLine(call, finErr)}`,
+          display: true,
+          details: { name, workstream: ws, call_id: call.callId, outcome: outcome ?? null },
         },
-      },
-      { deliverAs: "followUp", triggerTurn: true },
-      "answer",
-    );
+        { deliverAs: "followUp", triggerTurn: true },
+        "unrecorded",
+      );
+      return;
+    }
+    owed.set(call.callId, {
+      callId: call.callId,
+      name,
+      workstream: ws,
+      task: call.task,
+      // A failed record says so (the answer is kept as the report): record it yourself.
+      outcome:
+        fin.state === "failed" && fin.error
+          ? `${outcome ?? "no result"}, NOT recorded: ${fin.error}`
+          : (outcome ?? "no result"),
+      ...(fin.verdict ? { verdict: fin.verdict } : {}),
+      ...(call.record && fin.recorded
+        ? { record: `${call.record.workstream}/${call.record.task}` }
+        : {}),
+      ...(pane.closed ? {} : { kept: pane.why }),
+      at: Date.now(),
+    });
+    wakeIfIdle();
   }
 
   /** Spawn, send, and watch one registered call. The caller holds one
@@ -781,7 +779,7 @@ export function registerDelegate(
       } catch (e) {
         if (e instanceof SpawnFail && e.kind === "nomux") {
           freeSlot(); // startProcess counts it in inflight at once
-          return startProcess(call, queuedAs);
+          return startProcess(call);
         }
         const fail = e instanceof SpawnFail ? e : new SpawnFail(errText(e), "unsent");
         await settleFailedStart(call, fail);
@@ -825,10 +823,7 @@ export function registerDelegate(
         entry.abort.signal,
       );
       const settle = async (r: MuResult) => {
-        const delivery = ++deliverySeq;
-        trace("settle", { delivery, name, code: r.code });
-        arriving.set(delivery, { sent: false, name });
-        for (const w of [...wakes]) w();
+        trace("settle", { call: call.callId, name, code: r.code });
         forget(key);
         try {
           await deliver(
@@ -844,33 +839,23 @@ export function registerDelegate(
               ...(workspace ? { workspace } : {}),
               ...(entry.sessionFile ? { sessionFile: entry.sessionFile } : {}),
             },
-            delivery,
             entry.identity,
           );
-          markSent(delivery);
         } catch (e) {
           // A throw here would be an unhandled rejection and a lost answer.
           const content = `Delegate ${ws}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${ws}`;
-          const a = arriving.get(delivery);
-          if (a) a.content = content;
           await Promise.resolve(
             send(
               {
                 customType: DELEGATE_MESSAGE_TYPE,
                 content,
                 display: true,
-                details: { name, workstream: ws, outcome: null, closed: false, delivery },
+                details: { name, workstream: ws, outcome: null, closed: false },
               },
               { deliverAs: "followUp", triggerTurn: true },
               "deliver-failed",
             ),
-          ).then(
-            () => markSent(delivery),
-            () => {
-              // Nothing will arrive: stop counting it.
-              arriving.delete(delivery);
-            },
-          );
+          ).catch(() => {});
         }
       };
       void waiting.then(async (r) => {
@@ -879,7 +864,7 @@ export function registerDelegate(
         else await settle(r);
       });
       const lines = [
-        `Delegated to ${ws}/${name} (task ${ws}/${call.task}, call ${call.callId}). Its answer arrives as a follow-up message when it finishes, and stays on the task (mu task notes ${call.task} -w ${ws}); do not wait or poll.`,
+        `Delegated to ${ws}/${name} (task ${ws}/${call.task}, call ${call.callId}). Its answer arrives with your next settle (and stays on the task: mu task notes ${call.task} -w ${ws}); carry on, or end your turn if your next step needs it. Do not poll.`,
         workspace ? `Workspace: ${workspace}` : undefined,
         attach ? `Attach: ${attach}` : undefined,
         `Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${name}" }`,
@@ -922,14 +907,13 @@ export function registerDelegate(
       return undefined;
     });
 
-  function startProcess(call: CallInfo, queuedAs?: string): ToolResult {
+  function startProcess(call: CallInfo): ToolResult {
     const ws = call.workstream;
     const name = call.task;
     const key = inflightKey(ws, name);
     const entry: Inflight = { abort: new AbortController(), call, cancelling: false };
     inflight.set(key, entry);
     reportPending();
-    const started = Date.now();
     const settle = async (r: MuResult) => {
       const o = (json(r) ?? {}) as ProcessRun;
       forget(key);
@@ -939,40 +923,24 @@ export function registerDelegate(
         startFailed(name, new Error(text), "Delegate");
         return;
       }
-      const delivery = ++deliverySeq;
-      arriving.set(delivery, { sent: false, name });
-      for (const w of [...wakes]) w();
-      const done = o.outcome === "done";
-      const fin: FinishResult = {
-        changed: true,
-        state: (o.state ?? "failed") as FinishResult["state"],
-        recorded: call.record !== undefined && o.state !== "failed",
-        verdict: null,
-      };
-      const elapsedMs = Date.now() - started;
-      const content = processMessage(call, o, elapsedMs, recordedLine(call, fin), queuedAs);
-      const a = arriving.get(delivery);
-      if (a) Object.assign(a, { content, workstream: ws, outcome: o.outcome });
-      const details = {
+      // The run finished the call durably (verdict, report, close): owed to the settle.
+      const verdict = await calls
+        .show(call.callId)
+        .then((x) => x.verdict ?? undefined)
+        .catch(() => undefined);
+      owed.set(call.callId, {
+        callId: call.callId,
         name,
         workstream: ws,
-        task: `${ws}/${call.task}`,
-        call_id: call.callId,
+        task: call.task,
         outcome: o.outcome,
-        closed: true,
-        transport: "process",
-        answer: done ? (o.answer ?? null) : null,
-        elapsedMs,
-        workspace: o.workspace ?? null,
-        sessionFile: o.sessionFile ?? null,
-        log: o.logPath ?? null,
-        delivery,
-      };
-      const msg = { customType: DELEGATE_MESSAGE_TYPE, content, display: true, details };
-      await Promise.resolve(send(msg, { deliverAs: "followUp", triggerTurn: true }, "answer")).then(
-        () => markSent(delivery),
-        () => arriving.delete(delivery),
-      );
+        ...(verdict ? { verdict } : {}),
+        ...(call.record && o.state === "done"
+          ? { record: `${call.record.workstream}/${call.record.task}` }
+          : {}),
+        at: Date.now(),
+      });
+      wakeIfIdle();
     };
     // A cancel's SIGTERM aborts the turn, finishes the call, then stops the
     // child (up to ~11 s); SIGKILL before that would orphan the child pi.
@@ -1030,7 +998,7 @@ export function registerDelegate(
     const text =
       state === "refused"
         ? `REFUSED, not started: ${inflight.size + starting} running and ${queue.length} queued (MU_DELEGATE_MAX=${max}). The call is durable (task ${taskRef}, call ${call.callId}) and will NOT start on its own. Reissue it once slots free, as answers arrive: ${DELEGATE_REISSUE_TOOL} { call_id: "${call.callId}" }. List: mu delegates.`
-        : `Queued as ${handle} (#${position}; ${inflight.size + starting} running, MU_DELEGATE_MAX=${max}; task ${taskRef}, call ${call.callId}). It starts when a slot frees, and its answer arrives as a follow-up message like any delegate's; do not wait or poll. Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${handle}" }`;
+        : `Queued as ${handle} (#${position}; ${inflight.size + starting} running, MU_DELEGATE_MAX=${max}; task ${taskRef}, call ${call.callId}). It starts when a slot frees, and its answer arrives with a settle like any delegate's; do not poll. Cancel: ${DELEGATE_CANCEL_TOOL} { name: "${handle}" }`;
     return {
       content: [{ type: "text", text }],
       details: {
@@ -1047,9 +1015,9 @@ export function registerDelegate(
   pi.registerTool({
     name: DELEGATE_TOOL,
     label: "mu delegate",
-    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream; with no tmux or herdr, a child pi process with no pane) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation, or a refuter of a claim, plan or fix before you act on it; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free; past that a call is refused: durable, reissue it with ${DELEGATE_REISSUE_TOOL}). Every call is a mu task (kind delegate): the result names it, and the full answer stays on it. The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later as a follow-up message: carry on with other work, or end your turn if your next step needs the answer (the follow-up resumes you). The pane closes after a clean finish; keep: true leaves it open (needs a mux). When the check judges a mu task, set record so its verdict lands on that task; leave it out when there is no task. Set wave to group a fan-out (mu delegates tally).`,
+    description: `Subagent: run one self-contained task in a fresh pi agent (its own mux pane in mu's ${W} workstream; with no tmux or herdr, a child pi process with no pane) while you keep working. Use it whenever you would reach for a subagent: research, a review, a draft, an investigation, or a refuter of a claim, plan or fix before you act on it; call it several times to fan out in parallel (at most ${delegateMax()} run at once; up to ${DELEGATE_QUEUE_FACTOR * delegateMax()} more are queued and start as slots free; past that a call is refused: durable, reissue it with ${DELEGATE_REISSUE_TOOL}). Every call is a mu task (kind delegate): the result names it, and the full answer stays on it. The subagent starts with no context, in your working directory: put everything it needs in task. The call returns at once and the answer arrives later, with a settle (a wave's as ONE summary): carry on with other work, or end your turn if your next step needs the answer (it resumes you). The pane closes after a clean finish; keep: true leaves it open (needs a mux). When the check judges a mu task, set record so its verdict lands on that task; leave it out when there is no task. Set wave to group a fan-out (mu delegates tally).`,
     promptSnippet:
-      "Subagent: delegate a self-contained task to a background pi agent; its answer arrives later as a follow-up",
+      "Subagent: delegate a self-contained task to a background pi agent; its answer arrives later, with a settle",
     parameters: {
       type: "object",
       properties: {
@@ -1072,12 +1040,12 @@ export function registerDelegate(
         timeout: {
           type: "number",
           exclusiveMinimum: 0,
-          description: `Seconds to wait for the answer (default ${DELEGATE_TIMEOUT_S}). On timeout you get a "still running" follow-up instead of the answer, and the answer will not arrive later; the subagent keeps running in its pane.`,
+          description: `Seconds to wait for the answer (default ${DELEGATE_TIMEOUT_S}). On timeout you get a "still running" answer instead, and the real answer will not arrive later; the subagent keeps running in its pane.`,
         },
         workspace: {
           type: "boolean",
           description:
-            "For tasks that edit files: its own git worktree branched from the current commit of the repo at cwd (default: yours). The result and follow-up name the path; changes stay there until you merge them. This isolates repository edits only: the subagent runs as you, with your files, environment and network.",
+            "For tasks that edit files: its own git worktree branched from the current commit of the repo at cwd (default: yours). The result names the path; changes stay there until you merge them. This isolates repository edits only: the subagent runs as you, with your files, environment and network.",
         },
         cli: {
           type: "string",
@@ -1283,7 +1251,7 @@ export function registerDelegate(
   pi.registerTool({
     name: DELEGATE_CANCEL_TOOL,
     label: "mu delegate cancel",
-    description: `Stop a delegate started by ${DELEGATE_TOOL}: abort its turn and close its pane (keep: true leaves the pane open; a mux-free one's child pi is stopped). A queued or refused call is cancelled too (name it by its handle or call_id). The verdict target, if any, gets "no verdict (cancelled)". No follow-up message is sent for it afterwards.`,
+    description: `Stop a delegate started by ${DELEGATE_TOOL}: abort its turn and close its pane (keep: true leaves the pane open; a mux-free one's child pi is stopped). A queued or refused call is cancelled too (name it by its handle or call_id). The verdict target, if any, gets "no verdict (cancelled)". Its answer is not shown afterwards.`,
     parameters: {
       type: "object",
       properties: {
@@ -1386,13 +1354,9 @@ export function registerDelegate(
         forget(key);
       }
       let text = `Aborted ${ws}/${agentName}.`;
-      // What it wrote before the abort, and its transcript.
+      // Its transcript; what it wrote before the abort goes into the report.
       const sessionFile = entry?.sessionFile;
-      const partial = sessionFile ? partialCopy(agentName, sessionFile) : undefined;
-      const evidence = evidenceLines({
-        ...(sessionFile ? { sessionFile } : {}),
-        ...(partial ? { partial } : {}),
-      });
+      const evidence = evidenceLines({ ...(sessionFile ? { sessionFile } : {}) });
       // The result is durable before the pane goes: the cancel closes the task.
       if (entry)
         text += await cancelCall(
@@ -1410,56 +1374,39 @@ export function registerDelegate(
     },
   });
 
-  // A follow-up enters the conversation at its message_start: at once
-  // when pi is idle, or when the running turn drains its follow-ups.
-  // pi can start one delivery twice (a resend racing a send it deferred),
-  // and a started message cannot be recalled: the repeat is rewritten in
-  // place, before pi records it or the model sees it, into a stub.
-  const stub = (name: unknown, id: number) => ({
-    content: `Delegate ${W}/${String(name)}: this answer was already handled (delivery ${id}). Ignore this repeat; no reply needed.`,
-    details: { name, workstream: W, duplicateOf: id },
-  });
+  // A wake enters the conversation at its message_start: at once when pi is
+  // idle, or when the running turn drains its follow-ups. Its answers are then
+  // in front of the model (as pointers); its turn's settle shows the reports.
   pi.on("message_start", (e) => {
-    const m = (
-      e as {
-        message?: { role?: unknown; customType?: unknown; content?: unknown; details?: unknown };
-      }
-    ).message;
+    const m = (e as { message?: { role?: unknown; customType?: unknown; details?: unknown } })
+      .message;
     if (m?.role !== "custom" || m.customType !== DELEGATE_MESSAGE_TYPE) return;
-    const d = m.details as { delivery?: unknown; name?: unknown } | undefined;
-    const id = d?.delivery;
+    const id = (m.details as { wake?: unknown } | undefined)?.wake;
     if (typeof id !== "number") return;
-    if (seen.has(id)) {
-      trace("duplicate", { delivery: id, name: d?.name });
-      Object.assign(m, stub(d?.name, id));
-      return;
-    }
-    seen.add(id);
+    for (const c of arriving.get(id)?.calls ?? []) owed.delete(c);
     arriving.delete(id);
   });
 
-  /** Stop counting answers that never reached the conversation: copy
-   *  each to the cache dir and leave one line per answer in it (no turn). */
-  const dropAnswers = (ids: number[]) => {
-    const dropped: DroppedAnswer[] = [];
+  /** Stop waking for these: the reports stay recorded and the next settle's wait
+   *  still owes them. One line per answer in the conversation (no turn). */
+  const dropWakes = (ids: number[], also: string[] = []) => {
+    const names = new Set(also);
     for (const id of ids) {
       const a = arriving.get(id);
       if (!a) continue;
       arriving.delete(id);
-      seen.add(id);
-      // pi may still run a send it deferred while settling: no turn, a stub.
-      if (a.message) Object.assign(a.message, stub(a.name, id));
+      // pi may still run a send it deferred while settling: no turn.
       for (const o of a.opts ?? []) o.triggerTurn = false;
-      dropped.push({
-        name: a.name,
-        ...(a.workstream ? { workstream: a.workstream } : {}),
-        ...(a.outcome ? { outcome: a.outcome } : {}),
-        ...(a.elapsedMs !== undefined ? { elapsedMs: a.elapsedMs } : {}),
-        ...(a.sessionFile ? { sessionFile: a.sessionFile } : {}),
-        ...(a.content ? { copy: saveCopy(a.name, a.content) } : {}),
-      });
+      for (const c of a.calls) names.add(c);
     }
-    trace("dropped", { names: dropped.map((d) => d.name) });
+    const dropped: DroppedWake[] = [];
+    for (const c of names) {
+      const a = owed.get(c);
+      if (!a) continue;
+      owed.delete(c);
+      dropped.push(a);
+    }
+    trace("dropped", { calls: dropped.map((d) => d.callId) });
     if (dropped.length === 0) return;
     void Promise.resolve(
       send(
@@ -1467,19 +1414,18 @@ export function registerDelegate(
           customType: DELEGATE_MESSAGE_TYPE,
           content: droppedNote(dropped),
           display: true,
-          details: { dropped },
+          details: { dropped: dropped.map((d) => d.callId) },
         },
         { triggerTurn: false },
         "dropped-note",
       ),
     ).catch(() => {});
   };
-  /** After a normal settle, an answer pi accepted that never started was
-   *  cleared from pi's queue (the dequeue key, a failed compaction flush).
-   *  pi runs the sends it deferred right after this event, so only a pi
-   *  that is idle one tick later, with nothing accepted since, has
-   *  really lost it. Resend ONE; its run settles and finds the next.
-   *  Lost twice: drop it with a copy. */
+  /** After a normal settle, with pi idle one tick later (pi runs the sends it
+   *  deferred right after this event) and nothing accepted since: a wake pi
+   *  accepted that never started was cleared from its queue (the dequeue key, a
+   *  failed compaction flush). Resend ONE; lost twice, drop it with a note. With
+   *  no wake lost, wake for any answer the settle did not show. */
   const recoverLost = (candidates: number[], ctx: DelegateCtx) => {
     settleCheck = undefined;
     if (closed) return;
@@ -1490,32 +1436,39 @@ export function registerDelegate(
       // stale ctx: the next settle looks again
     }
     if (!idle) return;
-    // Accepted after the settle began: pi may be about to run it, and its
-    // own run settles again.
+    // Accepted after the settle began: pi may be about to run it, and its own
+    // run settles again.
     if ([...arriving].some(([id, a]) => a.sent && !candidates.includes(id))) return;
-    const unseen = candidates.filter((id) => arriving.get(id)?.sent);
-    dropAnswers(unseen.filter((id) => arriving.get(id)?.resent));
-    const next = unseen.find((id) => arriving.has(id));
+    const lost = candidates.filter((id) => arriving.get(id)?.sent);
+    dropWakes(lost.filter((id) => arriving.get(id)?.resent));
+    const next = lost.find((id) => arriving.has(id));
     const a = next === undefined ? undefined : arriving.get(next);
-    if (next === undefined || !a?.message) return;
+    if (next === undefined || !a?.message) {
+      wake("wake-after-settle");
+      return;
+    }
     a.resent = true;
-    trace("resend", { delivery: next, name: a.name });
+    trace("resend", { wake: next, calls: a.calls });
     void Promise.resolve(
       send(a.message, { deliverAs: "followUp", triggerTurn: true }, "resend"),
     ).catch(() => {
       arriving.delete(next);
     });
   };
+  pi.on("agent_start", () => {
+    busy = true;
+  });
   pi.on("agent_settled", (e, ctx) => {
+    busy = false;
     const sent = [...arriving].filter(([, a]) => a.sent).map(([id]) => id);
-    // Escape clears pi's queue along with the run: what it held never
-    // arrives. Never resend then: copies and one note.
+    // Escape clears pi's queue along with the run: what it held never arrives,
+    // and the user stopped. No wake: one note; the next prompt's settle shows them.
     if ((e as { aborted?: unknown }).aborted === true) {
       clearImmediate(settleCheck);
-      dropAnswers(sent);
+      dropWakes(sent, [...owed.keys()]);
       return;
     }
-    if (sent.length === 0) return;
+    if (sent.length === 0 && owed.size === 0) return;
     clearImmediate(settleCheck);
     settleCheck = setImmediate(() => recoverLost(sent, ctx));
   });
@@ -1526,12 +1479,15 @@ export function registerDelegate(
   pi.on("session_shutdown", async (e, ctx) => {
     closed = true;
     clearImmediate(settleCheck);
+    clearImmediate(wakeSoon);
     trace("session_shutdown.state", {
-      arriving: [...arriving.values()].map((a) => ({ name: a.name, sent: a.sent })),
+      arriving: [...arriving.values()].map((a) => ({ calls: a.calls, sent: a.sent })),
+      owed: [...owed.keys()],
       inflight: [...inflight.keys()],
     });
-    // Answers still being delivered or queued die with this runtime.
+    // Wakes die with this runtime; the recorded answers stay owed to the next wait.
     arriving.clear();
+    owed.clear();
     if (inflight.size === 0 && queue.length === 0) return;
     const shown = (key: string) => (key.startsWith(`${W}/`) ? key.slice(W.length + 1) : key);
     const names = [...inflight].flatMap(([k, e]) => (e.process ? [] : [shown(k)]));
@@ -1596,9 +1552,10 @@ export function registerDelegate(
 
   return {
     answerPending: () => arriving.size > 0,
-    onAnswer: (w) => {
-      wakes.add(w);
-      return () => wakes.delete(w);
+    delivered(shown) {
+      if (Array.isArray(shown)) for (const c of shown) owed.delete(c);
+      else
+        for (const [c, a] of owed) if (a.at < (shown as { before: number }).before) owed.delete(c);
     },
   };
 }

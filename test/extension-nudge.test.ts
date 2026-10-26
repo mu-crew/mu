@@ -10,7 +10,7 @@ import {
   registerNudge,
   SETTLE_DRAIN_MS,
   SETTLE_WAIT_ARGS,
-  type SettleWake,
+  type SettleDelivered,
 } from "../extension/nudge.js";
 
 const SKILL = readFileSync(join(import.meta.dirname, "..", "skills", "mu", "SKILL.md"), "utf8");
@@ -93,9 +93,13 @@ afterEach(() => {
   }
 });
 
-function setup(mu: ReturnType<typeof fakeMu>, ctx: MuNudgeCtx = SESSION, wake?: SettleWake) {
+function setup(
+  mu: ReturnType<typeof fakeMu>,
+  ctx: MuNudgeCtx = SESSION,
+  delivered?: SettleDelivered,
+) {
   const f = fakePi(ctx);
-  registerNudge(f.pi, mu.run, SKILL, undefined, undefined, wake);
+  registerNudge(f.pi, mu.run, SKILL, undefined, undefined, delivered);
   return f;
 }
 
@@ -240,13 +244,29 @@ describe("the settle wait", () => {
   });
 });
 
+describe("the hold, read again after the human-needs read", () => {
+  it.each(["input", "wake", "blocked"] as const)(
+    "%s landing during the read starts no wait",
+    async (h) => {
+      let late: typeof h | undefined;
+      const mu = fakeMu([okWait({})]);
+      const run: typeof mu.run = async (args, ...rest) => {
+        if (args[0] === "state") late = h;
+        return mu.run(args, ...rest);
+      };
+      const f = fakePi(SESSION);
+      registerNudge(f.pi, run, SKILL, undefined, () => late);
+      expect(await f.emit("agent_before_settle", settled)).toBeUndefined();
+      expect(mu.waits()).toHaveLength(0);
+    },
+  );
+});
+
 describe("cancelling the settle wait", () => {
   /** A settle blocked in its wait, with the hooks a cancel can come from. */
   function blocked() {
     let onInput: ((d: string) => undefined) | undefined;
     const off = vi.fn();
-    let onWake: (() => void) | undefined;
-    const wakeOff = vi.fn();
     const ctx: MuNudgeCtx = {
       ...SESSION,
       ui: {
@@ -257,20 +277,9 @@ describe("cancelling the settle wait", () => {
       },
     };
     const mu = fakeMu([blocking]);
-    const f = setup(mu, ctx, (w) => {
-      onWake = w;
-      return wakeOff;
-    });
+    const f = setup(mu, ctx);
     const settling = f.emit("agent_before_settle", settled);
-    return {
-      f,
-      mu,
-      settling,
-      key: (d: string) => onInput?.(d),
-      wake: () => onWake?.(),
-      off,
-      wakeOff,
-    };
+    return { f, mu, settling, key: (d: string) => onInput?.(d), off };
   }
 
   it.each([
@@ -279,7 +288,6 @@ describe("cancelling the settle wait", () => {
     ["typed input", (b: ReturnType<typeof blocked>) => b.f.emit("input")],
     ["a dialog", (b: ReturnType<typeof blocked>) => b.f.emit("ui_prompt_start")],
     ["shutdown", (b: ReturnType<typeof blocked>) => b.f.emit("session_shutdown")],
-    ["a delegate answer", (b: ReturnType<typeof blocked>) => b.wake()],
   ])("%s aborts only the owned wait, which drains; the turn may end", async (_n, act) => {
     const b = blocked();
     await flush();
@@ -290,7 +298,6 @@ describe("cancelling the settle wait", () => {
     expect(b.mu.waits()[0]?.signal?.aborted).toBe(true);
     expect(b.mu.waits()).toHaveLength(1); // not waited again
     expect(b.off).toHaveBeenCalledTimes(1);
-    expect(b.wakeOff).toHaveBeenCalledTimes(1);
   });
 
   it("other keys never cancel and are never consumed", async () => {
@@ -298,7 +305,7 @@ describe("cancelling the settle wait", () => {
     await flush();
     expect(b.key("a")).toBeUndefined();
     expect(b.mu.waits()[0]?.signal?.aborted).toBe(false);
-    b.wake();
+    b.key("\u001b");
     await b.settling;
   });
 
@@ -316,14 +323,14 @@ describe("cancelling the settle wait", () => {
 });
 
 describe("parallelSettle keeps a consumed receipt", () => {
-  it("a wait event consumed while an answer queued still reaches the transcript", async () => {
-    let late: "answer" | undefined;
+  it("a wait event consumed while a wake queued still reaches the transcript", async () => {
+    let late: "wake" | undefined;
     const mu = fakeMu([
       okWait({ firing: { kind: "closed", ref: { workstream: "ws", id: "t9" } } }),
     ]);
     const run: typeof mu.run = async (args, ...rest) => {
       const r = await mu.run(args, ...rest);
-      if (args[0] === "wait") late = "answer"; // an answer queued during the wait
+      if (args[0] === "wait") late = "wake"; // a wake queued during the wait
       return r;
     };
     const handlers: Handler[] = [];
@@ -332,13 +339,13 @@ describe("parallelSettle keeps a consumed receipt", () => {
     registerNudge(settle.api, run, SKILL, undefined, () => late);
     settle.flush();
     const r = (await handlers[0]?.({ entries: [], ...settled }, SESSION)) as Settle;
-    expect(r.continue).toBeUndefined(); // the answer's turn comes first
+    expect(r.continue).toBeUndefined(); // the wake's turn comes first
     expect(r.entries?.[0]?.content).toContain('"id":"t9"');
   });
 
   it("a late hold drops the wait's continuation, never its entries", async () => {
     const handlers: Handler[] = [];
-    let late: "answer" | "blocked" | undefined;
+    let late: "input" | "wake" | "blocked" | undefined;
     const settle = parallelSettle({ on: (_e: string, h: Handler) => handlers.push(h) }, () => late);
     settle.api.on("agent_before_settle", () => ({
       entries: ["event"],
@@ -346,7 +353,7 @@ describe("parallelSettle keeps a consumed receipt", () => {
       receipt: true,
     }));
     settle.flush();
-    for (const h of ["answer", "blocked"] as const) {
+    for (const h of ["input", "wake", "blocked"] as const) {
       late = h;
       expect(await handlers[0]?.({ entries: ["prior"] }, {})).toEqual({
         entries: ["prior", "event"],

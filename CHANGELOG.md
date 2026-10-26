@@ -848,6 +848,33 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Delegate answers arrive through the settle wait; the pi echo is gone (`v_settle_delivery`, Settle
+  B).** An answer used to travel twice: the wait's `delegate` event (no answer text) and a pi follow-up
+  echo carrying the whole answer, with its own in-memory delivery identity, copies under
+  `~/.cache/mu/delegate-answers/`, an "already handled" stub for repeats and a delegate answer that
+  cancelled a running settle wait. Now the call id is the one identity and the wait's cursor is the
+  delivery: when the settle wait returns a `delegate` event, the continuation carries that call's
+  report (its task note, capped at 4000 characters with the `mu task notes` pointer; a recorded check
+  with a verdict is the header only). A delegate of a wave keeps the same wait running while siblings
+  are pending and then shows ONE **wave summary** (counts, a line per call, the answers); refused
+  calls are listed for reissue, never waited on; any other event ends it early and follows the
+  summary. The delegate side sends a pi message only as a **wake**: one pointer per answer, no
+  answer text, when no settle will show it (pi idle, `MU_NUDGE=0`, the wait failed). The settle
+  tells it which answers it showed (`DelegateHandle.delivered`, which replaces `onAnswer`); a wait
+  that found nothing owed covers every answer recorded before it started. A wake lost from pi's
+  queue is resent once; lost twice or dropped by Escape it leaves one line per answer and no turn.
+  The settle hold splits into `input` / `wake` / `blocked`: any of them skips a wait's start, none
+  discards a consumed result's entries. A run with no final answer records its words (outcome,
+  error, what to do, session, partial text, pane tail) as the report; a record that fails still sends
+  that one answer whole. A mux-free delegate (`mu delegates run`, which records the call itself) is
+  owed and woken the same way; its follow-up wording (`processMessage`) is gone. Unchanged: record-before-close, `answerPending()`, and `murmur:pending`
+  `{source: "mu_delegate", count}` (running + starting + queued; wakes never count). Removed: the
+  `delegate-answers` cache dir, `droppedAnswersDir`, the stub, `partialCopy`. Tests: the echo, stub and
+  copy cases became wake, replay, loss, hold and wave cases; `extension-delegate-pi.integration.test.ts`
+  runs a real `AgentSession` with the real settle wait and `dist/cli.js` (starvation, wave summary,
+  Esc mid-wait, `MU_NUDGE=0`). Code: `extension/nudge.ts`, `extension/delegate.ts`,
+  `extension/delegate-format.ts`, `extension/mu-pi.ts`.
+
 - **Final docs pass on the merged surface (`v_docs_final`).** `mu --version` prints
   `4.0.0-next.0`, so a checkout no longer reads like the installed 3.13.3 (dogfood-1 F4).
   Every verb's `--help` description is at most 3 lines at 80 columns, pinned by the new

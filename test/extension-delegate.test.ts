@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +18,7 @@ import {
   type MuRunner,
   PENDING_CHANNEL,
   registerDelegate,
+  wakeText,
 } from "../extension/delegate.js";
 import muPi, { type MuPiContext } from "../extension/mu-pi.js";
 import { listDelegates } from "../src/delegates.js";
@@ -27,6 +28,7 @@ import {
   flush,
   installDelegateEnv,
   ok,
+  reportOf,
   sentArg,
   sentText,
   tool,
@@ -80,7 +82,7 @@ describe("registration guards", () => {
 });
 
 describe("mu_delegate", () => {
-  it("returns at once with the name, then delivers the answer as a follow-up and closes the pane", async () => {
+  it("returns at once with the name, then records the answer, closes the pane and wakes an idle pi", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -114,10 +116,14 @@ describe("mu_delegate", () => {
     await flush();
     await flush();
     expect(mu.calls.some((c) => c[1] === "close" && c[2] === "delegate-2")).toBe(true);
+    expect(reportOf(mu)).toBe("X is 42");
+    // pi is idle: one wake, a pointer to the report, never the answer itself.
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
     const [msg, opts] = p.sendMessage.mock.calls[0] ?? [];
     expect(msg).toMatchObject({ customType: "mu-delegate", display: true });
-    expect((msg as { content: string }).content).toContain("X is 42");
+    const wake = (msg as { content: string }).content;
+    expect(wake).not.toContain("X is 42");
+    expect(wake).toContain(`mu task notes ${task} -w scratch`);
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
   });
 
@@ -163,10 +169,10 @@ describe("mu_delegate", () => {
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "old" }] }));
     await flush();
     await flush();
-    expect(sentText(p)).toContain("old");
+    expect(reportOf(mu)).toBe("old");
   });
 
-  it("cwd and timeout reach spawn and wait; the timeout is named in the message", async () => {
+  it("cwd and timeout reach spawn and wait; the timeout is named in the report", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -181,7 +187,7 @@ describe("mu_delegate", () => {
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "timeout" }] }));
     await flush();
     await flush();
-    expect(sentText(p)).toContain("still running after 90s");
+    expect(reportOf(mu)).toContain("still running after 90s");
   });
 
   it("model appends --model to the cli's resolved command and spawns with --command", async () => {
@@ -272,10 +278,10 @@ describe("mu_delegate", () => {
     ]);
     expect(spawn).not.toContain("--cwd");
     expect(res.content[0]?.text).toContain("Workspace: /ws/scratch/delegate-2");
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "edited" }] }));
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "timeout" }] }));
     await flush();
     await flush();
-    expect(sentText(p)).toContain("Workspace: /ws/scratch/delegate-2");
+    expect(reportOf(mu)).toContain("Workspace: /ws/scratch/delegate-2");
   });
 
   it("workspace without cwd: a bare --worktree (the caller's cwd is the repo)", async () => {
@@ -360,13 +366,14 @@ describe("mu_delegate", () => {
       expect(spawns()).toHaveLength(3);
       expect(spawns()[2]).toContain("--cwd");
       expect(sentArg(spawns()[2] ?? [])).toBe("three");
-      // Its answer names the handle the model was given, so a batch of
+      // Its answer names the call id the queued result gave, so a batch of
       // answers still maps back to the calls.
       const third = [...mu.waits.keys()].at(-1) ?? "";
       mu.waits.get(third)?.resolve(ok({ agents: [{ outcome: "done", lastText: "z" }] }));
       for (let i = 0; i < 4; i++) await flush();
+      const callId = String((c.details as { call_id: string }).call_id);
       const texts = p.sendMessage.mock.calls.map((x) => (x[0] as { content: string }).content);
-      expect(texts.some((t) => t.includes(`${third} (queued as queued-1) finished`))).toBe(true);
+      expect(texts.some((t) => t.includes(`${third} (done; call ${callId})`))).toBe(true);
     } finally {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
@@ -650,9 +657,10 @@ describe("mu_delegate", () => {
     await flush();
     await flush();
     expect(mu.calls.some((c) => c[1] === "close")).toBe(false);
-    const content = sentText(p);
+    const content = reportOf(mu);
     expect(content).toContain("died");
     expect(content).toContain("last pane lines");
+    expect(sentText(p)).toContain("Pane kept (kept as evidence)");
   });
 
   it("an API error keeps the pane, names the error, and leaves nothing outstanding", async () => {
@@ -667,7 +675,7 @@ describe("mu_delegate", () => {
     await flush();
     expect(mu.calls.some((c) => c[1] === "close")).toBe(false);
     expect(mu.calls.some((c) => c[1] === "read")).toBe(false); // the error is the evidence
-    const content = sentText(p);
+    const content = reportOf(mu);
     expect(content).toContain("stopped on an API error");
     expect(content).toContain("529 overloaded");
     expect(content).toContain("re-issue the call, or record the check as UNVERIFIED");
@@ -745,17 +753,16 @@ describe("errors and corner cases", () => {
     expect(mu.calls.some((c) => c[1] === "spawn")).toBe(false);
   });
 
-  it("the follow-up details carry the answer and run time for machine readers", async () => {
+  it("the wake details carry the call ids it points at, for machine readers", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x" });
+    const r = await tool(p).execute("t", { task: "x" });
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
     await flush();
     await flush();
     const msg = p.sendMessage.mock.calls[0]?.[0] as { details: Record<string, unknown> };
-    expect(msg.details).toMatchObject({ outcome: "done", answer: "42", closed: true });
-    expect(typeof msg.details.elapsedMs).toBe("number");
+    expect(msg.details).toEqual({ wake: 1, calls: [(r.details as { call_id: string }).call_id] });
   });
 
   it("a cwd that is not a directory fails before anything spawns", async () => {
@@ -854,7 +861,8 @@ describe("errors and corner cases", () => {
     await expect(cancel).rejects.toThrow(/agent gone/);
     await flush();
     await flush();
-    expect(sentText(p)).toContain("late");
+    expect(reportOf(mu)).toBe("late");
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
     expect(pendingCounts(p).at(-1)).toBe(0);
   });
 
@@ -872,7 +880,8 @@ describe("errors and corner cases", () => {
       ?.resolve(ok({ agents: [{ outcome: "done", lastText: "still here" }] }));
     await flush();
     await flush();
-    expect(sentText(p)).toContain("still here");
+    expect(reportOf(mu)).toBe("still here");
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it("a successful cancel drops an answer that its own abort settled", async () => {
@@ -1005,265 +1014,228 @@ describe("pending reports and delivery tracking", () => {
     expect(pendingCounts(p)).toEqual([1, 0]);
   });
 
-  it("counts a finished answer as pending until it enters the conversation", async () => {
-    const mu = fakeMu();
-    const p = fakePi();
-    const handle = registerDelegate(p.pi, mu.run);
-    const { ctx } = uiCtx();
-    p.state.busy = true;
-    await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
-    await tool(p).execute("b", { task: "two" }, undefined, undefined, ctx);
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
-    await flush();
-    await flush();
-    // Sent, but pi is mid-turn: it waits in pi's follow-up queue.
-    expect(p.sendMessage).toHaveBeenCalledTimes(1);
-    expect(handle.answerPending()).toBe(true);
-    expect(pendingCounts(p).at(-1)).toBe(1); // the second delegate only
-    // Someone else's custom message does not clear it.
-    await p.fire("message_start", {
-      message: { role: "custom", customType: "other", details: { delivery: 1 } },
-    });
-    expect(handle.answerPending()).toBe(true);
-    await p.drainQueue();
-    expect(handle.answerPending()).toBe(false);
-  });
-
-  it("an aborted run drops queued answers from the pending count and points at each one", async () => {
-    const cache = mkdtempSync(join(tmpdir(), "mu-dropped-"));
-    process.env.XDG_CACHE_HOME = cache;
-    const mu = fakeMu();
-    const p = fakePi();
-    const handle = registerDelegate(p.pi, mu.run);
-    const { ctx } = uiCtx();
-    p.state.busy = true;
-    await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
-    mu.waits
-      .get("delegate-2")
-      ?.resolve(
-        ok({ agents: [{ outcome: "done", lastText: "the answer", sessionFile: "/s/d2.jsonl" }] }),
-      );
-    await flush();
-    await flush();
-    expect(handle.answerPending()).toBe(true);
-    await p.fire("agent_settled", { type: "agent_settled", aborted: true });
-    expect(handle.answerPending()).toBe(false);
-    // One note, no turn, one line pointing at the copy and the session.
-    expect(p.sendMessage).toHaveBeenCalledTimes(2);
-    const [note, opts] = p.sendMessage.mock.calls[1] ?? [];
-    expect(opts).toEqual({ triggerTurn: false });
-    const text = (note as { content: string }).content;
-    const line = text.split("\n").find((l) => l.startsWith("- scratch/delegate-2")) ?? "";
-    expect(line).toContain("(done, ");
-    expect(line).toContain("session: /s/d2.jsonl");
-    const copy = /answer: (\S+)/.exec(line)?.[1] ?? "";
-    expect(copy.startsWith(join(cache, "mu", "delegate-answers"))).toBe(true);
-    expect(readFileSync(copy, "utf8")).toContain("the answer");
-    rmSync(cache, { recursive: true, force: true });
-  });
-
-  /** agent_settled, then the tick the extension waits before judging an answer lost. */
+  /** Resolve delegate `name`'s wait with a done answer and let it record. */
+  const finish = async (mu: ReturnType<typeof fakeMu>, name: string, text = "x") => {
+    mu.waits.get(name)?.resolve(ok({ agents: [{ outcome: "done", lastText: text }] }));
+    for (let i = 0; i < 4; i++) await flush();
+  };
+  /** agent_settled, then the tick the extension waits before judging a wake lost. */
   const settled = async (p: ReturnType<typeof fakePi>, aborted = false) => {
     await p.fire("agent_settled", { type: "agent_settled", aborted });
     await new Promise((r) => setImmediate(r));
   };
+  const wakeCalls = (p: ReturnType<typeof fakePi>) =>
+    p.sendMessage.mock.calls.filter(
+      (c) => (c[0] as { details?: { wake?: unknown } }).details?.wake,
+    );
 
-  it("a follow-up cleared from pi's queue without an abort is sent again when the run settles", async () => {
-    // The dequeue key calls session.clearQueue(): the custom follow-up is
-    // dropped, the run ends normally (aborted: false) and nothing arrives.
+  it("an answer recorded mid-turn sends nothing: that turn's settle shows it", async () => {
     const mu = fakeMu();
     const p = fakePi();
     const handle = registerDelegate(p.pi, mu.run);
-    const { ctx } = uiCtx();
+    const r = await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await p.fire("agent_start", {});
+    await finish(mu, "delegate-2");
+    expect(p.sendMessage).not.toHaveBeenCalled();
+    expect(handle.answerPending()).toBe(false);
+    // The settle wait showed it: nothing owed, so the end of the run wakes nobody.
+    handle.delivered([(r.details as { call_id: string }).call_id]);
+    await settled(p);
+    expect(p.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("an answer the settle did not show wakes pi once the run settles idle", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    const handle = registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await p.fire("agent_start", {});
+    await finish(mu, "delegate-2", "THE ANSWER");
+    await settled(p); // e.g. MU_NUDGE=0, or the settle wait failed
+    expect(wakeCalls(p)).toHaveLength(1);
+    const [msg, opts] = wakeCalls(p)[0] ?? [];
+    expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
+    expect((msg as { content: string }).content).not.toContain("THE ANSWER");
+    expect(handle.answerPending()).toBe(false); // fakePi starts it at once: idle
+  });
+
+  it("a run that starts in the tick an idle answer is recorded takes it: no wake", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    // The user's prompt starts a run while the pane closes, before the wake is due.
+    const run: MuRunner = (args, ...rest) => {
+      if (args[1] === "close" && args.includes("--if")) void p.fire("agent_start", {});
+      return mu.run(args, ...rest);
+    };
+    registerDelegate(p.pi, run);
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
+    for (let i = 0; i < 4; i++) await flush();
+    expect(reportOf(mu)).toBe("x");
+    expect(p.sendMessage).not.toHaveBeenCalled(); // that run's settle shows it
+  });
+
+  it("a wait that found nothing owed covers answers recorded before it started, not after", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    const handle = registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await tool(p).execute("b", { task: "two" }, undefined, undefined, uiCtx().ctx);
+    await p.fire("agent_start", {});
+    await finish(mu, "delegate-2");
+    const before = Date.now() + 1;
+    await new Promise((r) => setTimeout(r, 5));
+    await finish(mu, "delegate-3");
+    handle.delivered({ before }); // the model's own wait consumed delegate-2 only
+    await settled(p);
+    const ids = wakeCalls(p).flatMap(
+      (c) => (c[0] as { details: { calls: string[] } }).details.calls,
+    );
+    expect(ids).toHaveLength(1);
+    expect(listDelegates(mu.db).find((c) => c.callId === ids[0])?.agent).toBe("delegate-3");
+  });
+
+  it("answers recorded in one tick while idle share ONE wake; a wake is pending until it starts", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    const handle = registerDelegate(p.pi, mu.run);
+    p.state.busy = true; // pi queues the wake behind a running compaction, say
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await tool(p).execute("b", { task: "two" }, undefined, undefined, uiCtx().ctx);
+    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "a" }] }));
+    mu.waits.get("delegate-3")?.resolve(ok({ agents: [{ outcome: "done", lastText: "b" }] }));
+    for (let i = 0; i < 6; i++) await flush();
+    expect(wakeCalls(p)).toHaveLength(1);
+    expect((wakeCalls(p)[0]?.[0] as { content?: string } | undefined)?.content).toMatch(
+      /^2 delegate answers/,
+    );
+    expect(handle.answerPending()).toBe(true);
+    expect(pendingCounts(p).at(-1)).toBe(0); // murmur counts running work, never wakes
+    await p.fire("message_start", {
+      message: { role: "custom", customType: "other", details: { wake: 1 } },
+    });
+    expect(handle.answerPending()).toBe(true); // someone else's message does not clear it
+    await p.drainQueue();
+    expect(handle.answerPending()).toBe(false);
+    await settled(p);
+    expect(wakeCalls(p)).toHaveLength(1); // the wake carried both: nothing owed
+  });
+
+  it("Escape drops a queued wake with a one-line note per answer: no turn, no copy, reports intact", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    const handle = registerDelegate(p.pi, mu.run);
     p.state.busy = true;
-    await tool(p).execute("a", { task: "one" }, undefined, undefined, ctx);
-    mu.waits
-      .get("delegate-2")
-      ?.resolve(ok({ agents: [{ outcome: "done", lastText: "the answer" }] }));
-    await flush();
-    await flush();
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await finish(mu, "delegate-2", "the answer");
+    const [, wakeOpts] = wakeCalls(p)[0] ?? [];
+    await settled(p, true);
+    expect(handle.answerPending()).toBe(false);
+    // pi runs the send it deferred later, reading the options object it was handed.
+    expect(wakeOpts).toEqual({ deliverAs: "followUp", triggerTurn: false });
+    const [note, opts] = p.sendMessage.mock.calls.at(-1) ?? [];
+    expect(opts).toEqual({ triggerTurn: false });
+    const text = (note as { content: string }).content;
+    expect(text).toMatch(/^Interrupted: 1 delegate answer recorded but not shown/);
+    expect(text).toContain("- scratch/delegate-2 (done;");
+    expect(text).not.toContain("the answer");
+    expect(reportOf(mu)).toBe("the answer"); // durable: the next settle's wait shows it
+    await settled(p);
+    expect(p.sendMessage).toHaveBeenCalledTimes(2); // no wake after the user stopped
+  });
+
+  it("an answer recorded during an aborted run is noted, never woken", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await p.fire("agent_start", {});
+    await finish(mu, "delegate-2");
+    await settled(p, true);
+    expect(wakeCalls(p)).toHaveLength(0);
+    expect((p.sendMessage.mock.calls[0]?.[1] as object) ?? {}).toEqual({ triggerTurn: false });
+  });
+
+  it("a wake cleared from pi's queue without an abort is sent again when the run settles", async () => {
+    // The dequeue key calls session.clearQueue(): the wake is dropped, the run
+    // ends normally (aborted: false) and nothing arrives.
+    const mu = fakeMu();
+    const p = fakePi();
+    const handle = registerDelegate(p.pi, mu.run);
+    p.state.busy = true;
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await finish(mu, "delegate-2");
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
     await settled(p); // queue was cleared
     expect(p.sendMessage).toHaveBeenCalledTimes(2);
     const [again, opts] = p.sendMessage.mock.calls[1] ?? [];
     expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
-    const [first] = p.sendMessage.mock.calls[0] ?? [];
-    expect(again).toEqual(first);
-    expect(handle.answerPending()).toBe(true);
-    // pi starts the resent message: it arrives once and the count clears.
-    p.state.busy = false;
-    await p.fire("message_start", {
-      type: "message_start",
-      message: { role: "custom", ...(again as object) },
-    });
-    expect(handle.answerPending()).toBe(false);
-  });
-
-  it("a follow-up that pi drained before the run ended is not sent again", async () => {
-    const mu = fakeMu();
-    const p = fakePi();
-    registerDelegate(p.pi, mu.run);
-    p.state.busy = true;
-    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
-    await flush();
-    await flush();
-    await p.drainQueue(); // message_start for the queued follow-up
-    await p.fire("agent_settled", { type: "agent_settled", aborted: false });
-    expect(p.sendMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("an answer queued after agent_end (post-run compaction) and then cleared is sent again", async () => {
-    // pi stays "streaming" through compaction after agent_end: the answer
-    // is queued, the dequeue key clears it, the run settles normally.
-    const mu = fakeMu();
-    const p = fakePi();
-    const handle = registerDelegate(p.pi, mu.run);
-    await p.fire("agent_start", { type: "agent_start" });
-    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
-    await p.fire("agent_end", { type: "agent_end" });
-    p.state.busy = true; // compacting
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
-    await flush();
-    await flush();
-    expect(handle.answerPending()).toBe(true);
-    await settled(p);
-    expect(p.sendMessage).toHaveBeenCalledTimes(2);
-    const [again, opts] = p.sendMessage.mock.calls[1] ?? [];
-    expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
-    // Still pending until pi starts it; then it clears, so mu-pi's nudges are not held back.
+    expect(again).toEqual(p.sendMessage.mock.calls[0]?.[0]);
     expect(handle.answerPending()).toBe(true);
     p.state.busy = false;
     await p.fire("message_start", { message: { role: "custom", ...(again as object) } });
     expect(handle.answerPending()).toBe(false);
+    await settled(p);
+    expect(p.sendMessage).toHaveBeenCalledTimes(2);
   });
 
-  it("several cleared answers are resent one at a time, each after the previous started", async () => {
-    const mu = fakeMu();
-    const p = fakePi();
-    registerDelegate(p.pi, mu.run);
-    p.state.busy = true;
-    const n = 3;
-    for (let i = 0; i < n; i++)
-      await tool(p).execute(`c${i}`, { task: "t", keep: true }, undefined, undefined, uiCtx().ctx);
-    for (let i = 0; i < n; i++)
-      mu.waits
-        .get(`delegate-${i + 2}`)
-        ?.resolve(ok({ agents: [{ outcome: "done", lastText: `a${i}` }] }));
-    await flush();
-    await flush();
-    expect(p.sendMessage).toHaveBeenCalledTimes(n);
-    const settle = (aborted: boolean) => settled(p, aborted);
-    for (let round = 1; round <= n; round++) {
-      await settle(false); // queue was cleared
-      expect(p.sendMessage).toHaveBeenCalledTimes(n + round); // exactly one resend
-      const [m, o] = p.sendMessage.mock.calls[n + round - 1] ?? [];
-      expect(o).toEqual({ deliverAs: "followUp", triggerTurn: true });
-      await p.fire("message_start", {
-        message: { role: "custom", ...(m as object) },
-      }); // pi starts that one
-    }
-    await settle(false);
-    expect(p.sendMessage).toHaveBeenCalledTimes(2 * n);
-  });
-
-  it("Escape during a resend drops the answers still waiting, with copies, and resends none", async () => {
-    const cache = mkdtempSync(join(tmpdir(), "mu-dropped-"));
-    process.env.XDG_CACHE_HOME = cache;
+  it("a wake lost twice is dropped with a note; the report stays", async () => {
     const mu = fakeMu();
     const p = fakePi();
     const handle = registerDelegate(p.pi, mu.run);
     p.state.busy = true;
-    const n = 3;
-    for (let i = 0; i < n; i++)
-      await tool(p).execute(`c${i}`, { task: "t", keep: true }, undefined, undefined, uiCtx().ctx);
-    for (let i = 0; i < n; i++)
-      mu.waits
-        .get(`delegate-${i + 2}`)
-        ?.resolve(ok({ agents: [{ outcome: "done", lastText: `a${i}` }] }));
-    await flush();
-    await flush();
-    // pi defers every triggerTurn send made inside agent_settled into a list
-    // that neither abort() nor clearQueue() empties, and runs all of it.
-    const before = p.sendMessage.mock.calls.length;
-    await settled(p);
-    const deferred = p.sendMessage.mock.calls.slice(before);
-    expect(deferred).toHaveLength(1);
-    expect(deferred[0]?.[1]).toEqual({ deliverAs: "followUp", triggerTurn: true });
-    p.state.busy = false;
-    await p.fire("message_start", {
-      message: { role: "custom", ...(deferred[0]?.[0] as object) },
-    });
-    p.state.busy = true;
-    await settled(p, true); // Escape in that run
-    // Only the note follows: no further resend, and it names just the answers that will not arrive.
-    expect(p.sendMessage).toHaveBeenCalledTimes(before + 2);
-    const [note, opts] = p.sendMessage.mock.calls[before + 1] ?? [];
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await finish(mu, "delegate-2", "kept");
+    await settled(p); // lost once: resent
+    await settled(p); // lost again: dropped
+    expect(p.sendMessage).toHaveBeenCalledTimes(3);
+    const [note, opts] = p.sendMessage.mock.calls[2] ?? [];
     expect(opts).toEqual({ triggerTurn: false });
-    const dropped = (note as { details: { dropped: { name: string }[] } }).details.dropped;
-    expect(dropped.map((d) => d.name)).toEqual(["delegate-3", "delegate-4"]);
+    expect((note as { content: string }).content).toMatch(/^Interrupted: 1 delegate answer/);
     expect(handle.answerPending()).toBe(false);
-    rmSync(cache, { recursive: true, force: true });
+    expect(reportOf(mu)).toBe("kept");
   });
 
-  it("a second start of one delivery is rewritten to a one-line stub", async () => {
+  it("a wake that pi drained before the run ended is not sent again", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
+    p.state.busy = true;
     await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "BIG" }] }));
-    await flush();
-    await flush();
+    await finish(mu, "delegate-2");
+    await p.drainQueue(); // message_start for the queued wake
+    await settled(p);
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("a repeated wake (a resend racing a deferred send) repeats no answer", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    const handle = registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await finish(mu, "delegate-2", "BIG");
     const [sent] = p.sendMessage.mock.calls[0] ?? [];
-    const again = { role: "custom", ...(sent as object) } as unknown as {
-      content: string;
-      details: Record<string, unknown>;
-    };
-    expect(again.content).toContain("BIG"); // the first start is untouched
-    const repeat = structuredClone(again);
-    await p.fire("message_start", { message: repeat });
-    expect(repeat.content).toMatch(/already handled/);
-    expect(repeat.content).not.toContain("BIG");
-    expect(repeat.details).toMatchObject({ duplicateOf: again.details.delivery });
+    await p.fire("message_start", { message: { role: "custom", ...(sent as object) } });
+    expect(JSON.stringify(p.sendMessage.mock.calls)).not.toContain("BIG");
+    expect(handle.answerPending()).toBe(false);
+    await settled(p);
+    expect(p.sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("a dropped answer's deferred send is defused: no turn, and a stub if it starts", async () => {
-    const cache = mkdtempSync(join(tmpdir(), "mu-dropped-"));
-    process.env.XDG_CACHE_HOME = cache;
+  it("no resend while pi is not idle", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
     p.state.busy = true;
     await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "BIG" }] }));
-    await flush();
-    await flush();
-    const [msg, opts] = p.sendMessage.mock.calls[0] ?? [];
-    expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: true });
-    await settled(p, true); // Escape: dropped with a copy
-    // pi runs the send it deferred later, reading the options object it was handed.
-    expect(opts).toEqual({ deliverAs: "followUp", triggerTurn: false });
-    expect((msg as { content: string }).content).toMatch(/already handled/);
-    rmSync(cache, { recursive: true, force: true });
-  });
-
-  it("no resend while pi is not idle, or while a later answer is still in flight", async () => {
-    const mu = fakeMu();
-    const p = fakePi();
-    registerDelegate(p.pi, mu.run);
-    p.state.busy = true;
-    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
-    mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "x" }] }));
-    await flush();
-    await flush();
-    const busyCtx = { isIdle: () => false };
+    await finish(mu, "delegate-2");
     for (const h of p.handlers.get("agent_settled") ?? [])
-      await h({ type: "agent_settled", aborted: false }, busyCtx);
+      await h({ type: "agent_settled", aborted: false }, { isIdle: () => false });
     await new Promise((r) => setImmediate(r));
     expect(p.sendMessage).toHaveBeenCalledTimes(1);
   });
 
-  it("an interrupt with nothing queued leaves no note", async () => {
+  it("an interrupt with nothing owed leaves no note", async () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -1272,11 +1244,41 @@ describe("pending reports and delivery tracking", () => {
     expect(p.sendMessage).not.toHaveBeenCalled();
   });
 
-  it("droppedNote falls back to mu agent read without a copy or session file", () => {
-    const text = droppedNote([{ name: "delegate-3", outcome: "error" }]);
-    expect(text).toContain("The interrupt dropped 1 delegate answer before it arrived:");
-    expect(text).toContain(
-      "- scratch/delegate-3 (error) read: mu agent read delegate-3 -n 50 -w scratch",
+  it("after a shutdown nothing wakes; the report stays for the next session's wait", async () => {
+    const mu = fakeMu();
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    await tool(p).execute("a", { task: "one" }, undefined, undefined, uiCtx().ctx);
+    await p.fire("agent_start", {});
+    await finish(mu, "delegate-2", "r");
+    for (const h of p.shutdown) await h({}, {});
+    await settled(p);
+    expect(wakeCalls(p)).toHaveLength(0);
+    expect(reportOf(mu)).toBe("r");
+  });
+
+  it("droppedNote and wakeText name each answer's report and kept pane, never its text", () => {
+    const a = {
+      callId: "pi:s:1",
+      name: "delegate-3",
+      workstream: "scratch",
+      task: "delegate_ab",
+      outcome: "error",
+      kept: "kept as evidence",
+    };
+    expect(droppedNote([a])).toBe(
+      [
+        "Interrupted: 1 delegate answer recorded but not shown; the next settle shows it:",
+        "- scratch/delegate-3 (error; call pi:s:1): mu task notes delegate_ab -w scratch. Pane kept (kept as evidence): mu agent read delegate-3 -n 50 -w scratch.",
+      ].join("\n"),
+    );
+    expect(
+      wakeText([{ ...a, outcome: "done", verdict: "CONFIRMED", record: "w/f1", kept: undefined }]),
+    ).toBe(
+      [
+        "A delegate answer is recorded; the settle shows it (or read the report):",
+        "- scratch/delegate-3 (done, CONFIRMED, recorded on w/f1; call pi:s:1): mu task notes delegate_ab -w scratch.",
+      ].join("\n"),
     );
   });
 
@@ -1382,7 +1384,7 @@ describe("evidence when there is no final answer", () => {
     expect(lastAssistantTextIn(join(tmp, "missing.jsonl"))).toBeUndefined();
   });
 
-  it("a timeout points at the session and copies the partial answer", async () => {
+  it("a timeout's report names the session and holds the partial answer; no copy file", async () => {
     const mu = muWithSession(sessionWith(tmp, "halfway there"));
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -1390,12 +1392,10 @@ describe("evidence when there is no final answer", () => {
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "timeout" }] }));
     await flush();
     await flush();
-    const text = sentText(p);
+    const text = reportOf(mu);
     expect(text).toContain(`Session: ${join(tmp, "s.jsonl")}`);
-    const copy = /Partial answer so far: (\S+)/.exec(text)?.[1] ?? "";
-    expect(copy.startsWith(join(tmp, "mu", "delegate-answers"))).toBe(true);
-    expect(copy.endsWith("_delegate-2.partial.md")).toBe(true);
-    expect(readFileSync(copy, "utf8")).toBe("halfway there\n");
+    expect(text).toContain("Partial answer so far:\nhalfway there");
+    expect(existsSync(join(tmp, "mu", "delegate-answers"))).toBe(false);
   });
 
   it("an API error prefers the session file the wait reports", async () => {
@@ -1409,11 +1409,11 @@ describe("evidence when there is no final answer", () => {
       ?.resolve(ok({ agents: [{ outcome: "error", lastError: "529", sessionFile: settled }] }));
     await flush();
     await flush();
-    expect(sentText(p)).toContain(`Session: ${settled}`);
-    expect(sentText(p)).toContain("Partial answer so far:");
+    expect(reportOf(mu)).toContain(`Session: ${settled}`);
+    expect(reportOf(mu)).toContain("Partial answer so far:\npartial");
   });
 
-  it("a blocked delegate keeps its pane, copies no partial, and says it has not finished", async () => {
+  it("a blocked delegate keeps its pane, records no partial, and says it has not finished", async () => {
     const mu = muWithSession(sessionWith(tmp, "half an answer"));
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -1432,7 +1432,8 @@ describe("evidence when there is no final answer", () => {
     );
     await flush();
     await flush();
-    const text = sentText(p);
+    expect(sentText(p)).toContain("Pane kept (waiting on a dialog)");
+    const text = reportOf(mu);
     expect(text).toContain('blocked on a confirm "Allow push?" dialog');
     expect(text).toContain("has NOT finished");
     expect(text).toContain("Pane kept (waiting on a dialog)");
@@ -1452,11 +1453,11 @@ describe("evidence when there is no final answer", () => {
     mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "A" }] }));
     await flush();
     await flush();
+    expect(reportOf(mu)).toBe("A");
     expect(sentText(p)).not.toContain("Session:");
-    expect(sentText(p)).not.toContain("Partial answer");
   });
 
-  it("cancel copies what it wrote and names the session", async () => {
+  it("cancel records what it wrote and names the session", async () => {
     const mu = muWithSession(sessionWith(tmp, "before the abort"));
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
@@ -1465,8 +1466,7 @@ describe("evidence when there is no final answer", () => {
     const text = r.content[0]?.text ?? "";
     expect(text).toContain("Aborted scratch/delegate-2.");
     expect(text).toContain(`Session: ${join(tmp, "s.jsonl")}`);
-    const copy = /Partial answer so far: (\S+)/.exec(text)?.[1] ?? "";
-    expect(readFileSync(copy, "utf8")).toBe("before the abort\n");
+    expect(reportOf(mu)).toContain("before the abort");
   });
 
   it("shutdown names each running delegate's session", async () => {
@@ -1480,28 +1480,33 @@ describe("evidence when there is no final answer", () => {
   });
 });
 
-describe("the settle wait yields to a delegate answer on its way", () => {
-  // The real wiring: muPi registers the delegate and the nudges; the settle
-  // wait would continue the run while owned work runs. pi's
-  // hasPendingMessages() does not count the answer.
+describe("the settle wait delivers delegate answers (muPi wiring)", () => {
+  // The real wiring: muPi registers the delegate and the nudges. The settle
+  // wait's `mu wait` is faked; everything else (delegates, task notes) is the
+  // real SDK on a temp DB, so a report the settle shows is what was recorded.
   const SESSION = { sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s1" } };
   const EVENT = ok({ firing: { kind: "closed" }, exit: 0 });
-  async function setup(opts: { holdWait?: boolean; worker?: boolean } = {}) {
+  const delegateEvent = (callId: string) =>
+    ok({ firing: { kind: "delegate", ref: `delegate:${callId}` }, exit: 0 });
+  type Entry = { customType?: string; content?: string };
+  async function setup(opts: { worker?: boolean } = {}) {
     const mu = fakeMu();
     const p = fakePi();
-    /** Settle waits in flight: their signal, and how to answer them. */
-    const settleWaits: { signal?: AbortSignal; resolve: (r: MuResult) => void }[] = [];
+    /** Settle waits in flight: their argv and signal, and how to answer them. */
+    const settleWaits: {
+      args: readonly string[];
+      signal?: AbortSignal;
+      resolve: (r: MuResult) => void;
+    }[] = [];
     const run: MuRunner = (args, signal, stdin) => {
       if (args[0] === "state") return Promise.resolve(ok({ workstreams: [] }));
-      if (args[0] === "wait") {
-        if (!opts.holdWait) return Promise.resolve(EVENT);
+      if (args[0] === "wait")
         return new Promise((resolve) => {
-          settleWaits.push({ resolve, ...(signal ? { signal } : {}) });
+          settleWaits.push({ args, resolve, ...(signal ? { signal } : {}) });
           signal?.addEventListener("abort", () =>
             resolve(ok({ firing: { kind: "interrupted" }, interrupted: true, exit: 143 })),
           );
         });
-      }
       if (args[0] === "task" && args[1] === "owned-by")
         return Promise.resolve(ok({ items: [{ id: "w1-task", status: "IN_PROGRESS" }] }));
       return mu.run(args, signal, stdin);
@@ -1526,61 +1531,250 @@ describe("the settle wait yields to a delegate answer on its way", () => {
         } as DelegateCtx);
         if (r !== undefined) out = r;
       }
-      return out as { continue?: boolean; entries?: { customType?: string }[] } | undefined;
+      return out as { continue?: boolean; entries?: Entry[] } | undefined;
     };
-    return { mu, p, settle, settleWaits };
+    /** Answer the next settle wait (after letting it start). */
+    const answerWait = async (r: MuResult) => {
+      for (let i = 0; i < 20 && settleWaits.length === 0; i++) await flush();
+      settleWaits.shift()?.resolve(r);
+    };
+    return { mu, p, settle, settleWaits, answerWait };
   }
+  const delegate = async (t: Awaited<ReturnType<typeof setup>>, params: Record<string, unknown>) =>
+    String(((await tool(t.p).execute("d", params)).details as { call_id: string }).call_id);
+  const content = (r: { entries?: Entry[] } | undefined) =>
+    (r?.entries ?? []).map((e) => e.content ?? "").join("\n");
 
-  /** Start a delegate and let its answer reach pi's follow-up queue. */
-  async function answerQueued(t: Awaited<ReturnType<typeof setup>>) {
-    await tool(t.p).execute("d", { task: "check it" });
-    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
-    await flush();
-    await flush();
-  }
-
-  it("no wait while the answer is queued; the answer's own settle waits", async () => {
+  it("a delegate event shows that call's report: header, the answer, no echo", async () => {
     const t = await setup();
-    t.p.state.busy = true;
-    await answerQueued(t);
+    await t.p.fire("agent_start", {});
+    const id = await delegate(t, { task: "check it" });
+    t.mu.waits
+      .get("delegate-2")
+      ?.resolve(ok({ agents: [{ outcome: "done", lastText: "42 is it" }] }));
+    for (let i = 0; i < 4; i++) await flush();
+    const settling = t.settle();
+    await t.answerWait(delegateEvent(id));
+    const r = await settling;
+    expect(r?.continue).toBe(true);
+    expect(content(r)).toContain(`Delegate answer: call ${id}, task scratch/`);
+    expect(content(r)).toContain("\n42 is it");
+    await t.p.fire("agent_settled", { aborted: false });
+    await new Promise((x) => setImmediate(x));
+    expect(t.p.sendMessage).not.toHaveBeenCalled(); // shown once, by the settle
+  });
+
+  it("a long report is capped with the pointer to the whole of it", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const id = await delegate(t, { task: "x" });
+    const long = `HEAD${"y".repeat(5000)}TAIL`;
+    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: long }] }));
+    for (let i = 0; i < 4; i++) await flush();
+    const settling = t.settle();
+    await t.answerWait(delegateEvent(id));
+    const text = content(await settling);
+    expect(text).toContain("HEAD");
+    expect(text).not.toContain("TAIL");
+    const c = listDelegates(t.mu.db)[0];
+    expect(text).toContain(`more characters: mu task notes ${c?.task} -w scratch]`);
+  });
+
+  it("a recorded check with a verdict shows the header only: the verdict is on its task", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const id = await delegate(t, { task: "x", record: { task: "crew/f1" } });
+    t.mu.waits
+      .get("delegate-2")
+      ?.resolve(
+        ok({ agents: [{ outcome: "done", lastText: "VERDICT: CONFIRMED\nEVIDENCE: SECRET" }] }),
+      );
+    for (let i = 0; i < 4; i++) await flush();
+    const settling = t.settle();
+    await t.answerWait(delegateEvent(id));
+    const text = content(await settling);
+    expect(text).toContain("done, CONFIRMED, recorded on crew/f1. Full answer: mu task notes");
+    expect(text).not.toContain("SECRET");
+  });
+
+  it("a wave event runs the same wait until the wave is in, then shows ONE summary", async () => {
+    process.env.MU_DELEGATE_MAX = "2";
+    try {
+      const t = await setup();
+      await t.p.fire("agent_start", {});
+      const ids: string[] = [];
+      for (let n = 1; n <= 3; n++)
+        ids.push(await delegate(t, { task: `c${n}`, wave: "w", record: { task: `crew/c${n}` } }));
+      // past the cap and the queue? no: 2 run, 1 queued (cap 2, queue 8)
+      const answer = async (name: string, v: string) => {
+        t.mu.waits
+          .get(name)
+          ?.resolve(ok({ agents: [{ outcome: "done", lastText: `VERDICT: ${v}` }] }));
+        for (let i = 0; i < 6; i++) await flush();
+      };
+      await answer("delegate-2", "CONFIRMED");
+      const settling = t.settle();
+      await t.answerWait(delegateEvent(ids[0] ?? ""));
+      // Siblings pending: the same owned wait again, not a summary yet.
+      await answer("delegate-3", "REFUTED");
+      await t.answerWait(delegateEvent(ids[1] ?? ""));
+      const third = [...t.mu.waits.keys()].at(-1) ?? "";
+      await answer(third, "CONFIRMED");
+      await t.answerWait(delegateEvent(ids[2] ?? ""));
+      const r = await settling;
+      expect(r?.continue).toBe(true);
+      expect(r?.entries).toHaveLength(1);
+      const text = content(r);
+      expect(text).toContain(
+        "Wave w: 2/3 CONFIRMED, 1 REFUTED, 0 UNVERIFIED, 0 pending, 0 refused.",
+      );
+      for (const n of [1, 2, 3]) expect(text).toContain(`- crew/c${n}: `);
+      expect(t.settleWaits).toHaveLength(0);
+      await t.p.fire("agent_settled", { aborted: false });
+      await new Promise((x) => setImmediate(x));
+      expect(t.p.sendMessage).not.toHaveBeenCalled(); // no N follow-ups, no wake
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("a refused wave call is listed for reissue, never waited on", async () => {
+    process.env.MU_DELEGATE_MAX = "1";
+    try {
+      const t = await setup();
+      await t.p.fire("agent_start", {});
+      const ids: string[] = [];
+      for (let n = 1; n <= 6; n++) ids.push(await delegate(t, { task: `c${n}`, wave: "w" }));
+      const refused = listDelegates(t.mu.db).filter((c) => c.state === "refused");
+      expect(refused).toHaveLength(1); // 1 running, 4 queued, 1 refused
+      // Cancel the queued ones: only the running call and the refused one stay.
+      for (const q of ["queued-1", "queued-2", "queued-3", "queued-4"])
+        await tool(t.p, DELEGATE_CANCEL_TOOL).execute("c", { name: q });
+      t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "ok" }] }));
+      for (let i = 0; i < 6; i++) await flush();
+      const settling = t.settle();
+      await t.answerWait(delegateEvent(ids[0] ?? ""));
+      const text = content(await settling);
+      expect(text).toContain("1 refused.");
+      expect(text).toContain(
+        `REFUSED, reissue it: mu_delegate_reissue (call ${refused[0]?.callId})`,
+      );
+      expect(t.settleWaits).toHaveLength(0); // not waited on
+    } finally {
+      const k = "MU_DELEGATE_MAX";
+      delete process.env[k];
+    }
+  });
+
+  it("another event during a wave's wait ends it: the summary so far, then that event", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const a = await delegate(t, { task: "c1", wave: "w" });
+    await delegate(t, { task: "c2", wave: "w" });
+    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "one" }] }));
+    for (let i = 0; i < 4; i++) await flush();
+    const settling = t.settle();
+    await t.answerWait(delegateEvent(a));
+    await t.answerWait(ok({ firing: { kind: "dead", ref: "agent:crew/w1" }, exit: 6 }));
+    const r = await settling;
+    const text = content(r);
+    expect(text).toContain("Wave w: 0/2 CONFIRMED, 0 REFUTED, 1 UNVERIFIED, 1 pending");
+    expect(text).toContain("Another event came before the rest of wave w:");
+    expect(text).toContain('"agent:crew/w1"');
+    expect(r?.continue).toBe(true);
+  });
+
+  it("no wait while a wake is queued; the wake's own turn waits and shows the report", async () => {
+    const t = await setup();
+    t.p.state.busy = true; // pi mid-compaction: the wake queues
+    const id = await delegate(t, { task: "check it" });
+    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
+    for (let i = 0; i < 6; i++) await flush();
     expect(t.p.sendMessage).toHaveBeenCalledTimes(1);
-    // Without the hold this settle continues the run ahead of the answer.
-    expect(await t.settle()).toBeUndefined();
-    await t.p.drainQueue(); // the answer enters the conversation
-    expect(await t.settle()).toMatchObject({ continue: true });
+    expect(await t.settle()).toBeUndefined(); // the wake's turn comes first
+    expect(t.settleWaits).toHaveLength(0);
+    await t.p.drainQueue(); // the wake enters the conversation
+    const settling = t.settle();
+    await t.answerWait(delegateEvent(id));
+    expect(content(await settling)).toContain("\n42");
   });
 
   it("no wait while an ordinary user message is queued", async () => {
     const t = await setup();
     expect(await t.settle({ hasPendingMessages: () => true })).toBeUndefined();
-    expect(await t.settle({ hasPendingMessages: () => false })).toMatchObject({ continue: true });
+    const settling = t.settle({ hasPendingMessages: () => false });
+    await t.answerWait(EVENT);
+    expect(await settling).toMatchObject({ continue: true });
   });
 
-  it("an answer that arrives during the wait wakes it: drained, no continuation ahead of it", async () => {
-    const t = await setup({ holdWait: true, worker: true });
-    t.p.state.busy = true;
-    await tool(t.p).execute("d", { task: "check it" });
+  it("an answer recorded during the wait is not a wake: the running wait returns it", async () => {
+    const t = await setup({ worker: true });
+    await t.p.fire("agent_start", {});
+    const id = await delegate(t, { task: "check it" });
     const settling = t.settle();
-    await flush();
+    for (let i = 0; i < 4; i++) await flush();
     expect(t.settleWaits).toHaveLength(1);
-    expect(t.settleWaits[0]?.signal?.aborted).toBe(false);
     t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "42" }] }));
-    await flush();
-    await flush();
-    // The wake aborted only the settle wait; the close nudge yielded to the answer too.
-    expect(t.settleWaits[0]?.signal?.aborted).toBe(true);
-    expect(await settling).toBeUndefined();
-    await t.p.drainQueue();
-    t.settleWaits.length = 0;
-    const again = t.settle();
-    await flush();
-    t.settleWaits[0]?.resolve(EVENT);
-    const r = await again;
+    for (let i = 0; i < 4; i++) await flush();
+    expect(t.settleWaits[0]?.signal?.aborted).toBe(false); // nothing aborts it
+    expect(t.p.sendMessage).not.toHaveBeenCalled(); // and nothing echoes
+    await t.answerWait(delegateEvent(id));
+    const r = await settling;
     expect(r).toMatchObject({ continue: true });
     expect(r?.entries?.map((e) => e.customType).sort()).toEqual([
       "mu-close-task",
       "mu-keep-driving",
     ]);
+    expect(content(r)).toContain("\n42");
+  });
+
+  it("a wait that finds nothing owed clears answers recorded before it: no wake", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    await delegate(t, { task: "x" });
+    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "a" }] }));
+    for (let i = 0; i < 4; i++) await flush();
+    await new Promise((x) => setTimeout(x, 2));
+    const settling = t.settle(); // e.g. the model's own `mu wait` consumed it first
+    await t.answerWait(ok({ firing: { kind: "drained" }, drained: true, exit: 0 }));
+    expect(await settling).toBeUndefined();
+    await t.p.fire("agent_settled", { aborted: false });
+    await new Promise((x) => setImmediate(x));
+    expect(t.p.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("Esc during the wait: drained, the answer stays owed, no wake; the next prompt's settle shows it", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const id = await delegate(t, { task: "x" });
+    let key: ((d: string) => undefined) | undefined;
+    const settling = t.settle({
+      ui: {
+        notify: () => {},
+        onTerminalInput: (h) => {
+          key = h;
+          return () => {};
+        },
+      },
+    });
+    for (let i = 0; i < 4; i++) await flush();
+    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "kept" }] }));
+    for (let i = 0; i < 4; i++) await flush();
+    key?.("\u001b");
+    expect(await settling).toBeUndefined();
+    await t.p.fire("agent_settled", { aborted: true });
+    expect(t.p.handlers.get("agent_settled")).toBeDefined();
+    const wakes = t.p.sendMessage.mock.calls.filter(
+      (c) => (c[1] as { triggerTurn?: boolean }).triggerTurn === true,
+    );
+    expect(wakes).toHaveLength(0);
+    // The next prompt: its settle's wait still owes the report.
+    t.settleWaits.length = 0; // the cancelled one
+    await t.p.fire("agent_start", {});
+    const next = t.settle();
+    await t.answerWait(delegateEvent(id));
+    expect(content(await next)).toContain("\nkept");
   });
 
   it("no wait while an extension dialog is open", async () => {
@@ -1591,7 +1785,9 @@ describe("the settle wait yields to a delegate answer on its way", () => {
     } finally {
       await t.p.fire("ui_prompt_end", { kind: "confirm" });
     }
-    expect(await t.settle()).toMatchObject({ continue: true });
+    const settling = t.settle();
+    await t.answerWait(EVENT);
+    expect(await settling).toMatchObject({ continue: true });
   });
 });
 
@@ -1618,7 +1814,7 @@ describe("closing is bound to the agent the delegate spawned as", () => {
     // the fixture's first spawn is registry id 100, revision id * 7
     expect(closes[1]?.[closes[1].indexOf("--if") + 1]).toBe("700");
     expect(mu.registry.has("delegate-2")).toBe(false);
-    expect(sentText(p)).toContain("Pane closed.");
+    expect(sentText(p)).not.toContain("Pane kept");
   });
 
   it("replaced before cleanup: the replacement is never previewed-then-applied; the pane is kept", async () => {

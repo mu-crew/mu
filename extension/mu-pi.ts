@@ -421,14 +421,15 @@ export default function muPi(pi: MuPiApi, run: MuRunner = defaultRunner()): void
   // another pi is nested and gets none of the agent's nudges.
   const nested = serveCtl(pi);
   // The settle wait and the close nudge run in parallel, as one handler.
-  // A delegate answer on its way resumes the agent itself (and wakes a
-  // running settle wait); an open dialog means nobody is driving. Either
-  // holds the nudges.
+  // A delegate wake on its way starts a turn whose settle waits; an open
+  // dialog means nobody is driving. Either holds the nudges. The settle wait
+  // shows delegate answers and tells the delegate side which, so it wakes pi
+  // only for answers no settle showed.
   const hold = withQueuedInput(() =>
-    delegates.answerPending() ? "answer" : isUiBlocked() ? "blocked" : undefined,
+    delegates.answerPending() ? "wake" : isUiBlocked() ? "blocked" : undefined,
   );
   const settle = parallelSettle(pi, hold);
-  registerNudge(settle.api, run, undefined, nested, hold, delegates.onAnswer);
+  registerNudge(settle.api, run, undefined, nested, hold, delegates.delivered);
   registerCloseNudge(settle.api, run, process.env, nested, hold);
   settle.flush();
 }
