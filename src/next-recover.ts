@@ -57,6 +57,12 @@ export type ObserveWorkers = (
 /** The ctl `wait` that reads a settled run's error: a reply is immediate, so this only bounds a dead socket. */
 export const OBSERVE_MS = 3000;
 
+/** Idle on a healthy control socket: nothing queued, no dialog. The only state a worker's last error is acted on from. */
+export const idleOnCtl = (
+  f: Pick<WorkerFacts, "status" | "ctl" | "pending" | "blocked">,
+): boolean =>
+  f.status === "needs_input" && f.ctl === "ok" && f.pending !== true && f.blocked === undefined;
+
 export const workerKey = (a: Pick<AgentRow, "workstreamName" | "name">): string =>
   `${a.workstreamName}/${a.name}`;
 
@@ -81,17 +87,7 @@ export const observeWorkers =
         };
         out.set(key, facts);
         const sock = agentCtlSocket(db, agent);
-        if (
-          s.status !== "needs_input" ||
-          s.ctl !== "ok" ||
-          s.pending === true ||
-          s.blocked !== undefined ||
-          s.runs === undefined ||
-          s.runs < 1 ||
-          !expectsCtl(agent, sock)
-        ) {
-          return;
-        }
+        if (!idleOnCtl(s) || s.runs === undefined || s.runs < 1 || !expectsCtl(agent, sock)) return;
         // A settled run is answered at once: the bound only covers a socket that stops answering.
         const stop = new AbortController();
         const timer = setTimeout(() => stop.abort(), ms);
@@ -252,7 +248,7 @@ export async function scanRecovery(
         continue;
       }
       if (f.lastError === undefined) continue;
-      if (f.status !== "needs_input" || f.ctl !== "ok" || f.pending === true || f.blocked) continue;
+      if (!idleOnCtl(f)) continue;
       const attention = (reason: string): void => {
         out.push({ kind: "attention", task: w.task, agent: w.agent.name, reason });
       };

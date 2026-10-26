@@ -187,30 +187,3 @@ export function resetReceipt(
   if (row === undefined) throw new Error("spawn receipt vanished");
   return row;
 }
-
-/**
- * Compare-and-set a receipt out of `from` (one statement): true iff THIS call
- * moved it. The write fence of an in-place send: only the winner may write.
- */
-export function casReceipt(
-  db: Db,
-  taskId: number,
-  attemptKey: string,
-  from: SpawnReceiptState,
-  patch: ReceiptPatch & { state: SpawnReceiptState },
-): boolean {
-  const keys = (Object.keys(patch) as (keyof ReceiptPatch)[]).filter((k) => patch[k] !== undefined);
-  const sets = [...keys.map((k) => `${COLUMN[k]} = ?`), "updated_at = ?"];
-  const res = db
-    .prepare(
-      `UPDATE spawn_receipts SET ${sets.join(", ")} WHERE task_id = ? AND attempt_key = ? AND state = ?`,
-    )
-    .run(
-      ...keys.map((k) => patch[k] as string | number | null),
-      new Date().toISOString(),
-      taskId,
-      attemptKey,
-      from,
-    );
-  return res.changes === 1;
-}
