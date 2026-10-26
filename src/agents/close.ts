@@ -30,6 +30,7 @@ import { activeMux } from "../mux.js";
 import { closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
 import { selectRemoteRecovery } from "../remote-recovery.js";
 import { agentRevision, assertRevision } from "../revision.js";
+import { dischargeAgent } from "../wait-registration.js";
 import {
   assertReleasable,
   getWorktreeAt,
@@ -377,6 +378,9 @@ async function closeLocked(
     await cleanGateResult(db, agent);
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   }
+  // Read before the delete: the reaper reopens what the agent held IN_PROGRESS, and a close of a
+  // busy worker is still news to a wait (its work is not done); a finished one is not.
+  const heldUnfinished = ownedTasksOf(db, agent).some((t) => t.reverts);
   const deletedRow = deleteAgent(
     db,
     name,
@@ -385,6 +389,8 @@ async function closeLocked(
     { preserve: !remoteHandled },
   );
   if (!deletedRow && replaced()) throw new AgentReplacedError(name, opts.workstream);
+  // A deliberate close of a finished worker is not a death: no caller owes a wait for it any more.
+  if (deletedRow && !heldUnfinished) dischargeAgent(db, agent.workstreamName, name);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.
   emitEvent(db, agent.workstreamName, "agent.close", closeLine(name, agent.paneId, worktree));

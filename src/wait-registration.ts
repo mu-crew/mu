@@ -336,6 +336,31 @@ export function fenceAgentRef(
 }
 
 /**
+ * A DELIBERATE close of an agent (`mu agent close`) settles what every caller owed for it: drop the
+ * agent ref and its unconsumed fence from every registration. Without this the next wait sees an
+ * owned agent whose row is gone and reports it `dead`, though nobody lost anything. Refs to its
+ * TASKS stay (a task it left unfinished is still owed). Not for a death: a reaped ghost stays owed
+ * so the wait reports it. Touches neither `state` nor `generation`.
+ */
+export function dischargeAgent(db: Db, workstream: string, name: string): void {
+  const key = cursorKey("agent", workstream, name);
+  db.transaction(() => {
+    const rows = db.prepare("SELECT caller FROM wait_registrations").all() as { caller: string }[];
+    for (const { caller } of rows) {
+      const row = select(db, caller);
+      if (row === undefined) continue;
+      const reg = parse(row);
+      const left = reg.refs.filter((r) => !(r.kind === "agent" && refKeyOf(r) === key));
+      if (left.length === reg.refs.length) continue;
+      const kept = Object.fromEntries(Object.entries(reg.baselines).filter(([k]) => k !== key));
+      db.prepare(
+        "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, updated_at = ? WHERE caller = ?",
+      ).run(JSON.stringify(left), JSON.stringify(kept), new Date().toISOString(), caller);
+    }
+  }).immediate();
+}
+
+/**
  * Start a wait for `caller`: bump the generation, mark the row `waiting`,
  * return the generation and the refs owed now. undefined (and nothing
  * written) when the caller owes nothing. An earlier wait still marked
