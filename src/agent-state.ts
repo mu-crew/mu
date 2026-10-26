@@ -39,6 +39,8 @@ export interface StateAgentRef {
   paneId: string;
   /** When set and it names pi, the control socket is the state source. */
   cli?: string;
+  /** A remote command gate (see src/agents/gate.ts): no control socket, whatever `cli` says. */
+  gateToken?: string | null;
 }
 
 /** Per-agent budget for the control-socket status read (one connection). */
@@ -281,7 +283,7 @@ export async function readAgentStates(
     (a) =>
       a.cli !== undefined &&
       expectsCtl(
-        { cli: a.cli, name: a.name, workstreamName: a.workstreamName },
+        { cli: a.cli, name: a.name, workstreamName: a.workstreamName, gateToken: a.gateToken },
         ctlSocketPath(a.workstreamName, a.name, opts.stateDir),
       ),
   );

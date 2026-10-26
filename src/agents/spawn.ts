@@ -79,6 +79,7 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
 } from "./errors.js";
+import { gateWrapper, newGateToken } from "./gate.js";
 import { withAgentLock } from "./lock.js";
 import { withSpawnLock } from "./spawn-lock.js";
 
@@ -374,6 +375,20 @@ export function speaksMuCtl(cli: string, command: string): boolean {
 }
 
 /**
+ * True when a REMOTE spawn is a command gate, not a worker: an explicit
+ * `--command` that is not pi. An explicit `--cli pi` and a `pi` / `pi-meta`
+ * argv0 stay workers (an opaque wrapper around pi needs `--cli pi`). Decided
+ * before any effect; `--cli` omitted classifies by the command alone, so
+ * `--host dev --command 'npm test'` is a gate even though `cli` defaults to pi.
+ */
+export function isCommandGate(opts: { host?: string; cli?: string; command?: string }): boolean {
+  if (opts.host === undefined || opts.command === undefined) return false;
+  if (opts.cli === "pi") return false;
+  const argv0 = basename(parseFirstToken(opts.command));
+  return argv0 !== "pi" && argv0 !== "pi-meta";
+}
+
+/**
  * Handshake budget in ms after the agent is live. 0 disables. Override
  * via `MU_SPAWN_CTL_MS`.
  */
@@ -515,6 +530,13 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // A remote command runs on the host: the local PATH and local
   // $MU_<CLI>_COMMAND knobs say nothing about it.
   const profile = opts.host === undefined ? undefined : await requireHostSpawn(db, opts);
+  // A command gate: decided here, before any effect, and recorded on its row.
+  const gateToken = isCommandGate(opts) ? newGateToken() : undefined;
+  if (gateToken !== undefined && opts.worktree) {
+    throw new HostProfileError(
+      "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in the profile's repo or --cwd",
+    );
+  }
   const command = opts.command ?? (profile ? cli : resolved.command);
   // Where `command` came from. Backends that resolve the executable
   // themselves may not silently ignore an operator's choice, and need to
@@ -659,7 +681,11 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // Whether the agent row is this spawn's to delete on rollback. A
   // spawn that lost a same-name race must not delete the winner's row.
   let ownedIncarnation: number | undefined = staged?.incarnation;
-  const wantsCtl = opts.ctl !== false && speaksMuCtl(cli, command) && defaultSpawnCtlMs() !== 0;
+  const wantsCtl =
+    gateToken === undefined &&
+    opts.ctl !== false &&
+    speaksMuCtl(cli, command) &&
+    defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
   let ctlIncarnation: string | undefined;
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
@@ -727,7 +753,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           ? remoteShellCommand(profile, {
               workstream: opts.workstream,
               name: opts.name,
-              command,
+              command: gateToken === undefined ? command : gateWrapper(command, gateToken),
               localSock: ctlSocket,
               cwd: paneCwd,
             })
@@ -736,6 +762,8 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         ...(profile ? {} : { cwd: paneCwd }),
         env: paneEnv,
         onPaneCreated: onCreated,
+        // A gate's pane outlives its command: the result is read after it ends.
+        ...(gateToken !== undefined ? { retainOnExit: true } : {}),
       });
       // Observe a rejection immediately: it is awaited after the lock.
       done.catch(() => {});
@@ -759,6 +787,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         commandSource,
         spawner,
         host: profile?.name,
+        gateToken,
       });
       ownedIncarnation = row.incarnation;
       // The lease now rides this pane (registry id + pane): freed when it dies.
@@ -839,9 +868,11 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           profile?.name,
         );
       }
-    } else {
+    } else if (gateToken === undefined) {
       trustDialog = await awaitSpawnLiveness(paneId, opts.name, command, profile?.name);
     }
+    // A gate is not scanned for startup errors or liveness: a command that ends at
+    // once is a result (the retained pane), and a dead transport reads as exit-less.
   } catch (err) {
     // Record first: a throwing cleanup must neither skip the record nor
     // mask the original error.
@@ -1095,9 +1126,10 @@ function finalizeAgentRow(
     commandSource: CommandSource;
     spawner: string | null;
     host: string | undefined;
+    gateToken: string | undefined;
   },
 ): AgentRow {
-  const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host } = args;
+  const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host, gateToken } = args;
   if (staged === undefined) {
     return insertAgent(db, {
       name: opts.name,
@@ -1111,6 +1143,7 @@ function finalizeAgentRow(
       commandSource,
       spawner,
       host: host ?? null,
+      gateToken: gateToken ?? null,
     });
   }
   // Scope the patch to the spawn's workstream so a same-named worker

@@ -38,6 +38,7 @@ export {
   muxByName,
   NoMultiplexerError,
   PaneNotFoundError,
+  type PaneResult,
   resetHerdrExecutor,
   resetMux,
   type SendOptions,

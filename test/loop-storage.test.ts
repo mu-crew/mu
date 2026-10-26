@@ -193,7 +193,7 @@ describe("a populated v12 DB upgrades to v13", () => {
     expect(CURRENT_SCHEMA_VERSION).toBe(13);
     expect(columns(p, "tasks")).toEqual(expect.arrayContaining(["kind", "wave"]));
     expect(columns(p, "agents")).toEqual(
-      expect.arrayContaining(["spawner", "host", "collected_head", "cwd", "base"]),
+      expect.arrayContaining(["spawner", "host", "collected_head", "gate_token", "cwd", "base"]),
     );
     expect(tables(p)).toEqual([...EXPECTED_TABLES].sort());
     expect(captureTriggersCurrent(db)).toBe(true);
@@ -444,9 +444,11 @@ describe("a populated v12 DB upgrades to v13", () => {
     });
     const db = track(openDb({ path: p }));
     expect(columns(p, "agents")).toContain("collected_head");
+    expect(columns(p, "agents")).toContain("gate_token");
     expect(getAgent(db, "w1", "alpha")).toMatchObject({
       spawner: "alpha/orch",
       collectedHead: null,
+      gateToken: null,
     });
     expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
   });
@@ -791,7 +793,9 @@ describe("machine-local state", () => {
        VALUES (?, 'manual:a', 'w1', 'd', 'sha', 'm', 'reserved', 'n', 'n')`,
     ).run(tid);
     db.prepare("UPDATE spawn_receipts SET state = 'sent'").run();
-    db.prepare("UPDATE agents SET spawner = 'x/y', host = 'h', collected_head = 'abc'").run();
+    db.prepare(
+      "UPDATE agents SET spawner = 'x/y', host = 'h', collected_head = 'abc', gate_token = 't'",
+    ).run();
     expect(ops()).toEqual(before);
   });
 

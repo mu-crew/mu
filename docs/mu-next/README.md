@@ -412,6 +412,11 @@ decision). Host profiles are templates mu fills in.
   to collect mid-run. Detach and reattach are `v_remote_detach`.
 - Long remote gates are panes (`spawn gate-1 --host dev --command
   'npm test'`, wait on exit), never a held `ssh dev …`. One skill line.
+  Shipped core (`v_remote_gates`): a non-pi `--command` on a host is a
+  command gate; `mu wait` returns its numeric exit from a token-bound
+  remote completion record read after the retained pane exits. The CLI
+  default `--cli pi` and the task/send refusals follow in
+  `f_gates_cli_flags`.
 
 **Close block (pi workers, local or remote).** Briefs end with one
 contract:

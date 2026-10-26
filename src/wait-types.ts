@@ -37,6 +37,8 @@ export type WaitEventKind =
   | "stall"
   | "delegate"
   | "pane-exit"
+  /** A remote command gate's command ended with a numeric status (`WaitResult.exit`, `snapshot.exit`). */
+  | "exited"
   /** An agent with no control socket: its pane tail matched `until.text`. Never a settled run. */
   | "pane-text"
   | "heartbeat"
@@ -98,6 +100,8 @@ export interface WaitSnapshot {
   stuckSecs?: number;
   /** Task, stuck: the owner's ctl settled-run count, when its socket answered (pi owners). */
   ownerRuns?: number;
+  /** Agent (a remote command gate): the command's own numeric exit status, authoritative. */
+  exit?: number;
   /** The ref's completion condition is met (task at target, agent settled, delegate terminal). */
   fired: boolean;
   dead: boolean;
@@ -147,8 +151,8 @@ export interface WaitResult {
   refs: WaitSnapshot[];
   timedOut: boolean;
   interrupted: boolean;
-  /** 0 fired or timed out, 6 dead, 7 input or stall, 130 interrupted. */
-  exit: 0 | 6 | 7 | 130;
+  /** 0 fired or timed out, 6 dead, 7 input or stall, 130 interrupted; an `exited` gate's own status (23 stays 23), the first nonzero of the gates that ended. */
+  exit: number;
   /** The callers' consumed tokens after this wait (empty without callers). */
   cursor: Record<string, CursorToken>;
   /** Open human needs of the callers (never another caller's). */
@@ -166,6 +170,8 @@ export interface WaitResult {
 /** What an agent read or watch reports; an AgentObservation satisfies it. */
 export interface AgentReading {
   status: RuntimeState | null;
+  /** A remote command gate that ended: its numeric exit status (status is then null; `exit` decides, not "dead"). */
+  exit?: number;
   settled?: boolean;
   reason?: string;
   incarnation?: string;

@@ -121,6 +121,7 @@ export function snapshotRecord(s: WaitSnapshot, textCap: number): Record<string,
   put("wave", s.wave);
   put("incarnation", s.incarnation);
   put("runs", s.runs);
+  if (s.exit !== undefined) out.exit = s.exit;
   put("afterRuns", s.afterRuns);
   if (s.settled !== undefined) out.settled = s.settled;
   if (s.close !== undefined) out.close = s.close;

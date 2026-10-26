@@ -19,6 +19,31 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Remote command gates** (`v_remote_gates`, core; SDK only). `spawnAgent` with `host` and an
+  explicit `--command` that is not pi (argv0 not `pi`/`pi-meta`, `cli` not explicitly `pi`) is a
+  *gate*: a foreground remote command whose exact numeric exit `mu wait agent:<ws>/<name>` returns
+  as `data.exit` and the process exit (`23` stays `23`; `exited` is a new wait event, the
+  snapshot carries `exit`). Decided before any effect and stored as `agents.gate_token` (nullable,
+  machine-local, same schema version; an existing file gains it on open; it joins `agentRevision`
+  and the agent JSON as `gate_token`). A gate speaks no ctl (`expectsCtl` is false whatever `cli`
+  says), is not startup-scanned, is never auto-closed, and refuses `--worktree` before any effect.
+  tmux arms `remain-on-exit` on its own pane BEFORE the command runs (new optional
+  `SpawnAgentPaneOptions.retainOnExit`: a placeholder pane, `set-option -p`, then `respawn-pane`)
+  and reads it with the new optional `MuxBackend.paneResult` (`running | exited{code,signal} |
+  absent`; a failed probe throws = unknown); herdr keeps refusing `--host`. The LOCAL pane's
+  status is not the answer (a shell template may swallow it): the remote wrapper writes
+  `MU_GATE <token> <rc>` atomically under `~/.local/state/mu-next/remote-gates/`, read with the
+  profile's `exec` only after the pane is proven exited, and its channel freed by registry id +
+  pane (so at `--max-sessions 1` the read admits, and so does the next spawn: `localPaneAlive`
+  treats a retained dead pane as transport-dead). A missing, malformed, over-255 or foreign
+  record, a signal or a lost transport reads `dead` (exit 6), never success; an unreadable probe
+  or exec reads `unknown` and keeps the lease. Repeated waits reproduce the result; an owned
+  cursor consumes it once; `agent close` removes only its own token's record. `WaitResult.exit` is
+  widened from `0|6|7|130` to a number; under `--all` it is the first nonzero gate code. The
+  legacy `waitForAgents` adapter reads a nonzero gate as `dead`. Not here (`f_gates_cli_flags`,
+  after `v_wait_arming`): dropping the CLI's `--cli pi` default so the README form works
+  verbatim, the `--task/--send/--attempt` refusal and gate hints.
+
 - **`--on-stall steer|release`** on `mu wait` and `mu task wait` (`f_steer_cli_wiring`). `runWait` now
   calls `waitWithActions` with the merged `steerStallHandler` / `releaseStallHandler`. The stall
   result names what was done (`sent`, `released`, `refused`, `unknown`, `budget-exhausted`): one

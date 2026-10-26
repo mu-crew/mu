@@ -458,7 +458,13 @@ export function remoteShellCommand(
   return `exec env ${unset} /bin/sh -c ${shellQuote(filled)}`;
 }
 
-/** The local pane's liveness probe for channel admission: unknown (a throw) keeps the channel. */
+/**
+ * The local pane's liveness probe for channel admission: unknown (a throw) keeps
+ * the channel. A retained pane whose command ended (a gate's transport) is not
+ * alive here: it holds no channel on the host, though its handle still exists.
+ */
 export async function localPaneAlive(paneId: string): Promise<boolean> {
-  return (await activeMux()).paneAlive(paneId);
+  const mux = await activeMux();
+  if (mux.paneResult === undefined) return mux.paneAlive(paneId);
+  return (await mux.paneResult(paneId)).state === "running";
 }

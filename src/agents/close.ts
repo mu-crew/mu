@@ -41,6 +41,7 @@ import {
 } from "../worktree.js";
 import { closeRecovery, recoveryPreview } from "./close-recovery.js";
 import { AgentPaneStillAliveError, AgentReplacedError } from "./errors.js";
+import { cleanGateResult } from "./gate.js";
 import { withAgentLock } from "./lock.js";
 
 export interface CloseAgentOptions {
@@ -366,6 +367,14 @@ async function closeLocked(
         if (replaced()) throw new AgentReplacedError(name, opts.workstream);
       },
     });
+    if (replaced()) throw new AgentReplacedError(name, opts.workstream);
+  }
+  // A remote command gate: its pane is dead (probed above), so free its channel by id + pane and
+  // remove ITS result record (its own token's files; a replacement has another token). Best effort:
+  // a host that cannot answer leaves one stray file, never a blocked close.
+  if (agent.gateToken !== null && agent.host !== null && mux !== undefined) {
+    releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
+    await cleanGateResult(db, agent);
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   }
   const deletedRow = deleteAgent(

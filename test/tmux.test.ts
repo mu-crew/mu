@@ -15,6 +15,7 @@ import {
   listPanes,
   PANE_ID_RE,
   paneAlive,
+  paneResult,
   resetSleep,
   resetTmuxExecutor,
   setSleepForTests,
@@ -317,6 +318,132 @@ describe("paneAlive", () => {
     setTmuxExecutor(executor);
     expect(await paneAlive("garbage")).toBe(false);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("spawnAgent with retainOnExit", () => {
+  const run = async (responder: (a: string[]) => TmuxExecResult, over = {}) => {
+    const { executor, calls } = harness(responder);
+    setTmuxExecutor(executor);
+    const seen: string[] = [];
+    const id = await spawnAgent({
+      ...SPAWN,
+      command: "REAL",
+      env: { A: "1" },
+      cwd: "/w",
+      retainOnExit: true,
+      onPaneCreated: (p) => seen.push(p),
+      ...over,
+    });
+    return { id, seen, calls: calls.map((c) => c.args) };
+  };
+  const create = (a: string[]) =>
+    a.includes("new-session") || a.includes("new-window") || a.includes("split-window");
+
+  it.each([
+    [
+      "new-session",
+      (a: string[]) => (a[0] === "has-session" ? fail("can't find session") : ok("%7\n")),
+    ],
+    [
+      "new-window",
+      (a: string[]) =>
+        a[0] === "has-session" ? ok() : a[0] === "list-windows" ? ok("@1\t_mu\n") : ok("%7\n"),
+    ],
+    [
+      "split-window",
+      (a: string[]) =>
+        a[0] === "has-session" ? ok() : a[0] === "list-windows" ? ok("@1\tworker-1\n") : ok("%7\n"),
+    ],
+  ])(
+    "%s: a placeholder, remain-on-exit on THAT pane, then the real command (never before)",
+    async (verb, responder) => {
+      const { id, seen, calls } = await run(responder);
+      expect(id).toBe("%7");
+      const made = calls.findIndex(create);
+      expect(calls[made]?.[0]).toBe(verb);
+      // The creating call never carries the real command, cwd or env: only the placeholder.
+      expect(calls[made]).not.toContain("REAL");
+      expect(calls[made]).not.toContain("-e");
+      expect(calls[made + 1]).toEqual(["set-option", "-p", "-t", "%7", "remain-on-exit", "on"]);
+      expect(calls[made + 2]).toEqual([
+        "respawn-pane",
+        "-k",
+        "-t",
+        "%7",
+        "-c",
+        "/w",
+        "-e",
+        "A=1",
+        "REAL",
+      ]);
+      // The pane is reported only once the real command runs; no global or session option is set.
+      expect(seen).toEqual(["%7"]);
+      expect(calls.flat()).not.toContain("-g");
+    },
+  );
+
+  it("a failing arm kills the pane and reports nothing", async () => {
+    const { executor, calls } = harness((a) =>
+      a[0] === "has-session"
+        ? fail("can't find session")
+        : a[0] === "set-option"
+          ? fail("nope")
+          : ok("%7\n"),
+    );
+    setTmuxExecutor(executor);
+    const seen: string[] = [];
+    await expect(
+      spawnAgent({ ...SPAWN, retainOnExit: true, onPaneCreated: (p) => seen.push(p) }),
+    ).rejects.toThrow();
+    expect(seen).toEqual([]);
+    expect(calls.map((c) => c.args[0])).toContain("kill-pane");
+  });
+
+  it("without retainOnExit nothing changes: one call, no set-option, no respawn", async () => {
+    const { calls } = await run(
+      (a) => (a[0] === "has-session" ? fail("can't find session") : ok("%7\n")),
+      { retainOnExit: false },
+    );
+    expect(calls.map((c) => c[0])).toEqual(["has-session", "new-session"]);
+  });
+});
+
+describe("paneResult", () => {
+  const probe = (r: TmuxExecResult) => {
+    const { executor, calls } = harness(() => r);
+    setTmuxExecutor(executor);
+    return calls;
+  };
+
+  it("running, exited with a code, exited by a signal", async () => {
+    probe(ok("%3|0||\n"));
+    expect(await paneResult("%3")).toEqual({ state: "running" });
+    probe(ok("%3|1|23|\n"));
+    expect(await paneResult("%3")).toEqual({ state: "exited", code: 23, signal: null });
+    probe(ok("%3|1||9\n"));
+    expect(await paneResult("%3")).toEqual({ state: "exited", code: null, signal: 9 });
+    const calls = probe(ok("%3|1|0|\n"));
+    await paneResult("%3");
+    expect(calls[0]?.args).toEqual([
+      "display-message",
+      "-t",
+      "%3",
+      "-p",
+      "#{pane_id}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}",
+    ]);
+  });
+
+  it("absent only when the pane or server is gone; any other failure throws (unknown)", async () => {
+    probe(fail("can't find pane: %3"));
+    expect(await paneResult("%3")).toEqual({ state: "absent" });
+    probe(fail("no server running on /tmp/tmux-1/default"));
+    expect(await paneResult("%3")).toEqual({ state: "absent" });
+    probe(ok("\n"));
+    expect(await paneResult("%3")).toEqual({ state: "absent" });
+    expect(await paneResult("bogus")).toEqual({ state: "absent" });
+    probe(fail("error connecting to socket (Permission denied)"));
+    await expect(paneResult("%3")).rejects.toBeInstanceOf(TmuxError);
   });
 });
 

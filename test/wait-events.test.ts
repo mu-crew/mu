@@ -651,3 +651,93 @@ describe("sync bounds", () => {
   });
 });
 void tick;
+
+describe("exited: a remote command gate's numeric exit (v_remote_gates)", () => {
+  const gate = (code: number): AgentReading => ({ status: null, exit: code });
+
+  it("first: the gate's own status is the exit and the event, with no busy-first (23 stays 23)", async () => {
+    mkAgent(env.db, "g1");
+    const r = await waitForEvents(env.db, [agentRef("g1")], {
+      ...fast,
+      timeoutMs: 1000,
+      ...scriptedAgents(new Map([["w/g1", gate(23)]])),
+    });
+    expect(r.event).toMatchObject({ kind: "exited", ref: { id: "g1" } });
+    expect(r.exit).toBe(23);
+    expect(r.refs[0]).toMatchObject({ exit: 23, fired: true, dead: false, status: null });
+  });
+
+  it("a zero status is a clean fired result, exit 0; not dead", async () => {
+    mkAgent(env.db, "g1");
+    const r = await waitForEvents(env.db, [agentRef("g1")], {
+      ...fast,
+      timeoutMs: 1000,
+      ...scriptedAgents(new Map([["w/g1", gate(0)]])),
+    });
+    expect(r).toMatchObject({ exit: 0, event: { kind: "exited" } });
+  });
+
+  it("all: every code is exposed and the first nonzero of the gates is the exit", async () => {
+    for (const n of ["g1", "g2", "g3"]) mkAgent(env.db, n);
+    const r = await waitForEvents(env.db, [agentRef("g1"), agentRef("g2"), agentRef("g3")], {
+      ...fast,
+      mode: "all",
+      timeoutMs: 1000,
+      ...scriptedAgents(
+        new Map([
+          ["w/g1", gate(0)],
+          ["w/g2", gate(23)],
+          ["w/g3", gate(5)],
+        ]),
+      ),
+    });
+    expect(r.exit).toBe(23);
+    expect(r.event.ref?.id).toBe("g2");
+    expect(r.refs.map((s) => s.exit)).toEqual([0, 23, 5]);
+  });
+
+  it("all with every gate at 0 exits 0; with a dead one the dead (6) wins over a gate code", async () => {
+    mkAgent(env.db, "g1");
+    mkAgent(env.db, "g2");
+    const ok = await waitForEvents(env.db, [agentRef("g1"), agentRef("g2")], {
+      ...fast,
+      mode: "all",
+      timeoutMs: 1000,
+      ...scriptedAgents(
+        new Map([
+          ["w/g1", gate(0)],
+          ["w/g2", gate(0)],
+        ]),
+      ),
+    });
+    expect(ok.exit).toBe(0);
+    const mixed = await waitForEvents(env.db, [agentRef("g1"), agentRef("g2")], {
+      ...fast,
+      mode: "all",
+      timeoutMs: 1000,
+      ...scriptedAgents(
+        new Map([
+          ["w/g1", gate(23)],
+          ["w/g2", { status: null }],
+        ]),
+      ),
+    });
+    expect(mixed.exit).toBe(6);
+  });
+
+  it("an owned cursor consumes an exited gate once (a gate reading without an exit stays dead)", async () => {
+    mkAgent(env.db, "g1");
+    registerOwnedWait(env.db, "orch", [agentRef("g1")]);
+    const reader = scriptedAgents(new Map([["w/g1", gate(23)]]));
+    const first = await waitForEvents(env.db, [], {
+      ...fast,
+      callers: ["orch"],
+      timeoutMs: 1000,
+      ...reader,
+    });
+    expect(first).toMatchObject({ exit: 23, event: { kind: "exited" } });
+    await expect(
+      waitForEvents(env.db, [], { ...fast, callers: ["orch"], timeoutMs: 50, ...reader }),
+    ).rejects.toBeInstanceOf(WaitNothingError);
+  });
+});

@@ -54,6 +54,14 @@ mu agent spawn worker-1 -w auth --host dev --worktree --task build --send 'Read:
   the slot.
 - The pane is the transport: closing it, or its death, ends the agent
   and frees the slot. tmux only; herdr refuses `--host` in one line.
+- A non-pi `--command` (`--host dev --command 'npm test'`, no `--cli pi`) is a
+  **command gate**, not a worker: its pane is kept after the command ends, and
+  `mu wait agent:auth/gate-1` returns the command's own exit status (the
+  `exit` of the result and of the process; 23 stays 23). Never a held
+  `ssh dev …`. The remote command writes a token-bound completion record that
+  mu reads once the pane has exited; no record, a signal or a lost transport is
+  exit 6, never 0. `mu agent close gate-1` frees the pane and removes that
+  record. No `--worktree`, no `--task`.
 - If the spawn reports `ctl refused` or `missing`, run
   `mu host check dev --agent worker-1 -w auth`, then check
   `AllowStreamLocalForwarding` on the host.

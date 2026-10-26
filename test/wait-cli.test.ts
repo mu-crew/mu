@@ -544,3 +544,28 @@ describe("the bounded result and the resume handle", () => {
     ).toBe("1/3 CONFIRMED, 1 REFUTED, 1 pending, 1 refused");
   });
 });
+
+describe("exited: a remote command gate's status is the exit (v_remote_gates)", () => {
+  it("the document carries the numeric exit, the exited firing event and the snapshot's own status", async () => {
+    const { waitData } = await import("../src/cli/wait-output.js");
+    const ref = { kind: "agent" as const, workstream: "w", id: "g1" };
+    const data = waitData({
+      result: {
+        event: { kind: "exited", ref },
+        refs: [{ ref, status: null, exit: 23, fired: true, dead: false }],
+        timedOut: false,
+        interrupted: false,
+        exit: 23,
+        cursor: {},
+        humanNeeds: [],
+      },
+      exit: 23,
+      resume: null,
+    });
+    expect(data).toMatchObject({
+      exit: 23,
+      firing: { kind: "exited", ref: "agent:w/g1" },
+      snapshots: [{ exit: 23, fired: true, dead: false }],
+    });
+  });
+});
