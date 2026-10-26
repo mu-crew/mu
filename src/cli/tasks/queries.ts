@@ -22,6 +22,7 @@ import { AgentNotFoundError } from "../../agents.js";
 import {
   byRoiDesc,
   checkQualifiedPrefix,
+  emitJson,
   parseQualifiedRef,
   parseSortOption,
   parseStatusesOption,
@@ -34,7 +35,7 @@ import {
   UsageError,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
-import { pc, printNextSteps } from "../../output.js";
+import { pc } from "../../output.js";
 import { taskRevisions } from "../../revision.js";
 import { shellWord } from "../../shell-quote.js";
 import {
@@ -46,12 +47,12 @@ import {
   type TaskRow,
 } from "../../tasks.js";
 import { resolveMeAgent } from "../me-identity.js";
-import { jsonDocument, type TaskPageOut, taskPage } from "./records.js";
+import { type TaskPageOut, taskPage } from "./records.js";
 
 /** Print a page: the JSON document, or the record lines. */
 function emitPage(out: TaskPageOut, json: boolean): void {
   if (json) {
-    console.log(jsonDocument(out.data));
+    emitJson(out.data);
     return;
   }
   console.log(out.lines.join("\n"));
@@ -183,17 +184,6 @@ export async function cmdTaskList(
     owner?.flag,
   ];
   const head = ["mu", "task", "list", wsFlag(workstream)];
-  const first = tasks.find((t) => t.status === "OPEN" && t.substate === "triage");
-  const trailer: string[] = [];
-  // The triage inbox is a to-do list of decisions: say how to make them.
-  if (first !== undefined && opts.json !== true) {
-    const ref = `${shellWord(first.name)} ${wsFlag(workstream)}`;
-    trailer.push(
-      `triage next=mu task accept ${ref}`,
-      `triage next=mu task close ${ref} --as rejected|duplicate --why "<reason>"`,
-      `triage next=mu task notes ${ref}`,
-    );
-  }
   if (tasks.length === 0 && opts.json !== true) {
     console.log(pc.dim("(no tasks)"));
     return;
@@ -206,7 +196,6 @@ export async function cmdTaskList(
       basis: relTimeBasisForSort(sortKey),
       // `revision` is what `--if <rev>` on the guarded verbs repeats.
       ...(opts.json === true ? { revisions: taskRevisions(db, workstream) } : {}),
-      trailer,
     }),
     opts.json === true,
   );
@@ -252,25 +241,12 @@ export async function cmdTaskNext(
     const held = [parked > 0 ? `${parked} parked` : "", triage > 0 ? `${triage} in triage` : ""]
       .filter(Boolean)
       .join(", ");
-    console.log(pc.dim(`(no ready tasks; ${held})`));
-    printNextSteps([
-      ...(triage > 0
-        ? [
-            {
-              intent: "Triage findings",
-              command: `mu task list --substate triage -w ${workstream}`,
-            },
-          ]
-        : []),
-      ...(parked > 0
-        ? [
-            {
-              intent: "List parked tasks",
-              command: `mu task list --substate parked -w ${workstream}`,
-            },
-          ]
-        : []),
-    ]);
+    const which = [triage > 0 ? "triage" : "", parked > 0 ? "parked" : ""]
+      .filter(Boolean)
+      .join(",");
+    console.log(
+      pc.dim(`(no ready tasks; ${held}: mu task list --substate ${which} -w ${workstream})`),
+    );
     return;
   }
   const flags: Flags = [

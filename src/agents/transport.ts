@@ -326,6 +326,7 @@ export async function ctlFailure(
       e.cause.message,
       msgId,
       incarnation,
+      agent.incarnation,
     );
   }
   return new AgentCtlUnreachableError(

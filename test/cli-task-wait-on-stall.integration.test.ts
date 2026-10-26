@@ -39,7 +39,7 @@ import { resetTmuxExecutor, setTmuxExecutor, type TmuxExecutor } from "../src/tm
 import { setWaitSleepForTests } from "../src/wait.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { freshWorkstream } from "./_fixture.js";
-import { runCli, runCliJson } from "./_runCli.js";
+import { runCli } from "./_runCli.js";
 
 describe("mu task wait --on-stall warn|exit", () => {
   let tempDir: string;
@@ -166,7 +166,6 @@ describe("mu task wait --on-stall warn|exit", () => {
       stuckWhy?: string;
       fired: boolean;
     }[];
-    nextSteps?: { intent: string; command: string }[];
   }
   const doc = (stdout: string): Doc => JSON.parse(stdout).data as Doc;
 
@@ -297,9 +296,8 @@ describe("mu task wait --on-stall warn|exit", () => {
     expect(exitCode).toBe(7);
     const d = doc(stdout);
     expect(d.firing.kind).toBe("stall");
-    expect(d.nextSteps?.map((x) => x.command)).toContain(
-      `mu agent read dave -w ${workstream} --lines 60`,
-    );
+    // Reads are never next: no pane read is suggested.
+    expect(JSON.parse(stdout).next).toBeNull();
   });
 
   it("--on-stall warn: one stderr line, keeps waiting, times out ok:true", async () => {
@@ -326,77 +324,6 @@ describe("mu task wait --on-stall warn|exit", () => {
     expect(stderr).toMatch(/needs attention/i);
     expect(stderr.trim().split("\n")).toHaveLength(1); // once, not once per poll
     expect(doc(stdout)).toMatchObject({ timedOut: true, exit: 0 });
-  });
-
-  // agent_attention_required defect 3: on a timeout, nextSteps used to offer `mu task show <id>`
-  // for every unmet ref. For a stuck ref that is the wrong first move — the task row looks
-  // healthy and IN_PROGRESS, while the reason it is not progressing is only in the pane.
-  it("timeout: a stuck ref's next step reads the owner's pane, not the task row", async () => {
-    setupStalledWorker("grace", "stalled_task");
-    // A second unmet ref with NO owner: still gets the task-show step,
-    // proving the redirect is scoped to the stuck case.
-    addTask(db, { localId: "plain_task", workstream, title: "P", impact: 50, effortDays: 1 });
-
-    const { exitCode, stdout } = await runCliJson(
-      [
-        "task",
-        "wait",
-        "stalled_task",
-        "plain_task",
-        "-w",
-        workstream,
-        "--all",
-        "--stuck-after",
-        "1",
-        "--on-stall",
-        "warn",
-        "--timeout",
-        "0.3",
-      ],
-      dbPath,
-    ).then((r) => ({ exitCode: r.exitCode, stdout: r.stdout }));
-
-    expect(exitCode).toBeNull();
-    const d = doc(stdout);
-    expect(d.snapshots.find((x) => x.ref.endsWith("/stalled_task"))?.stuck).toBe(true);
-
-    const commands = (d.nextSteps ?? []).map((x) => x.command);
-    expect(commands).toContain(`mu agent read grace -w ${workstream} --lines 60`);
-    // The stuck ref must NOT also get the misleading task-show step…
-    expect(commands).not.toContain(`mu task show stalled_task -w ${workstream}`);
-    // …while the ownerless unmet ref keeps it.
-    expect(commands).toContain(`mu task show plain_task -w ${workstream}`);
-    // A mux owner has no ctl runs: no exact-answer wait hint.
-    expect(commands.some((c) => c.includes("@"))).toBe(false);
-  });
-
-  it("timeout: a stuck pi owner's next steps lead with the answer wait (runs-1), then the read", async () => {
-    setupStalledWorker("piwarn", "pi_stuck", "pi");
-    await serveCtl("piwarn", Date.now() - 10 * 60_000, 3);
-
-    const { exitCode, stdout } = await runCli(
-      [
-        "task",
-        "wait",
-        "pi_stuck",
-        "-w",
-        workstream,
-        "--stuck-after",
-        "1",
-        "--on-stall",
-        "warn",
-        "--timeout",
-        "0.3",
-      ],
-      dbPath,
-    );
-
-    expect(exitCode).toBeNull();
-    const commands = (doc(stdout).nextSteps ?? []).map((x) => x.command);
-    const wait = commands.indexOf(`mu wait agent:${workstream}/piwarn@2`);
-    const read = commands.indexOf(`mu agent read piwarn -w ${workstream} --lines 60`);
-    expect(wait).toBeGreaterThanOrEqual(0);
-    expect(read).toBe(wait + 1);
   });
 
   it("pi owner: ctl idle with an old since → --on-stall exit 7", async () => {

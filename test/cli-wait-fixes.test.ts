@@ -278,12 +278,8 @@ describe("mu task wait --on-stall exit (exit 7)", () => {
     expect(res.exitCode).toBe(7);
     const out = JSON.parse(res.stdout).data as {
       snapshots: { owner?: string; ownerWorkstream?: string }[];
-      nextSteps: { command: string }[];
     };
     expect(out.snapshots[0]).toMatchObject({ owner: "w2", ownerWorkstream: "agent-ws" });
-    const commands = out.nextSteps.map((x) => x.command);
-    expect(commands).toContain("mu agent read w2 -w agent-ws --lines 60");
-    expect(commands).not.toContain("mu agent read w2 -w task-ws --lines 60");
   });
 });
 

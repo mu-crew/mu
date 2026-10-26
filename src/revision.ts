@@ -22,14 +22,12 @@
 
 import { createHash } from "node:crypto";
 import type { Db } from "./db.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 
 /** A guarded verb was given a revision that no longer matches. Exit 4,
  *  nothing was done. One stderr line naming the fresh preview
  *  (`inlineNext`); JSON carries `expected_rev` / `current_rev`. */
-export class RevisionMismatchError extends Error implements HasNextSteps {
+export class RevisionMismatchError extends Error {
   override readonly name = "RevisionMismatchError";
-  readonly inlineNext = true;
   constructor(
     public readonly subject: string,
     public readonly expectedRev: number,
@@ -40,9 +38,6 @@ export class RevisionMismatchError extends Error implements HasNextSteps {
     super(
       `${subject} changed since preview (rev ${expectedRev} → ${currentRev}); preview again: ${previewCommand}`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "Preview again", command: this.previewCommand }];
   }
 }
 

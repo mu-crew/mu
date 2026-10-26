@@ -132,7 +132,7 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     expect((await listEmptyWorkstreams(db)).map((w) => w.name)).toEqual(["bare"]);
   });
 
-  it("the sweep's hint points at the per-workstream group list", async () => {
+  it("each swept workstream is its own group in the torn-down list", async () => {
     ensureWorkstream(db, "e1");
     ensureWorkstream(db, "e2");
     db.close();
@@ -144,9 +144,8 @@ describe("teardown --empty: live-pane guard and group hint", () => {
     expect(r.stdout).toContain("tornDown=2");
     expect(r.stdout).not.toContain("snapshot");
     expect(r.stdout).not.toContain("mu undo");
-    expect(r.stdout).toContain("mu workstream list --torn-down");
 
-    // Each teardown is its own group: that is why the hint lists them.
+    // Each teardown is its own group.
     const list = await runCliJson(["workstream", "list", "--torn-down", "--json"], dbPath);
     const groups = (list.data as { items: { group: string }[] }).items.map((i) => i.group);
     expect(new Set(groups).size).toBe(2);

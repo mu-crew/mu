@@ -88,7 +88,6 @@ export {
   idFromTitleVerbose,
   isValidTaskId,
   type SlugifyResult,
-  sanitiseTaskId,
   slugifyTitle,
   slugifyTitleVerbose,
   TaskTitleSlugEmptyError,

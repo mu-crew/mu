@@ -17,7 +17,7 @@
 // Extracted from src/cli/tasks.ts as part of the wire-out follow-up
 // to refactor_split_large_src_files.
 
-import { assertTaskInWorkstream, resolveEntityRef } from "../../cli.js";
+import { assertTaskInWorkstream, emitJson, resolveEntityRef } from "../../cli.js";
 import {
   FRONTIER_MAX_DEPTH,
   type FrontierDirection,
@@ -136,5 +136,6 @@ export async function cmdTaskTree(db: Db, rawId: string, opts: TreeOpts): Promis
         return json ? Buffer.byteLength(jsonDocument(r.data)) + 1 : linesBytes(r.lines);
       });
   const out = render(page);
-  console.log(json ? jsonDocument(out.data) : out.lines.join("\n"));
+  if (json) emitJson(out.data);
+  else console.log(out.lines.join("\n"));
 }

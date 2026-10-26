@@ -72,19 +72,18 @@ afterEach(async () => {
 });
 
 describe("CLI against the real extension", () => {
-  it("send returns msgId + incarnation + runs; check confirms the same msgId; the wait hint names both", async () => {
+  it("send returns msgId + incarnation + runs; check confirms the same msgId; next is the wait on both", async () => {
     const r = await runCliJson(["agent", "send", "worker-1", "go", "-w", "auth", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
     const out = r.data as {
       msgId: string;
       incarnation: string;
       runs: number;
-      nextSteps: { command: string }[];
     };
     expect(out.msgId).toHaveLength(36);
     expect(out.incarnation).toMatch(/\S/);
     expect(out.runs).toBe(0);
-    expect(out.nextSteps[0]?.command).toBe(`mu wait 'agent:auth/worker-1@0#${out.incarnation}'`);
+    expect(r.doc.next?.commands).toEqual([`mu wait 'agent:auth/worker-1@0#${out.incarnation}'`]);
     const check = await runCli(["agent", "check", "worker-1", out.msgId, "-w", "auth"], dbPath);
     expect(check.exitCode).toBeNull();
     expect(check.stdout).toMatch(/^accepted runs=0 at=\d{4}-\d\d-\d\dT/);

@@ -12,7 +12,6 @@ import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
-type Step = { intent: string; command: string };
 let dir: string;
 let dbPath: string;
 let db: Db;
@@ -55,34 +54,32 @@ async function noteHuman(author: string) {
   expect(r.exitCode).toBeNull();
   return r;
 }
-const steps = (data: unknown) => (data as { nextSteps: Step[] }).nextSteps;
-const sendHint = (s: Step[]) => s.find((x) => x.command.startsWith("mu agent send"));
+const warnings = (data: unknown) => (data as { warnings?: string[] }).warnings ?? [];
+const sendHint = (w: string[]) => w.find((x) => x.includes("will not see this note"));
 const claim = () => runCli(["task", "claim", "t1", "--for", "worker-1", "-w", "auth"], dbPath);
 
 describe("mu task note send hint", () => {
   it("another agent's IN_PROGRESS task: names the send (json + human)", async () => {
     await claim();
-    const hint = sendHint(steps((await note("orchestrator")).data));
-    expect(hint).toEqual({
-      intent:
-        "worker-1 will not see this note: send it (--steer, or --interrupt if the note makes the current work wasted)",
-      command: 'mu agent send worker-1 -w auth --steer "..."',
-    });
-    expect((await noteHuman("orchestrator")).stdout).toContain("worker-1 will not see this note");
+    const hint = sendHint(warnings((await note("orchestrator")).data));
+    expect(hint).toBe(
+      "worker-1 will not see this note: send it (mu agent send worker-1 -w auth --steer, or --interrupt if the note makes the current work wasted)",
+    );
+    expect((await noteHuman("orchestrator")).stderr).toContain("worker-1 will not see this note");
   });
 
   it("the owner's own note: no send hint", async () => {
     await claim();
-    expect(sendHint(steps((await note("worker-1")).data))).toBeUndefined();
+    expect(sendHint(warnings((await note("worker-1")).data))).toBeUndefined();
   });
 
   it("OPEN task: no send hint", async () => {
-    expect(sendHint(steps((await note("orchestrator")).data))).toBeUndefined();
+    expect(sendHint(warnings((await note("orchestrator")).data))).toBeUndefined();
   });
 
   it("CLOSED task: no send hint", async () => {
     await claim();
     await runCli(["task", "close", "t1", "-w", "auth", "--evidence", "test"], dbPath);
-    expect(sendHint(steps((await note("orchestrator")).data))).toBeUndefined();
+    expect(sendHint(warnings((await note("orchestrator")).data))).toBeUndefined();
   });
 });

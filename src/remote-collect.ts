@@ -60,11 +60,6 @@ export class RemoteCollectError extends Error {
   ) {
     super(`host ${host}: collect failed: ${detail}`);
   }
-  errorNextSteps(): { intent: string; command: string }[] {
-    return [
-      { intent: "Check the host answers and has the repo", command: `mu host check ${this.host}` },
-    ];
-  }
 }
 
 export interface CollectResult {

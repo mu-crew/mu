@@ -59,15 +59,11 @@ describe("mu rebuild", () => {
     expect(tree.stdout).toContain("a");
   });
 
-  it("prints a Next: block whose FIRST step is the swap command", async () => {
+  it("prints the swap command", async () => {
     await seed();
     const out = target();
     const { stdout } = await runCli(["rebuild", out], dbPath);
-    expect(stdout).toContain("Next:");
-    const next = stdout.slice(stdout.indexOf("Next:"));
-    const firstLine = next.split("\n")[1] ?? "";
-    expect(firstLine).toContain("mv ");
-    expect(firstLine).toContain(out);
+    expect(stdout).toContain(`swap it in: mv ${out}`);
   });
 
   it("--json emits the documented shape including the swap command", async () => {
@@ -83,7 +79,6 @@ describe("mu rebuild", () => {
       rebuiltRows: Record<string, number>;
       machineLocalLost: Array<{ table: string; rows: number }>;
       swapCommand: string;
-      nextSteps: Array<{ intent: string; command: string }>;
     };
     expect(parsed.targetPath).toBe(out);
     expect(parsed.machineId).toMatch(/^[0-9a-f-]{36}$/);
@@ -97,7 +92,6 @@ describe("mu rebuild", () => {
     expect(parsed.rebuiltRows).toMatchObject({ workstreams: 1, tasks: 2, task_edges: 1 });
     expect(parsed.machineLocalLost).toEqual([]);
     expect(parsed.swapCommand).toContain(`mv ${out}`);
-    expect(parsed.nextSteps[0]?.command).toBe(parsed.swapCommand);
   });
 
   it("SAYS SO when machine-local rows cannot be rebuilt", async () => {
@@ -120,8 +114,6 @@ describe("mu rebuild", () => {
     expect(stdout).toMatch(/1 agents/);
     expect(stdout).toContain("no capture triggers");
     expect(stdout).toContain("Re-spawn agents");
-    // And the Next: block gains the re-spawn hint.
-    expect(stdout).toContain("mu agent spawn");
   });
 
   it("exits 4 when the target already exists, and --force overrides", async () => {

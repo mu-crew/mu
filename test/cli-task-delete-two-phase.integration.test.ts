@@ -69,7 +69,6 @@ describe("mu task delete (two-phase)", () => {
       deletedNotes: number;
       dryRun: boolean;
       present: boolean;
-      nextSteps: { intent: string; command: string }[];
     };
     expect(payload).toMatchObject({
       taskName: "b",
@@ -79,10 +78,10 @@ describe("mu task delete (two-phase)", () => {
       dryRun: true,
       present: true,
     });
-    // The apply hint carries the preview revision (README: destructive moves carry --if).
-    expect(
-      payload.nextSteps.some((s) => /^mu task delete b -w test --if \d+$/.test(s.command)),
-    ).toBe(true);
+    // next is the apply, fenced by the preview revision (README: destructive moves carry --if).
+    expect(r.doc.next?.commands).toEqual([
+      expect.stringMatching(/^mu task delete b -w test --if \d+$/),
+    ]);
     // Verify nothing changed.
     const check = openDb({ path: dbPath });
     expect(getTask(check, "b", "test")).toBeDefined();

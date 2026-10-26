@@ -171,8 +171,6 @@ export interface WaitDataInput {
   signal?: string;
   /** The words for a non-routine event: why it ended the wait. */
   reason?: string;
-  /** Legacy hints (`nextSteps`) the verb still carries. */
-  nextSteps?: readonly { intent: string; command: string }[];
   warning?: string;
   /**
    * Fields the verb that entered the wait adds (`sent` for `send --wait`, `claimed` for
@@ -186,7 +184,6 @@ export interface WaitDataInput {
 interface Shape {
   /** Each snapshot's `lastText` is clipped to this many characters (0 = dropped). */
   text: number;
-  nextSteps: number;
   humanNeeds: number;
   /** Each human need's reason is clipped to NEED_CHARS. */
   clipNeeds: boolean;
@@ -200,11 +197,11 @@ const NEED_CHARS = 200;
 const REFUSED_KEPT = 3;
 
 /**
- * The result document, bounded to RESULT_BYTES on its FINAL bytes (envelope, `nextSteps`,
+ * The result document, bounded to RESULT_BYTES on its FINAL bytes (envelope, `next`,
  * `humanNeeds` and `resume` included; the measure of the shared pager,
  * src/cli/page-records.ts). The firing event, exit, timedOut, interrupted, resume and
  * the open count are never cut. What is cut, in order: each snapshot's `lastText` (tail
- * kept), the hints and human needs, the tally's per-finding rows, then the least
+ * kept), the human needs, the tally's per-finding rows, then the least
  * important snapshots (`pageRecords`); every cut says how many it took, and `retrieve`
  * names how to read the rest.
  */
@@ -225,7 +222,6 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
     result.tally === undefined
       ? undefined
       : { summary: tallySummary(result.tally), ...result.tally };
-  const steps = input.nextSteps ?? [];
   const needs: readonly HumanNeeded[] = result.humanNeeds;
   const build = (shape: Shape, shown: number): Record<string, unknown> => {
     const snaps = ordered.slice(0, shown);
@@ -239,7 +235,6 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
     );
     const cut = ordered.length - snaps.length;
     const cursorCut = Object.keys(result.cursor).length - Object.keys(cursor).length;
-    const keptSteps = steps.slice(0, shape.nextSteps);
     const keptNeeds = needs
       .slice(0, shape.humanNeeds)
       .map((n) =>
@@ -290,8 +285,6 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       ...(result.drained === true ? { drained: true } : {}),
       ...(result.superseded === true ? { superseded: true } : {}),
       ...(result.action !== undefined ? { action: result.action } : {}),
-      ...(keptSteps.length > 0 ? { nextSteps: keptSteps } : {}),
-      ...(steps.length > keptSteps.length ? { nextStepsCut: steps.length - keptSteps.length } : {}),
       ...(input.warning !== undefined ? { warning: input.warning } : {}),
       ...(input.extra ?? {}),
     };
@@ -301,15 +294,12 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
   const every = Number.POSITIVE_INFINITY;
   // The texts shrink first (a CLOSE block and its report end a message, so the tail stays).
   for (const text of [1500, 800, 300, 120, 0]) {
-    const d = build(
-      { text, nextSteps: every, humanNeeds: every, clipNeeds: false, findings: true },
-      ordered.length,
-    );
+    const d = build({ text, humanNeeds: every, clipNeeds: false, findings: true }, ordered.length);
     if (fits(d)) return d;
   }
   // Then the hints; the snapshots are paged on final bytes, the findings kept while they can be.
   for (const findings of [true, false]) {
-    const shape: Shape = { text: 0, nextSteps: 3, humanNeeds: 3, clipNeeds: true, findings };
+    const shape: Shape = { text: 0, humanNeeds: 3, clipNeeds: true, findings };
     const page = pageRecords(
       ordered,
       (p) => Buffer.byteLength(encodeEnvelope(okEnvelope(build(shape, p.shown.length)))),
@@ -320,7 +310,7 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
     if (fits(d)) return d;
   }
   return build(
-    { text: 0, nextSteps: 0, humanNeeds: 1, clipNeeds: true, findings: false },
+    { text: 0, humanNeeds: 1, clipNeeds: true, findings: false },
     Math.min(1, ordered.length),
   );
 }

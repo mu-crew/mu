@@ -442,19 +442,16 @@ describe("mu agent wait on gates", () => {
 });
 
 describe("the CLI: the exact README form", () => {
-  it("`mu agent spawn gate-1 --host dev --command '...'` (no --cli) is a gate; its hint and `mu wait` give the command's status", async () => {
+  it("`mu agent spawn gate-1 --host dev --command '...'` (no --cli) is a gate; its next and `mu wait` give the command's status", async () => {
     // The fake host runs the command text itself (never a real `npm test`).
     const spawned = await runCliJson(
       ["agent", "spawn", "gate-1", "-w", "auth", "--host", "dev", "--command", "exit 23", "--json"],
       join(dir, "mu.db"),
     );
     expect(spawned.exitCode).toBeNull();
-    const data = spawned.data as {
-      agent: { gate_token: string | null };
-      nextSteps: { command: string }[];
-    };
+    const data = spawned.data as { agent: { gate_token: string | null } };
     expect(data.agent.gate_token).not.toBeNull();
-    expect(data.nextSteps[0]?.command).toBe("mu wait agent:auth/gate-1");
+    expect(spawned.doc.next?.commands).toEqual(["mu wait agent:auth/gate-1"]);
     const waited = await runCliJson(
       ["wait", "agent:auth/gate-1", "-w", "auth"],
       join(dir, "mu.db"),

@@ -116,41 +116,6 @@ describe("mu task add --note", () => {
     expect(parsed.note).toEqual(expect.objectContaining({ author: "author-a", content: "A: b" }));
   });
 
-  it("nudges adding initial context when --note was omitted", async () => {
-    const { stdout } = await runCli(
-      ["task", "add", "plain", "-w", "test", "-t", "Plain", "-i", "20", "-e", "1"],
-      dbPath,
-    );
-
-    expect(stdout).toContain("Add initial context (or use --note next time)");
-    expect(stdout).toContain("mu task note plain 'REPRO: ...\\nSCOPE: ...' -w test");
-  });
-
-  it("nudges showing notes instead of adding another note when --note was supplied", async () => {
-    const { stdout } = await runCli(
-      [
-        "task",
-        "add",
-        "noted",
-        "-w",
-        "test",
-        "-t",
-        "Noted",
-        "-i",
-        "20",
-        "-e",
-        "1",
-        "--note",
-        "context",
-      ],
-      dbPath,
-    );
-
-    expect(stdout).toContain("Show notes");
-    expect(stdout).toContain("mu task notes noted -w test");
-    expect(stdout).not.toContain("Add initial context");
-  });
-
   it("does not create a task when initial-note insertion fails", async () => {
     // Force the note half to fail AFTER task insertion. Because
     // cmdTaskAdd wraps addTask + addNote in one transaction, the task

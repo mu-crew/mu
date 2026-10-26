@@ -79,7 +79,6 @@ describe("weak decision warnings", () => {
     expect(r.exitCode).toBeNull();
     expect(r.stderr).toContain("warning:");
     expect(r.stderr).toContain("verdict");
-    expect(r.stderr).toContain(`mu task note f1 -w ${WS} "EVIDENCE: <command + result>"`);
   });
 
   it("(a) accept with no evidence at all warns", async () => {

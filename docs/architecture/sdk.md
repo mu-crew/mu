@@ -25,9 +25,10 @@ A verb's path:
 5. On error the transaction rolls back and the typed error reaches
    `handle()`, which maps it to an exit code. Flush runs on both paths.
 
-Output is self-documenting: `src/output.ts` (`printNextSteps`,
-`errorNextSteps`) prints `Next:` hints, quoted by `src/shell-quote.ts`
-so they paste cleanly.
+A result's follow-up is its `next` plan: `computeNext` (`src/next-hints.ts`)
+over the DB `handle()` holds open, after the verb's writes, rendered as POSIX
+words by `src/shell-quote.ts`. A verb only declares its outcome
+(`setNextOutcome`); typed errors carry facts, never commands.
 
 ## Surrogate-PK and SDK-boundary discipline
 

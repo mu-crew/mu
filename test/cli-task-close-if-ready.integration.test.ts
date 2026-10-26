@@ -140,17 +140,12 @@ describe("mu task close --if-ready", () => {
       previousStatus: string;
       status: string;
       blockingIds?: string[];
-      nextSteps: { intent: string; command: string }[];
     };
     expect(payload.changed).toBe(false);
     expect(payload.skipped).toBe("not_ready");
     expect(payload.previousStatus).toBe("OPEN");
     expect(payload.status).toBe("OPEN");
     expect(payload.blockingIds).toEqual(["b", "c"]);
-    // Next: hint watches the still-blocking set and exits when a worker needs attention.
-    expect(payload.nextSteps.map((s) => s.command)).toContain(
-      "mu task wait b c -w test --first --any --on-stall exit",
-    );
 
     const check = openDb({ path: dbPath });
     expect(getTask(check, "umbrella", "test")?.status).toBe("OPEN");
@@ -176,7 +171,6 @@ describe("mu task close --if-ready", () => {
     );
     expect(r.exitCode).toBe(4);
     expect(String(r.doc.message)).toContain("open blockers: a");
-    expect(JSON.stringify(r.doc)).toContain("mu task tree umbrella -w test");
   });
 
   it("a non-done close still closes over open blockers (it claims no work happened)", async () => {
@@ -245,7 +239,5 @@ describe("mu task close --if-ready", () => {
     expect(r.stdout).toContain("umbrella");
     expect(r.stdout).toContain("blocked by 1 task");
     expect(r.stdout).toContain("a");
-    expect(r.stdout).toContain("mu task wait a");
-    expect(r.stdout).toContain("--on-stall exit");
   });
 });

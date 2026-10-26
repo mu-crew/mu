@@ -12,16 +12,14 @@
 //   cycle      → 4   (CycleError — also a conflict)
 //   usage      → 2   (TaskIdInvalidError; TaskTitleSlugEmptyError in id.ts)
 //
-// Each error implements HasNextSteps so the CLI can render a per-error
-// `Next:` block with the most useful follow-up commands.
+// Errors carry facts (ids, workstreams, structured fields), never commands:
+// a result's follow-up is its `next` (src/next-hints.ts).
 //
 // Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
-import type { HasNextSteps, NextStep } from "../output.js";
-import { sanitiseTaskId } from "./id.js";
 import { TASK_SUBSTATES, type TaskStatus, type TaskSubstate } from "./status.js";
 
-export class TaskNotFoundError extends Error implements HasNextSteps {
+export class TaskNotFoundError extends Error {
   override readonly name = "TaskNotFoundError";
   /** Near ids from the SAME workstream (`candidateTaskIds`), read-only
    *  suggestions: filled by `handle()` after the miss, never used to write. */
@@ -36,75 +34,25 @@ export class TaskNotFoundError extends Error implements HasNextSteps {
   ) {
     super(`no such task: ${taskId}`);
   }
-  errorNextSteps(): NextStep[] {
-    if (this.workstream !== undefined) {
-      const ws = this.workstream;
-      return [
-        ...this.candidateIds.map((id) => ({
-          intent: `Did you mean ${id}? (read-only)`,
-          command: `mu task show ${id} -w ${ws}`,
-        })),
-        { intent: "List tasks in workstream", command: `mu task list -w ${ws}` },
-      ];
-    }
-    // v5: tasks.workstream (TEXT) was replaced by tasks.workstream_id
-    // (FK → workstreams.id). The pre-v5 recipe SELECTed a column that
-    // no longer exists and crashed at runtime — and this is THE first
-    // hint a user sees on a missed-task lookup, so the breakage was
-    // high-traffic. Mirror the join pattern used by AgentExistsError.
-    const idLit = this.taskId.replace(/'/g, "''").toLowerCase();
-    const recipe = `mu db query "SELECT ws.name AS workstream, t.local_id, t.status, t.title FROM tasks t JOIN workstreams ws ON ws.id = t.workstream_id WHERE LOWER(t.local_id) LIKE '%${idLit}%' OR LOWER(t.title) LIKE '%${idLit}%'"`;
-    return [
-      { intent: "List tasks in workstream", command: "mu task list -w <workstream>" },
-      { intent: "Search every workstream by substring (id + title)", command: recipe },
-    ];
-  }
 }
 
 /**
  * Thrown by `addTask` when `localId` violates the schema regex
  * `/^[a-z][a-z0-9_-]{0,63}$/`. Replaces a bare `TypeError` so the
  * CLI's `handle()` wrapper can map it to exit code 2 (usage, with the
- * verb's --help, like WorkstreamNameInvalidError) and surface a `--json` `nextSteps` block pointing at
- * the auto-derived-id workflow and a sanitised candidate.
+ * verb's --help, like WorkstreamNameInvalidError).
  */
-export class TaskIdInvalidError extends Error implements HasNextSteps {
+export class TaskIdInvalidError extends Error {
   override readonly name = "TaskIdInvalidError";
   constructor(public readonly attempted: string) {
     super(`invalid task id: ${JSON.stringify(attempted)} (expected /^[a-z][a-z0-9_-]{0,63}$/)`);
   }
-  errorNextSteps(): NextStep[] {
-    const sanitised = sanitiseTaskId(this.attempted);
-    return [
-      {
-        intent: "Use the auto-derived id (drop the <id> positional; --title derives it)",
-        command: 'mu task add --title "..." --impact <n> --effort-days <n>',
-      },
-      {
-        intent: "Sanitise to a valid id",
-        command: `mu task add ${sanitised} --title "..." --impact <n> --effort-days <n>`,
-      },
-    ];
-  }
 }
 
-export class TaskExistsError extends Error implements HasNextSteps {
+export class TaskExistsError extends Error {
   override readonly name = "TaskExistsError";
   constructor(public readonly taskId: string) {
     super(`task already exists: ${taskId}`);
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Show the existing task", command: `mu task show ${this.taskId}` },
-      {
-        intent: "Update fields on the existing task",
-        command: `mu task update ${this.taskId} --title "..." --impact <n> --effort-days <n>`,
-      },
-      {
-        intent: "Pick a different id",
-        command: 'mu task add <new-id> --title "..." --impact <n> --effort-days <n>',
-      },
-    ];
   }
 }
 
@@ -115,7 +63,7 @@ export class TaskExistsError extends Error implements HasNextSteps {
  * (which surfaces as `TaskNotFoundError`). Maps to exit code 4
  * (conflict / wrong scope).
  */
-export class TaskNotInWorkstreamError extends Error implements HasNextSteps {
+export class TaskNotInWorkstreamError extends Error {
   override readonly name = "TaskNotInWorkstreamError";
   constructor(
     public readonly taskId: string,
@@ -124,21 +72,9 @@ export class TaskNotInWorkstreamError extends Error implements HasNextSteps {
   ) {
     super(`task ${taskId} is in workstream ${actualWorkstream}, not ${expectedWorkstream}`);
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Use the correct workstream",
-        command: `mu task show ${this.taskId} -w ${this.actualWorkstream}`,
-      },
-      {
-        intent: "List tasks in the requested workstream",
-        command: `mu task list -w ${this.expectedWorkstream}`,
-      },
-    ];
-  }
 }
 
-export class TaskAlreadyOwnedError extends Error implements HasNextSteps {
+export class TaskAlreadyOwnedError extends Error {
   override readonly name = "TaskAlreadyOwnedError";
   /** `taskId` / `currentOwner` are omitted when a raw `mu sql` write tripped
    *  the guard: the SQL may not name one task, so the hints carry placeholders. */
@@ -151,22 +87,6 @@ export class TaskAlreadyOwnedError extends Error implements HasNextSteps {
         ? "a claim in this SQL would take an owned task; release it first: mu task release <id> -w <ws>"
         : `task ${taskId} is already owned by ${currentOwner}`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    if (this.taskId === "<id>") {
-      return [{ intent: "Release the claim, then retry", command: "mu task release <id> -w <ws>" }];
-    }
-    return [
-      {
-        intent: "See the current owner's task list",
-        command: `mu task owned-by ${this.currentOwner}`,
-      },
-      {
-        intent: "Release the current claim (if you ARE the owner)",
-        command: `mu task release ${this.taskId}`,
-      },
-      { intent: "Show full task state", command: `mu task show ${this.taskId}` },
-    ];
   }
 }
 
@@ -181,7 +101,7 @@ export class TaskAlreadyOwnedError extends Error implements HasNextSteps {
  *
  * Maps to exit code 4 (conflict) via the cli.ts handler.
  */
-export class ClaimerNotRegisteredError extends Error implements HasNextSteps {
+export class ClaimerNotRegisteredError extends Error {
   override readonly name = "ClaimerNotRegisteredError";
   constructor(
     public readonly agentName: string,
@@ -192,21 +112,9 @@ export class ClaimerNotRegisteredError extends Error implements HasNextSteps {
       `claimer '${agentName}'${paneHint} is not a registered mu agent (no row in agents table)`,
     );
   }
-
-  /**
-   * Two actionable resolutions in expected-frequency order:
-   *   1. --self  : orchestrator pattern (working directly)
-   *   2. --for   : dispatcher pattern (assigning to a worker)
-   */
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Work directly (anonymous)", command: "mu task claim <id> --self" },
-      { intent: "Dispatch to a worker", command: "mu task claim <id> --for <worker>" },
-    ];
-  }
 }
 
-export class CycleError extends Error implements HasNextSteps {
+export class CycleError extends Error {
   override readonly name = "CycleError";
   constructor(
     public readonly from: string,
@@ -221,38 +129,9 @@ export class CycleError extends Error implements HasNextSteps {
         : `adding edge ${from} -> ${to} would create a cycle`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    const a = this.path[0];
-    const b = this.path[1];
-    const ws = this.workstream ? ` -w ${this.workstream}` : "";
-    const concrete: NextStep[] =
-      a !== undefined && b !== undefined
-        ? [
-            {
-              intent: `Break the cycle by removing existing edge ${a} -> ${b}`,
-              command: `mu task unblock ${b} --by ${a}${ws}`,
-            },
-          ]
-        : [];
-    return [
-      ...concrete,
-      {
-        intent: "Show the dependency tree",
-        command: `mu task tree ${this.to} --down`,
-      },
-      {
-        intent: "Show the prereq tree (what blocks the from-task)",
-        command: `mu task tree ${this.from}`,
-      },
-      {
-        intent: "Remove an edge in the path to break the cycle",
-        command: "mu task unblock <blocked> --by <blocker>",
-      },
-    ];
-  }
 }
 
-export class CrossWorkstreamEdgeError extends Error implements HasNextSteps {
+export class CrossWorkstreamEdgeError extends Error {
   override readonly name = "CrossWorkstreamEdgeError";
   constructor(
     public readonly blocker: string,
@@ -264,25 +143,6 @@ export class CrossWorkstreamEdgeError extends Error implements HasNextSteps {
       `cross-workstream edge: blocker '${blocker}' is in workstream '${blockerWorkstream}', dependent '${dependent}' is in workstream '${dependentWorkstream}'`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    // No "move the blocker" recipe. A task's workstream is part of its
-    // natural key (`<ws>/<local_id>`), which every op is filed under, so
-    // a raw `UPDATE tasks SET workstream_id=...` re-keys the row with no
-    // op for either key: sync and `mu doctor` then disagree with
-    // the table. The capture layer refuses that UPDATE (src/capture.ts
-    // KEY_COLUMNS). The "rename one workstream to the other" hint went
-    // earlier for the same reason, and because it moved every task.
-    return [
-      {
-        intent: "Duplicate the blocker into the dependent's workstream",
-        command: `mu task add <new-id> -w ${this.dependentWorkstream} --title "<copy of ${this.blocker}>" --impact <n> --effort-days <n>`,
-      },
-      {
-        intent: "Or wait on the blocker across workstreams instead of an edge",
-        command: `mu task wait ${this.blockerWorkstream}/${this.blocker}`,
-      },
-    ];
-  }
 }
 
 /**
@@ -290,7 +150,7 @@ export class CrossWorkstreamEdgeError extends Error implements HasNextSteps {
  * non-empty `--why` was given. The reason is stored as a note, so a
  * classification with no rationale is refused before any write.
  */
-export class SubstateReasonRequiredError extends Error implements HasNextSteps {
+export class SubstateReasonRequiredError extends Error {
   override readonly name = "SubstateReasonRequiredError";
   constructor(
     public readonly verb: "close" | "park",
@@ -303,13 +163,6 @@ export class SubstateReasonRequiredError extends Error implements HasNextSteps {
         : `parking ${taskId} needs a reason (--why "...")`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    const cmd =
-      this.verb === "close"
-        ? `mu task close ${this.taskId} --as ${this.substate} --why "<reason>"`
-        : `mu task park ${this.taskId} --why "<reason>"`;
-    return [{ intent: "Retry with a reason", command: cmd }];
-  }
 }
 
 /**
@@ -317,7 +170,7 @@ export class SubstateReasonRequiredError extends Error implements HasNextSteps {
  * group: the local-write guard `_cap_tasks_close_evidence` (src/capture.ts)
  * refused it. Raised by `closeTask` only; ingest never sees it.
  */
-export class CloseNeedsEvidenceError extends Error implements HasNextSteps {
+export class CloseNeedsEvidenceError extends Error {
   override readonly name = "CloseNeedsEvidenceError";
   /** Ids are omitted when a raw `mu sql` write tripped the guard: the SQL
    *  may not name one task, so the message and hint carry placeholders. */
@@ -331,14 +184,6 @@ export class CloseNeedsEvidenceError extends Error implements HasNextSteps {
         : `closing ${taskId} needs evidence (--evidence "<command + result>")`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Retry with what you observed",
-        command: `mu task close ${this.taskId} -w ${this.workstream} --evidence "<command + result>"`,
-      },
-    ];
-  }
 }
 
 /**
@@ -347,7 +192,7 @@ export class CloseNeedsEvidenceError extends Error implements HasNextSteps {
  * as wontfix / duplicate / rejected / superseded is exempt: those do not
  * claim the work happened.
  */
-export class TaskHasOpenBlockersError extends Error implements HasNextSteps {
+export class TaskHasOpenBlockersError extends Error {
   override readonly name = "TaskHasOpenBlockersError";
   /** Ids are omitted when a raw `mu sql` write tripped the guard: the SQL
    *  may not name one task, so the message and hint carry placeholders. */
@@ -362,14 +207,6 @@ export class TaskHasOpenBlockersError extends Error implements HasNextSteps {
         : `task ${taskId} has open blockers: ${blockerIds.join(", ")}`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "See the open blockers",
-        command: `mu task tree ${this.taskId} -w ${this.workstream}`,
-      },
-    ];
-  }
 }
 
 /**
@@ -377,7 +214,7 @@ export class TaskHasOpenBlockersError extends Error implements HasNextSteps {
  * transition (OPEN/todo → OPEN/parked); the owner releases, or the task
  * is reopened, first.
  */
-export class TaskParkStateError extends Error implements HasNextSteps {
+export class TaskParkStateError extends Error {
   override readonly name = "TaskParkStateError";
   constructor(
     public readonly taskId: string,
@@ -390,20 +227,6 @@ export class TaskParkStateError extends Error implements HasNextSteps {
         : `cannot park ${taskId}: it is CLOSED (open it first)`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    const ws = this.workstream;
-    const first: NextStep =
-      this.status === "IN_PROGRESS"
-        ? { intent: "Release the claim first", command: `mu task release ${this.taskId} -w ${ws}` }
-        : { intent: "Reopen the task first", command: `mu task open ${this.taskId} -w ${ws}` };
-    return [
-      first,
-      {
-        intent: "Then park it",
-        command: `mu task park ${this.taskId} --why "<reason>" -w ${ws}`,
-      },
-    ];
-  }
 }
 
 /**
@@ -411,7 +234,7 @@ export class TaskParkStateError extends Error implements HasNextSteps {
  * task is a proposal (often a review finding) nobody has accepted as
  * work yet; accept it, or close it rejected / duplicate.
  */
-export class TaskInTriageError extends Error implements HasNextSteps {
+export class TaskInTriageError extends Error {
   override readonly name = "TaskInTriageError";
   constructor(
     public readonly taskId: string,
@@ -419,40 +242,19 @@ export class TaskInTriageError extends Error implements HasNextSteps {
   ) {
     super(`task ${taskId} is in triage (OPEN/triage); accept it or claim with --force`);
   }
-  errorNextSteps(): NextStep[] {
-    const ws = this.workstream;
-    return [
-      {
-        intent: "Accept it as work, then claim",
-        command: `mu task accept ${this.taskId} -w ${ws}`,
-      },
-      {
-        intent: "Decline it",
-        command: `mu task close ${this.taskId} --as rejected --why "<reason>" -w ${ws}`,
-      },
-      { intent: "Claim it anyway", command: `mu task claim ${this.taskId} --force -w ${ws}` },
-    ];
-  }
 }
 
 /**
  * Thrown by `claimTask` on an OPEN/parked task without `force`. Parked
  * means "keep out of the scheduler"; claiming it anyway is explicit.
  */
-export class TaskParkedError extends Error implements HasNextSteps {
+export class TaskParkedError extends Error {
   override readonly name = "TaskParkedError";
   constructor(
     public readonly taskId: string,
     public readonly workstream: string,
   ) {
     super(`task ${taskId} is parked (OPEN/parked); unpark it or claim with --force`);
-  }
-  errorNextSteps(): NextStep[] {
-    const ws = this.workstream;
-    return [
-      { intent: "Unpark it, then claim", command: `mu task unpark ${this.taskId} -w ${ws}` },
-      { intent: "Claim it anyway", command: `mu task claim ${this.taskId} --force -w ${ws}` },
-    ];
   }
 }
 
@@ -462,10 +264,8 @@ export class TaskParkedError extends Error implements HasNextSteps {
  * task records a decision only a person can make; nothing autonomous may
  * make it ready or close it.
  */
-export class HumanTaskError extends Error implements HasNextSteps {
+export class HumanTaskError extends Error {
   override readonly name = "HumanTaskError";
-  /** The message already names the command: one line, no Next: block. */
-  readonly inlineNext = true;
   constructor(
     public readonly taskId: string,
     public readonly workstream: string,
@@ -475,14 +275,6 @@ export class HumanTaskError extends Error implements HasNextSteps {
       `task ${taskId} is a human task: ${action} refused; it resolves only by an explicit \`mu task close ${taskId} -w ${workstream}\``,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Close it on the human's decision",
-        command: `mu task close ${this.taskId} -w ${this.workstream} --evidence "<the decision>"`,
-      },
-    ];
-  }
 }
 
 /**
@@ -491,7 +283,7 @@ export class HumanTaskError extends Error implements HasNextSteps {
  * Caught here rather than by the deferred FK, which would fail only at
  * commit with an opaque constraint message.
  */
-export class InvalidSubstateError extends Error implements HasNextSteps {
+export class InvalidSubstateError extends Error {
   override readonly name = "InvalidSubstateError";
   constructor(
     public readonly status: TaskStatus,
@@ -500,13 +292,6 @@ export class InvalidSubstateError extends Error implements HasNextSteps {
     super(
       `invalid substate for ${status}: ${JSON.stringify(substate)} (expected one of: ${TASK_SUBSTATES[status].join(", ")})`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return TASK_SUBSTATES[this.status].map((s) => ({
-      intent: `Use ${this.status}/${s}`,
-      command:
-        this.status === "CLOSED" ? `mu task close <id> --as ${s}` : `mu task list --substate ${s}`,
-    }));
   }
 }
 

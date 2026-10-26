@@ -1,15 +1,7 @@
-// Unit tests for src/output.ts — the self-documenting output helpers.
+// Unit tests for src/output.ts — colour, tables, JSON mode, usage lines.
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  colorEnabled,
-  hasNextSteps,
-  isJsonMode,
-  muTable,
-  type NextStep,
-  printNextSteps,
-  printNextStepsTo,
-} from "../src/output.js";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { colorEnabled, isJsonMode, muTable } from "../src/output.js";
 
 // `colorEnabled()` reads every signal it cares about straight from
 // `process.env` / `process.stdout` at call time (per task
@@ -129,88 +121,6 @@ describe("colorEnabled (env-var matrix + isTTY fallback)", () => {
   });
 });
 
-describe("printNextSteps", () => {
-  let logs: string[];
-  let logSpy: ReturnType<typeof vi.spyOn>;
-
-  beforeEach(() => {
-    logs = [];
-    logSpy = vi.spyOn(console, "log").mockImplementation((msg: string) => {
-      logs.push(msg);
-    });
-  });
-
-  afterEach(() => {
-    logSpy.mockRestore();
-  });
-
-  it("emits nothing for an empty array (no 'Next:' header without steps)", () => {
-    printNextSteps([]);
-    expect(logs).toEqual([]);
-  });
-
-  it("emits a 'Next:' header followed by one line per step", () => {
-    printNextSteps([
-      { intent: "Show", command: "mu task show foo" },
-      { intent: "Close", command: "mu task close foo" },
-    ]);
-    // Lines are dimmed via picocolors; assert the substrings are present
-    // rather than the exact ANSI sequence (which depends on isTTY).
-    expect(logs.length).toBe(3); // header + 2 steps
-    expect(logs[0]).toContain("Next:");
-    expect(logs[1]).toContain("Show");
-    expect(logs[1]).toContain("mu task show foo");
-    expect(logs[2]).toContain("Close");
-    expect(logs[2]).toContain("mu task close foo");
-  });
-
-  it("printNextStepsTo('stderr') routes to console.error, NOT console.log", () => {
-    // Pin the sink discrimination in src/output.ts:
-    //   const out = sink === "stderr" ? console.error : console.log;
-    // A regression that flipped the conditional (e.g. a refactor that
-    // dropped the sink param) would silently send error nextSteps to
-    // stdout, breaking `mu ... 2>err >ignored` redirection contracts
-    // — every typed-error nextSteps emission would regress with the
-    // suite still green. See task
-    // review_test_print_next_steps_stderr_branch_uncovered.
-    const errs: string[] = [];
-    const errSpy = vi.spyOn(console, "error").mockImplementation((msg: string) => {
-      errs.push(msg);
-    });
-    try {
-      printNextStepsTo([{ intent: "X", command: "y" }], "stderr");
-      // stderr branch fires: header + 1 step. logs[] (stdout spy from
-      // beforeEach) stays empty — pinning that the conditional did NOT
-      // fall through to the stdout sink.
-      expect(errs.length).toBe(2);
-      expect(errs[0]).toContain("Next:");
-      expect(errs[1]).toContain("X");
-      expect(errs[1]).toContain("y");
-      expect(logs).toEqual([]);
-    } finally {
-      errSpy.mockRestore();
-    }
-  });
-
-  it("pads short labels with spaces to the longest label's width before the colon", () => {
-    const steps: NextStep[] = [
-      { intent: "Short", command: "a" },
-      { intent: "Much longer label", command: "b" },
-    ];
-    printNextSteps(steps);
-    const ESC = String.fromCharCode(0x1b);
-    const ansiRe = new RegExp(`${ESC}\\[[0-9;]*m`, "g");
-    const stripAnsi = (s: string): string => s.replace(ansiRe, "");
-    // Assert the literal padding pattern — stronger than the previous
-    // 'colon positions match' check (which would still pass on broken
-    // padding semantics like double-padding or tab-padding). Long label
-    // is 17 chars, short is 5; padding is 12 spaces. Caught by
-    // review_test_output_padding_implementation_test.
-    expect(stripAnsi(logs[1] ?? "")).toBe("  Short             : a");
-    expect(stripAnsi(logs[2] ?? "")).toBe("  Much longer label : b");
-  });
-});
-
 describe("muTable (cli-table3 wrapper with the mu-standard truncation safety belt)", () => {
   // Strip ANSI escape sequences so width assertions are decoupled from
   // colorEnabled() (mirror the helper in the printNextSteps padding
@@ -250,29 +160,6 @@ describe("muTable (cli-table3 wrapper with the mu-standard truncation safety bel
     const t = muTable({ head: ["a", "b"] });
     t.push(["hello", "world"]);
     expect(stripAnsi(t.toString())).toContain("hello");
-  });
-});
-
-describe("hasNextSteps (duck-type guard for typed errors)", () => {
-  it("returns true for objects with errorNextSteps()", () => {
-    const fakeErr = {
-      errorNextSteps(): NextStep[] {
-        return [{ intent: "x", command: "y" }];
-      },
-    };
-    expect(hasNextSteps(fakeErr)).toBe(true);
-  });
-
-  it("returns false for plain Errors / null / non-objects", () => {
-    expect(hasNextSteps(new Error("boom"))).toBe(false);
-    expect(hasNextSteps(null)).toBe(false);
-    expect(hasNextSteps("string")).toBe(false);
-    expect(hasNextSteps(42)).toBe(false);
-    expect(hasNextSteps({})).toBe(false);
-  });
-
-  it("returns false when errorNextSteps exists but isn't a function", () => {
-    expect(hasNextSteps({ errorNextSteps: "not a function" })).toBe(false);
   });
 });
 

@@ -57,7 +57,6 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type Db, openDb } from "./db.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 import { rebuildInto } from "./rebuild.js";
 
 /** One field-level divergence between the live tables and the rebuild. */
@@ -448,7 +447,7 @@ export function driftRemediation(): readonly string[] {
  * exit code is how that reaches automation; the printed report is how it
  * reaches a human.
  */
-export class DriftDetectedError extends Error implements HasNextSteps {
+export class DriftDetectedError extends Error {
   constructor(
     readonly totalDrift: number,
     readonly records: readonly DriftRecord[],
@@ -457,19 +456,5 @@ export class DriftDetectedError extends Error implements HasNextSteps {
       `ops-log drift: ${totalDrift} divergence${totalDrift === 1 ? "" : "s"} between the live tables and the ops log`,
     );
     this.name = "DriftDetectedError";
-  }
-
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Back up the current state FIRST",
-        command: "mu db backup /tmp/mu-drift-evidence.db",
-      },
-      { intent: "Materialize what the log believes", command: "mu rebuild /tmp/mu-rebuilt.db" },
-      {
-        intent: "Compare the named keys by hand before choosing a side",
-        command: 'mu db query "SELECT local_id, title, status, impact FROM tasks"',
-      },
-    ];
   }
 }

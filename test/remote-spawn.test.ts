@@ -676,7 +676,7 @@ describe("the CLI", () => {
     expect(r.data).toMatchObject({ agent: { host: "dev", cwd: WT, base: SHA } });
   });
 
-  it("agent close's re-spawn step keeps --host; agent show prints the host", async () => {
+  it("agent show prints the host; the close applies", async () => {
     await spawn({ worktree: true });
     const shown = await runCliWire(["agent", "show", "worker-1", "-w", "auth"], dbPath());
     expect(shown.stdout).toMatch(/host\s+: dev/);
@@ -688,10 +688,7 @@ describe("the CLI", () => {
       ["agent", "close", "worker-1", "-w", "auth", "--if", String(preview.data.revision), "--json"],
       dbPath(),
     );
-    const cmds = (closed.data.nextSteps as { command: string }[]).map((n) => n.command);
-    expect(
-      cmds.some((c) => c.startsWith("mu agent spawn worker-1") && c.includes("--host dev")),
-    ).toBe(true);
+    expect(closed.data).toMatchObject({ deletedRow: true });
   });
 
   it("--host with --root is a usage error (exit 2) before any effect", async () => {

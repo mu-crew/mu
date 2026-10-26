@@ -31,7 +31,6 @@
 import { randomUUID } from "node:crypto";
 import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { nextHlc } from "./hlc.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 
 export type LogKind = "message" | "event" | "broadcast" | string;
 
@@ -238,7 +237,7 @@ export const MACHINE_WIDE_KEY = "";
 /** Raised when a group-id prefix matches more than one group.
  *  Astronomically unlikely with uuids, but silently picking one of two
  *  candidate groups is not an acceptable failure mode. */
-export class GroupIdAmbiguousError extends Error implements HasNextSteps {
+export class GroupIdAmbiguousError extends Error {
   constructor(
     readonly prefix: string,
     readonly candidates: readonly string[],
@@ -251,27 +250,13 @@ export class GroupIdAmbiguousError extends Error implements HasNextSteps {
     );
     this.name = "GroupIdAmbiguousError";
   }
-
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "List recent groups with their ids", command: "mu log -n 20" },
-      {
-        intent: "Retry with more characters",
-        command: `mu log --group ${this.candidates[0] ?? "<full-id>"}`,
-      },
-    ];
-  }
 }
 
 /** Raised when a group-id prefix matches no group. Exit 3. */
-export class GroupNotFoundError extends Error implements HasNextSteps {
+export class GroupNotFoundError extends Error {
   constructor(readonly prefix: string) {
     super(`no op group matching ${JSON.stringify(prefix)}`);
     this.name = "GroupNotFoundError";
-  }
-
-  errorNextSteps(): NextStep[] {
-    return [{ intent: "List recent ops with their group ids", command: "mu log -n 20" }];
   }
 }
 
@@ -361,20 +346,12 @@ const RESERVED_LOG_KINDS: ReadonlySet<string> = new Set(
 
 /** Raised by `appendLog` for a kind in RESERVED_LOG_KINDS. Usage lane
  *  (exit 2): the operator picked a tag that names a projectable entity. */
-export class LogKindReservedError extends Error implements HasNextSteps {
+export class LogKindReservedError extends Error {
   override readonly name = "LogKindReservedError";
   constructor(readonly kind: string) {
     super(
       `--kind ${JSON.stringify(kind)} is reserved: ${[...RESERVED_LOG_KINDS].join(", ")} name projectable op entities, and a log line under one would be synced and replayed as a real ${kind} change`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Use a channel tag that names your ledger",
-        command: `mu log --kind ${this.kind}-log '<text>'`,
-      },
-    ];
   }
 }
 

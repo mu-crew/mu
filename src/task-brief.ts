@@ -9,13 +9,12 @@
 // no ctl.
 
 import type { Db } from "./db.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 import { taskIdFor } from "./tasks/core.js";
 import { TaskNotFoundError } from "./tasks/errors.js";
 import { getTaskNote } from "./tasks/queries.js";
 
 /** The task has no `brief` note : nothing is built. */
-export class TaskBriefMissingError extends Error implements HasNextSteps {
+export class TaskBriefMissingError extends Error {
   override readonly name = "TaskBriefMissingError";
   constructor(
     public readonly task: string,
@@ -23,14 +22,6 @@ export class TaskBriefMissingError extends Error implements HasNextSteps {
     reason: string,
   ) {
     super(`task ${task} cannot be briefed: ${reason}`);
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Pin the brief the worker should get",
-        command: `mu task note ${this.task} --kind brief -w ${this.workstream} -`,
-      },
-    ];
   }
 }
 

@@ -499,7 +499,7 @@ describe("the CLI verb", () => {
     return r;
   };
 
-  it("unknown delivery: exit 1, ONE failure document with the receipt, agent evidence and a check hint; replay exits 1 again without a send", async () => {
+  it("unknown delivery: exit 1, ONE failure document with the receipt, agent evidence and the receipt check as next; replay exits 1 again without a send", async () => {
     onSend = () => "close";
     const r = await cli([]);
     expect(r.exitCode).toBe(1);
@@ -511,8 +511,8 @@ describe("the CLI verb", () => {
       data: {
         agent: { name: string; id: number };
         task: { state: string; claimed: boolean };
-        nextSteps: { command: string }[];
       };
+      next: { commands: string[] } | null;
     };
     expect(doc).toMatchObject({
       ok: false,
@@ -522,7 +522,7 @@ describe("the CLI verb", () => {
     expect(doc.msgId).toBe(receipt()?.msgId);
     expect(doc.data.agent.id).toBe(getAgent(db, "worker-1", "auth")?.incarnation);
     expect(doc.data.task).toMatchObject({ state: "unknown", claimed: true });
-    expect(doc.data.nextSteps[0]?.command).toBe(`mu agent check worker-1 ${doc.msgId} -w auth`);
+    expect(doc.next?.commands).toEqual([`mu agent check worker-1 ${doc.msgId} -w auth --json`]);
     const again = await cli([]);
     expect(again.exitCode).toBe(1);
     expect(sends()).toHaveLength(1);

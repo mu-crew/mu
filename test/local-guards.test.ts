@@ -396,13 +396,12 @@ describe("mu task close --as done", () => {
     expect(statusOf("t")).toBe("OPEN");
   });
 
-  it("with open blockers: exit 4 and a Next: pointing at the tree", async () => {
+  it("with open blockers: exit 4 naming them", async () => {
     addBlockEdge(db, "demo", "t", "blocker");
     db.close();
     const r = await runCli(["task", "close", "t", "-w", "demo", "--evidence", "x"], path);
     expect(r.exitCode).toBe(4);
     expect(r.stderr).toContain("blocker");
-    expect(r.stderr).toContain("mu task tree t -w demo");
     db = openDb({ path });
   });
 

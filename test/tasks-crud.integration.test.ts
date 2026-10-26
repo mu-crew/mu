@@ -107,19 +107,6 @@ describe("addTask", () => {
     expect(caught).not.toBeInstanceOf(TypeError);
     const err = caught as TaskIdInvalidError;
     expect(err.attempted).toBe("Bad ID");
-    const steps = err.errorNextSteps();
-    expect(steps.length).toBeGreaterThan(0);
-    // First step: drop the <id> positional and pass --title (auto-derive path).
-    expect(steps[0]?.command).toMatch(/--title/);
-    // Sanitised candidate must be a runnable id (lowercase + alnum/_/-).
-    // Assert only the load-bearing parts (verb, sanitised id, --title flag)
-    // so cosmetic copy edits to the suggestion suffix don't drift the test.
-    const sanitisedStep = steps.find((s) => s.intent.toLowerCase().includes("sanitise"));
-    expect(sanitisedStep).toBeDefined();
-    const sanitisedCmd = sanitisedStep?.command ?? "";
-    expect(sanitisedCmd).toContain("mu task add");
-    expect(sanitisedCmd).toContain("bad_id");
-    expect(sanitisedCmd).toMatch(/--title/);
     expect(listTasks(db)).toEqual([]);
   });
 

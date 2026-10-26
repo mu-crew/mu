@@ -74,7 +74,6 @@ describe("mu task substates CLI", () => {
     expect(r.exitCode).toBeNull();
     expect(plain(r.stdout)).toContain("CLOSED/superseded");
     expect(plain(r.stdout)).toMatch(/Unblocked: b/);
-    expect(r.stdout).toContain("mu task next -w test");
   });
 
   it("park hides a task from next and --substate parked lists it", async () => {
@@ -96,11 +95,11 @@ describe("mu task substates CLI", () => {
     expect(bad.stderr).toContain("--substate");
   });
 
-  it("park on an IN_PROGRESS task exits 4 and suggests release", async () => {
+  it("park on an IN_PROGRESS task exits 4 and says to release it", async () => {
     expect((await cli("claim", "a", "--self")).exitCode).toBeNull();
     const r = await cli("park", "a", "--why", "x");
     expect(r.exitCode).toBe(4);
-    expect(r.stderr).toContain("mu task release");
+    expect(r.stderr).toContain("release it first");
   });
 
   it("unpark returns the task to next", async () => {
@@ -144,8 +143,7 @@ describe("mu task substates CLI", () => {
     const r = await cli("next");
     expect(r.exitCode).toBeNull();
     const out = plain(r.stdout);
-    expect(out).toContain("(no ready tasks; 2 parked)");
-    expect(out).toContain("mu task list --substate parked -w test");
+    expect(out).toContain("(no ready tasks; 2 parked: mu task list --substate parked -w test)");
   });
 
   it("empty next without parked tasks stays bare", async () => {
@@ -162,7 +160,7 @@ describe("mu task substates CLI", () => {
     expect(plain((await cli("show", "a")).stdout)).toContain("mu task open a -w test");
   });
 
-  it("wait names the pair and skips cherry-pick for a non-done close", async () => {
+  it("wait names the pair for a non-done close; next is null (nothing owed)", async () => {
     await cli("close", "a", "--as", "duplicate", "--why", "see e");
     const r = await cli("wait", "a", "--first");
     expect(r.exitCode).toBeNull();
@@ -170,14 +168,11 @@ describe("mu task substates CLI", () => {
       firing: { kind: string; ref: string };
       reason: string;
       snapshots: { substate: string }[];
-      nextSteps: { command: string }[];
     }>(r).data;
     expect(out.firing).toEqual({ kind: "closed", ref: "task:test/a" });
     expect(out.reason).toContain("CLOSED/duplicate");
     expect(out.snapshots[0]?.substate).toBe("duplicate");
-    const commands = out.nextSteps.map((n) => n.command);
-    expect(commands.join("\n")).not.toContain("cherry-pick");
-    expect(commands).toContain("mu task notes a -w test");
+    expect(asJson(r).doc.next).toBeNull();
   });
 
   it("list renders CLOSED/wontfix and bare OPEN", async () => {

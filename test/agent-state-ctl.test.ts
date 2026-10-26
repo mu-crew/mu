@@ -349,42 +349,20 @@ describe("mu agent wait on a pi agent", () => {
     expect(ext.ops).toEqual(["wait"]);
   });
 
-  it("--first with lastText drops the read hint; an empty lastText keeps it", async () => {
+  it("--first never hints a pane read (reads are never next), with or without lastText", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
     ext.settle("the answer");
     const args = ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--first"];
     const withText = await runCliJson([...args, "--timeout", "5", "--json"], dbPath);
-    expect(withText.data.nextSteps).toEqual([]);
+    expect(withText.doc.next).toBeNull();
     ext.start();
     ext.settle("");
-    const empty = await runCliJson(
-      ["agent", "wait", "pia", "-w", WS, "--after-runs", "1", "--first", "--json"],
+    const empty = await runCli(
+      ["agent", "wait", "pia", "-w", WS, "--first", "--after-runs", "1"],
       dbPath,
     );
-    expect(JSON.stringify(empty.data.nextSteps)).toContain("mu agent read pia -w cs");
-  });
-
-  it("--first keeps the read hint for a run with lastText and a lastError", async () => {
-    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
-    ext.settle("partial", "rate limited");
-    const res = await runCliJson(
-      ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--first", "--json"],
-      dbPath,
-    );
-    expect(JSON.stringify(res.data.nextSteps)).toContain("mu agent read pia -w cs");
-  });
-
-  it("--first human output prints the read hint only when the run has no lastText", async () => {
-    const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
-    ext.settle("the answer");
-    const args = ["agent", "wait", "pia", "-w", WS, "--first"];
-    const withText = await runCli([...args, "--after-runs", "0"], dbPath);
-    expect(withText.stdout).toContain("finished");
-    expect(withText.stdout).not.toContain("mu agent read");
-    ext.start();
-    ext.settle("");
-    const empty = await runCli([...args, "--after-runs", "1"], dbPath);
-    expect(empty.stdout).toContain("mu agent read pia -w cs");
+    expect(empty.stdout).toContain("finished");
+    expect(empty.stdout).not.toContain("mu agent read");
   });
 
   it("a settled worker's CLOSE block is not applied by `mu agent wait` (only the wait verbs that own the task close it)", async () => {
@@ -442,7 +420,6 @@ describe("mu agent wait on a pi agent", () => {
     const out = res.data as {
       timedOut: boolean;
       agents: Array<{ fired: boolean; outcome?: string; status?: string; blocked?: unknown }>;
-      nextSteps: unknown[];
     };
     expect(out.timedOut).toBe(false);
     expect(out.agents[0]).toMatchObject({
@@ -451,7 +428,6 @@ describe("mu agent wait on a pi agent", () => {
       status: "needs_permission",
       blocked: { kind: "select", title: "Pick a branch" },
     });
-    expect(JSON.stringify(out.nextSteps)).toContain("mu agent wait pia -w cs");
   });
 
   it("a dialog already open ends the wait at once; human output names it", async () => {
@@ -464,7 +440,7 @@ describe("mu agent wait on a pi agent", () => {
     expect(res.stdout).toContain("not finished");
   });
 
-  it("blocked JSON carries the run baseline; the hinted re-wait returns a run that settled first", async () => {
+  it("blocked JSON carries the run baseline; a re-wait from it returns a run that settled first", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 2 });
     ext.block("confirm", "Allow push?");
     // No --after-runs: the baseline is the status read taken at wait start.
@@ -474,17 +450,20 @@ describe("mu agent wait on a pi agent", () => {
     );
     expect(process.exitCode).toBe(7);
     process.exitCode = undefined;
-    const out = first.data as {
-      agents: Array<{ outcome?: string; afterRuns?: number }>;
-      nextSteps: Array<{ command: string }>;
-    };
+    const out = first.data as { agents: Array<{ outcome?: string; afterRuns?: number }> };
     expect(out.agents[0]).toMatchObject({ outcome: "blocked", afterRuns: 2 });
-    const rewait = out.nextSteps.find((s) => s.command.startsWith("mu agent wait"))?.command;
-    expect(rewait).toBe("mu agent wait pia -w cs --after-runs 2");
     // The human answers and the run settles before the re-wait starts.
     ext.unblock();
     ext.settle("the answer");
-    const args = (rewait ?? "").split(" ").slice(1);
+    const args = [
+      "agent",
+      "wait",
+      "pia",
+      "-w",
+      WS,
+      "--after-runs",
+      String(out.agents[0]?.afterRuns),
+    ];
     const again = await runCliJson([...args, "--timeout", "2", "--json"], dbPath);
     expect(again.exitCode).toBeNull();
     expect(process.exitCode).toBeUndefined();
@@ -632,7 +611,7 @@ describe("mu agent wait --inc: a restarted agent is refused, never waited on", (
     );
   });
 
-  it("human mode: the message is the first stderr line, then its one Next step", async () => {
+  it("human mode: the message is the one stderr line", async () => {
     await fakeExtension({ state: "idle", since: 1, runs: 3 });
     const res = await runCli(
       ["agent", "wait", "pia", "-w", WS, "--timeout", "5", "--after-runs", "2", "--inc", "inc-OLD"],
@@ -647,7 +626,7 @@ describe("mu agent wait --inc: a restarted agent is refused, never waited on", (
     expect(lines[0]).toBe(
       `conflict: agent pia restarted (incarnation inc-OLD → ${INC}); its earlier run is gone: re-send the brief`,
     );
-    expect(lines).toHaveLength(3); // message, "Next:", one command
+    expect(lines).toHaveLength(1);
   });
 
   it("pi restarts MID-wait: the held wait drops, the reconnect finds another incarnation: fatal, not polled", async () => {

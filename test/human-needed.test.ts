@@ -346,12 +346,11 @@ describe("mu human-needed (in-process CLI)", () => {
     }
   });
 
-  it("human output is brief and names the close command", async () => {
+  it("human output is brief", async () => {
     await managed(async () => {
       const r = await runCli(["human-needed", "pick one"], dbPath);
       expect(r.exitCode).toBeNull();
       expect(r.stdout).toMatch(/Recorded human-needed/);
-      expect(r.stdout).toMatch(/mu task close /);
     });
   });
 

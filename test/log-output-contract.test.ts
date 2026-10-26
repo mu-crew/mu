@@ -525,7 +525,7 @@ describe("workstream list is capped, live and torn down", () => {
     for (const i of doc.data.items) expect(i.muxSession.length).toBeLessThanOrEqual(80);
   });
 
-  it("the torn-down text list (records, footer AND the Next block) is <= 4096 bytes on stdout", async () => {
+  it("the torn-down text list (records and footer) is <= 4096 bytes on stdout", async () => {
     for (let i = 0; i < 100; i++) {
       const name = `t${String(i).padStart(3, "0")}`;
       ensureWorkstream(db, name);
@@ -534,7 +534,6 @@ describe("workstream list is capped, live and torn down", () => {
     const r = await runCli(["workstream", "list", "--torn-down"], dbPath);
     expect(bytesOf(r.stdout)).toBeLessThanOrEqual(RESULT_BYTES);
     expect(r.stdout).toMatch(/more=\d+ next=mu workstream list --torn-down --all/);
-    expect(r.stdout).toContain("mu log --group <group>");
   });
 });
 

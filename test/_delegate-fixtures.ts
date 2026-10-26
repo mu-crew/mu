@@ -231,7 +231,7 @@ export function fakeMu(
         agent: { name: saved.name, cwd: opts.workspace ?? null, ...saved.row },
         send: { ok: true, transport: "ctl", runs: 0 },
         task: { id: taskId, attempt: `manual:${attempt}`, state: "sent", replay: true },
-        nextSteps: [{ intent: "Attach the pane", command: `tmux attach -t mu-${ws}` }],
+        attach: `tmux attach -t mu-${ws}`,
       });
     }
     const name = args.includes("--next-free") ? nextFree(String(args[2])) : String(args[2]);
@@ -241,7 +241,7 @@ export function fakeMu(
     const base = {
       agent: { name, cwd: opts.workspace ?? null, ...row },
       ctl: opts.ctl ?? "ok",
-      nextSteps: [{ intent: "Attach the pane", command: `tmux attach -t mu-scratch` }],
+      attach: `tmux attach -t mu-scratch`,
       ...(taskId
         ? { task: { id: taskId, attempt: `manual:${attempt}`, state: "sent", replay: false } }
         : {}),

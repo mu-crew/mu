@@ -15,7 +15,6 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Db } from "./db.js";
 import { defaultStateDir } from "./db.js";
-import type { HasNextSteps, NextStep } from "./output.js";
 import {
   addWorktree,
   createBranch,
@@ -33,18 +32,10 @@ export { upstreamRefs } from "./vcs/git.js";
 // ─── errors ────────────────────────────────────────────────────────────
 
 /** `--worktree` was asked of a root that is not inside a git repo. Exit 4. */
-export class WorktreeVcsRequiredError extends Error implements HasNextSteps {
+export class WorktreeVcsRequiredError extends Error {
   override readonly name = "WorktreeVcsRequiredError";
   constructor(public readonly root: string) {
     super(`--worktree requires a git repository; ${root} is not inside one`);
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Run from inside a git repo, or name one",
-        command: "mu agent spawn <agent> --worktree --root <git-repo>",
-      },
-    ];
   }
 }
 
@@ -55,7 +46,7 @@ const MAX_DIRTY_LISTED = 10;
  * `agent close` (or teardown) refused: the worktree has uncommitted work.
  * `--discard` overrides. Exit 4.
  */
-export class WorktreeDirtyError extends Error implements HasNextSteps {
+export class WorktreeDirtyError extends Error {
   override readonly name = "WorktreeDirtyError";
   constructor(
     public readonly agent: string,
@@ -71,26 +62,13 @@ export class WorktreeDirtyError extends Error implements HasNextSteps {
       }${more > 0 ? ` (+${more} more)` : ""}`,
     );
   }
-  errorNextSteps(): NextStep[] {
-    return [
-      { intent: "Look at the changes", command: `git -C ${this.path} status --short` },
-      {
-        intent: "Commit them, then close",
-        command: `git -C ${this.path} add -A && git -C ${this.path} commit -m <message>`,
-      },
-      {
-        intent: "Or preview throwing the changes away (lossy; the preview prints the --if apply)",
-        command: `mu agent close ${this.agent} -w ${this.workstream} --discard`,
-      },
-    ];
-  }
 }
 
 /**
  * Spawn found a worktree dir at the agent's path that is not its own clean
  * leftover (dirty, new commits, or not made by mu). Exit 4.
  */
-export class WorktreePathNotEmptyError extends Error implements HasNextSteps {
+export class WorktreePathNotEmptyError extends Error {
   override readonly name = "WorktreePathNotEmptyError";
   constructor(
     public readonly agent: string,
@@ -101,22 +79,6 @@ export class WorktreePathNotEmptyError extends Error implements HasNextSteps {
     super(
       `worktree dir already on disk for agent ${agent} (${path}): ${why}; refusing to overwrite`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return [
-      {
-        intent: "Keep it: preview closing it (an unmerged commit keeps a branch; dirty refuses)",
-        command: `mu agent close ${this.agent} -w ${this.workstream}`,
-      },
-      {
-        intent: "Or preview throwing it away (lossy)",
-        command: `mu agent close ${this.agent} -w ${this.workstream} --discard`,
-      },
-      {
-        intent: "Or spawn under another name",
-        command: "mu agent spawn <agent> --next-free --worktree",
-      },
-    ];
   }
 }
 

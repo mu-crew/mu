@@ -28,7 +28,7 @@ import {
 } from "../../cli.js";
 import type { Db, NoteKind } from "../../db.js";
 import { lastClaimActor } from "../../logs.js";
-import { type NextStep, pc, printNextSteps } from "../../output.js";
+import { pc } from "../../output.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../../output-contract.js";
 import { taskRevision } from "../../revision.js";
 import { shellWord } from "../../shell-quote.js";
@@ -364,31 +364,6 @@ export async function cmdTaskAdd(
   if (task === undefined) throw new UsageError("task add: nothing to add", { showHelp: true });
   const note = noteText !== undefined ? (listNotes(db, task.name, workstream)[0] ?? null) : null;
   const derivation = derivations[0] ?? { id: task.name, truncated: false, originalSlug: task.name };
-  const nextSteps: NextStep[] = [
-    { intent: "Show this task", command: `mu task show ${task.name} -w ${workstream}` },
-    ...(note === null
-      ? [
-          {
-            // Single-quoted example: shell metachars (`...`, $VAR, $(...))
-            // inside a double-quoted string expand in YOUR shell before mu
-            // sees the note (mufeedback note #257). Single quotes defer
-            // expansion to the agent.
-            intent: "Add initial context (or use --note next time)",
-            command: `mu task note ${task.name} 'REPRO: ...\\nSCOPE: ...' -w ${workstream}`,
-          },
-        ]
-      : [{ intent: "Show notes", command: `mu task notes ${task.name} -w ${workstream}` }]),
-    {
-      intent: "Add a blocker",
-      command: `mu task block ${task.name} --by <other-id> -w ${workstream}`,
-    },
-    opts.triage === true
-      ? { intent: "Accept it as work", command: `mu task accept ${task.name} -w ${workstream}` }
-      : {
-          intent: "Claim and start",
-          command: `mu task claim ${task.name} -w ${workstream} --self  (or --for <worker>)`,
-        },
-  ];
   if (opts.json) {
     // JSON callers are scripts: stay machine-readable. The human
     // stderr hint is suppressed under --json (matches every other
@@ -413,7 +388,6 @@ export async function cmdTaskAdd(
       blockers: blockedBy,
       ...(blocks.length > 0 ? { blocks } : {}),
       ...(note !== null ? { note } : {}),
-      nextSteps,
       ...truncationFields,
       ...(warnings.length > 0 ? { warnings } : {}),
     });
@@ -446,7 +420,6 @@ export async function cmdTaskAdd(
   }
   if (hasBlockers) console.log(pc.dim(`  blocked by: ${blockedBy.join(", ")}`));
   if (blocks.length > 0) console.log(pc.dim(`  blocks: ${blocks.join(", ")}`));
-  printNextSteps(nextSteps);
 }
 
 /** Reconcile `mu task note <id> [text]`'s positional text with its flag
@@ -506,34 +479,27 @@ export async function cmdTaskNote(
   const author = opts.author ?? (await resolveActorIdentity());
   const text = content === STDIN_ARG ? await readStdinText("note text") : unescapeNoteText(content);
   const warnings = suspiciousNoteWarnings(text);
-  emitWarnings(warnings, opts.json);
   const kind: NoteKind = opts.report === true ? "report" : (opts.kind ?? "note");
   const note = addNote(db, localId, text, { author, workstream: ws, kind });
-  const nextSteps: NextStep[] = [
-    { intent: "Show all notes on this task", command: `mu task notes ${localId} -w ${ws}` },
-    { intent: "Show full task state", command: `mu task show ${localId} -w ${ws}` },
-  ];
   // A worker reads notes at dispatch, not while it runs: a note on its
   // IN_PROGRESS task reaches it only through a send.
   const task = getTask(db, localId, ws);
   const owner = task?.status === "IN_PROGRESS" ? task.ownerName : null;
   if (owner !== null && owner !== author) {
-    nextSteps.unshift({
-      intent: `${owner} will not see this note: send it (--steer, or --interrupt if the note makes the current work wasted)`,
-      command: `mu agent send ${owner} -w ${ws} --steer "..."`,
-    });
+    warnings.push(
+      `${owner} will not see this note: send it (mu agent send ${owner} -w ${ws} --steer, or --interrupt if the note makes the current work wasted)`,
+    );
   }
+  emitWarnings(warnings, opts.json);
   if (opts.json) {
     emitJson({
       taskName: localId,
       note,
-      nextSteps,
       ...(warnings.length > 0 ? { warnings } : {}),
     });
     return;
   }
   console.log(pc.dim(`note appended to ${localId}`));
-  printNextSteps(nextSteps);
 }
 
 /** Bytes the edge records of one `show` may take before the notes get their share of the 4 KB. */
@@ -629,12 +595,11 @@ export async function cmdTaskShow(
   const revision = taskRevision(db, task.workstreamName, task.name);
 
   // Only the non-default substates get a hint: they are the ones whose
-  // way out is not obvious from the status alone.
+  // way out is not obvious from the status alone. Executable as printed (no placeholder).
   const hints: string[] = [];
   if (task.substate === "parked" && task.kind !== "human") hints.push(`next=mu task unpark ${ref}`);
   else if (task.substate === "triage") {
     hints.push(`next=mu task accept ${ref}`);
-    hints.push(`next=mu task close ${ref} --as rejected --why "<reason>"`);
   } else if (task.status === "CLOSED" && task.substate !== "done") {
     hints.push(`next=mu task open ${ref}`);
   }
@@ -879,11 +844,8 @@ export async function cmdTaskUpdate(
     );
   }
   const r = updateTask(db, localId, updateOpts, { workstream: ws });
-  const nextSteps: NextStep[] = [
-    { intent: "Show updated task", command: `mu task show ${localId} -w ${ws}` },
-  ];
   if (opts.json) {
-    emitJson({ taskName: localId, ...r, nextSteps });
+    emitJson({ taskName: localId, ...r });
     return;
   }
   if (!r.updated) {
@@ -891,5 +853,4 @@ export async function cmdTaskUpdate(
     return;
   }
   console.log(`Updated ${pc.bold(localId)} ${pc.dim(`(${r.changedFields.join(", ")})`)}`);
-  printNextSteps(nextSteps);
 }

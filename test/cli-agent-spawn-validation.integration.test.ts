@@ -38,7 +38,6 @@ import {
   spawnAgent,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { hasNextSteps } from "../src/output.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { listWorktrees, worktreePath } from "../src/worktree.js";
@@ -234,29 +233,6 @@ describe("spawnAgent — pre-flight PATH check (Part A)", () => {
         } catch {}
       }
     }
-  });
-
-  it("AgentSpawnCliNotFoundError carries actionable nextSteps (default + env-var + which)", async () => {
-    setCommandResolverForTests(fakeResolver(new Set([])));
-    const { executor } = mockTmux(state);
-    setTmuxExecutor(executor);
-
-    let caught: unknown;
-    try {
-      await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "pi-meta" });
-    } catch (err) {
-      caught = err;
-    }
-    expect(hasNextSteps(caught)).toBe(true);
-    if (!hasNextSteps(caught)) throw new Error("unreachable");
-    const commands = caught
-      .errorNextSteps()
-      .map((s) => s.command)
-      .join("\n");
-    // Three required hints from the spec.
-    expect(commands).toMatch(/--cli pi\b/);
-    expect(commands).toMatch(/MU_PI_META_COMMAND/);
-    expect(commands).toMatch(/which pi pi-meta claude codex/);
   });
 
   it("succeeds when the resolver reports the binary IS on PATH (--cli pi happy path)", async () => {

@@ -201,11 +201,6 @@ describe("claimTask", () => {
       // live in errorNextSteps(), not the prose.
       expect(msg).toContain("ghost");
       expect(msg).toContain("not a registered mu agent");
-      const steps = (err as ClaimerNotRegisteredError).errorNextSteps();
-      expect(steps).toHaveLength(2);
-      // --self is first (most-common-resolution-first).
-      expect(steps[0]?.command).toContain("--self");
-      expect(steps[1]?.command).toContain("--for");
     }
   });
 
@@ -217,9 +212,7 @@ describe("claimTask", () => {
           throw new Error("expected throw");
         } catch (err) {
           expect(err).toBeInstanceOf(ClaimerNotRegisteredError);
-          const steps = (err as ClaimerNotRegisteredError).errorNextSteps();
           expect((err as Error).message).toContain("(pane %99)");
-          expect(steps.some((s) => s.command.includes("adopt"))).toBe(false);
         }
       });
     });

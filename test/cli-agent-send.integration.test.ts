@@ -89,9 +89,7 @@ describe("mu agent send to a pi agent", () => {
       dbPath,
     );
     expect(exitCode).toBe(1);
-    const env = doc as unknown as { error: string; nextSteps: { command: string }[] };
-    expect(env.error).toBe("AgentCtlUnreachableError");
-    expect(env.nextSteps.some((s) => s.command === "pi install npm:@mu-crew/mu")).toBe(true);
+    expect(doc).toMatchObject({ error: "AgentCtlUnreachableError", next: null });
     expect(calls.filter((c) => c[0] === "paste-buffer")).toEqual([]);
   });
 
@@ -105,9 +103,7 @@ describe("mu agent send to a pi agent", () => {
       dbPath,
     );
     expect(exitCode).toBe(1);
-    const env = doc as unknown as { error: string; nextSteps: { command: string }[] };
-    expect(env.error).toBe("AgentPaneDeadError");
-    expect(env.nextSteps.some((s) => s.command === "pi install npm:@mu-crew/mu")).toBe(false);
+    expect(doc).toMatchObject({ error: "AgentPaneDeadError", next: null });
     expect(calls.filter((c) => c[0] === "paste-buffer")).toEqual([]);
   });
 

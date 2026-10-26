@@ -61,12 +61,4 @@ describe("scratch reserved workstream", () => {
     const row = db.prepare("SELECT name FROM workstreams WHERE name = ?").get("scratch");
     expect(row).toEqual({ name: "scratch" });
   });
-
-  it("WorkstreamNameReservedError carries actionable next steps", () => {
-    const err = new WorkstreamNameReservedError("scratch");
-    const steps = err.errorNextSteps();
-    expect(steps.length).toBeGreaterThan(0);
-    expect(steps[0]?.command).toContain("mu agent spawn");
-    expect(steps[0]?.command).toContain("scratch");
-  });
 });

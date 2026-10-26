@@ -29,7 +29,7 @@ import {
   listHosts,
   removeHost,
 } from "../hosts.js";
-import { isJsonMode, muTable, pc, printNextSteps } from "../output.js";
+import { isJsonMode, muTable, pc } from "../output.js";
 import { shellQuote } from "../shell-quote.js";
 import { failureWithData } from "./handle.js";
 
@@ -52,7 +52,6 @@ export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
     return;
   }
   console.log(`added host ${pc.bold(host.name)}`);
-  printNextSteps([{ intent: "Check it", command: `mu host check ${host.name}` }]);
 }
 
 export function cmdHostList(db: Db): void {
@@ -62,8 +61,7 @@ export function cmdHostList(db: Db): void {
     return;
   }
   if (hosts.length === 0) {
-    console.log("no host profiles");
-    printNextSteps([{ intent: "Print a starter", command: "mu host init <name> --ssh" }]);
+    console.log("no host profiles (mu host init prints a starter)");
     return;
   }
   const held = new Map<string, number>();

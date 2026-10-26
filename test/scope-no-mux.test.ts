@@ -450,11 +450,10 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
     );
   });
 
-  it("--json keeps the nextSteps in the envelope", async () => {
+  it("--json is one failure envelope with no next", async () => {
     const r = await runCliJson(["agent", "list", "-w", "own", "--json"], dbPath);
     expect(r.exitCode).toBe(5);
     expect(r.doc).toMatchObject({ ok: false, next: null, exit: 5 });
-    expect((r.doc as unknown as { nextSteps: unknown[] }).nextSteps).toHaveLength(1);
   });
 
   it("doctor prints its report, then exits 5 naming the install", async () => {

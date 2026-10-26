@@ -419,12 +419,8 @@ describe("the bounded result and the resume handle", () => {
     expect(String(d.retrieve)).toMatch(/mu agent read/);
   });
 
-  it("nextSteps, humanNeeds and the warning count toward the bound (60 open tasks, 30 needs)", () => {
+  it("humanNeeds and the warning count toward the bound (60 open tasks, 30 needs)", () => {
     const refs = Array.from({ length: 60 }, (_, i) => snap(i));
-    const nextSteps = Array.from({ length: 60 }, (_, i) => ({
-      intent: `Investigate w/t${i} (status=OPEN)`,
-      command: `mu task show t${i} -w w`,
-    }));
     const humanNeeds = Array.from({ length: 30 }, (_, i) => ({
       workstream: "w",
       id: `n${i}`,
@@ -434,14 +430,12 @@ describe("the bounded result and the resume handle", () => {
       result: result(refs, { humanNeeds }),
       exit: 0,
       resume: HANDLE,
-      nextSteps,
       warning: "w".repeat(300),
       reason: "no event before the deadline; 60 still open",
     });
     expect(wire(d)).toBeLessThanOrEqual(RESULT_BYTES);
     // What is kept says what it cut; the handle, firing and exit are never cut.
     expect(d).toMatchObject({ resume: HANDLE, exit: 0, open: 60, firing: { kind: "heartbeat" } });
-    expect((d.nextSteps as unknown[]).length + Number(d.nextStepsCut)).toBe(60);
     expect(Number(d.humanNeedsCut)).toBeGreaterThan(0);
   });
 

@@ -325,8 +325,10 @@ describe("agent close preview", () => {
       join(dir, "mu.db"),
     );
     expect(r.data.remote).toMatchObject({ host: "dev", path: WT, base: BASE });
-    const cmds = (r.data.nextSteps as { command: string }[]).map((n) => n.command);
-    expect(cmds.some((c) => c.includes("--keep-branch") && c.includes("--if"))).toBe(true);
+    expect(r.doc.next).toEqual({
+      mode: "alt",
+      commands: [`mu agent close worker-1 -w auth --keep-branch --if ${r.data.revision}`],
+    });
   });
 
   it("a local agent has no remote section", async () => {

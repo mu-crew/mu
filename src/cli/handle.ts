@@ -88,16 +88,9 @@ import {
   PaneNotFoundError,
 } from "../mux.js";
 import { NextArgError } from "../next.js";
-import {
-  hasNextSteps,
-  isJsonMode,
-  type NextStep,
-  pc,
-  printNextStepsTo,
-  printUsageHuman,
-  usageLines,
-} from "../output.js";
-import { type Envelope, encodeEnvelope } from "../output-contract.js";
+import { capPlan, computeNext, NEXT_BYTES, type NextOutcome } from "../next-hints.js";
+import { isJsonMode, pc, printUsageHuman, usageLines } from "../output.js";
+import { encodeEnvelope, type NextPlan, RESULT_BYTES } from "../output-contract.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-agent.js";
 import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
@@ -137,6 +130,7 @@ import {
   TaskParkStateError,
   TaskTitleSlugEmptyError,
 } from "../tasks.js";
+import { currentCallers } from "../wait-callers.js";
 import { WaitResumeNotFoundError } from "../wait-resume.js";
 import {
   WorkstreamExistsError,
@@ -201,15 +195,84 @@ export interface JsonFailure {
 
 /** The sentinel for a verb that fails AFTER producing its report (doctor's
  *  drift/hazard/no-mux): `--json` prints one failure document holding `data`,
- *  with the real error's class, message, exit code and legacy nextSteps. */
+ *  with the real error's class, message and exit code. */
 export function failureWithData(err: unknown, data: unknown): CliExitError {
-  const nextSteps = hasNextSteps(err) ? err.errorNextSteps() : [];
   return new CliExitError(classifyError(err).exitCode, {
     error: err instanceof Error ? err.name : "Error",
     message: err instanceof Error ? err.message : String(err),
     data,
-    ...(nextSteps.length > 0 ? { extra: { nextSteps } } : {}),
   });
+}
+
+// ─── The ONE finalisation of `next` ──────────────────────────────────
+//
+// Every result's `next` (success JSON, failure JSON, partial failure, human
+// text) is `finalNext()`: `computeNext` (src/next-hints.ts) over the DB
+// `handle()` holds open, read when the result is printed, so after the verb's
+// writes. A verb only DECLARES what it did (`setNextOutcome`) and its scope
+// (`setNextScope`, done by resolveWorkstream); it never builds a hint. Outside
+// `handle()` (parse errors, no DB) the plan is null.
+
+let nextDb: Db | undefined;
+let nextScope: string | undefined;
+let nextOutcome: NextOutcome | undefined;
+
+/** What the verb did that a follow-up depends on (a delivered send, a preview, …). */
+export function setNextOutcome(outcome: NextOutcome): void {
+  nextOutcome = outcome;
+}
+
+/** The resolved workstream of the call (resolveWorkstream records it). */
+export function setNextScope(workstream: string): void {
+  nextScope = workstream;
+}
+
+/** The plan of this result, or null outside handle(). Best effort: a hint never fails a verb. */
+export function finalNext(): NextPlan {
+  if (nextDb === undefined) return null;
+  try {
+    return computeNext(nextDb, {
+      callers: currentCallers(),
+      ...(nextScope !== undefined ? { workstream: nextScope } : {}),
+      ...(nextOutcome !== undefined ? { outcome: nextOutcome } : {}),
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The plan cut to what is left of the result budget once `base` (the document
+ * with `next:null`) is counted: a seq is dropped whole, an alt from its tail.
+ * A document already over budget (a brief is never cut) keeps NEXT_BYTES.
+ */
+export function fitNext(plan: NextPlan, baseBytes: number): NextPlan {
+  const left = baseBytes > RESULT_BYTES ? NEXT_BYTES : RESULT_BYTES - baseBytes + 4;
+  return capPlan(plan, Math.min(NEXT_BYTES, left)).next;
+}
+
+/** The human rendering of a plan: one `next:` line per command. */
+export function printNext(plan: NextPlan, sink: "stdout" | "stderr"): void {
+  if (plan === null) return;
+  const out = sink === "stderr" ? console.error : console.log;
+  const head = plan.mode === "seq" ? "next (in order):" : "next:";
+  if (plan.commands.length === 1) out(pc.dim(`${head} ${plan.commands[0]}`));
+  else {
+    out(pc.dim(head));
+    for (const c of plan.commands) out(pc.dim(`  ${c}`));
+  }
+}
+
+/** One failure document on STDOUT, its plan fitted to the budget. */
+function printFailure(env: {
+  error: string;
+  message: string;
+  exit: number;
+  extra?: Record<string, unknown>;
+  data?: unknown;
+}): void {
+  const doc = (next: NextPlan) => encodeEnvelope({ ok: false, ...env, next });
+  console.log(doc(fitNext(finalNext(), Buffer.byteLength(doc(null)))));
 }
 
 // ─── Active-command tracking for the validation-error contract ──────
@@ -278,8 +341,7 @@ function isUsageClassError(err: unknown): boolean {
  * Raised when a bare entity name is used at the CLI but the resolution
  * context (no --workstream and no injected worker scope) is empty
  * AND the same name lives in two or more workstreams. Exit 4 (conflict)
- * via classifyError. The errorNextSteps lists every candidate as a
- * runnable qualified-form invocation — a one-paste fix.
+ * via classifyError. The message names every candidate workstream.
  *
  * See verb_arg_qualified_workstream_name for the design.
  */
@@ -293,12 +355,6 @@ export class NameAmbiguousError extends Error {
     super(
       `${kind} name "${entityName}" exists in ${candidates.length} workstreams (${candidates.join(", ")}); pass -w <workstream> or use the qualified form <workstream>/${entityName}`,
     );
-  }
-  errorNextSteps(): NextStep[] {
-    return this.candidates.map((ws) => ({
-      intent: `Target the ${ws} ${this.kind}`,
-      command: `${ws}/${this.entityName}`,
-    }));
   }
 }
 
@@ -487,8 +543,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // provider-auth-failure prompt. Same generic exit 1 lane as
     // AgentDiedOnSpawnError — both are "the spawn looked OK to mu but
     // the operator can't actually use this agent". The error message
-    // already carries the matched line + scrollback;
-    // errorNextSteps() carries the remediation recipe.
+    // already carries the matched line + scrollback.
     return { label: "spawn startup error", exitCode: 1 };
   }
   if (err instanceof AgentExtensionOutdatedError) {
@@ -555,49 +610,83 @@ function isSqliteBusy(err: unknown): boolean {
 
 /** prose-quoting: on the verbs that carry prose, "too many arguments"
  *  nearly always means an apostrophe ended a single-quoted string and
- *  bash split the rest into words. Point at the stdin form. */
-function quotingHint(err: unknown, cmd: Command | undefined): NextStep | undefined {
+ *  bash split the rest into words. The message says so and names stdin. */
+function quotingHint(err: unknown, cmd: Command | undefined): string | undefined {
   if (!(err instanceof CommanderError) || err.code !== "commander.excessArguments") return;
   const verb = `${cmd?.parent?.name()} ${cmd?.name()}`;
-  const first = cmd?.args[0] ?? "<id>";
-  const command =
-    verb === "task add"
-      ? "mu task add <id> -t '<title>' -i <n> -e <days> --note - <<'EOF'"
-      : verb === "task note"
-        ? `mu task note ${first} - <<'EOF'`
-        : verb === "agent send"
-          ? `mu agent send ${first === "<id>" ? "<name>" : first} - <<'EOF'`
-          : undefined;
-  if (command === undefined) return;
-  return {
-    intent:
-      "a quote in the text probably ended the string early (an apostrophe inside '...'); pass long text with a quoted heredoc",
-    command,
-  };
+  if (verb !== "task add" && verb !== "task note" && verb !== "agent send") return;
+  return "; a quote in the text probably ended the string early (an apostrophe inside '...'): pass the text on stdin as - with a quoted heredoc (<<'EOF')";
 }
 
-/** Render error + nextSteps to stderr and return the resolved exit
- *  code. Returning the exitCode lets `handle` reuse it instead of
- *  re-classifying the same error twice (review_code_classify_error_called_twice).
+/** Levenshtein distance (shared by the unknown-verb and wrong-column hints). */
+export function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) {
+      row.push(
+        Math.min(
+          (prev[j] as number) + 1,
+          (row[j - 1] as number) + 1,
+          (prev[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1),
+        ),
+      );
+    }
+    prev = row;
+  }
+  return prev[b.length] as number;
+}
+
+/**
+ * An unknown verb, as one line: `unknown command 'x'` plus the closest verb
+ * of `cmd` (or `mu --help`). The root takes no arguments, so commander calls
+ * an unknown top-level verb "too many arguments"; a namespace says
+ * "unknown command". undefined for any other error.
+ */
+function unknownVerb(err: unknown, cmd: Command | undefined): string | undefined {
+  if (!(err instanceof CommanderError) || cmd === undefined) return;
+  const root = cmd.parent === null;
+  let word: string | undefined;
+  if (err.code === "commander.unknownCommand") word = /'([^']*)'/.exec(err.message)?.[1];
+  else if (err.code === "commander.excessArguments" && root) word = cmd.args[0];
+  if (word === undefined) return;
+  // The verbs one level down count too (`mu next` → `mu task next`); a direct one wins a tie.
+  const path = root ? "mu" : `mu ${cmd.name()}`;
+  const names = cmd.commands.flatMap((c) => [c.name(), ...c.aliases()].map((n) => [n, n]));
+  const nested = cmd.commands.flatMap((c) =>
+    c.commands.map((g) => [g.name(), `${c.name()} ${g.name()}`]),
+  );
+  let best: string | undefined;
+  let bestD = Number.POSITIVE_INFINITY;
+  for (const [n, full] of [...names, ...nested] as [string, string][]) {
+    const d = n === word ? 0 : n.startsWith(word) || word.startsWith(n) ? 1 : editDistance(n, word);
+    if (d < bestD) [best, bestD] = [full, d];
+  }
+  const near =
+    best !== undefined && bestD <= Math.max(word.length <= 3 ? 1 : 2, Math.floor(word.length / 3));
+  return `unknown command '${word}'${near ? ` (closest: ${path} ${best})` : ""}; see ${path} --help`;
+}
+
+/** Render the error and return the resolved exit code. Returning the
+ *  exitCode lets `handle` reuse it instead of re-classifying the same
+ *  error twice (review_code_classify_error_called_twice).
  *
  *  audit_cli_validation_uniformity: usage-class errors (commander +
  *  UsageError + typed *Invalid*) ALSO emit the failing subcommand's
- *  --help (human path) or a structured `usage` field (JSON path). */
+ *  --help (human path) or a structured `usage` field (JSON path); an
+ *  unknown verb is one line naming the closest verb instead. */
 function emitError(err: unknown): number {
   if (err instanceof CliExitError) {
     const f = err.failure;
     if (f !== undefined) {
-      const env: Envelope<unknown> = {
-        ok: false,
+      printFailure({
         error: f.error,
         message: f.message,
-        next: null,
         exit: err.exitCode,
         ...(f.extra !== undefined ? { extra: f.extra } : {}),
         ...(f.data !== undefined ? { data: f.data } : {}),
-      };
-      console.log(encodeEnvelope(env));
-    }
+      });
+    } else if (!isJsonMode()) printNext(finalNext(), "stderr");
     return err.exitCode;
   }
 
@@ -613,22 +702,33 @@ function emitError(err: unknown): number {
   const { label, exitCode } =
     err instanceof CommanderError ? classifyCommanderError(err) : classifyError(err);
   const errClass = err instanceof Error ? err.name : "Error";
-  const steps: NextStep[] = hasNextSteps(err) ? err.errorNextSteps() : [];
-  const quoting = quotingHint(err, activeCommand);
-  if (quoting) steps.push(quoting);
+  const unknown = unknownVerb(err, activeCommand);
   // Strip commander's own "error: " prefix — we re-add our own "error: "
   // (red, in the human path) and don't want "error: error: ...".
   const cleanMessage =
-    err instanceof CommanderError && message.startsWith("error: ")
+    unknown ??
+    (err instanceof CommanderError && message.startsWith("error: ")
       ? message.slice("error: ".length)
-      : message;
+      : message) + (quotingHint(err, activeCommand) ?? "");
   const usageCmd = isUsageClassError(err) ? activeCommand : undefined;
+  // A send whose delivery is unknown: its receipt check (never a resend), from the row it went to.
+  if (
+    err instanceof AgentSendIndeterminateError &&
+    err.msgId !== undefined &&
+    err.agentId !== undefined
+  ) {
+    setNextOutcome({
+      kind: "send-unknown",
+      agent: { name: err.agentName, workstream: err.workstream },
+      msgId: err.msgId,
+      agentId: err.agentId,
+    });
+  }
 
   if (isJsonMode()) {
     // ONE failure document on STDOUT, the real exit code beside it: a caller
-    // that pipes `2>/dev/null` loses nothing. `nextSteps` is the legacy hint
-    // list, kept until the per-verb `next` plans replace it.
-    const extra: Record<string, unknown> = { nextSteps: steps };
+    // that pipes `2>/dev/null` loses nothing.
+    const extra: Record<string, unknown> = {};
     if (usageCmd) extra.usage = usageLines(usageCmd);
     // A stale `--if` names both revisions; a wrong task id its near ids.
     if (err instanceof RevisionMismatchError) {
@@ -638,30 +738,28 @@ function emitError(err: unknown): number {
     if (err instanceof TaskNotFoundError && err.candidateIds.length > 0) {
       extra.candidate_ids = err.candidateIds;
     }
+    if (err instanceof NameAmbiguousError) extra.candidates = err.candidates;
     // A send whose delivery is unknown still names its receipt, structurally.
     if (err instanceof AgentSendIndeterminateError && err.msgId !== undefined) {
       extra.msgId = err.msgId;
       if (err.incarnation !== undefined) extra.incarnation = err.incarnation;
       extra.delivery = "unknown";
     }
-    console.log(
-      encodeEnvelope({
-        ok: false,
-        error: errClass,
-        message: cleanMessage,
-        next: null,
-        exit: exitCode,
-        extra,
-      }),
-    );
+    printFailure({
+      error: errClass,
+      message: cleanMessage,
+      exit: exitCode,
+      ...(Object.keys(extra).length > 0 ? { extra } : {}),
+    });
     return exitCode;
   }
 
   console.error(pc.red(`${label}: ${cleanMessage}`));
-  if (steps.length > 0 && !(hasNextSteps(err) && err.inlineNext === true)) {
-    printNextStepsTo(steps, "stderr");
+  if (err instanceof TaskNotFoundError && err.candidateIds.length > 0) {
+    console.error(pc.dim(`similar: ${err.candidateIds.join(", ")}`));
   }
-  if (usageCmd) {
+  printNext(finalNext(), "stderr");
+  if (usageCmd && unknown === undefined) {
     printUsageHuman(usageCmd);
   }
   return exitCode;
@@ -731,7 +829,9 @@ export function handle(
       refuseDbInsideSyncDir();
       db = openDb();
       if (ambient) await ambientIngest(db);
+      nextDb = db;
       await fn(db);
+      if (!isJsonMode()) printNext(finalNext(), "stdout");
     } catch (err) {
       // Read-only suggestions for a wrong task id, from the partition the
       // exact lookup missed in. Best effort: a hint never masks the miss.
@@ -743,6 +843,9 @@ export function handle(
       exitCode = emitError(err);
     } finally {
       activeCommand = undefined;
+      nextDb = undefined;
+      nextScope = undefined;
+      nextOutcome = undefined;
       // Flush even on the error path: the verb may have committed ops
       // before throwing (a cascade that hit a cycle halfway), and those
       // ops are already canonical in `ops`. Withholding them from the

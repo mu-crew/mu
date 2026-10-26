@@ -323,8 +323,6 @@ export interface TaskPageOpts {
   basis?: "updatedAt" | "createdAt" | null;
   /** `local_id` → revision (list). */
   revisions?: ReadonlyMap<string, number>;
-  /** Extra single-line records printed after the footer (counted in the cap). */
-  trailer?: readonly string[];
 }
 
 export interface TaskPageOut {
@@ -366,7 +364,6 @@ export function taskPage(rows: readonly TaskRow[], opts: TaskPageOpts): TaskPage
     }
     const foot = footerLine({ more: page.more, cut }, opts.next);
     if (foot !== null) lines.push(foot);
-    lines.push(...(opts.trailer ?? []));
     return {
       lines: opts.json ? [] : lines,
       data: {

@@ -32,7 +32,7 @@ import {
   registerDelegateCall,
   verdictTally,
 } from "../delegates.js";
-import { muTable, pc, printNextSteps } from "../output.js";
+import { muTable, pc } from "../output.js";
 import { qualifiedRefProblem } from "../workstream-scope.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
@@ -74,20 +74,21 @@ export async function cmdDelegatesList(
   });
   if (opts.json) return emitJsonCollection(rows);
   if (rows.length === 0) {
-    console.log("no delegate calls");
-    if (caller !== undefined && opts.caller === undefined)
-      printNextSteps([{ intent: "Every caller's calls", command: "mu delegates --all" }]);
+    console.log(
+      caller !== undefined && opts.caller === undefined
+        ? "no delegate calls of this caller (--all lists every caller's)"
+        : "no delegate calls",
+    );
     return;
   }
   console.log(renderRows(rows));
   const refused = rows.filter((r) => r.state === "refused");
   if (refused.length > 0)
-    printNextSteps([
-      {
-        intent: `${refused.length} refused past the cap: reissue each once, in its pi session`,
-        command: reissueHint(refused[0]?.callId ?? ""),
-      },
-    ]);
+    console.log(
+      pc.yellow(
+        `${refused.length} refused past the cap: reissue each once in its pi session, e.g. ${reissueHint(refused[0]?.callId ?? "")}`,
+      ),
+    );
 }
 
 export async function cmdDelegatesShow(db: Db, callId: string, opts: WsOpt): Promise<void> {
@@ -116,12 +117,9 @@ export async function cmdDelegatesTally(db: Db, opts: WsOpt & { wave?: string })
   console.log(table.toString());
   console.log(`queued ${t.queued}, running ${t.running}, refused ${t.refused.length}`);
   if (t.refused.length > 0)
-    printNextSteps([
-      {
-        intent: "Reissue a refused call, in its pi session",
-        command: reissueHint(t.refused[0] ?? ""),
-      },
-    ]);
+    console.log(
+      pc.yellow(`reissue a refused call in its pi session: ${reissueHint(t.refused[0] ?? "")}`),
+    );
 }
 
 export interface RegisterOpts extends WsOpt {
