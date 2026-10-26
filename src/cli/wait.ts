@@ -412,6 +412,8 @@ export async function runWait(
     extraNextSteps?: (result: WaitResult) => Promise<{ intent: string; command: string }[]>;
     /** A resume runs for the callers the stored wait ran for, not for whoever types it. */
     callers?: readonly string[];
+    /** The producer's receipt (`sent`, `claimed`, `warnings`) when a verb entered the wait: see WaitDataInput.extra. */
+    extraData?: Record<string, unknown>;
   } = {},
 ): Promise<void> {
   const callers = opts.callers !== undefined ? [...opts.callers] : currentCallers();
@@ -546,6 +548,7 @@ export async function runWait(
       reason: reasonOf(result, signal, openNow),
       nextSteps,
       ...(short !== undefined ? { warning: short } : {}),
+      ...(opts.extraData !== undefined ? { extra: opts.extraData } : {}),
     }),
   );
   sig.dispose();

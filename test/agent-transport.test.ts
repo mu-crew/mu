@@ -366,7 +366,7 @@ describe("sendViaTransport", () => {
     expect(body.nextSteps).toEqual([
       {
         intent: `Wait for the response to ${id} (returns its final text)`,
-        command: `mu agent wait worker-1 -w auth --after-runs 5 --inc ${INC} --json`,
+        command: `mu wait 'agent:auth/worker-1@5#${INC}'`,
       },
     ]);
   });
@@ -738,7 +738,7 @@ describe("mu agent send transport", () => {
     expect(body.nextSteps).toHaveLength(1);
   });
 
-  it("a ctl send with runs points at wait --after-runs, not a pane read", async () => {
+  it("a ctl send with runs points at mu wait, not a pane read", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), {
       v: 1,
@@ -755,11 +755,11 @@ describe("mu agent send transport", () => {
     const cmds = (data as { nextSteps: Array<{ command: string }> }).nextSteps.map(
       (s) => s.command,
     );
-    expect(cmds[0]).toBe(`mu agent wait worker-1 -w auth --after-runs 4 --inc ${INC} --json`);
+    expect(cmds[0]).toBe(`mu wait 'agent:auth/worker-1@4#${INC}'`);
     expect(cmds.some((c) => c.startsWith("mu agent read"))).toBe(false);
   });
 
-  it("--steer and --fresh ctl replies with runs also point at wait --after-runs", async () => {
+  it("--steer and --fresh ctl replies with runs also point at mu wait", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), {
       v: 1,
@@ -777,9 +777,7 @@ describe("mu agent send transport", () => {
       const cmds = (data as { nextSteps: Array<{ command: string }> }).nextSteps.map(
         (s) => s.command,
       );
-      expect(cmds[0], flag).toBe(
-        `mu agent wait worker-1 -w auth --after-runs 7 --inc ${INC} --json`,
-      );
+      expect(cmds[0], flag).toBe(`mu wait 'agent:auth/worker-1@7#${INC}'`);
       expect(
         cmds.some((c) => c.startsWith("mu agent read")),
         flag,

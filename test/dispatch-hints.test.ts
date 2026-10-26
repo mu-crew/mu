@@ -113,10 +113,7 @@ describe("dispatchHint", () => {
         .errorNextSteps()
         .map((s) => s.command)
         .slice(0, 2),
-    ).toEqual([
-      "mu agent wait worker-1 --after-runs 2 --json -w auth",
-      "mu agent read worker-1 -w auth --lines 60",
-    ]);
+    ).toEqual(["mu wait agent:auth/worker-1@2", "mu agent read worker-1 -w auth --lines 60"]);
     for (const e of [
       new StallDetectedDuringWaitError("t", "worker-2", "auth", 300),
       new StallDetectedDuringWaitError("t", "worker-1", "auth", 300, true, 0),
@@ -173,8 +170,7 @@ describe("mu agent send hints: exactly ONE, the wait", () => {
   function seed(): void {
     insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%1", cli: "pi" });
   }
-  const WAIT = (runs: number) =>
-    `mu agent wait worker-1 -w auth --after-runs ${runs} --inc inc-test-1 --json`;
+  const WAIT = (runs: number) => `mu wait 'agent:auth/worker-1@${runs}#inc-test-1'`;
 
   // Every state a send can meet (idle after a run, busy, first run) and every
   // mode: the hint list is the wait and nothing else, text and JSON.
@@ -211,9 +207,7 @@ describe("mu agent send hints: exactly ONE, the wait", () => {
     const i = lines.indexOf("Next:");
     expect(i).toBeGreaterThan(0);
     expect(lines.slice(i + 1)).toHaveLength(1);
-    expect(lines[lines.length - 1]).toMatch(
-      / : mu agent wait worker-1 -w auth --after-runs 3 --inc inc-test-1 --json$/,
-    );
+    expect(lines[lines.length - 1]).toMatch(/ : mu wait 'agent:auth\/worker-1@3#inc-test-1'$/);
     expect(r.stdout).not.toContain("--interrupt");
     expect(r.stdout).not.toContain("--fresh");
     expect(r.stdout).not.toContain("mu log");
@@ -229,15 +223,15 @@ function shWords(line: string): string[] {
 }
 
 describe("waitHint: executable as printed", () => {
-  it("is `mu agent wait <a> -w <ws> --after-runs <n> --inc <i> --json`", () => {
+  it("is ONE quoted typed ref: mu wait 'agent:<ws>/<name>@<runs>#<inc>'", () => {
     expect(waitHint({ name: "worker-1", workstreamName: "auth" }, 4, "7f0a-1").command).toBe(
-      "mu agent wait worker-1 -w auth --after-runs 4 --inc 7f0a-1 --json",
+      "mu wait 'agent:auth/worker-1@4#7f0a-1'",
     );
   });
 
-  it("without an incarnation (an older extension) the --inc words are omitted, not blank", () => {
+  it("without an incarnation (an older extension) the # part is omitted, not blank", () => {
     expect(waitHint({ name: "w", workstreamName: "auth" }, 0).command).toBe(
-      "mu agent wait w -w auth --after-runs 0 --json",
+      "mu wait agent:auth/w@0",
     );
   });
 
@@ -252,19 +246,7 @@ describe("waitHint: executable as printed", () => {
     (_n, name, ws, inc) => {
       const cmd = waitHint({ name, workstreamName: ws }, 12, inc).command;
       expect(cmd).not.toMatch(/<|\.\.\./);
-      expect(shWords(cmd.replace(/^mu /, "mu "))).toEqual([
-        "mu",
-        "agent",
-        "wait",
-        name,
-        "-w",
-        ws,
-        "--after-runs",
-        "12",
-        "--inc",
-        inc,
-        "--json",
-      ]);
+      expect(shWords(cmd)).toEqual(["mu", "wait", `agent:${ws}/${name}@12#${inc}`]);
       // and `sh -n` agrees it is well formed
       execFileSync("sh", ["-n", "-c", cmd]);
     },
@@ -280,10 +262,8 @@ describe("waitHint: executable as printed", () => {
       );
       expect(r.exitCode, flags.join(" ")).toBeNull();
       const steps = (r.data as { nextSteps: Step[] }).nextSteps;
-      const wait = steps.find((s) => s.command.startsWith("mu agent wait"));
-      expect(wait?.command, flags.join(" ")).toMatch(
-        /^mu agent wait worker-1 -w auth --after-runs \d+ --inc \S+ --json$/,
-      );
+      const wait = steps.find((s) => s.command.startsWith("mu wait"));
+      expect(wait?.command, flags.join(" ")).toMatch(/^mu wait 'agent:auth\/worker-1@\d+#\S+'$/);
       expect(shWords(wait?.command ?? "")[0]).toBe("mu");
     }
   });

@@ -20,12 +20,13 @@ function dispatchText(task: { id: string; workstream: string }): string {
 }
 
 /**
- * The one hint after a send: wait for exactly the run it started. `runs` is
- * the baseline the send measured; `incarnation` pins the pi process, so a
- * restart is refused instead of waited on. `--json` is part of it: the text
- * mode prints no answer, `lastText` is in the JSON. Every word is POSIX
- * quoted; the line parses as printed. `msgId` names the send in the intent
- * (the wait command has no msgId word: the run is pinned by runs + inc).
+ * The ONE hint after a send: `mu wait` on exactly the run it started, as one
+ * typed ref (`agent:<ws>/<name>@<runs>#<incarnation>`). `runs` is the baseline
+ * the send measured; `incarnation` pins the pi process, so a restart is refused
+ * instead of waited on. `mu wait` always prints JSON (the final text is
+ * `snapshots[].lastText`), so no `--json`. The ref is one POSIX-quoted word:
+ * the line parses as printed and works in any shell, armed or not. `msgId` names
+ * the send in the intent (the ref pins the run by runs + inc).
  */
 export function waitHint(
   agent: Pick<HintAgent, "name" | "workstreamName">,
@@ -33,12 +34,20 @@ export function waitHint(
   incarnation?: string,
   msgId?: string,
 ): NextStep {
-  const inc = incarnation === undefined ? "" : ` --inc ${shellWord(incarnation)}`;
   const of = msgId === undefined ? "" : ` to ${msgId}`;
   return {
     intent: `Wait for the response${of} (returns its final text)`,
-    command: `mu agent wait ${shellWord(agent.name)} -w ${shellWord(agent.workstreamName)} --after-runs ${runs}${inc} --json`,
+    command: `mu wait ${shellWord(agentRefOf(agent, runs, incarnation))}`,
   };
+}
+
+/** `agent:<ws>/<name>[@<runs>][#<incarnation>]`: the typed ref a wait takes. */
+export function agentRefOf(
+  agent: Pick<HintAgent, "name" | "workstreamName">,
+  runs?: number,
+  incarnation?: string,
+): string {
+  return `agent:${agent.workstreamName}/${agent.name}${runs === undefined ? "" : `@${runs}`}${incarnation === undefined ? "" : `#${incarnation}`}`;
 }
 
 /**

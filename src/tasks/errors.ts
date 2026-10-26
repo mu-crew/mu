@@ -333,7 +333,7 @@ export function stallWaitHint(owner: string, ws: string, runs: number | undefine
   return [
     {
       intent: "Read the worker's last answer (its final text, at once)",
-      command: `mu agent wait ${owner} --after-runs ${runs - 1} --json -w ${ws}`,
+      command: `mu wait agent:${ws}/${owner}@${runs - 1}`,
     },
   ];
 }

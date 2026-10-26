@@ -592,9 +592,9 @@ describe("mu task wait --stuck-after for a pi owner", () => {
       }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(StallDetectedDuringWaitError);
       const cmds = (err as StallDetectedDuringWaitError).errorNextSteps().map((s) => s.command);
-      expect(cmds[0]).toBe("mu agent wait pia --after-runs 2 --json -w cs");
+      expect(cmds[0]).toBe("mu wait agent:cs/pia@2");
       expect(cmds[1]).toBe("mu agent read pia -w cs --lines 60");
-      expect(warns.join("")).toContain("mu agent wait pia --after-runs 2 --json -w cs");
+      expect(warns.join("")).toContain("mu wait agent:cs/pia@2");
       expect(warns.join("")).toContain("mu agent read pia -w cs --lines 60");
     } finally {
       setWaitStuckWarnForTests(restore);

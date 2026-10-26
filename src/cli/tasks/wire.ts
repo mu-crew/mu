@@ -529,6 +529,10 @@ export function wireTaskCommands(program: Command): void {
     )
     .option("--force", "claim even when the task is parked or in triage (OPEN/parked, OPEN/triage)")
     .option(
+      "--and-wait",
+      "after a --for dispatch, wait for the task (`mu wait` semantics: ONE JSON result, `data.claimed` is the claim, SIGINT/SIGTERM print a snapshot and a `resume`). Needs --for",
+    )
+    .option(
       "--if <rev>",
       "apply only if the task is still at this revision (from `mu task show --json` .task.revision or a preview); stale refuses with exit 4",
       parseNonNegativeInt,
@@ -546,8 +550,11 @@ export function wireTaskCommands(program: Command): void {
         json?: boolean;
         force?: boolean;
         if?: number;
+        andWait?: boolean;
       };
-      return handle((db) => cmdClaim(db, taskId, opts), this as Command)();
+      const sig = opts.andWait ? installWaitSignals() : undefined;
+      const run = handle((db) => cmdClaim(db, taskId, opts, sig), this as Command)();
+      return sig === undefined ? run : run.finally(() => sig.dispose());
     });
 
   task

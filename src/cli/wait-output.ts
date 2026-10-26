@@ -174,6 +174,12 @@ export interface WaitDataInput {
   /** Legacy hints (`nextSteps`) the verb still carries. */
   nextSteps?: readonly { intent: string; command: string }[];
   warning?: string;
+  /**
+   * Fields the verb that entered the wait adds (`sent` for `send --wait`, `claimed` for
+   * `claim --and-wait`: the producer's receipt). Small by contract; they count against the
+   * bound and are never cut.
+   */
+  extra?: Record<string, unknown>;
 }
 
 /** What one shrink step keeps. */
@@ -287,6 +293,7 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       ...(keptSteps.length > 0 ? { nextSteps: keptSteps } : {}),
       ...(steps.length > keptSteps.length ? { nextStepsCut: steps.length - keptSteps.length } : {}),
       ...(input.warning !== undefined ? { warning: input.warning } : {}),
+      ...(input.extra ?? {}),
     };
   };
   const fits = (d: Record<string, unknown>): boolean =>

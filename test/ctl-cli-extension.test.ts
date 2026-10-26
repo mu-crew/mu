@@ -84,9 +84,7 @@ describe("CLI against the real extension", () => {
     expect(out.msgId).toHaveLength(36);
     expect(out.incarnation).toMatch(/\S/);
     expect(out.runs).toBe(0);
-    expect(out.nextSteps[0]?.command).toBe(
-      `mu agent wait worker-1 -w auth --after-runs 0 --inc ${out.incarnation} --json`,
-    );
+    expect(out.nextSteps[0]?.command).toBe(`mu wait 'agent:auth/worker-1@0#${out.incarnation}'`);
     const check = await runCli(["agent", "check", "worker-1", out.msgId, "-w", "auth"], dbPath);
     expect(check.exitCode).toBeNull();
     expect(check.stdout).toMatch(/^accepted runs=0 at=\d{4}-\d\d-\d\dT/);
