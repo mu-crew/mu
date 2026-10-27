@@ -55,9 +55,11 @@ export const MESSAGES = {
     total === 0
       ? `${id} has no notes; note ${n} does not exist`
       : `note ${n} is not one of ${id}'s notes (1..${total})`,
-  "task.claim_self_and_for": () => "claimTask: --self and --for are mutually exclusive",
+  "task.claim_self_and_for": () => "--self and --for are mutually exclusive",
+  "task.claim_no_claimer": () =>
+    "no claimer: pass --for <worker> (dispatch), --self (orchestrator), or run in a mu-spawned pane",
   "task.claim_no_agent": () =>
-    "claimTask: no agent name (pass opts.agentName, run inside an mu-spawned pane with $MU_AGENT_NAME set, or pass --self for an anonymous claim)",
+    "no agent name (pass opts.agentName, run inside an mu-spawned pane with $MU_AGENT_NAME set, or pass --self for an anonymous claim)",
   "task.auto_cli_required": () =>
     "--cli <key> is required (the model key `mu next` spawns); or --off",
   "task.auto_reserved_ws": (ws: string) =>
