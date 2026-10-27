@@ -1011,7 +1011,14 @@ async function prestageLocked(
   });
   let creating = false;
   try {
-    await reclaimWorktreePath(db, { agent: opts.name, workstream: opts.workstream, path });
+    const reclaimed = await reclaimWorktreePath(db, {
+      agent: opts.name,
+      workstream: opts.workstream,
+      path,
+    });
+    for (const w of reclaimed) {
+      emitEvent(db, opts.workstream, "agent.spawn", `agent spawn ${opts.name}: reused path: ${w}`);
+    }
     creating = true; // from here anything at `path` is this staging's
     const { base } = await createWorktree({ root, path, from, signal: opts.signal });
     const createdAt = new Date().toISOString();

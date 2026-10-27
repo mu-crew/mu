@@ -32,8 +32,10 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import {
   getWorktreeAt,
   listWorktrees,
+  reclaimWorktreePath,
   releaseWorktree,
   WorktreeHeldError,
+  WorktreePathNotEmptyError,
   worktreePath,
 } from "../src/worktree.js";
 import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
@@ -308,6 +310,36 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
       chmodSync(join(proc, "4242"), 0o755);
     }
   });
+
+  it.runIf(procOk)(
+    "name reuse scans the leftover too: a writer refuses naming the --force close, a cwd holder is logged",
+    async () => {
+      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      deleteAgent(db, "worker-1", "auth"); // mu's own clean leftover, registered
+      writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
+      hold(tmp, join(wt.path, "log.txt"));
+      const err = await reclaimWorktreePath(db, {
+        agent: "worker-1",
+        workstream: "auth",
+        path: wt.path,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(WorktreePathNotEmptyError);
+      expect((err as Error).message).toContain(`process ${holder?.pid}`);
+      expect((err as Error).message).toContain("mu agent close worker-1 -w auth --force");
+      expect(existsSync(wt.path)).toBe(true);
+      expect(getWorktreeAt(db, wt.path)).toBeDefined();
+      holder?.kill("SIGKILL");
+      await new Promise((r) => holder?.once("exit", r));
+      hold(wt.path);
+      const warnings = await reclaimWorktreePath(db, {
+        agent: "worker-1",
+        workstream: "auth",
+        path: wt.path,
+      });
+      expect(warnings.join("\n")).toContain(`process ${holder?.pid}`);
+      expect(existsSync(wt.path)).toBe(false);
+    },
+  );
 
   it("no /proc and no lsof: unproven refuses and keeps the tree; force closes it", async () => {
     const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
