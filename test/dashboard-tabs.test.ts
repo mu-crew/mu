@@ -11,7 +11,6 @@ import { insertAgent } from "../src/agents.js";
 import { App, layout } from "../src/cli/tui/app.js";
 import {
   cursorIndex,
-  formatElapsed,
   moveCursor,
   NO_FILTER,
   nextLine,
@@ -22,7 +21,7 @@ import {
 } from "../src/cli/tui/rows.js";
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
 import { cell, clean, scrollTop } from "../src/cli/tui/text.js";
-import type { DashboardSnapshot } from "../src/dashboard-data.js";
+import { type DashboardSnapshot, formatElapsed } from "../src/dashboard-data.js";
 import { type Db, openDb } from "../src/db.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
@@ -173,7 +172,7 @@ describe("model", () => {
       "… 4 open start tasks left out by the node cap",
       "… 1 repeat line left out by the node cap",
     ]);
-    expect(hidden.every((r) => r.notice === true)).toBe(true);
+    expect(hidden.every((r) => r.key.startsWith("cut:"))).toBe(true);
     // A matching filter shows the entry (with its cut in the line) and no duplicate notice.
     const shown = tabRows("dag", snap, "w", { ...NO_FILTER, text: "a" }, 0);
     expect(shown.filter((r) => r.text.includes("under a"))).toEqual([]);
@@ -460,6 +459,15 @@ describe("tabs (Ink over a real snapshot)", () => {
       expect(new Set(cols).size).toBe(1);
       expect(rows[1]?.text.startsWith("  bb")).toBe(true);
     });
+  });
+
+  it("the workstream row scrolls so the SELECTED label is whole, '…' prefix counted", async () => {
+    for (const n of ["aaaa", "bbbb", "cccc"]) add(n, "t1");
+    // "… bbbb [cccc]" is 13 columns (the "…" counts): at 12 the scroll must also drop bbbb.
+    const ui = await open({ columns: 12, rows: 10 }, "cccc");
+    await ui.until((s) => s.includes("[cccc]"));
+    expect(ui.screen().split("\n")[0]?.trimEnd()).toBe("…[cccc]");
+    ui.unmount();
   });
 
   it("s cycles the Tasks sort and o the status filter", async () => {

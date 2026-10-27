@@ -37,8 +37,8 @@ export const slowerTick = (ms: number): number => clampTick(ms * 2);
  * What a snapshot shows, as one string: two snapshots with the same key render the
  * same frame. A running tool's elapsed time counts in whole seconds, the unit shown.
  */
-export const snapshotKey = (s: DashboardSnapshot, warnings: readonly string[]): string =>
-  JSON.stringify([s, warnings], (k, v: unknown) =>
+export const snapshotKey = (s: DashboardSnapshot): string =>
+  JSON.stringify(s, (k, v: unknown) =>
     k === "elapsed_ms" && typeof v === "number" ? Math.floor(v / 1000) : v,
   );
 
@@ -48,7 +48,6 @@ export interface SnapshotState {
   error: string | null;
   /** The last good snapshot, kept across a failed refresh. */
   snapshot: DashboardSnapshot | null;
-  warnings: readonly string[];
   /** The snapshot was read for an older query than the current one (a filter just changed). */
   stale: boolean;
   /** Moves only when the published snapshot's key changes (flicker guard B). */
@@ -63,7 +62,6 @@ interface Published {
   loading: boolean;
   error: string | null;
   snapshot: DashboardSnapshot | null;
-  warnings: readonly string[];
   /** The query the snapshot was read for. */
   key: string;
   nonce: number;
@@ -80,7 +78,6 @@ export function useSnapshot(
     loading: true,
     error: null,
     snapshot: null,
-    warnings: [],
     key: "",
     nonce: 0,
     slowNonce: 0,
@@ -105,7 +102,7 @@ export function useSnapshot(
         try {
           const r = await runtime.refresh(q, { slow });
           if (cancelled) return;
-          const key = `${queryKey}\u0000${snapshotKey(r.snapshot, r.warnings)}`;
+          const key = `${queryKey}\u0000${snapshotKey(r.snapshot)}`;
           const changed = key !== published.current;
           published.current = key;
           if (changed || slow)
@@ -119,7 +116,7 @@ export function useSnapshot(
               };
               if (!changed && s.error === null && !s.loading)
                 return { ...next, snapshot: s.snapshot };
-              return { ...next, snapshot: r.snapshot, warnings: r.warnings, nonce: s.nonce + 1 };
+              return { ...next, snapshot: r.snapshot, nonce: s.nonce + 1 };
             });
           else
             setState((s) =>

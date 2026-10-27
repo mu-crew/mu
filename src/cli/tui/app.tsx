@@ -1,12 +1,14 @@
 // The dashboard: a workstream row, five tabs (Overview, Tasks, DAG, Agents, Log), an
 // attention strip (every view, drills too), a framed list that fills the screen, and Next plus a hint/error
 // line pinned to the last row. Overview (the first screen) is a grid of framed cards
-// (overview.tsx). Read-only. Drill (Enter, a) is the next unit. Plain text only: every line is
+// (overview.tsx). Enter drills into a row, `a` attaches to an agent, `y` copies its command.
+// Plain text only: every line is
 // cleaned and cut/padded by visual width (text.ts), never ANSI inside <Text>; colour is
 // theme roles (theme.ts) passed as ink props.
 
 import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize } from "ink";
 import { useEffect, useRef, useState } from "react";
+import stringWidth from "string-width";
 import type { DashboardSnapshot } from "../../dashboard-data.js";
 import {
   type AttachResult,
@@ -90,19 +92,17 @@ const HINT_TASKS = `${HINT_HEAD}  Enter open  s sort  o status  / filter  c clea
 const hintAgents = (attachKey: string): string =>
   `${HINT_HEAD}  Enter scrollback  ${attachKey}  / filter  c clear  y copy  +/- rate`;
 
-/** The workstream labels as one line of `width` columns, scrolled so the selected one shows. */
-export function workstreamLine(labels: readonly string[], selected: number, width: number): string {
-  return workstreamSegs(labels, selected, width)
-    .map((s) => s.text)
-    .join("");
-}
-
-/** The same line in roles: the selected workstream bold cyan, the others dim (3.x tab strip). */
+/**
+ * The workstream labels as one line of `width` columns in roles (the selected one bold
+ * cyan, the others dim: the 3.x tab strip), scrolled so the selected one shows whole.
+ */
 function workstreamSegs(labels: readonly string[], selected: number, width: number): Seg[] {
   const cell = (i: number): string => (i === selected ? `[${labels[i]}]` : ` ${labels[i]} `);
   let first = 0;
+  // The columns from `first` on, with the 1-column "…" a scrolled line starts with.
   const total = (from: number): number =>
-    labels.slice(from).reduce((n, _, k) => n + clean(cell(from + k)).length, 0);
+    (from > 0 ? 1 : 0) +
+    labels.slice(from).reduce((n, _, k) => n + stringWidth(clean(cell(from + k))), 0);
   while (first < selected && total(first) > width) first++;
   return [
     ...(first > 0 ? [{ text: "…", role: "muted" as const }] : []),
@@ -158,24 +158,41 @@ export function App({
   const lastSel = useRef<Record<string, number>>({});
   const [tick, setTick] = useState(pollMs);
 
-  // The Tasks status filter and the Log's workstream are what the data layer applies,
-  // so they are the query; text filters and the other tabs' scoping are client-side.
   const viewOf = (t: TabId, w: string | null): View =>
     views[scopeKey(t, w)] ?? { filter: NO_FILTER, cursor: null };
+  // The workstream shown: the chosen one while it is live, else the pick (the hint, or
+  // the most recent). The query needs it BEFORE this render's snapshot exists, so it
+  // resolves against the workstreams the previous snapshot named; until there is one,
+  // the hint, so the first read already scopes to it (never every workstream's tasks).
+  const known = useRef<DashboardSnapshot["workstreams"] | null>(null);
+  const pickShown = (list: DashboardSnapshot["workstreams"] | null): string | null =>
+    list === null
+      ? (chosen ?? initialWorkstream ?? null)
+      : chosen !== null && list.some((w) => w.name === chosen)
+        ? chosen
+        : pickWorkstream(list, initialWorkstream);
+  const queryWs = pickShown(known.current);
+  // The query is the shown workstream's: its tasks and DAG (every other tab's rows and
+  // the Overview cards are cut from them client-side), its Log tail (a quiet workstream
+  // must not vanish behind a busy one's 100 ops). CLOSED tasks ride along only while the
+  // Tasks tab asks for them; its status and text filters are applied client-side, so
+  // the Overview and the attention drills never see a filtered snapshot.
+  const wantsClosed =
+    tab === "tasks" && statusesOf(viewOf("tasks", queryWs).filter.status).includes("CLOSED");
   const query: DashboardQuery = {
-    status: [...statusesOf(viewOf("tasks", chosen).filter.status)],
-    // The Log tail is read per workstream: a quiet one must not vanish behind a busy one's 100 ops.
-    ...(chosen !== null ? { logWorkstream: chosen } : {}),
+    scopeWorkstream: queryWs,
+    ...(wantsClosed ? { status: [...statusesOf("all")] } : {}),
+    ...(queryWs !== null ? { logWorkstream: queryWs } : {}),
   };
   const state = useSnapshot(runtime, query, tick, slowMs);
   const snap: DashboardSnapshot | null = state.snapshot;
-
   const names = snap?.workstreams ?? [];
-  const live = chosen !== null && names.some((w) => w.name === chosen);
-  const ws = live ? chosen : snap ? pickWorkstream(names, initialWorkstream) : null;
-  // Lock the first pick: later polls must not move you to whatever is newest.
+  known.current = snap?.workstreams ?? known.current;
+  const ws = snap ? pickShown(names) : queryWs;
+  // Lock the pick, the fallback after a teardown included: later polls must not move you
+  // to whatever is newest, and the state must name what the row shows.
   useEffect(() => {
-    if (chosen === null && ws !== null) setChosen(ws);
+    if (ws !== null && ws !== chosen) setChosen(ws);
   }, [ws, chosen]);
 
   const view = viewOf(tab, ws);
@@ -358,25 +375,22 @@ export function App({
           ? "no rows match the filter"
           : "nothing here"
         : "";
-  const warn = state.warnings[0];
   const footer = flash
     ? { text: flash, role: "text" as const }
     : state.error
       ? { text: `error: ${state.error}`, role: "bad" as const }
-      : warn
-        ? { text: `sync: ${warn}`, role: "warn" as const }
-        : {
-            text: editing
-              ? "type to filter  Enter keep  Esc cancel"
-              : overview
-                ? HINT_OVERVIEW
-                : tab === "agents"
-                  ? hintAgents(attachKey)
-                  : tab === "tasks"
-                    ? HINT_TASKS
-                    : HINT,
-            role: "muted" as const,
-          };
+      : {
+          text: editing
+            ? "type to filter  Enter keep  Esc cancel"
+            : overview
+              ? HINT_OVERVIEW
+              : tab === "agents"
+                ? hintAgents(attachKey)
+                : tab === "tasks"
+                  ? HINT_TASKS
+                  : HINT,
+          role: "muted" as const,
+        };
 
   if (drill !== null)
     return (

@@ -46,7 +46,7 @@ export interface AgentTool {
 export interface DashboardWorkstream {
   name: string;
   scratch: boolean;
-  /** Newest visible op seq in the workstream; 0 when it has none. */
+  /** Newest visible op seq in the workstream; 0 when it has none, or when `activity: false` skipped the read. */
   latest_seq: number;
 }
 
@@ -151,9 +151,9 @@ export interface DashboardDelegate {
  *
  * - `dead`: the agent's pane (or gate process) is gone.
  * - `permission`: `needs_permission`; `text` carries how long.
+ * - `stalled`: one tool has run over `STALLED_TOOL_MS`.
  * - `input`: `needs_input` past the idle threshold on an agent that owns work
  *   (the registry's `idle` flag; `MU_IDLE_THRESHOLD_MS`, 0 disables).
- * - `stalled`: one tool has run over `STALLED_TOOL_MS`.
  * - `human`: an OPEN `kind=human` task, whoever recorded it (`human_needs`
  *   is caller-scoped and empty for a human shell).
  * - `next_unavailable`: `computeNext` failed.
@@ -207,6 +207,14 @@ export interface DashboardSnapshot {
 export interface DashboardOptions {
   /** Narrow tasks, frontier, agents, log and caller panels to one live workstream. */
   workstream?: string;
+  /**
+   * Read tasks, edges and frontier of this workstream ONLY (a name that is not live,
+   * or null: none), leaving agents, log, caller panels and attention machine-wide:
+   * the dashboard shows one workstream, and reading every other one's tasks and DAG
+   * each tick is what made it costly. Absent: every live workstream. `workstream`, when
+   * set, wins.
+   */
+  scopeWorkstream?: string | null;
   /** Statuses to list; default OPEN + IN_PROGRESS (CLOSED is hidden). */
   status?: readonly TaskStatus[];
   /** Case-insensitive substring over a task's key/title/owner/substate and an agent's key/name/state/task keys. */
@@ -217,8 +225,14 @@ export interface DashboardOptions {
   callers?: readonly string[];
   /** Log tail size (default 100). */
   logLimit?: number;
-  /** Read the log tail of this workstream only (a live one), leaving every other panel unscoped. */
+  /** Read the log tail of this workstream only, leaving every other panel unscoped (not checked: a name that is not live reads an empty log). */
   logWorkstream?: string;
+  /**
+   * Read each workstream's `latest_seq` (default true). It only ranks the starting
+   * pick and costs one log scan per workstream, so the dashboard's poll passes false
+   * once the set of live workstreams is known (every `latest_seq` is then 0).
+   */
+  activity?: boolean;
   /** Sync warnings the caller holds (`ambientIngest`); each becomes a `sync` attention item. */
   syncWarnings?: readonly string[];
   /**
@@ -320,16 +334,13 @@ function byActivityDesc(a: DashboardTask, b: DashboardTask): number {
   return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
 }
 
-/** `45s`, `20m`, `3h`, `3h05m`: coarse on purpose, it is a strip, not a clock. */
-function ago(ms: number): string {
+/** `45s`, `1m05s`, `1h05m`: the ONE duration format of the dashboard (strip and tool column). */
+export function formatElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;
   const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m`;
-  const rest = m % 60;
-  return rest === 0
-    ? `${Math.floor(m / 60)}h`
-    : `${Math.floor(m / 60)}h${String(rest).padStart(2, "0")}m`;
+  if (m < 60) return `${m}m${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
 }
 
 /** The pane (or a gate's process) is gone, as opposed to a state source that merely cannot say. */
@@ -358,19 +369,22 @@ function agentAttention(a: DashboardAgent, now: number): DashboardAttention[] {
     target: a.key,
   });
   const since = a.since == null ? Number.NaN : Date.parse(a.since);
-  const waited = Number.isFinite(since) ? ` ${ago(now - since)}` : "";
+  const waited = Number.isFinite(since) ? ` ${formatElapsed(now - since)}` : "";
   const out: DashboardAttention[] = [];
   if (isDead(a)) out.push(item("dead", "dead"));
   if (a.state === "needs_permission") out.push(item("permission", `permission${waited}`));
   if (a.idle === true) out.push(item("input", `input${waited}`));
   const ran = a.tool?.elapsed_ms;
   if (a.tool != null && ran !== undefined && ran >= STALLED_TOOL_MS) {
-    out.push(item("stalled", `${a.tool.name} ${ago(ran)}`));
+    out.push(item("stalled", `${a.tool.name} ${formatElapsed(ran)}`));
   }
   return out;
 }
 
-function matches(text: string | undefined, ...fields: (string | null)[]): boolean {
+export function matches(
+  text: string | undefined,
+  ...fields: (string | null | undefined)[]
+): boolean {
   if (text === undefined || text === "") return true;
   const needle = text.toLowerCase();
   return fields.some((f) => f?.toLowerCase().includes(needle) === true);
@@ -391,6 +405,11 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     throw new WorkstreamNotFoundError(opts.workstream);
   }
   const scoped = live.filter((w) => opts.workstream === undefined || w.name === opts.workstream);
+  // Whose tasks, edges and frontier are read (`scopeWorkstream`; `workstream` wins).
+  const readFrom =
+    opts.workstream !== undefined || opts.scopeWorkstream === undefined
+      ? scoped
+      : live.filter((w) => w.name === opts.scopeWorkstream);
   const statuses =
     opts.status === undefined || opts.status.length === 0 ? DEFAULT_STATUS : opts.status;
 
@@ -406,11 +425,14 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
   // IN_PROGRESS tasks by owner registry id, over EVERY live workstream: a task can be
   // claimed by an agent of another workstream, and a filtered read must still show it.
   const owned = new Map<number, string[]>();
-  for (const ws of live) {
-    for (const t of listTasks(db, ws.name, { status: "IN_PROGRESS" })) {
-      if (t.ownerId === null) continue;
-      owned.set(t.ownerId, [...(owned.get(t.ownerId) ?? []), keyOf(ws.name, t.name)]);
-    }
+  for (const t of db
+    .prepare(
+      `SELECT ws.name AS ws, t.local_id AS id, t.owner_id AS owner FROM tasks t
+        JOIN workstreams ws ON ws.id = t.workstream_id AND ws.torn_down_at IS NULL
+        WHERE t.status = 'IN_PROGRESS' AND t.owner_id IS NOT NULL ORDER BY ws.name, t.local_id`,
+    )
+    .all() as { ws: string; id: string; owner: number }[]) {
+    owned.set(t.owner, [...(owned.get(t.owner) ?? []), keyOf(t.ws, t.id)]);
   }
 
   const tasks: DashboardTask[] = [];
@@ -418,7 +440,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
   const frontier: DashboardFrontierCut[] = [];
   const agents: DashboardAgent[] = [];
   const now = Date.now();
-  for (const ws of scoped) {
+  for (const ws of readFrom) {
     const activity = taskActivity(db, ws.name);
     tasks.push(
       ...listTasks(db, ws.name, { status: statuses })
@@ -514,17 +536,20 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     : [];
 
   const attention: DashboardAttention[] = everyAgent.flatMap((a) => agentAttention(a, now));
-  for (const ws of live) {
-    for (const t of listTasks(db, ws.name, { status: "OPEN" })) {
-      if (t.kind !== "human") continue;
-      attention.push({
-        key: `human:${keyOf(ws.name, t.name)}`,
-        workstream: ws.name,
-        kind: "human",
-        text: t.title,
-        target: keyOf(ws.name, t.name),
-      });
-    }
+  for (const t of db
+    .prepare(
+      `SELECT ws.name AS ws, t.local_id AS id, t.title AS title FROM tasks t
+        JOIN workstreams ws ON ws.id = t.workstream_id AND ws.torn_down_at IS NULL
+        WHERE t.status = 'OPEN' AND t.kind = 'human' ORDER BY ws.name, t.local_id`,
+    )
+    .all() as { ws: string; id: string; title: string }[]) {
+    attention.push({
+      key: `human:${keyOf(t.ws, t.id)}`,
+      workstream: t.ws,
+      kind: "human",
+      text: t.title,
+      target: keyOf(t.ws, t.id),
+    });
   }
   if (next.source === "unavailable") {
     attention.push({
@@ -553,7 +578,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     workstreams: live.map((w) => ({
       name: w.name,
       scratch: w.scratch,
-      latest_seq: latestSeq(db, w.name),
+      latest_seq: opts.activity === false ? 0 : latestSeq(db, w.name),
     })),
     tasks,
     edges,

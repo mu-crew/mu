@@ -172,7 +172,12 @@ describe("dashboard shell", () => {
       close: rt.close,
     };
     const ui = await renderApp(
-      createElement(App, { runtime: flaky, initialTab: "tasks", pollMs: 0 }),
+      createElement(App, {
+        runtime: flaky,
+        initialTab: "tasks",
+        pollMs: 0,
+        initialWorkstream: "demo",
+      }),
     );
     await ui.until((s) => s.includes("error: boom") && s.includes("t1"));
     ui.unmount();

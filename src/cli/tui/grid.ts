@@ -42,7 +42,7 @@ export function gridWidths(total: number, n: number): number[] {
  * Which column each Overview card sits in, per column count. A fixed table, so a
  * list growing by one row never moves a card. Attention first, Log last.
  */
-export const PLACEMENT: Readonly<Record<1 | 2 | 3, Readonly<Record<string, number>>>> = {
+const PLACEMENT: Readonly<Record<1 | 2 | 3, Readonly<Record<string, number>>>> = {
   1: {},
   2: { attention: 0, agents: 0, progress: 1, open: 1, log: 0 },
   3: { attention: 0, agents: 0, progress: 1, open: 1, log: 2 },

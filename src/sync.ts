@@ -255,8 +255,8 @@ export interface AmbientResult {
 export interface AmbientOptions {
   /** Suppress the stderr warnings. Set by the TUI, which owns the
    *  alternate screen — a stray write there paints garbage over the
-   *  dashboard. The warnings are still returned, and the Doctor card
-   *  is where a TUI operator learns about a broken sync dir. */
+   *  dashboard. The warnings are still returned: the dashboard keeps the
+   *  latest ones as `sync` attention items until the next ingest. */
   quiet?: boolean;
 }
 

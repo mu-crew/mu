@@ -18,7 +18,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import stringWidth from "string-width";
 import { parseOpKey } from "../../log-render.js";
 import { activeMux } from "../../mux.js";
-import { DEFAULT_SUBSTATE } from "../../tasks/status.js";
+import { formatPair } from "../../tasks/status.js";
 import type { SelectedNotes, TaskRow } from "../../tasks.js";
 import { copyCommand, planAttach, yankSequence } from "./commands.js";
 import { Segs } from "./frame.js";
@@ -131,8 +131,7 @@ type Load =
 /** A task's live line for the notes drill and a log entry's context: status, owner, title. */
 export function taskLine(t: TaskRow | undefined): string {
   if (t === undefined) return "task: gone";
-  const status = t.substate === DEFAULT_SUBSTATE[t.status] ? t.status : `${t.status}/${t.substate}`;
-  return `${status}  ${t.ownerName === null ? "unowned" : `@${t.ownerName}`}  ${t.title}`;
+  return `${formatPair(t)}  ${t.ownerName === null ? "unowned" : `@${t.ownerName}`}  ${t.title}`;
 }
 
 /**
