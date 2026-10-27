@@ -8,15 +8,22 @@ nothing replaces `mu_delegate`. Tested with codex 0.164 and cursor-agent
 
 ## Pin the mu the harness runs
 
-Check this first. codex and cursor-agent run each shell command through your
-interactive shell rc. If `~/.zshrc` puts another `mu` first on `PATH`, or
-exports `MU_SYNC_DIR` / `MU_DB_PATH`, the harness uses that `mu` and that DB,
-not the env mu gave its pane. Pin it for each harness:
+Check this first. codex and cursor-agent pass mu's env (`MU_*`, `PATH`) on
+to their shell tool, but they run each command through your interactive
+shell rc, and the rc wins. If `~/.zshrc` puts another `mu` first on `PATH`,
+or exports `MU_SYNC_DIR` / `MU_DB_PATH`, the harness uses that `mu` and
+that DB. codex's `shell_environment_policy.set` does not help: it is applied
+before the rc runs. Pin it for each harness:
 
 - codex: `codex --disable shell_snapshot` (as `MU_CODEX_COMMAND`, or in a
   wrapper).
 - cursor-agent: `ZDOTDIR=<a dir with an empty .zshrc> cursor-agent`.
 - Or keep the rc file from adding `mu` and `MU_*` at all.
+
+A wrapper that sets the env itself (`MU_SYNC_DIR=`, `MU_DB_PATH`,
+`MU_STATE_DIR`, then `exec mu "$@"`) holds its env under any rc. Name it
+something the rc does not shadow (`mun`). The skill and briefs still say
+`mu`, so pin `mu` as well.
 
 Then check from inside the harness:
 `command -v mu; mu --version; echo "<$MU_SYNC_DIR>"`.
