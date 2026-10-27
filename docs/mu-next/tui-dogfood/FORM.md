@@ -1,102 +1,126 @@
-# TUI dogfood feedback
+# TUI dogfood feedback, second pass
 
-Fill this in as you go (edit the file, or paste it into the task note).
-Run each scenario with `docs/mu-next/tui-dogfood/run.sh <N>` (see [README.md](README.md)).
-Write `ok`, `bad: <what>` or `n/a` after each item; a screenshot or a pasted line beats prose.
-Skip what bores you: a skipped scenario is a finding too (say why).
+There is one section for each item of your first feedback (2026-10-27). The
+original complaint is quoted, then what changed and how to try it. Answer the
+three questions in each section; one word each is fine. Rebuild first:
+`npm run build` in the checkout, then `docs/mu-next/tui-dogfood/run.sh <N>` (see
+[README.md](README.md)). Item 3 (delegate wave) "worked", so it has no section.
+Check that it still works under "Anything else".
 
 Terminal / size / tmux or not: ____________________  Date: __________
 
-## First impression (before reading any hint)
+## 1. Viewport and layout
 
-- [ ] What did you think `mu` with no args would show, and did it?
-- [ ] Time to find out how to quit: ______  how to switch tabs: ______
-- [ ] Could you tell what each tab is for from its name alone?
+> "The TUI does not fill the viewport; layout generally unappealing; take cues
+> from the 3.x layout."
 
-## 1. Empty / first run  (`run.sh 1`)
+Changed: bare `mu` opens on a new **Overview** tab of framed cards (Attention,
+Agents, In progress, Open by ROI, Log). It uses 1 column below 120 cols, 2 from
+120 and 3 from 180. A card that hides rows grows and says `+N more` in its bottom
+border. The other tabs are one frame that fills the screen. Next and the key
+hint are pinned to the last two rows.
 
-- [ ] It says what is happening instead of looking broken (no workstreams, empty tabs).
-- [ ] Every tab renders with no rows; no crash on `Enter`, `a`, `s`, `/`, `y`, `]`.
-- [ ] Is it clear what to do next (is there any hint toward `mu workstream init`)? What would you want to see?
+Try: `run.sh 5` (big) and `run.sh 2` (small) at your usual size, then resize
+wide, narrow (about 80) and short (about 24 rows). A column of short cards
+(little data) keeps blank rows under it. Only a card that hides data stretches.
 
-## 2. Small healthy crew  (`run.sh 2`)
+- Fixed? ____
+- Better than before? Closer to 3.x? ____
+- What still bugs you (blank areas, frames, density, what the Overview shows)? ____
 
-- [ ] Tasks tab: order feels right (newest activity first)? Status text (`IN_PROGRESS`, `OPEN/parked`, `OPEN/triage`) and `@owner` readable?
-- [ ] `s` cycles active / open / in_progress / closed / all; the closed `schema` task appears under `closed`.
-- [ ] `/` filter: type `auth`, Enter keeps it, `c` clears. Does the filter line tell you what is active?
-- [ ] DAG tab: can you see what blocks `release` and `api_v2`? Is the indentation / `+N open` / `again, listed above` understandable?
-- [ ] Agents tab: state (`busy`, `needs_input`), the task it owns, the running tool and its elapsed time. Does `worker-3` showing `tool ?` (an old extension) read as "unknown" or as "broken"?
-- [ ] `Enter` on a task shows its notes (brief, progress). `A` toggles all notes. `y` copies a usable command (paste it).
-- [ ] `Enter` on an agent shows its scrollback. Scroll with `j/k`, `g/G`, space. Is the very long line handled? `r` reloads; `q` closes.
-- [ ] `a` on an agent attaches to its tmux window; the line it prints and the Agents hint say how to detach (inside your own tmux: `Ctrl-b Ctrl-b d`), and that returns you to the dashboard intact (cursor, tab, filter kept).
-- [ ] `[` / `]` switches to `shop-web`; Tasks and DAG follow it, Agents and Log stay machine-wide. Surprising?
-- [ ] Log tab: readable? Does `Enter` on a line add anything?
-- [ ] The `next:` line: useful, noise, or confusing?
+## 2. Sort, and getting back after `a` attach
 
-## 3. Delegate wave  (`run.sh 3`)
+> "Sort by missing. After `a` attach, how to detach? Nested tmux needs
+> Ctrl-b b d: the TUI must say how, or attach must use switch-client."
 
-- [ ] `]` to `scratch*`: can you find the delegates? Does a finished one show its verdict anywhere on screen? (On `hail-cache` tasks, `Enter` shows the verdict notes.)
-- [ ] Can you tell running / queued / refused / failed / cancelled apart? If not, which do you want to see and where?
-- [ ] Agents tab shows the 2 running delegates; their scrollback opens.
-- [ ] Is the dashboard the right place for the wave tally (`mu delegates tally`), or is that a CLI job?
+Changed: on Tasks, `s` cycles the sort: activity ↓ → roi → age → id. The filter
+line shows `sort: …`. The status filter moved to `o`. `a` (Agents tab) prints
+`attaching … · detach: C-b d (nested: C-b C-b d)` before it hands over. The
+Agents hint says the same. If the dashboard runs on mu's own tmux server, `a`
+switches your client instead, and the hint says `back: C-b L`.
 
-## 4. Trouble  (`run.sh 4`)
+Try: `run.sh 5`, Tasks, press `s` a few times, then `o`. `run.sh 2`, Agents,
+`a` on a worker, then come back the way the hint says.
 
-- [ ] Without being told, can you spot the dead worker (`worker-4`), the stalled one (`worker-2`, `bash 3h00m`) and the blocked one (`worker-3`)?
-- [ ] State labels for them (`unknown`, `busy`, `needs_permiss…`): meaningful? Is the cut-off `needs_permiss…` acceptable?
-- [ ] The human-needed task: easy to find? Does `Enter` show the reason in full?
-- [ ] The malformed-CLOSE note on `webhooks`: found by opening the task? Should it surface on the Tasks row?
-- [ ] `Enter` on the dead worker: what happens? What should happen?
-- [ ] Would you trust this screen at 3 a.m. to tell you whether to intervene? What is missing?
+- Fixed? ____
+- Better? Is the sort order what you expected (roi = impact/effort; age = oldest first)? ____
+- What still bugs you (keys, the detach line, landing back where you were)? ____
 
-## 5. Big  (`run.sh 5`)
+## 4. Trouble on the first screen
 
-- [ ] Scrolling: `PgDn`, `G`, `g` on Tasks (about 190 rows) and DAG (about 210). Any lag, flicker, lost cursor?
-- [ ] Long titles are cut with `…`, never wrapped or corrupting neighbours. The CJK/emoji row and the ANSI/tab row (`t003`, `t005`) keep the columns aligned.
-- [ ] The 64-char id is cut in the Tasks id column; is the full id visible anywhere?
-- [ ] Workstream picker line (top): scrolls to the selected one; the `…` lead is understandable. Try `[` and `]` through all five.
-- [ ] `Enter` on `t001` (60 notes) and `t002` (5 KB note), `t004` (multi-line): scroll and `A` (all) behave.
-- [ ] Resize the terminal while it runs (narrow to about 60 columns, short to about 8 rows). Does it degrade without breaking?
-- [ ] Agents tab: 10 agents, mixed states; `/` filter `stalled` or `worker-1` works.
-- [ ] Is anything slow? (Subjective: instant / fine / sluggish.)
+> "Works, but you have to go to the Agents tab to see it."
 
-## 6. Live  (`run.sh 6`)
+Changed: the Overview's first card is **Attention**, which covers every
+workstream: dead, permission, waiting for input, stalled tool, human-needed,
+`next` unavailable and sync warnings. j/k and Enter open the agent's scrollback
+or the task's notes. Every other tab has a one-line strip under the tabs:
+`⚠ 4 need you: …` or `✓ all quiet`.
 
-Leave it open on the Agents tab for two minutes.
+Try: `run.sh 4`. Do you see worker-4 dead, worker-3 permission, worker-2's 3 h
+`bash` and the human-needed task without pressing a key? Then `Enter` on each.
 
-- [ ] State and tool columns update without you pressing anything, with no flicker or flashing.
-- [ ] The cursor stays on the row you chose when rows reorder or new ones appear (try on Tasks: new tasks arrive every few seconds).
-- [ ] Order by activity on Tasks makes sense while it changes; is the movement distracting?
-- [ ] `r` forces a refresh. Is there any sign of "loading…" or staleness that bothered you?
-- [ ] On the Log tab, new lines follow the tail until you move up; they stop following after that.
-- [ ] Open `Enter` scrollback on a worker and leave it for 20 s: does it update? (It should not; is that surprising?)
-- [ ] Idle CPU: does your fan spin up? (`top` in another terminal.)
+- Fixed? ____
+- Better? Would you trust it at 3 a.m.? ____
+- What still bugs you (missing kinds, wording, order, too loud or too quiet)? ____
 
-## 7. Remote (simulated)  (`run.sh 7`)
+## 5. Workstream switch
 
-- [ ] Can you tell `worker-1` is remote? (the host column says `dev` for `worker-1` and `local` for `worker-2`.)
-- [ ] Its state and tool come through the forwarded socket like the local one's.
-- [ ] `Enter` scrollback and `a` attach work for the remote one.
+> "BUG: Agents and Log tabs do not change when cycling workstreams with [ ]."
 
-## Across scenarios
+Changed: every tab, the Overview included, shows the selected workstream. Each
+workstream keeps its own cursor and filter. The Log is read per workstream, so a
+quiet one does not come up empty.
 
-- [ ] Mouse: does clicking or scrolling do anything? Did you expect it to?
-- [ ] Colours: readable on your theme? Is anything only distinguishable by colour?
-- [ ] Help: is the bottom hint line enough, or do you want a `?` help screen?
-- [ ] Quitting: `q` and `Esc` both leave; did either surprise you (Esc inside a filter vs. quit)?
-- [ ] Anything that wrote to your terminal after quitting (garbage, lost scrollback, a stuck cursor)?
+Try: `run.sh 2`, press `]` and `[` on Agents, Log and Overview (`shop-web` has
+one idle reviewer). `run.sh 5`: walk through all five workstreams.
 
-## Open questions
+- Fixed? ____
+- Better? ____
+- What still bugs you? ____
 
-1. What was most confusing?
-2. What is missing that you reached for?
-3. What would you remove?
-4. What would you do differently in the top three lines (workstream row, tabs, filter)?
-5. Would you leave this open all day next to your orchestrator? What would stop you?
-6. Any key that did not do what you expected?
+## 6. Column stability
+
+> "Column widths not stable: widths jump 1 → 10 → 100 as content changes;
+> long lines clipped badly."
+
+Changed: the column widths come from the whole workstream, not from the rows on
+screen, so a filter, a scroll or a poll cannot move a column. Tasks: id (cut at
+24), status, owner, title. Agents: name, host, state, task, tool. Log: seq,
+time, text. Only the last column is cut, and it ends in `…`. The owner now comes
+before the title, so it is never cut off.
+
+Try: `run.sh 6` (live). Watch Tasks and Log for a minute while tasks arrive.
+Type `/` with a filter, then `c`. `run.sh 5`: the 64-char id, CJK and emoji, and
+the 400-char title.
+
+- Fixed? ____
+- Better? ____
+- What still bugs you (which column, which tab, what gets cut)? ____
+
+## 7. Remote and local
+
+> "Remote scenario shows everything as remote, not a mix of remote and local."
+
+Changed: the Agents rows have a host column that says `dev` or `local`. In the
+kit, each fake worker's pane starts with a banner and prefixes every line with
+it (`remote:dev` or `local`). The two workers now behave differently too:
+worker-1 is busy and worker-2 waits for input. Before, both ran the same
+profile, so their rows and panes looked identical.
+
+Try: `run.sh 7`. Agents tab, then `Enter` on each worker, then `a` on each.
+
+- Fixed? Was "everything remote" the identical rows and panes, or something else? ____
+- Better? ____
+- What still bugs you? ____
+
+## Anything else
+
+- New problems this pass introduced (keys that moved, things that got slower, flicker)? ____
+- Item 3, delegate wave (`run.sh 3`, `]` to `scratch*`): still fine? ____
+- Would you leave this open all day next to your orchestrator now? What would stop you? ____
 
 ## Findings (the triager fills this after you answer)
 
-| # | Scenario | Finding | P1 / P2 / P3 | Task |
+| # | Item | Finding | P1 / P2 / P3 | Task |
 |---|---|---|---|---|
 | | | | | |

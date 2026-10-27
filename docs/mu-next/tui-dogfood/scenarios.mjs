@@ -36,8 +36,8 @@ const close = (ws, id, evidence, author = "orchestrator") =>
   mu.closeTask(db, id, { workstream: ws, evidence, author });
 
 /** A real tmux pane running the fake worker (see fake-worker.mjs for the profiles). */
-function worker(ws, name, profile, extra = []) {
-  const cmd = `node ${join(HERE, "fake-worker.mjs")} --profile ${profile}`;
+function worker(ws, name, profile, extra = [], banner = "") {
+  const cmd = `node ${join(HERE, "fake-worker.mjs")} --profile ${profile}${banner ? ` --banner ${banner}` : ""}`;
   cli("agent", "spawn", name, "-w", ws, "--cli", "pi", "--command", cmd, ...extra);
 }
 const initWs = (name) => cli("workstream", "init", name);
@@ -257,9 +257,11 @@ function s7() {
     "--exec", "sh -c {cmd}", "--fetch", "true", "--repo", dir, "--max-sessions", "2");
   T(ws, "remote_build", "Build on the big machine", { impact: 70, effort: 1 });
   T(ws, "local_check", "Check on this machine", { impact: 50, effort: 1 });
-  const cmd = `node ${join(HERE, "fake-worker.mjs")} --profile busy`;
+  // Banners say where each pane runs; the profiles differ too (busy vs waiting for input), so
+  // the two rows and the two panes cannot be mistaken for each other.
+  const cmd = `node ${join(HERE, "fake-worker.mjs")} --profile busy --banner remote:dev`;
   cli("agent", "spawn", "worker-1", "-w", ws, "--cli", "pi", "--host", "dev", "--cwd", dir, "--command", cmd);
-  worker(ws, "worker-2", "busy"); // a local one next to it, for contrast
+  worker(ws, "worker-2", "idle", [], "local"); // a local one next to it, for contrast
   claim(ws, "remote_build", "worker-1");
   claim(ws, "local_check", "worker-2");
 }

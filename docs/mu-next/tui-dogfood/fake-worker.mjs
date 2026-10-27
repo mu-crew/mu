@@ -6,6 +6,8 @@
 //   stalled  one tool running for 3 h             blocked  confirm dialog open for 20 min
 //   legacy   busy, never reports a tool (old extension: "tool ?")
 //   churn    flips busy/idle/blocked/tool every 2-7 s (the live scenario)
+// --banner TEXT (e.g. remote:dev, local) is shown in a header block, in the tmux pane title and in
+// front of every line, so a pane says where its worker runs however far it has scrolled.
 import { createServer } from "node:net";
 import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
@@ -20,7 +22,13 @@ const tools = Object.keys(T);
 const rnd = (n) => Math.floor(Math.random() * n);
 const ts = () => new Date().toTimeString().slice(0, 8);
 const C = (n, s) => `\x1b[${n}m${s}\x1b[0m`;
-const say = (s) => console.log(`${C(2, ts())} ${s}`);
+const banner = opt("--banner", "");
+const say = (s) => console.log(`${banner ? `${C(7, ` ${banner} `)} ` : ""}${C(2, ts())} ${s}`);
+if (banner) {
+  process.stdout.write(`\x1b]2;${banner}\x07`);
+  console.log(C(7, `  ${banner}  `.padEnd(40)));
+  console.log(C(7, `  this worker runs: ${banner}  `.padEnd(40)));
+}
 function setState(s, t = null, b = undefined) {
   if (s !== state) { state = s; since = Date.now(); if (s === "busy") runs++; }
   tool = t; blocked = b;
