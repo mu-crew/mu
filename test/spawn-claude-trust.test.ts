@@ -97,3 +97,52 @@ describe("claude trust dialog", () => {
     expect(getAgent(db, "w-1", "auth")).toBeDefined();
   });
 });
+
+describe("codex / cursor-agent re-source the shell rc", () => {
+  it("--json spawn carries one warning naming the flag and the guide; pi gets none", async () => {
+    db.close();
+    installPanes("ready");
+    const codex = await runCliJson(
+      ["agent", "spawn", "w-2", "-w", "auth", "--cli", "codex", "--json"],
+      dbPath,
+    );
+    const warnings = (codex.data as { warnings?: string[] }).warnings ?? [];
+    expect(warnings.filter((w) => w.includes("--disable shell_snapshot"))).toHaveLength(1);
+    expect(warnings.join("\n")).toContain("docs/guide/other-agent-clis.md");
+    const cursor = await runCliJson(
+      ["agent", "spawn", "w-3", "-w", "auth", "--cli", "cursor-agent", "--json"],
+      dbPath,
+    );
+    expect(((cursor.data as { warnings?: string[] }).warnings ?? []).join("\n")).toContain(
+      "ZDOTDIR",
+    );
+    const pi = await runCliJson(
+      ["agent", "spawn", "w-4", "-w", "auth", "--cli", "sh", "--json"],
+      dbPath,
+    );
+    expect((pi.data as { warnings?: string[] }).warnings).toBeUndefined();
+    db = openDb({ path: dbPath });
+  });
+
+  it("a command that already pins it gets no warning", async () => {
+    db.close();
+    installPanes("ready");
+    const r = await runCliJson(
+      [
+        "agent",
+        "spawn",
+        "w-2",
+        "-w",
+        "auth",
+        "--cli",
+        "codex",
+        "--command",
+        "codex --disable shell_snapshot",
+        "--json",
+      ],
+      dbPath,
+    );
+    expect((r.data as { warnings?: string[] }).warnings).toBeUndefined();
+    db = openDb({ path: dbPath });
+  });
+});

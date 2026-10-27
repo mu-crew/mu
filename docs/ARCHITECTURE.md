@@ -127,6 +127,7 @@ are re-export hubs.
 | `src/sync.ts` | peer status, the ambient hook, `--from`, `--repair` |
 | `src/file-lock.ts` | cross-process advisory lock through atomic `fs.mkdir`; `strict` publishes whole by rename, reclaims a dead holder's lock under an O_EXCL claim, fails closed; release by token |
 | `src/fleet-hazards.ts` | mixed-fleet checks: DB inside `MU_SYNC_DIR` (plus `DbInsideSyncDirError`, which `handle()` throws before `openDb`), network mount, case collisions, own segment written by a newer mu |
+| `src/pane-env.ts` | the pane env guard: spawn records `MU_PANE_ENV` (DB, state, sync dir); `handle()` opens a mismatched run read-only with no sync, and a write is `PaneEnvMismatchError` |
 | `src/dormant.ts` | doctor housekeeping: `finished` (all closed, idle 14 days) vs `abandoned` (idle 60 days, open tasks) workstreams; idle derived from `MAX(tasks.updated_at)` |
 | `src/disk-recon.ts` | report-only state-dir vs DB reconciliation (rows without dirs, dirs without rows, residue); `--disk` measures bytes |
 | `src/cli/doctor.ts` | `mu doctor` (human and `--json`): environment, DB integrity, injected scope, per-workstream counts and report-only reconcile drift, disk reconciliation |

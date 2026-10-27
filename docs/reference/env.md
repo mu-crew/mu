@@ -53,6 +53,7 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_CTL_SOCK` | The agent's control socket path, derived from state dir, workstream, and agent. The mu pi extension serves it. |
 | `MU_MANAGED_AGENT` | `1`. Hides `mu_delegate` inside agents, so a helper cannot spawn helpers. |
 | `MU_DB_PATH`, `MU_STATE_DIR` | The absolute DB path and state dir the spawn used, so the worker's `mu` reads the same DB from any cwd. Local agents only. |
+| `MU_PANE_ENV` | JSON `{db,state,sync}`: the DB, state dir and sync dir (`""` when off) the spawn used. A `mu` in the pane whose own resolution differs (a shell rc the agent CLI re-sources reset `PATH` or `MU_*`) prints one warning, does not sync, and refuses writes (exit 4, `PaneEnvMismatchError`). Local agents only. |
 | `SSH_AUTH_SOCK` | The caller's, when it is a socket (a detached tmux session would otherwise hand the pane a stale one). Local agents only. |
 | `MU_REMOTE` | `1`, only for an agent spawned with `--host`. Tells its pi extension there is no mu DB on that host: it skips the close nudge (you close the task) and the settle wait. |
 
@@ -60,6 +61,9 @@ A `--host` agent gets exactly `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,
 `MU_WORKSTREAM`, `MU_CTL_SOCK` (the host-side path) and `MU_REMOTE`, written
 into its profile's shell template (`{env}`). It never gets `MU_DB_PATH`,
 `MU_STATE_DIR` or `MU_SYNC_DIR`; its local pane gets none of the vars above.
+
+`MU_ALLOW_FOREIGN_DB=1` lifts the `MU_PANE_ENV` refusal: that run writes and
+syncs with whatever DB and sync dir it resolved.
 
 ## pi package and `mu pi migrate`
 
