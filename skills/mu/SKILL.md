@@ -17,11 +17,6 @@ Agents in tmux/herdr panes, coordinated by a SQLite task DAG. **`mu --help` and
 `-w <workstream>` only if its `--help` lists it (`doctor`, `sync`, `delegates
 show` do not); workers get it.
 
-`--json` returns `{ok,data,next}`; errors come on stdout as
-`{ok:false,error,message,next,exit}`. `next` is the next command, or null. Collections are
-`{items,count}`; `agent list` is `{workstreamName,agents,orphans}`. Keys are SQL
-column names; `id` is the task's name. A capped reader names its way back (`more=N next=<command>`).
-
 - **umbrella**: a job's parent task, blocked by every unit; holds brief, criteria, stop rule.
 - **finding**: an `OPEN/triage` task. **verdict**: `VERDICT: <id>
   CONFIRMED|REFUTED|UNVERIFIED <line>` plus `EVIDENCE:`.

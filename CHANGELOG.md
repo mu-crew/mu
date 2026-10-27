@@ -12,6 +12,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Skill: SKILL.md drops the JSON-envelope paragraph** (`t_skill` step 3, 597 → 555 words). The envelope, error document, collection and key shapes are in `--help` and each result's own `next`. R4 on haiku ×3 over 14 non-holdout scenarios: cost −470k/rep, inside the 694k rep spread, destructive 0, completed 35 → 38/42, so the shorter text wins the tie. Log: docs/mu-next/eval/hillclimb-skill.jsonl.
+
 - **Guide: Run mu with other agent CLIs** (`dogfood_harnesses`, [docs/guide/other-agent-clis.md](docs/guide/other-agent-clis.md)). Pinning which `mu` a codex or cursor-agent shell runs (their tools re-source `~/.zshrc`; `codex --disable shell_snapshot`, an empty `ZDOTDIR`), a tmux worker started with its prompt as an argument, waiting on `task:` refs, delegation through `scratch`, and what works with no multiplexer. The report is [docs/mu-next/eval/harnesses.md](docs/mu-next/eval/harnesses.md).
 
 - **`mu wait agent:` on a non-pi agent keeps the 3.x busy-first rule** (`triage_dfh_wait_nonpi_idle`, harnesses F4). It fires only on busy → not busy. murmur's notify path (codex, cursor-agent) reports `unknown`, then `needs_input`, and never `busy`, so on tmux the wait runs to its timeout. 3.13.3's `mu agent wait` does the same, checked against the same pane states. The guide now says so and points at `task:` refs and `--until-text`. Test: `test/wait-events.test.ts` (notify-only agent, mutation-checked).
