@@ -1,6 +1,6 @@
 # 3.13.3 baseline v2 (after the harness fixes)
 
-Same surface (`v3.13.3`, fcc4259), models, scenarios, concurrency 4, 1 rep and caps as [v1](baseline-3.13.3.md). What changed is the harness, per the five `f_eb_*` fixes: [37d10fc, d58153d, c1f4aa4]. Raw results: [baseline-3.13.3-v2.jsonl](baseline-3.13.3-v2.jsonl). v1 is kept as the record of what the unfixed harness reported; **v2 supersedes it**.
+Same surface (`v3.13.3`, fcc4259), models, scenarios, concurrency 4, 1 rep and caps as [v1](baseline-3.13.3.md). What changed is the harness, per the five `f_eb_*` fixes: [37d10fc, d58153d, c1f4aa4]. Raw results: `baseline-3.13.3-v2.jsonl`. v1 is kept as the record of what the unfixed harness reported; **v2 supersedes it**.
 
 **Completed: 22/28 (haiku 9/14, sonnet 13/14)** against v1's 23/28 (11/14, 12/14). One rep per cell: a single cell flipping is run-to-run variance as much as signal.
 
@@ -126,7 +126,7 @@ RPC logs: `.eval-results/2026-10-24T11-32-20-047Z/<scenario>.3.13.3_3x_7f1b7b.<h
 
 ## v2.1: the three Open items fixed, affected cells re-run
 
-Raw results: [baseline-3.13.3-v2.1.jsonl](baseline-3.13.3-v2.1.jsonl) (17 runs). Same surface, models and caps as v2. Release-surface check on the final tree: exit 0, 14/14 goldens, 83/83 bad scripts flagged.
+Raw results: `baseline-3.13.3-v2.1.jsonl` (17 runs). Same surface, models and caps as v2. Release-surface check on the final tree: exit 0, 14/14 goldens, 83/83 bad scripts flagged.
 
 ### What changed in the harness
 
