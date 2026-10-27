@@ -17,6 +17,7 @@ import {
 } from "./commands.js";
 import { Drill, useYank } from "./drill.js";
 import { FRAME_CHROME, FRAME_SIDES, Frame } from "./frame.js";
+import { NAV_HINT, navKey } from "./nav.js";
 import { Overview, overviewCards } from "./overview.js";
 import {
   attentionLabel,
@@ -77,12 +78,13 @@ export function layout(
   return { shown, height: Math.max(0, rows - TOP_LINES - shown.size) };
 }
 
-const HINT_OVERVIEW = "←/→ tab  [/] workstream  j/k move  Enter open  y copy  q quit";
-const HINT = "←/→ tab  [/] workstream  j/k move  Enter open  / filter  c clear  y copy  q quit";
-const HINT_TASKS =
-  "←/→ tab  [/] workstream  j/k move  Enter open  s sort  o status  / filter  c clear  y copy  q quit";
+// `q quit` comes right after the tab keys: a narrow terminal cuts the hint from the right.
+const HINT_HEAD = `←/→ tab  q quit  [/] workstream  ${NAV_HINT} move`;
+const HINT_OVERVIEW = `${HINT_HEAD}  Enter open  y copy`;
+const HINT = `${HINT_HEAD}  Enter open  / filter  c clear  y copy`;
+const HINT_TASKS = `${HINT_HEAD}  Enter open  s sort  o status  / filter  c clear  y copy`;
 const hintAgents = (attachKey: string): string =>
-  `←/→ tab  [/] workstream  j/k move  Enter scrollback  ${attachKey}  / filter  c clear  y copy  q quit`;
+  `${HINT_HEAD}  Enter scrollback  ${attachKey}  / filter  c clear  y copy`;
 
 /** The workstream labels as one line of `width` columns, scrolled so the selected one shows. */
 export function workstreamLine(labels: readonly string[], selected: number, width: number): string {
@@ -256,6 +258,8 @@ export function App({
         return;
       }
       if (input === "q" || key.escape) return exit();
+      // The Overview's cursor is the Attention card's; its page is the screen's data area.
+      const nav = navKey(input, key, height);
       const ids = TABS.map((t) => t.id);
       if (key.tab || key.rightArrow || key.leftArrow) {
         const back = key.leftArrow || (key.tab && key.shift);
@@ -267,12 +271,8 @@ export function App({
           input === "]" ? 1 : -1,
         );
         if (next !== null) setChosen(next);
-      } else if (key.downArrow || input === "j") move(1);
-      else if (key.upArrow || input === "k") move(-1);
-      else if (key.pageDown) move(height);
-      else if (key.pageUp) move(-height);
-      else if (input === "g" || key.home) move(-all.length);
-      else if (input === "G" || key.end) move(all.length);
+      } else if (nav !== null)
+        move("by" in nav ? nav.by : nav.to === "top" ? -all.length : all.length);
       else if (input === "s" && tab === "tasks")
         setFilter({ sort: nextSortLabel(view.filter.sort) });
       else if (input === "o" && tab === "tasks")
