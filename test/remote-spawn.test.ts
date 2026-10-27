@@ -51,6 +51,7 @@ import {
 import { listLogs } from "../src/logs.js";
 import { reconcile } from "../src/reconcile.js";
 import { LOCAL_ONLY_ENV, RemotePrepareError } from "../src/remote-agent.js";
+import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { stateSnapshot } from "../src/state.js";
 import { claimTask } from "../src/tasks/claim.js";
 import { addTask } from "../src/tasks/edit.js";
@@ -128,7 +129,9 @@ printf '%s' "$1" > '${execLog}'/$n
 mode=$(cat '${modeFile}' 2>/dev/null || echo ok)
 case "$1" in
   *MU_STATE*) echo "MU_STATE clean ${SHA}" ;;
-  *MU_RM*) echo "MU_RM removed" ;;
+  *MU_RM*)
+    [ "$mode" = rmkept ] && { echo "left alone" >&2; exit 0; }
+    echo "MU_RM removed" ;;
   *'worktree add'*)
     [ "$mode" = addfail ] && { echo boom >&2; exit 3; }
     [ "$mode" = noise ] && { echo garbage; exit 0; }
@@ -644,6 +647,22 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     const rm = execCalls().find((c) => c.includes("status --porcelain"));
     expect(rm).toContain(WT);
     expect(rm).toContain(SHA);
+  });
+
+  it("four unsent attempts whose rollback removed the tree leave no recovery record (triage_dff_remote_recovery_pileup)", async () => {
+    extensionOn = false;
+    for (let i = 0; i < 4; i++) {
+      await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
+    }
+    expect(execCalls().filter((c) => c.includes("status --porcelain"))).toHaveLength(4);
+    expect(listRemoteRecoveries(db)).toEqual([]);
+  });
+
+  it("a rollback that could not remove the tree (left alone) keeps its recovery record", async () => {
+    extensionOn = false;
+    setMode("rmkept");
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
+    expect(listRemoteRecoveries(db)).toMatchObject([{ host: "dev", cwd: WT, name: "worker-1" }]);
   });
 
   it("without --worktree an unsent failure still frees the lease", async () => {

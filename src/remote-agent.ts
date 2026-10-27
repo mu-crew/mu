@@ -139,7 +139,8 @@ export async function prepareRemote(
  * Remove a remote worktree THIS spawn made: only while it is still clean and
  * still at `base` (anything else is left for the user and said so on stderr).
  * Best-effort, one exec under its own channel (the caller has already freed
- * the pane's). Returns whether the removal command ran clean.
+ * the pane's). Returns whether the tree is proven gone (removed now, or
+ * already absent): a tree left alone, or an answer with no `MU_RM` line, is not.
  */
 export async function removeRemoteWorktree(
   db: Db,
@@ -150,13 +151,14 @@ export async function removeRemoteWorktree(
   const p = shellQuote(wt.path);
   const body = [
     `wt=${p}`,
-    `[ -d "$wt" ] || exit 0`,
-    `[ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" = ${shellQuote(wt.base)} ] || { echo "$wt is not at its base: left alone" >&2; exit 0; }`,
-    `[ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || { echo "$wt has changes: left alone" >&2; exit 0; }`,
-    `git -C ${remotePathWord(wt.root)} worktree remove --force "$wt"`,
+    `[ -d "$wt" ] || { echo "MU_RM gone"; exit 0; }`,
+    `[ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" = ${shellQuote(wt.base)} ] || { echo "$wt is not at its base: left alone" >&2; echo "MU_RM moved"; exit 0; }`,
+    `[ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || { echo "$wt has changes: left alone" >&2; echo "MU_RM dirty"; exit 0; }`,
+    `git -C ${remotePathWord(wt.root)} worktree remove --force "$wt" && echo "MU_RM removed"`,
   ].join("\n");
   const r = await runHostTemplate(db, host, "exec", holder, { cmd: script(body), cwd: wt.root });
-  return r.exitCode === 0;
+  const said = lastMatch(r.stdout, REMOTE_RM_RE)?.[1];
+  return r.exitCode === 0 && (said === "removed" || said === "gone");
 }
 
 /** `agent close` refused to remove a remote worktree: nothing was removed. Exit 4. */

@@ -1273,6 +1273,8 @@ export async function rollbackSpawn(
       // best-effort: the next admission reclaims a channel whose pane is dead
     }
   }
+  // The remote tree this rollback proved gone: the row's delete then owes no recovery record.
+  let remoteGone = false;
   if (staged?.host !== undefined) {
     // A worktree on a remote host: its own exec, under its own channel, once
     // the pane's is free. Only while the name is still this spawn's.
@@ -1282,7 +1284,12 @@ export async function rollbackSpawn(
       await withAgentLock(db, workstream, name, async () => {
         const cur = getAgent(db, name, workstream);
         if (cur !== undefined && cur.incarnation !== remote.incarnation) return;
-        await removeRemoteWorktree(db, remote.host ?? "", `rollback:${workstream}/${name}`, remote);
+        remoteGone = await removeRemoteWorktree(
+          db,
+          remote.host ?? "",
+          `rollback:${workstream}/${name}`,
+          remote,
+        );
       });
     } catch {
       try {
@@ -1329,9 +1336,11 @@ export async function rollbackSpawn(
     }
     return;
   }
-  // Only the row this spawn inserted: never a replacement under the name.
+  // Only the row this spawn inserted: never a replacement under the name. A remote
+  // tree this rollback removed (or found gone) leaves no `remote_recovery` record:
+  // the record is for a worktree someone must still deal with.
   if (ownedIncarnation !== undefined)
-    deleteAgent(db, name, workstream, { incarnation: ownedIncarnation });
+    deleteAgent(db, name, workstream, { incarnation: ownedIncarnation }, { preserve: !remoteGone });
 }
 
 /**
