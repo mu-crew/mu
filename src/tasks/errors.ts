@@ -16,8 +16,6 @@
 //
 // Errors carry facts (ids, workstreams, structured fields), never commands:
 // a result's follow-up is its `next` (src/next-hints.ts).
-//
-// Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
 import { say } from "../messages.js";
 import { TASK_SUBSTATES, type TaskStatus, type TaskSubstate } from "./status.js";

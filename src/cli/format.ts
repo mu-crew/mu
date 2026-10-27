@@ -1,7 +1,6 @@
 // mu — pure rendering helpers used by every cli/*.ts verb wrapper.
 //
-// Extracted from src/cli.ts (review_cli_ts_past_refactor_signal): the
-// table renderers, status colourers, truncators, and relative-time
+// The table renderers, status colourers, truncators, and relative-time
 // formatter were the bulk of cli.ts's bloat (~600 LOC over the 800-LOC
 // refactor signal). Co-locating them here keeps cli.ts focused on
 // argument parsing, workstream resolution, and program wiring.
@@ -22,8 +21,7 @@ import type { TaskNoteRow } from "../tasks.js";
 
 /** Per-status colour for the table view. The glyph itself comes from
  *  agentStateGlyph in src/glyphs.ts — single source of truth so the
- *  CLI and TUI status surfaces never drift
- *  (review_code_status_emoji_two_sources caught a 2-of-7 disagreement). */
+ *  CLI and TUI status surfaces never drift. */
 const STATUS_COLORS: Record<RuntimeState, (s: string) => string> = {
   busy: pc.cyan,
   needs_input: pc.dim,
@@ -108,7 +106,7 @@ export function relTime(ms: number): string {
  *  Recent card / popup wants past-tense formatting ("3m ago") while
  *  the In-progress card / popup wants the bare token ("3m"); both
  *  buckets share the rest of the arithmetic. Hoisted out of the TUI
- *  cluster (review_unify_format_when_since) so the two formatters
+ *  cluster so the two formatters
  *  can't drift the way they were starting to. */
 export function relTimeAgo(ms: number): string {
   return `${relTime(ms)} ago`;

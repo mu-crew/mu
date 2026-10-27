@@ -9,8 +9,6 @@
 //
 // Read-only (the reconcile pass uses mode: "report-only" so polling doesn't
 // race in-flight spawns; see PENDING_PANE_PREFIX).
-//
-// Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
 import { dirname } from "node:path";
 import { listAgents, listLiveAgents } from "../agents.js";

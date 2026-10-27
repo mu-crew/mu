@@ -5,8 +5,6 @@
 //   mu log                    → read latest 50
 //   mu log --tail             → blocking subscription (poll every 1s)
 //   mu log --since <seq>      → cursor read (everything after seq)
-//
-// Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
 import {
   emitJson,

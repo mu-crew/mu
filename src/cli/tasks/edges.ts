@@ -3,9 +3,6 @@
 // All four mutate task_edges (block/unblock/reparent) or cascade through
 // it via FK (delete). Each is idempotent and emits typed errors that
 // `handle()` in src/cli.ts maps to exit codes.
-//
-// Extracted from src/cli/tasks.ts as part of the wire-out follow-up
-// to refactor_split_large_src_files.
 
 import {
   assertTaskInWorkstream,
@@ -173,9 +170,7 @@ export async function cmdTaskDelete(
   assertTaskInWorkstream(db, localId, opts.workstream);
   const ws = await resolveExistingWorkstream(db, opts.workstream);
   // Two-phase: bare = dry-run preview; --yes commits. Mirrors
-  // `mu workstream teardown`. Surfaced by feedback
-  // ws task fb_task_delete_no_yes
-  // (impact=30): the dogfood report typed `mu task delete X --yes`
+  // `mu workstream teardown`. A dogfood report typed `mu task delete X --yes`
   // (mirroring workstream teardown) and got 'unknown option --yes'
   // because the verb took no confirmation flag at all; two failed
   // deletes left long-named tasks lingering until noticed.

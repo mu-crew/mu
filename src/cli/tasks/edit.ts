@@ -13,9 +13,6 @@
 // the SDK's lastClaimActor (src/logs.ts) directly — the prior CLI-side
 // thin-wrapper was a vestigial re-export from the cluster split, gone
 // in schema_v5_cleanups.
-//
-// Extracted from src/cli/tasks.ts as part of the wire-out follow-up
-// to refactor_split_large_src_files.
 
 import {
   assertTaskInWorkstream,
@@ -318,7 +315,7 @@ export async function cmdTaskAdd(
   // telemetry (slugifytitle_silently_drops_clauses). `autoDerived`
   // distinguishes the explicit-id branch so `--json` exposes the
   // truncation fields only when meaningful
-  // (task_add_slugify_silently_truncates_ids).
+  //.
   const autoDerived = localIds.length === 0;
   const blockedBy = parseCsvFlag(opts.blockedBy, "-b/--blocked-by");
   const blocks = parseCsvFlag(opts.blocks, "--blocks");
@@ -371,7 +368,7 @@ export async function cmdTaskAdd(
     // id no longer carries the title's full meaning. Surface it as
     // top-level `truncated`/`originalSlug` siblings of `task` (NOT
     // inside `task`, which mirrors the persisted row).
-    // Conventions, consistent with the audit_json_envelope_uniformity
+    // Conventions, consistent with the {items, count} envelope
     // singleton style: only emit when meaningful. Both fields are
     // omitted when the operator passed an explicit <id> (no
     // auto-derive) and when auto-derivation produced no truncation

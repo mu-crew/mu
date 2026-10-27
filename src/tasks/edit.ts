@@ -264,8 +264,7 @@ function addBlocksEdges(
  *  back to a global lookup so a cross-ws endpoint still surfaces
  *  CrossWorkstreamEdgeError (not TaskNotFoundError). Without the
  *  same-ws preference, two tasks of the same local_id (one in this ws,
- *  one elsewhere) could silently bind to the wrong row
- *  (bug_v5_name_clash_silent_misroute). */
+ *  one elsewhere) could silently bind to the wrong row. */
 function lookupEdgeTask(
   db: Db,
   wsId: number,
@@ -416,9 +415,7 @@ export interface DeleteTaskOptions {
   /** When true, return the cascade preview (would-be edge / note
    *  counts) without mutating. The CLI uses this to power the bare
    *  `mu task delete <id>` two-phase pattern (mirrors
-   *  `mu workstream teardown`). Surfaced
-   *  by feedback ws task
-   *  fb_task_delete_no_yes (impact=30): a dogfood report typed
+   *  `mu workstream teardown`). A dogfood report typed
    *  `mu task delete X --yes` (mirroring workstream teardown) and got
    *  'unknown option --yes' — the verb took no confirmation flag at
    *  all. Two failed deletes left long-named tasks lingering. */

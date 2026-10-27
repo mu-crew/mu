@@ -13,9 +13,6 @@
 // cap, collapsed CLOSED neighbours, a clipped title): the same command with
 // `--all`, which walks everything (CLOSED included) and prints it whole.
 // The footer `more=N next=<that command>` is reserved before the page shrinks.
-//
-// Extracted from src/cli/tasks.ts as part of the wire-out follow-up
-// to refactor_split_large_src_files.
 
 import { assertTaskInWorkstream, emitJson, resolveEntityRef } from "../../cli.js";
 import {

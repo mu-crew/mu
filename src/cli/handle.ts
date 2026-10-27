@@ -1,8 +1,6 @@
 // mu — typed-error → exit-code mapping + CLI handler wrapper.
 //
-// Extracted from src/cli.ts (review_cli_ts_past_refactor_signal):
-// classifyError + emitError + handle were ~150 LOC in the middle of
-// cli.ts. They live here so cli.ts is just argument parsing /
+// classifyError + emitError + handle live here so cli.ts is just argument parsing /
 // workstream resolution / program wiring; the typed-error catalogue
 // belongs next to its own helper. cli.ts re-exports `classifyError`
 // and `handle` for back-compat with existing tests + cli/* importers.
@@ -14,7 +12,7 @@
 //       unknown subcommand) — commander-detected mistakes AND
 //       handler-thrown UsageError. Both surfaces print the failing
 //       subcommand's --help (human path) or include a structured
-//       `usage` field (--json path). See `audit_cli_validation_uniformity`.
+//       `usage` field (--json path).
 //   3 = not found (no such agent / task / pane)
 //   4 = conflict (name collision, double-claim, cycle, etc.)
 //   5 = substrate unavailable or unsafe (no multiplexer, DB locked,
@@ -692,9 +690,9 @@ function unknownVerb(err: unknown, cmd: Command | undefined): string | undefined
 
 /** Render the error and return the resolved exit code. Returning the
  *  exitCode lets `handle` reuse it instead of re-classifying the same
- *  error twice (review_code_classify_error_called_twice).
+ *  error twice.
  *
- *  audit_cli_validation_uniformity: usage-class errors (commander +
+ *  Usage-class errors (commander +
  *  UsageError + typed *Invalid*) ALSO emit the failing subcommand's
  *  --help (human path) or a structured `usage` field (JSON path); an
  *  unknown verb is one line naming the closest verb instead. */

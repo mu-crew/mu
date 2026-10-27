@@ -2,12 +2,8 @@
 // close + the top-level `mu me` agent-self
 // verb (default + `tasks` / `next` subcommands).
 //
-// Extracted from src/cli.ts as part of refactor_split_large_src_files.
-//
-// `whoami` / `my-tasks` / `my-next` were merged into `mu me` /
-// `mu me tasks` / `mu me next` in audit_merge_self_verbs_into_mu_me
-// (audit_cleanups_post_schema_v5_wave). The three old verbs are
-// gone; `cmdMyTasks` and `cmdMyNext` stayed.
+// `mu me` / `mu me tasks` / `mu me next` are the agent-self verbs
+// (`cmdMyTasks` and `cmdMyNext` back the last two).
 
 import { dirname } from "node:path";
 import { agentToOutput, liveAgentToOutput, workstreamIdOf } from "../agent-output.js";
@@ -322,7 +318,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
   //   3. bare CLI name on PATH         → 'pi'
   // Env-var attribution is preferred over the generic '(cmd: ...)'
   // suffix because the env-var name is the actionable knob the
-  // operator can grep for / unset (fb_agent_spawn_no_validation pt C).
+  // operator can grep for / unset.
   const cliDisplay =
     opts.command !== undefined
       ? `${agent.cli} ${pc.dim(`(cmd: ${resolvedCommand})`)}`

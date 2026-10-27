@@ -12,7 +12,7 @@
 // `tmux new-session -d -s mu-scratch`. Exactly one wins; the losers get
 // "duplicate session", throw, and `rollbackSpawn` removes their agent
 // row. Net effect: agents silently dropped (and sometimes duplicated as
-// windows race). bug_parallel_spawn_races_drop_agents.
+// windows race).
 //
 // The fix is a filesystem advisory lock keyed on the tmux SESSION name
 // (the shared resource — two spawns into different sessions never

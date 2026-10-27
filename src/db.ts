@@ -202,7 +202,7 @@ function closeQuietly(db: Db): void {
 }
 
 /**
- * Hard guard (Layer "db" of bug_test_flake_round_2): refuse to open
+ * Hard guard: refuse to open
  * the user's REAL default mu.db when running under vitest. Tests
  * MUST point at a per-test temp DB (via MU_DB_PATH or the explicit
  * `{ path }` option). A test that forgets to override either one

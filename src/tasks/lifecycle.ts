@@ -6,8 +6,6 @@
 // EvidenceOption is shared with claim/release (in tasks/claim.ts) and
 // re-exported here as the canonical home; claim.ts imports from this
 // file.
-//
-// Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
 import { GUARD_NEEDS_EVIDENCE, GUARD_OPEN_BLOCKERS } from "../capture.js";
 import type { Db, NoteKind } from "../db.js";
@@ -195,7 +193,7 @@ function openBlockerIds(db: Db, localId: string, workstream: string): string[] {
  *  by the literal `skipped` field; the CLI keys on it to switch
  *  between the "closed" and "waiting" rendering paths.
  *
- *  Surfaced in `fb_umbrella_no_auto_close` (impact=60): a wave umbrella
+ *  A wave umbrella
  *  with N blockers stayed OPEN after every blocker reached a terminal
  *  status. `--if-ready` is the cheap fix: bare `mu task close` is
  *  unchanged (closes regardless), `--if-ready` is a no-op unless every

@@ -5,7 +5,7 @@
 // mu once rendered log lines by prefix-matching free prose: `classifyEventVerb`
 // walked `EVENT_VERB_PREFIXES` looking for a leading two-word verb, and
 // `CLAIM_EVENT_PREFIX` was bolted on because that matching kept breaking
-// (review_code_last_claim_actor_brittle). Rewording any payload silently
+//. Rewording any payload silently
 // broke its renderer, and attribution had to be smuggled through a
 // tab-delimited prefix so it could be parsed back out.
 //
