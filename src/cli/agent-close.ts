@@ -36,6 +36,7 @@ interface CloseOpts {
   keepBranch?: boolean;
   if?: number;
   recovery?: number;
+  force?: boolean;
 }
 
 /**
@@ -70,6 +71,7 @@ export async function cmdClose(db: Db, rawName: string, opts: CloseOpts = {}): P
   const discard = opts.discard === true;
   const keepBranch = opts.keepBranch === true;
   const recoveryId = opts.recovery;
+  const force = opts.force === true;
   // Bare close is the preview: it reads, it never kills. `--if <rev>` applies.
   if (opts.if === undefined) {
     const p = await previewClose(db, name, {
@@ -91,6 +93,7 @@ export async function cmdClose(db: Db, rawName: string, opts: CloseOpts = {}): P
           ...(p.recovery === null ? [] : ["--recovery", String(p.recovery.id)]),
           ...(discard ? ["--discard"] : []),
           ...(keepBranch ? ["--keep-branch"] : []),
+          ...(force ? ["--force"] : []),
         ],
         revision: p.revision,
       });
@@ -107,6 +110,7 @@ export async function cmdClose(db: Db, rawName: string, opts: CloseOpts = {}): P
     ifRevision: opts.if,
     ...(discard ? { discard: true } : {}),
     ...(keepBranch ? { keepBranch: true } : {}),
+    ...(force ? { force: true } : {}),
     ...(recoveryId === undefined ? {} : { recoveryId }),
   });
   if (opts.json) {
@@ -198,6 +202,10 @@ export function wireCloseCommand(agent: Command): void {
       "--recovery <id>",
       "close the remote worktree of the removed agent whose recovery id this is (shown by the preview; needed when several records share the name)",
       parseNonNegativeInt,
+    )
+    .option(
+      "--force",
+      "the pane's liveness could not be checked (the probe failed) and you know it is gone: close anyway (never overrides a pane that answers alive)",
     )
     .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)
     .option(...WORKSTREAM_OPT)

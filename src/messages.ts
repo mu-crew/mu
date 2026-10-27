@@ -101,8 +101,16 @@ export const MESSAGES = {
     `agent ${name}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown${msgId === undefined ? "" : `, msgId ${msgId}`}. Never resend blindly`,
   "agent.restarted": (name: string, expected: string, actual: string | undefined) =>
     `agent ${name} restarted (incarnation ${expected} → ${actual ?? "unknown"}); its earlier run is gone: re-send the brief`,
-  "agent.pane_still_alive": (name: string, ws: string, pane: string, state: true | "unknown") =>
-    `agent ${name}: pane ${pane} ${state === true ? "is still alive after the kill" : "could not be checked"}; its row is kept. Close the pane in your multiplexer, then preview: mu agent close ${name} -w ${ws}`,
+  "agent.pane_still_alive": (
+    name: string,
+    ws: string,
+    pane: string,
+    state: true | "unknown",
+    reason?: string,
+  ) =>
+    state === true
+      ? `agent ${name}: pane ${pane} is still alive after the kill; its row is kept. Close the pane in your multiplexer, then preview: mu agent close ${name} -w ${ws}`
+      : `agent ${name}: pane ${pane} could not be checked${reason === undefined ? "" : ` (${reason})`}; its row, tasks and worktree are kept. Retry once the multiplexer answers, or if you know the pane is gone preview with --force: mu agent close ${name} -w ${ws} --force`,
   "agent.replaced": (name: string, ws: string, during: "closed" | "sent to" | "collected") =>
     during === "closed"
       ? `agent ${name} was replaced while it was being closed; the replacement was left alone. Preview it: mu agent close ${name} -w ${ws}`

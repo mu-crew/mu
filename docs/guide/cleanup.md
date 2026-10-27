@@ -13,6 +13,10 @@ Close removes the agent's worktree with it. A worktree with uncommitted
 edits makes close refuse with exit 4 before anything is killed: commit
 them, or pass `--discard` to lose them. Clean commits that are not merged
 are kept on a branch `mu/<workstream>/<agent>-<sha>`, named in the output.
+The row, its tasks and its worktree go only once the pane is proven gone:
+a pane that survives the kill, or one mu cannot ask (the probe fails),
+refuses with exit 4. If you know the pane is gone, preview
+with `--force`; it never overrides a pane that answers alive.
 See [Stop a worker](stop-a-worker.md).
 
 ## Tear down a workstream

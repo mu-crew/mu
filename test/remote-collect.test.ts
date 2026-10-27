@@ -17,7 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentNotFoundError } from "../src/agents/errors.js";
+import { AgentNotFoundError, AgentPaneStillAliveError } from "../src/agents/errors.js";
 import { closeAgent, getAgent, insertAgent, previewClose } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import {
@@ -274,7 +274,9 @@ describe("agent close of a remote worktree row", () => {
     mux.restore();
     withEnvSync("MU_MUX", "nonsense", () => resetMux());
     const err = await close().catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(HostChannelBusyError);
+    // Refused before anything is freed: an unknown pane is not a dead one (rr_r3_close_unknown_probe).
+    expect(err).toBeInstanceOf(AgentPaneStillAliveError);
+    expect((err as AgentPaneStillAliveError).state).toBe("unknown");
     expect(execCalls()).toEqual([]);
     expect(channels()).toHaveLength(1);
     expect(channels()[0]).toMatchObject({ kind: "attached" });

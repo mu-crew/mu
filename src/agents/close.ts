@@ -22,8 +22,8 @@
 // Without `ifRevision` the SDK closes at once (internal callers, tests);
 // guards 2 and 3 still apply. The CLI previews unless `--if` is given.
 
-import { type AgentRow, deleteAgent, getAgentForCleanup } from "../agents.js";
-import { type Db, tornDownAtOf } from "../db.js";
+import { type AgentRow, deleteAgent, getAgentForCleanup, isPendingPaneId } from "../agents.js";
+import type { Db } from "../db.js";
 import { releaseHostChannelsForAgent } from "../hosts.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
@@ -73,6 +73,13 @@ export interface CloseAgentOptions {
    * Refuses while an agent holds the name or the path.
    */
   recoveryId?: number;
+  /**
+   * Close although the pane's liveness could not be checked (the probe
+   * failed, or no multiplexer answers): the caller asserts it is gone. Never
+   * overrides a pane that answers alive. Without it an unknown refuses
+   * (`AgentPaneStillAliveError`, state `unknown`) with everything kept.
+   */
+  force?: boolean;
 }
 
 export interface CloseAgentResult {
@@ -330,23 +337,29 @@ async function closeLocked(
       /* idempotent — pane may already be gone, or the mux with it */
     });
   }
-  // The row rule: never delete (nor release a worktree for) a row whose
-  // recorded pane is alive. A pane that survives the kill (moved, or the
-  // kill failed) keeps its row. In a torn-down workstream, where teardown
-  // already deferred to this verb, a probe that cannot answer keeps it too.
-  if (mux !== undefined) {
-    let alive: boolean | "unknown" = false;
-    try {
-      alive = await mux.paneAlive(agent.paneId);
-    } catch {
+  // The row rule: never delete (nor release a claim, a worktree or a host
+  // channel for) a row whose recorded pane may be alive. A pane that survives
+  // the kill (moved, or the kill failed) keeps its row; so does one nobody
+  // could ask (the probe failed, or no multiplexer answers), in every
+  // workstream, unless `force` says it is gone. A pending placeholder never
+  // had a pane. Past this check the pane is gone (proven, or forced).
+  let alive: boolean | "unknown" = false;
+  let why: string | undefined;
+  if (!isPendingPaneId(agent.paneId)) {
+    if (mux === undefined) {
       alive = "unknown";
+      why = "no multiplexer answers";
+    } else {
+      try {
+        alive = await mux.paneAlive(agent.paneId);
+      } catch (err) {
+        alive = "unknown";
+        why = err instanceof Error ? err.message.split("\n")[0] : String(err);
+      }
     }
-    if (
-      alive === true ||
-      (alive === "unknown" && tornDownAtOf(db, agent.workstreamName) !== null)
-    ) {
-      throw new AgentPaneStillAliveError(name, agent.workstreamName, agent.paneId, alive);
-    }
+  }
+  if (alive === true || (alive === "unknown" && opts.force !== true)) {
+    throw new AgentPaneStillAliveError(name, agent.workstreamName, agent.paneId, alive, why);
   }
   if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   // Re-checks the state: a write after the pre-check still refuses, with
@@ -361,8 +374,8 @@ async function closeLocked(
   if (row !== undefined) worktree = await releaseWorktree(db, row, { discard });
   else if (remoteOf(agent) !== null) {
     remoteHandled = true;
-    // The pane is dead (probed above): free its channel by id + pane.
-    if (mux !== undefined) releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
+    // The pane is gone (checked above): free its channel by id + pane.
+    releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
     worktree = await closeRemoteWorktree(db, agent, {
       keepBranch: opts.keepBranch === true,
       paneAlive: localPaneAlive,
@@ -375,7 +388,7 @@ async function closeLocked(
   // A remote command gate: its pane is dead (probed above), so free its channel by id + pane and
   // remove ITS result record (its own token's files; a replacement has another token). Best effort:
   // a host that cannot answer leaves one stray file, never a blocked close.
-  if (agent.gateToken !== null && agent.host !== null && mux !== undefined) {
+  if (agent.gateToken !== null && agent.host !== null) {
     releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
     await cleanGateResult(db, agent);
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
