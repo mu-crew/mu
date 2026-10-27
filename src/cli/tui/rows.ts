@@ -14,6 +14,7 @@ import type {
   DashboardSnapshot,
   DashboardTask,
 } from "../../dashboard-data.js";
+import { KNOWN_VERBS } from "../../log-render.js";
 import {
   DEFAULT_SUBSTATE,
   isTaskStatus,
@@ -22,7 +23,8 @@ import {
   type TaskStatus,
 } from "../../tasks/status.js";
 import { type ColumnSpec, columnWidths, GUTTER, renderCells } from "./columns.js";
-import { clean } from "./text.js";
+import { clean, type Line, lineText } from "./text.js";
+import { agentStateRole, type Role, type Seg, statusRole } from "./theme.js";
 
 export type TabId = "overview" | "tasks" | "dag" | "agents" | "log";
 export const TABS: readonly { id: TabId; label: string }[] = [
@@ -41,7 +43,9 @@ export type DrillTarget =
 
 export interface Row {
   key: string;
+  /** The plain line (filters, tests, copy); `line` is the same text in theme roles. */
   text: string;
+  line: Line;
   /** Enter opens this; absent = nothing to open. */
   drill?: DrillTarget;
   /** Not a cursor stop's data (a cut notice): shown, never filtered out. */
@@ -162,16 +166,43 @@ const CLIP: ColumnSpec = { kind: "clip" };
 function layoutRows(
   basis: ReadonlyArray<ReadonlyArray<string>>,
   specs: readonly ColumnSpec[],
-): (cells: readonly string[]) => string {
+): (cells: readonly string[], roles: readonly (Role | undefined)[]) => Line {
   const widths = columnWidths(basis, specs);
   const last = specs.length - 1;
-  return (cells) => {
-    const head = renderCells(cells, widths, specs)
-      .slice(0, last)
-      .filter((_, i) => (widths[i] ?? 0) > 0);
-    return [...head, clean(cells[last] ?? "")].join(" ".repeat(GUTTER)).trimEnd();
+  return (cells, roles) => {
+    const fitted = renderCells(cells, widths, specs);
+    const shown = specs.flatMap((_, i) =>
+      i === last
+        ? [{ text: clean(cells[last] ?? ""), role: roles[last] }]
+        : (widths[i] ?? 0) > 0
+          ? [{ text: fitted[i] ?? "", role: roles[i] }]
+          : [],
+    );
+    const out: Seg[] = shown.flatMap((seg, i) => [
+      ...(i > 0 ? [{ text: " ".repeat(GUTTER) }] : []),
+      seg.role === undefined ? { text: seg.text } : { text: seg.text, role: seg.role },
+    ]);
+    // The line ends at its last non-blank character, as the plain text always did.
+    while (out.length > 0) {
+      const tail = out[out.length - 1] as Seg;
+      const trimmed = tail.text.trimEnd();
+      if (trimmed !== "") {
+        out[out.length - 1] = { ...tail, text: trimmed };
+        break;
+      }
+      out.pop();
+    }
+    return out;
   };
 }
+
+/** A row from its styled line (the plain text is derived, so the two never differ). */
+const rowOf = (key: string, line: Line, rest: Omit<Row, "key" | "text" | "line"> = {}): Row => ({
+  key,
+  text: lineText(line),
+  line,
+  ...rest,
+});
 
 /** `@name`, with the owner's workstream when it is not the task's own. */
 const ownerLabel = (t: DashboardTask): string =>
@@ -207,11 +238,16 @@ function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] 
     [...inWs.map((t) => [t.id, "", ownerLabel(t)]), ...agentNames.map((n) => ["", "", n])],
     specs,
   );
-  return tasks.map((t) => ({
-    key: t.key,
-    text: line([t.id, statusText(t.status, t.substate), ownerLabel(t), t.title]),
-    drill: { kind: "notes", workstream: t.workstream, id: t.id, title: t.title },
-  }));
+  return tasks.map((t) =>
+    rowOf(
+      t.key,
+      line(
+        [t.id, statusText(t.status, t.substate), ownerLabel(t), t.title],
+        ["id", statusRole(t.status, t.substate), "muted", undefined],
+      ),
+      { drill: { kind: "notes", workstream: t.workstream, id: t.id, title: t.title } },
+    ),
+  );
 }
 
 function edgeNotes(e: DashboardEdge): string {
@@ -223,6 +259,10 @@ function edgeNotes(e: DashboardEdge): string {
   ].filter((n) => n !== "");
   return notes.length > 0 ? `  (${notes.join(", ")})` : "";
 }
+
+/** A cut notice: shown in the warning role, never filtered out. */
+const notice = (key: string, text: string): Row =>
+  rowOf(key, [{ text, role: "warn" }], { notice: true });
 
 /** The id cell carries the tree indent: the protected column that shows the shape. */
 const edgeId = (e: DashboardEdge): string => `${"  ".repeat(e.depth)}${e.id}`;
@@ -244,35 +284,46 @@ function dagRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
   );
   for (const e of mine) {
     if (textMatch(f.text, e.key, e.title, e.substate)) {
-      rows.push({
-        key: `${e.parent ?? ""}>${e.key}`,
-        text: line([edgeId(e), statusText(e.status, e.substate), `${e.title}${edgeNotes(e)}`]),
-        drill: { kind: "notes", workstream: e.workstream, id: e.id, title: e.title },
-      });
+      rows.push(
+        rowOf(
+          `${e.parent ?? ""}>${e.key}`,
+          [
+            ...line(
+              [edgeId(e), statusText(e.status, e.substate), e.title],
+              ["id", statusRole(e.status, e.substate), undefined],
+            ),
+            ...(edgeNotes(e) === "" ? [] : [{ text: edgeNotes(e), role: "muted" as const }]),
+          ],
+          { drill: { kind: "notes", workstream: e.workstream, id: e.id, title: e.title } },
+        ),
+      );
     } else if (e.cap_cut > 0) {
       // Its line is filtered out, and the line is the only place its cap cut was
       // said: keep the warning as a notice naming the entry.
-      rows.push({
-        key: `cut:cap:${e.key}`,
-        text: `… ${e.cap_cut} open task${e.cap_cut === 1 ? "" : "s"} under ${e.id} left out by the node cap`,
-        notice: true,
-      });
+      rows.push(
+        notice(
+          `cut:cap:${e.key}`,
+          `… ${e.cap_cut} open task${e.cap_cut === 1 ? "" : "s"} under ${e.id} left out by the node cap`,
+        ),
+      );
     }
   }
   const cut = snap.frontier.find((c) => c.workstream === ws);
   if (cut !== undefined && cut.roots_cut > 0) {
-    rows.push({
-      key: "cut:roots",
-      text: `… ${cut.roots_cut} open start task${cut.roots_cut === 1 ? "" : "s"} left out by the node cap`,
-      notice: true,
-    });
+    rows.push(
+      notice(
+        "cut:roots",
+        `… ${cut.roots_cut} open start task${cut.roots_cut === 1 ? "" : "s"} left out by the node cap`,
+      ),
+    );
   }
   if (cut !== undefined && cut.again_cut > 0) {
-    rows.push({
-      key: "cut:again",
-      text: `… ${cut.again_cut} repeat line${cut.again_cut === 1 ? "" : "s"} left out by the node cap`,
-      notice: true,
-    });
+    rows.push(
+      notice(
+        "cut:again",
+        `… ${cut.again_cut} repeat line${cut.again_cut === 1 ? "" : "s"} left out by the node cap`,
+      ),
+    );
   }
   return rows;
 }
@@ -314,17 +365,33 @@ function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: n
     ],
     specs,
   );
-  return agents.map((a) => ({
-    key: a.key,
-    text: line([a.name, a.host ?? LOCAL, a.state ?? "?", taskOf(a), toolText(a, now)]),
-    drill: {
-      kind: "scrollback" as const,
-      workstream: a.workstream,
-      name: a.name,
-      paneId: a.pane_id,
-      tab: a.tab,
-    },
-  }));
+  // Trouble is coloured from the attention list, the one place that decides what is dead or stalled.
+  const flagged = (kind: string, key: string): boolean =>
+    snap.attention.some((x) => x.kind === kind && x.target === key);
+  return agents.map((a) =>
+    rowOf(
+      a.key,
+      line(
+        [a.name, a.host ?? LOCAL, a.state ?? "?", taskOf(a), toolText(a, now)],
+        [
+          "id",
+          "muted",
+          flagged("dead", a.key) ? "bad" : agentStateRole(a.state),
+          "muted",
+          flagged("stalled", a.key) ? "warn" : "muted",
+        ],
+      ),
+      {
+        drill: {
+          kind: "scrollback" as const,
+          workstream: a.workstream,
+          name: a.name,
+          paneId: a.pane_id,
+          tab: a.tab,
+        },
+      },
+    ),
+  );
 }
 
 const timeOf = (iso: string): string => /T(\d\d:\d\d:\d\d)/.exec(iso)?.[1] ?? iso;
@@ -339,11 +406,28 @@ function logRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
   );
   return mine
     .filter((l) => textMatch(f.text, l.rendered, l.actor, l.scope))
-    .map((l) => ({
-      key: String(l.seq),
-      text: line([String(l.seq), timeOf(l.created_at), l.rendered]),
-      drill: { kind: "log", item: l },
-    }));
+    .map((l) => {
+      const head = line([String(l.seq), timeOf(l.created_at), ""], ["muted", "muted", undefined]);
+      return rowOf(String(l.seq), [...head, { text: " ".repeat(GUTTER) }, ...logProse(l)], {
+        drill: { kind: "log", item: l },
+      });
+    });
+}
+
+/** Every verb `renderOpLine` can start a line with, longest first (a prefix never shadows a longer verb). */
+const LOG_VERBS = [...KNOWN_VERBS, "task status", "op put", "op del", "op"].sort(
+  (a, b) => b.length - a.length,
+);
+
+/** A log line's prose with its verb in the verb role (3.x log card); operator prose (no intent) stays plain. */
+function logProse(l: DashboardLogItem): Seg[] {
+  const text = clean(l.rendered);
+  const verb = l.intent ? LOG_VERBS.find((v) => text === v || text.startsWith(`${v} `)) : undefined;
+  if (verb === undefined) return [{ text }];
+  return [
+    { text: verb, role: "verb" },
+    ...(text.length > verb.length ? [{ text: text.slice(verb.length) }] : []),
+  ];
 }
 
 /** One attention item as a line: another workstream's is qualified, bare names otherwise. */
@@ -351,6 +435,21 @@ export function attentionLabel(a: DashboardAttention, ws: string | null): string
   const where = a.workstream !== null && a.workstream !== ws ? `${a.workstream}/` : "";
   return `${where}${a.kind === "human" ? `human: ${a.text}` : a.text}`;
 }
+
+/** The attention strip (every view): `✓ all quiet` green, else the count and each item in its role. */
+export function attentionStrip(attention: readonly DashboardAttention[], ws: string | null): Line {
+  if (attention.length === 0) return [{ text: "✓ all quiet", role: "good" }];
+  return [
+    { text: `⚠ ${attention.length} need you: `, role: "warn" },
+    ...attention.flatMap((a, i): Seg[] => [
+      ...(i > 0 ? [{ text: " · ", role: "muted" as const }] : []),
+      { text: attentionLabel(a, ws), role: attentionRole(a) },
+    ]),
+  ];
+}
+
+/** 3.x attention colours: a dead agent red, everything else that needs you yellow. */
+export const attentionRole = (a: DashboardAttention): Role => (a.kind === "dead" ? "bad" : "warn");
 
 /** The Overview's cursor stops: every attention item (all workstreams), Enter opens its agent or task. */
 function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
@@ -368,7 +467,11 @@ function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
       : task
         ? { kind: "notes", workstream: task.workstream, id: task.id, title: task.title }
         : undefined;
-    return { key: a.key, text: attentionLabel(a, ws), ...(drill ? { drill } : {}) };
+    return rowOf(
+      a.key,
+      [{ text: attentionLabel(a, ws), role: attentionRole(a) }],
+      drill ? { drill } : {},
+    );
   });
 }
 
