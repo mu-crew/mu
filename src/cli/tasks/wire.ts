@@ -301,7 +301,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("notes <id>")
     .description(
-      "A task's notes, one per line (a newline inside a note prints as \\n): the brief, the report, every verdict, the last 3 others; `more=N next=…` names the rest. --all/--from <n> page the history; --tail, --since, --since-claim filter.",
+      "Notes, one per line (newline as \\n): brief, report, verdicts, the last 3 others; `more=N next=…` the rest; --all/--from page, --tail/--since/--since-claim filter. Its caller reading a finished delegate takes the answer.",
     )
     .option("--all", "every note, from the first (the default view leaves some out)")
     .option("--from <n>", "every note from note <n> on", parsePositiveNumber)
