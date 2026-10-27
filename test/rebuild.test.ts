@@ -16,6 +16,7 @@ import {
   RebuildTargetIsSourceError,
   rebuildInto,
 } from "../src/rebuild.js";
+import { applyIncomingOp } from "../src/segments.js";
 import { addBlockEdge, removeBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
@@ -431,6 +432,113 @@ describe("rebuildInto", () => {
         });
         const minted = (
           conn.prepare("SELECT MAX(hlc) AS hlc FROM ops WHERE key = 'demo/brand-new'").get() as {
+            hlc: string;
+          }
+        ).hlc;
+        expect(minted > newest).toBe(true);
+      });
+    });
+  });
+
+  describe("concurrent ingest during rebuild", () => {
+    it("a future-HLC op ingested after the identity read cannot leave the clock behind the copy", () => {
+      // The identity SELECT and the ops SELECT are separate reads. A
+      // peer op with a far-future HLC ingested between them is copied,
+      // but the stale clock is carried: the next local edit would mint
+      // BELOW it and lose LWW on every later rebuild.
+      ensureWorkstream(db, "demo");
+      addTask(db, { workstream: "demo", localId: "a", title: "initial", impact: 1, effortDays: 1 });
+      const writer = openDb({ path: sourcePath });
+      let injected = false;
+      const source = new Proxy(db, {
+        get(t, k) {
+          if (k === "prepare") {
+            return (sql: string) => {
+              const stmt = t.prepare(sql);
+              if (!sql.includes("FROM machine_identity")) return stmt;
+              return new Proxy(stmt, {
+                get(s, key) {
+                  if (key === "get") {
+                    return (...args: unknown[]) => {
+                      const value = s.get(...args);
+                      if (!injected) {
+                        injected = true;
+                        applyIncomingOp(writer, {
+                          hlc: "001893121000000.000001.remote",
+                          machineId: "remote",
+                          groupId: "g",
+                          entity: "task",
+                          key: "demo/a",
+                          op: "put",
+                          payload: '{"title":"remote newer"}',
+                        });
+                      }
+                      return value;
+                    };
+                  }
+                  const v = Reflect.get(s, key, s);
+                  return typeof v === "function" ? v.bind(s) : v;
+                },
+              });
+            };
+          }
+          const v = Reflect.get(t, k, t);
+          return typeof v === "function" ? v.bind(t) : v;
+        },
+      });
+      const path = targetPath();
+      try {
+        rebuildInto(source, { targetPath: path });
+      } finally {
+        writer.close();
+      }
+      expect(injected).toBe(true);
+      withTarget(path, (conn) => {
+        // One snapshot: the op that landed after the first read is not in
+        // the copy, so identity, ops and peers describe the same moment.
+        const raced = conn.prepare("SELECT COUNT(*) AS n FROM ops WHERE machine_id = 'remote'");
+        expect((raced.get() as { n: number }).n).toBe(0);
+        updateTask(conn, "a", { title: "local later" }, { workstream: "demo" });
+        const minted = (
+          conn.prepare("SELECT hlc FROM ops WHERE payload LIKE '%local later%'").get() as {
+            hlc: string;
+          }
+        ).hlc;
+        const above = conn.prepare("SELECT COUNT(*) AS n FROM ops WHERE hlc > ?").get(minted) as {
+          n: number;
+        };
+        // Whether or not the racing op made the snapshot, nothing in the
+        // copy may sort above a later local edit.
+        expect(above.n).toBe(0);
+        const title = conn.prepare("SELECT title FROM tasks WHERE local_id = 'a'").get() as {
+          title: string;
+        };
+        expect(title.title).toBe("local later");
+      });
+    });
+  });
+
+  describe("stale source clock", () => {
+    it("moves the rebuilt clock past the newest copied op even when the carried clock is behind", () => {
+      seedRealisticSource();
+      applyIncomingOp(db, {
+        hlc: "001893121000000.000001.remote",
+        machineId: "remote",
+        groupId: "g",
+        entity: "task",
+        key: "demo/c",
+        op: "put",
+        payload: '{"title":"remote newer"}',
+      });
+      db.prepare("UPDATE machine_identity SET last_wall = 0, last_counter = 0 WHERE id = 1").run();
+      const path = targetPath();
+      rebuildInto(db, { targetPath: path });
+      withTarget(path, (conn) => {
+        const newest = (conn.prepare("SELECT MAX(hlc) AS hlc FROM ops").get() as { hlc: string })
+          .hlc;
+        updateTask(conn, "c", { title: "after" }, { workstream: "demo" });
+        const minted = (
+          conn.prepare("SELECT MAX(hlc) AS hlc FROM ops WHERE payload LIKE '%after%'").get() as {
             hlc: string;
           }
         ).hlc;

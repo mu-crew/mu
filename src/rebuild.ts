@@ -64,7 +64,7 @@ import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { projectLog } from "./apply.js";
 import { type Db, openDb, SYNCED_ENTITIES } from "./db.js";
-import { compareHlc } from "./hlc.js";
+import { compareHlc, type Hlc, parseHlc } from "./hlc.js";
 import { say } from "./messages.js";
 import { withCaptureSuppressed } from "./op-context.js";
 
@@ -218,49 +218,56 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
 
   // Read everything we need from the source FIRST, so the target is only
   // opened once we know the replay can proceed.
-  const identity = source
-    .prepare(
-      "SELECT machine_id, hostname, created_at, last_wall, last_counter FROM machine_identity WHERE id = 1",
-    )
-    .get() as
-    | {
-        machine_id: string;
-        hostname: string | null;
-        created_at: string;
-        last_wall: number;
-        last_counter: number;
-      }
-    | undefined;
-  if (!identity) throw new Error(say("rebuild.no_identity"));
+  // ONE read transaction (a WAL snapshot): a concurrent ingest between
+  // separate SELECTs could otherwise copy an op whose HLC is ahead of the
+  // clock we read.
+  const snapshot = source.transaction(() => {
+    const identity = source
+      .prepare(
+        "SELECT machine_id, hostname, created_at, last_wall, last_counter FROM machine_identity WHERE id = 1",
+      )
+      .get() as
+      | {
+          machine_id: string;
+          hostname: string | null;
+          created_at: string;
+          last_wall: number;
+          last_counter: number;
+        }
+      | undefined;
+    if (!identity) throw new Error(say("rebuild.no_identity"));
 
-  const opRows = source
-    .prepare(
-      `SELECT hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at
-         FROM ops`,
-    )
-    .all() as RawOpRow[];
+    const opRows = source
+      .prepare(
+        `SELECT hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at
+           FROM ops`,
+      )
+      .all() as RawOpRow[];
 
-  // HLC ORDER, not seq order. seq is a local append cursor, so it
-  // reflects the order ops were RECORDED, which for ingested peer ops is
-  // arrival order rather than causal order. Replaying in HLC order is
-  // what makes per-field LWW resolve correctly (see src/apply.ts), and
-  // it is why the rebuild converges to the same state regardless of how
-  // the log happened to be assembled.
-  opRows.sort((a, b) => compareHlc(a.hlc, b.hlc));
+    // HLC ORDER, not seq order. seq is a local append cursor, so it
+    // reflects the order ops were RECORDED, which for ingested peer ops is
+    // arrival order rather than causal order. Replaying in HLC order is
+    // what makes per-field LWW resolve correctly (see src/apply.ts), and
+    // it is why the rebuild converges to the same state regardless of how
+    // the log happened to be assembled.
+    opRows.sort((a, b) => compareHlc(a.hlc, b.hlc));
 
-  const peerRows = source
-    .prepare("SELECT machine_id, last_applied_seq, last_seen_at FROM sync_peers")
-    .all() as Array<{
-    machine_id: string;
-    last_applied_seq: number;
-    last_seen_at: string | null;
-  }>;
+    const peerRows = source
+      .prepare("SELECT machine_id, last_applied_seq, last_seen_at FROM sync_peers")
+      .all() as Array<{
+      machine_id: string;
+      last_applied_seq: number;
+      last_seen_at: string | null;
+    }>;
 
-  const machineLocalLost: MachineLocalLoss[] = [];
-  for (const table of UNREBUILDABLE_TABLES) {
-    const row = source.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
-    if (row.n > 0) machineLocalLost.push({ table, rows: row.n });
-  }
+    const machineLocalLost: MachineLocalLoss[] = [];
+    for (const table of UNREBUILDABLE_TABLES) {
+      const row = source.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
+      if (row.n > 0) machineLocalLost.push({ table, rows: row.n });
+    }
+    return { identity, opRows, peerRows, machineLocalLost };
+  });
+  const { identity, opRows, peerRows, machineLocalLost } = snapshot();
 
   // `force` replaces the target, never merges into it: replaying over an
   // existing DB would keep its foreign rows and ops under our identity.
@@ -342,6 +349,11 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
           if (isProjectable(row.entity)) opsProjected += 1;
           else logOnlyByEntity[row.entity] = (logOnlyByEntity[row.entity] ?? 0) + 1;
         }
+        // Move the clock past the newest copied op, whatever the carried
+        // clock says (a stale identity read, a clock-skewed peer): the next
+        // local mint must sort above everything in the log.
+        advanceClockPast(target, opRows);
+
         // Project through the SAME fold a live apply uses (src/fold.ts):
         // each key is folded once from the whole log, so a rebuild and an
         // ingest cannot disagree. Not replayed op by op.
@@ -380,6 +392,34 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
   } finally {
     target.close();
   }
+}
+
+/** Raise `machine_identity`'s clock to the newest parseable HLC in `rows`
+ *  when it is behind; never lowers it. */
+function advanceClockPast(target: Db, rows: RawOpRow[]): void {
+  let newest: Hlc | undefined;
+  for (const row of rows) {
+    let h: Hlc;
+    try {
+      h = parseHlc(row.hlc);
+    } catch {
+      continue; // an unparseable HLC cannot order anything
+    }
+    if (
+      !newest ||
+      h.wallMs > newest.wallMs ||
+      (h.wallMs === newest.wallMs && h.counter > newest.counter)
+    ) {
+      newest = h;
+    }
+  }
+  if (!newest) return;
+  target
+    .prepare(
+      `UPDATE machine_identity SET last_wall = @wall, last_counter = @counter
+        WHERE id = 1 AND (last_wall < @wall OR (last_wall = @wall AND last_counter < @counter))`,
+    )
+    .run({ wall: newest.wallMs, counter: newest.counter });
 }
 
 /** True iff both paths name the same file on disk. Guards the
