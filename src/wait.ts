@@ -34,7 +34,9 @@
 // that names ITS state (the dialog's `since`, the owner's registry id, the
 // stall token), a blockersOf blocker seen open under `open|` + key. An event
 // is consumed only when it is the one returned, in ONE short transaction
-// guarded by the registration's generation (endWait). A sibling that `first`
+// guarded by the registration's generation (endWait) that first re-reads the
+// cursors: an event another process consumed meanwhile is skipped and the
+// wait selects again. A sibling that `first`
 // did not return stays owed (a timeout or interrupt delivers nothing), a
 // returned event is never delivered again, and an unchanged urgent
 // observation is news once per state change: it never outranks a
@@ -91,6 +93,7 @@ import {
   cursorKey,
   DELEGATE_TOKEN,
   isConsumed,
+  logStallOnce,
   readCursors,
   recordCursors,
 } from "./wait-cursor.js";
@@ -103,6 +106,7 @@ import {
   reapFlip,
   taskOwnerRowId,
 } from "./wait-db.js";
+import { type AgentTrack, rearmLatch, supersededBy } from "./wait-latch.js";
 import { agentOwed, hasDoneMark, setAgentDone } from "./wait-owed.js";
 import { compileTextMatcher, type TextMatcher } from "./wait-regex.js";
 import {
@@ -118,7 +122,6 @@ import {
 } from "./wait-registration.js";
 import {
   type AgentReading,
-  type AgentWatchHandle,
   type CloseOutcome,
   DEFAULT_CTL_STUCK_AFTER_MS,
   DEFAULT_STUCK_AFTER_MS,
@@ -182,26 +185,6 @@ interface StallState {
   job?: Promise<void>;
   result?: StallActionResult;
   carry?: { key: string; stall: Item["stall"] };
-}
-
-interface AgentTrack {
-  ref: WaitRef;
-  explicit: boolean;
-  wasBusy: boolean;
-  /** The ctl run count a (re)watch counts past. */
-  baseline: number | undefined;
-  handle: AgentWatchHandle | undefined;
-  needWatch: boolean;
-  result: AgentReading | undefined;
-  reading: AgentReading | undefined;
-  latched:
-    | { kind: "settled" | "dead" | "input" | "pane-text" | "exited"; reading: AgentReading }
-    | undefined;
-  close: CloseOutcome | undefined;
-  /** The dialog already returned once is still open: not news again until it changes. */
-  muted: boolean;
-  /** Owed with no fence, no cursor: counted from now, said so in the snapshot. */
-  unknownBaseline: boolean;
 }
 
 const refKey = (r: Pick<WaitRef, "kind" | "workstream" | "id">): string =>
@@ -568,28 +551,8 @@ export async function waitForEvents(
     if (close !== undefined) t.close = close;
   };
 
-  /**
-   * Drop a settled latch (its close, handle, result) and watch again past `baseline`. A latch holds
-   * one settled run until it is acted on; a later run always supersedes it (refresh), and a steer
-   * that answers it rearms from the send baseline (driveStalls).
-   */
-  const rearm = (t: AgentTrack, baseline: number): void => {
-    t.latched = undefined;
-    t.close = undefined;
-    t.handle = undefined;
-    t.result = undefined;
-    t.needWatch = opts.watchAgent !== undefined;
-    t.baseline = baseline;
-    t.wasBusy = false;
-  };
-
-  /** The settled run `t` holds, when `r` (same pi process) has settled a LATER one. */
-  const supersededBy = (t: AgentTrack, r: AgentReading): number | undefined => {
-    const held = t.latched?.kind === "settled" ? t.latched.reading : undefined;
-    if (held?.runs === undefined || r.runs === undefined || r.runs <= held.runs) return undefined;
-    if (held.incarnation !== undefined && r.incarnation !== held.incarnation) return undefined;
-    return held.runs;
-  };
+  const rearm = (t: AgentTrack, baseline: number): void =>
+    rearmLatch(t, baseline, opts.watchAgent !== undefined);
 
   /** Fold a watch result (`fromWatch`) or a poll reading into the track. */
   const inputToken = (r: AgentReading): CursorToken => ({
@@ -737,8 +700,9 @@ export async function waitForEvents(
         const t = tracks.get(refKey(ref));
         const held = t === undefined ? undefined : supersededBy(t, r);
         if (t !== undefined && held !== undefined) {
-          // The owner settled a run past the one latched: the latched run is history. Watch again
-          // from it, so the later run is read and its CLOSE applied; a polled agent latches it now.
+          // The owner is another identity, or settled a run past the one latched: the latched run is
+          // history. Watch again from the new baseline, so the newer run is read and its CLOSE
+          // applied; a polled agent latches it now.
           rearm(t, held);
           if (t.needWatch) continue;
           t.wasBusy = true;
@@ -956,12 +920,21 @@ export async function waitForEvents(
         });
         if (!stallEmitted.has(token)) {
           stallEmitted.add(token);
-          emitEvent(
-            db,
-            ref.workstream,
-            "agent.stall",
-            `agent stalled ${ownerRef.name} owns ${ref.id} for ${Math.round(age / 1000)}s`,
-            ownerRef.name,
+          // Once per (owner row, pi incarnation, runs) across waits and processes, not per wait. An
+          // owner with no run count (no ctl) has only its state's start to tell stalls apart.
+          const identity = {
+            agentId: r.agentId ?? taskOwnerRowId(db, ref),
+            incarnation: `${r.incarnation ?? ""}${r.runs === undefined ? `|since:${r.since ?? ""}` : ""}`,
+            runs: r.runs ?? 0,
+          };
+          logStallOnce(db, ref, identity, () =>
+            emitEvent(
+              db,
+              ref.workstream,
+              "agent.stall",
+              `agent stalled ${ownerRef.name} owns ${ref.id} for ${Math.round(age / 1000)}s`,
+              ownerRef.name,
+            ),
           );
         }
         return item;
@@ -1429,6 +1402,71 @@ export async function waitForEvents(
     throw fatal.error;
   };
 
+  let committed = false;
+  let applied = true;
+  /**
+   * Deliver what `build` handed out, in ONE immediate transaction: re-read the callers' cursors (a
+   * wait in another process may have consumed `event` since this one read them), then end each
+   * caller's wait and record the tokens. A returned event is consumed (its token written); a
+   * completed one also leaves the registration; an urgent one (input, stall, a dead task) stays
+   * owed. false = `event` is already consumed: nothing is written, `delivered` is cleared and the
+   * caller selects again (with the cursors just read). Without a consuming caller: a no-op.
+   */
+  const commit = (event?: Item): boolean => {
+    if (!consumes) return true;
+    const ok = db
+      .transaction((): boolean => {
+        for (const c of callers) cursorsBy.set(c, readCursors(db, c));
+        if (
+          // Only news this wait saw as unconsumed can turn stale; the re-read hides it next time.
+          event?.token !== undefined &&
+          event.ready &&
+          event.suppressible &&
+          isConsumed(cursorOf(event.ckey ?? event.key), event.token)
+        ) {
+          return false;
+        }
+        const completed = delivered.filter(
+          (i) =>
+            i.kind === "closed" ||
+            i.kind === "settled" ||
+            i.kind === "pane-text" ||
+            i.kind === "exited" ||
+            i.kind === "delegate" ||
+            (i.kind === "dead" && i.ref.kind === "agent"),
+        );
+        // Each delivered ref is consumed by the caller that owns it, guarded by that caller's
+        // wait generation.
+        for (const c of callers) {
+          const mine = completed.filter((i) => ownerOf(i.key) === c);
+          const tokens = delivered
+            .filter((i) => i.token !== undefined && ownerOf(i.ckey ?? i.key) === c)
+            .flatMap((i) =>
+              i.token === undefined ? [] : [{ key: i.ckey ?? i.key, token: i.token }],
+            );
+          const b = begun.get(c);
+          if (b !== undefined) {
+            const ended = endWait(
+              db,
+              c,
+              b.generation,
+              mine.map((i) => registered(i.ref)),
+            );
+            if (!ended.applied) {
+              applied = false;
+              continue;
+            }
+          }
+          recordCursors(db, c, tokens);
+        }
+        return true;
+      })
+      .immediate();
+    if (ok) committed = true;
+    else delivered.length = 0;
+    return ok;
+  };
+
   let result: WaitResult | undefined;
   try {
     for (;;) {
@@ -1442,9 +1480,11 @@ export async function waitForEvents(
         const items = evaluate();
         driveStalls(items);
         const chosen = select(items);
-        result = chosen
+        const r = chosen
           ? build(chosen.event.kind ?? "closed", items, chosen)
           : build("heartbeat", items);
+        if (!commit(chosen?.event)) continue;
+        result = r;
         break;
       }
       await refresh();
@@ -1456,7 +1496,10 @@ export async function waitForEvents(
       if (items.length === 0) throw new WaitNothingError();
       const chosen = select(items);
       if (chosen !== undefined) {
-        result = build(chosen.event.kind ?? "closed", items, chosen);
+        const r = build(chosen.event.kind ?? "closed", items, chosen);
+        // Consumed by another process since this wait read its cursors: select again.
+        if (!commit(chosen.event)) continue;
+        result = r;
         break;
       }
       if (!all && items.every((i) => i.done)) {
@@ -1497,44 +1540,7 @@ export async function waitForEvents(
     opts.signal?.removeEventListener("abort", onAbort);
     watchAbort.abort();
     if (consumes) {
-      // A returned event is consumed (its token written); a completed one also
-      // leaves the registration. An urgent one (input, stall, a dead task) stays owed.
-      const completed = delivered.filter(
-        (i) =>
-          i.kind === "closed" ||
-          i.kind === "settled" ||
-          i.kind === "pane-text" ||
-          i.kind === "exited" ||
-          i.kind === "delegate" ||
-          (i.kind === "dead" && i.ref.kind === "agent"),
-      );
-      // Each delivered ref is consumed by the caller that owns it, in one
-      // transaction guarded by that caller's wait generation.
-      let applied = true;
-      db.transaction(() => {
-        for (const c of callers) {
-          const mine = completed.filter((i) => ownerOf(i.key) === c);
-          const tokens = delivered
-            .filter((i) => i.token !== undefined && ownerOf(i.ckey ?? i.key) === c)
-            .flatMap((i) =>
-              i.token === undefined ? [] : [{ key: i.ckey ?? i.key, token: i.token }],
-            );
-          const b = begun.get(c);
-          if (b !== undefined) {
-            const ended = endWait(
-              db,
-              c,
-              b.generation,
-              mine.map((i) => registered(i.ref)),
-            );
-            if (!ended.applied) {
-              applied = false;
-              continue;
-            }
-          }
-          recordCursors(db, c, tokens);
-        }
-      }).immediate();
+      if (!committed) commit();
       if (result !== undefined) {
         result.cursor = Object.fromEntries(callers.flatMap((c) => [...readCursors(db, c)]));
         if (!applied) result.superseded = true;
