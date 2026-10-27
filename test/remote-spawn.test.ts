@@ -669,7 +669,7 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     expect(getTask(db, "t1", "auth")).toMatchObject({ ownerId: null, status: "OPEN" });
     expect(state.panes.size).toBe(0);
     expect(channels()).toEqual([]);
-    const rm = execCalls().find((c) => c.includes("status --porcelain"));
+    const rm = execCalls().find((c) => c.includes("MU_RM"));
     expect(rm).toContain(WT);
     expect(rm).toContain(SHA);
   });
@@ -679,7 +679,7 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     for (let i = 0; i < 4; i++) {
       await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
     }
-    expect(execCalls().filter((c) => c.includes("status --porcelain"))).toHaveLength(4);
+    expect(execCalls().filter((c) => c.includes("MU_RM"))).toHaveLength(4);
     expect(listRemoteRecoveries(db)).toEqual([]);
   });
 
@@ -688,6 +688,24 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     setMode("rmkept");
     await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
     expect(listRemoteRecoveries(db)).toMatchObject([{ host: "dev", cwd: WT, name: "worker-1" }]);
+  });
+
+  it("while that record names the path, the next spawn's prepare may not reclaim a leftover there", async () => {
+    extensionOn = false;
+    setMode("rmkept");
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
+    setMode("ok");
+    extensionOn = true;
+    const before = execCalls().length;
+    await spawn({ worktree: true }).catch(() => undefined);
+    const prep = execCalls()[before] ?? "";
+    expect(prep).toContain("worktree add");
+    expect(prep).not.toContain("not an unused mu leftover");
+  });
+
+  it("with no record for the name, prepare may reclaim its own lost-answer leftover", async () => {
+    await spawn({ worktree: true });
+    expect(execCalls()[0]).toContain("not an unused mu leftover");
   });
 
   it("without --worktree an unsent failure still frees the lease", async () => {

@@ -53,7 +53,9 @@ mu agent spawn worker-1 -w auth --host dev --worktree --task build --send 'Read:
   keeps it while the pane lives (`--max-sessions` counts it). A full host
   refuses the spawn up front and names the holder. A failed spawn removes
   only the worktree it made (still clean, still at its base) and frees
-  the slot.
+  the slot. If the host's answer was lost after it made the worktree (a
+  timeout), spawning the same name again takes that tree over while it is
+  clean, at its base and unused; anything else at the path refuses.
 - The pane is the transport: closing it, or its death, ends the agent
   and frees the slot. tmux only; herdr refuses `--host` in one line.
 - A non-pi `--command` (`--host dev --command 'npm test'`, no `--cli pi`) is a

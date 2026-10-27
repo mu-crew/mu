@@ -68,30 +68,70 @@ export interface RemoteSite {
   base: string | null;
 }
 
+/** The file in a remote worktree's own git dir that says mu's prepare made it (`git worktree remove` takes it along). */
+const PREPARED_MARK = "mu-prepared";
+
+/**
+ * Remote lines reclaiming the tree at `$wt` (exit 4 with the reason, else fall
+ * through): only mu's own unused leftover, the one a lost answer leaves. It
+ * carries the prepare mark, is a worktree of `$root`, is clean and at `$base`,
+ * and nothing has its cwd or an open file in it (the close rule's scan).
+ */
+function reclaimLines(): string[] {
+  return [
+    `fail() { echo "$wt already exists and is not an unused mu leftover ($*)" >&2; exit 4; }`,
+    `gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || fail "not a git worktree"`,
+    `[ -f "$gd/${PREPARED_MARK}" ] || fail "not made by mu"`,
+    `[ "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)" = "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)" ] || fail "not a worktree of $root"`,
+    `[ "$(git -C "$wt" rev-parse --verify HEAD)" = "$base" ] || fail "HEAD is not $base"`,
+    `st=$(git -C "$wt" status --porcelain) || fail "git status failed"`,
+    `[ -z "$st" ] || fail "uncommitted work"`,
+    `aside="$wt"`,
+    ...quiescenceLines({ proc: "/proc", lsof: "lsof" }),
+  ];
+}
+
 /**
  * The remote half of a spawn, under `lease`: with `worktree`, one exec makes a
  * detached `git worktree add` of `from` (default the repo's HEAD) at a fixed
- * path and prints its base and absolute path; otherwise one exec resolves the
- * cwd (`cwd`, default the profile's repo; a leading `~` expands remotely).
- * The answer is a tagged line, because a login shell may print noise first;
- * no answer is an error, never a guessed path.
+ * path, marks it as prepare's own, and prints its base and absolute path;
+ * otherwise one exec resolves the cwd (`cwd`, default the profile's repo; a
+ * leading `~` expands remotely). The answer is a tagged line, because a login
+ * shell may print noise first; no answer is an error, never a guessed path.
+ *
+ * A tree already at the path refuses, unless `reclaim` and it is the unused
+ * leftover of an earlier prepare whose answer was lost (`reclaimLines`): that
+ * one is answered as if just made, so a retry of the spawn takes it over.
  */
 export async function prepareRemote(
   db: Db,
   lease: HostLease,
   profile: HostProfile,
-  opts: { workstream: string; name: string; worktree: boolean; from?: string; cwd?: string },
+  opts: {
+    workstream: string;
+    name: string;
+    worktree: boolean;
+    from?: string;
+    cwd?: string;
+    /** May a leftover at the path be reclaimed (false while a recovery record names it). */
+    reclaim?: boolean;
+  },
 ): Promise<RemoteSite> {
   const root = remotePathWord(profile.repo);
+  const answer = `printf 'MU_WT %s %s\\n' "$base" "$(cd "$wt" && pwd -P)"`;
   const body = opts.worktree
     ? [
         `root=${root}`,
         `wt=${remoteWorktreeWord(opts.workstream, opts.name)}`,
-        `[ ! -e "$wt" ] || { echo "$wt already exists" >&2; exit 4; }`,
         `base=$(git -C "$root" rev-parse --verify ${shellQuote(`${opts.from ?? "HEAD"}^{commit}`)}) || exit 5`,
+        opts.reclaim === true
+          ? `if [ -e "$wt" ]; then\n${reclaimLines().join("\n")}\n${answer}\nexit 0\nfi`
+          : `[ ! -e "$wt" ] || { echo "$wt already exists" >&2; exit 4; }`,
         `mkdir -p "$(dirname "$wt")" || exit 6`,
-        `git -C "$root" worktree add --detach "$wt" "$base" >&2 || { git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1; rm -rf "$wt"; exit 7; }`,
-        `printf 'MU_WT %s %s\\n' "$base" "$(cd "$wt" && pwd -P)"`,
+        `undo() { git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1; rm -rf "$wt"; exit 7; }`,
+        `git -C "$root" worktree add --detach "$wt" "$base" >&2 || undo`,
+        `gd=$(git -C "$wt" rev-parse --absolute-git-dir) && : > "$gd/${PREPARED_MARK}" || undo`,
+        answer,
       ].join("\n")
     : `cd ${remotePathWord(opts.cwd ?? profile.repo)} && printf 'MU_CWD %s\\n' "$(pwd -P)"`;
   const r = await runLeasedTemplate(
@@ -105,11 +145,15 @@ export async function prepareRemote(
   const what = opts.worktree
     ? "creating the remote worktree failed"
     : "the remote cwd is unreachable";
+  // No answer after the exec may have made the tree: say how a retry takes it over.
+  const lost = opts.worktree
+    ? `; if it made the worktree, spawning ${opts.name} again reclaims it while it is unused`
+    : "";
   if (r.exitCode === null) {
     throw new RemotePrepareError(
       profile.name,
       what,
-      `timed out after ${REMOTE_PREPARE_TIMEOUT_MS}ms`,
+      `timed out after ${REMOTE_PREPARE_TIMEOUT_MS}ms${lost}`,
     );
   }
   if (r.exitCode !== 0) {
@@ -132,7 +176,7 @@ export async function prepareRemote(
       if (m?.[1] !== undefined) return { cwd: m[1], base: null };
     }
   }
-  throw new RemotePrepareError(profile.name, what, "the host's answer named no path");
+  throw new RemotePrepareError(profile.name, what, `the host's answer named no path${lost}`);
 }
 
 /**

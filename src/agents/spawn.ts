@@ -55,6 +55,7 @@ import {
   remoteShellCommand,
   removeRemoteWorktree,
 } from "../remote-agent.js";
+import { recoveriesFor } from "../remote-recovery.js";
 import { resolveActorIdentity } from "../tasks/claim.js";
 // `sleep` is the shared poll-sleep TEST SEAM (setSleepForTests), not a
 // multiplexer operation, so it stays on the tmux module rather than
@@ -1086,6 +1087,11 @@ async function prestageRemote(
         name: opts.name,
         worktree: true,
         ...(opts.from !== undefined ? { from: opts.from } : {}),
+        // An unused leftover of a prepare whose answer was lost is taken over;
+        // never while a removed agent's recovery record may name that tree.
+        reclaim: !recoveriesFor(db, opts.workstream, opts.name).some(
+          (r) => r.host === profile.name,
+        ),
       });
       return {
         path: made.cwd,
