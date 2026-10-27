@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { createElement } from "react";
 import stringWidth from "string-width";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { insertAgent } from "../src/agents.js";
 import { App, layout } from "../src/cli/tui/app.js";
 import {
   cursorIndex,
@@ -88,14 +89,15 @@ describe("model", () => {
     ).toBe("next (seq): mu a ; mu b");
   });
 
-  it("filters are scoped per tab and workstream; Agents/Log are workstream-wide", () => {
+  it("filters are scoped per tab and workstream", () => {
     expect(scopeKey("tasks", "a")).not.toBe(scopeKey("tasks", "b"));
     expect(scopeKey("tasks", "a")).not.toBe(scopeKey("dag", "a"));
-    expect(scopeKey("agents", "a")).toBe(scopeKey("agents", "b"));
+    expect(scopeKey("agents", "a")).not.toBe(scopeKey("agents", "b"));
+    expect(scopeKey("log", "a")).not.toBe(scopeKey("log", "b"));
   });
 
   it("an agent whose tool is not reported shows '?', not 'none'; a reported one shows elapsed", () => {
-    const base = { key: "w/a", state: "idle", tasks: [], task: null } as never;
+    const base = { key: "w/a", workstream: "w", state: "idle", tasks: [], task: null } as never;
     const snap = empty({
       agents: [
         base,
@@ -103,11 +105,27 @@ describe("model", () => {
         { ...(base as object), key: "w/c", tool: null },
       ] as never,
     });
-    const [a, b, c] = tabRows("agents", snap, null, NO_FILTER, 0);
+    const [a, b, c] = tabRows("agents", snap, "w", NO_FILTER, 0);
     expect(a?.text).toContain("tool ?");
     expect(c?.text).toContain("tool -"); // reported none: not unknown
     expect(b?.text).toContain("bash 1m05s");
     expect(formatElapsed(3_700_000)).toBe("1h01m");
+  });
+
+  it("Agents: bare names for the selected workstream, @host only on a remote agent", () => {
+    const a = { workstream: "w", state: "busy", tool: null } as const;
+    const snap = empty({
+      agents: [
+        { ...a, key: "w/local", name: "local", host: null, tasks: [], task: "w/t1" },
+        { ...a, key: "w/far", name: "far", host: "dev", tasks: [], task: "other/t2" },
+        { ...a, key: "o/x", workstream: "o", name: "x", host: null, tasks: [], task: null },
+      ] as never,
+    });
+    const [l, f, ...rest] = tabRows("agents", snap, "w", NO_FILTER, 0);
+    expect(l?.text).toMatch(/^local\s+busy\s+t1\s+tool -$/);
+    expect(l?.text).not.toContain("@");
+    expect(f?.text).toMatch(/^far@dev\s+busy\s+other\/t2/);
+    expect(rest).toEqual([]);
   });
 
   it("the cursor follows its key when rows reorder, and clamps", () => {
@@ -237,8 +255,32 @@ describe("tabs (Ink over a real snapshot)", () => {
     expect(ui.screen()).not.toContain("a1");
     await ui.press("\t"); // Agents: none registered
     await ui.until((s) => s.includes("nothing here"));
-    await ui.press("\t"); // Log: every workstream
-    await ui.until((s) => s.includes("alpha") && s.includes("beta"));
+    await ui.press("\t"); // Log: the selected workstream's ops
+    await ui.until((s) => s.includes("beta"));
+    expect(ui.screen()).not.toContain("task add a1");
+    ui.unmount();
+  });
+
+  it("Agents and Log follow the workstream switch ([ ])", async () => {
+    add("alpha", "a1");
+    add("beta", "b1");
+    insertAgent(db, { name: "amy", workstream: "alpha", paneId: "%1" });
+    insertAgent(db, { name: "bob", workstream: "beta", paneId: "%2" });
+    const ui = await open({ columns: 80, rows: 20 }, "alpha");
+    await ui.until((s) => s.includes("a1"));
+    await ui.press("\t"); // DAG
+    await ui.press("\t"); // Agents
+    await ui.until((s) => s.includes("amy"));
+    expect(ui.screen()).not.toContain("bob");
+    await ui.press("]");
+    await ui.until((s) => s.includes("bob"));
+    expect(ui.screen()).not.toContain("amy");
+    await ui.press("\t"); // Log: beta's ops only
+    await ui.until((s) => s.includes("b1"));
+    expect(ui.screen()).not.toContain("a1");
+    await ui.press("[");
+    await ui.until((s) => s.includes("a1"));
+    expect(ui.screen()).not.toContain("b1");
     ui.unmount();
   });
 

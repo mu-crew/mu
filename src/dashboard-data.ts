@@ -175,6 +175,8 @@ export interface DashboardOptions {
   callers?: readonly string[];
   /** Log tail size (default 100). */
   logLimit?: number;
+  /** Read the log tail of this workstream only (a live one), leaving every other panel unscoped. */
+  logWorkstream?: string;
 }
 
 const DEFAULT_STATUS: readonly TaskStatus[] = ["OPEN", "IN_PROGRESS"];
@@ -362,8 +364,9 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     opts.callers ?? (opts.caller === null ? [] : [opts.caller]),
     opts.workstream,
   );
+  const logWs = opts.logWorkstream ?? opts.workstream;
   const log = listLogs(db, {
-    ...(opts.workstream !== undefined ? { workstream: opts.workstream } : {}),
+    ...(logWs !== undefined ? { workstream: logWs } : {}),
     limit: opts.logLimit ?? DEFAULT_LOG_LIMIT,
   }).map((row) => ({
     ...logItem(row, true).item,
