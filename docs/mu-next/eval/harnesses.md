@@ -96,7 +96,8 @@ owns nothing.** `currentCallers()` is the managed `<ws>/<agent>` or
 `mu wait -w o1` after its own spawns is a UsageError. The message names the
 fix (refs). Both orchestrators recovered in one step. orchestrator-loop step 4
 says "`mu wait -w <ws>` waits on what you started", which is true only inside
-pi or a managed pane. The guide section says to wait on refs.
+pi or a managed pane. The guide section says to wait on refs; the recipe is at its 250-word cap,
+so it is unchanged (prose budget).
 
 **F6 (P3, fixed): `task claim --for <non-pi>` suggested a send tmux refuses.**
 `next` was `mu agent send <w> 'Claim done: ...'` (exit 4 on tmux). Fixed in
