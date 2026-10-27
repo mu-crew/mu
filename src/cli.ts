@@ -3,14 +3,13 @@
 // One namespace/command per verb group (see `mu --help` for the current
 // list), each registered via commander as a thin wrapper around the
 // corresponding programmatic function in src/. The real work happens in
-// agents.ts, tasks.ts, tracks.ts, db.ts, mux.ts; this file is just
+// agents.ts, tasks.ts, db.ts, mux.ts; this file is just
 // argument parsing, output formatting, and error-to-exit-code
 // translation.
 //
 // Layout: cli.ts is the wiring root. Pure rendering helpers live in
 // `src/cli/format.ts`; typed-error → exit-code mapping + the `handle`
-// wrapper live in `src/cli/handle.ts` (extracted by
-// review_cli_ts_past_refactor_signal). cli.ts re-exports their public
+// wrapper live in `src/cli/handle.ts`. cli.ts re-exports their public
 // surface so existing tests + cli/* importers don't need to change
 // import paths. The exit-code catalogue is documented at the top of
 // `src/cli/handle.ts`.
@@ -220,7 +219,6 @@ export async function resolveExistingWorkstream(db: Db, explicit?: string): Prom
 //   - qualified `<ws>/<name>` → resolves directly, no -w needed
 // Implemented as a parse-at-CLI-entry helper so the SDK signatures
 // stay workstream-explicit (no entity ref shape leaks below cli.ts).
-// See verb_arg_qualified_workstream_name and the OUTPUT_LABELS_AUDIT.
 
 export interface ParsedRef {
   /** Workstream prefix when the input was `<ws>/<name>`; undefined for

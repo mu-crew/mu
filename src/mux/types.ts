@@ -349,7 +349,7 @@ export interface MuxBackend {
   /**
    * Name of the session the CALLER is running inside, or undefined when
    * outside one.
-   * @deprecated scope fallback, removed by the -w unit.
+   * Suggestion only (the no-scope hint, the TUI start workstream); never routes a verb.
    */
   currentSessionName(): Promise<string | undefined>;
   /** Version + ambient facts for `mu doctor`. Never throws: an

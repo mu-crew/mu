@@ -4,44 +4,32 @@
 // enables WAL + foreign keys, applies the schema idempotently, and
 // exposes the live Database handle.
 //
-// Schema (v12 — v11's task substates plus the kernel additions below):
-//   - 6 entity tables: workstreams, agents, tasks, task_edges,
-//                      task_notes, worktrees
-//   - 1 machine-local table: task_auto (per-task auto-dispatch state); v13
-//     adds delegate_calls, wait_cursors, agent_settles, host_profiles,
-//     host_channels, spawn_receipts, human_needs, wait_registrations,
-//     wait_action_receipts, wait_resumes and remote_recovery
-//   - 1 ops log:       ops        (the single append-only record of
-//                                  every change — VISION.md § 2b)
-//   - 2 sync tables:   sync_peers (per-peer watermarks),
-//                      sync_fingerprints (caught-up fingerprints)
-//   - 4 meta tables:   schema_version, machine_identity,
-//                      op_ctx (op context), op_dying (delete-key stash)
-//   - 1 lookup table:  task_substates (legal (status, substate) pairs,
-//                                      seeded from code when missing)
-//   - 4 views:         ready, blocked, blockers, goals
-//   => EXPECTED_TABLES is exactly 15 entries at v12 (26 at v13: see there).
+// Schema (v13; EXPECTED_TABLES below is the exact list, 26 tables), by group:
+//   - entity (portable: they sync): workstreams, tasks, task_edges, task_notes.
+//     tasks carries substate (status qualifier; a composite FK
+//     (status, substate) -> task_substates, DEFERRABLE INITIALLY DEFERRED,
+//     checked at COMMIT so apply's one-field-at-a-time UPDATEs pass), kind,
+//     wave, scored, dispatch_host; task_notes carries kind.
+//   - machine-local entity: agents (with cwd, base, spawner, host,
+//     collected_head), worktrees, task_auto, delegate_calls, human_needs,
+//     wait_cursors, wait_registrations, wait_resumes, wait_action_receipts,
+//     agent_settles, spawn_receipts, host_profiles, host_channels,
+//     remote_recovery
+//   - ops log:  ops (the single append-only record of every change:
+//               VISION.md § 2b)
+//   - sync:     sync_peers (per-peer watermarks),
+//               sync_fingerprints (caught-up fingerprints)
+//   - meta:     schema_version, machine_identity, op_ctx (op context),
+//               op_dying (delete-key stash)
+//   - lookup:   task_substates (legal (status, substate) pairs, seeded
+//               from code when missing)
+//   - views:    ready, blocked, blockers, goals
+// PORTABLE_TABLES / MACHINE_LOCAL_TABLES classify every table.
 //
-// v12 is additive over v11: workstreams.torn_down_at (soft teardown),
-// agents.cwd / agents.base (worktree path and the commit it forked
-// from), tasks.scored / tasks.dispatch_host, task_notes.kind, the
-// task_auto table, the blockers view, and SQL defaults 50 / 1 on
-// tasks.impact / effort_days (still NOT NULL). The synced fields
-// (torn_down_at, scored, dispatch_host, kind) ride v2 segment lines only
-// (src/segment-line.ts); a v11 DB is refused, there is no ladder.
-//
-// v11 adds tasks.substate, which qualifies status (OPEN/parked,
-// CLOSED/wontfix, ...). A composite FK (status, substate) ->
-// task_substates, DEFERRABLE INITIALLY DEFERRED, is the only guard on
-// the pair: it is checked at COMMIT, so apply's one-field-at-a-time
-// UPDATEs pass as long as the pair is valid when the transaction ends.
-//
-// v9 is a BREAKING, migration-free redesign. It DROPS v8's four
-// separate change-recording mechanisms — `agent_logs`, `snapshots`,
-// `workstream_sync`, and the five `archived_*` tables — and replaces
-// all of them with one **ops log**. Sync and history
-// are queries or replays over that log (docs/VOCABULARY.md § op,
-// ops log, watermark).
+// v9 dropped v8's separate change-recording mechanisms (`agent_logs`,
+// `snapshots`, `workstream_sync`, the `archived_*` tables) for the one
+// **ops log**; sync and history are queries or replays over it
+// (docs/VOCABULARY.md § op, ops log, watermark).
 //
 // The surrogate-INTEGER-PK discipline introduced in v5 is unchanged:
 // per docs/architecture/sdk.md § Surrogate-PK and SDK-boundary discipline,
@@ -945,7 +933,7 @@ CREATE VIEW goals AS
      );
 `;
 
-// ─── v12 SCHEMA ───────────────────────────────────────────────────────
+// ─── SCHEMA (v13) ───────────────────────────────────────────────────────
 //
 // Per docs/architecture/sdk.md § Surrogate-PK and SDK-boundary discipline.
 // Every entity table has:

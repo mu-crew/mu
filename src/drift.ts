@@ -161,7 +161,7 @@ export function checkCheapDriftInvariant(db: Db): CheapDriftReport {
     {
       // Notes are keyed <task-key>#<origin-id> and the origin id is the
       // AUTHORING machine's surrogate id, which need not match ours (see
-      // src/apply.ts § applyNotePut). So match on the task-key PREFIX
+      // src/apply.ts § syncNotes). So match on the task-key PREFIX
       // rather than the exact key: the question here is "does the log
       // know about a note on this task at all", not "which note".
       //
@@ -258,7 +258,7 @@ const SNAPSHOT_SQL: Record<string, string> = {
             FROM tasks t JOIN workstreams w ON w.id = t.workstream_id`,
   // Notes are a GROW-ONLY SET whose local surrogate id is not portable,
   // so identity for diffing is (task, author, content, created_at) —
-  // exactly the identity applyNotePut uses for its insert-if-absent check. Using the
+  // exactly the identity syncNotes (src/apply.ts) folds notes by. Using the
   // '#<id>' key here would report drift on every note that replayed to a
   // different rowid, which is normal and not drift.
   //

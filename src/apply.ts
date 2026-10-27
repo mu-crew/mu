@@ -158,7 +158,7 @@ function parseTaskKey(key: string): { workstream: string; localId: string } {
  *  cannot contain '#', so the LAST '#' separates. The origin id is
  *  validated as present (a key without one is malformed) but not
  *  returned: it identifies the note on its ORIGIN machine only, and
- *  `applyNotePut` uses content identity instead. See its comment. */
+ *  `syncNotes` uses content identity instead. See its comment. */
 function parseNoteKey(key: string): { taskKey: string } {
   const hash = key.lastIndexOf("#");
   if (hash <= 0 || hash === key.length - 1) throw new OpKeyMalformedError("note", key);

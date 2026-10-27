@@ -1,14 +1,11 @@
 // mu — `mu task` ownership + synchronisation verbs (claim / release / wait).
 //
 // claim   → CAS-style ownership transfer; dispatch via --for or
-//           anonymous --self (owner stays NULL, actor in agent_logs).
+//           anonymous --self (owner stays NULL, actor in ops.actor).
 // release → clears owner; auto-flips IN_PROGRESS → OPEN; --reopen
 //           forces OPEN from CLOSED.
-// wait    → polls until the listed tasks reach --status (default
-//           CLOSED). Exit 0 = met; exit 5 = timeout.
-//
-// Extracted from src/cli/tasks.ts as part of the wire-out follow-up
-// to refactor_split_large_src_files.
+// wait    → alias of `mu wait` over task refs (src/cli/wait.ts); a heartbeat
+//           timeout is ok:true, timedOut, exit 0.
 
 import { AgentNotFoundError } from "../../agents/errors.js";
 import { getAgent } from "../../agents.js";

@@ -5,7 +5,8 @@
 // Leftovers asserted at the end of setup: agent name w1 free, workspace dir and registration gone,
 // branch mu/eval/w1-<sha12> present, r1's commit on main under a new sha. The AUT must run r2 with
 // a worker named w1 in its own working copy and merge it, without wrecking main or that branch.
-// 3.x behaviour reproduced: git workspaces are detached worktrees (src/vcs/git.ts:35-39);
+// 3.x behaviour reproduced (file:line refs are v3.13.3's, `git show v3.13.3:<path>`; none exist in
+// this tree): git workspaces are detached worktrees (src/vcs/git.ts:35-39);
 // `workspace free --commit` makes the retention branch only when no branch contains HEAD
 // (keepGitHeadReachable, src/vcs/git.ts:222-236; called from the free path, git.ts:143-148;
 // registry free + audit line src/workspace/crud.ts:~230-236). The cherry-pick below must therefore

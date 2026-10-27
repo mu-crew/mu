@@ -3,7 +3,7 @@
 // command, and the wait-specific bound.
 //
 // Pure: no DB, no I/O. cmdWait (src/cli/wait.ts) builds a WaitResult and hands
-// it here. The shape is the README's: `firing` (alias `event`), `exit`,
+// it here. The shape (docs/VOCABULARY.md, "wait event"): `firing` (alias `event`), `exit`,
 // `timedOut`, `snapshots`, `cursor`, `resume` (the stored handle, see
 // src/wait-resume.ts; null with `resumeWhy` when nothing is left to wait for).
 
@@ -150,7 +150,7 @@ export function snapshotRecord(s: WaitSnapshot, textCap: number): Record<string,
   return out;
 }
 
-/** The event as the README names it: kind, typed ref, incarnation, runs. */
+/** The event record (docs/VOCABULARY.md, "wait event"): kind, typed ref, incarnation, runs. */
 export function eventRecord(e: WaitEvent): Record<string, unknown> {
   return {
     kind: e.kind,

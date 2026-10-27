@@ -1,32 +1,18 @@
-// mu — the log surface, as a thin shim over the **ops log**.
+// mu — the log surface over the **ops log**: appendLog / listLogs / latestSeq /
+// emitEvent / lastClaimActor / lastClaimEventAt.
 //
-// @deprecated — v2-log-verb replaces this module. v9 dropped the
-// `agent_logs` table; `ops` is now the single append-only record of
-// every change (VISION.md § 2b). Rather than rewrite ~25 consumers in
-// the schema commit, this module keeps its legacy signatures
-// (appendLog / listLogs / latestSeq / emitEvent) and reads and writes
-// `ops` rows underneath. v2-capture makes triggers the real writers
-// and v2-log-verb re-renders `mu log` from intents; both delete
-// chunks of this file.
-//
-// Shim mapping (legacy log row -> op):
+// `ops` is the single append-only record of every change (VISION.md § 2b); a
+// log row is an op, read through the column mapping below:
 //   kind       -> ops.entity     ('message' | 'event' | ...)
 //   source     -> ops.actor
 //   workstream -> ops.key        (natural key; '' = machine-wide)
-//   payload    -> ops.payload    (raw text, not JSON, until v2-capture)
-//   seq        -> ops.seq        (same AUTOINCREMENT cursor semantics)
+//   payload    -> ops.payload
+//   seq        -> ops.seq        (AUTOINCREMENT cursor)
 //
-// `ops.hlc` is now a REAL HLC minted by `nextHlc` (src/hlc.ts). The old
-// placeholder `<iso>|<uuid>` is gone: `parseHlc` deliberately rejects
-// that shape as a tripwire, so leaving it would have failed loudly the
-// moment anything downstream read the log in HLC order.
-//
-// `group_id` is still a fresh uuid per entry rather than the ambient
-// **op context** group. That is correct for this module's remaining
-// callers, which are log APPENDS (`mu log "<text>"`, event breadcrumbs) —
-// each is its own user-visible action, not part of a row-mutation
-// group. Rows written through the capture triggers get the ambient
-// group; these are hand-written log lines, not captured mutations.
+// `ops.hlc` is minted by `nextHlc` (src/hlc.ts). `group_id` is a fresh uuid per
+// entry, not the ambient **op context** group: these are hand-written log
+// lines and event breadcrumbs, each its own user-visible action. Rows written
+// through the capture triggers get the ambient group.
 
 import { randomUUID } from "node:crypto";
 import { type Db, SYNCED_ENTITIES } from "./db.js";
@@ -80,7 +66,7 @@ interface RawLogRow {
   created_at: string;
 }
 
-/** SELECT clause mapping op columns back onto the legacy log row shape.
+/** SELECT clause mapping op columns back onto the log row shape.
  *  `ops.key` already holds the operator-facing workstream name (the
  *  natural key), so there is no join to do; '' means machine-wide and
  *  is normalised back to NULL in `rowFromDb`. */
@@ -98,23 +84,10 @@ const SELECT_LOG_COLS = `
 
 const LOG_FROM_JOIN = "FROM ops l";
 
-// WHY THERE IS NO LONGER AN ENTITY FILTER (v2-retire-log-shim)
-//
-// v2-capture briefly left `ops` holding the SAME change twice: once as
-// a typed op from the trigger (intent='task.update', key='demo/t1',
-// JSON payload) and once as a prose breadcrumb from `emitEvent`
-// (intent=NULL, key='demo', free text). A filter pinning `mu log` to
-// the prose entities was needed so a single `task add` did not surface
-// twice.
-//
-// The duplicate prose emits are gone, so the filter's reason to exist
-// went with them. `mu log` now reads EVERY op, which is what
-// docs/VOCABULARY.md § log entry has always claimed ("a rendered op...
-// not a distinct table"). Payloads for captured ops are still raw JSON;
-// v2-log-verb renders prose from `intent`. Uglier for now, honest, and
-// no longer lossy: a peer's synced ops appear in `mu log` too, which
-// prose events could never do (they were machine-local by accident of
-// entity='event' not being in SYNCED_ENTITIES).
+// `mu log` reads EVERY op, no entity filter: docs/VOCABULARY.md § log entry
+// defines it as a rendered op, not a distinct table. A peer's synced ops
+// appear too, which machine-local prose events could not do. src/log-render.ts
+// renders each row from `intent`; captured payloads stay raw JSON.
 //
 // `latestSeq` deliberately shares this same "no filter" shape. When the
 // two disagreed, `mu log --tail` started its cursor past rows the
@@ -225,7 +198,7 @@ const TOUCH_OP_FILTER = `NOT (
 
 /** Sentinel stored in `ops.key` for machine-wide entries (ops.key is
  *  NOT NULL). Exported so the few call sites that query `ops` directly
- *  agree with the shim. */
+ *  agree with this module. */
 export const MACHINE_WIDE_KEY = "";
 
 // ─── group-id prefix resolution ───────────────────────────────────
@@ -428,7 +401,7 @@ export interface ListLogsOptions {
    *  re-sorted oldest-first. */
   limit?: number;
   source?: string;
-  /** Filter by `ops.entity` (the legacy `kind` column). */
+  /** Filter by `ops.entity` (`kind` on a log row). */
   kind?: string;
   /** Filter by structured `ops.intent`, e.g. 'task.close'. */
   intent?: string;
@@ -561,9 +534,8 @@ export function latestSeq(db: Db, workstream?: string): number {
  * (workstreams, tasks, task_edges, task_notes), so every task and
  * workstream mutation is already an op with a real `intent` and a real
  * natural key. Anything that mutates one of those tables must NOT call
- * this — that was the duplication v2-retire-log-shim deleted: 13 call
- * sites each writing a second, prose, intent-less copy of a change the
- * trigger had already captured properly.
+ * this: it would write a second, prose, intent-less copy of a change the
+ * trigger already captured with a real intent.
  *
  * What legitimately remains is state that lives OUTSIDE those tables:
  *
@@ -598,7 +570,7 @@ export function emitEvent(
 /**
  * Intents for changes no trigger can capture. Closed union rather than
  * `string` so a typo is a compile error and the set stays auditable —
- * `mu log`'s formatter (v2-log-verb) switches on exactly these.
+ * `mu log`'s formatter (src/log-render.ts) switches on exactly these.
  */
 export type LocalIntent =
   | "agent.spawn"
@@ -679,14 +651,7 @@ export function lastClaimEventAt(db: Db, workstream: string, localId: string): s
   return lastClaimOp(db, workstream, localId)?.created_at ?? null;
 }
 
-// ─── retired: prose verb classification ───────────────────────────────
+// ─── what an op IS ────────────────────────────────────────────────────
 //
-// The old renderer needed EVENT_VERB_PREFIXES + classifyEventVerb + ClassifiedEvent +
-// logRowSubject to render a log line: every consumer prefix-matched a
-// payload's leading two words to find its verb, and CLAIM_EVENT_PREFIX
-// was bolted on because that matching kept breaking.
-//
-// v2-log-verb deletes all four. Rendering now reads `intent` (+ `key` +
-// named payload fields) in src/log-render.ts, which cannot be broken by
-// rewording a payload. If you find yourself wanting to string-match a
-// payload to decide what an op IS, that is the bug this removed.
+// Read `intent` (+ `key` + named payload fields), as src/log-render.ts does.
+// Never string-match a payload to decide what an op is: rewording breaks it.
