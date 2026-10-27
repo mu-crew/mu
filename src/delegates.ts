@@ -199,34 +199,21 @@ export function listDelegates(
 /**
  * Reading a finished call's report is its delivery (`mu task notes` on its task):
  * the owning caller's delegate cursor is recorded, so no later wait hands the same
- * answer back. Only a terminal call whose caller is one of `callers`, and only when
- * `shownWhole` (the `n` of every note the read emitted uncut) holds the call's report
- * note: a read that missed the report, or saw a stub of it, delivered nothing. A
- * running call, another caller's, a shell with no caller, and a call with no report
- * note stay pure reads (a wait still hands those over). Call after the output went
- * out. Idempotent with a wait's own consume (recordCursors is monotonic). The call id, if consumed.
+ * answer back. Only a terminal call whose caller is one of `callers`; anything else
+ * (a running call, another caller's, a shell with no caller) stays a pure read.
+ * Idempotent with a wait's own consume (recordCursors is monotonic). The call id, if consumed.
  */
 export function consumeReadReport(
   db: Db,
   callers: readonly string[],
   workstream: string,
   task: string,
-  shownWhole: ReadonlySet<number>,
 ): string | undefined {
   if (callers.length === 0) return undefined;
   const r = db
     .prepare(`${SELECT_CALL} WHERE w.name = ? AND t.local_id = ?`)
     .get(workstream, task) as RawCall | undefined;
   if (r === undefined || !callers.includes(r.caller) || !isTerminal(r.state)) return undefined;
-  const kinds = db
-    .prepare(
-      `SELECT n.kind AS kind FROM task_notes n JOIN tasks t ON t.id = n.task_id
-         JOIN workstreams w ON w.id = t.workstream_id
-        WHERE w.name = ? AND t.local_id = ? ORDER BY n.id`,
-    )
-    .all(workstream, task) as { kind: string }[];
-  const report = kinds.map((k) => k.kind).lastIndexOf("report") + 1; // a note's `n` is its 1-based place
-  if (report === 0 || !shownWhole.has(report)) return undefined;
   const key = cursorKey("delegate", r.workstream, r.call_id);
   recordCursors(db, r.caller, [{ key, token: DELEGATE_TOKEN }]);
   return r.call_id;

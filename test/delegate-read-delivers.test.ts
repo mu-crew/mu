@@ -13,7 +13,7 @@ import { setWaitSleepForTests } from "../src/wait.js";
 import { readCursors } from "../src/wait-cursor.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
-import { runCli, runCliJson } from "./_runCli.js";
+import { runCliJson } from "./_runCli.js";
 import { answer, mkDelegate } from "./_wait-fixtures.js";
 
 let dir: string;
@@ -50,14 +50,6 @@ async function as(session: string | undefined, argv: string[]) {
 const notes = (session: string | undefined, callId: string) => {
   const c = getDelegateCall(db, callId);
   return as(session, ["task", "notes", c?.task ?? "", "-w", "scratch", "--json"]);
-};
-/** `task notes <call's task> ...args` as `s`; the raw result (a thrown error is kept). */
-const notesArgs = async (callId: string, args: string[]) => {
-  const c = getDelegateCall(db, callId);
-  return await as("s", ["task", "notes", c?.task ?? "", "-w", "scratch", "--json", ...args]).then(
-    (r) => r,
-    (e: unknown) => e,
-  );
 };
 const consumed = (caller: string) => [...readCursors(db, caller).keys()];
 
@@ -103,67 +95,6 @@ describe("mu task notes on a delegate task", () => {
     expect(consumed("pi:other")).toEqual([]);
     const w = await as("s", ["wait", "--json"]);
     expect(w.data.firing.ref).toBe(`delegate:${a}`);
-  });
-});
-
-describe("mu task notes: consumed only when the report was in the output", () => {
-  // A finished call's notes: [brief?] report, close. The page must hold the report whole.
-  it("the default read with the report consumes", async () => {
-    const a = mkDelegate(db, "pi:s");
-    answer(db, a);
-    await notesArgs(a, []);
-    expect(consumed("pi:s")).toEqual([`delegate:scratch/${a}`]);
-  });
-
-  it.each([
-    ["--tail 1 (the close only)", ["--tail", "1"]],
-    ["--from past the report (the close only)", ["--from", "3"]],
-    ["--since in the future (nothing)", ["--since", "2099-01-01"]],
-  ])("%s consumes nothing and the wait still hands the answer over", async (_n, args) => {
-    const a = mkDelegate(db, "pi:s");
-    answer(db, a);
-    await notesArgs(a, args);
-    expect(consumed("pi:s")).toEqual([]);
-    const w = await as("s", ["wait", "--json"]);
-    expect(w.data.firing.ref).toBe(`delegate:${a}`);
-  });
-
-  it("a report far over the 4 KB cap is still shown whole (pinned) and consumes", async () => {
-    const a = mkDelegate(db, "pi:s");
-    answer(db, a, `VERDICT: CONFIRMED\n${"long ".repeat(3000)}`);
-    const r = await notesArgs(a, []);
-    expect((r as { data: { items: { kind: string; cut?: number }[] } }).data.items).toContainEqual(
-      expect.objectContaining({ kind: "report" }),
-    );
-    expect(consumed("pi:s")).toEqual([`delegate:scratch/${a}`]);
-  });
-
-  it("--from out of range errors and consumes nothing", async () => {
-    const a = mkDelegate(db, "pi:s");
-    answer(db, a);
-    const r = await notesArgs(a, ["--from", "999"]);
-    expect((r as { exitCode: number | null }).exitCode).not.toBeNull();
-    expect(consumed("pi:s")).toEqual([]);
-  });
-
-  it("text output follows the same rule", async () => {
-    const a = mkDelegate(db, "pi:s");
-    const b = mkDelegate(db, "pi:s");
-    answer(db, a);
-    answer(db, b);
-    const text = (callId: string, args: string[]) =>
-      withEnv("PI_SESSION_ID", "s", () =>
-        withEnv("MU_MANAGED_AGENT", undefined, async () => {
-          await runCli(
-            ["task", "notes", getDelegateCall(db, callId)?.task ?? "", "-w", "scratch", ...args],
-            dbPath,
-          );
-        }),
-      );
-    await text(a, ["--tail", "1"]);
-    expect(consumed("pi:s")).toEqual([]);
-    await text(b, []);
-    expect(consumed("pi:s")).toEqual([`delegate:scratch/${b}`]);
   });
 });
 
