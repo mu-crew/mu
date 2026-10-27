@@ -2,7 +2,7 @@
 
 The first full matrix on the merged mu-next surface (worktree build at 682672a, family `next`) against `v3.13.3` (family `3x`). Settings: haiku-5-5 and sonnet-5-5, 3 reps, `--concurrency 3`, default caps, holdouts included. This is a measurement, not tuning. `v_eval_next` re-runs it after settle, hints and the skill.
 
-- Raw results: [matrix-pre-settle.jsonl](matrix-pre-settle.jsonl), 276 rows. The tool-call outputs and `events` are stripped and `finalText` is cut to 500 chars, so the file stays at 1.1 MB. `report` renders the same table from it as from the full file.
+- Raw results: `matrix-pre-settle.jsonl`, 276 rows. The tool-call outputs and `events` are stripped and `finalText` is cut to 500 chars, so the file stays at 1.1 MB. `report` renders the same table from it as from the full file.
 - Full rows and the per-run rpc transcripts are in `matrix-pre-settle/` (gitignored, 174 MB). They stay in worker-5's workspace and are not in git.
 - Scenarios: all 23 ids under `tools/eval/scenarios` × 2 surfaces × 2 models × 3 reps = 276 runs, 0 harness failures, 76.8M tokens, $13.59. `worker_dies` and `wait_receipt_race` are holdouts with no `next` golden: they run against the 3x scripts' judges (see caveats).
 
