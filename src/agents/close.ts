@@ -74,12 +74,12 @@ export interface CloseAgentOptions {
    */
   recoveryId?: number;
   /**
-   * Close although something could not be checked: the pane's liveness (the
-   * probe failed, or no multiplexer answers), or that no process uses the
-   * worktree (no /proc, no lsof). The caller asserts it. Never overrides a
-   * pane that answers alive or a process found in the tree. Without it an
-   * unknown refuses (`AgentPaneStillAliveError` state `unknown`,
-   * `WorktreeHeldError` with no pid) with everything kept.
+   * Close past a refusal the caller owns: the pane's liveness could not be
+   * checked (the probe failed, or no multiplexer answers), a process has a
+   * file in the worktree open for writing, or no scan could prove none has
+   * (no /proc, no lsof). Never overrides a pane that answers alive, nor
+   * uncommitted work. Without it these refuse (`AgentPaneStillAliveError`
+   * state `unknown`, `WorktreeHeldError`) with everything kept.
    */
   force?: boolean;
 }
