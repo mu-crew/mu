@@ -153,6 +153,25 @@ describe("computeNext: the outcome's own move", () => {
     ).toBeNull();
   });
 
+  it("claim --for a non-pi owner on a mux that cannot send to it (tmux): no send hint", () => {
+    agent("cx", "codex");
+    const task = { workstream: "d", id: "t1" };
+    const owner = { workstream: "d", name: "cx" };
+    expect(next({ outcome: { kind: "claimed-for", task, owner, muxCanSend: false } })).toBeNull();
+    // A pi owner is sent over its control socket, whatever the mux.
+    agent("w1");
+    expect(
+      next({
+        outcome: {
+          kind: "claimed-for",
+          task,
+          owner: { workstream: "d", name: "w1" },
+          muxCanSend: false,
+        },
+      })?.commands[0],
+    ).toMatch(/^mu agent send w1 --fresh /);
+  });
+
   it("a preview: the apply, fenced with --if <rev>, and nothing else", () => {
     authorizeTasks(db, [addTask(db, { workstream: "d", localId: "a1", title: "a" }).name], {
       workstream: "d",

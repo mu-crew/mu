@@ -24,6 +24,7 @@ import {
 } from "../../cli.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../../db.js";
 import { say } from "../../messages.js";
+import { activeMux } from "../../mux/detect.js";
 import { pc } from "../../output.js";
 import { getTaskOwner } from "../../tasks/queries.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../../tasks.js";
@@ -74,6 +75,15 @@ export async function cmdTaskRelease(
   const statusBit = r.previousStatus !== r.status ? ` (${r.previousStatus} → ${r.status})` : "";
   console.log(`Released ${pc.bold(localId)} ${pc.dim(`(${ownerBit})${statusBit}`)}`);
   if (opts.evidence) console.log(pc.dim(`  evidence: ${opts.evidence}`));
+}
+
+/** Whether the active mux can type into a non-pi pane (herdr yes, tmux no). No mux: true. */
+async function muxCanSendToPanes(): Promise<boolean> {
+  try {
+    return (await activeMux()).sendToPane !== undefined;
+  } catch {
+    return true;
+  }
 }
 
 export async function cmdClaim(
@@ -196,6 +206,7 @@ export async function cmdClaim(
       kind: "claimed-for",
       task: { workstream: ws, id: localId },
       owner: { name: result.ownerName, workstream: forWorkstream ?? ws },
+      muxCanSend: await muxCanSendToPanes(),
     });
   }
   if (opts.json) {

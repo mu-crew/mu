@@ -482,7 +482,7 @@ describe("sendViaTransport", () => {
     );
     expect(err).toBeInstanceOf(AgentSendUnsupportedError);
     expect((err as Error).message).toBe(
-      "agent worker-1 runs claude, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr) or use pi",
+      "agent worker-1 runs claude, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr), start it with the prompt as an argument (--command \"claude '<prompt>'\"), or use pi",
     );
     expect(pasted()).toBe(false);
     expect(mux.calls.some((c) => c[0] === "send-keys" || c[0] === "set-buffer")).toBe(false);
