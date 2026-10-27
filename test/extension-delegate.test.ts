@@ -1639,6 +1639,31 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     }
   });
 
+  it("a wave already recorded before the settle is ONE entry; the later settle owes nothing", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const ids: string[] = [];
+    for (let n = 1; n <= 3; n++)
+      ids.push(await delegate(t, { task: `c${n}`, wave: "w", record: { task: `crew/c${n}` } }));
+    for (const [i, name] of ["delegate-2", "delegate-3", "delegate-4"].entries()) {
+      t.mu.waits
+        .get(name)
+        ?.resolve(ok({ agents: [{ outcome: "done", lastText: `VERDICT: CONFIRMED ${i}` }] }));
+      for (let k = 0; k < 6; k++) await flush();
+    }
+    const settling = t.settle();
+    // No sibling is pending, but each is owed its own event: the wave drains them all.
+    await t.answerWait(delegateEvent(ids[0] ?? ""));
+    await t.answerWait(delegateEvent(ids[1] ?? ""));
+    await t.answerWait(delegateEvent(ids[2] ?? ""));
+    const r = await settling;
+    expect(r?.entries).toHaveLength(1);
+    const text = content(r);
+    expect(text).toContain("Wave w: 3/3 CONFIRMED");
+    for (const id of ids) expect(text).toContain(`Delegate answer: call ${id}`);
+    expect(t.settleWaits).toHaveLength(0);
+  });
+
   it("a refused wave call is listed for reissue, never waited on", async () => {
     process.env.MU_DELEGATE_MAX = "1";
     try {
@@ -1654,7 +1679,9 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
       t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "ok" }] }));
       for (let i = 0; i < 6; i++) await flush();
       const settling = t.settle();
-      await t.answerWait(delegateEvent(ids[0] ?? ""));
+      // The running call's event, then each cancelled one's (terminal, still owed to the wait).
+      for (const id of ids.filter((i) => i !== refused[0]?.callId))
+        await t.answerWait(delegateEvent(id));
       const text = content(await settling);
       expect(text).toContain("1 refused.");
       expect(text).toContain(

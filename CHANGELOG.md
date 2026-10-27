@@ -12,6 +12,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A wave whose answers are already recorded is shown once, not once per delegate** (`triage_df4_wave_once`,
+  dogfood-4 F1). The settle's wave loop only ran while a sibling was pending, so with none pending it
+  showed the firing call's summary and the next settle repeated it for the next call (3 entries, then one
+  per closed task). It now keeps running the owned wait until every non-refused call of the wave has been
+  handed over, then shows ONE summary with every answer. Red test: `test/extension-delegate.test.ts`
+  ("a wave already recorded before the settle is ONE entry").
+
 - **A malformed `CLOSE` block ends a task wait instead of hanging it** (`close_block_malformed_visible`).
   Reproduced on the built CLI with the old driver (empty `REPORT:`): `mu task wait f1 f2 f3 --all
   --status CLOSED` ran to its whole timeout with `3 still open` and said nothing, though the tasks

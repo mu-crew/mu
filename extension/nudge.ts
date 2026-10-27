@@ -467,7 +467,11 @@ export function registerNudge(
       const after: string[] = [];
       let stop = false;
       let rows = await listed();
-      while (!ctl.signal.aborted && rows.some((r) => PENDING_STATES.has(r.state))) {
+      // Owed: a pending sibling, or a finished one whose event this wait has not yet handed
+      // over (the cursor still owes it: leaving it would repeat the summary one settle per call).
+      const owedRow = (r: CallRow) =>
+        PENDING_STATES.has(r.state) || (r.state !== "refused" && !shown.has(r.callId));
+      while (!ctl.signal.aborted && rows.some(owedRow)) {
         const r = await wait(SETTLE_WAIT_ARGS);
         const v = envelopeOf(r.stdout);
         if (v?.ok === false && v.error === "WaitNothingError") break;
