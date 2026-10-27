@@ -358,7 +358,7 @@ describe("error and warning paths stay in the one document", () => {
     expect((add.doc.data as { warnings?: string[] }).warnings?.[0]).toMatch(/whitespace/);
   });
 
-  it("agent wait on an unknown state: stderr stays empty and the exit is unchanged (5)", async () => {
+  it("agent wait on an unknown state: stderr stays empty and a timeout exits 0 like `mu wait`", async () => {
     const { r, doc } = await run([
       "agent",
       "wait",
@@ -370,7 +370,7 @@ describe("error and warning paths stay in the one document", () => {
       "--json",
     ]);
     expect(doc.ok).toBe(true);
-    expect(process.exitCode).toBe(5);
+    expect(process.exitCode ?? 0).toBe(0);
     expect(r.stderr).toBe("");
   });
 

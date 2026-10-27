@@ -244,17 +244,13 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
   // Resolve the actual command that landed in the pane, so the operator
   // can confirm `--command 'pi-meta --no-solo'` (etc.) took effect.
   // Mirrors the resolution chain in spawnAgent: explicit --command >
-  // $MU_<UPPER_CLI>_COMMAND > the cli value itself. Surfaced from
-  // mufeedback note #159: 'Spawned ... (pi)' was misleading when
-  // --command overrode the binary.
+  // $MU_<UPPER_CLI>_COMMAND > the cli value itself. 'Spawned ... (pi)'
+  // was misleading when --command overrode the binary.
   const resolvedCommand = opts.command ?? resolveCliCommand(agent.cli);
   const commandOverridden = resolvedCommand !== agent.cli;
-  // fb_agent_spawn_no_validation part C: when the override came from
-  // an env var (no explicit --command), surface the env-var name in
-  // the success line so config issues ("Spawned ... (pi-meta)" but I
-  // never set $MU_PI_META_COMMAND — wait, I did, and it's stale")
-  // are visible without `mu agent show`. Explicit --command takes
-  // priority and is shown via the existing `(cmd: ...)` suffix below.
+  // When the override came from an env var (no explicit --command), the success
+  // line names it, so a stale $MU_<CLI>_COMMAND is visible without `mu agent show`.
+  // An explicit --command is shown via the `(cmd: ...)` suffix below.
   const envSourced =
     opts.command === undefined ? resolveCliCommandWithSource(agent.cli) : undefined;
   // What the spawn owes next: a gate's wait, or the exact wait of a delivered --send.
@@ -1093,15 +1089,16 @@ function agentWaitState(
 /**
  * `mu agent wait <names...>` — block until agents finish working.
  *
- * The task-less counterpart to `mu task wait`: scratch / off-the-cuff
+ * The task-less, agent-keyed form of `mu wait` (same engine, own document): scratch / off-the-cuff
  * helpers have no task in the DAG, so the only "done" signal is the
  * agent's own runtime status. An agent fires when it goes **busy → any
  * other state** (it must be observed busy first, so an already-idle
  * agent doesn't fire instantly — you're waiting for THIS work to end).
  *
- * Mirrors `mu task wait` output/exit shape:
- *   exit 0 = condition met; 5 = timeout; 6 = a watched agent's pane died;
- *   7 = a pi agent is waiting on an extension dialog (needs a human).
+ * One timeout rule with `mu wait`: a timeout is ok:true with `timedOut`, exit 0;
+ * run the same command again to keep waiting (`--after-runs` makes that lossless:
+ * a run that settled in between still fires). Exit 6 = a watched agent's pane died; 7 = a pi agent is
+ * waiting on an extension dialog (needs a human).
  * `--any`/`--first` fire on the first agent; default = all must fire.
  * `--first` additionally prints the firing agent's qualified ref.
  */
@@ -1254,15 +1251,12 @@ export async function cmdAgentWait(
     }
   }
 
-  // Exit-code mapping mirrors `mu task wait`: 6 (a watched pane died,
-  // even when others finished) wins over 5 (timeout); a clean
-  // met-condition is 0.
+  // 6 (a watched pane died, even when others finished) wins over 7 (a dialog);
+  // a met condition and a timeout are both 0 (`timedOut` says which).
   if (dead.length > 0) {
     process.exitCode = 6;
   } else if (blocked.length > 0) {
     process.exitCode = 7;
-  } else if (result.timedOut) {
-    process.exitCode = 5;
   }
 }
 
@@ -1511,13 +1505,13 @@ export function wireAgentCommands(program: Command): void {
       return handle((db) => cmdAbort(db, name, opts), this as Command)();
     });
 
-  // `mu agent wait` — the task-less counterpart to `mu task wait`. Block
+  // `mu agent wait` — the task-less, agent-keyed form of `mu wait`. Block
   // until agents finish (busy → any other state). For scratch /
   // off-the-cuff helpers that own no task to wait on.
   agent
     .command("wait <names...>")
     .description(
-      "Block until agents leave busy; fires on needs_input too. For task work prefer `mu wait`. A pi agent opening a dialog ends it as `blocked`. Exit 0 met, 5 timeout, 6 pane died, 7 dialog.",
+      "Block until agents leave busy; fires on needs_input too. For task work prefer `mu wait`. A pi agent opening a dialog ends it as `blocked`. Exit 0 met or timed out (`timedOut`), 6 pane died, 7 dialog.",
     )
     .option("--any", "succeed as soon as ONE listed agent finishes (default: all)")
     .option("--first", "alias for --any that also prints the firing agent's ref")

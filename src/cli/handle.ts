@@ -18,7 +18,8 @@
 //   3 = not found (no such agent / task / pane)
 //   4 = conflict (name collision, double-claim, cycle, etc.)
 //   5 = substrate unavailable or unsafe (no multiplexer, DB locked,
-//       ops-log drift, a `mu doctor` FAIL row, timeouts)
+//       ops-log drift, a `mu doctor` FAIL row, an abort/interrupt that
+//       did not settle in time; a wait timeout is NOT here: it is exit 0)
 //   6 / 7 = `mu wait` results, not errors: an owner died / needs attention
 //       (`WaitResult.exit`, src/wait.ts); no error class maps here.
 
@@ -299,8 +300,8 @@ function printFailure(env: {
 // .action() body. `emitError()` reads it to render the failing
 // subcommand's --help on usage errors. We thread it via module-local
 // state (mirror of `isJsonMode` reading process.argv) instead of
-// constructor-arg-ing every UsageError throw site — there are 27 of
-// them, several inside helpers (resolveWorkstream, parseStatusFilter)
+// constructor-arg-ing every UsageError throw site — there are many
+// of them, several inside helpers (resolveWorkstream, parseStatusFilter)
 // that don't know which subcommand called them.
 //
 // Cleared in handle()'s finally so a sequence of test calls (which
@@ -599,7 +600,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof AgentAbortTimeoutError) {
-    // Same lane as the wait verbs' timeout: still busy, try again.
+    // Still busy after --timeout: substrate lane, try again.
     return { label: "timeout", exitCode: 5 };
   }
   if (err instanceof RemotePrepareError || err instanceof RemoteCollectError) {

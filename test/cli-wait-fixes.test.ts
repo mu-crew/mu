@@ -353,7 +353,7 @@ describe("mu agent wait summary and exit code", () => {
     setWaitSleepForTests(shortSleep);
     const res = await runCli(["agent", "wait", "a1", "-w", WS, "--timeout", "0.05"], dbPath);
     expect(res.error).toBeUndefined();
-    expect(process.exitCode).toBe(5);
+    expect(process.exitCode ?? 0).toBe(0); // a timeout is not an error: the same rule as `mu wait`
   });
 });
 
