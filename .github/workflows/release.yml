@@ -34,17 +34,23 @@ jobs:
       # Trusted publishing (OIDC) needs npm 11.5.1+; older npm fails with a
       # misleading 404.
       - run: npm install -g npm@^11.5.1
-      # Build the release notes before the irreversible publish: a missing
-      # section or one over GitHub's 125000-character body limit fails here.
+      # Everything that can fail runs before the irreversible publish: the notes
+      # (a missing [x.y.z] section or one over GitHub's 125000-character body
+      # limit fails here), then the GitHub release with those notes. A re-run
+      # after a failed publish edits the existing release instead of failing.
       - name: Release notes
         run: |
           version="${GITHUB_REF_NAME#v}"
           python3 scripts/changelog-section.py CHANGELOG.md "$version" > notes.md
-      - name: Publish
-        run: npm publish --access public
       - name: GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          gh release create "$GITHUB_REF_NAME" --title "mu $version" --notes-file notes.md --verify-tag
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --title "mu $version" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "mu $version" --notes-file notes.md --verify-tag
+          fi
+      - name: Publish
+        run: npm publish --access public
