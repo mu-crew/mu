@@ -916,10 +916,8 @@ describe("mu agent spawn --task (claim + brief, one journaled attempt)", () => {
     expect(mux.calls.some((c) => c[0] === "new-session" || c[0] === "new-window")).toBe(false);
   });
 
-  it("--task without --send, and --attempt without --task, are usage errors before any side effect", async () => {
+  it("--attempt without --task is a usage error before any side effect", async () => {
     seedTask();
-    const r = await spawnTask(["--task", "t1"]);
-    expect(r.exitCode).toBe(2);
     const r2 = await spawnTask(["--attempt", "k"]);
     expect(r2.exitCode).toBe(2);
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();

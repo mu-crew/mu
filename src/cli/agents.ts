@@ -53,6 +53,8 @@ import type { Db } from "../db.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { pc } from "../output.js";
+import { buildTaskBrief, TaskBriefMissingError } from "../task-brief.js";
+import { getTask } from "../tasks/queries.js";
 import { type WaitRef, type WaitSnapshot, waitForEvents } from "../wait.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
 import { wireCloseCommand } from "./agent-close.js";
@@ -80,7 +82,7 @@ interface SpawnOpts {
   host?: string;
   /** Send this text once the agent is up (`-` reads stdin). */
   send?: string;
-  /** Bind the spawn to this task: claim it for the new agent and send the text as its brief (needs `--send`). */
+  /** Bind the spawn to this task: claim it for the new agent and send the text as its brief (default text: the task's brief). */
   task?: string;
   /** With `--task`: the attempt's name (default: the task id). Replays of a name never send twice. */
   attempt?: string;
@@ -136,13 +138,28 @@ export async function cmdSpawn(
   }
 }
 
+/** What `--task` sends when `--send` is absent: the task's brief (as `mu task auto` builds it), or,
+ *  with no brief note, one line from its title. That line carries no footer: it is pinned as the brief. */
+function taskBriefText(db: Db, workstream: string, task: string): string {
+  try {
+    return buildTaskBrief(db, workstream, task).text;
+  } catch (err) {
+    if (!(err instanceof TaskBriefMissingError)) throw err;
+    const title = getTask(db, task, workstream)?.title ?? task;
+    return say("agent.spawn_task_default", task, workstream, title);
+  }
+}
+
 async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
   assertGateFlags(opts);
   const workstream = await resolveWorkstream(opts.workstream);
   // Read stdin before any side effect: an empty pipe must not leave a pane.
+  // `--task` without `--send` sends the task's own brief (what `mu auto` sends).
   const sendText =
     opts.send === undefined
-      ? undefined
+      ? opts.task === undefined
+        ? undefined
+        : taskBriefText(db, workstream, opts.task)
       : opts.send === STDIN_ARG
         ? await readStdinText("send text")
         : opts.send;
@@ -151,10 +168,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
   if (opts.attempt !== undefined && opts.task === undefined) {
     throw new UsageError(say("agent.spawn_attempt_task"));
   }
-  if (opts.task !== undefined) {
-    if (sendText === undefined) {
-      throw new UsageError(say("agent.spawn_task_send"));
-    }
+  if (opts.task !== undefined && sendText !== undefined) {
     return cmdSpawnTask(db, rawName, workstream, opts.task, sendText, opts);
   }
 
@@ -1323,7 +1337,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--task <id>",
-      "with --send: bind the spawn to this task: claim it for the new agent after the pane exists, then send the text as its brief (pinned once delivered, kept when the task already has one). One journaled attempt: a failure before the send rolls back its own pane and claim; an unknown delivery keeps both and is never resent",
+      "bind the spawn to this task: claim it for the new agent after the pane exists, then send --send's text (default: the task's brief note, else its title) as its brief (pinned once delivered, kept when the task already has one). One journaled attempt: a failure before the send rolls back its own pane and claim; an unknown delivery keeps both and is never resent",
     )
     .option(
       "--attempt <key>",

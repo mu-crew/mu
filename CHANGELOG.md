@@ -50,7 +50,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **`mu sql` / `mu db query` read by default; a write needs `--write`** (`sql_write_optin`; the release matrix had haiku writing raw rows). A statement SQLite reports as not read-only (INSERT, UPDATE, DELETE, REPLACE, `WITH ... INSERT`, anything with RETURNING; a script checks each statement) is refused before it runs with one line naming the verb and `--write` (UsageError, exit 2); the connection also runs `query_only` meanwhile. `--confirm-rows` needs `--write` to do anything. EXPLAIN and PRAGMA reads are unchanged. Writes under `--write` are captured exactly as before (one `sql.write` group). Help is 3 lines; the guide says so; the eval `bad-*` scripts that write now pass `--write`. Test: `test/sql-write-optin.test.ts` (each write shape, mutation-checked).
 
 - **Cold-guess misses as aliases** (`t_surface`, one round): `mu agent stop` is an alias of
-  `agent close`; an unknown plural noun names its list (`mu tasks`
+  `agent close`; `agent spawn --task <id>` without `--send` sends the task's own brief note (a
+  task with no brief gets one line from its title); an unknown plural noun names its list (`mu tasks`
   → `closest: mu task list`) and a tie between namespaces prefers `task` (`mu show` → `mu task
   show`, was `mu agent show`); the `blockers` view gains `task_local_id`. Scored with R4 on
   haiku x3: docs/mu-next/eval/hillclimb-surface.jsonl.

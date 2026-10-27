@@ -83,7 +83,9 @@ chars, and it gives up with exit 4 when no free name is near).
 
 `mu agent spawn <name> --task <id> --send <text>` spawns, **claims the task
 for the new agent**, sends the text and pins it as the task's `brief` (kept
-when the task has one), as one attempt. A journal (`spawn_receipts`) is
+when the task has one), as one attempt. Without `--send` it sends the
+task's own `brief` note (with the CLOSE footer, as `mu task auto` does), or
+with no brief one line from its title that points at `mu task notes`. A journal (`spawn_receipts`) is
 written before each step, so the same command never sends a second prompt.
 
 - Same command again = replay: it returns the saved delivery
