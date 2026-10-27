@@ -1,13 +1,18 @@
 // The engine additions the `mu wait` surface needs (v_wait_surface): provenance discovery of
 // what a caller spawned, the `scope` narrowing, a plain-shell wait still seeing an owner die,
-// `onStall: warn`, and a wave narrowed to the scope. Real SQLite; agents scripted (no ctl, no mux).
+// `onStall: warn`, and a wave that ignores the scope. Real SQLite; agents scripted (no ctl, no mux).
 
 import { describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { reasonOf } from "../src/cli/wait.js";
 import { releaseTask } from "../src/tasks/claim.js";
 import { closeTask, getTask, listNotes } from "../src/tasks.js";
-import { type AgentReading, WAIT_HEARTBEAT_CAP_MS, waitForEvents } from "../src/wait.js";
+import {
+  type AgentReading,
+  WAIT_HEARTBEAT_CAP_MS,
+  WaveNotFoundError,
+  waitForEvents,
+} from "../src/wait.js";
 import { readWaitRegistration } from "../src/wait-registration.js";
 import {
   agentRef,
@@ -705,35 +710,27 @@ describe("--until-text on a non-pi pane (no ctl text exists for it)", () => {
   });
 });
 
-describe("a wave narrowed to the scope", () => {
-  it("counts only this caller's calls of the wave, in the scope's workstream or recorded on it", async () => {
-    mkTask(env.db, "j1", "w");
-    mkTask(env.db, "j2", "v");
-    const a = mkDelegate(env.db, "pi:s", {
-      wave: "claims",
-      record: { workstream: "w", task: "j1" },
-    });
-    const b = mkDelegate(env.db, "pi:s", {
-      wave: "claims",
-      record: { workstream: "v", task: "j2" },
-    });
-    mkDelegate(env.db, "pi:other", { wave: "claims", record: { workstream: "w", task: "j1" } });
+describe("a wave is the caller's, whatever the scope", () => {
+  it("-w <ws> still sees a wave whose calls live in scratch (triage_dff_wave_scope)", async () => {
+    // mu_delegate defaults to scratch: the dogfood repro, a done call, no record target.
+    const a = mkDelegate(env.db, "pi:s", { wave: "rv" });
+    mkDelegate(env.db, "pi:other", { wave: "rv" });
     answer(env.db, a);
     const r = await waitForEvents(env.db, [], {
       ...base,
       callers: ["pi:s"],
       mode: "all",
       scope: "w",
-      wave: { name: "claims" },
+      wave: { name: "rv" },
     });
-    // Only the call recorded on w counts: one finding, confirmed; the other session and v's are not in it.
-    expect(r.tally?.findings).toEqual([
-      { id: "w/j1", confirmed: 1, refuted: 0, unverified: 0, pending: 0 },
-    ]);
-    expect(b).toBeDefined();
+    expect(r.timedOut).toBe(false);
+    expect(r.tally?.findings).toHaveLength(1);
+    expect(r.tally?.findings[0]).toMatchObject({ confirmed: 1, pending: 0 });
+    expect(r.tally?.findings[0]?.id.startsWith("scratch/")).toBe(true);
+    expect(r.refs.map((s) => s.ref.id)).toEqual([a]);
   });
 
-  it("without a scope the wave is every workstream's (still only this caller's)", async () => {
+  it("counts every one of this caller's calls of the wave, in any workstream or record, scoped or not", async () => {
     mkTask(env.db, "j1", "w");
     mkTask(env.db, "j2", "v");
     const a = mkDelegate(env.db, "pi:s", {
@@ -747,15 +744,38 @@ describe("a wave narrowed to the scope", () => {
     mkDelegate(env.db, "pi:other", { wave: "claims", record: { workstream: "w", task: "j1" } });
     answer(env.db, a);
     answer(env.db, b);
-    const r = await waitForEvents(env.db, [], {
+    for (const scope of ["w", undefined]) {
+      const r = await waitForEvents(env.db, [], {
+        ...base,
+        callers: ["pi:s"],
+        mode: "all",
+        ...(scope !== undefined ? { scope } : {}),
+        wave: { name: "claims" },
+      });
+      expect(r.tally?.findings.map((f) => f.id).sort()).toEqual(["v/j2", "w/j1"]);
+      expect(r.tally?.findings.reduce((n, f) => n + f.confirmed, 0)).toBe(2);
+    }
+    expect(WAIT_HEARTBEAT_CAP_MS).toBeGreaterThan(0);
+  });
+
+  it("a wave name this caller never used is 'no such wave', naming the caller's waves", async () => {
+    mkDelegate(env.db, "pi:s", { wave: "rv" });
+    mkDelegate(env.db, "pi:s", { wave: "rev2" });
+    mkDelegate(env.db, "pi:other", { wave: "theirs" });
+    const err = await waitForEvents(env.db, [], {
       ...base,
       callers: ["pi:s"],
-      mode: "all",
-      wave: { name: "claims" },
-    });
-    expect(r.tally?.findings.map((f) => f.id).sort()).toEqual(["v/j2", "w/j1"]);
-    expect(r.tally?.findings.reduce((n, f) => n + f.confirmed, 0)).toBe(2);
-    expect(WAIT_HEARTBEAT_CAP_MS).toBeGreaterThan(0);
+      wave: { name: "rx" },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WaveNotFoundError);
+    expect((err as Error).message).toBe("no such wave: rx (your waves: rev2, rv)");
+    // Another caller's wave of that name is not this caller's.
+    const theirs = await waitForEvents(env.db, [], {
+      ...base,
+      callers: ["pi:s"],
+      wave: { name: "theirs" },
+    }).catch((e: unknown) => e);
+    expect(theirs).toBeInstanceOf(WaveNotFoundError);
   });
 });
 
