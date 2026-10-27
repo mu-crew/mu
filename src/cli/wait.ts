@@ -421,7 +421,7 @@ export async function runWait(
   const openNow = result.refs.filter((s) => !s.fired && !s.dead).length;
   // The handle: what is still owed, stored; the printed line stays tiny. With no caller there is
   // nothing to discover, so no owed ref (and no wave or blockers) means nothing to resume.
-  const owed = owedRefs(result, spec.mode, spec.refs);
+  const owed = owedRefs(result, spec.refs);
   const resumable =
     owed.length > 0 ||
     callers.length > 0 ||

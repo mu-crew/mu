@@ -75,6 +75,14 @@ const URGENCY: Partial<Record<WaitEventKind, number>> = {
 };
 export const urgency = (k: WaitEventKind | undefined): number =>
   k === undefined ? 9 : (URGENCY[k] ?? 4);
+/** A delivered item that finishes its ref (urgent input, stall and a dead task stay owed). */
+export const isCompletion = (i: Item): boolean =>
+  i.kind === "closed" ||
+  i.kind === "settled" ||
+  i.kind === "pane-text" ||
+  i.kind === "exited" ||
+  i.kind === "delegate" ||
+  (i.kind === "dead" && i.ref.kind === "agent");
 export const exitFor = (k: WaitEventKind): number =>
   k === "dead" ? 6 : k === "input" || k === "stall" ? 7 : k === "interrupted" ? 130 : 0;
 
