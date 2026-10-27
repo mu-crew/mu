@@ -18,8 +18,7 @@ Agents in tmux/herdr panes, coordinated by a SQLite task DAG. **`mu --help` and
 show` do not); workers get it.
 
 `--json` returns `{ok,data,next}`; errors come on stdout as
-`{ok:false,error,message,next,exit}`. `next` is null; hints are in
-`data.nextSteps` (errors: top-level `nextSteps`). Collections are
+`{ok:false,error,message,next,exit}`. `next` is the next command, or null. Collections are
 `{items,count}`; `agent list` is `{workstreamName,agents,orphans}`. Keys are SQL
 column names; `id` is the task's name. A capped reader names its way back (`more=N next=<command>`).
 
