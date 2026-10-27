@@ -145,6 +145,7 @@ import {
 import {
   WorktreeBranchExistsError,
   WorktreeDirtyError,
+  WorktreeHeldError,
   WorktreePathNotEmptyError,
   WorktreeVcsRequiredError,
 } from "../worktree.js";
@@ -484,6 +485,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof CrossWorkstreamEdgeError ||
     err instanceof WorktreeDirtyError ||
     err instanceof WorktreeBranchExistsError ||
+    err instanceof WorktreeHeldError ||
     err instanceof WorktreePathNotEmptyError ||
     err instanceof WorktreeVcsRequiredError ||
     err instanceof ClaimerNotRegisteredError ||

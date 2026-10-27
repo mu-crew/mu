@@ -205,7 +205,7 @@ export function wireCloseCommand(agent: Command): void {
     )
     .option(
       "--force",
-      "the pane's liveness could not be checked (the probe failed) and you know it is gone: close anyway (never overrides a pane that answers alive)",
+      "close although the pane's liveness, or that no process uses its worktree, could not be checked and you know (never overrides a live pane or a process found in the tree)",
     )
     .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)
     .option(...WORKSTREAM_OPT)

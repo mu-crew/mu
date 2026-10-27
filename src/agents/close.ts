@@ -74,10 +74,12 @@ export interface CloseAgentOptions {
    */
   recoveryId?: number;
   /**
-   * Close although the pane's liveness could not be checked (the probe
-   * failed, or no multiplexer answers): the caller asserts it is gone. Never
-   * overrides a pane that answers alive. Without it an unknown refuses
-   * (`AgentPaneStillAliveError`, state `unknown`) with everything kept.
+   * Close although something could not be checked: the pane's liveness (the
+   * probe failed, or no multiplexer answers), or that no process uses the
+   * worktree (no /proc, no lsof). The caller asserts it. Never overrides a
+   * pane that answers alive or a process found in the tree. Without it an
+   * unknown refuses (`AgentPaneStillAliveError` state `unknown`,
+   * `WorktreeHeldError` with no pid) with everything kept.
    */
   force?: boolean;
 }
@@ -309,7 +311,7 @@ async function closeLocked(
   if (!agent) {
     if (orphan === undefined) return { killedPane: false, deletedRow: false, worktree: null };
     fence();
-    const worktree = await releaseWorktree(db, orphan, { discard });
+    const worktree = await releaseWorktree(db, orphan, { discard, force: opts.force === true });
     emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, worktree));
     return { killedPane: false, deletedRow: false, worktree };
   }
@@ -371,7 +373,8 @@ async function closeLocked(
   // is removed, kept on a branch or gone (anything else throws, row kept), so
   // the row's deletion needs no recovery record.
   let remoteHandled = false;
-  if (row !== undefined) worktree = await releaseWorktree(db, row, { discard });
+  if (row !== undefined)
+    worktree = await releaseWorktree(db, row, { discard, force: opts.force === true });
   else if (remoteOf(agent) !== null) {
     remoteHandled = true;
     // The pane is gone (checked above): free its channel by id + pane.
