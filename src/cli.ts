@@ -56,7 +56,6 @@ import {
   isTaskStatus,
   TASK_STATUS_LIST,
   TaskNotInWorkstreamError,
-  type TaskRow,
   type TaskStatus,
 } from "./tasks.js";
 import {
@@ -454,30 +453,6 @@ export function parseSortOption(raw: string, flag = "--sort"): TaskSortKey {
     );
   }
   return raw;
-}
-
-/**
- * Decorate a TaskRow (or array of them) with a computed `roi` field for
- * JSON output. ROI is a CLI-rendering concern (the old table view computed
- * it inline) but JSON consumers were getting
- * raw rows with no ROI at all, which broke `mu task next --json | jq
- * 'sort_by(.roi)'` and similar. We keep `TaskRow` itself ROI-free so
- * the SDK contract stays minimal; the decorator lives only in the JSON
- * emit path.
- *
- * `roi` is a plain JSON number when finite; for effortDays=0 the field
- * is omitted (JSON has no Infinity literal and `null` would be a lie).
- * Callers can detect the infinity case via `effortDays === 0`.
- */
-function withRoi<T extends TaskRow>(task: T): T & { roi?: number } {
-  if (task.effortDays > 0) {
-    return { ...task, roi: task.impact / task.effortDays };
-  }
-  return task;
-}
-
-export function withRoiAll<T extends TaskRow>(tasks: T[]): (T & { roi?: number })[] {
-  return tasks.map(withRoi);
 }
 
 // ─── Workstream-scope assertions ──────────────────────────────────────

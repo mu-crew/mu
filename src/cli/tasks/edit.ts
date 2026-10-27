@@ -24,7 +24,6 @@ import {
   resolveEntityRef,
   resolveExistingWorkstream,
   UsageError,
-  withRoiAll,
 } from "../../cli.js";
 import type { Db, NoteKind } from "../../db.js";
 import { lastClaimActor } from "../../logs.js";
@@ -58,6 +57,7 @@ import {
   SHOW_TITLE_CHARS,
   taskItemCut,
   taskRecordCut,
+  taskToOutput,
 } from "./records.js";
 
 /**
@@ -381,8 +381,9 @@ export async function cmdTaskAdd(
         ? { truncated: true, originalSlug: derivation.originalSlug }
         : {};
     emitJson({
-      task: withRoiAll([task])[0],
-      ...(tasks.length > 1 ? { tasks: withRoiAll(tasks) } : {}),
+      // The SQL-column record every task read prints (records.ts), never the SDK row.
+      task: taskToOutput(task),
+      ...(tasks.length > 1 ? { tasks: tasks.map((t) => taskToOutput(t)) } : {}),
       blockers: blockedBy,
       ...(blocks.length > 0 ? { blocks } : {}),
       ...(note !== null ? { note } : {}),
