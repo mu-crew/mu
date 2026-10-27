@@ -21,7 +21,7 @@ import {
   wakeText,
 } from "../extension/delegate.js";
 import muPi, { type MuPiContext } from "../extension/mu-pi.js";
-import { listDelegates } from "../src/delegates.js";
+import { consumeReadReport, listDelegates } from "../src/delegates.js";
 import {
   fakeMu,
   fakePi,
@@ -1692,6 +1692,32 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
       const k = "MU_DELEGATE_MAX";
       delete process.env[k];
     }
+  });
+
+  it("a wave sibling the model already read (mu task notes) is not waited on", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const a = await delegate(t, { task: "c1", wave: "w" });
+    const b = await delegate(t, { task: "c2", wave: "w" });
+    for (const name of ["delegate-2", "delegate-3"]) {
+      t.mu.waits
+        .get(name)
+        ?.resolve(ok({ agents: [{ outcome: "done", lastText: "VERDICT: CONFIRMED" }] }));
+      for (let i = 0; i < 6; i++) await flush();
+    }
+    const rb = listDelegates(t.mu.db).find((c) => c.callId === b);
+    expect(rb?.state).toBe("done");
+    // Mid-turn the model read b's report: that took it, so no wait will return b.
+    expect(
+      consumeReadReport(t.mu.db, [rb?.caller ?? ""], rb?.workstream ?? "", rb?.task ?? ""),
+    ).toBe(b);
+    const settling = t.settle();
+    await t.answerWait(delegateEvent(a));
+    for (let i = 0; i < 20; i++) await flush();
+    expect(t.settleWaits).toHaveLength(0); // no second wait for b
+    const text = content(await settling);
+    expect(text).toContain("Wave w: 2/2 CONFIRMED");
+    expect(text).toContain(`Delegate answer: call ${a}`);
   });
 
   it("another event during a wave's wait ends it: the summary so far, then that event", async () => {

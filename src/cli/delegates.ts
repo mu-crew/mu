@@ -33,6 +33,7 @@ import {
   markDelegate,
   registerDelegateCall,
   verdictTally,
+  withDelivered,
 } from "../delegates.js";
 import { muTable, pc } from "../output.js";
 import { qualifiedRefProblem } from "../workstream-scope.js";
@@ -74,7 +75,7 @@ export async function cmdDelegatesList(
   const rows = listDelegates(db, caller, opts.workstream, {
     ...(opts.wave !== undefined ? { wave: opts.wave } : {}),
   });
-  if (opts.json) return emitJsonCollection(rows);
+  if (opts.json) return emitJsonCollection(withDelivered(db, rows));
   if (rows.length === 0) {
     console.log(
       caller !== undefined && opts.caller === undefined

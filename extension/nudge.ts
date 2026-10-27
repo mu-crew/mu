@@ -328,6 +328,8 @@ type CallRow = {
   error?: string | null;
   wave?: string | null;
   record?: { workstream?: string; task?: string } | null;
+  /** `mu delegates list`: the caller already took this answer (a wait, or reading its notes). */
+  delivered?: boolean;
 };
 type Run1 = (args: readonly string[]) => Promise<Envelope | undefined>;
 
@@ -490,8 +492,10 @@ export function registerNudge(
       let rows = await listed();
       // Owed: a pending sibling, or a finished one whose event this wait has not yet handed
       // over (the cursor still owes it: leaving it would repeat the summary one settle per call).
+      // One the model already took (`delivered`: no wait returns it again) is not waited on.
       const owedRow = (r: CallRow) =>
-        PENDING_STATES.has(r.state) || (r.state !== "refused" && !shown.has(r.callId));
+        PENDING_STATES.has(r.state) ||
+        (r.state !== "refused" && !shown.has(r.callId) && r.delivered !== true);
       while (!ctl.signal.aborted && rows.some(owedRow)) {
         const r = await wait(SETTLE_WAIT_ARGS);
         const v = envelopeOf(r.stdout);
