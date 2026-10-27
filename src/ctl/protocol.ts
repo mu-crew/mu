@@ -52,7 +52,14 @@ export type CtlRequest =
    * agent_settled (up to timeoutMs), then send `text` as a new run. Idle:
    * just send. Replies `timeout` and sends nothing when pi does not settle.
    */
-  | { op: "interrupt"; text: string; timeoutMs?: number; msgId?: string }
+  | {
+      op: "interrupt";
+      text: string;
+      timeoutMs?: number;
+      msgId?: string;
+      /** As on `send`: another incarnation is refused before the abort. */
+      expectIncarnation?: string;
+    }
   /** New session + prompt as one operation. Refused with error "busy" unless force. */
   | {
       op: "fresh";
@@ -66,7 +73,14 @@ export type CtlRequest =
    * Run one of pi's session commands inside pi (sendUserMessage cannot run
    * built-in slash commands). Refused with error "busy" unless force.
    */
-  | { op: "command"; name: CtlCommandName; instructions?: string; force?: boolean };
+  | {
+      op: "command";
+      name: CtlCommandName;
+      instructions?: string;
+      force?: boolean;
+      /** As on `send`: another incarnation is refused before any session change. */
+      expectIncarnation?: string;
+    };
 
 /** Session commands the `command` op runs: `/new`, `/reload`, `/compact`. */
 export const CTL_COMMANDS = ["new", "reload", "compact"] as const;
@@ -91,8 +105,11 @@ export const CTL_OPS = [
 /**
  * Optional capabilities, listed in the `hello` reply's `features`. Ops stay
  * as they are: a feature is a field an old client never sends and ignores.
+ * `fence`: `expectIncarnation` is honoured on every side-effecting op
+ * (send, fresh, interrupt, command); an extension without it ignores the
+ * field on interrupt and command, so a caller never relies on it there.
  */
-export const CTL_FEATURES = ["incarnation", "msgId"] as const;
+export const CTL_FEATURES = ["incarnation", "msgId", "fence"] as const;
 export type CtlFeature = (typeof CTL_FEATURES)[number];
 
 /** How many accepted msgIds the extension remembers (oldest evicted). */
