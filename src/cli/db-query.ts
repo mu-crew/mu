@@ -56,6 +56,7 @@ import {
 } from "../capture.js";
 import { emitJson, handle, injectedWorkstream, parseLines } from "../cli.js";
 import { type Db, defaultDbPath, resolveWorkstreamId } from "../db.js";
+import { editDistance } from "../edit-distance.js";
 import { currentOpContext, withOpContext } from "../op-context.js";
 import { muTable, pc } from "../output.js";
 import { RESULT_BYTES } from "../output-contract.js";
@@ -65,7 +66,7 @@ import {
   TaskAlreadyOwnedError,
   TaskHasOpenBlockersError,
 } from "../tasks.js";
-import { CliExitError, editDistance, SqlColumnError, UsageError } from "./handle.js";
+import { CliExitError, SqlColumnError, UsageError } from "./handle.js";
 import { jsonDocument, pageRecords, type RecordPage } from "./tasks/records.js";
 
 type Statement = ReturnType<Db["prepare"]>;

@@ -67,6 +67,7 @@ import {
   DelegateStateError,
 } from "../delegates.js";
 import { DriftDetectedError } from "../drift.js";
+import { editDistance } from "../edit-distance.js";
 import { checkDbInsideSyncDir, DbInsideSyncDirError, HazardFailError } from "../fleet-hazards.js";
 import {
   HostChannelBusyError,
@@ -625,25 +626,6 @@ function quotingHint(err: unknown, cmd: Command | undefined): string | undefined
   const verb = `${cmd?.parent?.name()} ${cmd?.name()}`;
   if (verb !== "task add" && verb !== "task note" && verb !== "agent send") return;
   return "; a quote in the text probably ended the string early (an apostrophe inside '...'): pass the text on stdin as - with a quoted heredoc (<<'EOF')";
-}
-
-/** Levenshtein distance (shared by the unknown-verb and wrong-column hints). */
-export function editDistance(a: string, b: string): number {
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const row = [i];
-    for (let j = 1; j <= b.length; j++) {
-      row.push(
-        Math.min(
-          (prev[j] as number) + 1,
-          (row[j - 1] as number) + 1,
-          (prev[j - 1] as number) + (a[i - 1] === b[j - 1] ? 0 : 1),
-        ),
-      );
-    }
-    prev = row;
-  }
-  return prev[b.length] as number;
 }
 
 /**

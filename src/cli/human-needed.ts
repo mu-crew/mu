@@ -2,7 +2,7 @@
 
 import type { Command } from "commander";
 import { spawnerFromEnv } from "../agents/spawn.js";
-import { emitJson, handle, JSON_OPT, resolveWorkstream, WORKSTREAM_OPT } from "../cli.js";
+import { emitJson, handle, JSON_OPT, resolveExistingWorkstream, WORKSTREAM_OPT } from "../cli.js";
 import type { Db } from "../db.js";
 import { recordHumanNeeded } from "../human-needed.js";
 import { pc } from "../output.js";
@@ -12,7 +12,7 @@ async function cmdHumanNeeded(
   reason: string,
   opts: { workstream?: string; json?: boolean },
 ): Promise<void> {
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const r = recordHumanNeeded(db, { workstream: ws, caller: spawnerFromEnv() ?? "", reason });
   if (opts.json) {
     emitJson({ workstream: ws, id: r.id, changed: r.changed });

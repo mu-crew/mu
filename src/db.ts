@@ -263,8 +263,13 @@ function refuseUserDbDuringTests(path: string): void {
 
 export class WorkstreamNotFoundError extends Error {
   override readonly name: string = "WorkstreamNotFoundError";
-  constructor(public readonly workstream: string) {
-    super(say("workstream.not_found", workstream));
+  /** `near` are live workstreams with a similar name; `init` says `mu workstream init` is the fix
+   *  (the name is valid and not reserved). Both only shape the message. */
+  constructor(
+    public readonly workstream: string,
+    hints: { near?: readonly string[]; init?: boolean } = {},
+  ) {
+    super(say("workstream.not_found", workstream, hints.near, hints.init));
   }
 }
 

@@ -14,6 +14,8 @@ import {
   injectedIdentity,
   injectedWorkstream,
   missingWorkstreamError,
+  requireLiveWorkstream,
+  resolveExistingWorkstream,
   resolveWorkstream,
   UsageError,
 } from "../cli.js";
@@ -108,17 +110,20 @@ function refuseWriteWithReadFlags(text: string, opts: LogReadOpts): void {
  *   else             source = 'user'; scope is -w, or the missing-scope error
  * An explicit `-w` always wins the workstream.
  */
-async function resolveLogContext(opts: {
-  as?: string;
-  workstream?: string;
-}): Promise<{ source: string; workstream: string }> {
+async function resolveLogContext(
+  db: Db,
+  opts: {
+    as?: string;
+    workstream?: string;
+  },
+): Promise<{ source: string; workstream: string }> {
   const identity = injectedIdentity();
-  const workstream = await resolveWorkstream(opts.workstream);
+  const workstream = await resolveExistingWorkstream(db, opts.workstream);
   return { source: opts.as ?? identity?.name ?? "user", workstream };
 }
 
 async function cmdLogWrite(db: Db, text: string, opts: LogWriteOpts): Promise<void> {
-  const ctx = await resolveLogContext(opts);
+  const ctx = await resolveLogContext(db, opts);
   const row = appendLog(db, {
     workstream: ctx.workstream,
     source: ctx.source,
@@ -218,7 +223,7 @@ function cmdLogAfter(db: Db, opts: LogReadOpts): void {
 async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
   if (opts.seq !== undefined) return cmdLogSeq(db, opts);
   if (opts.after !== undefined) return cmdLogAfter(db, opts);
-  const workstream = await logReadWorkstream(opts);
+  const workstream = await logReadWorkstream(db, opts);
   const listOpts: ListLogsOptions = {};
   if (workstream !== undefined) listOpts.workstream = workstream;
   if (opts.source !== undefined) listOpts.source = opts.source;
@@ -264,7 +269,7 @@ async function cmdLogRead(db: Db, opts: LogReadOpts): Promise<void> {
  *   injected worker  → its own workstream
  *   none             → the one-line missing-scope error (never a global read)
  */
-async function logReadWorkstream(opts: LogReadOpts): Promise<string | undefined> {
+async function logReadWorkstream(db: Db, opts: LogReadOpts): Promise<string | undefined> {
   if (opts.allWorkstreams) {
     if (opts.workstream !== undefined) {
       throw new UsageError("--all and -w/--workstream are mutually exclusive", {
@@ -276,7 +281,16 @@ async function logReadWorkstream(opts: LogReadOpts): Promise<string | undefined>
   if (opts.workstream === undefined && injectedWorkstream() === undefined) {
     throw await missingWorkstreamError({ orAll: true });
   }
-  return resolveWorkstream(opts.workstream);
+  const ws = await resolveWorkstream(opts.workstream);
+  // A destroyed workstream's log stays readable (its ops outlive the row): only a name with
+  // neither a row nor any history is a typo.
+  const known = db
+    .prepare(
+      "SELECT 1 FROM workstreams WHERE name = ? UNION ALL SELECT 1 FROM ops WHERE key = ? LIMIT 1",
+    )
+    .get(ws, ws);
+  if (known === undefined) requireLiveWorkstream(db, ws);
+  return ws;
 }
 
 /** A tail whose output failed. `cursor` is the seq of the last row that went out: `--since` it to lose none. */

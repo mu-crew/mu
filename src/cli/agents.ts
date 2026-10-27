@@ -45,6 +45,7 @@ import {
   emitJson,
   formatAgentsTable,
   resolveEntityRef,
+  resolveExistingWorkstream,
   resolveWorkstream,
   statusIcon,
   UsageError,
@@ -152,6 +153,8 @@ function taskBriefText(db: Db, workstream: string, task: string): string {
 
 async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
   assertGateFlags(opts);
+  // Spawn is a create path: the first spawn into a workstream creates it (insertAgent), as
+  // `scratch` does. Every other verb refuses an unknown -w.
   const workstream = await resolveWorkstream(opts.workstream);
   // Read stdin before any side effect: an empty pipe must not leave a pane.
   // `--task` without `--send` sends the task's own brief (what `mu auto` sends).
@@ -655,7 +658,7 @@ export async function cmdSend(
   if (opts.interrupt) return cmdSendInterrupt(db, rawName, text, opts, sig);
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   // dogfood_send_after_new_dropped: capture the undelivered warning
   // rather than letting it print raw, so it lands in the JSON payload
   // too. `exit 0` must not be able to mean "silently dropped".
@@ -806,7 +809,7 @@ async function cmdSendInterrupt(
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const r = await interruptAgent(db, name, text, {
     workstream: ws,
     ...(opts.timeout === undefined ? {} : { timeoutMs: Math.round(opts.timeout * 1000) }),
@@ -883,7 +886,7 @@ export async function cmdRead(
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const text = await readAgent(db, name, {
     workstream: ws,
     ...(opts.lines !== undefined ? { lines: opts.lines } : {}),
@@ -905,7 +908,7 @@ export async function cmdList(
   db: Db,
   opts: { workstream?: string; json?: boolean },
 ): Promise<void> {
-  const workstream = await resolveWorkstream(opts.workstream);
+  const workstream = await resolveExistingWorkstream(db, opts.workstream);
   const view = await listLiveAgents(db, { workstream });
   if (opts.json) {
     const wsId = workstreamIdOf(db, workstream);
@@ -938,7 +941,7 @@ export async function cmdAgentShow(
   assertAgentInWorkstream(db, name, opts.workstream);
   // v5: agents.name is per-workstream unique. Resolve the operator's
   // workstream up front so the lookup scopes correctly.
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const agent = getAgent(db, name, ws);
   if (!agent) throw new AgentNotFoundError(name);
   const lines = opts.lines ?? 20;
@@ -1011,7 +1014,7 @@ export async function cmdAgentCheck(
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const agent = getAgent(db, name, ws);
   if (agent === undefined) throw new AgentNotFoundError(name, ws);
   const check = await checkMessage(agentCtlSocket(db, agent), msgId);
@@ -1049,7 +1052,7 @@ export async function cmdAbort(
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const result = await abortAgent(db, name, {
     workstream: ws,
     ...(opts.timeout === undefined ? {} : { timeoutMs: Math.round(opts.timeout * 1000) }),
@@ -1128,7 +1131,7 @@ export async function cmdAgentWait(
     rawNames.map(async (raw) => {
       const local: { workstream?: string } = { workstream: opts.workstream };
       const name = applyQualifiedRef(raw, local);
-      const workstreamName = await resolveWorkstream(local.workstream);
+      const workstreamName = await resolveExistingWorkstream(db, local.workstream);
       return { name, workstreamName };
     }),
   );

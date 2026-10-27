@@ -9,7 +9,7 @@ import {
   assertTaskInWorkstream,
   emitJson,
   resolveEntityRef,
-  resolveWorkstream,
+  resolveExistingWorkstream,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
 import { say } from "../../messages.js";
@@ -52,7 +52,7 @@ export async function cmdTaskClose(
   const opts = { ...rawOpts, evidence: rawOpts.evidence ?? rawOpts.note };
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const actor = await resolveActorIdentity();
   const sdkOpts: Parameters<typeof closeTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
@@ -208,7 +208,7 @@ export async function cmdTaskOpen(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const sdkOpts: Parameters<typeof openTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
@@ -233,7 +233,7 @@ export async function cmdTaskPark(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const sdkOpts: Parameters<typeof parkTask>[2] = {
     workstream: ws,
     why: opts.why,
@@ -259,7 +259,7 @@ export async function cmdTaskAccept(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const sdkOpts: Parameters<typeof acceptTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();
@@ -285,7 +285,7 @@ export async function cmdTaskUnpark(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const sdkOpts: Parameters<typeof unparkTask>[2] = { workstream: ws };
   if (opts.evidence !== undefined) sdkOpts.evidence = opts.evidence;
   if (opts.evidence) sdkOpts.author = await resolveActorIdentity();

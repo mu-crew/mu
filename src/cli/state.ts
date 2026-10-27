@@ -21,9 +21,10 @@ import {
   JSON_OPT,
   missingWorkstreamError,
   parseWorkstreamList,
+  requireLiveWorkstream,
   UsageError,
 } from "../cli.js";
-import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../db.js";
+import type { Db } from "../db.js";
 import { noticesField } from "../next-hints.js";
 import { RESULT_BYTES } from "../output-contract.js";
 import { reconcile } from "../reconcile.js";
@@ -67,7 +68,7 @@ async function resolveScope(db: Db, opts: StateOpts): Promise<string[]> {
     // Repeat / comma / mixed forms become one flat list; blank or padded names are a usage error.
     const names = Array.from(new Set(parseWorkstreamList(opts.workstream ?? [])));
     for (const n of names) {
-      if (tryResolveLiveWorkstreamId(db, n) === null) throw new WorkstreamNotFoundError(n);
+      requireLiveWorkstream(db, n);
     }
     if (names.length > 0) return names;
   }

@@ -19,7 +19,7 @@ import {
   normalizeInheritedWorkstream,
   parsePositiveInt,
   parseSeconds,
-  resolveWorkstream,
+  resolveExistingWorkstream,
   WORKSTREAM_OPT,
 } from "../cli.js";
 import type { Db } from "../db.js";
@@ -97,7 +97,7 @@ export function nextExit(r: NextResult, signal: "SIGINT" | "SIGTERM" | undefined
 
 export async function cmdNext(db: Db, o: NextOpts, sig: WaitSignals): Promise<void> {
   const scope = normalizeInheritedWorkstream(o.workstream);
-  const workstream = await resolveWorkstream(scope);
+  const workstream = await resolveExistingWorkstream(db, scope);
   const opts: ExecuteNextOptions = {
     workstream,
     caller: spawnerFromEnv() ?? "",

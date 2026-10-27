@@ -14,7 +14,7 @@ import {
   emitJson,
   parseCsvFlag,
   resolveEntityRef,
-  resolveWorkstream,
+  resolveExistingWorkstream,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
 import { say } from "../../messages.js";
@@ -53,7 +53,7 @@ export async function cmdTaskAuto(
     assertTaskInWorkstream(db, name, opts.workstream);
     blockersOf = name;
   }
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   if (!off) {
     const check = await checkCommandResolvable(resolveCliCommand(cli));
     if (!check.ok) throw new AgentSpawnCliNotFoundError(cli, check.binary, envVarNameForCli(cli));

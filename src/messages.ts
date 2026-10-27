@@ -15,7 +15,7 @@ export const MESSAGES = {
     `title yields empty slug: ${JSON.stringify(title)} (no ASCII letter or digit to derive an id from)`,
   "task.exists": (id: string) => `task already exists: ${id}`,
   "task.not_in_workstream": (id: string, expected: string, actual: string) =>
-    `task ${id} is in workstream ${actual}, not ${expected}`,
+    `task ${id} is in workstream ${actual}, not ${expected}; pass -w ${actual}`,
   "task.owned": (id: string, owner: string) => `task ${id} is already owned by ${owner}`,
   "task.owned_sql": () =>
     "a claim in this SQL would take an owned task; release it first: mu task release <id> -w <ws>",
@@ -77,7 +77,7 @@ export const MESSAGES = {
   "agent.not_found": (name: string, ws: string | undefined) =>
     ws === undefined ? `no such agent: ${name}` : `no such agent: ${name} (in workstream ${ws})`,
   "agent.not_in_workstream": (name: string, expected: string, actual: string) =>
-    `agent ${name} is in workstream ${actual}, not ${expected}`,
+    `agent ${name} is in workstream ${actual}, not ${expected}; pass -w ${actual}`,
   "agent.scrollback": (text: string) =>
     `\n\n--- pane scrollback ---\n${text}\n--- end scrollback ---`,
   "agent.died_cause_remote": (host: string | undefined) =>
@@ -225,7 +225,10 @@ export const MESSAGES = {
       : `DB's capture triggers are revision ${detected}; this mu understands up to ${supported}. Upgrade mu.`,
   "db.sqlite_old": (version: string) =>
     `SQLite ${version} is too old; mu needs >= 3.42 (unixepoch('subsec') for the op clock). The DB was not touched.`,
-  "workstream.not_found": (ws: string) => `no such workstream: ${ws}`,
+  "workstream.not_found": (ws: string, near: readonly string[] = [], init = false) =>
+    `no such workstream: ${ws}${near.length > 0 ? ` (did you mean ${near.join(", ")}?)` : ""}${
+      init ? `; \`mu workstream init ${ws}\` creates it` : ""
+    }`,
   "workstream.torn_down": (ws: string, at: string) =>
     `workstream ${ws} is torn down (at ${at}); \`mu workstream init ${ws}\` to reuse the name`,
   "workstream.exists": (ws: string) => `workstream already exists: ${ws}`,
