@@ -4,7 +4,7 @@ mu is built around pi, but codex, cursor-agent and claude can be its workers
 or its orchestrator. They get less: they have no control socket, so mu
 cannot hand them a prompt on tmux, abort them, or read their final text, and
 nothing replaces `mu_delegate`. Tested with codex 0.164 and cursor-agent
-2026.10.22 on tmux ([report](../mu-next/eval/harnesses.md)).
+2026.10.22 on tmux ([report](../eval/harnesses.md)).
 
 ## Pin the mu the harness runs
 

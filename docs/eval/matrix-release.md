@@ -2,8 +2,8 @@
 
 `v_eval_next`. Same method as [matrix-pre-settle.md](matrix-pre-settle.md), re-run on post-settle mu-next: build of HEAD `e87c382` (family `next`, `--surface $PWD:next`) against `v3.13.3` (family `3x`). haiku-5-5 and sonnet-5-5, `--concurrency 3`, default caps, holdouts included (`worker_dies`, `wrong_id`, `wait_receipt_race`, `single_channel_host`: never tuned, judges untouched). Measurement only: no scenario, judge, skill or src change in this unit.
 
-- Rows: `matrix-release.jsonl`, 304 rows (outputs and `events` stripped, `finalText` cut to 500 chars; `node tools/eval/main.ts report docs/mu-next/eval/matrix-release.jsonl` renders the harness table). Supplemental `guessed_sql_column` reps: `matrix-release-extra.jsonl` (12 rows, see Destructive).
-- **Every transcript is kept** (rpc stream of every agent turn, tool calls with args, exit state and output, plus `.stderr`): `docs/mu-next/eval/matrix-release/` in worker-5's workspace (gitignored, 205 MB) and a stable copy at `~/.local/state/mu-next/eval-transcripts/matrix-release/` (`<scenario>.<surface>.<model>.<rep>.rpc.jsonl`, `results.full.jsonl` with unstripped tool outputs, `extra-guessed-sql/`). `t_surface` mines these.
+- Rows: `matrix-release.jsonl`, 304 rows (outputs and `events` stripped, `finalText` cut to 500 chars; `node tools/eval/main.ts report <rows>.jsonl` renders the harness table). Supplemental `guessed_sql_column` reps: `matrix-release-extra.jsonl` (12 rows, see Destructive).
+- **Every transcript is kept** (rpc stream of every agent turn, tool calls with args, exit state and output, plus `.stderr`): a gitignored directory in the run's workspace (205 MB) and a copy outside the repo (`<scenario>.<surface>.<model>.<rep>.rpc.jsonl`, `results.full.jsonl` with unstripped tool outputs, `extra-guessed-sql/`). `t_surface` mines these.
 - Scale: 24 scenario ids (the 23 of pre-settle + `no_mux_delegate`) × 2 surfaces × 2 models × 3 reps, `wait_mixed_refs` and `worker_dies` × 5 reps = 304 rows, 0 harness failures, 81.6M tokens, $13.36. The run was started in three invocations (the first hit its own `--budget-tokens 60000000` cap with 32 runs unstarted, so `wait_wave_starvation`, `worktree_reuse`, `wrong_id` were run in a follow-up; the 4 partial `wait_wave_starvation` rows of the first run were discarded for the clean rerun). All spend incl. supplemental and discarded rows: 87.1M tokens, $13.73 (budget ~$20).
 - Headline numbers below use the 23 paired scenarios (`no_mux_delegate` has no 3.x equivalent and is reported apart). "3 reps" views use reps 1–3 only; "all reps" adds reps 4–5 of the two 5-rep scenarios.
 - Not run: a full `check --family next` (it was started and killed after `api_outage_resume` ok, `delegate_saturation` golden ok; the judges are those of `e87c382` and `check` was green in the earlier units). Treat the judge-artifact findings below as unproven by `check`.
@@ -135,7 +135,7 @@ Smaller, 1–2 rep moves:
 
 ## Gate re-run (`eval_gate_fix`)
 
-Targeted re-run of the two cells that failed the release gate, on the same harness and the same `next` surface (`--surface $PWD:next --model haiku-5-5 --concurrency 3`, same scenarios and judges, no scenario, judge or holdout touched; `MU_SYNC_DIR=` blank, `TMPDIR=/var/tmp/m5`). Rows: `matrix-gate-rerun.jsonl` (the final run, 12 rows, outputs stripped). Transcripts of both attempts: `~/.local/state/mu-next/eval-transcripts/gate-rerun/`.
+Targeted re-run of the two cells that failed the release gate, on the same harness and the same `next` surface (`--surface $PWD:next --model haiku-5-5 --concurrency 3`, same scenarios and judges, no scenario, judge or holdout touched; `MU_SYNC_DIR=` blank, `TMPDIR=/var/tmp/m5`). Rows: `matrix-gate-rerun.jsonl` (the final run, 12 rows, outputs stripped). Transcripts of both attempts are kept outside the repo.
 
 Fixes, both in the skill (not the judges):
 

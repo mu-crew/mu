@@ -1,4 +1,4 @@
-// cold-guess.jsonl -> the short markdown of docs/mu-next/eval/cold-guess.md. Pure.
+// cold-guess.jsonl -> the short markdown of docs/eval/cold-guess.md. Pure.
 import type { ColdRow } from "./cold-guess.ts";
 import { INTENTS } from "./cold-intents.ts";
 

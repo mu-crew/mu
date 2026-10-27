@@ -1,7 +1,7 @@
 # Run the checkout in isolation
 
 To run a pi orchestrator on a mu-next checkout next to a live 3.x install,
-without touching 3.x state. Found by dogfood-1 ([eval/dogfood-1.md](eval/dogfood-1.md), F8).
+without touching 3.x state. Found by dogfood-1 ([eval/dogfood-1.md](../eval/dogfood-1.md), F8).
 
 ```bash
 # env.sh: source it before anything below
