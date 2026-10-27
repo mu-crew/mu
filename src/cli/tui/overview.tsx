@@ -9,14 +9,17 @@ import type { DashboardSnapshot } from "../../dashboard-data.js";
 import { Frame } from "./frame.js";
 import { COLUMN_GAP, columnCount, fitColumn, gridWidths, placeCards } from "./grid.js";
 import { NO_FILTER, tabRows } from "./rows.js";
-import { scrollTop } from "./text.js";
+import { type Line, scrollTop } from "./text.js";
+import type { Role } from "./theme.js";
 
 export interface Card {
   id: string;
   title: string;
-  lines: string[];
+  lines: Line[];
   /** Shown when there are no lines. */
   empty: string;
+  /** The empty line's role (Attention's `✓ all quiet` is good news; the rest are muted). */
+  emptyRole?: Role;
   /** Body rows it takes before spare rows are shared out. */
   max: number;
   /** Show the newest lines (the log), not the first. */
@@ -25,10 +28,17 @@ export interface Card {
 
 /** The five cards of workstream `ws`, in order. */
 export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: number): Card[] {
-  const lines = (tab: "overview" | "tasks" | "agents" | "log", f = NO_FILTER): string[] =>
-    tabRows(tab, snap, ws, f, now).map((r) => r.text);
+  const lines = (tab: "overview" | "tasks" | "agents" | "log", f = NO_FILTER): Line[] =>
+    tabRows(tab, snap, ws, f, now).map((r) => r.line);
   return [
-    { id: "attention", title: "Attention", lines: lines("overview"), empty: "✓ all quiet", max: 6 },
+    {
+      id: "attention",
+      title: "Attention",
+      lines: lines("overview"),
+      empty: "✓ all quiet",
+      emptyRole: "good",
+      max: 6,
+    },
     { id: "agents", title: "Agents", lines: lines("agents"), empty: "no agents", max: 6 },
     {
       id: "progress",
@@ -87,7 +97,10 @@ export function Overview(p: {
                   : 0;
               const body = card.lines
                 .slice(from, from + pl.rows)
-                .map((l, i) => (attention ? `${from + i === p.sel ? "> " : "  "}${l}` : l));
+                .map(
+                  (l, i): Line =>
+                    attention ? [{ text: from + i === p.sel ? "> " : "  " }, ...l] : l,
+                );
               return (
                 <Frame
                   key={card.id}
@@ -96,7 +109,11 @@ export function Overview(p: {
                   title={card.title}
                   subtitle={card.lines.length > 0 ? String(card.lines.length) : ""}
                   bottom={pl.hidden > 0 ? `+${pl.hidden} ${card.tail ? "older" : "more"}` : ""}
-                  body={card.lines.length === 0 ? [card.empty] : body}
+                  body={
+                    card.lines.length === 0
+                      ? [[{ text: card.empty, role: card.emptyRole ?? "muted" }]]
+                      : body
+                  }
                   {...(attention && card.lines.length > 0 ? { selected: p.sel - from } : {})}
                 />
               );

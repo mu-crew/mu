@@ -3,6 +3,7 @@
 // padded by VISUAL width (wide glyphs count 2), then handed over as plain text.
 
 import stringWidth from "string-width";
+import type { Seg } from "./theme.js";
 
 // CSI and OSC sequences, then any other control character (tabs and newlines
 // become one space so a title can never add a line to a row).
@@ -45,4 +46,34 @@ export function scrollTop(top: number, selected: number, count: number, height: 
   if (selected < next) next = selected;
   else if (selected >= next + h) next = selected - h + 1;
   return Math.max(0, Math.min(next, count - h));
+}
+
+/** A styled line: runs of text, each in one theme role. */
+export type Line = readonly Seg[];
+
+/** The plain text of a line. */
+export const lineText = (line: Line): string => line.map((s) => s.text).join("");
+
+/** `line` cleaned, cut to `width` columns (a cut ends in "…", in the cut run's role) and padded to exactly `width`. */
+export function fitLine(line: Line, width: number): Seg[] {
+  if (width <= 0) return [];
+  const runs = line.map((s) => ({ ...s, text: clean(s.text) }));
+  const total = stringWidth(runs.map((s) => s.text).join(""));
+  if (total <= width) return [...runs, { text: " ".repeat(width - total) }];
+  const out: Seg[] = [];
+  let used = 0;
+  for (const run of runs) {
+    let text = "";
+    for (const { segment } of segmenter.segment(run.text)) {
+      const sw = stringWidth(segment);
+      if (used + sw > width - 1) {
+        out.push({ ...run, text: `${text}…` });
+        return [...out, { text: " ".repeat(width - used - 1) }];
+      }
+      text += segment;
+      used += sw;
+    }
+    out.push({ ...run, text });
+  }
+  return out;
 }

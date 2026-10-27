@@ -131,7 +131,7 @@ describe("model", () => {
   });
 
   it("the cursor follows its key when rows reorder, and clamps", () => {
-    const rows = ["a", "b", "c"].map((key) => ({ key, text: key }));
+    const rows = ["a", "b", "c"].map((key) => ({ key, text: key, line: [{ text: key }] }));
     expect(cursorIndex(rows, "c", "tasks")).toBe(2);
     expect(cursorIndex([...rows].reverse(), "c", "tasks")).toBe(0);
     expect(cursorIndex(rows, "gone", "tasks")).toBe(0);

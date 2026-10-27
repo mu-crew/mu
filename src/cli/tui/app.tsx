@@ -2,7 +2,8 @@
 // attention strip (every view, drills too), a framed list that fills the screen, and Next plus a hint/error
 // line pinned to the last row. Overview (the first screen) is a grid of framed cards
 // (overview.tsx). Read-only. Drill (Enter, a) is the next unit. Plain text only: every line is
-// cleaned and cut/padded by visual width (text.ts), never ANSI inside <Text>.
+// cleaned and cut/padded by visual width (text.ts), never ANSI inside <Text>; colour is
+// theme roles (theme.ts) passed as ink props.
 
 import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize } from "ink";
 import { useEffect, useRef, useState } from "react";
@@ -16,11 +17,11 @@ import {
   spawnStep,
 } from "./commands.js";
 import { Drill, useYank } from "./drill.js";
-import { FRAME_CHROME, FRAME_SIDES, Frame } from "./frame.js";
+import { FRAME_CHROME, FRAME_SIDES, Frame, Segs } from "./frame.js";
 import { NAV_HINT, navKey } from "./nav.js";
 import { Overview, overviewCards } from "./overview.js";
 import {
-  attentionLabel,
+  attentionStrip,
   cursorIndex,
   type DrillTarget,
   type Filter,
@@ -40,7 +41,8 @@ import {
   workstreamLabel,
 } from "./rows.js";
 import type { DashboardQuery, DashboardRuntime } from "./runtime.js";
-import { cell, clean, scrollTop } from "./text.js";
+import { cell, clean, fitLine, type Line, scrollTop } from "./text.js";
+import { type Seg, style } from "./theme.js";
 import { useSnapshot } from "./use-snapshot.js";
 
 export interface AppProps {
@@ -88,13 +90,24 @@ const hintAgents = (attachKey: string): string =>
 
 /** The workstream labels as one line of `width` columns, scrolled so the selected one shows. */
 export function workstreamLine(labels: readonly string[], selected: number, width: number): string {
+  return workstreamSegs(labels, selected, width)
+    .map((s) => s.text)
+    .join("");
+}
+
+/** The same line in roles: the selected workstream bold cyan, the others dim (3.x tab strip). */
+function workstreamSegs(labels: readonly string[], selected: number, width: number): Seg[] {
   const cell = (i: number): string => (i === selected ? `[${labels[i]}]` : ` ${labels[i]} `);
   let first = 0;
   const total = (from: number): number =>
     labels.slice(from).reduce((n, _, k) => n + clean(cell(from + k)).length, 0);
   while (first < selected && total(first) > width) first++;
-  const lead = first > 0 ? "…" : "";
-  return lead + labels.map((_, i) => (i >= first ? cell(i) : "")).join("");
+  return [
+    ...(first > 0 ? [{ text: "…", role: "muted" as const }] : []),
+    ...labels.flatMap((_, i): Seg[] =>
+      i >= first ? [{ text: cell(i), role: i === selected ? "title" : "muted" }] : [],
+    ),
+  ];
 }
 
 interface View {
@@ -302,7 +315,7 @@ export function App({
 
   const text = (s: string) => cell(s, columns);
   const attention = snap?.attention ?? [];
-  const lineOf = (r: Row, i: number): string => `${i === sel ? "> " : "  "}${r.text}`;
+  const lineOf = (r: Row, i: number): Line => [{ text: i === sel ? "> " : "  " }, ...r.line];
   const visible = all.slice(top, top + height);
   const f = view.filter;
   const filterLine = [
@@ -321,10 +334,7 @@ export function App({
     0,
     names.findIndex((w) => w.name === ws),
   );
-  const strip =
-    attention.length === 0
-      ? "✓ all quiet"
-      : `⚠ ${attention.length} need you: ${attention.map((a) => attentionLabel(a, ws)).join(" · ")}`;
+  const strip = attentionStrip(attention, ws);
   const empty =
     snap === null
       ? state.error
@@ -337,11 +347,11 @@ export function App({
         : "";
   const warn = state.warnings[0];
   const footer = flash
-    ? { text: flash, color: undefined }
+    ? { text: flash, role: "text" as const }
     : state.error
-      ? { text: `error: ${state.error}`, color: "red" as const }
+      ? { text: `error: ${state.error}`, role: "bad" as const }
       : warn
-        ? { text: `sync: ${warn}`, color: "yellow" as const }
+        ? { text: `sync: ${warn}`, role: "warn" as const }
         : {
             text: editing
               ? "type to filter  Enter keep  Esc cancel"
@@ -352,7 +362,7 @@ export function App({
                   : tab === "tasks"
                     ? HINT_TASKS
                     : HINT,
-            color: undefined,
+            role: "muted" as const,
           };
 
   if (drill !== null)
@@ -360,7 +370,7 @@ export function App({
       <Drill
         target={drill.target}
         notice={drill.notice}
-        strip={{ text: strip, alert: attention.length > 0 }}
+        strip={strip}
         runtime={runtime}
         busy={busy}
         onClose={() => setDrill(null)}
@@ -368,21 +378,28 @@ export function App({
       />
     );
 
-  const bodyLines = [
+  const bodyLines: Line[] = [
     ...visible.map((r, i) => lineOf(r, top + i)),
-    ...(empty ? [`  ${empty}`] : []),
+    ...(empty ? [[{ text: `  ${empty}`, role: "muted" as const }]] : []),
   ];
   const tabLabel = TABS[tabIndex]?.label ?? "";
 
   return (
     <Box flexDirection="column" height={screenRows}>
       <Text wrap="truncate">
-        {text(wsLabels.length > 0 ? workstreamLine(wsLabels, wsIndex, columns) : "no workstreams")}
+        <Segs
+          line={fitLine(
+            wsLabels.length > 0
+              ? workstreamSegs(wsLabels, wsIndex, columns)
+              : [{ text: "no workstreams", role: "muted" }],
+            columns,
+          )}
+        />
       </Text>
       {tabsFit ? (
         <Box>
           {TABS.map((t) => (
-            <Text key={t.id} inverse={t.id === tab} bold={t.id === tab}>
+            <Text key={t.id} inverse={t.id === tab} {...style(t.id === tab ? "title" : "muted")}>
               {` ${t.label} `}
             </Text>
           ))}
@@ -390,21 +407,17 @@ export function App({
       ) : (
         // Too narrow for the labels (they would wrap onto a second row): show the
         // active one and its place.
-        <Text wrap="truncate" inverse bold>
+        <Text wrap="truncate" inverse {...style("title")}>
           {cell(` ${tabLabel} ${tabIndex + 1}/${TABS.length}`, columns)}
         </Text>
       )}
       {shown.has("strip") ? (
-        <Text
-          wrap="truncate"
-          color={attention.length > 0 ? "yellow" : undefined}
-          dimColor={attention.length === 0}
-        >
-          {text(strip)}
+        <Text wrap="truncate">
+          <Segs line={fitLine(strip, columns)} />
         </Text>
       ) : null}
       {shown.has("filter") ? (
-        <Text wrap="truncate" dimColor>
+        <Text wrap="truncate" {...style("muted")}>
           {text(filterLine)}
         </Text>
       ) : null}
@@ -428,19 +441,23 @@ export function App({
       ) : (
         bodyLines.map((l, i) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: positional rows of a fixed-height viewport
-          <Text key={i} wrap="truncate" inverse={i === sel - top}>
-            {text(l)}
+          <Text key={i} wrap="truncate">
+            {i === sel - top ? (
+              <Text inverse>{text(l.map((s) => s.text).join(""))}</Text>
+            ) : (
+              <Segs line={fitLine(l, columns)} />
+            )}
           </Text>
         ))
       )}
       <Box flexGrow={1} />
       {shown.has("next") ? (
-        <Text wrap="truncate" dimColor>
+        <Text wrap="truncate" {...style("muted")}>
           {text(snap ? nextLine(snap) : "next: unavailable")}
         </Text>
       ) : null}
       {shown.has("footer") ? (
-        <Text wrap="truncate" color={footer.color} dimColor={footer.color === undefined}>
+        <Text wrap="truncate" {...style(footer.role)}>
           {text(footer.text)}
         </Text>
       ) : null}

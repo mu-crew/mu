@@ -4,7 +4,8 @@
 //   log        one op of the canonical log, every field
 // Keys are this component's alone while it is mounted (App's input is off), so a
 // press is consumed once and Esc returns to the tab with its filters untouched.
-// Plain text only: bodies are cleaned, then wrapped by visual width (never ANSI in <Text>).
+// Plain text only: bodies are cleaned, then wrapped by visual width (never ANSI in <Text>);
+// colour comes from theme roles as ink props.
 // A load is guarded: a result that lands after Esc (or for an older `r`) is dropped.
 
 import { Box, Text, useInput, useStdout, useWindowSize } from "ink";
@@ -13,10 +14,12 @@ import stringWidth from "string-width";
 import { activeMux } from "../../mux.js";
 import type { SelectedNotes } from "../../tasks.js";
 import { copyCommand, planAttach, yankSequence } from "./commands.js";
+import { Segs } from "./frame.js";
 import { NAV_HINT, navKey } from "./nav.js";
 import type { DrillTarget } from "./rows.js";
 import type { DashboardRuntime } from "./runtime.js";
-import { cell, clean } from "./text.js";
+import { cell, clean, fitLine, type Line } from "./text.js";
+import { style } from "./theme.js";
 
 /** Lines of scrollback a drill captures (the tail; the pane has more). */
 export const SCROLLBACK_LINES = 2000;
@@ -142,7 +145,7 @@ export interface DrillProps {
   /** Lines pinned under the title, outside the scrolled body (an attach failure and the outside-client line). */
   notice: readonly string[];
   /** The dashboard's attention strip, shown under the title (null: none). */
-  strip?: { text: string; alert: boolean } | null;
+  strip?: Line | null;
   /** True while the terminal belongs to an attach: a key is ignored (the hook stays active). */
   busy: { readonly current: boolean };
   onClose(): void;
@@ -259,29 +262,29 @@ export function Drill({
   return (
     // Exactly `rows` lines: a short body is followed by the spacer, so the hint stays on the last row.
     <Box flexDirection="column" height={rows}>
-      <Text wrap="truncate" inverse bold>
+      <Text wrap="truncate" {...style("heading")}>
         {cell(titleOf(target), columns)}
       </Text>
       {showStrip ? (
-        <Text wrap="truncate" color={strip.alert ? "yellow" : undefined} dimColor={!strip.alert}>
-          {cell(strip.text, columns)}
+        <Text wrap="truncate">
+          <Segs line={fitLine(strip, columns)} />
         </Text>
       ) : null}
       {pinned.map((l, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: lines have no identity; the index IS the position
-        <Text key={`p${i}`} wrap="truncate" bold>
+        <Text key={`p${i}`} wrap="truncate" {...style("strong")}>
           {cell(l, columns)}
         </Text>
       ))}
       {visible.map((l, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: lines have no identity; the index IS the position
-        <Text key={first + i} wrap="truncate">
+        <Text key={first + i} wrap="truncate" {...style(load.state === "error" ? "bad" : "text")}>
           {cell(l, columns)}
         </Text>
       ))}
       <Box flexGrow={1} />
       {rows >= 3 ? (
-        <Text wrap="truncate" dimColor>
+        <Text wrap="truncate" {...style("muted")}>
           {cell(`${where}${hint}`, columns)}
         </Text>
       ) : null}
