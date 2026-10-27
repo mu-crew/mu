@@ -5,16 +5,16 @@ panes, coordinated through a task DAG.
 
 ## Read these first
 
-1. [docs/guide/README.md](docs/guide/README.md) — what mu does for a user.
-2. [CHANGELOG.md](CHANGELOG.md) — the upcoming version's entry is the
+1. [docs/guide/README.md](docs/guide/README.md): what mu does for a user.
+2. [CHANGELOG.md](CHANGELOG.md): the upcoming version's entry is the
    source of truth for verbs, schema, and env vars.
-3. [docs/VISION.md](docs/VISION.md) — design pillars you must not violate.
-4. [docs/ROADMAP.md](docs/ROADMAP.md) — what's next and the promotion
+3. [docs/VISION.md](docs/VISION.md): design pillars you must not violate.
+4. [docs/ROADMAP.md](docs/ROADMAP.md): what's next and the promotion
    criteria. Read [Anti-feature pledges](docs/ROADMAP.md#anti-feature-pledges)
    before you add a dependency, an abstraction, or a surface.
-5. [docs/VOCABULARY.md](docs/VOCABULARY.md) — canonical terms for code,
+5. [docs/VOCABULARY.md](docs/VOCABULARY.md): canonical terms for code,
    docs, and error messages. [docs/reference/](docs/reference/) holds env vars and naming.
-6. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — the module map (what
+6. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): the module map (what
    lives where in `src/`), plus deep dives under [docs/architecture/](docs/architecture/).
 
 ## Build, test, lint
@@ -35,12 +35,14 @@ TS 7.0 lacks. Revisit at TS 7.1.
 
 ## Gates
 
-Measured 2026-10-23 on linuxpc (16 cores, node 26, warm cache).
+Measured 2026-10-23 on linuxpc (16 cores, warm cache, shared host);
+see [the record](docs/test-health/2026-10-23-surface.md). Both gates are
+over budget today.
 
 | Gate | Command | Budget | Today |
 |---|---|---|---|
-| fast | `npm run typecheck && npm run lint && npm run test:fast` | 30 s | ~16 s |
-| slow | `npm run build && npm run test` | 5 min | ~3 min |
+| fast | `npm run typecheck && npm run lint && npm run test:fast` | 30 s | ~50 s |
+| slow | `npm run build && npm run test` | 5 min | 4.5 to 8.5 min |
 | targeted slow | `npm run build && npx vitest run <files>` | — | — |
 
 Workers run fast while iterating, then targeted slow for the changed area,
@@ -180,9 +182,9 @@ Call sites use `await activeMux()` and never name a backend.
 
 Run tmux only through `tmux(args)` and herdr only through
 `herdr(args)`. pi agents are driven through the control socket, not
-the multiplexer. For non-pi agents and `--via mux`, tmux needs the
-bracketed-paste sequence in `sendToPane`, while herdr's `agent prompt`
-is one atomic call. Keep the tmux workaround out of herdr.
+the multiplexer. tmux refuses a send to a non-pi agent
+(`AgentSendUnsupportedError`; it has no `sendToPane`), while herdr's
+`agent prompt` is one atomic call.
 
 ## Known traps
 
@@ -190,23 +192,18 @@ is one atomic call. Keep the tmux workaround out of herdr.
   top-level await" is an import cycle: a file in `src/cli/tui/`
   imported `../../../cli.js`. Import from the real source module
   instead (`rg 'from "\.\./\.\./\.\./cli\.js"' src/cli/tui/`).
-- **ANSI in ink `<Text>`** breaks wrap math. Pre-wrap by visual width
-  with `src/cli/tui/wrap-ansi.ts` and pad lines to the box width.
-- **A key or click lands in the wrong popup**: a stale mouse event was
-  replayed. Consume it once, as `src/cli/tui/use-popup-action-queue.ts`
-  does.
-- **A hint for one popup** goes in its `hint` prop, not the global
-  `POPUP_DRILL_HINTS`.
+- **ANSI in ink `<Text>`** breaks wrap math. Size and cut styled lines
+  by visual width with `fitLine` in `src/cli/tui/text.ts`, and keep
+  frame lines exactly the box width (`frame.tsx`).
 
 ## Orchestrating on this repo
 
 Follow [skills/mu/recipes/orchestrator-loop.md](skills/mu/recipes/orchestrator-loop.md). Repo specifics:
 
-- Each workspace runs `npm install` into its own `node_modules`. Never
+- Each worktree runs `npm install` into its own `node_modules`. Never
   symlink main's.
-- `mu task wait` may list commits already on main when a worker forked
-  from an old HEAD. Check `git log` in the workspace and cherry-pick
-  only the new shas.
+- A worker may fork from an old HEAD. Check `git log` in its worktree
+  and cherry-pick only the new shas.
 - CHANGELOG.md conflicts are routine: keep both halves in order.
   Resolve source conflicts by hand, never with `--ours` or `--theirs`.
 - Fix a worker's bug in a separate commit after the cherry-pick. Do

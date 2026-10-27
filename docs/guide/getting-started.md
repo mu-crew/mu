@@ -19,8 +19,8 @@ mu doctor
 ```
 
 `pi install` loads the mu extension, skill, and recipe prompts as one
-package. Once a pi agent is running, the `ext` and `ctl` rows of
-`mu doctor` report the live extension; before that, `ext` says
+package. Once a pi agent is running, the "mu ext" and `ctl` rows of
+`mu doctor` report the live extension; before that, "mu ext" says
 `unknown`. If pi was already running, restart it so it loads the package.
 
 ## Create a workstream
@@ -52,11 +52,7 @@ mu task next -w auth
 ```
 
 ```
-┌────────┬────────┬────────────────────────┬────────┬────────┬──────┬───────┐
-│ name   │ status │ title                  │ impact │ effort │ ROI  │ owner │
-├────────┼────────┼────────────────────────┼────────┼────────┼──────┼───────┤
-│ design │ OPEN   │ Design the auth module │ 80     │ 2      │ 40.0 │ —     │
-└────────┴────────┴────────────────────────┴────────┴────────┴──────┴───────┘
+task	design	OPEN	impact=80 effort_days=2	Design the auth module
 ```
 
 Only `design` is ready. `build` appears when `design` closes.

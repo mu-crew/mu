@@ -115,8 +115,8 @@ from there, so a lost wake (Escape, compaction, `/reload`) loses
 nothing: the next runtime of the same pi session (after `/reload`, or
 `pi -c` after quitting) re-adopts its `running` pane calls and records
 the answer, a delegate that finished meanwhile included. `tally`
-counts one result per call: a done answer by its last first
-`VERDICT:` label (none: UNVERIFIED), a failed or cancelled call as
+counts one result per call: a done answer by the label of its first
+`VERDICT:` line (none: UNVERIFIED), a failed or cancelled call as
 UNVERIFIED, queued, running and refused ones as pending. So a plain
 research call (an answer with no `VERDICT:` line) tallies UNVERIFIED
 and closes `answered with no VERDICT line`: the answer arrived, it
@@ -227,8 +227,11 @@ and steering agent work is worth a pane.
 ## When to stop delegating
 
 Use delegates when you only need the answer: reviewing someone's PR or
-a doc, a fact-check, a go/no-go. Nothing they find lands in the ops
-log, which is permanent and syncs to every machine.
+a doc, a fact-check, a go/no-go. Findings stay in the answers and
+never enter your workstream's task graph. Each call's prompt and
+answer are a `scratch` task, which is in the ops log and syncs like any
+task; `mu workstream teardown scratch` hides them and `mu db forget
+scratch` deletes them.
 
 Move to a workstream when the findings become work agents will fix, or
 the job has dependencies or several stages: see

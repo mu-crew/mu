@@ -10,6 +10,10 @@ for i, m in enumerate(heads):
         end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
         body = text[m.end():end].strip()
         body = re.sub(r"\n---\s*$", "", body).strip()
+        # GitHub rejects a release body over 125000 characters (HTTP 422), and
+        # the workflow publishes to npm first: fail here, before it matters.
+        if len(body) > 125000:
+            sys.exit(f"section {version} is {len(body)} chars; GitHub's release body limit is 125000")
         print(body)
         sys.exit(0)
 sys.exit(f"no section for {version} in {path}")

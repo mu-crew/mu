@@ -101,7 +101,8 @@ it in the open:
 
 Not every review needs a record. Reviewing someone's PR or a doc runs
 as delegates only: findings come back in their answers, and nothing
-lands in the ops log.
+enters your workstream's task graph. Each call is still a task in
+`scratch` (its prompt and answer), which syncs like any task.
 
 Ask your orchestrator to *ultrathink* a job, and it follows the
 [orchestrator loop](skills/mu/recipes/orchestrator-loop.md): every unit,

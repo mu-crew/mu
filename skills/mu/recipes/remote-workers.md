@@ -21,4 +21,4 @@ End the brief with: commit, then `CLOSE: task=<id> evidence="<command + result>"
 - **`--max-sessions 1`**: the live pane holds the only channel; `collect` and your own `ssh dev` refuse until it is gone. Raise the cap to collect mid-run.
 - **Long remote gates are panes** (`spawn gate-1 --host dev --command 'npm test'`), not a held ssh.
 - `close` refuses a dirty worktree or one ahead of the collected commit: collect again.
-- A mule exit 3 is a hand-back (hardware key): never retry or open ssh yourself.
+- A host command's exit 3 is a hand-back (hardware key): never retry or open ssh yourself.

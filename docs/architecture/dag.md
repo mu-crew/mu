@@ -41,7 +41,7 @@ the first per-field UPDATE would fail the FK.
 
 Every lifecycle write sets `status` and `substate` in one UPDATE, so
 one op carries both under one HLC. A pair can still split across ops:
-a status-only op from a v10 peer, an unknown substate from a newer
+a status-only op from an older peer, an unknown substate from a newer
 peer, or a concurrent close and park on two machines. `foldTask`
 (`src/fold.ts`) takes the substate from the newest live op in the log
 that writes one and resolves it against the folded status. If that

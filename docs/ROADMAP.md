@@ -59,9 +59,8 @@ track them; delete the row when one ships.
 | **Tag mux sessions with their DB** | `teardown --empty` never removes a `mu-*` session that has no DB row, because another DB may own it. | Set `@mu_db=<abs path>` at session creation. Remove unregistered sessions whose tag matches this DB, and keep foreign or untagged ones. Optional mux method, since herdr may have no equivalent. | ~60 LOC |
 | **Token usage per run** | Orchestrators cannot budget a fan-out. | The extension reports pi's usage for the run, and `wait --json` carries it. Unknown stays unknown, never 0. No dollar estimates. | ~80 LOC |
 | **Global delegate cap** | `MU_DELEGATE_MAX` applies per pi session. Several orchestrators, plus workers running `mu agent spawn -w scratch`, are not capped in total. | Count live `scratch` agents from the DB in the queue check. | ~30 LOC |
-| **Wait for a non-pi CLI's prompt** | `spawn --send` treats a blank or booting screen as calm and can paste before the CLI is ready. | Settle only once the CLI has drawn its input prompt. This needs a screen pattern for each CLI, so it waits for real friction. | ~40 LOC |
 | **Absolute deadline in `wait`** | A delegate re-armed after `/reload` restarts its countdown. | Report `deadline` (epoch ms) alongside `timeoutS`. | ~20 LOC |
-| **Design-doc review angles** | `review-panel`'s angles are for diffs. | Add rollout and back-compat, alternatives, and integration angles. Synthesize into unanimous findings, tensions, and the strongest objection. | recipe |
+| **Design-doc review angles** | [adversarial-review](../skills/mu/recipes/adversarial-review.md) reviews diffs, not design docs. | Add rollout and back-compat, alternatives, and integration angles. Synthesize into unanimous findings, tensions, and the strongest objection. | recipe |
 | **Sender framing on sends** | The receiving agent cannot tell a peer's message from its human's. | Prefix text sent by a mu agent with `[mu: from <agent>]`. This touches prompts, so it follows logging the sender. | ~20 LOC |
 | **A third mux backend** | None: tmux and herdr are the two implementations that justify `MuxBackend`. | zellij, wezterm or kitty. A third needs its own friction evidence; the existing interface is not evidence. | — |
 | **Subscription-based wakeups** | `mu log --tail` polls once a second. | SQLite update hooks or `fs.watch` on the WAL. Lower latency for more machinery. | — |
@@ -72,8 +71,7 @@ track them; delete the row when one ships.
   compatibility; it always holds `spawning` and nothing reads it.
 - **`mu agent list --json` becomes `{items, count}`.** It emits
   `{workstreamName, agents, orphans}`, the one collection off the
-  documented shape (SKILL.md notes the exception). Conforming breaks
-  `.agents` readers, `mu_delegate` among them.
+  documented shape. Conforming breaks `.agents` readers, `mu_delegate` among them.
 
 ## Open questions
 

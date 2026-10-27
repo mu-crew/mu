@@ -22,5 +22,7 @@ publishing: owner `mu-crew`, repository `mu`, workflow `release.yml`).
 The workflow refuses a tag that does not match `package.json`.
 
 The workflow also creates the GitHub release for the tag, with the matching
-CHANGELOG section as its notes. It fails if that section is missing, so add
-the CHANGELOG entry before tagging.
+CHANGELOG section as its notes. It extracts the section before `npm publish`
+and fails there if it is missing or over GitHub's 125000-character body limit,
+so add a short CHANGELOG entry before tagging. The 4.0 development history
+lives in [docs/history/CHANGELOG-4.0-dev.md](docs/history/CHANGELOG-4.0-dev.md).
