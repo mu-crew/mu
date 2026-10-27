@@ -27,6 +27,7 @@ import { CTL_FEATURES, CTL_OPS } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, HostChannelBusyError, listHostChannels } from "../src/hosts.js";
 import { LOCAL_ONLY_ENV } from "../src/remote-agent.js";
+import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask } from "../src/tasks.js";
 import { killSession, tmux } from "../src/tmux.js";
@@ -274,6 +275,8 @@ describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
     expect(existsSync(other)).toBe(true);
     expect(gitIn(repo, "worktree", "list")).not.toContain("worker-1");
     expect(channels()).toEqual([]);
+    // Removed by its own rollback: nothing left to recover (triage_dff_remote_recovery_pileup).
+    expect(listRemoteRecoveries(db)).toEqual([]);
   }, 30_000);
 
   it("a worktree whose remote HEAD moved is left alone by the rollback (never destroys work)", async () => {
@@ -288,6 +291,8 @@ describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
     expect(gitIn(path, "log", "--format=%s", "-1")).toBe("moved");
     expect(getAgent(db, "worker-1", ws)).toBeUndefined();
     expect(channels()).toEqual([]);
+    // The tree it left alone keeps its record: `agent close --recovery` can still reach it.
+    expect(listRemoteRecoveries(db)).toMatchObject([{ name: "worker-1", cwd: path }]);
   }, 30_000);
 
   it("the exec-made worktree path survives git: a second spawn of a used name refuses instead of reusing it", async () => {

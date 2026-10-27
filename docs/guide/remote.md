@@ -100,7 +100,8 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   reaper took it, a workstream teardown, a peer's workstream delete, even a raw
   SQL delete) the database keeps a
   machine-local `remote_recovery` record of the host, path and base (`mu sql
-  "select * from remote_recovery"`; `mu rebuild` loses it). With no agent row left,
+  "select * from remote_recovery"`; `mu rebuild` loses it). A failed spawn whose
+  own rollback removed the tree (or found it gone) leaves none. With no agent row left,
   `mu agent close <name> -w <ws>` (or `<ws>/<name>`) previews and closes THAT
   worktree under the rule above (no pane, no task; the recorded host profile only), and
   `mu agent collect <name>` fetches from it. Several records of one name need
