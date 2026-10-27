@@ -36,7 +36,7 @@ export default defineConfig({
     // underneath tests. See test/_setup.ts for the rationale and
     // the allowlist (MU_TMUX_SOCKET is preserved). Layer "test" of
     // bug_test_flake_round_2.
-    setupFiles: ["./test/_setup.ts"],
+    setupFiles: ["./test/_setup.ts", "./test/_setup-db.ts"],
     // Belt-and-suspenders for tmux-fan-out integration tests:
     // many tests in test/*.integration.test.ts spawn real tmux
     // panes + sh subprocesses and then poll/wait for state to

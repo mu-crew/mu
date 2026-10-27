@@ -5,13 +5,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { classifyError } from "../src/cli/handle.js";
 import { type Db, defaultDbPath, openDb, SchemaTooOldError } from "../src/db.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
 import { TaskNotFoundError } from "../src/tasks/errors.js";
 import { DEFAULT_SUBSTATE, type TaskStatus } from "../src/tasks/status.js";
 import { addBlockEdge, addTask } from "../src/tasks.js";
+
+// This file pins openDb on fresh files: opt out of the template copy (test/_setup-db.ts).
+vi.unmock("../src/db.js");
 
 describe("openDb", () => {
   let tempDir: string;
