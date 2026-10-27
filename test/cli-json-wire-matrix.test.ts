@@ -7,9 +7,10 @@
 // Warning and error paths are pinned below the walk: warnings ride in the
 // document, never on stderr.
 
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import type { Command } from "commander";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCommandResolverForTests, setCommandResolverForTests } from "../src/agents.js";
@@ -18,7 +19,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliWire } from "./_runCli.js";
-import { freshMockState, mockTmux } from "./_verbs-mock.js";
+import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 /** Leaf verbs and their argv (without --json). `-w probe` is appended when the
  *  verb takes a workstream. A verb missing here fails the coverage test. */
@@ -152,20 +153,42 @@ afterAll(() => {
   rmFixtureDir(dir);
 });
 
-/** A fresh mux, DB and fixture per case: worker-1 (a live pane) owns no task, t1 is open. */
-async function seed(): Promise<void> {
-  dbPath = join(dir, `case-${n++}.db`);
-  mux?.restore();
-  mux = installMux("tmux", mockTmux(freshMockState()).executor);
-  for (const argv of [
-    ["workstream", "init", "probe"],
-    ["agent", "spawn", "worker-1", "-w", "probe"],
-    ["task", "add", "t1", "-t", "One", "-i", "50", "-e", "1", "-w", "probe"],
-  ]) {
-    const r = await runCliWire(argv, dbPath);
-    expect(r.exitCode ?? 0, `seed ${argv.join(" ")}: ${r.stderr}`).toBe(0);
+/** The seeded fixture is built ONCE through the CLI (a fresh `openDb` costs ~100 ms of DDL, and
+ *  every case seeds, twice for the root-position pair); each case then gets a file copy of the
+ *  checkpointed DB and a deep copy of the mock mux state. */
+let templateDb = "";
+let templateMux: MockState | undefined;
+
+async function buildTemplate(): Promise<void> {
+  templateDb = join(dir, "template.db");
+  const state = freshMockState();
+  const harness = installMux("tmux", mockTmux(state).executor);
+  try {
+    for (const argv of [
+      ["workstream", "init", "probe"],
+      ["agent", "spawn", "worker-1", "-w", "probe"],
+      ["task", "add", "t1", "-t", "One", "-i", "50", "-e", "1", "-w", "probe"],
+    ]) {
+      const r = await runCliWire(argv, templateDb);
+      expect(r.exitCode ?? 0, `seed ${argv.join(" ")}: ${r.stderr}`).toBe(0);
+    }
+  } finally {
+    harness.restore();
   }
   process.exitCode = undefined;
+  const db = new Database(templateDb);
+  db.pragma("wal_checkpoint(TRUNCATE)");
+  db.close();
+  templateMux = state;
+}
+
+/** A fresh mux, DB and fixture per case: worker-1 (a live pane) owns no task, t1 is open. */
+async function seed(): Promise<void> {
+  if (templateMux === undefined) await buildTemplate();
+  dbPath = join(dir, `case-${n++}.db`);
+  copyFileSync(templateDb, dbPath);
+  mux?.restore();
+  mux = installMux("tmux", mockTmux(structuredClone(templateMux as MockState)).executor);
 }
 
 let n = 0;

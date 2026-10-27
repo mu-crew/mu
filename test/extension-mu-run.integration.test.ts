@@ -96,7 +96,12 @@ describe("defaultRunner", () => {
     const ctl = new AbortController();
     const done = runChild(
       "sh",
-      ["-c", "trap 'sleep 0.3; echo rolled-back; exit 143' TERM; echo up; sleep 10 & wait"],
+      // the trap also kills the background sleep: left alive it holds the stdout pipe and execFile
+      // would not call back until it exits (10 s), which is not the thing under test
+      [
+        "-c",
+        "trap 'kill $p; sleep 0.3; echo rolled-back; exit 143' TERM; echo up; sleep 10 & p=$!; wait",
+      ],
       ctl.signal,
     );
     await new Promise((r) => setTimeout(r, 100));
