@@ -321,7 +321,7 @@ def live_check():
     finally:
         scr.tmux("send-keys", "-t", "s", "q"); time.sleep(0.5); scr.tmux("send-keys", "-t", "s", "q"); time.sleep(0.5)
         scr.kill()
-    # s6: the mutator notes IN_PROGRESS tasks every 2-5 s; an open drill on one must grow without a key.
+    # s6: the mutator notes IN_PROGRESS tasks every 2-5 s; an open drill on seed1 (never closed) must grow without a key.
     scr = Screen(6, 160, 45)
     try:
         if not scr.wait("Overview"):
@@ -329,9 +329,10 @@ def live_check():
         time.sleep(1.5)
         scr.keys("Right")
         scr.tmux("send-keys", "-t", "s", "o"); time.sleep(0.4); scr.tmux("send-keys", "-t", "s", "o"); time.sleep(0.8)  # in_progress
+        scr.keys("/"); scr.tmux("send-keys", "-t", "s", "-l", "seed1"); time.sleep(0.4); scr.keys("Enter")  # seed1: the mutator never closes it
         scr.keys("Enter"); time.sleep(0.8)
         before = sum("progress " in l for l in scr.grab())
-        # The mutator notes a RANDOM in-progress task 1 tick in 4 (every 2-5 s): give it 90 s to hit this one.
+        # The mutator notes a RANDOM in-progress task 1 tick in 4 (every 2-5 s) and never closes seed1: give it 90 s to hit it.
         end, seen = time.time() + 90, False
         while time.time() < end and not seen:
             seen = sum("progress " in l for l in scr.grab()) > before

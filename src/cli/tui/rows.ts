@@ -438,11 +438,12 @@ const attentionRole = (a: DashboardAttention): Role => (a.kind === "dead" ? "bad
 function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
   return snap.attention.map((a) => {
     const agent = snap.agents.find((x) => x.key === a.target);
-    const task = snap.tasks.find((x) => x.key === a.target);
+    // A human item's task comes from the item itself: snap.tasks is the shown workstream's only.
+    const id = a.kind === "human" ? a.target?.slice((a.workstream?.length ?? 0) + 1) : undefined;
     const drill: DrillTarget | undefined = agent
       ? scrollbackOf(agent)
-      : task
-        ? { kind: "notes", workstream: task.workstream, id: task.id, title: task.title }
+      : a.workstream !== null && id
+        ? { kind: "notes", workstream: a.workstream, id, title: a.text }
         : undefined;
     return rowOf(
       a.key,

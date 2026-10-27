@@ -150,4 +150,23 @@ describe("dashboard screen", () => {
     await ui.until((s) => s.includes("decide the fx policy") && !s.includes("Attention"));
     ui.unmount();
   });
+
+  it("Enter on another workstream's human item opens its notes (the snapshot is scoped to beta)", async () => {
+    ensureWorkstream(db, "alpha");
+    addTask(db, {
+      workstream: "alpha",
+      localId: "ask",
+      title: "approve the budget",
+      impact: 50,
+      effortDays: 1,
+      kind: "human",
+    });
+    const ui = await open(120, 40);
+    await ui.until((s) => s.includes("> alpha/human: approve the budget"));
+    await ui.press("\r");
+    await ui.until(
+      (s) => s.includes("Notes  ") && s.includes("approve the budget") && !s.includes("Attention"),
+    );
+    ui.unmount();
+  });
 });
