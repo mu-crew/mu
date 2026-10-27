@@ -24,6 +24,7 @@ import { getAgent } from "../agents.js";
 import type { Db } from "../db.js";
 import { currentCallers } from "../wait-callers.js";
 import { type RefBaseline, type RegisterRef, registerOwnedWait } from "../wait-registration.js";
+import { setNextArmed } from "./handle.js";
 
 export interface ArmResult {
   armed: boolean;
@@ -65,6 +66,7 @@ export function armWait(db: Db, refs: readonly RegisterRef[]): ArmResult {
   if (caller === undefined || refs.length === 0) return { armed: false };
   try {
     registerOwnedWait(db, caller, refs);
+    setNextArmed();
     return { armed: true, caller };
   } catch (e) {
     return {

@@ -12,7 +12,9 @@ import { type Db, openDb } from "../src/db.js";
 import type { NextPlan } from "../src/output-contract.js";
 import { taskRevision } from "../src/revision.js";
 import { addTask } from "../src/tasks/edit.js";
+import { registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -89,6 +91,19 @@ describe("one finalisation for every result path", () => {
     // A failure after the scope resolved computes from the same state.
     const bad = await runCliJson(["task", "show", "nope", "-w", "demo", "--json"], path);
     expect(bad.doc.next).toEqual({ mode: "alt", commands: ["mu next -w demo"] });
+  });
+
+  it("the bare wait follows only a verb that armed work, not a read or an unrelated write", async () => {
+    await withEnv("PI_SESSION_ID", "s1", async () => {
+      registerOwnedWait(db, "pi:s1", [{ kind: "task", workstream: "demo", id: "t" }]);
+      const read = await runCliJson(["task", "show", "t", "-w", "demo", "--json"], path);
+      expect(read.doc.next).toBeNull();
+      const write = await runCliJson(
+        ["task", "update", "t", "-w", "demo", "--impact", "70", "--json"],
+        path,
+      );
+      expect(write.doc.next).toBeNull();
+    });
   });
 
   it("a parse error has no DB and no scope: next is null", async () => {
