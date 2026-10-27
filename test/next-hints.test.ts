@@ -329,7 +329,7 @@ describe("courseCheckHint / computeNotices: the course-correct trigger", () => {
     expect(courseCheckHint(db, "d")).toBeUndefined();
     closeN(1, "d", COURSE_CHECK_CLOSED - 1);
     expect(courseCheckHint(db, "d")).toMatch(
-      /^course check due: 10 closed since \d{4}-\d\d-\d\dT\d\d:\d\dZ \(recipes\/course-correct\.md\)$/,
+      /^course check due: 10 closed since \d{4}-\d\d-\d\dT\d\d:\d\dZ\. Stop dispatching: finish merging, then follow recipes\/course-correct\.md$/,
     );
   });
 
