@@ -461,7 +461,7 @@ activity. Bare `mu` on a TTY opens it. Read-only; keys yank commands.
 
 | Tab | Content |
 |---|---|
-| Tasks | sorted by latest op per task (`db_activity_sort_bypass`); CLOSED hidden by default; status + text filter persists; owner shown on IN_PROGRESS only; Enter drills to the notes view |
+| Tasks | sorted by latest op per task (`db_activity_sort_bypass`), `s` cycles activity / roi / age / id; CLOSED hidden by default, `o` cycles the status filter; status + sort + text filter persist; owner (before the title) shown on IN_PROGRESS only; Enter drills to the notes view |
 | DAG | open tasks + their frontier by default (`db_dag_unusable_default`: 1,781 roots, 57 open) |
 | Agents | every workstream incl. scratch; ctl state, owned task, running tool + elapsed; Enter = scrollback, `a` = attach (user decision) |
 | Log | `renderOp` tail |

@@ -22,9 +22,11 @@ import {
   moveCursor,
   NO_FILTER,
   nextLine,
+  nextSortLabel,
   nextStatusLabel,
   pickWorkstream,
   type Row,
+  SORT_ARROWS,
   scopeKey,
   statusesOf,
   TABS,
@@ -63,8 +65,9 @@ export function layout(rows: number): { shown: ReadonlySet<FixedLine>; height: n
   return { shown, height: Math.max(0, rows - TOP_LINES - shown.size) };
 }
 
-const HINT =
-  "←/→ tab  [/] workstream  j/k move  Enter open  s status  / filter  c clear  y copy  q quit";
+const HINT = "←/→ tab  [/] workstream  j/k move  Enter open  / filter  c clear  y copy  q quit";
+const HINT_TASKS =
+  "←/→ tab  [/] workstream  j/k move  Enter open  s sort  o status  / filter  c clear  y copy  q quit";
 const hintAgents = (attachKey: string): string =>
   `←/→ tab  [/] workstream  j/k move  Enter scrollback  ${attachKey}  / filter  c clear  y copy  q quit`;
 
@@ -250,10 +253,15 @@ export function App({
       else if (input === "g" || key.home) move(-all.length);
       else if (input === "G" || key.end) move(all.length);
       else if (input === "s" && tab === "tasks")
+        setFilter({ sort: nextSortLabel(view.filter.sort) });
+      else if (input === "o" && tab === "tasks")
         setFilter({ status: nextStatusLabel(view.filter.status) });
       else if (input === "/") setEditing({ before: view.filter.text });
       else if (input === "c")
-        setFilter({ text: "", ...(tab === "tasks" ? { status: "active" as const } : {}) });
+        setFilter({
+          text: "",
+          ...(tab === "tasks" ? { status: "active" as const, sort: "activity" as const } : {}),
+        });
       else if (input === "r") state.refresh();
       else if (key.return) {
         const target = all[sel]?.drill;
@@ -276,6 +284,7 @@ export function App({
   const f = view.filter;
   const filterLine = [
     tab === "tasks" ? `status: ${f.status}` : "",
+    tab === "tasks" ? `sort: ${f.sort} ${SORT_ARROWS[f.sort]}` : "",
     `filter: ${f.text}${editing ? "_" : ""}`,
     snap ? `${all.length} row${all.length === 1 ? "" : "s"}` : "",
     state.stale || (state.loading && !snap) ? "loading…" : "",
@@ -311,7 +320,9 @@ export function App({
               ? "type to filter  Enter keep  Esc cancel"
               : tab === "agents"
                 ? hintAgents(attachKey)
-                : HINT,
+                : tab === "tasks"
+                  ? HINT_TASKS
+                  : HINT,
             color: undefined,
           };
 

@@ -15,6 +15,7 @@ import {
   moveCursor,
   NO_FILTER,
   nextLine,
+  nextSortLabel,
   pickWorkstream,
   scopeKey,
   tabRows,
@@ -123,9 +124,9 @@ describe("model", () => {
       ] as never,
     });
     const [l, f, ...rest] = tabRows("agents", snap, "w", NO_FILTER, 0);
-    expect(l?.text).toMatch(/^local\s+busy\s+t1\s+tool -$/);
+    expect(l?.text).toMatch(/^local\s+local\s+busy\s+t1\s+tool -$/);
     expect(l?.text).not.toContain("@");
-    expect(f?.text).toMatch(/^far@dev\s+busy\s+other\/t2/);
+    expect(f?.text).toMatch(/^far\s+dev\s+busy\s+other\/t2/);
     expect(rest).toEqual([]);
   });
 
@@ -160,7 +161,7 @@ describe("model", () => {
       frontier: [{ workstream: "w", roots_cut: 4, again_cut: 1 }],
     });
     const all = tabRows("dag", snap, "w", NO_FILTER, 0).map((r) => r.text);
-    expect(all[0]).toBe("a  [OPEN]  A  (2 closed, 1 cut by cap)");
+    expect(all[0]).toMatch(/^a {2}OPEN {13} {2}A {2}\(2 closed, 1 cut by cap\)$/);
     expect(all.slice(1)).toEqual([
       "… 4 open start tasks left out by the node cap",
       "… 1 repeat line left out by the node cap",
@@ -252,7 +253,7 @@ describe("tabs (Ink over a real snapshot)", () => {
     const ui = await open({ columns: 80, rows: 20 }, "beta");
     await ui.until((s) => s.includes("b1"));
     await ui.press("\t"); // DAG: the selected workstream only
-    await ui.until((s) => s.includes("[OPEN]"));
+    await ui.until((s) => s.includes("OPEN") && s.includes("b1"));
     expect(ui.screen()).not.toContain("a1");
     await ui.press("\t"); // Agents: none registered
     await ui.until((s) => s.includes("nothing here"));
@@ -285,6 +286,184 @@ describe("tabs (Ink over a real snapshot)", () => {
     ui.unmount();
   });
 
+  describe("stable columns and sort", () => {
+    const task = (id: string, over: Record<string, unknown> = {}) => ({
+      key: `w/${id}`,
+      workstream: "w",
+      id,
+      title: `title of ${id}`,
+      status: "OPEN",
+      substate: "todo",
+      impact: 50,
+      effort_days: 1,
+      owner: null,
+      owner_id: null,
+      owner_workstream: null,
+      kind: "work",
+      wave: null,
+      created_at: "2026-01-01 00:00:00",
+      updated_at: "2026-01-01 00:00:00",
+      activity_seq: 0,
+      ...over,
+    });
+    const col = (text: string, needle: string): number => text.indexOf(needle);
+
+    it("Tasks: the title column does not move with the filter, and the owner precedes the title", () => {
+      const snap = empty({
+        tasks: [
+          task("a", { title: "T-a" }),
+          task("long_task_identifier", {
+            title: "T-long",
+            status: "IN_PROGRESS",
+            substate: "active",
+            owner: "worker-6",
+            owner_workstream: "w",
+          }),
+        ] as never,
+      });
+      const all = tabRows("tasks", snap, "w", NO_FILTER, 0).map((r) => r.text);
+      const only = tabRows("tasks", snap, "w", { ...NO_FILTER, text: "T-a" }, 0).map((r) => r.text);
+      expect(only).toHaveLength(1);
+      expect(col(only[0] ?? "", "T-a")).toBe(col(all[0] ?? "", "T-a"));
+      expect(col(all[1] ?? "", "@worker-6")).toBeLessThan(col(all[1] ?? "", "T-long"));
+      // Unowned rows keep the title in the same column as owned ones.
+      expect(col(all[0] ?? "", "T-a")).toBe(col(all[1] ?? "", "T-long"));
+    });
+
+    it("Tasks: a long title is the clipped column; the owner stays whole", () => {
+      const snap = empty({
+        tasks: [
+          task("t009", {
+            title: "x".repeat(400),
+            status: "IN_PROGRESS",
+            substate: "active",
+            owner: "worker-6",
+            owner_workstream: "w",
+          }),
+        ] as never,
+      });
+      const [r] = tabRows("tasks", snap, "w", NO_FILTER, 0);
+      expect(r?.text).toContain("t009");
+      expect(r?.text).toContain("@worker-6");
+      expect(r?.text.indexOf("@worker-6")).toBeLessThan(40);
+    });
+
+    it("Tasks: sort cycles activity, roi, age, id; roi ties go to the smaller effort", () => {
+      expect(nextSortLabel("activity")).toBe("roi");
+      expect(nextSortLabel("id")).toBe("activity");
+      const snap = empty({
+        tasks: [
+          task("b", { impact: 10, effort_days: 1, created_at: "2026-01-03 00:00:00" }),
+          task("a", { impact: 80, effort_days: 4, created_at: "2026-01-02 00:00:00" }), // roi 20
+          task("c", { impact: 20, effort_days: 1, created_at: "2026-01-01 00:00:00" }), // roi 20, smaller effort
+        ] as never,
+      });
+      const order = (sort: "activity" | "roi" | "age" | "id"): string[] =>
+        tabRows("tasks", snap, "w", { ...NO_FILTER, sort }, 0).map((r) => r.key);
+      expect(order("activity")).toEqual(["w/b", "w/a", "w/c"]);
+      expect(order("roi")).toEqual(["w/c", "w/a", "w/b"]);
+      expect(order("age")).toEqual(["w/c", "w/a", "w/b"]);
+      expect(order("id")).toEqual(["w/a", "w/b", "w/c"]);
+    });
+
+    it("Agents: host column is `local` or the host; columns do not move under a filter", () => {
+      const a = { workstream: "w", tool: null, tasks: [], task: null } as const;
+      const snap = empty({
+        agents: [
+          { ...a, key: "w/x", name: "x", host: null, state: "idle" },
+          {
+            ...a,
+            key: "w/longer-name",
+            name: "longer-name",
+            host: "dev",
+            state: "needs_permission",
+          },
+        ] as never,
+      });
+      const all = tabRows("agents", snap, "w", NO_FILTER, 0).map((r) => r.text);
+      const one = tabRows("agents", snap, "w", { ...NO_FILTER, text: "idle" }, 0).map(
+        (r) => r.text,
+      );
+      expect(all[0]).toMatch(/^x +local +idle +- +tool -$/);
+      expect(all[1]).toMatch(/^longer-name +dev +needs_permission +- +tool -$/);
+      expect(col(one[0] ?? "", "idle")).toBe(col(all[0] ?? "", "idle"));
+    });
+
+    it("Agents: the tool column does not move when an agent claims a task", () => {
+      const a = { workstream: "w", tool: null, host: null, state: "idle", tasks: [] } as const;
+      const at = (owned: string | null) =>
+        empty({
+          tasks: [task("long_task_id")] as never,
+          agents: [
+            { ...a, key: "w/x", name: "x", task: owned === null ? null : `w/${owned}` },
+          ] as never,
+        });
+      const idle = tabRows("agents", at(null), "w", NO_FILTER, 0)[0]?.text ?? "";
+      const busy = tabRows("agents", at("long_task_id"), "w", NO_FILTER, 0)[0]?.text ?? "";
+      expect(idle.indexOf("tool")).toBe(busy.indexOf("tool"));
+    });
+
+    it("Log: seq, time and text start in the same column on every row", () => {
+      const item = (seq: number, rendered: string) => ({
+        seq,
+        scope: "w",
+        created_at: `2026-01-01T10:00:0${seq % 10}`,
+        rendered,
+        actor: "a",
+      });
+      const snap = empty({
+        log: [item(9, "first"), item(10, "second"), item(100, "third")] as never,
+      });
+      const rows = tabRows("log", snap, "w", NO_FILTER, 0).map((r) => r.text);
+      expect(new Set(rows.map((r) => r.search(/first|second|third/))).size).toBe(1);
+      expect(rows[0]).toMatch(/^ {2}9 {2}10:00:09 {2}first$/);
+      expect(rows[2]).toMatch(/^100 {2}10:00:00 {2}third$/);
+    });
+
+    it("DAG: ids carry the indent, statuses and titles line up", () => {
+      const e = (id: string, depth: number) => ({
+        key: `w/${id}`,
+        workstream: "w",
+        id,
+        title: `T-${id}`,
+        status: "OPEN",
+        substate: "todo",
+        depth,
+        parent: null,
+        again: false,
+        kids: 0,
+        closed: 0,
+        cap_cut: 0,
+      });
+      const rows = tabRows(
+        "dag",
+        empty({ edges: [e("a", 0), e("bb", 1), e("c", 2)] }),
+        "w",
+        NO_FILTER,
+        0,
+      );
+      const cols = rows.map((r) => r.text.indexOf("T-"));
+      expect(new Set(cols).size).toBe(1);
+      expect(rows[1]?.text.startsWith("  bb")).toBe(true);
+    });
+  });
+
+  it("s cycles the Tasks sort and o the status filter", async () => {
+    add("beta", "t1");
+    const ui = await open({ columns: 100, rows: 20 }, "beta");
+    await ui.until((s) => s.includes("t1"));
+    expect(ui.screen()).toContain("sort: activity ↓");
+    await ui.press("s");
+    await ui.until((s) => s.includes("sort: roi ↓") && s.includes("status: active"));
+    await ui.press("s");
+    await ui.until((s) => s.includes("sort: age ↑"));
+    await ui.press("o");
+    await ui.until((s) => s.includes("status: open") && s.includes("sort: age ↑"));
+    await ui.press("c");
+    await ui.until((s) => s.includes("sort: activity ↓") && s.includes("status: active"));
+    ui.unmount();
+  });
+
   it("CLOSED is hidden until the status filter asks for it", async () => {
     add("beta", "live");
     add("beta", "done1");
@@ -292,9 +471,9 @@ describe("tabs (Ink over a real snapshot)", () => {
     const ui = await open({ columns: 80, rows: 20 }, "beta");
     await ui.until((s) => s.includes("live"));
     expect(ui.screen()).not.toContain("done1");
-    await ui.press("s"); // open
-    await ui.press("s"); // in_progress
-    await ui.press("s"); // closed
+    await ui.press("o"); // open
+    await ui.press("o"); // in_progress
+    await ui.press("o"); // closed
     await ui.until((s) => s.includes("status: closed") && s.includes("done1"));
     expect(ui.screen()).not.toContain("live");
     ui.unmount();
@@ -311,7 +490,7 @@ describe("tabs (Ink over a real snapshot)", () => {
     await ui.press("blue");
     await ui.until((s) => s.includes("filter: blue_") && !s.includes("banana"));
     await ui.press("\r");
-    await ui.press("s");
+    await ui.press("o");
     await ui.until((s) => s.includes("status: open"));
     // Another tab and another workstream carry their own (empty) filters ...
     await ui.press("\t");

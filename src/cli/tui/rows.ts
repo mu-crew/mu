@@ -13,8 +13,15 @@ import type {
   DashboardSnapshot,
   DashboardTask,
 } from "../../dashboard-data.js";
-import { DEFAULT_SUBSTATE, isTaskStatus, type TaskStatus } from "../../tasks/status.js";
-import { cell, clean } from "./text.js";
+import {
+  DEFAULT_SUBSTATE,
+  isTaskStatus,
+  TASK_STATUSES,
+  TASK_SUBSTATES,
+  type TaskStatus,
+} from "../../tasks/status.js";
+import { type ColumnSpec, columnWidths, GUTTER, renderCells } from "./columns.js";
+import { clean } from "./text.js";
 
 export type TabId = "tasks" | "dag" | "agents" | "log";
 export const TABS: readonly { id: TabId; label: string }[] = [
@@ -39,15 +46,28 @@ export interface Row {
   notice?: boolean;
 }
 
-/** Task status filter, cycled with `s`. `active` is the dashboard default (CLOSED hidden). */
+/** Task status filter, cycled with `o`. `active` is the dashboard default (CLOSED hidden). */
 export const STATUS_LABELS = ["active", "open", "in_progress", "closed", "all"] as const;
 export type StatusLabel = (typeof STATUS_LABELS)[number];
+
+/** Task order, cycled with `s` (Tasks tab only): newest activity (default), ROI, oldest first, id. */
+export const SORT_LABELS = ["activity", "roi", "age", "id"] as const;
+export type SortLabel = (typeof SORT_LABELS)[number];
+
+/** The filter line's name for a sort: the arrow points at what comes first. */
+export const SORT_ARROWS: Record<SortLabel, string> = {
+  activity: "↓", // newest first
+  roi: "↓", // highest first
+  age: "↑", // oldest first
+  id: "↑",
+};
 
 export interface Filter {
   status: StatusLabel;
   text: string;
+  sort: SortLabel;
 }
-export const NO_FILTER: Filter = { status: "active", text: "" };
+export const NO_FILTER: Filter = { status: "active", text: "", sort: "activity" };
 
 const STATUS_SETS: Record<StatusLabel, readonly TaskStatus[]> = {
   active: ["OPEN", "IN_PROGRESS"],
@@ -62,6 +82,11 @@ export const statusesOf = (label: StatusLabel): readonly TaskStatus[] => STATUS_
 export function nextStatusLabel(label: StatusLabel): StatusLabel {
   const i = STATUS_LABELS.indexOf(label);
   return STATUS_LABELS[(i + 1) % STATUS_LABELS.length] ?? "active";
+}
+
+export function nextSortLabel(label: SortLabel): SortLabel {
+  const i = SORT_LABELS.indexOf(label);
+  return SORT_LABELS[(i + 1) % SORT_LABELS.length] ?? "activity";
 }
 
 /** Filters (and cursors) persist per tab and workstream: every tab shows the selected one. */
@@ -102,54 +127,103 @@ function textMatch(text: string, ...fields: (string | null | undefined)[]): bool
   return fields.some((f) => f?.toLowerCase().includes(needle) === true);
 }
 
-const pad = (n: number, max: number): number => Math.min(max, n);
-const widest = (xs: readonly string[], max: number): number =>
-  pad(Math.max(0, ...xs.map((x) => clean(x).length)), max);
-
 function statusText(status: string, substate: string): string {
   const dflt = isTaskStatus(status) ? DEFAULT_SUBSTATE[status] : undefined;
   return substate === "" || substate === dflt ? status : `${status}/${substate}`;
 }
 
-function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
-  const statuses: readonly string[] = statusesOf(f.status);
-  const tasks = snap.tasks.filter(
-    (t) =>
-      t.workstream === ws &&
-      statuses.includes(t.status) &&
-      textMatch(f.text, t.key, t.title, t.owner, t.substate),
-  );
-  // `snap.tasks` already arrives newest-activity first: keep that order.
-  const idw = widest(
-    tasks.map((t) => t.id),
-    28,
-  );
-  const stw = widest(
-    tasks.map((t) => statusText(t.status, t.substate)),
-    22,
-  );
-  return tasks.map((t: DashboardTask) => {
-    const owner =
-      t.owner === null
-        ? ""
-        : `  @${t.owner_workstream !== null && t.owner_workstream !== t.workstream ? `${t.owner_workstream}/` : ""}${t.owner}`;
-    return {
-      key: t.key,
-      text: `${cell(t.id, idw)}  ${cell(statusText(t.status, t.substate), stw)}  ${t.title}${owner}`,
-      drill: { kind: "notes", workstream: t.workstream, id: t.id, title: t.title },
-    };
-  });
+// Column widths come from the SNAPSHOT (every row of the workstream), never from the
+// filtered or scrolled rows, so typing a filter or a poll never moves a column. A
+// status label is fixed at the longest legal one (`CLOSED/superseded`); the one clip
+// column (title, rendered text, tool) is last.
+const STATUS_WIDTH = Math.max(
+  ...TASK_STATUSES.flatMap((st) => TASK_SUBSTATES[st].map((sub) => statusText(st, sub).length)),
+);
+const STATE_WIDTH = "needs_permission".length;
+const HOST_WIDTH = 6;
+const LOCAL = "local";
+const TIME_WIDTH = 8;
+
+const protect = (min = 0, max?: number): ColumnSpec => ({
+  kind: "protect",
+  min,
+  ...(max !== undefined ? { max } : {}),
+});
+const fixed = (n: number): ColumnSpec => ({ kind: "protect", min: n, max: n });
+const CLIP: ColumnSpec = { kind: "clip" };
+
+/**
+ * Lay rows out in columns sized over `basis` (every row of the snapshot, protected
+ * columns only). The LAST spec is the one clip column: its text goes out whole and
+ * the view cuts the line to its width, ending in "…". Zero-width columns vanish.
+ */
+function layoutRows(
+  basis: ReadonlyArray<ReadonlyArray<string>>,
+  specs: readonly ColumnSpec[],
+): (cells: readonly string[]) => string {
+  const widths = columnWidths(basis, specs);
+  const last = specs.length - 1;
+  return (cells) => {
+    const head = renderCells(cells, widths, specs)
+      .slice(0, last)
+      .filter((_, i) => (widths[i] ?? 0) > 0);
+    return [...head, clean(cells[last] ?? "")].join(" ".repeat(GUTTER)).trimEnd();
+  };
 }
 
-function edgeText(e: DashboardEdge): string {
+/** `@name`, with the owner's workstream when it is not the task's own. */
+const ownerLabel = (t: DashboardTask): string =>
+  t.owner === null
+    ? ""
+    : `@${t.owner_workstream !== null && t.owner_workstream !== t.workstream ? `${t.owner_workstream}/` : ""}${t.owner}`;
+
+/** Order of a task list: activity is the snapshot's own order (newest first); ties keep it. */
+function sortTasks(tasks: DashboardTask[], sort: SortLabel): DashboardTask[] {
+  const roi = (t: DashboardTask): number => t.impact / Math.max(t.effort_days, 1e-9);
+  const out = [...tasks];
+  if (sort === "roi") out.sort((a, b) => roi(b) - roi(a) || a.effort_days - b.effort_days);
+  else if (sort === "age")
+    out.sort((a, b) => (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : 0));
+  else if (sort === "id") out.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return out;
+}
+
+function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
+  const statuses: readonly string[] = statusesOf(f.status);
+  const inWs = snap.tasks.filter((t) => t.workstream === ws);
+  const tasks = sortTasks(
+    inWs.filter(
+      (t) => statuses.includes(t.status) && textMatch(f.text, t.key, t.title, t.owner, t.substate),
+    ),
+    f.sort,
+  );
+  const specs = [protect(0, 24), fixed(STATUS_WIDTH), protect(0, 24), CLIP];
+  // The owner sits BEFORE the title, so a long title can never clip it away. Its width
+  // covers the workstream's agents too: a task claimed later does not shift the title.
+  const agentNames = snap.agents.filter((a) => a.workstream === ws).map((a) => `@${a.name}`);
+  const line = layoutRows(
+    [...inWs.map((t) => [t.id, "", ownerLabel(t)]), ...agentNames.map((n) => ["", "", n])],
+    specs,
+  );
+  return tasks.map((t) => ({
+    key: t.key,
+    text: line([t.id, statusText(t.status, t.substate), ownerLabel(t), t.title]),
+    drill: { kind: "notes", workstream: t.workstream, id: t.id, title: t.title },
+  }));
+}
+
+function edgeNotes(e: DashboardEdge): string {
   const notes = [
     e.again ? "again, listed above" : "",
     e.kids > 0 ? `+${e.kids} open` : "",
     e.closed > 0 ? `${e.closed} closed` : "",
     e.cap_cut > 0 ? `${e.cap_cut} cut by cap` : "",
   ].filter((n) => n !== "");
-  return `${"  ".repeat(e.depth)}${e.id}  [${statusText(e.status, e.substate)}]  ${e.title}${notes.length > 0 ? `  (${notes.join(", ")})` : ""}`;
+  return notes.length > 0 ? `  (${notes.join(", ")})` : "";
 }
+
+/** The id cell carries the tree indent: the protected column that shows the shape. */
+const edgeId = (e: DashboardEdge): string => `${"  ".repeat(e.depth)}${e.id}`;
 
 /**
  * The open DAG of one workstream, preorder. The text filter hides entry lines
@@ -160,10 +234,18 @@ function edgeText(e: DashboardEdge): string {
  */
 function dagRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
   const rows: Row[] = [];
-  for (const e of snap.edges) {
-    if (e.workstream !== ws) continue;
+  const mine = snap.edges.filter((e) => e.workstream === ws);
+  const specs = [protect(0, 40), fixed(STATUS_WIDTH), CLIP];
+  const line = layoutRows(
+    mine.map((e) => [edgeId(e), "", ""]),
+    specs,
+  );
+  for (const e of mine) {
     if (textMatch(f.text, e.key, e.title, e.substate)) {
-      rows.push({ key: `${e.parent ?? ""}>${e.key}`, text: edgeText(e) });
+      rows.push({
+        key: `${e.parent ?? ""}>${e.key}`,
+        text: line([edgeId(e), statusText(e.status, e.substate), `${e.title}${edgeNotes(e)}`]),
+      });
     } else if (e.cap_cut > 0) {
       // Its line is filtered out, and the line is the only place its cap cut was
       // said: keep the warning as a notice naming the entry.
@@ -209,27 +291,29 @@ function toolText(a: DashboardAgent, now: number): string {
 }
 
 function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: number): Row[] {
-  const agents = snap.agents.filter(
-    (a) => a.workstream === ws && textMatch(f.text, a.key, a.state, a.tool?.name, ...a.tasks),
-  );
-  // The tab shows one workstream: a bare name, `@host` when it runs on a remote host
-  // (local = no marker), and a task of another workstream keeps its qualifier.
-  const label = (a: DashboardAgent): string => (a.host === null ? a.name : `${a.name}@${a.host}`);
+  const mine = snap.agents.filter((a) => a.workstream === ws);
+  const agents = mine.filter((a) => textMatch(f.text, a.key, a.state, a.tool?.name, ...a.tasks));
+  // The tab shows one workstream: a bare name, the host in its own column (`local` =
+  // none), and a task of another workstream keeps its qualifier.
   const taskOf = (a: DashboardAgent): string =>
     a.task === null
       ? "-"
       : a.task.startsWith(`${a.workstream}/`)
         ? a.task.slice(a.workstream.length + 1)
         : a.task;
-  const kw = widest(agents.map(label), 32);
-  const sw = widest(
-    agents.map((a) => a.state ?? "?"),
-    14,
+  const specs = [protect(0, 32), fixed(HOST_WIDTH), fixed(STATE_WIDTH), protect(0, 32), CLIP];
+  const line = layoutRows(
+    // The task column is as wide as the workstream's task ids, not just the tasks owned
+    // right now: an agent claiming or finishing a task must not move the tool column.
+    [
+      ...mine.map((a) => [a.name, "", "", taskOf(a)]),
+      ...snap.tasks.filter((t) => t.workstream === ws).map((t) => ["", "", "", t.id]),
+    ],
+    specs,
   );
-  const tw = widest(agents.map(taskOf), 32);
   return agents.map((a) => ({
     key: a.key,
-    text: `${cell(label(a), kw)}  ${cell(a.state ?? "?", sw)}  ${cell(taskOf(a), tw)}  ${toolText(a, now)}`,
+    text: line([a.name, a.host ?? LOCAL, a.state ?? "?", taskOf(a), toolText(a, now)]),
     drill: {
       kind: "scrollback" as const,
       workstream: a.workstream,
@@ -240,17 +324,23 @@ function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: n
   }));
 }
 
+const timeOf = (iso: string): string => /T(\d\d:\d\d:\d\d)/.exec(iso)?.[1] ?? iso;
+
+/** The log is one workstream's (the data layer reads it so), so there is no scope column. */
 function logRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
-  return snap.log
-    .filter((l) => l.scope === ws && textMatch(f.text, l.rendered, l.actor, l.scope))
-    .map((l) => {
-      const time = /T(\d\d:\d\d:\d\d)/.exec(l.created_at)?.[1] ?? l.created_at;
-      return {
-        key: String(l.seq),
-        text: `${l.seq}  ${time}  ${l.scope ?? "-"}  ${l.rendered}`,
-        drill: { kind: "log", item: l },
-      };
-    });
+  const mine = snap.log.filter((l) => l.scope === ws);
+  const specs: ColumnSpec[] = [{ kind: "protect", align: "right" }, fixed(TIME_WIDTH), CLIP];
+  const line = layoutRows(
+    mine.map((l) => [String(l.seq), "", ""]),
+    specs,
+  );
+  return mine
+    .filter((l) => textMatch(f.text, l.rendered, l.actor, l.scope))
+    .map((l) => ({
+      key: String(l.seq),
+      text: line([String(l.seq), timeOf(l.created_at), l.rendered]),
+      drill: { kind: "log", item: l },
+    }));
 }
 
 /** Every tab shows the selected workstream only (scratch included, like any other). */
