@@ -66,6 +66,21 @@ chooses. Verified mitigations: codex `--disable shell_snapshot`; cursor-agent
 any run: `command -v mu; mu --version; echo "<$MU_SYNC_DIR>"`. pi's bash tool
 did not show it. Task `triage_dfh_harness_path`.
 
+How the env is lost, measured after the alert (10:20). The env is not
+stripped: codex and cursor pass the pane's `MU_*` through, then the rc file
+overwrites what it names. Here that is `PATH` (`~/.local/bin` first) and
+`MU_SYNC_DIR=~/mu`. `MU_DB_PATH` and `MU_STATE_DIR`, which `.zshrc` does not
+set, came through intact. codex's own env config
+(`-c 'shell_environment_policy.set={...}'`) is applied before the snapshot,
+so `.zshrc` still wins: with `PATH` and `MU_SYNC_DIR` set there, `mu` was
+still 3.13.3, though `MU_SYNC_DIR` stayed blank. A wrapper under a name
+the rc file does not shadow (`mun`, which exports `MU_SYNC_DIR=` /
+`MU_DB_PATH` / `MU_STATE_DIR` itself and execs the checkout) resolved
+correctly in every mode: `command -v mun` = the wrapper with snapshot on,
+off, and in cursor's default shell. But the skill and every brief say `mu`,
+so the agent still runs bare `mu`. Use the two mitigations above, and treat
+`mun` as the orchestrator's own pin.
+
 **F2 (P3): trust and hook dialogs block a fresh codex pane.** In a new folder
 codex asks "Trust this folder?" (default "Trust and continue"), then "Hooks
 need review" (a herdr hook in `~/.codex/hooks.json`). mu reports
