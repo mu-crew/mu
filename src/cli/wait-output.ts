@@ -274,6 +274,10 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
                 findingsCut: tallyFull.findings.length,
               },
             }),
+      ...(result.alsoFiring !== undefined
+        ? { alsoFiring: result.alsoFiring.map((r) => refString(r)) }
+        : {}),
+      ...(result.alsoFiringMore !== undefined ? { alsoFiringMore: result.alsoFiringMore } : {}),
       ...(keptNeeds.length > 0 ? { humanNeeds: keptNeeds } : {}),
       ...(needs.length > keptNeeds.length
         ? { humanNeedsCut: needs.length - keptNeeds.length }

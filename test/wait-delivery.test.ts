@@ -37,6 +37,10 @@ const label = (r: WaitResult): string =>
     ? r.event.kind
     : `${r.event.kind}:${r.event.ref.id}${r.event.kind === "settled" && r.event.runs !== undefined ? `#${r.event.runs}` : ""}`;
 
+/** Every delegate report a result consumed: the firing one, then those that came with it. */
+const alsoLabels = (r: WaitResult): string[] =>
+  (r.alsoFiring ?? []).map((x) => `${x.kind}:${x.id}`);
+
 /** A small seeded PRNG (mulberry32): the property test is reproducible. */
 function rng(seed: number): () => number {
   let a = seed;
@@ -168,7 +172,10 @@ describe("fairness: an unchanged urgent observation is delivered once per state 
       readAgents: async () => table,
     } as const;
     const got: string[] = [];
-    for (let i = 0; i < 16; i++) got.push(label(await waitForEvents(env.db, [], opts)));
+    for (let i = 0; i < 16; i++) {
+      const r = await waitForEvents(env.db, [], opts);
+      got.push(label(r), ...alsoLabels(r));
+    }
     expect(got.filter((g) => g.startsWith("delegate:")).sort()).toEqual(
       calls.map((c) => `delegate:${c}`).sort(),
     );
@@ -238,6 +245,60 @@ describe("fairness: an unchanged urgent observation is delivered once per state 
     expect(label(await waitForEvents(env.db, [agentRef("w1")], opts))).toBe("input:w1");
     expect(label(await waitForEvents(env.db, [agentRef("w1")], opts))).toBe(`delegate:${call}`);
     expect(label(await waitForEvents(env.db, [agentRef("w1")], opts))).toBe("input:w1");
+  });
+});
+
+describe("an owned delegate report drains every ready owned delegate report together (dogfood-switch F2)", () => {
+  const opts = { ...base, callers: ["pi:s"], timeoutMs: 30 } as const;
+
+  it("3 recorded reports + an explicit closed task: one result names all three, the next wait returns the task", async () => {
+    mkTask(env.db, "t1");
+    close("t1");
+    const calls = [1, 2, 3].map(() => mkDelegate(env.db, "pi:s"));
+    for (const c of calls) answer(env.db, c);
+    const first = await waitForEvents(env.db, [taskRef("t1")], opts);
+    expect(first.event).toMatchObject({ kind: "delegate", ref: { id: calls[0] } });
+    expect(first.alsoFiring?.map((r) => r.id)).toEqual([calls[1], calls[2]]);
+    expect(first.alsoFiringMore).toBeUndefined();
+    expect(first.refs.filter((s) => s.ref.kind === "delegate" && s.fired)).toHaveLength(3);
+    expect(label(await waitForEvents(env.db, [taskRef("t1")], opts))).toBe("closed:t1");
+  });
+
+  it("two reports in one wait, none left: both consumed, the next wait has nothing owed", async () => {
+    const calls = [1, 2].map(() => mkDelegate(env.db, "pi:s"));
+    for (const c of calls) answer(env.db, c);
+    const r = await waitForEvents(env.db, [], opts);
+    expect(r.alsoFiring?.map((x) => x.id)).toEqual([calls[1]]);
+    // Both are consumed: nothing is owed any more.
+    await expect(waitForEvents(env.db, [], opts)).rejects.toThrow(/nothing to wait for/);
+  });
+
+  it("explicit delegate refs are asked for by name: never swept in, one per wait", async () => {
+    const [a, b] = [1, 2].map(() => mkDelegate(env.db, "pi:s"));
+    for (const c of [a, b]) answer(env.db, c as string);
+    const refs = [a, b].map((id) => ({
+      kind: "delegate" as const,
+      workstream: "scratch",
+      id: id as string,
+    }));
+    const first = await waitForEvents(env.db, refs, opts);
+    expect(first.event.ref?.id).toBe(a);
+    expect(first.alsoFiring).toBeUndefined();
+    expect((await waitForEvents(env.db, refs, opts)).event.ref?.id).toBe(b);
+  });
+
+  it("a cap: the rest stays owed (counted, not consumed) and the next wait returns it", async () => {
+    const calls = Array.from({ length: 15 }, () => mkDelegate(env.db, "pi:s"));
+    for (const c of calls) answer(env.db, c);
+    const first = await waitForEvents(env.db, [], opts);
+    const got = [first.event.ref?.id, ...(first.alsoFiring ?? []).map((r) => r.id)];
+    expect(got).toHaveLength(12);
+    expect(first.alsoFiringMore).toBe(3);
+    const second = await waitForEvents(env.db, [], opts);
+    expect([second.event.ref?.id, ...(second.alsoFiring ?? []).map((r) => r.id)].sort()).toEqual(
+      [...calls].filter((c) => !got.includes(c)).sort(),
+    );
+    await expect(waitForEvents(env.db, [], opts)).rejects.toThrow(/nothing to wait for/);
   });
 });
 
@@ -376,8 +437,10 @@ describe("property: N waits over a random mix of events deliver each exactly onc
           delivered.push(l);
           continue;
         }
-        delivered.push(l);
-        expect(pending.delete(l), `${l} was delivered twice or was never due`).toBe(true);
+        for (const x of [l, ...alsoLabels(r)]) {
+          delivered.push(x);
+          expect(pending.delete(x), `${x} was delivered twice or was never due`).toBe(true);
+        }
       }
       // Drain: nothing owed may be left behind.
       for (let i = 0; i < 40 && pending.size > 0; i++) {
@@ -391,27 +454,30 @@ describe("property: N waits over a random mix of events deliver each exactly onc
         });
         const l = label(r);
         if (l.startsWith("input:") || l === "heartbeat") continue;
-        delivered.push(l);
-        expect(pending.delete(l), `${l} was delivered twice or was never due`).toBe(true);
+        for (const x of [l, ...alsoLabels(r)]) {
+          delivered.push(x);
+          expect(pending.delete(x), `${x} was delivered twice or was never due`).toBe(true);
+        }
       }
       // Only events whose cause happened can be pending: close what is left, then it must come out.
       for (const t of tasks) if (pending.has(`closed:${t}`)) close(t);
       for (const b of blockers) if (pending.has(`closed:${b}`)) close(b);
       for (const c of calls) if (pending.has(`delegate:${c}`)) answer(env.db, c);
       for (let i = 0; i < 80 && pending.size > 0; i++) {
-        const l = label(
-          await waitForEvents(env.db, [], {
-            ...base,
-            callers: [caller],
-            timeoutMs: 8,
-            readAgents,
-            watchAgent,
-            blockersOf: { workstream: "w", id: "goal" },
-          }),
-        );
+        const r = await waitForEvents(env.db, [], {
+          ...base,
+          callers: [caller],
+          timeoutMs: 8,
+          readAgents,
+          watchAgent,
+          blockersOf: { workstream: "w", id: "goal" },
+        });
+        const l = label(r);
         if (l.startsWith("input:") || l === "heartbeat") continue;
-        delivered.push(l);
-        expect(pending.delete(l), `${l} was delivered twice or was never due`).toBe(true);
+        for (const x of [l, ...alsoLabels(r)]) {
+          delivered.push(x);
+          expect(pending.delete(x), `${x} was delivered twice or was never due`).toBe(true);
+        }
       }
       expect([...pending]).toEqual([]);
       const real = delivered.filter((l) => !l.startsWith("input:"));

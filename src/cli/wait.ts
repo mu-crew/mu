@@ -272,8 +272,15 @@ export function reasonOf(result: WaitResult, signal: string | undefined, open: n
           : `; --on-stall ${result.action.action}: ${result.action.state}${result.action.reason !== undefined ? ` (${result.action.reason})` : ""}`
       }`;
     }
-    case "delegate":
-      return `${who} reached ${snap?.status ?? "a final state"}${snap?.verdict ? ` (${snap.verdict})` : ""}`;
+    case "delegate": {
+      const more = result.alsoFiring?.length ?? 0;
+      const left = result.alsoFiringMore ?? 0;
+      return `${who} reached ${snap?.status ?? "a final state"}${snap?.verdict ? ` (${snap.verdict})` : ""}${
+        more > 0
+          ? `; ${more} more delegate report${more === 1 ? "" : "s"} consumed with it (data.alsoFiring)`
+          : ""
+      }${left > 0 ? `; ${left} more ready: wait again` : ""}`;
+    }
     case "interrupted":
       return `${signal ?? "interrupted"}: nothing consumed; ${open} still open`;
     case "heartbeat":
