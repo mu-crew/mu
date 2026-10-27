@@ -337,7 +337,7 @@ export interface MuxBackend {
    *  running here. Throws when the probe itself fails: unknown, never a result. */
   paneResult?(paneId: string): Promise<PaneResult>;
   /** herdr only: atomic `agent prompt`. tmux has no reliable paste (cut in
-   *  mu-next), so callers branch on the method's presence, never on
+   *  4.0), so callers branch on the method's presence, never on
    *  `mux.name`, and refuse when it is absent. */
   sendToPane?(paneId: string, text: string, opts?: SendOptions): Promise<void>;
   /** The argv steps that type pi's `/reload` into `paneId` from outside, for

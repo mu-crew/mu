@@ -820,7 +820,7 @@ export function refuseDbInsideSyncDir(): void {
   if (checkDbInsideSyncDir(dbPath, dir).severity === "fail") {
     throw new DbInsideSyncDirError(dbPath, dir);
   }
-  // A 3.x peer shares the folder: mu-next neither writes into it nor reads it.
+  // A 3.x peer shares the folder: mu 4 neither writes into it nor reads it.
   assertSyncDirV2(dir);
 }
 

@@ -230,7 +230,7 @@ function refuseUserDbDuringTests(path: string): void {
   const inTest = process.env.VITEST !== undefined || process.env.NODE_ENV === "test";
   if (!inTest) return;
   const home = process.env.HOME ?? homedir();
-  // mu-next's default, and 3.x's: a test must reach neither.
+  // The 4.x default (<state home>/mu-next) and 3.x's: a test must reach neither.
   const realDbs = ["mu-next", "mu"].map((dir) => resolve(join(xdgStateHome(home), dir, "mu.db")));
   const realDb = realDbs.find((p) => p === resolve(path));
   if (realDb !== undefined) {

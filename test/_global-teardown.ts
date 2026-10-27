@@ -303,7 +303,7 @@ export function userDbPaths(env: NodeJS.ProcessEnv = process.env): readonly stri
       ? env.XDG_STATE_HOME
       : join(home, ".local", "state");
   const paths = [env.MU_DB_PATH, env.MU_STATE_DIR ? join(env.MU_STATE_DIR, "mu.db") : undefined];
-  // mu-next's default, then 3.x's: a larger allowlist only means fewer kills.
+  // The 4.x default (<state home>/mu-next), then 3.x's: a larger allowlist only means fewer kills.
   paths.push(join(xdg, "mu-next", "mu.db"), join(xdg, "mu", "mu.db"));
   return [...new Set(paths.filter((p): p is string => p !== undefined && p.length > 0))];
 }

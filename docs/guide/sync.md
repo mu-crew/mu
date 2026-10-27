@@ -22,9 +22,8 @@ mu task close auth_fix -w app --evidence "shipped in #412"
 
 4.0 writes v2 segments, which 3.x warns about on every command. So 4.0
 refuses a `MU_SYNC_DIR` where any segment opens with a v1 line (exit 4,
-nothing read or written): `MU_SYNC_DIR holds 3.x segments; give mu-next
-its own dir`. Point it at a new folder. (The message still says mu-next,
-4.0's pre-release name.)
+nothing read or written): `MU_SYNC_DIR holds 3.x segments; give mu 4
+its own dir`. Point it at a new folder.
 
 ## Keep the DB out of the sync folder
 

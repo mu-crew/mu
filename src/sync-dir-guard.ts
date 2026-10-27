@@ -1,7 +1,7 @@
-// mu — the sync-dir guard: mu-next never reads or writes a MU_SYNC_DIR that
+// mu — the sync-dir guard: mu 4 never reads or writes a MU_SYNC_DIR that
 // a 3.x peer shares. 3.x reads only v1 lines and warns `unknown-version` on
 // every command once a v2 line lands in its folder (the 18:04 incident), so
-// no segment may open with a v1 line for mu-next to touch the dir.
+// no segment may open with a v1 line for mu 4 to touch the dir.
 // Builtins only: segments.ts and the CLI's handle() both import it.
 //
 // The guard lives INSIDE flushSegment, discoverPeers and ingestSegment, so
@@ -12,7 +12,7 @@ import { closeSync, openSync, readdirSync, readFileSync, readSync } from "node:f
 import { join } from "node:path";
 
 /** The one-line refusal. Exit 4 (conflict); nothing was written or read. */
-export const SYNC_DIR_FOREIGN_MESSAGE = "MU_SYNC_DIR holds 3.x segments; give mu-next its own dir";
+export const SYNC_DIR_FOREIGN_MESSAGE = "MU_SYNC_DIR holds 3.x segments; give mu 4 its own dir";
 
 export class SyncDirForeignError extends Error {
   override readonly name = "SyncDirForeignError";

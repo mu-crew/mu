@@ -1,4 +1,4 @@
-// mu-next wire contract: the one JSON document a `--json` invocation prints.
+// mu wire contract: the one JSON document a `--json` invocation prints.
 //
 //   success  {"ok":true,"data":<payload>,"next":null}
 //   failure  {"ok":false,"error":<class>,"message":<one line>,"next":null,"exit":<n>}

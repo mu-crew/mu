@@ -666,7 +666,7 @@ export async function currentSessionName(): Promise<string | undefined> {
 // THE SEND PROTOCOL IS ONE CALL. A tmux paste-then-Enter can be swallowed
 // by a TUI rendering a modal, stranding the text while `mu agent send`
 // reports exit 0 (dogfood_send_after_new_dropped); tmux therefore has no
-// send (cut in mu-next).
+// send (cut in 4.0).
 //
 // `herdr agent prompt` submits the text AND an encoded Enter atomically,
 // honouring the pane's live bracketed-paste mode, so the Enter cannot be
