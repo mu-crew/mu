@@ -31,6 +31,11 @@ export interface Item {
   ckey?: string;
   /** The event was already returned once (its token is consumed): it never outranks a never-returned one. */
   seen?: boolean;
+  /**
+   * Who died, on a `dead` item: the registry row (0 when it is gone and unknown) and, when known,
+   * its name and workstream. A task's is its owner's; an agent ref's is its own.
+   */
+  death?: { rowId: number; name?: string; workstream?: string };
   /** An owned event that was already returned: hidden until its state changes. */
   hidden?: boolean;
   /** Completed: closed, settled, delegate terminal, dead. */
@@ -144,6 +149,25 @@ export const delegateItem = (
     item.token = DELEGATE_TOKEN;
   }
   return item;
+};
+
+/**
+ * One death, one event: a dead task and a dead agent ref name the same death when the agent is the
+ * task's owner that died. The same registry row; or, the agent's row being gone (reaped), the
+ * owner the task names by name (and workstream, when the task knows it). A respawn under the name
+ * is another row: its death is its own.
+ */
+export const sameDeath = (a: Item, b: Item): boolean => {
+  const task = a.ref.kind === "task" ? a : b;
+  const agent = task === a ? b : a;
+  const t = task.death;
+  const g = agent.death;
+  if (a.kind !== "dead" || b.kind !== "dead" || t === undefined || g === undefined) return false;
+  if (task.ref.kind !== "task" || agent.ref.kind !== "agent") return false;
+  if (g.rowId !== 0) return g.rowId === t.rowId;
+  return (
+    t.name === agent.ref.id && (t.workstream === undefined || t.workstream === agent.ref.workstream)
+  );
 };
 
 export const failedGate = (i: Item): boolean =>
