@@ -183,7 +183,8 @@ export const MESSAGES = {
   "agent.spawn_gate_worktree": () =>
     "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in the profile's repo or --cwd",
   "agent.spawn_attempt_task": () => "--attempt needs --task",
-  "agent.spawn_task_send": () => "--task needs --send: the sent text is the task's brief",
+  "agent.spawn_task_default": (task: string, ws: string, title: string) =>
+    `Task ${task} (workstream ${ws}): ${title}. Read: mu task notes ${task} -w ${ws}`,
   "agent.spawn_name_hint": (name: string) =>
     `hint: agent name "${name}" does not match the smallest-unused-suffix convention (<role>-<n>; e.g. worker-1, reviewer-2). Accepted; consider renaming if you spawn additional workers.\n`,
   "agent.spawn_trust_warning": (name: string, skipped: boolean) =>
