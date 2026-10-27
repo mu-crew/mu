@@ -136,6 +136,46 @@ describe("rr_r3_local_rollback_live_pane: rollback keeps a local worktree and ro
   });
 });
 
+describe("rr_fix_r3_close_v2 P1 b: rollback never removes a tree with work in it", () => {
+  const spawnFailing = (work: (path: string) => void) =>
+    spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      worktree: true,
+      root,
+      onIdentity: (row) => {
+        if (row.cwd !== null) work(row.cwd); // the worker got going before the spawn failed
+        throw new Error("injected after finalize");
+      },
+    });
+  const logged = (re: RegExp): boolean =>
+    listLogs(db, { workstream: "auth" }).some((l) => re.test(l.payload));
+
+  it("committed work is kept on a branch before the tree goes; the rollback names it", async () => {
+    let head = "";
+    await expect(
+      spawnFailing((p) => {
+        head = commitFileIn(p, "w.txt", "own work");
+      }),
+    ).rejects.toThrow(/injected/);
+    const branch = `mu/auth/worker-1-${head.slice(0, 12)}`;
+    expect(gitIn(root, "rev-parse", "--verify", branch)).toBe(head);
+    expect(existsSync(worktreePath("auth", "worker-1"))).toBe(false);
+    expect(logged(new RegExp(branch))).toBe(true);
+  });
+
+  it("uncommitted files: the tree and its registry row stay, the record says how to finish", async () => {
+    const path = worktreePath("auth", "worker-1");
+    await expect(spawnFailing((p) => writeFileSync(join(p, "wip.txt"), "x"))).rejects.toThrow(
+      /injected/,
+    );
+    expect(existsSync(join(path, "wip.txt"))).toBe(true);
+    expect(listWorktrees(db).map((w) => w.path)).toEqual([path]);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined(); // the pane is gone
+    expect(logged(/mu agent close worker-1 -w auth/)).toBe(true);
+  });
+});
+
 describe("rr_r3_local_close_no_quiescence: a local close removes no tree a process still uses", () => {
   let holder: ChildProcess | undefined;
   afterEach(() => {
