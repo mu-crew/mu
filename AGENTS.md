@@ -88,6 +88,10 @@ first.
   close only what you created.
 - `openDb()` refuses the real DB under vitest. Use `MU_DB_PATH` or
   `{ path }`.
+- In tests, `openDb` on a new path copies a template DB built once per
+  run (`test/_db-template.ts`). A test that pins fresh-file behaviour
+  (the DDL, a refusal leaving the file empty) calls
+  `vi.unmock("../src/db.js")`.
 - `test/_setup.ts` clears inherited `MU_*` vars except
   `MU_TMUX_SOCKET`. Opt in per test with `withEnv()` from `test/_env.ts`.
 - Tests use temp DBs. `test/_global-teardown.ts` only reads the real DB

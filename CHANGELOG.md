@@ -23,6 +23,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 ### Test health
 
 - **Surface milestone measurement** (`v_health`, [docs/test-health/2026-10-23-surface.md](docs/test-health/2026-10-23-surface.md)). Fast tier 217 files / 4720 tests and full suite 302 / 5691 (3 environmental skips), all green. Both gate budgets are over on the shared host: fast ~49 s (budget 30 s), `npm run test` 8m31s (budget 5 min). The suite doubled since the kernel milestone. Test-only speed-ups with unchanged counts: `cli-json-wire-matrix` seeds a template DB once (36 s → 3 s) and the `extension-mu-run` TERM-trap test no longer waits on its own leaked `sleep` (10 s → 0.3 s), both mutation-checked. Top-20 classified; no MERGE or DELETE. Main remaining cost: fresh `openDb` is 48% of fast-tier time (follow-up: a shared template-DB helper). `docs/ARCHITECTURE.md` gains rows for `src/cli/doctor.ts`, `src/cli/tasks/wire.ts` and `extension/delegate-process-format.ts`.
+- **Shared template DB for tests** (`fast_gate_budget`). globalSetup builds one schema DB with the real `openDb`; a setup file routes every test `openDb` on a new path through a copy of it, re-keyed with its own `machine_identity`. Fast tier ~49 s → ~42 s wall, summed file time 329 s → 246 s (3 runs each, shared host); counts unchanged (217 / 4722). `db.test.ts` and `capture-persistent.test.ts` opt out to keep the fresh-file path pinned. Mutation-checked: skipping the re-key fails 85 tests.
 
 ### Fixed
 

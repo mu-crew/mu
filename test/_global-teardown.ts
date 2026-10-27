@@ -50,11 +50,13 @@
 // when set. Production code never sets the var; this file is the only
 // caller.
 
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import Database from "better-sqlite3";
 import { execa } from "execa";
+import { openDb } from "../src/db.js";
+import { DB_TEMPLATE_KEY } from "./_db-template.js";
 
 // ─── Layer 3: dedicated tmux socket ────────────────────────────────
 
@@ -334,6 +336,7 @@ async function sweepLeakedDefaultSocketSessions(phase: "setup" | "teardown"): Pr
  * path and teardown removes it. Both vitest configs share this file.
  */
 let vitestTmpDir: string | null = null;
+let dbTemplateDir: string | null = null;
 
 export function leakedVitestTmpDir(project: unknown, tmp: string = tmpdir()): string | null {
   const dir = (project as { vitest?: { _tmpDir?: unknown } } | null)?.vitest?._tmpDir;
@@ -344,6 +347,16 @@ export function leakedVitestTmpDir(project: unknown, tmp: string = tmpdir()): st
 
 export async function setup(project?: unknown): Promise<void> {
   vitestTmpDir = leakedVitestTmpDir(project);
+  // One schema-built DB for the whole run; forks copy it (test/_db-template.ts).
+  dbTemplateDir = mkdtempSync(join(tmpdir(), "mu-test-dbtpl-"));
+  const template = join(dbTemplateDir, "template.db");
+  const db = openDb({ path: template });
+  db.pragma("wal_checkpoint(TRUNCATE)");
+  db.close();
+  (project as { provide?: (k: string, v: unknown) => void } | undefined)?.provide?.(
+    DB_TEMPLATE_KEY,
+    template,
+  );
   // Layer 3 first: stand up the private tmux server. If this succeeds
   // every subsequent test invocation routes through `-L <socket>` and
   // can't see the user's tmux. If it FAILS we fall back gracefully.
@@ -355,6 +368,7 @@ export async function setup(project?: unknown): Promise<void> {
 
 export async function teardown(): Promise<void> {
   if (vitestTmpDir) rmSync(vitestTmpDir, { recursive: true, force: true });
+  if (dbTemplateDir) rmSync(dbTemplateDir, { recursive: true, force: true });
   // Layer 3: nuke the entire private server in one call. After this,
   // every session/window/pane the suite ever touched is gone.
   await killPrivateTmuxServer();

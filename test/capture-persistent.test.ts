@@ -33,6 +33,9 @@ import {
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 
+// This file pins openDb on fresh files: opt out of the template copy (test/_setup-db.ts).
+vi.unmock("../src/db.js");
+
 const PINNED_CHECKSUM = "0fa2a6ee2668584f1bdf66e3d65e8f792eeba3bd46eeeb808c58bf0050ace3d9";
 
 let dir: string;
