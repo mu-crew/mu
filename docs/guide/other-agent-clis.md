@@ -45,19 +45,33 @@ On herdr, `--send` and `agent send` work (herdr's `agent prompt`, see
   unreviewed hooks ask again. On tmux mu cannot answer them. Pre-trust the
   repo (`-c 'projects."<repo>".trust_level="trusted"'`; worktrees inherit the
   root's trust), or attach and press the key.
-- **State** comes from murmur on tmux, from herdr on herdr. Wire murmur's
-  notify hook (codex `notify`, cursor `.cursor/hooks.json` `stop`; see
-  murmur's `docs/setup.md`). Without it the agent is `unknown` throughout.
-  With it, you see `needs_input` when a turn ends, but never `busy`.
+- **State** comes from murmur on tmux, from herdr on herdr. Wire murmur to
+  the harness's stop hook (cursor: `.cursor/hooks.json` `stop`, see murmur's
+  `docs/setup.md`). Without it the agent is `unknown` throughout. With it,
+  you see `needs_input` when a turn ends, but never `busy`.
+- **codex: use its `Stop` hook, not `notify`.** codex runs a hidden turn to
+  title each new thread, and `notify` reports that turn as finished about 2 s
+  into the worker's first turn. murmur then reads `done`, and `--stuck-after`
+  reports the running worker as stalled (3.x does the same). `Stop` fires only
+  for real turns. Drop `notify` from `~/.codex/config.toml` and put this in
+  `~/.codex/hooks.json`:
+
+  ```json
+  {"hooks": {"Stop": [{"hooks": [{"type": "command",
+    "command": "murmur notify --source codex --event-type agent-turn-complete"}]}]}}
+  ```
+
+  Keep `--event-type`: without it murmur reads a `Stop` payload as `blocked`.
+  codex asks you to trust a new hook once (`/hooks`), and `--disable hooks`
+  turns it off.
 - **Wait on the task, not the agent.** `mu wait task:<ws>/<id>` fires when the
   worker closes it. `mu wait agent:<w>` fires only on busy → not busy, as in
   3.x: an agent already idle, or one that goes from `unknown` to
   `needs_input`, does not count. murmur's notify path never reports `busy`,
   so on tmux that wait runs to its timeout. `--until-text <re>` matches the
   pane's tail instead.
-- **Stalls are approximate.** codex notifies at turn start too, so
-  `--stuck-after` can report a running codex worker as stalled. Read the pane
-  (`mu agent read`) before you act.
+- **Stalls** mean the owner has read `needs_input` for `--stuck-after` while
+  its task is still open. Read the pane (`mu agent read`) before you act.
 - **No abort, no CLOSE block.** Stop it with `mu agent close` (preview, then
   `--if`). The brief must end with the worker's own `mu task close`.
 

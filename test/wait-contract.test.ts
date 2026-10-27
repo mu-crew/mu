@@ -240,6 +240,22 @@ describe("stall detection and handleStall", () => {
     });
   });
 
+  it("a non-pi owner read from murmur (no ctl, no runs) stalls on needs_input age alone (3.x rule)", async () => {
+    await mkOwnedTask(env.db, "t1", "w1");
+    const since = Date.now() - 20_000;
+    const table = new Map<string, AgentReading>([
+      ["w/w1", { status: "needs_input", source: "murmur", since }],
+    ]);
+    const r = await waitForEvents(env.db, [taskRef("t1")], {
+      ...base,
+      callers: [],
+      stuckAfterMs: 15_000,
+      ...scriptedAgents(table),
+    });
+    expect(r.exit).toBe(7);
+    expect(r.refs[0]).toMatchObject({ stuck: true, stuckWhy: "needs_input" });
+  });
+
   it("stuckAfterMs 0 disables it; a fresh needs_input is not a stall; a closed task is not", async () => {
     await mkOwnedTask(env.db, "t1", "w1");
     const table = new Map([["w/w1", stalled()]]);
