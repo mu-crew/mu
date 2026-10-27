@@ -457,6 +457,10 @@ describe("attach", () => {
         ]);
         expect(during).toBe(false);
         expect(leftScreen).toBe(true);
+        // The terminal is told where it went and how to come back, before the handoff.
+        expect(ui.writes().slice(before).join("")).toContain(
+          "attaching mu-ws:w1tab · detach: C-b d (nested: C-b C-b d)",
+        );
         // ...and takes it back afterwards.
         await ui.until(() =>
           ui
@@ -499,6 +503,34 @@ describe("attach", () => {
         await ui.press("a");
         await ui.until(() => ran.length === 1);
         expect(ran[0]?.args).toEqual(["-L", "mu-private", "switch-client", "-t", "mu-ws:w1tab"]);
+        expect(ui.writes().join("")).toContain("attaching mu-ws:w1tab · back: C-b L");
+        await ui.until((s) => s.includes("a attach (back: C-b L)"));
+        ui.unmount();
+      }),
+    );
+  });
+
+  it("inside ANOTHER tmux server: a nested attach-session with TMUX stripped, and the nested hint", async () => {
+    await withEnv("TMUX", "/tmp/tmux-1/default,1,0", () =>
+      withEnv("MU_TMUX_SOCKET", "mu-private", async () => {
+        mux = installMux("tmux", calm);
+        const ran: MuxCommand[] = [];
+        const ui = await open(async (s) => {
+          ran.push(s);
+          return { code: 0, stderr: "" };
+        });
+        await toAgents(ui);
+        await ui.until((s) => s.includes("a attach (detach: C-b C-b d)"));
+        await ui.press("a");
+        await ui.until(() => ran.length === 1);
+        expect(ran[0]).toEqual({
+          command: "tmux",
+          args: ["-L", "mu-private", "attach-session", "-t", "mu-ws:w1tab"],
+          nested: true,
+        });
+        expect(ui.writes().join("")).toContain(
+          "attaching mu-ws:w1tab · detach: C-b d (nested: C-b C-b d)",
+        );
         ui.unmount();
       }),
     );

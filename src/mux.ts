@@ -46,5 +46,6 @@ export {
   type SpawnAgentPaneOptions,
   setHerdrExecutor,
   setMuxForTests,
+  tmuxAttachMode,
   tmuxBackend,
 } from "./mux/index.js";

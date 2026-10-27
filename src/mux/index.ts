@@ -12,7 +12,7 @@ export {
   resetHerdrExecutor,
   setHerdrExecutor,
 } from "./herdr.js";
-export { tmuxBackend } from "./tmux.js";
+export { tmuxAttachMode, tmuxBackend } from "./tmux.js";
 export {
   type AttachTarget,
   attachShellLine,

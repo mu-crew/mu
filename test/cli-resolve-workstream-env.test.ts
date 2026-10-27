@@ -19,7 +19,8 @@ describe("resolveWorkstream env ladder", () => {
       saved[k] = process.env[k];
       delete process.env[k];
     }
-    process.env.TMUX = "/tmp/fake,1,0";
+    // A client of mu's own server: $TMUX names its socket (tmux ignores a foreign one).
+    process.env.TMUX = `/tmp/${process.env.MU_TMUX_SOCKET || "default"},1,0`;
     mux = installMux("tmux", [["display-message", "mu-fromtmux\n"]]);
   });
 

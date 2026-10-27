@@ -28,7 +28,7 @@ Terminal / size / tmux or not: ____________________  Date: __________
 - [ ] Agents tab: state (`busy`, `needs_input`), the task it owns, the running tool and its elapsed time. Does `worker-3` showing `tool ?` (an old extension) read as "unknown" or as "broken"?
 - [ ] `Enter` on a task shows its notes (brief, progress). `A` toggles all notes. `y` copies a usable command (paste it).
 - [ ] `Enter` on an agent shows its scrollback. Scroll with `j/k`, `g/G`, space. Is the very long line handled? `r` reloads; `q` closes.
-- [ ] `a` on an agent attaches to its tmux window; `Ctrl-b d` returns you to the dashboard intact (cursor, tab, filter kept).
+- [ ] `a` on an agent attaches to its tmux window; the line it prints and the Agents hint say how to detach (inside your own tmux: `Ctrl-b Ctrl-b d`), and that returns you to the dashboard intact (cursor, tab, filter kept).
 - [ ] `[` / `]` switches to `shop-web`; Tasks and DAG follow it, Agents and Log stay machine-wide. Surprising?
 - [ ] Log tab: readable? Does `Enter` on a line add anything?
 - [ ] The `next:` line: useful, noise, or confusing?

@@ -140,6 +140,9 @@ export interface MuxCommand {
   optional?: boolean;
   /** Why an `optional` step may fail (shown when it does). */
   reason?: string;
+  /** A client deliberately nested inside another tmux server's client: run it with
+   *  `$TMUX` removed (tmux refuses to nest otherwise). The shell line spells it `env -u TMUX`. */
+  nested?: boolean;
 }
 
 /** What a backend can say about its own health. Deliberately DATA, not
@@ -193,7 +196,13 @@ export interface CaptureOptions {
 export function attachShellLine(steps: readonly MuxCommand[]): string {
   return steps
     .map((step) => {
-      const words = [step.command, ...step.args].map(shellWord).join(" ");
+      const words = [
+        ...(step.nested === true ? ["env", "-u", "TMUX"] : []),
+        step.command,
+        ...step.args,
+      ]
+        .map(shellWord)
+        .join(" ");
       return step.optional === true ? `{ ${words} || true; }` : words;
     })
     .join(" && ");
