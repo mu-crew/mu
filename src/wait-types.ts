@@ -6,6 +6,7 @@ import type { AgentObservation } from "./agents/observe.js";
 import type { CtlBlocked } from "./ctl/protocol.js";
 import type { VerdictTally } from "./delegates.js";
 import type { HumanNeeded } from "./human-needed.js";
+import { say } from "./messages.js";
 import type { TaskStatus } from "./tasks/status.js";
 import type { CursorToken } from "./wait-cursor.js";
 import type { WaitRefKind } from "./wait-registration.js";
@@ -225,7 +226,7 @@ export interface WaitOptions {
   mode?: "first" | "all";
   /** `owned` (default): the callers' owned refs also end the wait. `refs`: only the listed refs do. */
   eventScope?: "owned" | "refs";
-  /** Delegate calls of this wave (the callers' only) are targets; the result carries their tally. */
+  /** Delegate calls of this wave (the callers' only, never narrowed by `scope`) are targets; the result carries their tally. A name none of their calls carry throws WaveNotFoundError. */
   wave?: { workstream?: string; name: string };
   /** The open transitive blockers of this task are targets, re-read each iteration. */
   blockersOf?: { workstream: string; id: string };
@@ -300,6 +301,17 @@ export class WaitNothingError extends Error {
   override readonly name = "WaitNothingError";
   constructor() {
     super("wait: nothing to wait for (no refs given and none owed to this caller)");
+  }
+}
+
+/** `--wave <name>` that none of the callers' delegate calls carry (a typo, or another session's wave). */
+export class WaveNotFoundError extends Error {
+  override readonly name = "WaveNotFoundError";
+  constructor(
+    public readonly wave: string,
+    yours: readonly (string | null)[],
+  ) {
+    super(say("wait.wave_not_found", wave, yours));
   }
 }
 

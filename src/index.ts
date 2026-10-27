@@ -623,6 +623,7 @@ export {
   type WaitResult,
   type WaitSnapshot,
   type WaitStallContext,
+  WaveNotFoundError,
   waitForEvents,
 } from "./wait.js";
 export {

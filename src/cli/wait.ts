@@ -673,7 +673,7 @@ export function wireWaitCommand(program: Command): void {
     )
     .option(
       "--wave <name>",
-      "wait on this caller's delegate calls of the wave; the result carries `data.tally`",
+      "wait on this caller's delegate calls of the wave, in any workstream (-w does not narrow it); the result carries `data.tally`; an unknown name is exit 3",
     )
     .option(
       "--blockers-of <task>",

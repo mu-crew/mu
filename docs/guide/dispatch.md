@@ -197,8 +197,9 @@ mu wait task:auth/build task:auth/docs
   permitted with `mu task auto`. `mu task wait` is the same wait over task
   refs.
 - `--all` waits for every ref; `--until-text <re>` waits for a run's final
-  text; `--wave <name>` waits on your delegate wave and `data.tally` says
-  `6/12 CONFIRMED, ...`.
+  text; `--wave <name>` waits on your delegate wave in any workstream
+  (`-w` does not narrow it) and `data.tally` says `6/12 CONFIRMED, ...`;
+  a name none of your calls carry is `no such wave` (exit 3).
 
 ## Close and park tasks
 

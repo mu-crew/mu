@@ -132,6 +132,7 @@ import {
 } from "../tasks.js";
 import { currentCallers } from "../wait-callers.js";
 import { WaitResumeNotFoundError } from "../wait-resume.js";
+import { WaveNotFoundError } from "../wait-types.js";
 import {
   WorkstreamExistsError,
   WorkstreamHasAgentsError,
@@ -420,6 +421,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentNotFoundError ||
     err instanceof DelegateNotFoundError ||
     err instanceof WaitResumeNotFoundError ||
+    err instanceof WaveNotFoundError ||
     err instanceof TaskNotFoundError ||
     err instanceof TaskNoteRangeError ||
     err instanceof HostNotFoundError ||

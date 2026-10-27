@@ -147,6 +147,7 @@ import {
   type WaitResult,
   type WaitSnapshot,
   type WaitStallContext,
+  WaveNotFoundError,
 } from "./wait-types.js";
 
 let sleepSeam: ((ms: number) => Promise<void>) | undefined;
@@ -236,6 +237,16 @@ export async function waitForEvents(
   }
   if (input.length === 0 && !opts.wave && !opts.blockersOf && callers.length === 0) {
     throw new WaitNothingError();
+  }
+  // A wave is the callers' (never narrowed by the scope): a name none of their calls carry is a typo.
+  if (opts.wave !== undefined) {
+    const mine = listDelegatesOf(db, callers, opts.wave.workstream);
+    if (!mine.some((c) => c.wave === opts.wave?.name)) {
+      throw new WaveNotFoundError(
+        opts.wave.name,
+        mine.map((c) => c.wave),
+      );
+    }
   }
 
   // ─── one active wait per caller; cursors read before any await ────
@@ -978,11 +989,11 @@ export async function waitForEvents(
       else addCall(getDelegateCall(db, r.id), true, false);
     }
     if (opts.wave !== undefined) {
-      // The caller's own calls of the wave, narrowed to the scope: a delegate lives in
-      // `scratch` unless told otherwise, and records on the workstream the scope names.
+      // The caller's own calls of the wave, whatever the scope: a delegate lives in `scratch`
+      // unless told otherwise, so `-w <ws>` narrowing it would hide the whole wave.
       const waveCalls = listDelegatesOf(db, callers, opts.wave.workstream, {
         wave: opts.wave.name,
-      }).filter(callInScope);
+      });
       for (const c of waveCalls) addCall(c, true, !all);
       tally = tallyCalls(waveCalls);
     }

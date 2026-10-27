@@ -317,6 +317,10 @@ export const MESSAGES = {
   "delegate.state": (callId: string, from: string, to: string) =>
     `delegate call ${callId} is ${from}; it cannot go to ${to}`,
   "delegate.not_found": (callId: string) => `no such delegate call: ${callId}`,
+  "wait.wave_not_found": (wave: string, yours: readonly (string | null)[]) => {
+    const names = [...new Set(yours.filter((w): w is string => w !== null))].sort();
+    return `no such wave: ${wave} (your waves: ${names.length > 0 ? names.join(", ") : "none"})`;
+  },
   "wait.resume_not_found": (id: string, days: number) =>
     `no such wait resume handle: ${id} (a handle is kept ${days} days; name the refs again with \`mu wait <ref>...\`)`,
   "task.brief_missing": (task: string, reason: string) =>

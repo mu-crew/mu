@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { owedRefs, resumeCommand, tallySummary, waitData } from "../src/cli/wait-output.js";
 import { type Db, openDb } from "../src/db.js";
+import { finishDelegate, markDelegate, registerDelegateCall } from "../src/delegates.js";
 import { COURSE_CHECK_CLOSED } from "../src/next-hints.js";
 import { isJsonMode, isWaitVerbArgv } from "../src/output.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../src/output-contract.js";
@@ -173,6 +174,34 @@ describe("the typed ref grammar", () => {
       expect(r.exitCode).toBe(2);
       expect(JSON.parse(r.stdout).message).toMatch(/--wave/);
     });
+  });
+
+  it("-w <ws> --wave sees the caller's scratch calls; an unknown wave is exit 3 'no such wave'", async () => {
+    registerDelegateCall(db, {
+      callId: "pi:sessX:1",
+      caller: "pi:sessX",
+      workstream: "scratch",
+      request: { text: "check" },
+      state: "starting",
+      wave: "rv",
+    });
+    markDelegate(db, "pi:sessX:1", "running", { agent: "d1" });
+    finishDelegate(db, "pi:sessX:1", {
+      outcome: "done",
+      text: "VERDICT: CONFIRMED\nok",
+      author: "d1",
+    });
+    const hit = await asCaller("sessX", ["wait", "-w", "w", "--wave", "rv", "--timeout", "2"]);
+    expect((hit.data as { tally: { summary: string } }).tally.summary).toBe("1/1 CONFIRMED");
+    let typo: Awaited<ReturnType<typeof runCli>> | undefined;
+    await withEnv("PI_SESSION_ID", "sessX", () =>
+      withEnv("MU_MANAGED_AGENT", undefined, async () => {
+        typo = await runCli(["wait", "-w", "w", "--wave", "rx", "--timeout", "2"], dbPath);
+      }),
+    );
+    if (typo === undefined) throw new Error("no capture");
+    expect(typo.exitCode).toBe(3);
+    expect(JSON.parse(typo.stdout).message).toBe("no such wave: rx (your waves: rv)");
   });
 });
 
