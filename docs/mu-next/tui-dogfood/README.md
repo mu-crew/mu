@@ -1,7 +1,8 @@
 # TUI dogfood kit
 
 Try the new dashboard (`mu` with no arguments, `src/cli/tui`) on seven seeded
-scenarios, then fill in [FORM.md](FORM.md). Temporary: `release_cleanup`
+scenarios, then fill in [FORM.md](FORM.md) (second pass: one section per item of the
+first feedback). Temporary: `release_cleanup`
 moves or drops this directory. It ships nothing.
 
 ## Run
@@ -45,7 +46,7 @@ deletes everything and kills the private tmux servers.
 | 4 | Trouble. `payments`: a dead worker (pane gone), a stalled one (one `bash` for 3 h), one blocked on a confirm dialog, a human-needed task, a malformed-CLOSE note, closed-as-wontfix and duplicate tasks | `payments` |
 | 5 | Big. `monorepo`: 200 tasks in a layered DAG, 10 agents (7 own a task), long titles, a 64-char id, wide CJK and emoji, ANSI and tabs in a title, a 400-char title, a task with 60 notes and one with a 5 KB note; 4 more workstreams with long names so the picker scrolls | `monorepo` |
 | 6 | Live. 3 fake workers flip busy / idle / blocked / tool every 2-7 s; a mutator adds, claims, notes and closes tasks every 2-5 s | `live-demo` |
-| 7 | Remote (simulated). `worker-1` runs through a fake "ssh" with a forwarded control socket, host `dev`; `worker-2` is local, for contrast | `remote-demo` |
+| 7 | Remote (simulated). `worker-1` runs through a fake "ssh" with a forwarded control socket, host `dev`, and stays busy; `worker-2` is local and waits for input. Each pane starts with a banner and prefixes its lines with `remote:dev` or `local` | `remote-demo` |
 
 ## What is real and what is fake
 
@@ -56,27 +57,37 @@ Fake: the workers are `fake-worker.mjs` (a node process that answers the
 control socket like the mu pi extension and prints a transcript), not pi.
 There are no LLM calls, nothing edits files, and the remote host is a local
 process (`fake-ssh.mjs`). `Enter` scrollback shows its transcript; `a`
-attach puts you in its real tmux window (detach with `Ctrl-b d` and you are
-back in the dashboard).
+attach puts you in its real tmux window. The line printed before it, and the
+Agents hint, say how to get back: `C-b d`, or `C-b C-b d` when the dashboard
+runs inside your own tmux (a nested client).
 
 ## Keys to try (the dashboard's own hint line lists them too)
 
-`←/→` or Tab: tabs (Overview, Tasks, DAG, Agents, Log) · `[` `]`: workstream · `j/k`,
+`←/→` or Tab: tabs (Overview first: Attention, Agents, In progress, Open, Log cards; then Tasks, DAG, Agents, Log) · `[` `]`: workstream · `j/k`,
 PgUp/PgDn, `g/G`: move · `Enter`: notes / scrollback / log entry · `a`
-(Agents tab): attach · `s` (Tasks): cycle the sort (activity, roi, age, id) · `o` (Tasks): cycle the status filter · `/`: text filter
+(Agents tab): attach, the hint says how to get back (`detach: C-b C-b d` nested, `back: C-b L` on mu's own server) · `s` (Tasks): cycle the sort (activity, roi, age, id) · `o` (Tasks): cycle the status filter · `/`: text filter
 (Enter keeps, Esc cancels) · `c`: clear · `y`: copy the equivalent command ·
 `r`: refresh · `q` or Esc: back out / quit.
 
 ## Smoke test the kit
 
 ```bash
-python3 docs/mu-next/tui-dogfood/smoke.py      # all seven, through a PTY, about 40 s
-python3 docs/mu-next/tui-dogfood/smoke.py 4 6  # some
+python3 docs/mu-next/tui-dogfood/smoke.py              # everything, about 4 min
+python3 docs/mu-next/tui-dogfood/smoke.py 4 6          # some scenarios only
+python3 docs/mu-next/tui-dogfood/smoke.py fill stable  # the screen checks only
 ```
 
-Each scenario must seed, render its workstream, take a few keys, quit on `q`
-with exit 0, and leave no private tmux server behind. It does not judge
-what the screens look like: that is what [FORM.md](FORM.md) is for.
+- **Scenarios** (through a PTY): each one must seed, render its workstream,
+  take a few keys, quit on `q` with exit 0, and leave no private tmux server
+  behind.
+- **fill** (s2, s4, s5, s7 at 200x50, 120x40 and 80x24, every tab, read off
+  a private tmux screen): the last row is the hint. A tab's frame reaches the
+  last body row. An Overview column whose card says `+N more` reaches it too.
+  A column of short cards may leave blank rows.
+- **stable** (s6): on Tasks and Log, two screens 5 s apart; the second column
+  starts at the same x on every row of both.
+
+It does not judge whether the screens look good: that is what [FORM.md](FORM.md) is for.
 
 ## Files
 
@@ -85,5 +96,5 @@ what the screens look like: that is what [FORM.md](FORM.md) is for.
 | `run.sh` | The launcher: isolation, private tmux, seed, run, clean up |
 | `scenarios.mjs` | Seeds scenario N through the built SDK and CLI; `driver` is scenario 6's mutator |
 | `fake-worker.mjs`, `fake-ssh.mjs` | The fake pi worker and the fake ssh |
-| `smoke.py` | The PTY smoke test |
+| `smoke.py` | The smoke test: PTY runs, plus fill and stable-column checks |
 | `FORM.md` | The feedback form |
