@@ -354,13 +354,6 @@ export {
 } from "./op-context.js";
 export type { NextPlan } from "./output-contract.js";
 export {
-  ALLOW_FOREIGN_DB_VAR,
-  PANE_ENV_VAR,
-  type PaneEnvMismatch,
-  PaneEnvMismatchError,
-  paneEnvMismatch,
-} from "./pane-env.js";
-export {
   type MigrateEntry,
   type MigrateResult,
   type MigrateState,

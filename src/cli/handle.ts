@@ -22,7 +22,6 @@
 //   6 / 7 = `mu wait` results, not errors: an owner died / needs attention
 //       (`WaitResult.exit`, src/wait.ts); no error class maps here.
 
-import { existsSync } from "node:fs";
 import { type Command, CommanderError } from "commander";
 import {
   AgentAbortNeedsCtlError,
@@ -92,12 +91,6 @@ import { NextArgError } from "../next.js";
 import { capPlan, computeNext, NEXT_BYTES, type NextOutcome } from "../next-hints.js";
 import { isJsonMode, isStateVerbArgv, pc, printUsageHuman, usageLines } from "../output.js";
 import { encodeEnvelope, type NextPlan, RESULT_BYTES } from "../output-contract.js";
-import {
-  foreignDbAllowed,
-  PaneEnvMismatchError,
-  paneEnvMessage,
-  paneEnvMismatch,
-} from "../pane-env.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-agent.js";
 import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
@@ -484,7 +477,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SqliteTooOldError ||
     err instanceof SyncSourceTooNewError ||
     err instanceof DbInsideSyncDirError ||
-    err instanceof PaneEnvMismatchError ||
     err instanceof SyncDirForeignError ||
     err instanceof WorkstreamExistsError ||
     err instanceof WorkstreamRevisionMismatchError ||
@@ -613,13 +605,6 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     return { label: "mux", exitCode: 5 };
   }
   return { label: "error", exitCode: 1 };
-}
-
-/** better-sqlite3's SqliteError for a write on a read-only connection. */
-function isReadonlyWrite(err: unknown): boolean {
-  if (!(err instanceof Error) || err.name !== "SqliteError") return false;
-  const code = (err as { code?: unknown }).code;
-  return typeof code === "string" && code.startsWith("SQLITE_READONLY");
 }
 
 /** better-sqlite3's SqliteError for a lock it could not get: SQLITE_BUSY
@@ -861,26 +846,15 @@ export function handle(
     activeCommand = command;
     // The single `if` the unconfigured single-machine case pays: one env
     // var read, no promise allocated, no filesystem touched.
-    // A run whose DB/state/sync differ from its pane's (a re-sourced shell rc):
-    // read-only, no sync, one warning (src/pane-env.ts).
-    const foreign = foreignDbAllowed() ? [] : paneEnvMismatch();
-    const ambient = opts?.ambientSync !== false && syncEnabled() && foreign.length === 0;
+    const ambient = opts?.ambientSync !== false && syncEnabled();
     try {
       refuseDbInsideSyncDir();
-      if (foreign.length > 0 && !existsSync(defaultDbPath())) {
-        throw new PaneEnvMismatchError(foreign);
-      }
-      db = foreign.length > 0 ? openDb({ readonly: true }) : openDb();
+      db = openDb();
       if (ambient) await ambientIngest(db);
       nextDb = db;
       await fn(db);
-      // A mismatched read went through: say so once (a refused write says it as the error).
-      if (foreign.length > 0) console.error(pc.yellow(`warning: ${paneEnvMessage(foreign)}`));
       if (!isJsonMode()) printNext(finalNext(), "stdout");
-    } catch (caught) {
-      // The read-only connection of a mismatched run refused a write: say why.
-      const err =
-        foreign.length > 0 && isReadonlyWrite(caught) ? new PaneEnvMismatchError(foreign) : caught;
+    } catch (err) {
       // Read-only suggestions for a wrong task id, from the partition the
       // exact lookup missed in. Best effort: a hint never masks the miss.
       if (err instanceof TaskNotFoundError && err.workstream !== undefined && db !== undefined) {

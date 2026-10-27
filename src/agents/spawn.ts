@@ -48,7 +48,6 @@ import { say } from "../messages.js";
 import type { CommandSource } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode } from "../output.js";
-import { PANE_ENV_VAR, paneEnvValue } from "../pane-env.js";
 import {
   localPaneAlive,
   prepareRemote,
@@ -56,11 +55,10 @@ import {
   remoteShellCommand,
   removeRemoteWorktree,
 } from "../remote-agent.js";
+import { resolveActorIdentity } from "../tasks/claim.js";
 // `sleep` is the shared poll-sleep TEST SEAM (setSleepForTests), not a
 // multiplexer operation, so it stays on the tmux module rather than
 // joining the MuxBackend contract.
-import { syncDir } from "../segments.js";
-import { resolveActorIdentity } from "../tasks/claim.js";
 import { sleep } from "../tmux.js";
 import { discardWorktree, git, gitToplevel, owningRoot } from "../vcs/git.js";
 import { isScratchWorkstream } from "../workstream.js";
@@ -640,16 +638,13 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // a test DB in a temp dir keeps its sockets there too.
   const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
   mkdirSync(dirname(ctlSocket), { recursive: true, mode: 0o700 });
-  // Exactly these seven (plus SSH_AUTH_SOCK below). tmux panes inherit the
+  // Exactly these six (plus SSH_AUTH_SOCK below). tmux panes inherit the
   // tmux server's env, not ours: pin the DB and state dir this spawn used,
   // absolute and always (the default ones too), so the worker's `mu` hits
   // the same taskgraph from any cwd.
   // A remote agent's identity travels in the filled shell template (`{env}`:
   // five whitelisted variables, never the local DB, state or sync dir); the
   // local pane (the transport) is given none of it.
-  const paneDb = resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath());
-  const paneState = resolve(defaultStateDir());
-  const paneSync = syncDir();
   const paneEnv: Record<string, string> = profile
     ? {}
     : {
@@ -657,15 +652,8 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         MU_AGENT_NAME: opts.name,
         MU_WORKSTREAM: opts.workstream,
         [CTL_SOCK_ENV]: ctlSocket,
-        MU_DB_PATH: paneDb,
-        MU_STATE_DIR: paneState,
-        // What this pane was given, so a mu whose env a shell rc reset there warns and
-        // refuses writes (src/pane-env.ts). MU_SYNC_DIR itself is inherited, not set.
-        [PANE_ENV_VAR]: paneEnvValue({
-          db: paneDb,
-          state: paneState,
-          sync: paneSync === null ? "" : resolve(paneSync),
-        }),
+        MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
+        MU_STATE_DIR: resolve(defaultStateDir()),
       };
   // mu sessions are created detached and may never be attached, so tmux's
   // update-environment never refreshes them and a pane would inherit a
