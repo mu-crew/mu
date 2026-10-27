@@ -19,6 +19,9 @@ development is [docs/history/CHANGELOG-4.0-dev.md](docs/history/CHANGELOG-4.0-de
 
 Upgrade: [docs/guide/upgrade.md](docs/guide/upgrade.md). Then run `mu doctor`
 and send `/reload` to running pi agents.
+- **CLI surface fixes, one per finding** (`rr_fix_r4_surface`). `mu delegates show <unknown>` is exit 3 `DelegateNotFoundError` (it was a `UsageError`, exit 2) like every other not-found (`rr_r4_delegates_show_exit2`).
+
+- **One workstream rule: an unknown `-w` is exit 3 on every verb** (`rr_fix_r4_ws`; findings `rr_r4_unknown_ws_reads_silent`, `rr_r4_ws_mismatch_before_resolve`). `task list`, `task next`, `agent list` and `log` answered a typo'd `-w` with an empty success ("nothing to do"), and `task add -w nows` created the workstream `nows`. Every verb that acts inside a workstream now checks it exists (`resolveExistingWorkstream` in `src/cli.ts`, the same check `state` uses): `no such workstream: r4w (did you mean r4ws?); \`mu workstream init r4w\` creates it`, exit 3. The `init` fix is left out when the name could not be a workstream. The reserved `scratch` still auto-creates on its first `task add`, and `agent spawn` still creates its workstream (a spawn is the create path; `-w` there is the name you are choosing). `mu log` still reads a destroyed workstream's history. A task or agent verb with a wrong `-w` now validates and checks the name first (an invalid or unknown name is exit 2 or 3, no longer a scope conflict), and the exit-4 conflict ends with the fix: `task a1 is in workstream r4ws, not other; pass -w r4ws`. `editDistance` moved to the leaf `src/edit-distance.ts`. Tests: `test/cli-unknown-workstream.test.ts`, red first.
 
 ### Breaking
 

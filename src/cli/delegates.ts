@@ -25,6 +25,7 @@ import {
 import type { Db } from "../db.js";
 import { type DelegateRunResult, runDelegateProcess } from "../delegate-process.js";
 import {
+  DelegateNotFoundError,
   type DelegateRequest,
   type DelegateRow,
   finishDelegate,
@@ -95,7 +96,7 @@ export async function cmdDelegatesList(
 
 export async function cmdDelegatesShow(db: Db, callId: string, opts: WsOpt): Promise<void> {
   const row = getDelegateCall(db, callId);
-  if (!row) throw new UsageError(`no such delegate call: ${callId}`, { showHelp: false });
+  if (!row) throw new DelegateNotFoundError(callId);
   if (opts.json) return emitJson({ call: row });
   console.log(renderRows([row]));
   if (row.error) console.log(pc.yellow(`error: ${row.error}`));

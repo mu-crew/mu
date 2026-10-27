@@ -38,6 +38,12 @@ const reg = (id: string, ...more: string[]) =>
   );
 
 describe("mu delegates", () => {
+  it("show of an unknown call is exit 3 like every other miss (rr_r4_delegates_show_exit2)", async () => {
+    const r = await runCliJson(["delegates", "show", "nope", "--json"], db);
+    expect(r.exitCode).toBe(3);
+    expect(r.doc).toMatchObject({ ok: false, error: "DelegateNotFoundError", exit: 3 });
+  });
+
   it("register -> mark -> finish -> list/show/tally round-trips", async () => {
     await runCliJson(["workstream", "init", "crew", "--json"], db);
     await runCliJson(["task", "add", "f1", "-w", "crew", "-t", "f1", "--json"], db);
