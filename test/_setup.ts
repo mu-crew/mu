@@ -49,11 +49,18 @@
 // recreated ~/.local/state/mu-next/locks. Every fork gets its own temp XDG
 // root, and test/_real-dir-guard.ts throws on a write that still targets the
 // real dirs.
+//
+// The XDG roots live under one per-run scratch dir that globalSetup creates
+// and removes (test/_global-teardown.ts, `provide`d like the DB template).
+// Forks are killed without their "exit" handlers, so a per-fork mkdtemp +
+// exit cleanup leaked one dir per fork (rr_r6_test_tmp_leaks).
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inject } from "vitest";
 import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
+import { RUN_ROOT_KEY } from "./_run-root.js";
 
 const ALLOWED: ReadonlySet<string> = new Set([
   // Layer-3 test-isolation socket (see _global-teardown.ts).
@@ -75,6 +82,13 @@ for (const key of Object.keys(process.env)) {
   delete process.env[key];
 }
 
+// Baseline: tmux is the mux. Detection otherwise needs an ambient $TMUX /
+// $TMUX_PANE (a shell inside tmux) or a working `tmux -V`; the files that mock
+// the tmux executor answer neither, so they failed from a plain shell or SSH
+// session (rr_r6_tmux_gate_env). Tests of detection itself clear MU_MUX
+// (test/mux-detect.test.ts); herdr tests set theirs.
+process.env.MU_MUX = "tmux";
+
 // Baseline: no spawn-time control-socket handshake. No test pane runs
 // the mu pi extension, so the 30s default would stall every pi spawn.
 // test/spawn-ctl.test.ts opts back in with a small budget.
@@ -87,15 +101,23 @@ process.env.MU_PI_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-pi-home-${p
 
 // Real dirs first (from the inherited env), then redirect, then guard.
 const realDirs = realMuDirs();
-const xdgRoot = mkdtempSync(join(tmpdir(), "mu-test-xdg-"));
+const runRoot = (inject as (key: string) => unknown)(RUN_ROOT_KEY);
+let xdgRoot: string;
+if (typeof runRoot === "string") {
+  xdgRoot = join(runRoot, `xdg-${process.pid}`);
+  mkdirSync(xdgRoot, { recursive: true });
+} else {
+  // No globalSetup (a custom config): fall back to a per-fork dir.
+  xdgRoot = mkdtempSync(join(tmpdir(), "mu-test-xdg-"));
+  process.on("exit", () => {
+    try {
+      rmSync(xdgRoot, { recursive: true, force: true });
+    } catch {
+      // best effort
+    }
+  });
+}
 process.env.XDG_CACHE_HOME = join(xdgRoot, "cache");
 process.env.XDG_STATE_HOME = join(xdgRoot, "state");
 process.env.XDG_CONFIG_HOME = join(xdgRoot, "config");
-process.on("exit", () => {
-  try {
-    rmSync(xdgRoot, { recursive: true, force: true });
-  } catch {
-    // best effort
-  }
-});
 installRealDirGuard(realDirs);

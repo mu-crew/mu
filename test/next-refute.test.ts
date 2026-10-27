@@ -6,60 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const hook = vi.hoisted(() => ({
-  spawns: [] as string[],
-  sends: [] as { agent: string; text: string }[],
-  checks: [] as string[],
-  panes: 0,
-  spawnFails: undefined as undefined | (() => Error),
-  afterSpawn: undefined as undefined | (() => void),
-  sendMode: "ok" as "ok" | "throws",
-  checkState: "unreachable" as "accepted" | "not-accepted" | "unreachable",
-}));
-vi.mock("../src/agents/spawn.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/agents/spawn.js")>();
-  return {
-    ...actual,
-    spawnAgent: async (
-      db: import("../src/db.js").Db,
-      opts: { name: string; workstream: string; onIdentity?: (a: unknown) => void },
-    ) => {
-      // Import HERE, not in the factory body: agents.js imports spawn.js, which is being
-      // mocked, so awaiting it while the factory runs deadlocks collection (0% CPU, and
-      // no test timeout can fire because no test has started).
-      const { insertAgent } = await import("../src/agents.js");
-      hook.spawns.push(opts.name);
-      if (hook.spawnFails !== undefined) throw hook.spawnFails();
-      const row = insertAgent(db, {
-        name: opts.name,
-        workstream: opts.workstream,
-        paneId: `%${++hook.panes}`,
-      });
-      opts.onIdentity?.(row);
-      hook.afterSpawn?.();
-      return { ...row, ctl: "ok", ctlSocket: "/fake.sock" };
-    },
-  };
-});
-vi.mock("../src/agents/transport.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/agents/transport.js")>();
-  return {
-    ...actual,
-    sendViaTransport: async (a: { name: string }, text: string, o: { msgId?: string }) => {
-      hook.sends.push({ agent: a.name, text });
-      if (hook.sendMode === "throws") throw new Error("socket vanished mid-write");
-      return { transport: "ctl", runs: 0, msgId: o.msgId, incarnation: "pi-inc" };
-    },
-    checkMessage: async (_s: string, msgId: string) => {
-      hook.checks.push(msgId);
-      return hook.checkState === "accepted"
-        ? { state: "accepted", incarnation: "pi-inc", runs: 1 }
-        : hook.checkState === "not-accepted"
-          ? { state: "not-accepted" }
-          : { state: "unreachable", reason: "no socket" };
-    },
-  };
-});
+vi.mock("../src/agents/spawn.js", async (importOriginal) =>
+  (await import("./_next-fakes.js")).spawnFake(await importOriginal()),
+);
+vi.mock("../src/agents/transport.js", async (importOriginal) =>
+  (await import("./_next-fakes.js")).transportFake(await importOriginal()),
+);
 
 // Loaded before anything else needs the mocked spawn (the next-executor suite imports it too).
 import "../src/agents.js";
@@ -74,6 +26,7 @@ import { getTask, selectTaskNotes } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
+import { hook, resetHook } from "./_next-fakes.js";
 
 let dir: string;
 let db: Db;
@@ -82,14 +35,7 @@ let reading: CheckerReading;
 let reads: number;
 
 beforeEach(() => {
-  hook.spawns = [];
-  hook.sends = [];
-  hook.checks = [];
-  hook.panes = 0;
-  hook.spawnFails = undefined;
-  hook.afterSpawn = undefined;
-  hook.sendMode = "ok";
-  hook.checkState = "unreachable";
+  resetHook();
   reading = { kind: "running" };
   reads = 0;
   dir = mkdtempSync(join(tmpdir(), "mu-refute-"));

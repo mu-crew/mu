@@ -109,7 +109,9 @@ it("a staged spawn's rollback leaves a newer orphan worktree at its path alone",
     spawned = spawnAgent(db, { name: "worker-1", workstream: "auth", worktree: true, root }).catch(
       (e) => e,
     );
-    for (let i = 0; i < 200 && getAgent(db, "worker-1", "auth") === undefined; i++) {
+    // Poll the worktree, not the row: prestageLocked inserts the placeholder
+    // row BEFORE `git worktree add` runs, so the row alone races the add.
+    for (let i = 0; i < 400 && getWorktreeAt(db, path) === undefined; i++) {
       await new Promise((r) => setTimeout(r, 25));
     }
     expect(getAgent(db, "worker-1", "auth")?.paneId).toMatch(/^%pending-/);

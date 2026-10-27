@@ -29,6 +29,12 @@ const note = (text: string, kind: "brief" | "report" | "note" = "note") =>
   addNote(db, "t1", text, { workstream: "d", kind, author: "a" });
 
 describe("buildTaskBrief", () => {
+  it("never tells the worker to cd anywhere: its cwd is its worktree", () => {
+    note("Change src/x.ts.", "brief");
+    const b = buildTaskBrief(db, "d", "t1");
+    expect(b.text).not.toMatch(/\bcd\b|workspace path/);
+  });
+
   it("is the first brief verbatim plus one task/CLOSE footer; pins the brief note", () => {
     note("Do the thing.\n\nScope: src/x.ts only.", "brief");
     const b = buildTaskBrief(db, "d", "t1");

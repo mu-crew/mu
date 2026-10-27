@@ -19,10 +19,11 @@ import { resetTmuxExecutor, setTmuxExecutor, type TmuxExecutor, tmux } from "../
 import { ensureWorkstream } from "../src/workstream.js";
 import { freshWorkstream } from "./_fixture.js";
 import { rmFixtureDir } from "./_fs.js";
+import { tmuxIntegrationAvailable } from "./_mux.js";
 import { softTeardown } from "./_teardown.js";
 
 const run = promisify(execFile);
-const describeIfTmux = process.env.TMUX ? describe : describe.skip;
+const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 const SLEEP = "sh -c 'while true; do sleep 60; done'";
 
 /** The real tmux, through the same private-socket flags mu uses. */

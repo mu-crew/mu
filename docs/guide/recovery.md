@@ -8,7 +8,7 @@ read the same rules in
 
 ```bash
 mu doctor           # exit 0 healthy (WARN rows too), 5 on drift or a FAIL row
-mu doctor --deep    # rebuild the ops log and diff every field
+mu doctor --deep    # rebuild the ops log and diff every field; PRAGMA quick_check on the DB
 mu doctor --disk    # add per-worktree byte usage
 ```
 

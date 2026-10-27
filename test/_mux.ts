@@ -198,14 +198,16 @@ export function installNoMux(): { restore(): void } {
 // ─── Integration-tier gates ────────────────────────────────────────────
 
 /**
- * tmux integration tests self-skip when `$TMUX` is unset — the
- * long-standing convention (see AGENTS.md § Tests). Isolation itself is
- * STRUCTURAL for tmux: `test/_global-teardown.ts` points the whole
- * suite at a private `-L <socket>` server, so the user's sessions are
- * invisible and suite residue dies with `kill-server`.
+ * tmux integration tests run whenever the suite has a real tmux server to
+ * drive. Isolation is STRUCTURAL: `test/_global-teardown.ts` starts a private
+ * `-L <socket>` server and publishes it as `MU_TMUX_SOCKET`, so the user's
+ * sessions are invisible and suite residue dies with `kill-server`. Neither
+ * needs the shell to be inside tmux. `$TMUX` still counts (a caller who
+ * pointed the run at their own server). When both are absent, global setup
+ * failed to start tmux and the tests skip.
  */
 export function tmuxIntegrationAvailable(): boolean {
-  return Boolean(process.env.TMUX);
+  return Boolean(process.env.MU_TMUX_SOCKET) || Boolean(process.env.TMUX);
 }
 
 // ─── The herdr blast shield ────────────────────────────────────────────

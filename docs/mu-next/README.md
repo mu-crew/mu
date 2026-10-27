@@ -244,16 +244,16 @@ the old one after a preview, since names are reused: `hail`,
 `machine_identity`, `op_ctx`, `sync_peers` (`co_sync_peers_missing`);
 views `ready`, `blocked`, `blockers`, shared by agents and dashboard.
 `ready` order, used by `mu next` dispatch: scored tasks by
-impact/effort desc, then the rest oldest first (`pv_impact_effort_flags`).
+impact/effort desc, then the rest oldest first (`pv_impact_effort_flags`; `schema-v12:231`, `cli-task-scored:56`).
 `impact`/`effort_days` stay NOT NULL with defaults
 (`co_nullable_blocks_ingest`). Trigger-enforced for **local writes
 only** (`WHEN applying=0`): claim CAS, close needs evidence, close
-refuses open blockers. Ingest accepts what the log says
+refuses open blockers (`local-guards:89-317`). Ingest accepts what the log says
 (peers can merge into states no local write allows; close and its
 evidence are separate ops; 2 live CLOSED tasks have open blockers);
 doctor reports such states. A RAISE during ingest would roll back the
-segment and stall sync forever. Natural keys immutable
-including `INSERT OR REPLACE` (`sp_insert_or_replace`). A BEFORE INSERT
+segment and stall sync forever (`local-guards:319-372`). Natural keys immutable
+including `INSERT OR REPLACE` (`sp_insert_or_replace`; `capture:620+`). A BEFORE INSERT
 guard cannot see the conflict clause, so it also aborts `INSERT OR
 IGNORE`: mu's own idempotent inserts (`ensureWorkstream`, `addEdge`)
 become `INSERT … WHERE NOT EXISTS`, and the guard matches the natural
@@ -263,19 +263,19 @@ key, not only `id`.
 
 | Verb | Guarantee (tests) |
 |---|---|
-| `workstream init / teardown` | session + row; ordered teardown: kill session, then rows; soft delete (`workstream`) |
-| `agent spawn [--task id] [--worktree] [names...]` | lock, row, pane, env, ctl handshake, rollback; claim only after the pane exists, release on rollback; replay returns the existing delivery (`spawn-ctl`) |
-| `agent send [--fresh/--interrupt]`, `wait`, `abort` | ctl only; send returns `runs` + incarnation; wait refuses an incarnation mismatch; timeout after write = delivery unknown, check never resend (`extension-mu-pi`, `ctl-client`) |
-| `agent close [--discard]`, `list`, `read` | reaper + ghost prune; close refuses a dirty worktree (`agents`) |
-| `task add [--triage] [--blocks u] [ids...]`, `block`, `unblock` | cycle guard; batch create (`edges`); shipped: `add` batch + `--blocks` (atomic), `note -m/--message/--note/--report`, `close --note/--report` |
-| `task claim`, `release`, `open`, `accept` | CAS; release returns IN_PROGRESS to OPEN (shipped in `src/tasks/claim.ts`; 78/65/46/749 uses: `kg_release_reopen`, `pv_substate_verbs`) |
-| `task close [--as s --why] --evidence` | status + substate + evidence, one op group; `done` needs `--evidence` and closed blockers, other substates need `--why` (their evidence) and may close over open blockers; reclassifying to `done` is checked like any close to done (`local-guards`, `lifecycle`) |
-| `task wait <ids> / --blockers-of u` | shipped: `task wait <ids>` is an alias of `mu wait` over task refs (`v_wait_surface`): the first event by default, `--all` for all-of, one JSON result (`data.firing`, `data.exit`, `data.snapshots`, `data.resume`), a timeout is `ok:true` with `timedOut`, exit 6 owner died, 7 stall (`--stuck-after`, `--on-stall exit` default, `warn` keeps waiting). `--blockers-of` is `mu wait --blockers-of` |
-| `task tree <id> [--down]` | open-only, capped (`pv_tree_view`: one umbrella reaches 870 tasks, 3 open) |
-| `state [--me]`, `log [--tail]`, `notes`, `show` | caps; `renderOp` trimmed to the new intents |
-| `next [--dry]` | executor above |
-| `db [sql]` | in-process on better-sqlite3 like 3.x `mu sql`, inside the context wrapper: `foreign_keys=on`, `busy_timeout=5000`, per-connection TEMP views with the resolved workstream as a literal (SQLite rejects view parameters; no agent filter: ready/blocked tasks are OPEN and unowned); user `BEGIN`/`COMMIT` refused; writes captured and flushed; `no such column` → one-line did-you-mean + column list, non-zero exit (`um_sql_column_guess`). `mu db --shell` opens the sqlite3 CLI read-only |
-| `sync`, `rebuild`, `doctor`, `host add/check/init` | doctor: mux, integrity, cycles, drift, schema/capture version, trigger checksum, sqlite3 version, network mount, case collisions |
+| `workstream init / teardown` | session + row; ordered teardown: kill session, then rows; soft delete (`workstream-soft-teardown`, `workstream.integration:321`; teardown kills first: `workstream-teardown-empty.integration:305`, `workstream-teardown-probe:68`) |
+| `agent spawn [--task id] [--worktree] [names...]` | lock, row, pane, env, ctl handshake, rollback; claim only after the pane exists, release on rollback; replay returns the existing delivery (`spawn-ctl:866,926`, `spawn-receipts:379-412`) |
+| `agent send [--fresh/--interrupt]`, `wait`, `abort` | ctl only; send returns `runs` + incarnation; wait refuses an incarnation mismatch; timeout after write = delivery unknown, check never resend (`extension-mu-pi:639-656`, `agent-transport:252`, `ctl-client:174`) |
+| `agent close [--discard]`, `list`, `read` | reaper + ghost prune; close refuses a dirty worktree, `--discard`, unmerged commits kept on a branch (`worktree.integration:96-368`; ghost prune: `agent-reaper-transactional`) |
+| `task add [--triage] [--blocks u] [ids...]`, `block`, `unblock` | cycle guard; batch create (`tasks-crud.integration:257,503`, `cli-task-add-blocked-by.integration:272`); shipped: `add` batch + `--blocks` (atomic), `note -m/--message/--note/--report`, `close --note/--report` |
+| `task claim`, `release`, `open`, `accept` | CAS; release returns IN_PROGRESS to OPEN (shipped in `src/tasks/claim.ts`; `claim.integration`, `cli-task-claim.integration`, `local-guards:89`; 78/65/46/749 uses: `kg_release_reopen`, `pv_substate_verbs`) |
+| `task close [--as s --why] --evidence` | status + substate + evidence, one op group; `done` needs `--evidence` and closed blockers, other substates need `--why` (their evidence) and may close over open blockers; reclassifying to `done` is checked like any close to done (`local-guards:89-317`, `tasks-lifecycle.integration`, `tasks-substate-lifecycle`) |
+| `task wait <ids> / --blockers-of u` | shipped: `task wait <ids>` is an alias of `mu wait` over task refs (`v_wait_surface`): the first event by default, `--all` for all-of, one JSON result (`data.firing`, `data.exit`, `data.snapshots`, `data.resume`), a timeout is `ok:true` with `timedOut`, exit 6 owner died, 7 stall (`--stuck-after`, `--on-stall exit` default, `warn` keeps waiting). `--blockers-of` is `mu wait --blockers-of` (`cli-task-wait.integration`, `cli-task-wait-on-stall.integration`, `cli-task-wait-shape.integration`) |
+| `task tree <id> [--down]` | open-only, capped (`pv_tree_view`: one umbrella reaches 870 tasks, 3 open; `task-read-records:502-600`) |
+| `state [--me]`, `log [--tail]`, `notes`, `show` | caps; `renderOp` trimmed to the new intents (`state-output-contract`, `log-output-contract`, `log-render-intent`, `cli-task-notes-filters.integration`) |
+| `next [--dry]` | executor above (`next-executor`, `next-cli`, `next-recover`, `next-refute`) |
+| `db [sql]` | in-process on better-sqlite3 like 3.x `mu sql`, inside the context wrapper: `foreign_keys=on`, `busy_timeout=5000`, per-connection TEMP views with the resolved workstream as a literal (SQLite rejects view parameters; no agent filter: ready/blocked tasks are OPEN and unowned); user `BEGIN`/`COMMIT` refused; writes captured and flushed; `no such column` → one-line did-you-mean + column list, non-zero exit (`um_sql_column_guess`). `mu db --shell` opens the sqlite3 CLI read-only (`db-query:491-584,658`, `sql-capture:253`, `db-shell.integration:58`) |
+| `sync`, `rebuild`, `doctor`, `host add/check/init` | doctor: mux (`scope-no-mux:465`), integrity (`quick_check` under `--deep`) and the db block (`cli-doctor-db`), cycles (`cli-doctor-exit:136`), drift (`cli-doctor-drift.integration`), trigger checksum and sqlite3 version (`capture-persistent:853-870`), network mount, case collisions (`fleet-hazards`); sync contract `sync-contract:85-160`, sync-dir refusal `sync-dir-guard` |
 
 **Plain `sqlite3` is read-only.** It defaults to `foreign_keys=0` and
 `busy_timeout=0` (cascades silently skipped), cannot
@@ -293,7 +293,7 @@ WAL DB copied without `-wal` passes `integrity_check` with rows missing
 
 **Ctl versioning.** Protocol version + `hello` (ext build, served ops);
 changes additive only; a new CLI checks served ops; outdated live
-agents: ctl `/reload`, else mux reload, else respawn (`mi_ctl_versioning`).
+agents: ctl `/reload`, else mux reload, else respawn (`mi_ctl_versioning`; `ctl-client:174`, `doctor-ctl:274`, `agent-transport:546-561`).
 
 **Mux seam (tmux, herdr).** `available`, `ensureSession`,
 `killSession` (herdr: workspace close, group refusal surfaced),
@@ -303,7 +303,7 @@ command overrides), `listPanes`, `paneAlive`, `killPane`, `capture`,
 `attachCommands(target)` → ordered steps, some optional, may fail with
 a reason; optional `paneStatus` for non-pi agents on herdr. Agent
 state is ctl-only for pi. Pane-title identity is retired
-(`mx_herdr_spawn_inputs`, `mx_no_session_kill`, `mx_attach_contract`,
+(`mux-herdr:263`, `mux-herdr-spawn:607`; `mx_herdr_spawn_inputs`, `mx_no_session_kill`, `mx_attach_contract`,
 `mx_native_status`).
 
 **Worktrees.** The worker's cwd *is* its worktree; briefs never tell it
@@ -322,8 +322,8 @@ fetch site, so the sentence must fetch (git refuses dirty trees itself; `pv_refr
 post follow-up, `record` the verdict or no-verdict before posting,
 admission control kept from 3.x (`MU_DELEGATE_MAX` running, a bounded
 queue drained automatically, refusal past it; tests:
-`extension-delegate` 273-335; this run hit 16+64),
-no-recursion guard); one settle hook for keep-driving and close nudges.
+`extension-delegate:345-410`; this run hit 16+64),
+no-recursion guard, `extension-delegate:63`); one settle hook for keep-driving and close nudges.
 Skill and prompts ship in the package.
 
 ## The orchestrator's loop: never stop, never starve

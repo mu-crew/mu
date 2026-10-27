@@ -8,64 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const hook = vi.hoisted(() => ({
-  spawns: [] as string[],
-  sends: [] as { agent: string; text: string; msgId?: string; expect?: string }[],
-  panes: 0,
-  sendMode: "ok" as "ok" | "throws" | "unsent",
-  sendRuns: 0,
-  afterSpawn: undefined as undefined | (() => void),
-}));
-vi.mock("../src/agents/spawn.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/agents/spawn.js")>();
-  return {
-    ...actual,
-    spawnAgent: async (
-      db: import("../src/db.js").Db,
-      opts: { name: string; workstream: string; onIdentity?: (a: unknown) => void },
-    ) => {
-      const { insertAgent } = await import("../src/agents.js");
-      hook.spawns.push(opts.name);
-      const row = insertAgent(db, {
-        name: opts.name,
-        workstream: opts.workstream,
-        paneId: `%${++hook.panes}`,
-      });
-      opts.onIdentity?.(row);
-      hook.afterSpawn?.();
-      return { ...row, ctl: "ok", ctlSocket: "/fake.sock", ctlIncarnation: "pi-inc" };
-    },
-  };
-});
-vi.mock("../src/agents/transport.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/agents/transport.js")>();
-  return {
-    ...actual,
-    sendViaTransport: async (
-      a: { name: string },
-      text: string,
-      o: { msgId?: string; expectIncarnation?: string },
-    ) => {
-      hook.sends.push({
-        agent: a.name,
-        text,
-        ...(o.msgId !== undefined ? { msgId: o.msgId } : {}),
-        ...(o.expectIncarnation !== undefined ? { expect: o.expectIncarnation } : {}),
-      });
-      if (hook.sendMode === "throws") throw new Error("socket vanished mid-write");
-      if (hook.sendMode === "unsent") {
-        const { AgentCtlUnreachableError } = await import("../src/agents/errors.js");
-        throw new AgentCtlUnreachableError(a.name, "d", "/fake.sock", "missing", null);
-      }
-      return { transport: "ctl", runs: hook.sendRuns, msgId: o.msgId, incarnation: "pi-inc" };
-    },
-    checkMessage: async (_s: string, msgId: string) => ({
-      state: "unreachable",
-      id: msgId,
-      reason: "no socket",
-    }),
-  };
-});
+vi.mock("../src/agents/spawn.js", async (importOriginal) =>
+  (await import("./_next-fakes.js")).spawnFake(await importOriginal()),
+);
+vi.mock("../src/agents/transport.js", async (importOriginal) =>
+  (await import("./_next-fakes.js")).transportFake(await importOriginal()),
+);
 
 import { getReceipt, updateReceipt } from "../src/agents/receipts.js";
 import { deleteAgent, getAgent, insertAgent } from "../src/agents.js";
@@ -83,6 +31,7 @@ import type { WaitOptions, WaitRef, WaitResult } from "../src/wait-types.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
+import { hook, resetHook } from "./_next-fakes.js";
 
 let dir: string;
 let db: Db;
@@ -93,12 +42,7 @@ let facts: Record<string, WorkerFacts | undefined>;
 let observed: string[][];
 
 beforeEach(() => {
-  hook.spawns = [];
-  hook.sends = [];
-  hook.panes = 0;
-  hook.sendMode = "ok";
-  hook.sendRuns = 0;
-  hook.afterSpawn = undefined;
+  resetHook();
   muxCalls = 0;
   facts = {};
   observed = [];

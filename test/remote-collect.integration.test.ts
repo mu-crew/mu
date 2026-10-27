@@ -593,9 +593,10 @@ describe.each([
   });
 
   const lsofHere = spawnLsof();
-  (supported && lsofHere && format === "files" ? it : it.skip)(
-    "with no /proc, lsof finds the holder",
-    async () => {
+  // Registered for the files format only (not skipped for reftable: a permanent
+  // skip hides real ones in the count).
+  if (format === "files")
+    (supported && lsofHere ? it : it.skip)("with no /proc, lsof finds the holder", async () => {
       await remoteAgent("worker-1", { pane: false });
       await holder("cwd");
       const agent = getAgent(db, "worker-1", "auth");
@@ -605,8 +606,7 @@ describe.each([
       }).catch((e: unknown) => e);
       expect((err as RemoteCloseRefusedError).reason).toBe("held");
       expect(existsSync(wt())).toBe(true);
-    },
-  );
+    });
 });
 
 function spawnLsof(): boolean {

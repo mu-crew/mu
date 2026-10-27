@@ -28,11 +28,12 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { killSession } from "../src/tmux.js";
+import { tmuxIntegrationAvailable } from "./_mux.js";
 
 const execFileP = promisify(execFile);
 
 const CLI = join(process.cwd(), "dist", "cli.js");
-const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== "";
+const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 const BUILT = existsSync(CLI);
 const describeIfReady = TMUX_AVAILABLE && BUILT ? describe : describe.skip;
 
