@@ -410,6 +410,19 @@ export interface FinishDelegateResult {
   error?: string;
 }
 
+/** Who wrote the CLOSE note of a task that is already CLOSED; null when it is open or closed bare. */
+function closedBy(db: Db, task: string, workstream: string): string | null {
+  const row = db
+    .prepare(
+      `SELECT n.author AS author FROM task_notes n
+         JOIN tasks t ON t.id = n.task_id JOIN workstreams w ON w.id = t.workstream_id
+        WHERE w.name = ? AND t.local_id = ? AND t.status = 'CLOSED' AND n.kind = 'close'
+        ORDER BY n.id DESC LIMIT 1`,
+    )
+    .get(workstream, task) as { author: string | null } | undefined;
+  return row?.author ?? null;
+}
+
 function finishText(outcome: string, text: string | undefined): string {
   if (outcome === "done") return text ?? "";
   return `no answer (${outcome})${text?.trim() ? `\n\n${text.trimEnd()}` : ""}`;
@@ -473,11 +486,25 @@ export function finishDelegate(
             );
           const ok = answered && error === undefined;
           const state: DelegateState = ok ? "done" : cancelled ? "cancelled" : "failed";
+          // The delegate closed its own task first (a pane's close nudge, its own
+          // habit): closeTask's no-op retry would drop the report. Keep it as a
+          // report note; the close below then changes nothing. A task someone
+          // else closed (the orchestrator, a user) gets no note. The delegate is told
+          // from them by the author of the close note: the call row's `agent`.
+          const selfClosed =
+            cur.agent !== null && closedBy(db, cur.task, cur.workstream) === cur.agent;
+          if (selfClosed)
+            addNote(db, cur.task, report, {
+              workstream: cur.workstream,
+              kind: "report",
+              author: opts.author,
+              group: "inherit",
+            });
           closeTask(db, cur.task, {
             workstream: cur.workstream,
             author: opts.author,
             group: "inherit",
-            report,
+            ...(selfClosed ? {} : { report }),
             as: ok ? "done" : cancelled ? "wontfix" : "rejected",
             ...(ok
               ? { evidence: `answered ${verdict ?? "NO VERDICT"} (call ${callId})` }

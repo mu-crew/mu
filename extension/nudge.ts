@@ -106,7 +106,11 @@ function readSkill(): string | undefined {
   return undefined;
 }
 
-type ListJson = { items?: { id?: string; status?: string }[]; count?: number; more?: number };
+type ListJson = {
+  items?: { id?: string; status?: string; kind?: string }[];
+  count?: number;
+  more?: number;
+};
 
 /**
  * Every item of a task read, uncapped: `uncapped` is the flag that turns the 4 KB
@@ -569,7 +573,12 @@ export function workerIdentity(
   return { agent, workstream };
 }
 
-/** IN_PROGRESS task names owned by `agent`, from `mu task owned-by --json`. */
+/**
+ * IN_PROGRESS task names owned by `agent`, from `mu task owned-by --json`. A
+ * `kind=delegate` task is left out: a delegate is spawned with `--task` bound
+ * to its own call task, and that call records the answer and closes it
+ * (finishDelegate); a pane that closed it itself would lose the answer.
+ */
 async function ownedInProgress(
   run: MuRunner,
   agent: string,
@@ -582,7 +591,9 @@ async function ownedInProgress(
       "--full",
     );
     if (items === undefined) return undefined;
-    return items.flatMap((t) => (t.status === "IN_PROGRESS" && t.id ? [t.id] : []));
+    return items.flatMap((t) =>
+      t.status === "IN_PROGRESS" && t.kind !== "delegate" && t.id ? [t.id] : [],
+    );
   } catch {
     return undefined;
   }

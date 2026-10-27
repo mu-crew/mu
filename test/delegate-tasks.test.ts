@@ -20,6 +20,7 @@ import {
 } from "../src/delegates.js";
 import { addTask } from "../src/tasks/edit.js";
 import { TaskNotFoundError } from "../src/tasks/errors.js";
+import { closeTask } from "../src/tasks/lifecycle.js";
 import { selectTaskNotes } from "../src/tasks/queries.js";
 import { getTask } from "../src/tasks.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -386,6 +387,66 @@ describe("finish: record before report and close", () => {
     const r = finishDelegate(db, c.callId, { outcome: "done", text: "the answer", author: "d" });
     expect(r).toMatchObject({ state: "done", recorded: false, record: null });
     expect(getTask(db, c.task, "scratch")).toMatchObject({ status: "CLOSED", substate: "done" });
+  });
+
+  describe("a delegate that closed its own task before the recorder ran", () => {
+    const running = (record?: { workstream: string; task: string }) => {
+      const { call: c } = call({
+        ...(record ? { record } : {}),
+        request: { text: "refute f1", label: "ref1" },
+      });
+      markDelegate(db, c.callId, "starting");
+      markDelegate(db, c.callId, "running", { agent: "delegate-ref1" });
+      return c;
+    };
+    const selfClose = (task: string, author: string, as?: "wontfix") =>
+      closeTask(db, task, {
+        workstream: "scratch",
+        author,
+        ...(as ? { as, why: "no longer needed" } : { evidence: "I closed it" }),
+      });
+
+    it("keeps the answer as the report and the real verdict on the judged task; the call is done with its verdict", () => {
+      judged("crew", "f1");
+      const c = running({ workstream: "crew", task: "f1" });
+      selfClose(c.task, "delegate-ref1");
+      const r = finishDelegate(db, c.callId, {
+        outcome: "done",
+        text: "VERDICT: CONFIRMED it holds\nEVIDENCE: ran it",
+        author: "pi:s1",
+      });
+      expect(r).toMatchObject({
+        changed: true,
+        state: "done",
+        recorded: true,
+        verdict: "CONFIRMED",
+      });
+      expect(getDelegateCall(db, c.callId)).toMatchObject({ state: "done", verdict: "CONFIRMED" });
+      const rep = notes("scratch", c.task).filter((x) => x.kind === "report");
+      expect(rep).toHaveLength(1);
+      expect(rep[0]?.content).toContain("VERDICT: CONFIRMED");
+      const v = notes("crew", "f1").filter((x) => x.kind === "verdict");
+      expect(v).toHaveLength(1);
+      expect(v[0]?.content).toContain("VERDICT: CONFIRMED it holds");
+      expect(getTask(db, c.task, "scratch")).toMatchObject({ status: "CLOSED", substate: "done" });
+      // A duplicate callback still writes nothing more.
+      expect(
+        finishDelegate(db, c.callId, { outcome: "done", text: "x", author: "d" }).changed,
+      ).toBe(false);
+      expect(notes("scratch", c.task).filter((x) => x.kind === "report")).toHaveLength(1);
+    });
+
+    it("closed by someone else (the orchestrator, not the delegate): that path is unchanged, no report note is added to a task they closed", () => {
+      const c = running();
+      selfClose(c.task, "orchestrator");
+      const r = finishDelegate(db, c.callId, {
+        outcome: "done",
+        text: "VERDICT: CONFIRMED late",
+        author: "pi:s1",
+      });
+      expect(r.state).toBe("done");
+      expect(notes("scratch", c.task).filter((x) => x.kind === "report")).toHaveLength(0);
+    });
   });
 
   it("a record that fails never becomes done: failed, task closed rejected, the answer kept, nothing half-written", () => {
