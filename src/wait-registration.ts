@@ -49,6 +49,12 @@ export interface RegisteredRef {
  */
 export interface RefBaseline {
   afterRuns: number;
+  /**
+   * The LATEST fence armed for this process, when later than `afterRuns` (the earliest unconsumed
+   * one): a send armed after the first still owes the run that follows it, so a wait that delivers
+   * a run at or below `latest` leaves the ref owed (`endWait`).
+   */
+  latest?: number;
   incarnation?: string;
   agentId?: number;
 }
@@ -187,6 +193,9 @@ function parseBaselines(json: string, refs: readonly RegisteredRef[]): Record<st
       continue;
     out[k] = {
       afterRuns: b.afterRuns,
+      ...(typeof b.latest === "number" && Number.isInteger(b.latest) && b.latest > b.afterRuns
+        ? { latest: b.latest }
+        : {}),
       ...(typeof b.incarnation === "string" ? { incarnation: b.incarnation } : {}),
       ...(typeof b.agentId === "number" ? { agentId: b.agentId } : {}),
     };
@@ -196,12 +205,21 @@ function parseBaselines(json: string, refs: readonly RegisteredRef[]): Record<st
 
 const refKeyOf = (r: RegisteredRef): string => cursorKey(r.kind, r.workstream, r.id);
 
-/** Merge a new baseline into an old one: the EARLIEST run of one incarnation wins; a new incarnation replaces. */
+/**
+ * Merge a new baseline into an old one: of one incarnation the EARLIEST fence is kept (the first run
+ * is still owed) beside the LATEST (`latest`); a new incarnation replaces. Returns `old` itself when
+ * nothing changes.
+ */
 function mergeBaseline(old: RefBaseline | undefined, add: RefBaseline): RefBaseline {
   if (old === undefined || old.incarnation !== add.incarnation || old.agentId !== add.agentId) {
     return add;
   }
-  return old.afterRuns <= add.afterRuns ? old : add;
+  const oldLatest = old.latest ?? old.afterRuns;
+  const hi = Math.max(oldLatest, add.latest ?? add.afterRuns);
+  const lo = Math.min(old.afterRuns, add.afterRuns);
+  if (lo === old.afterRuns && hi === oldLatest) return old;
+  const { latest: _a, ...rest } = old.afterRuns <= add.afterRuns ? old : add;
+  return { ...rest, afterRuns: lo, ...(hi > lo ? { latest: hi } : {}) };
 }
 
 function parse(row: Row): WaitRegistration {
@@ -329,8 +347,14 @@ export function fenceAgentRef(
     if (!reg.refs.some((r) => refKeyOf(r) === key)) return;
     // The same fence (or an earlier one of the same process) stays; a baseline of
     // another process or registry row, which no wait could use, is replaced.
-    const merged = mergeBaseline(reg.baselines[key], baseline);
-    if (merged === reg.baselines[key]) return;
+    // (A probed fence is no send: it never raises `latest`.)
+    const old = reg.baselines[key];
+    const sameProcess =
+      old !== undefined &&
+      old.incarnation === baseline.incarnation &&
+      old.agentId === baseline.agentId;
+    const merged = sameProcess ? old : baseline;
+    if (merged === old) return;
     db.prepare("UPDATE wait_registrations SET baselines_json = ? WHERE caller = ?").run(
       JSON.stringify({ ...reg.baselines, [key]: merged }),
       caller,
@@ -401,6 +425,12 @@ export function beginWait(
     .immediate();
 }
 
+/** The run an agent ref was delivered at, when it was a settled run (`endWait`). */
+export interface DeliveredRun {
+  runs?: number;
+  incarnation?: string;
+}
+
 /**
  * Finish the wait that `beginWait` numbered `generation`: drop the
  * `delivered` refs from what is owed and re-arm the row. A compare-and-set:
@@ -413,19 +443,37 @@ export function endWait(
   db: Db,
   caller: string,
   generation: number,
-  delivered: readonly RegisteredRef[],
+  delivered: readonly (RegisteredRef & DeliveredRun)[],
 ): { applied: boolean } {
   return db
     .transaction((): { applied: boolean } => {
-      const gone = new Set(canonical(delivered).map(keyOf));
       const row = select(db, caller);
       if (row === undefined || row.generation !== generation || row.state !== "waiting") {
         return { applied: false };
       }
       const reg = parse(row);
+      const gone = new Set(canonical(delivered).map(keyOf));
+      // A send armed after the delivered run (producer fence >= the run) still owes the run that
+      // follows it: the ref stays, counted from the run just delivered.
+      const baselines = { ...reg.baselines };
+      for (const d of delivered) {
+        const key = refKeyOf(d);
+        const b = baselines[key];
+        if (d.runs === undefined || b === undefined || b.latest === undefined) continue;
+        if (
+          b.incarnation !== undefined &&
+          d.incarnation !== undefined &&
+          b.incarnation !== d.incarnation
+        )
+          continue;
+        if (b.latest < d.runs) continue;
+        gone.delete(keyOf(d));
+        const { latest: _l, ...rest } = b;
+        baselines[key] = { ...rest, afterRuns: Math.max(d.runs, b.afterRuns) };
+      }
       const left = reg.refs.filter((r) => !gone.has(keyOf(r)));
       const kept = Object.fromEntries(
-        Object.entries(reg.baselines).filter(([k]) => left.some((r) => refKeyOf(r) === k)),
+        Object.entries(baselines).filter(([k]) => left.some((r) => refKeyOf(r) === k)),
       );
       db.prepare(
         "UPDATE wait_registrations SET refs_json = ?, baselines_json = ?, state = 'armed', updated_at = ? WHERE caller = ?",

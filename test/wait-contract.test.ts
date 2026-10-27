@@ -470,6 +470,7 @@ describe("producer fence: unconsumed baselines", () => {
     registerOwnedWait(env.db, "c", [ref(7)]);
     expect(readWaitRegistration(env.db, "c")?.baselines["agent:w/w1"]).toEqual({
       afterRuns: 5,
+      latest: 7, // the latest send is kept beside it (rr_r2_rearm_lost)
       incarnation: "i",
       agentId: id,
     });
