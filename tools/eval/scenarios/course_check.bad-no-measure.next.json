@@ -1,0 +1,33 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree --task k10 --send 'do k10 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu state -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu human-needed -w eval 'course check: 10 closed, k11-k12 left; review the measurement before k11'"
+      }
+    ]
+  },
+  {
+    "text": "A course check fell due after k10. A delegate measured; I recorded a human-needed stop before dispatching k11."
+  }
+]
