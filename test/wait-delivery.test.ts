@@ -7,6 +7,7 @@
 import { mkdirSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { deleteAgent } from "../src/agents.js";
 import { recordHumanNeeded } from "../src/human-needed.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { closeTask } from "../src/tasks.js";
@@ -218,6 +219,62 @@ describe("fairness: an unchanged urgent observation is delivered once per state 
     const got: string[] = [];
     for (let i = 0; i < 3; i++) got.push(label(await waitForEvents(env.db, [], opts)));
     expect(got).toEqual(["dead:t1", `delegate:${call}`, "heartbeat"]);
+  });
+
+  // dead_double_event: `claim --for` registers the task AND its owner. One death is one event that
+  // names both refs, never dead:t1 then dead:w1 (exit 6 twice for one fact).
+  const oneDeath = async (
+    kill: () => void,
+    table: Map<string, AgentReading>,
+    mode: "first" | "all" = "first",
+  ) => {
+    await mkOwnedTask(env.db, "t1", "w1");
+    registerOwnedWait(env.db, "pi:s", [taskRef("t1"), agentRef("w1")]);
+    const call = mkDelegate(env.db, "pi:s");
+    answer(env.db, call);
+    kill();
+    const opts = {
+      ...base,
+      callers: ["pi:s"],
+      mode,
+      timeoutMs: 30,
+      readAgents: async () => table,
+    } as const;
+    const first = await waitForEvents(env.db, [], opts);
+    const got = [label(first)];
+    for (let i = 0; i < 2; i++) got.push(label(await waitForEvents(env.db, [], opts)));
+    expect(got).toEqual(["dead:t1", `delegate:${call}`, "heartbeat"]);
+    expect(first.exit).toBe(6);
+    expect(first.refs.filter((r) => r.dead).map((r) => r.ref.id)).toEqual(["t1", "w1"]);
+  };
+
+  it("one owner death (pane gone, row still there) is ONE event naming the task and the agent", async () => {
+    await oneDeath(() => {}, new Map([["w/w1", { status: null }]]));
+  });
+
+  it("one owner death after the reaper ran (row gone, task flipped OPEN) is ONE event", async () => {
+    await oneDeath(() => deleteAgent(env.db, "w1", "w"), new Map());
+  });
+
+  it("--all: one owner death is ONE urgent event too", async () => {
+    await oneDeath(() => {}, new Map([["w/w1", { status: null }]]), "all");
+  });
+
+  it("two deaths stay two events: an unrelated agent, or a respawn under the dead owner's name", async () => {
+    await mkOwnedTask(env.db, "t1", "w1");
+    mkAgent(env.db, "w2");
+    registerOwnedWait(env.db, "pi:s", [taskRef("t1"), agentRef("w1"), agentRef("w2")]);
+    deleteAgent(env.db, "w1", "w");
+    // w1 respawned as a NEW registry row: its death is not the old owner's.
+    mkAgent(env.db, "w1");
+    const dead = new Map<string, AgentReading>([
+      ["w/w1", { status: null }],
+      ["w/w2", { status: null }],
+    ]);
+    const opts = { ...base, callers: ["pi:s"], timeoutMs: 30, readAgents: async () => dead };
+    const got: string[] = [];
+    for (let i = 0; i < 4; i++) got.push(label(await waitForEvents(env.db, [], opts)));
+    expect(got).toEqual(["dead:t1", "dead:w1", "dead:w2", "heartbeat"]);
   });
 
   it("an explicit ref on a dialog never starves an owned delegate report", async () => {

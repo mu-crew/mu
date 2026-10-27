@@ -100,12 +100,13 @@ export function opsHead(db: Db): number {
  * died with the work undone. A later claim, release, park, open or close is a decision, not a
  * death: it is the latest change then, and this returns undefined. `ownerId` is the row the reaper
  * removed (the last owner the log names before the flip; 0 if none), the same token a live wait pins.
+ * `ownerName` is the actor of the op that set that owner (a claim records the claiming agent's name).
  */
 export function reapFlip(
   db: Db,
   ref: Pick<WaitRef, "workstream" | "id">,
   since: number,
-): { seq: number; ownerId: number } | undefined {
+): { seq: number; ownerId: number; ownerName?: string } | undefined {
   const key = `${ref.workstream}/${ref.id}`;
   const last = db
     .prepare(
@@ -117,12 +118,16 @@ export function reapFlip(
   if (last === undefined || last.intent !== "task.reap" || last.seq <= since) return undefined;
   const owner = db
     .prepare(
-      `SELECT json_extract(payload, '$.owner_id') AS id FROM ops
+      `SELECT json_extract(payload, '$.owner_id') AS id, actor FROM ops
         WHERE entity = 'task' AND key = ? AND seq < ? AND json_extract(payload, '$.owner_id') IS NOT NULL
         ORDER BY seq DESC LIMIT 1`,
     )
-    .get(key, last.seq) as { id: number } | undefined;
-  return { seq: last.seq, ownerId: Number(owner?.id ?? 0) };
+    .get(key, last.seq) as { id: number; actor: string | null } | undefined;
+  return {
+    seq: last.seq,
+    ownerId: Number(owner?.id ?? 0),
+    ...(owner?.actor != null ? { ownerName: owner.actor } : {}),
+  };
 }
 
 /** The registry row id of a task's current owner (0 when it has none). */

@@ -26,7 +26,9 @@
 // ref); an urgent event (an owned ref that died, an agent blocked on a
 // dialog, a stall, an owned delegate report) ends it early without counting
 // toward "all". Order: never-returned events first, then dead, input, stall,
-// delegate, then closed/settled; targets before owned refs.
+// delegate, then closed/settled; targets before owned refs. One fact is one
+// event: a settled run and the close its CLOSE block made, or a dead task and
+// its dead owner (`sameDeath`), are delivered (and consumed) together.
 //
 // Delivery is durable, never in-memory. Every event has a cursor key
 // (src/wait-cursor.ts): a close or settle under the ref's own key, an urgent
@@ -113,6 +115,7 @@ import {
   refKey,
   registered,
   type StallState,
+  sameDeath,
   snapshotsOf,
   urgency,
 } from "./wait-item.js";
@@ -781,9 +784,16 @@ export async function waitForEvents(
         item.kind = "dead";
         item.done = true;
         item.ckey = urgentKey("dead", item.key);
-        item.token = {
-          incarnation: `dead:${ownerRef !== undefined ? taskOwnerRowId(db, ref) : prior?.ownerId || flip?.ownerId || 0}`,
-          runs: 1,
+        const rowId =
+          ownerRef !== undefined ? taskOwnerRowId(db, ref) : prior?.ownerId || flip?.ownerId || 0;
+        item.token = { incarnation: `dead:${rowId}`, runs: 1 };
+        const name = ownerRef?.name ?? prior?.owner ?? flip?.ownerName;
+        const workstream =
+          ownerRef?.workstreamName ?? (prior?.owner != null ? prior.ownerWs : undefined);
+        item.death = {
+          rowId,
+          ...(name != null ? { name } : {}),
+          ...(workstream !== undefined ? { workstream } : {}),
         };
         return item;
       }
@@ -885,6 +895,7 @@ export async function waitForEvents(
     const key = refKey(t.ref);
     let token: CursorToken | undefined;
     let ckey: string | undefined;
+    let death: Item["death"];
     if (l?.kind === "settled" && r?.runs !== undefined) {
       token = { incarnation: r.incarnation ?? "", runs: r.runs };
     } else if (l?.kind === "input" && r !== undefined) {
@@ -892,7 +903,10 @@ export async function waitForEvents(
       token = inputToken(r);
     } else if (l?.kind === "dead") {
       ckey = urgentKey("dead", key);
-      token = { incarnation: `dead:${agentRowId(db, t.ref)}`, runs: 1 };
+      const rowId = agentRowId(db, t.ref);
+      token = { incarnation: `dead:${rowId}`, runs: 1 };
+      // A reaped row reads 0: the reading may still say which row it was.
+      death = { rowId: rowId || (r?.agentId ?? 0), name: t.ref.id, workstream: t.ref.workstream };
     } else if (l?.kind === "exited") {
       // One token per registry row: an owned cursor consumes the result once; a replacement is a new row.
       token = { incarnation: `exited:${agentRowId(db, t.ref)}`, runs: 1 };
@@ -913,6 +927,7 @@ export async function waitForEvents(
       ...(l !== undefined ? { kind: l.kind } : {}),
       ...(token !== undefined ? { token } : {}),
       ...(ckey !== undefined ? { ckey } : {}),
+      ...(death !== undefined ? { death } : {}),
     };
   };
 
@@ -1212,7 +1227,9 @@ export async function waitForEvents(
         a.ref.workstream === b.ref.workstream &&
         b.ref.kind === "task" &&
         b.kind === "closed";
-      const companions = ready.filter((i) => i !== best && (same(i, best) || same(best, i)));
+      const companions = ready.filter(
+        (i) => i !== best && (same(i, best) || same(best, i) || sameDeath(i, best)),
+      );
       return { event: best, fired: [best, ...companions] };
     }
     const urgent = ready.find(
@@ -1221,7 +1238,10 @@ export async function waitForEvents(
         i.kind === "stall" ||
         (!i.target && (i.kind === "dead" || i.kind === "delegate")),
     );
-    if (urgent !== undefined) return { event: urgent, fired: [urgent] };
+    if (urgent !== undefined) {
+      const companions = ready.filter((i) => i !== urgent && sameDeath(i, urgent));
+      return { event: urgent, fired: [urgent, ...companions] };
+    }
     const targets = items.some((i) => i.target) ? items.filter((i) => i.target) : items;
     if (targets.length === 0 || !targets.every((i) => i.done)) return undefined;
     const sorted = [...targets].sort(rank);
