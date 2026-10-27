@@ -109,7 +109,7 @@ export type TmuxExecutor = (args: readonly string[]) => Promise<TmuxExecResult>;
  * Read fresh on every call so a setupFiles hook that mutates
  * `process.env.MU_TMUX_SOCKET` mid-run takes effect immediately.
  *
- * Production code never sets this; it's a test-isolation seam.
+ * The test suite sets this; a user may too (docs/reference/env.md).
  */
 function tmuxGlobalFlags(): readonly string[] {
   const socket = process.env.MU_TMUX_SOCKET;

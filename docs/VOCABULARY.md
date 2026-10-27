@@ -174,10 +174,9 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **DB** / **registry** | `<state-dir>/mu.db` and its tables. | "store" |
 | **TUI** | The read-only ink dashboard. The 3.x card TUI (cards, popups, toasts, tick, help overlay) is removed; bare `mu` on a TTY opens the dashboard (help when piped or `--json`). | "GUI" |
 
-### mu-next terms
+### Terms added in 4.0
 
-Terms the [mu-next contract](mu-next/surface-contract.md) added. All of
-them ship; a row that describes behaviour still landing says so.
+Terms the [4.0 contract](mu-next/surface-contract.md) added.
 
 <!-- doc-cli-drift:skip-start -->
 

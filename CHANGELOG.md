@@ -238,6 +238,11 @@ and send `/reload` to running pi agents.
 - **Guides.** [Run mu with other agent CLIs](docs/guide/other-agent-clis.md): pin which
   `mu` a codex or cursor-agent shell runs, start a tmux worker with its prompt as an
   argument, and what works with no multiplexer.
+- **Docs for 4.0.** The README states 4.0 and shows the dashboard
+  (`docs/img/tui-dashboard.png`, drafted by `tools/screenshot/dashboard.sh`).
+  The upgrade guide covers 3.x to 4.0, keeping 3.x runnable for the Move
+  recipe, and rollback. `MU_TMUX_SOCKET` is documented as a private-server
+  switch, and the remote guide says which wait applies a `CLOSE:` block.
 
 ### Changed
 

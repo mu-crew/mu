@@ -1,5 +1,8 @@
 # How to upgrade mu
 
+Coming from 3.x? Read [Upgrade from 3.x to 4.0](#upgrade-from-3x-to-40)
+first: `npm i -g @mu-crew/mu@latest` replaces your 3.x `mu`.
+
 ## Upgrade the package
 
 ```bash
@@ -51,63 +54,71 @@ Until then, the `ctl` row of `mu doctor` warns
 `extension X older than installed Y` or `extension lacks ops`. Ops the old extension lacks,
 such as `send --fresh`, fail with exit 4.
 
-## Upgrade from 3.1 or earlier
+An agent started before the pi package was installed has no control
+socket, so a send to it fails with `ctl missing`. Restart it.
 
-Before 3.2.0, mu pasted text into pi panes. Now it sends through a
-control socket. Agents started before the pi package was installed have no socket, so
-sends to them fail with `ctl missing` instead of pasting. Restart those
-agents.
+## Upgrade from 3.x to 4.0
+
+4.0 is a breaking release with its own DB. It does not import a 3.x DB,
+and nothing converts one. 3.x keeps its state in `~/.local/state/mu`
+(`$XDG_STATE_HOME/mu`); 4.0 keeps its state in `~/.local/state/mu-next`
+(`$XDG_STATE_HOME/mu-next`), a name kept so the two never share a DB,
+socket or worktree. The release notes list every breaking change:
+[CHANGELOG](../../CHANGELOG.md).
+
+There is no flag day. Each machine switches when its human decides:
+
+1. Close the 3.x agents you no longer need (`mu agent close`); 4.0 cannot
+   see them.
+2. If you still need the old DB, [keep 3.x runnable](#keep-3x-runnable)
+   before you install: `npm i -g @mu-crew/mu@latest` replaces the `mu` on
+   your `PATH`.
+3. Install 4.0 as above (`npm i -g @mu-crew/mu@latest`, `pi install`,
+   `mu pi migrate --apply`). `mu --version` should print `4.x`.
+4. Give 4.0 its own sync folder, or none. Sync stays off until you set
+   `MU_SYNC_DIR`. If any segment in the folder opens with a 3.x (v1)
+   line, every 4.0 verb exits 4 with `MU_SYNC_DIR holds 3.x segments;
+   give mu-next its own dir` before it reads or writes anything. Unset
+   or change `MU_SYNC_DIR` in a shell that also runs 3.x.
+5. Move workstreams one at a time, from the machine that holds each one,
+   with the [Move recipe](../../skills/mu/recipes/move.md). Only open
+   tasks move; owners, agents and history stay in the 3.x DB, an archive.
+   The recipe's one 3.x write is the last step: it parks each moved task
+   with `--why "moved to 4.0"`, so nobody works it twice.
+
+Rollback: `pi remove npm:@mu-crew/mu`, `npm i -g @mu-crew/mu@3`, then
+3.x's `link pi` to relink its shim. Nothing needs converting. For each
+moved workstream, run `mu task unpark <id> -w <ws>` on 3.x per task. Work
+done in 4.0 since the move stays in 4.0's DB.
+
+## Keep 3.x runnable
+
+`npm i -g @mu-crew/mu@latest` replaces the `mu` on your `PATH`, so the
+Move recipe needs 3.x from somewhere else. Install it into its own
+prefix, or run it once with npx:
+
+```bash
+npm i --prefix ~/.local/share/mu3 @mu-crew/mu@3.13.3
+~/.local/share/mu3/node_modules/.bin/mu --version   # 3.13.3
+
+npx -y @mu-crew/mu@3.13.3 --version                # no install; slower to start
+```
+
+Use that path, or the `npx` command, as `<mu3>` in the recipe. 3.x reads its own state dir, so
+it finds the old DB with no flags. Use it to read the archive and to park
+moved tasks, not for new work: `mu pi migrate --apply` moved aside the
+shim 3.x's pi agents load. A harness that runs `mu` through your shell rc
+may pick the wrong one; see
+[Pin the mu the harness runs](other-agent-clis.md#pin-the-mu-the-harness-runs).
 
 ## Old DBs
 
 A v13 DB missing a later addition is completed on its first open, in one
 transaction: it either completes or leaves the file as it was. mu
 refuses a DB older than v13 with `SchemaTooOldError`, and a newer one
-with `SchemaTooNewError`. Both exit 4 and leave the file alone. Back up an old DB and move it aside. mu-next does not import a 3.x DB:
-it runs beside 3.x with its own DB, and workstreams move by the
-[Move recipe](../../skills/mu/recipes/move.md).
-
-## Run mu-next beside 3.x
-
-mu-next keeps its state in `~/.local/state/mu-next` (`$XDG_STATE_HOME/mu-next`);
-3.x keeps `~/.local/state/mu`. Sync stays off until you set `MU_SYNC_DIR`,
-and the folder must be mu-next's own: if any segment in it opens with a
-3.x (v1) line, every verb exits 4 with
-`MU_SYNC_DIR holds 3.x segments; give mu-next its own dir` before it
-reads or writes anything. Unset or change `MU_SYNC_DIR` in a shell that
-also runs 3.x.
-
-## Switch to mu-next
-
-There is no flag day. Each machine switches when its human decides:
-
-1. Install mu-next beside 3.x. Its default state dir is its own, so the
-   two DBs, sockets and worktrees never meet. `mu --version` tells the two
-   builds apart: mu-next prints `4.0.0-next.<n>`, 3.x prints `3.x.y`. Check
-   which `mu` is first on `PATH` before you run the Move recipe. Give it a separate
-   `MU_SYNC_DIR`, or none.
-2. Move workstreams one at a time, from the machine that holds each
-   one, with the [Move recipe](../../skills/mu/recipes/move.md).
-   Only open tasks move. Owners, agents and history stay behind.
-3. The 3.x DB stays as a read-only archive. 3.x keeps running whatever
-   has not moved. The recipe's only 3.x write is the last step, which
-   parks each moved task with `--why "moved to mu-next"` so nobody
-   works it twice.
-
-Rollback: stop using mu-next and go back to 3.x. There is nothing to
-convert. For a workstream you already moved, `mu task unpark <id> -w <ws>`
-on 3.x for each of its tasks. Anything done in mu-next since the move
-stays in mu-next's DB.
-
-Before you switch a machine or change models, compare a new model to
-the stored baseline. From the checkout, run:
-
-```bash
-node tools/eval/main.ts matrix --surface "$PWD:next" --model <model> --reps 3 --out docs/mu-next/eval/models.jsonl
-```
-
-The release gate (the full matrix diffed against the baseline) is
-`v_eval_next`.
+with `SchemaTooNewError`. Both exit 4 and leave the file alone, so
+pointing 4.0 at a 3.x DB (`MU_DB_PATH`) is safe. Back up an old DB and
+move it aside.
 
 ## Run mu from a checkout
 
