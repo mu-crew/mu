@@ -79,6 +79,7 @@ parallel.
   `mu_delegate_cancel`) records the delegate's pi session file and,
   when it wrote anything, its last message so far, in the report.
   Quitting pi or `/reload` lists each running delegate's session file.
+  A call whose pane is gone fails when the next runtime re-adopts it.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
 
@@ -110,8 +111,11 @@ mu task notes <task> -w scratch               # its brief, and its report: the f
 
 The answer is the delegate task's `report`, whole; the settle shows it
 from there, so a lost wake (Escape, compaction, `/reload`) loses
-nothing. `tally` counts one result per call: a done answer by its last
-first `VERDICT:` label (none: UNVERIFIED), a failed or cancelled call as
+nothing: the next runtime of the same pi session (after `/reload`, or
+`pi -c` after quitting) re-adopts its `running` pane calls and records
+the answer, a delegate that finished meanwhile included. `tally`
+counts one result per call: a done answer by its last first
+`VERDICT:` label (none: UNVERIFIED), a failed or cancelled call as
 UNVERIFIED, queued, running and refused ones as pending.
 
 ### Record a verdict

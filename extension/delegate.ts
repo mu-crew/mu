@@ -25,7 +25,13 @@ import { randomBytes } from "node:crypto";
 import { statSync } from "node:fs";
 import { qualifiedRefProblem, workstreamNameProblem } from "../src/workstream-scope.js";
 import { labelStem, modelCommand, normalizeModel } from "./delegate-args.js";
-import { type CallInfo, callsApi, type FinishResult, type RecordTarget } from "./delegate-calls.js";
+import {
+  type CallInfo,
+  callInfoOf,
+  callsApi,
+  type FinishResult,
+  type RecordTarget,
+} from "./delegate-calls.js";
 import {
   DELEGATE_TIMEOUT_S,
   DELEGATE_WORKSTREAM,
@@ -89,6 +95,7 @@ export interface MuDelegateApi {
 
 /** The slice of pi's ExtensionContext the delegate side uses. */
 export interface DelegateCtx {
+  sessionManager?: { getSessionId?(): string };
   hasUI?: boolean;
   cwd?: string;
   isIdle?(): boolean;
@@ -738,6 +745,102 @@ export function registerDelegate(
     wakeIfIdle();
   }
 
+  /**
+   * Watch one running pane delegate (`mu agent wait` past `runs`) and deliver
+   * its answer when its run settles. Used by a fresh start and by a reloaded
+   * runtime re-adopting a call the previous runtime was watching.
+   */
+  async function watch(
+    call: CallInfo,
+    name: string,
+    runs: number,
+    o: {
+      keep: boolean;
+      timeoutS: number;
+      queuedAs?: string;
+      attach?: string;
+      workspace?: string;
+      sessionFile?: string;
+      identity?: DelegateIdentity;
+      /** Runs once the call is in `inflight`, before its wait starts. */
+      tracked?: () => Promise<void>;
+    },
+  ): Promise<Inflight> {
+    const ws = call.workstream;
+    const key = inflightKey(ws, name);
+    const entry: Inflight = {
+      abort: new AbortController(),
+      call,
+      cancelling: false,
+      ...(o.sessionFile ? { sessionFile: o.sessionFile } : {}),
+      ...(o.identity ? { identity: o.identity } : {}),
+    };
+    inflight.set(key, entry);
+    // The slot is released only now that the call is counted in `inflight`.
+    if (o.tracked === undefined) reportPending();
+    await o.tracked?.();
+    // The send's `runs` is pi's count before this prompt: waiting past it
+    // catches the run even if it settled before this wait started.
+    const started = Date.now();
+    const waiting = mu(
+      [
+        "agent",
+        "wait",
+        name,
+        "-w",
+        ws,
+        "--json",
+        "--timeout",
+        String(o.timeoutS),
+        "--after-runs",
+        String(runs),
+      ],
+      entry.abort.signal,
+    );
+    const settle = async (r: MuResult) => {
+      trace("settle", { call: call.callId, name, code: r.code });
+      forget(key);
+      try {
+        await deliver(
+          call,
+          name,
+          r,
+          o.keep,
+          {
+            timeoutS: o.timeoutS,
+            elapsedMs: Date.now() - started,
+            ...(o.queuedAs ? { queuedAs: o.queuedAs } : {}),
+            ...(o.attach ? { attach: o.attach } : {}),
+            ...(o.workspace ? { workspace: o.workspace } : {}),
+            ...(entry.sessionFile ? { sessionFile: entry.sessionFile } : {}),
+          },
+          entry.identity,
+        );
+      } catch (e) {
+        // A throw here would be an unhandled rejection and a lost answer.
+        const content = `Delegate ${ws}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${ws}`;
+        await Promise.resolve(
+          send(
+            {
+              customType: DELEGATE_MESSAGE_TYPE,
+              content,
+              display: true,
+              details: { name, workstream: ws, outcome: null, closed: false },
+            },
+            { deliverAs: "followUp", triggerTurn: true },
+            "deliver-failed",
+          ),
+        ).catch(() => {});
+      }
+    };
+    void waiting.then(async (r) => {
+      if (inflight.get(key) !== entry) return; // cancelled or shut down
+      if (entry.cancelling) entry.parked = () => settle(r);
+      else await settle(r);
+    });
+    return entry;
+  }
+
   /** Spawn, send, and watch one registered call. The caller holds one
    *  `starting` slot and has already moved the call to `starting`; the slot
    *  is released once the delegate is in `inflight` (or on failure). A
@@ -790,78 +893,21 @@ export function registerDelegate(
         );
       }
       const { name, runs, attach, workspace, sessionFile, identity } = spawned;
-      const key = inflightKey(ws, name);
-      const entry: Inflight = {
-        abort: new AbortController(),
-        call,
-        cancelling: false,
+      await watch(call, name, runs, {
+        keep,
+        timeoutS,
+        ...(queuedAs ? { queuedAs } : {}),
+        ...(attach ? { attach } : {}),
+        ...(workspace ? { workspace } : {}),
         ...(sessionFile ? { sessionFile } : {}),
         ...(identity ? { identity } : {}),
-      };
-      inflight.set(key, entry);
-      freeSlot(); // now counted in inflight
-      reportPending();
-      await calls.mark(call.callId, "running", { agent: name }).catch((e) => {
-        trace("mark.running.failed", { call: call.callId, error: errText(e) });
-      });
-      const started = Date.now();
-      // The send's `runs` is pi's count before this prompt: waiting past it
-      // catches the run even if it settled before this wait started.
-      const waiting = mu(
-        [
-          "agent",
-          "wait",
-          name,
-          "-w",
-          ws,
-          "--json",
-          "--timeout",
-          String(timeoutS),
-          "--after-runs",
-          String(runs),
-        ],
-        entry.abort.signal,
-      );
-      const settle = async (r: MuResult) => {
-        trace("settle", { call: call.callId, name, code: r.code });
-        forget(key);
-        try {
-          await deliver(
-            call,
-            name,
-            r,
-            keep,
-            {
-              timeoutS,
-              elapsedMs: Date.now() - started,
-              ...(queuedAs ? { queuedAs } : {}),
-              ...(attach ? { attach } : {}),
-              ...(workspace ? { workspace } : {}),
-              ...(entry.sessionFile ? { sessionFile: entry.sessionFile } : {}),
-            },
-            entry.identity,
-          );
-        } catch (e) {
-          // A throw here would be an unhandled rejection and a lost answer.
-          const content = `Delegate ${ws}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${ws}`;
-          await Promise.resolve(
-            send(
-              {
-                customType: DELEGATE_MESSAGE_TYPE,
-                content,
-                display: true,
-                details: { name, workstream: ws, outcome: null, closed: false },
-              },
-              { deliverAs: "followUp", triggerTurn: true },
-              "deliver-failed",
-            ),
-          ).catch(() => {});
-        }
-      };
-      void waiting.then(async (r) => {
-        if (inflight.get(key) !== entry) return; // cancelled or shut down
-        if (entry.cancelling) entry.parked = () => settle(r);
-        else await settle(r);
+        tracked: async () => {
+          freeSlot(); // now counted in inflight
+          reportPending();
+          await calls.mark(call.callId, "running", { agent: name }).catch((e) => {
+            trace("mark.running.failed", { call: call.callId, error: errText(e) });
+          });
+        },
       });
       const lines = [
         `Delegated to ${ws}/${name} (task ${ws}/${call.task}, call ${call.callId}). Its answer arrives with your next settle (and stays on the task: mu task notes ${call.task} -w ${ws}); carry on, or end your turn if your next step needs it. Do not poll.`,
@@ -1473,6 +1519,32 @@ export function registerDelegate(
     settleCheck = setImmediate(() => recoverLost(sent, ctx));
   });
 
+  // The watchers die with a runtime, but the calls are durable: the next runtime
+  // of the same pi session (/reload, resume, `pi -c`) re-adopts this session's
+  // `running` pane calls, so no wait owes an answer nobody watches. A call whose
+  // agent is gone ends as failed through the same recorder.
+  pi.on("session_start", async (_e, ctx) => {
+    const session = piSessionId(ctx) || process.env.PI_SESSION_ID;
+    if (!session || closed) return;
+    const r = await mu(["delegates", "list", "--caller", `pi:${session}`, "--json"]).catch(
+      () => undefined,
+    );
+    const items = (r ? (json(r)?.items as Record<string, unknown>[] | undefined) : undefined) ?? [];
+    for (const row of items) {
+      // A mux-free run is its own child (agent = its task) and finishes by itself.
+      if (row.state !== "running" || typeof row.agent !== "string" || row.agent === row.task)
+        continue;
+      const call = callInfoOf(row);
+      if (call.caller !== `pi:${session}` || inflight.has(inflightKey(call.workstream, row.agent)))
+        continue;
+      // One-shot delegates: the first run is the answer, so 0 is the exact baseline.
+      await watch(call, row.agent, 0, {
+        keep: call.request.keep === true,
+        timeoutS: call.request.timeoutS ?? DELEGATE_TIMEOUT_S,
+      });
+    }
+  });
+
   // The watchers die with this runtime (/reload, /new, quit): say which
   // delegates lose their callback, so none is lost silently. The names
   // are also in the tool results, and `mu agent wait` recovers them.
@@ -1532,7 +1604,11 @@ export function registerDelegate(
     const parts: string[] = [];
     if (names.length > 0)
       parts.push(
-        `${names.length} delegate${names.length === 1 ? "" : "s"} still running: ${names.join(", ")}. Their answers will not come back here; use mu agent wait <name> -w ${W} --json.`,
+        `${names.length} delegate${names.length === 1 ? "" : "s"} still running: ${names.join(", ")}. ${
+          reason === "reload"
+            ? "This session's next runtime re-adopts them and delivers their answers."
+            : `Their answers will not come back here; use mu agent wait <name> -w ${W} --json.`
+        }`,
       );
     if (procs.length > 0)
       parts.push(
