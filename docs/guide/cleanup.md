@@ -15,8 +15,11 @@ them, or pass `--discard` to lose them. Clean commits that are not merged
 are kept on a branch `mu/<workstream>/<agent>-<sha>`, named in the output.
 The row, its tasks and its worktree go only once the pane is proven gone:
 a pane that survives the kill, or one mu cannot ask (the probe fails),
-refuses with exit 4. If you know the pane is gone, preview
-with `--force`; it never overrides a pane that answers alive.
+refuses with exit 4. So does a worktree a process still uses (its cwd or
+an open file in it, a survivor of the pane kill): stop it and close again.
+If you know the pane is gone, or (with no /proc and no lsof) that nothing
+uses the tree, preview with `--force`; it never overrides a live pane or a
+process found in the tree.
 See [Stop a worker](stop-a-worker.md).
 
 ## Tear down a workstream

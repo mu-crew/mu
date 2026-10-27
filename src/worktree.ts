@@ -11,8 +11,10 @@
 // The reaper (reconcile) never touches a worktree or the registry; cleanup
 // is `agent close` / teardown, never a side effect of listing.
 
-import { existsSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { existsSync, readdirSync, readlinkSync, renameSync } from "node:fs";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import type { Db } from "./db.js";
 import { defaultStateDir } from "./db.js";
 import { say } from "./messages.js";
@@ -20,6 +22,7 @@ import {
   addWorktree,
   createBranch,
   dirtyFiles,
+  git,
   gitToplevel,
   headSha,
   ownCommits,
@@ -91,6 +94,24 @@ export class WorktreeBranchExistsError extends Error {
     public readonly branch: string,
   ) {
     super(say("worktree.branch_exists", agent, workstream, path, branch));
+  }
+}
+
+/**
+ * `agent close` refused to remove a worktree something may still use: a
+ * process has its cwd or an open file in it (`pid`), or no scan could prove
+ * there is none (`pid` undefined; `--force` overrides only that). The tree,
+ * its registry row and the agent row are kept. Exit 4.
+ */
+export class WorktreeHeldError extends Error {
+  override readonly name = "WorktreeHeldError";
+  constructor(
+    public readonly agent: string,
+    public readonly workstream: string,
+    public readonly path: string,
+    public readonly pid: number | undefined,
+  ) {
+    super(say("worktree.held", agent, workstream, path, pid));
   }
 }
 
@@ -258,6 +279,14 @@ export async function reclaimWorktreePath(
 ): Promise<void> {
   const { agent, workstream, path } = opts;
   const row = getWorktreeAt(db, path);
+  if (existsSync(asideOfLocal(path))) {
+    throw new WorktreePathNotEmptyError(
+      agent,
+      workstream,
+      path,
+      `an interrupted close parked it at ${asideOfLocal(path)}; finish it: mu agent close ${agent} -w ${workstream}`,
+    );
+  }
   if (!existsSync(path)) {
     if (row !== undefined) forgetWorktree(db, path);
     return;
@@ -311,6 +340,88 @@ export async function assertReleasable(
   return state;
 }
 
+/** Where `releaseWorktree` parks a tree while it proves nothing holds it. */
+export const asideOfLocal = (path: string): string => `${path}.mu-removing`;
+
+const exec = promisify(execFile);
+
+/** True when `target` is `dir` or under it. */
+const under = (target: string, dir: string): boolean =>
+  target === dir || target.startsWith(`${dir}/`);
+
+/**
+ * Processes of this user with their cwd or an open file at or under `dir`
+ * (this process excluded: a close run from inside the tree writes nothing
+ * there). Reads /proc, else `lsof`; undefined when neither demonstrably ran
+ * (the scan must see this very process). `probe` is a test seam.
+ */
+export async function worktreeHolders(
+  dir: string,
+  probe: { proc: string; lsof: string } = { proc: "/proc", lsof: "lsof" },
+): Promise<number[] | undefined> {
+  const held = new Set<number>();
+  let sawSelf = false;
+  if (existsSync(join(probe.proc, "self"))) {
+    for (const ent of readdirSync(probe.proc)) {
+      if (!/^\d+$/.test(ent)) continue;
+      const pid = Number(ent);
+      const link = (p: string): string | undefined => {
+        try {
+          return readlinkSync(p);
+        } catch {
+          return undefined; // gone, or another user's
+        }
+      };
+      const cwd = link(join(probe.proc, ent, "cwd"));
+      if (pid === process.pid) {
+        sawSelf = cwd !== undefined;
+        continue;
+      }
+      if (cwd !== undefined && under(cwd, dir)) held.add(pid);
+      let fds: string[] = [];
+      try {
+        fds = readdirSync(join(probe.proc, ent, "fd"));
+      } catch {
+        // gone, or another user's
+      }
+      for (const fd of fds) {
+        const t = link(join(probe.proc, ent, "fd", fd));
+        if (t !== undefined && under(t, dir)) held.add(pid);
+      }
+    }
+    return sawSelf ? [...held] : undefined;
+  }
+  let out: string;
+  try {
+    out = (await exec(probe.lsof, ["-w", "-Fpfn"], { maxBuffer: 256 * 1024 * 1024 })).stdout;
+  } catch (err) {
+    // lsof exits 1 when some files could not be read; its output still counts.
+    const o = (err as { stdout?: unknown }).stdout;
+    if (typeof o !== "string" || o === "") return undefined;
+    out = o;
+  }
+  let pid = 0;
+  let field = "";
+  for (const l of out.split("\n")) {
+    if (l.startsWith("p")) pid = Number(l.slice(1));
+    else if (l.startsWith("f")) field = l.slice(1);
+    else if (l.startsWith("n")) {
+      if (pid === process.pid) sawSelf ||= field === "cwd";
+      else if (under(l.slice(1), dir)) held.add(pid);
+    }
+  }
+  return sawSelf ? [...held] : undefined;
+}
+
+/**
+ * Move a worktree (`git worktree move` while its repo lives, so git keeps
+ * tracking it; a plain rename once the repo is gone).
+ */
+async function moveTree(owner: string | undefined, from: string, to: string): Promise<void> {
+  if (owner === undefined) renameSync(from, to);
+  else await git(["worktree", "move", from, to], owner);
+}
+
 /**
  * The one close rule (README § Worktrees):
  *   dirty            refuse (WorktreeDirtyError) unless `discard`, which removes it
@@ -319,54 +430,89 @@ export async function assertReleasable(
  *   missing          forget the row
  * The registry row is forgotten once the dir is handled. Re-checks the state
  * itself: a write between a caller's pre-check and this call still refuses.
+ *
+ * Quiescence before any branch or removal, the remote close rule's local
+ * twin: the tree is parked at `asideOfLocal(path)` (a writer addressing the
+ * old path now fails), `worktreeHolders` must prove no process has its cwd or
+ * an open file in it, and the state is judged again under the park. A holder
+ * refuses (`WorktreeHeldError`); so does a scan that cannot run, unless
+ * `force`. Any refusal moves the tree back. A park a crash left is moved
+ * back first, then the rule runs again.
  */
 export async function releaseWorktree(
   db: Db,
   row: WorktreeRow,
-  opts: { discard?: boolean } = {},
+  opts: { discard?: boolean; force?: boolean; probe?: { proc: string; lsof: string } } = {},
 ): Promise<ReleasedWorktree> {
-  const state = await assertReleasable(row, opts);
+  const aside = asideOfLocal(row.path);
+  if (existsSync(aside)) {
+    if (existsSync(row.path)) {
+      throw new WorktreePathNotEmptyError(
+        row.agent,
+        row.workstream,
+        row.path,
+        `a parked copy is beside it at ${aside}; move or remove one by hand`,
+      );
+    }
+    await moveTree(await liveRoot(row.root, aside), aside, row.path);
+  }
+  const before = await assertReleasable(row, opts);
   const owner = await liveRoot(row.root, row.path);
-  if (state === "missing") {
+  if (before === "missing") {
     if (owner !== undefined) await removeWorktreeDir(owner, row.path, false);
     forgetWorktree(db, row.path);
     return { path: row.path, action: "gone" };
   }
-  if (opts.discard === true) {
-    await removeWorktreeDir(owner, row.path, true);
-    forgetWorktree(db, row.path);
-    return { path: row.path, action: "discarded" };
-  }
-  if (state === "clean-unmerged") {
-    if (owner === undefined) {
-      throw new Error(say("worktree.unmerged_repo_gone", row.path));
-    }
-    const sha = await headSha(row.path);
-    const branch = `mu/${row.workstream}/${row.agent}-${sha.slice(0, 12)}`;
-    // Create-only: a retry finds its own branch at this HEAD and goes on.
-    if (!(await createBranch(owner, branch, sha))) {
-      throw new WorktreeBranchExistsError(row.agent, row.workstream, row.path, branch);
-    }
-    await removeWorktreeDir(owner, row.path, false);
-    forgetWorktree(db, row.path);
-    return { path: row.path, action: "kept-branch", branch };
-  }
-  // clean-merged. Without --force git itself refuses a write that raced the check.
+  await moveTree(owner, row.path, aside);
+  const parked: WorktreeRow = { ...row, path: aside };
   try {
-    await removeWorktreeDir(owner, row.path, false);
-  } catch (err) {
-    if (existsSync(row.path)) {
+    const holders = await worktreeHolders(aside, opts.probe);
+    if (holders === undefined ? opts.force !== true : holders.length > 0) {
+      throw new WorktreeHeldError(row.agent, row.workstream, row.path, holders?.[0]);
+    }
+    // Judged again under the park: a write that raced the first check counts.
+    const state = await assertReleasable(parked, opts);
+    if (state === "missing") throw new Error(`worktree ${aside} vanished while closing`);
+    if (opts.discard === true) {
+      await removeWorktreeDir(owner, aside, true);
+      forgetWorktree(db, row.path);
+      return { path: row.path, action: "discarded" };
+    }
+    if (state === "clean-unmerged") {
+      if (owner === undefined) throw new Error(say("worktree.unmerged_repo_gone", row.path));
+      const sha = await headSha(aside);
+      const branch = `mu/${row.workstream}/${row.agent}-${sha.slice(0, 12)}`;
+      // Create-only: a retry finds its own branch at this HEAD and goes on.
+      if (!(await createBranch(owner, branch, sha))) {
+        throw new WorktreeBranchExistsError(row.agent, row.workstream, row.path, branch);
+      }
+      await removeWorktreeDir(owner, aside, false);
+      forgetWorktree(db, row.path);
+      return { path: row.path, action: "kept-branch", branch };
+    }
+    // clean-merged. Without --force git itself refuses a write that raced the check.
+    try {
+      await removeWorktreeDir(owner, aside, false);
+    } catch (err) {
       let files: string[] = [];
       try {
-        files = await dirtyFiles(row.path);
+        files = existsSync(aside) ? await dirtyFiles(aside) : [];
       } catch {
         // fall through with an empty list
       }
       if (files.length > 0)
         throw new WorktreeDirtyError(row.agent, row.workstream, row.path, files);
+      throw err;
+    }
+    forgetWorktree(db, row.path);
+    return { path: row.path, action: "removed" };
+  } catch (err) {
+    // Nothing was removed: put the tree back where its agent and registry say it is.
+    if (existsSync(aside) && !existsSync(row.path)) await moveTree(owner, aside, row.path);
+    // A dirty refusal names the real path, not the park.
+    if (err instanceof WorktreeDirtyError && err.path === aside) {
+      throw new WorktreeDirtyError(row.agent, row.workstream, row.path, err.files);
     }
     throw err;
   }
-  forgetWorktree(db, row.path);
-  return { path: row.path, action: "removed" };
 }

@@ -714,6 +714,7 @@ export {
   upstreamRefs,
   WorktreeBranchExistsError,
   WorktreeDirtyError,
+  WorktreeHeldError,
   WorktreePathNotEmptyError,
   type WorktreeRow,
   type WorktreeState,

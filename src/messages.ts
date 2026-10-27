@@ -266,6 +266,10 @@ export const MESSAGES = {
     `worktree dir already on disk for agent ${agent} (${path}): ${why}; refusing to overwrite`,
   "worktree.branch_exists": (agent: string, ws: string, path: string, branch: string) =>
     `agent ${agent}: branch ${branch} already exists at another commit; ${path} was kept and nothing was moved. Rename that branch, then preview: mu agent close ${agent} -w ${ws}`,
+  "worktree.held": (agent: string, ws: string, path: string, pid: number | undefined) =>
+    pid === undefined
+      ? `agent ${agent}: nothing could prove that no process is using ${path} (no /proc, no lsof); it was kept. If you know none is, preview with --force: mu agent close ${agent} -w ${ws} --force`
+      : `agent ${agent}: process ${pid} is still using ${path} (its cwd or an open file); it was kept. Stop it, then preview: mu agent close ${agent} -w ${ws}`,
   "worktree.unmerged_repo_gone": (path: string) =>
     `worktree ${path} has unmerged commits and its repo is gone; nothing can keep them (use --discard to drop them)`,
   "revision.changed": (subject: string, expected: number, current: number, preview: string) =>

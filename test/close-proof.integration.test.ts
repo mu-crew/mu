@@ -3,13 +3,22 @@
 // (pane gone, no writer in the tree); a doubt refuses and keeps everything.
 // Real git; the multiplexer is the mock tmux, so no pane is real.
 
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { type ChildProcess, execFileSync, spawn as spawnChild } from "node:child_process";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   closeAgent,
+  deleteAgent,
   getAgent,
   resetCommandResolverForTests,
   setCommandResolverForTests,
@@ -18,7 +27,13 @@ import {
 import { type Db, openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
-import { getWorktreeAt, listWorktrees, releaseWorktree, worktreePath } from "../src/worktree.js";
+import {
+  getWorktreeAt,
+  listWorktrees,
+  releaseWorktree,
+  WorktreeHeldError,
+  worktreePath,
+} from "../src/worktree.js";
 import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -60,10 +75,7 @@ describe("rr_r3_branch_retry_collision: a retried unmerged close reuses its own 
     const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
     const head = commitFileIn(wt.path, "w.txt", "own work");
     const branch = `mu/auth/worker-1-${head.slice(0, 12)}`;
-    gitIn(root, "worktree", "lock", wt.path);
-    await expect(releaseWorktree(db, wt)).rejects.toThrow();
-    expect(gitIn(root, "rev-parse", branch)).toBe(head); // the first attempt made it
-    gitIn(root, "worktree", "unlock", wt.path);
+    gitIn(root, "branch", branch, head); // what the first attempt left before its removal failed
     const r = await closeAgent(db, "worker-1", { workstream: "auth" });
     expect(r.worktree).toMatchObject({ action: "kept-branch", branch });
     expect(existsSync(wt.path)).toBe(false);
@@ -121,5 +133,79 @@ describe("rr_r3_local_rollback_live_pane: rollback keeps a local worktree and ro
     expect(existsSync(worktreePath("auth", "worker-1"))).toBe(false);
     expect(listWorktrees(db)).toEqual([]);
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+});
+
+describe("rr_r3_local_close_no_quiescence: a local close removes no tree a process still uses", () => {
+  let holder: ChildProcess | undefined;
+  afterEach(() => {
+    holder?.kill("SIGKILL");
+    holder = undefined;
+  });
+  const hold = (cwd: string, file?: string): void => {
+    // Detached, as a survivor of the pane kill would be (setsid/nohup).
+    const fd = file === undefined ? "ignore" : openSync(file, "a");
+    holder = spawnChild("sleep", ["30"], { cwd, detached: true, stdio: ["ignore", fd, "ignore"] });
+    if (typeof fd === "number") closeSync(fd); // only the child holds it
+  };
+  const procOk = existsSync("/proc/self");
+
+  it.runIf(procOk)(
+    "a process with its cwd in the tree: refused, tree, registry and row kept",
+    async () => {
+      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      hold(wt.path);
+      const err = await closeAgent(db, "worker-1", { workstream: "auth" }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(WorktreeHeldError);
+      expect((err as Error).message).toContain(String(holder?.pid));
+      expect(existsSync(wt.path)).toBe(true);
+      expect(existsSync(`${wt.path}.mu-removing`)).toBe(false); // moved back
+      expect(gitIn(wt.path, "rev-parse", "--show-toplevel")).toBe(wt.path);
+      expect(getWorktreeAt(db, wt.path)).toBeDefined();
+      expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+      holder?.kill("SIGKILL");
+      await new Promise((r) => holder?.once("exit", r));
+      holder = undefined;
+      const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+      expect(r.worktree?.action).toBe("removed");
+    },
+  );
+
+  it.runIf(procOk)("an open file in the tree (cwd elsewhere), on the orphan path too", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const head = commitFileIn(wt.path, "w.txt", "own work");
+    writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
+    hold(tmp, join(wt.path, "log.txt"));
+    deleteAgent(db, "worker-1", "auth"); // the orphan: only the registry row is left
+    await expect(closeAgent(db, "worker-1", { workstream: "auth" })).rejects.toBeInstanceOf(
+      WorktreeHeldError,
+    );
+    expect(existsSync(wt.path)).toBe(true);
+    // No branch was pinned before the proof.
+    expect(() =>
+      gitIn(root, "rev-parse", "--verify", `mu/auth/worker-1-${head.slice(0, 12)}`),
+    ).toThrow();
+  });
+
+  it("no /proc and no lsof: unproven refuses and keeps the tree; force closes it", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const probe = { proc: join(tmp, "no-proc"), lsof: join(tmp, "no-lsof") };
+    const err = await releaseWorktree(db, wt, { probe }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(WorktreeHeldError);
+    expect((err as WorktreeHeldError).pid).toBeUndefined();
+    expect((err as Error).message).toContain("--force");
+    expect(existsSync(wt.path)).toBe(true);
+    expect(getWorktreeAt(db, wt.path)).toBeDefined();
+    const r = await releaseWorktree(db, wt, { probe, force: true });
+    expect(r.action).toBe("removed");
+  });
+
+  it("a crash after the park is resumed: the parked tree is moved back and closed", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    gitIn(root, "worktree", "move", wt.path, `${wt.path}.mu-removing`);
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.worktree?.action).toBe("removed");
+    expect(existsSync(`${wt.path}.mu-removing`)).toBe(false);
+    expect(gitIn(root, "worktree", "list")).not.toContain("mu-removing");
   });
 });
