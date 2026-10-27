@@ -536,7 +536,9 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   const resolved = resolveCliCommandWithSource(cli);
   // A remote command runs on the host: the local PATH and local
   // $MU_<CLI>_COMMAND knobs say nothing about it.
-  const profile = opts.host === undefined ? undefined : await requireHostSpawn(db, opts);
+  // Admission (below) re-reads it inside the transaction that counts the cap:
+  // from then on the ADMITTED snapshot is the one every template runs from.
+  let profile = opts.host === undefined ? undefined : await requireHostSpawn(db, opts);
   // A command gate: decided here, before any effect, and recorded on its row.
   const gateToken = isCommandGate(opts) ? newGateToken() : undefined;
   if (gateToken !== undefined && opts.worktree) {
@@ -590,11 +592,12 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   let site: RemoteSite | undefined;
   try {
     if (profile) {
-      lease = (
-        await admitHostChannel(db, profile.name, `spawn:${opts.workstream}/${opts.name}`, {
-          paneAlive: localPaneAlive,
-        })
-      ).lease;
+      ({ lease, profile } = await admitHostChannel(
+        db,
+        profile.name,
+        `spawn:${opts.workstream}/${opts.name}`,
+        { paneAlive: localPaneAlive },
+      ));
       if (opts.worktree) staged = await prestageRemote(db, opts, cli, spawner, lease, profile);
       else
         site = await prepareRemote(db, lease, profile, {

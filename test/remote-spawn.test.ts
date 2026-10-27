@@ -461,6 +461,31 @@ describe("the channel lease", () => {
   });
 });
 
+describe("rr_r3_spawn_stale_profile: spawn runs the profile admission counted", () => {
+  it("a profile edited during the attached-pane probe: prepare, shell and the row use the new one", async () => {
+    // An attached channel whose pane probe is the await in admission; the edit lands in it.
+    db.prepare(
+      "INSERT INTO host_channels (host, holder, kind, token, agent_id, pane_id, opened_at) VALUES ('free', 'other', 'attached', 't', 999, '%999', 'x')",
+    ).run();
+    mux.restore();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) => {
+      if (args[0] === "display-message" && args[2] === "%999") {
+        db.prepare(
+          "UPDATE host_profiles SET repo = '/srv/new', shell = 'echo NEW {env} -- {cmd} {local_sock} {remote_sock} {cwd}' WHERE name = 'free'",
+        ).run();
+      }
+      return fake(args);
+    });
+    extensionOn = false;
+    await spawn({ host: "free", ctl: false }).catch(() => undefined);
+    const [prep] = execCalls();
+    expect(prep).toContain("/srv/new");
+    expect(prep).not.toContain("/srv/repo");
+    expect(paneCommand()).toContain("echo NEW");
+  });
+});
+
 describe("failure rolls back only what this spawn made", () => {
   it("a failed exec: no row, no pane, the slot is free again", async () => {
     setMode("addfail");
