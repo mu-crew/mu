@@ -204,6 +204,21 @@ describe("apply", () => {
     expect(mux.calls.filter((c) => c[0] === "kill-pane")).toEqual([]);
   });
 
+  it("--force reaches the host's removal (an unprovable scan or a holder only warns)", async () => {
+    orphaned();
+    await close({ force: true });
+    expect(execCalls()[1]).toContain("MU_WARN held");
+  });
+
+  it("without --force a held tree refuses and the line names --recovery and --force", async () => {
+    const id = orphaned();
+    answer(`MU_STATE clean ${BASE}`, "MU_RM held 4242");
+    const err = await close().catch((e: unknown) => e);
+    expect((err as Error).message).toContain(`--recovery ${id} --force`);
+    expect(execCalls()[1]).not.toContain("MU_WARN");
+    expect(records().map((x) => x.agentId)).toEqual([id]);
+  });
+
   it("a worktree already gone deletes the record", async () => {
     orphaned();
     answer("MU_STATE gone");

@@ -245,21 +245,24 @@ export const asideOf = (path: string, incarnation: number): string =>
  * Remote shell lines proving nothing holds `$aside`: no process of this user
  * has its cwd or an open file at or under it (`fail held <pid>`), and the scan
  * demonstrably ran (it must see this very shell, else `fail unproven`). Reads
- * /proc, else `lsof`, else refuses. `proc` and `lsof` are test seams.
+ * /proc, else `lsof`, else refuses. With `force` (the caller asserts nothing
+ * uses the tree) neither refuses: each is printed as `MU_WARN unproven` /
+ * `MU_WARN held <pid>` and the removal goes on. `proc` and `lsof` are test seams.
  */
-function quiescenceLines(probe: { proc: string; lsof: string }): string[] {
+function quiescenceLines(probe: { proc: string; lsof: string }, force = false): string[] {
   const proc = shellQuote(probe.proc);
   const lsof = shellQuote(probe.lsof);
   // Prints "H<pid>" per holder and "S<pid>" per process whose cwd it could read.
   const procAwk = `A="$aside" awk 'BEGIN{a=ENVIRON["A"]} { i=index($0," -> "); if (i==0) next; t=substr($0,i+4); n=split(substr($0,1,i-1),f," "); n=split(f[n],q,"/"); if (q[n]=="cwd") print "S" q[n-1]; h=(t==a || index(t,a "/")==1); if (h && q[n]=="cwd") print "H" q[n-1]; else if (h && q[n-1]=="fd") print "H" q[n-2] }'`;
   const lsofAwk = `A="$aside" awk 'BEGIN{a=ENVIRON["A"]} /^p/{p=substr($0,2)} /^f/{f=substr($0,2)} /^n/{t=substr($0,2); if (f=="cwd") print "S" p; if (t==a || index(t,a "/")==1) print "H" p}'`;
   return [
+    `scan=`,
     `if [ -d ${proc}/self ]; then scan=$(find ${proc}/[0-9]*/cwd ${proc}/[0-9]*/fd -maxdepth 1 -type l -exec ls -ld {} + 2>/dev/null | ${procAwk})`,
-    `elif command -v ${lsof} >/dev/null 2>&1; then scan=$(${lsof} -w -Fpfn 2>/dev/null | ${lsofAwk})`,
-    `else fail unproven; fi`,
-    `printf '%s\\n' "$scan" | grep -qx "S$$" || fail unproven`,
-    `held=$(printf '%s\\n' "$scan" | sed -n 's/^H//p' | head -n 1)`,
-    `[ -z "$held" ] || fail held "$held"`,
+    `elif command -v ${lsof} >/dev/null 2>&1; then scan=$(${lsof} -w -Fpfn 2>/dev/null | ${lsofAwk}); fi`,
+    `printf '%s\\n' "$scan" | grep -qx "S$$" || ${force ? "echo 'MU_WARN unproven'" : "fail unproven"}`,
+    force
+      ? `printf '%s\\n' "$scan" | sed -n 's/^H//p' | sort -u | sed 's/^/MU_WARN held /'`
+      : `held=$(printf '%s\\n' "$scan" | sed -n 's/^H//p' | head -n 1); [ -z "$held" ] || fail held "$held"`,
   ];
 }
 
@@ -301,6 +304,8 @@ export async function closeRemoteWorktree(
     checkProfile?: (profile: HostProfile) => void;
     /** Test seam: where the quiescence scan looks (default /proc, then `lsof`). */
     probe?: { proc: string; lsof: string };
+    /** Remove past a holder or an unprovable scan (each becomes a warning). Never past dirt or a moved HEAD. */
+    force?: boolean;
   } = {},
 ): Promise<ReleasedWorktree> {
   const { name, workstreamName: ws, host, cwd: path, base, collectedHead } = agent;
@@ -386,7 +391,7 @@ export async function closeRemoteWorktree(
           `[ -d "$wt" ] || { if [ -e "$aside" ]; then echo "$aside is parked" >&2; echo 'MU_RM failed'; else echo 'MU_RM gone'; fi; exit 0; }`,
           `fail() { if [ -d "$aside" ] && [ ! -e "$wt" ]; then git -C "$root" worktree move "$aside" "$wt" >&2 || { echo 'MU_RM stuck'; exit 0; }; fi; echo "MU_RM $*"; exit 0; }`,
           `git -C "$root" worktree move "$wt" "$aside" >&2 || { echo 'MU_RM failed'; exit 0; }`,
-          ...quiescenceLines(probe),
+          ...quiescenceLines(probe, opts.force === true),
           `[ "$(git -C "$aside" rev-parse --verify HEAD)" = "$want" ] || fail moved`,
           `st=$(git -C "$aside" status --porcelain) || fail failed`,
           `[ -z "$st" ] || fail dirty`,
@@ -403,10 +408,21 @@ export async function closeRemoteWorktree(
         ].join("\n"),
       );
       const r = lastMatch(removed.out, REMOTE_RM_RE)?.[1];
+      const force = ` close again, or if you know nothing uses it preview with --force: mu agent close ${name} -w ${ws}${opts.recoveryId === undefined ? "" : ` --recovery ${opts.recoveryId}`} --force`;
       if (r === "removed") {
+        const warnings = removed.out
+          .split("\n")
+          .map((l) => /^MU_WARN (unproven|held (\d+))$/.exec(l.trim()))
+          .filter((m) => m !== null)
+          .map((m) =>
+            m[2] === undefined
+              ? `host ${host} has neither /proc nor lsof to prove nothing is using ${path}; removed under --force`
+              : `process ${m[2]} on ${host} was still inside ${path}; removed under --force`,
+          );
+        const said = warnings.length > 0 ? { warnings } : {};
         return branch === undefined
-          ? { path, action: "removed" }
-          : { path, action: "kept-branch", branch };
+          ? { path, action: "removed", ...said }
+          : { path, action: "kept-branch", branch, ...said };
       }
       if (r === "gone") return { path, action: "gone" };
       if (r === "moved")
@@ -417,13 +433,13 @@ export async function closeRemoteWorktree(
         const pid = lastMatch(removed.out, REMOTE_RM_RE)?.[2];
         return refuse(
           "held",
-          `${pid === undefined ? "a process" : `process ${pid}`} on ${host} is still inside ${path}; stop it and close again; nothing was removed`,
+          `${pid === undefined ? "a process" : `process ${pid}`} on ${host} is still inside ${path}; nothing was removed. Stop it and${force}`,
         );
       }
       if (r === "unproven") {
         return refuse(
           "unreadable",
-          `host ${host} has neither /proc nor lsof to prove nothing is using ${path}; nothing was removed`,
+          `host ${host} has neither /proc nor lsof to prove nothing is using ${path}; nothing was removed. Fix that and${force}`,
         );
       }
       if (r === "stuck") {

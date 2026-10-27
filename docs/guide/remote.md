@@ -95,7 +95,10 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   cap to collect while the worker runs.
 - `close` kills the pane first (that frees the channel), then removes the
   remote worktree **only if** it is clean and its HEAD is the base or the
-  collected HEAD. It never uses `--force`. A newer HEAD refuses with one line:
+  collected HEAD, and no process on the host is inside it. Its `git worktree
+  remove` never uses git's `--force`. A process inside it, or a host with
+  neither /proc nor lsof to check, refuses naming `close --force`, which
+  removes past either with a warning. A newer HEAD refuses with one line:
   `collect` again, or `close --keep-branch` to keep the commits on the remote
   branch `mu/<ws>/<agent>-<sha12>` and remove the worktree. Uncommitted files
   always refuse (`--discard` and `--keep-branch` do not override that).

@@ -642,8 +642,29 @@ describe.each([
     }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RemoteCloseRefusedError);
     expect((err as Error).message).toMatch(/neither \/proc nor lsof/);
+    expect((err as Error).message).toContain("--force");
     expect(existsSync(wt())).toBe(true);
     expect(existsSync(aside(row.incarnation))).toBe(false);
+    // --force reaches the host: the caller asserts nothing uses the tree.
+    const r = await closeRemoteWorktree(db, agent, {
+      probe: { proc: "/nonexistent-proc", lsof: "/nonexistent-lsof" },
+      force: true,
+    });
+    expect(r.action).toBe("removed");
+    expect(r.warnings?.join("\n")).toMatch(/neither \/proc nor lsof/);
+    expect(existsSync(wt())).toBe(false);
+  });
+
+  it_("a held tree names --force, and agent close --force removes it with a warning", async () => {
+    await remoteAgent("worker-1");
+    const pid = await holder("cwd");
+    const err = await close("worker-1").catch((e: unknown) => e);
+    expect((err as RemoteCloseRefusedError).reason).toBe("held");
+    expect((err as Error).message).toContain("--force");
+    const r = await closeAgent(db, "worker-1", { workstream: "auth", force: true });
+    expect(r.worktree?.action).toBe("removed");
+    expect(r.worktree?.warnings?.join("\n")).toContain(`process ${pid}`);
+    expect(existsSync(wt())).toBe(false);
   });
 
   const lsofHere = spawnLsof();

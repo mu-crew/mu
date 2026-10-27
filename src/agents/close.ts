@@ -306,7 +306,10 @@ async function closeLocked(
     const rec = selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId);
     if (rec === undefined) return { killedPane: false, deletedRow: false, worktree: null };
     fence();
-    return closeRecovery(db, rec, { keepBranch: opts.keepBranch === true });
+    return closeRecovery(db, rec, {
+      keepBranch: opts.keepBranch === true,
+      force: opts.force === true,
+    });
   }
   if (!agent) {
     if (orphan === undefined) return { killedPane: false, deletedRow: false, worktree: null };
@@ -381,6 +384,7 @@ async function closeLocked(
     releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
     worktree = await closeRemoteWorktree(db, agent, {
       keepBranch: opts.keepBranch === true,
+      force: opts.force === true,
       paneAlive: localPaneAlive,
       beforeRemove: () => {
         if (replaced()) throw new AgentReplacedError(name, opts.workstream);

@@ -206,7 +206,7 @@ export function wireCloseCommand(agent: Command): void {
     )
     .option(
       "--force",
-      "close although the pane's liveness, or that no process uses its worktree, could not be checked and you know (never overrides a live pane or a process found in the tree)",
+      "close past what you vouch for: a pane mu cannot ask, or a worktree a process writes in or no scan can check (a cwd or reader there only warns); never overrides a live pane or uncommitted work",
     )
     .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)
     .option(...WORKSTREAM_OPT)

@@ -59,7 +59,7 @@ export function recoveryPreview(
 export async function closeRecovery(
   db: Db,
   rec: RemoteRecovery,
-  opts: { keepBranch: boolean },
+  opts: { keepBranch: boolean; force?: boolean },
 ): Promise<CloseAgentResult> {
   if (rec.aside !== asideOf(rec.cwd, rec.agentId)) {
     throw new RemoteRecoveryRefusedError(
@@ -85,6 +85,7 @@ export async function closeRecovery(
     },
     {
       keepBranch: opts.keepBranch,
+      force: opts.force === true,
       paneAlive: localPaneAlive,
       recoveryId: rec.agentId,
       checkProfile: (profile) => assertRecoveryProfile(rec, profile),
