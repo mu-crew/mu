@@ -8,6 +8,7 @@
 
 import type {
   DashboardAgent,
+  DashboardAttention,
   DashboardEdge,
   DashboardLogItem,
   DashboardSnapshot,
@@ -23,8 +24,9 @@ import {
 import { type ColumnSpec, columnWidths, GUTTER, renderCells } from "./columns.js";
 import { clean } from "./text.js";
 
-export type TabId = "tasks" | "dag" | "agents" | "log";
+export type TabId = "overview" | "tasks" | "dag" | "agents" | "log";
 export const TABS: readonly { id: TabId; label: string }[] = [
+  { id: "overview", label: "Overview" },
   { id: "tasks", label: "Tasks" },
   { id: "dag", label: "DAG" },
   { id: "agents", label: "Agents" },
@@ -343,6 +345,32 @@ function logRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
     }));
 }
 
+/** One attention item as a line: another workstream's is qualified, bare names otherwise. */
+export function attentionLabel(a: DashboardAttention, ws: string | null): string {
+  const where = a.workstream !== null && a.workstream !== ws ? `${a.workstream}/` : "";
+  return `${where}${a.kind === "human" ? `human: ${a.text}` : a.text}`;
+}
+
+/** The Overview's cursor stops: every attention item (all workstreams), Enter opens its agent or task. */
+function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
+  return snap.attention.map((a) => {
+    const agent = snap.agents.find((x) => x.key === a.target);
+    const task = snap.tasks.find((x) => x.key === a.target);
+    const drill: DrillTarget | undefined = agent
+      ? {
+          kind: "scrollback",
+          workstream: agent.workstream,
+          name: agent.name,
+          paneId: agent.pane_id,
+          tab: agent.tab,
+        }
+      : task
+        ? { kind: "notes", workstream: task.workstream, id: task.id, title: task.title }
+        : undefined;
+    return { key: a.key, text: attentionLabel(a, ws), ...(drill ? { drill } : {}) };
+  });
+}
+
 /** Every tab shows the selected workstream only (scratch included, like any other). */
 export function tabRows(
   tab: TabId,
@@ -352,6 +380,8 @@ export function tabRows(
   now: number,
 ): Row[] {
   switch (tab) {
+    case "overview":
+      return attentionRows(snap, ws);
     case "tasks":
       return taskRows(snap, ws, f);
     case "dag":

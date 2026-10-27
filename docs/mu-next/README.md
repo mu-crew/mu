@@ -455,12 +455,15 @@ Recipe target: ≤ 200 words, from 2,275.
 
 ## Dashboard
 
-The only human surface. All workstreams, a workstream row above four
-tabs; `scratch` marked. Starting tab from the tmux session, else latest
+The only human surface. All workstreams, a workstream row above five
+tabs; `scratch` marked. Every tab gets the attention strip (trouble in any
+workstream, else `✓ all quiet`); lists are framed and fill the screen, with
+Next and the key hint pinned to the bottom rows. Starting tab from the tmux session, else latest
 activity. Bare `mu` on a TTY opens it. Read-only; keys yank commands.
 
 | Tab | Content |
 |---|---|
+| Overview | the default: framed cards (Attention, Agents, In progress, Open by ROI, Log) in 1/2/3 columns at <120/120/180 cols; `+N more` in a card's bottom border; Enter on an attention item opens its agent's scrollback or the task's notes |
 | Tasks | sorted by latest op per task (`db_activity_sort_bypass`), `s` cycles activity / roi / age / id; CLOSED hidden by default, `o` cycles the status filter; status + sort + text filter persist; owner (before the title) shown on IN_PROGRESS only; Enter drills to the notes view |
 | DAG | open tasks + their frontier by default (`db_dag_unusable_default`: 1,781 roots, 57 open) |
 | Agents | every workstream incl. scratch; ctl state, owned task, running tool + elapsed; Enter = scrollback, `a` = attach (user decision) |

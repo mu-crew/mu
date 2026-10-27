@@ -1,6 +1,7 @@
-// The dashboard: a workstream row, four tabs (Tasks, DAG, Agents, Log), one
-// filter line, a viewport of rows, and Next plus a hint/error line.
-// Read-only. Drill (Enter, a) is the next unit. Plain text only: every line is
+// The dashboard: a workstream row, five tabs (Overview, Tasks, DAG, Agents, Log), an
+// attention strip, a framed list that fills the screen, and Next plus a hint/error
+// line pinned to the last row. Overview (the first screen) is a grid of framed cards
+// (overview.tsx). Read-only. Drill (Enter, a) is the next unit. Plain text only: every line is
 // cleaned and cut/padded by visual width (text.ts), never ANSI inside <Text>.
 
 import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize } from "ink";
@@ -15,7 +16,10 @@ import {
   spawnStep,
 } from "./commands.js";
 import { Drill, useYank } from "./drill.js";
+import { FRAME_CHROME, FRAME_SIDES, Frame } from "./frame.js";
+import { Overview, overviewCards } from "./overview.js";
 import {
+  attentionLabel,
   cursorIndex,
   type DrillTarget,
   type Filter,
@@ -44,6 +48,8 @@ export interface AppProps {
   initialWorkstream?: string;
   /** Poll gap in ms; null loads once. */
   pollMs: number | null;
+  /** The tab to open on (default: Overview). */
+  initialTab?: TabId;
   /** Clock seam for elapsed times. */
   now?: () => number;
   /** Runs one attach step with the terminal handed over (a test seam; default spawns). */
@@ -52,19 +58,26 @@ export interface AppProps {
 
 // Every screen line is one row tall (cut by width), so the layout is exactly `rows`
 // lines at any size. A short terminal drops lines in this order of importance: the
-// workstream row and tab row always stay, then ONE data row, then the filter line,
-// the hint/error line and Next last.
-const FIXED_BY_PRIORITY = ["filter", "footer", "next"] as const;
+// workstream row and tab row always stay, then ONE data line, then the pinned
+// footer, the attention strip, the filter line and Next last.
+const FIXED_BY_PRIORITY = ["footer", "strip", "filter", "next"] as const;
 type FixedLine = (typeof FIXED_BY_PRIORITY)[number];
 const TOP_LINES = 2;
 
-/** Which optional fixed lines fit in `rows` screen lines, and how many data rows remain. */
-export function layout(rows: number): { shown: ReadonlySet<FixedLine>; height: number } {
+/**
+ * Which of `lines` fit in `rows` screen lines, and how many lines remain for the
+ * data area (a frame, or bare rows when too short to frame).
+ */
+export function layout(
+  rows: number,
+  lines: readonly FixedLine[] = FIXED_BY_PRIORITY,
+): { shown: ReadonlySet<FixedLine>; height: number } {
   const spare = Math.max(0, rows - TOP_LINES - 1); // one line kept for data
-  const shown = new Set(FIXED_BY_PRIORITY.slice(0, spare));
+  const shown = new Set(lines.slice(0, spare));
   return { shown, height: Math.max(0, rows - TOP_LINES - shown.size) };
 }
 
+const HINT_OVERVIEW = "←/→ tab  [/] workstream  j/k move  Enter open  y copy  q quit";
 const HINT = "←/→ tab  [/] workstream  j/k move  Enter open  / filter  c clear  y copy  q quit";
 const HINT_TASKS =
   "←/→ tab  [/] workstream  j/k move  Enter open  s sort  o status  / filter  c clear  y copy  q quit";
@@ -98,6 +111,7 @@ type ScrollTarget = Extract<DrillTarget, { kind: "scrollback" }>;
 export function App({
   runtime,
   initialWorkstream,
+  initialTab = "overview",
   pollMs,
   now = Date.now,
   runStep = spawnStep,
@@ -117,7 +131,7 @@ export function App({
     void attachKeyHint().then(setAttachKey);
   }, []);
   const { columns, rows: screenRows } = useWindowSize();
-  const [tab, setTab] = useState<TabId>("tasks");
+  const [tab, setTab] = useState<TabId>(initialTab);
   const [chosen, setChosen] = useState<string | null>(null);
   const [views, setViews] = useState<Record<string, View>>({});
   const [editing, setEditing] = useState<{ before: string } | null>(null);
@@ -145,7 +159,14 @@ export function App({
 
   const view = viewOf(tab, ws);
   const all: Row[] = snap ? tabRows(tab, snap, ws, view.filter, now()) : [];
-  const { shown, height } = layout(screenRows);
+  const overview = tab === "overview";
+  const { shown, height: area } = layout(
+    screenRows,
+    FIXED_BY_PRIORITY.filter((l) => !(overview && (l === "filter" || l === "strip"))),
+  );
+  // The data area is framed when it has room for a border and a row; else bare rows.
+  const framed = !overview && area > FRAME_CHROME && columns > FRAME_SIDES + 2;
+  const height = framed ? area - FRAME_CHROME : area;
   const sel = cursorIndex(all, view.cursor, tab);
   const scope = scopeKey(tab, ws);
   const top = scrollTop(tops.current[scope] ?? 0, sel, all.length, height);
@@ -256,8 +277,8 @@ export function App({
         setFilter({ sort: nextSortLabel(view.filter.sort) });
       else if (input === "o" && tab === "tasks")
         setFilter({ status: nextStatusLabel(view.filter.status) });
-      else if (input === "/") setEditing({ before: view.filter.text });
-      else if (input === "c")
+      else if (input === "/" && !overview) setEditing({ before: view.filter.text });
+      else if (input === "c" && !overview)
         setFilter({
           text: "",
           ...(tab === "tasks" ? { status: "active" as const, sort: "activity" as const } : {}),
@@ -279,6 +300,7 @@ export function App({
   );
 
   const text = (s: string) => cell(s, columns);
+  const attention = snap?.attention ?? [];
   const lineOf = (r: Row, i: number): string => `${i === sel ? "> " : "  "}${r.text}`;
   const visible = all.slice(top, top + height);
   const f = view.filter;
@@ -298,6 +320,10 @@ export function App({
     0,
     names.findIndex((w) => w.name === ws),
   );
+  const strip =
+    attention.length === 0
+      ? "✓ all quiet"
+      : `⚠ ${attention.length} need you: ${attention.map((a) => attentionLabel(a, ws)).join(" · ")}`;
   const empty =
     snap === null
       ? state.error
@@ -318,11 +344,13 @@ export function App({
         : {
             text: editing
               ? "type to filter  Enter keep  Esc cancel"
-              : tab === "agents"
-                ? hintAgents(attachKey)
-                : tab === "tasks"
-                  ? HINT_TASKS
-                  : HINT,
+              : overview
+                ? HINT_OVERVIEW
+                : tab === "agents"
+                  ? hintAgents(attachKey)
+                  : tab === "tasks"
+                    ? HINT_TASKS
+                    : HINT,
             color: undefined,
           };
 
@@ -338,8 +366,14 @@ export function App({
       />
     );
 
+  const bodyLines = [
+    ...visible.map((r, i) => lineOf(r, top + i)),
+    ...(empty ? [`  ${empty}`] : []),
+  ];
+  const tabLabel = TABS[tabIndex]?.label ?? "";
+
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" height={screenRows}>
       <Text wrap="truncate">
         {text(wsLabels.length > 0 ? workstreamLine(wsLabels, wsIndex, columns) : "no workstreams")}
       </Text>
@@ -352,27 +386,52 @@ export function App({
           ))}
         </Box>
       ) : (
-        // Too narrow for four labels (they would wrap onto a second row): show the
+        // Too narrow for the labels (they would wrap onto a second row): show the
         // active one and its place.
         <Text wrap="truncate" inverse bold>
-          {cell(` ${TABS[tabIndex]?.label ?? ""} ${tabIndex + 1}/${TABS.length}`, columns)}
+          {cell(` ${tabLabel} ${tabIndex + 1}/${TABS.length}`, columns)}
         </Text>
       )}
+      {shown.has("strip") ? (
+        <Text
+          wrap="truncate"
+          color={attention.length > 0 ? "yellow" : undefined}
+          dimColor={attention.length === 0}
+        >
+          {text(strip)}
+        </Text>
+      ) : null}
       {shown.has("filter") ? (
         <Text wrap="truncate" dimColor>
           {text(filterLine)}
         </Text>
       ) : null}
-      {visible.map((r, i) => (
-        <Text key={r.key} wrap="truncate" inverse={top + i === sel} dimColor={r.notice === true}>
-          {text(lineOf(r, top + i))}
-        </Text>
-      ))}
-      {empty !== "" && height > 0 ? (
-        <Text wrap="truncate" dimColor>
-          {text(`  ${empty}`)}
-        </Text>
-      ) : null}
+      {overview ? (
+        <Overview
+          cards={snap ? overviewCards(snap, ws, now()) : []}
+          sel={sel}
+          width={columns}
+          height={area}
+        />
+      ) : framed ? (
+        <Frame
+          width={columns}
+          height={area}
+          title={tabLabel}
+          subtitle={snap ? String(all.length) : ""}
+          bottom={all.length > height ? `${sel + 1}/${all.length}` : ""}
+          body={bodyLines}
+          selected={sel - top}
+        />
+      ) : (
+        bodyLines.map((l, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: positional rows of a fixed-height viewport
+          <Text key={i} wrap="truncate" inverse={i === sel - top}>
+            {text(l)}
+          </Text>
+        ))
+      )}
+      <Box flexGrow={1} />
       {shown.has("next") ? (
         <Text wrap="truncate" dimColor>
           {text(snap ? nextLine(snap) : "next: unavailable")}

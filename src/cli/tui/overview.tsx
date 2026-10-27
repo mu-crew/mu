@@ -1,0 +1,109 @@
+// The Overview tab: framed cards over the selected workstream (Attention, Agents,
+// In progress, Open by ROI, Log) in 1/2/3 columns by width (grid.ts). The card
+// contents are the other tabs' own rows, so a line reads the same everywhere.
+// Attention is the cursor's list; the rest are read-only glances.
+
+import { Box } from "ink";
+import type { ReactElement } from "react";
+import type { DashboardSnapshot } from "../../dashboard-data.js";
+import { Frame } from "./frame.js";
+import { COLUMN_GAP, columnCount, fitColumn, gridWidths, placeCards } from "./grid.js";
+import { NO_FILTER, tabRows } from "./rows.js";
+import { scrollTop } from "./text.js";
+
+export interface Card {
+  id: string;
+  title: string;
+  lines: string[];
+  /** Shown when there are no lines. */
+  empty: string;
+  /** Body rows it takes before spare rows are shared out. */
+  max: number;
+  /** Show the newest lines (the log), not the first. */
+  tail?: boolean;
+}
+
+/** The five cards of workstream `ws`, in order. */
+export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: number): Card[] {
+  const lines = (tab: "overview" | "tasks" | "agents" | "log", f = NO_FILTER): string[] =>
+    tabRows(tab, snap, ws, f, now).map((r) => r.text);
+  return [
+    { id: "attention", title: "Attention", lines: lines("overview"), empty: "✓ all quiet", max: 6 },
+    { id: "agents", title: "Agents", lines: lines("agents"), empty: "no agents", max: 6 },
+    {
+      id: "progress",
+      title: "In progress",
+      lines: lines("tasks", { ...NO_FILTER, status: "in_progress" }),
+      empty: "nothing in progress",
+      max: 8,
+    },
+    {
+      id: "open",
+      title: "Open · by ROI",
+      lines: lines("tasks", { ...NO_FILTER, status: "open", sort: "roi" }),
+      empty: "nothing open",
+      max: 12,
+    },
+    { id: "log", title: "Log", lines: lines("log"), empty: "no activity", max: 10, tail: true },
+  ];
+}
+
+/** The cards laid out in `width` x `height`; `sel` is the Attention cursor. */
+export function Overview(p: {
+  cards: readonly Card[];
+  sel: number;
+  width: number;
+  height: number;
+}): ReactElement {
+  const columns = placeCards(
+    p.cards.map((c) => c.id),
+    columnCount(p.width),
+  );
+  const widths = gridWidths(p.width, columns.length);
+  return (
+    <Box height={p.height} width={p.width} columnGap={COLUMN_GAP}>
+      {columns.map((ids, ci) => {
+        const cards = ids.flatMap((id) => p.cards.find((c) => c.id === id) ?? []);
+        const placed = fitColumn(
+          p.height,
+          cards.map((c) => ({
+            id: c.id,
+            // Attention keeps up to 3 rows even on a short screen: it is why you look.
+            min: c.id === "attention" ? Math.max(1, Math.min(3, c.lines.length)) : 1,
+            max: c.max,
+            count: c.lines.length,
+          })),
+        );
+        return (
+          <Box key={ids.join()} flexDirection="column" width={widths[ci]} flexShrink={0}>
+            {placed.map((pl) => {
+              const card = cards.find((c) => c.id === pl.id);
+              if (card === undefined) return null;
+              const attention = card.id === "attention";
+              const from = card.tail
+                ? Math.max(0, card.lines.length - pl.rows)
+                : attention
+                  ? scrollTop(0, p.sel, card.lines.length, pl.rows)
+                  : 0;
+              const body = card.lines
+                .slice(from, from + pl.rows)
+                .map((l, i) => (attention ? `${from + i === p.sel ? "> " : "  "}${l}` : l));
+              return (
+                <Frame
+                  key={card.id}
+                  width={widths[ci] ?? 0}
+                  height={pl.height}
+                  title={card.title}
+                  subtitle={card.lines.length > 0 ? String(card.lines.length) : ""}
+                  bottom={pl.hidden > 0 ? `+${pl.hidden} ${card.tail ? "older" : "more"}` : ""}
+                  body={card.lines.length === 0 ? [card.empty] : body}
+                  {...(attention && card.lines.length > 0 ? { selected: p.sel - from } : {})}
+                />
+              );
+            })}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}

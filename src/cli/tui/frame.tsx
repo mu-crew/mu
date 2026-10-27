@@ -67,9 +67,16 @@ export interface FrameProps extends FrameSpec {
   /** One entry per body row; plain text. */
   body: ReadonlyArray<string>;
   borderColor?: string;
+  /** Body row drawn inverse (the cursor). */
+  selected?: number;
 }
 
-export function Frame({ body, borderColor = "gray", ...spec }: FrameProps): ReactElement | null {
+export function Frame({
+  body,
+  borderColor = "gray",
+  selected,
+  ...spec
+}: FrameProps): ReactElement | null {
   if (spec.height < FRAME_CHROME || spec.width < FRAME_SIDES) return null;
   const { top, rows, bottom } = frameParts(spec, body);
   return (
@@ -81,7 +88,7 @@ export function Frame({ body, borderColor = "gray", ...spec }: FrameProps): Reac
         // biome-ignore lint/suspicious/noArrayIndexKey: fixed-height frame, rows are positional
         <Text key={i} wrap="truncate">
           <Text color={borderColor}>│ </Text>
-          {row}
+          <Text inverse={i === selected}>{row}</Text>
           <Text color={borderColor}> │</Text>
         </Text>
       ))}

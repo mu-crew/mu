@@ -197,6 +197,7 @@ describe("drills in the dashboard", () => {
     return renderApp(
       createElement(App, {
         runtime: rt,
+        initialTab: "tasks",
         pollMs: null,
         initialWorkstream: "ws",
         now: () => 0,
@@ -399,6 +400,7 @@ describe("attach", () => {
     return renderApp(
       createElement(App, {
         runtime: rt,
+        initialTab: "tasks",
         pollMs: null,
         initialWorkstream: "ws",
         now: () => 0,
