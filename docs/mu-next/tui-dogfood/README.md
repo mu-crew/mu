@@ -64,7 +64,7 @@ runs inside your own tmux (a nested client).
 ## Keys to try (the dashboard's own hint line lists them too)
 
 `←/→` or Tab: tabs (Overview first: Attention, Agents, In progress, Open, Log cards; then Tasks, DAG, Agents, Log) · `[` `]`: workstream · `j/k`,
-PgUp/PgDn, `g/G`: move · `Enter`: notes / scrollback / log entry · `a`
+Ctrl-d/Ctrl-u (half page), PgUp/PgDn, `g`/`gg` top, `G` bottom: move, in every list and drill · `Enter`: notes / scrollback / log entry · `a`
 (Agents tab): attach, the hint says how to get back (`detach: C-b C-b d` nested, `back: C-b L` on mu's own server) · `s` (Tasks): cycle the sort (activity, roi, age, id) · `o` (Tasks): cycle the status filter · `/`: text filter
 (Enter keeps, Esc cancels) · `c`: clear · `y`: copy the equivalent command ·
 `r`: refresh · `q` or Esc: back out / quit.
@@ -74,7 +74,7 @@ PgUp/PgDn, `g/G`: move · `Enter`: notes / scrollback / log entry · `a`
 ```bash
 python3 docs/mu-next/tui-dogfood/smoke.py              # everything, about 4 min
 python3 docs/mu-next/tui-dogfood/smoke.py 4 6          # some scenarios only
-python3 docs/mu-next/tui-dogfood/smoke.py fill stable  # the screen checks only
+python3 docs/mu-next/tui-dogfood/smoke.py fill stable drill  # the screen checks only
 ```
 
 - **Scenarios** (through a PTY): each one must seed, render its workstream,
@@ -86,6 +86,8 @@ python3 docs/mu-next/tui-dogfood/smoke.py fill stable  # the screen checks only
   A column of short cards may leave blank rows.
 - **stable** (s6): on Tasks and Log, two screens 5 s apart; the second column
   starts at the same x on every row of both.
+- **drill** (s2 at 120x40 and 80x24): Enter on a Tasks row and on a DAG row
+  opens the task's notes, and the drill keeps the hint on the last row.
 
 It does not judge whether the screens look good: that is what [FORM.md](FORM.md) is for.
 

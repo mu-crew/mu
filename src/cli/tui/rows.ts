@@ -33,7 +33,7 @@ export const TABS: readonly { id: TabId; label: string }[] = [
   { id: "log", label: "Log" },
 ];
 
-/** What Enter opens on a row (a tagged union; the DAG tab has no drill). */
+/** What Enter opens on a row (a tagged union). */
 export type DrillTarget =
   | { kind: "notes"; workstream: string; id: string; title: string }
   | { kind: "scrollback"; workstream: string; name: string; paneId: string; tab: string | null }
@@ -247,6 +247,7 @@ function dagRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
       rows.push({
         key: `${e.parent ?? ""}>${e.key}`,
         text: line([edgeId(e), statusText(e.status, e.substate), `${e.title}${edgeNotes(e)}`]),
+        drill: { kind: "notes", workstream: e.workstream, id: e.id, title: e.title },
       });
     } else if (e.cap_cut > 0) {
       // Its line is filtered out, and the line is the only place its cap cut was

@@ -21,6 +21,7 @@ import { clampTop, notesText, wrap } from "../src/cli/tui/drill.js";
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
 import { type Db, openDb } from "../src/db.js";
 import type { MuxCommand } from "../src/mux.js";
+import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
@@ -267,6 +268,112 @@ describe("drills in the dashboard", () => {
     await ui.until((s) => s.includes("row-39") && s.split("\n").length >= 20);
     ui.resize(30, 4);
     await ui.until((s) => s.includes("row-39"));
+    ui.unmount();
+  });
+
+  it("every drill is exactly `rows` lines with the hint on the last row (a short body does not pull it up)", async () => {
+    seed();
+    note("t1", "short");
+    agent();
+    mux = tmuxMux();
+    for (const size of [
+      { columns: 120, rows: 40 },
+      { columns: 80, rows: 24 },
+    ]) {
+      const at = `${size.columns}x${size.rows}`;
+      const ui = await open(size);
+      await ui.until((s) => s.includes("first task"));
+      const pinned = (): void => {
+        const lines = ui.screen().split("\n");
+        expect(lines.length, at).toBe(size.rows);
+        expect(lines.at(-1), at).toContain("Esc back");
+      };
+      await ui.press(ENTER);
+      await ui.until((s) => s.includes("Notes  ws/"));
+      pinned();
+      await ui.press(ESC);
+      await ui.until((s) => !s.includes("Notes  ws/"));
+      await tab(ui, 2); // Agents
+      await ui.until((s) => s.includes("w1"));
+      await ui.press(ENTER);
+      await ui.until((s) => s.includes("line two"));
+      pinned();
+      await ui.press(ESC);
+      await ui.until((s) => !s.includes("Scrollback  ws/"));
+      await tab(ui, 1); // Log
+      await ui.press(ENTER);
+      await ui.until((s) => s.includes("Log  #"));
+      pinned();
+      ui.unmount();
+      await rt?.close();
+    }
+  });
+
+  it("DAG Enter opens that task's notes, the same drill as Tasks", async () => {
+    seed();
+    addBlockEdge(db, "ws", "t2", "t1");
+    note("t1", "DAG NOTE BODY");
+    const ui = await open();
+    await tab(ui, 1); // DAG
+    await ui.until((s) => s.includes("DAG") && s.includes("first task"));
+    await ui.press(ENTER);
+    await ui.until((s) => s.includes("Notes  ws/"));
+    expect(ui.screen()).toMatch(/Notes {2}ws\/t[12]/);
+    ui.unmount();
+  });
+
+  it("drill keys: Ctrl-d/Ctrl-u half a page, gg and g top, G bottom", async () => {
+    seed();
+    note("t1", Array.from({ length: 60 }, (_, i) => `row-${i}`).join("\n"));
+    const ui = await open({ columns: 60, rows: 12 }); // body: 10 rows
+    await ui.until((s) => s.includes("first task"));
+    await ui.press(ENTER); // t1: its note made it the newest activity
+    await ui.until((s) => s.includes("row-0"));
+    const firstRow = (): number => Number(/row-(\d+)/.exec(ui.screen())?.[1] ?? -1);
+    const start = firstRow();
+    await ui.press("\u0004"); // Ctrl-d (the note's header line sits above row-0)
+    const a = firstRow();
+    expect(a).toBeGreaterThan(start);
+    await ui.press("\u0004");
+    expect(firstRow()).toBe(a + 5);
+    await ui.press("\u0015"); // Ctrl-u
+    expect(firstRow()).toBe(a);
+    await ui.press("G");
+    await ui.until((s) => s.includes("row-59"));
+    await ui.press("g");
+    await ui.press("g");
+    expect(firstRow()).toBe(start);
+    await ui.press("G");
+    await ui.press("g"); // a single g goes to the top too
+    expect(firstRow()).toBe(start);
+    ui.unmount();
+  });
+
+  it("list keys: Ctrl-d/Ctrl-u move the cursor half a page, g top, G bottom", async () => {
+    ensureWorkstream(db, "ws");
+    for (let i = 0; i < 30; i++)
+      addTask(db, {
+        workstream: "ws",
+        localId: `k${String(i).padStart(2, "0")}`,
+        title: `task ${i}`,
+        impact: 50,
+        effortDays: 1,
+      });
+    const ui = await open({ columns: 80, rows: 20 });
+    await ui.until((s) => s.includes("task "));
+    const pos = (): string => /(\d+)\/30/.exec(ui.screen())?.[1] ?? "?";
+    expect(pos()).toBe("1");
+    await ui.press("\u0004");
+    const half = Number(pos()) - 1;
+    expect(half).toBeGreaterThan(2);
+    await ui.press("\u0004");
+    expect(pos()).toBe(String(1 + 2 * half));
+    await ui.press("\u0015");
+    expect(pos()).toBe(String(1 + half));
+    await ui.press("G");
+    expect(pos()).toBe("30");
+    await ui.press("g");
+    expect(pos()).toBe("1");
     ui.unmount();
   });
 

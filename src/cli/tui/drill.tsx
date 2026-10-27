@@ -13,6 +13,7 @@ import stringWidth from "string-width";
 import { activeMux } from "../../mux.js";
 import type { SelectedNotes } from "../../tasks.js";
 import { copyCommand, planAttach, yankSequence } from "./commands.js";
+import { NAV_HINT, navKey } from "./nav.js";
 import type { DrillTarget } from "./rows.js";
 import type { DashboardRuntime } from "./runtime.js";
 import { cell, clean } from "./text.js";
@@ -220,22 +221,18 @@ export function Drill({ target, runtime, notice, busy, onClose, onAttach }: Dril
   topSeen.current = first;
   const hint =
     target.kind === "notes"
-      ? "j/k PgUp/PgDn g/G scroll  A all notes  r reload  y copy cmd  Esc back"
+      ? `${NAV_HINT} scroll  A all notes  r reload  y copy cmd  Esc back`
       : target.kind === "scrollback"
-        ? "j/k PgUp/PgDn g/G scroll  r reload  a attach  y copy cmd  Esc back"
-        : "j/k PgUp/PgDn g/G scroll  y copy cmd  Esc back";
+        ? `${NAV_HINT} scroll  r reload  a attach  y copy cmd  Esc back`
+        : `${NAV_HINT} scroll  y copy cmd  Esc back`;
 
   useInput((input, key) => {
     if (busy.current) return;
     setFlash(null);
     const at = topSeen.current;
     if (key.escape || input === "q") return onClose();
-    if (key.downArrow || input === "j") setTop(at + 1);
-    else if (key.upArrow || input === "k") setTop(Math.max(0, at - 1));
-    else if (key.pageDown || input === " ") setTop(at + Math.max(1, height));
-    else if (key.pageUp) setTop(Math.max(0, at - Math.max(1, height)));
-    else if (input === "g" || key.home) setTop(0);
-    else if (input === "G" || key.end) setTop(END);
+    const nav = navKey(input, key, height, true);
+    if (nav !== null) setTop("by" in nav ? Math.max(0, at + nav.by) : nav.to === "top" ? 0 : END);
     else if (input === "r") setReload((n) => n + 1);
     else if (input === "A" && target.kind === "notes") setAll((a) => !a);
     else if (input === "a" && target.kind === "scrollback") onAttach(target);
@@ -248,7 +245,8 @@ export function Drill({ target, runtime, notice, busy, onClose, onAttach }: Dril
       ? ""
       : `${first + 1}-${Math.min(lines.body.length, first + height)}/${lines.body.length}  `;
   return (
-    <Box flexDirection="column">
+    // Exactly `rows` lines: a short body is followed by the spacer, so the hint stays on the last row.
+    <Box flexDirection="column" height={rows}>
       <Text wrap="truncate" inverse bold>
         {cell(titleOf(target), columns)}
       </Text>
@@ -264,6 +262,7 @@ export function Drill({ target, runtime, notice, busy, onClose, onAttach }: Dril
           {cell(l, columns)}
         </Text>
       ))}
+      <Box flexGrow={1} />
       {rows >= 3 ? (
         <Text wrap="truncate" dimColor>
           {cell(`${where}${hint}`, columns)}

@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Smoke every scenario through a PTY: it must seed, launch, render and quit cleanly.
-   python3 smoke.py [N ... | fill | stable]   (default: all three kinds). Exit 0 = all green.
+   python3 smoke.py [N ... | fill | stable | drill]   (default: all three kinds). Exit 0 = all green.
      N       scenario N seeds, renders, takes keys, quits 0, leaves no tmux server
      fill    s2 s4 s5 s7 at 200x50, 120x40, 80x24, every tab, read off a private tmux screen:
              the last row is the hint; a frame reaches the bottom body row (tabs always, an
              Overview column whenever one of its cards says "+N more")
      stable  s6, two screens 5 s apart: the second column of Tasks and of Log starts at the same x
+     drill   s2 at 120x40 and 80x24: Enter on a Tasks row and on a DAG row opens the notes, hint on the last row
    Needs a built checkout. Set MU_DOGFOOD_DIR to keep the scratch DBs somewhere short."""
 import os, pty, re, select, struct, fcntl, termios, subprocess, sys, time, signal
 
@@ -155,6 +156,31 @@ def fill_check(ns=(2, 4, 5, 7)):
             scr.kill()
     return bad
 
+def drill_check():
+    """s2: Enter on a task (Tasks, then DAG) opens its notes, and the drill keeps the hint on the last row."""
+    scr = Screen(2, 120, 40)
+    bad = 0
+    try:
+        if not scr.wait("Overview"):
+            print("drill s2: FAIL never rendered"); return 1
+        for (w, h) in [(120, 40), (80, 24)]:
+            scr.size(w, h)
+            for name, presses in [("Tasks", 1), ("DAG", 2)]:
+                scr.keys(*["Right"] * presses, "Enter")
+                opened = scr.wait("Notes  shop-api/", 5)
+                lines = scr.grab()
+                probs = [] if opened else ["Enter opened no notes"]
+                if len(lines) != h: probs.append(f"{len(lines)} rows, want {h}")
+                if not lines or "Esc back" not in lines[-1]: probs.append(f"last row is not the hint: {lines[-1:]!r}")
+                bad += bool(probs)
+                print(f"drill s2 {name} {w}x{h}: {'OK ' if not probs else 'FAIL'}")
+                for p in probs: print("   ", p)
+                scr.keys("Escape"); time.sleep(0.4); scr.keys(*["Left"] * presses)
+    finally:
+        scr.tmux("send-keys", "-t", "s", "q"); time.sleep(0.5); scr.tmux("send-keys", "-t", "s", "q"); time.sleep(0.5)
+        scr.kill()
+    return bad
+
 def second_col_x(lines, pat):
     """x of the first match of `pat` on every row that has one (the rows' second column)."""
     return sorted({m.start() for l in lines if (m := re.search(pat, l))})
@@ -199,4 +225,5 @@ for n in scen:
         print("   tail:", text[-600:].decode("utf8", "replace").replace("\n", " | "))
 if not args or "fill" in kinds: bad += fill_check()
 if not args or "stable" in kinds: bad += stable_check()
+if not args or "drill" in kinds: bad += drill_check()
 sys.exit(1 if bad else 0)
