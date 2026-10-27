@@ -113,8 +113,9 @@ text with herdr's atomic `agent prompt`. To start a new session, send
 `/new` (codex: `/clear`), then the prompt. If mu prints
 `warning: ... was NOT submitted`, the agent has not seen the text.
 Read the pane before you wait. On tmux, a send to a non-pi agent exits
-4 (`AgentSendUnsupportedError`): spawn it on herdr (`MU_MUX=herdr`) or
-use pi.
+4 (`AgentSendUnsupportedError`): spawn it on herdr (`MU_MUX=herdr`), start
+it with the prompt as an argument, or use pi
+([other agent CLIs](other-agent-clis.md)).
 
 ## Write the brief
 

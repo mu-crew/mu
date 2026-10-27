@@ -31,8 +31,10 @@ pi install npm:@mu-crew/mu   # extension (control socket, mu_delegate), the mu s
 mu doctor
 ```
 
-To drive mu from another agent CLI (claude-code, codex), install the
-skill with `npx skills add mu-crew/mu` instead of the pi package.
+To drive mu from another agent CLI (claude-code, codex, cursor-agent),
+install the skill with `npx skills add mu-crew/mu` instead of the pi
+package. Read [Run mu with other agent CLIs](docs/guide/other-agent-clis.md)
+first: pin which `mu` the harness runs, and see what works without pi.
 
 You need:
 
