@@ -270,6 +270,19 @@ describe("error and warning paths stay in the one document", () => {
     expect(msg).not.toContain("\n");
   });
 
+  it("--report help says what a second report does (rr_r4_report_set_once)", async () => {
+    for (const verb of [
+      ["task", "note"],
+      ["task", "close"],
+    ]) {
+      const r = await runCliWire([...verb, "--help"], dbPath);
+      expect(r.stdout.replace(/\s+/g, " ")).toMatch(
+        /last report wins, earlier ones stay in `mu task notes <id> --all`/,
+      );
+      expect(r.stdout).not.toMatch(/set once/);
+    }
+  });
+
   it("agent close: the preview and the --if apply are each one document, stderr empty", async () => {
     const preview = await run(["agent", "close", "worker-1", "-w", "probe", "--json"]);
     expect(preview.doc.ok).toBe(true);
