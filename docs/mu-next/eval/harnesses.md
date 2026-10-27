@@ -31,7 +31,7 @@ claude-haiku-5-5, tmux 3.7c on a private socket (`MU_TMUX_SOCKET=m4`), murmur
 | codex | worker | `mu wait task:<id>` | works (exit 0, `closed`) |
 | codex | worker | `mu wait agent:<w>` | **no**: hangs until timeout when no `busy` reading was seen (F4) |
 | codex | worker | `mu wait agent:<w> --until-text` | works: `pane-text` event |
-| codex | worker | `--stuck-after` stall | degraded: false stall 15 s into a 40 s `sleep` (F3) |
+| codex | worker | `--stuck-after` stall | degraded with `notify`: false stall 15 s into a 40 s `sleep`; works with the `Stop` hook (F3) |
 | codex | worker | `agent read` | works (pane text) |
 | codex | worker | `agent send` (idle or mid-run) | **no** on tmux (exit 4, by design); herdr not tested |
 | codex | worker | `agent abort` | **no**: "abort needs the mu pi extension; close the agent instead" |
@@ -81,8 +81,23 @@ equivalent. Not filed; the guide covers it.
 start codex notified `{"title":"Read task notes t_st"}`, and murmur recorded
 `done`. `mu wait task:h1/t_st --stuck-after 15` then exited 7 ("needs_input
 for 15s") while codex was still working. It closed the task 25 s later.
-murmur's notify path is attention-only (murmur `docs/setup.md`: "no
-`running`/`idle`"). Task `triage_dfh_notify_stall`. Probably a murmur fix.
+Task `triage_dfh_notify_stall`. Cause: codex runs a hidden turn to title the
+thread (`input-messages` "Generate a concise, single-line task title…", its
+own `thread-id`), and legacy `notify` reports it as `agent-turn-complete`
+(dumped with a logging `notify`, codex 0.164.0, about 2 s into the turn). So
+murmur's `done` is correct for the payload it got. codex's `Stop` hook does
+not fire for the title turn. Re-run on private tmux socket `m7par`, a
+`sleep 40` turn, `mu wait task: --stuck-after 15`: with `notify`, exit 7 at
+16 s while codex was still working; with a `Stop` hook running `murmur notify
+--source codex --event-type agent-turn-complete`, no stall, and murmur's `done`
+landed at the real turn end. 3.13.3 has the same stall predicate and exits 7
+on the same pane state. Decision: no engine change. The guide wires codex
+through `Stop`. A pane-text check on non-ctl stalls was considered and
+rejected: it would cost a capture per poll per owner and still miss a worker
+whose pane is quiet (a long `sleep`). This hook needs hooks enabled, so it
+cannot be combined with the `--disable hooks` from F2. Trust it once instead.
+Upstream note for murmur: `docs/setup.md` should recommend the `Stop` hook
+over `notify` for codex.
 
 **F4 (P2): `mu wait agent:<non-pi>` never fires.** The agent track settles on
 `busy` → not busy (`src/wait.ts`, `wasBusy`). A notify-only murmur never
