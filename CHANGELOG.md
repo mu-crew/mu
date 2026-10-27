@@ -12,6 +12,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Guide: Run mu with other agent CLIs** (`dogfood_harnesses`, [docs/guide/other-agent-clis.md](docs/guide/other-agent-clis.md)). Pinning which `mu` a codex or cursor-agent shell runs (their tools re-source `~/.zshrc`; `codex --disable shell_snapshot`, an empty `ZDOTDIR`), a tmux worker started with its prompt as an argument, waiting on `task:` refs, delegation through `scratch`, and what works with no multiplexer. The report is [docs/mu-next/eval/harnesses.md](docs/mu-next/eval/harnesses.md). orchestrator-loop step 4 says a bare `mu wait` owns nothing outside pi or a mu pane.
+
 - **`mu sql` / `mu db query` read by default; a write needs `--write`** (`sql_write_optin`; the release matrix had haiku writing raw rows). A statement SQLite reports as not read-only (INSERT, UPDATE, DELETE, REPLACE, `WITH ... INSERT`, anything with RETURNING; a script checks each statement) is refused before it runs with one line naming the verb and `--write` (UsageError, exit 2); the connection also runs `query_only` meanwhile. `--confirm-rows` needs `--write` to do anything. EXPLAIN and PRAGMA reads are unchanged. Writes under `--write` are captured exactly as before (one `sql.write` group). Help is 3 lines; the guide says so; the eval `bad-*` scripts that write now pass `--write`. Test: `test/sql-write-optin.test.ts` (each write shape, mutation-checked).
 
 - **Cold-guess misses as aliases** (`t_surface`, one round): `mu agent stop` is an alias of
