@@ -26,6 +26,7 @@ import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "..
 import { say } from "../../messages.js";
 import { activeMux } from "../../mux/detect.js";
 import { pc } from "../../output.js";
+import { resolveWorkerIdentity } from "../../tasks/claim.js";
 import { getTaskOwner } from "../../tasks/queries.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../../tasks.js";
 import type { WaitRef } from "../../wait.js";
@@ -110,7 +111,14 @@ export async function cmdClaim(
     throw new UsageError(say("task.claim_and_wait"));
   }
   if (opts.self === true && opts.for !== undefined) {
-    throw new UsageError(say("task.claim_self_and_for"));
+    throw new UsageError(say("task.claim_self_and_for"), { showHelp: false });
+  }
+  if (
+    opts.for === undefined &&
+    opts.self !== true &&
+    (await resolveWorkerIdentity()) === undefined
+  ) {
+    throw new UsageError(say("task.claim_no_claimer"), { showHelp: false });
   }
   if (opts.actor !== undefined && opts.self !== true) {
     throw new UsageError(say("task.claim_actor"));
