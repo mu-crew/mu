@@ -277,9 +277,10 @@ export class AgentRestartedError extends Error {
 
 /**
  * `agent close` killed the pane and it is STILL alive (moved out from under
- * the kill, or the mux refused), or the mux could not be asked in a torn-down
- * workstream. The row stays: no row is deleted while its pane may run.
- * Exit 4; the message names the retry.
+ * the kill, or the mux refused), or its liveness could not be checked (the
+ * probe failed, or no multiplexer answers: `unknown`, with `reason`). The
+ * row, its claims and its worktree stay: nothing is freed while the pane may
+ * run. Exit 4; the message names the retry (`--force` for `unknown` only).
  */
 export class AgentPaneStillAliveError extends Error {
   override readonly name = "AgentPaneStillAliveError";
@@ -288,8 +289,9 @@ export class AgentPaneStillAliveError extends Error {
     public readonly workstream: string,
     public readonly paneId: string,
     public readonly state: true | "unknown",
+    public readonly reason?: string,
   ) {
-    super(say("agent.pane_still_alive", agentName, workstream, paneId, state));
+    super(say("agent.pane_still_alive", agentName, workstream, paneId, state, reason));
   }
 }
 
