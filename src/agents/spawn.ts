@@ -1197,10 +1197,12 @@ function finalizeAgentRow(
  *
  * `paneId` is `undefined` when spawnAgent itself threw before returning a
  * pane id — there's nothing to kill. `staged` is set when prestageWorktree
- * succeeded: the worktree this spawn just made is removed (force: it has
- * never run anything) and its registry row forgotten; if the removal
- * fails the registry row stays, so `mu agent close <name> --discard` can
- * finish it. deleteAgent is idempotent (no-op on a missing row).
+ * succeeded: once the pane is proven gone, the worktree this spawn just made
+ * is removed (force: it has never run anything) and its registry row
+ * forgotten; if the removal fails the registry row stays, so
+ * `mu agent close <name> --discard` can finish it. A pane NOT proven gone
+ * keeps the row and the worktree (the row rule): `mu agent close` finishes
+ * them once it is. deleteAgent is idempotent (no-op on a missing row).
  *
  * `ownedIncarnation` is undefined when the spawn failed before inserting
  * its own row (e.g. it lost a same-name race); the row then belongs to
@@ -1306,7 +1308,9 @@ export async function rollbackSpawn(
         // best-effort
       }
     }
-  } else if (staged !== undefined) {
+  } else if (staged !== undefined && paneGone) {
+    // Only once the pane is proven gone: a surviving pane may be running in
+    // the tree (the row is kept below, so `mu agent close` finishes it).
     try {
       // Under the agent lock, and only while the name is still this spawn's
       // (or gone) AND the registry row at the path is the one this spawn
@@ -1324,15 +1328,16 @@ export async function rollbackSpawn(
       // the registry row stays: `mu agent close <name> --discard` finishes it
     }
   }
-  // A host row whose pane is not proven gone keeps its row: the row's death
-  // frees the channel, and the pane (the transport, with the remote pi) is live.
-  if (ownedIncarnation !== undefined && !paneGone && getAgent(db, name, workstream)?.host) {
+  // A row whose pane is not proven gone is kept (the row rule, as in close),
+  // with its worktree: the pane may still run in it. A host row's death would
+  // also free the channel the live pane (the transport) holds.
+  if (ownedIncarnation !== undefined && !paneGone) {
     try {
       emitEvent(
         db,
         workstream,
         "agent.spawn_failed",
-        `agent spawn rollback ${name}: pane ${paneId} not proven gone, row and host channel kept`,
+        `agent spawn rollback ${name}: pane ${paneId} not proven gone, row${staged === undefined ? "" : " and worktree"}${getAgent(db, name, workstream)?.host ? " and host channel" : ""} kept; once it is gone: mu agent close ${name} -w ${workstream}`,
       );
     } catch {
       // best-effort

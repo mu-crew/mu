@@ -244,6 +244,10 @@ const UNSUPPORTED_KIND = {
 };
 
 const OK_PANE_CLOSE = JSON.stringify({ id: "cli:pane:close", result: { type: "ok" } });
+const PANE_NOT_FOUND = JSON.stringify({
+  error: { code: "pane_not_found", message: "pane w1:p1 not found" },
+  id: "cli:pane:get",
+});
 
 /** Answers for a first-ever spawn into a workspace that does not exist yet. */
 function freshWorkspace(args: readonly string[]) {
@@ -432,6 +436,8 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
       ["tab rename", ok(OK_PANE_CLOSE)],
       ["agent start", serverError(AGENT_START_TIMEOUT)],
       ["pane close", ok(OK_PANE_CLOSE)],
+      // The rollback deletes the row only once the pane is proven gone.
+      ["pane get", serverError(PANE_NOT_FOUND)],
     ]);
     ensureWorkstream(db, "spawntest");
 
@@ -455,6 +461,8 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
       ["tab rename", ok(OK_PANE_CLOSE)],
       ["agent start", serverError(AGENT_INVALID_NAME)],
       ["pane close", ok(OK_PANE_CLOSE)],
+      // The rollback deletes the row only once the pane is proven gone.
+      ["pane get", serverError(PANE_NOT_FOUND)],
     ]);
     ensureWorkstream(db, "spawntest");
 
@@ -472,6 +480,8 @@ describe("a failed agent start never leaves a pane mu thinks is an agent", () =>
       ["tab rename", ok(OK_PANE_CLOSE)],
       ["agent start", serverError(AGENT_NAME_TAKEN)],
       ["pane close", ok(OK_PANE_CLOSE)],
+      // The rollback deletes the row only once the pane is proven gone.
+      ["pane get", serverError(PANE_NOT_FOUND)],
     ]);
     ensureWorkstream(db, "spawntest");
 

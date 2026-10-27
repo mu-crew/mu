@@ -13,10 +13,12 @@ import {
   getAgent,
   resetCommandResolverForTests,
   setCommandResolverForTests,
+  spawnAgent,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
+import { listLogs } from "../src/logs.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
-import { getWorktreeAt, releaseWorktree } from "../src/worktree.js";
+import { getWorktreeAt, listWorktrees, releaseWorktree, worktreePath } from "../src/worktree.js";
 import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -79,5 +81,45 @@ describe("rr_r3_branch_retry_collision: a retried unmerged close reuses its own 
     expect(gitIn(root, "rev-parse", branch)).toBe(main);
     expect(existsSync(wt.path)).toBe(true);
     expect(getWorktreeAt(db, wt.path)).toBeDefined();
+  });
+});
+
+describe("rr_r3_local_rollback_live_pane: rollback keeps a local worktree and row whose pane survives", () => {
+  const spawnFailingAfterPane = () =>
+    spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      worktree: true,
+      root,
+      onIdentity: () => {
+        throw new Error("injected after finalize");
+      },
+    });
+
+  it("a kill that fails (pane still alive): the tree, its registry row and the agent row stay", async () => {
+    const inner = mockTmux(tmuxState).executor;
+    mux.restore();
+    mux = installMux("tmux", async (args) =>
+      args[0] === "kill-pane"
+        ? { stdout: "", stderr: "permission denied", exitCode: 1 }
+        : inner(args),
+    );
+    await expect(spawnFailingAfterPane()).rejects.toThrow(/injected/);
+    const path = worktreePath("auth", "worker-1");
+    expect(tmuxState.panes.size).toBe(1); // the pane lives
+    expect(existsSync(path)).toBe(true);
+    expect(listWorktrees(db).map((w) => w.path)).toEqual([path]);
+    expect(getAgent(db, "worker-1", "auth")?.cwd).toBe(path);
+    expect(
+      listLogs(db, { workstream: "auth" }).some((l) => l.payload.includes("not proven gone")),
+    ).toBe(true);
+  });
+
+  it("a pane the kill removed: the rollback still removes everything", async () => {
+    await expect(spawnFailingAfterPane()).rejects.toThrow(/injected/);
+    expect(tmuxState.panes.size).toBe(0);
+    expect(existsSync(worktreePath("auth", "worker-1"))).toBe(false);
+    expect(listWorktrees(db)).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 });
