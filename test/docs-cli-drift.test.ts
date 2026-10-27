@@ -37,6 +37,7 @@ const DOC_FILES = [
   "docs/VOCABULARY.md",
   "docs/reference/env.md",
   "docs/reference/naming.md",
+  "docs/reference/surface-contract.md",
   "docs/ARCHITECTURE.md",
   "docs/architecture/control-socket.md",
   "docs/architecture/dag.md",

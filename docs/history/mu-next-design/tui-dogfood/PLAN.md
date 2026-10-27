@@ -125,7 +125,7 @@ next: no authorised work
 | U4 | Stable columns per tab, owner before title, host column, sort cycle | rows.ts, app.tsx (keys/filter line), test/dashboard-tabs | ~150 | U1, U2 |
 | U5 | Attach: same-server `inside`, deliberate nesting, detach hint | commands.ts, mux/tmux.ts (+types env), app.tsx hint, test, kit run.sh | ~80 | none |
 | U6 | Screen: Overview tab (default), framed full-height tabs, attention strip, pinned footer | app.tsx (layout section), new tui/overview.tsx, tests | ~250 | U2, U3, U4 |
-| U7 | Kit: s7 pane banners and profiles, FORM/README, smoke checks for fill and stable columns | docs/mu-next/tui-dogfood/* | ~40 | U4 for the host column |
+| U7 | Kit: s7 pane banners and profiles, FORM/README, smoke checks for fill and stable columns | docs/history/mu-next-design/tui-dogfood/* | ~40 | U4 for the host column |
 
 - **U1**: do it first. It's a small bug fix and it removes a wrong design claim.
 - **U2**: port the logic, not the files. Keep these modules pure and plain-text so a unit test can pin them without Ink.
@@ -140,14 +140,14 @@ U1, U2, U3 and U5 can run in parallel. U1 and U4 both touch `rows.ts`, so run th
 ## Verification (every unit; U6 and U7 gate)
 - **Unit tests:** `npx vitest run test/dashboard-*.test.ts` plus the new unit tests for frame, columns and grid (row budgets at 30/40/50 rows, column counts at 100/120/180/240, protect/clip cases).
 - **PTY snapshots:**
-  - Run in a private `tmux -L td new-session -x W -y H`, with `MU_DOGFOOD_DIR=/var/tmp/td/df docs/mu-next/tui-dogfood/run.sh N`.
+  - Run in a private `tmux -L td new-session -x W -y H`, with `MU_DOGFOOD_DIR=/var/tmp/td/df docs/history/mu-next-design/tui-dogfood/run.sh N`.
   - Capture with `capture-pane -p` at **200x50, 120x40 and 80x24** for scenarios 2, 4, 5 and 7.
   - Check that the last row is the hint and that there are no blank rows while any card shows `+N more`.
   - Check that s4 shows the attention strip on the first screen.
   - Check that the `]` key changes the Agents and Log rows.
   - In scenario 6, take two captures 5 s apart: the second column must start at the same x.
   - In scenario 7, the rows must show `dev` and `local`.
-- **Kit smoke:** `python3 docs/mu-next/tui-dogfood/smoke.py`, with all 7 passing, plus the new fill and stable-column checks.
+- **Kit smoke:** `python3 docs/history/mu-next-design/tui-dogfood/smoke.py`, with all 7 passing, plus the new fill and stable-column checks.
 - **Attach:** in s2, run inside an outer tmux on another server. Check that the nested detach hint appears and that `C-b C-b d` returns to the TUI. With `MU_TMUX_SOCKET` unset on the same server, check that `switch-client` runs and `C-b L` returns.
 
 ## Not porting from 3.x

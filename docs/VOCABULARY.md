@@ -176,7 +176,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 
 ### Terms added in 4.0
 
-Terms the [4.0 contract](mu-next/surface-contract.md) added.
+Terms the [4.0 contract](reference/surface-contract.md) added.
 
 <!-- doc-cli-drift:skip-start -->
 

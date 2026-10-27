@@ -226,7 +226,7 @@ def live_check():
            "MU_TMUX_SOCKET": "mudf-2", "MU_MUX": "tmux"}
     for v in [k for k in env if k.startswith("MU_AGENT") or k in ("MU_SESSION", "TMUX_PANE", "PI_SESSION_ID")]:
         env.pop(v, None)
-    CLI = os.path.realpath(os.path.join(HERE, "../../../dist/cli.js"))
+    CLI = os.path.realpath(os.path.join(HERE, "../../../../dist/cli.js"))
     cli = lambda *a, extra={}: subprocess.run(["node", CLI, *a], env={**env, **extra}, capture_output=True, text=True)
     def timed(name, change, seen, budget):
         """The write commits somewhere between the CLI's start and its exit, so the latency is
@@ -340,7 +340,7 @@ def live_check():
         bad += not seen
         title = next((l for l in scr.grab() if l.startswith("Notes  ")), "?")
         print(f"live s6 drill grows from the mutator: {'OK ' if seen else 'FAIL'} ({title.split('  ')[1] if '  ' in title else title})")
-        pid = subprocess.run(["pgrep", "-f", "-n", f"{os.path.realpath(os.path.join(HERE, '../../../dist/cli.js'))} -w live-demo"],
+        pid = subprocess.run(["pgrep", "-f", "-n", f"{os.path.realpath(os.path.join(HERE, '../../../../dist/cli.js'))} -w live-demo"],
                              capture_output=True, text=True).stdout.split()
         if pid:
             cpu = lambda: sum(int(x) for x in open(f"/proc/{pid[0]}/stat").read().rsplit(")", 1)[1].split()[11:13])

@@ -35,10 +35,9 @@ watch_*
 # eval candidate scenario roots (tournament private .next proofs)
 tools/eval/candidates/
 
-# eval matrix transcripts (commit only the jsonl + report)
+# eval matrix transcripts (commit only the md report)
 docs/eval/matrix-pre-settle/
 docs/eval/matrix-release/
 
 # raw eval run dumps: never committed (the reports cite them; see docs/history/README.md)
 docs/eval/**/*.jsonl
-docs/mu-next/eval/**/*.jsonl

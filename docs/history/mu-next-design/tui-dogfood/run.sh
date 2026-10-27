@@ -7,7 +7,7 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO="${MU_DOGFOOD_REPO:-$(cd "$HERE/../../.." && pwd)}"
+REPO="${MU_DOGFOOD_REPO:-$(cd "$HERE/../../../.." && pwd)}"
 ROOT="${MU_DOGFOOD_DIR:-/var/tmp/mu-dogfood}"
 SOCK_OVERRIDE="${MU_DOGFOOD_SOCKET:-}" # a private server name, to keep parallel runs apart
 

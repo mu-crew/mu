@@ -7,6 +7,13 @@ disagree, the shipped docs win.
 - [CHANGELOG-pre-3.md](CHANGELOG-pre-3.md): releases before 3.0.
 - [CHANGELOG-4.0-dev.md](CHANGELOG-4.0-dev.md): every change made
   between 3.13.3 and 4.0.0, as written while the work landed.
+- [mu-next-design/](mu-next-design/README.md): the 4.0 rewrite's design
+  of record (built under the name mu-next), where each dropped 3.x skill
+  rule went ([rule-destinations](mu-next-design/rule-destinations.md)),
+  the persistent-capture spike, the isolated side-by-side run, the
+  pre-release review reports ([release-review/](mu-next-design/release-review/)),
+  and the TUI dogfood kit with its plan
+  ([tui-dogfood/](mu-next-design/tui-dogfood/README.md)).
 
 ## Raw eval runs
 

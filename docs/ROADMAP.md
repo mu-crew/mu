@@ -42,7 +42,7 @@ mu does not add these unless one earns its way back under the criteria:
 
 The 4.0 rewrite was approved as a whole and was exempt from the
 promotion criteria. Its units have merged: the contract as built is
-[surface-contract.md](mu-next/surface-contract.md), and what changed is
+[surface-contract.md](reference/surface-contract.md), and what changed is
 in the [CHANGELOG](../CHANGELOG.md). Nothing beyond them is approved;
 anything else follows the criteria above.
 
