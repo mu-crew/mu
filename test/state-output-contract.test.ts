@@ -12,11 +12,12 @@ import { jsonDocument } from "../src/cli/tasks/records.js";
 import { type Db, openDb } from "../src/db.js";
 import { finishDelegate, registerDelegateCall } from "../src/delegates.js";
 import { recordHumanNeeded } from "../src/human-needed.js";
+import { COURSE_CHECK_CLOSED } from "../src/next-hints.js";
 import { isStateVerbArgv } from "../src/output.js";
 import { type StateSnapshot, stateSnapshot } from "../src/state.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
-import { claimTask } from "../src/tasks.js";
+import { claimTask, closeTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -113,6 +114,23 @@ describe("mu state: one JSON document, SQL names, by default", () => {
     });
     expect(w.counts).toMatchObject({ tasks: 1, open: 1, ready: 1, blocked: 0, closed: 0 });
     expect(JSON.stringify(r.data)).not.toMatch(/workstreamName|effortDays|recentClosed|inProgress/);
+  });
+
+  it("a course check due is a one-line data.notices entry; absent when nothing is due", async () => {
+    ensureWorkstream(db, "ws");
+    task("ws", "alpha");
+    const quiet = await runCliJson(["state", "-w", "ws"], dbPath);
+    expect(quiet.data).not.toHaveProperty("notices");
+    for (let i = 0; i < COURSE_CHECK_CLOSED; i++) {
+      task("ws", `c${i}`);
+      closeTask(db, `c${i}`, { workstream: "ws", evidence: "ok" });
+    }
+    const due = await runCliJson(["state", "-w", "ws"], dbPath);
+    expect(due.data.notices).toEqual([
+      expect.stringMatching(
+        /^course check due: 10 closed since .* \(recipes\/course-correct\.md\)$/,
+      ),
+    ]);
   });
 
   it("--json is still accepted and prints the same document", async () => {

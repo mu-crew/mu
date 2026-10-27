@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { owedRefs, resumeCommand, tallySummary, waitData } from "../src/cli/wait-output.js";
 import { type Db, openDb } from "../src/db.js";
+import { COURSE_CHECK_CLOSED } from "../src/next-hints.js";
 import { isJsonMode, isWaitVerbArgv } from "../src/output.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../src/output-contract.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
@@ -115,6 +116,21 @@ describe("the typed ref grammar", () => {
     expect(d.snapshots.map((s) => s.ref).sort()).toEqual(["task:v/c", "task:w/a"]);
     expect(d.snapshots.every((s) => s.fired)).toBe(true);
     expect(d.firing.kind).toBe("closed");
+  });
+
+  it("a course check due in the wait's -w scope is a data.notices line; none when not due", async () => {
+    close("a");
+    const quiet = await runCliJson(["wait", "task:a", "-w", "w", "--timeout", "2"], dbPath);
+    expect(quiet.data).not.toHaveProperty("notices");
+    for (let i = 0; i < COURSE_CHECK_CLOSED; i++) {
+      addTask(db, { localId: `c${i}`, workstream: "w", title: `c${i}` });
+      close(`c${i}`);
+    }
+    const due = await runCliJson(["wait", "task:a", "-w", "w", "--timeout", "2"], dbPath);
+    expect(due.exitCode).toBeNull();
+    expect((due.data as { notices?: string[] }).notices).toEqual([
+      expect.stringMatching(/^course check due: \d+ closed since /),
+    ]);
   });
 
   it("an unknown task or workstream is exit 3 before anything waits, as one document", async () => {

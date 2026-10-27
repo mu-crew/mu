@@ -38,6 +38,7 @@ import {
 } from "../cli.js";
 import { type Db, tryResolveLiveWorkstreamId } from "../db.js";
 import { DelegateNotFoundError, getDelegateCall } from "../delegates.js";
+import { noticesField } from "../next-hints.js";
 import { reconcile } from "../reconcile.js";
 import { TaskNotFoundError } from "../tasks/errors.js";
 import { getTask, getTaskOwner } from "../tasks/queries.js";
@@ -468,6 +469,11 @@ export async function runWait(
       ...(signal !== undefined ? { signal } : {}),
       reason: reasonOf(result, signal, openNow),
       ...(short !== undefined ? { warning: short } : {}),
+      // The call's workstream: its -w, else every workstream its refs name.
+      ...noticesField(
+        db,
+        spec.scope !== undefined ? [spec.scope] : result.refs.map((s) => s.ref.workstream),
+      ),
       ...(opts.extraData !== undefined ? { extra: opts.extraData } : {}),
     }),
   );
