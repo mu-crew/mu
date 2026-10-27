@@ -394,6 +394,22 @@ function firingDelegate(d: Record<string, unknown>): string | undefined {
 }
 
 /**
+ * The call ids of the delegate calls a wait result's snapshots still show (its owed picture), or
+ * undefined when the result cut its snapshots (the picture is then unknown, not empty).
+ */
+function pictureOf(d: Record<string, unknown>): Set<string> | undefined {
+  if (typeof d.snapshotsCut === "number" && d.snapshotsCut > 0) return undefined;
+  const snaps = Array.isArray(d.snapshots) ? (d.snapshots as { ref?: unknown }[]) : [];
+  return new Set(
+    snaps.flatMap((s) =>
+      typeof s.ref === "string" && s.ref.startsWith("delegate:")
+        ? [s.ref.slice("delegate:".length)]
+        : [],
+    ),
+  );
+}
+
+/**
  * Told which delegate answers a settle showed the model: their call ids, or
  * `{ before }` when the wait found nothing owed (every answer recorded before
  * that wait started, at epoch ms `before`, was consumed: by this settle or by
@@ -468,6 +484,7 @@ export function registerNudge(
     const answers = async (
       callId: string,
       shown: Set<string>,
+      first: Record<string, unknown>,
     ): Promise<{ blocks: string[]; stop: boolean }> => {
       shown.add(callId);
       const c = await call(callId);
@@ -488,10 +505,14 @@ export function registerNudge(
       const after: string[] = [];
       let stop = false;
       let rows = await listed();
-      // Owed: a pending sibling, or a finished one whose event this wait has not yet handed
-      // over (the cursor still owes it: leaving it would repeat the summary one settle per call).
+      // Owed: a pending sibling, or a finished one whose event this wait has not yet handed over
+      // (the cursor still owes it: leaving it would repeat the summary one settle per call). The
+      // latest wait's picture says which: it drops what an earlier wait already consumed, so a
+      // sibling absent from it is not owed (waiting for it would never end).
+      let picture = pictureOf(first);
       const owedRow = (r: CallRow) =>
-        PENDING_STATES.has(r.state) || (r.state !== "refused" && !shown.has(r.callId));
+        PENDING_STATES.has(r.state) ||
+        (r.state !== "refused" && !shown.has(r.callId) && picture?.has(r.callId) !== false);
       while (!ctl.signal.aborted && rows.some(owedRow)) {
         const r = await wait(SETTLE_WAIT_ARGS);
         const v = envelopeOf(r.stdout);
@@ -504,6 +525,7 @@ export function registerNudge(
           break;
         }
         if (d.interrupted === true || d.drained === true) break;
+        picture = pictureOf(d);
         if (d.timedOut === true) continue;
         if (Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0) stop = true;
         const id = firingDelegate(d);
@@ -600,7 +622,7 @@ export function registerNudge(
           if (d.timedOut === true) continue; // work still owed: wait again
           const callId = firingDelegate(d);
           const shown = new Set<string>();
-          const got = callId === undefined ? undefined : await answers(callId, shown);
+          const got = callId === undefined ? undefined : await answers(callId, shown, d);
           const blocks = got?.blocks ?? [];
           if (shown.size > 0) delivered([...shown]);
           const stop =

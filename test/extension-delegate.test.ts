@@ -1486,8 +1486,13 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
   // real SDK on a temp DB, so a report the settle shows is what was recorded.
   const SESSION = { sessionManager: { getSessionFile: () => undefined, getSessionId: () => "s1" } };
   const EVENT = ok({ firing: { kind: "closed" }, exit: 0 });
-  const delegateEvent = (callId: string) =>
-    ok({ firing: { kind: "delegate", ref: `delegate:${callId}` }, exit: 0 });
+  /** A delegate event as the real engine prints it: `owed` are the answers still unconsumed. */
+  const delegateEvent = (callId: string, owed: readonly string[] = []) =>
+    ok({
+      firing: { kind: "delegate", ref: `delegate:${callId}` },
+      snapshots: [callId, ...owed].map((id) => ({ kind: "delegate", ref: `delegate:${id}` })),
+      exit: 0,
+    });
   type Entry = { customType?: string; content?: string };
   async function setup(opts: { worker?: boolean } = {}) {
     const mu = fakeMu();
@@ -1653,8 +1658,8 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     }
     const settling = t.settle();
     // No sibling is pending, but each is owed its own event: the wave drains them all.
-    await t.answerWait(delegateEvent(ids[0] ?? ""));
-    await t.answerWait(delegateEvent(ids[1] ?? ""));
+    await t.answerWait(delegateEvent(ids[0] ?? "", ids.slice(1)));
+    await t.answerWait(delegateEvent(ids[1] ?? "", ids.slice(2)));
     await t.answerWait(delegateEvent(ids[2] ?? ""));
     const r = await settling;
     expect(r?.entries).toHaveLength(1);
@@ -1662,6 +1667,27 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     expect(text).toContain("Wave w: 3/3 CONFIRMED");
     for (const id of ids) expect(text).toContain(`Delegate answer: call ${id}`);
     expect(t.settleWaits).toHaveLength(0);
+  });
+
+  it("a wave sibling an earlier wait already consumed is not waited for again", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const ids: string[] = [];
+    for (let n = 1; n <= 2; n++) ids.push(await delegate(t, { task: `c${n}`, wave: "w" }));
+    for (const name of ["delegate-2", "delegate-3"]) {
+      t.mu.waits
+        .get(name)
+        ?.resolve(ok({ agents: [{ outcome: "done", lastText: "VERDICT: CONFIRMED" }] }));
+      for (let k = 0; k < 6; k++) await flush();
+    }
+    const settling = t.settle();
+    // The settle's event is the second call; the first was consumed by an earlier explicit wait,
+    // so the engine's picture (snapshots) no longer shows it, though unrelated work stays open.
+    await t.answerWait(delegateEvent(ids[1] ?? ""));
+    const r = await settling;
+    expect(t.settleWaits).toHaveLength(0); // no further wait: nothing of the wave is owed
+    expect(content(r)).toContain("Wave w: 2/2 CONFIRMED");
+    expect(r?.continue).toBe(true);
   });
 
   it("a refused wave call is listed for reissue, never waited on", async () => {
