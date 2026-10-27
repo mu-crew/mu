@@ -217,7 +217,7 @@ its absence (README, Prose budget, rule 7 "Promote back").
 
 ### models (878 → 232)
 
-Tier table, role table, checkers (level or up, another family, same model with higher effort), passing the model and effort, herdr refuses overrides: **K**. Dropped: how to rank an unknown model (long paragraph; probe and compare), "a local model never reviews" kept as one clause, "`ctl: ok` does not test the model" and the probe command (`pi --list-models` states it), "thinking effort strengthens a model" kept as "Effort is no other family", the gateway prefix example (`modelbridge/...`): **D**, it is host-specific and `mu_delegate: model must be one pi model id like 'provider/id:thinking'` already teaches it (`extension/delegate.ts:1029`).
+Tier table, role table, checkers (level or up, another family, same model with higher effort), passing the model and effort, herdr refuses overrides: **K**. Dropped: how to rank an unknown model (long paragraph; probe and compare), "a local model never reviews" kept as one clause, "`ctl: ok` does not test the model" and the probe command (`pi --list-models` states it), "thinking effort strengthens a model" kept as "Effort is no other family", the gateway prefix example (`<gateway>/...`): **D**, it is host-specific and `mu_delegate: model must be one pi model id like 'provider/id:thinking'` already teaches it (`extension/delegate.ts:1029`).
 
 ### remote-workers (1,985 → 239; README target ≤ 200, exceeded to carry the close step; cap 250)
 
