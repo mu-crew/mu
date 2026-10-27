@@ -1,9 +1,9 @@
 // mu — workstream-level operations.
 //
 // One workstream = one mux session + N agents + M tasks (and their
-// edges/notes) all sharing the workstream column. 0.1.0 ships `mu init`
-// (create the mux session) and `mu workstream teardown` (this module: nuke the
-// mux session and every DB row tagged with the workstream name).
+// edges/notes) all sharing the workstream column. This module holds the
+// workstream-level operations: ensure / list / summarize / teardown / reinit
+// (`mu workstream init`, `list`, `teardown`).
 //
 // `teardownWorkstream` is SOFT and needs a preview revision (`--if <rev>`):
 // it kills the session, deletes the
@@ -144,7 +144,7 @@ export class WorkstreamNameReservedError extends Error {
 /** A destructive verb was given a preview revision that no longer matches:
  *  the workstream (its ops, agents or worktrees) changed since the preview.
  *  Exit 4, nothing was done. One stderr line: the message names the
- *  preview command (`inlineNext`). */
+ *  preview command. */
 export class WorkstreamRevisionMismatchError extends Error {
   override readonly name = "WorkstreamRevisionMismatchError";
   constructor(
@@ -243,7 +243,7 @@ export function sweepRevision(members: ReadonlyMap<string, number>): number {
  * Ensure a row exists in the `workstreams` table for `name`. Idempotent;
  * INSERT OR IGNORE so concurrent callers race safely. Called by
  * `insertAgent` and `addTask` so callers don't need to remember to call
- * `mu init` before adding a task / spawning an agent (preserves the
+ * `mu workstream init` before adding a task / spawning an agent (preserves the
  * spawn-without-init ergonomics now that agents.workstream and
  * tasks.workstream are real FKs into this table).
  *
@@ -424,7 +424,7 @@ export function listTornDownWorkstreams(db: Db): TornDownWorkstream[] {
 
 /**
  * Discover every registered workstream: the rows in the `workstreams`
- * table (canonical DB source; populated by `mu init` and auto-created by
+ * table (canonical DB source; populated by `mu workstream init` and auto-created by
  * insertAgent / addTask), each decorated with mux liveness. A `mu-*` mux
  * session with no row is not discovered: the DB owns the workstream list.
  *
@@ -442,7 +442,7 @@ export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
 /**
  * Discover every REGISTERED workstream that has no user-meaningful
  * state attached: a row in `workstreams` with zero tasks, zero
- * agents, zero worktrees. Mux session presence and agent_logs
+ * agents, zero worktrees. Mux session presence and ops-log
  * entries do NOT disqualify — the session itself was created at
  * init time and contains no agent panes; the events are audit, not
  * state.

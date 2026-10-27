@@ -2,7 +2,7 @@
 //
 // Concrete backends live in the cohesive src/mux/ cluster: one file per
 // backend plus shared types and detection. This root file is the public
-// `import { ... } from "./mux.js"` surface, mirroring src/vcs.ts.
+// `import { ... } from "./mux.js"` surface.
 //
 // A "mux" is the terminal multiplexer that owns panes. Exactly one is
 // active per mu invocation, resolved by `activeMux()`. Everything

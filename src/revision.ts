@@ -26,7 +26,7 @@ import { say } from "./messages.js";
 
 /** A guarded verb was given a revision that no longer matches. Exit 4,
  *  nothing was done. One stderr line naming the fresh preview
- *  (`inlineNext`); JSON carries `expected_rev` / `current_rev`. */
+ *  command; JSON carries `expected_rev` / `current_rev`. */
 export class RevisionMismatchError extends Error {
   override readonly name = "RevisionMismatchError";
   constructor(

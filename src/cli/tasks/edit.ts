@@ -576,7 +576,7 @@ export async function cmdTaskShow(
     : selectTaskNotes(db, localId, { workstream: task.workstreamName });
 
   // When owner IS NULL but the task is IN_PROGRESS (or recently was),
-  // the actor is in agent_logs. Surface it so 'who's working on this'
+  // the actor is in the ops log (ops.actor). Surface it so 'who's working on this'
   // is answerable from `mu task show` alone.
   const lastActor =
     task.ownerName === null && task.status !== "OPEN"

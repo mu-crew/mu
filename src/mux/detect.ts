@@ -1,10 +1,8 @@
 // mu — multiplexer backend detection.
 //
-// Picks the ONE backend a given mu invocation drives. Mirrors
-// detectBackend() in src/vcs/index.ts, with one difference: the VCS
-// backend is a property of a directory, so it is re-detected per call;
-// the mux backend is a property of the PROCESS, so it is resolved once
-// and cached (see `activeMux`).
+// Picks the ONE backend a given mu invocation drives. The mux backend is a
+// property of the PROCESS, so it is resolved once and cached (see
+// `activeMux`).
 
 import { say } from "../messages.js";
 import { herdrBackend } from "./herdr.js";

@@ -65,8 +65,7 @@ export interface OpenTaskFrontierOptions {
  * few lines. Depth is capped at `FRONTIER_MAX_DEPTH` and entries at
  * `FRONTIER_MAX_NODES`; what a cap leaves out is counted in `kids`. Diamonds
  * and cycles list a task once and mark later sightings `again`. One SQL read
- * per level (never per node), same-workstream edges only. `loadFullDag` stays
- * the whole-workstream SDK read.
+ * per level (never per node), same-workstream edges only.
  */
 export function loadOpenTaskFrontier(
   db: Db,

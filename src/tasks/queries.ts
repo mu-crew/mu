@@ -236,8 +236,8 @@ export function listRecentClosed(db: Db, workstream: string, limit = 5): TaskRow
  *  the mutex between `--since` and `--since-claim` is a CLI concern,
  *  not enforced here — if both arrive at the SDK, `since` wins (it's
  *  the explicit one) and `sinceClaim` is ignored. The auto-resolve
- *  for `sinceClaim` (look up the most recent `task claim` event in
- *  agent_logs) happens here so the SDK is self-contained for scripted
+ *  for `sinceClaim` (look up the most recent `task.claim` op in
+ *  the ops log) happens here so the SDK is self-contained for scripted
  *  callers. */
 export interface ListNotesOptions {
   /** Print only the last N notes (after any timestamp filter). Must

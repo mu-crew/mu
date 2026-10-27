@@ -522,7 +522,7 @@ export function wireTaskCommands(program: Command): void {
     )
     .option(
       "--self",
-      "anonymous claim (orchestrator pattern): owner stays NULL; actor recorded in agent_logs.source. Mutually exclusive with --for.",
+      "anonymous claim (orchestrator pattern): owner stays NULL; actor recorded in the ops log (ops.actor). Mutually exclusive with --for.",
     )
     .option(
       "--actor <name>",

@@ -6,7 +6,7 @@
 //   "worker claim"  : --for <name> sets owner_id to that agent (FK to agents.id)
 //   "anonymous claim": --self      keeps owner_id=NULL but flips status to
 //                                  IN_PROGRESS and records the actor
-//                                  in agent_logs
+//                                  in the ops log (ops.actor)
 //
 // resolveActorIdentity is the env-aware identity helper:
 // $MU_AGENT_NAME > $USER > 'orchestrator'. Used by --self
@@ -214,8 +214,8 @@ export interface ClaimTaskOptions extends AttributedEvidence {
    * (or a script, or a human) doing direct work in a workstream they
    * aren't a registered worker in.
    *
-   * The actor name is still recorded — it ends up in `agent_logs.source`
-   * for the auto-emitted `task claim` event — so provenance is preserved.
+   * The actor name is still recorded — it ends up in `ops.actor` of
+   * the captured `task.claim` op — so provenance is preserved.
    * Just not in the FK column.
    *
    * Resolution order for the actor name (used as the log source):
@@ -247,7 +247,7 @@ export interface ClaimTaskOptions extends AttributedEvidence {
 export interface ClaimResult {
   /** The agent now owning the task, or null when the claim was anonymous (--self). */
   ownerName: string | null;
-  /** The actor recorded in the agent_logs event — the agent name for a
+  /** The actor recorded in the claim op — the agent name for a
    *  registered-worker claim, or the resolved actor for --self. */
   actorName: string;
   /** The previous owner (null if it was unowned). */
@@ -271,7 +271,7 @@ export interface ClaimResult {
  *
  *   Anonymous claim (--self):
  *     Skip the name -> agents FK lookup entirely. Sets `owner_id = NULL`.
- *     Records the actor in `agent_logs.source` instead. This is the
+ *     Records the actor in `ops.actor` instead. This is the
  *     orchestrator-doing-direct-work path — the actor is logged but
  *     not registered as a worker pane.
  *
@@ -403,10 +403,8 @@ async function claimTaskImpl(
         // No emitEvent: the UPDATE fired the capture trigger under
         // intent='task.claim' with actor=agentName (withOpContext above
         // put it in op_ctx, and the trigger copies it into ops.actor).
-        // The op payload carries the new owner_id, so the prose
-        // `formatClaimEvent` breadcrumb — and the tab-delimited prefix
-        // that existed only because prose had to be re-parsed — are both
-        // redundant. `lastClaimActor` now reads ops.actor directly.
+        // The op payload carries the new owner_id; no prose
+        // breadcrumb is written. `lastClaimActor` reads ops.actor.
         return {
           ownerName: agentName,
           actorName: agentName,

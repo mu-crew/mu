@@ -1,13 +1,13 @@
-// mu — agent registry CRUD primitives + the five high-level verbs
-// (spawn, send, read, list, close) that the CLI in step 7 will wrap.
+// mu — agent registry CRUD + send / read / list, and the re-exports of the
+// src/agents/ cluster (spawnAgent and closeAgent live in agents/spawn.ts and
+// agents/close.ts).
 //
 // Layering inside this file:
 //
 //   - Types & raw-row mapping (RawAgentRow / rowFromDb)
 //   - CRUD primitives        (insertAgent, getAgent, listAgents,
 //                              deleteAgent)
-//   - Verbs                  (spawnAgent, sendToAgent, readAgent,
-//                              closeAgent, listLiveAgents)
+//   - Verbs                  (sendToAgent, readAgent, listLiveAgents)
 //
 // The verbs compose the CRUD primitives with the mux and reconciliation
 // layers. They are deliberately thin.
@@ -159,7 +159,7 @@ export interface AgentRow {
   role: string;
   /** Window name; null when the agent has its own window named after itself. */
   tab: string | null;
-  /** Directory the pane started in (its worktree under `--worktree`); null for a row older than v12. */
+  /** Directory the pane started in (its worktree under `--worktree`); null when spawned without a cwd. */
   cwd: string | null;
   /** Commit the worktree was created at; null without `--worktree`. */
   base: string | null;
@@ -354,7 +354,7 @@ function agentIdByName(db: Db, name: string, workstream: string): number | null 
 export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
   // Auto-create the workstreams row if missing so the FK on
   // agents.workstream_id is always satisfied. Preserves the ergonomics
-  // where you could spawn without explicit `mu init`.
+  // where you could spawn without an explicit `mu workstream init`.
   ensureWorkstream(db, input.workstream);
   const workstreamId = resolveWorkstreamId(db, input.workstream);
   const now = new Date().toISOString();

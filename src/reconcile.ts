@@ -71,7 +71,7 @@ export interface ReconcileReport {
 
 /**
  * Pane commands that suggest "this is an agent, surface it as an orphan."
- * 0.1.0 scope: pi only is detected, but the orphan list will surface
+ * Detection: pi only, but the orphan list will surface
  * claude/codex panes too so the user can see them.
  *
  * Also includes any env-overridden binary names (e.g. `MU_PI_COMMAND=pi-alt`

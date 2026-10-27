@@ -15,7 +15,7 @@
 // `task goals`, `task search`, `task ready` (the latter merged into
 // `task next -n 0`, which now means "all ready, unlimited"). The
 // underlying SDK helpers `listBlocked` and `listGoals` survive —
-// `mu state` / `mu tracks` consume them. The audit's SQL recipes for
+// `mu state` consumes `listBlocked`. The audit's SQL recipes for
 // the removed verbs live in docs/guide/sql.md "Run common queries".
 
 import { AgentNotFoundError } from "../../agents.js";
