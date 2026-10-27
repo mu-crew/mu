@@ -26,7 +26,12 @@ import { AgentReplacedError } from "../src/agents/errors.js";
 import { closeAgent, getAgent, insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, admitHostChannel, bindHostChannel, listHostChannels } from "../src/hosts.js";
-import { asideOf, closeRemoteWorktree, RemoteCloseRefusedError } from "../src/remote-agent.js";
+import {
+  asideOf,
+  closeRemoteWorktree,
+  RemoteCloseRefusedError,
+  removeRemoteWorktree,
+} from "../src/remote-agent.js";
 import { collectRef, collectRemoteAgent, RemoteCollectError } from "../src/remote-collect.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -337,6 +342,55 @@ describe("close", () => {
     gitIn(remote, "worktree", "remove", wtPath("worker-1"));
     expect((await close("worker-1")).worktree).toMatchObject({ action: "gone" });
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+});
+
+describe("rollback's remote removal (rr_fix_r3_close_v2 P1 c)", () => {
+  it("a git status that fails (exit 128, empty stdout) is unknown: the tree and its files stay", async () => {
+    gitIn(remote, "worktree", "add", "--detach", wtPath("worker-1"), base);
+    writeFileSync(join(wtPath("worker-1"), "keep.txt"), "user's\n");
+    gitIn(wtPath("worker-1"), "add", "keep.txt");
+    // A corrupt index: HEAD still resolves to the base, `git status` exits 128.
+    writeFileSync(gitIn(wtPath("worker-1"), "rev-parse", "--git-path", "index"), "junk");
+    const gone = await removeRemoteWorktree(db, "wide", "rollback:auth/worker-1", {
+      path: wtPath("worker-1"),
+      base,
+      root: remote,
+    });
+    expect(gone).toBe(false);
+    expect(readFileSync(join(wtPath("worker-1"), "keep.txt"), "utf8")).toBe("user's\n");
+  });
+
+  it("a git status that fails while everything else works: still unknown, still kept", async () => {
+    gitIn(remote, "worktree", "add", "--detach", wtPath("worker-1"), base);
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh\ncase " $* " in *' status '*) exit 128 ;; esac\nexec /usr/bin/git "$@"\n`,
+    );
+    chmodSync(join(bin, "git"), 0o755);
+    db.prepare("UPDATE host_profiles SET exec = ? WHERE name = 'wide'").run(
+      `PATH=${bin}:$PATH /bin/sh ${join(dir, "exec.sh")} {cmd}`,
+    );
+    const gone = await removeRemoteWorktree(db, "wide", "rollback:auth/worker-1", {
+      path: wtPath("worker-1"),
+      base,
+      root: remote,
+    });
+    expect(gone).toBe(false);
+    expect(existsSync(wtPath("worker-1"))).toBe(true);
+  });
+
+  it("a clean tree at its base is removed", async () => {
+    gitIn(remote, "worktree", "add", "--detach", wtPath("worker-1"), base);
+    const gone = await removeRemoteWorktree(db, "wide", "rollback:auth/worker-1", {
+      path: wtPath("worker-1"),
+      base,
+      root: remote,
+    });
+    expect(gone).toBe(true);
+    expect(existsSync(wtPath("worker-1"))).toBe(false);
   });
 });
 

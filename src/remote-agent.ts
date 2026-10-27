@@ -181,7 +181,8 @@ export async function prepareRemote(
 
 /**
  * Remove a remote worktree THIS spawn made: only while it is still clean and
- * still at `base` (anything else is left for the user and said so on stderr).
+ * still at `base`, proven by git commands that exited 0 (a failing one is
+ * unknown, never clean); anything else is left for the user and said so on stderr.
  * Best-effort, one exec under its own channel (the caller has already freed
  * the pane's). Returns whether the tree is proven gone (removed now, or
  * already absent): a tree left alone, or an answer with no `MU_RM` line, is not.
@@ -196,9 +197,14 @@ export async function removeRemoteWorktree(
   const body = [
     `wt=${p}`,
     `[ -d "$wt" ] || { echo "MU_RM gone"; exit 0; }`,
-    `[ "$(git -C "$wt" rev-parse HEAD 2>/dev/null)" = ${shellQuote(wt.base)} ] || { echo "$wt is not at its base: left alone" >&2; echo "MU_RM moved"; exit 0; }`,
-    `[ -z "$(git -C "$wt" status --porcelain 2>/dev/null)" ] || { echo "$wt has changes: left alone" >&2; echo "MU_RM dirty"; exit 0; }`,
-    `git -C ${remotePathWord(wt.root)} worktree remove --force "$wt" && echo "MU_RM removed"`,
+    // Any git that fails is unknown, never clean: the tree is left alone.
+    `unknown() { echo "$wt: $1 failed: left alone" >&2; echo "MU_RM failed"; exit 0; }`,
+    `head=$(git -C "$wt" rev-parse --verify HEAD) || unknown "git rev-parse HEAD"`,
+    `[ "$head" = ${shellQuote(wt.base)} ] || { echo "$wt is not at its base: left alone" >&2; echo "MU_RM moved"; exit 0; }`,
+    `st=$(git -C "$wt" status --porcelain) || unknown "git status"`,
+    `[ -z "$st" ] || { echo "$wt has changes: left alone" >&2; echo "MU_RM dirty"; exit 0; }`,
+    // No --force: git re-checks cleanliness itself, so a write that raced the check refuses.
+    `git -C ${remotePathWord(wt.root)} worktree remove "$wt" && echo "MU_RM removed"`,
   ].join("\n");
   const r = await runHostTemplate(db, host, "exec", holder, { cmd: script(body), cwd: wt.root });
   const said = lastMatch(r.stdout, REMOTE_RM_RE)?.[1];
