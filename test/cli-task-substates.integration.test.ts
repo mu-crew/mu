@@ -49,9 +49,9 @@ describe("mu task substates CLI", () => {
   const names = (cap: Capture) =>
     (asJson(cap).data as { items: { id: string }[] }).items.map((t) => t.id);
 
-  it("close --as wontfix without --why exits 4 naming --why", async () => {
+  it("close --as wontfix without --why exits 2 (a missing flag is usage) naming --why", async () => {
     const r = await cli("close", "a", "--as", "wontfix");
-    expect(r.exitCode).toBe(4);
+    expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("--why");
   });
 
