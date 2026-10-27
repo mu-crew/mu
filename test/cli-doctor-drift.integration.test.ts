@@ -183,7 +183,11 @@ describe("mu doctor — drift + fleet checks", () => {
   it("warns about case-colliding workstream names", async () => {
     await seed();
     await runCli(
-      ["sql", "INSERT INTO workstreams (name, created_at) VALUES ('Demo', datetime('now'))"],
+      [
+        "sql",
+        "--write",
+        "INSERT INTO workstreams (name, created_at) VALUES ('Demo', datetime('now'))",
+      ],
       dbPath,
     );
     const { stdout } = await runCli(["doctor"], dbPath);

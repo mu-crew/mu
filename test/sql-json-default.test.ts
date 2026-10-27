@@ -40,14 +40,15 @@ describe.each(spellings)("mu %s defaults to JSON", (_n, verb) => {
   });
 
   it("a write keeps its write result", async () => {
-    const r = await runCliJson([...verb, "UPDATE tasks SET impact = 20"], dbPath);
+    const r = await runCliJson([...verb, "--write", "UPDATE tasks SET impact = 20"], dbPath);
     expect(r.data).toEqual({ changes: 1, lastInsertRowid: expect.any(Number) });
   });
 
   it.each([
     ["bad SQL", ["SELEC 1"], 1, "SqliteError"],
     ["bad column", ["SELECT nope FROM tasks"], 2, "SqlColumnError"],
-    ["a forbidden write", ["UPDATE ops SET actor = 'x'"], 2, "UsageError"],
+    ["a forbidden write", ["--write", "UPDATE ops SET actor = 'x'"], 2, "UsageError"],
+    ["a write without --write", ["UPDATE tasks SET impact = 1"], 2, "UsageError"],
     ["a missing query", [], 2, "CommanderError"],
     ["an unknown -w", ["SELECT 1", "-w", "nope"], 3, "WorkstreamNotFoundError"],
     ["a root -w naming nothing", ["SELECT 1", "-w", "nope"], 3, "WorkstreamNotFoundError"],

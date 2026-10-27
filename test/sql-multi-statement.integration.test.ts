@@ -215,7 +215,14 @@ describe("mu sql --confirm-rows", () => {
   it("single-statement: --confirm-rows N matches actual → commits", async () => {
     expect(countCr()).toBe(3);
     const { data, stderr } = await runCliJson(
-      ["sql", "DELETE FROM workstreams WHERE name LIKE 'cr_%'", "--confirm-rows", "3", "--json"],
+      [
+        "sql",
+        "--write",
+        "DELETE FROM workstreams WHERE name LIKE 'cr_%'",
+        "--confirm-rows",
+        "3",
+        "--json",
+      ],
       dbPath,
     );
     expect(stderr).toBe("");
@@ -227,7 +234,7 @@ describe("mu sql --confirm-rows", () => {
   it("single-statement: --confirm-rows N != actual → rollback + UsageError", async () => {
     expect(countCr()).toBe(3);
     const { stdout, stderr } = await runCli(
-      ["sql", "DELETE FROM workstreams WHERE name LIKE 'cr_%'", "--confirm-rows", "2"],
+      ["sql", "--write", "DELETE FROM workstreams WHERE name LIKE 'cr_%'", "--confirm-rows", "2"],
       dbPath,
     );
     // Combined output: error message references both expected and actual.
@@ -256,7 +263,7 @@ describe("mu sql --confirm-rows", () => {
       DELETE FROM workstreams WHERE name = 'cr_b';
     `;
     const { data, stderr } = await runCliJson(
-      ["sql", sql, "--confirm-rows", "2", "--json"],
+      ["sql", "--write", sql, "--confirm-rows", "2", "--json"],
       dbPath,
     );
     expect(stderr).toBe("");
@@ -275,7 +282,7 @@ describe("mu sql --confirm-rows", () => {
       DELETE FROM workstreams WHERE name = 'cr_a';
       DELETE FROM workstreams WHERE name = 'cr_b';
     `;
-    const { stdout, stderr } = await runCli(["sql", sql, "--confirm-rows", "3"], dbPath);
+    const { stdout, stderr } = await runCli(["sql", "--write", sql, "--confirm-rows", "3"], dbPath);
     const combined = stdout + stderr;
     expect(combined).toMatch(/expected 3 rows, would have affected 2/);
     expect(combined).toMatch(/rolled back/);

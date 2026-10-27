@@ -26,7 +26,7 @@ import {
   insertAgent,
 } from "../src/agents.js";
 import { applyOp, type Op } from "../src/apply.js";
-import { cmdDbQuery } from "../src/cli/db-query.js";
+import { type DbQueryOptions, cmdDbQuery as runDbQuery } from "../src/cli/db-query.js";
 import { type Db, openDb } from "../src/db.js";
 import { formatHlc } from "../src/hlc.js";
 import { addHost, removeHost } from "../src/hosts.js";
@@ -45,6 +45,9 @@ import {
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";
+
+const cmdDbQuery = (db: Db, q: string, o: DbQueryOptions = {}): Promise<void> =>
+  runDbQuery(db, q, { write: true, ...o }); // these tests drive writes; the read-only default is test/sql-write-optin.test.ts
 
 const BASE = "b".repeat(40);
 const WT = "/home/u/.local/state/mu-next/remote-worktrees/auth/w1";

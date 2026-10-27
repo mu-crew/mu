@@ -87,7 +87,7 @@ describe("mu sql follows the ambient contract", () => {
     expect(allSegmentText()).not.toContain("SQL-WRITTEN");
 
     const r = await runCli(
-      ["sql", "UPDATE tasks SET title = 'SQL-WRITTEN' WHERE local_id = 't1'"],
+      ["sql", "--write", "UPDATE tasks SET title = 'SQL-WRITTEN' WHERE local_id = 't1'"],
       lap,
     );
     expect(r.exitCode, r.stderr).toBeNull();
@@ -108,7 +108,7 @@ describe("mu sql follows the ambient contract", () => {
     // fails. The script is one transaction, so nothing may leak out (and
     // the flush on the error path must not invent anything either).
     const r = await runCli(
-      ["sql", "UPDATE tasks SET title = 'HALF'; SELECT * FROM no_such_table"],
+      ["sql", "--write", "UPDATE tasks SET title = 'HALF'; SELECT * FROM no_such_table"],
       lap,
     );
     expect(r.exitCode).not.toBeNull();

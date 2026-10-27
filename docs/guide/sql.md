@@ -1,7 +1,7 @@
 # How to query and script mu
 
 Use typed verbs with `--json` first. Use `mu db query` (alias `mu sql`) for
-ad-hoc joins, reports, and repairs that no verb covers.
+ad-hoc joins and reports that no verb covers; a repair needs `--write`.
 
 ## Script with `--json`
 
@@ -90,7 +90,10 @@ mu db query "WITH RECURSIVE prereqs(id) AS (
 
 `mu db query` syncs like every other verb (when `MU_SYNC_DIR` is set): it
 ingests peer ops before the query and flushes its own writes after, even
-when the statement fails. It runs writes too and prints the number of rows changed. Writes
+when the statement fails. It reads by default: a statement SQLite reports as
+not read-only (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `WITH ... INSERT`,
+anything with `RETURNING`) is refused in one line, exit 2, until you add
+`--write`. A write prints the number of rows changed. Writes
 are captured as ops under one `sql.write` group per call, so `mu log --group`
 shows the whole call. `--confirm-rows N` counts rows removed by
 `ON DELETE CASCADE` too: deleting a task with one edge counts 2.

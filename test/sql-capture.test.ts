@@ -12,7 +12,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cmdDbQuery } from "../src/cli/db-query.js";
+import { type DbQueryOptions, cmdDbQuery as runDbQuery } from "../src/cli/db-query.js";
 import { classifyError, UsageError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
 import { renderOpLine } from "../src/log-render.js";
@@ -24,6 +24,9 @@ import { addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { envelopeData } from "./_envelope.js";
 import { rmFixtureDir } from "./_fs.js";
+
+const cmdDbQuery = (db: Db, q: string, o: DbQueryOptions = {}): Promise<void> =>
+  runDbQuery(db, q, { write: true, ...o }); // these tests drive writes; the read-only default is test/sql-write-optin.test.ts
 
 let dir: string;
 let db: Db;
