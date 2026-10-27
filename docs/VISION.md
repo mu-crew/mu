@@ -58,8 +58,8 @@ three rules keep it thin:
 
 Delegation is CLI: a `kind=delegate` task (`mu delegates register`), a
 spawn bound to it, and `mu wait`. `mu_delegate` only adds admission
-control and the callback that echoes the answer into the parent
-conversation; the answer itself is the delegate task's report.
+control and the settle wait that hands the answer to the parent; the
+answer itself is the delegate task's report.
 
 ### 2. One DB is canonical
 
@@ -141,16 +141,16 @@ under the [ROADMAP](ROADMAP.md) criteria: spawn accepts any command and
 ### 7. TypeScript on Node
 
 mu uses a few well-known npm dependencies (`commander`,
-`better-sqlite3`, `cli-table3`, `picocolors`, `execa`, and `ink` for the
-TUI). There is no native code to maintain and no build matrix.
+`better-sqlite3`, `cli-table3`, `picocolors`, and `ink` for the
+dashboard). There is no native code to maintain and no build matrix.
 
 - **Types pay.** The typed error classes map to exit codes in
   `handle()`. The `assertXInWorkstream` family stays type-safe across
   namespaces. `noUncheckedIndexedAccess` has caught real bugs.
 - **`better-sqlite3` fits.** Synchronous calls match a short-lived CLI,
   and `db.transaction()` is the right shape.
-- **Iteration is fast.** Several substantive changes a day land in
-  about 99k lines of `src/` and `test/`.
+- **Iteration is fast.** Several substantive changes a day land in a
+  codebase one agent can still hold in pieces.
 
 The weak spot is cold start: Node takes 30–50 ms to boot, which matters
 only in tight loops. If that changes, Rust is the port target.
@@ -237,8 +237,9 @@ the agent choosing; mu reads none of it.
 
 ## Key constraints
 
-1. **A multiplexer is required** (tmux or herdr). `mu doctor` reports
-   the backend. Agent verbs exit 5 when none is reachable.
+1. **Agents need a multiplexer** (tmux or herdr). `mu doctor` reports
+   the backend. Agent verbs exit 5 when none is reachable; task verbs
+   and `mu_delegate` (a child pi process) work without one.
 2. **The agent never acknowledges a send.** For pi, the control socket
    confirms that pi accepted the message. On the mux path, mu confirms
    only that the text reached the pane and warns when it cannot confirm
@@ -248,22 +249,20 @@ the agent choosing; mu reads none of it.
    them they are not the orchestrator.
 4. **Every invocation is short-lived, except two interactive readers.**
    No daemon, no resident state outside SQLite, no background process.
-   The exceptions are `mu log --tail` and the dashboard (removed in
-   mu-next; the rewrite keeps these rules). Both are:
+   The exceptions are `mu log --tail` and the dashboard. Both are:
    - owned by a human or parent script and gone when it ends;
-   - free of user actions: TUI keys copy the `mu <verb>` command to
-     the clipboard and exit, so every change the operator asks for is a
-     fresh CLI call. The TUI's slow tick still does the housekeeping
-     any `mu` invocation does: ambient sync (ingest peer ops, flush the
-     local segment) and reconcile (prune agents whose pane died, which
-     reopens their tasks with a `[reaper]` note, and refresh pane
-     titles);
+   - free of user actions: the dashboard is read-only. `y` copies a
+     `mu <verb>` command over OSC 52 and `a` hands the terminal to the
+     mux's attach, so every change the operator asks for is a fresh CLI
+     call. Its slow tick does what any `mu` invocation does, ambient sync
+     (ingest peer ops, flush the local segment), on its own connection.
+     It never reconciles or reaps;
    - limited to stdin, stdout, and a poll timer: no sockets or watches.
-     The TUI's slow tick runs short-lived probes (mux liveness, VCS
-     status) and ambient sync, and its handoffs (lazygit, tuicr, attach,
-     clipboard) run one foreground child each; none outlives the TUI;
-   - TTY-gated: pipes, CI, and `--json` never enter the TUI, and plain
-     `mu state` prints the state document.
+     The slow tick runs short-lived probes (agent control sockets, mux
+     liveness) and ambient sync; the attach handoff runs one foreground
+     child that does not outlive the dashboard;
+   - TTY-gated: pipes, CI, and `--json` never enter the dashboard, and
+     plain `mu state` prints the state document.
 
    The control socket is not a third exception. The pi process serves it
    and it dies with that process. Any other long-lived process needs its
@@ -279,8 +278,8 @@ workspace ownership, an event log, wakeups, human approvals, a typed
 control API, read-only state cards, and orphan recovery. Everything else
 (chat, workflow DSLs, memory, dashboards) had to prove its worth.
 
-mu ships nine of the ten. Approvals are missing because 200+ dogfooded
-tasks never needed them. Below the point where coordination is itself
+mu ships nine of the ten. Approvals are only `mu human-needed`: it
+records a person's decision as a task, and nothing enforces one. Below the point where coordination is itself
 the work, pi plus manual tmux is more transparent than mu.
 
 Two lessons back the orchestrator-pull remote design. The runtime built
@@ -293,5 +292,6 @@ text.
 
 Known gaps, none promoted yet: `--evidence` grounds but does not verify,
 mutations have no declared idempotency keys, most mutations have no dry
-run (`workstream teardown` and `task delete` do), and the `role`
+run (`workstream teardown`, `task delete`, `agent close`, `db compact`
+and `db forget` preview; the rest apply at once), and the `role`
 field is stored but not enforced.

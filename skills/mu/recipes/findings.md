@@ -2,7 +2,7 @@
 
 Use when an agent reviews, audits or checks something and reports problems.
 
-**Mode.** Will agents fix these through the DAG? No (someone's PR, a doc): delegates answer with one `FINDING:` line each and you act; nothing enters the ops log. Yes: workstream mode, below.
+**Mode.** Will agents fix these through the DAG? No (someone's PR, a doc): delegates answer with one `FINDING:` line each and you act; nothing enters your DAG (calls are synced `scratch` tasks). Yes: workstream mode, below.
 
 ## Record
 

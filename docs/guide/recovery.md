@@ -123,7 +123,7 @@ Re-create the workstream instead:
 mu db backup /tmp/mu-before-rename.db
 mu workstream init auth-refactor
 # re-add the tasks you still need, with -w auth-refactor
-mu workstream teardown auth-refator      # preview, then --if <rev>
+mu workstream teardown auth      # preview, then --if <rev>
 ```
 
 Names start with a lowercase letter, use letters, digits, `_`, or

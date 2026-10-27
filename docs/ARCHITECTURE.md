@@ -65,7 +65,7 @@ JSONL segments before the verb and flushes its own ops after it,
 through `handle()`. There is no daemon and no network code:
 [architecture/sync.md](architecture/sync.md).
 
-**Dashboard.** The 3.x card TUI is removed. Bare `mu` on a TTY (not `--json`) opens the fresh read-only ink dashboard, a lazy chunk (`src/cli/tui/`) the SDK index never reaches; anywhere else it prints help. Projections run on a `readonly` connection; ambient sync runs on the launcher's separate writable connection, outside render. Four tabs (Tasks, DAG, Agents, Log) over a workstream row; Enter drills a row (notes, scrollback, one log op); `a` on an agent runs the mux's attach steps with Ink's terminal suspended, else opens the scrollback with the reason.
+**Dashboard.** The 3.x card TUI is removed. Bare `mu` on a TTY (not `--json`) opens the fresh read-only ink dashboard, a lazy chunk (`src/cli/tui/`) the SDK index never reaches; anywhere else it prints help. Projections run on a `readonly` connection; ambient sync runs on the launcher's separate writable connection, outside render. Five tabs (Overview, Tasks, DAG, Agents, Log) over a workstream row; Enter drills a row (notes, scrollback, one log op); `a` on an agent runs the mux's attach steps with Ink's terminal suspended, else opens the scrollback with the reason.
 
 **CLI and SDK surface.** Each operation is a typed SDK function plus a
 thin Commander wrapper. Public functions take operator-facing names and
