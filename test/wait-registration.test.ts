@@ -279,6 +279,29 @@ describe("beginWait / endWait: one active wait per caller", () => {
     expect(keys("c")).toEqual(["delegate:w/d1", "task:w/b"]);
   });
 
+  it("endWait keeps the LATEST fence while it is above the delivered run (a send armed at fence 2 owes run 3)", () => {
+    const a = agent("w1");
+    const fence = (afterRuns: number) =>
+      registerOwnedWait(db, "c", [
+        { ...a, baseline: { afterRuns, incarnation: "p1", agentId: 1 } },
+      ]);
+    const base = () => Object.values(readWaitRegistration(db, "c")?.baselines ?? {})[0];
+    fence(0);
+    fence(2);
+    expect(base()).toMatchObject({ afterRuns: 0, latest: 2 });
+    const w1 = beginWait(db, "c");
+    endWait(db, "c", w1?.generation ?? -1, [{ ...a, runs: 1, incarnation: "p1" }]);
+    expect(readWaitRegistration(db, "c")?.refs).toEqual([a]);
+    expect(base()).toEqual({ afterRuns: 1, latest: 2, incarnation: "p1", agentId: 1 });
+    const w2 = beginWait(db, "c");
+    endWait(db, "c", w2?.generation ?? -1, [{ ...a, runs: 2, incarnation: "p1" }]);
+    expect(readWaitRegistration(db, "c")?.refs).toEqual([a]);
+    expect(base()).toEqual({ afterRuns: 2, incarnation: "p1", agentId: 1 });
+    const w3 = beginWait(db, "c");
+    endWait(db, "c", w3?.generation ?? -1, [{ ...a, runs: 3, incarnation: "p1" }]);
+    expect(readWaitRegistration(db, "c")?.refs).toEqual([]);
+  });
+
   it("endWait with nothing delivered (timeout, interrupt) keeps every ref and re-arms", () => {
     registerOwnedWait(db, "c", [task("a"), task("b")]);
     const w = beginWait(db, "c");
