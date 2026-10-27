@@ -10,7 +10,8 @@
 //                     AgentNotInWorkstreamError,
 //                     AgentSendUnsupportedError,
 //                     AgentExtensionOutdatedError, AgentBusyError)
-//   timeout    → 5   (AgentAbortTimeoutError)
+//   timeout    → 5   (AgentAbortTimeoutError: abort/interrupt only; a wait
+//                     that hits its cap is exit 0 with timedOut, not an error)
 //   failure    → 1   (AgentSpawnCliNotFoundError, AgentDiedOnSpawnError,
 //                     AgentSpawnStartupError, AgentCtlUnreachableError)
 //

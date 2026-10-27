@@ -40,13 +40,12 @@ mu task list -w auth --json | jq '.data.count'
 mu task show t1 -w auth --json | jq 'if .ok then .data.task else .message end'
 ```
 
-Exit codes: `1` an unexpected failure, `2` usage error, `3` not found, `4` conflict, `5`
 Exit codes: `1` any other failure (a spawn that failed, an unreachable
 control socket, a send whose delivery is unknown), `2` usage error, `3` not found, `4` conflict, `5`
-timeout, a locked DB, or a multiplexer, VCS, drift, or `mu doctor`
+an abort or interrupt that timed out (pi still busy), a locked DB, or a multiplexer, VCS, drift, or `mu doctor`
 FAIL-row failure, `6` a watched owner died, `7` stall, `130`/`143`
-SIGINT/SIGTERM during a wait. A `mu wait` that hits its cap is `0` with
-`timedOut: true`.
+SIGINT/SIGTERM during a wait. A wait that hits its cap
+(`mu wait`, `mu task wait`, `mu agent wait`) is `0` with `timedOut: true`, not `5`.
 
 ## Read the schema
 

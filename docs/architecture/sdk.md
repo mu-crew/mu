@@ -126,10 +126,14 @@ codes:
 | 2 | usage error (Commander's default) |
 | 3 | not found (agent, task) |
 | 4 | conflict (name collision, double claim, dirty tree, schema too old or new, outdated extension) |
-| 5 | substrate unavailable or unsafe (no multiplexer, mux or VCS failure, DB locked, ops-log drift, a `mu doctor` FAIL row, timeout) |
+| 5 | substrate unavailable or unsafe (no multiplexer, mux or VCS failure, DB locked, ops-log drift, a `mu doctor` FAIL row, an abort or interrupt that timed out with pi still busy) |
 | 6 | `mu wait` (and its aliases): a watched owner died (the reaper reopened its task, or its pane is gone with work owed) |
 | 7 | `mu wait`: a watched owner needs you (a stall under `--on-stall exit`, or a pi dialog) |
 | 130, 143 | `mu wait`, `mu next`, `mu log --tail`: SIGINT, SIGTERM (a wait still prints its snapshot and `resume`) |
+
+A wait that hits its cap is not an error: exit 0 with `timedOut: true`. `mu wait` and
+`mu task wait` return an event or heartbeat with a `resume` handle; `mu agent wait` returns
+`{agents, timedOut}` with no `resume`, so a pi caller re-runs it with each agent's `afterRuns`.
 
 Errors carry structured context (operation, target, attempted action)
 so `mu doctor` can show them readably.
