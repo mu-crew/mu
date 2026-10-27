@@ -666,6 +666,12 @@ function unknownVerb(err: unknown, cmd: Command | undefined): string | undefined
   const nested = [...cmd.commands]
     .sort((a, b) => Number(b.name() === "task") - Number(a.name() === "task"))
     .flatMap((c) => c.commands.map((g) => [g.name(), `${c.name()} ${g.name()}`]));
+  // The shell's spellings of a verb: `ls` is `list`, `rm` is `delete`.
+  const alias = { ls: "list", rm: "delete" }[word as "ls" | "rm"];
+  if (alias !== undefined && cmd.commands.some((c) => c.name() === alias)) {
+    const p = root ? "mu" : `mu ${cmd.name()}`;
+    return `unknown command '${word}' (closest: ${p} ${alias}); see ${p} --help`;
+  }
   // A plural noun names its namespace's list: `mu tasks` → `mu task list`.
   const singular = word.endsWith("s") ? word.slice(0, -1) : undefined;
   const ns = cmd.commands.find((c) => c.name() === singular);

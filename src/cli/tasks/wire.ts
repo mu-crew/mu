@@ -110,7 +110,7 @@ export function wireTaskCommands(program: Command): void {
 
   task
     .command("list")
-    .description("List every task in the current workstream (id, status, ROI, owner)")
+    .description("List every task in the current workstream (id, status, impact, effort, scored)")
     .option(...WORKSTREAM_OPT)
     .option(
       "--status <status...>",

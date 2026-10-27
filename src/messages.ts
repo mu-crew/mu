@@ -1,4 +1,4 @@
-// mu — the message table: every error and hint line an agent reads, in ONE place.
+// mu — the message table: most error and hint lines an agent reads, in ONE place.
 //
 // A line is `MESSAGES["<domain>.<what>"]`, a function of the facts it names, rendered
 // with `say(key, ...facts)`. The key is stable; the wording is free to change (t_errors
