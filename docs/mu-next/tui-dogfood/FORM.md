@@ -74,7 +74,7 @@ Leave it open on the Agents tab for two minutes.
 
 ## 7. Remote (simulated)  (`run.sh 7`)
 
-- [ ] Can you tell `worker-1` is remote? (`worker-1@dev` is remote; `worker-2` has no marker: local.)
+- [ ] Can you tell `worker-1` is remote? (the host column says `dev` for `worker-1` and `local` for `worker-2`.)
 - [ ] Its state and tool come through the forwarded socket like the local one's.
 - [ ] `Enter` scrollback and `a` attach work for the remote one.
 
