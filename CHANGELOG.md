@@ -16,6 +16,8 @@ for a model to read and act on, and only the dashboard is for a human. The
 database, the ops log and the task DAG carry over in spirit, but 4.0 is a
 breaking release with its own DB. The full change-by-change record of the 4.0
 development is [docs/history/CHANGELOG-4.0-dev.md](docs/history/CHANGELOG-4.0-dev.md).
+- **A refused delegate call no longer holds the settle in a heartbeat loop** (`rr_r2_refused_settle_loop`, pre-release review R2, P1). The owned wait listed every call of the callers as owed, and a refused call (admission past `MU_DELEGATE_MAX`, an unsent spawn, a `/reload` parking queued calls) is never terminal, so a bare `mu wait` heartbeated on it for ever and pi never ended its turn. A refused call is now neither owed nor a wave target (the wave tally still counts it; its answer is not marked consumed), and `mu wait delegate:<refused>` is refused at once (`WaitRefError`) with the reissue hint. Test: `test/wait-refused-call.test.ts`, mutation-checked (owing it again, accepting the ref).
+### Changed
 
 Upgrade: [docs/guide/upgrade.md](docs/guide/upgrade.md). Then run `mu doctor`
 and send `/reload` to running pi agents.

@@ -221,6 +221,12 @@ export async function waitForEvents(
       if (callers.length > 0 && !callers.includes(call.caller)) {
         throw new WaitRefError(`delegate call ${ref.id} belongs to another caller`);
       }
+      // A refused call never started and nothing will start it: waiting on it would never end.
+      if (call.state === "refused") {
+        throw new WaitRefError(
+          `delegate call ${ref.id} was refused (it never started): reissue it, mu_delegate_reissue`,
+        );
+      }
     }
   }
   const umbrella =
@@ -975,7 +981,8 @@ export async function waitForEvents(
       isTarget: boolean,
       suppressible: boolean,
     ): void => {
-      if (c === undefined) return;
+      // A refused call is not owed (no run will answer it; the tally still counts it).
+      if (c === undefined || c.state === "refused") return;
       const prev = calls.get(c.callId);
       calls.set(c.callId, {
         call: c,
