@@ -5,7 +5,7 @@
 // read-only; they query against `resolveSelf(db)` instead of -w —
 // wired in src/cli/agents.ts via `wireSelfCommands`).
 //
-// Output is the mu-next record form (src/cli/tasks/records.ts): one task per
+// Output is the 4.0 record form (src/cli/tasks/records.ts): one task per
 // line or one JSON item with SQL column names, every result capped on its final
 // bytes, a cut naming the exact `--from` command that resumes.
 //

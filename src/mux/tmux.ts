@@ -5,7 +5,7 @@
 // `TmuxError`s carrying args + stderr.
 //
 // tmux has no `sendToPane`: a bracketed paste cannot be confirmed
-// (cut in mu-next). pi agents use the control socket
+// (cut in 4.0). pi agents use the control socket
 // (src/agents/transport.ts); herdr has its own atomic `agent prompt`.
 
 import { basename } from "node:path";

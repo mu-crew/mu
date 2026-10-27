@@ -78,7 +78,7 @@ There is no flag day. Each machine switches when its human decides:
 4. Give 4.0 its own sync folder, or none. Sync stays off until you set
    `MU_SYNC_DIR`. If any segment in the folder opens with a 3.x (v1)
    line, every 4.0 verb exits 4 with `MU_SYNC_DIR holds 3.x segments;
-   give mu-next its own dir` before it reads or writes anything. Unset
+   give mu 4 its own dir` before it reads or writes anything. Unset
    or change `MU_SYNC_DIR` in a shell that also runs 3.x.
 5. Move workstreams one at a time, from the machine that holds each one,
    with the [Move recipe](../../skills/mu/recipes/move.md). Only open

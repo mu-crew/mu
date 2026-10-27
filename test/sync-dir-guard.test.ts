@@ -1,5 +1,5 @@
 // A MU_SYNC_DIR holding a 3.x (non-v2) segment is refused for write AND read:
-// exit 4, nothing written, one line. The 18:04 incident: a mu-next run with an
+// exit 4, nothing written, one line. The 18:04 incident: a 4.0 dev run with an
 // inherited MU_SYNC_DIR appended a v2 segment into the real 3.x folder and
 // 3.x warned "unknown-version" on every command after.
 
@@ -25,7 +25,7 @@ import { ensureWorkstream } from "../src/workstream.js";
 import { runCli, runCliWire } from "./_runCli.js";
 
 const SYNC_KEY = "MU_SYNC_DIR";
-const MESSAGE = "MU_SYNC_DIR holds 3.x segments; give mu-next its own dir";
+const MESSAGE = "MU_SYNC_DIR holds 3.x segments; give mu 4 its own dir";
 
 let tempDir: string;
 let dir: string;

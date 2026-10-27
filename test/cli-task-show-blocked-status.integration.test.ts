@@ -1,7 +1,7 @@
 // Regression tests for `mu task show` listing blockers / dependents with their
 // status (task_show_blocked_by_renders_closed): a reader must tell from `show`
 // alone which blockers still gate the task and which are CLOSED (satisfied).
-// mu-next form: after the task record, one `blocker|dependent<TAB>id<TAB>STATE`
+// 4.0 form: after the task record, one `blocker|dependent<TAB>id<TAB>STATE`
 // record per neighbour, still-gating first, CLOSED (satisfied) after; JSON
 // blockers/dependents are {id, status, substate} items. CLOSED satisfies an edge
 // and nothing else does; OPEN/IN_PROGRESS keep gating.
