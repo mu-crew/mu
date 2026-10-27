@@ -133,7 +133,9 @@ export {
 } from "./dag.js";
 export {
   type AgentTool,
+  type AttentionKind,
   type DashboardAgent,
+  type DashboardAttention,
   type DashboardDelegate,
   type DashboardEdge,
   type DashboardHumanNeed,
@@ -143,6 +145,7 @@ export {
   type DashboardTask,
   type DashboardWorkstream,
   loadDashboard,
+  STALLED_TOOL_MS,
 } from "./dashboard-data.js";
 export {
   CURRENT_SCHEMA_VERSION,
