@@ -5,7 +5,9 @@ description: >-
   commit: have a `mu_delegate` call refute a claim, root cause, plan, fix or
   brief before you act on it. Also parallel read-only research, fan-out,
   background helpers, and persistent crews with a task DAG, review gates and
-  merges. Outside pi, delegate through the `scratch` workstream.
+  merges. Outside pi, delegate through the `scratch` workstream. Never write
+  mu's DB (no `sqlite3`, no raw SQL writes): read it with `mu sql "<SELECT>"`,
+  change it with a verb.
 ---
 
 # mu
@@ -13,20 +15,18 @@ description: >-
 Agents in tmux/herdr panes, coordinated by a SQLite task DAG. **`mu --help` and
 `mu <verb> --help` outrank this skill**; a verb they omit does not exist. A verb takes
 `-w <workstream>` only if its `--help` lists it (`doctor`, `sync`, `delegates
-show` do not); workers: injected.
+show` do not); workers get it.
 
 `--json` returns `{ok,data,next}`; errors come on stdout as
-`{ok:false,error,message,next,exit}`. `next` is null today; hints are in
+`{ok:false,error,message,next,exit}`. `next` is null; hints are in
 `data.nextSteps` (errors: top-level `nextSteps`). Collections are
 `{items,count}`; `agent list` is `{workstreamName,agents,orphans}`. Keys are SQL
-column names; `id` is the task's name. A capped reader names its way back
-(`more=N next=<command>`).
+column names; `id` is the task's name. A capped reader names its way back (`more=N next=<command>`).
 
-- **umbrella**: the parent task of a job, blocked by every unit; holds brief,
-  criteria and stop rule.
+- **umbrella**: a job's parent task, blocked by every unit; holds brief, criteria, stop rule.
 - **finding**: an `OPEN/triage` task. **verdict**: `VERDICT: <id>
   CONFIRMED|REFUTED|UNVERIFIED <line>` plus `EVIDENCE:`.
-- `mu task block A --by B`: B blocks A. Chain tasks that edit the same files.
+- `mu task block A --by B`: B blocks A. Chain tasks sharing files.
 
 ## Orchestrator rules
 
@@ -39,8 +39,7 @@ point: one per wave, then back to waiting. An error never means a
 human is needed. Ending a turn mid-run stalls the crew.
 <!-- /mu:keep-driving -->
 
-Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch.
-These hold regardless:
+Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Always:
 
 - **Claim before work is sent.** `agent spawn --task <id> --send ...` does both.
 - **Wait with `mu wait`, never `sleep` loops** (exits:
@@ -48,8 +47,8 @@ These hold regardless:
 - **A send that timed out is unknown, never resent**: `mu agent check <a> <msgId>`.
 - **New work to pi: `send --fresh`.** A running worker never sees a note: send
   ([modes](recipes/orchestrator-loop.md#sending)).
-- **`unknown` is not dead.** Read the pane and `mu doctor` before you release.
-- **Only `CLOSED/done` ships.** Verify the merged tree.
+- **`unknown` is not dead.** Read the pane and `mu doctor` first.
+- **Only `CLOSED/done` ships.** Verify the merge.
 - **Checks are calls, not tasks** ([tasks-or-calls](recipes/tasks-or-calls.md)).
   Before you act on a claim, cause, plan, fix or brief, have a recorded call
   refute it; rewrite on REFUTED.
@@ -62,7 +61,6 @@ These hold regardless:
 
 - `close --as rejected|wontfix --why` unblocks dependents; `park --why` keeps them waiting.
 - Prose goes through `-` and a quoted heredoc ([brief](recipes/brief.md)).
-- Model and checker family: [models](recipes/models.md).
 - Teardown, rebuild, sync, `doctor` DRIFT: [recovery](recipes/recovery.md) first.
 - Claimed for you: [worker](recipes/worker.md). Remote host:
   [remote-workers](recipes/remote-workers.md).

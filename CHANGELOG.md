@@ -12,6 +12,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- Skill: the description now carries the rule that mu's DB is read with `mu sql "<SELECT>"` and never written (every write is a verb); the release matrix showed `next` haiku writing raw `sqlite3` INSERTs in 6 of 9 reps because it never read the SKILL.md body. remote-workers: `--after-runs <n>` names its value (the spawn's printed `runs`, 0 fresh). Gate re-run in `docs/mu-next/eval/matrix-release.md`: 0 of 9 raw writes, `remote_spawn` 3/3.
 - **Help and guide wording from dogfood-3/4/switch** (`docs_final_p3`): `task close --why` says `done` takes `--evidence`; `task notes` says a newline prints as `\n`; `wait` help names `cursorCut` and that `resume` takes no other flags; a delegate answer without a `VERDICT:` line closes `answered with no VERDICT line`; the guides explain a worker's `close.applied:false`, Esc versus a later delegate answer, `--attempt` after a dead worker, and one Move pointer; the Move recipe says what to write when the last note is the brief.
 
 - **A delegate in a named workstream no longer closes its own task and loses its answer**

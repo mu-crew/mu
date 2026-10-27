@@ -10,7 +10,7 @@ mu host check dev
 mu agent spawn worker-1 -w <ws> --host dev --worktree --task <id> --send - <<'EOF'
 <brief>
 EOF
-mu agent wait worker-1 -w <ws> --after-runs <runs> --json   # lastText: its CLOSE block
+mu agent wait worker-1 -w <ws> --after-runs <n> --json   # n = the spawn's printed "runs" (0 fresh); lastText: its CLOSE block
 mu agent collect worker-1 -w <ws>   # run in the local repo
 mu task close <id> -w <ws> --evidence "<the block's evidence>"
 mu agent close worker-1 -w <ws> --if <rev>
