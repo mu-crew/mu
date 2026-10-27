@@ -19,7 +19,7 @@ export interface RunDashboardOptions {
   shutdown: Shutdown;
   /** `-w`; else the mux session's workstream; else the most recently active one. */
   initialWorkstream?: string;
-  /** Poll gap in ms (default 2000). */
+  /** The fast tick in ms (default 1000; `+`/`-` change it live). */
   pollMs?: number;
 }
 
@@ -42,7 +42,7 @@ export async function runDashboard(opts: RunDashboardOptions): Promise<void> {
       runtime,
       initialWorkstream:
         opts.initialWorkstream ?? (await resolveMuxSessionWorkstreamName()) ?? undefined,
-      pollMs: opts.pollMs ?? 2000,
+      pollMs: opts.pollMs ?? 1000,
     }),
     { alternateScreen: true, interactive: true },
   );

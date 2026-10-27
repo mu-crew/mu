@@ -168,6 +168,7 @@ describe("dashboard shell", () => {
       refresh: (q?: Parameters<typeof rt.refresh>[0]) =>
         ++calls === 1 ? rt.refresh(q) : Promise.reject(new Error("boom")),
       notes: rt.notes,
+      task: rt.task,
       close: rt.close,
     };
     const ui = await renderApp(

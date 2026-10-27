@@ -43,14 +43,16 @@ import {
 import type { DashboardQuery, DashboardRuntime } from "./runtime.js";
 import { cell, clean, fitLine, type Line, scrollTop } from "./text.js";
 import { type Seg, style } from "./theme.js";
-import { useSnapshot } from "./use-snapshot.js";
+import { fasterTick, slowerTick, useSnapshot } from "./use-snapshot.js";
 
 export interface AppProps {
   runtime: DashboardRuntime;
   /** The workstream to start on (the mux session's, or `-w`); else the most recently active. */
   initialWorkstream?: string;
-  /** Poll gap in ms; null loads once. */
+  /** The fast tick in ms (`+`/`-` change it live); null loads once. */
   pollMs: number | null;
+  /** The slow tier's gap (agent state, scrollback); default SLOW_TICK_MS. A test seam. */
+  slowMs?: number;
   /** The tab to open on (default: Overview). */
   initialTab?: TabId;
   /** Clock seam for elapsed times. */
@@ -82,11 +84,11 @@ export function layout(
 
 // `q quit` comes right after the tab keys: a narrow terminal cuts the hint from the right.
 const HINT_HEAD = `←/→ tab  q quit  [/] workstream  ${NAV_HINT} move`;
-const HINT_OVERVIEW = `${HINT_HEAD}  Enter open  y copy`;
-const HINT = `${HINT_HEAD}  Enter open  / filter  c clear  y copy`;
-const HINT_TASKS = `${HINT_HEAD}  Enter open  s sort  o status  / filter  c clear  y copy`;
+const HINT_OVERVIEW = `${HINT_HEAD}  Enter open  y copy  +/- rate`;
+const HINT = `${HINT_HEAD}  Enter open  / filter  c clear  y copy  +/- rate`;
+const HINT_TASKS = `${HINT_HEAD}  Enter open  s sort  o status  / filter  c clear  y copy  +/- rate`;
 const hintAgents = (attachKey: string): string =>
-  `${HINT_HEAD}  Enter scrollback  ${attachKey}  / filter  c clear  y copy`;
+  `${HINT_HEAD}  Enter scrollback  ${attachKey}  / filter  c clear  y copy  +/- rate`;
 
 /** The workstream labels as one line of `width` columns, scrolled so the selected one shows. */
 export function workstreamLine(labels: readonly string[], selected: number, width: number): string {
@@ -128,6 +130,7 @@ export function App({
   initialWorkstream,
   initialTab = "overview",
   pollMs,
+  slowMs,
   now = Date.now,
   runStep = spawnStep,
 }: AppProps) {
@@ -151,6 +154,9 @@ export function App({
   const [views, setViews] = useState<Record<string, View>>({});
   const [editing, setEditing] = useState<{ before: string } | null>(null);
   const tops = useRef<Record<string, number>>({});
+  // The cursor's last index per scope: a row that leaves the list hands the cursor to its neighbour.
+  const lastSel = useRef<Record<string, number>>({});
+  const [tick, setTick] = useState(pollMs);
 
   // The Tasks status filter and the Log's workstream are what the data layer applies,
   // so they are the query; text filters and the other tabs' scoping are client-side.
@@ -161,7 +167,7 @@ export function App({
     // The Log tail is read per workstream: a quiet one must not vanish behind a busy one's 100 ops.
     ...(chosen !== null ? { logWorkstream: chosen } : {}),
   };
-  const state = useSnapshot(runtime, query, pollMs);
+  const state = useSnapshot(runtime, query, tick, slowMs);
   const snap: DashboardSnapshot | null = state.snapshot;
 
   const names = snap?.workstreams ?? [];
@@ -183,8 +189,9 @@ export function App({
   // The data area is framed when it has room for a border and a row; else bare rows.
   const framed = !overview && area > FRAME_CHROME && columns > FRAME_SIDES + 2;
   const height = framed ? area - FRAME_CHROME : area;
-  const sel = cursorIndex(all, view.cursor, tab);
   const scope = scopeKey(tab, ws);
+  const sel = cursorIndex(all, view.cursor, tab, lastSel.current[scope]);
+  lastSel.current[scope] = sel;
   const top = scrollTop(tops.current[scope] ?? 0, sel, all.length, height);
   tops.current[scope] = top;
 
@@ -195,7 +202,8 @@ export function App({
     });
   const setFilter = (change: Partial<Filter>): void =>
     patch({ filter: { ...view.filter, ...change }, cursor: null });
-  const move = (delta: number): void => patch({ cursor: moveCursor(all, view.cursor, tab, delta) });
+  const move = (delta: number): void =>
+    patch({ cursor: moveCursor(all, view.cursor, tab, delta, lastSel.current[scope]) });
   // Pin the default row: with no cursor yet (first view, or a filter just reset it) the
   // cursor is index 0 of whatever is listed NOW, and a later poll that reorders by
   // activity must not carry it to another task. Log keeps null: its default is the
@@ -278,6 +286,7 @@ export function App({
       if (key.tab || key.rightArrow || key.leftArrow) {
         const back = key.leftArrow || (key.tab && key.shift);
         setTab((cycle(ids, tab, back ? -1 : 1) ?? tab) as TabId);
+        state.refresh(); // 3.x: a tab switch fetches eagerly, agent states included
       } else if (input === "[" || input === "]") {
         const next = cycle(
           names.map((w) => w.name),
@@ -298,7 +307,11 @@ export function App({
           ...(tab === "tasks" ? { status: "active" as const, sort: "activity" as const } : {}),
         });
       else if (input === "r") state.refresh();
-      else if (key.return) {
+      else if ((input === "+" || input === "=" || input === "-") && tick !== null) {
+        const next = input === "-" ? slowerTick(tick) : fasterTick(tick);
+        setTick(next);
+        setFlash(`refresh every ${next >= 1000 ? `${next / 1000}s` : `${next}ms`}`);
+      } else if (key.return) {
         const target = all[sel]?.drill;
         if (target !== undefined) setDrill({ target, notice: [] });
       } else if (input === "a" && tab === "agents") {
@@ -373,6 +386,8 @@ export function App({
         strip={strip}
         runtime={runtime}
         busy={busy}
+        nonce={state.nonce}
+        slowNonce={state.slowNonce}
         onClose={() => setDrill(null)}
         onAttach={(t) => void attach(t)}
       />

@@ -497,10 +497,20 @@ export function tabRows(
   }
 }
 
-/** Index of the cursor: its key when still listed, else the tab default (Log: the newest row). */
-export function cursorIndex(rows: readonly Row[], key: string | null, tab: TabId): number {
+/**
+ * Index of the cursor: its key when still listed. A key that left the list (closed,
+ * deleted, filtered) lands on its neighbour: `was`, the index it last had, clamped.
+ * No key: the tab default (Log: the newest row).
+ */
+export function cursorIndex(
+  rows: readonly Row[],
+  key: string | null,
+  tab: TabId,
+  was?: number,
+): number {
   const i = key === null ? -1 : rows.findIndex((r) => r.key === key);
   if (i >= 0) return i;
+  if (key !== null && was !== undefined) return Math.max(0, Math.min(was, rows.length - 1));
   return tab === "log" ? Math.max(0, rows.length - 1) : 0;
 }
 
@@ -510,8 +520,9 @@ export function moveCursor(
   key: string | null,
   tab: TabId,
   delta: number,
+  was?: number,
 ): string | null {
   if (rows.length === 0) return null;
-  const i = Math.max(0, Math.min(rows.length - 1, cursorIndex(rows, key, tab) + delta));
+  const i = Math.max(0, Math.min(rows.length - 1, cursorIndex(rows, key, tab, was) + delta));
   return rows[i]?.key ?? null;
 }

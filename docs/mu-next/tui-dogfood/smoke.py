@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Smoke every scenario through a PTY: it must seed, launch, render and quit cleanly.
-   python3 smoke.py [N ... | fill | stable | drill]   (default: all three kinds). Exit 0 = all green.
+   python3 smoke.py [N ... | fill | stable | drill | live]   (default: scenarios + fill, stable, drill). Exit 0 = all green.
      N       scenario N seeds, renders, takes keys, quits 0, leaves no tmux server
      fill    s2 s4 s5 s7 at 200x50, 120x40, 80x24, every tab, read off a private tmux screen:
              row 3 is the attention strip (s4: "⚠ N need you"); the last row is the hint; a frame reaches the bottom body row (tabs always, an
              Overview column whenever one of its cards says "+N more")
      stable  s6, two screens 5 s apart: the second column of Tasks and of Log starts at the same x
      drill   s2 at 120x40 and 80x24: Enter on a Tasks row and on a DAG row opens the notes, strip on row 2, hint on the last row
+     live    (opt-in) every view updates from another process with no key: per-view latency, idle and s6 CPU
    Needs a built checkout. Set MU_DOGFOOD_DIR to keep the scratch DBs somewhere short."""
 import os, pty, re, select, struct, fcntl, termios, subprocess, sys, time, signal
 
@@ -213,6 +214,144 @@ def stable_check():
         scr.kill()
     return bad
 
+def live_check():
+    """Every view updates from another process with no key press (tui_live_updates): s2 driven by
+    the CLI from here, one change per view, each timed from the write to the screen showing it.
+    DB changes must show within 1 s (fast tick), agent state and scrollback within one slow tick
+    (10 s, as 3.x). Then idle CPU over 60 s, and s6 (the mutator): a note appears in an open drill."""
+    scr = Screen(2, 160, 45)
+    bad = 0
+    d = os.path.join(os.environ.get("MU_DOGFOOD_DIR", "/var/tmp/mu-dogfood"), "s2")
+    env = {**os.environ, "MU_DB_PATH": os.path.join(d, "mu.db"), "MU_STATE_DIR": d, "MU_SYNC_DIR": "",
+           "MU_TMUX_SOCKET": "mudf-2", "MU_MUX": "tmux"}
+    for v in [k for k in env if k.startswith("MU_AGENT") or k in ("MU_SESSION", "TMUX_PANE", "PI_SESSION_ID")]:
+        env.pop(v, None)
+    CLI = os.path.realpath(os.path.join(HERE, "../../../dist/cli.js"))
+    cli = lambda *a, extra={}: subprocess.run(["node", CLI, *a], env={**env, **extra}, capture_output=True, text=True)
+    def timed(name, change, seen, budget):
+        """The write commits somewhere between the CLI's start and its exit, so the latency is
+        reported as a range [screen - exit, screen - start]; the budget holds the lower end
+        plus nothing else: node's own startup (~0.4 s) is not the dashboard's."""
+        nonlocal bad
+        t0 = time.time(); r = change(); t1 = time.time()
+        if r is not None and r.returncode != 0:
+            print(f"live {name}: FAIL the change failed: {r.stderr.strip()[:200]}"); bad += 1; return
+        end = t1 + budget + 2
+        while time.time() < end:
+            if seen(scr.grab()):
+                t2 = time.time(); ok = t2 - t1 <= budget; bad += not ok
+                print(f"live {name}: {'OK ' if ok else 'FAIL'} {t2 - t1:.2f}s after the write returned"
+                      f" ({t2 - t0:.2f}s incl. the CLI; budget {budget}s)"); return
+            time.sleep(0.05)
+        bad += 1; print(f"live {name}: FAIL not seen within {budget + 2}s")
+    has = lambda text: (lambda ls: any(text in l for l in ls))
+    def col(ls, word):
+        return next((m.start() for l in ls if (m := re.search(rf"\b{word}\b", l))), -1)
+    try:
+        if not scr.wait("Overview"):
+            print("live s2: FAIL never rendered"); return 1
+        time.sleep(1.5)
+        W = ("-w", "shop-api")
+        # Overview: attention strip appears (a human-needed task) and the Next line changes (auto off).
+        timed("Overview strip appears", lambda: cli("human-needed", "pick a release date", *W, extra={"PI_SESSION_ID": "smoke"}),
+              has("1 need you"), 1)
+        timed("Next line changes", lambda: cli("task", "auto", "perf", "--off", *W), has("next: no authorised work"), 1)
+        hid = cli("task", "list", *W, "--json")
+        try:
+            import json as _j
+            rows = _j.loads(hid.stdout); rows = rows.get("data", rows) if isinstance(rows, dict) else rows
+            rows = rows.get("items", rows) if isinstance(rows, dict) else rows
+            human = next((t.get("id") or t.get("name") for t in rows if (t.get("kind") == "human")), None)
+        except Exception:
+            human = None
+        if human:
+            timed("Overview strip clears", lambda: cli("task", "close", human, *W, "--as", "wontfix", "--why", "smoke"),
+                  has("all quiet"), 1)
+        else:
+            bad += 1; print("live Overview strip clears: FAIL no human task id found")
+        scr.keys("Right")  # Tasks
+        timed("Tasks row add", lambda: cli("task", "add", "live1", "-t", "Added from the second shell", *W),
+              has("Added from the second shell"), 1)
+        timed("Tasks row close", lambda: cli("task", "close", "live1", *W, "--as", "wontfix", "--why", "smoke"),
+              lambda ls: not has("Added from the second shell")(ls), 1)
+        scr.keys("Right")  # DAG
+        cli("task", "add", "live2", "-t", "Live edge target", *W); time.sleep(1.2)
+        timed("DAG edge add", lambda: cli("task", "block", "live2", "--by", "perf", *W),
+              lambda ls: col(ls, "live2") > col(ls, "perf") >= 0, 1)  # now indented under its blocker
+        scr.keys("Right")  # Agents
+        scr.keys("Enter")  # worker-1's scrollback
+        scr.wait("Scrollback  shop-api/worker-1", 5); time.sleep(0.5)
+        timed("Scrollback new lines", lambda: cli("agent", "send", "worker-1", "streamed from the second shell", *W),
+              has("streamed from the second"), 10)
+        scr.keys("Escape")
+        # The registry row (agent list reconciles against the live mux and would read none here).
+        import sqlite3
+        con = sqlite3.connect(f"file:{env['MU_DB_PATH']}?mode=ro", uri=True)
+        row = con.execute("SELECT pane_id FROM agents WHERE name = 'worker-3'").fetchone(); con.close()
+        pane = row[0] if row else None
+        if pane:  # the agent's process dies: busy -> dead (unknown, pane gone) and the strip says so
+            timed("Agents state flip (worker-3 dies)",
+                  lambda: subprocess.run(["tmux", "-L", "mudf-2", "kill-pane", "-t", pane], capture_output=True),
+                  lambda ls: any(re.search(r"worker-3 .*unknown", l) for l in ls), 10)
+        else:
+            bad += 1; print("live Agents state flip: FAIL worker-3's pane not found")
+        scr.keys("Right")  # Log
+        timed("Log row add", lambda: cli("task", "note", "perf", "log line from the second shell", *W),
+              has("log line from the second"), 1)
+        scr.keys("Left", "Left", "Left", "Down")  # Tasks, a row
+        scr.keys("Enter"); time.sleep(0.8)
+        title = next((l for l in scr.grab() if l.startswith("Notes  shop-api/")), "")
+        tid = title.split("/")[1].split()[0] if "/" in title else "perf"
+        timed("Notes drill new note", lambda: cli("task", "note", tid, "note appended live", *W),
+              has("note appended live"), 1)
+        scr.keys("Escape")  # back on Tasks: nothing on it changes while idle
+        time.sleep(2)
+        pid = subprocess.run(["pgrep", "-f", f"{CLI} -w shop-api"], capture_output=True, text=True).stdout.split()
+        if pid:
+            cpu = lambda: sum(int(x) for x in open(f"/proc/{pid[0]}/stat").read().rsplit(")", 1)[1].split()[11:13])
+            def share(sec):
+                c0, t0 = cpu(), time.time(); time.sleep(sec); c1, t1 = cpu(), time.time()
+                return (c1 - c0) / os.sysconf("SC_CLK_TCK") / (t1 - t0) * 100
+            pct = share(60); ok = pct < 2; bad += not ok
+            print(f"live idle CPU s2 Tasks 60s (no change on screen): {'OK ' if ok else 'FAIL'} {pct:.2f}% of one core (budget 2%)")
+            scr.keys("Left")  # Overview: two busy agents' tool clocks tick every second (a real change)
+            print(f"live CPU s2 Overview 30s (tool clocks ticking; reported, no budget): {share(30):.2f}% of one core")
+        else:
+            bad += 1; print("live idle CPU: FAIL dashboard pid not found")
+    finally:
+        scr.tmux("send-keys", "-t", "s", "q"); time.sleep(0.5); scr.tmux("send-keys", "-t", "s", "q"); time.sleep(0.5)
+        scr.kill()
+    # s6: the mutator notes IN_PROGRESS tasks every 2-5 s; an open drill on one must grow without a key.
+    scr = Screen(6, 160, 45)
+    try:
+        if not scr.wait("Overview"):
+            print("live s6: FAIL never rendered"); return bad + 1
+        time.sleep(1.5)
+        scr.keys("Right")
+        scr.tmux("send-keys", "-t", "s", "o"); time.sleep(0.4); scr.tmux("send-keys", "-t", "s", "o"); time.sleep(0.8)  # in_progress
+        scr.keys("Enter"); time.sleep(0.8)
+        before = sum("progress " in l for l in scr.grab())
+        # The mutator notes a RANDOM in-progress task 1 tick in 4 (every 2-5 s): give it 90 s to hit this one.
+        end, seen = time.time() + 90, False
+        while time.time() < end and not seen:
+            seen = sum("progress " in l for l in scr.grab()) > before
+            time.sleep(0.2)
+        bad += not seen
+        title = next((l for l in scr.grab() if l.startswith("Notes  ")), "?")
+        print(f"live s6 drill grows from the mutator: {'OK ' if seen else 'FAIL'} ({title.split('  ')[1] if '  ' in title else title})")
+        pid = subprocess.run(["pgrep", "-f", "-n", f"{os.path.realpath(os.path.join(HERE, '../../../dist/cli.js'))} -w live-demo"],
+                             capture_output=True, text=True).stdout.split()
+        if pid:
+            cpu = lambda: sum(int(x) for x in open(f"/proc/{pid[0]}/stat").read().rsplit(")", 1)[1].split()[11:13])
+            scr.keys("Escape", "Left"); c0, t0 = cpu(), time.time(); time.sleep(30); c1, t1 = cpu(), time.time()
+            pct = (c1 - c0) / os.sysconf("SC_CLK_TCK") / (t1 - t0) * 100
+            ok = pct < 10; bad += not ok
+            print(f"live busy CPU s6 30s: {'OK ' if ok else 'FAIL'} {pct:.2f}% of one core (budget 10%)")
+    finally:
+        scr.tmux("send-keys", "-t", "s", "q"); time.sleep(0.5); scr.tmux("send-keys", "-t", "s", "q"); time.sleep(0.5)
+        scr.kill()
+    return bad
+
 args = sys.argv[1:]
 nums = [int(a) for a in args if a.isdigit()]
 kinds = [a for a in args if not a.isdigit()]
@@ -232,4 +371,5 @@ for n in scen:
 if not args or "fill" in kinds: bad += fill_check()
 if not args or "stable" in kinds: bad += stable_check()
 if not args or "drill" in kinds: bad += drill_check()
+if "live" in kinds: bad += live_check()  # ~3 min (60 s idle CPU): opt-in
 sys.exit(1 if bad else 0)

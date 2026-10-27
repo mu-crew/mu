@@ -25,6 +25,11 @@ export function openDashboardOrHelp(program: Command): () => Promise<void> {
   const run = handle(
     (syncDb) =>
       withShutdown(syncDb, async (shutdown) => {
+        // React's development build costs ~10x per render (measured: ~4% of a core idle
+        // with a ticking tool clock); the dashboard runs the production one unless the
+        // caller chose otherwise. Set before the lazy import: react reads it at load.
+        const key = "NODE_ENV";
+        process.env[key] ??= "production";
         const { runDashboard } = await import("./tui/index.js");
         const first = (program.opts() as { workstream?: string[] }).workstream?.[0];
         await runDashboard({ dbPath: defaultDbPath(), syncDb, shutdown, initialWorkstream: first });
