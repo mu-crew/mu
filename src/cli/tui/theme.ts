@@ -67,7 +67,7 @@ export interface Seg {
 }
 
 /** Colour is on unless NO_COLOR is set (read per call so a test can flip it). */
-export const colorOn = (): boolean => process.env.NO_COLOR === undefined;
+const colorOn = (): boolean => process.env.NO_COLOR === undefined;
 
 /** The ink props for `role`, without colour under NO_COLOR. */
 export function style(role: Role = "text"): TextStyle {

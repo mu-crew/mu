@@ -10,6 +10,8 @@ import { openDb } from "../src/db.js";
 import { rmFixtureDir } from "./_fs.js";
 
 const gate = vi.hoisted(() => ({
+  warnings: [] as string[],
+  seen: [] as unknown[],
   active: 0,
   peak: 0,
   started: [] as string[],
@@ -25,7 +27,8 @@ async function held(label: string): Promise<void> {
 
 vi.mock("../src/dashboard-data.js", async (orig) => ({
   ...(await orig<typeof import("../src/dashboard-data.js")>()),
-  loadDashboard: async () => {
+  loadDashboard: async (_db: unknown, opts: { syncWarnings?: readonly string[] }) => {
+    gate.seen.push(opts.syncWarnings);
     await held("project");
     return {} as never;
   },
@@ -35,7 +38,7 @@ vi.mock("../src/sync.js", async (orig) => ({
   syncEnabled: () => true,
   ambientIngest: async () => {
     await held("ingest");
-    return { warnings: [] } as never;
+    return { warnings: gate.warnings } as never;
   },
 }));
 
@@ -58,6 +61,8 @@ describe("dashboard runtime serialization", () => {
     gate.active = gate.peak = 0;
     gate.started = [];
     gate.waiting = [];
+    gate.warnings = [];
+    gate.seen = [];
   });
   afterEach(() => rmFixtureDir(tmp));
 
@@ -81,6 +86,39 @@ describe("dashboard runtime serialization", () => {
       await second;
       expect(gate.started).toHaveLength(4);
       expect(gate.peak).toBe(1);
+    } finally {
+      await rt.close();
+      syncDb.close();
+    }
+  });
+
+  it("a sync warning stays in the projection until the next ingest replaces it", async () => {
+    const syncDb = openDb({ path: join(tmp, "a.db") });
+    let clock = 0;
+    const rt = createRuntime({
+      dbPath: join(tmp, "a.db"),
+      syncDb,
+      caller: null,
+      syncEveryMs: 10_000,
+      now: () => clock,
+    });
+    const one = async (): Promise<readonly string[]> => {
+      const run = rt.refresh({});
+      for (let i = 0; i < 4; i++) {
+        await settle();
+        gate.waiting.shift()?.();
+      }
+      return (await run).warnings;
+    };
+    try {
+      gate.warnings = ["peer x unreadable"];
+      expect(await one()).toEqual(["peer x unreadable"]); // the ingest tick
+      clock += 1000;
+      gate.warnings = []; // not asked again: no ingest is due
+      expect(await one()).toEqual(["peer x unreadable"]); // a later fast tick still carries it
+      clock += 10_000;
+      expect(await one()).toEqual([]); // a clean ingest clears it
+      expect(gate.seen).toEqual([["peer x unreadable"], ["peer x unreadable"], []]);
     } finally {
       await rt.close();
       syncDb.close();

@@ -385,6 +385,43 @@ describe("log: the canonical op tail, rendered by the one formatter", () => {
   });
 });
 
+describe("scopeWorkstream: the shown workstream's tasks, everything else machine-wide", () => {
+  it("reads tasks, edges and frontier of that workstream only; agents and attention stay global", async () => {
+    ensureWorkstream(db, "other");
+    task("a");
+    task("b", {}, "other");
+    task("c", {}, "other");
+    addBlockEdge(db, "other", "b", "c");
+    insertAgent(db, { name: "dead", workstream: "other", paneId: "%9" });
+    recordHumanNeeded(db, { workstream: "other", caller: "pi:s2", reason: "fx policy" });
+    const snap = await loadDashboard(db, { caller: null, scopeWorkstream: "ws" });
+    expect(keys(snap)).toEqual(["ws/a"]);
+    expect(new Set(snap.edges.map((e) => e.workstream))).toEqual(new Set(["ws"]));
+    expect(snap.frontier.map((f) => f.workstream)).toEqual(["ws"]);
+    expect(snap.agents.map((a) => a.key)).toEqual(["other/dead"]);
+    expect(snap.workstreams.map((w) => w.name)).toEqual(["other", "ws"]);
+    expect(snap.attention.map((a) => a.key).sort()).toEqual([
+      "dead:other/dead",
+      expect.stringMatching(/^human:other\//),
+    ]);
+  });
+
+  it("null reads no tasks; a name that is not live reads none and does not throw", async () => {
+    task("a");
+    expect(keys(await loadDashboard(db, { caller: null, scopeWorkstream: null }))).toEqual([]);
+    expect(keys(await loadDashboard(db, { caller: null, scopeWorkstream: "gone" }))).toEqual([]);
+  });
+
+  it("an IN_PROGRESS task claimed by another workstream's agent still shows its owner", async () => {
+    ensureWorkstream(db, "other");
+    insertAgent(db, { name: "w", workstream: "other", paneId: "%1" });
+    task("a");
+    await claimTask(db, "a", { agentName: "w", workstream: "ws", agentWorkstream: "other" });
+    const snap = await loadDashboard(db, { caller: null, scopeWorkstream: "ws" });
+    expect(snap.agents.find((a) => a.key === "other/w")?.tasks).toEqual(["ws/a"]);
+  });
+});
+
 describe("next: computeNext, the CLI's rule set", () => {
   it("equals computeNext for the same callers and scope; null is computed, not unavailable", async () => {
     task("a");
@@ -619,9 +656,9 @@ describe("attention: trouble across every workstream, filters ignored", () => {
     await serve("ws", "fine", { tool: { name: "bash", since: now - 60_000 } });
     const snap = await loadDashboard(db, { caller: null });
     expect(kinds(snap)).toEqual([
-      "permission:perm permission 20m",
-      "stalled:slow bash 3h",
-      "input:idle input 30m",
+      "permission:perm permission 20m00s",
+      "stalled:slow bash 3h00m",
+      "input:idle input 30m00s",
     ]);
     expect(snap.attention.map((a) => a.target)).toEqual(["ws/perm", "ws/slow", "ws/idle"]);
   });

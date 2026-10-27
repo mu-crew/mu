@@ -72,7 +72,7 @@ afterEach(async () => {
 const add = (id: string, title = `title ${id}`): void => {
   addTask(db, { workstream: "ws", localId: id, title, impact: 50, effortDays: 1 });
 };
-const open = (opts: { tab?: "tasks" | "agents" | "overview"; slowMs?: number } = {}) => {
+const open = (opts: { tab?: "tasks" | "agents" | "overview" | "log"; slowMs?: number } = {}) => {
   rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
   return renderApp(
     createElement(App, {
@@ -102,8 +102,8 @@ describe("tick control and the key", () => {
   it("the key ignores a running tool's sub-second elapsed time (the unit shown is seconds)", () => {
     const snap = (ms: number) =>
       ({ agents: [{ tool: { name: "bash", since: 0, elapsed_ms: ms } }] }) as never;
-    expect(snapshotKey(snap(1200), [])).toBe(snapshotKey(snap(1900), []));
-    expect(snapshotKey(snap(1900), [])).not.toBe(snapshotKey(snap(2100), []));
+    expect(snapshotKey(snap(1200))).toBe(snapshotKey(snap(1900)));
+    expect(snapshotKey(snap(1900))).not.toBe(snapshotKey(snap(2100)));
   });
 });
 
@@ -134,6 +134,43 @@ describe("lists are live", () => {
     add("t2");
     await ui.until((s) => s.includes("t2"));
     expect(ui.writes().length).toBeGreaterThan(before);
+    ui.unmount();
+  });
+});
+
+describe("the selected workstream is torn down", () => {
+  it("the row, the query and the Log move to the same workstream (not 0 rows forever)", async () => {
+    ensureWorkstream(db, "other");
+    add("t1");
+    addTask(db, { workstream: "other", localId: "zz9", title: "other", impact: 50, effortDays: 1 });
+    const ui = await open({ tab: "log" });
+    await ui.until((s) => s.includes("[ws]") && s.includes("t1"));
+    db.prepare(
+      "UPDATE workstreams SET torn_down_at = '2026-01-01T00:00:00Z' WHERE name = 'ws'",
+    ).run();
+    await ui.until((s) => s.includes("[other]"));
+    await ticks(10);
+    await ui.until((s) => s.includes("zz9"));
+    expect(ui.screen()).not.toContain("0 rows");
+    ui.unmount();
+  });
+});
+
+describe("the pick after a teardown is the most recently active", () => {
+  it("falls back to the busiest remaining workstream, not the first by name", async () => {
+    ensureWorkstream(db, "aaa");
+    ensureWorkstream(db, "zzz");
+    addTask(db, { workstream: "aaa", localId: "a1", title: "quiet", impact: 1, effortDays: 1 });
+    addTask(db, { workstream: "zzz", localId: "z1", title: "busy", impact: 1, effortDays: 1 });
+    const ui = await open({ tab: "tasks" });
+    await ui.until((s) => s.includes("[ws]"));
+    db.prepare(
+      "UPDATE workstreams SET torn_down_at = '2026-01-01T00:00:00Z' WHERE name = 'ws'",
+    ).run();
+    await ui.until((s) => s.includes("[zzz]"));
+    await ticks(10);
+    expect(ui.screen()).toContain("[zzz]");
+    expect(ui.screen()).toContain("busy");
     ui.unmount();
   });
 });
@@ -228,6 +265,22 @@ describe("drills are live", () => {
 });
 
 describe("runtime tiers", () => {
+  it("latest_seq (one log scan per workstream, it only ranks the start pick) is read when the live set changes, not per tick", async () => {
+    ensureWorkstream(db, "other");
+    add("a");
+    rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
+    const seqs = async (): Promise<number[]> =>
+      (await rt?.refresh({ scopeWorkstream: "ws" }))?.snapshot.workstreams.map(
+        (w) => w.latest_seq,
+      ) ?? [];
+    expect((await seqs()).every((n) => n > 0)).toBe(true); // first read: ranked
+    expect(await seqs()).toEqual([0, 0]); // steady state: skipped
+    db.prepare(
+      "UPDATE workstreams SET torn_down_at = '2026-01-01T00:00:00Z' WHERE name = 'other'",
+    ).run();
+    expect((await seqs()).every((n) => n > 0)).toBe(true); // the set changed: ranked again
+  });
+
   it("a fast refresh reads agent state from the slow tier's cache", async () => {
     insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1" });
     rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });

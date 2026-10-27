@@ -129,6 +129,20 @@ describe("dashboard screen", () => {
     ui.unmount();
   });
 
+  it("the Tasks status filter is the Tasks tab's alone: Overview keeps its open work and the human drill", async () => {
+    const ui = await open(120, 40, "tasks");
+    await ui.until((s) => s.includes("╭─ Tasks"));
+    for (let i = 0; i < 3; i++) await ui.press("o"); // active -> open -> in_progress -> closed
+    await ui.until((s) => s.includes("status: closed") && s.includes("nothing here"));
+    await ui.press("\u001b[D"); // left: Overview
+    await ui.until((s) => s.includes("Open · by ROI") && s.includes("t29"));
+    expect(ui.screen()).not.toContain("nothing open");
+    await ui.until((s) => s.includes("> human: decide"));
+    await ui.press("\r");
+    await ui.until((s) => s.includes("decide the fx policy") && !s.includes("Attention"));
+    ui.unmount();
+  });
+
   it("Enter on an attention item opens that task's notes", async () => {
     const ui = await open(120, 40);
     await ui.until((s) => s.includes("> human: decide"));

@@ -5,8 +5,7 @@
 //   │ worker-1  busy         │
 //   ╰─ +2 more ──────────────╯
 //
-// `frameLines` is pure text so a test can pin the geometry; `<Frame>` draws the
-// same lines in theme roles (gray border, bold cyan title, dim subtitle and
+// `<Frame>` draws it in theme roles (gray border, bold cyan title, dim subtitle and
 // bottom note; the cursor row solid inverse). Always `height` lines tall.
 
 import { Box, Text } from "ink";
@@ -32,8 +31,8 @@ export interface FrameSpec {
   bottom?: string;
 }
 
-/** A border line split around its label: `╭─ ` + label + ` ───╮`. */
-function borderParts(
+/** A border line split around its label: `╭─ ` + label + ` ───╮`, the label cut to fit and a dash always kept. */
+export function borderParts(
   width: number,
   left: string,
   right: string,
@@ -47,34 +46,6 @@ function borderParts(
   const shown = stringWidth(text) <= room ? text : cell(text, room).trimEnd();
   const fill = "─".repeat(Math.max(1, inner - 3 - stringWidth(shown)));
   return { head: `${left}─ `, shown, tail: ` ${fill}${right}` };
-}
-
-/** A border line: `╭─ label ───╮`, the label cut to fit, the fill at least one dash. */
-export function borderLine(width: number, left: string, right: string, label: string): string {
-  const { head, shown, tail } = borderParts(width, left, right, label);
-  return head + shown + tail;
-}
-
-/** The three parts of a frame; `rows` are the bodies between the side borders. */
-export function frameParts(
-  spec: FrameSpec,
-  body: ReadonlyArray<string>,
-): { top: string; rows: string[]; bottom: string } {
-  const label = spec.subtitle ? `${spec.title} · ${spec.subtitle}` : spec.title;
-  const rows = Math.max(0, spec.height - FRAME_CHROME);
-  const room = Math.max(0, spec.width - FRAME_SIDES);
-  return {
-    top: borderLine(spec.width, "╭", "╮", label),
-    rows: Array.from({ length: rows }, (_, i) => cell(body[i] ?? "", room)),
-    bottom: borderLine(spec.width, "╰", "╯", spec.bottom ?? ""),
-  };
-}
-
-/** The frame as exactly `height` lines of exactly `width` columns; `body` is cut or padded to fit. */
-export function frameLines(spec: FrameSpec, body: ReadonlyArray<string>): string[] {
-  if (spec.height < FRAME_CHROME || spec.width < FRAME_SIDES) return [];
-  const { top, rows, bottom } = frameParts(spec, body);
-  return [top, ...rows.map((r) => `│ ${r} │`), bottom];
 }
 
 export interface FrameProps extends FrameSpec {

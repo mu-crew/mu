@@ -14,12 +14,13 @@ import type {
   DashboardSnapshot,
   DashboardTask,
 } from "../../dashboard-data.js";
+import { formatElapsed, matches } from "../../dashboard-data.js";
 import { KNOWN_VERBS } from "../../log-render.js";
 import {
-  DEFAULT_SUBSTATE,
-  isTaskStatus,
+  formatPair,
   TASK_STATUSES,
   TASK_SUBSTATES,
+  type TaskPair,
   type TaskStatus,
 } from "../../tasks/status.js";
 import { type ColumnSpec, columnWidths, GUTTER, renderCells } from "./columns.js";
@@ -48,16 +49,14 @@ export interface Row {
   line: Line;
   /** Enter opens this; absent = nothing to open. */
   drill?: DrillTarget;
-  /** Not a cursor stop's data (a cut notice): shown, never filtered out. */
-  notice?: boolean;
 }
 
 /** Task status filter, cycled with `o`. `active` is the dashboard default (CLOSED hidden). */
-export const STATUS_LABELS = ["active", "open", "in_progress", "closed", "all"] as const;
+const STATUS_LABELS = ["active", "open", "in_progress", "closed", "all"] as const;
 export type StatusLabel = (typeof STATUS_LABELS)[number];
 
 /** Task order, cycled with `s` (Tasks tab only): newest activity (default), ROI, oldest first, id. */
-export const SORT_LABELS = ["activity", "roi", "age", "id"] as const;
+const SORT_LABELS = ["activity", "roi", "age", "id"] as const;
 export type SortLabel = (typeof SORT_LABELS)[number];
 
 /** The filter line's name for a sort: the arrow points at what comes first. */
@@ -127,16 +126,17 @@ export function nextLine(snap: DashboardSnapshot): string {
   return `next (${snap.next.mode}): ${snap.next.commands.join(" ; ")}`;
 }
 
-function textMatch(text: string, ...fields: (string | null | undefined)[]): boolean {
-  if (text === "") return true;
-  const needle = text.toLowerCase();
-  return fields.some((f) => f?.toLowerCase().includes(needle) === true);
-}
+/** `OPEN`, `OPEN/parked`: the CLI's `formatPair` over the snapshot's string columns. */
+export const statusText = (status: string, substate: string): string =>
+  substate === "" ? status : formatPair({ status, substate } as TaskPair);
 
-function statusText(status: string, substate: string): string {
-  const dflt = isTaskStatus(status) ? DEFAULT_SUBSTATE[status] : undefined;
-  return substate === "" || substate === dflt ? status : `${status}/${substate}`;
-}
+const scrollbackOf = (a: DashboardAgent): DrillTarget => ({
+  kind: "scrollback",
+  workstream: a.workstream,
+  name: a.name,
+  paneId: a.pane_id,
+  tab: a.tab,
+});
 
 // Column widths come from the SNAPSHOT (every row of the workstream), never from the
 // filtered or scrolled rows, so typing a filter or a poll never moves a column. A
@@ -226,7 +226,7 @@ function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] 
   const inWs = snap.tasks.filter((t) => t.workstream === ws);
   const tasks = sortTasks(
     inWs.filter(
-      (t) => statuses.includes(t.status) && textMatch(f.text, t.key, t.title, t.owner, t.substate),
+      (t) => statuses.includes(t.status) && matches(f.text, t.key, t.title, t.owner, t.substate),
     ),
     f.sort,
   );
@@ -260,9 +260,8 @@ function edgeNotes(e: DashboardEdge): string {
   return notes.length > 0 ? `  (${notes.join(", ")})` : "";
 }
 
-/** A cut notice: shown in the warning role, never filtered out. */
-const notice = (key: string, text: string): Row =>
-  rowOf(key, [{ text, role: "warn" }], { notice: true });
+/** A cut notice: a row in the warning role that `dagRows` never filters out. */
+const notice = (key: string, text: string): Row => rowOf(key, [{ text, role: "warn" }]);
 
 /** The id cell carries the tree indent: the protected column that shows the shape. */
 const edgeId = (e: DashboardEdge): string => `${"  ".repeat(e.depth)}${e.id}`;
@@ -283,7 +282,7 @@ function dagRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
     specs,
   );
   for (const e of mine) {
-    if (textMatch(f.text, e.key, e.title, e.substate)) {
+    if (matches(f.text, e.key, e.title, e.substate)) {
       rows.push(
         rowOf(
           `${e.parent ?? ""}>${e.key}`,
@@ -328,14 +327,6 @@ function dagRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
   return rows;
 }
 
-export function formatElapsed(ms: number): string {
-  const s = Math.max(0, Math.floor(ms / 1000));
-  if (s < 60) return `${s}s`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m${String(s % 60).padStart(2, "0")}s`;
-  return `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}m`;
-}
-
 /** Running tool + elapsed; `-` = none running; an agent whose tool is not reported is `?` (unknown), never "none". */
 function toolText(a: DashboardAgent, now: number): string {
   if (a.tool === undefined) return "tool ?";
@@ -346,7 +337,7 @@ function toolText(a: DashboardAgent, now: number): string {
 
 function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: number): Row[] {
   const mine = snap.agents.filter((a) => a.workstream === ws);
-  const agents = mine.filter((a) => textMatch(f.text, a.key, a.state, a.tool?.name, ...a.tasks));
+  const agents = mine.filter((a) => matches(f.text, a.key, a.state, a.tool?.name, ...a.tasks));
   // The tab shows one workstream: a bare name, the host in its own column (`local` =
   // none), and a task of another workstream keeps its qualifier.
   const taskOf = (a: DashboardAgent): string =>
@@ -381,15 +372,7 @@ function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: n
           flagged("stalled", a.key) ? "warn" : "muted",
         ],
       ),
-      {
-        drill: {
-          kind: "scrollback" as const,
-          workstream: a.workstream,
-          name: a.name,
-          paneId: a.pane_id,
-          tab: a.tab,
-        },
-      },
+      { drill: scrollbackOf(a) },
     ),
   );
 }
@@ -405,7 +388,7 @@ function logRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
     specs,
   );
   return mine
-    .filter((l) => textMatch(f.text, l.rendered, l.actor, l.scope))
+    .filter((l) => matches(f.text, l.rendered, l.actor, l.scope))
     .map((l) => {
       const head = line([String(l.seq), timeOf(l.created_at), ""], ["muted", "muted", undefined]);
       return rowOf(String(l.seq), [...head, { text: " ".repeat(GUTTER) }, ...logProse(l)], {
@@ -431,7 +414,7 @@ function logProse(l: DashboardLogItem): Seg[] {
 }
 
 /** One attention item as a line: another workstream's is qualified, bare names otherwise. */
-export function attentionLabel(a: DashboardAttention, ws: string | null): string {
+function attentionLabel(a: DashboardAttention, ws: string | null): string {
   const where = a.workstream !== null && a.workstream !== ws ? `${a.workstream}/` : "";
   return `${where}${a.kind === "human" ? `human: ${a.text}` : a.text}`;
 }
@@ -449,7 +432,7 @@ export function attentionStrip(attention: readonly DashboardAttention[], ws: str
 }
 
 /** 3.x attention colours: a dead agent red, everything else that needs you yellow. */
-export const attentionRole = (a: DashboardAttention): Role => (a.kind === "dead" ? "bad" : "warn");
+const attentionRole = (a: DashboardAttention): Role => (a.kind === "dead" ? "bad" : "warn");
 
 /** The Overview's cursor stops: every attention item (all workstreams), Enter opens its agent or task. */
 function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
@@ -457,13 +440,7 @@ function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
     const agent = snap.agents.find((x) => x.key === a.target);
     const task = snap.tasks.find((x) => x.key === a.target);
     const drill: DrillTarget | undefined = agent
-      ? {
-          kind: "scrollback",
-          workstream: agent.workstream,
-          name: agent.name,
-          paneId: agent.pane_id,
-          tab: agent.tab,
-        }
+      ? scrollbackOf(agent)
       : task
         ? { kind: "notes", workstream: task.workstream, id: task.id, title: task.title }
         : undefined;

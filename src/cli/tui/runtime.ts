@@ -29,7 +29,7 @@ import { currentCallers } from "../../wait-callers.js";
 /** One refresh: the projection plus whatever sync said while producing it. */
 export interface RefreshResult {
   snapshot: DashboardSnapshot;
-  /** Non-fatal sync problems from this refresh's ingest (empty when none ran). */
+  /** The latest ingest's non-fatal sync problems (kept until the next ingest replaces them). */
   warnings: readonly string[];
 }
 
@@ -78,20 +78,36 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
   let inflight: Promise<RefreshResult> | null = null;
   let inflightQuery = "";
   let lastSync = Number.NEGATIVE_INFINITY;
+  // The last ingest's warnings: replaced when an ingest runs, never cleared by a read,
+  // so the `sync` attention item stays while the problem does.
+  let warnings: readonly string[] = [];
+  // `latest_seq` costs one log scan per workstream and only ranks the starting pick, so it
+  // is read when the set of live workstreams changed (the first read, a teardown), not per tick.
+  let seenNames = "";
   let closed = false;
   // The slow tier's agent readings, merged into every fast read.
   const agentStates = new Map<string, StateReading>();
 
   async function run(query: DashboardQuery, slow: boolean): Promise<RefreshResult> {
-    let warnings: readonly string[] = [];
     if (syncEnabled() && now() - lastSync >= every) {
       lastSync = now();
       warnings = (await ambientIngest(opts.syncDb, { quiet: true })).warnings;
     }
+    const names = (
+      ro.prepare("SELECT name FROM workstreams WHERE torn_down_at IS NULL ORDER BY name").all() as {
+        name: string;
+      }[]
+    )
+      .map((w) => w.name)
+      .join("\n");
+    const activity = names !== seenNames;
+    seenNames = names;
     const snapshot = await loadDashboard(ro, {
       ...query,
+      activity,
       caller: opts.caller,
       callers: opts.callers ?? currentCallers(),
+      syncWarnings: warnings,
       agentStates: { cache: agentStates, probe: slow },
     });
     return { snapshot, warnings };
