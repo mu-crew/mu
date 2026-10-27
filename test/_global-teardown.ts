@@ -50,13 +50,14 @@
 // when set. Production code never sets the var; this file is the only
 // caller.
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import Database from "better-sqlite3";
 import { execa } from "execa";
 import { openDb } from "../src/db.js";
 import { DB_TEMPLATE_KEY } from "./_db-template.js";
+import { RUN_ROOT_KEY } from "./_run-root.js";
 
 // ─── Layer 3: dedicated tmux socket ────────────────────────────────
 
@@ -148,14 +149,88 @@ async function bootstrapPrivateTmuxServer(): Promise<void> {
   // set from the module-load assignment above.
 }
 
+/** The socket file path of a (running) private server, or null. */
+async function socketPathOf(socket: string): Promise<string | null> {
+  const r = await execa("tmux", ["-L", socket, "display-message", "-p", "#{socket_path}"], {
+    reject: false,
+  });
+  const path = r.exitCode === 0 ? String(r.stdout ?? "").trim() : "";
+  return isAbsolute(path) ? path : null;
+}
+
 async function killPrivateTmuxServer(): Promise<void> {
   if (process.env.MU_TMUX_SOCKET !== TEST_SOCKET) return;
   // `kill-server` nukes every session/window/pane in one call. No
   // per-session iteration needed; this is what makes Layer 3 the
   // "real fix" — there's literally nothing to leak past this point.
+  // It leaves the socket file behind (tmux 3.x), so remember the path first
+  // and unlink it after.
+  const path = await socketPathOf(TEST_SOCKET);
   await execa("tmux", ["-L", TEST_SOCKET, "kill-server"], { reject: false });
+  if (path !== null) rmSync(path, { force: true });
   const key = "MU_TMUX_SOCKET";
   delete process.env[key];
+}
+
+/**
+ * A test socket name carries its owner's pid: `mu-test-<pid36>-<time36>-<6>`
+ * for a suite run (TEST_SOCKET), `mu-test-<pid10>-<epoch ms>-<6>` for
+ * test/remote-gates.integration.test.ts.
+ */
+export function socketOwnerPid(name: string): number | null {
+  const run = /^mu-test-([0-9a-z]+)-[0-9a-z]{6,9}-[0-9a-z]{6}$/.exec(name);
+  if (run?.[1] !== undefined) return Number.parseInt(run[1], 36);
+  const gate = /^mu-test-(\d+)-\d{13}-[0-9a-z]{6}$/.exec(name);
+  return gate?.[1] !== undefined ? Number.parseInt(gate[1], 10) : null;
+}
+
+function pidIsGone(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+/**
+ * Reap what an interrupted run (SIGKILL, OOM) left: its private tmux server
+ * and socket file, and its scratch dir. Both names carry the owning pid, so
+ * only runs whose pid is gone are touched. A name that does not match the
+ * pattern (another test's socket) is never touched.
+ */
+export async function sweepStaleRuns(
+  socketDir: string | null,
+  scratch: string = tmpdir(),
+): Promise<void> {
+  if (socketDir !== null) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(socketDir);
+    } catch {
+      // no socket dir yet
+    }
+    for (const name of names) {
+      const pid = socketOwnerPid(name);
+      if (pid === null || name === TEST_SOCKET || !pidIsGone(pid)) continue;
+      await execa("tmux", ["-L", name, "kill-server"], { reject: false });
+      rmSync(join(socketDir, name), { force: true });
+    }
+  }
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(scratch);
+  } catch {
+    return;
+  }
+  for (const name of entries) {
+    const m = /^mu-test-run-([0-9a-z]+)-/.exec(name);
+    if (m === null) continue;
+    if (pidIsGone(Number.parseInt(m[1] ?? "", 36))) {
+      rmSync(join(scratch, name), { recursive: true, force: true });
+    }
+  }
 }
 
 // ─── Layer 2 (round-4): DB-rooted default-socket sweep ────────────
@@ -337,6 +412,7 @@ async function sweepLeakedDefaultSocketSessions(phase: "setup" | "teardown"): Pr
  */
 let vitestTmpDir: string | null = null;
 let dbTemplateDir: string | null = null;
+let runRoot: string | null = null;
 
 export function leakedVitestTmpDir(project: unknown, tmp: string = tmpdir()): string | null {
   const dir = (project as { vitest?: { _tmpDir?: unknown } } | null)?.vitest?._tmpDir;
@@ -347,8 +423,14 @@ export function leakedVitestTmpDir(project: unknown, tmp: string = tmpdir()): st
 
 export async function setup(project?: unknown): Promise<void> {
   vitestTmpDir = leakedVitestTmpDir(project);
+  // One scratch dir per run, removed in teardown: forks' XDG roots go inside.
+  runRoot = mkdtempSync(join(tmpdir(), `mu-test-run-${process.pid.toString(36)}-`));
+  (project as { provide?: (k: string, v: unknown) => void } | undefined)?.provide?.(
+    RUN_ROOT_KEY,
+    runRoot,
+  );
   // One schema-built DB for the whole run; forks copy it (test/_db-template.ts).
-  dbTemplateDir = mkdtempSync(join(tmpdir(), "mu-test-dbtpl-"));
+  dbTemplateDir = mkdtempSync(join(runRoot, "dbtpl-"));
   const template = join(dbTemplateDir, "template.db");
   const db = openDb({ path: template });
   db.pragma("wal_checkpoint(TRUNCATE)");
@@ -361,6 +443,9 @@ export async function setup(project?: unknown): Promise<void> {
   // every subsequent test invocation routes through `-L <socket>` and
   // can't see the user's tmux. If it FAILS we fall back gracefully.
   await bootstrapPrivateTmuxServer();
+  // Reap runs that were killed before their teardown ran.
+  const ours = process.env.MU_TMUX_SOCKET === TEST_SOCKET ? await socketPathOf(TEST_SOCKET) : null;
+  await sweepStaleRuns(ours === null ? null : dirname(ours));
   // Layer 2: clean any leftovers on the user's default socket from a
   // prior non-Layer-3 run.
   await sweepLeakedDefaultSocketSessions("setup");
@@ -369,6 +454,7 @@ export async function setup(project?: unknown): Promise<void> {
 export async function teardown(): Promise<void> {
   if (vitestTmpDir) rmSync(vitestTmpDir, { recursive: true, force: true });
   if (dbTemplateDir) rmSync(dbTemplateDir, { recursive: true, force: true });
+  if (runRoot) rmSync(runRoot, { recursive: true, force: true });
   // Layer 3: nuke the entire private server in one call. After this,
   // every session/window/pane the suite ever touched is gone.
   await killPrivateTmuxServer();

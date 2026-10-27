@@ -16,8 +16,9 @@ import { type Db, openDb } from "../src/db.js";
 import { capture, killSession, resetTmuxExecutor } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
+import { tmuxIntegrationAvailable } from "./_mux.js";
 
-const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== "";
+const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
 
 describeIfTmux("verbs integration (real tmux + real DB)", () => {
@@ -231,9 +232,3 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
     expect(view3.agents).toEqual([]);
   });
 });
-
-if (!TMUX_AVAILABLE) {
-  describe("verbs integration", () => {
-    it.skip("skipped — set $TMUX (run inside tmux) to enable", () => {});
-  });
-}

@@ -23,7 +23,7 @@
 //      could resolve (MU_STATE_DIR included), and fails OPEN (null:
 //      no sweep) when no DB exists or one cannot be read.
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -33,6 +33,8 @@ import {
   leakedVitestTmpDir,
   readUserWorkstreams,
   sessionsToKill,
+  socketOwnerPid,
+  sweepStaleRuns,
   userDbPaths,
 } from "./_global-teardown.js";
 
@@ -201,5 +203,39 @@ describe("leakedVitestTmpDir", () => {
     expect(leakedVitestTmpDir(root("rel"), "/t")).toBeNull();
     expect(leakedVitestTmpDir(root(undefined), "/t")).toBeNull();
     expect(leakedVitestTmpDir(undefined, "/t")).toBeNull();
+  });
+});
+
+describe("stale-run sweep", () => {
+  it("reads the owning pid from both private-socket name shapes", () => {
+    expect(socketOwnerPid("mu-test-2br6j-mvqzpjq8-7vi9y4")).toBe(Number.parseInt("2br6j", 36));
+    expect(socketOwnerPid("mu-test-4242-1793010111400-sbf4dx")).toBe(4242);
+    expect(socketOwnerPid("mu-other")).toBeNull();
+    expect(socketOwnerPid("mu-test-x")).toBeNull();
+  });
+
+  it("removes scratch dirs and socket files of dead pids, keeps live ones and strangers", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-sweep-"));
+    try {
+      const socks = join(dir, "socks");
+      mkdirSync(socks);
+      const live = process.pid.toString(36);
+      const dead = (2 ** 22 + 12345).toString(36); // above pid_max: never a process
+      const deadSock = `mu-test-${dead}-mvqzpjq8-7vi9y4`;
+      const liveSock = `mu-test-${live}-mvqzpjq8-7vi9y4`;
+      for (const n of [deadSock, liveSock, "default"]) writeFileSync(join(socks, n), "");
+      const deadRun = `mu-test-run-${dead}-abc123`;
+      const liveRun = `mu-test-run-${live}-abc123`;
+      for (const n of [deadRun, liveRun, "unrelated"]) mkdirSync(join(dir, n));
+      await sweepStaleRuns(socks, dir);
+      expect(existsSync(join(socks, deadSock))).toBe(false);
+      expect(existsSync(join(socks, liveSock))).toBe(true);
+      expect(existsSync(join(socks, "default"))).toBe(true);
+      expect(existsSync(join(dir, deadRun))).toBe(false);
+      expect(existsSync(join(dir, liveRun))).toBe(true);
+      expect(existsSync(join(dir, "unrelated"))).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

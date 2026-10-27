@@ -1,6 +1,19 @@
 # Test conventions
 
-One topic lives here: [mux tests](#mux-tests) (which tier, which seam).
+Test conventions. Start with the tiers, then [mux tests](#mux-tests) (which seam).
+
+## Tiers
+
+| Tier | Files | Runs | Rules |
+| --- | --- | --- | --- |
+| fast | `*.test.ts` | `npm run test:fast`, parallel | in-process: mocked mux and VCS, per-test temp DBs, no real tmux/git/jj/sl, no sleeps over 50ms |
+| integration | `*.integration.test.ts` | `npm run build && npm run test`, one worker | may use real tmux (the run's private `-L` server), herdr (named session), VCS fixtures, subprocesses; some need `dist/` |
+
+The tmux integration tests do **not** need `$TMUX`: `globalSetup` starts a
+private server and exports `MU_TMUX_SOCKET`, and `tmuxIntegrationAvailable()`
+is true whenever that is set. They skip only if that server failed to start
+(the setup prints a warning). Tests scratch under the per-run dir
+globalSetup `provide`s (`test/_run-root.ts`), removed at the end of the run.
 
 ## Mux tests
 
@@ -57,7 +70,7 @@ helpers in `test/_mux.ts`:
 
 | Backend | Gate | Isolation |
 | --- | --- | --- |
-| tmux | `tmuxIntegrationAvailable()` (i.e. `$TMUX` is set) | **Structural** — `MU_TMUX_SOCKET` points the suite at a private `-L <socket>` server (see `_global-teardown.ts`) |
+| tmux | `tmuxIntegrationAvailable()` (the private socket is up; `$TMUX` is not needed) | **Structural** — `MU_TMUX_SOCKET` points the suite at a private `-L <socket>` server (see `_global-teardown.ts`) |
 | herdr | none — herdr tests are explicit-only | **Explicit** — `MU_HERDR_SESSION` names a private session; there is no private-socket equivalent |
 
 ### ⚠️ The herdr blast shield

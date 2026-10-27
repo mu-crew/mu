@@ -33,9 +33,10 @@ import { setWaitSleepForTests } from "../src/wait.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
+import { tmuxIntegrationAvailable } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
-const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== "";
+const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
 
 describeIfTmux("mu task wait — reaper-detection integration", () => {

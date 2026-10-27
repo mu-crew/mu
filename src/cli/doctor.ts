@@ -2,7 +2,7 @@
 //
 // Reports:
 //   - environment: the active mux + its ambient env facts
-//   - db: schema integrity, schema_version, journal_mode, foreign_keys
+//   - db: tables present, schema_version, integrity (--deep: quick_check), journal_mode, foreign_keys
 //   - workstream: the injected worker scope, if any (never read from the session)
 //   - state: per-workstream agent / task / log counts + reconcile drift
 //   - disk: state-dir vs DB reconciliation (both directions) + residue
@@ -54,6 +54,30 @@ import { type EdgeCycle, findEdgeCycles } from "../tasks/edges.js";
 import { summarizeWorkstream } from "../workstream.js";
 import { forgetHint } from "./db.js";
 import { failureWithData } from "./handle.js";
+
+/** Cap on the `quick_check` lines doctor prints or reports. */
+const INTEGRITY_LINES = 10;
+
+/**
+ * Page-level integrity (`PRAGMA quick_check`), deep tier only: it reads every
+ * page, so the default doctor stays cheap and says so. Anything but a lone
+ * "ok" is a failure (exit 5, row name `integrity`).
+ */
+export function checkDbIntegrity(
+  db: Db,
+  deep: boolean,
+): { mode: "deep" | "skipped"; ok: boolean | null; problems: string[] } {
+  if (!deep) return { mode: "skipped", ok: null, problems: [] };
+  let lines: string[];
+  try {
+    lines = (db.pragma("quick_check") as { quick_check: string }[]).map((r) => r.quick_check);
+  } catch (err) {
+    // A page too damaged to read throws instead of reporting.
+    lines = [err instanceof Error ? err.message : String(err)];
+  }
+  const ok = lines.length === 1 && lines[0] === "ok";
+  return { mode: "deep", ok, problems: ok ? [] : lines.slice(0, INTEGRITY_LINES) };
+}
 
 /** Column width for the `label : value` environment block. Wide enough
  *  for the longest label any backend contributes — `$HERDR_WORKSPACE_ID`
@@ -156,6 +180,7 @@ export async function cmdDoctor(
   // ─ DB + schema
   console.log(pc.bold("\ndb"));
   console.log(`  path             : ${pc.dim(defaultDbPath())}`);
+  let integrityFailed = false;
   try {
     const tables = (
       db
@@ -198,6 +223,18 @@ export async function cmdDoctor(
       console.log(
         `  schema_version   : ${pc.red("unreadable")} (schema_version table missing or wrong shape)`,
       );
+    }
+    const integrity = checkDbIntegrity(db, opts.deep === true);
+    if (integrity.mode === "skipped") {
+      console.log(
+        `  integrity        : ${pc.dim("skipped (run `mu doctor --deep` for PRAGMA quick_check)")}`,
+      );
+    } else if (integrity.ok) {
+      console.log(`  integrity        : ${pc.green("ok")} (quick_check)`);
+    } else {
+      integrityFailed = true;
+      console.log(`  integrity        : ${pc.red("FAIL")} (quick_check)`);
+      for (const line of integrity.problems) console.log(`      ${line}`);
     }
     const capture = captureDoctorCheck(db);
     const paint =
@@ -422,6 +459,7 @@ export async function cmdDoctor(
   // not a hint, so it exits non-zero like drift. Thrown last so the
   // whole report is printed first.
   const failed = failedHazardNames([...fleet, ...disk]);
+  if (integrityFailed) failed.push("integrity");
   if (failed.length > 0) throw new HazardFailError(failed);
   const noMux = noMuxFailure(health);
   if (noMux !== null) throw noMux;
@@ -482,6 +520,7 @@ export async function cmdDoctorJson(
 
   // db / schema
   let dbReport: Record<string, unknown>;
+  let integrity: ReturnType<typeof checkDbIntegrity> | undefined;
   try {
     const tables = (
       db
@@ -510,6 +549,7 @@ export async function cmdDoctorJson(
     }
     const journal = db.pragma("journal_mode", { simple: true });
     const fk = db.pragma("foreign_keys", { simple: true });
+    integrity = checkDbIntegrity(db, opts.deep === true);
     dbReport = {
       path: defaultDbPath(),
       schema: { ok: missing.length === 0, expected: EXPECTED_TABLES, missing, present: tables },
@@ -518,6 +558,7 @@ export async function cmdDoctorJson(
         expected: CURRENT_SCHEMA_VERSION,
         status: schemaVersionStatus,
       },
+      integrity,
       journalMode: journal,
       foreignKeys: fk === 1,
     };
@@ -650,6 +691,7 @@ export async function cmdDoctorJson(
   // failing one is the failure envelope with the same report in `data`, so a
   // --json consumer still gets the integrity facts beside the non-zero exit.
   const failed = failedHazardNames([...hazards, ...disk]);
+  if (integrity?.ok === false) failed.push("integrity");
   const failure =
     driftFailure ?? (failed.length > 0 ? new HazardFailError(failed) : noMuxFailure(health));
   if (failure !== null) throw failureWithData(failure, report);
@@ -724,7 +766,7 @@ export function wireDoctorCommand(program: Command): void {
     .option(...JSON_OPT)
     .option(
       "--deep",
-      "also rebuild the ops log into a temp DB and diff it against the live tables (slower: ~0.6ms per op)",
+      "also run PRAGMA quick_check, and rebuild the ops log into a temp DB and diff it against the live tables (slower: ~0.6ms per op)",
     )
     .option(
       "--disk",

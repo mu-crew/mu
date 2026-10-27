@@ -479,12 +479,17 @@ describe("no multiplexer at all (no tmux, no herdr)", () => {
       error: string;
       exit: number;
       message: string;
-      data: { environment: { mux: { ok: boolean } }; db: unknown };
+      data: {
+        environment: { mux: { ok: boolean } };
+        db: { schema: { ok: boolean }; foreignKeys: boolean; journalMode: string };
+      };
     };
     expect(env).toMatchObject({ ok: false, error: "NoMultiplexerError", exit: 5 });
     expect(env.message).toMatch(/install tmux/);
     expect(env.data.environment.mux.ok).toBe(false);
-    expect(env.data.db).toBeDefined();
+    expect(env.data.db.schema.ok).toBe(true);
+    expect(env.data.db.foreignKeys).toBe(true);
+    expect(env.data.db.journalMode).toBe("wal");
   });
 });
 

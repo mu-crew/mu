@@ -33,9 +33,10 @@ import { killPane, killSession, paneAlive, resetTmuxExecutor } from "../src/tmux
 import { getParallelTracks } from "../src/tracks.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
+import { tmuxIntegrationAvailable } from "./_mux.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
-const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== "";
+const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
 
 describeIfTmux("MVP acceptance — full demo end-to-end", () => {
@@ -322,9 +323,3 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
     expect(hidden.stderr).toContain(`workstream ${workstream} is torn down`);
   });
 });
-
-if (!TMUX_AVAILABLE) {
-  describe("MVP acceptance", () => {
-    it.skip("skipped — set $TMUX (run inside tmux) to enable", () => {});
-  });
-}

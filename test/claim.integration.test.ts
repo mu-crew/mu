@@ -13,8 +13,9 @@ import { type Db, openDb } from "../src/db.js";
 import { addTask, claimTask, getTask, TaskNotFoundError } from "../src/tasks.js";
 import { killSession, resetTmuxExecutor } from "../src/tmux.js";
 import { freshWorkstream } from "./_fixture.js";
+import { tmuxIntegrationAvailable } from "./_mux.js";
 
-const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== "";
+const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
 
 describeIfTmux("claim integration (real tmux + real DB)", () => {
@@ -187,9 +188,3 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
     expect(second.previousStatus).toBe("IN_PROGRESS"); // already in progress
   });
 });
-
-if (!TMUX_AVAILABLE) {
-  describe("claim integration", () => {
-    it.skip("skipped — set $TMUX (run inside tmux) to enable", () => {});
-  });
-}

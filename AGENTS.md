@@ -45,6 +45,10 @@ over budget today.
 | slow | `npm run build && npm run test` | 5 min | 4.5 to 8.5 min |
 | targeted slow | `npm run build && npx vitest run <files>` | — | — |
 
+The "Today" column is stale: on a shared box the RC measured fast 22–39 s
+(4850 tests) and slow 307–486 s (5835 tests), over budget. Re-measure on an
+idle host before the release and rewrite the column.
+
 Workers run fast while iterating, then targeted slow for the changed area,
 and fast on the final commit. The orchestrator runs fast + slow once per
 merged batch (`npm run test` excludes lint and typecheck). Record gates per
@@ -77,8 +81,8 @@ first.
 - The fast tier (`*.test.ts`) stays in-process: mocked tmux and VCS,
   per-test temp DBs, no real tmux/git/jj/sl, no sleeps over 50ms.
 - Name full-only tests `*.integration.test.ts`. They may use real
-  tmux, herdr, VCS fixtures, or subprocesses. Real-tmux tests skip
-  without `$TMUX`. Set `process.env.MU_SPAWN_LIVENESS_MS = "0"` in
+  tmux, herdr, VCS fixtures, or subprocesses. Real-tmux tests run on the
+  private socket and need no `$TMUX`. Set `process.env.MU_SPAWN_LIVENESS_MS = "0"` in
   `beforeEach` when the spawned process is meant to live long.
 - Integration tests use unique session names
   (`mu-test-<pid>-<ts>-<rand>`), poll (50ms × 10) instead of sleeping,

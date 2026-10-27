@@ -17,8 +17,9 @@ import {
 } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
+import { tmuxIntegrationAvailable } from "./_mux.js";
 
-const TMUX_AVAILABLE = process.env.TMUX !== undefined && process.env.TMUX !== "";
+const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
 
@@ -127,9 +128,3 @@ describeIfTmux("tmux integration (real tmux server)", () => {
     expect(content).toContain("MU_INTEGRATION_MARKER");
   });
 });
-
-if (!TMUX_AVAILABLE) {
-  describe("tmux integration", () => {
-    it.skip("skipped — set $TMUX (run inside tmux) to enable", () => {});
-  });
-}

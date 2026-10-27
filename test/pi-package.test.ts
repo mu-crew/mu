@@ -46,10 +46,42 @@ describe("package manifest", () => {
     expect(pkg.dependencies?.[name]).toBeUndefined();
   });
 
-  it("registers no prompts from the extension (the manifest owns them)", () => {
-    const src = readFileSync(join(root, "extension", "mu-pi.ts"), "utf8");
-    expect(src).not.toContain("resources_discover");
-    expect(src).not.toContain("promptsDir");
+  it("registers no prompts from the extension (the manifest owns them)", async () => {
+    // Load the real factory against a recording pi: no resources_discover hook
+    // (the way an extension would add prompt paths) and no prompt registration.
+    const { default: muPi } = await import("../extension/mu-pi.js");
+    const events: string[] = [];
+    const calls: string[] = [];
+    const pi = new Proxy(
+      {},
+      {
+        get: (_t, name: string) => {
+          if (name === "on") {
+            return (event: string) => {
+              events.push(event);
+              return () => {};
+            };
+          }
+          return (...args: unknown[]) => {
+            calls.push(name);
+            void args;
+          };
+        },
+      },
+    );
+    muPi(pi as never);
+    expect(events).not.toContain("resources_discover");
+    expect(calls.filter((c) => /prompt/i.test(c) && c !== "sendUserMessage")).toEqual([]);
+  });
+});
+
+describe("shipped skill", () => {
+  it("the refresh sentence fetches (3.x's only fetch site; git refuses dirty trees itself)", () => {
+    const loop = readFileSync(
+      join(root, "skills", "mu", "recipes", "orchestrator-loop.md"),
+      "utf8",
+    );
+    expect(loop).toMatch(/git -C <cwd> fetch && git -C <cwd> rebase/);
   });
 });
 
