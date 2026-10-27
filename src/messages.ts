@@ -256,6 +256,8 @@ export const MESSAGES = {
     }${more > 0 ? ` (+${more} more)` : ""}`,
   "worktree.path_not_empty": (agent: string, path: string, why: string) =>
     `worktree dir already on disk for agent ${agent} (${path}): ${why}; refusing to overwrite`,
+  "worktree.branch_exists": (agent: string, ws: string, path: string, branch: string) =>
+    `agent ${agent}: branch ${branch} already exists at another commit; ${path} was kept and nothing was moved. Rename that branch, then preview: mu agent close ${agent} -w ${ws}`,
   "worktree.unmerged_repo_gone": (path: string) =>
     `worktree ${path} has unmerged commits and its repo is gone; nothing can keep them (use --discard to drop them)`,
   "revision.changed": (subject: string, expected: number, current: number, preview: string) =>

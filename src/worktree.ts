@@ -77,6 +77,23 @@ export class WorktreePathNotEmptyError extends Error {
   }
 }
 
+/**
+ * Close would keep unmerged commits on `mu/<ws>/<agent>-<sha12>`, but a branch
+ * of that name already points at another commit. It is never moved; the
+ * worktree and its registry row are kept. Exit 4.
+ */
+export class WorktreeBranchExistsError extends Error {
+  override readonly name = "WorktreeBranchExistsError";
+  constructor(
+    public readonly agent: string,
+    public readonly workstream: string,
+    public readonly path: string,
+    public readonly branch: string,
+  ) {
+    super(say("worktree.branch_exists", agent, workstream, path, branch));
+  }
+}
+
 // ─── paths ─────────────────────────────────────────────────────────────
 
 /** `<state dir>/worktrees`: where mu puts the worktrees it creates. */
@@ -326,7 +343,10 @@ export async function releaseWorktree(
     }
     const sha = await headSha(row.path);
     const branch = `mu/${row.workstream}/${row.agent}-${sha.slice(0, 12)}`;
-    await createBranch(owner, branch, sha);
+    // Create-only: a retry finds its own branch at this HEAD and goes on.
+    if (!(await createBranch(owner, branch, sha))) {
+      throw new WorktreeBranchExistsError(row.agent, row.workstream, row.path, branch);
+    }
     await removeWorktreeDir(owner, row.path, false);
     forgetWorktree(db, row.path);
     return { path: row.path, action: "kept-branch", branch };
