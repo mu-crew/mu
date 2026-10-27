@@ -108,7 +108,7 @@ const UNRESOLVED = "<unresolved>";
  * a capture revision is upgradeable in place, so it must not be folded
  * into it (an older schema number is refused before any trigger work).
  */
-export const CAPTURE_VERSION = 4;
+export const CAPTURE_VERSION = 5;
 
 /** Lowest SQLite that mints correct HLCs: `unixepoch('subsec')` arrived
  *  in 3.42; before it the call yields NULL and every op gets a zero-time
@@ -219,8 +219,9 @@ const CREATED_AT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 //
 // Notes keep their surrogate `id` as a suffix because a note has no
 // natural identity of its own — same author and text twice is two
-// notes. Notes are append-only and never edited, so the suffix only
-// needs to be locally unique, and `<task-key>#<id>` is.
+// notes. Notes are append-only (a local edit raises), so the suffix only
+// needs to be locally unique, and `<task-key>#<id>` is. A rebuild can
+// reassign ids, so a tombstone also names the note it kills.
 
 /** Workstream name for a workstream id, or the dying-stash value if the
  *  workstream row is already gone (FK cascade). */
@@ -293,14 +294,20 @@ function fullOldPayload(cols: readonly string[]): string {
   return `json_object(${pairs})`;
 }
 
-/** A note tombstone's payload. The full row only when the log holds no
- *  put under the same key (a reprojection gave the note a new rowid, so
- *  a fold of the puts could not find it: drift-641); otherwise `{}`,
- *  because apply's delete reads the content from that put.
- *  Without this, every workstream teardown wrote each note a second time. */
+/** A note tombstone's payload. `{}` only when the NEWEST put under the
+ *  same key describes the very row being deleted (same author, content and
+ *  created_at): apply's delete reads the identity from that put, and a
+ *  workstream teardown then does not write each note twice. Otherwise the
+ *  full row: no put under the key (a reprojection gave the note a new
+ *  rowid, drift-641), or one that names ANOTHER note (a rebuild reassigned
+ *  ids, so a deleted note's key now belongs to a different row). */
 function noteTombstonePayload(keyExpr: string, cols: readonly string[]): string {
-  return `CASE WHEN EXISTS (
-      SELECT 1 FROM ops WHERE entity = 'note' AND key = ${keyExpr} AND op = 'put'
+  return `CASE WHEN (
+      SELECT json_extract(p.payload, '$.author') IS OLD.author
+         AND json_extract(p.payload, '$.content') IS OLD.content
+         AND json_extract(p.payload, '$.created_at') IS OLD.created_at
+        FROM ops p WHERE p.entity = 'note' AND p.key = ${keyExpr} AND p.op = 'put'
+       ORDER BY p.seq DESC LIMIT 1
     ) THEN '{}' ELSE ${fullOldPayload(cols)} END`;
 }
 
@@ -493,17 +500,30 @@ BEGIN
   );
 }
 
-/** BEFORE UPDATE trigger: a note's kind is set once at INSERT. A change
- *  would sync as a `{kind}`-only put that no peer can match to a row (a
- *  note's identity is its content), so local writes refuse it. Gated on
+/** BEFORE UPDATE triggers: a note is append-only, an edge's `created_at`
+ *  is set once. A note's identity is (author, content, created_at), so an
+ *  edit would replay as a SECOND note (and a `{kind}`-only put matches no
+ *  row at all); an edge's fold reads only its first put, so a changed
+ *  `created_at` is captured but never replayed. Either way live and a
+ *  rebuild or peer diverge, so local writes refuse them. Gated on
  *  `applying = 0`: ingest accepts what the log says, and a RAISE there
- *  would roll back the segment and stall sync. */
-const NOTE_KIND_GUARD = trigger(
-  "_cap_task_notes_kind",
-  `BEFORE UPDATE OF kind ON task_notes
-  WHEN ${NOT_APPLYING} AND NEW.kind IS NOT OLD.kind
+ *  would roll back the segment and stall sync. A no-op rewrite passes. */
+const NOTE_APPEND_ONLY_GUARD = trigger(
+  "_cap_task_notes_once",
+  `BEFORE UPDATE OF author, content, created_at, kind ON task_notes
+  WHEN ${NOT_APPLYING}
+  AND (NEW.author IS NOT OLD.author OR NEW.content IS NOT OLD.content
+       OR NEW.created_at IS NOT OLD.created_at OR NEW.kind IS NOT OLD.kind)
 BEGIN
-  SELECT RAISE(ABORT, 'mu: task_notes.kind is set once when the note is written; add a new note instead of changing it.');`,
+  SELECT RAISE(ABORT, 'mu: task_notes are append-only: author, content, created_at and kind are set once when the note is written; add a new note instead of changing it.');`,
+);
+
+const EDGE_CREATED_GUARD = trigger(
+  "_cap_task_edges_created",
+  `BEFORE UPDATE OF created_at ON task_edges
+  WHEN ${NOT_APPLYING} AND NEW.created_at IS NOT OLD.created_at
+BEGIN
+  SELECT RAISE(ABORT, 'mu: task_edges.created_at is set once when the edge is added; remove the edge and add it again instead of changing it.');`,
 );
 
 // ─── Local-write guards (README Kernel § Schema) ──────────────────────
@@ -672,7 +692,8 @@ function buildTriggers(): CaptureTrigger[] {
     ...tables.map(insertGuard),
     ...tables.map(positiveIdGuard),
     ...tables.map(hugeIdGuard),
-    NOTE_KIND_GUARD,
+    NOTE_APPEND_ONLY_GUARD,
+    EDGE_CREATED_GUARD,
     ...localGuards(),
     // The singleton op_ctx row must survive: the HLC clock reads
     // `now_ms` from it, and a missing row would NULL last_wall.

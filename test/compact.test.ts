@@ -79,7 +79,10 @@ describe("compact", () => {
     legacyHardTeardown(db, "demo");
     // Simulate history written before capture slimmed tombstones.
     db.prepare(
-      `UPDATE ops SET payload = json_object('content', 'x', 'author', 'w', 'created_at', 'z')
+      `UPDATE ops SET payload = (SELECT json_object('content', json_extract(p.payload, '$.content'),
+                                                   'author', json_extract(p.payload, '$.author'),
+                                                   'created_at', json_extract(p.payload, '$.created_at'))
+                                   FROM ops p WHERE p.entity = 'note' AND p.op = 'put' AND p.key = ops.key)
         WHERE entity = 'note' AND op = 'del'`,
     ).run();
     const plan = planCompact(db);
@@ -89,6 +92,16 @@ describe("compact", () => {
     expect(planCompact(db).tombstones).toBe(0);
     expect(noteTombstones().every((t) => t.payload === "{}")).toBe(true);
     expect(checkDrift(db).clean).toBe(true);
+  });
+
+  it("leaves a tombstone alone when the put under its key names another note", async () => {
+    seed("demo", ["only"]);
+    db.prepare(
+      `UPDATE ops SET payload = json_set(payload, '$.content', 'other') WHERE entity = 'note' AND op = 'put'`,
+    ).run();
+    legacyHardTeardown(db, "demo");
+    expect(noteTombstones().every((t) => t.payload !== "{}")).toBe(true);
+    expect(planCompact(db).tombstones).toBe(0);
   });
 
   it("leaves a self-describing tombstone with no matching put alone", async () => {

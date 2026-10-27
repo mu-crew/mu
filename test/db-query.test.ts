@@ -320,7 +320,7 @@ describe("db query refuses to write mu's capture bookkeeping", () => {
       db,
       "INSERT INTO task_notes (task_id, author, content, kind, created_at) SELECT id, 'me', 'hi', 'note', 'now' FROM tasks WHERE local_id = 'a' AND workstream_id = (SELECT id FROM workstreams WHERE name = 'w')",
     );
-    await cmdDbQuery(db, "UPDATE task_notes SET content = 'edited'");
+    await cmdDbQuery(db, "UPDATE task_notes SET task_id = task_id");
     await cmdDbQuery(db, "DELETE FROM task_notes");
     await cmdDbQuery(db, "INSERT INTO workstreams (name, created_at) VALUES ('fresh', 'now')");
     expect(count("SELECT COUNT(*) AS n FROM workstreams WHERE name = 'fresh'")).toBe(1);
