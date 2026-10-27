@@ -149,11 +149,6 @@ export function wireTaskCommands(program: Command): void {
     .option(...WORKSTREAM_OPT)
     .option("--all", "no cap: every ready task, whole (a cut result names this command)")
     .option("--sort <key>", `${SORT_OPT_DESC} (default roi)`)
-    .option(
-      "--status <status...>",
-      `filter by lifecycle status (${TASK_STATUS_LIST}; case-insensitive; repeat or comma-separate; or both)`,
-    )
-    .option("--substate <substate...>", SUBSTATE_OPT_DESC)
     .option(...JSON_OPT)
     .action(function () {
       const opts = (this as Command).opts() as {
@@ -161,8 +156,6 @@ export function wireTaskCommands(program: Command): void {
         lines?: number;
         json?: boolean;
         sort?: string;
-        status?: string[];
-        substate?: string[];
         all?: boolean;
       };
       return handle((db) => cmdTaskNext(db, opts), this as Command)();
