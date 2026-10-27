@@ -150,7 +150,24 @@ export async function ownCommits(dir: string, notRefs: readonly string[]): Promi
   return out.length === 0 ? [] : out.split("\n");
 }
 
-/** `git branch <name> <sha>` in `root`. */
-export async function createBranch(root: string, name: string, sha: string): Promise<void> {
+/** The commit branch `name` points at in `root`, or undefined when there is none. */
+export async function branchSha(root: string, name: string): Promise<string | undefined> {
+  try {
+    const sha = await git(["rev-parse", "--verify", "-q", `refs/heads/${name}^{commit}`], root);
+    return sha.length > 0 ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * `git branch <name> <sha>` in `root`, create-only and idempotent: a branch
+ * already at `sha` (an earlier attempt's) is kept. Never moves a branch:
+ * one at another commit returns false. True once the branch is at `sha`.
+ */
+export async function createBranch(root: string, name: string, sha: string): Promise<boolean> {
+  const existing = await branchSha(root, name);
+  if (existing !== undefined) return existing === sha;
   await git(["branch", name, sha], root);
+  return true;
 }

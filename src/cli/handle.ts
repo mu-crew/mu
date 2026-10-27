@@ -143,6 +143,7 @@ import {
   WorkstreamSessionLiveError,
 } from "../workstream.js";
 import {
+  WorktreeBranchExistsError,
   WorktreeDirtyError,
   WorktreePathNotEmptyError,
   WorktreeVcsRequiredError,
@@ -482,6 +483,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof CycleError ||
     err instanceof CrossWorkstreamEdgeError ||
     err instanceof WorktreeDirtyError ||
+    err instanceof WorktreeBranchExistsError ||
     err instanceof WorktreePathNotEmptyError ||
     err instanceof WorktreeVcsRequiredError ||
     err instanceof ClaimerNotRegisteredError ||

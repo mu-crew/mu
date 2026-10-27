@@ -712,6 +712,7 @@ export {
   releaseWorktree,
   removeWorktree,
   upstreamRefs,
+  WorktreeBranchExistsError,
   WorktreeDirtyError,
   WorktreePathNotEmptyError,
   type WorktreeRow,
