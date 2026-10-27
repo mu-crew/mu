@@ -1348,7 +1348,17 @@ export async function waitForEvents(
               db,
               c,
               b.generation,
-              mine.map((i) => registered(i.ref)),
+              mine.map((i) => ({
+                ...registered(i.ref),
+                ...(i.kind === "settled" && i.snap.runs !== undefined
+                  ? {
+                      runs: i.snap.runs,
+                      ...(i.snap.incarnation !== undefined
+                        ? { incarnation: i.snap.incarnation }
+                        : {}),
+                    }
+                  : {}),
+              })),
             );
             if (!ended.applied) {
               applied = false;
