@@ -3,10 +3,10 @@
    python3 smoke.py [N ... | fill | stable | drill]   (default: all three kinds). Exit 0 = all green.
      N       scenario N seeds, renders, takes keys, quits 0, leaves no tmux server
      fill    s2 s4 s5 s7 at 200x50, 120x40, 80x24, every tab, read off a private tmux screen:
-             the last row is the hint; a frame reaches the bottom body row (tabs always, an
+             row 3 is the attention strip (s4: "⚠ N need you"); the last row is the hint; a frame reaches the bottom body row (tabs always, an
              Overview column whenever one of its cards says "+N more")
      stable  s6, two screens 5 s apart: the second column of Tasks and of Log starts at the same x
-     drill   s2 at 120x40 and 80x24: Enter on a Tasks row and on a DAG row opens the notes, hint on the last row
+     drill   s2 at 120x40 and 80x24: Enter on a Tasks row and on a DAG row opens the notes, strip on row 2, hint on the last row
    Needs a built checkout. Set MU_DOGFOOD_DIR to keep the scratch DBs somewhere short."""
 import os, pty, re, select, struct, fcntl, termios, subprocess, sys, time, signal
 
@@ -114,9 +114,14 @@ def frames(lines):
             if b is not None: out.append((x0, x1, r, b))
     return out
 
-def fill_problems(lines, h, tab):
-    """What is wrong with one screen, as strings (empty = fine)."""
+STRIP = re.compile(r"^(⚠ \d+ need you|✓ all quiet)")
+
+def fill_problems(lines, h, tab, alert=False):
+    """What is wrong with one screen, as strings (empty = fine). `alert`: the strip must say ⚠."""
     bad = []
+    strip = lines[2] if len(lines) > 2 else ""
+    if not STRIP.match(strip) or (alert and not strip.startswith("⚠")):
+        bad.append(f"row 3 is not the attention strip{' (⚠)' if alert else ''}: {strip[:60]!r}")
     if len(lines) != h: bad.append(f"{len(lines)} rows, want {h}")
     if not lines or not HINT.search(lines[-1]): bad.append(f"last row is not the hint: {lines[-1:]!r}")
     fs = frames(lines)
@@ -146,7 +151,7 @@ def fill_check(ns=(2, 4, 5, 7)):
                 for t, tab in enumerate(TABS):
                     if t: scr.keys("Right")
                     time.sleep(0.4)
-                    probs += [f"{tab}: {p}" for p in fill_problems(scr.grab(), h, tab)]
+                    probs += [f"{tab}: {p}" for p in fill_problems(scr.grab(), h, tab, alert=n == 4)]
                 scr.keys(*["Left"] * 4)  # back to Overview for the next size
                 bad += bool(probs)
                 print(f"fill s{n} {w}x{h}: {'OK ' if not probs else 'FAIL'}")
@@ -172,6 +177,7 @@ def drill_check():
                 probs = [] if opened else ["Enter opened no notes"]
                 if len(lines) != h: probs.append(f"{len(lines)} rows, want {h}")
                 if not lines or "Esc back" not in lines[-1]: probs.append(f"last row is not the hint: {lines[-1:]!r}")
+                if len(lines) < 2 or not STRIP.match(lines[1]): probs.append(f"row 2 is not the attention strip: {lines[1:2]!r}")
                 bad += bool(probs)
                 print(f"drill s2 {name} {w}x{h}: {'OK ' if not probs else 'FAIL'}")
                 for p in probs: print("   ", p)

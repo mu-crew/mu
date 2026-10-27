@@ -73,6 +73,7 @@ describe("dashboard screen", () => {
       const at = `${columns}x${rows}`;
       expect(lines, at).toHaveLength(rows);
       expect(lines[1], at).toContain("Overview");
+      expect(lines[2], at).toMatch(/^⚠ 1 need you: human: decide/); // the strip, under the tabs
       expect(lines.at(-1), at).toContain("q quit"); // footer pinned to the last row
       expect(lines.join("\n"), at).toContain("human: decide the fx policy");
       expect(lines.join("\n"), at).toContain("t29"); // highest ROI first in Open
@@ -99,6 +100,19 @@ describe("dashboard screen", () => {
         .find((l) => l.includes("Attention")),
     ).not.toContain("Agents");
     narrow.unmount();
+  });
+
+  it("a drill keeps the attention strip under its title", async () => {
+    const ui = await open(100, 30);
+    await ui.until((s) => s.includes("Attention"));
+    await ui.press("\r"); // Enter on the attention item: the human task's notes
+    await ui.until((s) => s.includes("Notes  "));
+    const lines = ui.screen().split("\n");
+    expect(lines[0]).toContain("Notes  ");
+    expect(lines[1]).toMatch(/^⚠ 1 need you: human: decide/);
+    expect(lines).toHaveLength(30);
+    expect(lines.at(-1)).toContain("Esc back");
+    ui.unmount();
   });
 
   it("the attention strip stays on the other tabs; a framed tab fills the screen", async () => {

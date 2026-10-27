@@ -1,5 +1,5 @@
 // The dashboard: a workstream row, five tabs (Overview, Tasks, DAG, Agents, Log), an
-// attention strip, a framed list that fills the screen, and Next plus a hint/error
+// attention strip (every view, drills too), a framed list that fills the screen, and Next plus a hint/error
 // line pinned to the last row. Overview (the first screen) is a grid of framed cards
 // (overview.tsx). Read-only. Drill (Enter, a) is the next unit. Plain text only: every line is
 // cleaned and cut/padded by visual width (text.ts), never ANSI inside <Text>.
@@ -164,7 +164,8 @@ export function App({
   const overview = tab === "overview";
   const { shown, height: area } = layout(
     screenRows,
-    FIXED_BY_PRIORITY.filter((l) => !(overview && (l === "filter" || l === "strip"))),
+    // The Overview has no filter; the strip shows on every view, next to the Attention card.
+    FIXED_BY_PRIORITY.filter((l) => !(overview && l === "filter")),
   );
   // The data area is framed when it has room for a border and a row; else bare rows.
   const framed = !overview && area > FRAME_CHROME && columns > FRAME_SIDES + 2;
@@ -359,6 +360,7 @@ export function App({
       <Drill
         target={drill.target}
         notice={drill.notice}
+        strip={{ text: strip, alert: attention.length > 0 }}
         runtime={runtime}
         busy={busy}
         onClose={() => setDrill(null)}
