@@ -37,3 +37,4 @@ tools/eval/candidates/
 
 # eval matrix transcripts (commit only the jsonl + report)
 docs/mu-next/eval/matrix-pre-settle/
+docs/mu-next/eval/matrix-release/
