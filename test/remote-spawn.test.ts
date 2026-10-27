@@ -530,7 +530,8 @@ describe("failure rolls back only what this spawn made", () => {
     expect(calls).toHaveLength(2);
     const rm = calls[1] ?? "";
     expect(rm).toContain("status --porcelain");
-    expect(rm).toContain("worktree remove --force");
+    expect(rm).toContain("worktree remove");
+    expect(rm).not.toContain("--force"); // git re-checks cleanliness itself
     expect(rm).toContain(SHA); // only while the remote HEAD is still the recorded base
     expect(rm).toContain(WT);
   });
