@@ -9,6 +9,7 @@ import {
   parallelSettle,
   registerNudge,
   SETTLE_DRAIN_MS,
+  SETTLE_READY_ARGS,
   SETTLE_WAIT_ARGS,
   type SettleDelivered,
 } from "../extension/nudge.js";
@@ -169,10 +170,46 @@ describe("the settle wait", () => {
     expect(await setup(mu).emit("agent_before_settle", settled)).toBeUndefined();
   });
 
-  it("an open human stop ends the turn before any wait", async () => {
-    const mu = fakeMu([okWait({})], 1);
+  it("an open human stop with nothing ready ends the turn after one short wait", async () => {
+    const mu = fakeMu([okWait({ firing: { kind: "heartbeat" }, timedOut: true })], 1);
     expect(await setup(mu).emit("agent_before_settle", settled)).toBeUndefined();
-    expect(mu.waits()).toHaveLength(0);
+    expect(mu.waits().map((w) => w.args)).toEqual([[...SETTLE_READY_ARGS]]);
+  });
+
+  // d8: one `mu human-needed` (for the release) silenced every later settle, while
+  // the delegate wakes promised "the settle shows them".
+  it("an open human stop still shows every ready answer, without continuing", async () => {
+    const fire = (id: string) => okWait({ firing: { kind: "delegate", ref: `delegate:${id}` } });
+    const mu = fakeMu([fire("c1"), fire("c2"), NOTHING], 1);
+    const run: typeof mu.run = async (args, ...rest) => {
+      if (args[0] === "delegates" && args[1] === "show") {
+        const id = args[2] ?? "";
+        return out({
+          ok: true,
+          data: { call: { callId: id, task: `t_${id}`, workstream: "ws", state: "done" } },
+          next: null,
+        });
+      }
+      if (args[0] === "task" && args[1] === "notes")
+        return out({
+          ok: true,
+          data: { items: [{ kind: "report", content: `report of ${args[2]}` }] },
+          next: null,
+        });
+      return mu.run(args, ...rest);
+    };
+    const shown: unknown[] = [];
+    const f = fakePi(SESSION);
+    registerNudge(f.pi, run, SKILL, undefined, undefined, (s) => shown.push(s));
+    const r = (await f.emit("agent_before_settle", settled)) as Settle;
+    expect(r.continue).toBeUndefined();
+    const text = r.entries?.map((e) => e.content).join("\n") ?? "";
+    expect(text).toContain("report of t_c1");
+    expect(text).toContain("report of t_c2");
+    expect(text).toContain("human stop is open");
+    expect(text).not.toContain("Work you own is still running");
+    expect(mu.waits().every((w) => w.args.join(" ") === SETTLE_READY_ARGS.join(" "))).toBe(true);
+    expect(shown).toContainEqual(["c1", "c2"]);
   });
 
   it("a human stop in the wait's result shows the result but does not continue", async () => {

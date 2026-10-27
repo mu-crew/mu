@@ -5,8 +5,9 @@
  * `mu wait --first --on-stall exit --json` as this session's callers (the
  * inherited managed identity and pi:<session>). Producers (spawn/send/claim)
  * arm that wait from state, so no shell line is parsed. The turn ends only when
- * nothing is owed, a `mu human-needed` stop is open, the wait fails (shown), or
- * the user cancels it. The rule text lives in skills/mu/SKILL.md between the
+ * nothing is owed, a `mu human-needed` stop is open (what is already ready is
+ * still shown, without a blocking wait), the wait fails (shown), or the user
+ * cancels it. The rule text lives in skills/mu/SKILL.md between the
  * keep-driving markers and heads the wait's result.
  *
  * Its worker-side twin, the close nudge: a mu-spawned pi worker
@@ -233,6 +234,21 @@ function outcomeOf(event: unknown): unknown {
 export const SETTLE_DRAIN_MS = 3000;
 /** The one wait the settle runs: whatever this caller owns, first event. */
 export const SETTLE_WAIT_ARGS = ["wait", "--first", "--on-stall", "exit", "--json"] as const;
+/**
+ * Under an open human stop the settle does not block: this wait returns an event
+ * already ready, or times out within a second.
+ */
+export const SETTLE_READY_ARGS = [
+  "wait",
+  "--first",
+  "--on-stall",
+  "exit",
+  "--timeout",
+  "1",
+  "--json",
+] as const;
+/** At most this many ready events are shown by one settle under a human stop. */
+const READY_MAX = 50;
 /** Escape, plain or in the kitty keyboard protocol. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ESC is the point
 const ESC = /^\u001b(\[27(;\d+)*u)?$/;
@@ -392,7 +408,8 @@ const noDelivered: SettleDelivered = () => {};
  * no shell parsing: producers arm the wait from state) runs the ONE wait,
  * `mu wait --first --on-stall exit --json`, as this session's callers. The turn
  * then ends only when the wait says nothing is owed (WaitNothingError, or drained),
- * a human stop is open, the wait failed (shown), or the user cancelled it (Esc,
+ * a human stop is open (ready events are still shown: no blocking wait, no
+ * continue), the wait failed (shown), or the user cancelled it (Esc,
  * typed input, a dialog, shutdown). A heartbeat timeout with work still owed waits
  * again. An event continues the turn with the wait's own result, which survives a
  * late hold (it was consumed). A delegate event adds that call's report; one of a
@@ -508,6 +525,49 @@ export function registerNudge(
       );
       return { blocks: [waveSummary(wave, rows), ...bodies, ...after], stop };
     };
+    /**
+     * The settle under an open human stop: drain the events already ready (each
+     * delegate answer with its report), show them, and never continue. Nothing
+     * ready: the turn ends quietly.
+     */
+    const ready = async (): Promise<SettleResult> => {
+      const blocks: string[] = [];
+      const shown: string[] = [];
+      for (let i = 0; i < READY_MAX && !ctl.signal.aborted; i++) {
+        const started = Date.now();
+        const r = await wait(SETTLE_READY_ARGS);
+        const v = envelopeOf(r.stdout);
+        if (v?.ok === false && v.error === "WaitNothingError") {
+          delivered({ before: started });
+          break;
+        }
+        const d = v?.ok === true ? v.data : undefined;
+        if (d === undefined) {
+          const why = (r.stdout.trim() || r.stderr.trim()).slice(0, 2000);
+          blocks.push(`mu wait failed (exit ${r.code}): ${why}`);
+          break;
+        }
+        if (d.drained === true) delivered({ before: started });
+        if (d.interrupted === true || d.drained === true || d.timedOut === true) break;
+        blocks.push(JSON.stringify(d));
+        const id = firingDelegate(d);
+        if (id === undefined) continue;
+        shown.push(id);
+        const c = await call(id);
+        blocks.push(
+          c === undefined
+            ? `Delegate answer: call ${id}. Its row is unreadable here: mu delegates show ${id}`
+            : await answerBlock(mu, c, REPORT_CAP),
+        );
+      }
+      if (shown.length > 0) delivered(shown);
+      if (blocks.length === 0) return undefined;
+      const text = [
+        "[mu] A human stop is open (mu human-needed), so the settle did not wait. It showed what was already ready:",
+        ...blocks.flatMap((b) => ["", b]),
+      ].join("\n");
+      return { entries: [entry(text)], receipt: true };
+    };
     let result: SettleResult;
     try {
       result = await (async (): Promise<SettleResult> => {
@@ -522,7 +582,7 @@ export function registerNudge(
                 ),
               ],
             };
-          if (needs > 0) return undefined; // a deliberate human stop
+          if (needs > 0) return ready(); // a deliberate human stop: show what is ready, never block
           const started = Date.now();
           const r = await wait(SETTLE_WAIT_ARGS);
           const v = envelopeOf(r.stdout);
