@@ -139,6 +139,7 @@ export async function cmdClose(db: Db, rawName: string, opts: CloseOpts = {}): P
               : "  worktree removed",
       ),
     );
+    for (const warn of w.warnings ?? []) console.error(pc.yellow(`warning: ${warn}`));
   }
 }
 

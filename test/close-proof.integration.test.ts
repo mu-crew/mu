@@ -151,41 +151,99 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   const procOk = existsSync("/proc/self");
 
   it.runIf(procOk)(
-    "a process with its cwd in the tree: refused, tree, registry and row kept",
+    "a process with its cwd in a clean merged tree: a warning naming it, and the close goes on",
     async () => {
       const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
       hold(wt.path);
+      const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+      expect(r.worktree?.action).toBe("removed");
+      expect(r.worktree?.warnings?.join("\n")).toContain(`process ${holder?.pid} (sleep)`);
+      expect(existsSync(wt.path)).toBe(false);
+      expect(getWorktreeAt(db, wt.path)).toBeUndefined();
+      expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    },
+  );
+
+  it.runIf(procOk)("a read-only open file: a warning, not a refusal", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const fd = openSync(join(wt.path, "README"), "r");
+    holder = spawnChild("sleep", ["30"], {
+      cwd: tmp,
+      detached: true,
+      stdio: [fd, "ignore", "ignore"],
+    });
+    closeSync(fd);
+    const r = await releaseWorktree(db, wt);
+    expect(r.action).toBe("removed");
+    expect(r.warnings?.join("\n")).toContain(String(holder.pid));
+  });
+
+  it.runIf(procOk)(
+    "a cwd holder in an unmerged tree: the branch is kept, the tree removed, the holder warned of",
+    async () => {
+      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const head = commitFileIn(wt.path, "w.txt", "own work");
+      hold(wt.path);
+      const r = await releaseWorktree(db, wt);
+      expect(r).toMatchObject({
+        action: "kept-branch",
+        branch: `mu/auth/worker-1-${head.slice(0, 12)}`,
+      });
+      expect(r.warnings?.join("\n")).toContain(String(holder?.pid));
+      expect(existsSync(wt.path)).toBe(false);
+    },
+  );
+
+  it.runIf(procOk)(
+    "a file open for writing (cwd elsewhere), on the orphan path too: refused naming --force, which closes it",
+    async () => {
+      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const head = commitFileIn(wt.path, "w.txt", "own work");
+      writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
+      hold(tmp, join(wt.path, "log.txt"));
+      deleteAgent(db, "worker-1", "auth"); // the orphan: only the registry row is left
       const err = await closeAgent(db, "worker-1", { workstream: "auth" }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(WorktreeHeldError);
       expect((err as Error).message).toContain(String(holder?.pid));
+      expect((err as Error).message).toContain("--force");
       expect(existsSync(wt.path)).toBe(true);
       expect(existsSync(`${wt.path}.mu-removing`)).toBe(false); // moved back
       expect(gitIn(wt.path, "rev-parse", "--show-toplevel")).toBe(wt.path);
       expect(getWorktreeAt(db, wt.path)).toBeDefined();
-      expect(getAgent(db, "worker-1", "auth")).toBeDefined();
-      holder?.kill("SIGKILL");
-      await new Promise((r) => holder?.once("exit", r));
-      holder = undefined;
-      const r = await closeAgent(db, "worker-1", { workstream: "auth" });
-      expect(r.worktree?.action).toBe("removed");
+      // No branch was pinned before the proof.
+      const branch = `mu/auth/worker-1-${head.slice(0, 12)}`;
+      expect(() => gitIn(root, "rev-parse", "--verify", branch)).toThrow();
+      const r = await closeAgent(db, "worker-1", { workstream: "auth", force: true });
+      expect(r.worktree).toMatchObject({ action: "kept-branch", branch });
+      expect(r.worktree?.warnings?.join("\n")).toContain(String(holder?.pid));
     },
   );
 
-  it.runIf(procOk)("an open file in the tree (cwd elsewhere), on the orphan path too", async () => {
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
-    const head = commitFileIn(wt.path, "w.txt", "own work");
-    writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
-    hold(tmp, join(wt.path, "log.txt"));
-    deleteAgent(db, "worker-1", "auth"); // the orphan: only the registry row is left
-    await expect(closeAgent(db, "worker-1", { workstream: "auth" })).rejects.toBeInstanceOf(
-      WorktreeHeldError,
-    );
-    expect(existsSync(wt.path)).toBe(true);
-    // No branch was pinned before the proof.
-    expect(() =>
-      gitIn(root, "rev-parse", "--verify", `mu/auth/worker-1-${head.slice(0, 12)}`),
-    ).toThrow();
-  });
+  const lsofOk = (() => {
+    try {
+      execFileSync("lsof", ["-v"], { stdio: "ignore" });
+      return true;
+    } catch (e) {
+      return (e as { code?: string }).code !== "ENOENT";
+    }
+  })();
+  it.runIf(lsofOk)(
+    "with no /proc, lsof tells a cwd holder (warned) from a writer (refused)",
+    async () => {
+      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const probe = { proc: join(tmp, "no-proc"), lsof: "lsof" };
+      writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
+      hold(tmp, join(wt.path, "log.txt"));
+      const err = await releaseWorktree(db, wt, { probe }).catch((e: unknown) => e);
+      expect((err as WorktreeHeldError).pid).toBe(holder?.pid);
+      holder?.kill("SIGKILL");
+      await new Promise((r) => holder?.once("exit", r));
+      hold(wt.path);
+      const r = await releaseWorktree(db, wt, { probe });
+      expect(r.action).toBe("removed");
+      expect(r.warnings?.join("\n")).toContain(String(holder?.pid));
+    },
+  );
 
   it("no /proc and no lsof: unproven refuses and keeps the tree; force closes it", async () => {
     const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });

@@ -715,6 +715,7 @@ export {
   WorktreeBranchExistsError,
   WorktreeDirtyError,
   WorktreeHeldError,
+  type WorktreeHolder,
   WorktreePathNotEmptyError,
   type WorktreeRow,
   type WorktreeState,

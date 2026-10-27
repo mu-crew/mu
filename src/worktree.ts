@@ -12,7 +12,7 @@
 // is `agent close` / teardown, never a side effect of listing.
 
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, readlinkSync, renameSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, readlinkSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Db } from "./db.js";
@@ -99,9 +99,9 @@ export class WorktreeBranchExistsError extends Error {
 
 /**
  * `agent close` refused to remove a worktree something may still use: a
- * process has its cwd or an open file in it (`pid`), or no scan could prove
- * there is none (`pid` undefined; `--force` overrides only that). The tree,
- * its registry row and the agent row are kept. Exit 4.
+ * process has a file in it open for writing (`holder`), or no scan could
+ * prove there is none (`holder` undefined). `--force` overrides either. The
+ * tree, its registry row and the agent row are kept. Exit 4.
  */
 export class WorktreeHeldError extends Error {
   override readonly name = "WorktreeHeldError";
@@ -109,9 +109,13 @@ export class WorktreeHeldError extends Error {
     public readonly agent: string,
     public readonly workstream: string,
     public readonly path: string,
-    public readonly pid: number | undefined,
+    public readonly holder: WorktreeHolder | undefined,
   ) {
-    super(say("worktree.held", agent, workstream, path, pid));
+    super(say("worktree.held", agent, workstream, path, holder));
+  }
+  /** The writer's pid; undefined when the refusal is an unprovable scan. */
+  get pid(): number | undefined {
+    return this.holder?.pid;
   }
 }
 
@@ -317,6 +321,8 @@ export interface ReleasedWorktree {
   action: "removed" | "kept-branch" | "discarded" | "gone";
   /** The branch made to keep unmerged commits. */
   branch?: string;
+  /** Processes still in the tree when it was removed (their cwd, a read-only file; or, under `force`, a writer). */
+  warnings?: string[];
 }
 
 /**
@@ -350,6 +356,30 @@ const under = (target: string, dir: string): boolean =>
   target === dir || target.startsWith(`${dir}/`);
 
 /**
+ * A process found in a worktree. `writer`: it has a file there open for
+ * writing (the one kind whose work a removal can lose); else its cwd or a
+ * read-only file is there, which a close reports and goes past.
+ */
+export interface WorktreeHolder {
+  pid: number;
+  /** Its command name (`/proc/<pid>/comm`, lsof's `c`), "" when unknown. */
+  command: string;
+  writer: boolean;
+}
+
+/** `/proc/<pid>/fdinfo/<fd>` flags: O_WRONLY or O_RDWR. Unreadable counts as writing. */
+function fdWrites(fdinfo: string): boolean {
+  let text: string;
+  try {
+    text = readFileSync(fdinfo, "utf8");
+  } catch {
+    return true;
+  }
+  const m = /^flags:\s*([0-7]+)/m.exec(text);
+  return m?.[1] === undefined || (Number.parseInt(m[1], 8) & 3) !== 0;
+}
+
+/**
  * Processes of this user with their cwd or an open file at or under `dir`
  * (this process excluded: a close run from inside the tree writes nothing
  * there). Reads /proc, else `lsof`; undefined when neither demonstrably ran
@@ -358,8 +388,13 @@ const under = (target: string, dir: string): boolean =>
 export async function worktreeHolders(
   dir: string,
   probe: { proc: string; lsof: string } = { proc: "/proc", lsof: "lsof" },
-): Promise<number[] | undefined> {
-  const held = new Set<number>();
+): Promise<WorktreeHolder[] | undefined> {
+  const held = new Map<number, WorktreeHolder>();
+  const add = (pid: number, command: string, writer: boolean): void => {
+    const h = held.get(pid);
+    if (h === undefined) held.set(pid, { pid, command, writer });
+    else h.writer ||= writer;
+  };
   let sawSelf = false;
   if (existsSync(join(probe.proc, "self"))) {
     for (const ent of readdirSync(probe.proc)) {
@@ -377,7 +412,18 @@ export async function worktreeHolders(
         sawSelf = cwd !== undefined;
         continue;
       }
-      if (cwd !== undefined && under(cwd, dir)) held.add(pid);
+      let command: string | undefined;
+      const name = (): string => {
+        if (command === undefined) {
+          try {
+            command = readFileSync(join(probe.proc, ent, "comm"), "utf8").trim();
+          } catch {
+            command = "";
+          }
+        }
+        return command;
+      };
+      if (cwd !== undefined && under(cwd, dir)) add(pid, name(), false);
       let fds: string[] = [];
       try {
         fds = readdirSync(join(probe.proc, ent, "fd"));
@@ -386,14 +432,15 @@ export async function worktreeHolders(
       }
       for (const fd of fds) {
         const t = link(join(probe.proc, ent, "fd", fd));
-        if (t !== undefined && under(t, dir)) held.add(pid);
+        if (t !== undefined && under(t, dir))
+          add(pid, name(), fdWrites(join(probe.proc, ent, "fdinfo", fd)));
       }
     }
-    return sawSelf ? [...held] : undefined;
+    return sawSelf ? [...held.values()] : undefined;
   }
   let out: string;
   try {
-    out = (await exec(probe.lsof, ["-w", "-Fpfn"], { maxBuffer: 256 * 1024 * 1024 })).stdout;
+    out = (await exec(probe.lsof, ["-w", "-Fpcfan"], { maxBuffer: 256 * 1024 * 1024 })).stdout;
   } catch (err) {
     // lsof exits 1 when some files could not be read; its output still counts.
     const o = (err as { stdout?: unknown }).stdout;
@@ -401,16 +448,26 @@ export async function worktreeHolders(
     out = o;
   }
   let pid = 0;
+  let command = "";
   let field = "";
+  let access = "";
   for (const l of out.split("\n")) {
-    if (l.startsWith("p")) pid = Number(l.slice(1));
-    else if (l.startsWith("f")) field = l.slice(1);
+    if (l.startsWith("p")) {
+      pid = Number(l.slice(1));
+      command = "";
+    } else if (l.startsWith("c")) command = l.slice(1);
+    else if (l.startsWith("f")) {
+      field = l.slice(1);
+      access = "";
+    } else if (l.startsWith("a")) access = l.slice(1).trim();
     else if (l.startsWith("n")) {
       if (pid === process.pid) sawSelf ||= field === "cwd";
-      else if (under(l.slice(1), dir)) held.add(pid);
+      else if (under(l.slice(1), dir))
+        // An fd (numeric field) not known to be read-only counts as writing.
+        add(pid, command, /^\d+$/.test(field) && access !== "r");
     }
   }
-  return sawSelf ? [...held] : undefined;
+  return sawSelf ? [...held.values()] : undefined;
 }
 
 /**
@@ -434,9 +491,11 @@ async function moveTree(owner: string | undefined, from: string, to: string): Pr
  * Quiescence before any branch or removal, the remote close rule's local
  * twin: the tree is parked at `asideOfLocal(path)` (a writer addressing the
  * old path now fails), `worktreeHolders` must prove no process has its cwd or
- * an open file in it, and the state is judged again under the park. A holder
- * refuses (`WorktreeHeldError`); so does a scan that cannot run, unless
- * `force`. Any refusal moves the tree back. A park a crash left is moved
+ * an open file in it, and the state is judged again under the park. A file
+ * open for writing refuses (`WorktreeHeldError`), as does a scan that cannot
+ * run; `force` overrides both. A process with only its cwd or a read-only
+ * file there (a shell cd'd in, a reader, a dashboard) loses nothing: it is
+ * named in `warnings` and the close goes on. Any refusal moves the tree back. A park a crash left is moved
  * back first, then the rule runs again.
  */
 export async function releaseWorktree(
@@ -467,16 +526,20 @@ export async function releaseWorktree(
   const parked: WorktreeRow = { ...row, path: aside };
   try {
     const holders = await worktreeHolders(aside, opts.probe);
-    if (holders === undefined ? opts.force !== true : holders.length > 0) {
-      throw new WorktreeHeldError(row.agent, row.workstream, row.path, holders?.[0]);
+    const writer = holders?.find((h) => h.writer);
+    if ((holders === undefined || writer !== undefined) && opts.force !== true) {
+      throw new WorktreeHeldError(row.agent, row.workstream, row.path, writer);
     }
+    // Nothing a removal can lose: say who is still there, and go on.
+    const warnings = (holders ?? []).map((h) => say("worktree.holder_left", row.path, h));
+    const said = warnings.length > 0 ? { warnings } : {};
     // Judged again under the park: a write that raced the first check counts.
     const state = await assertReleasable(parked, opts);
     if (state === "missing") throw new Error(`worktree ${aside} vanished while closing`);
     if (opts.discard === true) {
       await removeWorktreeDir(owner, aside, true);
       forgetWorktree(db, row.path);
-      return { path: row.path, action: "discarded" };
+      return { path: row.path, action: "discarded", ...said };
     }
     if (state === "clean-unmerged") {
       if (owner === undefined) throw new Error(say("worktree.unmerged_repo_gone", row.path));
@@ -488,7 +551,7 @@ export async function releaseWorktree(
       }
       await removeWorktreeDir(owner, aside, false);
       forgetWorktree(db, row.path);
-      return { path: row.path, action: "kept-branch", branch };
+      return { path: row.path, action: "kept-branch", branch, ...said };
     }
     // clean-merged. Without --force git itself refuses a write that raced the check.
     try {
@@ -505,7 +568,7 @@ export async function releaseWorktree(
       throw err;
     }
     forgetWorktree(db, row.path);
-    return { path: row.path, action: "removed" };
+    return { path: row.path, action: "removed", ...said };
   } catch (err) {
     // Nothing was removed: put the tree back where its agent and registry say it is.
     if (existsSync(aside) && !existsSync(row.path)) await moveTree(owner, aside, row.path);

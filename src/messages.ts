@@ -266,10 +266,17 @@ export const MESSAGES = {
     `worktree dir already on disk for agent ${agent} (${path}): ${why}; refusing to overwrite`,
   "worktree.branch_exists": (agent: string, ws: string, path: string, branch: string) =>
     `agent ${agent}: branch ${branch} already exists at another commit; ${path} was kept and nothing was moved. Rename that branch, then preview: mu agent close ${agent} -w ${ws}`,
-  "worktree.held": (agent: string, ws: string, path: string, pid: number | undefined) =>
-    pid === undefined
-      ? `agent ${agent}: nothing could prove that no process is using ${path} (no /proc, no lsof); it was kept. If you know none is, preview with --force: mu agent close ${agent} -w ${ws} --force`
-      : `agent ${agent}: process ${pid} is still using ${path} (its cwd or an open file); it was kept. Stop it, then preview: mu agent close ${agent} -w ${ws}`,
+  "worktree.held": (
+    agent: string,
+    ws: string,
+    path: string,
+    writer: { pid: number; command: string } | undefined,
+  ) =>
+    writer === undefined
+      ? `agent ${agent}: nothing could prove that no process is writing in ${path} (no /proc, no lsof); it was kept. If you know none is, preview with --force: mu agent close ${agent} -w ${ws} --force`
+      : `agent ${agent}: process ${writer.pid}${writer.command === "" ? "" : ` (${writer.command})`} has a file in ${path} open for writing; it was kept. Stop it and preview again, or to remove the tree under it preview with --force: mu agent close ${agent} -w ${ws} --force`,
+  "worktree.holder_left": (path: string, h: { pid: number; command: string; writer: boolean }) =>
+    `process ${h.pid}${h.command === "" ? "" : ` (${h.command})`} was still ${h.writer ? "writing in" : "inside"} ${path} (${h.writer ? "a file open for writing; --force" : "its cwd or a file open for reading"}); the tree was removed under it`,
   "worktree.unmerged_repo_gone": (path: string) =>
     `worktree ${path} has unmerged commits and its repo is gone; nothing can keep them (use --discard to drop them)`,
   "revision.changed": (subject: string, expected: number, current: number, preview: string) =>
