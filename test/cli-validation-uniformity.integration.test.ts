@@ -177,17 +177,17 @@ describe("audit_cli_validation_uniformity", () => {
   // ─── Class C: typed *Invalid* domain errors ───────────────────────
 
   describe("class C — typed *Invalid* errors", () => {
-    it("WorkstreamNameInvalidError: exit 2 + help block + JSON usage", async () => {
+    it("WorkstreamNameInvalidError: exit 2, one line naming the shape, no help block", async () => {
       const human = await runCli(["workstream", "init", "Bad-Name"], dbPath);
       expect(human.exitCode).toBe(2);
-      // The typed error message itself is the operator-facing message.
-      expect(human.stderr).toMatch(/error:.*Bad-Name/);
-      expect(human.stderr).toMatch(/Usage: mu workstream init/);
+      // The typed error message names the fix, so nothing follows it (rr_r4_usage_help_dump_fix_named).
+      expect(human.stderr).toMatch(/error:.*Bad-Name.*use \[a-z\]/);
+      expect(human.stderr).not.toMatch(/Usage: mu workstream init/);
 
       const { exitCode, env } = await failure(["workstream", "init", "Bad-Name", "--json"], dbPath);
       expect(exitCode).toBe(2);
       expect(env.error).toBe("WorkstreamNameInvalidError");
-      expect(env.usage?.[0]).toMatch(/^mu workstream init/);
+      expect(env.usage).toBeUndefined();
     });
   });
 

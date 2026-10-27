@@ -111,7 +111,7 @@ export async function cmdClaim(
     throw new UsageError(say("task.claim_and_wait"));
   }
   if (opts.self === true && opts.for !== undefined) {
-    throw new UsageError(say("task.claim_self_and_for"), { showHelp: false });
+    throw new UsageError(say("task.claim_self_and_for"));
   }
   if (
     opts.for === undefined &&

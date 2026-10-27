@@ -516,7 +516,7 @@ describe("isValidWorkstreamName", () => {
     }
     expect(caught).toBeDefined();
     expect(caught?.message).toMatch(/mu-mu-auth/);
-    expect(caught?.message).toMatch(/double-prefixed/);
+    expect(caught?.message).toMatch(/double-prefixed/); // the mu- gotcha keeps its one-sentence reason
   });
 });
 
@@ -525,7 +525,7 @@ describe("ensureWorkstream — name validation", () => {
     expect(() => ensureWorkstream(db, "roadmap-v0.2")).toThrow(WorkstreamNameInvalidError);
   });
 
-  it("the thrown error names the offending input and explains why", () => {
+  it("the thrown error names the offending input and names the shape", () => {
     let caught: WorkstreamNameInvalidError | undefined;
     try {
       ensureWorkstream(db, "auth:refactor");
@@ -534,7 +534,7 @@ describe("ensureWorkstream — name validation", () => {
     }
     expect(caught).toBeDefined();
     expect(caught?.attempted).toBe("auth:refactor");
-    expect(caught?.message).toMatch(/tmux/);
+    expect(caught?.message).toMatch(/use \[a-z\]\[a-z0-9_-\]\{0,31\}/);
     expect(caught?.message).toMatch(/auth:refactor/);
   });
 
