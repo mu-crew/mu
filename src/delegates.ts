@@ -34,7 +34,6 @@ import { addNote, addTask } from "./tasks/edit.js";
 import { TaskNotFoundError } from "./tasks/errors.js";
 import { closeTask, setTaskStatus } from "./tasks/lifecycle.js";
 import { getTask } from "./tasks/queries.js";
-import { cursorKey, DELEGATE_TOKEN, readCursors, recordCursors } from "./wait-cursor.js";
 
 export { parseVerdict, type VerdictLabel } from "./delegate-verdict.js";
 
@@ -194,45 +193,6 @@ export function listDelegates(
   }
   const sql = `${SELECT_CALL}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY d.task_id`;
   return (db.prepare(sql).all(...args) as RawCall[]).map(rowOf);
-}
-
-/**
- * Reading a finished call's report is its delivery (`mu task notes` on its task):
- * the owning caller's delegate cursor is recorded, so no later wait hands the same
- * answer back. Only a terminal call whose caller is one of `callers`; anything else
- * (a running call, another caller's, a shell with no caller) stays a pure read.
- * Idempotent with a wait's own consume (recordCursors is monotonic). The call id, if consumed.
- */
-export function consumeReadReport(
-  db: Db,
-  callers: readonly string[],
-  workstream: string,
-  task: string,
-): string | undefined {
-  if (callers.length === 0) return undefined;
-  const r = db
-    .prepare(`${SELECT_CALL} WHERE w.name = ? AND t.local_id = ?`)
-    .get(workstream, task) as RawCall | undefined;
-  if (r === undefined || !callers.includes(r.caller) || !isTerminal(r.state)) return undefined;
-  const key = cursorKey("delegate", r.workstream, r.call_id);
-  recordCursors(db, r.caller, [{ key, token: DELEGATE_TOKEN }]);
-  return r.call_id;
-}
-
-/** `rows`, each with `delivered`: its own caller already consumed its answer (a wait, or a read). */
-export function withDelivered(
-  db: Db,
-  rows: readonly DelegateRow[],
-): (DelegateRow & { delivered: boolean })[] {
-  const byCaller = new Map<string, Map<string, unknown>>();
-  return rows.map((r) => {
-    let cursors = byCaller.get(r.caller);
-    if (cursors === undefined) {
-      cursors = readCursors(db, r.caller);
-      byCaller.set(r.caller, cursors);
-    }
-    return { ...r, delivered: cursors.has(cursorKey("delegate", r.workstream, r.callId)) };
-  });
 }
 
 /** Calls of any of `callers` (the union, each call once, oldest first), optionally in one workstream and wave. `[]` is no calls. */

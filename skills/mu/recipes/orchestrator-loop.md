@@ -29,7 +29,7 @@ Use when you dispatch and merge.
 
 ## Delegate waves
 
-One `wave` label per fan-out ([tasks-or-calls](tasks-or-calls.md)); `mu wait -w <ws> --wave <label>` returns its tally. A bare `mu wait` returns each unread answer.
+One `wave` label per fan-out ([tasks-or-calls](tasks-or-calls.md)); `mu wait -w <ws> --wave <label>` returns its tally. A bare `mu wait` ends on each answer too.
 
 ## Stopping
 

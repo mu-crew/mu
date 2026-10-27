@@ -27,7 +27,6 @@ import {
   withRoiAll,
 } from "../../cli.js";
 import type { Db, NoteKind } from "../../db.js";
-import { consumeReadReport } from "../../delegates.js";
 import { lastClaimActor } from "../../logs.js";
 import { say } from "../../messages.js";
 import { pc } from "../../output.js";
@@ -50,7 +49,6 @@ import {
   type UpdateTaskOptions,
   updateTask,
 } from "../../tasks.js";
-import { currentCallers } from "../../wait-callers.js";
 import { noteRecord, planNotes, type ShownNote, stubAuthor, stubPreview } from "../format.js";
 import { readStdinText, STDIN_ARG } from "../stdin.js";
 import {
@@ -749,9 +747,6 @@ export async function cmdTaskNotes(
   const ws = await resolveWorkstream(opts.workstream);
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
-  // Its caller reading a finished delegate's report takes the answer: a later wait owes it no more.
-  if (task.kind === "delegate")
-    consumeReadReport(db, currentCallers(), task.workstreamName, localId);
   let page: NotesPage;
   let total: number;
   const notesWire = {
