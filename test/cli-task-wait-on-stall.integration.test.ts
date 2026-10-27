@@ -296,8 +296,10 @@ describe("mu task wait --on-stall warn|exit", () => {
     expect(exitCode).toBe(7);
     const d = doc(stdout);
     expect(d.firing.kind).toBe("stall");
-    // Reads are never next: no pane read is suggested.
-    expect(JSON.parse(stdout).next).toBeNull();
+    // A stall leaves the task owed: next is its resume (4226d0c), never a pane read.
+    const next = JSON.parse(stdout).next;
+    expect(next?.commands?.[0]).toMatch(/^mu wait --resume /);
+    expect(JSON.stringify(next)).not.toContain("agent read");
   });
 
   it("--on-stall warn: one stderr line, keeps waiting, times out ok:true", async () => {
