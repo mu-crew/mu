@@ -39,6 +39,7 @@ const reg = (id: string, ...more: string[]) =>
 
 describe("mu delegates", () => {
   it("register -> mark -> finish -> list/show/tally round-trips", async () => {
+    await runCliJson(["workstream", "init", "crew", "--json"], db);
     await runCliJson(["task", "add", "f1", "-w", "crew", "-t", "f1", "--json"], db);
     const r = await reg(
       "pi:s:1",

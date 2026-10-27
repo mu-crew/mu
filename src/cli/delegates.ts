@@ -18,7 +18,7 @@ import {
   JSON_OPT,
   parseNonNegativeInt,
   parsePositiveNumber,
-  resolveWorkstream,
+  resolveExistingWorkstream,
   UsageError,
   WORKSTREAM_OPT,
 } from "../cli.js";
@@ -104,7 +104,7 @@ export async function cmdDelegatesShow(db: Db, callId: string, opts: WsOpt): Pro
 
 export async function cmdDelegatesTally(db: Db, opts: WsOpt & { wave?: string }): Promise<void> {
   if (opts.wave === undefined) throw new UsageError("tally needs --wave <label>");
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const t = verdictTally(db, ws, opts.wave);
   if (opts.json) return emitJson(t);
   const table = muTable({ head: ["FINDING", "CONFIRMED", "REFUTED", "UNVERIFIED", "PENDING"] });
@@ -144,7 +144,7 @@ export async function cmdDelegatesRegister(
   callId: string,
   opts: RegisterOpts,
 ): Promise<void> {
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const caller = opts.caller ?? callerFromEnv();
   if (caller === undefined) throw new UsageError("register needs --caller <session>");
   if (opts.text === undefined)

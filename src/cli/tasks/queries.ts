@@ -28,8 +28,8 @@ import {
   parseStatusesOption,
   parseSubstatesOption,
   relTimeBasisForSort,
+  resolveExistingWorkstream,
   resolveSelf,
-  resolveWorkstream,
   sortTasks,
   type TaskSortKey,
   UsageError,
@@ -159,7 +159,7 @@ export async function cmdTaskList(
     mine?: boolean;
   },
 ): Promise<void> {
-  const workstream = await resolveWorkstream(opts.workstream);
+  const workstream = await resolveExistingWorkstream(db, opts.workstream);
   const listOpts: Parameters<typeof listTasks>[2] = {};
   // --status accepts repeat OR comma-separate OR mix; parseStatusesOption
   // handles parseCsvFlag + per-element validate + dedup. Returns
@@ -220,7 +220,7 @@ export async function cmdTaskNext(
     all?: boolean;
   },
 ): Promise<void> {
-  const workstream = await resolveWorkstream(opts.workstream);
+  const workstream = await resolveExistingWorkstream(db, opts.workstream);
   const k = opts.lines ?? 1;
   const sortKey: TaskSortKey = opts.sort === undefined ? "roi" : parseSortOption(opts.sort);
   const readyOpts: Parameters<typeof listReady>[2] = {};
@@ -283,7 +283,7 @@ export async function cmdTaskOwnedBy(
   // worker-1, not every workstream's). --all explicitly opts into the
   // cross-workstream view via listTasksByOwnerCrossWorkstream.
   const includeClosed = opts.includeClosed ?? false;
-  const ws = opts.all ? undefined : await resolveWorkstream(opts.workstream);
+  const ws = opts.all ? undefined : await resolveExistingWorkstream(db, opts.workstream);
   const tasks: TaskRow[] =
     ws === undefined
       ? listTasksByOwnerCrossWorkstream(db, agent, { includeClosed })

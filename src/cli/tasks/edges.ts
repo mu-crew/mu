@@ -12,7 +12,7 @@ import {
   emitJson,
   parseCsvFlag,
   resolveEntityRef,
-  resolveWorkstream,
+  resolveExistingWorkstream,
   UsageError,
 } from "../../cli.js";
 import type { Db } from "../../db.js";
@@ -52,7 +52,7 @@ export async function cmdTaskBlock(
 ): Promise<void> {
   const { name: blocked } = await resolveEntityRef(db, rawBlocked, opts, "task");
   assertTaskInWorkstream(db, blocked, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const blockers = parseByFlag(opts.by);
   // Sequential, fail-fast: the first bad blocker throws its typed
   // error (not-found / cycle / cross-workstream) and earlier edges
@@ -96,7 +96,7 @@ export async function cmdTaskUnblock(
 ): Promise<void> {
   const { name: blocked } = await resolveEntityRef(db, rawBlocked, opts, "task");
   assertTaskInWorkstream(db, blocked, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   // Symmetric with `block`: same --by parsing on both halves of the
   // same edge operation, so a multi-blocker block is a single
   // invocation too.
@@ -147,7 +147,7 @@ export async function cmdTaskReparent(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   // An all-EMPTY --blocked-by '' is the documented clear-all-blockers
   // sentinel here (unlike --by, where zero blockers is meaningless),
   // so [] stays legal. A BLANK ' ' still throws from parseCsvFlag.
@@ -171,7 +171,7 @@ export async function cmdTaskDelete(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   // Two-phase: bare = dry-run preview; --yes commits. Mirrors
   // `mu workstream teardown`. Surfaced by feedback
   // ws task fb_task_delete_no_yes

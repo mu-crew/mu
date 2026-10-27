@@ -32,7 +32,7 @@ import {
   parseQualifiedRef,
   parseSeconds,
   parseStatusOption,
-  resolveWorkstream,
+  resolveExistingWorkstream,
   UsageError,
   WORKSTREAM_OPT,
 } from "../cli.js";
@@ -164,7 +164,7 @@ export async function parseWaitRef(
   const workstream =
     parsed.workstream !== undefined
       ? checkQualifiedPrefix(rest, parsed.workstream)
-      : await resolveWorkstream(scope);
+      : await resolveExistingWorkstream(db, scope);
   if (kind === "task") {
     if (getTask(db, parsed.name, workstream) === undefined) {
       throw new TaskNotFoundError(
@@ -539,7 +539,7 @@ export async function parseBlockersOf(
   const workstream =
     parsed.workstream !== undefined
       ? checkQualifiedPrefix(raw, parsed.workstream)
-      : await resolveWorkstream(scope);
+      : await resolveExistingWorkstream(db, scope);
   if (getTask(db, parsed.name, workstream) === undefined) {
     throw new TaskNotFoundError(
       parsed.workstream !== undefined ? raw : parsed.name,

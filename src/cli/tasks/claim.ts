@@ -19,7 +19,7 @@ import {
   emitJson,
   parseQualifiedRef,
   resolveEntityRef,
-  resolveWorkstream,
+  resolveExistingWorkstream,
   UsageError,
 } from "../../cli.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../../db.js";
@@ -54,7 +54,7 @@ export async function cmdTaskRelease(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const sdkOpts: Parameters<typeof releaseTask>[2] = {
     reopen: opts.reopen ?? false,
     workstream: ws,
@@ -105,7 +105,7 @@ export async function cmdClaim(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   if (opts.andWait === true && opts.for === undefined) {
     throw new UsageError(say("task.claim_and_wait"));
   }

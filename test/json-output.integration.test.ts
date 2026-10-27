@@ -347,6 +347,9 @@ describe("--json output on read verbs", () => {
     expect(ok.stderr).not.toMatch(/unknown option/);
     expect(ok.stderr).not.toMatch(/conflict:/);
 
+    const db2 = openDb({ path: dbPath });
+    ensureWorkstream(db2, "infra");
+    db2.close();
     const bad = await runCli(["agent", "show", "worker-1", "-w", "infra"], dbPath);
     expect(bad.stderr).toMatch(/conflict:/);
     expect(bad.stderr).toMatch(/auth/);

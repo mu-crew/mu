@@ -47,7 +47,8 @@ import { wireSyncCommand } from "./cli/sync.js";
 import { wireTaskCommands } from "./cli/tasks.js";
 import { wireWaitCommand } from "./cli/wait.js";
 import { wireWorkstreamCommands } from "./cli/workstream.js";
-import type { Db } from "./db.js";
+import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "./db.js";
+import { editDistance } from "./edit-distance.js";
 import { encodeEnvelope, okEnvelope, safeJsonLine } from "./output-contract.js";
 import { isTaskSortKey, TASK_SORT_KEYS, type TaskSortKey } from "./tasks/sort.js";
 import { TASK_SUBSTATES, type TaskSubstate } from "./tasks/status.js";
@@ -58,7 +59,11 @@ import {
   type TaskRow,
   type TaskStatus,
 } from "./tasks.js";
-import { resolveMuxSessionWorkstreamName } from "./workstream.js";
+import {
+  isScratchWorkstream,
+  isValidWorkstreamName,
+  resolveMuxSessionWorkstreamName,
+} from "./workstream.js";
 import {
   parseWorkstreamFragments,
   qualifiedRefProblem,
@@ -175,6 +180,39 @@ export async function resolveWorkstream(explicit?: string): Promise<string> {
   return ws;
 }
 
+/** The live workstreams whose name is near `name`, closest first (at most three). */
+function nearWorkstreams(db: Db, name: string): string[] {
+  const rows = db.prepare("SELECT name FROM workstreams WHERE torn_down_at IS NULL").all() as {
+    name: string;
+  }[];
+  return rows
+    .map((r) => ({ name: r.name, d: editDistance(r.name, name) }))
+    .filter((r) => r.d <= Math.max(2, Math.floor(name.length / 3)) || r.name.includes(name))
+    .sort((a, b) => a.d - b.d || a.name.localeCompare(b.name))
+    .slice(0, 3)
+    .map((r) => r.name);
+}
+
+/** Throw `WorkstreamNotFoundError` (exit 3) unless the workstream `name` is live; the reserved
+ *  `scratch` always passes (its first `task add` / `agent spawn` creates it). The one existence
+ *  check of every verb that reads or writes inside a workstream. A torn-down name throws
+ *  `WorkstreamTornDownError`. */
+export function requireLiveWorkstream(db: Db, name: string): void {
+  if (isScratchWorkstream(name) || tryResolveLiveWorkstreamId(db, name) !== null) return;
+  throw new WorkstreamNotFoundError(name, {
+    near: nearWorkstreams(db, name),
+    init: isValidWorkstreamName(name),
+  });
+}
+
+/** `resolveWorkstream`, then the existence check: a typo'd `-w` is exit 3, never an empty
+ *  success or a silently created workstream. */
+export async function resolveExistingWorkstream(db: Db, explicit?: string): Promise<string> {
+  const ws = await resolveWorkstream(explicit);
+  requireLiveWorkstream(db, ws);
+  return ws;
+}
+
 // ─── Qualified entity refs (cross-workstream verb args) ────────────────
 //
 // Every verb that takes an entity name (mu task show <id>, mu agent
@@ -281,7 +319,7 @@ export async function resolveEntityRef(
 ): Promise<{ name: string; workstream: string }> {
   const name = applyQualifiedRef(raw, opts);
   if (opts.workstream !== undefined || injectedWorkstream() !== undefined) {
-    return { name, workstream: await resolveWorkstream(opts.workstream) };
+    return { name, workstream: await resolveExistingWorkstream(db, opts.workstream) };
   }
   const matches = findEntityWorkstreams(db, kind, name);
   if (matches.length >= 2) throw new NameAmbiguousError(name, matches, kind);
@@ -530,11 +568,10 @@ export function assertAgentInWorkstream(
 
 /**
  * Sister of `assertAgentInWorkstream` for verbs that target a single
- * task by ID. Globally-unique task IDs mean these verbs could ignore
- * the flag, but accepting it gives the operator a sanity check ("yes,
- * I think this task is in that workstream") and raises a clear
- * `TaskNotInWorkstreamError` instead of silently acting on the task
- * they didn't mean. No-op when `workstream` is undefined or the task
+ * task by ID. Task ids are unique per workstream, so a bare id under the
+ * wrong `-w` is a different (or no) task: this raises a clear
+ * `TaskNotInWorkstreamError` naming the real workstream. `resolveEntityRef`
+ * has already validated and existence-checked `-w`. No-op when `workstream` is undefined or the task
  * doesn't exist (downstream handler raises `TaskNotFoundError`).
  */
 export function assertTaskInWorkstream(

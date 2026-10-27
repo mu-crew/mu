@@ -22,7 +22,7 @@ import {
   emitJson,
   parseCsvFlag,
   resolveEntityRef,
-  resolveWorkstream,
+  resolveExistingWorkstream,
   UsageError,
   withRoiAll,
 } from "../../cli.js";
@@ -306,7 +306,7 @@ export async function cmdTaskAdd(
     json?: boolean;
   },
 ): Promise<void> {
-  const workstream = await resolveWorkstream(opts.workstream);
+  const workstream = await resolveExistingWorkstream(db, opts.workstream);
   const titles = opts.title;
   if (localIds.length > 0 && titles.length !== localIds.length) {
     // A stray word is nearly always an apostrophe that ended '...' early
@@ -464,7 +464,7 @@ export async function cmdTaskNote(
   }
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   // Author resolution: explicit --author wins; otherwise consult
   // MU_AGENT_NAME (env var injected at spawn) > $USER >
   // 'orchestrator'. Surfaced from mufeedback note #176: notes from
@@ -545,7 +545,7 @@ export async function cmdTaskShow(
   assertTaskInWorkstream(db, localId, opts.workstream);
   // v5: tasks.local_id is per-workstream unique. Resolve the
   // operator's workstream up front so the lookup scopes correctly.
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
   const json = opts.json === true;
@@ -744,7 +744,7 @@ export async function cmdTaskNotes(
   }
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
   let page: NotesPage;
@@ -820,7 +820,7 @@ export async function cmdTaskUpdate(
 ): Promise<void> {
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
   assertTaskInWorkstream(db, localId, opts.workstream);
-  const ws = await resolveWorkstream(opts.workstream);
+  const ws = await resolveExistingWorkstream(db, opts.workstream);
   const updateOpts: UpdateTaskOptions = {};
   if (opts.title !== undefined) updateOpts.title = opts.title;
   if (opts.impact !== undefined) updateOpts.impact = opts.impact;
