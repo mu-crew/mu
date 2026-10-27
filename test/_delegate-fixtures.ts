@@ -17,7 +17,6 @@ import {
   listDelegates,
   markDelegate,
   registerDelegateCall,
-  withDelivered,
 } from "../src/delegates.js";
 import { addTask } from "../src/tasks/edit.js";
 import { selectTaskNotes } from "../src/tasks/queries.js";
@@ -129,12 +128,9 @@ export function delegatesVerb(db: Db, args: readonly string[], stdin?: string): 
         );
       case "list":
         return wrap({
-          items: withDelivered(
-            db,
-            listDelegates(db, undefined, undefined, {
-              ...(flag(args, "--wave") ? { wave: flag(args, "--wave") as string } : {}),
-            }),
-          ),
+          items: listDelegates(db, undefined, undefined, {
+            ...(flag(args, "--wave") ? { wave: flag(args, "--wave") as string } : {}),
+          }),
         });
       case "show": {
         const call = getDelegateCall(db, id);

@@ -11,9 +11,7 @@
 //             writes a newer note, so a reopened-and-closed task is news.
 //   delegate  `delegate` + 1: a call reaches a terminal state once.
 //
-// A token is written only for an event the wait DELIVERED, or (delegate only)
-// a finished call whose report its own caller read with `mu task notes`
-// (consumeReadReport, src/delegates.ts). Registering a
+// A token is written only for an event the wait DELIVERED. Registering a
 // ref or starting a wait never writes one, and a sibling that a `first`
 // wait did not return stays unconsumed. Keys are typed, `<kind>:<ws>/<id>`:
 // workstream names hold no `/`, so no two refs collide.
