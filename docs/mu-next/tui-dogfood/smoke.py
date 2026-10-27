@@ -7,13 +7,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][A-Z0-9]|\x1b[=>]")
 # scenario -> (text that must appear, keys to press before q, text that must appear after them)
 CHECKS = {
-    1: (b"nothing here", b"\t\t\t", b"Log"),
-    2: (b"worker-1", b"\t\t", b"worker-3"),
+    1: (b"no workstreams", b"\t\t\t\t", b"Log"),
+    2: (b"worker-1", b"\t\t\t", b"worker-3"),
     3: (b"hail-cache", b"]", b"Tasks"),
-    4: (b"payments", b"\t\t", b"worker-4"),
-    5: (b"monorepo", b"jjjj\r", b"note"),
-    6: (b"live-demo", b"\t\t", b"worker-1"),
-    7: (b"remote-demo", b"\t\t", b"worker-2"),
+    4: (b"payments", b"\t\t\t", b"worker-4"),
+    5: (b"monorepo", b"\tjjjj\r", b"note"),
+    6: (b"live-demo", b"\t\t\t", b"worker-1"),
+    7: (b"remote-demo", b"\t\t\t", b"worker-2"),
 }
 
 def run(n, budget=40):

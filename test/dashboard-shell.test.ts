@@ -140,7 +140,9 @@ describe("dashboard shell", () => {
   it("renders the snapshot, and q exits", async () => {
     seed(a, "t1");
     const rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: a, caller: null });
-    const ui = await renderApp(createElement(App, { runtime: rt, pollMs: null }));
+    const ui = await renderApp(
+      createElement(App, { runtime: rt, initialTab: "tasks", pollMs: null }),
+    );
     await ui.until((s) => s.includes("t1"));
     await ui.press("q");
     await ui.exited;
@@ -149,7 +151,9 @@ describe("dashboard shell", () => {
 
   it("Esc exits too", async () => {
     const rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: a, caller: null });
-    const ui = await renderApp(createElement(App, { runtime: rt, pollMs: null }));
+    const ui = await renderApp(
+      createElement(App, { runtime: rt, initialTab: "tasks", pollMs: null }),
+    );
     await ui.until((s) => s.includes("no workstreams"));
     await ui.press("\u001b");
     await ui.exited;
@@ -166,7 +170,9 @@ describe("dashboard shell", () => {
       notes: rt.notes,
       close: rt.close,
     };
-    const ui = await renderApp(createElement(App, { runtime: flaky, pollMs: 0 }));
+    const ui = await renderApp(
+      createElement(App, { runtime: flaky, initialTab: "tasks", pollMs: 0 }),
+    );
     await ui.until((s) => s.includes("error: boom") && s.includes("t1"));
     ui.unmount();
     await ui.exited;

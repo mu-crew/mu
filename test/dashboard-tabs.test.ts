@@ -187,10 +187,11 @@ describe("model", () => {
     expect(l(0)).toEqual({ shown: [], height: 0 });
     expect(l(2)).toEqual({ shown: [], height: 0 });
     expect(l(3)).toEqual({ shown: [], height: 1 });
-    expect(l(4)).toEqual({ shown: ["filter"], height: 1 });
-    expect(l(5)).toEqual({ shown: ["filter", "footer"], height: 1 });
-    expect(l(6)).toEqual({ shown: ["filter", "footer", "next"], height: 1 });
-    expect(l(20)).toEqual({ shown: ["filter", "footer", "next"], height: 15 });
+    expect(l(4)).toEqual({ shown: ["footer"], height: 1 });
+    expect(l(5)).toEqual({ shown: ["footer", "strip"], height: 1 });
+    expect(l(6)).toEqual({ shown: ["footer", "strip", "filter"], height: 1 });
+    expect(l(7)).toEqual({ shown: ["footer", "strip", "filter", "next"], height: 1 });
+    expect(l(50)).toEqual({ shown: ["footer", "strip", "filter", "next"], height: 44 });
   });
 });
 
@@ -216,7 +217,13 @@ describe("tabs (Ink over a real snapshot)", () => {
   const open = (size = { columns: 80, rows: 20 }, initial?: string) => {
     rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
     return renderApp(
-      createElement(App, { runtime: rt, pollMs: null, initialWorkstream: initial, now: () => 0 }),
+      createElement(App, {
+        runtime: rt,
+        initialTab: "tasks",
+        pollMs: null,
+        initialWorkstream: initial,
+        now: () => 0,
+      }),
       size,
     );
   };
@@ -269,20 +276,27 @@ describe("tabs (Ink over a real snapshot)", () => {
     insertAgent(db, { name: "amy", workstream: "alpha", paneId: "%1" });
     insertAgent(db, { name: "bob", workstream: "beta", paneId: "%2" });
     const ui = await open({ columns: 80, rows: 20 }, "alpha");
+    // The attention strip covers every workstream on purpose (a dead `bob` shows there): read the list.
+    const list = (): string =>
+      ui
+        .screen()
+        .split("\n")
+        .filter((l) => !/^[⚠✓]/.test(l))
+        .join("\n");
     await ui.until((s) => s.includes("a1"));
     await ui.press("\t"); // DAG
     await ui.press("\t"); // Agents
     await ui.until((s) => s.includes("amy"));
-    expect(ui.screen()).not.toContain("bob");
+    expect(list()).not.toContain("bob");
     await ui.press("]");
     await ui.until((s) => s.includes("bob"));
-    expect(ui.screen()).not.toContain("amy");
+    expect(list()).not.toContain("amy");
     await ui.press("\t"); // Log: beta's ops only
     await ui.until((s) => s.includes("b1"));
-    expect(ui.screen()).not.toContain("a1");
+    expect(list()).not.toContain("a1");
     await ui.press("[");
     await ui.until((s) => s.includes("a1"));
-    expect(ui.screen()).not.toContain("b1");
+    expect(list()).not.toContain("b1");
     ui.unmount();
   });
 
@@ -559,7 +573,13 @@ describe("tabs (Ink over a real snapshot)", () => {
     add("beta", "three");
     rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
     const ui = await renderApp(
-      createElement(App, { runtime: rt, pollMs: 0, initialWorkstream: "beta", now: () => 0 }),
+      createElement(App, {
+        runtime: rt,
+        initialTab: "tasks",
+        pollMs: 0,
+        initialWorkstream: "beta",
+        now: () => 0,
+      }),
       { columns: 60, rows: 12 },
     );
     const bump = (id: string) =>
@@ -624,7 +644,7 @@ describe("tabs (Ink over a real snapshot)", () => {
     const ui = await open({ columns: 80, rows: 20 }, "beta");
     await ui.until((s) => s.includes("t7") && s.includes("t0"));
     ui.resize(20, 10);
-    await ui.until((s) => s.includes("Tasks 1/4"));
+    await ui.until((s) => s.includes("Tasks 2/5"));
     let lines = ui.screen().split("\n");
     expect(lines).toHaveLength(10);
     expect(lines[0]).toContain("[beta]");
@@ -656,7 +676,12 @@ describe("tabs (Ink over a real snapshot)", () => {
       },
     };
     const ui = await renderApp(
-      createElement(App, { runtime: computed, pollMs: null, initialWorkstream: "beta" }),
+      createElement(App, {
+        runtime: computed,
+        initialTab: "tasks",
+        pollMs: null,
+        initialWorkstream: "beta",
+      }),
       { columns: 80, rows: 12 },
     );
     await ui.until((s) => s.includes("next (alt): mu x"));

@@ -61,7 +61,7 @@ back in the dashboard).
 
 ## Keys to try (the dashboard's own hint line lists them too)
 
-`←/→` or Tab: tabs (Tasks, DAG, Agents, Log) · `[` `]`: workstream · `j/k`,
+`←/→` or Tab: tabs (Overview, Tasks, DAG, Agents, Log) · `[` `]`: workstream · `j/k`,
 PgUp/PgDn, `g/G`: move · `Enter`: notes / scrollback / log entry · `a`
 (Agents tab): attach · `s` (Tasks): cycle the sort (activity, roi, age, id) · `o` (Tasks): cycle the status filter · `/`: text filter
 (Enter keeps, Esc cancels) · `c`: clear · `y`: copy the equivalent command ·
