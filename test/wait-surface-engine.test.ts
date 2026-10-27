@@ -5,7 +5,8 @@
 import { describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { reasonOf } from "../src/cli/wait.js";
-import { closeTask, listNotes } from "../src/tasks.js";
+import { releaseTask } from "../src/tasks/claim.js";
+import { closeTask, getTask, listNotes } from "../src/tasks.js";
 import { type AgentReading, WAIT_HEARTBEAT_CAP_MS, waitForEvents } from "../src/wait.js";
 import { readWaitRegistration } from "../src/wait-registration.js";
 import {
@@ -32,6 +33,7 @@ const spawnedBy = (agent: string, caller: string, ws = "w"): void => {
 };
 const agentRowOf = (name: string): number =>
   (env.db.prepare("SELECT id FROM agents WHERE name = ?").get(name) as { id: number }).id;
+const getTaskStatus = (id: string): string | undefined => getTask(env.db, id, "w")?.status;
 const reads = (status: "busy" | "needs_input" | null, over: Record<string, unknown> = {}) =>
   scriptedAgents(new Map([["w/a1", { status, ...over } as never]]));
 
@@ -384,6 +386,214 @@ describe("--all --on-stall steer rearms on the steered owner's next run (fix_all
     expect(r.exit).toBe(0);
     expect(sends).toHaveLength(1);
     expect(runs).toEqual([0, 1]); // the second watch counts past the steer baseline
+  });
+});
+
+describe("a later run always supersedes a settled latch (fix_latch_later_run)", () => {
+  const settlesOf = (): number[] =>
+    (
+      env.db.prepare("SELECT runs FROM agent_settles ORDER BY runs").all() as { runs: number }[]
+    ).map((r) => r.runs);
+  /** The owner a1 of t1: run 1 settles with `run1`; run 2 (once `two.on`) with a valid CLOSE. */
+  const script = (run1: string) => {
+    const since = Date.now() - 60_000;
+    const idle = {
+      status: "needs_input",
+      since,
+      source: "ctl",
+      ctl: "ok",
+      incarnation: "inc",
+      agentId: agentRowOf("a1"),
+    } as const;
+    const table = new Map<string, AgentReading>([["w/a1", { ...idle, runs: 1 }]]);
+    const watched: number[] = [];
+    const two = { on: false };
+    const watchAgent = async (ref: { afterRuns?: number }) => {
+      const after = ref.afterRuns ?? 0;
+      watched.push(after);
+      const w = controllableWatch({ status: "busy" });
+      if (after < 1) w.settle({ ...idle, settled: true, runs: 1, lastText: run1 });
+      else if (two.on)
+        w.settle({
+          ...idle,
+          settled: true,
+          runs: 2,
+          lastText: 'CLOSE: task=t1 evidence="npm test: 3 passed"\nREPORT:\ndone',
+        });
+      return { ...w.handle, afterRuns: after };
+    };
+    return { idle, table, watched, two, watchAgent, readAgents: scriptedAgents(table).readAgents };
+  };
+
+  it("P1a resume after a stall: run 2 settles during the resumed wait; its CLOSE closes t1 (exit 0)", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    spawnedBy("a1", "w/boss");
+    const s = script('CLOSE: task=t1 evidence="e"\nREPORT:\n');
+    const opts = {
+      ...base,
+      timeoutMs: 1500,
+      mode: "all" as const,
+      status: "CLOSED" as const,
+      readAgents: s.readAgents,
+      watchAgent: s.watchAgent,
+      callers: ["w/boss"],
+      stuckAfterMs: 1000,
+      onStall: "exit" as const,
+    };
+    const first = await waitForEvents(env.db, [], opts);
+    expect(first.event).toMatchObject({ kind: "stall", ref: { kind: "task", id: "t1" } });
+    expect(first.exit).toBe(7);
+    expect(settlesOf()).toEqual([1]);
+    // The resume: the owner was sent work, run 2 is on (busy), then settles while the wait runs.
+    s.table.set("w/a1", { status: "busy", source: "ctl", ctl: "ok", incarnation: "inc", runs: 1 });
+    let n = 0;
+    const second = await waitForEvents(env.db, [], {
+      ...opts,
+      sleep: async () => {
+        if (++n === 2) {
+          s.two.on = true;
+          s.table.set("w/a1", { ...s.idle, runs: 2 });
+        }
+        await new Promise((r) => setTimeout(r, 2));
+      },
+    });
+    expect(second.event).toMatchObject({ kind: "closed", ref: { kind: "task", id: "t1" } });
+    expect(second.exit).toBe(0);
+    expect(getTaskStatus("t1")).toBe("CLOSED");
+    expect(settlesOf()).toEqual([1, 2]); // run 2's CLOSE applied, exactly once
+    expect(s.watched.at(-1)).toBe(1); // rearmed from the latched run
+  });
+
+  it("P1b --on-stall warn: run 1 settles mid-task, run 2's valid CLOSE closes t1 in the same wait", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    spawnedBy("a1", "w/boss");
+    const s = script("paused mid-task");
+    let n = 0;
+    const r = await waitForEvents(env.db, [taskRef("t1")], {
+      ...base,
+      timeoutMs: 1500,
+      mode: "all",
+      status: "CLOSED",
+      readAgents: s.readAgents,
+      watchAgent: s.watchAgent,
+      callers: ["w/boss"],
+      stuckAfterMs: 1000,
+      onStall: "warn",
+      sleep: async () => {
+        if (++n === 3) {
+          s.two.on = true;
+          s.table.set("w/a1", { ...s.idle, runs: 2 });
+        }
+        await new Promise((res) => setTimeout(res, 2));
+      },
+    });
+    expect(r.event).toMatchObject({ kind: "closed", ref: { kind: "task", id: "t1" } });
+    expect(r.timedOut).toBe(false);
+    expect(getTaskStatus("t1")).toBe("CLOSED");
+    expect(settlesOf()).toEqual([2]); // run 1 had no block; run 2's applied once
+    expect(s.watched).toEqual([0, 1]);
+  });
+
+  it("a later run that is refused too: the stall names the NEWEST run's refusal", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    spawnedBy("a1", "w/boss");
+    const s = script("paused mid-task");
+    const watchAgent = async (ref: { afterRuns?: number }) => {
+      const after = ref.afterRuns ?? 0;
+      s.watched.push(after);
+      const w = controllableWatch({ status: "busy" });
+      if (after < 1) w.settle({ ...s.idle, settled: true, runs: 1, lastText: "paused mid-task" });
+      else
+        w.settle({
+          ...s.idle,
+          settled: true,
+          runs: 2,
+          lastText: 'CLOSE: task=t1 evidence="e"\nREPORT:\n',
+        });
+      return { ...w.handle, afterRuns: after };
+    };
+    s.table.set("w/a1", { ...s.idle, runs: 2 });
+    const r = await waitForEvents(env.db, [taskRef("t1")], {
+      ...base,
+      timeoutMs: 1500,
+      mode: "all",
+      status: "CLOSED",
+      readAgents: s.readAgents,
+      watchAgent,
+      callers: ["w/boss"],
+      stuckAfterMs: 1000,
+    });
+    expect(r.event).toMatchObject({ kind: "stall", ref: { kind: "task", id: "t1" } });
+    expect(r.refs.find((x) => x.ref.kind === "task")?.close?.reason).toMatch(
+      /^no close \(malformed\)/,
+    );
+    expect(s.watched).toEqual([0, 1]);
+  });
+});
+
+describe("a stall carried past a release keeps what it was (fix_latch_later_run P2)", () => {
+  it("the released task's stall still names its owner and the refused CLOSE", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    spawnedBy("a1", "w/boss");
+    const idle = {
+      status: "needs_input",
+      since: Date.now() - 60_000,
+      source: "ctl",
+      ctl: "ok",
+      runs: 1,
+      incarnation: "inc",
+      agentId: agentRowOf("a1"),
+    } as const;
+    const w = controllableWatch({ status: "busy" });
+    w.settle({ ...idle, settled: true, lastText: 'CLOSE: task=t1 evidence="e"\nREPORT:\n' });
+    const r = await waitForEvents(env.db, [taskRef("t1")], {
+      ...base,
+      timeoutMs: 1500,
+      mode: "all",
+      ...reads("needs_input", idle),
+      watchAgent: async () => ({ ...w.handle, afterRuns: 0 }),
+      callers: ["w/boss"],
+      stuckAfterMs: 1000,
+      onStall: "release",
+      handleStall: async () => {
+        releaseTask(env.db, "t1", { workstream: "w", author: "w/boss" });
+        return { disposition: "return", action: "release", state: "released" };
+      },
+    });
+    expect(r.event).toMatchObject({ kind: "stall", ref: { kind: "task", id: "t1" } });
+    expect(getTaskStatus("t1")).toBe("OPEN");
+    const snap = r.refs.find((x) => x.ref.kind === "task");
+    expect(snap).toMatchObject({ owner: "a1", ownerWorkstream: "w", stuck: true });
+    expect(snap?.close?.reason).toMatch(/^no close \(malformed\)/);
+    const why = reasonOf(r, undefined, 1);
+    expect(why).toContain("a1");
+    expect(why).toContain("no close (malformed)");
+    expect(why).toContain("--on-stall release: released");
+  });
+});
+
+describe("reasonOf: a plain stall names the owner and the fix", () => {
+  it("owner, why, and the commands to read and answer it or release the task", () => {
+    const why = reasonOf(
+      {
+        event: { kind: "stall", ref: { kind: "task", workstream: "w", id: "t1" } },
+        refs: [
+          {
+            ref: { kind: "task", workstream: "w", id: "t1" },
+            owner: "a1",
+            ownerWorkstream: "v",
+            stuckWhy: "needs_input",
+            stuckSecs: 42,
+          },
+        ],
+      } as never,
+      undefined,
+      1,
+    );
+    expect(why).toContain("owner a1 needs attention (needs_input for 42s");
+    expect(why).toContain("mu agent read a1 -w v");
+    expect(why).toContain("mu agent send a1 -w v");
+    expect(why).toContain("mu task release t1 -w w");
   });
 });
 

@@ -172,6 +172,8 @@ interface Item {
     ownerRef: { name: string; workstreamName: string };
     /** How long the owner had been stalled when seen (the snapshot's `stuckSecs`). */
     ageSecs: number;
+    /** The owner's settled run was refused its CLOSE (a malformed block): the snapshot's `close`. */
+    close?: CloseOutcome;
   };
 }
 
@@ -566,6 +568,29 @@ export async function waitForEvents(
     if (close !== undefined) t.close = close;
   };
 
+  /**
+   * Drop a settled latch (its close, handle, result) and watch again past `baseline`. A latch holds
+   * one settled run until it is acted on; a later run always supersedes it (refresh), and a steer
+   * that answers it rearms from the send baseline (driveStalls).
+   */
+  const rearm = (t: AgentTrack, baseline: number): void => {
+    t.latched = undefined;
+    t.close = undefined;
+    t.handle = undefined;
+    t.result = undefined;
+    t.needWatch = opts.watchAgent !== undefined;
+    t.baseline = baseline;
+    t.wasBusy = false;
+  };
+
+  /** The settled run `t` holds, when `r` (same pi process) has settled a LATER one. */
+  const supersededBy = (t: AgentTrack, r: AgentReading): number | undefined => {
+    const held = t.latched?.kind === "settled" ? t.latched.reading : undefined;
+    if (held?.runs === undefined || r.runs === undefined || r.runs <= held.runs) return undefined;
+    if (held.incarnation !== undefined && r.incarnation !== held.incarnation) return undefined;
+    return held.runs;
+  };
+
   /** Fold a watch result (`fromWatch`) or a poll reading into the track. */
   const inputToken = (r: AgentReading): CursorToken => ({
     incarnation: `input:${r.incarnation ?? ""}`,
@@ -662,7 +687,10 @@ export async function waitForEvents(
     // Owners of watched in-progress tasks ride on the same batched read.
     const reads = new Map<string, WaitRef>();
     for (const t of tracks.values()) {
-      if (t.latched === undefined && t.handle === undefined) reads.set(refKey(t.ref), t.ref);
+      // A settled latch is read too: a later run supersedes it.
+      if ((t.latched === undefined && t.handle === undefined) || t.latched?.kind === "settled") {
+        reads.set(refKey(t.ref), t.ref);
+      }
     }
     // Owned agents are read for real too (a watch's `initial` is only "busy"): what a reading says
     // decides whether the ref is still owed (src/wait-owed.ts).
@@ -707,6 +735,14 @@ export async function waitForEvents(
         }
         ownerReadings.set(key, r);
         const t = tracks.get(refKey(ref));
+        const held = t === undefined ? undefined : supersededBy(t, r);
+        if (t !== undefined && held !== undefined) {
+          // The owner settled a run past the one latched: the latched run is history. Watch again
+          // from it, so the later run is read and its CLOSE applied; a polled agent latches it now.
+          rearm(t, held);
+          if (t.needWatch) continue;
+          t.wasBusy = true;
+        }
         if (t !== undefined && t.latched === undefined && t.handle === undefined) {
           t.reading = r;
           advance(t, r, false);
@@ -804,6 +840,10 @@ export async function waitForEvents(
     item.ckey = urgentKey("stall", item.key);
     item.token = { incarnation: `stall:${stall.token}`, runs: 1 };
     item.stall = stall;
+    // A stall carried past its own effect (a release cleared the owner) still says whose and why.
+    item.snap.owner ??= stall.ownerRef.name;
+    item.snap.ownerWorkstream ??= stall.ownerRef.workstreamName;
+    if (stall.close !== undefined) item.snap.close = stall.close;
   };
 
   const taskItem = (
@@ -893,7 +933,7 @@ export async function waitForEvents(
         // applied (settle()), so a task it left open (a malformed block) is a stall NOW.
         ((!all && watched.latched?.kind === "settled") ||
           (watched.latched === undefined &&
-            watched.handle !== undefined &&
+            (watched.handle !== undefined || watched.needWatch) &&
             r?.runs !== undefined &&
             (watched.baseline ?? 0) < r.runs));
       const age = settleOwed ? null : stallAgeMs(ownerKey, r);
@@ -906,9 +946,14 @@ export async function waitForEvents(
           r.runs ?? "",
           r.since ?? "",
         ].join("|");
-        markStall(item, { token, owner: r, ownerRef, ageSecs: Math.round(age / 1000) });
-        // The owner's settled run was refused its CLOSE (a malformed block): say why on the task.
-        if (watched?.close?.applied === false) item.snap.close = watched.close;
+        markStall(item, {
+          token,
+          owner: r,
+          ownerRef,
+          ageSecs: Math.round(age / 1000),
+          // The owner's settled run was refused its CLOSE (a malformed block): say why on the task.
+          ...(watched?.close?.applied === false ? { close: watched.close } : {}),
+        });
         if (!stallEmitted.has(token)) {
           stallEmitted.add(token);
           emitEvent(
@@ -1277,14 +1322,8 @@ export async function waitForEvents(
               // A latched settle is the run this steer answers (under --all a stall may stand past
               // it): drop it and watch again from the send baseline, or the owner's NEXT run (and its
               // CLOSE) is never read. Any other latch (dead, input, ...) stays.
-              if (t.latched?.kind === "settled") {
-                t.latched = undefined;
-                t.close = undefined;
-                t.handle = undefined;
-                t.result = undefined;
-                t.needWatch = opts.watchAgent !== undefined;
-              }
-              if (t.latched === undefined) {
+              if (t.latched?.kind === "settled") rearm(t, res.afterRuns);
+              else if (t.latched === undefined) {
                 t.baseline = res.afterRuns;
                 t.wasBusy = false;
               }
