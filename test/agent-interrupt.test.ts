@@ -8,7 +8,13 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentEmptySendError, insertAgent, interruptAgent } from "../src/agents.js";
+import {
+  AgentEmptySendError,
+  AgentExtensionOutdatedError,
+  AgentReplacedError,
+  insertAgent,
+  interruptAgent,
+} from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -62,6 +68,8 @@ async function serve(
     hello?: Record<string, unknown>;
     silent?: boolean;
     accepts?: boolean;
+    /** The pi bound after the hello: its own incarnation, which refuses any other expectation. */
+    replacement?: string;
   } = {},
 ) {
   let state: "busy" | "idle" = opts.busy === false ? "idle" : "busy";
@@ -80,12 +88,19 @@ async function serve(
           afterRuns?: number;
           timeoutMs?: number;
           msgId?: string;
+          expectIncarnation?: string;
         };
         ops.push(req);
         const status = () => ({ incarnation: INC, state, since: 0, runs, pending: true });
         const reply = (r: object) => sock.end(encode({ v: 1, ...r }));
         if (req.op === "hello") reply(helloReply(opts.hello));
-        else if (req.op === "interrupt" && opts.silent) sock.destroy();
+        else if (
+          req.op === "interrupt" &&
+          opts.replacement !== undefined &&
+          req.expectIncarnation !== opts.replacement
+        ) {
+          reply({ ok: false, error: "incarnation mismatch", incarnation: opts.replacement });
+        } else if (req.op === "interrupt" && opts.silent) sock.destroy();
         else if (req.op === "status" && req.msgId !== undefined) {
           reply({
             ok: true,
@@ -142,7 +157,13 @@ describe("mu agent send --interrupt", () => {
     const r = await send("--interrupt", "stop, do X");
     expect(r.exitCode).toBeNull();
     expect(sent()).toEqual([
-      { op: "interrupt", text: "stop, do X", timeoutMs: 30_000, msgId: expect.any(String) },
+      {
+        op: "interrupt",
+        text: "stop, do X",
+        timeoutMs: 30_000,
+        msgId: expect.any(String),
+        expectIncarnation: INC,
+      },
     ]);
     const body = r.data as Record<string, unknown>;
     expect(body).toMatchObject({ transport: "ctl", wasBusy: true, pending: true, runs: 4 });
@@ -160,6 +181,45 @@ describe("mu agent send --interrupt", () => {
     );
     expect(r.stdout).toMatch(/interrupted a busy run/);
     expect(r.stdout).toMatch(/queued messages went back to the pane's editor/);
+  });
+
+  describe("incarnation fence (rr_r3_interrupt_unbound_incarnation)", () => {
+    const interrupt = (o: Record<string, unknown> = {}) =>
+      interruptAgent(db, "worker-1", "go", { workstream: "auth", ...o });
+
+    it("the interrupt carries the hello's incarnation by default", async () => {
+      seed();
+      await serve();
+      await interrupt();
+      expect(sent()[0]).toMatchObject({ op: "interrupt", expectIncarnation: INC });
+    });
+
+    it("a pi bound after the hello refuses it: AgentReplacedError, one interrupt written, no abort or send", async () => {
+      seed();
+      await serve({ replacement: "other-pi" });
+      await expect(interrupt()).rejects.toBeInstanceOf(AgentReplacedError);
+      expect(opNames()).toEqual(["interrupt"]);
+    });
+
+    it("an explicit expectIncarnation naming another pi is refused before any interrupt is written", async () => {
+      seed();
+      await serve();
+      await expect(interrupt({ expectIncarnation: "old-proc" })).rejects.toBeInstanceOf(
+        AgentReplacedError,
+      );
+      expect(opNames()).toEqual([]);
+    });
+
+    it("an extension that does not serve the fence: explicit is refused, implicit sends unfenced", async () => {
+      seed();
+      await serve({ hello: helloReply({ features: ["incarnation", "msgId"] }) });
+      await expect(interrupt({ expectIncarnation: INC })).rejects.toBeInstanceOf(
+        AgentExtensionOutdatedError,
+      );
+      expect(opNames()).toEqual([]);
+      await interrupt();
+      expect(sent()[0]).not.toHaveProperty("expectIncarnation");
+    });
   });
 
   it("idle: just sends", async () => {

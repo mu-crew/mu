@@ -27,7 +27,7 @@ reply carries `v: 1`; the client (`src/ctl/client.ts`) throws
 
 | op | does |
 | --- | --- |
-| `hello` | identity plus `ops` (served ops), `features` (`incarnation`, `msgId`) and `extVersion` (the mu version the extension was built from) |
+| `hello` | identity plus `ops` (served ops), `features` (`incarnation`, `msgId`, `fence`) and `extVersion` (the mu version the extension was built from) |
 | `status` | `state` (`busy` / `idle`), `since`, `runs`, `pending`, pi's `sessionFile` when it has one, and `tool` (`{name, since}` of the innermost running tool, `null` when none; absent from older extensions, which reads as unknown). With `msgId`, also `msg: { id, accepted, runs?, at? }`: whether that `send`/`fresh`/`interrupt` was accepted (`runs` is the baseline its reply carried) |
 | `send` | `pi.sendUserMessage`; when busy, `mode` is `steer` or `followUp` (default). Replies with the `status` fields measured before the dispatch, so `runs` is the baseline for a later `wait` |
 | `wait` | resolves on pi's `agent_settled` after `afterRuns`, with the run's `lastText` and pi's `sessionFile`. With `incarnation` that differs from the current one, replies `incarnation mismatch` (plus the current `incarnation`) at once, without waiting |
@@ -62,10 +62,15 @@ The CLI side: every ctl `send`, `fresh` and `interrupt` carries a fresh
 `status {msgId}` probe (5 s): accepted is a success with
 `receipt: "confirmed-after-timeout"`; anything else is
 `AgentSendIndeterminateError` (exit 1) carrying the `msgId`, whose Next
-is `mu agent check <a> <msgId>`. It never resends. A send/fresh right after a spawn
-carries `expectIncarnation` (the spawn handshake's): the extension refuses
-another incarnation before dispatching (`incarnation mismatch`, nothing
-delivered), so a replacement bound at the same socket path gets no prompt.
+is `mu agent check <a> <msgId>`. It never resends. Every side-effecting op
+(`send`, `fresh`, `interrupt`, `command`) carries `expectIncarnation`: the caller's
+own (a spawn handshake's), else the incarnation its `hello` just named
+(`fencedHello`). The extension refuses another incarnation before dispatching
+(`incarnation mismatch`, nothing delivered, `AgentReplacedError`), so a
+replacement bound at the same socket path gets no prompt, abort or `/new`. An
+extension without the `fence` feature ignores the field on `interrupt` and
+`command`: there the implicit fence is skipped (degrades), and an explicit
+one is refused with `AgentExtensionOutdatedError` (op `fence`), never dropped.
 A wait on `agent:<ws>/<a>#<inc>` (or `mu agent wait --inc`)
 sends `incarnation` with its `wait`; an `incarnation mismatch` reply, or a
 reconnect after a dropped wait that finds another incarnation, raises

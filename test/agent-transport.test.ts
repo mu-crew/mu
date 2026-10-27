@@ -14,6 +14,7 @@ import {
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
+  AgentReplacedError,
   type AgentRow,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
@@ -154,7 +155,9 @@ describe("sendViaTransport", () => {
       incarnation: INC,
       msgId: expect.any(String),
     });
-    expect(received).toEqual([{ op: "send", text: "hello", mode: "followUp", msgId: res.msgId }]);
+    expect(received).toEqual([
+      { op: "send", text: "hello", mode: "followUp", msgId: res.msgId, expectIncarnation: INC },
+    ]);
     expect(res.msgId).toHaveLength(36);
     expect(hellos).toHaveLength(1); // one served-ops check per send
     expect(pasted()).toBe(false);
@@ -515,20 +518,90 @@ describe("pi session commands over ctl", () => {
     await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "idle" });
     const res = await sendToAgent(db, "worker-1", text, { workstream: "auth" });
     expect(res).toEqual({ transport: "ctl", command: op.name, state: "idle" });
-    expect(received).toEqual([op]);
+    expect(received).toEqual([{ ...op, expectIncarnation: INC }]);
+  });
+
+  describe("incarnation fence on the command route (rr_r3_session_ignores_fence)", () => {
+    const commands = () => received.filter((r) => r.op === "command");
+
+    it("an explicit expectIncarnation naming another pi is refused before the command is written", async () => {
+      seed("worker-1");
+      await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "idle" });
+      const err = await sendToAgent(db, "worker-1", "/new", {
+        workstream: "auth",
+        expectIncarnation: "old-proc",
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AgentReplacedError);
+      expect(commands()).toEqual([]);
+    });
+
+    it("the extension's own refusal (a pi bound after the hello) is AgentReplacedError too", async () => {
+      seed("worker-1");
+      await serveExtension(sockFor("worker-1"), (req) =>
+        req.op === "hello"
+          ? helloReply()
+          : req.expectIncarnation !== undefined && req.expectIncarnation !== "replacement"
+            ? { v: 1, ok: false, error: "incarnation mismatch", incarnation: "replacement" }
+            : { v: 1, ok: true, state: "idle" },
+      );
+      const err = await sendToAgent(db, "worker-1", "/compact", {
+        workstream: "auth",
+        expectIncarnation: INC,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AgentReplacedError);
+      expect(commands()).toHaveLength(1);
+    });
+
+    it("the right expectIncarnation rides on the command; with none, the hello's incarnation does", async () => {
+      seed("worker-1");
+      await serveExtension(sockFor("worker-1"), { v: 1, ok: true, state: "idle" });
+      await sendToAgent(db, "worker-1", "/new", { workstream: "auth", expectIncarnation: INC });
+      await sendToAgent(db, "worker-1", "/reload", { workstream: "auth" });
+      expect(commands()).toEqual([
+        { op: "command", name: "new", expectIncarnation: INC },
+        { op: "command", name: "reload", expectIncarnation: INC },
+      ]);
+    });
+
+    it("an extension that does not serve the fence: an explicit fence is refused, never silently dropped; an implicit one degrades", async () => {
+      seed("worker-1");
+      await serveExtension(sockFor("worker-1"), (req) =>
+        req.op === "hello"
+          ? helloReply({ features: ["incarnation", "msgId"] })
+          : { v: 1, ok: true, state: "idle" },
+      );
+      const err = await sendToAgent(db, "worker-1", "/new", {
+        workstream: "auth",
+        expectIncarnation: INC,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
+      expect(err).toMatchObject({ op: "fence" });
+      expect(commands()).toEqual([]);
+      await sendToAgent(db, "worker-1", "/new", { workstream: "auth" });
+      expect(commands()).toEqual([{ op: "command", name: "new" }]);
+    });
   });
 
   it("passes force through and maps busy to AgentBusyError naming the command", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"), (req) =>
-      req.force ? { v: 1, ok: true, state: "idle" } : { v: 1, ok: false, error: "busy" },
+      req.op === "hello"
+        ? helloReply()
+        : req.force
+          ? { v: 1, ok: true, state: "idle" }
+          : { v: 1, ok: false, error: "busy" },
     );
     const err = await sendToAgent(db, "worker-1", "/new", { workstream: "auth" }).catch(
       (e: unknown) => e,
     );
     expect(err).toBeInstanceOf(AgentBusyError);
     await sendToAgent(db, "worker-1", "/new", { workstream: "auth", force: true });
-    expect(received.at(-1)).toEqual({ op: "command", name: "new", force: true });
+    expect(received.at(-1)).toEqual({
+      op: "command",
+      name: "new",
+      force: true,
+      expectIncarnation: INC,
+    });
   });
 
   it("surfaces pi's own refusal (Nothing to compact)", async () => {
@@ -599,6 +672,7 @@ describe("pi session commands over ctl", () => {
         text: "/tmp/x.log has the trace",
         mode: "followUp",
         msgId: expect.any(String),
+        expectIncarnation: INC,
       },
     ]);
   });
@@ -630,7 +704,12 @@ describe("pi session commands over ctl", () => {
     );
     expect(ok.exitCode).toBeNull();
     expect(ok.data).toMatchObject({ transport: "ctl", command: "compact" });
-    expect(received.at(-1)).toEqual({ op: "command", name: "compact", force: true });
+    expect(received.at(-1)).toEqual({
+      op: "command",
+      name: "compact",
+      force: true,
+      expectIncarnation: INC,
+    });
     const bad = await runCliJson(
       ["agent", "send", "worker-1", "/tree", "-w", "auth", "--json"],
       dbPath,
@@ -653,7 +732,9 @@ describe("mu agent send transport", () => {
     } finally {
       setStdinReaderForTests(null);
     }
-    expect(received).toEqual([{ op: "fresh", text: brief, msgId: expect.any(String) }]);
+    expect(received).toEqual([
+      { op: "fresh", text: brief, msgId: expect.any(String), expectIncarnation: INC },
+    ]);
   });
 
   it("agent.send is attributed to $MU_AGENT_NAME, not system", async () => {
@@ -792,13 +873,48 @@ describe("mu agent send transport", () => {
   });
 });
 
+describe("plain send and fresh bind the hello's incarnation (rr_r3_send_unbound_incarnation)", () => {
+  it.each([
+    ["plain", {}],
+    ["fresh", { fresh: true }],
+  ])(
+    "%s: a pi bound after the hello refuses it: AgentReplacedError, no receipt probe",
+    async (_n, extra) => {
+      seed("worker-1");
+      await serveExtension(sockFor("worker-1"), (req) =>
+        req.op === "hello"
+          ? helloReply()
+          : req.expectIncarnation === "replacement"
+            ? { v: 1, ok: true, state: "idle" }
+            : { v: 1, ok: false, error: "incarnation mismatch", incarnation: "replacement" },
+      );
+      const err = await sendToAgent(db, "worker-1", "x", { workstream: "auth", ...extra }).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(AgentReplacedError);
+      expect(received.map((r) => r.op)).toEqual(["fresh" in extra ? "fresh" : "send"]);
+    },
+  );
+
+  it("an extension that names no incarnation is sent to unbound", async () => {
+    seed("worker-1");
+    await serveExtension(sockFor("worker-1"), (req) =>
+      req.op === "hello" ? helloReply({ incarnation: undefined }) : { v: 1, ok: true },
+    );
+    await sendToAgent(db, "worker-1", "x", { workstream: "auth" });
+    expect(received[0]).not.toHaveProperty("expectIncarnation");
+  });
+});
+
 describe("send --fresh", () => {
   it("sends op fresh over ctl, even for slash-looking text", async () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
     const res = await sendToAgent(db, "worker-1", "/do-thing", { workstream: "auth", fresh: true });
     expect(res.transport).toBe("ctl");
-    expect(received).toEqual([{ op: "fresh", text: "/do-thing", msgId: res.msgId }]);
+    expect(received).toEqual([
+      { op: "fresh", text: "/do-thing", msgId: res.msgId, expectIncarnation: INC },
+    ]);
     expect(pasted()).toBe(false);
   });
 
@@ -806,7 +922,9 @@ describe("send --fresh", () => {
     seed("worker-1");
     await serveExtension(sockFor("worker-1"));
     await sendToAgent(db, "worker-1", "x", { workstream: "auth", fresh: true, force: true });
-    expect(received).toEqual([{ op: "fresh", text: "x", force: true, msgId: expect.any(String) }]);
+    expect(received).toEqual([
+      { op: "fresh", text: "x", force: true, msgId: expect.any(String), expectIncarnation: INC },
+    ]);
   });
 
   it("maps a busy refusal to AgentBusyError with abort / --force next steps", async () => {

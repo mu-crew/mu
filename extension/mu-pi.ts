@@ -637,6 +637,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
   }
 
   function command(req: Record<string, unknown>): Promise<Reply> | Reply {
+    const stale = incarnationRefusal(req);
+    if (stale) return stale;
     const name = CTL_COMMANDS.find((n) => n === req.name);
     if (name === undefined) {
       return fail(`command must be one of ${CTL_COMMANDS.join(", ")}`);
@@ -788,6 +790,8 @@ function serveCtl(pi: MuPiApi): () => boolean {
    * send: the caller's wait baseline for the new run, not the aborted one.
    */
   async function interrupt(req: Record<string, unknown>, conn: Socket): Promise<Reply> {
+    const stale = incarnationRefusal(req);
+    if (stale) return stale;
     const text = str(req, "text");
     if (text === undefined) return fail("interrupt needs a string text");
     const id = msgIdOf(req);

@@ -257,18 +257,49 @@ export async function requireFeature(
   feature: CtlFeature,
   guard?: CtlGuard,
 ): Promise<string | undefined> {
+  return (await fencedHello(agent, sock, { feature, guard })).inc;
+}
+
+/**
+ * The one incarnation fence every side-effecting ctl op (send, fresh,
+ * interrupt, command) goes through. One hello, then:
+ *  - `feature` (if any) must be served, else AgentExtensionOutdatedError;
+ *  - an explicit `expect` that is not the hello's incarnation is refused
+ *    (AgentReplacedError, nothing written);
+ *  - `bound` is the field to put on the request: the explicit `expect`, else
+ *    the hello's own incarnation, so a pi that binds the socket after the
+ *    hello refuses the write. An op the extension may not fence (`needsFence`:
+ *    interrupt, command; an older extension ignores the field there) gets the
+ *    implicit fence only when hello lists `fence`, and an explicit one is
+ *    refused (op `fence`) rather than silently dropped.
+ */
+export async function fencedHello(
+  agent: AgentRow,
+  sock: string,
+  o: { feature?: CtlFeature; expect?: string; needsFence?: boolean; guard?: CtlGuard },
+): Promise<{ inc: string | undefined; bound: { expectIncarnation?: string } }> {
   // The write fence is for the send alone: the hello is a read.
-  const hello = await ctlRequestFor(agent, sock, { op: "hello" }, withGuard(guard, false));
+  const hello = await ctlRequestFor(agent, sock, { op: "hello" }, withGuard(o.guard, false));
   if (!hello.ok) throw new Error(say("agent.ctl_refused", "hello", hello.error));
-  if (ctlServes(hello, feature)) return hello.incarnation;
-  throw new AgentExtensionOutdatedError(
-    agent.name,
-    agent.workstreamName,
-    feature,
-    hello.extVersion,
-    hello.ops,
-    { ...(await outdatedRecovery(agent)), feature: true },
-  );
+  const outdated = async (feature: string) =>
+    new AgentExtensionOutdatedError(
+      agent.name,
+      agent.workstreamName,
+      feature,
+      hello.extVersion,
+      hello.ops,
+      { ...(await outdatedRecovery(agent)), feature: true },
+    );
+  if (o.feature !== undefined && !ctlServes(hello, o.feature)) throw await outdated(o.feature);
+  const inc = hello.incarnation;
+  const fenced = o.needsFence !== true || ctlServes(hello, "fence");
+  if (o.expect !== undefined) {
+    // The hello already names another pi (or none): refuse before any write.
+    if (inc !== o.expect) throw new AgentReplacedError(agent.name, agent.workstreamName, "sent to");
+    if (!fenced) throw await outdated("fence");
+    return { inc, bound: { expectIncarnation: o.expect } };
+  }
+  return { inc, bound: inc !== undefined && fenced ? { expectIncarnation: inc } : {} };
 }
 
 /**
@@ -482,7 +513,7 @@ export async function sendViaTransport(
       if (opts.ctlGuard?.beforeWrite !== undefined) {
         throw new AgentSendUnsupportedError(agent.name, agent.workstreamName, agent.cli);
       }
-      return runSessionCommand(agent, sock, cmd, opts.force === true);
+      return runSessionCommand(agent, sock, cmd, opts.force === true, opts.expectIncarnation);
     }
     if (isSlashCommand(text)) {
       throw new AgentSlashCommandUnsupportedError(
@@ -494,13 +525,12 @@ export async function sendViaTransport(
     }
   }
   // Receipts need an extension that remembers msgIds: refuse before writing.
-  const inc = await requireFeature(agent, sock, "msgId", opts.ctlGuard);
-  const expect = opts.expectIncarnation;
-  // The hello already names another pi (or none): refuse before any write.
-  if (expect !== undefined && inc !== expect) {
-    throw new AgentReplacedError(agent.name, agent.workstreamName, "sent to");
-  }
-  const bound = expect !== undefined ? { expectIncarnation: expect } : {};
+  const { inc, bound } = await fencedHello(agent, sock, {
+    feature: "msgId",
+    ...(opts.expectIncarnation !== undefined ? { expect: opts.expectIncarnation } : {}),
+    guard: opts.ctlGuard,
+  });
+  const expect = bound.expectIncarnation;
   const sent = await ctlSendWithReceipt(
     agent,
     sock,
@@ -551,14 +581,23 @@ async function runSessionCommand(
   sock: string,
   cmd: { name: CtlCommandName; instructions?: string },
   force: boolean,
+  expect?: string,
 ): Promise<SendResult> {
+  const { bound } = await fencedHello(agent, sock, {
+    needsFence: true,
+    ...(expect !== undefined ? { expect } : {}),
+  });
   const reply = await ctlRequestFor(agent, sock, {
     op: "command",
     name: cmd.name,
     ...(cmd.instructions !== undefined ? { instructions: cmd.instructions } : {}),
     ...(force ? { force: true } : {}),
+    ...bound,
   });
   if (!reply.ok) {
+    if (expect !== undefined && reply.error === INCARNATION_MISMATCH) {
+      throw new AgentReplacedError(agent.name, agent.workstreamName, "sent to");
+    }
     if (reply.error === "busy") {
       throw new AgentBusyError(agent.name, agent.workstreamName, `/${cmd.name}`);
     }

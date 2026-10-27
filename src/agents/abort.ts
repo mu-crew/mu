@@ -20,15 +20,16 @@ import {
   AgentAbortTimeoutError,
   AgentEmptySendError,
   AgentNotFoundError,
+  AgentReplacedError,
   AgentRestartedError,
 } from "./errors.js";
 import {
   agentCtlSocket,
   ctlSendWithReceipt,
   expectsCtl,
+  fencedHello,
   recordSend,
   ctlRequestFor as request,
-  requireFeature,
 } from "./transport.js";
 
 export const DEFAULT_ABORT_TIMEOUT_MS = 30_000;
@@ -52,6 +53,8 @@ export type AbortAgentOptions = {
   timeoutMs?: number;
   /** Control socket path. Default: derived from the agent's identity. */
   socket?: string;
+  /** interrupt only: the ctl incarnation the caller saw; another pi is refused (AgentReplacedError). */
+  expectIncarnation?: string;
 };
 
 export async function abortAgent(
@@ -180,8 +183,17 @@ async function interruptAgentImpl(
   const sock = opts.socket ?? agentCtlSocket(db, agent);
   if (!expectsCtl(agent, sock)) throw new AgentAbortNeedsCtlError(name, opts.workstream, agent.cli);
   const timeoutMs = opts.timeoutMs ?? DEFAULT_ABORT_TIMEOUT_MS;
-  const inc = await requireFeature(agent, sock, "msgId");
-  const sent = await ctlSendWithReceipt(agent, sock, { op: "interrupt", text, timeoutMs }, inc);
+  const { inc, bound } = await fencedHello(agent, sock, {
+    feature: "msgId",
+    needsFence: true,
+    ...(opts.expectIncarnation !== undefined ? { expect: opts.expectIncarnation } : {}),
+  });
+  const sent = await ctlSendWithReceipt(
+    agent,
+    sock,
+    { op: "interrupt", text, timeoutMs, ...bound },
+    inc,
+  );
   const { reply: r, msgId } = sent;
   if (r === undefined) {
     // Written, no reply, but status {msgId} says pi took it: wasBusy and
@@ -197,6 +209,8 @@ async function interruptAgentImpl(
     };
   }
   if (!r.ok) {
+    if (r.error === INCARNATION_MISMATCH)
+      throw new AgentReplacedError(name, opts.workstream, "sent to");
     if (r.error === "timeout") throw new AgentAbortTimeoutError(name, opts.workstream, timeoutMs);
     throw new Error(say("agent.ctl_refused", "the interrupt", r.error));
   }

@@ -490,18 +490,18 @@ describe("mu pi extension", () => {
     });
   });
 
-  describe("incarnation and msgId receipts", () => {
-    const incarnationOf = (r: unknown): string => {
-      const i = (r as { incarnation?: unknown }).incarnation;
-      if (typeof i !== "string") throw new Error("reply carries no incarnation");
-      return i;
-    };
+  const incarnationOf = (r: unknown): string => {
+    const i = (r as { incarnation?: unknown }).incarnation;
+    if (typeof i !== "string") throw new Error("reply carries no incarnation");
+    return i;
+  };
 
+  describe("incarnation and msgId receipts", () => {
     it("every ok reply carries one stable incarnation; hello lists features, ops unchanged", async () => {
       await fake.emit("session_start");
       const hello = await ctlRequest(sock, { op: "hello" });
       expect(hello).toMatchObject({ ops: [...CTL_OPS], features: [...CTL_FEATURES] });
-      expect(CTL_FEATURES).toEqual(["incarnation", "msgId"]);
+      expect(CTL_FEATURES).toEqual(["incarnation", "msgId", "fence"]);
       const inc = incarnationOf(hello);
       expect(incarnationOf(await ctlRequest(sock, { op: "status" }))).toBe(inc);
       expect(incarnationOf(await ctlRequest(sock, { op: "send", text: "a" }))).toBe(inc);
@@ -676,6 +676,34 @@ describe("mu pi extension", () => {
       ).toMatchObject({ ok: true });
       expect(await ctlRequest(sock, { op: "send", text: "ok2" })).toMatchObject({ ok: true });
       expect(fake.sendUserMessage).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("expectIncarnation on command and interrupt (rr_fix_r3_fence)", () => {
+    it("a mismatch is refused before anything is dispatched, aborted or queued; the right one (or none) goes through", async () => {
+      await fake.emit("session_start");
+      const inc = incarnationOf(await ctlRequest(sock, { op: "hello" }));
+      const mismatch = { v: 1, ok: false, error: INCARNATION_MISMATCH, incarnation: inc };
+      expect(
+        await ctlRequest(sock, { op: "command", name: "new", expectIncarnation: "old-proc" }),
+      ).toEqual(mismatch);
+      expect(
+        await ctlRequest(sock, {
+          op: "interrupt",
+          text: "x",
+          msgId: "bad-int",
+          expectIncarnation: "old-proc",
+        }),
+      ).toEqual(mismatch);
+      expect(fake.sendUserMessage).not.toHaveBeenCalled();
+      expect(fake.ctx.abort).not.toHaveBeenCalled();
+      expect(await ctlRequest(sock, { op: "status", msgId: "bad-int" })).toMatchObject({
+        msg: { accepted: false },
+      });
+      expect(
+        await ctlRequest(sock, { op: "interrupt", text: "ok", expectIncarnation: inc }),
+      ).toMatchObject({ ok: true });
+      expect(fake.sendUserMessage).toHaveBeenCalledTimes(1);
     });
   });
 
