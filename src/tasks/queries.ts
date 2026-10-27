@@ -149,50 +149,22 @@ const SELECT_VIEW_COLS = `
   v.updated_at AS updated_at
 `;
 
-/** Options for listReady. The optional `statuses` filter composes
- *  on top of the `ready` view (which itself constrains to
- *  `status='OPEN'`); passing only OPEN is identical to today's no-
- *  filter shape, passing only non-OPEN values returns []. Exists so
- *  `mu task next --status` can mirror the multi-status flag shape
- *  shipped on `mu task list` (task_list_multi_status_union). */
-export interface ListReadyOptions {
-  status?: TaskStatus | readonly TaskStatus[];
-  /** Substate filter; the `ready` view already excludes OPEN/parked. */
-  substate?: TaskSubstate | readonly TaskSubstate[];
-}
-
-export function listReady(db: Db, workstream: string, opts: ListReadyOptions = {}): TaskRow[] {
+/** The `ready` view of one workstream: OPEN, not parked or triage, no open blocker. */
+export function listReady(db: Db, workstream: string): TaskRow[] {
   const wsId = tryResolveLiveWorkstreamId(db, workstream);
   if (wsId === null) return [];
-  const statuses =
-    opts.status === undefined
-      ? undefined
-      : Array.isArray(opts.status)
-        ? (opts.status as TaskStatus[])
-        : [opts.status as TaskStatus];
-  const where: string[] = ["v.workstream_id = ?"];
-  const params: unknown[] = [wsId];
-  if (statuses !== undefined && statuses.length > 0) {
-    where.push(`v.status IN (${statuses.map(() => "?").join(", ")})`);
-    params.push(...statuses);
-  }
-  const substates = asList(opts.substate);
-  if (substates !== undefined && substates.length > 0) {
-    where.push(`v.substate IN (${substates.map(() => "?").join(", ")})`);
-    params.push(...substates);
-  }
   // Same order as byRoiDesc (tasks/sort.ts): scored by impact/effort desc,
   // then the unscored oldest first; local_id breaks ties.
   const rows = db
     .prepare(
-      `SELECT ${SELECT_VIEW_COLS} ${VIEW_FROM_JOIN("ready")} WHERE ${where.join(" AND ")}
+      `SELECT ${SELECT_VIEW_COLS} ${VIEW_FROM_JOIN("ready")} WHERE v.workstream_id = ?
         ORDER BY v.scored DESC,
                  CASE WHEN v.scored = 1 THEN v.impact / v.effort_days END DESC,
                  CASE WHEN v.scored = 1 THEN v.effort_days END ASC,
                  CASE WHEN v.scored = 0 THEN v.created_at END ASC,
                  v.local_id`,
     )
-    .all(...params) as RawTaskRow[];
+    .all(wsId) as RawTaskRow[];
   return rows.map(rowFromDb);
 }
 

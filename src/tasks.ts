@@ -117,7 +117,6 @@ export {
   getTaskNote,
   getTaskOwner,
   type ListNotesOptions,
-  type ListReadyOptions,
   type ListTasksOptions,
   listBlocked,
   listGoals,

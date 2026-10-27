@@ -525,7 +525,6 @@ export {
   isValidPair,
   isValidTaskId,
   type ListNotesOptions,
-  type ListReadyOptions,
   type ListTasksOptions,
   listBlocked,
   listGoals,

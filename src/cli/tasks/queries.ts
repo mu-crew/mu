@@ -215,22 +215,13 @@ export async function cmdTaskNext(
     lines?: number;
     json?: boolean;
     sort?: string;
-    status?: string[];
-    substate?: string[];
     all?: boolean;
   },
 ): Promise<void> {
   const workstream = await resolveExistingWorkstream(db, opts.workstream);
   const k = opts.lines ?? 1;
   const sortKey: TaskSortKey = opts.sort === undefined ? "roi" : parseSortOption(opts.sort);
-  const readyOpts: Parameters<typeof listReady>[2] = {};
-  const statuses = parseStatusesOption(opts.status);
-  if (statuses !== undefined) {
-    readyOpts.status = statuses;
-  }
-  const substates = parseSubstatesOption(opts.substate);
-  if (substates !== undefined) readyOpts.substate = substates;
-  const sorted = sortTasks(listReady(db, workstream, readyOpts), sortKey);
+  const sorted = sortTasks(listReady(db, workstream), sortKey);
   const tasks = k === 0 ? sorted : sorted.slice(0, k);
   if (tasks.length === 0 && opts.json !== true) {
     const parked = listTasks(db, workstream, { substate: "parked" }).length;
@@ -253,8 +244,6 @@ export async function cmdTaskNext(
   const flags: Flags = [
     "-n",
     String(k),
-    statuses === undefined ? undefined : `--status ${statuses.join(",")}`,
-    substates === undefined ? undefined : `--substate ${substates.join(",")}`,
     opts.sort === undefined ? undefined : `--sort ${opts.sort}`,
   ];
   emitPage(
