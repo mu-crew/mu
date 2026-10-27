@@ -132,7 +132,9 @@ for (const where of ["inside", "outside"] as const) {
     let mux: MuxHarness;
 
     beforeEach(() => {
-      if (where === "inside") setEnv({ TMUX: "/tmp/fake,1,0", TMUX_PANE: "%9" });
+      // A client of mu's own server: $TMUX names its socket (a foreign one is outside).
+      if (where === "inside")
+        setEnv({ TMUX: `/tmp/${process.env.MU_TMUX_SOCKET || "default"},1,0`, TMUX_PANE: "%9" });
       mux = installMux("tmux", [
         ["display-message", "mu-decoy\n"],
         ["list-panes", { stdout: "", stderr: "can't find session", exitCode: 1 }],

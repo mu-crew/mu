@@ -9,6 +9,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="${MU_DOGFOOD_REPO:-$(cd "$HERE/../../.." && pwd)}"
 ROOT="${MU_DOGFOOD_DIR:-/var/tmp/mu-dogfood}"
+SOCK_OVERRIDE="${MU_DOGFOOD_SOCKET:-}" # a private server name, to keep parallel runs apart
 
 NAMES=(
   [1]="empty: first run, nothing in the DB"
@@ -42,11 +43,13 @@ N="$1"; KEEP="${2:-}"
 [ -f "$REPO/dist/cli.js" ] || { echo "no $REPO/dist/cli.js: run 'npm install && npm run build' in $REPO first" >&2; exit 1; }
 command -v tmux >/dev/null || { echo "tmux is needed (the fake workers run in a private tmux server)" >&2; exit 1; }
 
-# Isolation: drop every inherited MU_*/PI_SESSION_ID/TMUX, then point at this scenario only.
+# Isolation: drop every inherited MU_*/PI_SESSION_ID and the outer pane id, then point at this
+# scenario only. $TMUX stays: mu sees it names another server than -L mudf-N, so `a` opens a
+# deliberately nested client and says how to detach (C-b C-b d).
 for v in $(env | grep -E '^(MU_|PI_SESSION_ID)' | cut -d= -f1); do unset "$v"; done
-unset TMUX TMUX_PANE
+unset TMUX_PANE
 D="$ROOT/s$N"
-SOCK="mudf-$N"
+SOCK="${SOCK_OVERRIDE:-mudf-$N}"
 export MU_DB_PATH="$D/mu.db" MU_STATE_DIR="$D" MU_SYNC_DIR= MU_TMUX_SOCKET="$SOCK" MU_MUX=tmux
 export MU_SPAWN_LIVENESS_MS=0 MU_DOGFOOD_REPO="$REPO"
 MU=(node "$REPO/dist/cli.js")

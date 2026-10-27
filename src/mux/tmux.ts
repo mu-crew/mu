@@ -8,6 +8,7 @@
 // (cut in mu-next). pi agents use the control socket
 // (src/agents/transport.ts); herdr has its own atomic `agent prompt`.
 
+import { basename } from "node:path";
 import { execFileCapture } from "../exec-file.js";
 import { say } from "../messages.js";
 import {
@@ -493,10 +494,11 @@ export async function paneResult(paneId: string): Promise<PaneResult> {
  * Name of the tmux session this process is running inside, or
  * undefined outside tmux. Gated on `$TMUX` so a call from a plain
  * shell doesn't get whatever session the server happens to consider
- * current.
+ * current. A `$TMUX` naming another server (an outer tmux around mu's
+ * private one) is outside too.
  */
 export async function currentSessionName(): Promise<string | undefined> {
-  if (!process.env.TMUX) return undefined;
+  if (!tmuxServerIsCurrent()) return undefined;
   const result = await currentExecutor(["display-message", "-p", "#S"]);
   if (result.exitCode !== 0) return undefined;
   const name = result.stdout.trim();
@@ -577,13 +579,40 @@ function attachTargetSpec(target: AttachTarget): string {
   return target.window === undefined ? target.session : `${target.session}:${target.window}`;
 }
 
+/**
+ * Is `$TMUX` a client of the server mu drives? With no `MU_TMUX_SOCKET`, tmux itself follows
+ * `$TMUX`, so yes. With `-L <socket>`, only when `$TMUX` (`<socket path>,<pid>,<session>`)
+ * names that socket file. False when `$TMUX` is unset or names an outer tmux around mu's
+ * private server.
+ */
+function tmuxServerIsCurrent(): boolean {
+  const path = process.env.TMUX?.split(",")[0];
+  if (path === undefined || path === "") return false;
+  const socket = process.env.MU_TMUX_SOCKET;
+  return socket === undefined || socket.length === 0 || basename(path) === socket;
+}
+
+/** Inside a client of some OTHER tmux server than the one mu drives. */
+const inAnotherTmux = (): boolean => Boolean(process.env.TMUX) && !tmuxServerIsCurrent();
+
+/** How the caller gets back after an attach from here: `$TMUX` on mu's server (`switch`),
+ *  on another one (`nested`: the outer tmux needs a doubled prefix), or none (`plain`). */
+export function tmuxAttachMode(): "switch" | "nested" | "plain" {
+  if (!process.env.TMUX) return "plain";
+  return inAnotherTmux() ? "nested" : "switch";
+}
+
 export async function attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]> {
   const spec = attachTargetSpec(target);
   const socket = process.env.MU_TMUX_SOCKET;
   const route = socket === undefined || socket.length === 0 ? [] : ["-L", socket];
-  const verb =
-    target.inside === true && target.outside !== true ? "switch-client" : "attach-session";
-  return [{ command: "tmux", args: [...route, verb, "-t", spec] }];
+  const attach = { command: "tmux", args: [...route, "attach-session", "-t", spec] };
+  if (target.outside === true) return [attach];
+  // A client of ANOTHER server (an outer tmux around mu's private one) cannot be switched,
+  // and tmux refuses an attach with `$TMUX` set: open a deliberately nested client.
+  if (inAnotherTmux()) return [{ ...attach, nested: true }];
+  if (target.inside === true) return [{ ...attach, args: [...route, "switch-client", "-t", spec] }];
+  return [attach];
 }
 
 /**

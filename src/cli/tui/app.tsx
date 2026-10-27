@@ -3,11 +3,12 @@
 // Read-only. Drill (Enter, a) is the next unit. Plain text only: every line is
 // cleaned and cut/padded by visual width (text.ts), never ANSI inside <Text>.
 
-import { Box, Text, useApp, useInput, useStdin, useWindowSize } from "ink";
+import { Box, Text, useApp, useInput, useStdin, useStdout, useWindowSize } from "ink";
 import { useEffect, useRef, useState } from "react";
 import type { DashboardSnapshot } from "../../dashboard-data.js";
 import {
   type AttachResult,
+  attachKeyHint,
   planAttach,
   runAttach,
   type StepRunner,
@@ -64,8 +65,8 @@ export function layout(rows: number): { shown: ReadonlySet<FixedLine>; height: n
 
 const HINT =
   "←/→ tab  [/] workstream  j/k move  Enter open  s status  / filter  c clear  y copy  q quit";
-const HINT_AGENTS =
-  "←/→ tab  [/] workstream  j/k move  Enter scrollback  a attach  / filter  c clear  y copy  q quit";
+const hintAgents = (attachKey: string): string =>
+  `←/→ tab  [/] workstream  j/k move  Enter scrollback  ${attachKey}  / filter  c clear  y copy  q quit`;
 
 /** The workstream labels as one line of `width` columns, scrolled so the selected one shows. */
 export function workstreamLine(labels: readonly string[], selected: number, width: number): string {
@@ -100,6 +101,7 @@ export function App({
 }: AppProps) {
   const { exit, suspendTerminal } = useApp();
   const { stdin } = useStdin();
+  const { stdout } = useStdout();
   const yank = useYank();
   const [drill, setDrill] = useState<Open | null>(null);
   // A ref, not state or `isActive`: deactivating useInput would drop Ink's raw-mode count,
@@ -107,6 +109,10 @@ export function App({
   // arrive line-buffered and be lost). The hooks stay active; the handlers just return.
   const busy = useRef(false);
   const [flash, setFlash] = useState<string | null>(null);
+  const [attachKey, setAttachKey] = useState("a attach");
+  useEffect(() => {
+    void attachKeyHint().then(setAttachKey);
+  }, []);
   const { columns, rows: screenRows } = useWindowSize();
   const [tab, setTab] = useState<TabId>("tasks");
   const [chosen, setChosen] = useState<string | null>(null);
@@ -185,6 +191,8 @@ export function App({
       outcome = { ok: false, reason: "terminal unavailable", warnings: [] };
       try {
         await suspendTerminal(async () => {
+          // The suspended terminal keeps this line: where the user went, and how to get back.
+          stdout.write(`${plan.notice}\n`);
           outcome = await runAttach(plan.steps, runStep);
           // Still suspended: Ink has not resumed input, so nothing reads stdin yet.
           // Drop what is buffered (typeahead must not replay into the next screen);
@@ -302,7 +310,7 @@ export function App({
             text: editing
               ? "type to filter  Enter keep  Esc cancel"
               : tab === "agents"
-                ? HINT_AGENTS
+                ? hintAgents(attachKey)
                 : HINT,
             color: undefined,
           };

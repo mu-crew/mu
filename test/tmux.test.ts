@@ -4,6 +4,7 @@
 // test/tmux.integration.test.ts.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { attachShellLine } from "../src/mux.js";
 import {
   assertValidPaneId,
   attachCommands,
@@ -25,6 +26,7 @@ import {
   type TmuxExecResult,
   type TmuxExecutor,
   tmux,
+  tmuxAttachMode,
 } from "../src/tmux.js";
 
 // ─── Mock executor harness ────────────────────────────────────────────
@@ -679,21 +681,50 @@ function expectEnvFlag(args: string[], key: string, value: string): void {
 // ─── attachCommands ────────────────────────────────────────────────────
 
 describe("attachCommands", () => {
-  // The suite runs on a private socket; the default-socket cases clear it.
+  // The suite runs on a private socket; the default-socket cases clear it. `$TMUX` is set per
+  // case: the backend reads which server it names.
   let savedSocket: string | undefined;
+  let savedTmux: string | undefined;
   beforeEach(() => {
     savedSocket = process.env.MU_TMUX_SOCKET;
-    const key = "MU_TMUX_SOCKET";
-    delete process.env[key];
+    savedTmux = process.env.TMUX;
+    for (const key of ["MU_TMUX_SOCKET", "TMUX"]) delete process.env[key];
   });
   afterEach(() => {
+    for (const key of ["MU_TMUX_SOCKET", "TMUX"]) delete process.env[key];
     if (savedSocket !== undefined) process.env.MU_TMUX_SOCKET = savedSocket;
+    if (savedTmux !== undefined) process.env.TMUX = savedTmux;
   });
 
-  it("inside a client: one switch-client step", async () => {
+  it("inside a client of mu's server: one switch-client step", async () => {
+    process.env.TMUX = "/tmp/tmux-1000/default,123,0";
+    expect(tmuxAttachMode()).toBe("switch");
     expect(await attachCommands({ session: "mu-a", window: "w", inside: true })).toEqual([
       { command: "tmux", args: ["switch-client", "-t", "mu-a:w"] },
     ]);
+  });
+
+  it("inside a client of ANOTHER server: a deliberately nested attach (TMUX stripped)", async () => {
+    process.env.TMUX = "/tmp/tmux-1000/default,123,0";
+    process.env.MU_TMUX_SOCKET = "mu-private";
+    expect(tmuxAttachMode()).toBe("nested");
+    const steps = await attachCommands({ session: "mu-a", window: "w", inside: true });
+    expect(steps).toEqual([
+      {
+        command: "tmux",
+        args: ["-L", "mu-private", "attach-session", "-t", "mu-a:w"],
+        nested: true,
+      },
+    ]);
+    expect(attachShellLine(steps)).toBe("env -u TMUX tmux -L mu-private attach-session -t mu-a:w");
+    // The line for a shell outside any client stays plain.
+    expect(await attachCommands({ session: "mu-a", window: "w", outside: true })).toEqual([
+      { command: "tmux", args: ["-L", "mu-private", "attach-session", "-t", "mu-a:w"] },
+    ]);
+  });
+
+  it("$TMUX unset: a plain attach", async () => {
+    expect(tmuxAttachMode()).toBe("plain");
   });
 
   it("outside: ONE attach-session whose target names the window (nothing after the blocking attach)", async () => {
@@ -708,6 +739,7 @@ describe("attachCommands", () => {
     });
 
     it("every step is routed with -L, outside and inside", async () => {
+      process.env.TMUX = "/tmp/tmux-1000/mu-private,123,0";
       const outside = await attachCommands({ session: "mu-a", window: "w" });
       expect(outside.map((s) => s.args)).toEqual([
         ["-L", "mu-private", "attach-session", "-t", "mu-a:w"],

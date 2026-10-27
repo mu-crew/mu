@@ -10,7 +10,7 @@
 //     OSC 52 loses nothing. Control characters are refused: a pasted newline runs.
 
 import { spawn } from "node:child_process";
-import { activeMux, attachShellLine, type MuxCommand } from "../../mux.js";
+import { activeMux, attachShellLine, type MuxCommand, tmuxAttachMode } from "../../mux.js";
 import { shellWord } from "../../shell-quote.js";
 import type { DrillTarget } from "./rows.js";
 
@@ -28,13 +28,39 @@ export type AttachPlan =
       steps: readonly MuxCommand[];
       /** The line for a shell OUTSIDE any client; what `y` copies. */
       line: string;
+      /** One line for the terminal before it is handed over: where to, and how to get back. */
+      notice: string;
     }
   | { ok: false; reason: string; line: null };
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
-/** Inside a client of the mux? `$TMUX`, as `mu agent spawn`'s own attach hint reads it (herdr decides itself). */
+/** Inside a client of the mux? `$TMUX` set (herdr decides itself). Whether that client is on
+ *  mu's own server is the backend's call (`tmux.ts` `attachCommands`: switch or nest). */
 export const insideClient = (): boolean => Boolean(process.env.TMUX);
+
+/** How to get back from an attach, by backend and where the caller runs. */
+function backHint(backend: string): { short: string; text: string } {
+  if (backend !== "tmux") return { short: "", text: "" };
+  switch (tmuxAttachMode()) {
+    case "switch":
+      return { short: "back: C-b L", text: "back: C-b L" };
+    case "nested":
+      return { short: "detach: C-b C-b d", text: "detach: C-b d (nested: C-b C-b d)" };
+    case "plain":
+      return { short: "detach: C-b d", text: "detach: C-b d (nested: C-b C-b d)" };
+  }
+}
+
+/** The Agents footer's attach key, with how to come back. */
+export async function attachKeyHint(): Promise<string> {
+  try {
+    const { short } = backHint((await activeMux()).name);
+    return short === "" ? "a attach" : `a attach (${short})`;
+  } catch {
+    return "a attach";
+  }
+}
 
 /** Ask the active backend for the attach steps; a backend that cannot (no mux, no workspace) is a reason. */
 export async function planAttach(t: AttachSubject): Promise<AttachPlan> {
@@ -45,7 +71,9 @@ export async function planAttach(t: AttachSubject): Promise<AttachPlan> {
     const steps = await mux.attachCommands({ ...target, inside });
     // The copied line is for a shell outside any client, whatever this one is inside of.
     const outside = await mux.attachCommands({ ...target, inside: false, outside: true });
-    return { ok: true, steps, line: attachShellLine(outside) };
+    const { text } = backHint(mux.name);
+    const notice = `attaching ${target.session}:${target.window}${text === "" ? "" : ` · ${text}`}`;
+    return { ok: true, steps, line: attachShellLine(outside), notice };
   } catch (e) {
     return { ok: false, reason: message(e), line: null };
   }
@@ -66,7 +94,13 @@ export type StepRunner = (step: MuxCommand) => Promise<StepResult>;
 export const spawnStep: StepRunner = (step) =>
   new Promise((resolve) => {
     let stderr = "";
-    const child = spawn(step.command, [...step.args], { stdio: ["inherit", "inherit", "pipe"] });
+    // A nested client is deliberate: tmux refuses an attach while `$TMUX` is set.
+    const env = { ...process.env };
+    if (step.nested === true) delete env.TMUX;
+    const child = spawn(step.command, [...step.args], {
+      stdio: ["inherit", "inherit", "pipe"],
+      env,
+    });
     child.stderr.on("data", (d: Buffer) => {
       stderr = (stderr + d.toString()).slice(-400);
     });

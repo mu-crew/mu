@@ -25,10 +25,11 @@ sync folder or tmux server:
 
 - `MU_DB_PATH` and `MU_STATE_DIR` point under `/var/tmp/mu-dogfood/s<N>/`
   (override the root with `MU_DOGFOOD_DIR`); `MU_SYNC_DIR` is blank.
-- Panes live on a private tmux socket, `-L mudf-<N>`, never the default
-  server. Look at them from a second terminal: `tmux -L mudf-<N> attach`.
-- Every inherited `MU_*`, `PI_SESSION_ID` and `$TMUX` is dropped, so it works from
-  inside tmux or a mu pane too.
+- Panes live on a private tmux socket, `-L mudf-<N>` (or `$MU_DOGFOOD_SOCKET`),
+  never the default server. Look at them from a second terminal: `tmux -L mudf-<N> attach`.
+- Every inherited `MU_*`, `PI_SESSION_ID` and `$TMUX_PANE` is dropped, so it works from
+  inside tmux or a mu pane too. `$TMUX` stays: inside your own tmux, `a` opens a nested
+  client on the private server and the hint says `detach: C-b C-b d`.
 
 `run.sh <N> --keep` reuses the last seed instead of reseeding (the fake
 workers are not respawned, so their rows show as dead). `run.sh clean`

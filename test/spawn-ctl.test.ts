@@ -936,11 +936,14 @@ describe("mu agent spawn --task (claim + brief, one journaled attempt)", () => {
 });
 
 describe("mu agent spawn: the attach line does not assume a tmux client", () => {
-  const attach = async (inside: boolean) => {
+  const attach = async (inside: boolean | "other-server") => {
     db.close();
     installPanes("worker-1");
     const saved = process.env.TMUX;
-    if (inside) process.env.TMUX = "/tmp/tmux-1/default,1,0";
+    // A client of mu's server ($TMUX names its socket), or of an outer one around it.
+    const sock = process.env.MU_TMUX_SOCKET || "default";
+    if (inside === "other-server") process.env.TMUX = "/tmp/tmux-1/outer,1,0";
+    else if (inside) process.env.TMUX = `/tmp/tmux-1/${sock},1,0`;
     else {
       const key = "TMUX";
       delete process.env[key];
@@ -967,6 +970,14 @@ describe("mu agent spawn: the attach line does not assume a tmux client", () => 
     const sock = process.env.MU_TMUX_SOCKET;
     const route = sock ? `-L ${sock} ` : "";
     expect(await attach(true)).toBe(`tmux ${route}switch-client -t mu-auth:worker-1`);
+  });
+
+  it("inside another tmux server than mu's private one: a deliberately nested attach", async () => {
+    const sock = process.env.MU_TMUX_SOCKET;
+    if (!sock) return; // without a private socket, tmux follows $TMUX: it is always mu's server
+    expect(await attach("other-server")).toBe(
+      `env -u TMUX tmux -L ${sock} attach-session -t mu-auth:worker-1`,
+    );
   });
 });
 
