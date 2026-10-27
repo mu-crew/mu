@@ -195,6 +195,11 @@ describe("computeNext: state moves", () => {
     expect(next({ callers: ["d/orch"], workstream: "d" })?.commands).toEqual(["mu wait -w d"]);
     expect(next({ callers: ["d/orch"] })?.commands).toEqual(["mu wait"]);
     expect(next({ callers: ["pi:other"], workstream: "d" })).toBeNull();
+    // A verb that armed nothing (a read, an unrelated write) is not followed by the bare wait.
+    expect(next({ callers: ["d/orch"], workstream: "d", armed: false })).toBeNull();
+    expect(next({ callers: ["d/orch"], workstream: "d", armed: true })?.commands).toEqual([
+      "mu wait -w d",
+    ]);
     ensureWorkstream(db, "e");
     expect(next({ callers: ["d/orch"], workstream: "e" })).toBeNull();
   });

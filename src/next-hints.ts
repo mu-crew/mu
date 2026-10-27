@@ -63,6 +63,12 @@ export interface NextContext {
   /** The resolved scope of the call, when it has one. */
   workstream?: string;
   outcome?: NextOutcome;
+  /**
+   * Whether the verb that just ran registered owed work (`armWait`). The CLI passes it, so
+   * the bare wait follows only a command that created something to wait for; a read or an
+   * unrelated write is not followed by it. Absent (the dashboard, no verb): any owed ref counts.
+   */
+  armed?: boolean;
 }
 
 /** One move: the argv as typed (`mu` first). Destructive moves must carry `--if`. */
@@ -243,7 +249,7 @@ export function courseCheckHint(db: Db, ws: string, now = Date.now()): string | 
 /**
  * The `next` of a result: the outcome's own follow-up first, then (unless a caller has an
  * open human need, which stops everything it would start) `mu next` over authorised work and
- * the bare wait over owned refs, as alternatives. A preview's apply ranks last. Read-only.
+ * the bare wait over owned refs (only after a verb that armed one), as alternatives. A preview's apply ranks last. Read-only.
  */
 export function computeNext(db: Db, ctx: NextContext): NextPlan {
   const moves: HintMove[] = [];
@@ -254,7 +260,7 @@ export function computeNext(db: Db, ctx: NextContext): NextPlan {
     const exec = ctx.workstream === undefined ? undefined : executorMove(db, ctx.workstream);
     if (exec !== undefined) moves.push(exec);
     // The bare wait is redundant beside a more exact wait.
-    if (own === undefined || own.argv[1] !== "wait") {
+    if (ctx.armed !== false && (own === undefined || own.argv[1] !== "wait")) {
       const wait = ownedWaitMove(db, ctx.callers, ctx.workstream);
       if (wait !== undefined) moves.push(wait);
     }

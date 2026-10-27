@@ -216,10 +216,16 @@ export function failureWithData(err: unknown, data: unknown): CliExitError {
 let nextDb: Db | undefined;
 let nextScope: string | undefined;
 let nextOutcome: NextOutcome | undefined;
+let nextArmed = false;
 
 /** What the verb did that a follow-up depends on (a delivered send, a preview, …). */
 export function setNextOutcome(outcome: NextOutcome): void {
   nextOutcome = outcome;
+}
+
+/** The verb registered owed work (`armWait`): the bare wait may follow it. */
+export function setNextArmed(): void {
+  nextArmed = true;
 }
 
 /** The resolved workstream of the call (resolveWorkstream records it). */
@@ -233,6 +239,7 @@ export function finalNext(): NextPlan {
   try {
     return computeNext(nextDb, {
       callers: currentCallers(),
+      armed: nextArmed,
       ...(nextScope !== undefined ? { workstream: nextScope } : {}),
       ...(nextOutcome !== undefined ? { outcome: nextOutcome } : {}),
     });
@@ -852,6 +859,7 @@ export function handle(
       nextDb = undefined;
       nextScope = undefined;
       nextOutcome = undefined;
+      nextArmed = false;
       // Flush even on the error path: the verb may have committed ops
       // before throwing (a cascade that hit a cycle halfway), and those
       // ops are already canonical in `ops`. Withholding them from the
