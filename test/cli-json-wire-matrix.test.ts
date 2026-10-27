@@ -263,6 +263,13 @@ describe("error and warning paths stay in the one document", () => {
     expect((await run(["--json", "nonsense"])).doc).toMatchObject({ ok: false, exit: 2 });
   });
 
+  it("a failure's message is one line: commander's did-you-mean is folded in (rr_r4_json_message_multiline)", async () => {
+    const { doc } = await run(["task", "list", "--stauts", "OPEN", "-w", "probe", "--json"]);
+    const msg = (doc as unknown as { message: string }).message;
+    expect(msg).toBe("unknown option '--stauts' (Did you mean --status?)");
+    expect(msg).not.toContain("\n");
+  });
+
   it("agent close: the preview and the --if apply are each one document, stderr empty", async () => {
     const preview = await run(["agent", "close", "worker-1", "-w", "probe", "--json"]);
     expect(preview.doc.ok).toBe(true);
