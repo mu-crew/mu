@@ -468,8 +468,9 @@ export function endWait(
           continue;
         if (b.latest < d.runs) continue;
         gone.delete(keyOf(d));
-        const { latest: _l, ...rest } = b;
-        baselines[key] = { ...rest, afterRuns: Math.max(d.runs, b.afterRuns) };
+        const { latest, ...rest } = b;
+        const afterRuns = Math.max(d.runs, b.afterRuns);
+        baselines[key] = { ...rest, afterRuns, ...(latest > afterRuns ? { latest } : {}) };
       }
       const left = reg.refs.filter((r) => !gone.has(keyOf(r)));
       const kept = Object.fromEntries(
