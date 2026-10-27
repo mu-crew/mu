@@ -41,6 +41,33 @@ export const doneKey = (workstream: string, name: string): string =>
 
 export const DELEGATE_TOKEN: CursorToken = { incarnation: "delegate", runs: 1 };
 
+/** The reserved caller of the stall-log marks: no caller is spelled like it (`<ws>/<agent>`, `pi:<s>`). */
+const STALL_LOG_CALLER = "mu:agent.stall";
+
+/**
+ * Log a task's stall once per owner identity: `emit` runs only when no wait, in any process, has
+ * logged this task stalled on this (registry row, pi incarnation, run count) before. The mark is a
+ * `stall-log|task:<ws>/<id>` row under a reserved caller (machine-local, like the `agent.stall` op
+ * itself). One short immediate transaction: check, mark and emit together.
+ */
+export function logStallOnce(
+  db: Db,
+  task: { workstream: string; id: string },
+  id: { agentId: number; incarnation: string; runs: number },
+  emit: () => void,
+): void {
+  const key = `stall-log|${cursorKey("task", task.workstream, task.id)}`;
+  const token = { incarnation: `${id.agentId}|${id.incarnation}`, runs: id.runs };
+  db.transaction(() => {
+    const row = db
+      .prepare("SELECT incarnation, runs FROM wait_cursors WHERE caller = ? AND ref = ?")
+      .get(STALL_LOG_CALLER, key) as CursorToken | undefined;
+    if (isConsumed(row, token)) return;
+    recordCursors(db, STALL_LOG_CALLER, [{ key, token }]);
+    emit();
+  }).immediate();
+}
+
 /** Has this caller already consumed `token`'s event (or a later one)? */
 export function isConsumed(cursor: CursorToken | undefined, token: CursorToken): boolean {
   return (

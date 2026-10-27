@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  deleteAgent,
   insertAgent,
   resetCommandResolverForTests,
   setCommandResolverForTests,
@@ -71,7 +72,9 @@ afterEach(async () => {
 });
 
 /** A pi the test drives: `settle(text)` ends a run (idle since now), `busy()` starts one. */
-async function servePi(): Promise<{ settle: (text: string) => void; busy: () => void }> {
+async function servePi(
+  inc = INC,
+): Promise<{ settle: (text: string) => void; busy: () => void; server: Server }> {
   let state: "busy" | "idle" = "busy";
   let runs = 0;
   let since = Date.now();
@@ -80,7 +83,7 @@ async function servePi(): Promise<{ settle: (text: string) => void; busy: () => 
   const status = () => ({
     v: 1,
     ok: true,
-    incarnation: INC,
+    incarnation: inc,
     state,
     since,
     runs,
@@ -103,7 +106,7 @@ async function servePi(): Promise<{ settle: (text: string) => void; busy: () => 
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
         const req = JSON.parse(line) as { op: string; afterRuns?: number };
-        if (req.op === "hello") sock.end(encode(helloReply()));
+        if (req.op === "hello") sock.end(encode(helloReply({ incarnation: inc })));
         else if (req.op === "wait") {
           if (req.afterRuns !== undefined && runs > req.afterRuns && state === "idle") {
             sock.end(encode(reply()));
@@ -120,6 +123,7 @@ async function servePi(): Promise<{ settle: (text: string) => void; busy: () => 
   await new Promise<void>((r) => server.listen(path, () => r()));
   return {
     settle,
+    server,
     busy: () => {
       state = "busy";
       since = Date.now();
@@ -143,7 +147,7 @@ async function asCaller(args: string[]): Promise<Awaited<ReturnType<typeof runCl
   return out;
 }
 
-async function setup(): Promise<{ settle: (text: string) => void; busy: () => void }> {
+async function setup(): Promise<Awaited<ReturnType<typeof servePi>>> {
   addTask(db, { localId: "t1", workstream: "w", title: "t1", impact: 50, effortDays: 1 });
   insertAgent(db, { name: "w1", workstream: "w", paneId: "%w1", cli: "pi", spawner: CALLER });
   await claimTask(db, "t1", { workstream: "w", agentName: "w1" });
@@ -201,5 +205,53 @@ describe("a later run supersedes a settled latch (fix_latch_later_run)", () => {
     expect(JSON.parse(out.stdout).data).toMatchObject({ timedOut: false, exit: 0 });
     expect(getTask(db, "t1", "w")).toMatchObject({ status: "CLOSED" });
     expect(settles()).toEqual([2]);
+  });
+
+  it("P1 respawn (fix_latch_identity): w1 replaced under the same name; incarnation 2's valid CLOSE closes t1", async () => {
+    const pi = await setup();
+    pi.settle('CLOSE: task=t1 evidence="e"\nREPORT:\n');
+    const first = (db.prepare("SELECT id FROM agents WHERE name = 'w1'").get() as { id: number })
+      .id;
+    let second = 0;
+    setTimeout(() => {
+      // Closed and respawned: a new registry row, its own pi (a new incarnation) on a new socket.
+      pi.server.close();
+      deleteAgent(db, "w1", "w");
+      second = insertAgent(db, {
+        name: "w1",
+        workstream: "w",
+        paneId: "%w1",
+        cli: "pi",
+        spawner: CALLER,
+      }).incarnation;
+      void claimTask(db, "t1", { workstream: "w", agentName: "w1" });
+      void servePi("inc-test-2").then((p2) => setTimeout(() => p2.settle(VALID), 50));
+    }, 200);
+    const out = await asCaller([
+      "task",
+      "wait",
+      "t1",
+      "-w",
+      "w",
+      "--all",
+      "--status",
+      "CLOSED",
+      "--on-stall",
+      "warn",
+      "--stuck-after",
+      "0.05",
+      "--timeout",
+      "5",
+      "--json",
+    ]);
+    expect(JSON.parse(out.stdout).data).toMatchObject({ timedOut: false, exit: 0 });
+    expect(getTask(db, "t1", "w")).toMatchObject({ status: "CLOSED" });
+    expect(second).toBeGreaterThan(first);
+    expect(
+      db.prepare("SELECT agent_id, incarnation, runs FROM agent_settles ORDER BY rowid").all(),
+    ).toEqual([
+      { agent_id: first, incarnation: INC, runs: 1 },
+      { agent_id: second, incarnation: "inc-test-2", runs: 1 },
+    ]);
   });
 });
