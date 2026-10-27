@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cmdDbBackup } from "../src/cli/db.js";
-import { UsageError } from "../src/cli/handle.js";
+import { BackupTargetExistsError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
 
@@ -61,6 +61,6 @@ describe("mu db backup", () => {
   it("refuses to overwrite an existing file", () => {
     const target = join(tempDir, "copy.db");
     cmdDbBackup(db, target);
-    expect(() => cmdDbBackup(db, target)).toThrow(UsageError);
+    expect(() => cmdDbBackup(db, target)).toThrow(BackupTargetExistsError);
   });
 });

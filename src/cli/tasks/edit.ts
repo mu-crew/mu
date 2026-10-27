@@ -443,7 +443,7 @@ export function resolveNoteText(
   }
   const text = given[0]?.[1];
   if (text === undefined) {
-    throw new UsageError(say("task.note_required"));
+    throw new UsageError(say("task.note_required"), { showHelp: false });
   }
   return text;
 }
@@ -827,7 +827,7 @@ export async function cmdTaskUpdate(
   if (opts.impact !== undefined) updateOpts.impact = opts.impact;
   if (opts.effortDays !== undefined) updateOpts.effortDays = opts.effortDays;
   if (Object.keys(updateOpts).length === 0) {
-    throw new UsageError(say("task.update_nothing"));
+    throw new UsageError(say("task.update_nothing"), { showHelp: false });
   }
   const r = updateTask(db, localId, updateOpts, { workstream: ws });
   if (opts.json) {
