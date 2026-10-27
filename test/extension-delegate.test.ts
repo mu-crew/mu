@@ -22,7 +22,6 @@ import {
 } from "../extension/delegate.js";
 import muPi, { type MuPiContext } from "../extension/mu-pi.js";
 import { consumeReadReport, listDelegates } from "../src/delegates.js";
-import { selectTaskNotes } from "../src/tasks/queries.js";
 import {
   fakeMu,
   fakePi,
@@ -1710,18 +1709,7 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     expect(rb?.state).toBe("done");
     // Mid-turn the model read b's report: that took it, so no wait will return b.
     expect(
-      consumeReadReport(
-        t.mu.db,
-        [rb?.caller ?? ""],
-        rb?.workstream ?? "",
-        rb?.task ?? "",
-        new Set(
-          selectTaskNotes(t.mu.db, rb?.task ?? "", {
-            workstream: rb?.workstream ?? "",
-            all: true,
-          }).notes.map((n) => n.n),
-        ),
-      ),
+      consumeReadReport(t.mu.db, [rb?.caller ?? ""], rb?.workstream ?? "", rb?.task ?? ""),
     ).toBe(b);
     const settling = t.settle();
     await t.answerWait(delegateEvent(a));

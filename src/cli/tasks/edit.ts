@@ -749,6 +749,9 @@ export async function cmdTaskNotes(
   const ws = await resolveWorkstream(opts.workstream);
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
+  // Its caller reading a finished delegate's report takes the answer: a later wait owes it no more.
+  if (task.kind === "delegate")
+    consumeReadReport(db, currentCallers(), task.workstreamName, localId);
   let page: NotesPage;
   let total: number;
   const notesWire = {
@@ -800,17 +803,13 @@ export async function cmdTaskNotes(
   }
   if (opts.json) {
     emitJson({ items: page.items, count: page.items.length, ...pageFields(page) });
-  } else if (total === 0) {
+    return;
+  }
+  if (total === 0) {
     console.log(pc.dim(`(no notes on ${localId})`));
-  } else {
-    for (const line of page.lines) console.log(line);
+    return;
   }
-  // Its caller reading a finished delegate's report takes the answer: a later wait owes it no
-  // more. Only after the page went out, and only if the report came out whole (not cut, not left out).
-  if (task.kind === "delegate") {
-    const whole = new Set(page.items.filter((i) => i.cut === undefined).map((i) => i.n as number));
-    consumeReadReport(db, currentCallers(), task.workstreamName, localId, whole);
-  }
+  for (const line of page.lines) console.log(line);
 }
 
 export async function cmdTaskUpdate(
