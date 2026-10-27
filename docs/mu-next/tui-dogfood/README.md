@@ -67,7 +67,10 @@ runs inside your own tmux (a nested client).
 Ctrl-d/Ctrl-u (half page), PgUp/PgDn, `g`/`gg` top, `G` bottom: move, in every list and drill · `Enter`: notes / scrollback / log entry · `a`
 (Agents tab): attach, the hint says how to get back (`detach: C-b C-b d` nested, `back: C-b L` on mu's own server) · `s` (Tasks): cycle the sort (activity, roi, age, id) · `o` (Tasks): cycle the status filter · `/`: text filter
 (Enter keeps, Esc cancels) · `c`: clear · `y`: copy the equivalent command ·
-`r`: refresh · `q` or Esc: back out / quit.
+`+`/`-`: refresh rate (default 1 s, 100 ms to 10 s) · `r`: refresh now, agent state included · `q` or Esc: back out / quit.
+
+Everything is live, drills included: a DB change from another shell shows within
+about a second, and agent state and scrollback within one 10 s slow tick, as in 3.x.
 
 ## Smoke test the kit
 
@@ -75,6 +78,7 @@ Ctrl-d/Ctrl-u (half page), PgUp/PgDn, `g`/`gg` top, `G` bottom: move, in every l
 python3 docs/mu-next/tui-dogfood/smoke.py              # everything, about 4 min
 python3 docs/mu-next/tui-dogfood/smoke.py 4 6          # some scenarios only
 python3 docs/mu-next/tui-dogfood/smoke.py fill stable drill  # the screen checks only
+python3 docs/mu-next/tui-dogfood/smoke.py live         # opt-in, about 4 min: live updates + CPU
 ```
 
 - **Scenarios** (through a PTY): each one must seed, render its workstream,
@@ -90,6 +94,14 @@ python3 docs/mu-next/tui-dogfood/smoke.py fill stable drill  # the screen checks
 - **drill** (s2 at 120x40 and 80x24): Enter on a Tasks row and on a DAG row
   opens the task's notes; the drill keeps the attention strip under its title
   and the hint on the last row.
+- **live** (opt-in; s2 driven by the CLI from a second process, then s6):
+  each view shows a change with no key press. Overview strip appears and
+  clears, the Next line, a Tasks row added and closed, and a Log row must each
+  show within 1 s of the write. So must a DAG edge and a note in an open
+  notes drill. Scrollback lines and an agent dying must show within 10 s.
+  Idle CPU on Tasks must stay under 2% of one core over 60 s. In s6, an open
+  notes drill must grow from the mutator, with CPU under 10%. Each line
+  prints the measured latency.
 
 It does not judge whether the screens look good: that is what [FORM.md](FORM.md) is for.
 

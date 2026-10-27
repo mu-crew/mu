@@ -17,6 +17,7 @@
 // predates the field (unknown). Elapsed is `now - since`, calculated at read.
 
 import { type AgentOutput, liveAgentToOutput } from "./agent-output.js";
+import type { StateReading } from "./agent-state.js";
 import { UNKNOWN_REASON } from "./agent-state.js";
 import { readLiveAgents } from "./agents.js";
 import { type LogItem, logItem } from "./cli/log-records.js";
@@ -220,6 +221,11 @@ export interface DashboardOptions {
   logWorkstream?: string;
   /** Sync warnings the caller holds (`ambientIngest`); each becomes a `sync` attention item. */
   syncWarnings?: readonly string[];
+  /**
+   * The agent-state cache (the dashboard's slow tier, see `readLiveAgents`): with
+   * `probe: false` the read is SQL only for every cached agent. Absent: probe all.
+   */
+  agentStates?: { cache: Map<string, StateReading>; probe: boolean };
 }
 
 const DEFAULT_STATUS: readonly TaskStatus[] = ["OPEN", "IN_PROGRESS"];
@@ -447,7 +453,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
   // Every live workstream's agents, whatever the scope or text: Attention reads them all.
   const everyAgent: DashboardAgent[] = [];
   for (const ws of live) {
-    for (const a of await readLiveAgents(db, ws.name)) {
+    for (const a of await readLiveAgents(db, ws.name, undefined, opts.agentStates)) {
       const mine = owned.get(a.incarnation) ?? [];
       everyAgent.push({
         ...liveAgentToOutput(a, ws.id),

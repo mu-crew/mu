@@ -7,12 +7,19 @@
 // Plain text only: bodies are cleaned, then wrapped by visual width (never ANSI in <Text>);
 // colour comes from theme roles as ink props.
 // A load is guarded: a result that lands after Esc (or for an older `r`) is dropped.
+// Live, on the dashboard's one poll loop (3.x task-detail tickNonce): notes and the log
+// entry's task context re-read whenever the snapshot changed (`nonce`), scrollback
+// re-captures on every slow tick (`slowNonce`). A refresh keeps the previous body on screen
+// (no "loading…" flash) and the scroll position of the same entity; a body scrolled to its
+// end follows new lines, like `tail -f`.
 
 import { Box, Text, useInput, useStdout, useWindowSize } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import stringWidth from "string-width";
+import { parseOpKey } from "../../log-render.js";
 import { activeMux } from "../../mux.js";
-import type { SelectedNotes } from "../../tasks.js";
+import { DEFAULT_SUBSTATE } from "../../tasks/status.js";
+import type { SelectedNotes, TaskRow } from "../../tasks.js";
 import { copyCommand, planAttach, yankSequence } from "./commands.js";
 import { Segs } from "./frame.js";
 import { NAV_HINT, navKey } from "./nav.js";
@@ -119,7 +126,14 @@ function logText(t: Extract<DrillTarget, { kind: "log" }>): string {
 type Load =
   | { state: "loading" }
   | { state: "error"; message: string }
-  | { state: "ready"; text: string; notices: string[] };
+  | { state: "ready"; text: string; notices: string[]; header?: string };
+
+/** A task's live line for the notes drill and a log entry's context: status, owner, title. */
+export function taskLine(t: TaskRow | undefined): string {
+  if (t === undefined) return "task: gone";
+  const status = t.substate === DEFAULT_SUBSTATE[t.status] ? t.status : `${t.status}/${t.substate}`;
+  return `${status}  ${t.ownerName === null ? "unowned" : `@${t.ownerName}`}  ${t.title}`;
+}
 
 /**
  * Copy a target's command with OSC 52 and say what happened: the command is always
@@ -148,6 +162,10 @@ export interface DrillProps {
   strip?: Line | null;
   /** True while the terminal belongs to an attach: a key is ignored (the hook stays active). */
   busy: { readonly current: boolean };
+  /** The poll loop's change counter: notes and log context re-read when it moves. */
+  nonce?: number;
+  /** The slow tier's counter: scrollback re-captures when it moves. */
+  slowNonce?: number;
   onClose(): void;
   onAttach(target: Extract<DrillTarget, { kind: "scrollback" }>): void;
 }
@@ -160,6 +178,8 @@ export function Drill({
   busy,
   onClose,
   onAttach,
+  nonce = 0,
+  slowNonce = 0,
 }: DrillProps) {
   const { columns, rows } = useWindowSize();
   const yank = useYank();
@@ -169,14 +189,27 @@ export function Drill({
   const [flash, setFlash] = useState<string | null>(null);
   const [top, setTop] = useState(target.kind === "scrollback" ? END : 0);
   const topSeen = useRef(0);
+  const entityAll = useRef(false);
 
-  // One guarded load per (target, all, reload): the cleanup drops a late result.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `reload` only re-runs the effect
+  // What a refresh re-reads on: notes and log follow the snapshot, scrollback the slow tick.
+  const tick = target.kind === "scrollback" ? slowNonce : nonce;
+  // The entity on screen: a change of it (or of `all`) is a new body, so it shows
+  // "loading…"; a tick of the same one keeps the old body until the new one lands.
+  const entity = useRef<unknown>(null);
+
+  // One guarded load per (target, all, reload, tick): the cleanup drops a late result.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `reload` and `tick` only re-run the effect
   useEffect(() => {
     let live = true;
-    setLoad({ state: "loading" });
+    if (entity.current !== target || all !== entityAll.current) {
+      entity.current = target;
+      entityAll.current = all;
+      setLoad({ state: "loading" });
+    }
     const done = (l: Load): void => {
-      if (live) setLoad(l);
+      if (live)
+        // A byte-equal result keeps the old object: no re-render.
+        setLoad((prev) => (JSON.stringify(prev) === JSON.stringify(l) ? prev : l));
     };
     try {
       if (target.kind === "notes") {
@@ -188,9 +221,16 @@ export function Drill({
             sel.more > 0
               ? [`${sel.more} of ${sel.total} notes not shown: A shows them all (oldest first)`]
               : [],
+          header: taskLine(runtime.task(target.workstream, target.id)),
         });
       } else if (target.kind === "log") {
-        done({ state: "ready", text: logText(target), notices: [] });
+        // The op is immutable; the task it is about is live.
+        const { workstream, local } = parseOpKey(target.item.key === "" ? null : target.item.key);
+        const ctx =
+          workstream !== undefined && local !== undefined && local !== ""
+            ? `\n\ntask now: ${taskLine(runtime.task(workstream, local))}`
+            : "";
+        done({ state: "ready", text: `${logText(target)}${ctx}`, notices: [] });
       } else {
         void (async () => {
           try {
@@ -208,13 +248,16 @@ export function Drill({
     return () => {
       live = false;
     };
-  }, [target, runtime, all, reload]);
+  }, [target, runtime, all, reload, tick]);
 
   const lines = useMemo(() => {
     const above = [...notice, ...(flash === null ? [] : [flash])];
-    const head = [...(load.state === "ready" ? load.notices : []), ...above].flatMap((l) =>
-      wrap(l, columns),
-    );
+    const ready = load.state === "ready" ? load : null;
+    const head = [
+      ...(ready?.header !== undefined ? [ready.header] : []),
+      ...(ready?.notices ?? []),
+      ...above,
+    ].flatMap((l) => wrap(l, columns));
     const body =
       load.state === "loading"
         ? ["loading…"]
@@ -247,7 +290,18 @@ export function Drill({
     const at = topSeen.current;
     if (key.escape || input === "q") return onClose();
     const nav = navKey(input, key, height, true);
-    if (nav !== null) setTop("by" in nav ? Math.max(0, at + nav.by) : nav.to === "top" ? 0 : END);
+    // Reaching the end pins the view to it (END), so lines that arrive later are followed.
+    const end = Math.max(0, lines.body.length - Math.max(1, height));
+    if (nav !== null)
+      setTop(
+        "by" in nav
+          ? at + nav.by >= end
+            ? END
+            : Math.max(0, at + nav.by)
+          : nav.to === "top"
+            ? 0
+            : END,
+      );
     else if (input === "r") setReload((n) => n + 1);
     else if (input === "A" && target.kind === "notes") setAll((a) => !a);
     else if (input === "a" && target.kind === "scrollback") onAttach(target);

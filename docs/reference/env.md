@@ -82,5 +82,5 @@ into its profile's shell template (`{env}`). It never gets `MU_DB_PATH`,
 
 ## Tests
 
-`VITEST` or `NODE_ENV=test` makes `openDb()` refuse the real default DB.
+`VITEST` or `NODE_ENV=test` makes `openDb()` refuse the real default DB. The dashboard sets `NODE_ENV=production` for itself when it is unset, to get React's production build.
 `test/_setup.ts` clears inherited `MU_*` vars except `MU_TMUX_SOCKET`.

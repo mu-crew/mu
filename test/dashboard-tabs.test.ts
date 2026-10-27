@@ -662,6 +662,7 @@ describe("tabs (Ink over a real snapshot)", () => {
     const real = rt;
     const computed: DashboardRuntime = {
       notes: real.notes,
+      task: real.task,
       close: real.close,
       refresh: async (q) => {
         const r = await real.refresh(q);

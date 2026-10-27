@@ -18,6 +18,7 @@ import {
   type CtlLink,
   type RuntimeState,
   readAgentStates,
+  type StateReading,
   type StateSource,
 } from "./agent-state.js";
 import { reapAgentRow } from "./agents/reap.js";
@@ -711,11 +712,29 @@ export async function readLiveAgents(
   workstream: string,
   /** Only the agent of this name (`mu me` reads itself, not its neighbours' sockets). */
   only?: string,
+  /**
+   * A reading cache keyed by `agentKey` (the dashboard's slow tier). With `probe: false`
+   * an agent already in the cache is NOT probed (no socket, no subprocess): only agents
+   * missing from it are, and their readings are added. `probe: true` re-reads every agent
+   * and refreshes the cache. Absent: probe every agent, cache nothing.
+   */
+  states?: { cache: Map<string, StateReading>; probe: boolean },
 ): Promise<LiveAgent[]> {
   const baseAgents = listAgents(db, { workstream }).filter(
     (a) => only === undefined || a.name === only,
   );
-  const readings = await readAgentStates(baseAgents, { stateDir: dirname(db.name) });
+  const stateDir = dirname(db.name);
+  let readings: ReadonlyMap<string, StateReading>;
+  if (states === undefined) readings = await readAgentStates(baseAgents, { stateDir });
+  else {
+    const due = states.probe
+      ? baseAgents
+      : baseAgents.filter((a) => !states.cache.has(agentKey(a)));
+    if (due.length > 0) {
+      for (const [k, r] of await readAgentStates(due, { stateDir })) states.cache.set(k, r);
+    }
+    readings = states.cache;
+  }
   const now = Date.now();
   return baseAgents.map((agent) => {
     const reading = readings.get(agentKey(agent)) ?? {
