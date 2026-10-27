@@ -939,11 +939,12 @@ CREATE VIEW goals AS
 // Every entity table has:
 //   - INTEGER PRIMARY KEY AUTOINCREMENT (surrogate identity)
 //   - <scope>_id INTEGER NOT NULL REFERENCES <parent>(id) ON DELETE CASCADE
-//   - <name>     TEXT  NOT NULL  (operator-facing, mutable)
+//   - <name>     TEXT  NOT NULL  (operator-facing, immutable once written)
 //   - UNIQUE (<scope>_id, <name>)
 //
-// Foreign keys are INTEGER. Renames become single-row UPDATEs (no
-// cascade chain). The TEXT name is just an attribute. `ops` is the
+// Foreign keys are INTEGER. The natural keys (`workstreams.name`,
+// `tasks.local_id`) are immutable: the capture KEY_COLUMNS guard refuses
+// an UPDATE of them (src/capture.ts), because ops address rows by them. `ops` is the
 // documented exception: it has NO foreign keys at all and addresses
 // rows by their NATURAL key, because ops outlive the rows (and the
 // workstreams) they record.

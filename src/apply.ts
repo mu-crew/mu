@@ -589,10 +589,11 @@ function applyEdge(db: Db, log: Log, op: Op): ApplyResult {
  * Apply one op to the portable tables.
  *
  * SYNCHRONOUS, for the same reason `withOpContext` is: the op context is
- * a per-connection temp table, so two interleaved async apply scopes
+ * the shared main-DB `op_ctx` row, so two interleaved async apply scopes
  * would clobber each other's `applying` flag with no way to tell whose
- * suppression was in force. Keeping this sync makes that
- * unrepresentable rather than merely discouraged.
+ * suppression was in force. The scope is one synchronous transaction;
+ * keeping this sync makes that unrepresentable rather than merely
+ * discouraged.
  *
  * Runs inside `withCaptureSuppressed`, which is THE echo guard: without
  * it, writing a peer's op to `tasks` would fire the capture trigger,

@@ -13,8 +13,9 @@
 //      on at most the last WAIT_TEXT_MAX characters. What the grammar misses
 //      (polynomial `a*a*a*b`) ends in a typed error, never a hang.
 //
-// The text matched is authoritative text (a ctl `lastText`, a task report),
-// never pane output; the caller passes it already bounded or we tail it.
+// The text matched is a ctl `lastText`, a task report, or (non-pi agents)
+// captured pane text (wait-ctl.ts, wait.ts); the caller passes it already
+// bounded or we tail it.
 
 import { createContext, Script } from "node:vm";
 
