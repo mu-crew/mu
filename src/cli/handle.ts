@@ -401,6 +401,11 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // typed that cannot become an id. isUsageClassError prints --help.
     err instanceof TaskIdInvalidError ||
     err instanceof TaskTitleSlugEmptyError ||
+    // A close without its reason: a missing flag (--evidence, --why), whether the CLI, the SDK
+    // or a `mu sql --write` guard found it. One lane (usage, 2), no help dump: the message
+    // names the command.
+    err instanceof CloseNeedsEvidenceError ||
+    err instanceof SubstateReasonRequiredError ||
     // A blank reason or missing caller identity for `mu human-needed`.
     err instanceof HumanNeededInvalidError ||
     // The operator asked the ACTIVE backend for something it cannot do:
@@ -455,10 +460,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof DelegateStateError ||
     err instanceof TaskAlreadyOwnedError ||
     err instanceof TaskHasOpenBlockersError ||
-    err instanceof CloseNeedsEvidenceError ||
-    // Substate refusals (ts_4): a missing --why, a park from the wrong
-    // phase, a claim on a parked task, a pair outside TASK_SUBSTATES.
-    err instanceof SubstateReasonRequiredError ||
+    // Substate refusals (ts_4): a park from the wrong phase, a claim on a
+    // parked task, a pair outside TASK_SUBSTATES.
     err instanceof TaskParkStateError ||
     err instanceof TaskParkedError ||
     err instanceof HumanTaskError ||

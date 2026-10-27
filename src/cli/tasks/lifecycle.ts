@@ -17,6 +17,7 @@ import { pc } from "../../output.js";
 import { formatPair, type TaskPair } from "../../tasks/status.js";
 import {
   acceptTask,
+  CloseNeedsEvidenceError,
   type CloseSubstate,
   closeTask,
   getTask,
@@ -99,8 +100,8 @@ export async function cmdTaskClose(
     closeAs === "done" &&
     (opts.evidence ?? "").trim() === ""
   ) {
-    // One line, command included: no --help after it.
-    throw new UsageError(say("task.close_done_evidence", localId, ws), { showHelp: false });
+    // The same typed error the SDK and `mu sql` raise: one guard, one class, one exit (2).
+    throw new CloseNeedsEvidenceError(localId, ws);
   }
   // Read before the close: the warning is about the finding as it was.
   const warnings = decisionWarnings(db, localId, ws, sdkOpts.as ?? "done", opts.why);

@@ -27,6 +27,7 @@ import { HazardFailError } from "../src/fleet-hazards.js";
 import { MuxError, NoMultiplexerError } from "../src/mux.js";
 import {
   ClaimerNotRegisteredError,
+  CloseNeedsEvidenceError,
   CrossWorkstreamEdgeError,
   CycleError,
   InvalidSubstateError,
@@ -79,7 +80,8 @@ describe("classifyError exit-code map", () => {
     [new ClaimerNotRegisteredError("pi-mu", "%6441"), 4, "conflict"],
     [new SchemaTooOldError(4, 5), 4, "conflict"],
     [new WorkstreamExistsError("existing-ws"), 4, "conflict"],
-    [new SubstateReasonRequiredError("close", "wontfix", "foo"), 4, "conflict"],
+    [new SubstateReasonRequiredError("close", "wontfix", "foo"), 2, "error"],
+    [new CloseNeedsEvidenceError("foo", "ws"), 2, "error"],
     [new TaskParkStateError("foo", "IN_PROGRESS", "ws"), 4, "conflict"],
     [new TaskParkedError("foo", "ws"), 4, "conflict"],
     [new InvalidSubstateError("CLOSED", "parked"), 4, "conflict"],
