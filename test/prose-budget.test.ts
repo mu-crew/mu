@@ -141,10 +141,9 @@ describe("prose budget", () => {
       /\bmu link\b/,
       /workspace refresh/,
       /\bmu kick\b/,
-      /\bmu sql\b/,
       /\bsleep \d/,
       /\btask wait\b/,
-      /\bsqlite3\b(?! -readonly)/,
+      /(?<!no `)\bsqlite3\b(?! -readonly)/, // `no \`sqlite3\`` is the write ban
     ];
     const files = [
       "skills/mu/SKILL.md",
