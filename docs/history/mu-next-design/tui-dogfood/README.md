@@ -2,8 +2,8 @@
 
 Try the new dashboard (`mu` with no arguments, `src/cli/tui`) on seven seeded
 scenarios, then fill in [FORM.md](FORM.md) (second pass: one section per item of the
-first feedback). Temporary: `release_cleanup`
-moves or drops this directory. It ships nothing.
+first feedback). Kept as history; `tools/screenshot/dashboard.sh` still
+seeds its scenario 4. It ships nothing.
 
 ## Run
 
@@ -17,7 +17,7 @@ Then one command per scenario, in a real terminal (at least 100x30; the
 bigger the better):
 
 ```bash
-docs/mu-next/tui-dogfood/run.sh 1     # 1..7; `run.sh list` names them
+docs/history/mu-next-design/tui-dogfood/run.sh 1     # 1..7; `run.sh list` names them
 ```
 
 Each run seeds a fresh isolated DB, opens the dashboard in your terminal,
@@ -75,10 +75,10 @@ about a second, and agent state and scrollback within one 10 s slow tick, as in 
 ## Smoke test the kit
 
 ```bash
-python3 docs/mu-next/tui-dogfood/smoke.py              # everything, about 4 min
-python3 docs/mu-next/tui-dogfood/smoke.py 4 6          # some scenarios only
-python3 docs/mu-next/tui-dogfood/smoke.py fill stable drill  # the screen checks only
-python3 docs/mu-next/tui-dogfood/smoke.py live         # opt-in, about 4 min: live updates + CPU
+python3 docs/history/mu-next-design/tui-dogfood/smoke.py              # everything, about 4 min
+python3 docs/history/mu-next-design/tui-dogfood/smoke.py 4 6          # some scenarios only
+python3 docs/history/mu-next-design/tui-dogfood/smoke.py fill stable drill  # the screen checks only
+python3 docs/history/mu-next-design/tui-dogfood/smoke.py live         # opt-in, about 4 min: live updates + CPU
 ```
 
 - **Scenarios** (through a PTY): each one must seed, render its workstream,

@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const REPO = process.env.MU_DOGFOOD_REPO ?? join(HERE, "..", "..", "..");
+const REPO = process.env.MU_DOGFOOD_REPO ?? join(HERE, "..", "..", "..", "..");
 const CLI = join(REPO, "dist", "cli.js");
 const mu = await import(pathToFileURL(join(REPO, "dist", "index.js")).href);
 const db = mu.openDb({ path: process.env.MU_DB_PATH });

@@ -12,11 +12,12 @@ helps when what replaces it is cheaper for the agent. Built on the
 `mu-next` branch, then run side by side with 3.x; workstreams move
 over one at a time by a model-run recipe (see Move).
 
-**Status.** This page is the design of record, not a description of
-what ships. Shipped behaviour is in [ARCHITECTURE](../ARCHITECTURE.md),
-[VOCABULARY](../VOCABULARY.md) and the [CHANGELOG](../../CHANGELOG.md);
+**Status: history.** This was the design of record for the 4.0 rewrite
+while it was built under the name mu-next; it is kept as written and
+describes no shipped behaviour. Shipped behaviour is in [ARCHITECTURE](../../ARCHITECTURE.md),
+[VOCABULARY](../../VOCABULARY.md) and the [CHANGELOG](../../../CHANGELOG.md);
 the contract as built is
-[surface-contract.md](surface-contract.md). Where this page and
+[surface-contract.md](../../reference/surface-contract.md). Where this page and
 the shipped docs disagree, the shipped docs win.
 
 Revision 2 (2026-10-23) folds in an ultrathink run over revision 1:
@@ -559,7 +560,7 @@ like any unknown segment version.
 
 Revision 2 fixes architecture, guarantees and contracts. The surface
 defaults are the Interface section plus the binding amendments in the
-[surface contract](surface-contract.md).
+[surface contract](../../reference/surface-contract.md).
 
 **Tournaments dropped (2026-10-24).** Six build-time `dec_*` tournaments
 (verb grammar, record format, error style, next rules, executor
@@ -607,12 +608,12 @@ cheap and a mid model against a candidate surface and records tokens,
 calls, correct completion, and wrong or destructive actions. Baseline:
 3.x on the same scenarios.
 
-3.13.3 baseline v2 ([report](../eval/baseline-3.13.3-v2.md), after the harness
-fixes; supersedes [v1](../eval/baseline-3.13.3.md)): 22/28 completed (haiku 9/14,
+3.13.3 baseline v2 ([report](../../eval/baseline-3.13.3-v2.md), after the harness
+fixes; supersedes [v1](../../eval/baseline-3.13.3.md)): 22/28 completed (haiku 9/14,
 sonnet 13/14). One full run (14 scenarios x 2 models, 1 rep, concurrency 4)
 cost 5.4M AUT tokens ($1.06) and 25 min elapsed, plus 17 min for the
 release-surface check; budget about 7M tokens and 30 min per run.
-[v2.1](../eval/baseline-3.13.3-v2.md#v21-the-three-open-items-fixed-affected-cells-re-run)
+[v2.1](../../eval/baseline-3.13.3-v2.md#v21-the-three-open-items-fixed-affected-cells-re-run)
 fixed three scoring gaps and re-ran four scenarios: destructive 2 → 0, and
 remote_close_block now fails on the AUT's own close evidence (haiku 3/3, sonnet
 1/3), not on a stub delegate.

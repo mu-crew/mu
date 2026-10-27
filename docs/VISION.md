@@ -206,6 +206,34 @@ mu agent spawn reviewer-1 --cli pi_big
 The skill's [model tiers](../skills/mu/recipes/models.md) are advice to
 the agent choosing; mu reads none of it.
 
+### 11. The user is an agent
+
+Every verb, result, error and line of prose is written for a model to
+read and act on; only the dashboard is for a human. The measure is how
+cheaply an agent reaches the correct next action: tokens read and
+written, and the mistakes it cannot make. 4.0 was rebuilt on these
+rules ([design history](history/mu-next-design/README.md)):
+
+1. **Guarantees are code.** Atomicity, locking, cross-machine merge,
+   exact delivery and identity each have a measured failure behind
+   them.
+2. **A procedure is prose only if it is one sentence and not every
+   agent needs it.** Otherwise it is a verb.
+3. **Silent code beats taught prose.** A verb costs one `--help` line;
+   a guard costs nothing until it fires, then one line.
+4. **Errors and hints teach at the decision point**, not in the skill.
+   Each is one line, and a `next` is executable as printed.
+5. **Accept what models reach for.** A flag, key or column guessed
+   repeatedly becomes an alias or a teaching error.
+6. **Context is the budget.** Skill, recipes, `--help` and results are
+   capped, and tests pin the caps
+   ([surface contract](reference/surface-contract.md)).
+7. **Promote back.** Prose that models get wrong twice becomes a verb.
+
+The eval harness ([tools/eval/](../tools/eval/README.md)) holds the
+line: a change to what an agent sees must be no worse than the
+previous surface on the same scenarios ([reports](eval/README.md)).
+
 ## What it enables
 
 - **Visible crews.** Spawn agents once and send them work all day. Each

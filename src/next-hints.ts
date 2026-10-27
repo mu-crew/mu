@@ -4,7 +4,7 @@
 // current state plus what the verb that just ran did (`NextOutcome`), and
 // nowhere else. The dashboard asks the same function with no outcome.
 //
-// Contract (docs/mu-next/README.md "Next contract"):
+// Contract (docs/reference/surface-contract.md "Next"):
 //   - READ-ONLY. It reads SQLite (and, through `expectsCtl`, whether a control
 //     socket file exists). It never waits, registers, reaps, ingests, spawns or
 //     runs what it suggests; it never consumes a cursor.

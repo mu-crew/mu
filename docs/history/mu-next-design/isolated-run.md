@@ -1,7 +1,7 @@
 # Run the checkout in isolation
 
 To run a pi orchestrator on a mu-next checkout next to a live 3.x install,
-without touching 3.x state. Found by dogfood-1 ([eval/dogfood-1.md](../eval/dogfood-1.md), F8).
+without touching 3.x state. Found by dogfood-1 ([eval/dogfood-1.md](../../eval/dogfood-1.md), F8).
 
 ```bash
 # env.sh: source it before anything below
@@ -13,7 +13,7 @@ export MU_PI_COMMAND=/tmp/mun/bin/piwrap
 
 - `/tmp/mun/bin/mu`: `exec node <checkout>/dist/cli.js "$@"`. Name it `mu`:
   the skill and every brief say `mu`. It hides the 3.x binary, so call that
-  by full path (the [Move recipe](../../skills/mu/recipes/move.md)'s `<mu3>`).
+  by full path (the [Move recipe](../../../skills/mu/recipes/move.md)'s `<mu3>`).
 - `/tmp/mun/bin/piwrap`: `exec pi -ne -e <checkout>/dist/extension/mu-pi.js
   --no-skills --skill <checkout>/skills/mu "$@"`. Without
   `-ne` the global `~/.pi/agent/extensions/mu.ts` loads the 3.x extension.

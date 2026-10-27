@@ -3,7 +3,7 @@
 There is one section for each item of your first feedback (2026-10-27). The
 original complaint is quoted, then what changed and how to try it. Answer the
 three questions in each section; one word each is fine. Rebuild first:
-`npm run build` in the checkout, then `docs/mu-next/tui-dogfood/run.sh <N>` (see
+`npm run build` in the checkout, then `docs/history/mu-next-design/tui-dogfood/run.sh <N>` (see
 [README.md](README.md)). Item 3 (delegate wave) "worked", so it has no section.
 Check that it still works under "Anything else".
 

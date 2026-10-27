@@ -1,4 +1,4 @@
-// The sync contract (docs/mu-next/README.md § Sync contract), end to end.
+// The sync contract (docs/reference/surface-contract.md "Sync"), end to end.
 //
 //   1. Every verb ingests peer ops before and flushes its own after,
 //      including `mu sql` and including when the verb throws.

@@ -1,31 +1,20 @@
-# mu-next surface contract
+# Surface contract
 
-Status: **shipped, except the two rows marked TODO below.** This page is
-the compact contract the mu-next build was made against: output, wait,
-delegates, the CLOSE block and the prose and help budgets. It adds no
-design. The design of record is [README.md](README.md); terms are in
-[VOCABULARY](../VOCABULARY.md); the module map is in
-[ARCHITECTURE](../ARCHITECTURE.md); what changed is in
-[CHANGELOG](../../CHANGELOG.md). Where this page and the source
-disagree, the source is right and this page is a bug.
+The contract mu 4.0 is built to: what every result, wait, delegate and
+CLOSE block promises an agent caller, and the budgets on what it reads.
+Terms are in [VOCABULARY](../VOCABULARY.md), the module map in
+[ARCHITECTURE](../ARCHITECTURE.md), the reasons in the
+[design history](../history/mu-next-design/README.md). Where this page
+and the source disagree, the source is right and this page is a bug.
 
-Rules for readers and for the units that touch it:
-
-- A unit that ships a contract updates ARCHITECTURE (module map) and
-  VOCABULARY (term) in the same commit as the code.
-- No module-map row, runnable guide snippet or `next` hint exists for
-  code that has not shipped.
-- No import and no flag day (user decision, 2026-10-25): mu-next runs
-  beside 3.x with its own DB, state, sync dir and machine id; workstreams
-  move by the [move recipe](../../skills/mu/recipes/move.md). Reading v1
-  segment lines and accepting a v12 DB are cut.
-- The build-time spelling tournaments (`dec_*`) were dropped. The README
-  Interface defaults plus the amendments below are the contract;
-  `v_eval_next` measures it with grammar-neutral judges.
+A change that alters a contract here updates this page, ARCHITECTURE
+(module map) and VOCABULARY (term) in the same commit as the code. No
+module-map row, runnable guide snippet or `next` hint exists for code
+that has not shipped.
 
 ## What ships
 
-Schema 13, `CAPTURE_VERSION` 4, 26 classified tables and 4 views
+Schema 13, `CAPTURE_VERSION` 5, 26 classified tables and 4 views
 (`PORTABLE_TABLES`: `workstreams`, `tasks`, `task_edges`, `task_notes`;
 every other table is machine-local, see `src/db.ts`). The verbs and
 their guarantees:
@@ -51,8 +40,8 @@ their guarantees:
   per settled run by the wait engine (`src/close-block.ts`).
 - **Remote.** Host profiles, remote spawn, `agent collect`, the close
   rule, remote command gates, recovery records.
-- **Surfaces.** In-process `mu db query` (alias `mu sql`), four-tab
-  read-only dashboard, pi package (no `mu link`), `mu pi migrate`.
+- **Surfaces.** In-process `mu db query` (alias `mu sql`), five-tab
+  read-only dashboard, pi package (3.x's link verb is gone), `mu pi migrate`.
 
 - **Settle wait.** The pi extension's keep-driving nudge is the settle
   wait (`extension/nudge.ts`): every completed settle of an orchestrator
@@ -117,6 +106,27 @@ judged task; the answer is the delegate task's report. Pi echo is
 optional, one summary per wave. Admission control, arriving-answer
 safety and `murmur:pending {source,count}` are unchanged.
 
+**Next.** One rule set over current state computes `next` on every
+call (`computeNext`); the dashboard asks the same function. Agents
+follow state-advancing hints far more often than read hints, so `next`
+holds only state-advancing moves (a send's exact wait, a preview's
+apply, a claim's brief, `mu next` over authorised work, the wait over
+owned refs) and is usually null; reads are never hinted. Every command
+is executable as printed: POSIX-quoted, real ids, no `<…>`, `...` or
+`a|b`; a move mu cannot fill is omitted. Safe moves rank before
+destructive ones, and a destructive move carries `--if <rev>`. Never a
+resend.
+
+**Guards.** `--if <rev>` on membership-changing and destructive verbs;
+teardown and `agent close` print a preview revision first. A wrong id
+returns read-only candidates, never a fuzzy write. An ambiguous ctl
+delivery returns a receipt to check (`msgId`), never a resend.
+
+**Sync.** Every verb ingests peer ops before its body and flushes its
+own after, on the error path too; `mu db query` writes flush as well. A
+DB inside `MU_SYNC_DIR` is refused before anything is opened, and so is
+a `MU_SYNC_DIR` holding a 3.x segment (exit 4, nothing written).
+
 **CLOSE block.** Final lines of a settled pi run's `lastText`, `task=`
 the agent's own task; applied once per (agent, incarnation, runs) as
 report + close in one op group; malformed writes "no close (malformed)".
@@ -125,7 +135,7 @@ only for a caller-scoped human-needed task or when nothing it owns runs.
 
 **Budgets (pinned by tests).** SKILL 600 words, each recipe 250, all
 recipes 4,000 (`test/prose-budget.test.ts`; the remote recipe's separate
-200-word target is not met and not tested: it is 239); per-verb `--help` description at most 3 lines at 80 columns
+200-word target is not met and not tested); per-verb `--help` description at most 3 lines at 80 columns
 (`test/help-budget.test.ts`); each `next` and error one line
 (`src/messages.ts`). They do not cap canonical docs such as this page.
 
