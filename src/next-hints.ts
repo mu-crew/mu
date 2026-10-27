@@ -251,7 +251,7 @@ export function courseCheckHint(db: Db, ws: string, now = Date.now()): string | 
   if (row === undefined || row.closed === 0) return undefined;
   const old = now - Date.parse(row.since) >= COURSE_CHECK_AGE_MS;
   if (row.closed < COURSE_CHECK_CLOSED && !old) return undefined;
-  return `course check due: ${row.closed} closed since ${row.since.slice(0, 16)}Z (recipes/course-correct.md)`;
+  return `course check due: ${row.closed} closed since ${row.since.slice(0, 16)}Z. Stop dispatching: finish merging, then follow recipes/course-correct.md`;
 }
 
 /**

@@ -128,7 +128,7 @@ describe("mu state: one JSON document, SQL names, by default", () => {
     const due = await runCliJson(["state", "-w", "ws"], dbPath);
     expect(due.data.notices).toEqual([
       expect.stringMatching(
-        /^course check due: 10 closed since .* \(recipes\/course-correct\.md\)$/,
+        /^course check due: 10 closed since .*\. Stop dispatching: finish merging, then follow recipes\/course-correct\.md$/,
       ),
     ]);
   });
