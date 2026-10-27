@@ -14,6 +14,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **`mu sql` / `mu db query` read by default; a write needs `--write`** (`sql_write_optin`; the release matrix had haiku writing raw rows). A statement SQLite reports as not read-only (INSERT, UPDATE, DELETE, REPLACE, `WITH ... INSERT`, anything with RETURNING; a script checks each statement) is refused before it runs with one line naming the verb and `--write` (UsageError, exit 2); the connection also runs `query_only` meanwhile. `--confirm-rows` needs `--write` to do anything. EXPLAIN and PRAGMA reads are unchanged. Writes under `--write` are captured exactly as before (one `sql.write` group). Help is 3 lines; the guide says so; the eval `bad-*` scripts that write now pass `--write`. Test: `test/sql-write-optin.test.ts` (each write shape, mutation-checked).
 
+- **Cold-guess misses as aliases** (`t_surface`, one round): `mu agent stop` is an alias of
+  `agent close`; an unknown plural noun names its list (`mu tasks`
+  → `closest: mu task list`) and a tie between namespaces prefers `task` (`mu show` → `mu task
+  show`, was `mu agent show`); the `blockers` view gains `task_local_id`. Scored with R4 on
+  haiku x3: docs/mu-next/eval/hillclimb-surface.jsonl.
+
 ### Test health
 
 - **Surface milestone measurement** (`v_health`, [docs/test-health/2026-10-23-surface.md](docs/test-health/2026-10-23-surface.md)). Fast tier 217 files / 4720 tests and full suite 302 / 5691 (3 environmental skips), all green. Both gate budgets are over on the shared host: fast ~49 s (budget 30 s), `npm run test` 8m31s (budget 5 min). The suite doubled since the kernel milestone. Test-only speed-ups with unchanged counts: `cli-json-wire-matrix` seeds a template DB once (36 s → 3 s) and the `extension-mu-run` TERM-trap test no longer waits on its own leaked `sleep` (10 s → 0.3 s), both mutation-checked. Top-20 classified; no MERGE or DELETE. Main remaining cost: fresh `openDb` is 48% of fast-tier time (follow-up: a shared template-DB helper). `docs/ARCHITECTURE.md` gains rows for `src/cli/doctor.ts`, `src/cli/tasks/wire.ts` and `extension/delegate-process-format.ts`.

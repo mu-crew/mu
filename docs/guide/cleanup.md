@@ -7,6 +7,8 @@ mu agent close worker-1 -w auth           # preview: writes nothing, prints rev=
 mu agent close worker-1 -w auth --if <n>  # apply that preview
 ```
 
+`mu agent stop` is the same verb.
+
 Close removes the agent's worktree with it. A worktree with uncommitted
 edits makes close refuse with exit 4 before anything is killed: commit
 them, or pass `--discard` to lose them. Clean commits that are not merged

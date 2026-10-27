@@ -211,7 +211,7 @@ describe("blockers view", () => {
         .columns()
         .map((c) => c.name),
     );
-    expect(cols2.length).toBe(4);
+    expect(cols2.length).toBe(5);
   });
 });
 

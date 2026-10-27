@@ -48,7 +48,8 @@ SIGINT/SIGTERM during a wait. A `mu wait` that hits its cap is `0` with
 ## Read the schema
 
 The schema (version 13) has 26 tables and 4 views (`ready`, `blocked`,
-`blockers`, `goals`). Views skip torn-down workstreams.
+`blockers`, `goals`). Views skip torn-down workstreams. `blockers` has one
+row per open edge: `task_local_id` is held up by `blocker_local_id`.
 Four tables travel between machines: `workstreams`, `tasks`,
 `task_edges`, and `task_notes`. List them all:
 

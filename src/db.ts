@@ -913,6 +913,7 @@ export const BLOCKERS_VIEW_SQL = `
 DROP VIEW IF EXISTS blockers;
 CREATE VIEW blockers AS
   SELECT e.to_task_id  AS task_id,
+         t.local_id    AS task_local_id,
          b.id          AS blocker_id,
          b.local_id    AS blocker_local_id,
          b.status      AS blocker_status
