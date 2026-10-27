@@ -1281,9 +1281,21 @@ export async function waitForEvents(
                 ...{ workstream: ownerRef.workstreamName, id: ownerRef.name },
               }),
             );
-            if (t !== undefined && res.afterRuns !== undefined && t.latched === undefined) {
-              t.baseline = res.afterRuns;
-              t.wasBusy = false;
+            if (t !== undefined && res.afterRuns !== undefined) {
+              // A latched settle is the run this steer answers (under --all a stall may stand past
+              // it): drop it and watch again from the send baseline, or the owner's NEXT run (and its
+              // CLOSE) is never read. Any other latch (dead, input, ...) stays.
+              if (t.latched?.kind === "settled") {
+                t.latched = undefined;
+                t.close = undefined;
+                t.handle = undefined;
+                t.result = undefined;
+                t.needWatch = opts.watchAgent !== undefined;
+              }
+              if (t.latched === undefined) {
+                t.baseline = res.afterRuns;
+                t.wasBusy = false;
+              }
             }
             wake();
           });

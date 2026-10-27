@@ -340,6 +340,81 @@ describe("a malformed CLOSE block surfaces on a task wait (close_block_malformed
   }
 });
 
+describe("--all --on-stall steer rearms on the steered owner's next run (fix_allstall_steer_rearm)", () => {
+  it("run 1 settles mid-task and is steered; run 2's valid CLOSE closes t1 in the SAME wait, one send", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    spawnedBy("a1", "w/boss");
+    const idle = {
+      status: "needs_input",
+      since: Date.now() - 60_000,
+      source: "ctl",
+      ctl: "ok",
+      incarnation: "inc",
+      agentId: agentRowOf("a1"),
+    } as const;
+    const runs: number[] = [];
+    const watches = [
+      { runs: 1, lastText: "paused mid-task" },
+      { runs: 2, lastText: 'CLOSE: task=t1 evidence="e"\nREPORT:\ndone' },
+    ];
+    const sends: number[] = [];
+    const r = await waitForEvents(env.db, [taskRef("t1")], {
+      ...base,
+      timeoutMs: 1500,
+      mode: "all",
+      status: "CLOSED",
+      ...reads("needs_input", { ...idle, runs: 1 }),
+      watchAgent: async (ref) => {
+        const next = watches[runs.length];
+        if (next === undefined) return undefined;
+        runs.push(ref.afterRuns ?? 0);
+        const w = controllableWatch({ status: "busy" });
+        w.settle({ ...idle, settled: true, ...next });
+        return { ...w.handle, afterRuns: ref.afterRuns ?? 0 };
+      },
+      callers: ["w/boss"],
+      stuckAfterMs: 1000,
+      onStall: "steer",
+      handleStall: async () => {
+        sends.push(1);
+        return { disposition: "continue", action: "steer", state: "sent", afterRuns: 1 };
+      },
+    });
+    expect(r.event).toMatchObject({ kind: "closed", ref: { kind: "task", id: "t1" } });
+    expect(r.exit).toBe(0);
+    expect(sends).toHaveLength(1);
+    expect(runs).toEqual([0, 1]); // the second watch counts past the steer baseline
+  });
+});
+
+describe("reasonOf: a stall with a refused CLOSE still names the --on-stall action", () => {
+  it("carries both the refusal and the action state", () => {
+    const stall = {
+      event: { kind: "stall", ref: { kind: "task", workstream: "w", id: "t1" } },
+      refs: [
+        {
+          ref: { kind: "task", workstream: "w", id: "t1" },
+          owner: "a1",
+          close: {
+            applied: false,
+            task: "t1",
+            reason: "no close (malformed): the report is empty",
+          },
+        },
+      ],
+      action: {
+        action: "steer",
+        state: "unknown",
+        disposition: "return",
+        reason: "budget-exhausted",
+      },
+    } as never;
+    const why = reasonOf(stall, undefined, 1);
+    expect(why).toContain("no close (malformed)");
+    expect(why).toContain("--on-stall steer: unknown (budget-exhausted)");
+  });
+});
+
 describe("one fact, one event: a settle whose CLOSE closed the task, and the task's close", () => {
   it("delivering the settle of the run that closed t1 consumes t1's close too: no second wait for the same news", async () => {
     await mkOwnedTask(env.db, "t1", "a1");
