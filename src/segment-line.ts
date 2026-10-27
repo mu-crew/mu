@@ -87,16 +87,39 @@ function computeCrc(line: Omit<SegmentLine, "crc">, payloadText: string): string
  * a torn write, on every single mu invocation, forever (the segment is
  * regenerated from `ops`, so the repair re-emitted the same bad bytes).
  *
- * So: pass valid JSON through verbatim (byte-preserving, which is what
- * the crc contract needs), and encode anything else as a JSON string.
+ * So: pass valid JSON through (minus line breaks, see singleLinePayload),
+ * and encode anything else as a JSON string. A stored JSON string SCALAR
+ * (`mu log '"hello"'`) is encoded too: passed through, it would read back
+ * as a string and `storedPayloadFor` could not tell it from wrapped prose.
  */
 function payloadTextFor(payload: string): string {
+  let value: unknown;
   try {
-    JSON.parse(payload);
-    return payload;
+    value = JSON.parse(payload);
   } catch {
     return JSON.stringify(payload);
   }
+  if (typeof value === "string") return JSON.stringify(payload);
+  return singleLinePayload(payload);
+}
+
+/** `payload` with its line breaks removed when it is JSON spanning
+ *  several lines, else unchanged (prose keeps its newlines: the segment
+ *  JSON-escapes it). Not JSON.stringify(JSON.parse()): that rounds big
+ *  numbers and merges duplicate keys. JSON strings cannot hold a raw
+ *  CR/LF, so each one, with the whitespace around it, sits between
+ *  tokens, and two adjacent JSON tokens are never both literals.
+ *
+ *  `appendLog` stores new rows this way; the encoder applies it again so
+ *  a row stored before that fix still fits on one segment line. */
+export function singleLinePayload(payload: string): string {
+  if (!/[\r\n]/.test(payload)) return payload;
+  try {
+    JSON.parse(payload);
+  } catch {
+    return payload;
+  }
+  return payload.replace(/[ \t\r\n]*[\r\n][ \t\r\n]*/g, "");
 }
 
 /** Serialize one op row to a segment line (without its trailing newline). */
@@ -128,9 +151,9 @@ export function encodeSegmentLine(
     payload: null, // replaced below; kept out of the crc input shape
   };
   const payloadText = payloadTextFor(op.payload);
-  // Valid JSON passes through verbatim, so a raw CR/LF in it would split
-  // one op over several physical lines, which every reader reports as a
-  // torn write. appendLog strips them; this catches any other writer.
+  // A raw CR/LF would split one op over several physical lines, which
+  // every reader reports as a torn write. payloadTextFor removes them;
+  // this is defensive.
   if (/[\r\n]/.test(payloadText))
     throw new Error(`segment line: payload of op ${op.hlc} contains a line break`);
   const crc = computeCrc(base, payloadText);
@@ -252,15 +275,16 @@ export function decodeLine(
  * prose rather than as a quoted string.
  *
  * The inverse is exact because the wrap rule is: wrap iff the stored
- * text is NOT valid JSON. So unwrap iff the line's payload is a JSON
- * string whose contents are NOT valid JSON — anything else was passed
- * through verbatim and must stay that way.
+ * text is NOT valid JSON or is a JSON string. So unwrap iff the line's
+ * payload is a string whose contents are NOT valid JSON or ARE a JSON
+ * string. Anything else was passed through and must stay that way: a
+ * line written before string scalars were wrapped carries the stored
+ * `"123"` as the string `123`, which this keeps as `"123"`.
  */
 function storedPayloadFor(line: SegmentLine, payloadText: string): string {
   if (typeof line.payload !== "string") return payloadText;
   try {
-    JSON.parse(line.payload);
-    return payloadText;
+    return typeof JSON.parse(line.payload) === "string" ? line.payload : payloadText;
   } catch {
     return line.payload;
   }
