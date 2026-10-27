@@ -4,8 +4,8 @@ Task `dogfood_after_v_delegate_nomux`. A 10-minute isolated loop like [dogfood-2
 
 ## Setup
 
-- `/var/tmp/df3/env.sh` unsets every inherited `MU_*`, `PI_*`, `TMUX*` and `HERDR*`. It sets `MU_STATE_DIR=/var/tmp/df3/state`, `MU_DB_PATH`, `MU_SYNC_DIR=` (blank) and `PI_CODING_AGENT_DIR=/var/tmp/df3/pa` (only modelbridge in its extensions, so no global 3.x `mu.ts` shim loads). It also sets `PATH=/var/tmp/df3/bin:/usr/bin:/bin`. `bin` holds `node`, `git`, `pi` and `mu` (the checkout's `dist/cli.js`). Neither `command -v tmux` nor `command -v herdr` finds anything.
-- Orchestrator: `pi --mode rpc -ne -e modelbridge.ts -e <checkout>/dist/extension/mu-pi.js --no-skills --skill <checkout>/skills/mu --model modelbridge/anthropic/claude-sonnet-5-5`, driven by a small script (`/var/tmp/df3/drive.py`). The settle wait was on (`MU_NUDGE` unset).
+- `/var/tmp/df3/env.sh` unsets every inherited `MU_*`, `PI_*`, `TMUX*` and `HERDR*`. It sets `MU_STATE_DIR=/var/tmp/df3/state`, `MU_DB_PATH`, `MU_SYNC_DIR=` (blank) and `PI_CODING_AGENT_DIR=/var/tmp/df3/pa` (only the provider extension, so no global 3.x `mu.ts` shim loads). It also sets `PATH=/var/tmp/df3/bin:/usr/bin:/bin`. `bin` holds `node`, `git`, `pi` and `mu` (the checkout's `dist/cli.js`). Neither `command -v tmux` nor `command -v herdr` finds anything.
+- Orchestrator: `pi --mode rpc -ne -e provider.ts -e <checkout>/dist/extension/mu-pi.js --no-skills --skill <checkout>/skills/mu --model claude-sonnet-5-5`, driven by a small script (`/var/tmp/df3/drive.py`). The settle wait was on (`MU_NUDGE` unset).
 - Repo: throwaway git repo with `a.js` (defines `foo`), `b.js` (calls it) and `README.md`. Tasks `c1`..`c3` in workstream `df3`, each holding one claim: c1 false, c2 and c3 true.
 
 ## Run

@@ -7,9 +7,9 @@
 ```bash
 export MU_SYNC_DIR= MU_DB_PATH=$(mktemp -u) MU_STATE_DIR=$(mktemp -d)
 node tools/eval/main.ts cold-guess run --surface "next=$PWD:next" --surface "3.13.3=3.13.3:3x" \
-  --model modelbridge/anthropic/claude-haiku-5-5 --model modelbridge/anthropic/claude-sonnet-5-5 \
-  --reps 3 --out docs/mu-next/eval/cold-guess.jsonl
-node tools/eval/main.ts cold-guess report docs/mu-next/eval/cold-guess.jsonl   # the tables below
+  --model claude-haiku-5-5 --model claude-sonnet-5-5 \
+  --reps 3 --out docs/eval/cold-guess.jsonl
+node tools/eval/main.ts cold-guess report docs/eval/cold-guess.jsonl   # the tables below
 ```
 
 What round 2 fixed, and how it is enforced:

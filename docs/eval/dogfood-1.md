@@ -6,9 +6,9 @@ Task `v_dogfood`, part A (the loop on merged surfaces; the full run is part B). 
 
 - `mun` = `/tmp/dogfood1/bin/mun`, `exec node <checkout>/dist/cli.js "$@"`. Env: `MU_STATE_DIR=/tmp/dogfood1/state`, `MU_DB_PATH=/tmp/dogfood1/state/mu.db`, `MU_SYNC_DIR=` (blank), `MU_TMUX_SOCKET=mu-dogfood`, every other inherited `MU_*` and `PI_SESSION_ID` unset.
 - Old DB: `sqlite3 -readonly ~/.local/state/mu/mu.db ".backup /tmp/dogfood1/old.db"` (schema v11, 123 MB). All reads of it use `-readonly`.
-- Only workstream with a few hundred open tasks and a clean graph: `swayward` (57 open, 60 edges). `next-build` (56 open) is this crew's live one, `demo` has 1.
+- Only workstream with a few hundred open tasks and a clean graph: `proj` (57 open, 60 edges). `next-build` (56 open) is this crew's live one, `demo` has 1.
 - tmux: `tmux -L mu-dogfood -f /dev/null start-server ; set -g history-limit 2000 ; set -g exit-empty off`. Peak 3 panes (spawn log: worker-3 at 08:16:03 while worker-1 was still up, see F9); `tmux -L mu-dogfood kill-server` at the end (`no server running` after).
-- pi: `piwrap.sh` = `pi -ne -e modelbridge.ts -e <checkout>/dist/extension/mu-pi.js --no-skills --skill docs/mu-next/skill-draft --model modelbridge/anthropic/claude-sonnet-5-5`; `MU_PI_COMMAND` points workers at it. Both agents ran in a throwaway clone `/tmp/dogfood1/repo` (45 MB, no cargo).
+- pi: `piwrap.sh` = `pi -ne -e provider.ts -e <checkout>/dist/extension/mu-pi.js --no-skills --skill <skill draft> --model claude-sonnet-5-5`; `MU_PI_COMMAND` points workers at it. Both agents ran in a throwaway clone `/tmp/dogfood1/repo` (45 MB, no cargo).
 
 ## Isolation: before and after
 
@@ -26,16 +26,16 @@ Verification that the isolated runs write nothing live: stat of the live segment
 
 The `mu-next` default dir is the only one whose mtime I cannot attribute: `locks/` was at 08:06:32 in the first listing, so something else (other workers running the checkout build with `MU_DB_PATH` but not `MU_STATE_DIR`, e.g. their test runs) writes there. After I set the isolated env, `mun task list/state/show/doctor/--version` left it unchanged (stat before/after, repeated). It is empty and inside the dir the pillars allow. The 3.x state, `~/mu`, `~/.cache/mu` and `~/.local/bin/mu` were not written by `mun` (their mtime moves match the live crew's traffic).
 
-## Move (recipe `docs/mu-next/skill-draft/recipes/move.md`)
+## Move (the skill draft's `recipes/move.md`)
 
-Followed literally on `swayward`; script `move.py` (python, argv lists, dependents first, brief on stdin).
+Followed literally on `proj`; script `move.py` (python, argv lists, dependents first, brief on stdin).
 
 | Step | Result |
 | --- | --- |
 | 1 read old DB `-readonly` | `mun` on the copy: `conflict: Detected v11 schema; v12 is required ... mu ships NO in-place migration` exit 4 (expected: a copy of a 3.x DB is not a mun DB; the recipe says never set `MU_DB_PATH` to it) |
 | 2 select | 57 open tasks (45 todo, 12 parked), 60 edges with both ends open, 242 notes, 57 briefs |
 | 3 add | `mun task add <id> -t -i -e --blocks <dependents> --note -` then `task note -m "moved from 3.x"`, `task park --why` for 12 parked: 0 failures, 9.3 s for ~126 calls (74 ms per call) |
-| 4 verify | `mun sql "select count(*) from tasks"` 57 (all OPEN), parked 12, todo 45; edges: `mun sql ... --all` 60 pairs, **set-equal** to the selection. `mun task tree launch-beta1` renders the umbrella with 12 levels |
+| 4 verify | `mun sql "select count(*) from tasks"` 57 (all OPEN), parked 12, todo 45; edges: `mun sql ... --all` 60 pairs, **set-equal** to the selection. `mun task tree umbrella-1` renders the umbrella with 12 levels |
 | 5 mark old | with 3.13.3 on a **copy** (`/tmp/dogfood1/old-for-park.db`): `mu task park <id> --why "moved to mu-next"` x57: 57 ok, 4.5 s; old side shows 57 parked. The live 3.x DB was not touched |
 
 The recipe worked. Friction: F2 (only the first note moves), F3 (IN_PROGRESS tasks), F11 (default `sql` row cap hides edges), and one wrong first guess of mine: the first `move.py` ran `mun` where the recipe step 5 needs 3.13.3 (see F4).
@@ -44,7 +44,7 @@ Trial of the recipe on the old binary: `mu task add` in 3.13.3 has no `--blocks`
 
 ## Orchestrator run
 
-Prompt: `orch-prompt.md` (swayward tasks `devrun-stray-proc-error`, `ci-proptest-cadence-truth`, `version-string-packaged-builds`; umbrella `dogfood-wave`; 2 workers at once; cherry-pick onto branch `dogfood`; list every misleading hint). Model sonnet-5-5 via modelbridge, skill draft loaded (4.2 KB `SKILL.md`), it read three recipes of its own accord.
+Prompt: `orch-prompt.md` (proj tasks `task-a`, `task-b`, `task-c`; umbrella `dogfood-wave`; 2 workers at once; cherry-pick onto branch `dogfood`; list every misleading hint). Model sonnet-5-5 via a model gateway, skill draft loaded (4.2 KB `SKILL.md`), it read three recipes of its own accord.
 
 | Outcome | Result |
 | --- | --- |
@@ -55,7 +55,7 @@ Prompt: `orch-prompt.md` (swayward tasks `devrun-stray-proc-error`, `ci-proptest
 | Wall clock | 08:15:45 to 08:16:35 = 50 s for 3 tasks |
 | `mun wait`, CLOSE block, `mun next` | `mu wait` (typed refs) not used by the agent; it used `task wait --first --on-stall exit --json` as the skill says. CLOSE block not used: local workers closed with `mu task close --evidence`. `mun next` does not exist yet (F5) |
 
-The workers read their brief and claim at spawn (log: `agent spawn`, `task claim`, `agent send` within the same second): the `agent spawn --task --send -` path works. Reaper cleared owners after close without trouble. `mu state` was 7.4 KB for a 57-task workstream (cap 4 KB is per field, first call printed `more=38 retrieve=mu state -w swayward --full`).
+The workers read their brief and claim at spawn (log: `agent spawn`, `task claim`, `agent send` within the same second): the `agent spawn --task --send -` path works. Reaper cleared owners after close without trouble. `mu state` was 7.4 KB for a 57-task workstream (cap 4 KB is per field, first call printed `more=38 retrieve=mu state -w proj --full`).
 
 ## Friction
 
@@ -64,18 +64,18 @@ Each is a triage task in `next-build`. Output tails are verbatim.
 ### F1 `df1_wait_stale_dead`: exit 6 for a worker closed on purpose
 
 ```
-$ mu task wait ci-proptest-cadence-truth version-string-packaged-builds -w swayward --first --on-stall exit --json
-{"ok":true,"data":{"firing":{"kind":"dead","ref":"agent:swayward/worker-1"},"event":{...},"exit":6,...,"reason":"agent swayward/worker-1 is gone (its pane died); the work is not done","open":1,"snapshots":[{"kind":"agent","ref":"agent:swayward/worker-1","status":null,"fired":false,"dead":true},{"kind":"task","ref":"task:swayward/version-string-packaged-builds","status":"IN_PROGRESS",...
-$ mu agent close worker-2 -w swayward --if 176662545011039   # its task already CLOSED/done
-$ mu task wait version-string-packaged-builds -w swayward --on-stall exit --json
-{"ok":true,"data":{"firing":{"kind":"dead","ref":"agent:swayward/worker-2"},...,"exit":6,"reason":"agent swayward/worker-2 is gone (its pane died); the work is not done","open":0,...
+$ mu task wait task-b task-c -w proj --first --on-stall exit --json
+{"ok":true,"data":{"firing":{"kind":"dead","ref":"agent:proj/worker-1"},"event":{...},"exit":6,...,"reason":"agent proj/worker-1 is gone (its pane died); the work is not done","open":1,"snapshots":[{"kind":"agent","ref":"agent:proj/worker-1","status":null,"fired":false,"dead":true},{"kind":"task","ref":"task:proj/task-c","status":"IN_PROGRESS",...
+$ mu agent close worker-2 -w proj --if 176662545011039   # its task already CLOSED/done
+$ mu task wait task-c -w proj --on-stall exit --json
+{"ok":true,"data":{"firing":{"kind":"dead","ref":"agent:proj/worker-2"},...,"exit":6,"reason":"agent proj/worker-2 is gone (its pane died); the work is not done","open":0,...
 ```
 
 The agent was never in the id list, and its task was CLOSED. The next wait gave the real event (`kind:closed`, exit 0). Highest-severity finding: a loop that obeys "6 = recover" would re-dispatch finished work.
 
 ### F2 `df1_move_drops_later_notes`: only the first note moves
 
-`deploy-aur` last note: `PARKED: beta1 plan 2026-10-04: post-beta1 (member of post-beta1-list)`; `differential-campaign` (74 notes) last note: `PAUSED 2026-10-11 (disk cleanup) ... Restart as nightly net`. Recipe step 3 says "re-park --why what was parked" but step 2 never selects the why. My script wrote `parked in 3.x`.
+`task-d` last note: `PARKED: plan 2026-10-04: after the beta (member of a later list)`; `task-e` (74 notes) last note: `PAUSED 2026-10-11 (disk cleanup) ... Restart as nightly net`. Recipe step 3 says "re-park --why what was parked" but step 2 never selects the why. My script wrote `parked in 3.x`.
 
 ### F3 `df1_move_in_progress`: no step for IN_PROGRESS
 
@@ -84,7 +84,7 @@ $ MU_DB_PATH=<copy> mu task park v_dogfood -w next-build --why "moved to mu-next
 conflict: cannot park v_dogfood: it is IN_PROGRESS (release it first)
 ```
 
-next-build has 3 IN_PROGRESS tasks; swayward none, so the Move itself was unaffected.
+next-build has 3 IN_PROGRESS tasks; proj none, so the Move itself was unaffected.
 
 ### F4 `df1_version_string_same`: both binaries say 3.13.3
 
@@ -112,11 +112,11 @@ Root help is 2.4x bigger than 3.13.3's (long descriptions on `wait`, `state`, `s
 ### F6 `df1_agent_close_two_calls`
 
 ```
-$ mu agent close worker-1 -w swayward
+$ mu agent close worker-1 -w proj
 Close worker-1? pane %0 will be killed and its row removed (rev 21409813741483)
-  owns swayward/devrun-stray-proc-error (CLOSED)
-  worktree /tmp/dogfood1/state/worktrees/swayward/worker-1: clean-unmerged
-Apply this close : mu agent close worker-1 -w swayward --if 21409813741483
+  owns proj/task-a (CLOSED)
+  worktree /tmp/dogfood1/state/worktrees/proj/worker-1: clean-unmerged
+Apply this close : mu agent close worker-1 -w proj --if 21409813741483
 ```
 
 Three times two calls. The skill covers the `--if` step only under Stopping. The preview is useful (it names the unmerged worktree); the gap is one skill line.
@@ -139,19 +139,19 @@ Umbrella: `CONCURRENCY: workers 2`. Log: `agent spawn worker-3` 08:16:03, `agent
 
 ### F11 `mun sql` default row cap hides rows
 
-`mun sql "<edge join>"` returned 54 of 60 rows with `"more":6,"retrieve":"mu db query '...' --all"`; `mun sql --full` is refused (`too many arguments`), `--all` works. The hint is right; I first compared 54 to 60 and thought the Move had lost 6 edges (all `-> post-beta-compliance-backlog`). Cost: three extra queries. Not filed: the cap and hint are by design (Pillar: capped readers name the way back); noted for the recipe step 4: use `--all`. Folded into `df1_move_drops_later_notes`'s fix target.
+`mun sql "<edge join>"` returned 54 of 60 rows with `"more":6,"retrieve":"mu db query '...' --all"`; `mun sql --full` is refused (`too many arguments`), `--all` works. The hint is right; I first compared 54 to 60 and thought the Move had lost 6 edges (all `-> task-f`). Cost: three extra queries. Not filed: the cap and hint are by design (Pillar: capped readers name the way back); noted for the recipe step 4: use `--all`. Folded into `df1_move_drops_later_notes`'s fix target.
 
 ## Per-command overhead vs 3.13.3
 
-`bench.sh`: cold = first call after `rm -rf <state>/compile-cache`, warm = median of 7 consecutive calls, wall ms via `date +%s%N`, same host, same machine load (crew running), one run. Moved DB: `mun` 786 KB v13 (57 tasks, 63 edges, 130 notes, 3 workers' runs). 3.13.3 comparison DB: `small3x.db`, the same 57 tasks and 60 edges built through 3.13.3 (504 KB). Also the real 3.x DB copy (123 MB, 2425 swayward tasks, 668 next-build).
+`bench.sh`: cold = first call after `rm -rf <state>/compile-cache`, warm = median of 7 consecutive calls, wall ms via `date +%s%N`, same host, same machine load (crew running), one run. Moved DB: `mun` 786 KB v13 (57 tasks, 63 edges, 130 notes, 3 workers' runs). 3.13.3 comparison DB: `small3x.db`, the same 57 tasks and 60 edges built through 3.13.3 (504 KB). Also the real 3.x DB copy (123 MB, 2425 proj tasks, 668 next-build).
 
 | Command | mun cold | mun warm | 3.13.3 cold | 3.13.3 warm | Δ warm |
 | --- | --- | --- | --- | --- | --- |
 | `--version` | 83 | 63 | 71 | 60 | +3 |
-| `task list -w swayward` | 102 | 77 | 89 | 78 | -1 |
-| `state -w swayward` | 110 | 93 | 101 | 88 | +5 |
+| `task list -w proj` | 102 | 77 | 89 | 78 | -1 |
+| `state -w proj` | 110 | 93 | 101 | 88 | +5 |
 | wait setup (`mun wait task:... --timeout 0.2` vs `mu task wait ... --timeout 0.2`) | 339 | 279 | 302 | 286 | -7 |
-| `task next -w swayward` | 88 | 73 | 81 | 97 (noisy: 69-112) | -24 |
+| `task next -w proj` | 88 | 73 | 81 | 97 (noisy: 69-112) | -24 |
 | `task show <id>` | 90 | 74 | 86 | 67 | +7 |
 | 3.13.3 on the 123 MB copy: `task list` / `state` | | | 122 / 125 | 103 / 110 | (mun has no equivalent DB of that size: v_import dropped by the Move decision) |
 

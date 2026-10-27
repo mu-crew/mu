@@ -4,7 +4,7 @@ Task `dogfood_after_v_settle`. An isolated loop like [dogfood-3](dogfood-3.md) o
 
 ## Setup
 
-- `/var/tmp/d6/env.sh` unsets every inherited `MU_*`, `PI_*`, `TMUX*`, `HERDR*`. It sets `MU_STATE_DIR=/var/tmp/d6/state`, `MU_DB_PATH`, `MU_SYNC_DIR=` (blank), `MU_TMUX_SOCKET=d6`, `TMPDIR=/var/tmp/d6/tmp`, `PI_CODING_AGENT_DIR=/var/tmp/d6/pa` (modelbridge only, so no 3.x `mu.ts`) and `MU_PI_COMMAND=/var/tmp/d6/piwrap.sh`. `/var/tmp/d6/bin/mu` runs `dist/cli.js`.
+- `/var/tmp/d6/env.sh` unsets every inherited `MU_*`, `PI_*`, `TMUX*`, `HERDR*`. It sets `MU_STATE_DIR=/var/tmp/d6/state`, `MU_DB_PATH`, `MU_SYNC_DIR=` (blank), `MU_TMUX_SOCKET=d6`, `TMPDIR=/var/tmp/d6/tmp`, `PI_CODING_AGENT_DIR=/var/tmp/d6/pa` (the provider extension only, so no 3.x `mu.ts`) and `MU_PI_COMMAND=/var/tmp/d6/piwrap.sh`. `/var/tmp/d6/bin/mu` runs `dist/cli.js`.
 - Run 1 drove `pi --mode rpc` from a script. Runs 3 to 7 ran the TUI in a pane of the private tmux server (typed prompts, real Esc and `/reload`). Per run: a workstream `d6<x>`, tasks that begin with `sleep` (40 to 130 s), a umbrella, and a throwaway git repo.
 - Each run: 1 or 2 pi workers (`agent spawn --task --worktree --send -`) plus a wave of 1 to 3 `mu_delegate` calls (`sleep 5..60`, read-only). Every step had a timeout (`timeout 20..120`, the drivers 480 to 600 s).
 - Isolation: after the runs nothing under `~/.local/state/mu-next` or `~/.cache/mu` was newer than the start (`find -newer`), and the live `mu.db-wal` and `~/mu` segment mtimes were still 23:53:38, before run 1. `tmux -L d6 kill-server`; no `pi` or `mu wait` left.
@@ -34,4 +34,4 @@ Task `dogfood_after_v_settle`. An isolated loop like [dogfood-3](dogfood-3.md) o
 3. A settled worker that closed its own task shows `close:{applied:false, reason:"no CLOSE block"}` and `needs_input`; the model read it as a failure (runs 4, 6).
 4. `next: mu wait -w <ws>` follows every command, the umbrella close included.
 5. Esc stops only the current wait; a later delegate answer still wakes an idle pi (run 5, 4 s later). Say so next to the Esc line in the guide.
-6. 2 of 22 delegate answers came back in Chinese (modelbridge sonnet child); a model matter, not mu's.
+6. 2 of 22 delegate answers came back in Chinese (sonnet child); a model matter, not mu's.

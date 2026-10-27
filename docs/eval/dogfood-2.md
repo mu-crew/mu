@@ -5,7 +5,7 @@ Task `dogfood_after_v_wait_cli`. A 10-minute isolated loop like [dogfood-1](dogf
 ## Setup
 
 - `/var/tmp/df2/env.sh` unsets every inherited `MU_*` and `PI_*`, then sets `MU_STATE_DIR=/var/tmp/df2/state`, `MU_DB_PATH=/var/tmp/df2/state/mu.db`, `MU_SYNC_DIR=` (blank), `MU_TMUX_SOCKET=mu-dogfood`, and `MU_PI_COMMAND=/var/tmp/df2/piwrap.sh`. `bin/mun` and `bin/mu` both run `node <checkout>/dist/cli.js`. No step needs 3.x here.
-- `piwrap.sh` runs `pi -ne -e modelbridge.ts -e <checkout>/dist/extension/mu-pi.js --no-skills --skill docs/mu-next/skill-draft --model modelbridge/anthropic/claude-sonnet-5-5`.
+- `piwrap.sh` runs `pi -ne -e provider.ts -e <checkout>/dist/extension/mu-pi.js --no-skills --skill <skill draft> --model claude-sonnet-5-5`.
 - tmux: `tmux -L mu-dogfood -f /dev/null start-server ; set -g history-limit 2000 ; set -g exit-empty off`. At most 3 panes (session pane and 2 workers; the probes ran one worker at a time). After `kill-server`, tmux printed `no server running on /tmp/tmux-1000/mu-dogfood`.
 - Repo: a throwaway git repo, `/var/tmp/df2/repo`, containing `textutil.js`, `test.js` and `package.json`.
 

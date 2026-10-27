@@ -1,10 +1,10 @@
 # Dogfood at the switch: a real loop, the Move, the switch note
 
-Task `v_dogfood_switch`. Isolated loop like [dogfood-4](dogfood-4.md) on `062210a` (both df4 triage fixes merged) + `npm run build`, never installed (`mu --version` 4.0.0-next.0). Host linuxpc, pi 1.4.0, tmux 3.7c, 2026-10-27 01:24 to 01:50. Orchestrator: sonnet-5-5 via modelbridge, TUI in a pane, the shipped `skills/mu` and `dist/extension/mu-pi.js` only.
+Task `v_dogfood_switch`. Isolated loop like [dogfood-4](dogfood-4.md) on `062210a` (both df4 triage fixes merged) + `npm run build`, never installed (`mu --version` 4.0.0-next.0). Host linuxpc, pi 1.4.0, tmux 3.7c, 2026-10-27 01:24 to 01:50. Orchestrator: sonnet-5-5 via a model gateway, TUI in a pane, the shipped `skills/mu` and `dist/extension/mu-pi.js` only.
 
 ## Setup
 
-- `/var/tmp/d8/env.sh` unsets every `MU_*`, `PI_*`, `TMUX*`, `HERDR*`. It then sets `MU_STATE_DIR`, `MU_DB_PATH` (both under `/var/tmp/d8/state`), `MU_SYNC_DIR=` (blank), `MU_TMUX_SOCKET=d8`, `TMPDIR`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `PI_CODING_AGENT_DIR=/var/tmp/d8/pa` (modelbridge only) and `MU_PI_COMMAND=piwrap.sh`. `PATH` holds only `/var/tmp/d8/bin`, where `mu` runs the checkout. Every driver and Move call ran under `timeout`.
+- `/var/tmp/d8/env.sh` unsets every `MU_*`, `PI_*`, `TMUX*`, `HERDR*`. It then sets `MU_STATE_DIR`, `MU_DB_PATH` (both under `/var/tmp/d8/state`), `MU_SYNC_DIR=` (blank), `MU_TMUX_SOCKET=d8`, `TMPDIR`, `XDG_STATE_HOME`, `XDG_CACHE_HOME`, `PI_CODING_AGENT_DIR=/var/tmp/d8/pa` (the provider extension only) and `MU_PI_COMMAND=piwrap.sh`. `PATH` holds only `/var/tmp/d8/bin`, where `mu` runs the checkout. Every driver and Move call ran under `timeout`.
 - Project: a throwaway git repo `textstats` (lib.js, `node --test`). Three typed user prompts, about 15 min of model time: (1) words, chars, README, plus "bump to 0.1.0 and publish: I decide"; (2) run batch 2 as a crew with tasks, 2 workers, a review wave before each merge and the release tracked in mu; (3) `paragraphs` (the worker sleeps 60 s first) plus one recorded claim check. I killed worker-4's pane mid-task (01:36:54).
 - Isolation: `find ~/.local/state/mu-next ~/.cache/mu ~/mu ~/.pi -newer T0` found only my own pi session file (this worker's, not the AUT). The live `mu.db` mtime stayed 2026-10-26 21:09. `tmux -L d8 kill-server` left no `pi` or `mu wait` process.
 
@@ -45,5 +45,5 @@ All as written: `MU_SYNC_DIR` holding a 3.x segment (one line copied out of `~/m
 1. A respawn after a dead worker is refused: `attempt manual:paragraphs … already ran with a different request: pass --attempt <new key>`. The recovery recipe could say so.
 2. One death gave two exit-6 events across consecutive waits (`dead agent:d8/worker-4`, then `dead task:d8/paragraphs`).
 3. Move recipe: when the brief is the only note, the "last note" repeats it, and an IN_PROGRESS task's last note is often just `CLAIM: dispatch`. Say what to write instead.
-4. upgrade.md "Old DBs" points to `docs/mu-next/README.md` (Move), while "Switch" links the recipe. Use one pointer: the recipe.
+4. upgrade.md "Old DBs" points to the design README (Move), while "Switch" links the recipe. Use one pointer: the recipe.
 5. After prompt 1 the model did the work in its own pane (no tasks) and left the release decision as prose. The `human-needed` record only came when the prompt named mu tracking.

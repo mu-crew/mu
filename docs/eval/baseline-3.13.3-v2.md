@@ -54,7 +54,7 @@ Each cell is `pass|FAIL tokens wrong destructive`.
 - **f_eb_discard_parse** (37d10fc): the v1 destructive entries from `2>&1` and `worker-$i` are gone: api_outage_resume/sonnet 2 → 0 and worker_dies/haiku 1 → 0, as the reviewer predicted. The sonnet total is still 2 destructive, from new rows, below.
 - **f_eb_send_before_claim** (d58153d): a never-run worker now waits up to 30 s for its claim and then says "no task claimed", instead of answering with the delegate's `VERDICT: CONFIRMED / eval fixture default`. fanout_gates/haiku and worker_dies still fail, for a different reason (below). The fixture default still reaches *delegates* that no `answers/N.txt` keys (remote_close_block, single_channel_host, refute stubs): see "Open".
 - **f_eb_fixture_origin** (c1f4aa4): `refs/remotes/origin/HEAD` points at main in the sandbox repo, so `mu workspace refresh` no longer fails. No v2 run hit "cannot resolve default branch".
-- **f_eb_fs_isolation** (c1f4aa4): the AUT's PATH is the sandbox bin plus `/usr`, `/bin`, `/sbin`, `/opt` dirs; node, sqlite3, git and ssh from mise are symlinked in. `which mule` in single_channel_host/haiku now reports "no mule in (...)", and no run found `/tmp/rv7i` or `/tmp/refute` this time. No mount namespace: bwrap cannot mount over `/home` (a symlink to `/var/home`) on this host, so absolute-path reads still work (below).
+- **f_eb_fs_isolation** (c1f4aa4): the AUT's PATH is the sandbox bin plus `/usr`, `/bin`, `/sbin`, `/opt` dirs; node, sqlite3, git and ssh from mise are symlinked in. `which mule` in single_channel_host/haiku now reports "no mule in (...)", and no run found `/tmp/rv7i` or `/tmp/refute` this time. No mount namespace: bwrap cannot mount over `/home` (a symlink) on this host, so absolute-path reads still work (below).
 
 ## Not completed (v2)
 
@@ -73,7 +73,7 @@ RPC logs: `.eval-results/2026-10-24T11-32-20-047Z/<scenario>.3.13.3_3x_7f1b7b.<h
 ## Conditions
 
 - Host linuxpc, node v26.12.0, pi 1.4.0, private tmux server per run. Surface `3.13.3` (`.ref` tag commit), scenario root `tools/eval/scenarios` on this branch, family `3x`.
-- Models `modelbridge/anthropic/claude-haiku-5-5` and `claude-sonnet-5-5` (`--model` takes the full id; the short `haiku-5-5` routed to `anthropic/...` without the bridge prefix and was killed after 2 runs, results discarded).
+- Models `claude-haiku-5-5` and `claude-sonnet-5-5` (`--model` takes the gateway's full id; the short `haiku-5-5` bypassed the gateway and was killed after 2 runs, results discarded).
 - Release-surface check first: `check --surface 3.13.3` exit 0, 14/14 goldens ok, 83/83 bad scripts flagged, ssh-shim preflight ok. 12:11:48 → 12:29:13 (17m25s).
 - Matrix: 12:30:33 → 12:55:41 (25m08s elapsed, concurrency 4). `--budget-tokens` default, per-run caps unchanged (1.5M tokens, 15 min; 500k on the remote scenarios).
 
@@ -93,36 +93,36 @@ RPC logs: `.eval-results/2026-10-24T11-32-20-047Z/<scenario>.3.13.3_3x_7f1b7b.<h
 
 | Scenario | Surface | Model | Completed | Mean tokens | Mean mu calls | Mean mu errors | Wrong | Destructive | Prods | Aborted |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| delegate_saturation | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 625445 | 29.0 | 2.0 | 0 | 0 | 0 | 0 |
-| api_outage_resume | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 201250 | 10.0 | 0.0 | 0 | 0 | 0 | 0 |
-| delegate_saturation | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 997402 | 41.0 | 2.0 | 0 | 0 | 0 | 0 |
-| guessed_flag | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 25116 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
-| fanout_gates | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 195602 | 9.0 | 0.0 | 0 | 1 | 0 | 0 |
-| guessed_flag | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 37993 | 2.0 | 0.0 | 0 | 0 | 0 | 0 |
-| guessed_sql_column | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 38252 | 5.0 | 0.0 | 0 | 0 | 0 | 0 |
-| guessed_sql_column | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 0/1 | 69725 | 5.0 | 0.0 | 1 | 0 | 1 | 0 |
-| api_outage_resume | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 497500 | 17.0 | 0.0 | 0 | 0 | 0 | 0 |
-| long_notes | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 45983 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
-| long_notes | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 26332 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
-| refute_verdicts | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 76093 | 4.0 | 0.0 | 0 | 0 | 0 | 0 |
-| refute_verdicts | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 76109 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
-| remote_close_block | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 186682 | 7.0 | 0.0 | 0 | 0 | 0 | 0 |
-| remote_spawn | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 287096 | 10.0 | 0.0 | 0 | 0 | 0 | 0 |
-| remote_spawn | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 124177 | 6.0 | 0.0 | 0 | 0 | 0 | 0 |
-| remote_close_block | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 0/1 | 503658 | 17.0 | 0.0 | 1 | 0 | 1 | 1 |
-| teardown | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 32136 | 4.0 | 0.0 | 0 | 0 | 0 | 0 |
-| single_channel_host | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 191547 | 9.0 | 0.0 | 0 | 0 | 0 | 0 |
-| teardown | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 40069 | 2.0 | 0.0 | 0 | 0 | 0 | 0 |
-| single_channel_host | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 0/1 | 359721 | 16.0 | 0.0 | 6 | 0 | 1 | 0 |
-| worktree_reuse | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 158124 | 7.0 | 0.0 | 0 | 0 | 0 | 0 |
-| worktree_reuse | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 94789 | 5.0 | 0.0 | 0 | 1 | 0 | 0 |
-| wrong_id | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 1/1 | 46362 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
-| wrong_id | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 1/1 | 23695 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
-| fanout_gates | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 0/1 | 213575 | 12.0 | 1.0 | 19 | 0 | 0 | 1 |
-| worker_dies | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 0/1 | 115002 | 8.0 | 0.0 | 3 | 0 | 0 | 1 |
-| worker_dies | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 0/1 | 97659 | 6.0 | 0.0 | 3 | 0 | 0 | 1 |
-| **total** | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-sonnet-5-5 | 13/14 | 139972 | 7.1 | 0.1 | 3 | 2 | 0 | 1 |
-| **total** | 3.13.3:3x:7f1b7b | modelbridge/anthropic/claude-haiku-5-5 | 9/14 | 244821 | 10.7 | 0.2 | 30 | 0 | 3 | 3 |
+| delegate_saturation | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 625445 | 29.0 | 2.0 | 0 | 0 | 0 | 0 |
+| api_outage_resume | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 201250 | 10.0 | 0.0 | 0 | 0 | 0 | 0 |
+| delegate_saturation | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 997402 | 41.0 | 2.0 | 0 | 0 | 0 | 0 |
+| guessed_flag | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 25116 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
+| fanout_gates | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 195602 | 9.0 | 0.0 | 0 | 1 | 0 | 0 |
+| guessed_flag | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 37993 | 2.0 | 0.0 | 0 | 0 | 0 | 0 |
+| guessed_sql_column | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 38252 | 5.0 | 0.0 | 0 | 0 | 0 | 0 |
+| guessed_sql_column | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 0/1 | 69725 | 5.0 | 0.0 | 1 | 0 | 1 | 0 |
+| api_outage_resume | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 497500 | 17.0 | 0.0 | 0 | 0 | 0 | 0 |
+| long_notes | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 45983 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
+| long_notes | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 26332 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
+| refute_verdicts | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 76093 | 4.0 | 0.0 | 0 | 0 | 0 | 0 |
+| refute_verdicts | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 76109 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
+| remote_close_block | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 186682 | 7.0 | 0.0 | 0 | 0 | 0 | 0 |
+| remote_spawn | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 287096 | 10.0 | 0.0 | 0 | 0 | 0 | 0 |
+| remote_spawn | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 124177 | 6.0 | 0.0 | 0 | 0 | 0 | 0 |
+| remote_close_block | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 0/1 | 503658 | 17.0 | 0.0 | 1 | 0 | 1 | 1 |
+| teardown | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 32136 | 4.0 | 0.0 | 0 | 0 | 0 | 0 |
+| single_channel_host | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 191547 | 9.0 | 0.0 | 0 | 0 | 0 | 0 |
+| teardown | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 40069 | 2.0 | 0.0 | 0 | 0 | 0 | 0 |
+| single_channel_host | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 0/1 | 359721 | 16.0 | 0.0 | 6 | 0 | 1 | 0 |
+| worktree_reuse | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 158124 | 7.0 | 0.0 | 0 | 0 | 0 | 0 |
+| worktree_reuse | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 94789 | 5.0 | 0.0 | 0 | 1 | 0 | 0 |
+| wrong_id | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 1/1 | 46362 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
+| wrong_id | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 1/1 | 23695 | 3.0 | 0.0 | 0 | 0 | 0 | 0 |
+| fanout_gates | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 0/1 | 213575 | 12.0 | 1.0 | 19 | 0 | 0 | 1 |
+| worker_dies | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 0/1 | 115002 | 8.0 | 0.0 | 3 | 0 | 0 | 1 |
+| worker_dies | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 0/1 | 97659 | 6.0 | 0.0 | 3 | 0 | 0 | 1 |
+| **total** | 3.13.3:3x:7f1b7b | claude-sonnet-5-5 | 13/14 | 139972 | 7.1 | 0.1 | 3 | 2 | 0 | 1 |
+| **total** | 3.13.3:3x:7f1b7b | claude-haiku-5-5 | 9/14 | 244821 | 10.7 | 0.2 | 30 | 0 | 3 | 3 |
 
 ## v2.1: the three Open items fixed, affected cells re-run
 
