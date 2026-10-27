@@ -708,8 +708,9 @@ function emitError(err: unknown): number {
   // (red, in the human path) and don't want "error: error: ...".
   const cleanMessage =
     unknown ??
-    (err instanceof CommanderError && message.startsWith("error: ")
-      ? message.slice("error: ".length)
+    (err instanceof CommanderError
+      ? // `message` is one line (the output contract): commander puts its suggestion on a second one.
+        message.replace(/^error: /, "").replace(/\s*\n\s*/g, " ")
       : message) + (quotingHint(err, activeCommand) ?? "");
   const usageCmd = isUsageClassError(err) ? activeCommand : undefined;
   // A send whose delivery is unknown: its receipt check (never a resend), from the row it went to.
