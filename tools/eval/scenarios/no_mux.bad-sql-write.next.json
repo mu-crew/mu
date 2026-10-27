@@ -9,7 +9,7 @@
   {
     "calls": [
       {
-        "bash": "mu sql \"UPDATE tasks SET status='CLOSED', substate='done' WHERE local_id='n1'\""
+        "bash": "mu sql --write \"UPDATE tasks SET status='CLOSED', substate='done' WHERE local_id='n1'\""
       }
     ]
   },

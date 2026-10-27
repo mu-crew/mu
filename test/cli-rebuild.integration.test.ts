@@ -100,6 +100,7 @@ describe("mu rebuild", () => {
     await runCli(
       [
         "sql",
+        "--write",
         `INSERT INTO agents (workstream_id, name, cli, pane_id, status, created_at, updated_at)
          VALUES ((SELECT id FROM workstreams WHERE name='demo'), 'w1', 'pi', '%17', 'free',
                  datetime('now'), datetime('now'))`,

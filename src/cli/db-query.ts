@@ -1,6 +1,6 @@
 // mu — `mu db query` (alias `mu sql`): the SQL escape hatch.
 //
-// Read OR write. The single-statement path uses better-sqlite3's prepare()
+// Reads by default; a write needs `--write`. The single-statement path uses better-sqlite3's prepare()
 // so we can tell a read (.all() rows) from a write (.run() change count);
 // a script runs one statement at a time (runScript).
 //
@@ -29,6 +29,12 @@
 //     the connection before any .run()) and its listing does not name the
 //     pragma. It reads only the statement's FIRST tokens (a keyword at the
 //     start of a statement cannot be an identifier), before the compile.
+//
+// Opt-in: without `--write` a statement SQLite reports as not read-only
+// (`sqlite3_stmt_readonly`: INSERT, UPDATE, DELETE, REPLACE, `WITH ... INSERT`,
+// anything with RETURNING, ...) is refused before it runs, and the connection
+// runs with `query_only=ON` as a second wall. Both are SQLite's verdict, never a
+// keyword scan; the first word of the text only names the verb in the refusal.
 //
 // `--confirm-rows N` adds a safety belt on top: if the actual
 // affected-row count (FK cascades included) doesn't match N, the scope
@@ -72,6 +78,8 @@ export interface DbQueryOptions {
   /** `--all`: every row whole, no 4 KB cap. */
   all?: boolean;
   confirmRows?: number;
+  /** `--write`: allow statements that change data. Without it a write is refused. */
+  write?: boolean;
   /** Scope `ready` / `blocked` / `blockers` to this workstream. Default: a
    *  managed worker's own, else the global views. */
   workstream?: string;
@@ -97,6 +105,7 @@ async function runQuery(db: Db, query: string, opts: DbQueryOptions): Promise<vo
   // A plain read skips the scope: it would take the write lock (and
   // wait behind every writer) to stamp nothing.
   const trimmed = query.trim();
+  const write = opts.write === true;
   let stmt: Statement | undefined;
   try {
     stmt = prepare(db, trimmed);
@@ -104,8 +113,9 @@ async function runQuery(db: Db, query: string, opts: DbQueryOptions): Promise<vo
     const msg = err instanceof Error ? err.message : String(err);
     if (!/more than one statement/i.test(msg)) throw err;
   }
-  if (stmt?.readonly === true) {
-    runSql(db, trimmed, stmt, opts);
+  if (!write || stmt?.readonly === true) {
+    // No `--write`: nothing may change, so no scope; `query_only` backs up the refusal.
+    withQueryOnly(db, write, () => runSql(db, trimmed, stmt, opts));
     return;
   }
   try {
@@ -115,6 +125,33 @@ async function runQuery(db: Db, query: string, opts: DbQueryOptions): Promise<vo
     // becomes the same typed conflict (exit 4) the typed verbs throw.
     throw guardError(err);
   }
+}
+
+/** Run `fn` with the connection `query_only` unless `write` (SQLite then refuses any data change itself). */
+function withQueryOnly<T>(db: Db, write: boolean, fn: () => T): T {
+  if (write) return fn();
+  const before = db.pragma("query_only", { simple: true });
+  db.pragma("query_only = ON");
+  try {
+    return fn();
+  } finally {
+    db.pragma(`query_only = ${before === 1 ? "ON" : "OFF"}`);
+  }
+}
+
+/** Does the statement start with EXPLAIN? SQLite never runs an EXPLAIN's body (`stmt.readonly` says false for `EXPLAIN UPDATE`). */
+function isExplain(text: string): boolean {
+  return tokenAt(skipLeadingTrivia(text), 0)?.text.toLowerCase() === "explain";
+}
+
+/** One line: the statement writes and `--write` was not given. The verb is the text's first word (for the message only; a `WITH` or other lead word is left out). */
+function refuseWrite(text: string): UsageError {
+  const first = tokenAt(skipLeadingTrivia(text), 0)?.text.toUpperCase() ?? "";
+  const verb = /^(INSERT|UPDATE|DELETE|REPLACE)$/.test(first) ? `${first} ` : "";
+  return new UsageError(
+    `mu sql reads by default: this ${verb}statement writes; add --write to run it`,
+    { showHelp: false },
+  );
 }
 
 /** The typed error for a guard's RAISE, matched by its exact message
@@ -500,10 +537,11 @@ function teachColumnError(db: Db, query: string, err: unknown): unknown {
  * built (a trigger on a table the script just created), and a refusal
  * throws, so the scope ROLLs BACK everything that ran before it.
  */
-function runScript(db: Db, sql: string): void {
+function runScript(db: Db, sql: string, write: boolean): void {
   let start = 0;
   const runOne = (text: string, stmt: Statement): void => {
     checkStatement(db, text);
+    if (!write && !stmt.readonly && !isExplain(text)) throw refuseWrite(text);
     if (stmt.reader) stmt.all([]);
     else stmt.run([]);
   };
@@ -582,7 +620,9 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
   if (stmt === undefined) {
     if (opts.confirmRows !== undefined) {
       const expected = opts.confirmRows;
-      const { actual } = runConfirmed(db, expected, () => runScript(db, trimmed));
+      const { actual } = runConfirmed(db, expected, () =>
+        runScript(db, trimmed, opts.write === true),
+      );
       const n = countTopLevelStatements(trimmed);
       if (opts.json) {
         emitJson({
@@ -600,7 +640,7 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
       );
       return;
     }
-    runScript(db, trimmed);
+    runScript(db, trimmed, opts.write === true);
     const n = countTopLevelStatements(trimmed);
     if (opts.json) {
       emitJson({ statements: n, multiStatement: true });
@@ -612,6 +652,7 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
 
   const single = stmt;
   checkStatement(db, trimmed);
+  if (opts.write !== true && !single.readonly && !isExplain(trimmed)) throw refuseWrite(trimmed);
   // better-sqlite3's prepared-statement metadata is the source of truth;
   // prefix guesses miss PRAGMA reads and comment-prefixed SELECTs.
   // `readonly` (not `reader`) decides whether --confirm-rows applies:
@@ -888,7 +929,7 @@ export async function cmdDbShell(db: Db, opts: { workstream?: string } = {}): Pr
 // under its old name (live hints and scripts name it).
 
 const QUERY_HELP =
-  "Run SQL in-process on the live DB (writes captured as one `sql.write` group). Refused: BEGIN/COMMIT, DDL, ATTACH, capture bookkeeping writes, non-read-only PRAGMAs. -w scopes the ready/blocked/blockers views.";
+  "Run SQL on the live DB. Reads by default; a write needs --write (one `sql.write` group).\nRefused: BEGIN/COMMIT, DDL, ATTACH, bookkeeping writes. -w scopes views.";
 
 function wireQuery(cmd: Command): void {
   cmd
@@ -908,9 +949,10 @@ function wireQuery(cmd: Command): void {
       "--all",
       "no cap: every row, whole (a read over 4 KB says `more` and names this command)",
     )
+    .option("--write", "allow statements that change data (without it a write is refused)")
     .option(
       "--confirm-rows <n>",
-      "abort if the affected-row count (ON DELETE CASCADE rows included) differs from N (rollback)",
+      "with --write: abort if the affected-row count (ON DELETE CASCADE rows included) differs from N (rollback)",
       parseLines,
     )
     .action(function (query: string) {

@@ -10,6 +10,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **`mu sql` / `mu db query` read by default; a write needs `--write`** (`sql_write_optin`; the release matrix had haiku writing raw rows). A statement SQLite reports as not read-only (INSERT, UPDATE, DELETE, REPLACE, `WITH ... INSERT`, anything with RETURNING; a script checks each statement) is refused before it runs with one line naming the verb and `--write` (UsageError, exit 2); the connection also runs `query_only` meanwhile. `--confirm-rows` needs `--write` to do anything. EXPLAIN and PRAGMA reads are unchanged. Writes under `--write` are captured exactly as before (one `sql.write` group). Help is 3 lines; the guide says so; the eval `bad-*` scripts that write now pass `--write`. Test: `test/sql-write-optin.test.ts` (each write shape, mutation-checked).
+
 ### Fixed
 
 - Skill: the description now carries the rule that mu's DB is read with `mu sql "<SELECT>"` and never written (every write is a verb); the release matrix showed `next` haiku writing raw `sqlite3` INSERTs in 6 of 9 reps because it never read the SKILL.md body. remote-workers: `--after-runs <n>` names its value (the spawn's printed `runs`, 0 fresh). Gate re-run in `docs/mu-next/eval/matrix-release.md`: 0 of 9 raw writes, `remote_spawn` 3/3.

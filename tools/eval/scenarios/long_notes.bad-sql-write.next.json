@@ -23,7 +23,7 @@
   {
     "calls": [
       {
-        "bash": "mu sql \"UPDATE tasks SET title='hijacked' WHERE local_id='big'\""
+        "bash": "mu sql --write \"UPDATE tasks SET title='hijacked' WHERE local_id='big'\""
       }
     ]
   },

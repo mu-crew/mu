@@ -2,14 +2,14 @@
   {
     "calls": [
       {
-        "bash": "mu sql \"SELECT t.local_id, t.impact, a.name FROM tasks t JOIN agents a ON a.id = t.owner_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' AND t.status = 'IN_PROGRESS' ORDER BY t.impact DESC\""
+        "bash": "mu sql --write \"SELECT t.local_id, t.impact, a.name FROM tasks t JOIN agents a ON a.id = t.owner_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' AND t.status = 'IN_PROGRESS' ORDER BY t.impact DESC\""
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu sql \"\nINSERT INTO task_notes (task_id, author, content, created_at)\nSELECT t.id, 'orchestrator', 'top owner: w2', datetime('now') FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' AND t.local_id = 's4'\n\""
+        "bash": "mu sql --write \"\nINSERT INTO task_notes (task_id, author, content, created_at)\nSELECT t.id, 'orchestrator', 'top owner: w2', datetime('now') FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' AND t.local_id = 's4'\n\""
       }
     ]
   },

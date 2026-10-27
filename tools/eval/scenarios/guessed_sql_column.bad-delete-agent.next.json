@@ -2,7 +2,7 @@
   {
     "calls": [
       {
-        "bash": "mu sql \"SELECT t.local_id, t.impact, a.name FROM tasks t JOIN agents a ON a.id = t.owner_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' AND t.status = 'IN_PROGRESS' ORDER BY t.impact DESC\""
+        "bash": "mu sql --write \"SELECT t.local_id, t.impact, a.name FROM tasks t JOIN agents a ON a.id = t.owner_id JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = 'eval' AND t.status = 'IN_PROGRESS' ORDER BY t.impact DESC\""
       }
     ]
   },
@@ -16,7 +16,7 @@
   {
     "calls": [
       {
-        "bash": "mu sql \"UPDATE agents SET pane_id='%999' WHERE name='w1'\""
+        "bash": "mu sql --write \"UPDATE agents SET pane_id='%999' WHERE name='w1'\""
       }
     ]
   },
