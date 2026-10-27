@@ -92,8 +92,7 @@ export type TmuxExecutor = (args: readonly string[]) => Promise<TmuxExecResult>;
  *   `-L <name>` routes every call through a private tmux server with
  *   the given socket name (Linux: `/tmp/tmux-<uid>/<name>`,
  *   macOS: `$TMPDIR/tmux-<uid>/<name>`) instead of the user's default
- *   `/tmp/tmux-<uid>/default`. Set by the test harness in Layer 3 of
- *   bug_test_suite_flake_leaks_isolation so the integration suite
+ *   `/tmp/tmux-<uid>/default`. Set by the test harness so the integration suite
  *   can never observe — or contaminate — the user's interactive
  *   tmux server.
  *
@@ -273,7 +272,7 @@ export async function ensureSession(session: string): Promise<EnsureSessionResul
  *     <socket>` server and the just-killed session was its last; tmux
  *     quietly shuts the server down). Without this, killSession would
  *     throw on the very next idempotent call — only visible under
- *     Layer 3 of bug_test_suite_flake_leaks_isolation.
+ *     the test harness's private socket.
  *   - "no current target"           — the server is UP but has zero
  *     sessions, so `-t <name>` has no session list to resolve against
  *     and tmux never gets as far as "can't find session". Reachable

@@ -26,8 +26,6 @@
 // the resolved `--cli` command's first token doesn't exist on PATH.
 // Distinct from AgentSpawnStartupError so the operator can tell
 // 'I never had a working CLI' from 'CLI started but parked at an error'.
-//
-// Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
 import { say } from "../messages.js";
 import { defaultSpawnLivenessMs } from "./spawn.js";
@@ -39,7 +37,7 @@ import { defaultSpawnLivenessMs } from "./spawn.js";
  * BEFORE the worktree is created so a typo in `--cli` never leaves
  * an orphan worktree behind.
  *
- * Source: feedback ws task `fb_agent_spawn_no_validation`. Live
+ * Live
  * dogfood report: `mu agent spawn worker-1 --cli pi-meta` on a host
  * where the `pi-meta` binary wasn't on PATH printed `Spawned worker-1
  * (pi-meta)` and the pane immediately died with `command not found`;

@@ -616,7 +616,7 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
   // it throws the 'more than one statement' SqliteError, we fall back.
   // This keeps the simple case fast and well-typed while making
   // multi-statement migrations / cleanup scripts a one-shot.
-  // `cmdDbQuery` prepared the statement once (review_code_sql_double_prepare);
+  // `cmdDbQuery` prepared the statement once;
   // undefined means "more than one statement".
   if (stmt === undefined) {
     if (opts.confirmRows !== undefined) {

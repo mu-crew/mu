@@ -595,7 +595,7 @@ function entityForIntent(intent: LocalIntent): string {
 // mu once stored claim attribution as PROSE and re-parsed it: a
 // tab-delimited `task.claim<TAB><id><TAB>actor=<a><TAB>...` prefix was
 // bolted onto the payload precisely because prefix-matching the prose
-// was brittle (review_code_last_claim_actor_brittle). Two helpers then
+// was brittle. Two helpers then
 // existed only to put that prefix on and take it back off.
 //
 // The ops log makes all of it unnecessary. `withOpContext` seeds

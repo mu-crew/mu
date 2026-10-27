@@ -482,7 +482,7 @@ export function assertEntityInWorkstream<E extends Error>(
   // v5: per-scope unique TEXT names mean a bare
   // `WHERE keyCol = ? LIMIT 1` could pick the wrong workstream's row
   // and falsely raise NotInWorkstreamError when the expected workstream
-  // ALSO has a row of this name (bug_v5_name_clash_silent_misroute).
+  // ALSO has a row of this name.
   // Fast path: if a row exists in the expected workstream, we're done.
   const inScope = db
     .prepare(
@@ -680,8 +680,8 @@ export const JSON_OPT = ["--json", "emit machine-readable JSON instead of a tabl
  *          whitespace, `" "` / `"\t"`) — a UsageError (exit 2). An
  *          operator never means "filter by the space character";
  *          it is a typo or a quoting accident, and silently dropping
- *          it produced a silent wrong answer
- *          (bug_whitespace_status_fragment): `--status "OPEN, "`
+ *          it produced a silent wrong answer:
+ *          `--status "OPEN, "`
  *          quietly widened to no-filter-at-all, and `--status " "`
  *          returned every task as though no filter were given.
  *
@@ -774,7 +774,7 @@ export function emitJsonRow(value: unknown): void {
 }
 
 /** Wrap a collection in mu's canonical `{items, count}` payload (the `data` of the envelope).
- *  audit_json_envelope_uniformity: every collection-read verb (list,
+ *  Every collection-read verb (list,
  *  next, owned-by, notes, search, orphans, commits, ...) emits this
  *  shape so a future sibling field (`baseRef`, `totalAcrossPages`,
  *  ...) can be added without breaking every caller. Pre-1.0
@@ -816,7 +816,7 @@ export function buildProgram(): Command {
     )
     .version(readPackageVersion())
     .helpOption("-h, --help")
-    // .showHelpAfterError() removed (audit_cli_validation_uniformity):
+    // .showHelpAfterError() is not used:
     // emitError() in handle.ts now owns help-on-error emission for both
     // commander mistakes and handler-thrown UsageErrors. Without this
     // removal, commander would print its own "\n<help>" appendix to
@@ -871,7 +871,7 @@ export function buildProgram(): Command {
   wireDoctorCommand(program);
   wirePiCommand(program);
   applyAlphabeticalHelpSort(program);
-  // audit_cli_validation_uniformity: every node in the command tree
+  // Every node in the command tree
   // must call exitOverride() so commander throws CommanderError
   // instead of calling process.exit() itself. Lets the parseAsync()
   // catch route every operator-error through emitError() with the

@@ -5,8 +5,6 @@
 // TASK_SUBSTATE_ROWS, and a composite FK from tasks (status, substate)
 // into it is the only guard on both columns. Add a status or substate
 // here only.
-//
-// Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
 export type TaskStatus = "OPEN" | "IN_PROGRESS" | "CLOSED";
 

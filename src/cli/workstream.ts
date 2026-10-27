@@ -5,8 +5,6 @@
 // `init` creates the session + DB row pair; `list` shows
 // every workstream on the machine; `teardown` is the symmetric inverse:
 // soft (sets torn_down_at), previewed first, applied with `--if <rev>`.
-//
-// Extracted from src/cli.ts as part of refactor_split_large_src_files.
 
 import { basename } from "node:path";
 import { emitJson, parseNonNegativeInt, resolveWorkstream, UsageError } from "../cli.js";
@@ -73,7 +71,6 @@ export async function cmdInit(
   // a missing `_mu` (the operator killed it after the first spawn;
   // without it, tmux a -t mu-<ws> lands on an agent's pane instead of
   // the orchestration shell).
-  // (review_bug_workstream_init_does_not_repair_missing_mu_window)
   const { created: sessionCreated, repaired: muWindowRepaired } =
     await mux.ensureSession(sessionName);
   const sessionAlready = !sessionCreated;

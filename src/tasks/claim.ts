@@ -12,8 +12,6 @@
 // $MU_AGENT_NAME > $USER > 'orchestrator'. Used by --self
 // AND by the bare worker-claim path, so both flavours answer "who am
 // I?" identically.
-//
-// Extracted from src/tasks.ts as part of refactor_split_large_src_files.
 
 import { GUARD_ALREADY_OWNED } from "../capture.js";
 import type { Db } from "../db.js";
@@ -69,7 +67,7 @@ export interface ReleaseTaskOptions extends AttributedEvidence {
 /**
  * Release a task: clear `tasks.owner`.
  *
- * Status side-effects (review_release_open_in_progress_inconsistency):
+ * Status side-effects:
  *   - IN_PROGRESS → OPEN automatically (without it, the task is
  *     stranded: no owner to drive it forward, but `mu task next`
  *     skips it because it's not OPEN).
@@ -531,7 +529,7 @@ async function claimSelf(db: Db, localId: string, opts: ClaimTaskOptions): Promi
         // cannot name the actor — but ops.actor can and does, because
         // withOpContext seeded op_ctx with it. That is precisely what
         // `lastClaimActor` needs, and reading a column beats
-        // prefix-matching prose (review_code_last_claim_actor_brittle).
+        // prefix-matching prose.
         return {
           ownerName: null,
           actorName: actor,

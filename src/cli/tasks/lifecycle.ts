@@ -2,8 +2,6 @@
 //
 // close / open / park / accept / unpark. Each delegates to the SDK; changes are captured as ops
 // and optionally reported as evidence notes.
-//
-// Extracted from src/cli/tasks.ts as part of refactor_split_large_src_files.
 
 import {
   assertTaskInWorkstream,

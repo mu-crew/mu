@@ -8,8 +8,7 @@
 //   ./tasks/queries.ts    list / next / owned-by / my-tasks / my-next
 //                         (the my-* helpers back `mu me tasks` /
 //                         `mu me next`; `task blocked` / `goals` /
-//                         `search` / `ready` were removed in
-//                         audit_cleanups_post_schema_v5_wave)
+//                         `search` / `ready` do not exist)
 //   ./tasks/lifecycle.ts  close / open / park / accept / unpark
 //   ./tasks/edit.ts       add / show / notes / note / update
 //                         + unescapeNoteText / printNote
@@ -18,8 +17,7 @@
 //   ./tasks/tree.ts       tree
 //   ./tasks/wire.ts       wireTaskCommands (Commander glue)
 //
-// Per the same anti-indirection policy that motivated
-// `review_code_cli_tasks_re_export_indirection`, only the names that
+// Anti-indirection policy: only the names that
 // are actually imported by callers OUTSIDE the cluster live here as
 // re-exports. Adding more would re-introduce dead surface.
 //

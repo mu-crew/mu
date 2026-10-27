@@ -22,8 +22,7 @@ import picocolors from "picocolors";
  * We therefore re-implement the decision from scratch at call time,
  * reading every signal directly from `process.env` / `process.stdout`
  * so tests can flip env vars and observe the result without the
- * vi.resetModules + vi.doMock dance (per task
- * review_test_color_enabled_no_color_module_load_caveat).
+ * vi.resetModules + vi.doMock dance.
  *
  * Order of precedence (first match wins):
  *   - `NO_COLOR` set (cross-tool opt-out, https://no-color.org/) →

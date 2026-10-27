@@ -5,15 +5,13 @@
 // read-only; they query against `resolveSelf(db)` instead of -w —
 // wired in src/cli/agents.ts via `wireSelfCommands`).
 //
-// Extracted from src/cli/tasks.ts as part of refactor_split_large_src_files.
-//
 // Output is the mu-next record form (src/cli/tasks/records.ts): one task per
 // line or one JSON item with SQL column names, every result capped on its final
 // bytes, a cut naming the exact `--from` command that resumes.
 //
-// Removed in audit_cleanups_post_schema_v5_wave: `task blocked`,
-// `task goals`, `task search`, `task ready` (the latter merged into
-// `task next -n 0`, which now means "all ready, unlimited"). The
+// There is no `task blocked`,
+// `task goals`, `task search` or `task ready` (the latter is
+// `task next -n 0`: "all ready, unlimited"). The
 // underlying SDK helpers `listBlocked` and `listGoals` survive —
 // `mu state` consumes `listBlocked`. The audit's SQL recipes for
 // the removed verbs live in docs/guide/sql.md "Run common queries".
@@ -206,8 +204,7 @@ export async function cmdTaskList(
 // (would divide by zero) sort to the top by treating their ROI as Infinity.
 //
 // `-n 0` means "unlimited" — the merged-in `task ready` semantics
-// from audit_merge_task_ready_into_next. Default K=1 keeps the
-// historical "what should I do right now?" shape.
+// Default K=1 keeps the "what should I do right now?" shape.
 export async function cmdTaskNext(
   db: Db,
   opts: {

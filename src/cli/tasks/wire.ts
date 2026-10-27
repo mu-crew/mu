@@ -4,9 +4,6 @@
 // per-verb modules in this cluster stay focused on behaviour. Imported
 // by buildProgram() in src/cli.ts via the re-export hub at
 // src/cli/tasks.ts.
-//
-// Extracted from src/cli/tasks.ts as part of the wire-out follow-up
-// to refactor_split_large_src_files.
 
 import { type Command, Option } from "commander";
 import {
