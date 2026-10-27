@@ -64,13 +64,9 @@ export function nextStatusLabel(label: StatusLabel): StatusLabel {
   return STATUS_LABELS[(i + 1) % STATUS_LABELS.length] ?? "active";
 }
 
-/**
- * Filters (and cursors) persist per tab and workstream. Agents and Log show every
- * workstream, so they are scoped by tab alone: a filter must not change under you
- * when you switch to a workstream that does not change the list.
- */
+/** Filters (and cursors) persist per tab and workstream: every tab shows the selected one. */
 export const scopeKey = (tab: TabId, workstream: string | null): string =>
-  tab === "agents" || tab === "log" ? tab : `${tab}\u0000${workstream ?? ""}`;
+  `${tab}\u0000${workstream ?? ""}`;
 
 /**
  * The workstream to start on: the hint (the mux session's, or `-w`) when it is
@@ -212,25 +208,28 @@ function toolText(a: DashboardAgent, now: number): string {
   return `${a.tool.name} ${formatElapsed(ms)}`;
 }
 
-function agentRows(snap: DashboardSnapshot, f: Filter, now: number): Row[] {
-  const agents = snap.agents.filter((a) =>
-    textMatch(f.text, a.key, a.state, a.tool?.name, ...a.tasks),
+function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: number): Row[] {
+  const agents = snap.agents.filter(
+    (a) => a.workstream === ws && textMatch(f.text, a.key, a.state, a.tool?.name, ...a.tasks),
   );
-  const kw = widest(
-    agents.map((a) => a.key),
-    32,
-  );
+  // The tab shows one workstream: a bare name, `@host` when it runs on a remote host
+  // (local = no marker), and a task of another workstream keeps its qualifier.
+  const label = (a: DashboardAgent): string => (a.host === null ? a.name : `${a.name}@${a.host}`);
+  const taskOf = (a: DashboardAgent): string =>
+    a.task === null
+      ? "-"
+      : a.task.startsWith(`${a.workstream}/`)
+        ? a.task.slice(a.workstream.length + 1)
+        : a.task;
+  const kw = widest(agents.map(label), 32);
   const sw = widest(
     agents.map((a) => a.state ?? "?"),
     14,
   );
-  const tw = widest(
-    agents.map((a) => a.task ?? "-"),
-    32,
-  );
+  const tw = widest(agents.map(taskOf), 32);
   return agents.map((a) => ({
     key: a.key,
-    text: `${cell(a.key, kw)}  ${cell(a.state ?? "?", sw)}  ${cell(a.task ?? "-", tw)}  ${toolText(a, now)}`,
+    text: `${cell(label(a), kw)}  ${cell(a.state ?? "?", sw)}  ${cell(taskOf(a), tw)}  ${toolText(a, now)}`,
     drill: {
       kind: "scrollback" as const,
       workstream: a.workstream,
@@ -241,9 +240,9 @@ function agentRows(snap: DashboardSnapshot, f: Filter, now: number): Row[] {
   }));
 }
 
-function logRows(snap: DashboardSnapshot, f: Filter): Row[] {
+function logRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
   return snap.log
-    .filter((l) => textMatch(f.text, l.rendered, l.actor, l.scope))
+    .filter((l) => l.scope === ws && textMatch(f.text, l.rendered, l.actor, l.scope))
     .map((l) => {
       const time = /T(\d\d:\d\d:\d\d)/.exec(l.created_at)?.[1] ?? l.created_at;
       return {
@@ -254,10 +253,7 @@ function logRows(snap: DashboardSnapshot, f: Filter): Row[] {
     });
 }
 
-/**
- * Tasks and DAG show the selected workstream; Agents and Log span every
- * workstream, scratch included (an agent's key says where it lives).
- */
+/** Every tab shows the selected workstream only (scratch included, like any other). */
 export function tabRows(
   tab: TabId,
   snap: DashboardSnapshot,
@@ -271,9 +267,9 @@ export function tabRows(
     case "dag":
       return dagRows(snap, ws, f);
     case "agents":
-      return agentRows(snap, f, now);
+      return agentRows(snap, ws, f, now);
     case "log":
-      return logRows(snap, f);
+      return logRows(snap, ws, f);
   }
 }
 

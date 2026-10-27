@@ -275,7 +275,7 @@ describe("drills in the dashboard", () => {
     mux = tmuxMux();
     const ui = await open();
     await tab(ui, 2); // → → Agents
-    await ui.until((s) => s.includes("ws/w1"));
+    await ui.until((s) => s.includes("w1"));
     await ui.press(ENTER);
     await ui.until((s) => s.includes("Scrollback  ws/w1") && s.includes("line two"));
     expect(mux.calls.some((c) => c[0] === "capture-pane" && c.includes("%1"))).toBe(true);
@@ -300,7 +300,7 @@ describe("drills in the dashboard", () => {
     });
     const ui = await open();
     await tab(ui, 2);
-    await ui.until((s) => s.includes("ws/w1"));
+    await ui.until((s) => s.includes("w1"));
     await ui.press(ENTER);
     await ui.until((s) => s.includes("loading…"));
     await ui.press(ESC);
@@ -338,7 +338,7 @@ describe("drills in the dashboard", () => {
     await ui.press(ESC);
     await ui.until((s) => s.includes("Tasks  DAG"));
     await tab(ui, 2);
-    await ui.until((s) => s.includes("ws/w1"));
+    await ui.until((s) => s.includes("w1"));
     await ui.press(ENTER);
     await ui.until((s) => s.includes("line two"));
     for (const k of ["y", "r", "G"]) await ui.press(k);
@@ -409,7 +409,7 @@ describe("attach", () => {
   };
   const toAgents = async (ui: Awaited<ReturnType<typeof open>>) => {
     await tab(ui, 2);
-    await ui.until((s) => s.includes("ws/w1"));
+    await ui.until((s) => s.includes("w1"));
   };
 
   it("Enter never attaches: no step runs until `a`", async () => {

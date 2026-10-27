@@ -374,6 +374,15 @@ describe("log: the canonical op tail, rendered by the one formatter", () => {
     const snap = await loadDashboard(db, { caller: null });
     expect(new Set(snap.log.map((l) => l.scope))).toEqual(new Set(["ws", "other"]));
   });
+
+  it("logWorkstream narrows the log alone: tasks and agents stay machine-wide", async () => {
+    ensureWorkstream(db, "other");
+    task("a");
+    task("b", {}, "other");
+    const snap = await loadDashboard(db, { caller: null, logWorkstream: "other" });
+    expect(new Set(snap.log.map((l) => l.scope))).toEqual(new Set(["other"]));
+    expect(new Set(snap.tasks.map((t) => t.workstream))).toEqual(new Set(["ws", "other"]));
+  });
 });
 
 describe("next: computeNext, the CLI's rule set", () => {

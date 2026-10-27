@@ -114,12 +114,14 @@ export function App({
   const [editing, setEditing] = useState<{ before: string } | null>(null);
   const tops = useRef<Record<string, number>>({});
 
-  // The Tasks status filter is the one part of a view the data layer applies, so it
-  // is also the query; text filters and workstream scoping are per tab, client-side.
+  // The Tasks status filter and the Log's workstream are what the data layer applies,
+  // so they are the query; text filters and the other tabs' scoping are client-side.
   const viewOf = (t: TabId, w: string | null): View =>
     views[scopeKey(t, w)] ?? { filter: NO_FILTER, cursor: null };
   const query: DashboardQuery = {
     status: [...statusesOf(viewOf("tasks", chosen).filter.status)],
+    // The Log tail is read per workstream: a quiet one must not vanish behind a busy one's 100 ops.
+    ...(chosen !== null ? { logWorkstream: chosen } : {}),
   };
   const state = useSnapshot(runtime, query, pollMs);
   const snap: DashboardSnapshot | null = state.snapshot;
