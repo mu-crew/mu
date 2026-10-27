@@ -278,8 +278,8 @@ export function computeNext(db: Db, ctx: NextContext): NextPlan {
 
 /**
  * The one-line notices of a result, beside its `next` (they are not commands): today only
- * `courseCheckHint` for the call's workstream. The output finalisation (`mu state`, `mu wait`)
- * prints them; empty when nothing is due. Read-only.
+ * `courseCheckHint` for the call's workstream. `mu state` and `mu wait` print them as
+ * `data.notices` (`noticesField`); empty when nothing is due. Read-only.
  */
 export function computeNotices(db: Db, ctx: NextContext, now = Date.now()): string[] {
   const hint =
@@ -287,4 +287,16 @@ export function computeNotices(db: Db, ctx: NextContext, now = Date.now()): stri
       ? undefined
       : courseCheckHint(db, ctx.workstream, now);
   return hint === undefined ? [] : [hint];
+}
+
+/** `computeNotices` over each workstream a result covers, in order, as `data.notices` (absent when empty). */
+export function noticesField(
+  db: Db,
+  workstreams: readonly string[],
+  now = Date.now(),
+): { notices?: string[] } {
+  const notices = [...new Set(workstreams)].flatMap((workstream) =>
+    computeNotices(db, { callers: [], workstream }, now),
+  );
+  return notices.length > 0 ? { notices } : {};
 }

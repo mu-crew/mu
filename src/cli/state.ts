@@ -24,6 +24,7 @@ import {
   UsageError,
 } from "../cli.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "../db.js";
+import { noticesField } from "../next-hints.js";
 import { RESULT_BYTES } from "../output-contract.js";
 import { reconcile } from "../reconcile.js";
 import { shellWord } from "../shell-quote.js";
@@ -170,10 +171,12 @@ export function boundState(
   retrieve: string,
   full: boolean,
   short = retrieve,
+  notices: { notices?: string[] } = {},
 ): unknown {
-  if (full) return { caller: snap.caller, me: snap.me, workstreams: snap.workstreams };
+  if (full) return { caller: snap.caller, me: snap.me, workstreams: snap.workstreams, ...notices };
   const finish = (b: Bounded, way: string): Record<string, unknown> => ({
     ...b.data,
+    ...notices,
     ...(b.more > 0 ? { more: b.more } : {}),
     ...(b.cut > 0 ? { cut: b.cut } : {}),
     ...(b.more > 0 || b.cut > 0 ? { retrieve: way } : {}),
@@ -233,7 +236,13 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
     if (found !== undefined) w.orphans = found;
   }
   emitJson(
-    boundState(snap, fullCommand(opts, scope), opts.full === true, fullCommand(opts, scope, true)),
+    boundState(
+      snap,
+      fullCommand(opts, scope),
+      opts.full === true,
+      fullCommand(opts, scope, true),
+      noticesField(db, scope),
+    ),
   );
 }
 

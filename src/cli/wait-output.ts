@@ -169,6 +169,8 @@ export interface WaitDataInput {
   /** Why `resume` is null. */
   resumeWhy?: string;
   signal?: string;
+  /** One-line notices beside `next` (`noticesField`: a course check due). Never cut. */
+  notices?: string[];
   /** The words for a non-routine event: why it ended the wait. */
   reason?: string;
   warning?: string;
@@ -286,6 +288,9 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       ...(result.superseded === true ? { superseded: true } : {}),
       ...(result.action !== undefined ? { action: result.action } : {}),
       ...(input.warning !== undefined ? { warning: input.warning } : {}),
+      ...(input.notices !== undefined && input.notices.length > 0
+        ? { notices: input.notices }
+        : {}),
       ...(input.extra ?? {}),
     };
   };
