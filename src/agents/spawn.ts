@@ -6,8 +6,6 @@
 // `--worktree` cycle (the pane starts IN the worktree, so the worktree
 // exists before the pane, while the agent name must already be claimed) —
 // see prestageWorktree.
-//
-// Extracted from src/agents.ts as part of refactor_split_large_src_files.
 
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
@@ -92,8 +90,7 @@ import { reclaimDeadStagings } from "./staging.js";
  * more digits. Examples that pass: `worker-1`, `reviewer-2`, `scout-12`.
  * Examples that warn: `worker-tests`, `alice`, `db-leader`, `x-y-1`.
  *
- * Source: feedback ws task fb_agent_naming_convention. The dogfood report
- * was operators (LLMs included) drifting to descriptive names like
+ * The dogfood report was operators (LLMs included) drifting to descriptive names like
  * `worker-tests` after a few spawns, breaking the convention silently.
  * The hint surfaced by `maybeWarnNonConventionalAgentName` is a lint, not
  * a rule — `isValidAgentName` still accepts the broader
@@ -147,8 +144,7 @@ export function envVarNameForCli(cli: string): string {
  * caller whether the resolution came from a `MU_<UPPER_CLI>_COMMAND`
  * env var or fell through to the bare cli name. The CLI uses this to
  * surface env-var attribution in the spawn-success line so config
- * issues are visible without `mu agent show`
- * (fb_agent_spawn_no_validation, part C).
+ * issues are visible without `mu agent show`.
  */
 export function resolveCliCommandWithSource(cli: string): {
   command: string;
@@ -163,7 +159,7 @@ export function resolveCliCommandWithSource(cli: string): {
   return { command: cli, envVar, resolvedFromEnv: false };
 }
 
-// ─── Pre-flight PATH check (fb_agent_spawn_no_validation, part A) ──
+// ─── Pre-flight PATH check ──
 //
 // Operator typo'd `mu agent spawn worker-1 --cli pi-meta` on a host
 // where `pi-meta` wasn't on PATH; the spawn appeared to succeed but
@@ -523,7 +519,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // Per-workstream uniqueness check: v5 allows the same agent name in
   // different workstreams. Scope the existence check to the spawn's
   // workstream so two operators spawning 'worker-1' in wsA and wsB
-  // both succeed (bug_v5_name_clash_silent_misroute). A fast path only:
+  // both succeed. A fast path only:
   // a parallel spawn of the same name can pass it too, so the check is
   // repeated inside the spawn lock, and insertAgent maps the UNIQUE
   // violation to AgentExistsError as the last line.
@@ -784,8 +780,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       // throw later in the lock (finalizeAgentRow INSERT failure) still
       // routes through rollbackSpawn -> killPane. Assigning only via the
       // returned object meant a finalize failure left paneId undefined
-      // and rollbackSpawn skipped killPane, leaking the pane
-      // (finding_verbs_spawn_rolls_back_pane).
+      // and rollbackSpawn skipped killPane, leaking the pane.
       paneId = pid;
       readiness = done;
       phase = "finalize";
@@ -1165,8 +1160,7 @@ function finalizeAgentRow(
     });
   }
   // Scope the patch to the spawn's workstream so a same-named worker
-  // in another workstream isn't repointed at this pane
-  // (bug_v5_name_clash_silent_misroute).
+  // in another workstream isn't repointed at this pane.
   // And to the placeholder this spawn inserted (by incarnation, still
   // pending): a row replaced since is not ours to repoint.
   const patched = db
@@ -1373,8 +1367,7 @@ export function defaultSpawnLivenessMs(): number {
 /**
  * Curated list of patterns that indicate the spawned CLI hit a fatal
  * provider/auth error during startup and is now parked at an error
- * prompt instead of becoming a working agent. Source:
- * `agent_spawn_model_auth_failure_counts_as_live` in the feedback ws.
+ * prompt instead of becoming a working agent.
  *
  * Kept short and case-insensitive on purpose: every entry must match a
  * real, observed dogfood failure mode. Don't add patterns speculatively
@@ -1396,8 +1389,7 @@ const AUTH_ERROR_PATTERNS: readonly RegExp[] = [
 ];
 
 /**
- * The spawned command failed to exec (fb_agent_spawn_no_validation
- * part B): post-spawn detection of the
+ * The spawned command failed to exec: post-spawn detection of the
  * "binary not found at exec time" failure mode. The pre-flight check
  * above catches the common typo BEFORE any side effect, but a few
  * edge cases still slip through and only surface in the pane:
@@ -1407,7 +1399,7 @@ const AUTH_ERROR_PATTERNS: readonly RegExp[] = [
  *   - Race: binary on PATH at spawn time, gone 1.5s later.
  *
  * Anchored to lines that LOOK like a shell error rather than prose
- * mentioning the marker (review_substrate_startup_err_patterns_too_broad):
+ * mentioning the marker:
  * require the marker at end-of-line, optionally followed by a single
  * `: <name>` token (the zsh form: `zsh: command not found: pi-meta`).
  * This still trips the canonical cases —
@@ -1515,8 +1507,7 @@ async function checkSpawnHealth(
     throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command, when, host);
   }
   // Pane is alive — but "alive" doesn't mean "working". Scan the tail of
-  // the capture for known provider/auth startup errors
-  // (agent_spawn_model_auth_failure_counts_as_live). The pane stays at
+  // the capture for known provider/auth startup errors. The pane stays at
   // an error prompt forever otherwise, and the orchestrator only
   // discovers the dud minutes later when `mu task wait` stalls.
   if (scrollback !== undefined) {
