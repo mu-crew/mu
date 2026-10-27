@@ -63,6 +63,7 @@ track them; delete the row when one ships.
 | **Design-doc review angles** | [adversarial-review](../skills/mu/recipes/adversarial-review.md) reviews diffs, not design docs. | Add rollout and back-compat, alternatives, and integration angles. Synthesize into unanimous findings, tensions, and the strongest objection. | recipe |
 | **Sender framing on sends** | The receiving agent cannot tell a peer's message from its human's. | Prefix text sent by a mu agent with `[mu: from <agent>]`. This touches prompts, so it follows logging the sender. | ~20 LOC |
 | **A third mux backend** | None: tmux and herdr are the two implementations that justify `MuxBackend`. | zellij, wezterm or kitty. A third needs its own friction evidence; the existing interface is not evidence. | — |
+| **CLI surface nits** (`rr_r4_p3_batch`) | `mu task --json` (bare namespace) is an unknown option while bare `mu task` prints help. `cli.ts`/`output.ts` export a few helpers used only in-file and by tests (`resolveSelfOptional`, `assertEntityInWorkstream`, `colorEnabled`, `isSqlVerbArgv`, `isWaitVerbArgv`). About 70 error literals are still built inline instead of in `messages.ts` (`delegates.ts`, `hosts.ts`, `wait-registration.ts`). | Accept `--json` on a bare namespace or leave it. Unexport when next touched. Migrate a file when its wording is next hill-climbed. | ~30 LOC |
 | **Subscription-based wakeups** | `mu log --tail` polls once a second. | SQLite update hooks or `fs.watch` on the WAL. Lower latency for more machinery. | — |
 
 ## Next breaking release

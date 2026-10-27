@@ -187,8 +187,8 @@ export function muTable(opts: {
 
 /**
  * Detect whether the current invocation requested `--json`. Used by the
- * error handler to decide between human-prose stderr and structured
- * a JSON document on stdout. Reads `process.argv` directly because commander has
+ * error handler to decide between human prose on stderr and one JSON
+ * document on stdout. Reads `process.argv` directly because commander has
  * already consumed it by the time the handler runs, and threading it
  * through every verb wrapper would be invasive.
  *

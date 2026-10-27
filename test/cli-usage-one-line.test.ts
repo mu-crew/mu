@@ -9,7 +9,7 @@ import { openDb } from "../src/db.js";
 import { addTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { runCli } from "./_runCli.js";
+import { runCli, runCliWire } from "./_runCli.js";
 
 describe("fix-naming usage errors are one line", () => {
   let dir: string;
@@ -74,5 +74,26 @@ describe("fix-naming usage errors are one line", () => {
     const r = await runCli(["task", "show", "--bogus"], dbPath);
     expect(r.exitCode).toBe(2);
     expect(r.stderr.trim().split("\n").length).toBeGreaterThan(3);
+  });
+});
+
+describe("did-you-mean knows the common aliases (rr_r4_p3_batch)", () => {
+  it.each([
+    [["task", "ls"], "mu task list"],
+    [["task", "rm"], "mu task delete"],
+  ])("%j names %s", async (argv, closest) => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-alias-"));
+    try {
+      const r = await runCli(argv, join(dir, "mu.db"));
+      expect(r.exitCode).toBe(2);
+      expect(r.stderr).toContain(`closest: ${closest})`);
+    } finally {
+      rmFixtureDir(dir);
+    }
+  });
+
+  it("task list help describes the records it prints", async () => {
+    const r = await runCliWire(["task", "list", "--help"], join(tmpdir(), "x.db"));
+    expect(r.stdout).not.toMatch(/ROI, owner/);
   });
 });

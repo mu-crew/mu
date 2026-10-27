@@ -41,6 +41,8 @@ mu task show t1 -w auth --json | jq 'if .ok then .data.task else .message end'
 ```
 
 Exit codes: `1` an unexpected failure, `2` usage error, `3` not found, `4` conflict, `5`
+Exit codes: `1` any other failure (a spawn that failed, an unreachable
+control socket, a send whose delivery is unknown), `2` usage error, `3` not found, `4` conflict, `5`
 timeout, a locked DB, or a multiplexer, VCS, drift, or `mu doctor`
 FAIL-row failure, `6` a watched owner died, `7` stall, `130`/`143`
 SIGINT/SIGTERM during a wait. A `mu wait` that hits its cap is `0` with
