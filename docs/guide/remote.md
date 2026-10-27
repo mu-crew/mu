@@ -10,8 +10,10 @@ Read it before your first remote spawn.
 ## Prepare the host
 
 1. On the host, install pi and the mu package:
-   `pi install npm:@mu-crew/mu`. The host needs no mu DB, and a remote
-   worker cannot claim or close tasks: you close.
+   `pi install npm:@mu-crew/mu`. The host needs no mu DB: a remote worker
+   cannot run `mu task` verbs. It ends with a `CLOSE:` block. `mu wait`
+   applies it when it sees the run settle; `mu agent wait` does not. Re-run
+   the evidence first, or close the task yourself.
 2. Allow unix-socket forwards in the host's sshd:
    `AllowStreamLocalForwarding yes`.
 3. Have a git repo there for `--worktree` to branch from.

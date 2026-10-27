@@ -13,15 +13,23 @@ task DAG in SQLite. Each agent gets its own git worktree.
 - **Exact control of pi agents.** mu's pi extension serves a control
   socket inside each agent, so send, state, wait, and abort are exact,
   locally and over ssh. The pane stays pi's normal TUI.
+- **One wait.** `mu wait` blocks until the first event you own (closed,
+  settled, needs you, dead, stalled) and prints one JSON result with a
+  `resume` command. In pi, the extension runs it for you, so an
+  orchestrator keeps driving until nothing is owed.
+- **Delegates without a pane.** A `mu_delegate` call is a fresh-context
+  helper recorded as a task with a durable id. With no tmux or herdr it
+  runs as a child pi.
+- **A capped skill.** One `mu` skill (under 600 words) and twelve short recipes,
+  checked by an eval matrix (`tools/eval`). `mu --help` holds the rest.
 
-mu persists state and coordinates handoffs. Every read path has
-`--json`, and every change goes through a typed CLI verb. See
-[What mu is not](#what-mu-is-not).
+Every read path has `--json`, and every change goes through a typed CLI
+verb. See [What mu is not](#what-mu-is-not).
 
-**Status:** this branch is mu-next (`mu --version` prints `4.0.0-next.0`),
-unreleased. It runs beside mu 3.x with its own DB and state dir and never
-imports a 3.x DB; workstreams move over one at a time
-([Switch to mu-next](docs/guide/upgrade.md#switch-to-mu-next)).
+**Status:** 4.0, a breaking rewrite for agent callers with its own DB. It
+never imports a 3.x DB; open work moves one workstream at a time. Coming
+from 3.x? Read [Upgrade from 3.x to 4.0](docs/guide/upgrade.md#upgrade-from-3x-to-40)
+before you install.
 
 ## Install
 
@@ -50,12 +58,12 @@ Non-pi agents on tmux need it for state: without it their state is
 `unknown`, so a wait never sees them finish and stall detection never fires.
 On herdr, herdr reports state.
 
-To update or run from a checkout, see
+Updating, keeping 3.x runnable beside 4.0, and running from a checkout:
 [How to upgrade mu](docs/guide/upgrade.md).
 
 ## Quick start
 
-Run this inside tmux or herdr:
+Run this inside tmux or herdr, in a git repository:
 
 ```bash
 mu workstream init auth                             # every verb below names it with -w
@@ -71,6 +79,13 @@ mu workstream teardown auth                         # preview (rev=<n>); apply w
 For one helper, ask pi to delegate (`mu_delegate` ships in the pi
 package), or spawn into the reserved `scratch` workstream:
 `mu agent spawn scout-1 -w scratch`.
+
+Run `mu` with no arguments for the read-only dashboard. It has five tabs
+(Overview, Tasks, DAG, Agents, Log), with what needs a human on top: a
+dead or stalled worker, one waiting on a permission or on input, a
+`human-needed` task.
+
+![The mu dashboard: a payments workstream with a dead worker, one waiting on a permission, one stalled on a tool, and a human-needed task.](docs/img/tui-dashboard.png)
 
 ## Ultrathink, the mu way
 
@@ -93,8 +108,8 @@ it in the open:
   ideally on another model, whose verdicts land on the task they
   judged. A 50-unit run adds about 50 units, 50 review gates and the
   findings that survive, not a task per check.
-- **Every agent is a pane.** Attach to any worker, reviewer, or judge
-  mid-run and steer it.
+- **Every agent is attachable.** Attach to any worker, reviewer, or judge
+  in its pane mid-run and steer it.
 - **Nothing lives only in a context window.** Verdicts, evidence, and
   stop rules are task notes. The run survives compaction, crashes, and
   a new orchestrator.
@@ -116,7 +131,7 @@ you can also use on their own:
 | [findings](skills/mu/recipes/findings.md) | reviewers record findings, one refuter call per finding, report from the graph |
 | [tasks-or-calls](skills/mu/recipes/tasks-or-calls.md) | refuters, judges and checkers as delegate calls |
 | [course-correct](skills/mu/recipes/course-correct.md) | a periodic look at whether a long job is on course |
-| [move](skills/mu/recipes/move.md) | move a 3.x workstream to mu-next |
+| [move](skills/mu/recipes/move.md) | move a 3.x workstream into 4.0 |
 
 In pi, the package adds them as commands: `/ultrathink <job>`,
 `/mu-research <question>`, `/mu-review [target]`, `/mu-refute <scope>`,
@@ -129,9 +144,10 @@ in [skills/mu/recipes/](skills/mu/recipes/).
 ## What mu is not
 
 - **Not a hidden subagent.** Every agent, including a one-off
-  `mu_delegate` helper, is an ordinary agent in a pane: attach, steer,
-  abort, or keep talking to it. That costs a pane and a pi process per
-  agent; for many tiny calls a hidden subagent is lighter. See
+  `mu_delegate` helper, is an ordinary agent you can steer, abort, or keep
+  talking to, in a pane you can attach to (with no tmux or herdr, a child
+  pi and a task record). That costs a pi process per agent; for many tiny
+  calls a hidden subagent is lighter. See
   [the comparison](docs/guide/delegate.md#delegates-vs-hidden-subagents).
 - **Not a workflow engine.** No DSL, no hidden plan, no script runner.
   The plan is the task DAG; recipes are instructions an agent follows,

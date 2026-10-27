@@ -38,15 +38,13 @@ mu does not add these unless one earns its way back under the criteria:
   system, or a workflow engine.** A prior internal runtime collected all
   of these. Not inheriting them is the point.
 
-## Approved mu-next work
+## Shipped in 4.0
 
-The mu-next build is approved as a whole and is exempt from the
-promotion criteria: its design of record is
-[mu-next/README.md](mu-next/README.md) and the contract as built is
-[mu-next/surface-contract.md](mu-next/surface-contract.md). Its units
-have merged, `v_settle` (the settle wait and delegate delivery through it)
-and `mu_delegate` with no multiplexer (`v_delegate_nomux`) last. Nothing
-beyond them is approved; anything else follows the criteria above.
+The 4.0 rewrite was approved as a whole and was exempt from the
+promotion criteria. Its units have merged: the contract as built is
+[surface-contract.md](mu-next/surface-contract.md), and what changed is
+in the [CHANGELOG](../CHANGELOG.md). Nothing beyond them is approved;
+anything else follows the criteria above.
 
 ## Candidates
 

@@ -87,7 +87,7 @@ fixtures may use human names.
 ## File paths
 
 The state dir is `MU_STATE_DIR`, else `$XDG_STATE_HOME/mu-next`, else
-`~/.local/state/mu-next`. (`mu` without `-next` is 3.x's.)
+`~/.local/state/mu-next`. (`~/.local/state/mu` is 3.x's; the separate name keeps 4.0 off a 3.x DB.)
 
 | Path | Contents |
 | --- | --- |

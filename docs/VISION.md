@@ -64,8 +64,9 @@ answer itself is the delegate task's report.
 ### 2. One DB is canonical
 
 All state lives in `~/.local/state/mu-next/mu.db` (SQLite WAL, safe for
-concurrent processes). In-memory state is a cache. The extension and the
-CLI share the DB, so they cannot diverge.
+concurrent processes). 3.x's `~/.local/state/mu` is a different DB.
+In-memory state is a cache. The extension and the CLI share the DB, so
+they cannot diverge.
 
 ### 2b. One log records every change
 

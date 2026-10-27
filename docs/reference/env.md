@@ -11,9 +11,9 @@ milliseconds; `0` disables a wait unless noted.
 | --- | --- | --- |
 | `MU_DB_PATH` | SQLite file path. Wins over the state dir. | `<state-dir>/mu.db` |
 | `MU_STATE_DIR` | State directory. Also holds `compile-cache/` (V8 code cache for the CLI; `NODE_DISABLE_COMPILE_CACHE=1` turns it off). | `$XDG_STATE_HOME/mu-next` |
-| `XDG_STATE_HOME` | XDG state base; mu appends `mu-next/` (3.x owns `mu/`). An empty or relative value is ignored. | `~/.local/state` |
+| `XDG_STATE_HOME` | XDG state base; mu appends `mu-next/` (3.x owns `mu/`, so the two builds never share a DB). An empty or relative value is ignored. | `~/.local/state` |
 | `XDG_CACHE_HOME` | XDG cache base; mu appends `mu/`. Holds only disposable copies. An empty or relative value is ignored. | `~/.cache` |
-| `MU_SYNC_DIR` | Folder holding one segment per machine. This is the whole sync setup; there is no peer list. mu-next refuses (exit 4, nothing read or written) a folder holding a segment that opens with a v1 line, i.e. a 3.x peer: give it its own folder. | unset: sync off |
+| `MU_SYNC_DIR` | Folder holding one segment per machine. This is the whole sync setup; there is no peer list. 4.0 refuses (exit 4, nothing read or written) a folder holding a segment that opens with a v1 line, i.e. a 3.x peer: give it its own folder. | unset: sync off |
 
 ## Multiplexer
 
@@ -24,7 +24,7 @@ milliseconds; `0` disables a wait unless noted.
 | `TMUX`, `TMUX_PANE` | Read only. Either one (set by tmux in its panes) selects tmux. `$TMUX` gates reading the current session name, used only as the suggestion in the missing-`-w` error: it never routes a verb. `mu me` / `mu state --me` never read `$TMUX_PANE` (identity is the injected `MU_AGENT_NAME` or `PI_SESSION_ID`); only `mu task list --mine` and a few older self-readers still fall back to it when no `MU_AGENT_NAME` is injected. | |
 | `HERDR_WORKSPACE_ID` | Read only. Set by herdr in its panes; pane listing with no target reads this workspace first. | |
 | `HERDR_PANE_ID` | Read only. Set by herdr in its panes. | |
-| `MU_TMUX_SOCKET` | Test isolation. Runs every tmux call on a private server (`-L <name>`) with `-f /dev/null`, so `~/.tmux.conf` is not loaded. tmux only. | unset: tmux's default server |
+| `MU_TMUX_SOCKET` | Run every tmux call on a private server (`-L <name>`) with `-f /dev/null`, so `~/.tmux.conf` is not loaded. The test suite uses it, and so can you to keep a crew off your own tmux server (a demo, a smoke test). Attach lines mu prints then carry `-L <name>`, and the dashboard's `a` nests a client on purpose when you are inside another tmux. tmux only. | unset: tmux's default server |
 | `MU_HERDR_SESSION` | Named herdr server (`--session <name>`). herdr only. Tests must set it to a non-default name. | herdr default session |
 
 ## Spawn
