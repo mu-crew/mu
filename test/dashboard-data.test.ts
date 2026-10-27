@@ -553,3 +553,121 @@ describe("read-only: nothing is written, reconciled or reaped", () => {
     );
   });
 });
+
+describe("created_at", () => {
+  it("a task carries its created_at (for the age sort)", async () => {
+    task("a");
+    const t = (await loadDashboard(db, { caller: null })).tasks[0];
+    expect(t?.created_at).toMatch(/^\d{4}-\d\d-\d\dT/);
+  });
+});
+
+describe("attention: trouble across every workstream, filters ignored", () => {
+  const servers: Server[] = [];
+  afterEach(() => {
+    for (const s of servers.splice(0)) s.close();
+  });
+  function serve(workstream: string, name: string, status: Record<string, unknown>) {
+    const path = ctlSocketPath(workstream, name, dir);
+    mkdirSync(dirname(path), { recursive: true });
+    const server = createServer((sock) => {
+      const dec = new LineDecoder();
+      sock.setEncoding("utf8");
+      sock.on("error", () => {});
+      sock.on("data", (chunk: string) => {
+        for (const _ of dec.push(chunk)) {
+          sock.end(
+            encode({ v: 1, ok: true, state: "busy", since: 1, runs: 0, pending: false, ...status }),
+          );
+        }
+      });
+    });
+    servers.push(server);
+    return new Promise<void>((r) => server.listen(path, () => r()));
+  }
+  const kinds = (s: DashboardSnapshot): string[] => s.attention.map((a) => `${a.kind}:${a.text}`);
+
+  it("is empty for a quiet workstream", async () => {
+    ensureWorkstream(db, "quiet");
+    task("a", {}, "quiet");
+    expect((await loadDashboard(db, { caller: null })).attention).toEqual([]);
+  });
+
+  it("flags a dead agent (pane gone) but not one whose state source merely cannot say", async () => {
+    mux.restore();
+    mux = installMux("tmux", [["list-panes", "%2\t\t\n"]]);
+    insertAgent(db, { name: "dead", workstream: "ws", paneId: "%1" });
+    insertAgent(db, { name: "mute", workstream: "ws", paneId: "%2" });
+    const snap = await loadDashboard(db, { caller: null });
+    expect(snap.agents.find((a) => a.name === "mute")?.state).toBe("unknown");
+    expect(snap.attention).toEqual([
+      { key: "dead:ws/dead", workstream: "ws", kind: "dead", text: "dead dead", target: "ws/dead" },
+    ]);
+  });
+
+  it("permission, input (idle owner) and stalled tool, with ages; most urgent first", async () => {
+    const now = Date.now();
+    for (const n of ["perm", "idle", "slow", "fine"])
+      insertAgent(db, { name: n, workstream: "ws", paneId: `%${n}`, cli: "pi" });
+    for (const n of ["idle", "slow"]) {
+      task(`t-${n}`);
+      await claimTask(db, `t-${n}`, { agentName: n, workstream: "ws" });
+    }
+    await serve("ws", "perm", { blocked: { kind: "confirm", since: now - 20 * 60_000 } });
+    await serve("ws", "idle", { state: "idle", since: now - 30 * 60_000 });
+    await serve("ws", "slow", { tool: { name: "bash", since: now - 3 * 3_600_000 } });
+    await serve("ws", "fine", { tool: { name: "bash", since: now - 60_000 } });
+    const snap = await loadDashboard(db, { caller: null });
+    expect(kinds(snap)).toEqual([
+      "permission:perm permission 20m",
+      "stalled:slow bash 3h",
+      "input:idle input 30m",
+    ]);
+    expect(snap.attention.map((a) => a.target)).toEqual(["ws/perm", "ws/slow", "ws/idle"]);
+  });
+
+  it("an OPEN human task shows for a human shell, any recorder, every workstream; CLOSED does not", async () => {
+    ensureWorkstream(db, "other");
+    recordHumanNeeded(db, { workstream: "ws", caller: "pi:s1", reason: "pick a licence" });
+    recordHumanNeeded(db, { workstream: "other", caller: "pi:s2", reason: "fx policy" });
+    const snap = await loadDashboard(db, { caller: null, workstream: "ws" });
+    expect(snap.human_needs).toEqual([]); // caller-scoped: empty for a human shell
+    // Workstreams in name order, whoever recorded it and whatever the scope.
+    expect(snap.attention.map((a) => [a.kind, a.workstream])).toEqual([
+      ["human", "other"],
+      ["human", "ws"],
+    ]);
+    expect(snap.attention.every((a) => a.target?.includes("/"))).toBe(true);
+    expect(snap.attention.map((a) => a.text).join(" | ")).toMatch(/fx policy/);
+    const id = snap.attention[0]?.target?.split("/")[1] ?? "";
+    const ws = snap.attention[0]?.workstream ?? "";
+    await closeTask(db, id, { workstream: ws, evidence: "answered" });
+    expect((await loadDashboard(db, { caller: null })).attention).toHaveLength(1);
+  });
+
+  it("ignores the status and text filters and the workstream scope", async () => {
+    ensureWorkstream(db, "other");
+    insertAgent(db, { name: "dead", workstream: "other", paneId: "%9" });
+    task("a");
+    const all = await loadDashboard(db, { caller: null });
+    const narrow = await loadDashboard(db, {
+      caller: null,
+      workstream: "ws",
+      status: ["CLOSED"],
+      text: "zzz-no-match",
+    });
+    expect(narrow.agents).toEqual([]);
+    expect(narrow.attention).toEqual(all.attention);
+    expect(kinds(narrow)).toEqual(["dead:dead dead"]);
+  });
+
+  it("next unavailable and sync warnings are machine-wide items, after the agent ones", async () => {
+    insertAgent(db, { name: "dead", workstream: "ws", paneId: "%1" });
+    const snap = await loadDashboard(db, { caller: null, syncWarnings: ["peer x unreadable"] });
+    expect(snap.attention.map((a) => [a.kind, a.workstream])).toEqual([
+      ["dead", "ws"],
+      ["sync", null],
+    ]);
+    expect(snap.attention[1]?.text).toBe("sync: peer x unreadable");
+  });
+});

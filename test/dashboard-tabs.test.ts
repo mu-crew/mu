@@ -42,6 +42,7 @@ const empty = (over: Partial<DashboardSnapshot> = {}): DashboardSnapshot => ({
   next_source: "unavailable",
   human_needs: [],
   delegates: [],
+  attention: [],
   ...over,
 });
 

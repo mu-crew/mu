@@ -1,5 +1,6 @@
 // SDK seam for the dashboard: ONE read-only projection of everything its tabs
-// show (workstreams, tasks, frontier, agents, log, human needs, delegates).
+// show (workstreams, tasks, frontier, agents, log, human needs, delegates,
+// attention).
 //
 // READ-ONLY by construction: it never reconciles, reaps, ingests or writes, and
 // runs on a `readonly: true` connection. The only I/O beyond SQL is the
@@ -16,6 +17,7 @@
 // predates the field (unknown). Elapsed is `now - since`, calculated at read.
 
 import { type AgentOutput, liveAgentToOutput } from "./agent-output.js";
+import { UNKNOWN_REASON } from "./agent-state.js";
 import { readLiveAgents } from "./agents.js";
 import { type LogItem, logItem } from "./cli/log-records.js";
 import type { CtlTool } from "./ctl/protocol.js";
@@ -65,6 +67,7 @@ export interface DashboardTask {
   owner_workstream: string | null;
   kind: string;
   wave: string | null;
+  created_at: string;
   updated_at: string;
   /** `MAX(ops.seq)` over the task's own ops, its notes' and its edges' (raw log, db/sql writes included); 0 when none. */
   activity_seq: number;
@@ -140,6 +143,42 @@ export interface DashboardDelegate {
   updated_at: string;
 }
 
+/**
+ * Something a human has to look at. Read over EVERY live workstream and blind
+ * to the status/text filters and the workstream scope, so each surface (the
+ * strip under the tabs, the Overview card) agrees.
+ *
+ * - `dead`: the agent's pane (or gate process) is gone.
+ * - `permission`: `needs_permission`; `text` carries how long.
+ * - `input`: `needs_input` past the idle threshold on an agent that owns work
+ *   (the registry's `idle` flag; `MU_IDLE_THRESHOLD_MS`, 0 disables).
+ * - `stalled`: one tool has run over `STALLED_TOOL_MS`.
+ * - `human`: an OPEN `kind=human` task, whoever recorded it (`human_needs`
+ *   is caller-scoped and empty for a human shell).
+ * - `next_unavailable`: `computeNext` failed.
+ * - `sync`: a warning the caller passed as `syncWarnings`.
+ */
+export type AttentionKind =
+  | "dead"
+  | "permission"
+  | "input"
+  | "stalled"
+  | "human"
+  | "next_unavailable"
+  | "sync";
+
+export interface DashboardAttention {
+  /** Unique within a snapshot (`<kind>:<target>`). */
+  key: string;
+  /** The workstream it belongs to; null for a machine-wide item (`next_unavailable`, `sync`). */
+  workstream: string | null;
+  kind: AttentionKind;
+  /** One short line, age at read ("worker-3 permission 20m"; a human task: its title); bare names, the UI qualifies. */
+  text: string;
+  /** Qualified key to drill into: the agent (dead/permission/input/stalled) or the task (human); null otherwise. */
+  target: string | null;
+}
+
 export interface DashboardSnapshot {
   /** The identity the caller-scoped panels were read for; null = a human shell. */
   caller: string | null;
@@ -160,6 +199,8 @@ export interface DashboardSnapshot {
   next_source: "unavailable" | "computed";
   human_needs: DashboardHumanNeed[];
   delegates: DashboardDelegate[];
+  /** Trouble across every workstream, filters ignored, most urgent first (see `AttentionKind`). */
+  attention: DashboardAttention[];
 }
 
 export interface DashboardOptions {
@@ -177,10 +218,14 @@ export interface DashboardOptions {
   logLimit?: number;
   /** Read the log tail of this workstream only (a live one), leaving every other panel unscoped. */
   logWorkstream?: string;
+  /** Sync warnings the caller holds (`ambientIngest`); each becomes a `sync` attention item. */
+  syncWarnings?: readonly string[];
 }
 
 const DEFAULT_STATUS: readonly TaskStatus[] = ["OPEN", "IN_PROGRESS"];
 const DEFAULT_LOG_LIMIT = 100;
+/** A tool running this long counts as stalled. */
+export const STALLED_TOOL_MS = 15 * 60_000;
 const FINISHED_CALL: readonly string[] = ["done", "failed", "cancelled"];
 
 /** `MAX(ops.seq)` per task id of one workstream over its task, note and edge ops. */
@@ -256,6 +301,7 @@ function dashboardTask(
     owner_workstream: owner?.workstream ?? null,
     kind: row.kind,
     wave: row.wave,
+    created_at: row.createdAt,
     updated_at: row.updatedAt,
     activity_seq: activity.get(row.name) ?? 0,
   };
@@ -266,6 +312,56 @@ function byActivityDesc(a: DashboardTask, b: DashboardTask): number {
   if (a.activity_seq !== b.activity_seq) return b.activity_seq - a.activity_seq;
   if (a.updated_at !== b.updated_at) return a.updated_at < b.updated_at ? 1 : -1;
   return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+}
+
+/** `45s`, `20m`, `3h`, `3h05m`: coarse on purpose, it is a strip, not a clock. */
+function ago(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const rest = m % 60;
+  return rest === 0
+    ? `${Math.floor(m / 60)}h`
+    : `${Math.floor(m / 60)}h${String(rest).padStart(2, "0")}m`;
+}
+
+/** The pane (or a gate's process) is gone, as opposed to a state source that merely cannot say. */
+function isDead(a: DashboardAgent): boolean {
+  if (a.state !== "unknown") return false;
+  if (a.reason === UNKNOWN_REASON.paneGone) return true;
+  return a.gate_token !== null && /^(exited \d+|killed by signal)/.test(a.reason ?? "");
+}
+
+const ATTENTION_ORDER: readonly AttentionKind[] = [
+  "dead",
+  "permission",
+  "stalled",
+  "input",
+  "human",
+  "next_unavailable",
+  "sync",
+];
+
+function agentAttention(a: DashboardAgent, now: number): DashboardAttention[] {
+  const item = (kind: AttentionKind, text: string): DashboardAttention => ({
+    key: `${kind}:${a.key}`,
+    workstream: a.workstream,
+    kind,
+    text: `${a.name} ${text}`,
+    target: a.key,
+  });
+  const since = a.since == null ? Number.NaN : Date.parse(a.since);
+  const waited = Number.isFinite(since) ? ` ${ago(now - since)}` : "";
+  const out: DashboardAttention[] = [];
+  if (isDead(a)) out.push(item("dead", "dead"));
+  if (a.state === "needs_permission") out.push(item("permission", `permission${waited}`));
+  if (a.idle === true) out.push(item("input", `input${waited}`));
+  const ran = a.tool?.elapsed_ms;
+  if (a.tool != null && ran !== undefined && ran >= STALLED_TOOL_MS) {
+    out.push(item("stalled", `${a.tool.name} ${ago(ran)}`));
+  }
+  return out;
 }
 
 function matches(text: string | undefined, ...fields: (string | null)[]): boolean {
@@ -345,19 +441,29 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
         cap_cut: e.capCut,
       });
     }
+  }
+  tasks.sort(byActivityDesc);
+
+  // Every live workstream's agents, whatever the scope or text: Attention reads them all.
+  const everyAgent: DashboardAgent[] = [];
+  for (const ws of live) {
     for (const a of await readLiveAgents(db, ws.name)) {
       const mine = owned.get(a.incarnation) ?? [];
-      const agent: DashboardAgent = {
+      everyAgent.push({
         ...liveAgentToOutput(a, ws.id),
         key: keyOf(ws.name, a.name),
         tasks: mine,
         task: mine[0] ?? null,
         ...toolOf(a.tool, now),
-      };
-      if (matches(opts.text, agent.key, agent.state ?? null, ...mine)) agents.push(agent);
+      });
     }
   }
-  tasks.sort(byActivityDesc);
+  const inScope = new Set(scoped.map((w) => w.name));
+  agents.push(
+    ...everyAgent.filter(
+      (a) => inScope.has(a.workstream) && matches(opts.text, a.key, a.state ?? null, ...a.tasks),
+    ),
+  );
 
   const next = nextOf(
     db,
@@ -373,7 +479,6 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     scope: parseOpKey(row.workstreamName).workstream ?? null,
   }));
 
-  const inScope = new Set(scoped.map((w) => w.name));
   const callerOwn = opts.caller !== null;
   const human_needs = callerOwn
     ? openHumanNeeds(db, opts.caller as string)
@@ -402,6 +507,40 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
         }))
     : [];
 
+  const attention: DashboardAttention[] = everyAgent.flatMap((a) => agentAttention(a, now));
+  for (const ws of live) {
+    for (const t of listTasks(db, ws.name, { status: "OPEN" })) {
+      if (t.kind !== "human") continue;
+      attention.push({
+        key: `human:${keyOf(ws.name, t.name)}`,
+        workstream: ws.name,
+        kind: "human",
+        text: t.title,
+        target: keyOf(ws.name, t.name),
+      });
+    }
+  }
+  if (next.source === "unavailable") {
+    attention.push({
+      key: "next_unavailable",
+      workstream: null,
+      kind: "next_unavailable",
+      text: "next unavailable",
+      target: null,
+    });
+  }
+  (opts.syncWarnings ?? []).forEach((w, i) => {
+    attention.push({
+      key: `sync:${i}`,
+      workstream: null,
+      kind: "sync",
+      text: `sync: ${w}`,
+      target: null,
+    });
+  });
+  // Most urgent kind first; within a kind the order read (workstream, then name) holds.
+  attention.sort((a, b) => ATTENTION_ORDER.indexOf(a.kind) - ATTENTION_ORDER.indexOf(b.kind));
+
   return {
     caller: opts.caller,
     caller_scope: callerOwn ? "caller" : "none",
@@ -419,5 +558,6 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     next_source: next.source,
     human_needs,
     delegates,
+    attention,
   };
 }
