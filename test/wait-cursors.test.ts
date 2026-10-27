@@ -136,9 +136,9 @@ describe("first keeps the siblings it did not return", () => {
     const d2 = mkDelegate(env.db, "c");
     answer(env.db, d1);
     answer(env.db, d2);
-    // One wait hands back every ready owned report (dogfood-switch F2): both are consumed together.
     const a = await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
-    expect([a.event.ref?.id, ...(a.alsoFiring ?? []).map((r) => r.id)]).toEqual([d1, d2]);
+    const b = await waitForEvents(env.db, [], { ...fast, callers: ["c"] });
+    expect([a.event.ref?.id, b.event.ref?.id]).toEqual([d1, d2]);
     expect(readCursors(env.db, "c").size).toBe(2);
     // History is quiet now: nothing owed, nothing to wait for.
     await expect(waitForEvents(env.db, [], { ...fast, callers: ["c"] })).rejects.toThrow(

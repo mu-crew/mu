@@ -1564,28 +1564,6 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     expect(t.p.sendMessage).not.toHaveBeenCalled(); // shown once, by the settle
   });
 
-  it("a wait that consumed several reports (alsoFiring) shows every one of them", async () => {
-    const t = await setup();
-    await t.p.fire("agent_start", {});
-    const a = await delegate(t, { task: "a" });
-    const b = await delegate(t, { task: "b" });
-    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "ANS-A" }] }));
-    t.mu.waits.get("delegate-3")?.resolve(ok({ agents: [{ outcome: "done", lastText: "ANS-B" }] }));
-    for (let i = 0; i < 6; i++) await flush();
-    const settling = t.settle();
-    await t.answerWait(
-      ok({
-        firing: { kind: "delegate", ref: `delegate:${a}` },
-        alsoFiring: [`delegate:${b}`],
-        exit: 0,
-      }),
-    );
-    const text = content(await settling);
-    expect(text).toContain("ANS-A");
-    expect(text).toContain("ANS-B");
-    expect(text).toContain(`call ${b}`);
-  });
-
   it("a long report is capped with the pointer to the whole of it", async () => {
     const t = await setup();
     await t.p.fire("agent_start", {});

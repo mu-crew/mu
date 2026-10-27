@@ -370,18 +370,11 @@ function waveSummary(wave: string, rows: CallRow[]): string {
   return [`Wave ${wave}: ${counts}.`, ...lines].join("\n");
 }
 
-/**
- * The delegate answers a wait result consumed: the firing one, then those `alsoFiring`
- * (the wait hands every ready owned report back together). Empty when the event is no answer.
- */
-function firingDelegates(d: Record<string, unknown>): string[] {
+/** The firing snapshot of a wait result, when its event is a delegate answer. */
+function firingDelegate(d: Record<string, unknown>): string | undefined {
   const f = d.firing as { kind?: unknown; ref?: unknown } | undefined;
-  if (f?.kind !== "delegate" || typeof f.ref !== "string" || !f.ref.startsWith("delegate:"))
-    return [];
-  const also = Array.isArray(d.alsoFiring) ? d.alsoFiring : [];
-  return [f.ref, ...also]
-    .filter((r): r is string => typeof r === "string" && r.startsWith("delegate:"))
-    .map((r) => r.slice("delegate:".length));
+  if (f?.kind !== "delegate" || typeof f.ref !== "string") return undefined;
+  return f.ref.startsWith("delegate:") ? f.ref.slice("delegate:".length) : undefined;
 }
 
 /**
@@ -496,19 +489,17 @@ export function registerNudge(
         if (d.interrupted === true || d.drained === true) break;
         if (d.timedOut === true) continue;
         if (Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0) stop = true;
-        const ids = firingDelegates(d);
-        for (const id of ids) shown.add(id);
-        const others = ids.filter((id) => !rows.some((x) => x.callId === id));
-        if (ids.length > others.length && others.length === 0 && !stop) {
+        const id = firingDelegate(d);
+        const sibling = id !== undefined && rows.some((x) => x.callId === id);
+        if (id !== undefined) shown.add(id);
+        if (sibling && !stop) {
           rows = await listed();
           continue;
         }
         // Another event ended the wave's wait: it is consumed, so it is shown too.
         after.push(`Another event came before the rest of wave ${wave}:\n${JSON.stringify(d)}`);
-        for (const id of others) {
-          const oc = await call(id);
-          if (oc) after.push(await answerBlock(mu, oc, REPORT_CAP));
-        }
+        const oc = id === undefined || sibling ? undefined : await call(id);
+        if (oc) after.push(await answerBlock(mu, oc, REPORT_CAP));
         break;
       }
       rows = await listed();
@@ -547,18 +538,13 @@ export function registerNudge(
           if (d.drained === true) delivered({ before: started });
           if (d.interrupted === true || d.drained === true) return undefined; // cancelled, or nothing owed
           if (d.timedOut === true) continue; // work still owed: wait again
+          const callId = firingDelegate(d);
           const shown = new Set<string>();
-          const blocks: string[] = [];
-          let waveStop = false;
-          // Every answer the wait consumed is shown (one wave's answers fold into one summary).
-          for (const callId of firingDelegates(d)) {
-            if (shown.has(callId)) continue;
-            const got = await answers(callId, shown);
-            blocks.push(...got.blocks);
-            waveStop ||= got.stop;
-          }
+          const got = callId === undefined ? undefined : await answers(callId, shown);
+          const blocks = got?.blocks ?? [];
           if (shown.size > 0) delivered([...shown]);
-          const stop = (Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0) || waveStop;
+          const stop =
+            (Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0) || got?.stop === true;
           const text = [
             `[mu] ${rule}`,
             "",

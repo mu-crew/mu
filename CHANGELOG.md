@@ -29,15 +29,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   told from a closer that is not the delegate by the author of the task's close note (the call row's
   `agent`). A task the orchestrator or a user closed is unchanged. Red tests:
   `test/extension-close-nudge.test.ts`, `test/delegate-tasks.test.ts`.
-- **A wait that fires on an owned delegate report returns every ready owned report together**
-  (`triage_dfs_wait_owned_drain`, dogfood-switch F2). The settle did consume its own answers; the stale
-  returns were waits the model ran itself (`mu wait <task>` / `<agent>`): the owned delegate report ranks
-  first (never-returned first), so each such wait returned one old report and the model switched to
-  `sleep` polls. Now the wait that fires on a delegate report consumes every other never-returned owned
-  one with it: `data.alsoFiring` lists them (refs), `data.alsoFiringMore` counts what a 12-report cap left
-  owed for the next wait. Explicit delegate refs are never swept in; the fairness order is unchanged. The
-  settle (`extension/nudge.ts`) shows every consumed answer. Red tests: `test/wait-delivery.test.ts`,
-  `test/extension-delegate.test.ts`.
 
 - **`/reload` no longer orphans a running pane delegate** (`triage_df4_reload_orphan`, dogfood-4 F2). The
   old runtime's watcher died with the reload while the call stayed `running`, so nothing recorded the
