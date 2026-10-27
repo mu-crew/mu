@@ -58,7 +58,8 @@ parallel.
   no answer text, that starts a turn. A wake lost from pi's queue (the
   dequeue key, alt+up) is sent once more; lost twice, or dropped by
   Escape, it leaves one line per answer and starts nothing. The report
-  stays recorded either way, so the next settle shows it.
+  stays recorded either way, so the next settle shows it. Escape ends
+  only the wait running now: a later answer still wakes an idle pi.
 - `MU_DELEGATE_TRACE=1` logs every wake send and pi lifecycle
   event to `~/.cache/mu/delegate-trace.log`, for finding a lost answer.
 - Each delegate costs a pane and a pi process. A session runs at most
@@ -116,7 +117,10 @@ nothing: the next runtime of the same pi session (after `/reload`, or
 the answer, a delegate that finished meanwhile included. `tally`
 counts one result per call: a done answer by its last first
 `VERDICT:` label (none: UNVERIFIED), a failed or cancelled call as
-UNVERIFIED, queued, running and refused ones as pending.
+UNVERIFIED, queued, running and refused ones as pending. So a plain
+research call (an answer with no `VERDICT:` line) tallies UNVERIFIED
+and closes `answered with no VERDICT line`: the answer arrived, it
+just carries no label.
 
 ### Record a verdict
 

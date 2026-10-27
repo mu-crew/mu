@@ -12,6 +12,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **Help and guide wording from dogfood-3/4/switch** (`docs_final_p3`): `task close --why` says `done` takes `--evidence`; `task notes` says a newline prints as `\n`; `wait` help names `cursorCut` and that `resume` takes no other flags; a delegate answer without a `VERDICT:` line closes `answered with no VERDICT line`; the guides explain a worker's `close.applied:false`, Esc versus a later delegate answer, `--attempt` after a dead worker, and one Move pointer; the Move recipe says what to write when the last note is the brief.
+
 - **A delegate in a named workstream no longer closes its own task and loses its answer**
   (`triage_dfs_delegate_self_close`, dogfood-switch F1). The close nudge told every delegate
   (spawned `--task <its call task>`) to run `mu task close`; `finishDelegate` then found the task

@@ -181,6 +181,9 @@ mu wait task:auth/build task:auth/docs
 - `data.cursor` is what this result consumed per ref (`incarnation`, `runs`);
   the next wait starts after it, so the same event is never reported twice.
   `cursorCut` counts entries dropped to fit the 4 KB result.
+- `close:{applied:false, reason:"no CLOSE block…"}` on a settled worker
+  is not a failure: the worker sent no CLOSE block, often because it
+  closed its own task. Read the snapshot's task status.
 - `next` is the stored resume while something is still owed, else null.
 - Exit codes: `0` event or timeout, `6` the owner's pane died, `7` the owner
   sat in `needs_input` for `--stuck-after` seconds (default 120, or 5 for a pi

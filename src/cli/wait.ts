@@ -644,7 +644,7 @@ export function wireWaitCommand(program: Command): void {
     .command("wait")
     .argument("[refs...]", `typed: ${TYPED_FORMS}; none = what this caller started`)
     .description(
-      "Block until the first event you own, then print ONE JSON result: `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (what it consumed), `resume`. --all waits for every ref; --wave returns a `tally`.",
+      "Block until the first event you own, then print ONE JSON result: `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (consumed; `cursorCut` = entries dropped to fit), `resume` (run as printed; no other flags).",
     )
     .option("--first", "end on the first event (default)")
     .option("--first-of", "alias for --first")
