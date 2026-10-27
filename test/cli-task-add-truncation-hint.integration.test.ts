@@ -86,7 +86,7 @@ describe("mu task add — truncation hint", () => {
     expect(r.stderr).toBe("");
     const parsed = r.data;
     expect(parsed).toHaveProperty("task");
-    expect(typeof parsed.task.name).toBe("string");
+    expect(typeof parsed.task.id).toBe("string");
   });
 
   // task_add_slugify_silently_truncates_ids: the stderr hint reaches
@@ -106,8 +106,8 @@ describe("mu task add — truncation hint", () => {
     // Sanity: the originalSlug is strictly longer than the truncated
     // id, and the truncated id is a prefix of the original (the cut
     // happens at a word boundary inside the original).
-    expect(parsed.originalSlug.length).toBeGreaterThan(parsed.task.name.length);
-    expect(parsed.originalSlug.startsWith(parsed.task.name)).toBe(true);
+    expect(parsed.originalSlug.length).toBeGreaterThan(parsed.task.id.length);
+    expect(parsed.originalSlug.startsWith(parsed.task.id)).toBe(true);
     // The fields live at the top level (siblings of `task`), not
     // inside the persisted task row — the row mirrors the schema and
     // the slug after truncation IS the canonical id.
@@ -152,7 +152,7 @@ describe("mu task add — truncation hint", () => {
     );
     expect(r.error).toBeUndefined();
     const parsed = r.data;
-    expect(parsed.task.name).toBe("manual_short_id");
+    expect(parsed.task.id).toBe("manual_short_id");
     expect(parsed).not.toHaveProperty("truncated");
     expect(parsed).not.toHaveProperty("originalSlug");
   });

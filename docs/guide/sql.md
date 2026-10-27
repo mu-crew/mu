@@ -14,7 +14,8 @@ Every verb takes `--json`.
   (`--full` on `owned-by`, whose `--all` means every workstream), which prints
   everything whole. Task items use the SQL column names (`id` is the `local_id`,
   `effort_days`, `workstream_id`, `owner_id`; `owner` only while
-  IN_PROGRESS), never `name`/`effortDays`/`roi`.
+  IN_PROGRESS), never `name`/`effortDays`/`roi`. `task add --json` returns its
+  `task` (and `tasks`) in the same shape.
 - Single objects, such as `mu task show`, put an object with named
   fields in `data`.
 - `mu db query` and `mu sql` print this document by default (`--table` gives
