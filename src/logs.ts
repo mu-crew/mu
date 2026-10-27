@@ -300,6 +300,22 @@ export function groupIdFromPrefix(db: Db, prefix: string): string | null {
   );
 }
 
+/** `payload` with its line breaks removed when it is JSON spanning
+ *  several lines, else unchanged (prose keeps its newlines: the segment
+ *  JSON-escapes it). Not JSON.stringify(JSON.parse()): that rounds big
+ *  numbers and merges duplicate keys. JSON strings cannot hold a raw
+ *  CR/LF, so each one, with the whitespace around it, sits between
+ *  tokens, and two adjacent JSON tokens are never both literals. */
+function singleLinePayload(payload: string): string {
+  if (!/[\r\n]/.test(payload)) return payload;
+  try {
+    JSON.parse(payload);
+  } catch {
+    return payload;
+  }
+  return payload.replace(/[ \t\r\n]*[\r\n][ \t\r\n]*/g, "");
+}
+
 /** This machine's identity — the peer id every op is stamped with. */
 function machineId(db: Db): string {
   const row = db.prepare("SELECT machine_id FROM machine_identity WHERE id = 1").get() as
@@ -359,8 +375,18 @@ export class LogKindReservedError extends Error {
 
 /**
  * Append a log entry. Returns the inserted row (with assigned `seq`).
- * Constant-time. Single INSERT; safe to call from any state-changing
- * verb without a transaction wrapper.
+ * Constant-time. Safe to call from any state-changing verb, inside or
+ * outside a transaction (it nests as a savepoint).
+ *
+ * The HLC mint and the INSERT share one BEGIN IMMEDIATE transaction so
+ * ops commit in hlc order: flushSegment publishes `hlc > lastPublished`,
+ * and an op minted earlier but committed after a later one was flushed
+ * would never be published.
+ *
+ * A JSON payload with line breaks is stored minified. A segment line
+ * holds one op on one physical line and passes valid JSON through
+ * verbatim, and a raw CR/LF in JSON can only be insignificant
+ * whitespace, so nothing is lost.
  */
 export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   const kind = opts.kind ?? "message";
@@ -371,22 +397,26 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   // workstream is destroyed (which is the point of an ops log).
   const key = opts.workstream ?? MACHINE_WIDE_KEY;
   const group = randomUUID();
-  const result = db
-    .prepare(
-      `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'put', ?, ?)`,
-    )
-    .run(
-      nextHlc(db),
-      machineId(db),
-      group,
-      opts.source,
-      opts.intent ?? null,
-      kind,
-      key,
-      opts.payload,
-      createdAt,
-    );
+  const payload = singleLinePayload(opts.payload);
+  const insert = db.transaction(() =>
+    db
+      .prepare(
+        `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'put', ?, ?)`,
+      )
+      .run(
+        nextHlc(db),
+        machineId(db),
+        group,
+        opts.source,
+        opts.intent ?? null,
+        kind,
+        key,
+        payload,
+        createdAt,
+      ),
+  );
+  const result = insert.immediate();
   return {
     seq: Number(result.lastInsertRowid),
     workstreamName: opts.workstream,
@@ -395,7 +425,7 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
     group,
     op: "put",
     kind,
-    payload: opts.payload,
+    payload,
     createdAt,
   };
 }

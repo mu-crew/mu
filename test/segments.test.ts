@@ -783,6 +783,55 @@ describe("segments", () => {
       expect(second.appended).toBe(0);
     });
 
+    // ─── multiline JSON payloads ─────────────────────────────────────
+
+    it("a pretty-printed JSON log line occupies one segment line and reaches a peer", async () => {
+      // The regression: payloadTextFor passed valid JSON through
+      // verbatim, raw LF included, so `mu log '{\n  "x": 1\n}'` wrote one
+      // op as three physical lines and every peer halted at torn-write.
+      seedProseMessage(a, '{\r\n  "x": 1,\n  "y": [\n    "a b"\n  ]\n}');
+      await flushSegment(a, dir);
+
+      const lines = linesOf(segFor(a));
+      expect(lines.length).toBe(2); // workstream put + the message
+
+      const peer = peersFor(b)[0];
+      if (peer === undefined) throw new Error("expected a peer");
+      const result = ingestSegment(b, peer);
+      expect(result.defects).toEqual([]);
+      expect(result.applied).toBe(2);
+
+      const read = (db: Db) =>
+        (
+          db.prepare("SELECT payload FROM ops WHERE entity = 'message'").get() as {
+            payload: string;
+          }
+        ).payload;
+      expect(read(b)).toBe(read(a));
+      expect(JSON.parse(read(b))).toEqual({ x: 1, y: ["a b"] });
+
+      const second = await flushSegment(a, dir);
+      expect(second.selfRepaired).toBeNull();
+      expect(second.appended).toBe(0);
+    });
+
+    it("encodeSegmentLine refuses a payload that would span physical lines", () => {
+      const op = {
+        hlc: formatHlc({ wallMs: 1, counter: 0, machineId: "m" }),
+        machineId: "m",
+        groupId: "g",
+        intent: null,
+        actor: null,
+        entity: "message",
+        key: "demo",
+        op: "put" as const,
+      };
+      expect(() => encodeSegmentLine({ ...op, payload: '{\n"x":1}' })).toThrow(/line break/);
+      expect(() => encodeSegmentLine({ ...op, payload: '{\r"x":1}' })).toThrow(/line break/);
+      // Prose is JSON-string-encoded, so its newlines are escaped: fine.
+      expect(encodeSegmentLine({ ...op, payload: "two\nlines" })).not.toMatch(/[\r\n]/);
+    });
+
     it("a COMPLETE line that will not parse is malformed-shape, not torn-write", async () => {
       // Cause and remediation differ: a torn write means a transfer was
       // caught in flight (refetch the tail), a malformed complete line

@@ -128,6 +128,11 @@ export function encodeSegmentLine(
     payload: null, // replaced below; kept out of the crc input shape
   };
   const payloadText = payloadTextFor(op.payload);
+  // Valid JSON passes through verbatim, so a raw CR/LF in it would split
+  // one op over several physical lines, which every reader reports as a
+  // torn write. appendLog strips them; this catches any other writer.
+  if (/[\r\n]/.test(payloadText))
+    throw new Error(`segment line: payload of op ${op.hlc} contains a line break`);
   const crc = computeCrc(base, payloadText);
   // Assemble by hand so `payload` is embedded as raw JSON rather than
   // being re-encoded, keeping the bytes the crc covered.
