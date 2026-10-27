@@ -182,6 +182,7 @@ function printClosePreview(p: ClosePreview): void {
 export function wireCloseCommand(agent: Command): void {
   agent
     .command("close <name>")
+    .alias("stop")
     .description(
       "Close an agent: previews without --if; --if <rev> kills the pane, removes the row and its clean worktree (unmerged commits keep a branch; a dirty tree refuses first). Remote and recovery-record rules: docs/guide/remote.md.",
     )

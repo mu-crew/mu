@@ -593,6 +593,7 @@ describe("scoped TEMP views", () => {
     expect(blockers).toHaveLength(1);
     expect(Object.keys(blockers[0] as object)).toEqual([
       "task_id",
+      "task_local_id",
       "blocker_id",
       "blocker_local_id",
       "blocker_status",

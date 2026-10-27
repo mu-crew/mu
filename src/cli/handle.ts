@@ -660,9 +660,16 @@ function unknownVerb(err: unknown, cmd: Command | undefined): string | undefined
   // The verbs one level down count too (`mu next` → `mu task next`); a direct one wins a tie.
   const path = root ? "mu" : `mu ${cmd.name()}`;
   const names = cmd.commands.flatMap((c) => [c.name(), ...c.aliases()].map((n) => [n, n]));
-  const nested = cmd.commands.flatMap((c) =>
-    c.commands.map((g) => [g.name(), `${c.name()} ${g.name()}`]),
-  );
+  // `task` verbs first: they win a tie (`mu show` → `mu task show`, not `mu agent show`).
+  const nested = [...cmd.commands]
+    .sort((a, b) => Number(b.name() === "task") - Number(a.name() === "task"))
+    .flatMap((c) => c.commands.map((g) => [g.name(), `${c.name()} ${g.name()}`]));
+  // A plural noun names its namespace's list: `mu tasks` → `mu task list`.
+  const singular = word.endsWith("s") ? word.slice(0, -1) : undefined;
+  const ns = cmd.commands.find((c) => c.name() === singular);
+  if (ns?.commands.some((g) => g.name() === "list")) {
+    return `unknown command '${word}' (closest: ${path} ${ns.name()} list); see ${path} --help`;
+  }
   let best: string | undefined;
   let bestD = Number.POSITIVE_INFINITY;
   for (const [n, full] of [...names, ...nested] as [string, string][]) {
