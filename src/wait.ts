@@ -215,6 +215,14 @@ const URGENCY: Partial<Record<WaitEventKind, number>> = {
   stall: 2,
   delegate: 3,
 };
+/** One wait hands back at most this many delegate reports together (the settle's wave cap). */
+const DELEGATE_BATCH = 12;
+/** What `select` chose: the event, everything it consumes, and the ready delegate reports it left owed. */
+interface Chosen {
+  event: Item;
+  fired: Item[];
+  more?: number;
+}
 const urgency = (k: WaitEventKind | undefined): number => (k === undefined ? 9 : (URGENCY[k] ?? 4));
 const exitFor = (k: WaitEventKind): number =>
   k === "dead" ? 6 : k === "input" || k === "stall" ? 7 : k === "interrupted" ? 130 : 0;
@@ -1290,7 +1298,24 @@ export async function waitForEvents(
   const failedGate = (i: Item): boolean =>
     i.kind === "exited" && i.snap.exit !== undefined && i.snap.exit !== 0;
 
-  const select = (items: Item[]): { event: Item; fired: Item[] } | undefined => {
+  /**
+   * A delegate report that fires brings every other never-returned ready owned one with it
+   * (consumed together; DELEGATE_BATCH in all, the rest counted in `more` and still owed), so a
+   * wave of answers is one wait and the next wait returns what it was really asked for.
+   */
+  const withDelegates = (event: Item, fired: Item[], ready: Item[]): Chosen => {
+    if (event.kind !== "delegate") return { event, fired };
+    // Owned, hidden-once-seen reports only: an explicit ref is asked for by name, never swept in.
+    const rest = ready.filter((i) => i !== event && i.kind === "delegate" && !i.target);
+    const take = rest.slice(0, DELEGATE_BATCH - 1);
+    return {
+      event,
+      fired: [...fired, ...take],
+      ...(rest.length > take.length ? { more: rest.length - take.length } : {}),
+    };
+  };
+
+  const select = (items: Item[]): Chosen | undefined => {
     const rank = (a: Item, b: Item): number =>
       // Never-returned events first: an event that was already returned once (an
       // unchanged dialog, a dead pane, a stall) never outranks one that was not.
@@ -1315,7 +1340,7 @@ export async function waitForEvents(
         b.ref.kind === "task" &&
         b.kind === "closed";
       const companions = ready.filter((i) => i !== best && (same(i, best) || same(best, i)));
-      return { event: best, fired: [best, ...companions] };
+      return withDelegates(best, [best, ...companions], ready);
     }
     const urgent = ready.find(
       (i) =>
@@ -1323,7 +1348,7 @@ export async function waitForEvents(
         i.kind === "stall" ||
         (!i.target && (i.kind === "dead" || i.kind === "delegate")),
     );
-    if (urgent !== undefined) return { event: urgent, fired: [urgent] };
+    if (urgent !== undefined) return withDelegates(urgent, [urgent], ready);
     const targets = items.some((i) => i.target) ? items.filter((i) => i.target) : items;
     if (targets.length === 0 || !targets.every((i) => i.done)) return undefined;
     const sorted = [...targets].sort(rank);
@@ -1342,7 +1367,7 @@ export async function waitForEvents(
   const build = (
     kind: WaitEventKind,
     items: Item[],
-    chosen?: { event: Item; fired: Item[] },
+    chosen?: Chosen,
     drained = false,
   ): WaitResult => {
     const e = chosen?.event;
@@ -1366,6 +1391,14 @@ export async function waitForEvents(
         ? { action: stallStates.get(e.stall.token)?.result as StallActionResult }
         : {}),
       humanNeeds: callers.flatMap((c) => openHumanNeeds(db, c)),
+      ...(e?.kind === "delegate" && chosen !== undefined && chosen.fired.length > 1
+        ? {
+            alsoFiring: chosen.fired
+              .filter((f) => f !== e && f.kind === "delegate")
+              .map((f) => f.ref),
+          }
+        : {}),
+      ...(chosen?.more !== undefined ? { alsoFiringMore: chosen.more } : {}),
       sinceSeq,
       ...(tally !== undefined ? { tally } : {}),
       ...(drained ? { drained: true } : {}),
