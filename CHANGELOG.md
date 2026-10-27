@@ -12,6 +12,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A delegate in a named workstream no longer closes its own task and loses its answer**
+  (`triage_dfs_delegate_self_close`, dogfood-switch F1). The close nudge told every delegate
+  (spawned `--task <its call task>`) to run `mu task close`; `finishDelegate` then found the task
+  CLOSED and wrote no report or verdict (15/15 calls: tally "0/2 CONFIRMED", "Report unreadable"). Two
+  fixes: the close nudge skips a `kind=delegate` task, and `finishDelegate` keeps the answer as the
+  report (and the real verdict on the judged task) when the task was closed by the delegate itself,
+  told from a closer that is not the delegate by the author of the task's close note (the call row's
+  `agent`). A task the orchestrator or a user closed is unchanged. Red tests:
+  `test/extension-close-nudge.test.ts`, `test/delegate-tasks.test.ts`.
+
 - **`/reload` no longer orphans a running pane delegate** (`triage_df4_reload_orphan`, dogfood-4 F2). The
   old runtime's watcher died with the reload while the call stayed `running`, so nothing recorded the
   answer and the settle wait owed it for ever (open:1 after 4 min 44 s). On `session_start` the

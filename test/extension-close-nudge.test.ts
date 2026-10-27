@@ -122,6 +122,38 @@ describe("registerCloseNudge", () => {
     ]);
   });
 
+  it("a delegate's own task (kind=delegate, in a named workstream) is never nudged: its call records and closes it", async () => {
+    const mixed: MuResult = {
+      code: 0,
+      stdout: JSON.stringify({
+        ok: true,
+        data: {
+          items: [
+            { id: "delegate_rev_1", status: "IN_PROGRESS", kind: "delegate" },
+            { id: "design", status: "IN_PROGRESS", kind: "work" },
+          ],
+          count: 2,
+        },
+        next: null,
+      }),
+      stderr: "",
+    };
+    const only = (items: unknown[]): MuResult => ({
+      ...mixed,
+      stdout: JSON.stringify({ ok: true, data: { items, count: items.length }, next: null }),
+    });
+    const a = setup(only([{ id: "delegate_rev_1", status: "IN_PROGRESS", kind: "delegate" }]));
+    expect(await a.emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
+    expect(a.run.mock.calls.find((c) => c[0][0] === "log")).toBeUndefined();
+    // A real task the same agent owns is still nudged, and only it is named.
+    const b = setup(mixed);
+    const r = (await b.emit("agent_before_settle", { outcome: "completed" })) as {
+      entries: { content: string }[];
+    };
+    expect(r.entries[0]?.content).toContain("mu task close design -w auth");
+    expect(r.entries[0]?.content).not.toContain("delegate_rev_1");
+  });
+
   it("owns nothing in progress: no nudge, no log", async () => {
     const { emit, run } = setup(owned([["later", "OPEN"]]));
     expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
