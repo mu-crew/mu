@@ -157,10 +157,6 @@ export interface WaitResult {
   cursor: Record<string, CursorToken>;
   /** Open human needs of the callers (never another caller's). */
   humanNeeds: HumanNeeded[];
-  /** A delegate report fired: the other owned delegate reports this wait consumed with it. */
-  alsoFiring?: WaitRef[];
-  /** More ready delegate reports than one wait hands back: how many stay owed for the next wait. */
-  alsoFiringMore?: number;
   /** The wave's tally over the callers' calls, when `wave` was given. */
   tally?: VerdictTally;
   /** What `handleStall` did for a returned stall. */
