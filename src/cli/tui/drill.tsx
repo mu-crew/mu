@@ -141,13 +141,23 @@ export interface DrillProps {
   runtime: DashboardRuntime;
   /** Lines pinned under the title, outside the scrolled body (an attach failure and the outside-client line). */
   notice: readonly string[];
+  /** The dashboard's attention strip, shown under the title (null: none). */
+  strip?: { text: string; alert: boolean } | null;
   /** True while the terminal belongs to an attach: a key is ignored (the hook stays active). */
   busy: { readonly current: boolean };
   onClose(): void;
   onAttach(target: Extract<DrillTarget, { kind: "scrollback" }>): void;
 }
 
-export function Drill({ target, runtime, notice, busy, onClose, onAttach }: DrillProps) {
+export function Drill({
+  target,
+  runtime,
+  notice,
+  strip = null,
+  busy,
+  onClose,
+  onAttach,
+}: DrillProps) {
   const { columns, rows } = useWindowSize();
   const yank = useYank();
   const [all, setAll] = useState(false);
@@ -214,7 +224,9 @@ export function Drill({ target, runtime, notice, busy, onClose, onAttach }: Dril
   // The head (notices, attach failure, yank confirmation) is pinned under the title, never part of
   // the scrolled body: a long scrollback opens at its END and must not push the reason out of view.
   // It takes at most half of the room, so the body always keeps some rows.
-  const room = Math.max(0, rows - 1 - (rows >= 3 ? 1 : 0));
+  // The strip (title + strip + hint + one body row) needs 4 rows; shorter screens drop it.
+  const showStrip = strip !== null && rows >= 4;
+  const room = Math.max(0, rows - 1 - (rows >= 3 ? 1 : 0) - (showStrip ? 1 : 0));
   const pinned = lines.head.slice(0, Math.floor(room / 2));
   const height = room - pinned.length;
   const first = clampTop(top, lines.body.length, height);
@@ -250,6 +262,11 @@ export function Drill({ target, runtime, notice, busy, onClose, onAttach }: Dril
       <Text wrap="truncate" inverse bold>
         {cell(titleOf(target), columns)}
       </Text>
+      {showStrip ? (
+        <Text wrap="truncate" color={strip.alert ? "yellow" : undefined} dimColor={!strip.alert}>
+          {cell(strip.text, columns)}
+        </Text>
+      ) : null}
       {pinned.map((l, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: lines have no identity; the index IS the position
         <Text key={`p${i}`} wrap="truncate" bold>

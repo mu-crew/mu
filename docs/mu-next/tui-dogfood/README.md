@@ -81,13 +81,15 @@ python3 docs/mu-next/tui-dogfood/smoke.py fill stable drill  # the screen checks
   take a few keys, quit on `q` with exit 0, and leave no private tmux server
   behind.
 - **fill** (s2, s4, s5, s7 at 200x50, 120x40 and 80x24, every tab, read off
-  a private tmux screen): the last row is the hint. A tab's frame reaches the
+  a private tmux screen): row 3 is the attention strip (s4: `⚠ N need you`,
+  Overview included), and the last row is the hint. A tab's frame reaches the
   last body row. An Overview column whose card says `+N more` reaches it too.
   A column of short cards may leave blank rows.
 - **stable** (s6): on Tasks and Log, two screens 5 s apart; the second column
   starts at the same x on every row of both.
 - **drill** (s2 at 120x40 and 80x24): Enter on a Tasks row and on a DAG row
-  opens the task's notes, and the drill keeps the hint on the last row.
+  opens the task's notes; the drill keeps the attention strip under its title
+  and the hint on the last row.
 
 It does not judge whether the screens look good: that is what [FORM.md](FORM.md) is for.
 

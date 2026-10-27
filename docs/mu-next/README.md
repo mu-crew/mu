@@ -456,8 +456,8 @@ Recipe target: ≤ 200 words, from 2,275.
 ## Dashboard
 
 The only human surface. All workstreams, a workstream row above five
-tabs; `scratch` marked. Every tab gets the attention strip (trouble in any
-workstream, else `✓ all quiet`); lists are framed and fill the screen, with
+tabs; `scratch` marked. Every view (the Overview, every tab, every drill)
+gets the one-line attention strip (trouble in any workstream, else `✓ all quiet`); lists are framed and fill the screen, with
 Next and the key hint pinned to the bottom rows. Starting tab from the tmux session, else latest
 activity. Bare `mu` on a TTY opens it. Read-only; keys yank commands.
 Every screen, drills included, is exactly the terminal's rows with the

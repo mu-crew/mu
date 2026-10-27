@@ -325,7 +325,7 @@ describe("drills in the dashboard", () => {
   it("drill keys: Ctrl-d/Ctrl-u half a page, gg and g top, G bottom", async () => {
     seed();
     note("t1", Array.from({ length: 60 }, (_, i) => `row-${i}`).join("\n"));
-    const ui = await open({ columns: 60, rows: 12 }); // body: 10 rows
+    const ui = await open({ columns: 60, rows: 12 });
     await ui.until((s) => s.includes("first task"));
     await ui.press(ENTER); // t1: its note made it the newest activity
     await ui.until((s) => s.includes("row-0"));
@@ -335,7 +335,11 @@ describe("drills in the dashboard", () => {
     const a = firstRow();
     expect(a).toBeGreaterThan(start);
     await ui.press("\u0004");
-    expect(firstRow()).toBe(a + 5);
+    // Half the body: the hint's `first-last/total` gives the body's height.
+    const [lo, hi] = (/(\d+)-(\d+)\/\d+/.exec(ui.screen()) ?? []).slice(1).map(Number);
+    const half = Math.floor(((hi ?? 0) - (lo ?? 0) + 1) / 2);
+    expect(half).toBeGreaterThan(1);
+    expect(firstRow()).toBe(a + half);
     await ui.press("\u0015"); // Ctrl-u
     expect(firstRow()).toBe(a);
     await ui.press("G");
