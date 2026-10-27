@@ -50,8 +50,11 @@ On herdr, `--send` and `agent send` work (herdr's `agent prompt`, see
   murmur's `docs/setup.md`). Without it the agent is `unknown` throughout.
   With it, you see `needs_input` when a turn ends, but never `busy`.
 - **Wait on the task, not the agent.** `mu wait task:<ws>/<id>` fires when the
-  worker closes it. `mu wait agent:<w>` may never fire. `--until-text <re>`
-  matches the pane's tail instead.
+  worker closes it. `mu wait agent:<w>` fires only on busy → not busy, as in
+  3.x: an agent already idle, or one that goes from `unknown` to
+  `needs_input`, does not count. murmur's notify path never reports `busy`,
+  so on tmux that wait runs to its timeout. `--until-text <re>` matches the
+  pane's tail instead.
 - **Stalls are approximate.** codex notifies at turn start too, so
   `--stuck-after` can report a running codex worker as stalled. Read the pane
   (`mu agent read`) before you act.

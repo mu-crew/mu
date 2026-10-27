@@ -88,7 +88,9 @@ murmur's notify path is attention-only (murmur `docs/setup.md`: "no
 `busy` → not busy (`src/wait.ts`, `wasBusy`). A notify-only murmur never
 reports `busy`, so the wait on cursor worker-3 (task closed, murmur `done`)
 and on an idle codex worker ran to the timeout. `task:` refs and
-`--until-text` work. Task `triage_dfh_wait_nonpi_idle`.
+`--until-text` work. Task `triage_dfh_wait_nonpi_idle`: kept as the 3.x rule
+(3.13.3's `mu agent wait` times out on the same readings), pinned by a test
+in `test/wait-events.test.ts` and stated in the guide.
 
 **F5 (P3): a non-pi orchestrator has no caller identity, so bare `mu wait`
 owns nothing.** `currentCallers()` is the managed `<ws>/<agent>` or

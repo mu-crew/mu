@@ -307,6 +307,25 @@ describe("agent events", () => {
     expect(done.event.kind).toBe("settled");
   });
 
+  it("a notify-only non-pi agent (unknown, then needs_input, never busy) does not fire (3.x rule)", async () => {
+    mkAgent(env.db, "c1", "w", "cursor-agent");
+    const table = new Map<string, AgentReading>([
+      ["w/c1", { status: "unknown", reason: "murmur has no row" }],
+    ]);
+    let n = 0;
+    const r = await waitForEvents(env.db, [agentRef("c1")], {
+      ...fast,
+      timeoutMs: 30,
+      ...scriptedAgents(table),
+      sleep: async () => {
+        if (n++ === 1) table.set("w/c1", { status: "needs_input", source: "murmur" });
+      },
+    });
+    expect(n).toBeGreaterThan(2);
+    expect(r.timedOut).toBe(true);
+    expect(r.refs[0]).toMatchObject({ status: "needs_input", fired: false });
+  });
+
   it("a dead pane is a dead event (exit 6); a dialog is input (exit 7)", async () => {
     mkAgent(env.db, "w1");
     const table = new Map<string, AgentReading>([["w/w1", { status: null }]]);
