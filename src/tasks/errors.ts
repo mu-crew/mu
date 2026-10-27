@@ -6,11 +6,13 @@
 //   conflict   → 4   (TaskExistsError, TaskNotInWorkstreamError,
 //                     TaskAlreadyOwnedError, ClaimerNotRegisteredError,
 //                     CrossWorkstreamEdgeError,
-//                     SubstateReasonRequiredError, TaskParkStateError,
+//                     TaskParkStateError,
 //                     TaskParkedError, TaskInTriageError,
 //                     InvalidSubstateError)
 //   cycle      → 4   (CycleError — also a conflict)
-//   usage      → 2   (TaskIdInvalidError; TaskTitleSlugEmptyError in id.ts)
+//   usage      → 2   (TaskIdInvalidError; TaskTitleSlugEmptyError in id.ts;
+//                     CloseNeedsEvidenceError, SubstateReasonRequiredError: a close's
+//                     missing --evidence / --why, on the CLI, the SDK and `mu sql --write`)
 //
 // Errors carry facts (ids, workstreams, structured fields), never commands:
 // a result's follow-up is its `next` (src/next-hints.ts).
@@ -167,7 +169,7 @@ export class CloseNeedsEvidenceError extends Error {
     super(
       taskId === "<id>"
         ? say("task.close_needs_evidence_sql")
-        : say("task.close_needs_evidence", taskId),
+        : say("task.close_needs_evidence", taskId, workstream),
     );
   }
 }

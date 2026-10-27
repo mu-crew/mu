@@ -54,18 +54,18 @@ const sqlJson = async (stmt: string) => {
   return r;
 };
 
-describe("mu sql: a guard's RAISE is a typed conflict (exit 4) with the next command", () => {
+describe("mu sql: a guard's RAISE is a typed error with the next command (a missing reason is exit 2)", () => {
   it("single statement: close with no close note", async () => {
     const r = await sql("UPDATE tasks SET status='CLOSED', substate='done' WHERE local_id='t'");
-    expect(r.exitCode).toBe(4);
+    expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("mu task close <id> -w <ws> --evidence");
     expect(count("SELECT COUNT(*) n FROM tasks WHERE status='CLOSED'")).toBe(0);
   });
 
   it("--json names the typed error, not SqliteError", async () => {
     const r = await sqlJson("UPDATE tasks SET status='CLOSED', substate='done' WHERE local_id='t'");
-    expect(r.exitCode).toBe(4);
-    expect(r.doc).toMatchObject({ error: "CloseNeedsEvidenceError", exit: 4 });
+    expect(r.exitCode).toBe(2);
+    expect(r.doc).toMatchObject({ error: "CloseNeedsEvidenceError", exit: 2 });
   });
 
   it("multi statement: a note first, then a close over an open blocker; all rolled back", async () => {
@@ -157,7 +157,7 @@ describe("mu task close without --evidence: exit 2, ONE stderr line, nothing wri
     const r = await closeNoEvidenceJson();
     expect(r.exitCode).toBe(2);
     const env = r.doc as unknown as { error: string; usage?: unknown };
-    expect(env.error).toBe("UsageError");
+    expect(env.error).toBe("CloseNeedsEvidenceError");
     expect(env.usage).toBeUndefined();
   });
 });

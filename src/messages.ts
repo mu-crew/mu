@@ -31,8 +31,8 @@ export const MESSAGES = {
     verb === "close"
       ? `closing ${id} as ${substate} needs a reason (--why "...")`
       : `parking ${id} needs a reason (--why "...")`,
-  "task.close_needs_evidence": (id: string) =>
-    `closing ${id} needs evidence (--evidence "<command + result>")`,
+  "task.close_needs_evidence": (id: string, ws: string) =>
+    `closing ${id} needs evidence: mu task close ${id} -w ${ws} --evidence "<command + result>"`,
   "task.close_needs_evidence_sql": () =>
     'a close in this SQL has no close note; close with: mu task close <id> -w <ws> --evidence "<command + result>"',
   "task.open_blockers": (id: string, blockers: readonly string[]) =>
@@ -171,8 +171,6 @@ export const MESSAGES = {
   "task.claim_actor": () => "--actor only meaningful with --self (it overrides the actor name)",
   "task.wait_ids": () => "mu task wait: at least one task id is required",
   "task.close_note_alias": () => "--note is an alias of --evidence: pass one of them",
-  "task.close_done_evidence": (id: string, ws: string) =>
-    `closing ${id} as done needs evidence: mu task close ${id} -w ${ws} --evidence "<command + result>"`,
   "task.close_uncommitted": (path: string, commit: string) =>
     `uncommitted changes in ${path}; don't forget to commit: ${commit}`,
   "task.list_owner_mine": () => "--owner and --mine pick the owner two ways; pass one of them",
