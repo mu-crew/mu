@@ -63,11 +63,10 @@ import { discardWorktree, git, gitToplevel, owningRoot } from "../vcs/git.js";
 import { isScratchWorkstream } from "../workstream.js";
 import {
   createWorktree,
-  forgetWorktree,
   getWorktreeAt,
   reclaimWorktreePath,
   registerWorktree,
-  removeWorktree,
+  releaseWorktree,
   WorktreeVcsRequiredError,
   worktreePath,
 } from "../worktree.js";
@@ -1197,10 +1196,11 @@ function finalizeAgentRow(
  *
  * `paneId` is `undefined` when spawnAgent itself threw before returning a
  * pane id — there's nothing to kill. `staged` is set when prestageWorktree
- * succeeded: once the pane is proven gone, the worktree this spawn just made
- * is removed (force: it has never run anything) and its registry row
- * forgotten; if the removal fails the registry row stays, so
- * `mu agent close <name> --discard` can finish it. A pane NOT proven gone
+ * succeeded: once the pane is proven gone, the worktree this spawn made goes
+ * through the close rule (`releaseWorktree`; its pane may have worked in it):
+ * clean and merged is removed, commits are kept on `mu/<ws>/<name>-<sha12>`
+ * first, and dirty files or a writer keep the tree and its registry row for
+ * `mu agent close <name>`; each outcome but the plain removal is logged. A pane NOT proven gone
  * keeps the row and the worktree (the row rule): `mu agent close` finishes
  * them once it is. deleteAgent is idempotent (no-op on a missing row).
  *
@@ -1311,6 +1311,17 @@ export async function rollbackSpawn(
   } else if (staged !== undefined && paneGone) {
     // Only once the pane is proven gone: a surviving pane may be running in
     // the tree (the row is kept below, so `mu agent close` finishes it).
+    // The worker may have worked before the spawn failed: the tree goes
+    // through the close rule, never a forced removal. Commits are kept on a
+    // branch first; dirty files or a writer keep the tree and its registry
+    // row (the record `mu agent close` finishes).
+    const say = (what: string): void => {
+      try {
+        emitEvent(db, workstream, "agent.spawn_failed", `agent spawn rollback ${name}: ${what}`);
+      } catch {
+        // best-effort
+      }
+    };
     try {
       // Under the agent lock, and only while the name is still this spawn's
       // (or gone) AND the registry row at the path is the one this spawn
@@ -1321,11 +1332,19 @@ export async function rollbackSpawn(
         const reg = getWorktreeAt(db, staged.path);
         if (reg !== undefined && (reg.createdAt !== staged.createdAt || reg.base !== staged.base))
           return;
-        await removeWorktree(staged.root, staged.path, { force: true });
-        forgetWorktree(db, staged.path);
+        const done = await releaseWorktree(
+          db,
+          reg ?? { ...staged, agent: name, workstream, lastCollectedHead: null },
+        );
+        if (done.action === "kept-branch")
+          say(`worktree ${staged.path} had commits; kept on branch ${done.branch}, tree removed`);
+        for (const w of done.warnings ?? []) say(w);
       });
-    } catch {
-      // the registry row stays: `mu agent close <name> --discard` finishes it
+    } catch (err) {
+      const why = err instanceof Error ? (err.message.split("\n")[0] ?? "") : String(err);
+      say(
+        `worktree ${staged.path} kept (${why}); once handled: mu agent close ${name} -w ${workstream}`,
+      );
     }
   }
   // A row whose pane is not proven gone is kept (the row rule, as in close),
