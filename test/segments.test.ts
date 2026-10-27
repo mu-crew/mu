@@ -815,7 +815,62 @@ describe("segments", () => {
       expect(second.appended).toBe(0);
     });
 
-    it("encodeSegmentLine refuses a payload that would span physical lines", () => {
+    it("a multi-line JSON payload stored before the appendLog fix still flushes and reaches a peer", async () => {
+      // rr_fix_r1_segments_legacy: appendLog only normalises NEW appends.
+      // A row stored by an older build keeps its raw LF, and the encoder
+      // threw on it, so flush could never get past that row.
+      seedProseMessage(a, "placeholder");
+      const legacy = '{\r\n  "x": 1,\n  "y": [\n    "a b"\n  ]\n}';
+      a.prepare("UPDATE ops SET payload = ? WHERE entity = 'message'").run(legacy);
+      appendLog(a, { workstream: "demo", source: "user", payload: "after the legacy row" });
+
+      const first = await flushSegment(a, dir);
+      expect(first.appended).toBe(3); // workstream put + legacy + ordinary
+      expect(linesOf(segFor(a)).length).toBe(3);
+
+      const peer = peersFor(b)[0];
+      if (peer === undefined) throw new Error("expected a peer");
+      const result = ingestSegment(b, peer);
+      expect(result.defects).toEqual([]);
+      expect(result.applied).toBe(3);
+      const payloads = (
+        b.prepare("SELECT payload FROM ops WHERE entity = 'message' ORDER BY hlc").all() as Array<{
+          payload: string;
+        }>
+      ).map((r) => r.payload);
+      expect(payloads.length).toBe(2);
+      expect(JSON.parse(payloads[0] ?? "")).toEqual({ x: 1, y: ["a b"] });
+      expect(payloads[1]).toBe("after the legacy row");
+
+      const second = await flushSegment(a, dir);
+      expect(second.selfRepaired).toBeNull();
+      expect(second.appended).toBe(0);
+    });
+
+    it("a log text that is a JSON string scalar round-trips byte-identical", async () => {
+      // rr_r1_string_scalar_unwrap: '"hello"' is valid JSON, so it went
+      // out verbatim, and the decoder unwrapped every JSON string whose
+      // contents are not JSON, storing `hello` on the peer.
+      const texts = ['"hello"', '"{\\"x\\":1}"', "hello", '""', "123", '{"a":"b"}'];
+      for (const text of texts) seedProseMessage(a, text);
+      await flushSegment(a, dir);
+
+      const peer = peersFor(b)[0];
+      if (peer === undefined) throw new Error("expected a peer");
+      expect(ingestSegment(b, peer).defects).toEqual([]);
+      const read = (db: Db) =>
+        (
+          db
+            .prepare("SELECT payload FROM ops WHERE entity = 'message' ORDER BY hlc")
+            .all() as Array<{
+            payload: string;
+          }>
+        ).map((r) => r.payload);
+      expect(read(b)).toEqual(texts);
+      expect(read(a)).toEqual(texts);
+    });
+
+    it("encodeSegmentLine never emits a payload that spans physical lines", () => {
       const op = {
         hlc: formatHlc({ wallMs: 1, counter: 0, machineId: "m" }),
         machineId: "m",
@@ -826,8 +881,9 @@ describe("segments", () => {
         key: "demo",
         op: "put" as const,
       };
-      expect(() => encodeSegmentLine({ ...op, payload: '{\n"x":1}' })).toThrow(/line break/);
-      expect(() => encodeSegmentLine({ ...op, payload: '{\r"x":1}' })).toThrow(/line break/);
+      // JSON is stripped of its line breaks (value-preserving).
+      expect(encodeSegmentLine({ ...op, payload: '{\n"x":1}' })).toContain('"payload":{"x":1}');
+      expect(encodeSegmentLine({ ...op, payload: '{\r"x":1}' })).toContain('"payload":{"x":1}');
       // Prose is JSON-string-encoded, so its newlines are escaped: fine.
       expect(encodeSegmentLine({ ...op, payload: "two\nlines" })).not.toMatch(/[\r\n]/);
     });

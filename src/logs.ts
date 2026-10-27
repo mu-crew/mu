@@ -32,6 +32,7 @@ import { randomUUID } from "node:crypto";
 import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { nextHlc } from "./hlc.js";
 import { say } from "./messages.js";
+import { singleLinePayload } from "./segment-line.js";
 
 export type LogKind = "message" | "event" | "broadcast" | string;
 
@@ -298,22 +299,6 @@ export function groupIdFromPrefix(db: Db, prefix: string): string | null {
     prefix,
     rows.map((r) => r.groupId),
   );
-}
-
-/** `payload` with its line breaks removed when it is JSON spanning
- *  several lines, else unchanged (prose keeps its newlines: the segment
- *  JSON-escapes it). Not JSON.stringify(JSON.parse()): that rounds big
- *  numbers and merges duplicate keys. JSON strings cannot hold a raw
- *  CR/LF, so each one, with the whitespace around it, sits between
- *  tokens, and two adjacent JSON tokens are never both literals. */
-function singleLinePayload(payload: string): string {
-  if (!/[\r\n]/.test(payload)) return payload;
-  try {
-    JSON.parse(payload);
-  } catch {
-    return payload;
-  }
-  return payload.replace(/[ \t\r\n]*[\r\n][ \t\r\n]*/g, "");
 }
 
 /** This machine's identity — the peer id every op is stamped with. */
