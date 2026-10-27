@@ -191,8 +191,8 @@ export interface RebuildOptions {
  * (forthcoming) doctor drift check can use it — the latter rebuilds into
  * a temp path and diffs rather than showing a human anything.
  *
- * SYNCHRONOUS, matching applyOp and withOpContext: the op context is a
- * per-connection temp table, so interleaved async scopes would clobber
+ * SYNCHRONOUS, matching applyOp and withOpContext: the op context is the
+ * shared main-DB `op_ctx` row, so interleaved async scopes would clobber
  * each other's suppression flag.
  */
 export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {

@@ -23,9 +23,9 @@
  * Delegate answers reach the model through the settle wait, never through a pi
  * echo: a `delegate` event is shown with that call's report (the durable task
  * note, capped, with a pointer), and an event of a wave waits for the rest of
- * the wave and shows ONE summary. `poke()` tells the delegate side whether a
- * live settle wait will catch a just-recorded answer; only when none will does
- * it send a one-line wake (delegate.ts).
+ * the wave and shows ONE summary. `registerNudge` takes the delegate side's
+ * `delivered` hook (mu-pi.ts); the delegate side sends a one-line wake only
+ * when no live settle wait will catch a just-recorded answer (delegate.ts).
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
