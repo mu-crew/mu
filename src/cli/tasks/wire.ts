@@ -210,7 +210,10 @@ export function wireTaskCommands(program: Command): void {
     .option("-m, --message <text>", "the note text (alias for <text>)")
     .option("--note <text>", "the note text (alias for <text>)")
     .option("--text <text>", "the note text (alias for <text>)")
-    .option("--report", "file the note as the task's report (kind report; set once, never edited)")
+    .option(
+      "--report",
+      "file the note as the task's report (kind report, never edited; the last report wins, earlier ones stay in `mu task notes <id> --all`)",
+    )
     .addOption(
       new Option("--kind <kind>", "note kind (internal: delegates write verdicts)")
         .choices(NOTE_KINDS)
@@ -374,7 +377,10 @@ export function wireTaskCommands(program: Command): void {
       "--if-ready",
       "only close when every blocker is CLOSED; otherwise no-op + list the still-blocking ids",
     )
-    .option("--report <text>", "the worker's report, stored first as its own note (not evidence)")
+    .option(
+      "--report <text>",
+      "the worker's report, stored first as its own note (not evidence); the last report wins, earlier ones stay in `mu task notes <id> --all`",
+    )
     .option("--note <text>", "alias for --evidence")
     .option(...WORKSTREAM_OPT)
     .option(...EVIDENCE_OPT)
