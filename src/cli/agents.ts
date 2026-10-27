@@ -9,7 +9,7 @@
 // (audit_cleanups_post_schema_v5_wave). The three old verbs are
 // gone; `cmdMyTasks` and `cmdMyNext` stayed.
 
-import { basename, dirname } from "node:path";
+import { dirname } from "node:path";
 import { agentToOutput, liveAgentToOutput, workstreamIdOf } from "../agent-output.js";
 import { agentKey, blockedReason, type RuntimeState, readAgentStates } from "../agent-state.js";
 import { isCommandGate } from "../agents/spawn.js";
@@ -115,18 +115,6 @@ function assertGateFlags(opts: SpawnOpts): void {
   }
 }
 
-/** The pin for an agent CLI that re-sources the shell rc, unless its command already has it. */
-function shellRcFix(cli: string, command: string): string | undefined {
-  const argv0 = basename(command.trim().split(/\s+/)[0] ?? "");
-  if (cli === "codex" || argv0 === "codex") {
-    return command.includes("shell_snapshot") ? undefined : "--disable shell_snapshot";
-  }
-  if (cli === "cursor-agent" || argv0 === "cursor-agent") {
-    return command.includes("ZDOTDIR=") ? undefined : "ZDOTDIR=<dir with an empty .zshrc>";
-  }
-  return undefined;
-}
-
 export async function cmdSpawn(
   db: Db,
   rawName: string,
@@ -211,14 +199,6 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
     const trustWarning = say("agent.spawn_trust_warning", name, trustSkip);
     warnings.push(trustWarning);
     if (!opts.json) console.error(pc.yellow(`warning: ${trustWarning}`));
-  }
-  // codex and cursor-agent re-source the interactive shell rc per tool command, so an rc
-  // that sets PATH or MU_* overrides the pane's env (triage_dfh_harness_path).
-  const rcFix = shellRcFix(agent.cli, agent.command ?? "");
-  if (rcFix !== undefined) {
-    const rcWarning = say("agent.spawn_rc_warning", name, agent.cli, rcFix);
-    warnings.push(rcWarning);
-    if (!opts.json) console.error(pc.yellow(`warning: ${rcWarning}`));
   }
   const sent: SpawnSend | undefined = trustSkip
     ? {

@@ -28,13 +28,6 @@ something the rc does not shadow (`mun`). The skill and briefs still say
 Then check from inside the harness:
 `command -v mu; mu --version; echo "<$MU_SYNC_DIR>"`.
 
-mu catches part of this itself. `agent spawn --cli codex` and
-`--cli cursor-agent` warn unless the command already pins the rc. A pane
-records what it was given (`MU_PANE_ENV`), and a mu-next `mu` there whose
-DB, state dir or sync dir differ warns, does not sync, and refuses writes
-(exit 4). An older `mu` that the rc puts first on `PATH` knows nothing of
-this, so the pins above still matter.
-
 ## Run one as a worker
 
 On tmux, mu cannot type into a non-pi pane, so `spawn --send` and `agent

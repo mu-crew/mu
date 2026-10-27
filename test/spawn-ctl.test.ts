@@ -313,16 +313,9 @@ describe("spawn control socket", () => {
         "MU_CTL_SOCK",
         "MU_DB_PATH",
         "MU_MANAGED_AGENT",
-        "MU_PANE_ENV",
         "MU_STATE_DIR",
         "MU_WORKSTREAM",
       ]);
-      // The pane's own record of what it was given (src/pane-env.ts): sync off here.
-      expect(JSON.parse(env.MU_PANE_ENV ?? "")).toEqual({
-        db: dbPath,
-        state: defaultStateDir(),
-        sync: "",
-      });
       expect(env).toMatchObject({
         MU_MANAGED_AGENT: "1",
         MU_AGENT_NAME: "worker-1",
