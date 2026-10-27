@@ -30,7 +30,7 @@ import type { Db } from "../db.js";
 import { formatBytes } from "../disk-recon.js";
 import { checkDrift, DriftDetectedError } from "../drift.js";
 import { isJsonMode, muTable, pc } from "../output.js";
-import { UsageError } from "./handle.js";
+import { BackupTargetExistsError, UsageError } from "./handle.js";
 
 export function cmdDbBackup(db: Db, file: string, opts: { json?: boolean } = {}): void {
   const target = resolve(file);
@@ -38,7 +38,7 @@ export function cmdDbBackup(db: Db, file: string, opts: { json?: boolean } = {})
   // raw SQLite string; a typed UsageError gets the operator an exit code
   // and a next step instead.
   if (existsSync(target)) {
-    throw new UsageError(`${target} already exists: mu db backup never overwrites`);
+    throw new BackupTargetExistsError(target);
   }
   mkdirSync(dirname(target), { recursive: true });
   db.prepare("VACUUM INTO ?").run(target);
@@ -142,7 +142,9 @@ export function cmdDbForget(
     const why = plan.refused
       .map((r) => `${r.name} (${r.why === "live" ? "is live" : "was never torn down"})`)
       .join(", ");
-    throw new UsageError(`cannot forget: ${why}. Only torn-down workstreams can be forgotten.`);
+    throw new UsageError(`cannot forget: ${why}. Only torn-down workstreams can be forgotten.`, {
+      showHelp: false,
+    });
   }
   const ops = plan.candidates.reduce((n, c) => n + c.ops, 0);
   const bytes = plan.candidates.reduce((n, c) => n + c.bytes, 0);

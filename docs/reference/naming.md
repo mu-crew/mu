@@ -45,6 +45,11 @@ clears all blockers.
 `mu agent spawn <name> -w scratch`, and `mu workstream init scratch`
 is rejected. The `mu-` prefix is reserved too.
 
+Why the shape: tmux rewrites `.` to `_` in a session name and reserves `:` as a
+target separator, so a name holding either would make a session mu cannot look
+up again. mu adds `mu-` to name the session, so a `mu-` name would be
+double-prefixed.
+
 ## Workstream names
 
 Name a workstream `<project>-<purpose>`: `hail-auth`, `swayward-v2`,

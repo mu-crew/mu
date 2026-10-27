@@ -123,7 +123,8 @@ describe("CLI surfaces", () => {
     );
     expect(r.exitCode).toBe(2);
     expect(r.stderr).toContain("title yields empty slug");
-    expect(r.stderr).toContain("mu task add [options] [ids...]");
+    expect(r.stderr).toContain("mu task add <id> -t");
+    expect(r.stderr.trim().split("\n")).toHaveLength(1);
   });
 
   it("`task add` with an invalid id exits 2 (usage), like an invalid workstream name", async () => {

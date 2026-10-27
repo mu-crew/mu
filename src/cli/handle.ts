@@ -160,6 +160,15 @@ export class UsageError extends Error {
   }
 }
 
+/** `mu db backup` was pointed at a file that exists: backup never overwrites. A collision, exit 4,
+ *  like `mu rebuild`'s (RebuildTargetExistsError). */
+export class BackupTargetExistsError extends Error {
+  override readonly name = "BackupTargetExistsError";
+  constructor(public readonly path: string) {
+    super(`${path} already exists: mu db backup never overwrites`);
+  }
+}
+
 /** `mu db query` hit `no such column`: the message already names the columns
  *  and the closest ones, so it is one line (exit 2, no help dump). */
 export class SqlColumnError extends UsageError {
@@ -336,10 +345,10 @@ function isUsageClassError(err: unknown): boolean {
   if (err instanceof CommanderError) return true;
   if (err instanceof UsageError) return err.showHelp;
   if (
-    err instanceof WorkstreamNameInvalidError ||
+    // The verb's --help would explain a constraint on a value the operator typed. (A workstream
+    // name, an empty slug: their messages name the fix, so they are one line, no help.)
     err instanceof WorkstreamNameReservedError ||
-    err instanceof TaskIdInvalidError ||
-    err instanceof TaskTitleSlugEmptyError
+    err instanceof TaskIdInvalidError
   ) {
     return true;
   }
@@ -454,6 +463,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
+    err instanceof BackupTargetExistsError ||
     err instanceof TaskAutoRefusedError ||
     err instanceof TaskBriefMissingError ||
     err instanceof DelegateCallConflictError ||
@@ -640,6 +650,11 @@ function quotingHint(err: unknown, cmd: Command | undefined): string | undefined
 function unknownVerb(err: unknown, cmd: Command | undefined): string | undefined {
   if (!(err instanceof CommanderError) || cmd === undefined) return;
   const root = cmd.parent === null;
+  // An unknown option on the bare root: the 70-line root help is no answer, `mu --help` is.
+  if (root && err.code === "commander.unknownOption") {
+    const opt = /'([^']*)'/.exec(err.message)?.[1];
+    if (opt !== undefined) return `unknown option '${opt}'; see mu --help`;
+  }
   let word: string | undefined;
   if (err.code === "commander.unknownCommand") word = /'([^']*)'/.exec(err.message)?.[1];
   else if (err.code === "commander.excessArguments" && root) word = cmd.args[0];

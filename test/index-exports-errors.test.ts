@@ -10,7 +10,13 @@ import { describe, expect, it } from "vitest";
 import * as sdk from "../src/index.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const CLI_ONLY = new Set(["CommanderError", "UsageError", "CliExitError", "NameAmbiguousError"]);
+const CLI_ONLY = new Set([
+  "BackupTargetExistsError",
+  "CommanderError",
+  "UsageError",
+  "CliExitError",
+  "NameAmbiguousError",
+]);
 
 describe("src/index.ts error exports", () => {
   it("exports every error class src/cli/handle.ts classifies", () => {

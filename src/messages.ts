@@ -12,7 +12,7 @@ export const MESSAGES = {
   "task.id_invalid": (attempted: string) =>
     `invalid task id: ${JSON.stringify(attempted)} (expected /^[a-z][a-z0-9_-]{0,63}$/)`,
   "task.slug_empty": (title: string) =>
-    `title yields empty slug: ${JSON.stringify(title)} (no ASCII letter or digit to derive an id from)`,
+    `title yields empty slug: ${JSON.stringify(title)} (no ASCII letter or digit to derive an id from); pass one: mu task add <id> -t "..."`,
   "task.exists": (id: string) => `task already exists: ${id}`,
   "task.not_in_workstream": (id: string, expected: string, actual: string) =>
     `task ${id} is in workstream ${actual}, not ${expected}; pass -w ${actual}`,
@@ -235,8 +235,8 @@ export const MESSAGES = {
   "workstream.name_invalid": (attempted: string, reservedPrefix: boolean) =>
     `invalid workstream name ${JSON.stringify(attempted)}: ${
       reservedPrefix
-        ? `the 'mu-' prefix is reserved (mu auto-prepends 'mu-' to derive the tmux session name; '${attempted}' would produce session 'mu-${attempted}', which is double-prefixed and almost never what you want). Drop the 'mu-' from the workstream name.`
-        : `must match /^[a-z][a-z0-9_-]{0,31}$/. tmux silently rewrites '.' to '_' and reserves ':' as a target separator, so workstream names containing those characters would create tmux sessions mu couldn't look up afterwards. Use letters, digits, '_', and '-' only.`
+        ? `the 'mu-' prefix is reserved (mu adds it to the tmux session name, so '${attempted}' would be double-prefixed as 'mu-${attempted}'). Drop the 'mu-' from the name.`
+        : `use [a-z][a-z0-9_-]{0,31}`
     }`,
   "workstream.name_reserved": (attempted: string) =>
     `workstream name ${JSON.stringify(attempted)} is reserved: it is the off-the-cuff bucket and auto-creates on first spawn. Don't 'init' it.`,
