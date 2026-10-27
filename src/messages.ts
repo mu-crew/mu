@@ -277,6 +277,8 @@ export const MESSAGES = {
       : `agent ${agent}: process ${writer.pid}${writer.command === "" ? "" : ` (${writer.command})`} has a file in ${path} open for writing; it was kept. Stop it and preview again, or to remove the tree under it preview with --force: mu agent close ${agent} -w ${ws} --force`,
   "worktree.holder_left": (path: string, h: { pid: number; command: string; writer: boolean }) =>
     `process ${h.pid}${h.command === "" ? "" : ` (${h.command})`} was still ${h.writer ? "writing in" : "inside"} ${path} (${h.writer ? "a file open for writing; --force" : "its cwd or a file open for reading"}); the tree was removed under it`,
+  "worktree.holders_hidden": (path: string, pids: readonly number[]) =>
+    `could not inspect ${pids.length} process${pids.length === 1 ? "" : "es"} of yours (${pids.slice(0, 5).join(", ")}${pids.length > 5 ? ", ..." : ""}; /proc refused: non-dumpable or another namespace); mu cannot say whether ${pids.length === 1 ? "it was" : "they were"} in ${path}`,
   "worktree.unmerged_repo_gone": (path: string) =>
     `worktree ${path} has unmerged commits and its repo is gone; nothing can keep them (use --discard to drop them)`,
   "revision.changed": (subject: string, expected: number, current: number, preview: string) =>

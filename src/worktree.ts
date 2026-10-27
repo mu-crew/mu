@@ -12,7 +12,7 @@
 // is `agent close` / teardown, never a side effect of listing.
 
 import { execFile } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, readlinkSync, renameSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Db } from "./db.js";
@@ -379,6 +379,23 @@ function fdWrites(fdinfo: string): boolean {
   return m?.[1] === undefined || (Number.parseInt(m[1], 8) & 3) !== 0;
 }
 
+/** Is the process at `/proc/<pid>` this user's: its dir's owner, else the real uid in `status`. */
+function ownedByMe(procDir: string): boolean {
+  const me = process.getuid?.();
+  if (me === undefined) return true;
+  try {
+    if (statSync(procDir).uid === me) return true;
+  } catch {
+    return false; // gone
+  }
+  try {
+    const m = /^Uid:\s*(\d+)/m.exec(readFileSync(join(procDir, "status"), "utf8"));
+    return m?.[1] !== undefined && Number(m[1]) === me;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Processes of this user with their cwd or an open file at or under `dir`
  * (this process excluded: a close run from inside the tree writes nothing
@@ -388,6 +405,8 @@ function fdWrites(fdinfo: string): boolean {
 export async function worktreeHolders(
   dir: string,
   probe: { proc: string; lsof: string } = { proc: "/proc", lsof: "lsof" },
+  /** Filled with this user's pids /proc refused to show (EACCES: non-dumpable, another namespace). */
+  hidden: number[] = [],
 ): Promise<WorktreeHolder[] | undefined> {
   const held = new Map<number, WorktreeHolder>();
   const add = (pid: number, command: string, writer: boolean): void => {
@@ -400,16 +419,24 @@ export async function worktreeHolders(
     for (const ent of readdirSync(probe.proc)) {
       if (!/^\d+$/.test(ent)) continue;
       const pid = Number(ent);
+      let denied = false;
       const link = (p: string): string | undefined => {
         try {
           return readlinkSync(p);
-        } catch {
-          return undefined; // gone, or another user's
+        } catch (err) {
+          const code = (err as { code?: unknown }).code;
+          denied ||= code === "EACCES" || code === "EPERM";
+          return undefined; // gone, or not ours to read
         }
       };
       const cwd = link(join(probe.proc, ent, "cwd"));
       if (pid === process.pid) {
         sawSelf = cwd !== undefined;
+        continue;
+      }
+      // Ours but unreadable: unknown, never "not a holder".
+      if (denied && ownedByMe(join(probe.proc, ent))) {
+        hidden.push(pid);
         continue;
       }
       let command: string | undefined;
@@ -525,13 +552,16 @@ export async function releaseWorktree(
   await moveTree(owner, row.path, aside);
   const parked: WorktreeRow = { ...row, path: aside };
   try {
-    const holders = await worktreeHolders(aside, opts.probe);
+    const hidden: number[] = [];
+    const holders = await worktreeHolders(aside, opts.probe, hidden);
     const writer = holders?.find((h) => h.writer);
     if ((holders === undefined || writer !== undefined) && opts.force !== true) {
       throw new WorktreeHeldError(row.agent, row.workstream, row.path, writer);
     }
-    // Nothing a removal can lose: say who is still there, and go on.
+    // Nothing a removal can lose: say who is still there, and go on. A process
+    // /proc would not show is unknown: said too (one line), never taken as absent.
     const warnings = (holders ?? []).map((h) => say("worktree.holder_left", row.path, h));
+    if (hidden.length > 0) warnings.push(say("worktree.holders_hidden", row.path, hidden));
     const said = warnings.length > 0 ? { warnings } : {};
     // Judged again under the park: a write that raced the first check counts.
     const state = await assertReleasable(parked, opts);

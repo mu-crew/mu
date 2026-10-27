@@ -5,12 +5,14 @@
 
 import { type ChildProcess, execFileSync, spawn as spawnChild } from "node:child_process";
 import {
+  chmodSync,
   closeSync,
   existsSync,
   mkdtempSync,
   openSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -284,6 +286,28 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
       expect(r.warnings?.join("\n")).toContain(String(holder?.pid));
     },
   );
+
+  it("a process of yours /proc will not show (EACCES) is unknown: a warning, never silently skipped", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const proc = join(tmp, "proc");
+    execFileSync("mkdir", [
+      "-p",
+      join(proc, "self"),
+      join(proc, String(process.pid)),
+      join(proc, "4242"),
+    ]);
+    symlinkSync(tmp, join(proc, String(process.pid), "cwd"));
+    symlinkSync(wt.path, join(proc, "4242", "cwd"));
+    writeFileSync(join(proc, "4242", "comm"), "secretive\n");
+    chmodSync(join(proc, "4242"), 0o000); // as PR_SET_DUMPABLE=0 leaves it
+    try {
+      const r = await releaseWorktree(db, wt, { probe: { proc, lsof: join(tmp, "no-lsof") } });
+      expect(r.action).toBe("removed");
+      expect(r.warnings?.join("\n")).toMatch(/could not inspect.*4242/);
+    } finally {
+      chmodSync(join(proc, "4242"), 0o755);
+    }
+  });
 
   it("no /proc and no lsof: unproven refuses and keeps the tree; force closes it", async () => {
     const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
