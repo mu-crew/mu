@@ -126,7 +126,7 @@ export const MESSAGES = {
   "agent.empty_send": (name: string) =>
     `agent ${name} runs pi: an empty message cannot go over the control socket; press Enter in the pane yourself`,
   "agent.send_unsupported": (name: string, cli: string) =>
-    `agent ${name} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr) or use pi`,
+    `agent ${name} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr), start it with the prompt as an argument (--command "${cli} '<prompt>'"), or use pi`,
   "agent.send_refused": (reason: string) => `control socket refused the send: ${reason}`,
   "agent.attempt_busy": (task: string, key: string) =>
     `spawn attempt ${key} of task ${task} is running in another mu process; nothing was done. Retry when it finishes (the replay returns its outcome)`,

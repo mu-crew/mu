@@ -50,8 +50,14 @@ export type NextOutcome =
   | { kind: "send-unknown"; agent: NextAgent; msgId: string; agentId: number }
   /** A remote command gate spawned: its wait returns the command's exit. */
   | { kind: "gate-spawned"; agent: NextAgent }
-  /** `task claim --for`: the owner still has to be sent the task. */
-  | { kind: "claimed-for"; task: { workstream: string; id: string }; owner: NextAgent }
+  /** `task claim --for`: the owner still has to be sent the task. `muxCanSend: false` (tmux):
+   *  a non-pi owner cannot be sent anything, so no send is offered. */
+  | {
+      kind: "claimed-for";
+      task: { workstream: string; id: string };
+      owner: NextAgent;
+      muxCanSend?: boolean;
+    }
   /** A destructive preview: `apply` is the verb's argv (from `mu`), `revision` its fence. */
   | { kind: "preview"; apply: readonly string[]; revision: number }
   /** A wait ended with something still owed: its stored handle. */
@@ -171,7 +177,9 @@ function outcomeMove(db: Db, o: NextOutcome): HintMove | undefined {
     case "claimed-for": {
       const owner = getAgent(db, o.owner.name, o.owner.workstream);
       if (owner === undefined) return undefined;
-      const fresh = expectsCtl(owner) ? ["--fresh"] : [];
+      const ctl = expectsCtl(owner);
+      if (!ctl && o.muxCanSend === false) return undefined;
+      const fresh = ctl ? ["--fresh"] : [];
       return {
         argv: [
           "mu",
