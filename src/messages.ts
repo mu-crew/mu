@@ -186,6 +186,8 @@ export const MESSAGES = {
   "agent.spawn_task_send": () => "--task needs --send: the sent text is the task's brief",
   "agent.spawn_name_hint": (name: string) =>
     `hint: agent name "${name}" does not match the smallest-unused-suffix convention (<role>-<n>; e.g. worker-1, reviewer-2). Accepted; consider renaming if you spawn additional workers.\n`,
+  "agent.spawn_rc_warning": (name: string, cli: string, fix: string) =>
+    `${name} runs ${cli}, which re-sources your shell rc for every command: an rc that sets PATH or MU_* points its mu elsewhere; start it with ${fix} (docs/guide/other-agent-clis.md)`,
   "agent.spawn_trust_warning": (name: string, skipped: boolean) =>
     `${name} is showing Claude's folder-trust dialog (default "No, exit")${skipped ? "; --send skipped" : ""}`,
   "agent.send_interrupt_excl": (flag: string) => `--interrupt and ${flag} are mutually exclusive`,
