@@ -133,6 +133,58 @@ describe("the result outlives the echo", () => {
     expect(getDelegateCall(mu.db, b?.callId ?? "")?.verdict).toBe("REFUTED");
   });
 
+  it("a /reload re-adopts the session's running pane calls: the late answer is recorded and woken, no wait owes it forever", async () => {
+    const mu = fakeMu();
+    const ctx = { sessionManager: { getSessionId: () => "s1" } };
+    const first = fakePi();
+    registerDelegate(first.pi, mu.run);
+    await tool(first).execute(
+      "a",
+      { task: "one", label: "a", record: { task: "crew/f1" } },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const [call] = listDelegates(mu.db);
+    expect(call).toMatchObject({ state: "running", agent: "delegate-a", caller: "pi:s1" });
+    for (const h of first.shutdown) await h({ reason: "reload" }, { hasUI: false });
+    mu.waits.delete("delegate-a"); // the old runtime's watcher died with it
+    // The reloaded runtime: same session, same DB.
+    const second = fakePi();
+    registerDelegate(second.pi, mu.run);
+    for (const h of second.handlers.get("session_start") ?? []) await h({ reason: "reload" }, ctx);
+    await settle();
+    const wait = mu.calls.filter((c) => c[0] === "agent" && c[1] === "wait").at(-1) ?? [];
+    expect(wait.slice(2, 3)).toEqual(["delegate-a"]);
+    expect(wait[wait.indexOf("--after-runs") + 1]).toBe("0"); // a one-shot delegate: its first run
+    mu.waits
+      .get("delegate-a")
+      ?.resolve(ok({ agents: [{ outcome: "done", lastText: answer("CONFIRMED") }] }));
+    await settle();
+    expect(getDelegateCall(mu.db, call?.callId ?? "")).toMatchObject({
+      state: "done",
+      verdict: "CONFIRMED",
+    });
+    expect(notes(mu, "crew", "f1").filter((n) => n.kind === "verdict")).toHaveLength(1);
+    expect(second.sendMessage).toHaveBeenCalledTimes(1); // the wake: the answer is not stranded
+  });
+
+  it("another session's running calls are left alone", async () => {
+    const mu = fakeMu();
+    const first = fakePi();
+    registerDelegate(first.pi, mu.run);
+    await tool(first).execute("a", { task: "one", label: "a" }, undefined, undefined, {
+      sessionManager: { getSessionId: () => "s1" },
+    });
+    const second = fakePi();
+    registerDelegate(second.pi, mu.run);
+    const before = mu.calls.length;
+    for (const h of second.handlers.get("session_start") ?? [])
+      await h({ reason: "startup" }, { sessionManager: { getSessionId: () => "s2" } });
+    await settle();
+    expect(mu.calls.slice(before).some((c) => c[1] === "wait")).toBe(false);
+  });
+
   it("a /reload drops queued calls to refused: durable, listable, reissuable, never silently gone", async () => {
     process.env.MU_DELEGATE_MAX = "1";
     try {

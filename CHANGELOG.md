@@ -12,6 +12,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`/reload` no longer orphans a running pane delegate** (`triage_df4_reload_orphan`, dogfood-4 F2). The
+  old runtime's watcher died with the reload while the call stayed `running`, so nothing recorded the
+  answer and the settle wait owed it for ever (open:1 after 4 min 44 s). On `session_start` the
+  extension now re-adopts this pi session's `running` pane calls (`mu delegates list --caller
+  pi:<session>`): it watches each again (`mu agent wait --after-runs 0`, a one-shot delegate's first
+  run) and delivers through the usual recorder and wake. A delegate that finished meanwhile is
+  recorded at once; a pane that is gone fails the call. The shutdown warning says so on reload.
+  `docs/guide/delegate.md` now states this. Red test: `test/extension-delegate-durable.test.ts`.
+
 - **A wave whose answers are already recorded is shown once, not once per delegate** (`triage_df4_wave_once`,
   dogfood-4 F1). The settle's wave loop only ran while a sibling was pending, so with none pending it
   showed the firing call's summary and the next settle repeated it for the next call (3 entries, then one
