@@ -301,7 +301,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("notes <id>")
     .description(
-      "A task's notes, one line each: the brief, the report, every verdict, then the last 3 ordinary notes; `more=N next=…` names the rest. --all/--from <n> page the whole history; --tail, --since, --since-claim filter.",
+      "A task's notes, one per line (a newline inside a note prints as \\n): the brief, the report, every verdict, the last 3 others; `more=N next=…` names the rest. --all/--from <n> page the history; --tail, --since, --since-claim filter.",
     )
     .option("--all", "every note, from the first (the default view leaves some out)")
     .option("--from <n>", "every note from note <n> on", parsePositiveNumber)
@@ -366,7 +366,10 @@ export function wireTaskCommands(program: Command): void {
       "--as <substate>",
       `closing substate (${TASK_SUBSTATES.CLOSED.join(" | ")}; default done)`,
     )
-    .option("--why <text>", "reason, stored as a note; required unless --as done")
+    .option(
+      "--why <text>",
+      "reason, stored as a note; every --as but done needs it (done takes --evidence instead)",
+    )
     .option(
       "--if-ready",
       "only close when every blocker is CLOSED; otherwise no-op + list the still-blocking ids",

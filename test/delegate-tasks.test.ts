@@ -436,6 +436,21 @@ describe("finish: record before report and close", () => {
       expect(notes("scratch", c.task).filter((x) => x.kind === "report")).toHaveLength(1);
     });
 
+    it("closed by the delegate as wontfix: one report note (closeTask is not handed the report again), the close is re-applied as done", () => {
+      const c = running();
+      selfClose(c.task, "delegate-ref1", "wontfix");
+      const r = finishDelegate(db, c.callId, {
+        outcome: "done",
+        text: "VERDICT: CONFIRMED late",
+        author: "pi:s1",
+      });
+      expect(r).toMatchObject({ changed: true, state: "done" });
+      const rep = notes("scratch", c.task).filter((x) => x.kind === "report");
+      expect(rep).toHaveLength(1);
+      expect(rep[0]?.content).toContain("VERDICT: CONFIRMED late");
+      expect(getTask(db, c.task, "scratch")).toMatchObject({ status: "CLOSED", substate: "done" });
+    });
+
     it("closed by someone else (the orchestrator, not the delegate): that path is unchanged, no report note is added to a task they closed", () => {
       const c = running();
       selfClose(c.task, "orchestrator");

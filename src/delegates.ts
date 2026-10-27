@@ -488,7 +488,8 @@ export function finishDelegate(
           const state: DelegateState = ok ? "done" : cancelled ? "cancelled" : "failed";
           // The delegate closed its own task first (a pane's close nudge, its own
           // habit): closeTask's no-op retry would drop the report. Keep it as a
-          // report note; the close below then changes nothing. A task someone
+          // report note; the close below then re-applies the outcome (a delegate's wontfix
+          // becomes done, with a close note) and is not handed the report. A task someone
           // else closed (the orchestrator, a user) gets no note. The delegate is told
           // from them by the author of the close note: the call row's `agent`.
           const selfClosed =
@@ -507,7 +508,7 @@ export function finishDelegate(
             ...(selfClosed ? {} : { report }),
             as: ok ? "done" : cancelled ? "wontfix" : "rejected",
             ...(ok
-              ? { evidence: `answered ${verdict ?? "NO VERDICT"} (call ${callId})` }
+              ? { evidence: `answered ${verdict ?? "with no VERDICT line"} (call ${callId})` }
               : { why: error ?? `${outcome}: no answer (call ${callId})` }),
           });
           db.prepare(

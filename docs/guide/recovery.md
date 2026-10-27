@@ -24,6 +24,10 @@ with the multiplexer:
   orphan. mu lists it and does not register it. Close the pane with
   tmux or herdr, or ignore it.
 
+A `mu agent spawn --task` after a dead worker, with the same attempt
+key but a new request, is refused (`already ran with a different
+request`): pass `--attempt <new key>`.
+
 ## A pi agent shows `ctl missing` or `ctl refused`
 
 mu reaches pi agents only through the control socket, and never falls
