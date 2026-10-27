@@ -275,12 +275,15 @@ export function listWorktrees(db: Db, workstream?: string): WorktreeRow[] {
  * stale registry row is forgotten). A worktree there is removed only if mu
  * made it, it is clean, and HEAD is the base (or the last collected head):
  * its own unused leftover. Anything else refuses with one line: no branch
- * is made on reuse.
+ * is made on reuse. The close rule's scan runs first: a process writing in
+ * the tree refuses (`mu agent close ... --force` removes it); a cwd or reader
+ * there, or a scan that cannot run, is returned as a warning (the removal is
+ * git's unforced one, which still refuses dirt).
  */
 export async function reclaimWorktreePath(
   db: Db,
   opts: { agent: string; workstream: string; path: string },
-): Promise<void> {
+): Promise<string[]> {
   const { agent, workstream, path } = opts;
   const row = getWorktreeAt(db, path);
   if (existsSync(asideOfLocal(path))) {
@@ -293,7 +296,7 @@ export async function reclaimWorktreePath(
   }
   if (!existsSync(path)) {
     if (row !== undefined) forgetWorktree(db, path);
-    return;
+    return [];
   }
   const refuse = (why: string) => new WorktreePathNotEmptyError(agent, workstream, path, why);
   if (row === undefined) throw refuse("not a worktree mu registered");
@@ -309,8 +312,20 @@ export async function reclaimWorktreePath(
   if (head !== row.base && head !== row.lastCollectedHead) {
     throw refuse(`commits of its own (HEAD ${head.slice(0, 12)})`);
   }
+  const hidden: number[] = [];
+  const holders = await worktreeHolders(path, undefined, hidden);
+  const writer = holders?.find((h) => h.writer);
+  if (writer !== undefined) {
+    throw refuse(
+      `process ${writer.pid}${writer.command === "" ? "" : ` (${writer.command})`} has a file in it open for writing; stop it, or remove the tree under it: mu agent close ${agent} -w ${workstream} --force`,
+    );
+  }
+  const warnings = (holders ?? []).map((h) => say("worktree.holder_left", path, h));
+  if (holders === undefined) warnings.push(say("worktree.holders_unproven", path));
+  if (hidden.length > 0) warnings.push(say("worktree.holders_hidden", path, hidden));
   await removeWorktreeDir((await liveRoot(row.root, path)) ?? undefined, path, false);
   forgetWorktree(db, path);
+  return warnings;
 }
 
 // ─── the close rule ────────────────────────────────────────────────────
