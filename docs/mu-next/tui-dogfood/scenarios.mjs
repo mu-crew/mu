@@ -223,7 +223,7 @@ function s6() {
   claim(ws, "seed1", "worker-1");
   claim(ws, "seed2", "worker-2");
 }
-// The mutator: kept running by run.sh, killed at exit.
+// The mutator: kept running by run.sh, killed at exit. It never closes seed1: the live smoke keeps a notes drill open on it.
 async function driver() {
   const ws = "live-demo";
   let n = 100;
@@ -241,7 +241,7 @@ async function driver() {
       if (r < 0.3) T(ws, `new${++n}`, `Task created at ${new Date().toTimeString().slice(0, 8)}`, { impact: 10 + Math.floor(Math.random() * 90) });
       else if (r < 0.55 && open().length) await claim(ws, pick(open()), `worker-${1 + Math.floor(Math.random() * 3)}`);
       else if (r < 0.8 && mine().length) { const t = pick(mine()); note(ws, t.id, `progress ${new Date().toTimeString().slice(0, 8)}`, t.owner); }
-      else if (mine().length) { const t = pick(mine()); close(ws, t.id, "ran tests: ok", t.owner); }
+      else if (mine().some((t) => t.id !== "seed1")) { const t = pick(mine().filter((t) => t.id !== "seed1")); close(ws, t.id, "ran tests: ok", t.owner); }
     } catch (e) { /* blocked, owned, gone: the next tick tries again */ }
   }
 }
