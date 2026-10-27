@@ -19,6 +19,7 @@ import { resetAgentStateCacheForTests, setMurmurRunnerForTests } from "../src/ag
 import { deleteAgent, insertAgent } from "../src/agents.js";
 import { parseSeconds } from "../src/cli.js";
 import { type Db, openDb } from "../src/db.js";
+import { withCaptureSuppressed } from "../src/op-context.js";
 import {
   addNote,
   addTask,
@@ -360,7 +361,9 @@ describe("listNotes since", () => {
   it("compares the cutoff as an instant (no millis, offsets)", () => {
     addT("n1");
     addNote(db, "n1", "hello", { workstream: WS, author: "me" });
-    db.prepare("UPDATE task_notes SET created_at = ?").run("2026-10-05T10:07:00.411Z");
+    withCaptureSuppressed(db, () =>
+      db.prepare("UPDATE task_notes SET created_at = ?").run("2026-10-05T10:07:00.411Z"),
+    );
     const since = (s: string) => listNotes(db, "n1", WS, { since: s }).length;
     // Same second without millis: lexically 'Z' > '.', so this hid the note.
     expect(since("2026-10-05T10:07:00Z")).toBe(1);

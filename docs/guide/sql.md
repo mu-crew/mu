@@ -113,7 +113,10 @@ statement checked by SQLite itself (a table or column named `begin` or
 `end` is fine, a leading `;` hides nothing); a failed statement rolls the call
 back. An `INSERT` that names an `id` of 0 or below is refused too (omit it), and
 so is an `UPDATE` of `id` (or `rowid`) on `workstreams`, `tasks`, `task_notes`
-and `task_edges`: ids are set once.
+and `task_edges`: ids are set once. Notes are append-only: an `UPDATE` of a
+note's `author`, `content`, `created_at` or `kind` is refused (add a new
+note), and so is an `UPDATE` of an edge's `created_at`. A rebuild or peer
+would replay either as a different row than the one you edited.
 
 What it will not touch: mu's capture bookkeeping, the schema and the
 connection. The rule is a policy, so nothing has to be detected:

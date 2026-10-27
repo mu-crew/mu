@@ -9,6 +9,7 @@ import { deleteAgent, insertAgent } from "../src/agents.js";
 import { applySettledClose } from "../src/close-block.js";
 import { type Db, openDb } from "../src/db.js";
 import { HumanNeededInvalidError, openHumanNeeds, recordHumanNeeded } from "../src/human-needed.js";
+import { withCaptureSuppressed } from "../src/op-context.js";
 import { rebuildInto } from "../src/rebuild.js";
 import { claimTask } from "../src/tasks/claim.js";
 import {
@@ -127,7 +128,7 @@ describe("recordHumanNeeded", () => {
 
   it("a note author never confers ownership", () => {
     const r = need("a/orch", "x");
-    db.prepare("UPDATE task_notes SET author = 'b/orch'").run();
+    withCaptureSuppressed(db, () => db.prepare("UPDATE task_notes SET author = 'b/orch'").run());
     expect(openHumanNeeds(db, "b/orch")).toEqual([]);
     expect(openHumanNeeds(db, "a/orch")).toHaveLength(1);
     expect(r.id).toBeTruthy();

@@ -17,13 +17,21 @@
 import type { Db } from "./db.js";
 import { OPS_ENTITIES_SQL } from "./logs.js";
 
-/** Note tombstones whose payload is redundant with a put under the same key. */
+/** Note tombstones whose payload is redundant: the newest earlier put under
+ *  the same key describes the same note (author, content, created_at). A
+ *  tombstone whose key now belongs to ANOTHER note (ids reassigned by a
+ *  rebuild) carries the only record of what died; blanking it would make
+ *  apply kill the wrong note. */
 const REDUNDANT_TOMBSTONES_SQL = `
   SELECT d.seq AS seq, length(d.payload) AS bytes
     FROM ops d
    WHERE d.entity = 'note' AND d.op = 'del' AND d.payload <> '{}'
-     AND EXISTS (SELECT 1 FROM ops p
-                  WHERE p.entity = 'note' AND p.key = d.key AND p.op = 'put')`;
+     AND (SELECT json_extract(p.payload, '$.author') IS json_extract(d.payload, '$.author')
+              AND json_extract(p.payload, '$.content') IS json_extract(d.payload, '$.content')
+              AND json_extract(p.payload, '$.created_at') IS json_extract(d.payload, '$.created_at')
+            FROM ops p
+           WHERE p.entity = 'note' AND p.key = d.key AND p.op = 'put' AND p.seq < d.seq
+           ORDER BY p.seq DESC LIMIT 1)`;
 
 export interface CompactPlan {
   /** Note tombstones that would be blanked. */

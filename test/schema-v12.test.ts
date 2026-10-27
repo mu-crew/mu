@@ -356,11 +356,10 @@ describe("note kind is set once at INSERT", () => {
     ).run(id, kind ?? "note");
   };
 
-  it("a local write changing kind raises; same-kind and other columns pass", () => {
+  it("a local write changing kind raises; a same-kind rewrite passes", () => {
     seedNote("brief");
     expect(() => db.prepare("UPDATE task_notes SET kind = 'report'").run()).toThrow(/kind/);
     expect(() => db.prepare("UPDATE task_notes SET kind = 'brief'").run()).not.toThrow();
-    expect(() => db.prepare("UPDATE task_notes SET content = 'y'").run()).not.toThrow();
     expect(db.prepare("SELECT kind FROM task_notes").get()).toEqual({ kind: "brief" });
   });
 
