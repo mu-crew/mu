@@ -112,6 +112,7 @@ import {
   failedGate,
   type Item,
   inputToken,
+  isCompletion,
   refKey,
   registered,
   type StallState,
@@ -1283,6 +1284,7 @@ export async function waitForEvents(
         ...(e?.snap.runs !== undefined ? { runs: e.snap.runs } : {}),
       },
       refs: snapshotsOf(items, chosen?.fired ?? []),
+      delivered: (chosen?.fired ?? []).filter(isCompletion).map((i) => i.ref),
       timedOut: kind === "heartbeat" && !drained,
       interrupted: kind === "interrupted",
       exit:
@@ -1330,15 +1332,7 @@ export async function waitForEvents(
         ) {
           return false;
         }
-        const completed = delivered.filter(
-          (i) =>
-            i.kind === "closed" ||
-            i.kind === "settled" ||
-            i.kind === "pane-text" ||
-            i.kind === "exited" ||
-            i.kind === "delegate" ||
-            (i.kind === "dead" && i.ref.kind === "agent"),
-        );
+        const completed = delivered.filter(isCompletion);
         // Each delivered ref is consumed by the caller that owns it, guarded by that caller's
         // wait generation.
         for (const c of callers) {

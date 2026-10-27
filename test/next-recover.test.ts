@@ -444,6 +444,7 @@ describe("--hold: bounded wait over the in-flight workers", () => {
   ): WaitResult => ({
     event: { kind, ref: id === null ? null : { kind: "agent", workstream: "d", id } },
     refs: [],
+    delivered: [],
     timedOut: kind === "heartbeat",
     interrupted: kind === "interrupted",
     exit:
@@ -770,6 +771,7 @@ describe("worker ceiling (--workers): the slot is what is working, not what stil
             ? { kind: "closed", ref: { kind: "task", workstream: "d", id: "a" } }
             : { kind: "heartbeat", ref: null },
         refs: [],
+        delivered: [],
         timedOut: false,
         interrupted: false,
         exit: 0,

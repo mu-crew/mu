@@ -154,6 +154,12 @@ export interface WaitResult {
   interrupted: boolean;
   /** 0 fired or timed out, 6 dead, 7 input or stall, 130 interrupted; an `exited` gate's own status (23 stays 23), the first nonzero of the gates that ended. */
   exit: number;
+  /**
+   * The refs this wait's event actually handed over as COMPLETED (closed, settled, delegate, ...):
+   * what a resume may drop. Never an input or stall (still owed its completion) and never a target
+   * an early urgent return did not name.
+   */
+  delivered: WaitRef[];
   /** The callers' consumed tokens after this wait (empty without callers). */
   cursor: Record<string, CursorToken>;
   /** Open human needs of the callers (never another caller's). */

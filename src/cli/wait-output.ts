@@ -28,19 +28,10 @@ export function refString(ref: WaitRef): string {
  * blockers) are not listed: the stored callers and filters find them again. Never
  * truncated: they live in the stored handle, not in the printed line.
  */
-export function owedRefs(
-  result: WaitResult,
-  mode: "first" | "all",
-  explicit: readonly WaitRef[],
-): WaitRef[] {
-  const delivered = (s: WaitSnapshot): boolean => {
-    if (result.event.kind === "heartbeat" || result.event.kind === "interrupted") return false;
-    if (mode === "all") return s.fired;
-    const e = result.event.ref;
-    return (
-      e !== null && e.kind === s.ref.kind && e.workstream === s.ref.workstream && e.id === s.ref.id
-    );
-  };
+export function owedRefs(result: WaitResult, explicit: readonly WaitRef[]): WaitRef[] {
+  // What the engine handed over as completed: an input or stall is never delivered, and an
+  // early urgent return of --all names only itself (a closed target stays owed).
+  const delivered = new Set(result.delivered.map(refString));
   const seen = new Set<string>();
   const out: WaitRef[] = [];
   for (const ref of explicit) {
@@ -48,7 +39,7 @@ export function owedRefs(
     if (seen.has(key)) continue;
     seen.add(key);
     const snap = result.refs.find((s) => refString(s.ref) === key);
-    if (snap !== undefined && delivered(snap)) continue;
+    if (delivered.has(key)) continue;
     if (ref.kind !== "agent") {
       out.push({ kind: ref.kind, workstream: ref.workstream, id: ref.id });
       continue;

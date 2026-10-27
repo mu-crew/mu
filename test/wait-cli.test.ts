@@ -438,6 +438,7 @@ describe("the bounded result and the resume handle", () => {
   const result = (refs: WaitSnapshot[], over: Partial<WaitResult> = {}): WaitResult => ({
     event: { kind: "heartbeat", ref: null },
     refs,
+    delivered: [],
     timedOut: true,
     interrupted: false,
     exit: 0,
@@ -539,15 +540,13 @@ describe("the bounded result and the resume handle", () => {
     const explicit = [fired.ref, open.ref];
     const hit = result([fired, open], {
       event: { kind: "settled", ref: fired.ref, runs: 3 },
+      delivered: [fired.ref],
       timedOut: false,
     });
-    expect(owedRefs(hit, "first", explicit).map((r) => r.id)).toEqual(["a2"]);
-    expect(owedRefs(result([fired, open]), "first", explicit).map((r) => r.id)).toEqual([
-      "a1",
-      "a2",
-    ]);
-    // --all: every ref that fired is delivered, whichever event ended the wait.
-    expect(owedRefs(hit, "all", explicit).map((r) => r.id)).toEqual(["a2"]);
+    expect(owedRefs(hit, explicit).map((r) => r.id)).toEqual(["a2"]);
+    expect(owedRefs(result([fired, open]), explicit).map((r) => r.id)).toEqual(["a1", "a2"]);
+    // --all: the same, by what the engine delivered (not by which refs fired).
+    expect(owedRefs(hit, explicit).map((r) => r.id)).toEqual(["a2"]);
   });
 
   it("owedRefs: 30 refs are all kept, and the OBSERVED incarnation and runs win over the typed ref", () => {
@@ -557,7 +556,7 @@ describe("the bounded result and the resume handle", () => {
       afterRuns: undefined,
       incarnation: undefined,
     })) as WaitRef[];
-    const owed = owedRefs(result(refs), "all", explicit);
+    const owed = owedRefs(result(refs), explicit);
     expect(owed).toHaveLength(30);
     expect(owed[7]).toEqual({
       kind: "agent",
@@ -592,6 +591,7 @@ describe("exited: a remote command gate's status is the exit (v_remote_gates)", 
       result: {
         event: { kind: "exited", ref },
         refs: [{ ref, status: null, exit: 23, fired: true, dead: false }],
+        delivered: [ref],
         timedOut: false,
         interrupted: false,
         exit: 23,
