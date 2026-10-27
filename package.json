@@ -45,7 +45,10 @@
     "dist",
     "skills",
     "prompts",
-    "docs",
+    "docs/guide",
+    "docs/reference",
+    "docs/VOCABULARY.md",
+    "docs/ARCHITECTURE.md",
     "README.md",
     "AGENTS.md"
   ],
