@@ -14,12 +14,19 @@ export const CTL_SOCK_ENV = "MU_CTL_SOCK";
 /** macOS sun_path is 104 bytes including the trailing NUL. */
 export const MAX_SOCK_PATH = 103;
 
-/** `<dir>/<ws>/<agent>.sock`, or `<dir>/h/<hash>.sock` past MAX_SOCK_PATH. */
+/** Directory of hashed paths: not a valid workstream name. */
+const HASHED_DIR = "_h";
+
+/**
+ * `<dir>/<ws>/<agent>.sock`, or `<dir>/_h/<hash>.sock` past MAX_SOCK_PATH. `_h` starts with
+ * `_`, which no workstream name can (`^[a-z]...`), so a hashed path never aliases a readable
+ * one: with `h/` a workstream `h` plus an agent named like a hash collided.
+ */
 function sockPathUnder(dir: string, workstream: string, agent: string, ext = "sock"): string {
   const readable = join(dir, workstream, `${agent}.${ext}`);
   if (Buffer.byteLength(readable) <= MAX_SOCK_PATH) return readable;
   const h = createHash("sha1").update(`${workstream}/${agent}`).digest("hex").slice(0, 16);
-  return join(dir, "h", `${h}.${ext}`);
+  return join(dir, HASHED_DIR, `${h}.${ext}`);
 }
 
 export function ctlSocketPath(workstream: string, agent: string, stateDir?: string): string {
@@ -30,7 +37,7 @@ export function ctlSocketPath(workstream: string, agent: string, stateDir?: stri
 
 /**
  * The file a lease carrier writes its job handle to: `<state dir>/carrier/<ws>/<agent>.job`,
- * hashed past the same bound as a ctl socket (`carrier/h/<hash>.job`). Derived, never stored.
+ * hashed past the same bound as a ctl socket (`carrier/_h/<hash>.job`). Derived, never stored.
  */
 export function carrierJobFilePath(workstream: string, agent: string, stateDir?: string): string {
   const dbPath = process.env.MU_DB_PATH;

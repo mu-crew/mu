@@ -34,7 +34,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `stop` must contain `{job}` (`{cwd}` is always `.`, `{env}` is refused) and a
   session profile refuses `--stop`. The lexer enforces which placeholder each
   field takes (`{{job}}` is a literal, `:sh` and quotes are read right), never a
-  substring check. `host show` / `list` print the transport and the stop; `host
+  substring check. `host show` and the human `host list` (a STOP column) print the
+  transport and the stop; `host
   init <name> --mule` prints the starter (`env {env} sh -c {cmd}`, `mule rm
   {job}`); `host check` on a lease profile checks the shell's placeholders,
   expands `stop` with a dummy handle without running it, runs the `pi` and
@@ -49,6 +50,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Hashed socket paths moved to `_h/`.** A long-path control socket is now
+  `<state dir>/sock/_h/<hash>.sock` (was `sock/h/`), the remote one
+  `/tmp/mu-<uid>/_h/<hash>.sock`, and the lease job file `carrier/_h/<hash>.job`.
+  A workstream may be named `h`, so `h/<hash>` could alias another pair's hashed
+  path (same local socket, different remote). `_` cannot start a workstream
+  name. Agents with a hashed path get the new one on their next spawn; a running
+  one keeps its old socket file.
 - **Schema (still v13, additive):** `host_profiles` gains `transport` (default
   `session`) and `stop`; the 27th table `carrier_jobs` joins `MACHINE_LOCAL_TABLES`.
   An existing file is completed in the one upgrade transaction.
@@ -59,6 +67,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`host check` picks login or bare shell from the admitted profile**, not one read before the pane probes, so a profile edited mid-probe is not certified through the other transport's shell.
 - **The `host init --ssh` starter comment named the wrong failure.** A multiplexed
   ssh does bind the `-L` forward, in the master, where it outlives the pane and is
   never re-bound. The options stay; the comment and `docs/guide/remote.md` now say why.

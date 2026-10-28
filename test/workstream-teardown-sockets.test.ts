@@ -1,8 +1,8 @@
 // Teardown must reap its agents' control socket files. The FK cascade
 // deletes agent rows without going through deleteAgent, so before this
 // the ssh -L forward sockets and <state>/sock/<ws>/ outlived the
-// workstream. Hashed long-path sockets share sock/h/ across workstreams,
-// so a workstream literally named "h" must only remove its own files.
+// workstream. Hashed long-path sockets share sock/_h/ across workstreams (no workstream
+// can be named `_h`), and a workstream literally named "h" owns only sock/h/.
 
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -55,7 +55,7 @@ describe("teardownWorkstream control sockets", () => {
   it("removes short-path and hashed long-path sockets, then the empty sock/<ws>/ dir", async () => {
     const short = touchSock("ws", "w1");
     const long = touchSock("ws", LONG);
-    expect(long).toContain(join("sock", "h"));
+    expect(long).toContain(join("sock", "_h"));
 
     await softTeardown(db, "ws");
 
@@ -89,10 +89,11 @@ describe("teardownWorkstream control sockets", () => {
     expect(rows.n).toBe(2);
   });
 
-  it('tearing down workstream "h" leaves other workstreams\' hashed sockets in sock/h/', async () => {
+  it('tearing down workstream "h" leaves other workstreams\' hashed sockets in sock/_h/', async () => {
     const other = touchSock("other", LONG);
     const own = touchSock("h", "w1");
-    expect(dirname(own)).toBe(dirname(other));
+    expect(dirname(other)).toMatch(/\/sock\/_h$/);
+    expect(dirname(own)).not.toBe(dirname(other));
 
     await softTeardown(db, "h");
 
