@@ -38,6 +38,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   mux.restore();
   try {
     db.close();
@@ -125,8 +126,14 @@ describe("text: one record per visible op", () => {
   });
 
   it("the parent-row touch of a note is not a second record (visible ops only)", async () => {
+    // touchTask skips a same-millisecond bump, so pin the note 1 ms after the add: else the
+    // touch this test is about does not exist (a flake under load).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     addTask(db, { localId: "a", workstream: "demo", title: "A", impact: 50, effortDays: 1 });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.001Z"));
     addNote(db, "a", "context", { workstream: "demo" });
+    vi.useRealTimers();
     const r = await runCli(["log", "-w", "demo", "--intent", "task.note"], dbPath);
     expect(r.stdout.trimEnd().split("\n")).toHaveLength(1);
     const raw = db
