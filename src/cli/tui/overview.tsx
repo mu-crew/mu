@@ -8,7 +8,7 @@ import type { ReactElement } from "react";
 import type { DashboardSnapshot } from "../../dashboard-data.js";
 import { Frame } from "./frame.js";
 import { COLUMN_GAP, columnCount, fitColumn, gridWidths, placeCards } from "./grid.js";
-import { NO_FILTER, tabRows } from "./rows.js";
+import { NO_FILTER, tabRows, waveRows } from "./rows.js";
 import { type Line, scrollTop } from "./text.js";
 import type { Role } from "./theme.js";
 
@@ -26,10 +26,11 @@ export interface Card {
   tail?: boolean;
 }
 
-/** The five cards of workstream `ws`, in order. */
+/** The cards of workstream `ws`, in order: five, plus Waves when it has delegate waves. */
 export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: number): Card[] {
   const lines = (tab: "overview" | "tasks" | "agents" | "log", f = NO_FILTER): Line[] =>
     tabRows(tab, snap, ws, f, now).map((r) => r.line);
+  const waves = waveRows(snap, ws).map((r) => r.line);
   return [
     {
       id: "attention",
@@ -54,6 +55,9 @@ export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: n
       empty: "nothing open",
       max: 12,
     },
+    ...(waves.length > 0
+      ? [{ id: "waves", title: "Waves", lines: waves, empty: "no waves", max: 5 }]
+      : []),
     { id: "log", title: "Log", lines: lines("log"), empty: "no activity", max: 10, tail: true },
   ];
 }

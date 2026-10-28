@@ -9,6 +9,7 @@ import stringWidth from "string-width";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { App, layout } from "../src/cli/tui/app.js";
+import { overviewCards } from "../src/cli/tui/overview.js";
 import {
   cursorIndex,
   moveCursor,
@@ -20,7 +21,7 @@ import {
   tabRows,
 } from "../src/cli/tui/rows.js";
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
-import { cell, clean, scrollTop } from "../src/cli/tui/text.js";
+import { cell, clean, lineText, scrollTop } from "../src/cli/tui/text.js";
 import { type DashboardSnapshot, formatElapsed } from "../src/dashboard-data.js";
 import { type Db, openDb } from "../src/db.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
@@ -42,6 +43,7 @@ const empty = (over: Partial<DashboardSnapshot> = {}): DashboardSnapshot => ({
   next_source: "unavailable",
   human_needs: [],
   delegates: [],
+  waves: [],
   attention: [],
   ...over,
 });
@@ -377,6 +379,81 @@ describe("tabs (Ink over a real snapshot)", () => {
       expect(order("roi")).toEqual(["w/c", "w/a", "w/b"]);
       expect(order("age")).toEqual(["w/c", "w/a", "w/b"]);
       expect(order("id")).toEqual(["w/a", "w/b", "w/c"]);
+    });
+
+    it("Tasks: a delegate task shows its call state, verdict and judged task; a work task none", () => {
+      const call = { call_id: "c", wave: null, judges: "w/fix_auth" };
+      const snap = empty({
+        tasks: [
+          task("delegate_a", {
+            kind: "delegate",
+            call: { ...call, state: "done", verdict: "REFUTED" },
+          }),
+          task("delegate_b", {
+            kind: "delegate",
+            call: { ...call, state: "refused", verdict: null, judges: null },
+          }),
+          task("work", { title: "T-work" }),
+        ] as never,
+      });
+      const rows = tabRows("tasks", snap, "w", NO_FILTER, 0);
+      expect(rows[0]?.text).toContain("done REFUTED > w/fix_auth");
+      expect(rows[1]?.text).toMatch(/refused +title of delegate_b/);
+      expect(col(rows[2]?.text ?? "", "T-work")).toBe(col(rows[0]?.text ?? "", "title of"));
+      expect(rows[1]?.line.find((s) => s.text.startsWith("refused"))?.role).toBe("warn");
+      const refused = tabRows("tasks", snap, "w", { ...NO_FILTER, text: "refused" }, 0);
+      expect(refused.map((r) => r.key)).toEqual(["w/delegate_b"]);
+    });
+
+    it("Tasks: no delegate tasks, no call column", () => {
+      const snap = empty({ tasks: [task("a", { title: "T-a" })] as never });
+      expect(tabRows("tasks", snap, "w", NO_FILTER, 0)[0]?.text).toMatch(/^a +OPEN +T-a$/);
+    });
+
+    it("Overview: a Waves card with counts, only when the workstream has waves", () => {
+      const wave = {
+        key: "w/refute-w",
+        workstream: "w",
+        wave: "refute-w",
+        calls: 5,
+        confirmed: 2,
+        refuted: 1,
+        unverified: 0,
+        pending: 2,
+        refused: 1,
+        updated_at: "2026-01-01",
+      };
+      expect(overviewCards(empty(), "w", 0).map((c) => c.id)).not.toContain("waves");
+      const card = overviewCards(empty({ waves: [wave] }), "w", 0).find((c) => c.id === "waves");
+      expect(card?.lines.map(lineText)).toEqual([
+        "refute-w  5 calls  2 CONFIRMED  1 REFUTED  2 pending (1 refused)",
+      ]);
+      expect(overviewCards(empty({ waves: [wave] }), "other", 0).map((c) => c.id)).not.toContain(
+        "waves",
+      );
+    });
+
+    it("Overview: Enter on a delegate attention item opens that delegate task's notes", () => {
+      const snap = empty({
+        attention: [
+          {
+            key: "delegate:scratch/delegate_x",
+            workstream: "scratch",
+            kind: "delegate",
+            text: "delegate failed: api check",
+            target: "scratch/delegate_x",
+          },
+        ],
+      });
+      const [r] = tabRows("overview", snap, "w", NO_FILTER, 0);
+      expect(r?.text).toBe("scratch/delegate failed: api check");
+      expect(r?.drill).toEqual({
+        kind: "notes",
+        workstream: "scratch",
+        id: "delegate_x",
+        title: "delegate failed: api check",
+      });
+      expect(r?.line[0]?.role).toBe("bad");
     });
 
     it("Agents: host column is `local` or the host; columns do not move under a filter", () => {

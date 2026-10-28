@@ -44,8 +44,8 @@ export function gridWidths(total: number, n: number): number[] {
  */
 const PLACEMENT: Readonly<Record<1 | 2 | 3, Readonly<Record<string, number>>>> = {
   1: {},
-  2: { attention: 0, agents: 0, progress: 1, open: 1, log: 0 },
-  3: { attention: 0, agents: 0, progress: 1, open: 1, log: 2 },
+  2: { attention: 0, agents: 0, progress: 1, open: 1, waves: 1, log: 0 },
+  3: { attention: 0, agents: 0, progress: 1, open: 1, waves: 1, log: 2 },
 };
 
 /**
