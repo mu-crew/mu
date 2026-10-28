@@ -162,9 +162,12 @@ session profile, or `mule run --wait` directly.
 1. Kill the pane.
 2. Read the job file again. The carrier writes it before dispatch, so a
    job that might exist always has a file.
-3. If there is a handle, run `stop`, then the existing
-   `removeRemoteWorktree`. A failed `stop` keeps the worktree and the
-   `carrier_jobs` row, and says so.
+3. If there is a handle, first **persist** it: insert the `carrier_jobs`
+   row (captured incarnation id, ws, name, host, handle, the admitted
+   profile's `stop`) if the handshake did not, before anything can delete
+   the agent row. Then run `stop`, then the existing `removeRemoteWorktree`.
+   A failed `stop` keeps the worktree and the `carrier_jobs` row, and says
+   so; `agent close <name>` recovers it later.
 4. If there is no file, nothing was dispatched: run the worktree removal as
    today.
 
@@ -320,7 +323,10 @@ No version bump, in line with the per-machine spec's no-migration stance.
   `t3-dev` exists to dodge the same hold. That is more than twice. After the
   review's simplifications (no channel kind, no recovery columns, no
   `--max-agents`) it is about 250 LOC of source.
-- (b) lands only after mule's `--lease`, `forward` and `exec` are released.
+- (b) **ships** (release, publish, docs announcing it) only after mule's
+  `--lease`, `forward`, `exec` and the `rm` stop contract are released.
+  Local development and merging to `main` may proceed in parallel with the
+  mule track; nothing is pushed or released before then.
 
 ## Testing
 
@@ -353,8 +359,13 @@ logs every stop call with its handle.
 - `host check` on a lease profile runs `pi` without `login()`; the handback
   step skips the rest.
 - Script scan: no builder emits a literal `exit 3`.
-- Smoke (operator-driven, not in suites): real mule against the local `sshd
-  MaxSessions 1` recipe from mule's SPEC.
+- Smoke (operator-driven, not in suites): an explicitly invoked script,
+  `scripts/smoke-lease.sh`, never picked up by vitest. Missing prerequisites
+  (sshd, a built mule) **fail** the script; they never count as a pass. Real
+  mule against the local `sshd MaxSessions 1` recipe from mule's SPEC, a
+  ctl-speaking fake pi (hello, status, send, wait with an advancing run count
+  and a `settled` reply carrying an identifiable echo), private config and
+  state.
   - Spawn. While the worker runs, `ssh -S <default master> host true`
     succeeds.
   - Send and wait. Close. Job, forward, socket, job file, worktree and
@@ -413,5 +424,8 @@ folded in:
 - The hand-back throw site is specified, with each caller's handling.
 - The starter ran env words as program names; now `env {env} sh -c {cmd}`.
 - The stop template is `mule rm`; the proposed `kill --missing-ok` was
-  redundant.
+  redundant. A later plan review found `rm` exited 0 on failure; the mule
+  spec now makes its exit 0 a proof of stop.
+- Rollback persists a reread handle before the agent row can go (plan
+  review). The smoke is a script, not a suite test.
 - `graceMs` raised so an interrupted carrier can stop its job.
