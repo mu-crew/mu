@@ -24,9 +24,22 @@
 //   "check owed", so pruning it would rerun the checker.
 //
 // The verdict notes the calls wrote live on the judged tasks and stay.
+//
+// Files: each pruned call's pi session goes too, after the commit (files are not
+// in the backup, so they go only with rows that did): a pane delegate's
+// `delegate-sessions/<ws>/<task>/` and a mux-free one's `delegate-process/<hash>/`
+// (receipt, log, session). Loose `delegate-sessions/<ws>/*.jsonl` files (the
+// first layout, one folder per workstream, no call to tie them to) go by age,
+// never younger than a day (a pane may still write one), and only for this
+// DB's live workstreams (another DB beside it may own the rest).
+// A receipt of a call that still exists is never touched: it fences a resend.
+//
 // The CLI adds the dry run, the backup beside the DB, VACUUM and the drift check.
 
+import { lstatSync, readdirSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Db } from "./db.js";
+import { delegateProcessDir, delegateSessionDir } from "./delegates.js";
 import type { FleetHazard } from "./fleet-hazards.js";
 import { withOpContext } from "./op-context.js";
 import { localMachineId } from "./segments.js";
@@ -56,7 +69,77 @@ export interface PrunePlan {
   ops: number;
   /** Payload bytes of those ops. */
   bytes: number;
+  /** The pi session files that go with the candidates, plus old loose ones. */
+  files: { paths: string[]; bytes: number };
 }
+
+/** Bytes under `p` (a file or a tree; symlinks not followed); 0 when absent. */
+function sizeOf(p: string): number {
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(p);
+  } catch {
+    return 0;
+  }
+  if (!st.isDirectory()) return st.size;
+  let n = 0;
+  for (const e of readdirSync(p)) n += sizeOf(join(p, e));
+  return n;
+}
+
+/** A DB with no file of its own keeps no session files beside it. */
+const hasFileDir = (db: Db): boolean => db.name !== "" && db.name !== ":memory:";
+
+/** A loose file this young may belong to a pane still writing it, whatever the age asked. */
+const LOOSE_MIN_AGE_MS = 86_400_000;
+
+/**
+ * Session files of the first layout: `delegate-sessions/<ws>/*.jsonl` last
+ * written before `cutoff` (and at least a day ago), for this DB's live
+ * workstreams only: another DB beside this one may own the rest.
+ */
+function looseSessions(
+  db: Db,
+  cutoff: string,
+  workstream: string | undefined,
+  now: number,
+): string[] {
+  const root = join(dirname(db.name), "delegate-sessions");
+  const before = Math.min(Date.parse(cutoff), now - LOOSE_MIN_AGE_MS);
+  const out: string[] = [];
+  const wss = (
+    db
+      .prepare(
+        "SELECT name FROM workstreams WHERE torn_down_at IS NULL AND (? IS NULL OR name = ?)",
+      )
+      .all(workstream ?? null, workstream ?? null) as { name: string }[]
+  ).map((r) => r.name);
+  for (const ws of wss) {
+    let names: string[];
+    try {
+      names = readdirSync(join(root, ws));
+    } catch {
+      continue;
+    }
+    for (const f of names) {
+      const p = join(root, ws, f);
+      if (!f.endsWith(".jsonl")) continue;
+      try {
+        const st = lstatSync(p);
+        if (st.isFile() && st.mtimeMs < before) out.push(p);
+      } catch {
+        // gone meanwhile
+      }
+    }
+  }
+  return out.sort();
+}
+
+/** The session directories one call may have left (either transport). */
+const callFiles = (db: Db, c: PruneCandidate): string[] => [
+  delegateSessionDir(db.name, c.workstream, c.task),
+  delegateProcessDir(db.name, c.callId),
+];
 
 /** The puts of one task and its notes: key `<ws>/<id>` and `<ws>/<id>#<n>`. The
  *  range outside the OR ('$' is the byte after '#') is what idx_ops_entity_key
@@ -117,6 +200,7 @@ export function planDelegatePrune(
     ownHistory,
     ops: 0,
     bytes: 0,
+    files: { paths: [], bytes: 0 },
   };
   const cost = db.prepare(
     `SELECT COUNT(*) AS n, COALESCE(SUM(length(payload)), 0) AS b FROM ops WHERE ${TASK_PUTS_WHERE}`,
@@ -144,7 +228,23 @@ export function planDelegatePrune(
     plan.ops += c.n;
     plan.bytes += c.b;
   }
+  if (hasFileDir(db)) {
+    const paths = [
+      ...plan.candidates.flatMap((c) => callFiles(db, c)).filter(exists),
+      ...looseSessions(db, cutoff, opts.workstream, opts.now ?? Date.now()),
+    ];
+    plan.files = { paths, bytes: paths.reduce((n, p) => n + sizeOf(p), 0) };
+  }
   return plan;
+}
+
+function exists(p: string): boolean {
+  try {
+    lstatSync(p);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -152,9 +252,13 @@ export function planDelegatePrune(
  * one transaction. Irreversible: the CLI backs up first. A task that changed
  * since the plan (reopened, no longer delegate or closed) is left alone.
  */
-export function pruneDelegates(db: Db, plan: PrunePlan): { tasks: number; ops: number } {
+export function pruneDelegates(
+  db: Db,
+  plan: PrunePlan,
+): { tasks: number; ops: number; files: number } {
   let tasks = 0;
   let ops = 0;
+  const pruned: PruneCandidate[] = [];
   withOpContext(db, { intent: "delegate.prune", actor: "mu delegates prune", group: "new" }, () =>
     db
       .transaction(() => {
@@ -173,13 +277,32 @@ export function pruneDelegates(db: Db, plan: PrunePlan): { tasks: number; ops: n
         for (const c of plan.candidates) {
           if (del.run(plan.cutoff, c.task, c.workstream).changes === 0) continue;
           tasks++;
+          pruned.push(c);
           ops += puts.run({ k: `${c.workstream}/${c.task}`, own, me }).changes;
           cursor.run(`delegate:${c.workstream}/${c.callId}`);
         }
       })
       .immediate(),
   );
-  return { tasks, ops };
+  // After the commit: only the calls whose rows are gone lose their files.
+  let files = 0;
+  if (hasFileDir(db)) {
+    const loose = new Set(plan.files.paths);
+    const go = [
+      ...pruned.flatMap((c) => callFiles(db, c)),
+      ...looseSessions(db, plan.cutoff, undefined, Date.now()).filter((p) => loose.has(p)),
+    ];
+    for (const p of go) {
+      if (!exists(p)) continue;
+      try {
+        rmSync(p, { recursive: true, force: true });
+        files++;
+      } catch {
+        // best-effort: a file left behind is found again by the next prune
+      }
+    }
+  }
+  return { tasks, ops, files };
 }
 
 /**

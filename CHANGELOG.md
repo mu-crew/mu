@@ -27,7 +27,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `MU_SYNC_DIR` set, only peers' puts: this machine's own are what a damaged
   segment is rebuilt from). It keeps a task with edges and a refute check of a task
   with `mu task auto` enabled (pruning it would rerun the checker); verdicts stay
-  on the judged tasks. Dry run by default;
+  on the judged tasks. The pruned calls' pi session files go too:
+  `delegate-sessions/<ws>/<task>/` and `delegate-process/<hash>/`, plus loose
+  session files of the first per-workstream layout past the same age (at least a day, this DB's workstreams only); a call
+  that stays keeps its receipt. Dry run by default;
   `--yes` backs up beside the DB, VACUUMs and runs the drift check, like
   `mu db forget`. `mu doctor`'s housekeeping section gains `delegates-old`, the
   count with the commands.
@@ -55,7 +58,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   plain.
 - **Delegate sessions leave your `/resume` list.** A pi pane spawned for a
   `kind=delegate` task (every `mu_delegate` reviewer and refuter) now keeps its
-  pi session in `<DB dir>/delegate-sessions/<workstream>` through
+  pi session in `<DB dir>/delegate-sessions/<workstream>/<task>` through
   `PI_CODING_AGENT_SESSION_DIR`, not pi's per-cwd folder, which they used to flood
   (175 of 208 sessions in one repo). Mux-free delegate processes already ran with
   their own `--session-dir`. Workers on `work` tasks are unchanged.
