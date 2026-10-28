@@ -171,7 +171,14 @@ export function listDelegates(
   db: Db,
   caller?: string,
   workstream?: string,
-  opts: { wave?: string; states?: readonly DelegateState[] } = {},
+  opts: {
+    wave?: string;
+    states?: readonly DelegateState[];
+    /** Only calls whose task has one of these statuses. */
+    taskStatuses?: readonly string[];
+    /** Only calls updated after this ISO time. */
+    updatedAfter?: string;
+  } = {},
 ): DelegateRow[] {
   const where: string[] = [];
   const args: string[] = [];
@@ -190,6 +197,14 @@ export function listDelegates(
   if (opts.states !== undefined) {
     where.push(`d.state IN (${opts.states.map(() => "?").join(",")})`);
     args.push(...opts.states);
+  }
+  if (opts.taskStatuses !== undefined) {
+    where.push(`t.status IN (${opts.taskStatuses.map(() => "?").join(",")})`);
+    args.push(...opts.taskStatuses);
+  }
+  if (opts.updatedAfter !== undefined) {
+    where.push("d.updated_at > ?");
+    args.push(opts.updatedAfter);
   }
   const sql = `${SELECT_CALL}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY d.task_id`;
   return (db.prepare(sql).all(...args) as RawCall[]).map(rowOf);

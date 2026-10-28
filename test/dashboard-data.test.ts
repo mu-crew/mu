@@ -10,7 +10,7 @@ import { insertAgent } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { FRONTIER_MAX_NODES } from "../src/dag.js";
-import { type DashboardSnapshot, loadDashboard } from "../src/dashboard-data.js";
+import { type DashboardSnapshot, loadDashboard, WAVE_MAX } from "../src/dashboard-data.js";
 import { type Db, openDb } from "../src/db.js";
 import { finishDelegate, markDelegate, registerDelegateCall } from "../src/delegates.js";
 import { recordHumanNeeded } from "../src/human-needed.js";
@@ -729,10 +729,10 @@ describe("attention: trouble across every workstream, filters ignored", () => {
       caller: null,
       status: ["OPEN", "IN_PROGRESS", "CLOSED"],
     });
-    // Oldest call first.
+    // Workstream, then task id; a refused item says how to clear it.
     expect(kinds(snap)).toEqual([
-      "delegate:delegate refused: lint check",
       "delegate:delegate failed: api check",
+      "delegate:delegate refused: lint check (reissue or cancel it from pi)",
     ]);
     const refused = snap.attention.find((a) => a.text.includes("refused"));
     const call = snap.tasks.find((t) => t.key === refused?.target)?.call;
@@ -756,6 +756,88 @@ describe("attention: trouble across every workstream, filters ignored", () => {
         refused: 1,
       }),
     ]);
+  });
+
+  it("failed calls: an item inside 24 h, gone just past it; torn-down workstreams never", async () => {
+    const failAt = (id: string, ageMs: number, ws = "ws") => {
+      registerDelegateCall(db, {
+        callId: id,
+        caller: "pi:s",
+        workstream: ws,
+        request: { text: id, label: id },
+      });
+      finishDelegate(db, id, { outcome: "died", author: "d" });
+      db.prepare("UPDATE delegate_calls SET updated_at = ? WHERE call_id = ?").run(
+        new Date(Date.now() - ageMs).toISOString(),
+        id,
+      );
+    };
+    failAt("inside", 23 * 3_600_000 + 59 * 60_000); // 24 h, literal: the constant is under test
+    failAt("past", 24 * 3_600_000 + 60_000);
+    ensureWorkstream(db, "gone");
+    failAt("gone-failed", 0, "gone");
+    registerDelegateCall(db, {
+      callId: "gone-refused",
+      caller: "pi:s",
+      workstream: "gone",
+      request: { text: "r", label: "gone-refused" },
+    });
+    markDelegate(db, "gone-refused", "refused");
+    db.prepare("UPDATE workstreams SET torn_down_at = ? WHERE name = 'gone'").run(
+      new Date().toISOString(),
+    );
+    expect(kinds(await loadDashboard(db, { caller: null }))).toEqual([
+      "delegate:delegate failed: inside",
+    ]);
+  });
+
+  it("waves: the WAVE_MAX most recently updated, newest first, from closed calls too", async () => {
+    const base = Date.parse("2026-01-01T00:00:00Z");
+    for (let i = 0; i < WAVE_MAX + 2; i++) {
+      registerDelegateCall(db, {
+        callId: `c${i}`,
+        caller: "pi:s",
+        workstream: "ws",
+        wave: `wave-${i}`,
+        request: { text: `c${i}`, label: `c${i}` },
+        state: "starting",
+      });
+      finishDelegate(db, `c${i}`, { outcome: "done", text: "VERDICT: CONFIRMED", author: "d" });
+      // Older index, older update; wave-1 is touched last, so it comes first.
+      const at = i === 1 ? base + 99 * 60_000 : base + i * 60_000;
+      db.prepare("UPDATE delegate_calls SET updated_at = ? WHERE call_id = ?").run(
+        new Date(at).toISOString(),
+        `c${i}`,
+      );
+    }
+    const snap = await loadDashboard(db, { caller: null });
+    expect(snap.waves.map((w) => w.wave)).toEqual([
+      "wave-1",
+      "wave-6",
+      "wave-5",
+      "wave-4",
+      "wave-3",
+    ]);
+    expect(snap.waves[0]).toMatchObject({ calls: 1, confirmed: 1, pending: 0 });
+  });
+
+  it("the text filter matches a delegate task's call state, verdict and judged task", async () => {
+    task("judged");
+    task("plain");
+    registerDelegateCall(db, {
+      callId: "c1",
+      caller: "pi:s",
+      workstream: "ws",
+      request: { text: "x", label: "x" },
+      record: { workstream: "ws", task: "judged" },
+    });
+    markDelegate(db, "c1", "refused");
+    const ids = async (text: string) =>
+      (await loadDashboard(db, { caller: null, text })).tasks.map((t) => t.id);
+    const delegateId = (await ids("delegate_"))[0];
+    expect(await ids("refused")).toEqual([delegateId]);
+    // `judged` matches the judged task itself and the delegate row that judges it.
+    expect((await ids("ws/judged")).sort()).toEqual([delegateId, "judged"].sort());
   });
 
   it("next unavailable and sync warnings are machine-wide items, after the agent ones", async () => {

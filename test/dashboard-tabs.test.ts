@@ -433,6 +433,37 @@ describe("tabs (Ink over a real snapshot)", () => {
       );
     });
 
+    it("Overview: the task cards leave out the call column, so titles keep their place", () => {
+      const snap = empty({
+        tasks: [
+          task("delegate_a", {
+            kind: "delegate",
+            call: {
+              call_id: "c",
+              wave: null,
+              state: "running",
+              verdict: null,
+              judges: "w/fix_auth_token_refresh",
+            },
+          }),
+          task("work", { title: "T-work" }),
+        ] as never,
+      });
+      const open = overviewCards(snap, "w", 0).find((c) => c.id === "open");
+      const text = open?.lines.map(lineText) ?? [];
+      expect(text.join("\n")).not.toContain("fix_auth_token_refresh");
+      const noCall = empty({
+        tasks: [
+          task("delegate_a", { kind: "delegate" }),
+          task("work", { title: "T-work" }),
+        ] as never,
+      });
+      const plain = overviewCards(noCall, "w", 0)
+        .find((c) => c.id === "open")
+        ?.lines.map(lineText);
+      expect(text).toEqual(plain);
+    });
+
     it("Overview: Enter on a delegate attention item opens that delegate task's notes", () => {
       const snap = empty({
         attention: [

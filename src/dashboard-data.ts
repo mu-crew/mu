@@ -1,12 +1,12 @@
 // SDK seam for the dashboard: ONE read-only projection of everything its tabs
-// show (workstreams, tasks, frontier, agents, log, human needs, delegates,
-// attention).
+// show (workstreams, tasks with a delegate task's `call`, frontier, agents, log,
+// human needs, the caller's delegates, delegate `waves`, attention).
 //
 // READ-ONLY by construction: it never reconciles, reaps, ingests or writes, and
 // runs on a `readonly: true` connection. The only I/O beyond SQL is the
 // best-effort ctl probe `readLiveAgents` does (a socket read). It composes the
 // merged readers (`listTasks`, `loadOpenTaskFrontier`, `readLiveAgents`,
-// `listLogs`/`logItem`, `openHumanNeeds`, `listDelegates`) rather than
+// `listLogs`/`logItem`, `openHumanNeeds`, `listDelegates`, `tallyCalls`) rather than
 // re-deriving them, so a dashboard row equals the CLI's. `stateSnapshot` is NOT
 // the source of the task list: it omits OPEN/parked rows and caps closed ones.
 //
@@ -15,6 +15,13 @@
 // work"). An agent's `tool` comes from the ctl status the agent read already did:
 // an object while a tool runs, null when none, absent for an extension that
 // predates the field (unknown). Elapsed is `now - since`, calculated at read.
+//
+// Two delegate reads, on purpose: `delegates` is the caller's own unfinished calls
+// (caller-scoped like `human_needs`, empty for a human shell), while a task's
+// `call`, `waves` and the `delegate` attention items read every caller's, because
+// they describe tasks and waves anyone can see. Each delegate read is bounded in
+// SQL (shown task statuses, the newest waves, the failed-call window), so a tick
+// does not grow with the delegate history in `scratch`.
 
 import { type AgentOutput, liveAgentToOutput } from "./agent-output.js";
 import type { StateReading } from "./agent-state.js";
@@ -218,7 +225,7 @@ export interface DashboardAttention {
 export interface DashboardSnapshot {
   /** The identity the caller-scoped panels were read for; null = a human shell. */
   caller: string | null;
-  /** `none`: no identity, so `human_needs` and `delegates` are empty BY DESIGN (never another caller's). */
+  /** `none`: no identity, so `human_needs` and `delegates` are empty BY DESIGN (never another caller's); `call`, `waves` and attention are every caller's. */
   caller_scope: "caller" | "none";
   /** Every live workstream, scratch included; never narrowed by a filter (it is the switcher). */
   workstreams: DashboardWorkstream[];
@@ -298,11 +305,20 @@ const callOf = (c: DelegateRow): DashboardCall => ({
 });
 
 /** The `WAVE_MAX` most recently updated waves of `calls` (one workstream's), newest first. */
-function wavesOf(workstream: string, calls: readonly DelegateRow[]): DashboardWave[] {
-  const groups = new Map<string, DelegateRow[]>();
-  for (const c of calls)
-    if (c.wave !== null) groups.set(c.wave, [...(groups.get(c.wave) ?? []), c]);
-  const out = [...groups].map(([wave, rows]): DashboardWave => {
+function wavesOf(db: Db, workstream: string): DashboardWave[] {
+  // The newest waves by name first (no request parse), then only their calls.
+  const names = (
+    db
+      .prepare(
+        `SELECT t.wave AS wave, MAX(d.updated_at) AS at FROM delegate_calls d
+           JOIN tasks t ON t.id = d.task_id JOIN workstreams w ON w.id = t.workstream_id
+          WHERE w.name = ? AND t.wave IS NOT NULL
+          GROUP BY t.wave ORDER BY at DESC, t.wave LIMIT ?`,
+      )
+      .all(workstream, WAVE_MAX) as { wave: string }[]
+  ).map((r) => r.wave);
+  return names.map((wave): DashboardWave => {
+    const rows = listDelegates(db, undefined, workstream, { wave });
     const t = tallyCalls(rows);
     const sum = (k: "confirmed" | "refuted" | "unverified" | "pending"): number =>
       t.findings.reduce((n, f) => n + f[k], 0);
@@ -319,8 +335,6 @@ function wavesOf(workstream: string, calls: readonly DelegateRow[]): DashboardWa
       updated_at: rows.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), ""),
     };
   });
-  out.sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0));
-  return out.slice(0, WAVE_MAX);
 }
 
 /** `MAX(ops.seq)` per task id of one workstream over its task, note and edge ops. */
@@ -522,14 +536,23 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
   const now = Date.now();
   for (const ws of readFrom) {
     const activity = taskActivity(db, ws.name);
-    const calls = listDelegates(db, undefined, ws.name);
+    const calls = listDelegates(db, undefined, ws.name, { taskStatuses: statuses });
     const callByTask = new Map(calls.map((c) => [c.task, c]));
-    waves.push(...wavesOf(ws.name, calls));
+    waves.push(...wavesOf(db, ws.name));
     tasks.push(
       ...listTasks(db, ws.name, { status: statuses })
         .map((r) => dashboardTask(r, activity, agentsById, callByTask))
         .filter((t) =>
-          matches(opts.text, t.key, t.title, t.owner, t.substate, t.call?.state, t.call?.verdict),
+          matches(
+            opts.text,
+            t.key,
+            t.title,
+            t.owner,
+            t.substate,
+            t.call?.state,
+            t.call?.verdict,
+            t.call?.judges,
+          ),
         ),
     );
     const front = loadOpenTaskFrontier(db, ws.name);
@@ -622,14 +645,24 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
 
   const attention: DashboardAttention[] = everyAgent.flatMap((a) => agentAttention(a, now));
   const liveNames = new Set(live.map((w) => w.name));
-  for (const c of listDelegates(db, undefined, undefined, { states: ["refused", "failed"] })) {
+  const troubled = [
+    ...listDelegates(db, undefined, undefined, { states: ["refused"] }),
+    ...listDelegates(db, undefined, undefined, {
+      states: ["failed"],
+      updatedAfter: new Date(now - FAILED_CALL_MS).toISOString(),
+    }),
+  ];
+  // Workstream, then task id, like the human items.
+  troubled.sort((a, b) => keyOf(a.workstream, a.task).localeCompare(keyOf(b.workstream, b.task)));
+  for (const c of troubled) {
     if (!liveNames.has(c.workstream)) continue;
-    if (c.state === "failed" && now - Date.parse(c.updatedAt) > FAILED_CALL_MS) continue;
+    // A refused call has no expiry: say how to clear it.
+    const how = c.state === "refused" ? " (reissue or cancel it from pi)" : "";
     attention.push({
       key: `delegate:${keyOf(c.workstream, c.task)}`,
       workstream: c.workstream,
       kind: "delegate",
-      text: `delegate ${c.state}: ${c.request.label ?? c.task}`,
+      text: `delegate ${c.state}: ${c.request.label ?? c.task}${how}`,
       target: keyOf(c.workstream, c.task),
     });
   }
@@ -666,7 +699,8 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
       target: null,
     });
   });
-  // Most urgent kind first; within a kind the order read (workstream, then name) holds.
+  // Most urgent kind first; within a kind the order read holds (agents, delegate and
+  // human items: workstream, then name).
   attention.sort((a, b) => ATTENTION_ORDER.indexOf(a.kind) - ATTENTION_ORDER.indexOf(b.kind));
 
   return {
