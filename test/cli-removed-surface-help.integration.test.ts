@@ -103,9 +103,10 @@ describe("removed CLI surface stays removed", () => {
     expect(lines.message.toLowerCase()).toContain("unknown option");
     expect(lines.message).toContain("--lines");
 
-    const agentAll = await runCli(["agent", "list", "--all"], dbPath);
-    expect(agentAll.exitCode).toBe(2);
-    expect(agentAll.stderr.toLowerCase()).toContain("unknown option");
-    expect(agentAll.stderr).toContain("--all");
+    // agent list is JSON by default too: its parse error is the failure document.
+    const agentAll = JSON.parse((await runCli(["agent", "list", "--all"], dbPath)).stdout);
+    expect(agentAll.exit).toBe(2);
+    expect(agentAll.message.toLowerCase()).toContain("unknown option");
+    expect(agentAll.message).toContain("--all");
   });
 });

@@ -11,7 +11,7 @@ import { getAgent, insertAgent } from "../src/agents.js";
 import { type Db, openDb, resolveWorkstreamId } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCliJson } from "./_runCli.js";
+import { runCliJson, runCliWire } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -191,5 +191,34 @@ describe("agent verbs emit SQL-keyed agent records", () => {
         else process.env[k] = v;
       });
     }
+  });
+});
+
+describe("agent list is JSON by default", () => {
+  it("prints the --json document with no flag; --table prints the table", async () => {
+    mux = installMux("tmux", paneList);
+    const bare = await runCliWire(["agent", "list", "-w", "auth"], dbPath);
+    const flagged = await runCliWire(["agent", "list", "-w", "auth", "--json"], dbPath);
+    const doc = JSON.parse(bare.stdout);
+    expect(doc).toMatchObject({ ok: true, data: { workstreamName: "auth" } });
+    expect(doc.data.agents[0]).toMatchObject({ name: "worker-1", pane_id: "%7" });
+    expect(Object.keys(doc.data)).toEqual(Object.keys(JSON.parse(flagged.stdout).data));
+
+    const table = await runCliWire(["agent", "list", "-w", "auth", "--table"], dbPath);
+    expect(() => JSON.parse(table.stdout)).toThrow();
+    expect(table.stdout).toContain("mu-auth");
+    expect(table.stdout).toContain("worker-1");
+  });
+
+  it("a failure is one envelope on stdout; --table keeps the human line", async () => {
+    mux = installMux("tmux", paneList);
+    const r = await runCliWire(["agent", "list", "-w", "nope"], dbPath);
+    expect(r.stderr).toBe("");
+    expect(JSON.parse(r.stdout)).toMatchObject({ ok: false, exit: 3 });
+    const t = await runCliWire(["agent", "list", "-w", "nope", "--table"], dbPath);
+    expect(t.stdout).toBe("");
+    expect(t.stderr).toMatch(/no such workstream: nope/);
+    const bad = await runCliWire(["agent", "list", "-w", "auth", "--bogus"], dbPath);
+    expect(JSON.parse(bad.stdout)).toMatchObject({ ok: false, error: "CommanderError", exit: 2 });
   });
 });
