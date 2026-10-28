@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.1.1] — 2026-10-28
+
 ### Changed
 
 - **`mu agent list` prints JSON by default; `--table` for the human table.** The
