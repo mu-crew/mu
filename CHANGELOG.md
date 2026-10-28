@@ -10,6 +10,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **A delegate's timeout is one deadline across `/reload`.** The reloaded runtime
+  re-adopted a running call with its whole `timeout` again, so each reload restarted
+  the countdown. It now waits only for what is left, counted from when the call went
+  `running` (at least 1 s, so an answer that landed meanwhile is still recorded).
+
 ### Added
 
 - **`mu delegates prune`.** Every delegate call left a `scratch` task, with its

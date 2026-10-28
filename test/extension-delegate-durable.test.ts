@@ -169,6 +169,45 @@ describe("the result outlives the echo", () => {
     expect(second.sendMessage).toHaveBeenCalledTimes(1); // the wake: the answer is not stranded
   });
 
+  it("a re-adopted call keeps its deadline: the reloaded wait gets what is left of timeoutS, at least 1 s", async () => {
+    const mu = fakeMu();
+    const ctx = { sessionManager: { getSessionId: () => "s1" } };
+    const first = fakePi();
+    registerDelegate(first.pi, mu.run);
+    for (const label of ["a", "b"])
+      await tool(first).execute(
+        label,
+        { task: label, label, timeout: 600 },
+        undefined,
+        undefined,
+        ctx,
+      );
+    const [a, b] = listDelegates(mu.db);
+    expect(a?.state).toBe("running");
+    // a went running 500 s ago (100 s left); b 900 s ago (past its 600 s deadline).
+    const ago = (s: number) => new Date(Date.now() - s * 1000).toISOString();
+    mu.db
+      .prepare("UPDATE delegate_calls SET updated_at = ? WHERE call_id = ?")
+      .run(ago(500), a?.callId);
+    mu.db
+      .prepare("UPDATE delegate_calls SET updated_at = ? WHERE call_id = ?")
+      .run(ago(900), b?.callId);
+    for (const h of first.shutdown) await h({ reason: "reload" }, { hasUI: false });
+    mu.waits.clear();
+    const second = fakePi();
+    registerDelegate(second.pi, mu.run);
+    const before = mu.calls.length;
+    for (const h of second.handlers.get("session_start") ?? []) await h({ reason: "reload" }, ctx);
+    await settle();
+    const timeoutOf = (name: string) => {
+      const w = mu.calls.slice(before).find((c) => c[1] === "wait" && c[2] === name) ?? [];
+      return Number(w[w.indexOf("--timeout") + 1]);
+    };
+    expect(timeoutOf("delegate-a")).toBeGreaterThanOrEqual(99);
+    expect(timeoutOf("delegate-a")).toBeLessThanOrEqual(101);
+    expect(timeoutOf("delegate-b")).toBe(1);
+  });
+
   it("another session's running calls are left alone", async () => {
     const mu = fakeMu();
     const first = fakePi();
