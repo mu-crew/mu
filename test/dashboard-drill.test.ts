@@ -19,7 +19,7 @@ import {
 } from "../src/cli/tui/commands.js";
 import { clampTop, notesLines, wrap } from "../src/cli/tui/drill.js";
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
-import { lineText } from "../src/cli/tui/text.js";
+import { type Line, lineText } from "../src/cli/tui/text.js";
 import { type Db, openDb } from "../src/db.js";
 import type { MuxCommand } from "../src/mux.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
@@ -498,18 +498,55 @@ describe("drills in the dashboard", () => {
     ]);
     expect(lines[0]?.find((s) => s.text === "report")?.role).toBe("good");
     expect(lines[2]?.[0]?.role).toBe("bad");
-    // A narrow screen cuts the header instead of overflowing it.
-    const narrow = notesLines(
-      {
-        notes: [{ n: 1, kind: "note", author: "me", content: "y", createdAt: "T" }],
-        more: 0,
-        total: 1,
-        pinned: [],
-      } as never,
-      12,
+  });
+
+  const one = (content: string, kind = "note") =>
+    ({
+      notes: [{ n: 1, kind, author: "me", content, createdAt: "T" }],
+      more: 0,
+      total: 1,
+      pinned: [],
+    }) as never;
+  const roleOf = (l: Line | undefined) => l?.[0]?.role;
+
+  it("notesLines colours the first verdict line by its label, as parseVerdict reads it", () => {
+    const cases: [string, string][] = [
+      ["VERDICT: F2 CONFIRMED the guard exists", "good"], // the canonical id-first form
+      ["REFUTER: VERDICT: f1 REFUTED no", "bad"],
+      ["VERDICT: **REFUTED**", "bad"],
+      ["VERDICT: x UNVERIFIED could not run it", "warn"],
+      ["VERDICT: pending", "warn"],
+      ["it said VERDICT: CONFIRMED mid-line", "text"],
+    ];
+    for (const [line, role] of cases)
+      expect([line, roleOf(notesLines(one(line), 60)[1])]).toEqual([line, role]);
+    // A later verdict line is quoted evidence: plain.
+    const quoted = notesLines(
+      one("VERDICT: a REFUTED\nEVIDENCE: it said\nVERDICT: a CONFIRMED"),
+      60,
     );
-    expect(stringWidth(lineText(narrow[0] ?? []))).toBe(12);
-    expect(lineText(narrow[0] ?? [])).toContain("…");
+    expect(quoted.slice(1, 4).map(roleOf)).toEqual(["bad", "text", "text"]);
+  });
+
+  it("notesLines colours each note kind by its role", () => {
+    const kindRole = (kind: string) =>
+      notesLines(one("y", kind), 60)[0]?.find((s) => s.text === kind)?.role;
+    expect(["brief", "report", "close", "verdict", "note"].map(kindRole)).toEqual([
+      "title",
+      "good",
+      "good",
+      "warn",
+      "id",
+    ]);
+  });
+
+  it("notesLines fills the header to the width, and cuts it with … only past it", () => {
+    const head = (w: number) => lineText(notesLines(one("y"), w)[0] ?? []);
+    const natural = "── #1 note · me · T ".length; // the header without its fill
+    expect(head(natural)).toBe("── #1 note · me · T ");
+    expect(head(natural + 3)).toBe("── #1 note · me · T ───");
+    expect(head(natural - 1)).toMatch(/…$/);
+    expect(stringWidth(head(natural - 1))).toBe(natural - 1);
   });
 });
 
