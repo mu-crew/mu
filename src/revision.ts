@@ -217,7 +217,7 @@ export function agentRevision(
   const agent = db
     .prepare(
       `SELECT a.id, a.pane_id, a.cli, a.role, a.tab, a.cwd, a.base, a.command, a.command_source,
-              a.spawner, a.host, a.collected_head, a.gate_token, a.created_at
+              a.spawner, a.host, a.collected_head, a.repo, a.gate_token, a.created_at
          FROM agents a JOIN workstreams w ON w.id = a.workstream_id
         WHERE w.name = ? AND a.name = ?`,
     )

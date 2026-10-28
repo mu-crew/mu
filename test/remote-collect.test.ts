@@ -63,7 +63,13 @@ const channels = () => listHostChannels(db, "dev");
 
 /** A remote worker row whose live pane holds the host's attached channel, as a real spawn leaves it. */
 async function remoteAgent(
-  over: { base?: string | null; collectedHead?: string | null; host?: string; name?: string } = {},
+  over: {
+    base?: string | null;
+    collectedHead?: string | null;
+    host?: string;
+    name?: string;
+    repo?: string | null;
+  } = {},
 ) {
   const name = over.name ?? "worker-1";
   const pane = `%${state.nextPaneId++}`;
@@ -75,6 +81,7 @@ async function remoteAgent(
     cwd: WT,
     base: over.base === undefined ? BASE : over.base,
     host: over.host ?? "dev",
+    repo: over.repo === undefined ? "/srv/repo" : over.repo,
     collectedHead: over.collectedHead ?? null,
   });
   const { lease } = await admitHostChannel(db, over.host ?? "dev", `spawn:auth/${name}`);
@@ -194,6 +201,22 @@ describe("agent close of a remote worktree row", () => {
     expect(calls[1]).toContain(BASE);
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
     expect(channels()).toEqual([]);
+  });
+
+  it("a remote row with no recorded repo is never closed against a guessed one", async () => {
+    await remoteAgent({ repo: null });
+    await expect(close()).rejects.toThrow(/no remote worktree/);
+    expect(execCalls()).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+  });
+
+  it("the close runs against the row's repo, not the profile's", async () => {
+    await remoteAgent({ repo: "/srv/per-spawn" });
+    await close();
+    for (const c of execCalls()) {
+      expect(c).toContain("/srv/per-spawn");
+      expect(c).not.toContain("/srv/repo");
+    }
   });
 
   it("HEAD at the last collected HEAD is removable", async () => {

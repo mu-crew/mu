@@ -42,8 +42,9 @@ export interface RemoteRecovery {
   collectedHead: string | null;
   /** The exact path a crashed close left (or would leave) the tree at. */
   aside: string;
-  /** The profile's exec template and repo when it existed, else null: identity, not authority. */
+  /** The profile's exec template when it existed, else null: identity, not authority. */
   hostExec: string | null;
+  /** The worktree's repo on the host (agents.repo), null when the row had none. */
   hostRepo: string | null;
   reason: RemoteRecoveryReason;
   preservedAt: string;
@@ -198,7 +199,7 @@ export const recoveryGone = (
 /** The profile at the time of use must be the one the record pinned. Missing provenance refuses. */
 export function assertRecoveryProfile(
   rec: RemoteRecovery,
-  profile: { exec: string; repo: string } | undefined,
+  profile: { exec: string } | undefined,
 ): void {
   const refuse = (detail: string): never => {
     throw new RemoteRecoveryRefusedError(rec.workstream, rec.name, "profile", detail, [
@@ -206,13 +207,14 @@ export function assertRecoveryProfile(
     ]);
   };
   if (profile === undefined) refuse(`host ${rec.host} has no profile now`);
-  if (rec.hostExec === null || rec.hostRepo === null) {
+  if (rec.hostExec === null) {
     refuse(
       `host ${rec.host} had no profile when the agent was removed: nothing proves the profile now named ${rec.host} reaches that worktree`,
     );
   }
-  if (profile?.exec !== rec.hostExec || profile.repo !== rec.hostRepo) {
-    refuse(`host ${rec.host}'s profile changed since the agent was removed (exec or repo differs)`);
+  if (rec.hostRepo === null) refuse(`recovery ${rec.agentId} names no repo for its worktree`);
+  if (profile?.exec !== rec.hostExec) {
+    refuse(`host ${rec.host}'s profile changed since the agent was removed (exec differs)`);
   }
 }
 
@@ -267,8 +269,8 @@ export function assertRecoveryUsable(db: Db, rec: RemoteRecovery): void {
   }
   assertRecoveryProfile(
     rec,
-    db.prepare("SELECT exec, repo FROM host_profiles WHERE name = ?").get(rec.host) as
-      | { exec: string; repo: string }
+    db.prepare("SELECT exec FROM host_profiles WHERE name = ?").get(rec.host) as
+      | { exec: string }
       | undefined,
   );
 }

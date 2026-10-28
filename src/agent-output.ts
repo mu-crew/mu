@@ -51,6 +51,7 @@ export interface AgentOutput {
   spawner: string | null;
   host: string | null;
   collected_head: string | null;
+  repo: string | null;
   gate_token: string | null;
   created_at: string;
   updated_at: string;
@@ -86,6 +87,7 @@ export function agentToOutput(
     spawner: row.spawner,
     host: row.host,
     collected_head: row.collectedHead,
+    repo: row.repo,
     gate_token: row.gateToken,
     created_at: row.createdAt,
     updated_at: row.updatedAt,

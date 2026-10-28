@@ -80,6 +80,7 @@ export async function closeRecovery(
       cwd: rec.cwd,
       base: rec.base,
       collectedHead: rec.collectedHead,
+      repo: rec.hostRepo,
       // The ORIGINAL registry incarnation: the aside path derives from it.
       incarnation: rec.agentId,
     },

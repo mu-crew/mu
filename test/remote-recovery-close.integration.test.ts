@@ -68,6 +68,7 @@ describe.each([
       cwd: wt(name),
       base,
       host: "wide",
+      repo: remote,
       ...(over.collectedHead === undefined ? {} : { collectedHead: over.collectedHead }),
     });
     expect(deleteAgent(db, name, "auth")).toBe(true);
@@ -223,6 +224,7 @@ describe.each([
         cwd: wt("w1"),
         base,
         host: "wide",
+        repo: remote,
       });
       gitShim(
         `case " $* " in *' worktree move '*mu-removing*) if [ ! -f '${dir}/crashed' ]; then ${GIT} "$@"; touch '${dir}/crashed'; kill -9 $PPID; exit 0; fi ;; esac`,
@@ -347,14 +349,25 @@ describe.each([
   });
 
   it_(
-    "a replaced profile (another repo) refuses a collect and a close before any fetch or exec",
+    "a replaced profile (another exec) refuses a collect and a close before any fetch or exec",
     async () => {
       const id = orphan("w1");
-      db.prepare("UPDATE host_profiles SET repo = ?").run(local);
+      db.prepare("UPDATE host_profiles SET exec = exec || ' #other'").run();
       await expect(collect("w1", id)).rejects.toMatchObject({ reason: "profile" });
       await expect(close("w1")).rejects.toMatchObject({ reason: "profile" });
       expect(existsSync(wt("w1"))).toBe(true);
       expect(listRemoteRecoveries(db)).toHaveLength(1);
+    },
+  );
+
+  it_(
+    "a changed default repo does not refuse: the close runs against the record's own repo",
+    async () => {
+      orphan("w1");
+      db.prepare("UPDATE host_profiles SET repo = ?").run(local);
+      expect((await close("w1")).worktree).toMatchObject({ action: "removed" });
+      expect(existsSync(wt("w1"))).toBe(false);
+      expect(listRemoteRecoveries(db)).toHaveLength(0);
     },
   );
 

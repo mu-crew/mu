@@ -189,7 +189,7 @@ export const MESSAGES = {
   "agent.spawn_gate_flag": (flag: string) =>
     `--${flag} cannot be used with a remote command gate (--host with a non-pi --command): it runs one command and reports its exit; wait on it`,
   "agent.spawn_gate_worktree": () =>
-    "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in the profile's repo or --cwd",
+    "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in --cwd, else the profile's default repo",
   "agent.spawn_attempt_task": () => "--attempt needs --task",
   "agent.spawn_task_default": (task: string, ws: string, title: string) =>
     `Task ${task} (workstream ${ws}): ${title}. Read: mu task notes ${task} -w ${ws}`,

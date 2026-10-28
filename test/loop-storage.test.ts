@@ -842,9 +842,7 @@ describe("machine-local state", () => {
     expect(() => prof(null)).not.toThrow();
     expect(() => prof(2)).not.toThrow();
     expect(() =>
-      db
-        .prepare("INSERT INTO host_profiles (name, shell, exec, fetch) VALUES ('x','s','e','f')")
-        .run(),
+      db.prepare("INSERT INTO host_profiles (name, shell, exec) VALUES ('x','s','e')").run(),
     ).toThrow(/NOT NULL/i);
     const cur = db.prepare(
       "INSERT INTO wait_cursors (caller, ref, incarnation, runs) VALUES (?, ?, 'i', 1)",

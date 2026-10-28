@@ -101,6 +101,8 @@ const remote = (
     cwd: over.cwd === undefined ? WT : over.cwd,
     base: BASE,
     host: "dev",
+    // Not the profile's default (/srv/repo): the record must carry the row's own repo.
+    repo: "/srv/per-spawn",
     collectedHead: "c".repeat(40),
   });
 const records = () => listRemoteRecoveries(db);
@@ -329,7 +331,7 @@ describe("the database writes the record (AFTER DELETE trigger)", () => {
         base: BASE,
         collectedHead: "c".repeat(40),
         hostExec: "/bin/sh -c {cmd}",
-        hostRepo: "/srv/repo",
+        hostRepo: "/srv/per-spawn",
         reason: "reap",
       }),
     ]);
@@ -344,9 +346,9 @@ describe("the database writes the record (AFTER DELETE trigger)", () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM agents WHERE name <> 'k'").get()).toEqual({
       n: 0,
     });
-    expect(records().map((r) => [r.agentId, r.workstream, r.reason])).toEqual([
-      [a.incarnation, "auth", "workstream-delete"],
-      [b.incarnation, "auth", "workstream-delete"],
+    expect(records().map((r) => [r.agentId, r.workstream, r.reason, r.hostRepo])).toEqual([
+      [a.incarnation, "auth", "workstream-delete", "/srv/per-spawn"],
+      [b.incarnation, "auth", "workstream-delete", "/srv/per-spawn"],
     ]);
   });
 
@@ -381,7 +383,9 @@ describe("the database writes the record (AFTER DELETE trigger)", () => {
 
   it("an already-v13 file whose triggers are missing gets them back on open", () => {
     remote({ name: "w1" });
-    db.exec("DROP TRIGGER remote_recovery_agent_del; DROP TRIGGER remote_recovery_workstream_del");
+    db.exec(
+      "DROP TRIGGER remote_recovery_agent_del_v2; DROP TRIGGER remote_recovery_workstream_del_v2",
+    );
     db.close();
     db = openDb({ path: dbPath });
     const names = (
@@ -391,9 +395,49 @@ describe("the database writes the record (AFTER DELETE trigger)", () => {
         )
         .all() as { name: string }[]
     ).map((t) => t.name);
-    expect(names.sort()).toEqual(["remote_recovery_agent_del", "remote_recovery_workstream_del"]);
+    expect(names.sort()).toEqual([
+      "remote_recovery_agent_del_v2",
+      "remote_recovery_workstream_del_v2",
+    ]);
     db.exec("DELETE FROM agents");
     expect(records()).toHaveLength(1);
+  });
+
+  it("an older v13 file (repo-bound profiles, old triggers) loses both on open: no migration", () => {
+    db.exec(`
+      DROP TRIGGER remote_recovery_agent_del_v2;
+      DROP TRIGGER remote_recovery_workstream_del_v2;
+      CREATE TRIGGER remote_recovery_agent_del AFTER DELETE ON agents BEGIN SELECT 1; END;
+      CREATE TRIGGER remote_recovery_workstream_del BEFORE DELETE ON workstreams BEGIN SELECT 1; END;
+      DROP TABLE host_profiles;
+      CREATE TABLE host_profiles (name TEXT PRIMARY KEY, shell TEXT NOT NULL, exec TEXT NOT NULL,
+        fetch TEXT NOT NULL, repo TEXT NOT NULL, max_sessions INTEGER CHECK (max_sessions > 0));
+      INSERT INTO host_profiles VALUES ('old', 's', 'e', 'f', '/r', NULL);
+    `);
+    db.close();
+    db = openDb({ path: dbPath });
+    const triggers = (
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'remote_recovery%'",
+        )
+        .all() as { name: string }[]
+    ).map((t) => t.name);
+    expect(triggers.sort()).toEqual([
+      "remote_recovery_agent_del_v2",
+      "remote_recovery_workstream_del_v2",
+    ]);
+    expect(db.prepare("SELECT name FROM host_profiles").all()).toEqual([]);
+    expect(() =>
+      addHost(db, {
+        name: "dev2",
+        shell: "s",
+        exec: "e {cmd}",
+        fetch: "f",
+        repo: null,
+        max_sessions: null,
+      }),
+    ).not.toThrow();
   });
 });
 
@@ -443,7 +487,7 @@ describe("shape", () => {
     expect(records()).toHaveLength(1);
   });
 
-  it("pins the profile's exec and repo when it exists, nothing when it does not", () => {
+  it("pins the profile's exec when it exists (nothing when it does not), and the row's repo", () => {
     remote();
     addHost(db, {
       name: "gone",
@@ -460,12 +504,13 @@ describe("shape", () => {
       cwd: "/p",
       base: BASE,
       host: "ghost",
+      repo: "/srv/ghost",
     });
     deleteAgent(db, "w1", "auth");
     deleteAgent(db, "w2", "auth");
     const [dev, ghost] = records();
-    expect(dev).toMatchObject({ hostExec: "/bin/sh -c {cmd}", hostRepo: "/srv/repo" });
-    expect(ghost).toMatchObject({ host: "ghost", hostExec: null, hostRepo: null });
+    expect(dev).toMatchObject({ hostExec: "/bin/sh -c {cmd}", hostRepo: "/srv/per-spawn" });
+    expect(ghost).toMatchObject({ host: "ghost", hostExec: null, hostRepo: "/srv/ghost" });
   });
 
   it("the reaper's own trail is unchanged: the owned task gets its [reaper] note", async () => {
@@ -503,6 +548,7 @@ describe("agent close", () => {
       cwd: WT,
       base: BASE,
       host: "fake",
+      repo: "/srv/repo",
     });
     const r = await closeAgent(db, "w1", { workstream: "auth" });
     expect(r.worktree).toMatchObject({ action: "removed" });

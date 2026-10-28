@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRow } from "../agents.js";
 import type { Db } from "../db.js";
-import { getHost, runHostTemplate } from "../hosts.js";
+import { runHostTemplate } from "../hosts.js";
 import { activeMux } from "../mux.js";
 import { localPaneAlive } from "../remote-agent.js";
 import { shellQuote } from "../shell-quote.js";
@@ -139,7 +139,7 @@ export async function readGate(db: Db, agent: AgentRow): Promise<GateReading> {
       host,
       "exec",
       `gate:${agent.workstreamName}/${agent.name}`,
-      { cmd: readCommand(token), cwd: getHost(db, host).repo },
+      { cmd: readCommand(token), cwd: "." },
       { paneAlive: localPaneAlive },
     );
   } catch (e) {
@@ -173,7 +173,7 @@ export async function cleanGateResult(db: Db, agent: AgentRow): Promise<boolean>
       host,
       "exec",
       `gate-clean:${agent.workstreamName}/${agent.name}`,
-      { cmd: cleanCommand(token), cwd: getHost(db, host).repo },
+      { cmd: cleanCommand(token), cwd: "." },
       { paneAlive: localPaneAlive },
     );
     return r.exitCode === 0;

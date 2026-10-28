@@ -16,7 +16,9 @@ Read it before your first remote spawn.
    the evidence first, or close the task yourself.
 2. Allow unix-socket forwards in the host's sshd:
    `AllowStreamLocalForwarding yes`.
-3. Have a git repo there for `--worktree` to branch from.
+3. Have a git repo there for `--worktree` to branch from. One profile serves
+   every repo on the host: `--max-sessions` caps the machine, so never add
+   the same machine twice.
 
 Use one orchestrator DB on your machine. Do not run a second mu on the
 host for the same work: task ownership points into your local `agents`
@@ -26,14 +28,14 @@ table.
 
 ```bash
 mu host init dev --ssh   # prints a starter `mu host add`; runs nothing
-mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --repo '~/repo' --max-sessions 1
-mu host check dev        # host answers, repo, pi, mu extension
+mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
+mu host check dev --root '~/repo'   # host answers, repo, pi, mu extension
 ```
 
 ## Spawn the agent
 
 ```bash
-mu agent spawn worker-1 -w auth --host dev --worktree --task build --send 'Read: mu task notes build -w auth'
+mu agent spawn worker-1 -w auth --host dev --worktree --root '~/repo' --task build --send 'Read: mu task notes build -w auth'
 ```
 
 - The pane runs the profile's `--shell` template, filled with the remote
@@ -42,11 +44,16 @@ mu agent spawn worker-1 -w auth --host dev --worktree --task build --send 'Read:
   `--command` (default `pi`), the local and remote socket paths and the
   remote cwd. The template starts the remote pi and forwards its control
   socket to the local derived path.
-- `--worktree` makes a detached `git worktree add` in the profile's
-  `--repo` through its `--exec`, at
-  `~/.local/state/mu-next/remote-worktrees/<ws>/<name>` on the host. Its path
-  and base commit are the agent's `cwd` and `base`. `--cwd` names an
-  existing remote directory instead. `--root` is refused.
+- `--worktree` makes a detached `git worktree add` in the remote repo
+  `--root` names (default: the profile's `--repo`; with neither the spawn
+  refuses) through its `--exec`, at
+  `~/.local/state/mu-next/remote-worktrees/<ws>/<name>` on the host. Its path,
+  base commit and the repo's absolute toplevel are the agent's `cwd`, `base`
+  and `repo`; close and recovery use that repo, never the profile's.
+  `--cwd` names an existing remote directory instead; without either, the
+  agent starts in `--root` (default the profile's repo), else the login
+  directory. Without a repo, templates get `.` for `{cwd}`. `--root` is part
+  of a `--task` attempt's identity: the same attempt in another repo conflicts.
 - `--task` is the same one journaled attempt as for a local agent: claim
   for the new agent, then the brief, never sent twice.
 - mu reserves the host's channel before its first remote command and
@@ -112,7 +119,7 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   `mu agent close <name> -w <ws>` (or `<ws>/<name>`) previews and closes THAT
   worktree under the rule above (no pane, no task; the recorded host profile only), and
   `mu agent collect <name>` fetches from it. Several records of one name need
-  `--recovery <id>`; a current agent of the name or path, a newer record of the same path, or a changed host profile, refuses.
+  `--recovery <id>`; a current agent of the name or path, a newer record of the same path, or a changed `--exec`, refuses (a changed default repo does not).
 
 ## Host profiles
 
@@ -123,8 +130,8 @@ collect` runs the `--fetch` template.
 
 ```bash
 mu host init dev --ssh        # prints a starter `mu host add`; runs nothing
-mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --repo '~/repo' --max-sessions 1
-mu host check dev             # host answers, repo, pi, mu extension
+mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
+mu host check dev --root '~/repo'   # host answers, repo, pi, mu extension
 mu host show dev              # templates and the holders of its channels
 ```
 

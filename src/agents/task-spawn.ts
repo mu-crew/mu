@@ -26,7 +26,6 @@ import { type AgentRow, getAgentForCleanup } from "../agents.js";
 import { newMsgId } from "../ctl/client.js";
 import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
-import { getHost } from "../hosts.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
 import { addNote } from "../tasks/edit.js";
 import { TaskAlreadyOwnedError, TaskNotFoundError } from "../tasks/errors.js";
@@ -186,21 +185,17 @@ async function tryPinBrief(
 
 /** The worktree this attempt's agent runs in, as rollbackSpawn needs it (registry row at its cwd). */
 function stagedOf(db: Db, row: AgentRow): StagedWorktree | undefined {
-  // A remote worktree has no local registry row: the agent row carries host, path and base.
+  // A remote worktree has no local registry row: the agent row carries host, path, base and repo.
   if (row.host !== null) {
-    if (row.cwd === null || row.base === null) return undefined;
-    try {
-      return {
-        path: row.cwd,
-        base: row.base,
-        root: getHost(db, row.host).repo,
-        createdAt: row.createdAt,
-        incarnation: row.incarnation,
-        host: row.host,
-      };
-    } catch {
-      return undefined; // the profile was removed: no way to reach that worktree
-    }
+    if (row.cwd === null || row.base === null || row.repo === null) return undefined;
+    return {
+      path: row.cwd,
+      base: row.base,
+      root: row.repo,
+      createdAt: row.createdAt,
+      incarnation: row.incarnation,
+      host: row.host,
+    };
   }
   const wt = row.cwd === null ? undefined : getWorktreeAt(db, row.cwd);
   if (wt === undefined || wt.agent !== row.name) return undefined;
@@ -287,6 +282,7 @@ async function run(
     nextFree: req.spawn.nextFree === true,
     text: req.text,
     host: req.spawn.host,
+    root: req.spawn.root,
   });
   const saved = getReceipt(db, taskId, key);
   const auto = guard !== undefined;
