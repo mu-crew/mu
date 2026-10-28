@@ -11,14 +11,17 @@
 //    the machine-local call row and receipts go with them by cascade.
 // 2. The puts of those tasks and their notes are deleted from `ops`, so mu.db
 //    shrinks. The tombstones stay: a peer's older put arriving later is still dead.
-//    Like `mu db forget`, this rewrites history on THIS machine only; sync
-//    segments are untouched.
+//    With sync on, only PEERS' puts go: this machine's own are lines of its
+//    segment, and flush regenerates a damaged or missing segment from `ops`. A
+//    shorter regenerated file would sit under peers' line watermarks and they
+//    would silently skip the ops that follow. Sync segments are never edited.
 //
 // Kept, and counted, so the operator sees why:
-// - a task with an edge: deleting it would unblock (or orphan) other work;
-// - a `refute:` call whose judged task is still under `mu task auto`: `mu next
-//   --refute` keys the check on the call id, and a missing call means "check
-//   owed", so pruning it would rerun the checker.
+// - a task with an edge: the edge records a dependency someone drew, and the
+//   cascade would drop it;
+// - a `refute:` call whose judged task is still under `mu task auto` (enabled):
+//   `mu next --refute` keys the check on the call id, and a missing call means
+//   "check owed", so pruning it would rerun the checker.
 //
 // The verdict notes the calls wrote live on the judged tasks and stay.
 // The CLI adds the dry run, the backup beside the DB, VACUUM and the drift check.
@@ -26,6 +29,8 @@
 import type { Db } from "./db.js";
 import type { FleetHazard } from "./fleet-hazards.js";
 import { withOpContext } from "./op-context.js";
+import { localMachineId } from "./segments.js";
+import { syncEnabled } from "./sync.js";
 
 /** Default age, in days, past which a closed delegate task is pruned. */
 export const PRUNE_DEFAULT_DAYS = 30;
@@ -45,16 +50,24 @@ export interface PrunePlan {
   candidates: PruneCandidate[];
   /** Old closed delegate tasks kept, by reason. */
   kept: { edges: number; refuteTarget: number };
+  /** Whether this machine's own puts are deleted too (sync off), or only peers'. */
+  ownHistory: boolean;
   /** Ops the prune would delete (the puts of the candidates and their notes). */
   ops: number;
   /** Payload bytes of those ops. */
   bytes: number;
 }
 
-/** The puts of one task and its notes: key `<ws>/<id>` and `<ws>/<id>#<n>`
- *  ('$' is the byte after '#'), so each entity seeks idx_ops_entity_key once. */
+/** The puts of one task and its notes: key `<ws>/<id>` and `<ws>/<id>#<n>`. The
+ *  range outside the OR ('$' is the byte after '#') is what idx_ops_entity_key
+ *  seeks on (without it SQLite scans every put of the entity); the OR inside drops
+ *  siblings such as `<id>-2`. `@own` 1 includes this machine's puts. */
 const TASK_PUTS_WHERE = `entity IN ('task', 'note') AND op = 'put'
-  AND (key = @k OR (key >= @k || '#' AND key < @k || '$'))`;
+  AND key >= @k AND key < @k || '$' AND (key = @k OR key >= @k || '#')
+  AND (@own = 1 OR machine_id <> @me)`;
+
+/** The earliest instant a JS Date holds: a huge age means "nothing that old". */
+const MIN_DATE_MS = -8.64e15;
 
 interface Row {
   id: number;
@@ -73,17 +86,20 @@ interface Row {
  */
 export function planDelegatePrune(
   db: Db,
-  opts: { days?: number; workstream?: string; now?: number } = {},
+  opts: { days?: number; workstream?: string; now?: number; ownHistory?: boolean } = {},
 ): PrunePlan {
   const days = opts.days ?? PRUNE_DEFAULT_DAYS;
-  const cutoff = new Date((opts.now ?? Date.now()) - days * 86_400_000).toISOString();
+  const ownHistory = opts.ownHistory ?? !syncEnabled();
+  const cutoff = new Date(
+    Math.max(MIN_DATE_MS, (opts.now ?? Date.now()) - days * 86_400_000),
+  ).toISOString();
   const rows = db
     .prepare(
       `SELECT t.id AS id, w.name AS workstream, t.local_id AS task, t.updated_at AS updated_at,
               d.call_id AS call_id, d.state AS call_state,
               (SELECT COUNT(*) FROM task_edges e WHERE e.from_task_id = t.id OR e.to_task_id = t.id) AS edges,
               EXISTS (SELECT 1 FROM tasks jt JOIN workstreams jw ON jw.id = jt.workstream_id
-                        JOIN task_auto ja ON ja.task_id = jt.id
+                        JOIN task_auto ja ON ja.task_id = jt.id AND ja.enabled = 1
                        WHERE jw.name = d.record_workstream AND jt.local_id = d.record_task) AS judged_auto
          FROM tasks t
          JOIN workstreams w ON w.id = t.workstream_id AND w.torn_down_at IS NULL
@@ -98,12 +114,15 @@ export function planDelegatePrune(
     days,
     candidates: [],
     kept: { edges: 0, refuteTarget: 0 },
+    ownHistory,
     ops: 0,
     bytes: 0,
   };
   const cost = db.prepare(
     `SELECT COUNT(*) AS n, COALESCE(SUM(length(payload)), 0) AS b FROM ops WHERE ${TASK_PUTS_WHERE}`,
   );
+  const me = localMachineId(db);
+  const own = ownHistory ? 1 : 0;
   for (const r of rows) {
     // A CLOSED task whose call is still live (a crash mid-record) is not old work.
     if (!["done", "failed", "cancelled"].includes(r.call_state)) continue;
@@ -121,7 +140,7 @@ export function planDelegatePrune(
       callId: r.call_id,
       closedAt: r.updated_at,
     });
-    const c = cost.get({ k: `${r.workstream}/${r.task}` }) as { n: number; b: number };
+    const c = cost.get({ k: `${r.workstream}/${r.task}`, own, me }) as { n: number; b: number };
     plan.ops += c.n;
     plan.bytes += c.b;
   }
@@ -139,17 +158,22 @@ export function pruneDelegates(db: Db, plan: PrunePlan): { tasks: number; ops: n
   withOpContext(db, { intent: "delegate.prune", actor: "mu delegates prune", group: "new" }, () =>
     db
       .transaction(() => {
+        // Re-checked at delete time: the plan ran before the backup, outside this transaction.
         const del = db.prepare(
           `DELETE FROM tasks WHERE kind = 'delegate' AND status = 'CLOSED' AND updated_at < ?
-              AND local_id = ? AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
+              AND local_id = ? AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)
+              AND NOT EXISTS (SELECT 1 FROM task_edges e
+                               WHERE e.from_task_id = tasks.id OR e.to_task_id = tasks.id)`,
         );
         const puts = db.prepare(`DELETE FROM ops WHERE ${TASK_PUTS_WHERE}`);
+        const me = localMachineId(db);
+        const own = plan.ownHistory ? 1 : 0;
         // A wait's consumed-call cursor names the call; it has nothing left to hide.
         const cursor = db.prepare("DELETE FROM wait_cursors WHERE ref = ?");
         for (const c of plan.candidates) {
           if (del.run(plan.cutoff, c.task, c.workstream).changes === 0) continue;
           tasks++;
-          ops += puts.run({ k: `${c.workstream}/${c.task}` }).changes;
+          ops += puts.run({ k: `${c.workstream}/${c.task}`, own, me }).changes;
           cursor.run(`delegate:${c.workstream}/${c.callId}`);
         }
       })

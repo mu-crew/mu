@@ -311,7 +311,14 @@ export async function cmdDelegatesPrune(
     ...(opts.workstream !== undefined ? { workstream: opts.workstream } : {}),
   });
   const n = plan.candidates.length;
-  if (opts.yes !== true || n === 0) {
+  if (opts.yes === true && n === 0) {
+    if (opts.json) return emitJson({ dryRun: false, ...plan, pruned: 0, deletedOps: 0 });
+    console.log(pc.dim(`nothing to prune: no closed delegate task older than ${plan.days} days`));
+    const kept = keptLine(plan);
+    if (kept) console.log(pc.dim(kept));
+    return;
+  }
+  if (opts.yes !== true) {
     if (opts.json) return emitJson({ dryRun: true, ...plan });
     if (n === 0)
       console.log(pc.dim(`nothing to prune: no closed delegate task older than ${plan.days} days`));
@@ -324,6 +331,12 @@ export async function cmdDelegatesPrune(
       console.log(
         `${n} closed delegate task(s) older than ${plan.days} days: ${plan.ops} ops (${formatBytes(plan.bytes)}). Dry run; nothing changed (--yes applies; irreversible).`,
       );
+      if (!plan.ownHistory)
+        console.log(
+          pc.dim(
+            "sync is on: the rows go everywhere, but this machine's own history stays (its segment is rebuilt from it)",
+          ),
+        );
     }
     const kept = keptLine(plan);
     if (kept) console.log(pc.dim(kept));
@@ -476,7 +489,7 @@ export function wireDelegatesCommands(program: Command): void {
     )
     .option("--older-than <days>", "age in days since the task closed", parsePositiveNumber)
     .option("--yes", "apply (default: dry run)")
-    .option(...WORKSTREAM_OPT)
+    .option("-w, --workstream <name>", "only this workstream (default: every live one)")
     .option(...JSON_OPT)
     .action(function () {
       const opts = (this as Command).optsWithGlobals() as WsOpt & {

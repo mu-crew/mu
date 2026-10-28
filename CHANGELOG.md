@@ -16,9 +16,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   whole brief and report, forever. Prune deletes the closed ones older than
   `--older-than <days>` (default 30) that this machine's calls made: the task
   rows in one `delegate.prune` op group (the tombstones sync, so peers drop them
-  too), their notes and call rows, and their puts in the ops log. It keeps a task
-  with edges and a refute check of a task still under `mu task auto` (pruning it
-  would rerun the checker); verdicts stay on the judged tasks. Dry run by default;
+  too), their notes and call rows, and their puts in the ops log (with
+  `MU_SYNC_DIR` set, only peers' puts: this machine's own are what a damaged
+  segment is rebuilt from). It keeps a task with edges and a refute check of a task
+  with `mu task auto` enabled (pruning it would rerun the checker); verdicts stay
+  on the judged tasks. Dry run by default;
   `--yes` backs up beside the DB, VACUUMs and runs the drift check, like
   `mu db forget`. `mu doctor`'s housekeeping section gains `delegates-old`, the
   count with the commands.

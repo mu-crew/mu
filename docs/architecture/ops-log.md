@@ -129,9 +129,16 @@ default, all backing up beside the DB and running the drift check after:
   delegate tasks: the rows go through capture (tombstones, which sync),
   then the puts of those tasks and their notes are deleted. The
   tombstones stay, so a peer's older put arriving later is still dead.
+  With `MU_SYNC_DIR` set it deletes only peers' puts, never this
+  machine's own.
 
-Neither touches sync segments. A peer is not affected: watermarks only
-read forward, so a peer never re-sends forgotten history.
+None of them touches sync segments. A peer is not affected: watermarks only
+read forward, so a peer never re-sends forgotten history. One case breaks
+that: flush regenerates a damaged or missing own segment from `ops`, so
+deleting this machine's own flushed ops makes the regenerated file shorter
+than peers' line watermarks, and they silently skip the ops that follow it.
+`mu delegates prune` never deletes own ops while sync is on; `mu db
+forget` still can.
 
 ## Rebuild
 
