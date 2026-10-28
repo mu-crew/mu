@@ -22,6 +22,7 @@
 //       (`WaitResult.exit`, src/wait.ts); no error class maps here.
 
 import { type Command, CommanderError } from "commander";
+import { CarrierJobUnstoppedError } from "../agents/lease-carrier.js";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -471,6 +472,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RemoteRecoveryRefusedError ||
     // A recorded job handle whose stop template changed, or whose profile is gone: nothing ran.
     err instanceof CarrierStopRefusedError ||
+    // A respawn of a name whose older incarnation's job was never stopped.
+    err instanceof CarrierJobUnstoppedError ||
     err instanceof HostInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||

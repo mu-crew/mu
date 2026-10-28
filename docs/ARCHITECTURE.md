@@ -141,6 +141,7 @@ are re-export hubs.
 | `src/agents/spawn-ready.ts` | spawn readiness: the ctl handshake (`awaitCtlHandshake`, its clock seam), the liveness window, the startup-error and Claude trust-dialog scan (`checkSpawnHealth`) |
 | `src/agents/spawn-remote.ts` | the remote half of `spawn --host`: `requireHostSpawn`, channel admission + remote prepare (`admitRemoteSpawn`, `prestageRemote`), remote-worktree rollback; imports only types from `spawn.ts` |
 | `src/agents/staging.ts` | dead `--worktree` stagings (a SIGKILLed spawn's placeholder row + unused worktree): `deadStagings` for doctor, `reclaimDeadStagings` at spawn |
+| `src/agents/lease-carrier.ts` | the lease half of `spawn --host`: refusals before any effect (`assertLeaseSpawnable`: command gates, an unstopped older job of the name), the job file claimed in the spawn lock, the job handshake (`awaitLeaseJob`, `MU_SPAWN_JOB_MS`, records `carrier_jobs`), the stop-first rollback (`rollbackLeaseJob`: persist a re-read handle, `runStop`, then the worktree) |
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
 | `src/agents/lock.ts` | per-agent lock (`withAgentLock`): fail-closed and strict; taken by close and `--worktree` staging/rollback; `withSpawnAttemptLock`: the same strict lock per (task, attempt key) |
 | `src/agents/reap.ts` | `reapAgentRow`: the one row-level reaper step, inside the caller's transaction and op group: record the remote worktree, DELETE the row, free its host channel, reopen what it owned with a `[reaper]` note. Used by `deleteAgent` and by teardown |

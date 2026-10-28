@@ -520,7 +520,15 @@ export const LOCAL_ONLY_ENV = [
  */
 export function remoteShellCommand(
   profile: HostProfile,
-  a: { workstream: string; name: string; command: string; localSock: string; cwd: string },
+  a: {
+    workstream: string;
+    name: string;
+    command: string;
+    localSock: string;
+    cwd: string;
+    /** A lease profile's `{job_file}`: where its carrier writes the job handle. */
+    jobFile?: string;
+  },
 ): string {
   const remoteSock = remoteCtlSocketPath(a.workstream, a.name, process.getuid?.() ?? 0);
   const env = hostEnvWords({
@@ -536,6 +544,7 @@ export function remoteShellCommand(
     local_sock: a.localSock,
     remote_sock: remoteSock,
     cwd: a.cwd,
+    ...(a.jobFile !== undefined ? { job_file: a.jobFile } : {}),
   });
   const unset = LOCAL_ONLY_ENV.map((k) => `-u ${k}`).join(" ");
   return `exec env ${unset} /bin/sh -c ${shellQuote(filled)}`;

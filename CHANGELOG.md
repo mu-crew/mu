@@ -44,9 +44,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   recorded with it; no FK, trigger, op or sync; agent deletion never touches
   it; `mu rebuild` reports it lost), `runStop` (runs `stop` only if the profile's
   `stop` still equals the recorded one; exit 3 hands back; a failure keeps the
-  handle) and the job-file path `<state dir>/carrier/<ws>/<agent>.job`. The
-  spawn handshake, close and `doctor` follow in later units; no verb yet
-  records or stops a job.
+  handle) and the job-file path `<state dir>/carrier/<ws>/<agent>.job`. Close
+  and `doctor` follow in a later unit.
+- **Lease transport, part 2: `agent spawn --host` on a lease profile.** Prepare
+  rides a transient channel that is released once prepare ends, and the pane
+  binds no `host_channels` row, so `--max-sessions 1` still admits `collect`
+  while the worker runs. `{job_file}` is filled into the `shell` template. The
+  job file is removed inside the spawn lock. If an older incarnation's handle of
+  that name is still in `carrier_jobs`, the spawn refuses (exit 4: `<name> has an
+  unstopped job <handle> on <host>: mu agent close <name>`). The **job
+  handshake** is mandatory for a lease and independent of ctl, `--no-ctl` and
+  `MU_SPAWN_CTL_MS`. mu waits up to `MU_SPAWN_JOB_MS` (default 30 s, never 0)
+  for one handle line and records it in one statement guarded by the row's id
+  and pane. A pane that dies first is `AgentDiedOnSpawnError` with its
+  scrollback. A live pane with no handle is rolled back. **Rollback** kills the
+  pane and re-reads the job file. A handle is persisted to `carrier_jobs` first
+  (even when reconcile already removed the agent row), then stopped, and only
+  then is the worktree removed. A failed stop keeps the worktree and the handle,
+  and says so. A lease profile refuses command gates (exit 2) before any effect.
+  `mu next` names the handle and `mu agent close <name>` for a dead lease
+  worker.
 
 ### Changed
 

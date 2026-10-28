@@ -131,6 +131,25 @@ export function listCarrierJobsByName(db: Db, workstream: string, name: string):
   ).map(toJob);
 }
 
+/**
+ * The newest handle of (workstream, name) whose agent incarnation is gone: an older job of
+ * the name that was never stopped. A spawn of the name refuses while one exists.
+ */
+export function unstoppedJobOfGoneAgent(
+  db: Db,
+  workstream: string,
+  name: string,
+): CarrierJob | undefined {
+  const r = db
+    .prepare(
+      `SELECT * FROM carrier_jobs c WHERE c.workstream = ? AND c.name = ?
+         AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.id = c.agent_id)
+       ORDER BY c.agent_id DESC LIMIT 1`,
+    )
+    .get(workstream, name) as Raw | undefined;
+  return r === undefined ? undefined : toJob(r);
+}
+
 /** Every recorded handle (doctor's `lease-job` hint reads these). */
 export function listCarrierJobs(db: Db): CarrierJob[] {
   return (db.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all() as Raw[]).map(toJob);

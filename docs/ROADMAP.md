@@ -58,7 +58,7 @@ for both specs to be implemented, which is the human decision that promotes it
 ([spec](specs/2026-10-28-lease-transport.md)).
 
 Built in units: the profile (`--transport lease`, `--stop`, `{job_file}`,
-`carrier_jobs`, `runStop`; done), then the spawn handshake, then close and
+`carrier_jobs`, `runStop`; done), the spawn handshake (done), then close and
 `doctor`. It merges to `main` as it lands but does not ship (release,
 publish, announce) before mule's `--lease`, `forward`, `exec` and the `rm`
 stop contract are released.
