@@ -137,7 +137,9 @@ are re-export hubs.
 | Module | Responsibility |
 | --- | --- |
 | `src/agents.ts` | CRUD (incarnation CAS), send, read, list, liveness, reaper; hub re-exporting close |
-| `src/agents/spawn.ts` | spawn: CLI resolution, `mux.spawnAgent`, liveness, readiness, ctl handshake, rollback |
+| `src/agents/spawn.ts` | spawn: CLI resolution, `mux.spawnAgent`, row finalize, rollback; re-exports the readiness names so `agents/spawn.js` imports keep working |
+| `src/agents/spawn-ready.ts` | spawn readiness: the ctl handshake (`awaitCtlHandshake`, its clock seam), the liveness window, the startup-error and Claude trust-dialog scan (`checkSpawnHealth`) |
+| `src/agents/spawn-remote.ts` | the remote half of `spawn --host`: `requireHostSpawn`, channel admission + remote prepare (`admitRemoteSpawn`, `prestageRemote`), remote-worktree rollback; imports only types from `spawn.ts` |
 | `src/agents/staging.ts` | dead `--worktree` stagings (a SIGKILLed spawn's placeholder row + unused worktree): `deadStagings` for doctor, `reclaimDeadStagings` at spawn |
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |
 | `src/agents/lock.ts` | per-agent lock (`withAgentLock`): fail-closed and strict; taken by close and `--worktree` staging/rollback; `withSpawnAttemptLock`: the same strict lock per (task, attempt key) |

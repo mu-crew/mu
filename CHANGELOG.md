@@ -26,6 +26,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   ssh master** (no `ControlMaster=no` or no `ControlPath=none`). A warning in
   `warnings` and on a `warn` line, never a failure.
 
+### Changed
+
+- **`src/agents/spawn.ts` is split** (1566 → 1193 lines, under the 1500 cap): the
+  remote half of `spawn --host` moved to `spawn-remote.ts` and the handshake,
+  liveness and startup-scan helpers to `spawn-ready.ts`. No behaviour change;
+  `agents/spawn.js` still exports every public name.
+
 ### Fixed
 
 - **The `host init --ssh` starter comment named the wrong failure.** A multiplexed
