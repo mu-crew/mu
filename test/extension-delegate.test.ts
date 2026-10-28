@@ -23,6 +23,7 @@ import {
 import muPi, { type MuPiContext } from "../extension/mu-pi.js";
 import { listDelegates } from "../src/delegates.js";
 import {
+  failed,
   fakeMu,
   fakePi,
   flush,
@@ -1564,6 +1565,9 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     expect(r?.continue).toBe(true);
     expect(content(r)).toContain(`Delegate answer: call ${id}, task scratch/`);
     expect(content(r)).toContain("\n42 is it");
+    // Not a wave: the wait's own result stays in the entry.
+    expect(content(r)).toContain("Its result:");
+    expect(content(r)).toContain(`"ref":"delegate:${id}"`);
     await t.p.fire("agent_settled", { aborted: false });
     await new Promise((x) => setImmediate(x));
     expect(t.p.sendMessage).not.toHaveBeenCalled(); // shown once, by the settle
@@ -1739,7 +1743,55 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     expect(text).toContain("Wave w: 0/2 CONFIRMED, 0 REFUTED, 1 UNVERIFIED, 1 pending");
     expect(text).toContain("Another event came before the rest of wave w:");
     expect(text).toContain('"agent:crew/w1"');
+    // The wave is not all in: the head says so, never "waited until ... was in".
+    expect(text).toContain("It waited for wave w, which is not all in (below):");
+    expect(text).not.toContain("It waited until wave w was in");
     expect(r?.continue).toBe(true);
+  });
+
+  it("a wave entry keeps the waits' notices (a course check due) without the stale JSON", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const a = await delegate(t, { task: "c1", wave: "w" });
+    const b = await delegate(t, { task: "c2", wave: "w" });
+    for (const name of ["delegate-2", "delegate-3"]) {
+      t.mu.waits.get(name)?.resolve(ok({ agents: [{ outcome: "done", lastText: "ok" }] }));
+      for (let i = 0; i < 4; i++) await flush();
+    }
+    const settling = t.settle();
+    const withNotice = (r: MuResult, n: string) => {
+      const v = JSON.parse(r.stdout);
+      v.data.notices = [n];
+      return { ...r, stdout: JSON.stringify(v) };
+    };
+    await t.answerWait(withNotice(delegateEvent(a, [b]), "course check due: run mu course check"));
+    await t.answerWait(withNotice(delegateEvent(b), "a later notice"));
+    const text = content(await settling);
+    expect(text).toContain("It waited until wave w was in:");
+    expect(text).toContain("Notice: course check due: run mu course check");
+    expect(text).toContain("Notice: a later notice");
+    expect(text).not.toContain('"snapshots"');
+  });
+
+  it("a wave entry whose first wait carries a human need keeps that wait's JSON", async () => {
+    const t = await setup();
+    await t.p.fire("agent_start", {});
+    const a = await delegate(t, { task: "c1", wave: "w" });
+    await delegate(t, { task: "c2", wave: "w" });
+    t.mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "done", lastText: "one" }] }));
+    for (let i = 0; i < 4; i++) await flush();
+    const settling = t.settle();
+    const v = JSON.parse(delegateEvent(a).stdout);
+    v.data.humanNeeds = [{ workstream: "crew", id: "h1", reason: "spend approval" }];
+    await t.answerWait({ ...delegateEvent(a), stdout: JSON.stringify(v) });
+    // The sibling's wait ends the wave loop quietly.
+    await t.answerWait(failed(3, "WaitNothingError", "nothing owed"));
+    const r = await settling;
+    const text = content(r);
+    expect(text).toContain("Its result:");
+    expect(text).toContain('"reason":"spend approval"');
+    expect(text).toContain("Wave w:");
+    expect(r?.continue).toBeUndefined(); // a human stop ends the turn
   });
 
   it("no wait while a wake is queued; the wake's own turn waits and shows the report", async () => {

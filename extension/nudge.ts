@@ -393,6 +393,13 @@ function waveSummary(wave: string, rows: CallRow[]): string {
   return [`Wave ${wave}: ${counts}.`, ...lines].join("\n");
 }
 
+/** A wait result's `notices` (one line each; `waitData` never cuts them). */
+function noticesOf(d: Record<string, unknown>): string[] {
+  return Array.isArray(d.notices)
+    ? d.notices.filter((n): n is string => typeof n === "string")
+    : [];
+}
+
 /** The firing snapshot of a wait result, when its event is a delegate answer. */
 function firingDelegate(d: Record<string, unknown>): string | undefined {
   const f = d.firing as { kind?: unknown; ref?: unknown } | undefined;
@@ -493,7 +500,12 @@ export function registerNudge(
       callId: string,
       shown: Set<string>,
       first: Record<string, unknown>,
-    ): Promise<{ blocks: string[]; stop: boolean; wave?: string }> => {
+    ): Promise<{
+      blocks: string[];
+      stop: boolean;
+      /** A wave's: its label, whether every call was handed over, and its waits' notices. */
+      wave?: { label: string; complete: boolean; notices: string[] };
+    }> => {
       shown.add(callId);
       const c = await call(callId);
       if (c === undefined)
@@ -511,6 +523,7 @@ export function registerNudge(
         return Array.isArray(items) ? items : [c];
       };
       const after: string[] = [];
+      const notices = new Set<string>(noticesOf(first));
       let stop = false;
       let rows = await listed();
       // Owed: a pending sibling, or a finished one whose event this wait has not yet handed over
@@ -533,6 +546,7 @@ export function registerNudge(
           break;
         }
         if (d.interrupted === true || d.drained === true) break;
+        for (const n of noticesOf(d)) notices.add(n);
         picture = pictureOf(d);
         if (d.timedOut === true) continue;
         if (Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0) stop = true;
@@ -550,10 +564,15 @@ export function registerNudge(
         break;
       }
       rows = await listed();
+      const complete = !ctl.signal.aborted && after.length === 0 && !rows.some(owedRow);
       const bodies = await Promise.all(
         rows.filter((x) => shown.has(x.callId)).map((x) => answerBlock(mu, x, WAVE_REPORT_CAP)),
       );
-      return { blocks: [waveSummary(wave, rows), ...bodies, ...after], stop, wave };
+      return {
+        blocks: [waveSummary(wave, rows), ...bodies, ...after],
+        stop,
+        wave: { label: wave, complete, notices: [...notices] },
+      };
     };
     /**
      * The settle under an open human stop: drain the events already ready (each
@@ -638,9 +657,16 @@ export function registerNudge(
           const ran = `Work you own is still running, so the settle ran \`mu ${SETTLE_WAIT_ARGS.join(" ")}\` for you.`;
           // A wave's summary supersedes the first wait's result: its snapshots predate the
           // siblings' answers (they would still read "running"). Kept when it carries a human need.
+          // Its notices (a course check due) are never cut by the wait, so they stay.
+          const w = got?.wave;
           const head =
-            got?.wave !== undefined && !humanStop
-              ? [`${ran} It waited until wave ${got.wave} was in:`]
+            w !== undefined && !humanStop
+              ? [
+                  w.complete
+                    ? `${ran} It waited until wave ${w.label} was in:`
+                    : `${ran} It waited for wave ${w.label}, which is not all in (below):`,
+                  ...w.notices.map((n) => `Notice: ${n}`),
+                ]
               : [`${ran} Its result:`, JSON.stringify(d)];
           const text = [`[mu] ${rule}`, "", ...head, ...blocks.flatMap((b) => ["", b])].join("\n");
           return { entries: [entry(text)], ...(stop ? {} : { continue: true }), receipt: true };
