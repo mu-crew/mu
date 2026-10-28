@@ -33,6 +33,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   and yellow otherwise, read the way `parseVerdict` reads it (`VERDICT: <id>
   CONFIRMED` included); a later `VERDICT:` line is quoted evidence and stays
   plain.
+- **Delegate sessions leave your `/resume` list.** A pi pane spawned for a
+  `kind=delegate` task (every `mu_delegate` reviewer and refuter) now keeps its
+  pi session in `<DB dir>/delegate-sessions/<workstream>` through
+  `PI_CODING_AGENT_SESSION_DIR`, not pi's per-cwd folder, which they used to flood
+  (175 of 208 sessions in one repo). Mux-free delegate processes already ran with
+  their own `--session-dir`. Workers on `work` tasks are unchanged.
 
 ### Fixed
 

@@ -22,6 +22,7 @@
 // `stale`, never swapped for the replacement. The attempt lock is strict
 // (fails closed); the advisory spawn lock stays inside spawnAgent.
 
+import { dirname, join } from "node:path";
 import { type AgentRow, getAgentForCleanup } from "../agents.js";
 import { newMsgId } from "../ctl/client.js";
 import type { Db } from "../db.js";
@@ -367,6 +368,20 @@ async function fresh(
 }
 
 /**
+ * A delegate's pi session goes under the DB's directory
+ * (`delegate-sessions/<workstream>`), not pi's per-cwd default, so the
+ * caller's `/resume` list holds only its own sessions.
+ */
+function delegateSessionDir(
+  db: Db,
+  task: string,
+  ws: string,
+): Pick<SpawnAgentOptions, "piSessionDir"> {
+  if (getTask(db, task, ws)?.kind !== "delegate") return {};
+  return { piSessionDir: join(dirname(db.name), "delegate-sessions", ws) };
+}
+
+/**
  * Spawn (when `agent` is absent), claim (when not yet), send, journal. The
  * rollback try covers everything up to the moment the prompt may be written.
  */
@@ -427,6 +442,7 @@ async function drive(
       spawnThrew = true;
       const spawned = await spawnAgent(db, {
         ...req.spawn,
+        ...delegateSessionDir(db, req.task, ws),
         onIdentity: (r) => {
           rec = updateReceipt(db, taskId, key, {
             state: "pane",
