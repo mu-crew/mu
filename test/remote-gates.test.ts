@@ -6,7 +6,14 @@
 // does. No real host, no real tmux: test/remote-gates.integration.test.ts has one.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,7 +29,7 @@ import {
   spawnAgent,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { addHost, HostProfileError, listHostChannels } from "../src/hosts.js";
+import { addHost, HostHandbackError, HostProfileError, listHostChannels } from "../src/hosts.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { type AgentReading, waitForEvents } from "../src/wait.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
@@ -316,6 +323,47 @@ describe("no usable record is never success", () => {
     await spawnGate({ host: "nohome", command: "touch ran; exit 0" });
     expect(existsSync(join(dir, "repo", "ran"))).toBe(false);
     expect((await waitForEvents(db, [ref()], waitOpts())).exit).toBe(6);
+  });
+});
+
+describe("a result read that hands back (exec exits 3)", () => {
+  /** Make `dev`'s exec template count its calls in a file and exit 3. */
+  const handBack = (): (() => number) => {
+    const log = join(dir, "handback-calls");
+    writeFileSync(log, "");
+    db.prepare("UPDATE host_profiles SET exec = ? WHERE name = 'dev'").run(
+      `echo call >> '${log}'; echo 'touch your key' >&2; exit 3`,
+    );
+    return () => readFileSync(log, "utf8").split("\n").filter(Boolean).length;
+  };
+
+  it("readGate throws HostHandbackError instead of reading unknown", async () => {
+    await spawnGate({ command: "exit 0" });
+    const calls = handBack();
+    const err = await readGate(db, agentRow()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HostHandbackError);
+    expect(calls()).toBe(1);
+  });
+
+  it("wait ends with the hand-back after exactly one template call, never polling it again", async () => {
+    await spawnGate({ command: "exit 0" });
+    const calls = handBack();
+    const outcome = await waitForEvents(
+      db,
+      [ref()],
+      waitOpts({ timeoutMs: 150, pollMs: 20 }),
+    ).catch((e: unknown) => e);
+    expect(outcome).toBeInstanceOf(HostHandbackError);
+    expect((outcome as HostHandbackError).message).toContain("touch your key");
+    expect(calls()).toBe(1);
+  });
+
+  it("gate-clean swallows it: close still succeeds", async () => {
+    const a = await spawnGate({ command: "exit 0" });
+    handBack();
+    await expect(cleanGateResult(db, { ...agentRow(), gateToken: a.gateToken })).resolves.toBe(
+      false,
+    );
   });
 });
 
