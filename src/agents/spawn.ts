@@ -303,6 +303,10 @@ export interface SpawnAgentOptions {
    * pane): a throw rolls the spawn back like a failed finalize.
    */
   onIdentity?: (agent: AgentRow) => void;
+  /** Where a local pi agent keeps its session (`PI_CODING_AGENT_SESSION_DIR`
+   *  in the pane env) instead of pi's per-cwd default. Set for delegates, so
+   *  their sessions stay out of the caller's `/resume` list. */
+  piSessionDir?: string;
 }
 
 /** How many taken names a `nextFree` spawn skips past before it gives up. */
@@ -637,7 +641,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // a test DB in a temp dir keeps its sockets there too.
   const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
   mkdirSync(dirname(ctlSocket), { recursive: true, mode: 0o700 });
-  // Exactly these six (plus SSH_AUTH_SOCK below). tmux panes inherit the
+  // Exactly these six (plus SSH_AUTH_SOCK and a delegate's PI_CODING_AGENT_SESSION_DIR below). tmux panes inherit the
   // tmux server's env, not ours: pin the DB and state dir this spawn used,
   // absolute and always (the default ones too), so the worker's `mu` hits
   // the same taskgraph from any cwd.
@@ -658,6 +662,9 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // update-environment never refreshes them and a pane would inherit a
   // stale SSH_AUTH_SOCK. Forward the caller's. File-type check only (is it
   // a socket?), not a liveness probe: mu stays ssh-free. Best-effort.
+  if (!profile && opts.piSessionDir !== undefined && speaksMuCtl(cli, command)) {
+    paneEnv.PI_CODING_AGENT_SESSION_DIR = resolve(opts.piSessionDir);
+  }
   const sshSock = process.env.SSH_AUTH_SOCK;
   if (sshSock) {
     try {

@@ -115,3 +115,38 @@ describe("non-pi delivery (no receipt id)", () => {
     expect(getTask(db, "t1", "auth")?.status).toBe("IN_PROGRESS");
   });
 });
+
+describe("delegate session dir", () => {
+  const sessionEnv = (calls: string[][]): string[] =>
+    calls.flat().filter((a) => a.startsWith("PI_CODING_AGENT_SESSION_DIR="));
+
+  it("a delegate task's pi pane keeps its session under the DB dir, out of the caller's /resume list", async () => {
+    mux.restore();
+    const m = mockTmux(freshMockState());
+    mux = installMux("tmux", m.executor);
+    addTask(db, {
+      localId: "d1",
+      workstream: "auth",
+      title: "D",
+      impact: 50,
+      effortDays: 1,
+      kind: "delegate",
+    });
+    await spawnForTask(db, {
+      task: "d1",
+      text: "check it",
+      spawn: { name: "delegate-1", workstream: "auth", cli: "claude", command: "pi", ctl: false },
+    });
+    expect(sessionEnv(m.calls)).toEqual([
+      `PI_CODING_AGENT_SESSION_DIR=${join(dir, "delegate-sessions", "auth")}`,
+    ]);
+  });
+
+  it("a work task's pane keeps pi's default session dir", async () => {
+    mux.restore();
+    const m = mockTmux(freshMockState());
+    mux = installMux("tmux", m.executor);
+    await spawnForTask(db, req());
+    expect(sessionEnv(m.calls)).toEqual([]);
+  });
+});
