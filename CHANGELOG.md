@@ -12,6 +12,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu delegates prune`.** Every delegate call left a `scratch` task, with its
+  whole brief and report, forever. Prune deletes the closed ones older than
+  `--older-than <days>` (default 30) that this machine's calls made: the task
+  rows in one `delegate.prune` op group (the tombstones sync, so peers drop them
+  too), their notes and call rows, and their puts in the ops log. It keeps a task
+  with edges and a refute check of a task still under `mu task auto` (pruning it
+  would rerun the checker); verdicts stay on the judged tasks. Dry run by default;
+  `--yes` backs up beside the DB, VACUUMs and runs the drift check, like
+  `mu db forget`. `mu doctor`'s housekeeping section gains `delegates-old`, the
+  count with the commands.
+
 - **The dashboard shows delegate calls.** A `kind=delegate` task row on the Tasks
   tab carries its call: state, verdict and the task it judges
   (`done REFUTED > ws/fix_auth`); the `/` filter matches them. A refused call, or

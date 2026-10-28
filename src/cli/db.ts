@@ -52,7 +52,7 @@ export function cmdDbBackup(db: Db, file: string, opts: { json?: boolean } = {})
 }
 
 /** Backup next to the DB, named so it sorts with it: `mu.db.pre-<verb>-<ts>`. */
-function backupBeside(db: Db, verb: string): string {
+export function backupBeside(db: Db, verb: string): string {
   const ts = new Date().toISOString().replace(/[:.]/g, "-");
   const target = `${db.name}.pre-${verb}-${ts}`;
   db.prepare("VACUUM INTO ?").run(target);
@@ -60,7 +60,7 @@ function backupBeside(db: Db, verb: string): string {
 }
 
 /** Reclaim the freed pages, then prove the log still explains the tables. */
-function vacuumAndCheck(
+export function vacuumAndCheck(
   db: Db,
   backup: string,
 ): { before: number; after: number; checkpointed: boolean } {
@@ -94,7 +94,7 @@ function dbBytes(db: Db): number {
   return pages * pageSize;
 }
 
-const CHECKPOINT_PENDING =
+export const CHECKPOINT_PENDING =
   "another connection is reading the DB; the file shrinks on its next checkpoint";
 
 export function cmdDbCompact(db: Db, opts: { yes?: boolean; json?: boolean } = {}): void {

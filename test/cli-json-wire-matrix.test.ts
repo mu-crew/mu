@@ -94,6 +94,7 @@ const ARGS: Record<string, string[]> = {
   "delegates list": ["--all"],
   "delegates show": ["pi:x:1"],
   "delegates tally": ["--wave", "w"],
+  "delegates prune": [],
   "delegates register": ["pi:x:2", "--caller", "pi:x", "--text", "t"],
   "delegates mark": ["pi:x:1", "running"],
   "delegates finish": [

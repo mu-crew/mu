@@ -5,6 +5,7 @@
 //   mu delegates tally -w <ws> --wave <w>                 verdicts grouped per judged task
 //   mu delegates register | mark | finish                 the writers the pi extension calls
 //   mu delegates reissue <call-id>                        refuses: the tool's job (see cmdDelegatesReissue)
+//   mu delegates prune [--older-than <days>] [--yes]      drop old closed delegate tasks (src/delegate-prune.ts)
 //
 // The extension shells out to the writers (VISION § 1: the CLI is the
 // product), so a script gets exactly the same lifecycle.
@@ -25,6 +26,12 @@ import {
 import type { Db } from "../db.js";
 import { type DelegateRunResult, runDelegateProcess } from "../delegate-process.js";
 import {
+  PRUNE_DEFAULT_DAYS,
+  type PrunePlan,
+  planDelegatePrune,
+  pruneDelegates,
+} from "../delegate-prune.js";
+import {
   DelegateNotFoundError,
   type DelegateRequest,
   type DelegateRow,
@@ -35,8 +42,10 @@ import {
   registerDelegateCall,
   verdictTally,
 } from "../delegates.js";
+import { formatBytes } from "../disk-recon.js";
 import { muTable, pc } from "../output.js";
 import { qualifiedRefProblem } from "../workstream-scope.js";
+import { backupBeside, CHECKPOINT_PENDING, vacuumAndCheck } from "./db.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 
 interface WsOpt {
@@ -278,6 +287,69 @@ export async function cmdDelegatesRun(
   if (r.ran && r.state !== "done") throw new CliExitError(1);
 }
 
+function keptLine(plan: PrunePlan): string {
+  const parts = [
+    plan.kept.edges > 0 ? `${plan.kept.edges} with edges` : "",
+    plan.kept.refuteTarget > 0
+      ? `${plan.kept.refuteTarget} refute checks of tasks still under mu task auto`
+      : "",
+  ].filter((p) => p !== "");
+  return parts.length > 0 ? `kept: ${parts.join(", ")}` : "";
+}
+
+/**
+ * Dry run by default; `--yes` backs up beside the DB, deletes, VACUUMs and runs
+ * the drift check, like `mu db forget`.
+ */
+export async function cmdDelegatesPrune(
+  db: Db,
+  opts: WsOpt & { olderThan?: number; yes?: boolean },
+): Promise<void> {
+  if (opts.workstream !== undefined) await resolveExistingWorkstream(db, opts.workstream);
+  const plan = planDelegatePrune(db, {
+    ...(opts.olderThan !== undefined ? { days: opts.olderThan } : {}),
+    ...(opts.workstream !== undefined ? { workstream: opts.workstream } : {}),
+  });
+  const n = plan.candidates.length;
+  if (opts.yes !== true || n === 0) {
+    if (opts.json) return emitJson({ dryRun: true, ...plan });
+    if (n === 0)
+      console.log(pc.dim(`nothing to prune: no closed delegate task older than ${plan.days} days`));
+    else {
+      const t = muTable({ head: ["TASK", "CALL", "CLOSED"] });
+      for (const c of plan.candidates.slice(0, 20))
+        t.push([`${c.workstream}/${c.task}`, c.callId, c.closedAt.slice(0, 10)]);
+      console.log(t.toString());
+      if (n > 20) console.log(pc.dim(`... and ${n - 20} more`));
+      console.log(
+        `${n} closed delegate task(s) older than ${plan.days} days: ${plan.ops} ops (${formatBytes(plan.bytes)}). Dry run; nothing changed (--yes applies; irreversible).`,
+      );
+    }
+    const kept = keptLine(plan);
+    if (kept) console.log(pc.dim(kept));
+    return;
+  }
+  const backup = backupBeside(db, "prune");
+  const r = pruneDelegates(db, plan);
+  const size = vacuumAndCheck(db, backup);
+  if (opts.json)
+    return emitJson({
+      dryRun: false,
+      ...plan,
+      pruned: r.tasks,
+      deletedOps: r.ops,
+      backup,
+      ...size,
+    });
+  console.log(
+    `Pruned ${r.tasks} delegate task(s), ${r.ops} ops: ${formatBytes(size.before)} → ${formatBytes(size.after)}. Drift check clean.`,
+  );
+  const kept = keptLine(plan);
+  if (kept) console.log(pc.dim(kept));
+  if (!size.checkpointed) console.log(pc.dim(CHECKPOINT_PENDING));
+  console.log(pc.dim(`backup (the only way back): ${backup}`));
+}
+
 /**
  * Always refuses. A reissued call is `queued`, and nothing drains a durable
  * queued row except the live pi runtime that holds the queue, so a shell
@@ -397,6 +469,21 @@ export function wireDelegatesCommands(program: Command): void {
     .action(function (callId: string) {
       const opts = (this as Command).optsWithGlobals() as WsOpt & { keep?: boolean };
       return handle((db) => cmdDelegatesRun(db, callId, opts), this as Command)();
+    });
+  d.command("prune")
+    .description(
+      `Delete this machine's closed delegate tasks older than --older-than days (default ${PRUNE_DEFAULT_DAYS}); the deletion syncs. Dry run without --yes; --yes backs up, VACUUMs, checks drift`,
+    )
+    .option("--older-than <days>", "age in days since the task closed", parsePositiveNumber)
+    .option("--yes", "apply (default: dry run)")
+    .option(...WORKSTREAM_OPT)
+    .option(...JSON_OPT)
+    .action(function () {
+      const opts = (this as Command).optsWithGlobals() as WsOpt & {
+        olderThan?: number;
+        yes?: boolean;
+      };
+      return handle((db) => cmdDelegatesPrune(db, opts), this as Command)();
     });
   d.command("reissue <call-id>")
     .description(

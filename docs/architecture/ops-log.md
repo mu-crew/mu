@@ -115,9 +115,8 @@ peer, it makes the tables reflect it.
 
 ## Rewriting history (local only)
 
-The log is append-only except for two operator verbs in `src/compact.ts`,
-both dry-run by default, both backing up beside the DB and running the
-drift check after:
+The log is append-only except for three operator verbs, all dry-run by
+default, all backing up beside the DB and running the drift check after:
 
 - **`mu db compact`** blanks note tombstones a put under the same key
   already explains: the slim form capture writes now, applied to older
@@ -126,6 +125,10 @@ drift check after:
   torn-down workstreams (keys `<ws>` and `<ws>/...`). Their rows are
   already gone from the tables, so rebuild and drift stay consistent;
   those teardowns' history is gone on purpose.
+- **`mu delegates prune`** (`src/delegate-prune.ts`) deletes old closed
+  delegate tasks: the rows go through capture (tombstones, which sync),
+  then the puts of those tasks and their notes are deleted. The
+  tombstones stay, so a peer's older put arriving later is still dead.
 
 Neither touches sync segments. A peer is not affected: watermarks only
 read forward, so a peer never re-sends forgotten history.
