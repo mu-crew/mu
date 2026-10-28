@@ -19,7 +19,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRow } from "../agents.js";
 import type { Db } from "../db.js";
-import { runHostTemplate } from "../hosts.js";
+import { HostHandbackError, runHostTemplate } from "../hosts.js";
 import { activeMux } from "../mux.js";
 import { localPaneAlive } from "../remote-agent.js";
 import { shellQuote } from "../shell-quote.js";
@@ -114,7 +114,8 @@ const unknown = (reason: string): GateReading => ({ kind: "unknown", reason });
  * dead (final failure: no usable record, or the pane is gone) or unknown
  * (retry: the mux or the host could not answer). A proven exit frees the pane's
  * channel through the result read's own admission (see `localPaneAlive`); an
- * unknown probe frees nothing.
+ * unknown probe frees nothing. A hand-back (the exec template's exit 3) throws
+ * `HostHandbackError` to the caller.
  */
 export async function readGate(db: Db, agent: AgentRow): Promise<GateReading> {
   const token = agent.gateToken;
@@ -143,6 +144,8 @@ export async function readGate(db: Db, agent: AgentRow): Promise<GateReading> {
       { paneAlive: localPaneAlive },
     );
   } catch (e) {
+    // A template's exit 3 asks for a human: never retried, so never an unknown the next poll reruns.
+    if (e instanceof HostHandbackError) throw e;
     return unknown(`result read: ${e instanceof Error ? e.message : String(e)}`);
   }
   if (!sameRow(db, agent)) return { kind: "dead", reason: "the agent was replaced" };

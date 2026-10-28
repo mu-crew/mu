@@ -19,7 +19,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   first stderr or stdout line as the detail). Never retried, and never recorded
   as `human-needed` automatically. `host check` reports a `handback` step and
   skips the rest (the report still prints); spawn prepare, close and collect
-  stop with it; a rollback or gate cleanup, which swallow every failure, still do.
+  stop with it, and so does a remote command gate's result read (`mu wait` ends
+  with it after one template call); a rollback or gate cleanup, which swallow
+  every failure, still do.
 - **`host check` warns about a session `shell` template that can ride a shared
   ssh master** (no `ControlMaster=no` or no `ControlPath=none`). A warning in
   `warnings` and on a `warn` line, never a failure.
