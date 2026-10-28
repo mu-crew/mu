@@ -2,7 +2,7 @@
 
 Status: proposed, revised after review (see [Review](#review-2026-10-28))
 Date: 2026-10-28
-Pairs with: [mule/docs/specs/2026-10-28-mu-lease.md](../../../mule/docs/specs/2026-10-28-mu-lease.md)
+Pairs with: mule `docs/specs/2026-10-28-mu-lease.md` (mule repo)
 
 ## Problem
 
