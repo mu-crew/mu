@@ -151,6 +151,17 @@ describe("grid: columns by width", () => {
       ["progress", "open"],
     ]);
     expect(placeCards(ids, 3)).toEqual([["attention", "agents"], ["progress", "open"], ["log"]]);
+    // Waves sits under the task cards, never with Log.
+    const withWaves = ["attention", "agents", "progress", "open", "waves", "log"];
+    expect(placeCards(withWaves, 2)).toEqual([
+      ["attention", "agents", "log"],
+      ["progress", "open", "waves"],
+    ]);
+    expect(placeCards(withWaves, 3)).toEqual([
+      ["attention", "agents"],
+      ["progress", "open", "waves"],
+      ["log"],
+    ]);
     expect(placeCards(["agents", "mystery"], 3)).toEqual([["agents"], ["mystery"]]);
     expect(placeCards(["log"], 3)).toEqual([["log"]]);
   });

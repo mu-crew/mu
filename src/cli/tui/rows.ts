@@ -234,14 +234,24 @@ export function callText(t: DashboardTask): string {
 const callRole = (t: DashboardTask): Role =>
   t.call?.state === "failed" ? "bad" : t.call?.state === "refused" ? "warn" : "muted";
 
-function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
+/**
+ * The Tasks tab's rows. `call: false` drops the delegate call column: the Overview
+ * cards are a third of the screen, and the column would crowd every title out.
+ */
+export function taskRows(
+  snap: DashboardSnapshot,
+  ws: string | null,
+  f: Filter,
+  opts: { call?: boolean } = {},
+): Row[] {
+  const callOf = opts.call === false ? () => "" : callText;
   const statuses: readonly string[] = statusesOf(f.status);
   const inWs = snap.tasks.filter((t) => t.workstream === ws);
   const tasks = sortTasks(
     inWs.filter(
       (t) =>
         statuses.includes(t.status) &&
-        matches(f.text, t.key, t.title, t.owner, t.substate, callText(t)),
+        matches(f.text, t.key, t.title, t.owner, t.substate, callOf(t)),
     ),
     f.sort,
   );
@@ -252,7 +262,7 @@ function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] 
   const agentNames = snap.agents.filter((a) => a.workstream === ws).map((a) => `@${a.name}`);
   const line = layoutRows(
     [
-      ...inWs.map((t) => [t.id, "", ownerLabel(t), callText(t)]),
+      ...inWs.map((t) => [t.id, "", ownerLabel(t), callOf(t)]),
       ...agentNames.map((n) => ["", "", n, ""]),
     ],
     specs,
@@ -261,7 +271,7 @@ function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] 
     rowOf(
       t.key,
       line(
-        [t.id, statusText(t.status, t.substate), ownerLabel(t), callText(t), t.title],
+        [t.id, statusText(t.status, t.substate), ownerLabel(t), callOf(t), t.title],
         ["id", statusRole(t.status, t.substate), "muted", callRole(t), undefined],
       ),
       { drill: { kind: "notes", workstream: t.workstream, id: t.id, title: t.title } },

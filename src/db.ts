@@ -1159,6 +1159,8 @@ CREATE TABLE IF NOT EXISTS delegate_calls (
   request          TEXT,  -- spawn request (JSON)
   verdict          TEXT, agent TEXT  -- parsed label of a done answer; the agent that ran it
 );
+-- The dashboard's attention scan reads refused and recently failed calls each tick.
+CREATE INDEX IF NOT EXISTS idx_delegate_calls_state ON delegate_calls (state, updated_at);
 
 -- human_needs: the caller that recorded a kind=human task (machine-local).
 -- The task, its reason brief and its close are portable; who asked is not

@@ -8,7 +8,7 @@ import type { ReactElement } from "react";
 import type { DashboardSnapshot } from "../../dashboard-data.js";
 import { Frame } from "./frame.js";
 import { COLUMN_GAP, columnCount, fitColumn, gridWidths, placeCards } from "./grid.js";
-import { NO_FILTER, tabRows, waveRows } from "./rows.js";
+import { NO_FILTER, tabRows, taskRows, waveRows } from "./rows.js";
 import { type Line, scrollTop } from "./text.js";
 import type { Role } from "./theme.js";
 
@@ -28,8 +28,10 @@ export interface Card {
 
 /** The cards of workstream `ws`, in order: five, plus Waves when it has delegate waves. */
 export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: number): Card[] {
-  const lines = (tab: "overview" | "tasks" | "agents" | "log", f = NO_FILTER): Line[] =>
-    tabRows(tab, snap, ws, f, now).map((r) => r.line);
+  const lines = (tab: "overview" | "agents" | "log"): Line[] =>
+    tabRows(tab, snap, ws, NO_FILTER, now).map((r) => r.line);
+  const tasks = (f: typeof NO_FILTER): Line[] =>
+    taskRows(snap, ws, f, { call: false }).map((r) => r.line);
   const waves = waveRows(snap, ws).map((r) => r.line);
   return [
     {
@@ -44,14 +46,14 @@ export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: n
     {
       id: "progress",
       title: "In progress",
-      lines: lines("tasks", { ...NO_FILTER, status: "in_progress" }),
+      lines: tasks({ ...NO_FILTER, status: "in_progress" }),
       empty: "nothing in progress",
       max: 8,
     },
     {
       id: "open",
       title: "Open · by ROI",
-      lines: lines("tasks", { ...NO_FILTER, status: "open", sort: "roi" }),
+      lines: tasks({ ...NO_FILTER, status: "open", sort: "roi" }),
       empty: "nothing open",
       max: 12,
     },

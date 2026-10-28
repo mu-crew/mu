@@ -18,8 +18,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   one failed in the last 24 hours, is an attention item (`delegate`) for any
   caller, a human shell included; Enter opens the delegate task's notes. The
   Overview gains a Waves card when the shown workstream has waves: each of the five
-  newest with its calls and verdict counts, refused ones named. Read-only, from
-  `delegate_calls` (`loadDashboard`'s new `call` and `waves`).
+  newest with its calls, verdict counts and how many were refused. A refused call's
+  item says to reissue or cancel it from pi. Read-only, from `delegate_calls`
+  (`loadDashboard`'s new `call` and `waves`), bounded in SQL so a tick does not grow
+  with the delegate history; a new index, `idx_delegate_calls_state`, serves the
+  attention scan (created on open, no schema bump).
 
 ## [4.0.0] — 2026-10-28
 
