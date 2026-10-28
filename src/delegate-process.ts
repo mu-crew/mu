@@ -46,6 +46,7 @@ import {
   DelegateNotFoundError,
   type DelegateRow,
   DelegateStateError,
+  delegateProcessDir,
   finishDelegate,
   getDelegateCall,
   markDelegate,
@@ -125,7 +126,7 @@ export function delegateProcessPaths(
   row: Pick<DelegateRow, "callId" | "task" | "workstream">,
 ) {
   const base = dirname(db.name);
-  const dir = join(base, "delegate-process", sha(row.callId, 16));
+  const dir = delegateProcessDir(db.name, row.callId);
   return {
     dir,
     log: join(dir, "pi.log"),

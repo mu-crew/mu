@@ -26,6 +26,7 @@
 // task; it never scans label-matched notes (they carry no call id).
 
 import { createHash } from "node:crypto";
+import { dirname, join } from "node:path";
 import type { Db, DELEGATE_CALL_STATES } from "./db.js";
 import { parseVerdict, recordNote, type VerdictLabel } from "./delegate-verdict.js";
 import { say } from "./messages.js";
@@ -34,6 +35,25 @@ import { addNote, addTask } from "./tasks/edit.js";
 import { TaskNotFoundError } from "./tasks/errors.js";
 import { closeTask, setTaskStatus } from "./tasks/lifecycle.js";
 import { getTask } from "./tasks/queries.js";
+
+/**
+ * Where a pane delegate's pi session lives, beside the DB at `dbPath`: one
+ * directory per call task, so `mu delegates prune` removes exactly the pruned
+ * calls' sessions. Out of pi's per-cwd folder, so the caller's `/resume` list
+ * holds only its own sessions.
+ */
+export function delegateSessionDir(dbPath: string, workstream: string, task: string): string {
+  return join(dirname(dbPath), "delegate-sessions", workstream, task);
+}
+
+/** A mux-free call's directory (receipt, log, pi session), beside the DB at `dbPath`. */
+export function delegateProcessDir(dbPath: string, callId: string): string {
+  return join(
+    dirname(dbPath),
+    "delegate-process",
+    createHash("sha256").update(callId).digest("hex").slice(0, 16),
+  );
+}
 
 export { parseVerdict, type VerdictLabel } from "./delegate-verdict.js";
 

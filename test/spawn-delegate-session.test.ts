@@ -1,5 +1,5 @@
 // A pi pane spawned for a kind=delegate task keeps its pi session under
-// <DB dir>/delegate-sessions/<ws> (PI_CODING_AGENT_SESSION_DIR), out of the
+// <DB dir>/delegate-sessions/<ws>/<task> (PI_CODING_AGENT_SESSION_DIR), out of the
 // caller's /resume list; any other task, or a non-pi agent, gets nothing.
 // The transport is substituted (no pi answers here); the spawn, the task
 // lookup and the pane env reach the mocked tmux for real.
@@ -68,9 +68,9 @@ async function spawnFor(kind: TaskKind, cli: string): Promise<string[]> {
 }
 
 describe("delegate session dir", () => {
-  it("a delegate's pi pane keeps its session under the DB dir", async () => {
+  it("a delegate's pi pane keeps its session under the DB dir, one folder per call task", async () => {
     expect(await spawnFor("delegate", "pi")).toEqual([
-      `PI_CODING_AGENT_SESSION_DIR=${join(dir, "delegate-sessions", "auth")}`,
+      `PI_CODING_AGENT_SESSION_DIR=${join(dir, "delegate-sessions", "auth", "t1")}`,
     ]);
   });
 
