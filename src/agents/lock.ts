@@ -2,9 +2,12 @@
 // by every step that destroys or re-stages that name's disk state: `agent
 // close` (the whole sequence: kill, worktree release, row delete) and a
 // `--worktree` spawn's staging and rollback (reclaim, create, register,
-// remove). Row writes by anything else (reconcile, teardown, plain spawn)
-// do not take it; they carry their own compare-and-swap on the row's
-// identity (`deleteAgent`'s `expected`).
+// remove). Every spawn also holds it from its in-lock name fence until its
+// claim is durable (pane created, row finalized), as does a lease spawn's
+// reservation insert: a reservation never lands between a spawn's fence and
+// its pane command. Row writes by anything else (reconcile, teardown) do not
+// take it; they carry their own compare-and-swap on the row's identity
+// (`deleteAgent`'s `expected`).
 //
 // FAIL CLOSED. Unlike the spawn lock (which only narrows a race and runs
 // unlocked when it cannot lock), a destructive agent step never runs

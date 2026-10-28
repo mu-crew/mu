@@ -55,10 +55,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   <name>`). The **job
   handshake** is mandatory for a lease and independent of ctl, `--no-ctl` and
   `MU_SPAWN_CTL_MS`. mu waits up to `MU_SPAWN_JOB_MS` (default 30 s, never 0)
-  for one handle line and records it in one statement guarded by the row's id
-  and pane. A pane that dies first is `AgentDiedOnSpawnError` with its
-  scrollback. A live pane with no handle is rolled back. **Rollback** kills the
-  pane and re-reads the job file. A handle is filled into the reservation first
+  for one handle line and fills it into the name's reservation in one
+  statement guarded by the reservation's spawn token alone, so the handle is
+  recorded even when no agent row survived. A pane that dies first is
+  `AgentDiedOnSpawnError` with its scrollback. A live pane with no handle is
+  rolled back. **Rollback** kills the pane and re-reads the job file. A handle is filled into the reservation first
   (even when reconcile already removed the agent row), then stopped, and only
   then is the worktree removed. A failed stop keeps the worktree and the handle,
   and says so. A lease profile refuses command gates (exit 2) before any effect.
@@ -72,7 +73,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   immediately before the mux is asked for the pane. The pane and incarnation
   are bound as soon as they are known, and the handshake fills in the handle.
   While a reservation exists, every spawn of the name refuses (exit 4), lease or
-  not, `--worktree` or `--cwd`. The agent-row insert checks this in the same
+  not, `--worktree` or `--cwd`. Every spawn holds the strict agent lock (the
+  one the reservation is inserted under) from its in-lock name check until its
+  pane exists and its row is finalized, so no reservation lands between the
+  check and the pane command. The agent-row insert checks this in the same
   statement. The message names the handle, or says the job is unknown, and
   names `mu agent close <name>` (`--abandon-job`).
   - **Job-file reads fail closed.** Only ENOENT means "no file". An unreadable
@@ -83,9 +87,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   - **Release is conservative.** A reservation is released only after a
     successful stop and the cleanup of its job file and tree, by its creator's
     rollback while `launch` is still `none` (failures that precede the tmux
-    call), or by `--abandon-job`. A launched carrier with no handle (a timeout,
-    pane death, a tmux hook failing after the window opened) keeps the
-    reservation, because the carrier may still publish. A job file left by an
+    call) and any remote worktree it prepared is removed, or by
+    `--abandon-job`. A failed removal keeps the reservation with the reason:
+    the placeholder row recorded no path, so it is the tree's only pointer. A
+    launched carrier with no handle (a timeout, pane death, a tmux hook
+    failing after the window opened) keeps the reservation, because the carrier may still publish. A job file left by an
     earlier reservation is moved aside, never deleted.
 
   This fixes four review findings: a finalize failure lost the only handle; a

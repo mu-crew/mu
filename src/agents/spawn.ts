@@ -27,6 +27,7 @@ import {
   getCarrierJobByAgent,
   getCarrierJobByName,
   markCarrierLaunch,
+  noteCarrierJob,
   recordCarrierPane,
   setCarrierJobStop,
 } from "../carrier-jobs.js";
@@ -680,113 +681,123 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // 15s acquire / 30s stale budget). The liveness wait below is
     // equally outside the lock: holding it would serialise the very
     // parallelism the operator asked for.
-    const created = await withSpawnLock(session, async () => {
-      // Re-check under the lock: a parallel spawn of the same name may
-      // have inserted its row since the fast-path check. (With a
-      // worktree, the placeholder row already claimed the name.)
-      if (!hasWorktree && getAgent(db, opts.name, opts.workstream) !== undefined) {
-        throw new AgentExistsError(opts.name);
-      }
-      // A staged spawn holds the name through its placeholder row, which
-      // the agent lock no longer covers: a close of the placeholder frees
-      // the name, and a replacement may own it (and its socket) by now.
-      // Unlink only while the placeholder this spawn inserted is still the
-      // row, in the same step (nothing awaited between check and unlink).
-      if (staged !== undefined) {
-        const cur = getAgent(db, opts.name, opts.workstream);
-        if (
-          cur === undefined ||
-          cur.incarnation !== staged.incarnation ||
-          cur.paneId !== pendingPaneIdFor(opts.name)
-        ) {
-          throw new AgentReplacedError(opts.name, opts.workstream);
+    //
+    // The STRICT agent lock of the name wraps it (taken first, so nothing
+    // holds the session lock while waiting on a name): from the name fence
+    // below until the name's claim is durable (the finalized row, or a lease
+    // spawn's reservation), no reservation (`reserveLeaseJob`, same lock) and
+    // no close of the name can land in between, so a pane command never runs
+    // under a name another owner reserved after the check. Released with the
+    // spawn lock: the slow readiness wait runs with the row already written.
+    const created = await withAgentLock(db, opts.workstream, opts.name, () =>
+      withSpawnLock(session, async () => {
+        // Re-check under the lock: a parallel spawn of the same name may
+        // have inserted its row since the fast-path check. (With a
+        // worktree, the placeholder row already claimed the name.)
+        if (!hasWorktree && getAgent(db, opts.name, opts.workstream) !== undefined) {
+          throw new AgentExistsError(opts.name);
         }
-      }
-      // The name fence again, under the lock (a lease spawn passes with its own token).
-      refuseReserved(db, opts.workstream, opts.name, carrier?.token);
-      // The name is ours: no live agent owns a socket at this path (nor, holding the
-      // reservation, a job file: an earlier one's is moved aside, never deleted).
-      rmSync(ctlSocket, { force: true });
-      const jobFile = carrier ? claimLeaseJobFile(db, opts.workstream, opts.name) : undefined;
-      const mux = await activeMux();
-      // `scratch` is never `workstream init`-ed: ensure its session (with
-      // the placeholder `_mu` window) so it outlives its last agent.
-      if (isScratchWorkstream(opts.workstream)) await mux.ensureSession(session);
-      // Built before the launch intent: a template error launches nothing.
-      const paneCommand = profile
-        ? remoteShellCommand(profile, {
-            workstream: opts.workstream,
-            name: opts.name,
-            command: gateToken === undefined ? command : gateWrapper(command, gateToken),
-            localSock: ctlSocket,
-            cwd: paneCwd,
-            ...(jobFile !== undefined ? { jobFile } : {}),
-          })
-        : command;
-      // Resolves with the pane id at creation; `done` settles when the
-      // backend considers the agent started.
-      let onCreated: (pid: string) => void = () => {};
-      const createdPane = new Promise<string>((res) => {
-        onCreated = res;
-      });
-      // From the next call on a carrier may run, even if the call rejects (tmux can start
-      // the command and still fail: a hook's exit, extra output): written FIRST, so a
-      // rollback never mistakes a launched carrier for none.
-      if (carrier && !markCarrierLaunch(db, carrier.token)) {
-        throw new Error(`carrier_jobs: reservation of ${opts.workstream}/${opts.name} is gone`);
-      }
-      const done = mux.spawnAgent({
-        session,
-        window: windowName,
-        name: opts.name,
-        cli,
-        command: paneCommand,
-        commandSource,
-        ...(profile ? {} : { cwd: paneCwd }),
-        env: paneEnv,
-        onPaneCreated: onCreated,
-        // A gate's pane outlives its command: the result is read after it ends.
-        ...(gateToken !== undefined ? { retainOnExit: true } : {}),
-      });
-      // Observe a rejection immediately: it is awaited after the lock.
-      done.catch(() => {});
-      const pid = await Promise.race([createdPane, done]);
-      // Capture the pane id on the OUTER scope as soon as it exists so a
-      // throw later in the lock (finalizeAgentRow INSERT failure) still
-      // routes through rollbackSpawn -> killPane. Assigning only via the
-      // returned object meant a finalize failure left paneId undefined
-      // and rollbackSpawn skipped killPane, leaking the pane.
-      paneId = pid;
-      if (carrier) recordCarrierPane(db, carrier.token, pid);
-      readiness = done;
-      phase = "finalize";
-      const row = finalizeAgentRow(db, {
-        opts,
-        cli,
-        paneId: pid,
-        cwd: paneCwd,
-        staged,
-        command,
-        commandSource,
-        spawner,
-        host: profile?.name,
-        gateToken,
-        reservation: carrier?.token,
-      });
-      ownedIncarnation = row.incarnation;
-      if (carrier && !bindCarrierJobAgent(db, carrier.token, row.incarnation, pid)) {
-        throw new Error(`carrier_jobs: reservation of ${opts.workstream}/${opts.name} is gone`);
-      }
-      // The lease now rides this pane (registry id + pane): freed when it dies.
-      if (
-        lease !== undefined &&
-        !bindHostChannel(db, lease, { agentId: row.incarnation, paneId: pid })
-      ) {
-        throw new Error(say("host.channel_lost", lease.host, lease.holder));
-      }
-      opts.onIdentity?.(row);
-      return { pid, row, jobFile };
-    });
+        // A staged spawn holds the name through its placeholder row, which
+        // the agent lock did not cover between staging and here: a close of the
+        // placeholder frees the name, and a replacement may own it (and its socket) by now.
+        // Unlink only while the placeholder this spawn inserted is still the
+        // row, in the same step (nothing awaited between check and unlink).
+        if (staged !== undefined) {
+          const cur = getAgent(db, opts.name, opts.workstream);
+          if (
+            cur === undefined ||
+            cur.incarnation !== staged.incarnation ||
+            cur.paneId !== pendingPaneIdFor(opts.name)
+          ) {
+            throw new AgentReplacedError(opts.name, opts.workstream);
+          }
+        }
+        // The name fence again, under the lock (a lease spawn passes with its own token).
+        refuseReserved(db, opts.workstream, opts.name, carrier?.token);
+        // The name is ours: no live agent owns a socket at this path (nor, holding the
+        // reservation, a job file: an earlier one's is moved aside, never deleted).
+        rmSync(ctlSocket, { force: true });
+        const jobFile = carrier ? claimLeaseJobFile(db, opts.workstream, opts.name) : undefined;
+        const mux = await activeMux();
+        // `scratch` is never `workstream init`-ed: ensure its session (with
+        // the placeholder `_mu` window) so it outlives its last agent.
+        if (isScratchWorkstream(opts.workstream)) await mux.ensureSession(session);
+        // Built before the launch intent: a template error launches nothing.
+        const paneCommand = profile
+          ? remoteShellCommand(profile, {
+              workstream: opts.workstream,
+              name: opts.name,
+              command: gateToken === undefined ? command : gateWrapper(command, gateToken),
+              localSock: ctlSocket,
+              cwd: paneCwd,
+              ...(jobFile !== undefined ? { jobFile } : {}),
+            })
+          : command;
+        // Resolves with the pane id at creation; `done` settles when the
+        // backend considers the agent started.
+        let onCreated: (pid: string) => void = () => {};
+        const createdPane = new Promise<string>((res) => {
+          onCreated = res;
+        });
+        // From the next call on a carrier may run, even if the call rejects (tmux can start
+        // the command and still fail: a hook's exit, extra output): written FIRST, so a
+        // rollback never mistakes a launched carrier for none.
+        if (carrier && !markCarrierLaunch(db, carrier.token)) {
+          throw new Error(`carrier_jobs: reservation of ${opts.workstream}/${opts.name} is gone`);
+        }
+        const done = mux.spawnAgent({
+          session,
+          window: windowName,
+          name: opts.name,
+          cli,
+          command: paneCommand,
+          commandSource,
+          ...(profile ? {} : { cwd: paneCwd }),
+          env: paneEnv,
+          onPaneCreated: onCreated,
+          // A gate's pane outlives its command: the result is read after it ends.
+          ...(gateToken !== undefined ? { retainOnExit: true } : {}),
+        });
+        // Observe a rejection immediately: it is awaited after the lock.
+        done.catch(() => {});
+        const pid = await Promise.race([createdPane, done]);
+        // Capture the pane id on the OUTER scope as soon as it exists so a
+        // throw later in the lock (finalizeAgentRow INSERT failure) still
+        // routes through rollbackSpawn -> killPane. Assigning only via the
+        // returned object meant a finalize failure left paneId undefined
+        // and rollbackSpawn skipped killPane, leaking the pane.
+        paneId = pid;
+        if (carrier) recordCarrierPane(db, carrier.token, pid);
+        readiness = done;
+        phase = "finalize";
+        const row = finalizeAgentRow(db, {
+          opts,
+          cli,
+          paneId: pid,
+          cwd: paneCwd,
+          staged,
+          command,
+          commandSource,
+          spawner,
+          host: profile?.name,
+          gateToken,
+          reservation: carrier?.token,
+        });
+        ownedIncarnation = row.incarnation;
+        if (carrier && !bindCarrierJobAgent(db, carrier.token, row.incarnation, pid)) {
+          throw new Error(`carrier_jobs: reservation of ${opts.workstream}/${opts.name} is gone`);
+        }
+        // The lease now rides this pane (registry id + pane): freed when it dies.
+        if (
+          lease !== undefined &&
+          !bindHostChannel(db, lease, { agentId: row.incarnation, paneId: pid })
+        ) {
+          throw new Error(say("host.channel_lost", lease.host, lease.holder));
+        }
+        opts.onIdentity?.(row);
+        return { pid, row, jobFile };
+      }),
+    );
     paneId = created.pid;
     agent = created.row;
     phase = "liveness";
@@ -1308,8 +1319,25 @@ export async function rollbackSpawn(
   // its job file and tree are dealt with. Until then the name stays fenced.
   // A stopped job whose remote tree was not removed keeps its reservation: the close
   // that finishes the tree releases it.
+  // Never launched is no exception: a prepared remote tree whose removal failed keeps
+  // the reservation, with the reason (the placeholder row recorded no path, so the
+  // reservation is the tree's only pointer, and the name stays fenced).
   const treeDone = staged?.host === undefined || remoteGone;
-  if (carrier && (job === "none" || (job === "stopped" && treeDone))) {
-    releaseLeaseReservation(db, carrier.token, job);
+  if (carrier && (job === "none" || job === "stopped")) {
+    if (treeDone) releaseLeaseReservation(db, carrier.token, job);
+    else keepForTree(db, carrier.token, staged);
+  }
+}
+
+/** Note on a kept reservation the remote tree its rollback did not remove. Never throws. */
+function keepForTree(db: Db, token: string, staged: StagedWorktree | undefined): void {
+  try {
+    noteCarrierJob(
+      db,
+      token,
+      `remote worktree ${staged?.path ?? "?"} on ${staged?.host ?? "?"} was not removed`,
+    );
+  } catch {
+    // best-effort: the kept reservation fences the name either way
   }
 }

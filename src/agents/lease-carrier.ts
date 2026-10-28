@@ -382,7 +382,8 @@ export interface EmptyReservationResolution {
 /**
  * Resolve a reservation that holds NO handle (close-by-name, `--abandon-job`). Without
  * abandon it is released only when its carrier was provably never launched: `launch`
- * 'none', no pane recorded, and its creator proven gone (pid + start time). Every other
+ * 'none', no pane recorded, no reason noted (a rollback that kept it for a remote tree it
+ * could not remove), and its creator proven gone (pid + start time). Every other
  * case is unknown and refuses with the facts (launch, pane, creator, job file). With
  * `abandon` it is dropped with an event naming the host and the job file, which is left
  * in place so a late-published handle can still be found. Under the strict agent lock.
@@ -426,7 +427,8 @@ export async function resolveEmptyReservation(
       }
       return { released: abandoned, abandoned, facts };
     }
-    if (r.launch !== "none" || r.paneId !== null || creator !== "gone") {
+    // A reason means the rollback kept it on purpose (a remote tree it did not remove).
+    if (r.launch !== "none" || r.paneId !== null || r.reason !== null || creator !== "gone") {
       return { released: false, abandoned: false, facts };
     }
     return { released: releaseCarrierJob(db, r), abandoned: false, facts };
