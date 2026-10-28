@@ -94,3 +94,11 @@ export function agentStateRole(state: string | null | undefined): Role {
   if (state === "needs_permission") return "permission";
   return "muted";
 }
+
+/** A note's kind (`NOTE_KINDS`): the brief and the report stand out, a verdict needs a look. */
+export function noteKindRole(kind: string): Role {
+  if (kind === "brief") return "title";
+  if (kind === "report" || kind === "close") return "good";
+  if (kind === "verdict") return "warn";
+  return "id";
+}
