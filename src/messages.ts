@@ -331,6 +331,20 @@ export const MESSAGES = {
         : `job handle ${JSON.stringify(handle)} on host ${host} is not a valid handle (A-Z a-z 0-9 . _ : @ -, 1 to 128 bytes); nothing was run`,
   "carrier.stop_failed": (host: string, handle: string, detail: string) =>
     `host ${host}: stopping job ${handle} failed${detail === "" ? "" : `: ${detail}`}; its handle is kept`,
+  "carrier.job_unstopped": (name: string, handle: string, host: string) =>
+    `${name} has an unstopped job ${handle} on ${host}: mu agent close ${name}`,
+  "carrier.lease_gate": (host: string) =>
+    `host ${host} is a lease profile, which runs no command gates (a carrier's exit is not a gate result): use a session profile, or run the command through the carrier directly`,
+  "carrier.job_timeout": (name: string, host: string, ms: number, file: string) =>
+    `agent ${name} on ${host}: its carrier wrote no job handle to ${file} within ${ms}ms (MU_SPAWN_JOB_MS); rolled back. Does the profile's shell pass {job_file} to the carrier?`,
+  "carrier.job_invalid": (name: string, file: string, line: string) =>
+    `agent ${name}: the job file ${file} holds ${JSON.stringify(line.slice(0, 80))}, not a handle (A-Z a-z 0-9 . _ : @ -, 1 to 128 bytes); rolled back, any remote worktree kept`,
+  "carrier.job_unrecorded": (name: string, ws: string, handle: string) =>
+    `agent ${name}: job ${handle} could not be recorded (the agent was closed or replaced during the spawn); rolled back. Check: mu agent list -w ${ws}`,
+  "carrier.rollback_kept": (name: string, ws: string, host: string, handle: string, why: string) =>
+    `job ${handle} on ${host} was not stopped (${why}): its handle and any remote worktree are kept; once the host answers: mu agent close ${name} -w ${ws}`,
+  "carrier.dead_worker": (name: string, host: string, handle: string) =>
+    `remote worker ${name} on ${host} has no pane, but its job ${handle} may still run there: mu agent close ${name} stops it (mu agent collect first keeps its commits)`,
   "host.channel_lost": (host: string, holder: string) => `host ${host}: channel ${holder} was lost`,
   "remote.prepare": (host: string, what: string, detail: string) =>
     `host ${host}: ${what}${detail === "" ? "" : `: ${detail}`}`,

@@ -109,6 +109,8 @@ async function prestageRemote(
  * here), then prepare the remote worktree (`--worktree`) or the remote site.
  * Returns the lease and the ADMITTED profile snapshot every template runs from.
  * A failure after admission frees the channel here (no pane was opened under it).
+ * A lease profile's channel is transient: released once prepare ends, so the
+ * returned lease is undefined (a lease pane holds no channel).
  */
 export async function admitRemoteSpawn(
   db: Db,
@@ -116,8 +118,10 @@ export async function admitRemoteSpawn(
   cli: string,
   spawner: string | null,
   profile: HostProfile,
+  /** Re-checks the ADMITTED profile before any remote command (a throw frees the channel). */
+  admit?: (admitted: HostProfile) => void,
 ): Promise<{
-  lease: HostLease;
+  lease: HostLease | undefined;
   profile: HostProfile;
   staged: StagedWorktree | undefined;
   site: RemoteSite | undefined;
@@ -130,19 +134,24 @@ export async function admitRemoteSpawn(
   );
   const { lease } = admitted;
   const admittedProfile = admitted.profile;
+  const transient = admittedProfile.transport === "lease";
   try {
+    admit?.(admittedProfile);
+    let staged: StagedWorktree | undefined;
+    let site: RemoteSite | undefined;
     if (opts.worktree) {
-      const staged = await prestageRemote(db, opts, cli, spawner, lease, admittedProfile);
-      return { lease, profile: admittedProfile, staged, site: undefined };
+      staged = await prestageRemote(db, opts, cli, spawner, lease, admittedProfile);
+    } else {
+      site = await prepareRemote(db, lease, admittedProfile, {
+        workstream: opts.workstream,
+        name: opts.name,
+        worktree: false,
+        ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+        ...remoteRoot(opts, admittedProfile),
+      });
     }
-    const site = await prepareRemote(db, lease, admittedProfile, {
-      workstream: opts.workstream,
-      name: opts.name,
-      worktree: false,
-      ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-      ...remoteRoot(opts, admittedProfile),
-    });
-    return { lease, profile: admittedProfile, staged: undefined, site };
+    if (transient) releaseHostChannel(db, lease); // prepare is over: nothing binds to the pane
+    return { lease: transient ? undefined : lease, profile: admittedProfile, staged, site };
   } catch (err) {
     releaseHostChannel(db, lease); // no pane was ever opened under it
     throw err;

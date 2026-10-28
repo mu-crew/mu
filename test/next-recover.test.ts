@@ -18,6 +18,7 @@ vi.mock("../src/agents/transport.js", async (importOriginal) =>
 import { getReceipt, updateReceipt } from "../src/agents/receipts.js";
 import { deleteAgent, getAgent, insertAgent } from "../src/agents.js";
 import { readAttempt, reserveAttempt, reserveRetry } from "../src/auto-attempt.js";
+import { persistCarrierJob } from "../src/carrier-jobs.js";
 import { type Db, openDb } from "../src/db.js";
 import { openHumanNeeds, recordHumanNeeded } from "../src/human-needed.js";
 import { executeNext, type NextResult } from "../src/next.js";
@@ -194,6 +195,27 @@ describe("dead worker: reaped through the id + pane CAS, then retried as a new a
     expect(getAgent(db, "a-1", "d")).toBeDefined();
     expect(getTask(db, "a", "d")).toMatchObject({ status: "IN_PROGRESS" });
     expect(db.prepare("SELECT COUNT(*) AS n FROM remote_recovery").get()).toEqual({ n: 0 });
+  });
+
+  it("a dead LEASE worker's reason names its job handle and the close that stops it", async () => {
+    await dispatched();
+    db.prepare("UPDATE agents SET host = 'box' WHERE name = 'a-1'").run();
+    const a = getAgent(db, "a-1", "d");
+    if (a === undefined) throw new Error("no a-1");
+    persistCarrierJob(db, {
+      agentId: a.incarnation,
+      workstream: "d",
+      name: "a-1",
+      host: "box",
+      job: "mule-42",
+      hostStop: "mule rm {job}",
+    });
+    facts["a-1"] = { status: null };
+    const r = await run();
+    expect(kinds(r)).toEqual(["attention:a"]);
+    expect(r.moves[0]?.reason).toMatch(/remote worker a-1 on box .*job mule-42/);
+    expect(r.moves[0]?.reason).toContain("mu agent close a-1");
+    expect(getAgent(db, "a-1", "d")).toBeDefined();
   });
 });
 

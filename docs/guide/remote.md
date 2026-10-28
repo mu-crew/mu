@@ -206,7 +206,12 @@ mu host check dev --root '~/repo'
   runs `pi` without a login shell on a lease profile for that reason.
 - An exit 3 from any host template (`stop` included) is a hand-back: stop and
   ask a human. mu never retries it.
+- `agent spawn --host` on a lease profile waits for the job handle
+  (`MU_SPAWN_JOB_MS`, default 30 s) even under `--no-ctl`. A spawn that fails
+  after the handle runs `stop` before it removes the worktree. A failed stop
+  keeps both the handle and the worktree, and a respawn of that name refuses
+  until `mu agent close <name>` stops the job. A lease profile runs no command
+  gates.
 
-The spawn handshake (`agent spawn --host` on a lease profile), close and
-`doctor` land in the next units; the profile alone is stored and checked today.
+`agent close` and `doctor` on a lease agent land in the next unit.
 Spec: [lease transport](../specs/2026-10-28-lease-transport.md).

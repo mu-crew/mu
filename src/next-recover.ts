@@ -28,8 +28,10 @@ import { savedIdentity } from "./agents/task-spawn.js";
 import { agentCtlSocket, expectsCtl } from "./agents/transport.js";
 import type { AgentRow } from "./agents.js";
 import { deliveredOf, type RetryTarget } from "./auto-attempt.js";
+import { getCarrierJob } from "./carrier-jobs.js";
 import type { CtlBlocked } from "./ctl/protocol.js";
 import type { Db } from "./db.js";
+import { say } from "./messages.js";
 import { localMachineId } from "./segments.js";
 import { autoPermitted, getAutoConfig } from "./task-auto.js";
 
@@ -231,11 +233,16 @@ export async function scanRecovery(
       if (f === undefined) continue;
       if (f.status === null) {
         if (w.agent.host !== null) {
+          // A lease worker's pane death is not its job's death: name the handle to stop.
+          const job = getCarrierJob(db, w.agent.incarnation);
           out.push({
             kind: "attention",
             task: w.task,
             agent: w.agent.name,
-            reason: `remote worker ${w.agent.name} on ${w.agent.host} has no pane: its tree is kept, not reaped (mu agent collect, then close it)`,
+            reason:
+              job !== undefined
+                ? say("carrier.dead_worker", w.agent.name, job.host, job.job)
+                : `remote worker ${w.agent.name} on ${w.agent.host} has no pane: its tree is kept, not reaped (mu agent collect, then close it)`,
           });
         } else {
           out.push({
