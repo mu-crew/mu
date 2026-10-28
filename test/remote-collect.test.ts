@@ -25,6 +25,7 @@ import {
   admitHostChannel,
   bindHostChannel,
   HostChannelBusyError,
+  HostHandbackError,
   listHostChannels,
 } from "../src/hosts.js";
 import { resetMux } from "../src/mux.js";
@@ -104,7 +105,7 @@ beforeEach(() => {
 n=$(ls '${execLog}' | wc -l)
 printf '%s' "$1" > '${execLog}'/$n
 case "$1" in
-  *MU_STATE*) cat '${dir}/observe'; exit $(cat '${dir}/observe-exit') ;;
+  *MU_STATE*) cat '${dir}/observe'; [ -f '${dir}/handback' ] && { echo "touch your key" >&2; exit 3; }; exit $(cat '${dir}/observe-exit') ;;
   *MU_RM*) cat '${dir}/remove' ;;
 esac
 `,
@@ -329,6 +330,18 @@ describe("agent close of a remote worktree row", () => {
     const r = await close();
     expect(r).toMatchObject({ killedPane: true, deletedRow: true, worktree: null });
     expect(execCalls()).toEqual([]);
+  });
+});
+
+describe("a host template's exit 3 is a hand-back", () => {
+  it("close rethrows it unchanged: nothing removed, row and channel state kept", async () => {
+    await remoteAgent();
+    writeFileSync(join(dir, "handback"), "");
+    const err = await closeAgent(db, "worker-1", { workstream: "auth" }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HostHandbackError);
+    expect((err as HostHandbackError).detail).toBe("touch your key");
+    expect(execCalls().filter((c) => c.includes("worktree remove"))).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
   });
 });
 

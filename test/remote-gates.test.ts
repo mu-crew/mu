@@ -444,6 +444,13 @@ describe("repeat, resume, replacement and close", () => {
     expect(gateFiles()).toEqual([b.gateToken]);
   });
 
+  it("a hand-back from the cleanup exec is swallowed: best effort, the close goes on", async () => {
+    const a = await spawnGate({ command: "exit 0" });
+    db.prepare("UPDATE host_profiles SET exec = 'exit 3' WHERE name = 'dev'").run();
+    expect(await cleanGateResult(db, a)).toBe(false);
+    expect(channels("dev")).toEqual([]);
+  });
+
   it("close of a gate never removes a remote worktree or runs a worktree command", async () => {
     await spawnGate({ command: "exit 0" });
     await closeAgent(db, "gate-1", { workstream: "auth" });

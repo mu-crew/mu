@@ -1,8 +1,8 @@
 # Remote workers
 
-Use when an agent runs on another machine. A **host profile** holds your command templates; mu never connects.
+Use when an agent runs on another machine. A host profile holds your command templates; mu never connects.
 
-The pane is the transport and forwards the remote pi's control socket: `send`, `wait`, `abort` work as locally; a dead pane is a dead agent. The host has no mu DB: you close the task, from the worker's `CLOSE:` block.
+The pane is the transport and forwards the remote pi's control socket: `send`, `wait`, `abort` work as locally; a dead pane is a dead agent. The host has no mu DB: you close the task from the worker's `CLOSE:` block.
 
 ```bash
 mu host init dev --ssh   # a starter to edit into `mu host add`
@@ -18,8 +18,8 @@ mu agent close worker-1 -w <ws> --if <rev>
 
 End the brief with: commit, then `CLOSE: task=<id> evidence="<command + result>"`. Cherry-pick the collected commits and re-run the evidence before you close.
 
-- **One profile per machine** (the cap is per profile); `--root` picks the repo.
-- **`--max-sessions 1`**: the live pane holds the only channel; `collect` and `ssh dev` refuse. Raise the cap to collect mid-run.
-- **Long remote gates are panes** (`--command 'npm test'`), not a held ssh.
+- At `--max-sessions 1` the live pane holds the only channel: `collect` refuses; raise the cap.
+- Long remote gates are panes (`--command`).
 - `close` refuses a dirty or uncollected tree: collect again.
-- A host command's exit 3 is a hand-back (hardware key): never retry or ssh yourself.
+- Exit 3 from a host command is a hand-back (hardware key): stop and ask; never retry or ssh yourself.
+- A `shell` template must not ride a shared ssh master (it outlives the pane). A capped host wants a lease (forthcoming).

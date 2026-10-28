@@ -143,8 +143,17 @@ mu host show dev              # templates and the holders of its channels
   that shell too. Write `{{` and `}}` for literal braces. Anything else in
   braces is refused.
 - A command that times out, or whose caller is killed, takes its whole process
-  group with it before its channel is freed, so `--max-sessions` never
-  undercounts a live transport.
+  group with it (TERM, then KILL after 5 s) before its channel is freed, so
+  `--max-sessions` never undercounts a live transport.
+- An `exec` or `fetch` template that exits 3 is a hand-back (a hardware key, a
+  prompt): mu stops with exit 5, `human needed`, and the template's first line.
+  Never retried; `host check` reports a `handback` step.
+- A `shell` template must not ride a shared ssh master (keep `-o
+  ControlMaster=no -o ControlPath=none`, as `host init --ssh` prints): a `-L`
+  through a master is bound by the master, outlives the pane, and is never
+  re-bound, so the next spawn of that name gets no socket. `host check` warns
+  when the template lacks either option. On a session-capped host use a
+  lease (forthcoming: [the spec](../specs/2026-10-28-lease-transport.md)).
 - `--max-sessions N` counts every channel mu holds to the host. At the cap mu
   refuses with one line naming the holder.
 - `host check --agent <name> -w <ws>` also probes that agent's forwarded

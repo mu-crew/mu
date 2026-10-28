@@ -151,6 +151,7 @@ export async function cmdHostCheck(
       s.ok === true ? pc.green("ok  ") : s.ok === false ? pc.red("FAIL") : pc.dim("skip");
     console.log(`${mark} ${s.step.padEnd(9)} ${s.detail}`);
   }
+  for (const w of report.warnings) console.log(`${pc.yellow("warn")} ${w}`);
   if (!report.ok) throw failedError(report);
 }
 

@@ -260,6 +260,7 @@ export {
   type HostCheckReport,
   type HostCheckStep,
   HostExistsError,
+  HostHandbackError,
   HostInUseError,
   type HostLease,
   HostNotFoundError,
