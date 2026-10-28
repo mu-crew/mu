@@ -184,7 +184,11 @@ mu host check dev --root '~/repo'
 
 - The `shell` template must contain `{job_file}` once, `{local_sock}` and
   `{remote_sock}`: the carrier writes the job handle to the file, and mu records
-  it in `carrier_jobs` (machine-local; `mu sql "SELECT * FROM carrier_jobs"`).
+  it in the name's `carrier_jobs` reservation (machine-local; `mu sql "SELECT *
+  FROM carrier_jobs"`). The reservation is taken before the pane opens. While
+  it exists, every spawn of that name refuses. Once a carrier may have launched,
+  a failed spawn that never got a handle keeps the reservation and the tree for
+  `mu agent close <name>`.
   `--stop` must contain `{job}`, and must be idempotent: exit 0 for a job that
   already ended. `{env}` is refused there, `{cwd}` is always `.`.
 - `local_sock` determines `remote_sock`: both derive from (workstream, agent),

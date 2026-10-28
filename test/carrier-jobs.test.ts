@@ -6,16 +6,20 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { CarrierJobUnstoppedError } from "../src/agents/errors.js";
 import { insertAgent } from "../src/agents.js";
 import {
   abandonCarrierJob,
-  deleteCarrierJobAfterStop,
+  bindCarrierJobAgent,
+  fillCarrierJob,
   getCarrierJob,
-  getCarrierJobByName,
-  insertCarrierJob,
+  getCarrierJobByAgent,
   listCarrierJobs,
   listCarrierJobsByName,
-  persistCarrierJob,
+  markCarrierLaunch,
+  recordCarrierPane,
+  releaseCarrierJob,
+  reserveCarrierJob,
 } from "../src/carrier-jobs.js";
 import { CarrierStopFailedError, CarrierStopRefusedError, runStop } from "../src/carrier-stop.js";
 import { classifyError } from "../src/cli/handle.js";
@@ -41,79 +45,118 @@ afterEach(() => {
   rmFixtureDir(dir);
 });
 
-const job = (agentId: number, over: Record<string, unknown> = {}) => ({
-  agentId,
-  workstream: "ws",
-  name: "w1",
-  host: "dev",
-  job: "job-1",
-  hostStop: "x rm {job}",
-  ...over,
-});
+const reserve = (over: Record<string, unknown> = {}) => {
+  const r = reserveCarrierJob(db, {
+    workstream: "ws",
+    name: "w1",
+    host: "dev",
+    hostStop: "x rm {job}",
+    ...over,
+  });
+  if (r === undefined) throw new Error("not reserved");
+  return r;
+};
 
-describe("carrier_jobs helpers", () => {
-  it("insert is guarded by the agent id AND pane: a gone or replaced agent records nothing", () => {
-    const a = insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1", host: "dev" });
-    const args = { ...job(a.incarnation), paneId: "%1" };
-    expect(insertCarrierJob(db, { ...args, paneId: "%other" })).toBe(false);
-    expect(insertCarrierJob(db, { ...args, agentId: a.incarnation + 99 })).toBe(false);
-    expect(listCarrierJobs(db)).toEqual([]);
-    expect(insertCarrierJob(db, args)).toBe(true);
-    expect(getCarrierJob(db, a.incarnation)).toMatchObject({
-      agentId: a.incarnation,
+describe("carrier_jobs reservations", () => {
+  it("a reservation is name-exclusive: a second one of (ws, name) is refused, other names are not", () => {
+    const a = reserve({ creatorPid: 42, creatorStart: "s" });
+    expect(a).toMatchObject({
       workstream: "ws",
       name: "w1",
       host: "dev",
-      job: "job-1",
       hostStop: "x rm {job}",
+      launch: "none",
+      creatorPid: 42,
+      creatorStart: "s",
+      agentId: null,
+      paneId: null,
+      job: null,
     });
-  });
-
-  it("never overwrites an incarnation's handle", () => {
-    const a = insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1", host: "dev" });
-    expect(insertCarrierJob(db, { ...job(a.incarnation), paneId: "%1" })).toBe(true);
-    expect(insertCarrierJob(db, { ...job(a.incarnation, { job: "other" }), paneId: "%1" })).toBe(
-      false,
+    expect(a.token).toMatch(/^[0-9a-f-]{36}$/);
+    expect(reserveCarrierJob(db, { workstream: "ws", name: "w1", host: "h", hostStop: "s" })).toBe(
+      undefined,
     );
-    expect(persistCarrierJob(db, job(a.incarnation, { job: "third" }))).toBe(false);
-    expect(getCarrierJob(db, a.incarnation)?.job).toBe("job-1");
+    // The unique index is the second fence, under any insert path.
+    expect(() =>
+      db
+        .prepare(
+          "INSERT INTO carrier_jobs (token, workstream, name, host, host_stop, created_at) VALUES ('t', 'ws', 'w1', 'h', 's', 'n')",
+        )
+        .run(),
+    ).toThrow(/UNIQUE/);
+    expect(reserve({ name: "w2" }).name).toBe("w2");
+    expect(reserve({ workstream: "ws2" }).workstream).toBe("ws2");
+    expect(listCarrierJobsByName(db, "ws", "w1")).toHaveLength(1);
   });
 
-  it("persist (rollback's re-read handle) needs no agent row", () => {
-    expect(persistCarrierJob(db, job(42))).toBe(true);
-    expect(getCarrierJob(db, 42)?.job).toBe("job-1");
+  it("every update is guarded by the token: launch, pane, agent, handle", () => {
+    const a = reserve();
+    expect(markCarrierLaunch(db, "nope")).toBe(false);
+    expect(markCarrierLaunch(db, a.token)).toBe(true);
+    expect(recordCarrierPane(db, a.token, "%1")).toBe(true);
+    expect(recordCarrierPane(db, a.token, "%2")).toBe(false); // never repointed
+    expect(bindCarrierJobAgent(db, a.token, 7, "%1")).toBe(true);
+    expect(bindCarrierJobAgent(db, a.token, 8, "%1")).toBe(false);
+    expect(fillCarrierJob(db, a.token, "job-1")).toBe(true);
+    expect(fillCarrierJob(db, a.token, "job-1")).toBe(true); // idempotent
+    expect(fillCarrierJob(db, a.token, "other")).toBe(false); // never overwritten
+    expect(getCarrierJob(db, a.token)).toMatchObject({
+      launch: "intent",
+      paneId: "%1",
+      agentId: 7,
+      job: "job-1",
+    });
+    expect(getCarrierJobByAgent(db, 7)?.token).toBe(a.token);
   });
 
-  it("get by (workstream, name) is the newest incarnation; list gives all, newest first", () => {
-    persistCarrierJob(db, job(3, { job: "old" }));
-    persistCarrierJob(db, job(9, { job: "new" }));
-    persistCarrierJob(db, job(5, { name: "w2", job: "other-name" }));
-    persistCarrierJob(db, job(6, { workstream: "ws2", job: "other-ws" }));
-    expect(getCarrierJobByName(db, "ws", "w1")?.job).toBe("new");
-    expect(listCarrierJobsByName(db, "ws", "w1").map((j) => j.job)).toEqual(["new", "old"]);
-    expect(getCarrierJobByName(db, "ws", "nope")).toBeUndefined();
-  });
-
-  it("deleting the agent row (any path, even raw SQL) leaves the handle", () => {
-    const a = insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1", host: "dev" });
-    insertCarrierJob(db, { ...job(a.incarnation), paneId: "%1" });
+  it("deleting the agent row (any path, even raw SQL) leaves the reservation", () => {
+    const r = reserve();
+    const a = insertAgent(db, {
+      name: "w1",
+      workstream: "ws",
+      paneId: "%1",
+      host: "dev",
+      reservation: r.token,
+    });
+    bindCarrierJobAgent(db, r.token, a.incarnation, "%1");
+    fillCarrierJob(db, r.token, "job-1");
     db.prepare("DELETE FROM agents WHERE id = ?").run(a.incarnation);
-    expect(getCarrierJob(db, a.incarnation)?.job).toBe("job-1");
+    expect(getCarrierJob(db, r.token)?.job).toBe("job-1");
     db.prepare("DELETE FROM workstreams WHERE name = 'ws'").run();
-    expect(getCarrierJob(db, a.incarnation)?.job).toBe("job-1");
+    expect(getCarrierJob(db, r.token)?.job).toBe("job-1");
   });
 
-  it("delete-after-stop is compare-and-set on the handle; abandon is the same delete", () => {
-    persistCarrierJob(db, job(1));
-    const row = getCarrierJob(db, 1);
+  it("the agent-row insert is the atomic name fence: only the reservation's own token passes", () => {
+    const r = reserve();
+    const err = (() => {
+      try {
+        insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1" });
+      } catch (e) {
+        return e;
+      }
+    })();
+    expect(err).toBeInstanceOf(CarrierJobUnstoppedError);
+    expect(() =>
+      insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1", reservation: "other" }),
+    ).toThrow(CarrierJobUnstoppedError);
+    expect(
+      insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1", reservation: r.token }).name,
+    ).toBe("w1");
+    expect(insertAgent(db, { name: "w2", workstream: "ws", paneId: "%2" }).name).toBe("w2");
+  });
+
+  it("release is compare-and-set on token and handle; abandon is the same delete", () => {
+    const r = reserve();
+    fillCarrierJob(db, r.token, "job-1");
+    const row = getCarrierJob(db, r.token);
     if (row === undefined) throw new Error("no row");
-    expect(deleteCarrierJobAfterStop(db, { ...row, job: "someone-else" })).toBe(false);
-    expect(getCarrierJob(db, 1)).toBeDefined();
-    expect(deleteCarrierJobAfterStop(db, row)).toBe(true);
-    expect(deleteCarrierJobAfterStop(db, row)).toBe(false);
-    persistCarrierJob(db, job(2));
-    const two = getCarrierJob(db, 2);
-    if (two === undefined) throw new Error("no row");
+    expect(releaseCarrierJob(db, { ...row, job: "someone-else" })).toBe(false);
+    expect(releaseCarrierJob(db, { ...row, job: null })).toBe(false);
+    expect(releaseCarrierJob(db, { ...row, token: "x" })).toBe(false);
+    expect(getCarrierJob(db, r.token)).toBeDefined();
+    expect(releaseCarrierJob(db, row)).toBe(true);
+    expect(releaseCarrierJob(db, row)).toBe(false);
+    const two = reserve();
     expect(abandonCarrierJob(db, two)).toBe(true);
     expect(listCarrierJobs(db)).toEqual([]);
   });
@@ -249,11 +292,12 @@ describe("runStop", () => {
 
   it("exit 0: the handle reaches the template as one word, the channel is freed, nothing is deleted", async () => {
     const p = profile("dev");
-    persistCarrierJob(db, job(1, { hostStop: p.stop }));
+    const r = reserve({ hostStop: p.stop });
+    fillCarrierJob(db, r.token, "job-1");
     await runStop(db, "dev", "job-1", p.stop ?? "");
     expect(calls()).toEqual(["job-1"]);
     expect(listHostChannels(db)).toEqual([]);
-    expect(getCarrierJob(db, 1)).toBeDefined();
+    expect(getCarrierJob(db, r.token)).toBeDefined();
   });
 
   it("a changed stop refuses, runs nothing, and names the handle", async () => {

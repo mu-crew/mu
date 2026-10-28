@@ -59,9 +59,11 @@ async function prestageRemote(
   spawner: string | null,
   lease: HostLease,
   profile: HostProfile,
+  reservation: string | undefined,
 ): Promise<StagedWorktree> {
   return withAgentLock(db, opts.workstream, opts.name, async () => {
     const placeholder = insertAgent(db, {
+      ...(reservation !== undefined ? { reservation } : {}),
       name: opts.name,
       workstream: opts.workstream,
       cli,
@@ -120,6 +122,8 @@ export async function admitRemoteSpawn(
   profile: HostProfile,
   /** Re-checks the ADMITTED profile before any remote command (a throw frees the channel). */
   admit?: (admitted: HostProfile) => void,
+  /** A lease spawn's `carrier_jobs` reservation token: the placeholder row passes the name fence with it. */
+  reservation?: string,
 ): Promise<{
   lease: HostLease | undefined;
   profile: HostProfile;
@@ -140,7 +144,7 @@ export async function admitRemoteSpawn(
     let staged: StagedWorktree | undefined;
     let site: RemoteSite | undefined;
     if (opts.worktree) {
-      staged = await prestageRemote(db, opts, cli, spawner, lease, admittedProfile);
+      staged = await prestageRemote(db, opts, cli, spawner, lease, admittedProfile, reservation);
     } else {
       site = await prepareRemote(db, lease, admittedProfile, {
         workstream: opts.workstream,

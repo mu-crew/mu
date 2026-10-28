@@ -28,6 +28,7 @@
 // Distinct from AgentSpawnStartupError so the operator can tell
 // 'I never had a working CLI' from 'CLI started but parked at an error'.
 
+import type { CarrierJob } from "../carrier-jobs.js";
 import { say } from "../messages.js";
 import { defaultSpawnLivenessMs } from "./spawn.js";
 
@@ -78,6 +79,34 @@ export class AgentExistsError extends Error {
     // the schema and (b) misled operators into closing the existing
     // agent when the actual fix is `-w <other-ws>`.
     super(say("agent.exists", agentName));
+  }
+}
+
+/**
+ * The name fence: (workstream, name) holds a `carrier_jobs` reservation (an unstopped
+ * job, or a lease launch whose job is unknown). Every spawn of the name refuses. Exit 4.
+ */
+export class CarrierJobUnstoppedError extends Error {
+  override readonly name = "CarrierJobUnstoppedError";
+  public readonly handle: string | null;
+  public readonly host: string;
+  constructor(
+    public readonly agentName: string,
+    reservation: Pick<CarrierJob, "job" | "host" | "launch" | "paneId">,
+  ) {
+    super(
+      reservation.job !== null
+        ? say("carrier.job_unstopped", agentName, reservation.job, reservation.host)
+        : say(
+            "carrier.job_reserved",
+            agentName,
+            reservation.host,
+            reservation.launch,
+            reservation.paneId,
+          ),
+    );
+    this.handle = reservation.job;
+    this.host = reservation.host;
   }
 }
 

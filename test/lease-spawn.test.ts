@@ -6,11 +6,13 @@
 // host, no real git, no mule: test/lease-spawn.integration.test.ts runs a real
 // fake-carrier script on real tmux.
 
+import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -20,10 +22,12 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   CarrierJobUnstoppedError,
-  claimLeaseJobFile,
   defaultSpawnJobMs,
   LeaseJobInvalidError,
   LeaseJobTimeoutError,
+  LeaseJobUnreadableError,
+  refuseReserved,
+  resolveEmptyReservation,
   setLeaseClockForTests,
 } from "../src/agents/lease-carrier.js";
 import { rollbackSpawn } from "../src/agents/spawn.js";
@@ -37,7 +41,17 @@ import {
   setCommandResolverForTests,
   spawnAgent,
 } from "../src/agents.js";
-import { getCarrierJob, listCarrierJobs } from "../src/carrier-jobs.js";
+import {
+  abandonCarrierJob,
+  bindCarrierJobAgent,
+  type CarrierJob,
+  getCarrierJobByAgent,
+  getCarrierJobByName,
+  listCarrierJobs,
+  markCarrierLaunch,
+  recordCarrierPane,
+  reserveCarrierJob,
+} from "../src/carrier-jobs.js";
 import { carrierJobFilePath, ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -89,6 +103,11 @@ const order = (): string[] =>
 const setStopExit = (code: number): void => writeFileSync(join(dir, "stop-exit"), String(code));
 const channels = () => listHostChannels(db, "dev");
 const jobFile = (name = "worker-1") => carrierJobFilePath("auth", name, dir);
+const reservation = (name = "worker-1"): CarrierJob | undefined =>
+  getCarrierJobByName(db, "auth", name);
+/** The facts a kept, launched reservation of worker-1 must show. */
+const expectKept = (over: Partial<CarrierJob> = {}): void =>
+  expect(reservation()).toMatchObject({ host: "dev", launch: "intent", ...over });
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mls-"));
@@ -214,18 +233,37 @@ function installCarrierTmux(): void {
 }
 const spawn = (over: Partial<Parameters<typeof spawnAgent>[1]> = {}) =>
   spawnAgent(db, { name: "worker-1", workstream: "auth", host: "dev", ...over });
+/** A reservation as a spawn leaves it once its carrier was launched (pane recorded). */
+const launched = (paneId?: string, name = "worker-1"): CarrierJob => {
+  const r = reserveCarrierJob(db, {
+    workstream: "auth",
+    name,
+    host: "dev",
+    hostStop: STOP(stopScript),
+    creatorPid: process.pid,
+  });
+  if (r === undefined) throw new Error("reserved already");
+  markCarrierLaunch(db, r.token);
+  if (paneId !== undefined) recordCarrierPane(db, r.token, paneId);
+  return r;
+};
+/** A pid that is certainly gone: a child that already exited. */
+const deadPid = (): number => spawnSync("true").pid ?? 999_999;
 
 describe("a lease spawn records its job and holds no channel", () => {
-  it("the handshake records carrier_jobs (id + pane, admitted stop); no host_channels row at the pane or after", async () => {
+  it("the handshake fills the reservation (id + pane, admitted stop); no host_channels row at the pane or after", async () => {
     const a = await spawn({ cwd: "/srv/repo" });
     expect(a).toMatchObject({ host: "dev", ctl: "ok" });
-    expect(getCarrierJob(db, a.incarnation)).toMatchObject({
+    expect(getCarrierJobByAgent(db, a.incarnation)).toMatchObject({
       agentId: a.incarnation,
+      paneId: a.paneId,
       workstream: "auth",
       name: "worker-1",
       host: "dev",
+      launch: "intent",
       job: "job-1",
       hostStop: STOP(stopScript),
+      creatorPid: process.pid,
     });
     // Prepare's channel was transient: released before the pane, never bound to it.
     expect(atPane).toEqual([]);
@@ -248,12 +286,12 @@ describe("a lease spawn records its job and holds no channel", () => {
   it("the job handshake runs under --no-ctl and under MU_SPAWN_CTL_MS=0", async () => {
     const a = await spawn({ cwd: "/srv/repo", ctl: false });
     expect(a.ctl).toBe("skipped");
-    expect(getCarrierJob(db, a.incarnation)?.job).toBe("job-1");
+    expect(getCarrierJobByAgent(db, a.incarnation)?.job).toBe("job-1");
     process.env.MU_SPAWN_CTL_MS = "0";
     carrier = { handle: "job-2", ctl: false };
     const b = await spawn({ name: "worker-2", cwd: "/srv/repo" });
     expect(b.ctl).toBe("skipped");
-    expect(getCarrierJob(db, b.incarnation)?.job).toBe("job-2");
+    expect(getCarrierJobByAgent(db, b.incarnation)?.job).toBe("job-2");
   });
 
   it("MU_SPAWN_JOB_MS defaults to 30 s and is never 0", () => {
@@ -269,9 +307,9 @@ describe("a lease spawn records its job and holds no channel", () => {
 });
 
 describe("handshake failures roll back", () => {
-  it("a live pane with no job file by the deadline (even under --no-ctl): pane killed, no row, tree removed, nothing stopped", async () => {
+  it("a live pane with no job file by the deadline (even under --no-ctl): pane killed, no row, nothing stopped, reservation and tree KEPT", async () => {
     carrier = { ctl: false };
-    // A stale file of an earlier, stopped incarnation: removed inside the lock, never read as this job.
+    // A stale file of an earlier, released reservation: moved aside inside the lock, never read as this job.
     mkdirSync(dirname(jobFile()), { recursive: true });
     writeFileSync(jobFile(), "old-job\n");
     const err = await spawn({ worktree: true, ctl: false }).catch((e: unknown) => e);
@@ -280,12 +318,16 @@ describe("handshake failures roll back", () => {
     expect(now).toBeGreaterThanOrEqual(2000);
     expect(state.panes.size).toBe(0);
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
-    expect(order()).toEqual(["exec add", "exec rm"]);
-    expect(listCarrierJobs(db)).toEqual([]);
-    expect(listRemoteRecoveries(db)).toEqual([]);
+    // The carrier was launched and nothing proves it will not publish: nothing removed, nothing stopped.
+    expect(order()).toEqual(["exec add"]);
+    expectKept({ job: null });
+    expect(listRemoteRecoveries(db)).toMatchObject([{ name: "worker-1", cwd: WT }]);
+    const aside = readdirSync(dirname(jobFile())).filter((f) => f.includes(".stale-"));
+    expect(aside).toHaveLength(1);
+    expect(readFileSync(join(dirname(jobFile()), aside[0] ?? ""), "utf8")).toBe("old-job\n");
   });
 
-  it("a pane that dies before writing the file: AgentDiedOnSpawnError with its scrollback, nothing stopped", async () => {
+  it("a pane that dies before writing the file: AgentDiedOnSpawnError with its scrollback, nothing stopped, reservation kept", async () => {
     // The carrier prints its error and exits: the pane is gone right after the first capture.
     mux.restore();
     const fake = mockTmux(state).executor;
@@ -303,8 +345,19 @@ describe("handshake failures roll back", () => {
     expect((err as Error).message).toContain("mule: no master for dev");
     expect((err as Error).message).toContain("before writing its job handle");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
-    expect(order()).toEqual(["exec add", "exec rm"]);
-    expect(listCarrierJobs(db)).toEqual([]);
+    // Pane death is not carrier death (a non-exec wrapper's child may still publish):
+    // the reservation and the tree are kept.
+    expect(order()).toEqual(["exec add"]);
+    expectKept({ job: null });
+    // A late publication after the pane died is caught: the name stays fenced and the
+    // reservation's job file holds the handle for the close.
+    writeFileSync(jobFile(), "late-job\n");
+    const again = await spawn({ cwd: "/srv/repo" }).catch((e: unknown) => e);
+    expect(again).toBeInstanceOf(CarrierJobUnstoppedError);
+    const r = await resolveEmptyReservation(db, reservation() as CarrierJob);
+    expect(r.released).toBe(false);
+    expect(r.facts).toContain("handle late-job");
+    expect(readFileSync(jobFile(), "utf8")).toBe("late-job\n");
   });
 
   it("a job file that is not a handle: rolled back, the tree kept (a job may exist)", async () => {
@@ -313,6 +366,16 @@ describe("handshake failures roll back", () => {
     expect(err).toBeInstanceOf(LeaseJobInvalidError);
     expect(order()).toEqual(["exec add"]);
     expect(listRemoteRecoveries(db)).toMatchObject([{ name: "worker-1", cwd: WT }]);
+    expectKept({ job: null });
+    expect(reservation()?.reason).toContain("not a handle");
+  });
+
+  it("an EMPTY job file is not a handle either: reservation and tree kept", async () => {
+    carrier = { handle: "", ctl: false };
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(LeaseJobInvalidError);
+    expect(order()).toEqual(["exec add"]);
+    expectKept({ job: null });
   });
 });
 
@@ -354,6 +417,7 @@ describe("rollback after the handle: stop first, then the worktree", () => {
       const [row, ...rest] = listCarrierJobs(db);
       expect(rest).toEqual([]);
       expect(row).toMatchObject({
+        launch: "intent",
         workstream: "auth",
         name: "worker-1",
         host: "dev",
@@ -366,23 +430,249 @@ describe("rollback after the handle: stop first, then the worktree", () => {
     });
   }
 
-  it("a reread handle whose agent row reconcile already removed is still persisted before the stop", async () => {
+  it("a reread handle whose agent row reconcile already removed is still filled in before the stop", async () => {
+    const r = launched("%77");
     const row = insertAgent(db, {
       name: "worker-1",
       workstream: "auth",
       paneId: "%77",
       host: "dev",
+      reservation: r.token,
     });
+    bindCarrierJobAgent(db, r.token, row.incarnation, "%77");
     mkdirSync(dirname(jobFile()), { recursive: true });
     writeFileSync(jobFile(), "job-5\n");
     deleteAgent(db, "worker-1", "auth"); // reconcile's prune
     setStopExit(1);
     await rollbackSpawn(db, "worker-1", "%77", undefined, row.incarnation, "auth", undefined, {
-      host: "dev",
-      stop: STOP(stopScript),
+      token: r.token,
     });
     expect(order()).toEqual(["stop job-5"]);
-    expect(getCarrierJob(db, row.incarnation)).toMatchObject({ job: "job-5", host: "dev" });
+    expect(getCarrierJobByAgent(db, row.incarnation)).toMatchObject({ job: "job-5", host: "dev" });
+    // task-spawn's rollback (no token) finds the reservation by the incarnation it owns.
+    setStopExit(0);
+    await rollbackSpawn(db, "worker-1", "%77", undefined, row.incarnation, "auth");
+    expect(order()).toEqual(["stop job-5", "stop job-5"]);
+    expect(listCarrierJobs(db)).toEqual([]);
+    expect(existsSync(jobFile())).toBe(false);
+  });
+});
+
+// The four reviewer-17 probes (lease_spawn_finalize_handle_lost, _invalid_pointer_erased,
+// _read_error_removes_tree, _rollback_stops_replacement): each failed on b190f90a.
+describe("reviewer probes: the job file is never an ownerless pointer", () => {
+  it("finalize failure and failed stop must not lose the only handle on respawn", async () => {
+    carrier = { handle: "orphan-job", ctl: false };
+    setStopExit(1);
+    db.exec(
+      "CREATE TRIGGER deny_insert BEFORE INSERT ON agents BEGIN SELECT RAISE(ABORT, 'finalize failed'); END",
+    );
+    const err = await spawn({ cwd: "/srv/repo", ctl: false }).catch((e: unknown) => e);
+    expect((err as Error).message).toContain("finalize failed");
+    expect(order()).toEqual(["exec cwd", "stop orphan-job"]);
+    expect(readFileSync(jobFile(), "utf8")).toBe("orphan-job\n");
+    // No agent row was ever written, yet the reservation holds the handle.
+    expectKept({ job: "orphan-job", agentId: null });
+    db.exec("DROP TRIGGER deny_insert");
+    setStopExit(0);
+    carrier = { handle: "replacement-job", ctl: false };
+    mux.restore();
+    state = freshMockState();
+    installCarrierTmux();
+    const replacement = await spawn({ cwd: "/srv/repo", ctl: false }).catch((e: unknown) => e);
+    expect(replacement).toBeInstanceOf(CarrierJobUnstoppedError);
+    expect((replacement as Error).message).toContain("orphan-job");
+    expect(readFileSync(jobFile(), "utf8")).toBe("orphan-job\n");
+  });
+
+  it("an invalid handle kept on rollback must not be erased on respawn", async () => {
+    carrier = { handle: "unknown job!", ctl: false };
+    await expect(spawn({ worktree: true, ctl: false })).rejects.toBeInstanceOf(
+      LeaseJobInvalidError,
+    );
+    expect(readFileSync(jobFile(), "utf8")).toBe("unknown job!\n");
+    mux.restore();
+    state = freshMockState();
+    installCarrierTmux();
+    carrier = { handle: "new-job", ctl: false };
+    const next = await spawn({ cwd: "/srv/repo", ctl: false }).catch((e: unknown) => e);
+    expect(next).toBeInstanceOf(CarrierJobUnstoppedError);
+    expect(mux.calls.filter(isPaneCall)).toEqual([]);
+    expect(readFileSync(jobFile(), "utf8")).toBe("unknown job!\n");
+  });
+
+  it("an unreadable existing job file must keep the remote tree", async () => {
+    carrier = { handle: "unreadable-job", ctl: false, onPane: () => chmodSync(jobFile(), 0) };
+    const err = await spawn({ worktree: true, ctl: false }).catch((e: unknown) => e);
+    chmodSync(jobFile(), 0o600);
+    expect(err).toBeInstanceOf(LeaseJobUnreadableError);
+    expect(order()).not.toContain("exec rm");
+    expect(order()).toEqual(["exec add"]);
+    expectKept({ job: null });
+    expect(reservation()?.reason).toMatch(/unreadable: EACCES/);
+    expect(listRemoteRecoveries(db)).toMatchObject([{ name: "worker-1", cwd: WT }]);
+  });
+
+  it("rollback must not stop the replacement job from a reused name file", async () => {
+    // The old spawn's reservation was abandoned; a replacement reserved the name and published.
+    const old = launched("%77");
+    const oldRow = insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%77",
+      host: "dev",
+      reservation: old.token,
+    });
+    deleteAgent(db, "worker-1", "auth");
+    abandonCarrierJob(db, old);
+    const fresh = launched("%88");
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%88",
+      host: "dev",
+      reservation: fresh.token,
+    });
+    mkdirSync(dirname(jobFile()), { recursive: true });
+    writeFileSync(jobFile(), "replacement-job\n");
+    await rollbackSpawn(db, "worker-1", "%77", undefined, oldRow.incarnation, "auth", undefined, {
+      token: old.token,
+    });
+    expect(order()).not.toContain("stop replacement-job");
+    expect(existsSync(jobFile())).toBe(true);
+    expect(reservation()).toMatchObject({ token: fresh.token, job: null });
+  });
+});
+
+describe("the reservation: name-exclusive, before any effect", () => {
+  it("two concurrent lease spawns of one name: exactly one reserves, the other refuses before any effect", async () => {
+    carrier = { handle: "job-1", ctl: false };
+    const [a, b] = await Promise.allSettled([
+      spawn({ cwd: "/srv/repo", ctl: false }),
+      spawn({ cwd: "/srv/repo", ctl: false }),
+    ]);
+    const outcomes = [a, b].map((r) => r.status);
+    expect(outcomes.sort()).toEqual(["fulfilled", "rejected"]);
+    const lost = [a, b].find((r) => r.status === "rejected") as PromiseRejectedResult;
+    // Refused by the reservation, or (the winner already finalized) by its agent row.
+    expect((lost.reason as Error).name).toMatch(/^(CarrierJobUnstoppedError|AgentExistsError)$/);
+    expect(listCarrierJobs(db)).toHaveLength(1);
+    expect(mux.calls.filter(isPaneCall)).toHaveLength(1);
+    expect(order().filter((l) => l === "exec cwd")).toHaveLength(1);
+  });
+
+  it("a SIGKILLed spawn before launch (creator gone, launch none, no pane): close-by-name releases without abandon", async () => {
+    const r = reserveCarrierJob(db, {
+      workstream: "auth",
+      name: "worker-1",
+      host: "dev",
+      hostStop: STOP(stopScript),
+      creatorPid: deadPid(),
+    });
+    if (r === undefined) throw new Error("not reserved");
+    await expect(spawn({ cwd: "/srv/repo" })).rejects.toBeInstanceOf(CarrierJobUnstoppedError);
+    const out = await resolveEmptyReservation(db, r);
+    expect(out).toMatchObject({ released: true, abandoned: false });
+    expect(out.facts).toMatch(/launch none, pane none, creator pid \d+ gone, job file absent/);
+    expect(listCarrierJobs(db)).toEqual([]);
+    await expect(spawn({ cwd: "/srv/repo" })).resolves.toMatchObject({ name: "worker-1" });
+  });
+
+  it("a launch with no pane recorded (creator SIGKILLed after the intent): refuses with facts; --abandon-job releases with an event", async () => {
+    const r = launched();
+    db.prepare("UPDATE carrier_jobs SET creator_pid = ? WHERE token = ?").run(deadPid(), r.token);
+    const out = await resolveEmptyReservation(db, r);
+    expect(out.released).toBe(false);
+    expect(out.facts).toMatch(/launch intent, pane none, creator pid \d+ gone, job file absent/);
+    expect(reservation()?.token).toBe(r.token);
+    const live = await resolveEmptyReservation(db, launched(undefined, "worker-2"));
+    expect(live.released).toBe(false);
+    expect(live.facts).toContain("not proven gone"); // a live creator, too
+    const gone = await resolveEmptyReservation(db, r, { abandon: true });
+    expect(gone).toMatchObject({ released: true, abandoned: true });
+    expect(reservation()).toBeUndefined();
+    const said = listLogs(db, { workstream: "auth" }).map((l) => l.payload);
+    const event = said.find((p) => p.includes("--abandon-job"));
+    expect(event).toContain("on dev");
+    expect(event).toContain(jobFile());
+  });
+
+  it("pane dead but carrier alive: a launched reservation is kept, whatever the pane says", async () => {
+    const r = launched("%404"); // no such pane in the mock: dead
+    db.prepare("UPDATE carrier_jobs SET creator_pid = ? WHERE token = ?").run(deadPid(), r.token);
+    const out = await resolveEmptyReservation(db, r);
+    expect(out.released).toBe(false);
+    expect(out.facts).toContain("pane %404 (dead)");
+    // ...and its carrier publishes later: still fenced, and the handle is found.
+    mkdirSync(dirname(jobFile()), { recursive: true });
+    writeFileSync(jobFile(), "late-job\n");
+    const again = await resolveEmptyReservation(db, r);
+    expect(again.released).toBe(false);
+    expect(again.facts).toContain("handle late-job");
+  });
+
+  it("a mux spawn rejected BEFORE submission (ensureSession fails): launch stays none and the rollback releases", async () => {
+    mux.restore();
+    mux = installMux("tmux", async (args) => ({
+      stdout: "",
+      stderr: "server exited unexpectedly",
+      exitCode: args[0] === "has-session" ? 1 : 1,
+    }));
+    const err = await spawnAgent(db, {
+      name: "worker-1",
+      workstream: "scratch",
+      host: "dev",
+      cwd: "/srv/repo",
+    }).catch((e: unknown) => e);
+    expect((err as Error).name).toBe("TmuxError");
+    expect(order()).toEqual(["exec cwd"]); // reserved and prepared, then ensureSession failed
+    // Only ensureSession ran: no pane command was ever submitted.
+    expect(mux.calls.filter((c) => isPaneCall(c) && c.includes("-P"))).toEqual([]);
+    expect(listCarrierJobs(db)).toEqual([]);
+  });
+
+  it("a mux spawn rejected AFTER submission (non-zero tmux exit, no pane id): launch intent, the reservation is kept", async () => {
+    mux.restore();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) => {
+      const res = await fake(args);
+      return isPaneCall(args) ? { stdout: res.stdout, stderr: "hook failed", exitCode: 1 } : res;
+    });
+    const err = await spawn({ cwd: "/srv/repo", ctl: false }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expectKept({ job: null, paneId: null });
+    await expect(spawn({ cwd: "/srv/repo" })).rejects.toBeInstanceOf(CarrierJobUnstoppedError);
+  });
+
+  it("a remote prepare failure (before the pane) releases the reservation: nothing was launched", async () => {
+    db.prepare("UPDATE host_profiles SET exec = 'false {cmd}' WHERE name = 'dev'").run();
+    await expect(spawn({ cwd: "/srv/repo" })).rejects.toBeInstanceOf(Error);
+    expect(listCarrierJobs(db)).toEqual([]);
+    expect(mux.calls.filter(isPaneCall)).toEqual([]);
+  });
+
+  it("a --cwd respawn of the name while the old tree's cleanup holds the reservation is refused", async () => {
+    // A failed stop: the reservation (with its handle) and the tree are kept for the close.
+    process.env.MU_SPAWN_LIVENESS_MS = "1500";
+    carrier = { handle: "job-9", ctl: true, scrollback: "Error: invalid API key" };
+    setStopExit(1);
+    await expect(spawn({ worktree: true })).rejects.toBeInstanceOf(AgentSpawnStartupError);
+    process.env.MU_SPAWN_LIVENESS_MS = "0";
+    carrier = { handle: "job-10", ctl: false };
+    setStopExit(0);
+    for (const over of [{ cwd: "/srv/repo" }, { cwd: "/srv/repo", host: undefined }]) {
+      const err = await spawn({ ...over, ctl: false }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CarrierJobUnstoppedError);
+    }
+    expect(order()).toEqual(["exec add", "stop job-9"]);
+    expect(reservation()?.job).toBe("job-9");
+  });
+
+  it("a successful spawn's reservation survives reconcile/teardown/raw deletes of the agent row", async () => {
+    const a = await spawn({ cwd: "/srv/repo" });
+    db.prepare("DELETE FROM agents WHERE id = ?").run(a.incarnation);
+    expect(reservation()).toMatchObject({ agentId: a.incarnation, job: "job-1" });
+    await expect(spawn({ cwd: "/srv/repo" })).rejects.toBeInstanceOf(CarrierJobUnstoppedError);
   });
 });
 
@@ -401,10 +691,17 @@ describe("refusals before any effect", () => {
     );
     expect(order().length).toBe(before);
     expect(mux.calls.filter(isPaneCall).length).toBe(panes);
-    // The in-lock check refuses too, and leaves the file the old job may name.
+    // The fence refuses any spawn of the name, and leaves the file the old job may name.
     writeFileSync(jobFile(), "job-9\n");
-    expect(() => claimLeaseJobFile(db, "auth", "worker-1")).toThrow(CarrierJobUnstoppedError);
-    expect(existsSync(jobFile())).toBe(true);
+    expect(() => refuseReserved(db, "auth", "worker-1")).toThrow(CarrierJobUnstoppedError);
+    const local = await spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      command: "pi",
+      cwd: dir,
+    }).catch((e: unknown) => e);
+    expect(local).toBeInstanceOf(CarrierJobUnstoppedError);
+    expect(readFileSync(jobFile(), "utf8")).toBe("job-9\n");
     const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--json"],
       join(dir, "mu.db"),

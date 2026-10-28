@@ -25,6 +25,12 @@ import { getAgent, insertAgent } from "../src/agents.js";
 import type { Op } from "../src/apply.js";
 import { CAPTURE_VERSION, captureTriggersCurrent } from "../src/capture.js";
 import {
+  getCarrierJobByName,
+  listCarrierJobs,
+  listCarrierJobsByName,
+  reserveCarrierJob,
+} from "../src/carrier-jobs.js";
+import {
   CURRENT_SCHEMA_VERSION,
   type Db,
   DELEGATE_CALL_STATES,
@@ -125,6 +131,44 @@ function v13Copy(): string {
   copyFileSync(join(dir, "v13.db"), p);
   return p;
 }
+/** The final carrier_jobs shape: a reservation per (workstream, name). */
+const CARRIER_JOBS_COLUMNS = [
+  "id",
+  "token",
+  "workstream",
+  "name",
+  "ordinal",
+  "host",
+  "host_stop",
+  "launch",
+  "creator_pid",
+  "creator_start",
+  "agent_id",
+  "pane_id",
+  "job",
+  "reason",
+  "created_at",
+  "recorded_at",
+];
+
+/** A current v13 copy whose carrier_jobs has the pre-reservation shape, with three handles. */
+function oldCarrierJobsCopy(): string {
+  const p = v13Copy();
+  track(openDb({ path: p })).close();
+  open.pop();
+  raw(p, (r) => {
+    r.exec("DROP TABLE carrier_jobs");
+    r.exec(
+      "CREATE TABLE carrier_jobs (agent_id INTEGER PRIMARY KEY, workstream TEXT, name TEXT, host TEXT, job TEXT NOT NULL, host_stop TEXT NOT NULL, recorded_at TEXT)",
+    );
+    r.exec(`INSERT INTO carrier_jobs VALUES
+      (5, 'd', 'w', 'h', 'new-job', 'stop {job}', 'r5'),
+      (3, 'd', 'w', 'h', 'old-job', 'stop {job}', 'r3'),
+      (7, 'd', 'v', 'h2', 'v-job', 'other {job}', NULL)`);
+  });
+  return p;
+}
+
 /** A private copy of the populated v13 DB that still lacks later additions. */
 function staleCopy(): string {
   const p = join(dir, `copy-${++n}.db`);
@@ -236,15 +280,7 @@ describe("a populated v13 DB is completed in place", () => {
     expect(columns(p, "tasks")).toContain("wave");
     expect(columns(p, "agents")).toContain("collected_head");
     expect(columns(p, "host_profiles")).toEqual(expect.arrayContaining(["transport", "stop"]));
-    expect(columns(p, "carrier_jobs")).toEqual([
-      "agent_id",
-      "workstream",
-      "name",
-      "host",
-      "job",
-      "host_stop",
-      "recorded_at",
-    ]);
+    expect(columns(p, "carrier_jobs")).toEqual(CARRIER_JOBS_COLUMNS);
     expect(tables(p)).toEqual([...EXPECTED_TABLES].sort());
     expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
     expect(captureTriggersCurrent(db)).toBe(true);
@@ -509,6 +545,87 @@ describe("a populated v13 DB is completed in place", () => {
     expect(columns(p, "host_profiles")).not.toContain("transport");
     expect(tables(p)).not.toContain("carrier_jobs");
   });
+
+  it("an old-shaped carrier_jobs (one row per incarnation, no token) is rebuilt losslessly as filled reservations", () => {
+    const p = oldCarrierJobsCopy();
+    const before = raw(p, (r) => r.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all());
+    expect(before).toHaveLength(3);
+    const db = track(openDb({ path: p }));
+    expect(columns(p, "carrier_jobs")).toEqual(CARRIER_JOBS_COLUMNS);
+    expect(tables(p)).not.toContain("carrier_jobs_pre_reservation");
+    const rows = db
+      .prepare(
+        "SELECT agent_id, workstream, name, ordinal, host, job, host_stop, launch, recorded_at, token FROM carrier_jobs ORDER BY agent_id",
+      )
+      .all() as Record<string, unknown>[];
+    expect(rows.map(({ token: _, ...r }) => r)).toEqual([
+      {
+        agent_id: 3,
+        workstream: "d",
+        name: "w",
+        ordinal: 1,
+        host: "h",
+        job: "old-job",
+        host_stop: "stop {job}",
+        launch: "intent",
+        recorded_at: "r3",
+      },
+      {
+        agent_id: 5,
+        workstream: "d",
+        name: "w",
+        ordinal: 0,
+        host: "h",
+        job: "new-job",
+        host_stop: "stop {job}",
+        launch: "intent",
+        recorded_at: "r5",
+      },
+      {
+        agent_id: 7,
+        workstream: "d",
+        name: "v",
+        ordinal: 0,
+        host: "h2",
+        job: "v-job",
+        host_stop: "other {job}",
+        launch: "intent",
+        recorded_at: null,
+      },
+    ]);
+    expect(new Set(rows.map((r) => r.token)).size).toBe(3);
+    // Every rebuilt handle fences its name: the newest first.
+    expect(getCarrierJobByName(db, "d", "w")?.job).toBe("new-job");
+    expect(listCarrierJobsByName(db, "d", "w").map((j) => j.job)).toEqual(["new-job", "old-job"]);
+    // A current file is not rebuilt again.
+    db.close();
+    const tokens = raw(p, (r) => r.prepare("SELECT token FROM carrier_jobs ORDER BY id").all());
+    track(openDb({ path: p }));
+    expect(raw(p, (r) => r.prepare("SELECT token FROM carrier_jobs ORDER BY id").all())).toEqual(
+      tokens,
+    );
+  });
+
+  for (const at of ["INSERT INTO carrier_jobs", "DROP TABLE carrier_jobs_pre_reservation"]) {
+    it(`a failure in the carrier_jobs rebuild (${at.split(" ")[0]}) rolls back: the old table and every handle are kept`, () => {
+      const p = oldCarrierJobsCopy();
+      const before = raw(p, (r) => r.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all());
+      const oldColumns = columns(p, "carrier_jobs");
+      const mine = new Database(p);
+      const db = failingOn(mine, (sql) => sql.startsWith(at));
+      expect(() => upgradeSchema(db)).toThrow("disk full");
+      expect(mine.inTransaction).toBe(false);
+      mine.close();
+      expect(columns(p, "carrier_jobs")).toEqual(oldColumns);
+      expect(tables(p)).not.toContain("carrier_jobs_pre_reservation");
+      expect(
+        raw(p, (r) => r.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all()),
+      ).toEqual(before);
+      // ...and the file still upgrades afterwards, losslessly.
+      const ok = track(openDb({ path: p }));
+      expect(listCarrierJobs(ok).map((j) => j.job)).toEqual(["old-job", "new-job", "v-job"]);
+    });
+  }
 
   it("host profiles that predate the lease transport become session profiles with no stop", () => {
     const p = staleCopy();
@@ -916,9 +1033,7 @@ describe("machine-local state", () => {
     db.prepare(
       "INSERT INTO host_channels (host, holder, kind, token, pid, opened_at) VALUES ('h', 'x', 'transient', 't', 1, 'n')",
     ).run();
-    db.prepare(
-      "INSERT INTO carrier_jobs (agent_id, workstream, name, host, job, host_stop, recorded_at) VALUES (5, 'd', 'w', 'h', 'j', 'stop {job}', 'n')",
-    ).run();
+    reserveCarrierJob(db, { workstream: "d", name: "w", host: "h", hostStop: "stop {job}" });
     const report = rebuildInto(db, { targetPath: join(dir, `rb-${++n}.db`) });
     expect(report.machineLocalLost).toEqual(
       expect.arrayContaining([

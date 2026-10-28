@@ -18,6 +18,7 @@ export {
   CarrierJobUnstoppedError,
   LeaseJobInvalidError,
   LeaseJobTimeoutError,
+  LeaseJobUnreadableError,
 } from "./agents/lease-carrier.js";
 export {
   type AbortAgentOptions,
@@ -127,14 +128,20 @@ export {
 } from "./capture.js";
 export {
   abandonCarrierJob,
+  bindCarrierJobAgent,
   type CarrierJob,
-  deleteCarrierJobAfterStop,
+  type CarrierLaunch,
+  fillCarrierJob,
   getCarrierJob,
+  getCarrierJobByAgent,
   getCarrierJobByName,
-  insertCarrierJob,
   listCarrierJobs,
   listCarrierJobsByName,
-  persistCarrierJob,
+  markCarrierLaunch,
+  noteCarrierJob,
+  recordCarrierPane,
+  releaseCarrierJob,
+  reserveCarrierJob,
 } from "./carrier-jobs.js";
 export { CarrierStopFailedError, CarrierStopRefusedError, runStop } from "./carrier-stop.js";
 export {

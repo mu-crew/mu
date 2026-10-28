@@ -13,9 +13,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { persistCarrierJob } from "../src/carrier-jobs.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, bindHostChannel, checkHost, reserveHostChannel } from "../src/hosts.js";
+import { filledReservation } from "./_carrier.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -232,7 +232,7 @@ describe("host check --agent on a lease agent", () => {
   });
 
   it("reports the agent's carrier_jobs handle", async () => {
-    persistCarrierJob(db, row());
+    filledReservation(db, row());
     const r = await checkHost(db, "lease", { agent: { name: "worker-1", workstream: ws } });
     const job = r.steps.find((s) => s.step === "job");
     expect(job).toMatchObject({ ok: true });
@@ -241,7 +241,7 @@ describe("host check --agent on a lease agent", () => {
   });
 
   it("says so when the stop template changed since the handle was recorded", async () => {
-    persistCarrierJob(db, row({ hostStop: "older {job}" }));
+    filledReservation(db, row({ hostStop: "older {job}" }));
     const job = (
       await checkHost(db, "lease", { agent: { name: "worker-1", workstream: ws } })
     ).steps.find((s) => s.step === "job");
@@ -258,13 +258,13 @@ describe("host check --agent on a lease agent", () => {
   });
 
   it("a handle recorded on another host is not this host's", async () => {
-    persistCarrierJob(db, row({ host: "elsewhere" }));
+    filledReservation(db, row({ host: "elsewhere" }));
     const r = await checkHost(db, "lease", { agent: { name: "worker-1", workstream: ws } });
     expect(r.steps.find((s) => s.step === "job")).toMatchObject({ ok: false });
   });
 
   it("the CLI prints the job line, and a session profile has none", async () => {
-    persistCarrierJob(db, row());
+    filledReservation(db, row());
     const human = await runCli(["host", "check", "lease", "--agent", "worker-1", "-w", ws], dbPath);
     expect(human.stdout).toContain("job");
     expect(human.stdout).toContain("mule-42");

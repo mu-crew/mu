@@ -68,6 +68,7 @@ export {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  CarrierJobUnstoppedError,
   SpawnAttemptBusyError,
   SpawnAttemptFailedError,
   SpawnAttemptGuardError,
@@ -128,7 +129,12 @@ export {
   type TransportSendOptions,
 } from "./agents/transport.js";
 
-import { AgentExistsError, AgentNotFoundError, AgentReplacedError } from "./agents/errors.js";
+import {
+  AgentExistsError,
+  AgentNotFoundError,
+  AgentReplacedError,
+  CarrierJobUnstoppedError,
+} from "./agents/errors.js";
 import {
   agentCtlSocket,
   recordSend,
@@ -136,6 +142,7 @@ import {
   sendViaTransport,
   type TransportSendOptions,
 } from "./agents/transport.js";
+import { getCarrierJobByName } from "./carrier-jobs.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import type { CtlTool } from "./ctl/protocol.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
@@ -266,6 +273,8 @@ export interface InsertAgentInput {
   collectedHead?: string | null;
   repo?: string | null;
   gateToken?: string | null;
+  /** The lease spawn's own `carrier_jobs` reservation token: the one the name fence lets through. */
+  reservation?: string;
 }
 
 interface RawAgentRow {
@@ -364,30 +373,39 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
   ensureWorkstream(db, input.workstream);
   const workstreamId = resolveWorkstreamId(db, input.workstream);
   const now = new Date().toISOString();
+  let inserted: number;
   try {
-    db.prepare(
-      `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, created_at, updated_at)
-       VALUES (@name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
+    // The name fence, in the same statement: no row while (workstream, name) holds a
+    // carrier_jobs reservation other than the caller's own (src/carrier-jobs.ts).
+    inserted = db
+      .prepare(
+        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, created_at, updated_at)
+       SELECT @name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
                COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource,
-               @spawner, @host, @collectedHead, @repo, @gateToken, @now, @now)`,
-    ).run({
-      name: input.name,
-      workstreamId,
-      cli: input.cli ?? null,
-      paneId: input.paneId,
-      role: input.role ?? null,
-      tab: input.tab ?? null,
-      cwd: input.cwd ?? null,
-      base: input.base ?? null,
-      command: input.command ?? null,
-      commandSource: input.commandSource ?? null,
-      spawner: input.spawner ?? null,
-      host: input.host ?? null,
-      collectedHead: input.collectedHead ?? null,
-      repo: input.repo ?? null,
-      gateToken: input.gateToken ?? null,
-      now,
-    });
+               @spawner, @host, @collectedHead, @repo, @gateToken, @now, @now
+       WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs c
+                         WHERE c.workstream = @workstream AND c.name = @name AND c.token IS NOT @reservation)`,
+      )
+      .run({
+        name: input.name,
+        workstream: input.workstream,
+        workstreamId,
+        cli: input.cli ?? null,
+        paneId: input.paneId,
+        role: input.role ?? null,
+        tab: input.tab ?? null,
+        cwd: input.cwd ?? null,
+        base: input.base ?? null,
+        command: input.command ?? null,
+        commandSource: input.commandSource ?? null,
+        spawner: input.spawner ?? null,
+        host: input.host ?? null,
+        collectedHead: input.collectedHead ?? null,
+        repo: input.repo ?? null,
+        gateToken: input.gateToken ?? null,
+        reservation: input.reservation ?? null,
+        now,
+      }).changes;
   } catch (err) {
     // UNIQUE (workstream_id, name): a concurrent spawn took the
     // name between the caller's existence check and this insert.
@@ -395,6 +413,11 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
       throw new AgentExistsError(input.name);
     }
     throw err;
+  }
+  if (inserted === 0) {
+    const r = getCarrierJobByName(db, input.workstream, input.name);
+    if (r !== undefined) throw new CarrierJobUnstoppedError(input.name, r);
+    throw new Error(`agents.insertAgent: row not inserted: ${input.name}`);
   }
   const row = getAgent(db, input.name, input.workstream);
   if (!row) throw new Error(`agents.insertAgent: row not found after insert: ${input.name}`);

@@ -613,7 +613,7 @@ export function listHostChannels(db: Db, host?: string): HostChannel[] {
 }
 
 /** The pid's start time (Linux: /proc stat field 22), or null when unreadable. */
-function pidStart(pid: number): string | null {
+export function pidStart(pid: number): string | null {
   try {
     const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
     return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[19] ?? null;
@@ -623,7 +623,7 @@ function pidStart(pid: number): string | null {
 }
 
 /** True only when the holder is certainly gone: ESRCH, or the pid now has another start time. */
-function pidProvenGone(pid: number, start: string | null): boolean {
+export function pidProvenGone(pid: number, start: string | null): boolean {
   try {
     process.kill(pid, 0);
   } catch (e) {
@@ -1127,7 +1127,7 @@ function leaseJobStep(
 ): HostCheckStep {
   const who = `${agent.workstream}/${agent.name}`;
   const job = getCarrierJobByName(db, agent.workstream, agent.name);
-  if (job === undefined || job.host !== profile.name) {
+  if (job === undefined || job.host !== profile.name || job.job === null) {
     return { step: "job", ok: false, detail: `${who}: no job handle recorded on ${profile.name}` };
   }
   const drift =
