@@ -28,14 +28,21 @@ function firstVerdictLine(lines: readonly string[]): number {
   return lines.findIndex((l) => VERDICT_LINE.test(l));
 }
 
+/** `line` as a verdict line: null when it is not one, else its label (the first
+ *  known label after the colon; undefined when it names none). */
+export function verdictLineLabel(line: string): VerdictLabel | undefined | null {
+  if (!VERDICT_LINE.test(line)) return null;
+  const after = line.slice(line.indexOf("VERDICT:") + "VERDICT:".length);
+  return LABEL_RE.exec(after)?.[1] as VerdictLabel | undefined;
+}
+
 /** The label on the first `VERDICT:` line (the first known label after the
  *  colon), or undefined when there is no verdict line or no known label. */
 export function parseVerdict(answer: string): VerdictLabel | undefined {
   const lines = answer.trimEnd().split("\n");
   const at = firstVerdictLine(lines);
   if (at < 0) return undefined;
-  const after = (lines[at] ?? "").slice((lines[at] ?? "").indexOf("VERDICT:") + "VERDICT:".length);
-  return LABEL_RE.exec(after)?.[1] as VerdictLabel | undefined;
+  return verdictLineLabel(lines[at] ?? "") ?? undefined;
 }
 
 /**

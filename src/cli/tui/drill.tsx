@@ -16,6 +16,7 @@
 import { Box, Text, useInput, useStdout, useWindowSize } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import stringWidth from "string-width";
+import { verdictLineLabel } from "../../delegate-verdict.js";
 import { parseOpKey } from "../../log-render.js";
 import { activeMux } from "../../mux.js";
 import { formatPair } from "../../tasks/status.js";
@@ -91,16 +92,15 @@ const NOTE_INDENT = 2;
 const noteTime = (iso: string): string =>
   /^(\d{4}-\d\d-\d\d)T(\d\d:\d\d:\d\d)/.exec(iso)?.slice(1, 3).join(" ") ?? iso;
 
-/** A content line's role: a `VERDICT:` line in its label's colour, else plain. */
-function contentRole(line: string): Role {
-  const v = /^(?:\w+: )?VERDICT:\s*(\w+)/.exec(line)?.[1];
-  return v === "CONFIRMED" ? "good" : v === "REFUTED" ? "bad" : v === undefined ? "text" : "warn";
-}
+/** A verdict line's role by its label (as `parseVerdict` reads it): CONFIRMED good, REFUTED bad, else warn. */
+const verdictRole = (label: string | undefined): Role =>
+  label === "CONFIRMED" ? "good" : label === "REFUTED" ? "bad" : "warn";
 
 /**
  * The notes as styled screen lines, `width` wide: per note a header rule
  * (`── #n kind pinned · author · time ───`, the kind in its colour), then the whole
- * content wrapped and indented under it, then a blank line.
+ * content wrapped and indented under it, then a blank line. The first `VERDICT:`
+ * line takes its label's colour.
  */
 export function notesLines(sel: SelectedNotes, width: number): Line[] {
   const out: Line[] = [];
@@ -124,8 +124,12 @@ export function notesLines(sel: SelectedNotes, width: number): Line[] {
         : [...head, { text: "─".repeat(width - used), role: "border" }],
     );
     const pad = " ".repeat(NOTE_INDENT);
+    // Only the note's FIRST verdict line is its verdict; a later one is quoted evidence.
+    let verdictSeen = false;
     for (const raw of n.content.replace(/\s+$/, "").split(/\r\n|\n|\r/)) {
-      const role = contentRole(raw);
+      const label = verdictSeen ? null : verdictLineLabel(raw);
+      if (label !== null) verdictSeen = true;
+      const role = label === null ? "text" : verdictRole(label);
       for (const l of wrap(raw, width - NOTE_INDENT)) out.push([{ text: pad + l, role }]);
     }
     out.push([]);
