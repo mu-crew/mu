@@ -27,12 +27,14 @@ import {
   LeaseJobTimeoutError,
   LeaseJobUnreadableError,
   refuseReserved,
+  reserveLeaseJob,
   resolveEmptyReservation,
   setLeaseClockForTests,
 } from "../src/agents/lease-carrier.js";
 import { rollbackSpawn } from "../src/agents/spawn.js";
 import {
   AgentDiedOnSpawnError,
+  AgentLockBusyError,
   AgentSpawnStartupError,
   deleteAgent,
   getAgent,
@@ -55,7 +57,13 @@ import {
 import { carrierJobFilePath, ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
-import { addHost, HostProfileError, listHostChannels, runHostTemplate } from "../src/hosts.js";
+import {
+  addHost,
+  getHost,
+  HostProfileError,
+  listHostChannels,
+  runHostTemplate,
+} from "../src/hosts.js";
 import { listLogs } from "../src/logs.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
@@ -87,6 +95,8 @@ let carrier: {
   onPane?: () => void;
 };
 let saved: Record<string, string | undefined>;
+/** Runs before every tmux call (a probe's boundary). */
+let beforeTmux: ((args: readonly string[]) => Promise<void>) | undefined;
 let now: number;
 
 const ENV_KEYS = [
@@ -96,6 +106,7 @@ const ENV_KEYS = [
   "MU_DB_PATH",
   "MU_STATE_DIR",
   "MU_SYNC_DIR",
+  "MU_AGENT_LOCK_TIMEOUT_MS",
 ];
 
 const order = (): string[] =>
@@ -115,6 +126,7 @@ beforeEach(() => {
   orderLog = join(dir, "order");
   servers = [];
   atPane = undefined;
+  beforeTmux = undefined;
   carrier = { handle: "job-1", ctl: true };
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   process.env.MU_SPAWN_CTL_MS = "300";
@@ -142,7 +154,8 @@ beforeEach(() => {
 case "$1" in
   *'worktree add'*) echo "exec add" >> '${orderLog}'
     echo "MU_REPO $(printf /srv/repo | od -An -v -tx1 | tr -d ' \\n')"; echo "MU_WT ${SHA} ${WT}" ;;
-  *'worktree remove'*) echo "exec rm" >> '${orderLog}'; echo "MU_RM removed" ;;
+  *'worktree remove'*) echo "exec rm" >> '${orderLog}'
+    [ -f '${dir}/rm-fail' ] && { echo "MU_RM failed"; exit 1; }; echo "MU_RM removed" ;;
   *MU_CWD*) echo "exec cwd" >> '${orderLog}'; echo "MU_CWD /srv/repo" ;;
   *) echo "exec other" >> '${orderLog}' ;;
 esac
@@ -213,6 +226,7 @@ const isPaneCall = (a: readonly string[]): boolean =>
 function installCarrierTmux(): void {
   const fake = mockTmux(state).executor;
   mux = installMux("tmux", async (args) => {
+    await beforeTmux?.(args);
     const res = await fake(args);
     if (!isPaneCall(args)) return res;
     atPane = channels().map((c) => [c.holder, c.kind]);
@@ -666,6 +680,110 @@ describe("the reservation: name-exclusive, before any effect", () => {
     }
     expect(order()).toEqual(["exec add", "stop job-9"]);
     expect(reservation()?.job).toBe("job-9");
+  });
+
+  // reviewer-19 boundary probe (high_a_concurrent_lease_reservation_does): a lease
+  // reservation of the name attempted at the tmux has-session boundary, after the
+  // spawn's in-lock fence passed and before its pane command is submitted. On 41f1cfb8
+  // it landed (the spawn held only the session lock) and `new-session … pi` ran under
+  // the reserved name. Now the spawn holds the strict agent lock from fence to row: the
+  // reservation cannot land, so no pane command ever runs beside a foreign reservation.
+  // The reservation goes through reserveLeaseJob, its only production writer (a raw
+  // INSERT that skips the lock is not a race any process can run). The lease shapes pin
+  // that a lease spawn holds the lock across its pane call too.
+  for (const shape of ["cwd", "lease", "lease-worktree"] as const) {
+    it(`reviewer-19 boundary probe (${shape}): no reservation lands between the fence and the pane command`, async () => {
+      process.env.MU_AGENT_LOCK_TIMEOUT_MS = "50";
+      carrier = { handle: "job-1", ctl: false };
+      const foreign: string[] = [];
+      let attempt: Promise<unknown> | undefined;
+      beforeTmux = async (args) => {
+        if (args[0] === "has-session" && attempt === undefined) {
+          attempt = reserveLeaseJob(db, "auth", "worker-1", getHost(db, "dev")).catch(
+            (e: unknown) => e,
+          );
+          await attempt;
+        }
+        // A pane command submitted while a reservation other than the spawn's own exists.
+        const r = reservation();
+        if (isPaneCall(args) && r !== undefined && r.launch === "none") {
+          foreign.push(args.join(" "));
+        }
+      };
+      const err = await (shape === "cwd"
+        ? spawnAgent(db, {
+            name: "worker-1",
+            workstream: "auth",
+            command: "pi",
+            cwd: dir,
+            ctl: false,
+          })
+        : spawn(
+            shape === "lease" ? { cwd: "/srv/repo", ctl: false } : { worktree: true, ctl: false },
+          )
+      ).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+      expect(err).toBeUndefined();
+      expect(await attempt).toBeInstanceOf(AgentLockBusyError);
+      expect(foreign).toEqual([]);
+      expect(mux.calls.filter(isPaneCall)).toHaveLength(1);
+      expect(listCarrierJobs(db)).toHaveLength(shape === "cwd" ? 0 : 1);
+    });
+  }
+
+  it("a reservation that lands before the spawn's lock refuses it with zero pane calls", async () => {
+    const r = reserveCarrierJob(db, {
+      workstream: "auth",
+      name: "worker-1",
+      host: "dev",
+      hostStop: STOP(stopScript),
+      creatorPid: process.pid,
+    });
+    expect(r).toBeDefined();
+    for (const over of [{ cwd: dir }, { cwd: dir, tmuxSession: "mu-other" }]) {
+      const err = await spawnAgent(db, {
+        name: "worker-1",
+        workstream: "auth",
+        command: "pi",
+        ...over,
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(CarrierJobUnstoppedError);
+    }
+    expect(mux.calls.filter(isPaneCall)).toEqual([]);
+  });
+
+  // reviewer-19 cleanup probe (medium_never_launched_rollback_releases): prepare made the
+  // remote worktree, a pre-launch error (EISDIR: a directory at the ctl socket path) rolls
+  // back with launch 'none', and the worktree removal fails. The placeholder recorded no
+  // path (no remote_recovery record), so the reservation is the tree's only pointer: kept,
+  // with the reason, and the name stays fenced. On 41f1cfb8 it was released.
+  it("reviewer-19 cleanup probe: a never-launched rollback whose tree removal fails keeps the reservation", async () => {
+    writeFileSync(join(dir, "rm-fail"), "");
+    mkdirSync(ctlSocketPath("auth", "worker-1", dir), { recursive: true });
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
+    expect((err as NodeJS.ErrnoException).code).toMatch(/EISDIR/);
+    expect(order()).toEqual(["exec add", "exec rm"]);
+    expect(mux.calls.filter(isPaneCall)).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    const kept = reservation();
+    expect(kept).toMatchObject({ launch: "none", job: null, paneId: null });
+    expect(kept?.reason).toContain(WT);
+    // Fenced: neither a respawn nor a close-by-name drops it (the facts name the tree).
+    rmFixtureDir(ctlSocketPath("auth", "worker-1", dir));
+    await expect(spawn({ cwd: "/srv/repo" })).rejects.toBeInstanceOf(CarrierJobUnstoppedError);
+    db.prepare("UPDATE carrier_jobs SET creator_pid = ?").run(deadPid());
+    const out = await resolveEmptyReservation(db, reservation() as CarrierJob);
+    expect(out.released).toBe(false);
+    expect(out.facts).toContain(WT);
+  });
+
+  it("a never-launched rollback whose tree removal succeeds releases the reservation", async () => {
+    mkdirSync(ctlSocketPath("auth", "worker-1", dir), { recursive: true });
+    await expect(spawn({ worktree: true })).rejects.toBeInstanceOf(Error);
+    expect(order()).toEqual(["exec add", "exec rm"]);
+    expect(listCarrierJobs(db)).toEqual([]);
   });
 
   it("a successful spawn's reservation survives reconcile/teardown/raw deletes of the agent row", async () => {
