@@ -81,6 +81,8 @@ parallel.
   when it wrote anything, its last message so far, in the report.
   Quitting pi or `/reload` lists each running delegate's session file.
   A call whose pane is gone fails when the next runtime re-adopts it.
+- Delegate pi sessions live under `<state dir>/delegate-sessions/<workstream>/`,
+  not in your `/resume` list. mu never prunes them; delete them freely.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
 

@@ -307,6 +307,12 @@ describe("the pane is the transport", () => {
     expect(getAgent(db, "worker-1", "auth")).toMatchObject({ host: "dev", cwd: "/srv/repo/sub" });
   });
 
+  it("a remote pi never gets a local pi session dir, even when one is asked for", async () => {
+    await spawn({ piSessionDir: join(dir, "delegate-sessions", "auth") });
+    const all = mux.calls.map((c) => c.join(" ")).join("\n");
+    expect(all).not.toContain("PI_CODING_AGENT_SESSION_DIR");
+  });
+
   it("without --cwd the remote cwd is the profile's repo, resolved remotely", async () => {
     await spawn();
     const [only, ...rest] = execCalls();
