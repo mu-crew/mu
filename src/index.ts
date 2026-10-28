@@ -15,6 +15,11 @@ export {
   UNKNOWN_REASON,
 } from "./agent-state.js";
 export {
+  CarrierJobUnstoppedError,
+  LeaseJobInvalidError,
+  LeaseJobTimeoutError,
+} from "./agents/lease-carrier.js";
+export {
   type AbortAgentOptions,
   type AbortResult,
   AgentAbortNeedsCtlError,
