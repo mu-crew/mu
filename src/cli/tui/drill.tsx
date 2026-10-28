@@ -5,7 +5,7 @@
 // Keys are this component's alone while it is mounted (App's input is off), so a
 // press is consumed once and Esc returns to the tab with its filters untouched.
 // Plain text only: bodies are cleaned, then wrapped by visual width (never ANSI in <Text>);
-// colour comes from theme roles as ink props.
+// colour comes from theme roles as ink props (a note's header rule, its kind, a verdict line).
 // A load is guarded: a result that lands after Esc (or for an older `r`) is dropped.
 // Live, on the dashboard's one poll loop (3.x task-detail tickNonce): notes and the log
 // entry's task context re-read whenever the snapshot changed (`nonce`), scrollback
@@ -26,7 +26,7 @@ import { NAV_HINT, navKey } from "./nav.js";
 import type { DrillTarget } from "./rows.js";
 import type { DashboardRuntime } from "./runtime.js";
 import { cell, clean, fitLine, type Line } from "./text.js";
-import { style } from "./theme.js";
+import { noteKindRole, type Role, type Seg, style } from "./theme.js";
 
 /** Lines of scrollback a drill captures (the tail; the pane has more). */
 export const SCROLLBACK_LINES = 2000;
@@ -84,14 +84,53 @@ export function wrap(text: string, width: number): string[] {
 export const clampTop = (top: number, count: number, height: number): number =>
   Math.max(0, Math.min(top, count - Math.max(1, height)));
 
-/** The notes as one text: a header line per note (`*` = pinned content), then the whole content. */
-export function notesText(sel: SelectedNotes): string {
-  return sel.notes
-    .map(
-      (n) =>
-        `#${n.n}  ${n.kind}${sel.pinned.includes(n.n) ? " *" : ""}  ${n.author ?? "-"}  ${n.createdAt}\n${n.content}\n`,
-    )
-    .join("\n");
+/** Columns a note's content is indented under its header rule. */
+const NOTE_INDENT = 2;
+
+/** `2026-10-28T07:41:50.123Z` as `2026-10-28 07:41:50` (UTC, like the log); anything else as is. */
+const noteTime = (iso: string): string =>
+  /^(\d{4}-\d\d-\d\d)T(\d\d:\d\d:\d\d)/.exec(iso)?.slice(1, 3).join(" ") ?? iso;
+
+/** A content line's role: a `VERDICT:` line in its label's colour, else plain. */
+function contentRole(line: string): Role {
+  const v = /^(?:\w+: )?VERDICT:\s*(\w+)/.exec(line)?.[1];
+  return v === "CONFIRMED" ? "good" : v === "REFUTED" ? "bad" : v === undefined ? "text" : "warn";
+}
+
+/**
+ * The notes as styled screen lines, `width` wide: per note a header rule
+ * (`── #n kind pinned · author · time ───`, the kind in its colour), then the whole
+ * content wrapped and indented under it, then a blank line.
+ */
+export function notesLines(sel: SelectedNotes, width: number): Line[] {
+  const out: Line[] = [];
+  for (const n of sel.notes) {
+    const head: Seg[] = [
+      { text: "── ", role: "border" },
+      { text: `#${n.n} `, role: "muted" },
+      { text: n.kind, role: noteKindRole(n.kind) },
+      ...(sel.pinned.includes(n.n) ? [{ text: " pinned", role: "muted" as const }] : []),
+      { text: " · ", role: "border" },
+      { text: n.author ?? "-", role: "id" },
+      { text: " · ", role: "border" },
+      { text: noteTime(n.createdAt), role: "muted" },
+      { text: " ", role: "border" },
+    ];
+    const used = stringWidth(head.map((x) => x.text).join(""));
+    // A narrow screen cuts the header (ending "…") rather than wrap it.
+    out.push(
+      used > width
+        ? fitLine(head, width)
+        : [...head, { text: "─".repeat(width - used), role: "border" }],
+    );
+    const pad = " ".repeat(NOTE_INDENT);
+    for (const raw of n.content.replace(/\s+$/, "").split(/\r\n|\n|\r/)) {
+      const role = contentRole(raw);
+      for (const l of wrap(raw, width - NOTE_INDENT)) out.push([{ text: pad + l, role }]);
+    }
+    out.push([]);
+  }
+  return out;
 }
 
 export function titleOf(t: DrillTarget): string {
@@ -126,7 +165,14 @@ function logText(t: Extract<DrillTarget, { kind: "log" }>): string {
 type Load =
   | { state: "loading" }
   | { state: "error"; message: string }
-  | { state: "ready"; text: string; notices: string[]; header?: string };
+  | {
+      state: "ready";
+      text: string;
+      notices: string[];
+      header?: string;
+      /** A notes drill's notes: drawn as styled lines instead of `text`. */
+      notes?: SelectedNotes;
+    };
 
 /** A task's live line for the notes drill and a log entry's context: status, owner, title. */
 export function taskLine(t: TaskRow | undefined): string {
@@ -215,7 +261,8 @@ export function Drill({
         const sel = runtime.notes(target.workstream, target.id, all);
         done({
           state: "ready",
-          text: sel.notes.length === 0 ? "(no notes)" : notesText(sel),
+          text: "(no notes)",
+          ...(sel.notes.length > 0 ? { notes: sel } : {}),
           notices:
             sel.more > 0
               ? [`${sel.more} of ${sel.total} notes not shown: A shows them all (oldest first)`]
@@ -257,12 +304,16 @@ export function Drill({
       ...(ready?.notices ?? []),
       ...above,
     ].flatMap((l) => wrap(l, columns));
-    const body =
+    const plain = (t: string, role: Role = "text"): Line[] =>
+      wrap(t, columns).map((l) => [{ text: l, role }]);
+    const body: Line[] =
       load.state === "loading"
-        ? ["loading…"]
+        ? plain("loading…")
         : load.state === "error"
-          ? wrap(`error: ${load.message}`, columns)
-          : wrap(load.text, columns);
+          ? plain(`error: ${load.message}`, "bad")
+          : load.notes !== undefined
+            ? notesLines(load.notes, columns)
+            : plain(load.text);
     return { head, body };
   }, [load, notice, flash, columns]);
 
@@ -331,8 +382,8 @@ export function Drill({
       ))}
       {visible.map((l, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: lines have no identity; the index IS the position
-        <Text key={first + i} wrap="truncate" {...style(load.state === "error" ? "bad" : "text")}>
-          {cell(l, columns)}
+        <Text key={first + i} wrap="truncate">
+          <Segs line={fitLine(l, columns)} />
         </Text>
       ))}
       <Box flexGrow={1} />

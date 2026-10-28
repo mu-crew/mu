@@ -17,8 +17,9 @@ import {
   type StepRunner,
   yankSequence,
 } from "../src/cli/tui/commands.js";
-import { clampTop, notesText, wrap } from "../src/cli/tui/drill.js";
+import { clampTop, notesLines, wrap } from "../src/cli/tui/drill.js";
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
+import { lineText } from "../src/cli/tui/text.js";
 import { type Db, openDb } from "../src/db.js";
 import type { MuxCommand } from "../src/mux.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
@@ -221,7 +222,7 @@ describe("drills in the dashboard", () => {
     await ui.press("j"); // keep the filter; one row only
     await ui.press(ENTER);
     await ui.until((s) => s.includes("Notes  ws/t1"));
-    expect(ui.screen()).toContain("#1  brief *  me");
+    expect(ui.screen()).toContain("── #1 brief pinned · me · ");
     expect(ui.screen()).toContain("second brief line");
     await ui.press(ESC);
     await ui.until((s) => s.includes("filter: first"));
@@ -471,14 +472,44 @@ describe("drills in the dashboard", () => {
     ui.unmount();
   });
 
-  it("notesText marks pinned notes and keeps content whole", () => {
-    const text = notesText({
-      notes: [{ n: 2, kind: "report", author: null, content: "x\ny", createdAt: "T" }],
-      more: 0,
-      total: 2,
-      pinned: [2],
-    } as never);
-    expect(text).toBe("#2  report *  -  T\nx\ny\n");
+  it("notesLines draws a header rule per note, the content whole and indented", () => {
+    const lines = notesLines(
+      {
+        notes: [
+          {
+            n: 2,
+            kind: "report",
+            author: null,
+            content: "x\nVERDICT: REFUTED\n",
+            createdAt: "2026-10-28T07:41:50.123Z",
+          },
+        ],
+        more: 0,
+        total: 2,
+        pinned: [2],
+      } as never,
+      60,
+    );
+    expect(lines.map(lineText)).toEqual([
+      "── #2 report pinned · - · 2026-10-28 07:41:50 ".padEnd(60, "─"),
+      "  x",
+      "  VERDICT: REFUTED",
+      "",
+    ]);
+    expect(lines[0]?.find((s) => s.text === "report")?.role).toBe("good");
+    expect(lines[2]?.[0]?.role).toBe("bad");
+    // A narrow screen cuts the header instead of overflowing it.
+    const narrow = notesLines(
+      {
+        notes: [{ n: 1, kind: "note", author: "me", content: "y", createdAt: "T" }],
+        more: 0,
+        total: 1,
+        pinned: [],
+      } as never,
+      12,
+    );
+    expect(stringWidth(lineText(narrow[0] ?? []))).toBe(12);
+    expect(lineText(narrow[0] ?? [])).toContain("…");
   });
 });
 
