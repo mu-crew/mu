@@ -10,6 +10,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mu next` failures are its one JSON document.** `next` prints ONE JSON result
+  with no `--json`, but a parse error (`mu next --bogus`) or a handler error (no
+  `-w`, an unknown workstream) printed red prose on stderr and a help dump. Both
+  are now the failure envelope on stdout with the real exit code, like `mu state`
+  and `mu wait`. `mu me next` and a workstream named `next` are unaffected.
+
 ## [4.1.0] — 2026-10-28
 
 ### Added
