@@ -24,6 +24,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   with the delegate history; a new index, `idx_delegate_calls_state`, serves the
   attention scan (created on open, no schema bump).
 
+### Fixed
+
+- **The keep-driving nudge no longer shows ragged line breaks.** The rule quoted
+  from SKILL.md kept the source's hard wraps, which the TUI then wrapped again.
+  Each paragraph is now one line.
+
 ## [4.0.0] — 2026-10-28
 
 **mu 4.0: a rewrite for agent callers.** Every verb, result and error is shaped

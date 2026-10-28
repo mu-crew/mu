@@ -114,6 +114,12 @@ describe("keep-driving rule source", () => {
     expect(rule).not.toContain("<!--");
   });
 
+  it("unwraps hard line breaks inside a paragraph, keeping paragraphs apart", () => {
+    const md =
+      "<!-- mu:keep-driving -->\nOne\n`two\nthree`.\n\nFour\nfive.\n<!-- /mu:keep-driving -->";
+    expect(keepDrivingRule(md)).toBe("One `two three`.\n\nFour five.");
+  });
+
   it("is undefined without the markers, and then registers nothing", () => {
     expect(keepDrivingRule("no markers here")).toBeUndefined();
     const f = fakePi();
