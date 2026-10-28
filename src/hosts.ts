@@ -122,6 +122,24 @@ export class HostSpawnUnsupportedError extends Error {
   }
 }
 
+/**
+ * A host template exited 3: the hand-back (a human must act, e.g. a hardware key). Exit 5,
+ * label `human needed`. Never retried, and never recorded as `human-needed` here: that record
+ * is always a decision (VISION). Thrown for `exec` and `fetch` runs only, never for a pane.
+ */
+export class HostHandbackError extends Error {
+  override readonly name = "HostHandbackError";
+  readonly handback = true;
+  constructor(
+    public readonly host: string,
+    public readonly field: "exec" | "fetch",
+    /** The first non-blank line of stderr, else of stdout. */
+    public readonly detail: string,
+  ) {
+    super(say("host.handback", host, field, detail));
+  }
+}
+
 /** `host check` found a failing step. The report rides on `failureWithData`. */
 export class HostCheckFailedError extends Error {
   override readonly name = "HostCheckFailedError";
@@ -221,7 +239,10 @@ export function removeHost(db: Db, name: string): boolean {
 export function hostStarter(host: string): { shell: string; exec: string; fetch: string } {
   const ssh = "ssh -o ControlMaster=no -o ControlPath=none";
   return {
-    // ControlMaster=no: a multiplexed ssh never binds the local end of the forward.
+    // ControlMaster=no ControlPath=none: a `-L` through a shared control master is bound by the
+    // master, not by this client. The listener outlives the pane, and a later ssh asking for
+    // the same forward exits 0 with no socket file (the master never re-binds it). Each pane
+    // keeps its own connection, so its forward dies with it.
     shell: `${ssh} -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L {local_sock}:{remote_sock} ${host} -t 'cd {cwd:sh} && {env} "$SHELL" -ilc {cmd:sh}'`,
     exec: `${ssh} -o BatchMode=yes ${host} {cmd}`,
     fetch: `git fetch ssh://${host}{cwd} HEAD`,
@@ -654,6 +675,9 @@ export async function withHostChannel<T>(
 /** Per-command budget for exec and check. */
 export const HOST_COMMAND_TIMEOUT_MS = 20_000;
 
+/** TERM-to-KILL grace for a host template's process group (`execGroupCapture`). */
+export const HOST_GRACE_MS = 5000;
+
 export interface HostRun {
   /** null: killed by the timeout or a signal. */
   exitCode: number | null;
@@ -663,7 +687,7 @@ export interface HostRun {
 
 /**
  * Expand `field` of `profile` and run it with /bin/sh -c. No retry, no
- * fallback. The command is its own process group: on timeout or caller
+ * fallback. Exit 3 throws `HostHandbackError`. The command is its own process group: on timeout or caller
  * termination the whole group (the template's transport included) is gone
  * before this returns, so the channel is never released under a live one.
  */
@@ -678,11 +702,21 @@ export async function runLeasedTemplate(
   localCwd?: string,
 ): Promise<HostRun> {
   const expanded = expandHostTemplate(profile[field], values);
-  return execGroupCapture("/bin/sh", ["-c", expanded], {
+  const run = await execGroupCapture("/bin/sh", ["-c", expanded], {
     timeoutMs,
+    // A carrier interrupted by the timeout needs time to stop what it dispatched.
+    graceMs: HOST_GRACE_MS,
     ...(localCwd !== undefined ? { cwd: localCwd } : {}),
     onSpawn: (pgid) => recordGroup(db, lease, pgid),
   });
+  if (run.exitCode === 3) {
+    throw new HostHandbackError(
+      profile.name,
+      field,
+      firstLine(run.stderr) || firstLine(run.stdout),
+    );
+  }
+  return run;
 }
 
 /** Run the profile's `exec` or `fetch` template under one transient channel. */
@@ -708,7 +742,7 @@ export async function runHostTemplate(
 // ─── Check ──────────────────────────────────────────────────────────────
 
 export interface HostCheckStep {
-  step: "reachable" | "repo" | "pi" | "extension" | "ctl";
+  step: "reachable" | "repo" | "pi" | "extension" | "ctl" | "handback";
   /** null: skipped because the host was not reachable. */
   ok: boolean | null;
   detail: string;
@@ -718,6 +752,8 @@ export interface HostCheckReport {
   host: string;
   ok: boolean;
   steps: HostCheckStep[];
+  /** Advice that never fails the check (a heuristic, said as one). */
+  warnings: string[];
 }
 
 export interface HostCheckOptions extends ChannelOpts {
@@ -758,6 +794,9 @@ export async function checkHost(
   getHost(db, host);
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   const steps: HostCheckStep[] = [];
+  const warnings = sessionShellWarnings(getHost(db, host));
+  // A template exited 3: the rest is skipped, as for an unreachable host.
+  let handedBack = false;
   const login = (cmd: string): string => `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`;
 
   await withHostChannel(
@@ -773,6 +812,10 @@ export async function checkHost(
         good: (r: HostRun) => string | undefined,
         unmet: string,
       ): Promise<boolean> => {
+        if (handedBack) {
+          steps.push({ step: name, ok: null, detail: "skipped: the host handed back" });
+          return false;
+        }
         let detail: string;
         let ok = false;
         try {
@@ -796,6 +839,12 @@ export async function checkHost(
                 ? unmet
                 : `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);
         } catch (e) {
+          if (e instanceof HostHandbackError) {
+            handedBack = true;
+            steps.push({ step: name, ok: null, detail: "skipped: the host handed back" });
+            steps.push({ step: "handback", ok: false, detail: `${name}: ${e.message}` });
+            return false;
+          }
           if (!(e instanceof HostTemplateError)) throw e;
           detail = e.message;
         }
@@ -826,10 +875,16 @@ export async function checkHost(
         );
       } else {
         for (const s of ["repo", "pi", "extension"] as const) {
-          steps.push({ step: s, ok: null, detail: "skipped: host not reachable" });
+          steps.push({
+            step: s,
+            ok: null,
+            detail: handedBack ? "skipped: the host handed back" : "skipped: host not reachable",
+          });
         }
       }
-      if (opts.agent !== undefined) {
+      if (opts.agent !== undefined && handedBack) {
+        steps.push({ step: "ctl", ok: null, detail: "skipped: the host handed back" });
+      } else if (opts.agent !== undefined) {
         const { name, workstream } = opts.agent;
         const p = await ctlProbe(
           ctlSocketPath(workstream, name, dirname(db.name)),
@@ -853,5 +908,23 @@ export async function checkHost(
     },
     opts,
   );
-  return { host, ok: steps.every((s) => s.ok !== false), steps };
+  return { host, ok: steps.every((s) => s.ok !== false), steps, warnings };
+}
+
+/**
+ * A session `shell` template that can ride a shared ssh master: the master, not the pane,
+ * binds a `-L` and keeps it past the pane. A heuristic on the template text, never a failure.
+ * Every profile is a session profile today.
+ */
+function sessionShellWarnings(profile: HostProfile): string[] {
+  const noMaster = /ControlMaster[= ]+no\b/i.test(profile.shell);
+  const noPath = /ControlPath[= ]+none\b/i.test(profile.shell);
+  if (noMaster && noPath) return [];
+  const lacks = [
+    ...(noMaster ? [] : ["ControlMaster=no"]),
+    ...(noPath ? [] : ["ControlPath=none"]),
+  ];
+  return [
+    `shell template lacks ${lacks.join(" and ")}: a forward that rides a shared ssh master is bound by the master and outlives the pane (heuristic; see mu host init --ssh)`,
+  ];
 }

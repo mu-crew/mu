@@ -43,6 +43,7 @@ import { type Db, openDb } from "../src/db.js";
 import {
   addHost,
   HostChannelBusyError,
+  HostHandbackError,
   HostNotFoundError,
   HostProfileError,
   HostSpawnUnsupportedError,
@@ -130,10 +131,12 @@ mode=$(cat '${modeFile}' 2>/dev/null || echo ok)
 case "$1" in
   *MU_STATE*) echo "MU_STATE clean ${SHA}" ;;
   *MU_RM*)
+    [ "$mode" = rmhandback ] && { echo "touch your key" >&2; exit 3; }
     [ "$mode" = rmkept ] && { echo "left alone" >&2; exit 0; }
     echo "MU_RM removed" ;;
   *'worktree add'*)
-    [ "$mode" = addfail ] && { echo boom >&2; exit 3; }
+    [ "$mode" = handback ] && { echo "touch your key" >&2; exit 3; }
+    [ "$mode" = addfail ] && { echo boom >&2; exit 4; }
     [ "$mode" = noise ] && { echo garbage; exit 0; }
     # The root the script names: run its own lines up to wt= (the root assignment, which may
     # span lines) under a fake HOME, then print it.
@@ -552,11 +555,31 @@ describe("failure rolls back only what this spawn made", () => {
     setMode("addfail");
     const err = await spawn({ worktree: true }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RemotePrepareError);
-    expect((err as Error).message).toContain("exit 3");
+    expect((err as Error).message).toContain("exit 4");
     expect((err as Error).message).toContain("boom");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
     expect(mux.calls.filter(isPaneCall)).toEqual([]);
     expect(channels()).toEqual([]);
+  });
+
+  it("an exec that exits 3 is a hand-back: exit 5, nothing retried, nothing recorded as human-needed", async () => {
+    setMode("handback");
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HostHandbackError);
+    expect((err as HostHandbackError).detail).toBe("touch your key");
+    expect(execCalls()).toHaveLength(1);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(channels()).toEqual([]);
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--worktree", "--json"],
+      join(dir, "mu.db"),
+    );
+    expect(r.exitCode).toBe(5);
+    expect(r.doc).toMatchObject({
+      error: "HostHandbackError",
+      data: { handback: true, host: "dev", template: "exec", detail: "touch your key" },
+    });
+    expect(db.prepare("SELECT COUNT(*) AS c FROM human_needs").get()).toEqual({ c: 0 });
   });
 
   it("an exec that prints no answer is an error, not a guessed path", async () => {
@@ -777,6 +800,14 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     setMode("rmkept");
     await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
     expect(listRemoteRecoveries(db)).toMatchObject([{ host: "dev", cwd: WT, name: "worker-1" }]);
+  });
+
+  it("a rollback whose removal hands back swallows it: the original error stands, the record stays", async () => {
+    extensionOn = false;
+    setMode("rmhandback");
+    await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
+    expect(listRemoteRecoveries(db)).toMatchObject([{ host: "dev", cwd: WT, name: "worker-1" }]);
+    expect(channels()).toEqual([]);
   });
 
   it("while that record names the path, the next spawn's prepare may not reclaim a leftover there", async () => {

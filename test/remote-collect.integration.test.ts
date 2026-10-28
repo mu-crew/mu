@@ -24,8 +24,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentReplacedError } from "../src/agents/errors.js";
 import { closeAgent, getAgent, insertAgent } from "../src/agents.js";
+import { classifyError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
-import { addHost, admitHostChannel, bindHostChannel, listHostChannels } from "../src/hosts.js";
+import {
+  addHost,
+  admitHostChannel,
+  bindHostChannel,
+  HostHandbackError,
+  listHostChannels,
+} from "../src/hosts.js";
 import {
   asideOf,
   closeRemoteWorktree,
@@ -180,6 +187,19 @@ describe("collect", () => {
     expect(getAgent(db, "worker-1", "auth")?.collectedHead).toBeNull();
     expect(localRef("worker-1")).toBeUndefined();
     expect(listHostChannels(db, "wide")).toHaveLength(1); // only the pane's own
+  });
+
+  it("a fetch that exits 3 is a hand-back: exit 5, nothing recorded or pinned", async () => {
+    await remoteAgent("a", { pane: false });
+    db.prepare(
+      "UPDATE host_profiles SET fetch = 'echo need key >&2; exit 3' WHERE name = 'wide'",
+    ).run();
+    const err = await collect("a").catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(HostHandbackError);
+    expect(err).toMatchObject({ field: "fetch", detail: "need key" });
+    expect(classifyError(err)).toEqual({ label: "human needed", exitCode: 5 });
+    expect(getAgent(db, "a", "auth")?.collectedHead).toBeNull();
+    expect(localRef("a")).toBeUndefined();
   });
 
   it("a template that succeeds without fetching is refused, even with a stale FETCH_HEAD", async () => {

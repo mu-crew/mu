@@ -172,6 +172,89 @@ describe("mu host check", () => {
     expect(callCount()).toBe(1);
   });
 
+  it("a template that exits 3 is a hand-back: one handback step, the rest skipped, the report prints", async () => {
+    addHost(db, {
+      name: "key",
+      shell: "s",
+      exec: `echo x >> ${calls}; echo 'touch your key' >&2; exit 3`,
+      fetch: "f",
+      repo: dir,
+      max_sessions: null,
+    });
+    const r = await runCliJson(["host", "check", "key", "--json"], dbPath);
+    expect(r.exitCode).toBe(5);
+    expect(r.data.steps.map((s: { step: string; ok: boolean | null }) => [s.step, s.ok])).toEqual([
+      ["reachable", null],
+      ["handback", false],
+      ["repo", null],
+      ["pi", null],
+      ["extension", null],
+    ]);
+    expect(r.data.steps[1].detail).toContain("touch your key");
+    expect(callCount()).toBe(1);
+    const human = await runCli(["host", "check", "key"], dbPath);
+    expect(human.stdout).toContain("handback");
+    expect(human.stdout).toContain("touch your key");
+    expect(human.stderr).toContain("host check");
+  });
+
+  it("a hand-back after the first step skips the rest, and with --agent the ctl probe too", async () => {
+    addHost(db, {
+      name: "late",
+      shell: "s",
+      exec: `case {cmd} in *rev-parse*) echo 'need key' >&2; exit 3;; esac; sh -c {cmd}`,
+      fetch: "f",
+      repo: dir,
+      max_sessions: null,
+    });
+    const r = await runCliJson(
+      ["host", "check", "late", "--agent", "worker-1", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(r.exitCode).toBe(5);
+    expect(r.data.steps.map((s: { step: string; ok: boolean | null }) => [s.step, s.ok])).toEqual([
+      ["reachable", true],
+      ["repo", null],
+      ["handback", false],
+      ["pi", null],
+      ["extension", null],
+      ["ctl", null],
+    ]);
+  });
+
+  it("warns, never fails, when a session shell template can ride a shared master", async () => {
+    const warned = (r: { data: { warnings: string[] } }) => r.data.warnings.join("\n");
+    // dev's `sh -c {cmd}` names neither option.
+    const a = await runCliJson(["host", "check", "dev", "--json"], dbPath);
+    expect(a.exitCode).toBeNull();
+    expect(a.data.ok).toBe(true);
+    expect(warned(a)).toContain("ControlMaster=no and ControlPath=none");
+    const human = await runCli(["host", "check", "dev"], dbPath);
+    expect(human.stdout).toContain("warn");
+    addHost(db, {
+      name: "good",
+      shell: "ssh -o ControlMaster=no -o ControlPath=none h",
+      exec: "sh -c {cmd}",
+      fetch: "f",
+      repo: dir,
+      max_sessions: null,
+    });
+    expect((await runCliJson(["host", "check", "good", "--json"], dbPath)).data.warnings).toEqual(
+      [],
+    );
+    addHost(db, {
+      name: "half",
+      shell: "ssh -o ControlMaster=no h",
+      exec: "sh -c {cmd}",
+      fetch: "f",
+      repo: dir,
+      max_sessions: null,
+    });
+    const half = await runCliJson(["host", "check", "half", "--json"], dbPath);
+    expect(warned(half)).toContain("lacks ControlPath=none");
+    expect(warned(half)).not.toContain("ControlMaster");
+  });
+
   it("a missing repo and a missing pi are each named", async () => {
     addHost(db, {
       name: "norepo",

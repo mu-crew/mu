@@ -72,6 +72,7 @@ import {
   HostChannelBusyError,
   HostCheckFailedError,
   HostExistsError,
+  HostHandbackError,
   HostInUseError,
   HostNotFoundError,
   HostProfileError,
@@ -616,6 +617,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // The host's own exec step failed or answered nothing usable: substrate, not usage.
     return { label: "remote host", exitCode: 5 };
   }
+  if (err instanceof HostHandbackError) {
+    // A host template asked for a human (exit 3): never retried, never auto-recorded.
+    return { label: "human needed", exitCode: 5 };
+  }
   if (err instanceof HostCheckFailedError) {
     // The host (or its forward) failed a check step: substrate, not usage.
     return { label: "host check", exitCode: 5 };
@@ -790,6 +795,9 @@ function emitError(err: unknown): number {
       message: cleanMessage,
       exit: exitCode,
       ...(Object.keys(extra).length > 0 ? { extra } : {}),
+      ...(err instanceof HostHandbackError
+        ? { data: { handback: true, host: err.host, template: err.field, detail: err.detail } }
+        : {}),
     });
     return exitCode;
   }

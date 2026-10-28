@@ -321,6 +321,8 @@ export const MESSAGES = {
     `--host ${host} needs a multiplexer that runs a shell command in its pane; ${mux} starts agents itself and cannot run the profile's shell template (use tmux)`,
   "host.check_failed": (host: string, failed: readonly string[]) =>
     `host ${host} check failed: ${failed.join(", ")}`,
+  "host.handback": (host: string, field: string, detail: string) =>
+    `host ${host}: its ${field} template exited 3, a hand-back (a human must act, e.g. a hardware key)${detail === "" ? "" : `: ${detail}`}. Do not retry or ssh yourself: stop and ask`,
   "host.channel_lost": (host: string, holder: string) => `host ${host}: channel ${holder} was lost`,
   "remote.prepare": (host: string, what: string, detail: string) =>
     `host ${host}: ${what}${detail === "" ? "" : `: ${detail}`}`,

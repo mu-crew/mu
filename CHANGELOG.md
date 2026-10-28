@@ -10,6 +10,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **A host template's exit 3 is a hand-back.** The remote-workers recipe already
+  told agents that exit 3 means a human must act, but no code did: the step just
+  failed like any other. `exec` and `fetch` runs now throw `HostHandbackError`
+  (label `human needed`, exit 5, `data.handback` in `--json`, the template's
+  first stderr or stdout line as the detail). Never retried, and never recorded
+  as `human-needed` automatically. `host check` reports a `handback` step and
+  skips the rest (the report still prints); spawn prepare, close and collect
+  stop with it; a rollback or gate cleanup, which swallow every failure, still do.
+- **`host check` warns about a session `shell` template that can ride a shared
+  ssh master** (no `ControlMaster=no` or no `ControlPath=none`). A warning in
+  `warnings` and on a `warn` line, never a failure.
+
+### Fixed
+
+- **The `host init --ssh` starter comment named the wrong failure.** A multiplexed
+  ssh does bind the `-L` forward, in the master, where it outlives the pane and is
+  never re-bound. The options stay; the comment and `docs/guide/remote.md` now say why.
+- **A host template interrupted by a timeout gets 5 s, not 0.5 s, to wind down**
+  (TERM, then KILL), so a transport that must clean up after itself can.
+
 ## [4.1.1] — 2026-10-28
 
 ### Changed
