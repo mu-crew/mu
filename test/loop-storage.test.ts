@@ -61,6 +61,7 @@ import { rmFixtureDir } from "./_fs.js";
 
 const NEW_TABLES = [
   "agent_settles",
+  "carrier_jobs",
   "delegate_calls",
   "host_channels",
   "host_profiles",
@@ -96,6 +97,15 @@ beforeAll(() => {
     r.exec("ALTER TABLE tasks DROP COLUMN wave");
     r.exec("ALTER TABLE agents DROP COLUMN collected_head");
     r.exec("DROP TABLE delegate_calls");
+    // ...and the lease transport: host_profiles.transport/stop and carrier_jobs.
+    // The fixture's host_profiles is older still (repo NOT NULL: dropped on open); give it the
+    // nullable-repo shape of the build before transport/stop, so the upgrade ADDs the columns.
+    r.exec("DROP TABLE host_profiles");
+    r.exec(
+      "CREATE TABLE host_profiles (name TEXT PRIMARY KEY, shell TEXT NOT NULL, exec TEXT NOT NULL, fetch TEXT NOT NULL, repo TEXT, max_sessions INTEGER CHECK (max_sessions > 0))",
+    );
+    r.exec("INSERT INTO host_profiles (name, shell, exec, fetch) VALUES ('old', 's', 'e', 'f')");
+    r.exec("DROP TABLE IF EXISTS carrier_jobs");
     r.exec("UPDATE schema_version SET capture_version = 3");
   });
 });
@@ -225,6 +235,16 @@ describe("a populated v13 DB is completed in place", () => {
     expect(columns(p, "tasks").filter((c) => c === "kind")).toHaveLength(1);
     expect(columns(p, "tasks")).toContain("wave");
     expect(columns(p, "agents")).toContain("collected_head");
+    expect(columns(p, "host_profiles")).toEqual(expect.arrayContaining(["transport", "stop"]));
+    expect(columns(p, "carrier_jobs")).toEqual([
+      "agent_id",
+      "workstream",
+      "name",
+      "host",
+      "job",
+      "host_stop",
+      "recorded_at",
+    ]);
     expect(tables(p)).toEqual([...EXPECTED_TABLES].sort());
     expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
     expect(captureTriggersCurrent(db)).toBe(true);
@@ -477,6 +497,27 @@ describe("a populated v13 DB is completed in place", () => {
     expect(tables(p)).not.toContain("delegate_calls");
   });
 
+  it("a failure while adding host_profiles.transport leaves no carrier_jobs table and no column", () => {
+    const p = staleCopy();
+    const mine = new Database(p);
+    const db = failingOn(mine, (sql) =>
+      sql.startsWith("ALTER TABLE host_profiles ADD COLUMN transport"),
+    );
+    expect(() => upgradeSchema(db)).toThrow("disk full");
+    mine.close();
+    expect(stamps(p)).toEqual({ version: 13, capture: 3 });
+    expect(columns(p, "host_profiles")).not.toContain("transport");
+    expect(tables(p)).not.toContain("carrier_jobs");
+  });
+
+  it("host profiles that predate the lease transport become session profiles with no stop", () => {
+    const p = staleCopy();
+    const db = track(openDb({ path: p }));
+    expect(
+      db.prepare("SELECT transport, stop FROM host_profiles WHERE name = 'old'").get(),
+    ).toEqual({ transport: "session", stop: null });
+  });
+
   it("refuses a v12 file untouched", () => {
     const p = v13Copy();
     raw(p, (r) => r.exec("UPDATE schema_version SET version = 12"));
@@ -694,7 +735,7 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(26);
+    expect(EXPECTED_TABLES).toHaveLength(27);
     expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
   });
 
@@ -875,6 +916,9 @@ describe("machine-local state", () => {
     db.prepare(
       "INSERT INTO host_channels (host, holder, kind, token, pid, opened_at) VALUES ('h', 'x', 'transient', 't', 1, 'n')",
     ).run();
+    db.prepare(
+      "INSERT INTO carrier_jobs (agent_id, workstream, name, host, job, host_stop, recorded_at) VALUES (5, 'd', 'w', 'h', 'j', 'stop {job}', 'n')",
+    ).run();
     const report = rebuildInto(db, { targetPath: join(dir, `rb-${++n}.db`) });
     expect(report.machineLocalLost).toEqual(
       expect.arrayContaining([
@@ -885,6 +929,7 @@ describe("machine-local state", () => {
         { table: "host_profiles", rows: 1 },
         { table: "host_channels", rows: 1 },
         { table: "spawn_receipts", rows: 1 },
+        { table: "carrier_jobs", rows: 1 },
       ]),
     );
   });

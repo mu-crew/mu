@@ -5,12 +5,21 @@
 // optional `max_sessions`. mu fills the documented placeholders and runs the
 // result with `/bin/sh -c`; `host init --ssh` only PRINTS a starter to edit.
 //
+// A profile has a TRANSPORT. `session` (the default): the pane runs the `shell`
+// template, a held ssh. `lease`: the pane runs a local CARRIER that owns a
+// detached remote job and writes its handle to `{job_file}`; a `stop` template
+// ends a job given its handle (`{job}`). A lease pane holds no channel.
+//
 // ─── Template grammar (one pass over the ORIGINAL template) ─────────────
 //   {{ and }}   literal braces. A lone `{` or `}`, or an unknown name, is an
 //               error: nothing is guessed. (A shell `${HOME}` is `${{HOME}}`.)
-//   {name}      one of env, cmd, local_sock, remote_sock, cwd. The value is
-//               substituted once and never rescanned, so braces inside a
-//               value are inert.
+//   {name}      one of env, cmd, local_sock, remote_sock, cwd, job_file, job.
+//               The value is substituted once and never rescanned, so braces
+//               inside a value are inert. A placeholder valid only in some
+//               fields is refused elsewhere (`TEMPLATE_SCOPES`): `job_file`
+//               only in a lease `shell`, `job` only in `stop`, and `stop`
+//               takes nothing but `job` and `cwd` (always `.`). The lexer
+//               decides, so `{{job}}` and a `:sh` modifier are read right.
 // A small lexer tracks '...' and "..." so every value stays exactly the text
 // the template author asked for. Quote characters never imply a second shell;
 // a second layer is always asked for by name:
@@ -55,6 +64,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { getCarrierJobByName } from "./carrier-jobs.js";
 import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import type { Db } from "./db.js";
@@ -132,7 +142,7 @@ export class HostHandbackError extends Error {
   readonly handback = true;
   constructor(
     public readonly host: string,
-    public readonly field: "exec" | "fetch",
+    public readonly field: "exec" | "fetch" | "stop",
     /** The first non-blank line of stderr, else of stdout. */
     public readonly detail: string,
   ) {
@@ -161,7 +171,21 @@ export interface HostProfile {
   /** Default remote repo for a spawn without `--root`; null: none. */
   repo: string | null;
   max_sessions: number | null;
+  /** `session`: the pane holds an ssh. `lease`: the pane is a carrier owning a detached remote job. */
+  transport: HostTransport;
+  /** Lease only: the template that ends a job given its handle (`{job}`); null for a session profile. */
+  stop: string | null;
 }
+
+export const HOST_TRANSPORTS = ["session", "lease"] as const;
+export type HostTransport = (typeof HOST_TRANSPORTS)[number];
+
+/** What `addHost` takes: a session profile needs neither `transport` nor `stop`. */
+export type NewHostProfile = Omit<HostProfile, "transport" | "stop"> &
+  Partial<Pick<HostProfile, "transport" | "stop">>;
+
+/** A job handle is opaque to mu: one line of these bytes, never parsed further. */
+export const JOB_HANDLE_RE = /^[A-Za-z0-9._:@-]{1,128}$/;
 
 const HOST_NAME_RE = /^[a-z][a-z0-9_-]{0,31}$/;
 
@@ -181,8 +205,13 @@ export function listHosts(db: Db): HostProfile[] {
   return db.prepare("SELECT * FROM host_profiles ORDER BY name").all() as HostProfile[];
 }
 
-/** Store a profile. Validates the name, cap, default repo and every template first; stores nothing on refusal. */
-export function addHost(db: Db, p: HostProfile): HostProfile {
+/** Store a profile. Validates the name, cap, default repo, transport and every template first; stores nothing on refusal. */
+export function addHost(db: Db, input: NewHostProfile): HostProfile {
+  const p: HostProfile = {
+    ...input,
+    transport: input.transport ?? "session",
+    stop: input.stop ?? null,
+  };
   if (!isValidHostName(p.name)) {
     throw new HostProfileError(
       `invalid host name ${JSON.stringify(p.name)}: lowercase letters, digits, - and _, starting with a letter (max 32)`,
@@ -194,17 +223,26 @@ export function addHost(db: Db, p: HostProfile): HostProfile {
   if (p.repo !== null && p.repo.trim() === "") {
     throw new HostProfileError("--repo must not be empty");
   }
-  for (const f of ["shell", "exec", "fetch"] as const) {
-    try {
-      validateHostTemplate(p[f]);
-    } catch (e) {
-      if (e instanceof HostTemplateError) throw new HostTemplateError(`--${f}: ${e.message}`);
-      throw e;
-    }
+  if (!(HOST_TRANSPORTS as readonly string[]).includes(p.transport)) {
+    throw new HostProfileError(
+      `invalid --transport ${JSON.stringify(p.transport)}: ${HOST_TRANSPORTS.join(" or ")}`,
+    );
   }
+  if (p.transport === "lease" && p.stop === null) {
+    throw new HostProfileError(
+      "--stop is required for --transport lease: the template that ends a job given its handle ({job})",
+    );
+  }
+  if (p.transport === "session" && p.stop !== null) {
+    throw new HostProfileError(
+      "--stop is only for --transport lease: a session has no job to stop",
+    );
+  }
+  const problem = profileTemplateProblem(p);
+  if (problem !== undefined) throw new HostTemplateError(problem);
   try {
     db.prepare(
-      "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions)",
+      "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop)",
     ).run(p);
   } catch (e) {
     if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
@@ -249,11 +287,66 @@ export function hostStarter(host: string): { shell: string; exec: string; fetch:
   };
 }
 
+/**
+ * The starter for `host init <name> --mule`: a lease profile for a session-capped host,
+ * printed for the user to edit, never run. `env {env} sh -c {cmd}`, not `{env} {cmd}`:
+ * mule quotes each argv word, so a bare `K='v'` word would run as a program name.
+ */
+export function hostMuleStarter(host: string): {
+  shell: string;
+  exec: string;
+  fetch: string;
+  stop: string;
+} {
+  return {
+    shell: `mule run --host ${host} --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}`,
+    exec: `mule exec --host ${host} -- sh -c {cmd}`,
+    fetch: `git fetch ssh://${host}{cwd} HEAD`,
+    stop: `mule rm --host ${host} {job}`,
+  };
+}
+
 // ─── Template grammar ───────────────────────────────────────────────────
 
-export const HOST_PLACEHOLDERS = ["env", "cmd", "local_sock", "remote_sock", "cwd"] as const;
+export const HOST_PLACEHOLDERS = [
+  "env",
+  "cmd",
+  "local_sock",
+  "remote_sock",
+  "cwd",
+  "job_file",
+  "job",
+] as const;
 export type HostPlaceholder = (typeof HOST_PLACEHOLDERS)[number];
 export type HostTemplateValues = Partial<Record<HostPlaceholder, string>>;
+
+/** The field a template is stored in; `lease-shell` is the `shell` of a lease profile. */
+export type HostTemplateScope = "shell" | "lease-shell" | "exec" | "fetch" | "stop";
+
+const LEGACY_PLACEHOLDERS: readonly HostPlaceholder[] = [
+  "env",
+  "cmd",
+  "local_sock",
+  "remote_sock",
+  "cwd",
+];
+
+/** The placeholders each field takes. A name outside its set is refused by the lexer. */
+const TEMPLATE_SCOPES: Record<HostTemplateScope, readonly HostPlaceholder[]> = {
+  shell: LEGACY_PLACEHOLDERS,
+  "lease-shell": [...LEGACY_PLACEHOLDERS, "job_file"],
+  exec: LEGACY_PLACEHOLDERS,
+  fetch: LEGACY_PLACEHOLDERS,
+  stop: ["job", "cwd"],
+};
+
+const SCOPE_LABEL: Record<HostTemplateScope, string> = {
+  shell: "session shell",
+  "lease-shell": "lease shell",
+  exec: "exec",
+  fetch: "fetch",
+  stop: "stop",
+};
 
 /**
  * The only variables a remote worker is given: its identity, never the local
@@ -293,7 +386,7 @@ type Token = { lit: string } | { ph: HostPlaceholder; ctx: Ctx; layers: 1 | 2 };
 
 const KNOWN = `${HOST_PLACEHOLDERS.map((p) => `{${p}}`).join(" ")}; {name:sh} quotes for a second shell`;
 
-function parseTemplate(t: string): Token[] {
+function parseTemplate(t: string, scope?: HostTemplateScope): Token[] {
   const out: Token[] = [];
   let lit = "";
   let ctx: Ctx = "none";
@@ -329,6 +422,11 @@ function parseTemplate(t: string): Token[] {
       if (name === "env" && mod !== undefined) {
         throw new HostTemplateError(
           "{env:sh} is refused: {env} is already text for the inner shell",
+        );
+      }
+      if (scope !== undefined && !TEMPLATE_SCOPES[scope].includes(name as HostPlaceholder)) {
+        throw new HostTemplateError(
+          `{${name}} is not valid in the ${SCOPE_LABEL[scope]} template (it takes ${TEMPLATE_SCOPES[scope].map((p) => `{${p}}`).join(" ")})`,
         );
       }
       if (ctx === "dq" && subst) {
@@ -370,9 +468,65 @@ function parseTemplate(t: string): Token[] {
   return out;
 }
 
-/** Throws HostTemplateError unless `template` is well-formed. */
-export function validateHostTemplate(template: string): void {
-  parseTemplate(template);
+/** Throws HostTemplateError unless `template` is well-formed (and, with a `scope`, uses only that field's placeholders). */
+export function validateHostTemplate(template: string, scope?: HostTemplateScope): void {
+  parseTemplate(template, scope);
+}
+
+/** How often each placeholder is USED (lexer tokens: an escaped `{{x}}` is a literal, not a use). */
+export function placeholderUses(
+  template: string,
+  scope?: HostTemplateScope,
+): Record<HostPlaceholder, number> {
+  const n = Object.fromEntries(HOST_PLACEHOLDERS.map((p) => [p, 0])) as Record<
+    HostPlaceholder,
+    number
+  >;
+  for (const tok of parseTemplate(template, scope)) if ("ph" in tok) n[tok.ph]++;
+  return n;
+}
+
+/** What a lease `shell` must contain: `{job_file}` exactly once, `{local_sock}` and `{remote_sock}` at least once. */
+function leaseShellProblems(shell: string): string[] {
+  const n = placeholderUses(shell, "lease-shell");
+  return [
+    ...(n.job_file === 1
+      ? []
+      : [`a lease shell template must contain {job_file} exactly once (found ${n.job_file})`]),
+    ...(n.local_sock > 0 ? [] : ["a lease shell template must contain {local_sock}"]),
+    ...(n.remote_sock > 0 ? [] : ["a lease shell template must contain {remote_sock}"]),
+  ];
+}
+
+/**
+ * The first reason a profile's templates are refused, `--field:`-prefixed, or undefined.
+ * Grammar and per-field placeholders for all four; a lease shell's shape; a stop's `{job}`.
+ */
+function profileTemplateProblem(
+  p: Pick<HostProfile, "shell" | "exec" | "fetch" | "transport" | "stop">,
+): string | undefined {
+  const fields: [string, string, HostTemplateScope][] = [
+    ["shell", p.shell, p.transport === "lease" ? "lease-shell" : "shell"],
+    ["exec", p.exec, "exec"],
+    ["fetch", p.fetch, "fetch"],
+    ...(p.stop === null ? [] : [["stop", p.stop, "stop"] as [string, string, HostTemplateScope]]),
+  ];
+  for (const [f, t, scope] of fields) {
+    try {
+      validateHostTemplate(t, scope);
+      const extra =
+        scope === "lease-shell"
+          ? leaseShellProblems(t)
+          : scope === "stop" && placeholderUses(t, scope).job === 0
+            ? ["a stop template must contain {job}"]
+            : [];
+      if (extra.length > 0) return `--${f}: ${extra.join("; ")}`;
+    } catch (e) {
+      if (e instanceof HostTemplateError) return `--${f}: ${e.message}`;
+      throw e;
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -381,9 +535,13 @@ export function validateHostTemplate(template: string): void {
  * whitelisted assignment words. A placeholder with
  * no value in this context is an error, never blanked.
  */
-export function expandHostTemplate(template: string, values: HostTemplateValues): string {
+export function expandHostTemplate(
+  template: string,
+  values: HostTemplateValues,
+  scope?: HostTemplateScope,
+): string {
   let out = "";
-  for (const tok of parseTemplate(template)) {
+  for (const tok of parseTemplate(template, scope)) {
     if ("lit" in tok) {
       out += tok.lit;
       continue;
@@ -695,13 +853,16 @@ export async function runLeasedTemplate(
   db: Db,
   lease: HostLease,
   profile: HostProfile,
-  field: "exec" | "fetch",
+  field: "exec" | "fetch" | "stop",
   values: HostTemplateValues,
   timeoutMs: number,
   /** The template's LOCAL working directory (a `--fetch` runs in the repo it fetches into). */
   localCwd?: string,
 ): Promise<HostRun> {
-  const expanded = expandHostTemplate(profile[field], values);
+  const template = profile[field];
+  if (template === null)
+    throw new HostTemplateError(`host ${profile.name} has no ${field} template`);
+  const expanded = expandHostTemplate(template, values, field);
   const run = await execGroupCapture("/bin/sh", ["-c", expanded], {
     timeoutMs,
     // A carrier interrupted by the timeout needs time to stop what it dispatched.
@@ -742,7 +903,7 @@ export async function runHostTemplate(
 // ─── Check ──────────────────────────────────────────────────────────────
 
 export interface HostCheckStep {
-  step: "reachable" | "repo" | "pi" | "extension" | "ctl" | "handback";
+  step: "shell" | "stop" | "reachable" | "repo" | "pi" | "extension" | "ctl" | "job" | "handback";
   /** null: skipped because the host was not reachable. */
   ok: boolean | null;
   detail: string;
@@ -795,9 +956,12 @@ export async function checkHost(
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   const steps: HostCheckStep[] = [];
   const warnings = sessionShellWarnings(getHost(db, host));
+  const lease = getHost(db, host).transport === "lease";
   // A template exited 3: the rest is skipped, as for an unreachable host.
   let handedBack = false;
-  const login = (cmd: string): string => `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`;
+  // A lease job runs in a non-login shell (the starter's `sh -c`): a login-shell success says
+  // nothing about it, so the pi and extension steps run bare for a lease profile.
+  const login = (cmd: string): string => (lease ? cmd : `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`);
 
   await withHostChannel(
     db,
@@ -805,6 +969,7 @@ export async function checkHost(
     `check:${process.pid}`,
     async (profile, lease) => {
       const root = opts.root ?? profile.repo ?? undefined;
+      if (profile.transport === "lease") steps.push(...leaseTemplateSteps(profile));
       // One remote command through `exec`; `good` turns a clean exit into a detail, or undefined.
       const step = async (
         name: HostCheckStep["step"],
@@ -882,6 +1047,9 @@ export async function checkHost(
           });
         }
       }
+      if (opts.agent !== undefined && profile.transport === "lease") {
+        steps.push(leaseJobStep(db, profile, opts.agent));
+      }
       if (opts.agent !== undefined && handedBack) {
         steps.push({ step: "ctl", ok: null, detail: "skipped: the host handed back" });
       } else if (opts.agent !== undefined) {
@@ -911,12 +1079,67 @@ export async function checkHost(
   return { host, ok: steps.every((s) => s.ok !== false), steps, warnings };
 }
 
+/** The dummy handle `host check` expands a lease profile's `stop` with. Never run. */
+const DUMMY_JOB = "check-job";
+
+/** A lease profile's template structure: the shell's three placeholders, and `stop` expanded with a dummy handle (never run). */
+function leaseTemplateSteps(profile: HostProfile): HostCheckStep[] {
+  const problems = (() => {
+    try {
+      return leaseShellProblems(profile.shell);
+    } catch (e) {
+      if (e instanceof HostTemplateError) return [e.message];
+      throw e;
+    }
+  })();
+  const shell: HostCheckStep =
+    problems.length === 0
+      ? {
+          step: "shell",
+          ok: true,
+          detail: "lease shell has {job_file}, {local_sock} and {remote_sock}",
+        }
+      : { step: "shell", ok: false, detail: problems.join("; ") };
+  let stop: HostCheckStep;
+  try {
+    if (profile.stop === null) throw new HostTemplateError("a lease profile has no stop template");
+    if (placeholderUses(profile.stop, "stop").job === 0) {
+      throw new HostTemplateError("a stop template must contain {job}");
+    }
+    const line = expandHostTemplate(profile.stop, { job: DUMMY_JOB, cwd: "." }, "stop");
+    stop = { step: "stop", ok: true, detail: `expands (not run) to: ${line}` };
+  } catch (e) {
+    if (!(e instanceof HostTemplateError)) throw e;
+    stop = { step: "stop", ok: false, detail: e.message };
+  }
+  return [shell, stop];
+}
+
+/** `check --agent` on a lease agent: the job handle recorded for it. */
+function leaseJobStep(
+  db: Db,
+  profile: HostProfile,
+  agent: { name: string; workstream: string },
+): HostCheckStep {
+  const who = `${agent.workstream}/${agent.name}`;
+  const job = getCarrierJobByName(db, agent.workstream, agent.name);
+  if (job === undefined || job.host !== profile.name) {
+    return { step: "job", ok: false, detail: `${who}: no job handle recorded on ${profile.name}` };
+  }
+  const drift =
+    job.hostStop === profile.stop
+      ? ""
+      : "; the stop template changed since it was recorded: a close will refuse and name the handle";
+  return { step: "job", ok: true, detail: `${who}: job ${job.job}${drift}` };
+}
+
 /**
  * A session `shell` template that can ride a shared ssh master: the master, not the pane,
  * binds a `-L` and keeps it past the pane. A heuristic on the template text, never a failure.
  * Every profile is a session profile today.
  */
 function sessionShellWarnings(profile: HostProfile): string[] {
+  if (profile.transport !== "session") return [];
   const noMaster = /ControlMaster[= ]+no\b/i.test(profile.shell);
   const noPath = /ControlPath[= ]+none\b/i.test(profile.shell);
   if (noMaster && noPath) return [];

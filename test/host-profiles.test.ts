@@ -222,9 +222,10 @@ describe("profile storage", () => {
   };
 
   it("add / get / list / remove round-trips the exact fields", () => {
-    expect(addHost(db, { ...base, max_sessions: 2 })).toEqual({ ...base, max_sessions: 2 });
+    const full = { ...base, max_sessions: 2, transport: "session", stop: null };
+    expect(addHost(db, { ...base, max_sessions: 2 })).toEqual(full);
     addHost(db, { ...base, name: "aaa" });
-    expect(getHost(db, "dev")).toEqual({ ...base, max_sessions: 2 });
+    expect(getHost(db, "dev")).toEqual(full);
     expect(listHosts(db).map((h) => h.name)).toEqual(["aaa", "dev"]);
     expect(removeHost(db, "dev")).toBe(true);
     expect(removeHost(db, "dev")).toBe(false);
@@ -293,7 +294,7 @@ describe("mu host (CLI)", () => {
     expect(a.data.host.repo).toBeNull();
     const list = await runCli(["host", "list"], dbPath);
     expect(list.stdout).toMatch(/DEFAULT REPO/);
-    expect(list.stdout).toMatch(/dev\s+│\s+-\s+│/);
+    expect(list.stdout).toMatch(/dev\s+│\s+session\s+│\s+-\s+│/);
     expect((await runCli(["host", "show", "dev"], dbPath)).stdout).toContain("default repo -");
   });
 

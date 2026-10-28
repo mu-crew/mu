@@ -51,6 +51,7 @@ import {
   SpawnTaskStateError,
   SpawnTrustDialogError,
 } from "../agents.js";
+import { CarrierStopFailedError, CarrierStopRefusedError } from "../carrier-stop.js";
 import {
   type Db,
   defaultDbPath,
@@ -468,6 +469,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RemoteCloseRefusedError ||
     // A recovery record that is ambiguous, claimed, changed or pinned to another profile.
     err instanceof RemoteRecoveryRefusedError ||
+    // A recorded job handle whose stop template changed, or whose profile is gone: nothing ran.
+    err instanceof CarrierStopRefusedError ||
     err instanceof HostInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
@@ -613,7 +616,12 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // Still busy after --timeout: substrate lane, try again.
     return { label: "timeout", exitCode: 5 };
   }
-  if (err instanceof RemotePrepareError || err instanceof RemoteCollectError) {
+  if (
+    err instanceof RemotePrepareError ||
+    err instanceof RemoteCollectError ||
+    // The stop template ran and did not prove the job stopped: the host's answer, substrate.
+    err instanceof CarrierStopFailedError
+  ) {
     // The host's own exec step failed or answered nothing usable: substrate, not usage.
     return { label: "remote host", exitCode: 5 };
   }

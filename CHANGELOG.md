@@ -26,8 +26,32 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   ssh master** (no `ControlMaster=no` or no `ControlPath=none`). A warning in
   `warnings` and on a `warn` line, never a failure.
 
+- **Lease transport, part 1: the host profile.** `mu host add --transport
+  lease --stop <template>` stores a profile whose pane runs a local carrier that
+  owns a detached remote job instead of holding an ssh session
+  ([spec](docs/specs/2026-10-28-lease-transport.md)). A lease `shell` must
+  contain `{job_file}` exactly once plus `{local_sock}` and `{remote_sock}`; a
+  `stop` must contain `{job}` (`{cwd}` is always `.`, `{env}` is refused) and a
+  session profile refuses `--stop`. The lexer enforces which placeholder each
+  field takes (`{{job}}` is a literal, `:sh` and quotes are read right), never a
+  substring check. `host show` / `list` print the transport and the stop; `host
+  init <name> --mule` prints the starter (`env {env} sh -c {cmd}`, `mule rm
+  {job}`); `host check` on a lease profile checks the shell's placeholders,
+  expands `stop` with a dummy handle without running it, runs the `pi` and
+  extension steps without a login shell, and with `--agent` reports the agent's
+  job handle. New machine-local table `carrier_jobs` (the handle and the `stop`
+  recorded with it; no FK, trigger, op or sync; agent deletion never touches
+  it; `mu rebuild` reports it lost), `runStop` (runs `stop` only if the profile's
+  `stop` still equals the recorded one; exit 3 hands back; a failure keeps the
+  handle) and the job-file path `<state dir>/carrier/<ws>/<agent>.job`. The
+  spawn handshake, close and `doctor` follow in later units; no verb yet
+  records or stops a job.
+
 ### Changed
 
+- **Schema (still v13, additive):** `host_profiles` gains `transport` (default
+  `session`) and `stop`; the 27th table `carrier_jobs` joins `MACHINE_LOCAL_TABLES`.
+  An existing file is completed in the one upgrade transaction.
 - **`src/agents/spawn.ts` is split** (1566 → 1193 lines, under the 1500 cap): the
   remote half of `spawn --host` moved to `spawn-remote.ts` and the handshake,
   liveness and startup-scan helpers to `spawn-ready.ts`. No behaviour change;

@@ -1,0 +1,211 @@
+// `mu host check` on a lease profile (mu_lease_profile): template structure checks, the stop
+// template expanded with a dummy handle and NOT run, pi and extension steps without a login
+// shell, and `--agent` reporting the agent's carrier_jobs handle. Fake templates through /bin/sh.
+
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { persistCarrierJob } from "../src/carrier-jobs.js";
+import { type Db, openDb } from "../src/db.js";
+import { addHost, checkHost } from "../src/hosts.js";
+import { rmFixtureDir } from "./_fs.js";
+import { initGitRepo } from "./_git.js";
+import { runCli, runCliJson } from "./_runCli.js";
+
+let dir: string;
+let dbPath: string;
+let db: Db;
+let cmds: string;
+let stopRan: string;
+let oldPath: string | undefined;
+
+type Step = { step: string; ok: boolean | null; detail: string };
+const stepsOf = (r: { steps: Step[] }) => r.steps.map((s) => [s.step, s.ok]);
+
+beforeEach(() => {
+  dir = mkdtempSync(join(tmpdir(), "mu-check-lease-"));
+  dbPath = join(dir, "mu.db");
+  cmds = join(dir, "cmds");
+  stopRan = join(dir, "stop-ran");
+  const bin = join(dir, "bin");
+  mkdirSync(bin);
+  initGitRepo(dir);
+  writeFileSync(
+    join(bin, "pi"),
+    '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.99.1; elif [ "$1" = list ]; then echo "  npm:@mu-crew/mu"; fi\n',
+  );
+  chmodSync(join(bin, "pi"), 0o755);
+  oldPath = process.env.PATH;
+  process.env.PATH = `${bin}:${oldPath}`;
+  db = openDb({ path: dbPath });
+  addHost(db, {
+    name: "lease",
+    shell: "c --job-file {job_file} -L {local_sock}:{remote_sock} -- env {env} sh -c {cmd}",
+    // Records every command it is handed, then runs it with a plain sh (a non-login shell).
+    exec: `printf '%s\\n' {cmd} >> ${cmds}; sh -c {cmd}`,
+    fetch: "true",
+    repo: dir,
+    max_sessions: 1,
+    transport: "lease",
+    stop: `touch ${stopRan}; echo {job}`,
+  });
+});
+afterEach(() => {
+  process.env.PATH = oldPath;
+  db.close();
+  rmFixtureDir(dir);
+});
+
+describe("host check on a lease profile", () => {
+  it("checks the shell's placeholders and expands stop with a dummy handle, without running it", async () => {
+    const r = await checkHost(db, "lease");
+    expect(r.ok).toBe(true);
+    expect(stepsOf(r)).toEqual([
+      ["shell", true],
+      ["stop", true],
+      ["reachable", true],
+      ["repo", true],
+      ["pi", true],
+      ["extension", true],
+    ]);
+    const stop = r.steps.find((s) => s.step === "stop");
+    expect(stop?.detail).toContain("expands (not run)");
+    expect(stop?.detail).toContain("echo 'check-job'");
+    expect(existsSync(stopRan)).toBe(false);
+  });
+
+  it("runs pi and `pi list` WITHOUT a login shell: the job's non-login `sh -c` is what is proven", async () => {
+    await checkHost(db, "lease");
+    const handed = readFileSync(cmds, "utf8").trim().split("\n");
+    expect(handed).toContain("pi --version");
+    expect(handed).toContain("pi list");
+    expect(handed.join("\n")).not.toMatch(/-ilc|SHELL/);
+  });
+
+  it("a session profile still runs pi under the login shell, with no shell or stop step", async () => {
+    addHost(db, {
+      name: "sess",
+      shell: "ssh -o ControlMaster=no -o ControlPath=none h {local_sock}:{remote_sock}",
+      exec: `printf '%s\\n' {cmd} >> ${cmds}; sh -c {cmd}`,
+      fetch: "true",
+      repo: dir,
+      max_sessions: null,
+    });
+    const r = await checkHost(db, "sess");
+    expect(stepsOf(r).map(([s]) => s)).toEqual(["reachable", "repo", "pi", "extension"]);
+    expect(readFileSync(cmds, "utf8")).toMatch(/-ilc/);
+  });
+
+  it("a lease profile never gets the session-on-master warning", async () => {
+    expect((await checkHost(db, "lease")).warnings).toEqual([]);
+  });
+
+  it("fails the shell step, naming what is missing, when the stored shell lacks {job_file}", async () => {
+    db.prepare("UPDATE host_profiles SET shell = 'c -L {local_sock}:{remote_sock}'").run();
+    const r = await checkHost(db, "lease");
+    expect(r.ok).toBe(false);
+    const shell = r.steps.find((s) => s.step === "shell");
+    expect(shell).toMatchObject({ ok: false });
+    expect(shell?.detail).toContain("{job_file} exactly once (found 0)");
+  });
+
+  it("fails the shell step on a stored template that does not parse", async () => {
+    db.prepare("UPDATE host_profiles SET shell = 'c {nope}'").run();
+    const shell = (await checkHost(db, "lease")).steps.find((s) => s.step === "shell");
+    expect(shell).toMatchObject({ ok: false });
+    expect(shell?.detail).toContain("unknown placeholder");
+  });
+
+  it("fails the stop step when the stored stop has no {job} or takes a placeholder it may not", async () => {
+    db.prepare("UPDATE host_profiles SET stop = 'echo nothing'").run();
+    expect((await checkHost(db, "lease")).steps.find((s) => s.step === "stop")).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("must contain {job}"),
+    });
+    db.prepare("UPDATE host_profiles SET stop = 'echo {job} {env}'").run();
+    expect((await checkHost(db, "lease")).steps.find((s) => s.step === "stop")).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("{env}"),
+    });
+    expect(existsSync(stopRan)).toBe(false);
+  });
+
+  it("a missing pi is named (no login shell to find it through)", async () => {
+    process.env.PATH = "/usr/bin:/bin";
+    const r = await checkHost(db, "lease");
+    expect(r.steps.find((s) => s.step === "pi")).toMatchObject({ ok: false });
+  });
+});
+
+describe("host check --agent on a lease agent", () => {
+  const ws = "auth";
+  const row = (over: Record<string, unknown> = {}) => ({
+    agentId: 7,
+    workstream: ws,
+    name: "worker-1",
+    host: "lease",
+    job: "mule-42",
+    hostStop: `touch ${stopRan}; echo {job}`,
+    ...over,
+  });
+
+  it("reports the agent's carrier_jobs handle", async () => {
+    persistCarrierJob(db, row());
+    const r = await checkHost(db, "lease", { agent: { name: "worker-1", workstream: ws } });
+    const job = r.steps.find((s) => s.step === "job");
+    expect(job).toMatchObject({ ok: true });
+    expect(job?.detail).toContain("auth/worker-1: job mule-42");
+    expect(job?.detail).not.toContain("changed");
+  });
+
+  it("says so when the stop template changed since the handle was recorded", async () => {
+    persistCarrierJob(db, row({ hostStop: "older {job}" }));
+    const job = (
+      await checkHost(db, "lease", { agent: { name: "worker-1", workstream: ws } })
+    ).steps.find((s) => s.step === "job");
+    expect(job).toMatchObject({ ok: true });
+    expect(job?.detail).toContain("stop template changed");
+  });
+
+  it("fails the job step when no handle is recorded for the agent", async () => {
+    const r = await checkHost(db, "lease", { agent: { name: "worker-1", workstream: ws } });
+    expect(r.steps.find((s) => s.step === "job")).toMatchObject({
+      ok: false,
+      detail: "auth/worker-1: no job handle recorded on lease",
+    });
+  });
+
+  it("a handle recorded on another host is not this host's", async () => {
+    persistCarrierJob(db, row({ host: "elsewhere" }));
+    const r = await checkHost(db, "lease", { agent: { name: "worker-1", workstream: ws } });
+    expect(r.steps.find((s) => s.step === "job")).toMatchObject({ ok: false });
+  });
+
+  it("the CLI prints the job line, and a session profile has none", async () => {
+    persistCarrierJob(db, row());
+    const human = await runCli(["host", "check", "lease", "--agent", "worker-1", "-w", ws], dbPath);
+    expect(human.stdout).toContain("job");
+    expect(human.stdout).toContain("mule-42");
+    addHost(db, {
+      name: "sess",
+      shell: "ssh -o ControlMaster=no -o ControlPath=none {local_sock}:{remote_sock}",
+      exec: "sh -c {cmd}",
+      fetch: "true",
+      repo: dir,
+      max_sessions: null,
+    });
+    const s = await runCliJson(
+      ["host", "check", "sess", "--agent", "worker-1", "-w", ws, "--json"],
+      dbPath,
+    );
+    expect(s.data.steps.map((x: Step) => x.step)).not.toContain("job");
+  });
+});

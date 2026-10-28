@@ -141,6 +141,8 @@ const UNREBUILDABLE_TABLES = [
   "wait_action_receipts",
   // A remote worker's worktree, kept when its row was deleted: no op carries it.
   "remote_recovery",
+  // A lease agent's remote job handle: no op carries it, and losing it loses the only pointer to the job.
+  "carrier_jobs",
   // The human task and its reason rebuild from ops; WHO recorded it does
   // not. Ownership is never inferred from a note author.
   "human_needs",
