@@ -28,7 +28,7 @@ import { savedIdentity } from "./agents/task-spawn.js";
 import { agentCtlSocket, expectsCtl } from "./agents/transport.js";
 import type { AgentRow } from "./agents.js";
 import { deliveredOf, type RetryTarget } from "./auto-attempt.js";
-import { getCarrierJob } from "./carrier-jobs.js";
+import { getCarrierJobByAgent } from "./carrier-jobs.js";
 import type { CtlBlocked } from "./ctl/protocol.js";
 import type { Db } from "./db.js";
 import { say } from "./messages.js";
@@ -234,7 +234,7 @@ export async function scanRecovery(
       if (f.status === null) {
         if (w.agent.host !== null) {
           // A lease worker's pane death is not its job's death: name the handle to stop.
-          const job = getCarrierJob(db, w.agent.incarnation);
+          const job = getCarrierJobByAgent(db, w.agent.incarnation);
           out.push({
             kind: "attention",
             task: w.task,

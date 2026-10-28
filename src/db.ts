@@ -59,6 +59,7 @@ import {
   sqliteTooOld,
   storedCaptureVersion,
 } from "./capture.js";
+import { CARRIER_JOBS_DDL, CARRIER_JOBS_REBUILD, carrierJobsPreReservation } from "./db-carrier.js";
 import { LEGACY_RECOVERY_TRIGGERS, REMOTE_RECOVERY_DDL } from "./db-recovery.js";
 import { say } from "./messages.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
@@ -517,7 +518,16 @@ function applySchemaDdl(db: Db): void {
   // are dropped, and its recovery triggers replaced by the _v2 ones below.
   if (hostProfilesRepoRequired(db)) db.exec("DROP TABLE host_profiles");
   for (const t of LEGACY_RECOVERY_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
+  // carrier_jobs before reservations (one row per agent incarnation, no token): set
+  // aside, then copied whole into the final shape below. Never dropped while it holds
+  // a handle: the copy and the drop commit together or not at all.
+  const oldCarrierJobs = carrierJobsPreReservation(db);
+  if (oldCarrierJobs) db.exec("ALTER TABLE carrier_jobs RENAME TO carrier_jobs_pre_reservation");
   db.exec(CURRENT_SCHEMA);
+  if (oldCarrierJobs) {
+    db.exec(CARRIER_JOBS_REBUILD);
+    db.exec("DROP TABLE carrier_jobs_pre_reservation");
+  }
   // Columns a v13 DB written before they existed still lacks.
   for (const [table, column, ddl] of ADDED_COLUMNS) {
     if (!hasColumn(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
@@ -667,6 +677,7 @@ function schemaIsCurrent(db: Db): boolean {
   if (ADDED_COLUMNS.some(([t, c]) => !hasColumn(db, t, c))) return false;
   if (LEGACY_RECOVERY_TRIGGERS.some((t) => have.has(`trigger:${t}`))) return false;
   if (hostProfilesRepoRequired(db)) return false;
+  if (carrierJobsPreReservation(db)) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
     if (have.get(`view:${name}`) !== sql) return false;
@@ -833,10 +844,12 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     outlive the agent it names.
  *    remote_recovery  a deleted remote worker row's worktree, written by
  *                     triggers (src/db-recovery.ts). No FK; rebuild loses it.
- *    carrier_jobs     a lease agent's job handle and the stop template it was
- *                     recorded with (src/carrier-jobs.ts). No FK, trigger or
- *                     op: only a successful stop (or `--abandon-job`) deletes
- *                     it; rebuild loses it.
+ *    carrier_jobs     a lease spawn's name-exclusive reservation of its remote
+ *                     job: spawn token, launch state, pane, incarnation, the
+ *                     handle and the admitted stop template (src/carrier-jobs.ts).
+ *                     No FK, trigger or op: released only after a stop and
+ *                     cleanup, a never-launched rollback, or `--abandon-job`;
+ *                     rebuild loses it.
  *    ops              see below — the carrier, not cargo.
  *
  *  `ops` is listed here deliberately rather than omitted. It is not
@@ -1320,20 +1333,7 @@ CREATE TABLE IF NOT EXISTS host_profiles (
   stop         TEXT                            -- lease only: the template that ends a job given its handle ({job}); NULL for session
 );
 
--- carrier_jobs: the handle of the remote job a lease agent's carrier dispatched
--- (machine-local). One row per agent incarnation, no FK, no trigger, no op: agent
--- deletion never touches it. Deleted only after a successful stop (or an explicit
--- abandon). 'host_stop' is the stop template as it was when the handle was recorded.
-CREATE TABLE IF NOT EXISTS carrier_jobs (
-  agent_id   INTEGER PRIMARY KEY,
-  workstream TEXT,
-  name       TEXT,
-  host       TEXT,
-  job        TEXT NOT NULL,
-  host_stop  TEXT NOT NULL,
-  recorded_at TEXT
-);
-
+${CARRIER_JOBS_DDL}
 -- host_channels: the connection slots of a host (machine-local). One row
 -- per holder. 'transient' rides an invocation (exec, fetch, check) and is
 -- reclaimed only when its pid is proven gone; 'attached' rides an agent's

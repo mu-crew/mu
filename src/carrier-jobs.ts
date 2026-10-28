@@ -1,176 +1,253 @@
-// mu — carrier_jobs: the handle of the remote job a lease agent's carrier dispatched.
+// mu — carrier_jobs: the RESERVATION of a lease agent's remote job, and its handle.
 //
 // A lease pane holds no ssh session and its death is not the job's death, so the
-// handle lives in its own machine-local table: no FK, no trigger, no op, no sync.
+// pointer to the job lives in its own machine-local table: no FK, no trigger, no op,
+// no sync. A lease spawn inserts the reservation BEFORE any carrier effect (before
+// its pane opens): name-exclusive per (workstream, name), with an immutable spawn
+// token every later write is guarded by. `launch` turns 'intent' just before the
+// mux is asked for the pane (from then on a carrier may run); the pane id, the
+// agent incarnation (finalize) and the handle (job handshake) fill in as they are
+// known. While a reservation exists, every spawn of the name refuses.
+//
 // Agent deletion (close, reconcile prune, teardown, workstream delete, the reaper,
-// raw `mu sql`) never touches it. Only a successful stop, or an explicit abandon,
-// deletes it. `host_stop` is the stop template as it was when the handle was
-// recorded; a later stop runs from the current profile only if its `stop` is
-// byte-identical (the twin of `host_exec` on a recovery record).
+// raw `mu sql`) never touches it. It is released (deleted) only after a successful
+// stop AND the job file's cleanup AND the tree's, by its creator's rollback when
+// nothing was launched, or by an explicit abandon. `host_stop` is the stop template
+// as it was admitted; a later stop runs from the current profile only if its `stop`
+// is byte-identical (the twin of `host_exec` on a recovery record).
 //
 // The stop itself (`runStop`) lives in carrier-stop.ts, which needs the host
 // channels; this file is the table and nothing else, so hosts.ts can read it.
 
+import { randomUUID } from "node:crypto";
 import type { Db } from "./db.js";
 
+/** Whether a carrier may have been launched: 'none' until just before the mux is asked for the pane. */
+export type CarrierLaunch = "none" | "intent";
+
 export interface CarrierJob {
-  agentId: number;
+  /** The spawn's immutable token: every update and the release are guarded by it. */
+  token: string;
   workstream: string;
   name: string;
   host: string;
-  /** The opaque handle the carrier wrote to its job file. */
-  job: string;
-  /** The profile's `stop` template when the handle was recorded. */
+  /** The profile's `stop` template, as admitted. */
   hostStop: string;
-  recordedAt: string;
+  launch: CarrierLaunch;
+  /** The creating spawn's process (pid + start time where the platform has one). */
+  creatorPid: number | null;
+  creatorStart: string | null;
+  /** The agent incarnation, bound at finalize; null before (or if finalize never ran). */
+  agentId: number | null;
+  /** The carrier's pane, recorded the moment the mux reports it. */
+  paneId: string | null;
+  /** The opaque handle the carrier wrote to its job file; null until the handshake reads it. */
+  job: string | null;
+  /** Why the reservation was kept without a handle (an unreadable or invalid job file). */
+  reason: string | null;
+  createdAt: string;
+  recordedAt: string | null;
 }
 
 interface Raw {
-  agent_id: number;
+  token: string;
   workstream: string;
   name: string;
   host: string;
-  job: string;
   host_stop: string;
-  recorded_at: string;
+  launch: CarrierLaunch;
+  creator_pid: number | null;
+  creator_start: string | null;
+  agent_id: number | null;
+  pane_id: string | null;
+  job: string | null;
+  reason: string | null;
+  created_at: string;
+  recorded_at: string | null;
 }
 
 const toJob = (r: Raw): CarrierJob => ({
-  agentId: r.agent_id,
+  token: r.token,
   workstream: r.workstream,
   name: r.name,
   host: r.host,
-  job: r.job,
   hostStop: r.host_stop,
+  launch: r.launch,
+  creatorPid: r.creator_pid,
+  creatorStart: r.creator_start,
+  agentId: r.agent_id,
+  paneId: r.pane_id,
+  job: r.job,
+  reason: r.reason,
+  createdAt: r.created_at,
   recordedAt: r.recorded_at,
 });
 
+const now = (): string => new Date().toISOString();
+
 /**
- * Record the handle of agent incarnation `agentId`, in ONE statement guarded by the
- * incarnation: the row only lands while a live agent row has this id AND this pane.
- * False when the guard fails (the agent is gone or replaced) or the incarnation
- * already has a handle (never overwritten).
+ * Reserve (workstream, name) for a lease spawn, in ONE statement: the row lands only
+ * while no reservation of the name exists (the unique index is the second fence).
+ * Undefined when the name is reserved already.
  */
-export function insertCarrierJob(
+export function reserveCarrierJob(
   db: Db,
   a: {
-    agentId: number;
-    paneId: string;
     workstream: string;
     name: string;
     host: string;
-    job: string;
     hostStop: string;
+    creatorPid?: number | null;
+    creatorStart?: string | null;
   },
-): boolean {
-  return (
-    db
+): CarrierJob | undefined {
+  const token = randomUUID();
+  try {
+    const r = db
       .prepare(
-        `INSERT OR IGNORE INTO carrier_jobs (agent_id, workstream, name, host, job, host_stop, recorded_at)
-         SELECT a.id, ?, ?, ?, ?, ?, ? FROM agents a WHERE a.id = ? AND a.pane_id = ?`,
+        `INSERT INTO carrier_jobs (token, workstream, name, host, host_stop, launch, creator_pid, creator_start, created_at)
+         SELECT ?, ?, ?, ?, ?, 'none', ?, ?, ?
+         WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs WHERE workstream = ? AND name = ?)`,
       )
       .run(
+        token,
         a.workstream,
         a.name,
         a.host,
-        a.job,
         a.hostStop,
-        new Date().toISOString(),
-        a.agentId,
-        a.paneId,
-      ).changes === 1
-  );
+        a.creatorPid ?? null,
+        a.creatorStart ?? null,
+        now(),
+        a.workstream,
+        a.name,
+      );
+    if (r.changes !== 1) return undefined;
+  } catch (err) {
+    if ((err as { code?: unknown }).code === "SQLITE_CONSTRAINT_UNIQUE") return undefined;
+    throw err;
+  }
+  return getCarrierJob(db, token);
 }
 
-/**
- * Record a handle for an incarnation whose agent row may already be going (rollback
- * persists a re-read handle BEFORE anything can delete the row). No agent guard:
- * the caller holds the incarnation's id from the spawn. Never overwrites.
- */
-export function persistCarrierJob(db: Db, j: Omit<CarrierJob, "recordedAt">): boolean {
-  return (
-    db
-      .prepare(
-        `INSERT OR IGNORE INTO carrier_jobs (agent_id, workstream, name, host, job, host_stop, recorded_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(j.agentId, j.workstream, j.name, j.host, j.job, j.hostStop, new Date().toISOString())
-      .changes === 1
-  );
+export function getCarrierJob(db: Db, token: string): CarrierJob | undefined {
+  const r = db.prepare("SELECT * FROM carrier_jobs WHERE token = ?").get(token) as Raw | undefined;
+  return r === undefined ? undefined : toJob(r);
 }
 
-export function getCarrierJob(db: Db, agentId: number): CarrierJob | undefined {
+/** The reservation bound to agent incarnation `agentId`, if any. */
+export function getCarrierJobByAgent(db: Db, agentId: number): CarrierJob | undefined {
   const r = db.prepare("SELECT * FROM carrier_jobs WHERE agent_id = ?").get(agentId) as
     | Raw
     | undefined;
   return r === undefined ? undefined : toJob(r);
 }
 
-/** The newest handle recorded for (workstream, name): a name can have an older incarnation's unstopped one. */
+/** The reservation of (workstream, name): the one a spawn of the name refuses on. */
 export function getCarrierJobByName(
   db: Db,
   workstream: string,
   name: string,
 ): CarrierJob | undefined {
-  const r = db
-    .prepare(
-      "SELECT * FROM carrier_jobs WHERE workstream = ? AND name = ? ORDER BY agent_id DESC LIMIT 1",
-    )
-    .get(workstream, name) as Raw | undefined;
-  return r === undefined ? undefined : toJob(r);
+  return listCarrierJobsByName(db, workstream, name)[0];
 }
 
-/** Every unstopped handle of (workstream, name), newest first. */
+/** Every reservation of (workstream, name); more than one only from the rebuilt pre-reservation shape. */
 export function listCarrierJobsByName(db: Db, workstream: string, name: string): CarrierJob[] {
   return (
     db
       .prepare(
-        "SELECT * FROM carrier_jobs WHERE workstream = ? AND name = ? ORDER BY agent_id DESC",
+        "SELECT * FROM carrier_jobs WHERE workstream = ? AND name = ? ORDER BY ordinal, id DESC",
       )
       .all(workstream, name) as Raw[]
   ).map(toJob);
 }
 
-/**
- * The newest handle of (workstream, name) whose agent incarnation is gone: an older job of
- * the name that was never stopped. A spawn of the name refuses while one exists.
- */
-export function unstoppedJobOfGoneAgent(
-  db: Db,
-  workstream: string,
-  name: string,
-): CarrierJob | undefined {
-  const r = db
-    .prepare(
-      `SELECT * FROM carrier_jobs c WHERE c.workstream = ? AND c.name = ?
-         AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.id = c.agent_id)
-       ORDER BY c.agent_id DESC LIMIT 1`,
-    )
-    .get(workstream, name) as Raw | undefined;
-  return r === undefined ? undefined : toJob(r);
-}
-
-/** Every recorded handle (doctor's `lease-job` hint reads these). */
+/** Every reservation (doctor's `lease-job` hint reads these). */
 export function listCarrierJobs(db: Db): CarrierJob[] {
-  return (db.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all() as Raw[]).map(toJob);
+  return (db.prepare("SELECT * FROM carrier_jobs ORDER BY id").all() as Raw[]).map(toJob);
 }
 
-/**
- * Delete exactly this handle, compare-and-set on its content, AFTER its stop succeeded.
- * False when it was already gone or is another handle now.
- */
-export function deleteCarrierJobAfterStop(db: Db, job: CarrierJob): boolean {
+/** The admitted profile's stop, before anything was launched under it. */
+export function setCarrierJobStop(db: Db, token: string, hostStop: string): boolean {
   return (
     db
-      .prepare("DELETE FROM carrier_jobs WHERE agent_id = ? AND job = ? AND host = ?")
-      .run(job.agentId, job.job, job.host).changes === 1
+      .prepare(
+        "UPDATE carrier_jobs SET host_stop = ? WHERE token = ? AND launch = 'none' AND job IS NULL",
+      )
+      .run(hostStop, token).changes === 1
+  );
+}
+
+/** Written immediately before the mux is asked for the pane: from here a carrier may run. */
+export function markCarrierLaunch(db: Db, token: string): boolean {
+  return (
+    db.prepare("UPDATE carrier_jobs SET launch = 'intent' WHERE token = ?").run(token).changes === 1
+  );
+}
+
+/** The carrier's pane, the moment the mux reports it. Never overwrites another pane. */
+export function recordCarrierPane(db: Db, token: string, paneId: string): boolean {
+  return (
+    db
+      .prepare(
+        "UPDATE carrier_jobs SET pane_id = ? WHERE token = ? AND (pane_id IS NULL OR pane_id = ?)",
+      )
+      .run(paneId, token, paneId).changes === 1
+  );
+}
+
+/** Finalize: the agent incarnation (and its pane) the reservation belongs to. */
+export function bindCarrierJobAgent(
+  db: Db,
+  token: string,
+  agentId: number,
+  paneId: string,
+): boolean {
+  return (
+    db
+      .prepare(
+        `UPDATE carrier_jobs SET agent_id = ?, pane_id = ?
+         WHERE token = ? AND (agent_id IS NULL OR agent_id = ?) AND (pane_id IS NULL OR pane_id = ?)`,
+      )
+      .run(agentId, paneId, token, agentId, paneId).changes === 1
   );
 }
 
 /**
- * Drop a handle WITHOUT stopping its job (`agent close --abandon-job`): the only way a row
- * leaves without a successful stop. The caller emits the event naming host and handle.
+ * The handle the carrier published, guarded by the token only: the reservation is the
+ * name's, so a handle read from its job file is its job whatever became of the agent row.
+ * Never overwrites a different handle; true when the row now holds `job`.
+ */
+export function fillCarrierJob(db: Db, token: string, job: string): boolean {
+  db.prepare(
+    "UPDATE carrier_jobs SET job = ?, reason = NULL, recorded_at = ? WHERE token = ? AND job IS NULL",
+  ).run(job, now(), token);
+  return getCarrierJob(db, token)?.job === job;
+}
+
+/** Why a reservation is kept without a handle (an unreadable or invalid job file). */
+export function noteCarrierJob(db: Db, token: string, reason: string): void {
+  db.prepare("UPDATE carrier_jobs SET reason = ? WHERE token = ?").run(reason, token);
+}
+
+/**
+ * Release exactly this reservation, compare-and-set on its token and handle (null
+ * included): only after its stop succeeded and its job file and tree are cleaned up, or
+ * by its creator when nothing was launched. False when it is gone or holds another
+ * handle now.
+ */
+export function releaseCarrierJob(db: Db, job: CarrierJob): boolean {
+  return (
+    db.prepare("DELETE FROM carrier_jobs WHERE token = ? AND job IS ?").run(job.token, job.job)
+      .changes === 1
+  );
+}
+
+/**
+ * Drop a reservation WITHOUT stopping its job (`agent close --abandon-job`): the only way
+ * a launched one leaves without a stop. The caller emits the event naming host, handle
+ * and job file, and leaves the file in place.
  */
 export function abandonCarrierJob(db: Db, job: CarrierJob): boolean {
-  return deleteCarrierJobAfterStop(db, job);
+  return releaseCarrierJob(db, job);
 }

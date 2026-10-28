@@ -18,7 +18,6 @@ vi.mock("../src/agents/transport.js", async (importOriginal) =>
 import { getReceipt, updateReceipt } from "../src/agents/receipts.js";
 import { deleteAgent, getAgent, insertAgent } from "../src/agents.js";
 import { readAttempt, reserveAttempt, reserveRetry } from "../src/auto-attempt.js";
-import { persistCarrierJob } from "../src/carrier-jobs.js";
 import { type Db, openDb } from "../src/db.js";
 import { openHumanNeeds, recordHumanNeeded } from "../src/human-needed.js";
 import { executeNext, type NextResult } from "../src/next.js";
@@ -30,6 +29,7 @@ import { closeTask } from "../src/tasks/lifecycle.js";
 import { getTask } from "../src/tasks.js";
 import type { WaitOptions, WaitRef, WaitResult } from "../src/wait-types.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { filledReservation } from "./_carrier.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { hook, resetHook } from "./_next-fakes.js";
@@ -202,8 +202,9 @@ describe("dead worker: reaped through the id + pane CAS, then retried as a new a
     db.prepare("UPDATE agents SET host = 'box' WHERE name = 'a-1'").run();
     const a = getAgent(db, "a-1", "d");
     if (a === undefined) throw new Error("no a-1");
-    persistCarrierJob(db, {
+    filledReservation(db, {
       agentId: a.incarnation,
+      paneId: a.paneId,
       workstream: "d",
       name: "a-1",
       host: "box",

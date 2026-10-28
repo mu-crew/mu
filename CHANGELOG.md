@@ -49,21 +49,48 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **Lease transport, part 2: `agent spawn --host` on a lease profile.** Prepare
   rides a transient channel that is released once prepare ends, and the pane
   binds no `host_channels` row, so `--max-sessions 1` still admits `collect`
-  while the worker runs. `{job_file}` is filled into the `shell` template. The
-  job file is removed inside the spawn lock. If an older incarnation's handle of
-  that name is still in `carrier_jobs`, the spawn refuses (exit 4: `<name> has an
-  unstopped job <handle> on <host>: mu agent close <name>`). The **job
+  while the worker runs. `{job_file}` is filled into the `shell` template. While
+  the name holds a `carrier_jobs` reservation (see below), the spawn refuses
+  (exit 4: `<name> has an unstopped job <handle> on <host>: mu agent close
+  <name>`). The **job
   handshake** is mandatory for a lease and independent of ctl, `--no-ctl` and
   `MU_SPAWN_CTL_MS`. mu waits up to `MU_SPAWN_JOB_MS` (default 30 s, never 0)
   for one handle line and records it in one statement guarded by the row's id
   and pane. A pane that dies first is `AgentDiedOnSpawnError` with its
   scrollback. A live pane with no handle is rolled back. **Rollback** kills the
-  pane and re-reads the job file. A handle is persisted to `carrier_jobs` first
+  pane and re-reads the job file. A handle is filled into the reservation first
   (even when reconcile already removed the agent row), then stopped, and only
   then is the worktree removed. A failed stop keeps the worktree and the handle,
   and says so. A lease profile refuses command gates (exit 2) before any effect.
   `mu next` names the handle and `mu agent close <name>` for a dead lease
   worker.
+
+- **Lease spawn: the name is reserved before the carrier launches.** A lease
+  spawn inserts a `carrier_jobs` **reservation** for (workstream, name) under
+  the agent lock, before any effect. The reservation is name-exclusive and every
+  update is guarded by its spawn token. Its `launch` turns `intent`
+  immediately before the mux is asked for the pane. The pane and incarnation
+  are bound as soon as they are known, and the handshake fills in the handle.
+  While a reservation exists, every spawn of the name refuses (exit 4), lease or
+  not, `--worktree` or `--cwd`. The agent-row insert checks this in the same
+  statement. The message names the handle, or says the job is unknown, and
+  names `mu agent close <name>` (`--abandon-job`).
+  - **Job-file reads fail closed.** Only ENOENT means "no file". An unreadable
+    file (`LeaseJobUnreadableError`), an empty one or an invalid one keeps the
+    reservation, with the reason, and the tree.
+  - **Rollback acts only on its own reservation.** It never acts on the shared
+    job file of a replacement.
+  - **Release is conservative.** A reservation is released only after a
+    successful stop and the cleanup of its job file and tree, by its creator's
+    rollback while `launch` is still `none` (failures that precede the tmux
+    call), or by `--abandon-job`. A launched carrier with no handle (a timeout,
+    pane death, a tmux hook failing after the window opened) keeps the
+    reservation, because the carrier may still publish. A job file left by an
+    earlier reservation is moved aside, never deleted.
+
+  This fixes four review findings: a finalize failure lost the only handle; a
+  respawn erased an invalid job file; an unreadable file removed the tree; a
+  rollback stopped the replacement's job.
 
 ### Changed
 
@@ -76,7 +103,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   one keeps its old socket file.
 - **Schema (still v13, additive):** `host_profiles` gains `transport` (default
   `session`) and `stop`; the 27th table `carrier_jobs` joins `MACHINE_LOCAL_TABLES`.
-  An existing file is completed in the one upgrade transaction.
+  An existing file is completed in the one upgrade transaction. `carrier_jobs`
+  has its final reservation shape (surrogate id, unique `token`, `ordinal`,
+  `launch`, `creator_pid`/`creator_start`, nullable `agent_id`, `pane_id`, `job`
+  and `reason`, unique `(workstream, name, ordinal)`). A local file with the
+  earlier unreleased shape (one row per incarnation) is rebuilt losslessly in
+  the same transaction: every row becomes a filled reservation with its job,
+  stop, incarnation and time intact.
 - **`src/agents/spawn.ts` is split** (1566 → 1193 lines, under the 1500 cap): the
   remote half of `spawn --host` moved to `spawn-remote.ts` and the handshake,
   liveness and startup-scan helpers to `spawn-ready.ts`. No behaviour change;

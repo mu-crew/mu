@@ -25,14 +25,14 @@ import {
   getAgent,
   spawnAgent,
 } from "../src/agents.js";
-import { getCarrierJob, listCarrierJobs } from "../src/carrier-jobs.js";
+import { getCarrierJobByAgent, getCarrierJobByName, listCarrierJobs } from "../src/carrier-jobs.js";
 import { carrierJobFilePath } from "../src/ctl/path.js";
 import { CTL_FEATURES, CTL_OPS } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, HostProfileError, listHostChannels } from "../src/hosts.js";
 import { collectRemoteAgent } from "../src/remote-collect.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
-import { killSession } from "../src/tmux.js";
+import { killSession, tmux } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { initGitRepo } from "./_git.js";
@@ -185,7 +185,7 @@ describeIfTmux("lease spawn (real tmux, fake carrier script)", () => {
   it("records the carrier's handle, holds no channel, and collect at --max-sessions 1 runs beside it", async () => {
     const a = await spawn({ worktree: true });
     expect(a.ctl).toBe("ok");
-    expect(getCarrierJob(db, a.incarnation)).toMatchObject({ host: "dev", job: handleOf() });
+    expect(getCarrierJobByAgent(db, a.incarnation)).toMatchObject({ host: "dev", job: handleOf() });
     expect(channels()).toEqual([]);
     const r = await collectRemoteAgent(db, { workstream: ws, name: "worker-1", repo: local });
     expect(r.head).toMatch(/^[0-9a-f]{40}$/);
@@ -197,33 +197,58 @@ describeIfTmux("lease spawn (real tmux, fake carrier script)", () => {
     mode("noctl");
     const a = await spawn({ ctl: false });
     expect(a.ctl).toBe("skipped");
-    expect(getCarrierJob(db, a.incarnation)?.job).toMatch(/^job-\d+$/);
+    expect(getCarrierJobByAgent(db, a.incarnation)?.job).toMatch(/^job-\d+$/);
     process.env.MU_SPAWN_CTL_MS = "0";
     const b = await spawn({ name: "worker-2" });
     expect(b.ctl).toBe("skipped");
-    expect(getCarrierJob(db, b.incarnation)?.job).toMatch(/^job-\d+$/);
+    expect(getCarrierJobByAgent(db, b.incarnation)?.job).toMatch(/^job-\d+$/);
   }, 30_000);
 
-  it("no job file by MU_SPAWN_JOB_MS: the carrier gets SIGHUP, nothing is stopped, the tree is removed", async () => {
+  it("no job file by MU_SPAWN_JOB_MS: the carrier gets SIGHUP, nothing is stopped, reservation and tree kept", async () => {
     process.env.MU_SPAWN_JOB_MS = "800";
     mode("nofile");
     const err = await spawn({ worktree: true, ctl: false }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(LeaseJobTimeoutError);
     await until(() => lines().includes("sighup"), "the carrier's SIGHUP");
     expect(lines().filter((l) => l.startsWith("stop"))).toEqual([]);
-    expect(lines()).toContain("exec rm");
+    expect(lines()).not.toContain("exec rm");
     expect(getAgent(db, "worker-1", ws)).toBeUndefined();
-    expect(listCarrierJobs(db)).toEqual([]);
+    expect(getCarrierJobByName(db, ws, "worker-1")).toMatchObject({ launch: "intent", job: null });
   }, 30_000);
 
-  it("a carrier that dies before its handle: AgentDiedOnSpawnError carries its screen", async () => {
+  it("a carrier that dies before its handle: AgentDiedOnSpawnError carries its screen; reservation kept", async () => {
     mode("die");
     const err = await spawn({ worktree: true }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(AgentDiedOnSpawnError);
     expect((err as Error).message).toContain("mule: no master for dev");
-    expect(lines()).toEqual(["exec add", "exec rm"]);
-    expect(listCarrierJobs(db)).toEqual([]);
+    expect(lines()).toEqual(["exec add"]);
+    expect(getCarrierJobByName(db, ws, "worker-1")).toMatchObject({ launch: "intent", job: null });
   }, 30_000);
+
+  // The refuter's counterexamples (fix_mu_lease_spawn REVISION 3): tmux runs the pane
+  // command and still makes the spawn reject before mu learns the pane id. The carrier
+  // may publish later, so the reservation is KEPT and the name stays fenced.
+  for (const [what, hook] of [
+    ["an after-new-window hook that fails", "select-pane -t %999999"],
+    ["an after-new-window hook that prints extra output", "display-message -p EXTRA"],
+  ] as const) {
+    it(`${what}: the spawn rejects after the launch, and the reservation is kept`, async () => {
+      // A session hook (never global): the session must exist first.
+      await tmux(["new-session", "-d", "-s", `mu-${ws}`, "-n", "_mu", "exec sleep 60"]);
+      await tmux(["set-hook", "-t", `mu-${ws}`, "after-new-window", hook]);
+      const err = await spawn({ ctl: false }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      await until(() => handleOf() !== "", "the carrier's late publication");
+      expect(getCarrierJobByName(db, ws, "worker-1")).toMatchObject({
+        launch: "intent",
+        job: null,
+        paneId: null,
+      });
+      const again = await spawn({ ctl: false }).catch((e: unknown) => e);
+      expect(again).toBeInstanceOf(CarrierJobUnstoppedError);
+      expect(existsSync(carrierJobFilePath(ws, "worker-1", dir))).toBe(true);
+    }, 30_000);
+  }
 
   it("rollback after the handle: stop (with the handle) runs before the worktree removal", async () => {
     process.env.MU_SPAWN_LIVENESS_MS = "1500";
