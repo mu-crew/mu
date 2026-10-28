@@ -762,6 +762,9 @@ export function registerDelegate(
       workspace?: string;
       sessionFile?: string;
       identity?: DelegateIdentity;
+      /** Epoch ms the delegate started running (default now). A re-adopted call
+       *  passes its durable start, so `timeoutS` stays one deadline across reloads. */
+      startedAt?: number;
       /** Runs once the call is in `inflight`, before its wait starts. */
       tracked?: () => Promise<void>;
     },
@@ -781,7 +784,10 @@ export function registerDelegate(
     await o.tracked?.();
     // The send's `runs` is pi's count before this prompt: waiting past it
     // catches the run even if it settled before this wait started.
-    const started = Date.now();
+    const started = o.startedAt ?? Date.now();
+    // What is left of the deadline; at least 1 s, so a run that settled while no
+    // runtime watched (`--after-runs` still counts it) is recorded, not timed out.
+    const left = Math.max(1, Math.ceil(o.timeoutS - (Date.now() - started) / 1000));
     const waiting = mu(
       [
         "agent",
@@ -791,7 +797,7 @@ export function registerDelegate(
         ws,
         "--json",
         "--timeout",
-        String(o.timeoutS),
+        String(left),
         "--after-runs",
         String(runs),
       ],
@@ -1538,9 +1544,13 @@ export function registerDelegate(
       if (call.caller !== `pi:${session}` || inflight.has(inflightKey(call.workstream, row.agent)))
         continue;
       // One-shot delegates: the first run is the answer, so 0 is the exact baseline.
+      // The deadline runs from when it went `running` (the row's last update), not
+      // from this reload, so a reload loop never extends it.
+      const since = typeof row.updatedAt === "string" ? Date.parse(row.updatedAt) : Number.NaN;
       await watch(call, row.agent, 0, {
         keep: call.request.keep === true,
         timeoutS: call.request.timeoutS ?? DELEGATE_TIMEOUT_S,
+        ...(Number.isFinite(since) ? { startedAt: since } : {}),
       });
     }
   });

@@ -21,7 +21,7 @@ parallel.
 | `label` | Names the delegate: `review` gives `delegate-review`. |
 | `brief` | Ad hoc persona or ground rules, sent first. Not enforced. |
 | `cwd` | Start directory. Default: the caller's. Must exist. |
-| `timeout` | Seconds to wait for the answer (default 3600). After it, the answer does not come back to pi; it still lands on the delegate task, whose report names a wait command. |
+| `timeout` | Seconds to wait for the answer (default 3600), counted from the start: a `/reload` does not restart it. After it, the answer does not come back to pi; it still lands on the delegate task, whose report names a wait command. |
 | `workspace` | Own git worktree, for delegates that edit files. The tool result names its path. It isolates repository edits only. |
 | `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`). Only keys set in pi's environment exist. |
 | `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux only: herdr refuses a command override. |
