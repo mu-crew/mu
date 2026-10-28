@@ -13,6 +13,7 @@ import type {
   DashboardLogItem,
   DashboardSnapshot,
   DashboardTask,
+  DashboardWave,
 } from "../../dashboard-data.js";
 import { formatElapsed, matches } from "../../dashboard-data.js";
 import { KNOWN_VERBS } from "../../log-render.js";
@@ -221,29 +222,47 @@ function sortTasks(tasks: DashboardTask[], sort: SortLabel): DashboardTask[] {
   return out;
 }
 
+/** A delegate task's call: `running`, `done REFUTED`, `refused`, then `> <judged task>`. Empty for other tasks. */
+export function callText(t: DashboardTask): string {
+  const c = t.call;
+  if (c === undefined) return "";
+  const judged = c.judges === null ? "" : ` > ${c.judges}`;
+  return `${c.state}${c.verdict === null ? "" : ` ${c.verdict}`}${judged}`;
+}
+
+/** A call that needs you is coloured as its attention item would be. */
+const callRole = (t: DashboardTask): Role =>
+  t.call?.state === "failed" ? "bad" : t.call?.state === "refused" ? "warn" : "muted";
+
 function taskRows(snap: DashboardSnapshot, ws: string | null, f: Filter): Row[] {
   const statuses: readonly string[] = statusesOf(f.status);
   const inWs = snap.tasks.filter((t) => t.workstream === ws);
   const tasks = sortTasks(
     inWs.filter(
-      (t) => statuses.includes(t.status) && matches(f.text, t.key, t.title, t.owner, t.substate),
+      (t) =>
+        statuses.includes(t.status) &&
+        matches(f.text, t.key, t.title, t.owner, t.substate, callText(t)),
     ),
     f.sort,
   );
-  const specs = [protect(0, 24), fixed(STATUS_WIDTH), protect(0, 24), CLIP];
+  // The call column is zero wide (gone) in a workstream with no delegate tasks.
+  const specs = [protect(0, 24), fixed(STATUS_WIDTH), protect(0, 24), protect(0, 48), CLIP];
   // The owner sits BEFORE the title, so a long title can never clip it away. Its width
   // covers the workstream's agents too: a task claimed later does not shift the title.
   const agentNames = snap.agents.filter((a) => a.workstream === ws).map((a) => `@${a.name}`);
   const line = layoutRows(
-    [...inWs.map((t) => [t.id, "", ownerLabel(t)]), ...agentNames.map((n) => ["", "", n])],
+    [
+      ...inWs.map((t) => [t.id, "", ownerLabel(t), callText(t)]),
+      ...agentNames.map((n) => ["", "", n, ""]),
+    ],
     specs,
   );
   return tasks.map((t) =>
     rowOf(
       t.key,
       line(
-        [t.id, statusText(t.status, t.substate), ownerLabel(t), t.title],
-        ["id", statusRole(t.status, t.substate), "muted", undefined],
+        [t.id, statusText(t.status, t.substate), ownerLabel(t), callText(t), t.title],
+        ["id", statusRole(t.status, t.substate), "muted", callRole(t), undefined],
       ),
       { drill: { kind: "notes", workstream: t.workstream, id: t.id, title: t.title } },
     ),
@@ -431,15 +450,21 @@ export function attentionStrip(attention: readonly DashboardAttention[], ws: str
   ];
 }
 
-/** 3.x attention colours: a dead agent red, everything else that needs you yellow. */
-const attentionRole = (a: DashboardAttention): Role => (a.kind === "dead" ? "bad" : "warn");
+/** 3.x attention colours: a dead agent (or a failed delegate call) red, everything else that needs you yellow. */
+const attentionRole = (a: DashboardAttention): Role =>
+  a.kind === "dead" || (a.kind === "delegate" && a.text.startsWith("delegate failed"))
+    ? "bad"
+    : "warn";
 
 /** The Overview's cursor stops: every attention item (all workstreams), Enter opens its agent or task. */
 function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
   return snap.attention.map((a) => {
     const agent = snap.agents.find((x) => x.key === a.target);
-    // A human item's task comes from the item itself: snap.tasks is the shown workstream's only.
-    const id = a.kind === "human" ? a.target?.slice((a.workstream?.length ?? 0) + 1) : undefined;
+    // A task item's task comes from the item itself: snap.tasks is the shown workstream's only.
+    const id =
+      a.kind === "human" || a.kind === "delegate"
+        ? a.target?.slice((a.workstream?.length ?? 0) + 1)
+        : undefined;
     const drill: DrillTarget | undefined = agent
       ? scrollbackOf(agent)
       : a.workstream !== null && id
@@ -451,6 +476,36 @@ function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
       drill ? { drill } : {},
     );
   });
+}
+
+/** `refute-ws  5 calls  2 CONFIRMED  1 REFUTED  2 pending (1 refused)`: zero counts left out. */
+export function waveText(w: DashboardWave): string {
+  const parts = [
+    `${w.calls} call${w.calls === 1 ? "" : "s"}`,
+    w.confirmed > 0 ? `${w.confirmed} CONFIRMED` : "",
+    w.refuted > 0 ? `${w.refuted} REFUTED` : "",
+    w.unverified > 0 ? `${w.unverified} UNVERIFIED` : "",
+    w.pending > 0 ? `${w.pending} pending${w.refused > 0 ? ` (${w.refused} refused)` : ""}` : "",
+  ].filter((p) => p !== "");
+  return parts.join("  ");
+}
+
+/** The shown workstream's recent waves (Overview's Waves card), newest first; read-only. */
+export function waveRows(snap: DashboardSnapshot, ws: string | null): Row[] {
+  const mine = snap.waves.filter((w) => w.workstream === ws);
+  const line = layoutRows(
+    mine.map((w) => [w.wave, ""]),
+    [protect(0, 32), CLIP],
+  );
+  return mine.map((w) =>
+    rowOf(
+      w.key,
+      line(
+        [w.wave, waveText(w)],
+        ["id", w.refused > 0 ? "warn" : w.pending > 0 ? "progress" : "muted"],
+      ),
+    ),
+  );
 }
 
 /** Every tab shows the selected workstream only (scratch included, like any other). */

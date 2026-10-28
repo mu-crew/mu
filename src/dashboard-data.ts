@@ -24,7 +24,7 @@ import { type LogItem, logItem } from "./cli/log-records.js";
 import type { CtlTool } from "./ctl/protocol.js";
 import { loadOpenTaskFrontier } from "./dag.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "./db.js";
-import { listDelegates } from "./delegates.js";
+import { type DelegateRow, listDelegates, tallyCalls } from "./delegates.js";
 import { openHumanNeeds } from "./human-needed.js";
 import { parseOpKey } from "./log-render.js";
 import { latestSeq, listLogs } from "./logs.js";
@@ -72,6 +72,38 @@ export interface DashboardTask {
   updated_at: string;
   /** `MAX(ops.seq)` over the task's own ops, its notes' and its edges' (raw log, db/sql writes included); 0 when none. */
   activity_seq: number;
+  /** The call behind a `kind=delegate` task, whoever made it; absent for any other task. */
+  call?: DashboardCall;
+}
+
+/** A delegate call as a task row shows it: machine-wide, never narrowed to a caller. */
+export interface DashboardCall {
+  call_id: string;
+  state: string;
+  /** The parsed label of a done answer; null otherwise. */
+  verdict: string | null;
+  /** `<workstream>/<task>` the call judges; null with no record target. */
+  judges: string | null;
+  wave: string | null;
+}
+
+/**
+ * One wave of delegate calls in a workstream, tallied as `verdictTally` counts it
+ * (one result per call), over every caller. `pending` includes `refused`.
+ */
+export interface DashboardWave {
+  /** `<workstream>/<wave>`. */
+  key: string;
+  workstream: string;
+  wave: string;
+  calls: number;
+  confirmed: number;
+  refuted: number;
+  unverified: number;
+  pending: number;
+  refused: number;
+  /** The newest `updated_at` of its calls. */
+  updated_at: string;
 }
 
 /** One line of the open DAG (`loadOpenTaskFrontier`, preorder, per workstream). */
@@ -154,6 +186,8 @@ export interface DashboardDelegate {
  * - `stalled`: one tool has run over `STALLED_TOOL_MS`.
  * - `input`: `needs_input` past the idle threshold on an agent that owns work
  *   (the registry's `idle` flag; `MU_IDLE_THRESHOLD_MS`, 0 disables).
+ * - `delegate`: a delegate call that is `refused` (parked until its pi session
+ *   reissues it) or `failed` within `FAILED_CALL_MS`, whoever made it.
  * - `human`: an OPEN `kind=human` task, whoever recorded it (`human_needs`
  *   is caller-scoped and empty for a human shell).
  * - `next_unavailable`: `computeNext` failed.
@@ -164,6 +198,7 @@ export type AttentionKind =
   | "permission"
   | "input"
   | "stalled"
+  | "delegate"
   | "human"
   | "next_unavailable"
   | "sync";
@@ -176,7 +211,7 @@ export interface DashboardAttention {
   kind: AttentionKind;
   /** One short line, age at read ("worker-3 permission 20m"; a human task: its title); bare names, the UI qualifies. */
   text: string;
-  /** Qualified key to drill into: the agent (dead/permission/input/stalled) or the task (human); null otherwise. */
+  /** Qualified key to drill into: the agent (dead/permission/input/stalled) or the task (delegate, human); null otherwise. */
   target: string | null;
 }
 
@@ -200,6 +235,8 @@ export interface DashboardSnapshot {
   next_source: "unavailable" | "computed";
   human_needs: DashboardHumanNeed[];
   delegates: DashboardDelegate[];
+  /** Per read workstream (tasks scope), its `WAVE_MAX` most recently updated waves, newest first, any caller. */
+  waves: DashboardWave[];
   /** Trouble across every workstream, filters ignored, most urgent first (see `AttentionKind`). */
   attention: DashboardAttention[];
 }
@@ -247,6 +284,44 @@ const DEFAULT_LOG_LIMIT = 100;
 /** A tool running this long counts as stalled. */
 export const STALLED_TOOL_MS = 15 * 60_000;
 const FINISHED_CALL: readonly string[] = ["done", "failed", "cancelled"];
+/** A failed call is an attention item this long after it failed. */
+export const FAILED_CALL_MS = 24 * 60 * 60_000;
+/** Waves kept per workstream. */
+export const WAVE_MAX = 5;
+
+const callOf = (c: DelegateRow): DashboardCall => ({
+  call_id: c.callId,
+  state: c.state,
+  verdict: c.verdict,
+  judges: c.record ? `${c.record.workstream}/${c.record.task}` : null,
+  wave: c.wave,
+});
+
+/** The `WAVE_MAX` most recently updated waves of `calls` (one workstream's), newest first. */
+function wavesOf(workstream: string, calls: readonly DelegateRow[]): DashboardWave[] {
+  const groups = new Map<string, DelegateRow[]>();
+  for (const c of calls)
+    if (c.wave !== null) groups.set(c.wave, [...(groups.get(c.wave) ?? []), c]);
+  const out = [...groups].map(([wave, rows]): DashboardWave => {
+    const t = tallyCalls(rows);
+    const sum = (k: "confirmed" | "refuted" | "unverified" | "pending"): number =>
+      t.findings.reduce((n, f) => n + f[k], 0);
+    return {
+      key: keyOf(workstream, wave),
+      workstream,
+      wave,
+      calls: rows.length,
+      confirmed: sum("confirmed"),
+      refuted: sum("refuted"),
+      unverified: sum("unverified"),
+      pending: sum("pending"),
+      refused: t.refused.length,
+      updated_at: rows.reduce((m, r) => (r.updatedAt > m ? r.updatedAt : m), ""),
+    };
+  });
+  out.sort((a, b) => (a.updated_at < b.updated_at ? 1 : a.updated_at > b.updated_at ? -1 : 0));
+  return out.slice(0, WAVE_MAX);
+}
 
 /** `MAX(ops.seq)` per task id of one workstream over its task, note and edge ops. */
 function taskActivity(db: Db, workstream: string): Map<string, number> {
@@ -304,7 +379,9 @@ function dashboardTask(
   row: TaskRow,
   activity: ReadonlyMap<string, number>,
   agentsById: ReadonlyMap<number, AgentIdentity>,
+  calls: ReadonlyMap<string, DelegateRow>,
 ): DashboardTask {
+  const call = row.kind === "delegate" ? calls.get(row.name) : undefined;
   const inProgress = row.status === "IN_PROGRESS";
   const owner = inProgress && row.ownerId !== null ? agentsById.get(row.ownerId) : undefined;
   return {
@@ -324,6 +401,7 @@ function dashboardTask(
     created_at: row.createdAt,
     updated_at: row.updatedAt,
     activity_seq: activity.get(row.name) ?? 0,
+    ...(call ? { call: callOf(call) } : {}),
   };
 }
 
@@ -355,6 +433,7 @@ const ATTENTION_ORDER: readonly AttentionKind[] = [
   "permission",
   "stalled",
   "input",
+  "delegate",
   "human",
   "next_unavailable",
   "sync",
@@ -439,13 +518,19 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
   const edges: DashboardEdge[] = [];
   const frontier: DashboardFrontierCut[] = [];
   const agents: DashboardAgent[] = [];
+  const waves: DashboardWave[] = [];
   const now = Date.now();
   for (const ws of readFrom) {
     const activity = taskActivity(db, ws.name);
+    const calls = listDelegates(db, undefined, ws.name);
+    const callByTask = new Map(calls.map((c) => [c.task, c]));
+    waves.push(...wavesOf(ws.name, calls));
     tasks.push(
       ...listTasks(db, ws.name, { status: statuses })
-        .map((r) => dashboardTask(r, activity, agentsById))
-        .filter((t) => matches(opts.text, t.key, t.title, t.owner, t.substate)),
+        .map((r) => dashboardTask(r, activity, agentsById, callByTask))
+        .filter((t) =>
+          matches(opts.text, t.key, t.title, t.owner, t.substate, t.call?.state, t.call?.verdict),
+        ),
     );
     const front = loadOpenTaskFrontier(db, ws.name);
     frontier.push({
@@ -536,6 +621,18 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     : [];
 
   const attention: DashboardAttention[] = everyAgent.flatMap((a) => agentAttention(a, now));
+  const liveNames = new Set(live.map((w) => w.name));
+  for (const c of listDelegates(db, undefined, undefined, { states: ["refused", "failed"] })) {
+    if (!liveNames.has(c.workstream)) continue;
+    if (c.state === "failed" && now - Date.parse(c.updatedAt) > FAILED_CALL_MS) continue;
+    attention.push({
+      key: `delegate:${keyOf(c.workstream, c.task)}`,
+      workstream: c.workstream,
+      kind: "delegate",
+      text: `delegate ${c.state}: ${c.request.label ?? c.task}`,
+      target: keyOf(c.workstream, c.task),
+    });
+  }
   for (const t of db
     .prepare(
       `SELECT ws.name AS ws, t.local_id AS id, t.title AS title FROM tasks t
@@ -589,6 +686,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     next_source: next.source,
     human_needs,
     delegates,
+    waves,
     attention,
   };
 }

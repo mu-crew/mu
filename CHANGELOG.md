@@ -8,6 +8,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **The dashboard shows delegate calls.** A `kind=delegate` task row on the Tasks
+  tab carries its call: state, verdict and the task it judges
+  (`done REFUTED > ws/fix_auth`); the `/` filter matches them. A refused call, or
+  one failed in the last 24 hours, is an attention item (`delegate`) for any
+  caller, a human shell included; Enter opens the delegate task's notes. The
+  Overview gains a Waves card when the shown workstream has waves: each of the five
+  newest with its calls and verdict counts, refused ones named. Read-only, from
+  `delegate_calls` (`loadDashboard`'s new `call` and `waves`).
 
 ## [4.0.0] — 2026-10-28
 

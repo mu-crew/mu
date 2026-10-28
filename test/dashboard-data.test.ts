@@ -12,7 +12,7 @@ import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { FRONTIER_MAX_NODES } from "../src/dag.js";
 import { type DashboardSnapshot, loadDashboard } from "../src/dashboard-data.js";
 import { type Db, openDb } from "../src/db.js";
-import { markDelegate, registerDelegateCall } from "../src/delegates.js";
+import { finishDelegate, markDelegate, registerDelegateCall } from "../src/delegates.js";
 import { recordHumanNeeded } from "../src/human-needed.js";
 import { computeNext } from "../src/next-hints.js";
 import { authorizeTasks } from "../src/task-auto.js";
@@ -696,6 +696,66 @@ describe("attention: trouble across every workstream, filters ignored", () => {
     expect(narrow.agents).toEqual([]);
     expect(narrow.attention).toEqual(all.attention);
     expect(kinds(narrow)).toEqual(["dead:dead dead"]);
+  });
+
+  it("a refused or recently failed delegate call is an item for anyone; done, old failures and other states are not", async () => {
+    task("judged");
+    const reg = (id: string, label: string, wave?: string) =>
+      registerDelegateCall(db, {
+        callId: id,
+        caller: `pi:${id}`,
+        workstream: "ws",
+        request: { text: label, label },
+        record: { workstream: "ws", task: "judged" },
+        ...(wave ? { wave } : {}),
+      });
+    reg("c-refused", "lint check", "w1");
+    markDelegate(db, "c-refused", "refused", { error: "queue full" });
+    reg("c-failed", "api check", "w1");
+    finishDelegate(db, "c-failed", { outcome: "died", author: "delegate-x" });
+    reg("c-old", "old check");
+    finishDelegate(db, "c-old", { outcome: "died", author: "delegate-y" });
+    db.prepare("UPDATE delegate_calls SET updated_at = ? WHERE call_id = 'c-old'").run(
+      new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    );
+    reg("c-done", "good check", "w1");
+    finishDelegate(db, "c-done", {
+      outcome: "done",
+      text: "VERDICT: REFUTED\nEVIDENCE: no",
+      author: "delegate-z",
+    });
+    reg("c-queued", "waiting check", "w1"); // registered queued
+    const snap = await loadDashboard(db, {
+      caller: null,
+      status: ["OPEN", "IN_PROGRESS", "CLOSED"],
+    });
+    // Oldest call first.
+    expect(kinds(snap)).toEqual([
+      "delegate:delegate refused: lint check",
+      "delegate:delegate failed: api check",
+    ]);
+    const refused = snap.attention.find((a) => a.text.includes("refused"));
+    const call = snap.tasks.find((t) => t.key === refused?.target)?.call;
+    expect(call).toEqual({
+      call_id: "c-refused",
+      state: "refused",
+      verdict: null,
+      judges: "ws/judged",
+      wave: "w1",
+    });
+    expect(snap.tasks.find((t) => t.call?.call_id === "c-done")?.call?.verdict).toBe("REFUTED");
+    expect(snap.tasks.find((t) => t.id === "judged")?.call).toBeUndefined();
+    // One wave, every caller's calls, tallied once per call.
+    expect(snap.waves).toEqual([
+      expect.objectContaining({
+        key: "ws/w1",
+        calls: 4,
+        refuted: 1,
+        unverified: 1,
+        pending: 2,
+        refused: 1,
+      }),
+    ]);
   });
 
   it("next unavailable and sync warnings are machine-wide items, after the agent ones", async () => {
