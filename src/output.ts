@@ -200,7 +200,9 @@ export function isJsonMode(): boolean {
     argv.some((a) => a === "--json" || a.startsWith("--json=")) ||
     (isSqlVerbArgv(argv) && !argv.includes("--table")) ||
     isStateVerbArgv(argv) ||
-    isWaitVerbArgv(argv)
+    isWaitVerbArgv(argv) ||
+    // `mu next` prints ONE JSON result for every outcome; its failures too.
+    verbWords(argv)[0] === "next"
   );
 }
 
