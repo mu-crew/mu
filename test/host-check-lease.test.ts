@@ -24,6 +24,7 @@ let dbPath: string;
 let db: Db;
 let cmds: string;
 let stopRan: string;
+let gitLog: string;
 let oldPath: string | undefined;
 // The fast tier runs no real git: the repo step's `git -C <root> rev-parse` is answered by the
 // exec template itself (exit 0), every other command runs through a plain sh.
@@ -45,6 +46,10 @@ beforeEach(() => {
     '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.99.1; elif [ "$1" = list ]; then echo "  npm:@mu-crew/mu"; fi\n',
   );
   chmodSync(join(bin, "pi"), 0o755);
+  // A git spy ahead of the real one on PATH: any real git run leaves a line in `gitLog`.
+  gitLog = join(dir, "git-log");
+  writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$@" >> ${gitLog}\nexit 0\n`);
+  chmodSync(join(bin, "git"), 0o755);
   oldPath = process.env.PATH;
   process.env.PATH = `${bin}:${oldPath}`;
   db = openDb({ path: dbPath });
@@ -62,8 +67,11 @@ beforeEach(() => {
 });
 afterEach(() => {
   process.env.PATH = oldPath;
+  // The whole fast file runs no real git (checked before the fixture dir goes).
+  const ranGit = existsSync(gitLog) ? readFileSync(gitLog, "utf8") : "";
   db.close();
   rmFixtureDir(dir);
+  expect(ranGit).toBe("");
 });
 
 describe("host check on a lease profile", () => {
@@ -160,7 +168,7 @@ describe("host check follows the ADMITTED profile", () => {
         ).run();
       } else {
         db.prepare(
-          "UPDATE host_profiles SET transport = 'session', stop = NULL, shell = 'ssh -o ControlMaster=no -o ControlPath=none h {local_sock}:{remote_sock}' WHERE name = 'flip'",
+          "UPDATE host_profiles SET transport = 'session', stop = NULL, shell = 'ssh h {local_sock}:{remote_sock}' WHERE name = 'flip'",
         ).run();
       }
       return false;
@@ -177,7 +185,7 @@ describe("host check follows the ADMITTED profile", () => {
       shell:
         transport === "lease"
           ? "c --job-file {job_file} -L {local_sock}:{remote_sock} -- sh -c {cmd}"
-          : "ssh -o ControlMaster=no -o ControlPath=none h {local_sock}:{remote_sock}",
+          : "ssh h {local_sock}:{remote_sock}",
       exec: execT,
       fetch: "true",
       repo: dir,
@@ -194,6 +202,7 @@ describe("host check follows the ADMITTED profile", () => {
     const handed = readFileSync(cmds, "utf8");
     expect(handed).toContain("pi --version");
     expect(handed).not.toMatch(/-ilc/);
+    // The admitted profile is a lease: the session shell's missing ControlMaster flags don't warn.
     expect(r.warnings).toEqual([]);
   });
 
@@ -203,6 +212,10 @@ describe("host check follows the ADMITTED profile", () => {
     const r = await checkHost(db, "flip", { paneAlive: switchDuringProbe("session") });
     expect(r.steps.map((s) => s.step)).not.toContain("stop");
     expect(readFileSync(cmds, "utf8")).toMatch(/-ilc/);
+    // The admitted profile is a session whose shell lacks both flags: its warning is reported.
+    expect(r.warnings).toEqual([
+      expect.stringContaining("lacks ControlMaster=no and ControlPath=none"),
+    ]);
   });
 });
 
@@ -258,7 +271,7 @@ describe("host check --agent on a lease agent", () => {
     addHost(db, {
       name: "sess",
       shell: "ssh -o ControlMaster=no -o ControlPath=none {local_sock}:{remote_sock}",
-      exec: "sh -c {cmd}",
+      exec: execT,
       fetch: "true",
       repo: dir,
       max_sessions: null,
