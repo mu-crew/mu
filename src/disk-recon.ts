@@ -182,7 +182,7 @@ export interface StrayFile {
  * `mu.db.*` files in the state dir that are not the live WAL triple.
  *
  * Hand-made copies (`mu.db.old`), pre-bump saves (`mu.db.v9-<stamp>`),
- * the safety backups `mu db compact` / `mu db forget` write beside the
+ * the safety backups `mu db compact` / `mu db forget` / `mu delegates prune` write beside the
  * DB (`mu.db.pre-<verb>-<stamp>`, src/cli/db.ts) and abandoned `-wal` /
  * `-shm` sidecars. Nothing in mu reads them and nothing prunes them, and
  * they are the largest single category of dead bytes in a long-lived
@@ -226,7 +226,7 @@ export function checkStrayDbFiles(): FleetHazard {
       `Live DB: ${defaultDbPath()}`,
       "",
       "These are hand-made copies, pre-upgrade saves, and the backups",
-      "`mu db compact` / `mu db forget` write first (mu.db.pre-<verb>-<time>).",
+      "`mu db compact` / `mu db forget` / `mu delegates prune` write first (mu.db.pre-<verb>-<time>).",
       "No mu code path reads them and none prunes them. Keep a pre-forget",
       "backup until you are sure: it is the only way back from a forget.",
       "Otherwise disaster recovery is the ops log, so a copy is a convenience:",

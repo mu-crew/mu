@@ -94,6 +94,45 @@ describe("mu doctor db block", () => {
     expect(r.data.db.integrity).toEqual({ mode: "skipped", ok: null, problems: [] });
   });
 
+  it("housekeeping: delegates-old is quiet with none, a note with the prune commands otherwise", async () => {
+    type Hk = {
+      housekeeping: { oldDelegates: { name: string; severity: string; remediation: string[] } };
+    };
+    const quiet = await runCliJson<Hk>(["doctor", "--json"], dbPath);
+    expect(quiet.data.housekeeping.oldDelegates).toMatchObject({
+      name: "delegates-old",
+      severity: "ok",
+      remediation: [],
+    });
+    const db = openDb({ path: dbPath });
+    try {
+      const { registerDelegateCall, finishDelegate } = await import("../src/delegates.js");
+      registerDelegateCall(db, {
+        callId: "c",
+        caller: "pi:s",
+        workstream: "scratch",
+        request: { text: "x", label: "c" },
+        state: "starting",
+      });
+      finishDelegate(db, "c", { outcome: "done", text: "VERDICT: CONFIRMED", author: "d" });
+      db.prepare(
+        "UPDATE tasks SET updated_at = '2020-01-01T00:00:00.000Z' WHERE kind = 'delegate'",
+      ).run();
+    } finally {
+      db.close();
+    }
+    const noted = await runCliJson<Hk>(["doctor", "--json"], dbPath);
+    expect(noted.exitCode, noted.stderr).toBeNull();
+    expect(noted.data.housekeeping.oldDelegates.remediation.join("\n")).toContain(
+      "mu delegates prune --yes",
+    );
+    const human = await runCli(["doctor"], dbPath);
+    expect(human.stdout).toMatch(
+      /delegates-old\s+: note 1 closed delegate task\(s\) older than 30 days/,
+    );
+    expect(human.stdout).toContain("mu delegates prune              # dry run");
+  });
+
   it("--deep runs quick_check and reports ok", async () => {
     const r = await runCliJson<DbData>(["doctor", "--deep", "--json"], dbPath);
     expect(r.exitCode, r.stderr).toBeNull();
