@@ -29,7 +29,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **The dashboard's notes drill draws each note under a header rule.** The
   rule shows `#n`, the kind in its colour (brief cyan, report green, verdict
   yellow), `pinned`, the author and the time. The content is indented under it,
-  and a `VERDICT:` line is green, red or yellow by its label.
+  and the note's first `VERDICT:` line is green for CONFIRMED, red for REFUTED
+  and yellow otherwise, read the way `parseVerdict` reads it (`VERDICT: <id>
+  CONFIRMED` included); a later `VERDICT:` line is quoted evidence and stays
+  plain.
 
 ### Fixed
 
@@ -38,8 +41,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   Each paragraph is now one line.
 - **A wave's settle entry no longer dumps the first wait's JSON.** Its snapshots
   predate the siblings' answers, so they showed calls as `running` that the wave
-  summary below listed as `done`. The wave summary stands alone; the JSON stays
-  when the wait carried a human need.
+  summary below listed as `done`. The wave summary stands alone, with the
+  waits' `notices` (a course check due) as `Notice:` lines; the JSON stays when
+  the wait carried a human need. A wave that is not all in (another event came
+  first, a failed wait, Esc) says so instead of "waited until the wave was in".
 
 ## [4.0.0] — 2026-10-28
 
