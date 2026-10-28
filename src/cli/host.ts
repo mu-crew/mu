@@ -70,11 +70,12 @@ export function cmdHostList(db: Db): void {
   }
   const held = new Map<string, number>();
   for (const c of listHostChannels(db)) held.set(c.host, (held.get(c.host) ?? 0) + 1);
-  const t = muTable({ head: ["HOST", "TRANSPORT", "DEFAULT REPO", "CHANNELS"] });
+  const t = muTable({ head: ["HOST", "TRANSPORT", "STOP", "DEFAULT REPO", "CHANNELS"] });
   for (const h of hosts) {
     t.push([
       h.name,
       h.transport,
+      h.stop ?? "-",
       h.repo ?? "-",
       `${held.get(h.name) ?? 0}/${h.max_sessions ?? "∞"}`,
     ]);

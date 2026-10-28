@@ -955,13 +955,9 @@ export async function checkHost(
   getHost(db, host);
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   const steps: HostCheckStep[] = [];
-  const warnings = sessionShellWarnings(getHost(db, host));
-  const lease = getHost(db, host).transport === "lease";
+  let warnings: string[] = [];
   // A template exited 3: the rest is skipped, as for an unreachable host.
   let handedBack = false;
-  // A lease job runs in a non-login shell (the starter's `sh -c`): a login-shell success says
-  // nothing about it, so the pi and extension steps run bare for a lease profile.
-  const login = (cmd: string): string => (lease ? cmd : `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`);
 
   await withHostChannel(
     db,
@@ -969,6 +965,14 @@ export async function checkHost(
     `check:${process.pid}`,
     async (profile, lease) => {
       const root = opts.root ?? profile.repo ?? undefined;
+      // Everything below follows the ADMITTED profile (admission re-reads it after the pane
+      // probes), never a read taken before: a profile that changed transport mid-probe would
+      // otherwise get the other transport's shell mode.
+      warnings = sessionShellWarnings(profile);
+      // A lease job runs in a non-login shell (the starter's `sh -c`): a login-shell success says
+      // nothing about it, so the pi and extension steps run bare for a lease profile.
+      const login = (cmd: string): string =>
+        profile.transport === "lease" ? cmd : `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`;
       if (profile.transport === "lease") steps.push(...leaseTemplateSteps(profile));
       // One remote command through `exec`; `good` turns a clean exit into a detail, or undefined.
       const step = async (

@@ -13,7 +13,7 @@ describe("ctlSocketPath", () => {
   it("hashes when the readable path is too long", () => {
     const p = ctlSocketPath("w".repeat(60), "a".repeat(60), "/Users/someone/.local/state/mu");
     expect(Buffer.byteLength(p)).toBeLessThanOrEqual(MAX_SOCK_PATH);
-    expect(p).toMatch(/\/sock\/h\/[0-9a-f]{16}\.sock$/);
+    expect(p).toMatch(/\/sock\/_h\/[0-9a-f]{16}\.sock$/);
   });
 
   it("distinguishes ws/agent splits", () => {

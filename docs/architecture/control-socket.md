@@ -12,7 +12,9 @@ dies with the pi process. Overview: [ARCHITECTURE.md](../ARCHITECTURE.md).
 `<state dir>/sock/<ws>/<agent>.sock`. The state dir is
 `dirname($MU_DB_PATH)` or the default. If the path exceeds 103 bytes
 (the macOS `sun_path` limit), it becomes
-`<state dir>/sock/h/<sha1(ws/agent)[:16]>.sock`.
+`<state dir>/sock/_h/<sha1(ws/agent)[:16]>.sock`. `_h` starts with `_`, which no workstream
+name can, so a hashed path never aliases a readable one. The carrier job file
+(`<state dir>/carrier/<ws>/<agent>.job`) and the remote socket follow the same rule.
 
 Nothing is stored. Spawn creates the directory (mode 0700), removes any
 stale socket file at the path, and injects the path as `MU_CTL_SOCK`

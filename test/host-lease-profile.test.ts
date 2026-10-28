@@ -238,7 +238,7 @@ describe("mu host add | list | show with a transport", () => {
     ...extra,
   ];
 
-  it("adds a lease profile; show and list print the transport, show prints the stop", async () => {
+  it("adds a lease profile; show and list print the transport and the stop", async () => {
     const a = await runCliJson(
       [...add(["--transport", "lease", "--stop", "x rm {job}"]), "--json"],
       dbPath,
@@ -247,7 +247,8 @@ describe("mu host add | list | show with a transport", () => {
     expect(a.data.host).toMatchObject({ transport: "lease", stop: "x rm {job}" });
     const list = await runCli(["host", "list"], dbPath);
     expect(list.stdout).toMatch(/TRANSPORT/);
-    expect(list.stdout).toMatch(/dev\s+│\s+lease\s+│/);
+    expect(list.stdout).toMatch(/STOP/);
+    expect(list.stdout).toMatch(/dev\s+│\s+lease\s+│\s+x rm \{job\}\s+│/);
     const show = await runCli(["host", "show", "dev"], dbPath);
     expect(show.stdout).toContain("transport lease");
     expect(show.stdout).toContain("stop   x rm {job}");

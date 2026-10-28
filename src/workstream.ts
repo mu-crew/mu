@@ -599,8 +599,8 @@ export async function teardownWorkstream(
   // behind) BEFORE the DELETE: the agent rows are how a retry finds the
   // sockets, so an interrupted unlink must leave them in place. Then reap
   // sock/<ws>/ only if empty, never recursively: hashed long paths
-  // share sock/h/ across workstreams, so a workstream named "h" must
-  // not take the others' sockets with it. A kept row keeps its socket.
+  // share sock/_h/ across workstreams, which is not a workstream directory, so it is
+  // never reaped here. A kept row keeps its socket.
   // Only for the incarnation that was asked about: a replacement registered
   // since owns the socket path now (its transaction check below then aborts).
   const sameRow = db.prepare(

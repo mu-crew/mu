@@ -15,9 +15,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { persistCarrierJob } from "../src/carrier-jobs.js";
 import { type Db, openDb } from "../src/db.js";
-import { addHost, checkHost } from "../src/hosts.js";
+import { addHost, bindHostChannel, checkHost, reserveHostChannel } from "../src/hosts.js";
 import { rmFixtureDir } from "./_fs.js";
-import { initGitRepo } from "./_git.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
@@ -26,6 +25,9 @@ let db: Db;
 let cmds: string;
 let stopRan: string;
 let oldPath: string | undefined;
+// The fast tier runs no real git: the repo step's `git -C <root> rev-parse` is answered by the
+// exec template itself (exit 0), every other command runs through a plain sh.
+let execT: string;
 
 type Step = { step: string; ok: boolean | null; detail: string };
 const stepsOf = (r: { steps: Step[] }) => r.steps.map((s) => [s.step, s.ok]);
@@ -35,9 +37,9 @@ beforeEach(() => {
   dbPath = join(dir, "mu.db");
   cmds = join(dir, "cmds");
   stopRan = join(dir, "stop-ran");
+  execT = `printf '%s\\n' {cmd} >> ${cmds}; case {cmd} in 'git -C'*) exit 0;; esac; sh -c {cmd}`;
   const bin = join(dir, "bin");
   mkdirSync(bin);
-  initGitRepo(dir);
   writeFileSync(
     join(bin, "pi"),
     '#!/bin/sh\nif [ "$1" = "--version" ]; then echo 0.99.1; elif [ "$1" = list ]; then echo "  npm:@mu-crew/mu"; fi\n',
@@ -50,7 +52,7 @@ beforeEach(() => {
     name: "lease",
     shell: "c --job-file {job_file} -L {local_sock}:{remote_sock} -- env {env} sh -c {cmd}",
     // Records every command it is handed, then runs it with a plain sh (a non-login shell).
-    exec: `printf '%s\\n' {cmd} >> ${cmds}; sh -c {cmd}`,
+    exec: execT,
     fetch: "true",
     repo: dir,
     max_sessions: 1,
@@ -87,6 +89,9 @@ describe("host check on a lease profile", () => {
     const handed = readFileSync(cmds, "utf8").trim().split("\n");
     expect(handed).toContain("pi --version");
     expect(handed).toContain("pi list");
+    expect(handed.some((c) => c.startsWith("git -C") && c.endsWith("rev-parse --git-dir"))).toBe(
+      true,
+    );
     expect(handed.join("\n")).not.toMatch(/-ilc|SHELL/);
   });
 
@@ -94,7 +99,7 @@ describe("host check on a lease profile", () => {
     addHost(db, {
       name: "sess",
       shell: "ssh -o ControlMaster=no -o ControlPath=none h {local_sock}:{remote_sock}",
-      exec: `printf '%s\\n' {cmd} >> ${cmds}; sh -c {cmd}`,
+      exec: execT,
       fetch: "true",
       repo: dir,
       max_sessions: null,
@@ -142,6 +147,62 @@ describe("host check on a lease profile", () => {
     process.env.PATH = "/usr/bin:/bin";
     const r = await checkHost(db, "lease");
     expect(r.steps.find((s) => s.step === "pi")).toMatchObject({ ok: false });
+  });
+});
+
+describe("host check follows the ADMITTED profile", () => {
+  // Another connection edits the profile while the pane probes run (admission re-reads it after).
+  const switchDuringProbe = (to: "lease" | "session") => {
+    const paneAlive = async (): Promise<boolean> => {
+      if (to === "lease") {
+        db.prepare(
+          "UPDATE host_profiles SET transport = 'lease', stop = 'echo {job}', shell = 'c --job-file {job_file} -L {local_sock}:{remote_sock} -- sh -c {cmd}' WHERE name = 'flip'",
+        ).run();
+      } else {
+        db.prepare(
+          "UPDATE host_profiles SET transport = 'session', stop = NULL, shell = 'ssh -o ControlMaster=no -o ControlPath=none h {local_sock}:{remote_sock}' WHERE name = 'flip'",
+        ).run();
+      }
+      return false;
+    };
+    return paneAlive;
+  };
+  const attachDead = async () => {
+    const old = await reserveHostChannel(db, "flip", "agent:x");
+    bindHostChannel(db, old, { agentId: 1, paneId: "%9" });
+  };
+  const flip = (transport: "session" | "lease") =>
+    addHost(db, {
+      name: "flip",
+      shell:
+        transport === "lease"
+          ? "c --job-file {job_file} -L {local_sock}:{remote_sock} -- sh -c {cmd}"
+          : "ssh -o ControlMaster=no -o ControlPath=none h {local_sock}:{remote_sock}",
+      exec: execT,
+      fetch: "true",
+      repo: dir,
+      max_sessions: null,
+      transport,
+      ...(transport === "lease" ? { stop: "echo {job}" } : {}),
+    });
+
+  it("session -> lease during the probe: pi runs bare, like the admitted lease", async () => {
+    flip("session");
+    await attachDead();
+    const r = await checkHost(db, "flip", { paneAlive: switchDuringProbe("lease") });
+    expect(r.steps.map((s) => s.step)).toContain("stop");
+    const handed = readFileSync(cmds, "utf8");
+    expect(handed).toContain("pi --version");
+    expect(handed).not.toMatch(/-ilc/);
+    expect(r.warnings).toEqual([]);
+  });
+
+  it("lease -> session during the probe: pi runs under the login shell", async () => {
+    flip("lease");
+    await attachDead();
+    const r = await checkHost(db, "flip", { paneAlive: switchDuringProbe("session") });
+    expect(r.steps.map((s) => s.step)).not.toContain("stop");
+    expect(readFileSync(cmds, "utf8")).toMatch(/-ilc/);
   });
 });
 

@@ -925,7 +925,7 @@ describe("the socket paths", () => {
     expect(remoteCtlSocketPath("big", "worker-1", 501)).toBe("/tmp/mu-501/big/worker-1.sock");
     const p = remoteCtlSocketPath("w".repeat(50), "a".repeat(50), 501);
     expect(Buffer.byteLength(p)).toBeLessThanOrEqual(MAX_SOCK_PATH);
-    expect(p).toMatch(/^\/tmp\/mu-501\/h\/[0-9a-f]{16}\.sock$/);
+    expect(p).toMatch(/^\/tmp\/mu-501\/_h\/[0-9a-f]{16}\.sock$/);
   });
 
   /** A socket file with no listener: what a dead forward leaves behind. */

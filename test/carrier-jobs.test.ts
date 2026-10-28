@@ -136,7 +136,7 @@ describe("job file path and the socket invariant", () => {
   it("is hashed past the same bound as a ctl socket, and stays a function of (ws, agent)", () => {
     const long = "/Users/someone/.local/state/mu-next/some/deep/state/dir";
     const p = carrierJobFilePath("w".repeat(30), "a".repeat(30), long);
-    expect(p).toMatch(/\/carrier\/h\/[0-9a-f]{16}\.job$/);
+    expect(p).toMatch(/\/carrier\/_h\/[0-9a-f]{16}\.job$/);
     expect(p).toBe(carrierJobFilePath("w".repeat(30), "a".repeat(30), long));
     expect(carrierJobFilePath("w".repeat(30), "b".repeat(30), long)).not.toBe(p);
     // The socket sibling hashes the same input: same 16 hex digits.
@@ -169,7 +169,7 @@ describe("job file path and the socket invariant", () => {
           const key = `${stateDir}\0${local}`;
           expect(remoteOf.get(key) ?? remote).toBe(remote);
           remoteOf.set(key, remote);
-          if (local.includes("/sock/h/")) hashed++;
+          if (local.includes("/sock/_h/")) hashed++;
           else readable++;
         }
       }
@@ -178,14 +178,42 @@ describe("job file path and the socket invariant", () => {
     expect(readable).toBeGreaterThan(0);
   });
 
+  it("a hashed path never aliases a valid (workstream, agent): `h` + a hash-looking agent", () => {
+    // The reviewer's case: ws "w"x32 / agent "worker-3"+"a"x24 hashes to fc1a869c81c2949e, which
+    // is itself a valid agent name under the valid workstream "h".
+    const stateDir = "/Users/someone/.local/state/mu-next";
+    const longWs = "w".repeat(32);
+    const longAgent = `worker-3${"a".repeat(24)}`;
+    const hashed = ctlSocketPath(longWs, longAgent, stateDir);
+    const hash = hashed.match(/([0-9a-f]{16})\.sock$/)?.[1] ?? "";
+    expect(hash).toBe("fc1a869c81c2949e");
+    for (const [ws, agent] of [
+      ["h", hash],
+      [longWs, longAgent],
+    ] as const) {
+      expect(ctlSocketPath(ws, agent, stateDir)).toBe(
+        ws === "h" ? `${stateDir}/sock/h/${hash}.sock` : hashed,
+      );
+    }
+    expect(ctlSocketPath("h", hash, stateDir)).not.toBe(hashed);
+    expect(carrierJobFilePath("h", hash, stateDir)).not.toBe(
+      carrierJobFilePath(longWs, longAgent, stateDir),
+    );
+    expect(remoteCtlSocketPath("h", hash, 501)).not.toBe(
+      remoteCtlSocketPath(longWs, longAgent, 501),
+    );
+    // A hashed remote socket is in a directory no workstream can be named.
+    expect(remoteCtlSocketPath("w".repeat(32), "a".repeat(60), 501)).toMatch(/\/mu-501\/_h\//);
+  });
+
   it("a hashed local socket can still pair with a readable remote: still one remote per (ws, agent)", () => {
     const ws = "w".repeat(20);
     const agent = "a".repeat(20);
     const deep = "/Users/someone/.local/state/mu-next/some/deep/state/dir/more";
-    expect(ctlSocketPath(ws, agent, deep)).toContain("/sock/h/");
+    expect(ctlSocketPath(ws, agent, deep)).toContain("/sock/_h/");
     expect(remoteCtlSocketPath(ws, agent, 501)).toBe(`/tmp/mu-501/${ws}/${agent}.sock`);
     // Another state dir (short): a readable local, the SAME remote for the same pair.
-    expect(ctlSocketPath(ws, agent, "/s")).not.toContain("/sock/h/");
+    expect(ctlSocketPath(ws, agent, "/s")).not.toContain("/sock/_h/");
     expect(remoteCtlSocketPath(ws, agent, 501)).toBe(remoteCtlSocketPath(ws, agent, 501));
   });
 });
