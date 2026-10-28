@@ -232,8 +232,12 @@ Use delegates when you only need the answer: reviewing someone's PR or
 a doc, a fact-check, a go/no-go. Findings stay in the answers and
 never enter your workstream's task graph. Each call's prompt and
 answer are a `scratch` task, which is in the ops log and syncs like any
-task; `mu workstream teardown scratch` hides them and `mu db forget
-scratch` deletes them.
+task. They pile up: `mu delegates prune` deletes the closed ones older
+than 30 days (`--older-than <days>`), dry run first, `--yes` to apply
+after a backup. It deletes only calls this machine made (the deletion
+syncs to peers). It keeps a task with edges and a refute check of a task
+still under `mu task auto`, and the verdicts stay on the judged tasks.
+`mu doctor` says when there are some to prune.
 
 Move to a workstream when the findings become work agents will fix, or
 the job has dependencies or several stages: see

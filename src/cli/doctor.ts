@@ -16,6 +16,7 @@ import { captureDoctorCheck } from "../capture.js";
 import { emitJson, injectedWorkstream } from "../cli.js";
 import { planCompact } from "../compact.js";
 import { CURRENT_SCHEMA_VERSION, type Db, defaultDbPath, EXPECTED_TABLES } from "../db.js";
+import { checkOldDelegates } from "../delegate-prune.js";
 import { checkDiskRecon, formatBytes, measureWorktreeUsage } from "../disk-recon.js";
 import {
   ctlExtensionDoctorCheck,
@@ -364,6 +365,14 @@ export async function cmdDoctor(
     console.log("");
     for (const line of dormant.remediation) console.log(`  ${line}`);
   }
+  const oldDelegates = checkOldDelegates(db);
+  console.log(
+    `  ${oldDelegates.name.padEnd(16)} : ${oldDelegates.remediation === undefined ? pc.green("ok") : pc.yellow("note")} ${pc.dim(oldDelegates.detail)}`,
+  );
+  if (oldDelegates.remediation !== undefined) {
+    console.log("");
+    for (const line of oldDelegates.remediation) console.log(`  ${line}`);
+  }
 
   // ─ Disk ↔ DB reconciliation
   //
@@ -639,6 +648,15 @@ export async function cmdDoctorJson(
       workstreams: findDormantWorkstreams(db, { currentWorkstream }),
       thresholds: { finishedIdleDays: FINISHED_IDLE_DAYS, abandonedIdleDays: ABANDONED_IDLE_DAYS },
     },
+    oldDelegates: (() => {
+      const h = checkOldDelegates(db);
+      return {
+        name: h.name,
+        severity: h.severity,
+        detail: h.detail,
+        remediation: h.remediation ?? [],
+      };
+    })(),
   };
   const worktreeUsage = opts.disk === true ? measureWorktreeUsage(db) : null;
 

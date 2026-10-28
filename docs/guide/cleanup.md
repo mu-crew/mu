@@ -110,6 +110,14 @@ It skips your current workstream, `scratch`, and any workstream with a
 live agent or a worktree. Teardown hides the plan, not the code: no
 commit or checkout is touched.
 
+The same section counts closed delegate tasks older than 30 days
+(`delegates-old`). Prune them:
+
+```bash
+mu delegates prune         # dry run: what goes, and what is kept
+mu delegates prune --yes   # backs up beside the DB first; irreversible
+```
+
 ## Free disk space
 
 ```bash
