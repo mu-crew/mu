@@ -46,6 +46,23 @@ promotion criteria. Its units have merged: the contract as built is
 in the [CHANGELOG](../CHANGELOG.md). Nothing beyond them is approved;
 anything else follows the criteria above.
 
+## Approved: the lease transport (stage b)
+
+A remote worker on a session-capped host (`MaxSessions 1`, the Meta devvm)
+holds the host's only session channel for its whole life, so every other
+`ssh dev` (murmur's collector, `git fetch`, an operator) is refused. Promotion
+met: the friction is the 2026-10-28 session plus the murmur collect starving
+(2026-09-28) and the `t3-dev` workaround, more than twice; the design adds no
+channel kind or recovery column; the source is about 250 LOC. The user asked
+for both specs to be implemented, which is the human decision that promotes it
+([spec](specs/2026-10-28-lease-transport.md)).
+
+Built in units: the profile (`--transport lease`, `--stop`, `{job_file}`,
+`carrier_jobs`, `runStop`; done), then the spawn handshake, then close and
+`doctor`. It merges to `main` as it lands but does not ship (release,
+publish, announce) before mule's `--lease`, `forward`, `exec` and the `rm`
+stop contract are released.
+
 ## Candidates
 
 Each has a design but no proven friction yet. Most come from the prior

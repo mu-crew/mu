@@ -15,17 +15,27 @@ export const CTL_SOCK_ENV = "MU_CTL_SOCK";
 export const MAX_SOCK_PATH = 103;
 
 /** `<dir>/<ws>/<agent>.sock`, or `<dir>/h/<hash>.sock` past MAX_SOCK_PATH. */
-function sockPathUnder(dir: string, workstream: string, agent: string): string {
-  const readable = join(dir, workstream, `${agent}.sock`);
+function sockPathUnder(dir: string, workstream: string, agent: string, ext = "sock"): string {
+  const readable = join(dir, workstream, `${agent}.${ext}`);
   if (Buffer.byteLength(readable) <= MAX_SOCK_PATH) return readable;
   const h = createHash("sha1").update(`${workstream}/${agent}`).digest("hex").slice(0, 16);
-  return join(dir, "h", `${h}.sock`);
+  return join(dir, "h", `${h}.${ext}`);
 }
 
 export function ctlSocketPath(workstream: string, agent: string, stateDir?: string): string {
   const dbPath = process.env.MU_DB_PATH;
   const base = stateDir ?? (dbPath ? dirname(dbPath) : defaultStateDir());
   return sockPathUnder(join(base, "sock"), workstream, agent);
+}
+
+/**
+ * The file a lease carrier writes its job handle to: `<state dir>/carrier/<ws>/<agent>.job`,
+ * hashed past the same bound as a ctl socket (`carrier/h/<hash>.job`). Derived, never stored.
+ */
+export function carrierJobFilePath(workstream: string, agent: string, stateDir?: string): string {
+  const dbPath = process.env.MU_DB_PATH;
+  const base = stateDir ?? (dbPath ? dirname(dbPath) : defaultStateDir());
+  return sockPathUnder(join(base, "carrier"), workstream, agent, "job");
 }
 
 /**

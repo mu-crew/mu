@@ -136,7 +136,9 @@ mu host show dev              # templates and the holders of its channels
 ```
 
 - Placeholders: `{env}` (the five `MU_*` identity variables only), `{cmd}`,
-  `{local_sock}`, `{remote_sock}`, `{cwd}`. Each value is one quoted word and
+  `{local_sock}`, `{remote_sock}`, `{cwd}`; a lease profile adds `{job_file}`
+  (its `shell`, exactly once) and `{job}` (its `stop`, required). A name valid
+  in only some fields is refused in the others. Each value is one quoted word and
   is exactly the text you passed, also inside your own `"..."` or `'...'`.
   A template that hands command text to a second shell (ssh's remote login
   shell) says so per placeholder: `{cmd:sh}`, `{cwd:sh}` quote the value for
@@ -153,8 +155,58 @@ mu host show dev              # templates and the holders of its channels
   through a master is bound by the master, outlives the pane, and is never
   re-bound, so the next spawn of that name gets no socket. `host check` warns
   when the template lacks either option. On a session-capped host use a
-  lease (forthcoming: [the spec](../specs/2026-10-28-lease-transport.md)).
+  lease ([below](#session-capped-hosts)).
+- `mu host show` and `list` print the transport (`session` or `lease`) and,
+  for a lease, the `stop` template.
 - `--max-sessions N` counts every channel mu holds to the host. At the cap mu
   refuses with one line naming the holder.
 - `host check --agent <name> -w <ws>` also probes that agent's forwarded
-  control socket.
+  control socket, and on a lease agent reports its recorded job handle.
+
+## Session-capped hosts
+
+Some hosts allow one ssh session per connection (`MaxSessions 1`, the Meta
+devvm). A `session` worker's pane holds that session for the worker's whole
+life, so every other `ssh` to the host (the murmur collector, `git fetch`, you)
+is refused, and it shows as a misleading `Permission denied`. A `lease` profile
+fixes that: the pane runs a local **carrier** that owns a detached remote job on
+its own connection, so no session is held.
+
+```bash
+mu host init dev --mule   # prints the starter below; runs nothing
+mu host add dev --transport lease \
+  --shell 'mule run --host dev --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}' \
+  --exec  'mule exec --host dev -- sh -c {cmd}' \
+  --stop  'mule rm --host dev {job}' \
+  --fetch 'git fetch ssh://dev{cwd} HEAD'
+mu host check dev --root '~/repo'
+```
+
+- The `shell` template must contain `{job_file}` once, `{local_sock}` and
+  `{remote_sock}`: the carrier writes the job handle to the file, and mu records
+  it in `carrier_jobs` (machine-local; `mu sql "SELECT * FROM carrier_jobs"`).
+  `--stop` must contain `{job}`, and must be idempotent: exit 0 for a job that
+  already ended. `{env}` is refused there, `{cwd}` is always `.`.
+- `local_sock` determines `remote_sock`: both derive from (workstream, agent),
+  so a carrier's forward table never maps one local socket to two remote ones.
+- A lease pane holds no host channel, so `--max-sessions` counts only what mu
+  opens itself (`exec`, `fetch`, `stop`, `check`), and `collect` works while a
+  lease worker runs.
+- Why `--fetch` stays plain ssh: a fetch is a bulk transfer, and the carrier's
+  channel is never lent to one.
+- Why a session template must not ride a shared master: a `-L` asked of a
+  control master is bound by the master, not by the client, and outlives the
+  pane. mu then deletes the socket file but the master keeps the listener; the
+  next spawn of that name asks for the same forward, ssh exits 0 and no file
+  appears (`ctl: missing`, for that name, for good). A lease carrier binds and
+  verifies its own forward; a session template keeps `ControlMaster=no
+  ControlPath=none`.
+- mule jobs run in a non-login shell: a host that finds `pi` only through login
+  files edits `sh -c` to `zsh -ilc`, or fixes `PATH` in `.bashrc`. `host check`
+  runs `pi` without a login shell on a lease profile for that reason.
+- An exit 3 from any host template (`stop` included) is a hand-back: stop and
+  ask a human. mu never retries it.
+
+The spawn handshake (`agent spawn --host` on a lease profile), close and
+`doctor` land in the next units; the profile alone is stored and checked today.
+Spec: [lease transport](../specs/2026-10-28-lease-transport.md).

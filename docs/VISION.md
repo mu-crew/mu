@@ -126,7 +126,7 @@ mu never infers agent state from pane text. Each state source reports it:
 
 | Agent | Send, abort, wait | State |
 | --- | --- | --- |
-| pi (any backend, local or remote over `ssh -L`) | control socket, exact | control socket |
+| pi (any backend, local or remote over `ssh -L` or a carrier's forward) | control socket, exact | control socket |
 | other CLI on herdr | mux | herdr |
 | other CLI on tmux | none: send refused | murmur |
 

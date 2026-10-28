@@ -4,7 +4,7 @@
 // enables WAL + foreign keys, applies the schema idempotently, and
 // exposes the live Database handle.
 //
-// Schema (v13; EXPECTED_TABLES below is the exact list, 26 tables), by group:
+// Schema (v13; EXPECTED_TABLES below is the exact list, 27 tables), by group:
 //   - entity (portable: they sync): workstreams, tasks, task_edges, task_notes.
 //     tasks carries substate (status qualifier; a composite FK
 //     (status, substate) -> task_substates, DEFERRABLE INITIALLY DEFERRED,
@@ -14,7 +14,7 @@
 //     collected_head), worktrees, task_auto, delegate_calls, human_needs,
 //     wait_cursors, wait_registrations, wait_resumes, wait_action_receipts,
 //     agent_settles, spawn_receipts, host_profiles, host_channels,
-//     remote_recovery
+//     remote_recovery, carrier_jobs
 //   - ops log:  ops (the single append-only record of every change:
 //               VISION.md § 2b)
 //   - sync:     sync_peers (per-peer watermarks),
@@ -637,6 +637,10 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   // The template's process group, recorded before it runs (hosts.ts).
   ["host_channels", "pgid", "INTEGER"],
   ["host_channels", "pgid_start", "TEXT"],
+  // A host profile's transport ('session' | 'lease', validated in addHost: SQLite adds no CHECK
+  // in place) and a lease profile's stop template (hosts.ts).
+  ["host_profiles", "transport", "TEXT NOT NULL DEFAULT 'session'"],
+  ["host_profiles", "stop", "TEXT"],
 ];
 
 function hasColumn(db: Db, table: string, column: string): boolean {
@@ -705,10 +709,11 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 26 entries. */
+ *  additive, and an older mu ignores it). Sorted; exactly 27 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
+  "carrier_jobs",
   "delegate_calls",
   "host_channels",
   "host_profiles",
@@ -828,6 +833,10 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     outlive the agent it names.
  *    remote_recovery  a deleted remote worker row's worktree, written by
  *                     triggers (src/db-recovery.ts). No FK; rebuild loses it.
+ *    carrier_jobs     a lease agent's job handle and the stop template it was
+ *                     recorded with (src/carrier-jobs.ts). No FK, trigger or
+ *                     op: only a successful stop (or `--abandon-job`) deletes
+ *                     it; rebuild loses it.
  *    ops              see below — the carrier, not cargo.
  *
  *  `ops` is listed here deliberately rather than omitted. It is not
@@ -845,6 +854,7 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
 export const MACHINE_LOCAL_TABLES = [
   "agent_settles",
   "agents",
+  "carrier_jobs",
   "delegate_calls",
   "host_channels",
   "host_profiles",
@@ -1305,7 +1315,23 @@ CREATE TABLE IF NOT EXISTS host_profiles (
   exec         TEXT NOT NULL,
   fetch        TEXT NOT NULL,
   repo         TEXT,                           -- default remote repo for spawns without --root; NULL: none
-  max_sessions INTEGER CHECK (max_sessions > 0)
+  max_sessions INTEGER CHECK (max_sessions > 0),
+  transport    TEXT NOT NULL DEFAULT 'session', -- 'session' | 'lease' (validated in addHost, no CHECK: ADDED_COLUMNS cannot add one)
+  stop         TEXT                            -- lease only: the template that ends a job given its handle ({job}); NULL for session
+);
+
+-- carrier_jobs: the handle of the remote job a lease agent's carrier dispatched
+-- (machine-local). One row per agent incarnation, no FK, no trigger, no op: agent
+-- deletion never touches it. Deleted only after a successful stop (or an explicit
+-- abandon). 'host_stop' is the stop template as it was when the handle was recorded.
+CREATE TABLE IF NOT EXISTS carrier_jobs (
+  agent_id   INTEGER PRIMARY KEY,
+  workstream TEXT,
+  name       TEXT,
+  host       TEXT,
+  job        TEXT NOT NULL,
+  host_stop  TEXT NOT NULL,
+  recorded_at TEXT
 );
 
 -- host_channels: the connection slots of a host (machine-local). One row

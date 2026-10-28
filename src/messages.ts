@@ -323,6 +323,14 @@ export const MESSAGES = {
     `host ${host} check failed: ${failed.join(", ")}`,
   "host.handback": (host: string, field: string, detail: string) =>
     `host ${host}: its ${field} template exited 3, a hand-back (a human must act, e.g. a hardware key)${detail === "" ? "" : `: ${detail}`}. Do not retry or ssh yourself: stop and ask`,
+  "carrier.stop_refused": (host: string, handle: string, why: string) =>
+    why === "stop-changed"
+      ? `host ${host}: the stop template changed since job ${handle} was recorded; stop it by hand with the old template, or mu agent close <name> --abandon-job`
+      : why === "no-host"
+        ? `host ${host} has no profile; job ${handle} was not stopped: stop it by hand, or mu agent close <name> --abandon-job`
+        : `job handle ${JSON.stringify(handle)} on host ${host} is not a valid handle (A-Z a-z 0-9 . _ : @ -, 1 to 128 bytes); nothing was run`,
+  "carrier.stop_failed": (host: string, handle: string, detail: string) =>
+    `host ${host}: stopping job ${handle} failed${detail === "" ? "" : `: ${detail}`}; its handle is kept`,
   "host.channel_lost": (host: string, holder: string) => `host ${host}: channel ${holder} was lost`,
   "remote.prepare": (host: string, what: string, detail: string) =>
     `host ${host}: ${what}${detail === "" ? "" : `: ${detail}`}`,
