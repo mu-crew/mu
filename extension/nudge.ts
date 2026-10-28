@@ -434,7 +434,8 @@ const noDelivered: SettleDelivered = () => {};
  * a human stop is open (ready events are still shown: no blocking wait, no
  * continue), the wait failed (shown), or the user cancelled it (Esc,
  * typed input, a dialog, shutdown). A heartbeat timeout with work still owed waits
- * again. An event continues the turn with the wait's own result, which survives a
+ * again. An event continues the turn with the wait's own result (a wave's summary
+ * replaces it: its snapshots predate the siblings' answers), which survives a
  * late hold (it was consumed). A delegate event adds that call's report; one of a
  * wave first waits for the rest of the wave (refused calls are listed, never
  * waited on) and adds ONE summary.
@@ -492,7 +493,7 @@ export function registerNudge(
       callId: string,
       shown: Set<string>,
       first: Record<string, unknown>,
-    ): Promise<{ blocks: string[]; stop: boolean }> => {
+    ): Promise<{ blocks: string[]; stop: boolean; wave?: string }> => {
       shown.add(callId);
       const c = await call(callId);
       if (c === undefined)
@@ -552,7 +553,7 @@ export function registerNudge(
       const bodies = await Promise.all(
         rows.filter((x) => shown.has(x.callId)).map((x) => answerBlock(mu, x, WAVE_REPORT_CAP)),
       );
-      return { blocks: [waveSummary(wave, rows), ...bodies, ...after], stop };
+      return { blocks: [waveSummary(wave, rows), ...bodies, ...after], stop, wave };
     };
     /**
      * The settle under an open human stop: drain the events already ready (each
@@ -632,15 +633,16 @@ export function registerNudge(
           const got = callId === undefined ? undefined : await answers(callId, shown, d);
           const blocks = got?.blocks ?? [];
           if (shown.size > 0) delivered([...shown]);
-          const stop =
-            (Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0) || got?.stop === true;
-          const text = [
-            `[mu] ${rule}`,
-            "",
-            `Work you own is still running, so the settle ran \`mu ${SETTLE_WAIT_ARGS.join(" ")}\` for you. Its result:`,
-            JSON.stringify(d),
-            ...blocks.flatMap((b) => ["", b]),
-          ].join("\n");
+          const humanStop = Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0;
+          const stop = humanStop || got?.stop === true;
+          const ran = `Work you own is still running, so the settle ran \`mu ${SETTLE_WAIT_ARGS.join(" ")}\` for you.`;
+          // A wave's summary supersedes the first wait's result: its snapshots predate the
+          // siblings' answers (they would still read "running"). Kept when it carries a human need.
+          const head =
+            got?.wave !== undefined && !humanStop
+              ? [`${ran} It waited until wave ${got.wave} was in:`]
+              : [`${ran} Its result:`, JSON.stringify(d)];
+          const text = [`[mu] ${rule}`, "", ...head, ...blocks.flatMap((b) => ["", b])].join("\n");
           return { entries: [entry(text)], ...(stop ? {} : { continue: true }), receipt: true };
         }
       })();

@@ -1634,6 +1634,10 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
         "Wave w: 2/3 CONFIRMED, 1 REFUTED, 0 UNVERIFIED, 0 pending, 0 refused.",
       );
       for (const n of [1, 2, 3]) expect(text).toContain(`- crew/c${n}: `);
+      // The first wait's stale result (siblings still "running") is not dumped.
+      expect(text).toContain("It waited until wave w was in:");
+      expect(text).not.toContain("Its result:");
+      expect(text).not.toContain('"snapshots"');
       expect(t.settleWaits).toHaveLength(0);
       await t.p.fire("agent_settled", { aborted: false });
       await new Promise((x) => setImmediate(x));

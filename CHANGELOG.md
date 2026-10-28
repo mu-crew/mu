@@ -29,6 +29,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **The keep-driving nudge no longer shows ragged line breaks.** The rule quoted
   from SKILL.md kept the source's hard wraps, which the TUI then wrapped again.
   Each paragraph is now one line.
+- **A wave's settle entry no longer dumps the first wait's JSON.** Its snapshots
+  predate the siblings' answers, so they showed calls as `running` that the wave
+  summary below listed as `done`. The wave summary stands alone; the JSON stays
+  when the wait carried a human need.
 
 ## [4.0.0] — 2026-10-28
 
