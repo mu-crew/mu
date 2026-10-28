@@ -66,6 +66,8 @@ export interface RemoteSite {
   cwd: string;
   /** The commit a worktree was made at; null without `--worktree`. */
   base: string | null;
+  /** The absolute toplevel of the repo the worktree was added to; null without `--worktree`. */
+  repo: string | null;
 }
 
 /** The file in a remote worktree's own git dir that says mu's prepare made it (`git worktree remove` takes it along). */
@@ -115,10 +117,25 @@ export async function prepareRemote(
     cwd?: string;
     /** May a leftover at the path be reclaimed (false while a recovery record names it). */
     reclaim?: boolean;
+    /** The remote repo: the worktree is added to it, and it is the default cwd without one. */
+    root?: string;
   },
 ): Promise<RemoteSite> {
-  const root = remotePathWord(profile.repo);
-  const answer = `printf 'MU_WT %s %s\\n' "$base" "$(cd "$wt" && pwd -P)"`;
+  if (opts.worktree && opts.root === undefined) {
+    throw new RemotePrepareError(
+      profile.name,
+      "creating the remote worktree failed",
+      `host ${profile.name} has no default repo: pass --root <remote repo path>`,
+    );
+  }
+  const root = remotePathWord(opts.root ?? "~");
+  // The root as an absolute physical path (bare repos too: no --show-toplevel), hex-encoded so
+  // no byte of it (a trailing space, a newline) is lost to the line parse. The row records it,
+  // and close, rollback and recovery run against it.
+  const answer = [
+    `r=$(cd "$root" && pwd -P) || exit 5`,
+    `printf 'MU_REPO %s\\nMU_WT %s %s\\n' "$(printf '%s' "$r" | od -An -v -tx1 | tr -d ' \\n')" "$base" "$(cd "$wt" && pwd -P)"`,
+  ].join("\n");
   const body = opts.worktree
     ? [
         `root=${root}`,
@@ -133,13 +150,15 @@ export async function prepareRemote(
         `gd=$(git -C "$wt" rev-parse --absolute-git-dir) && : > "$gd/${PREPARED_MARK}" || undo`,
         answer,
       ].join("\n")
-    : `cd ${remotePathWord(opts.cwd ?? profile.repo)} && printf 'MU_CWD %s\\n' "$(pwd -P)"`;
+    : `cd ${remotePathWord(opts.cwd ?? opts.root ?? "~")} && printf 'MU_CWD %s\\n' "$(pwd -P)"`;
   const r = await runLeasedTemplate(
     db,
     lease,
     profile,
     "exec",
-    { cmd: script(body), cwd: profile.repo },
+    // `.`, not `~`, without a repo: a template's `cd {cwd:sh}` stays where the login shell
+    // started (a quoted `~` never expands); the script itself resolves --cwd and "$HOME".
+    { cmd: script(body), cwd: opts.root ?? "." },
     REMOTE_PREPARE_TIMEOUT_MS,
   );
   const what = opts.worktree
@@ -166,17 +185,32 @@ export async function prepareRemote(
   }
   const lines = r.stdout.split("\n").map((l) => l.trim());
   if (opts.worktree) {
+    const repo = decodeRepo(
+      [...lines]
+        .reverse()
+        .find((l) => /^MU_REPO [0-9a-f]+$/.test(l))
+        ?.slice("MU_REPO ".length),
+    );
     for (const l of lines.reverse()) {
       const m = /^MU_WT ([0-9a-f]{40,64}) (\/.+)$/.exec(l);
-      if (m?.[1] !== undefined && m[2] !== undefined) return { cwd: m[2], base: m[1] };
+      if (m?.[1] !== undefined && m[2] !== undefined && repo !== undefined) {
+        return { cwd: m[2], base: m[1], repo };
+      }
     }
   } else {
     for (const l of lines.reverse()) {
       const m = /^MU_CWD (\/.+)$/.exec(l);
-      if (m?.[1] !== undefined) return { cwd: m[1], base: null };
+      if (m?.[1] !== undefined) return { cwd: m[1], base: null, repo: null };
     }
   }
   throw new RemotePrepareError(profile.name, what, `the host's answer named no path${lost}`);
+}
+
+/** The hex-encoded absolute path of a `MU_REPO` line, or undefined when it is not one. */
+function decodeRepo(hex: string | undefined): string | undefined {
+  if (hex === undefined || hex.length % 2 !== 0) return undefined;
+  const path = Buffer.from(hex, "hex").toString("utf8");
+  return path.startsWith("/") ? path : undefined;
 }
 
 /**
@@ -270,7 +304,7 @@ function quiescenceLines(probe: { proc: string; lsof: string }, force = false): 
  * The close rule for a remote worktree `spawn --host --worktree` made, run
  * AFTER the agent's pane is dead (the caller frees the channel first; at cap 1
  * the pane held it): under one lease, one exec observes the state (clean or
- * dirty, HEAD, and that the path is still a worktree of the profile's repo),
+ * dirty, HEAD, and that the path is still a worktree of the repo the row recorded),
  * the rule is applied here, and a second exec removes WITHOUT --force.
  *
  * No git lock fences every ref backend (reftable ignores HEAD.lock), so the
@@ -291,7 +325,7 @@ export async function closeRemoteWorktree(
   db: Db,
   agent: Pick<
     AgentRow,
-    "name" | "workstreamName" | "host" | "cwd" | "base" | "collectedHead" | "incarnation"
+    "name" | "workstreamName" | "host" | "cwd" | "base" | "collectedHead" | "incarnation" | "repo"
   >,
   opts: {
     keepBranch?: boolean;
@@ -308,8 +342,8 @@ export async function closeRemoteWorktree(
     force?: boolean;
   } = {},
 ): Promise<ReleasedWorktree> {
-  const { name, workstreamName: ws, host, cwd: path, base, collectedHead } = agent;
-  if (host === null || path === null || base === null) {
+  const { name, workstreamName: ws, host, cwd: path, base, collectedHead, repo } = agent;
+  if (host === null || path === null || base === null || repo === null) {
     throw new Error(say("remote.no_worktree", name));
   }
   const asidePath = asideOf(path, agent.incarnation);
@@ -323,7 +357,7 @@ export async function closeRemoteWorktree(
     `close:${ws}/${name}`,
     async (profile, lease) => {
       opts.checkProfile?.(profile);
-      const root = remotePathWord(profile.repo);
+      const root = shellQuote(repo);
       const wt = shellQuote(path);
       const aside = shellQuote(asidePath);
       const run = async (body: string): Promise<{ out: string; why: string }> => {
@@ -332,7 +366,7 @@ export async function closeRemoteWorktree(
           lease,
           profile,
           "exec",
-          { cmd: script(body), cwd: profile.repo },
+          { cmd: script(body), cwd: repo },
           REMOTE_PREPARE_TIMEOUT_MS,
         );
         if (r.exitCode === null) refuse("unreadable", `host ${host} timed out`);

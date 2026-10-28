@@ -44,7 +44,7 @@ export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
     shell: opts.shell,
     exec: opts.exec,
     fetch: opts.fetch,
-    repo: opts.repo,
+    repo: opts.repo ?? null,
     max_sessions: opts.maxSessions ?? null,
   });
   if (isJsonMode()) {
@@ -66,9 +66,9 @@ export function cmdHostList(db: Db): void {
   }
   const held = new Map<string, number>();
   for (const c of listHostChannels(db)) held.set(c.host, (held.get(c.host) ?? 0) + 1);
-  const t = muTable({ head: ["HOST", "REPO", "CHANNELS"] });
+  const t = muTable({ head: ["HOST", "DEFAULT REPO", "CHANNELS"] });
   for (const h of hosts) {
-    t.push([h.name, h.repo, `${held.get(h.name) ?? 0}/${h.max_sessions ?? "∞"}`]);
+    t.push([h.name, h.repo ?? "-", `${held.get(h.name) ?? 0}/${h.max_sessions ?? "∞"}`]);
   }
   console.log(t.toString());
 }
@@ -81,7 +81,7 @@ export function cmdHostShow(db: Db, name: string): void {
     return;
   }
   console.log(
-    `${pc.bold(host.name)}  repo ${host.repo}  max-sessions ${host.max_sessions ?? "none"}`,
+    `${pc.bold(host.name)}  default repo ${host.repo ?? "-"}  max-sessions ${host.max_sessions ?? "none"}`,
   );
   for (const f of ["shell", "exec", "fetch"] as const) console.log(`  ${f.padEnd(6)} ${host[f]}`);
   console.log(
@@ -117,7 +117,6 @@ export function cmdHostInit(name: string, opts: { ssh?: boolean }): void {
     `--shell ${shellQuote(s.shell)}`,
     `--exec ${shellQuote(s.exec)}`,
     `--fetch ${shellQuote(s.fetch)}`,
-    "--repo '<remote repo path>'",
     "--max-sessions 1",
   ].join(" \\\n  ");
   if (isJsonMode()) {
@@ -132,13 +131,16 @@ export function cmdHostInit(name: string, opts: { ssh?: boolean }): void {
 export async function cmdHostCheck(
   db: Db,
   name: string,
-  opts: { agent?: string; workstream?: string },
+  opts: { agent?: string; workstream?: string; root?: string },
 ): Promise<void> {
   const agent =
     opts.agent === undefined
       ? undefined
       : { name: opts.agent, workstream: await resolveWorkstream(opts.workstream) };
-  const report = await checkHost(db, name, agent === undefined ? {} : { agent });
+  const report = await checkHost(db, name, {
+    ...(agent !== undefined ? { agent } : {}),
+    ...(opts.root !== undefined ? { root: opts.root } : {}),
+  });
   if (isJsonMode()) {
     if (!report.ok) throw failureWithData(failedError(report), report);
     emitJson(report);
@@ -163,7 +165,7 @@ export interface HostAddOptions {
   shell: string;
   exec: string;
   fetch: string;
-  repo: string;
+  repo?: string;
   maxSessions?: number;
 }
 
@@ -181,7 +183,10 @@ export function wireHostCommands(program: Command): void {
     .requiredOption("--shell <template>", "pane command template (opens the remote shell)")
     .requiredOption("--exec <template>", "template that runs one remote command ({cmd})")
     .requiredOption("--fetch <template>", "local template that fetches commits home ({cwd})")
-    .requiredOption("--repo <path>", "the repository's path on the host")
+    .option(
+      "--repo <path>",
+      "default remote repo for `agent spawn --host` without --root (a profile names a machine, not a repo)",
+    )
     .option(
       "--max-sessions <n>",
       "cap on channels mu holds to this host at once (panes, --exec, --fetch)",
@@ -227,13 +232,18 @@ export function wireHostCommands(program: Command): void {
   host
     .command("check <name>")
     .description(
-      "Run the profile's --exec under one channel: host answers, repo is git, pi runs, `pi list` names mu. --agent also probes that agent's forwarded control socket. Reports each failure, retries nothing; exit 5 if a step fails.",
+      "Run the profile's --exec under one channel: host answers, the repo (--root, else the default) is git, pi runs, `pi list` names mu. --agent also probes that agent's control socket. Exit 5 if a step fails; retries nothing.",
     )
     .option("--agent <name>", "also probe this agent's control socket (the forward rides its pane)")
+    .option("--root <path>", "the remote repo the repo step checks (default: the profile's)")
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string) {
-      const opts = (this as Command).optsWithGlobals() as { agent?: string; workstream?: string };
+      const opts = (this as Command).optsWithGlobals() as {
+        agent?: string;
+        workstream?: string;
+        root?: string;
+      };
       return handle((db) => cmdHostCheck(db, name, opts), this as Command)();
     });
 }

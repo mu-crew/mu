@@ -319,6 +319,28 @@ describe("no usable record is never success", () => {
   });
 });
 
+describe("the result read never depends on a directory", () => {
+  it("a gate whose command removed its own cwd still reports and cleans, through a {cwd} exec", async () => {
+    const work = join(dir, "work");
+    mkdirSync(work);
+    addHost(db, {
+      name: "cwdexec",
+      shell: `HOME='${home}' /bin/sh -c {cmd}`,
+      // A template that enters {cwd} first, like `ssh h 'cd {cwd:sh} && ...'`.
+      exec: `cd {cwd} && HOME='${home}' /bin/sh -c {cmd}`,
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    const a = await spawnGate({ host: "cwdexec", cwd: work, command: `rmdir '${work}'; exit 23` });
+    const token = a.gateToken as string;
+    expect(existsSync(work)).toBe(false);
+    expect(await readGate(db, agentRow())).toEqual({ kind: "exited", code: 23 });
+    expect(await cleanGateResult(db, agentRow())).toBe(true);
+    expect(existsSync(join(home, ".local/state/mu-next/remote-gates", token))).toBe(false);
+  });
+});
+
 describe("the channel (max-sessions 1)", () => {
   it("the running gate holds the only channel; a proven exit frees it BEFORE the result read", async () => {
     // Pane still running: attached to the one channel, nothing read.

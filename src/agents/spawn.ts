@@ -285,7 +285,8 @@ export interface SpawnAgentOptions {
    *  here; `cwd` and `worktree` name REMOTE paths (the worktree is made by the
    *  profile's `exec`). One channel is held from before the first remote
    *  command until the pane dies. Refused on a mux that cannot run a shell
-   *  command (herdr), and with `root` (a local repo). */
+   *  command (herdr). With `host`, `root` is a REMOTE repo (default the
+   *  profile's `repo`); a `worktree` needs one of them. */
   host?: string;
   /** Run the control-socket handshake for pi agents (default true).
    *  `false` skips it and reports `ctl: "skipped"`. */
@@ -543,7 +544,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   const gateToken = isCommandGate(opts) ? newGateToken() : undefined;
   if (gateToken !== undefined && opts.worktree) {
     throw new HostProfileError(
-      "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in the profile's repo or --cwd",
+      "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in --cwd, else the profile's default repo",
     );
   }
   const command = opts.command ?? (profile ? cli : resolved.command);
@@ -605,6 +606,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           name: opts.name,
           worktree: false,
           ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+          ...remoteRoot(opts, profile),
         });
     } else if (opts.worktree) {
       staged = await prestageWorktree(db, opts, cli, spawner);
@@ -956,8 +958,8 @@ export interface StagedWorktree {
   createdAt: string;
   /** The placeholder row's incarnation: finalize and rollback act on it only. */
   incarnation: number;
-  /** Set for a worktree on a REMOTE host (`path` is a remote path, `root` the profile's repo
-   *  there): rollback removes it through the profile's `exec`, never through the local registry. */
+  /** Set for a worktree on a REMOTE host (`path` is a remote path, `root` the repo
+   *  there, absolute): rollback removes it through the profile's `exec`, never through the local registry. */
   host?: string;
 }
 
@@ -1052,13 +1054,19 @@ async function prestageLocked(
   }
 }
 
+/** The remote repo of a `--host` spawn: `--root`, else the profile's default. */
+function remoteRoot(opts: SpawnAgentOptions, profile: HostProfile): { root?: string } {
+  const root = opts.root ?? profile.repo ?? undefined;
+  return root === undefined ? {} : { root };
+}
+
 /** The profile `--host` names, once the spawn is known to be runnable on it. Nothing is touched. */
 async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise<HostProfile> {
   const host = opts.host ?? "";
   const profile = getHost(db, host);
-  if (opts.root !== undefined) {
+  if (opts.worktree && opts.root === undefined && profile.repo === null) {
     throw new HostProfileError(
-      "--root names a local repo and cannot be used with --host (the worktree is made in the profile's --repo)",
+      `host ${host} has no default repo: pass --root <remote repo path> with --worktree`,
     );
   }
   const mux = await activeMux();
@@ -1097,6 +1105,7 @@ async function prestageRemote(
         name: opts.name,
         worktree: true,
         ...(opts.from !== undefined ? { from: opts.from } : {}),
+        ...remoteRoot(opts, profile),
         // An unused leftover of a prepare whose answer was lost is taken over;
         // never while a removed agent's recovery record may name that tree.
         reclaim: !recoveriesFor(db, opts.workstream, opts.name).some(
@@ -1106,7 +1115,7 @@ async function prestageRemote(
       return {
         path: made.cwd,
         base: made.base ?? "",
-        root: profile.repo,
+        root: made.repo ?? "",
         createdAt: new Date().toISOString(),
         incarnation: placeholder.incarnation,
         host: profile.name,
@@ -1180,7 +1189,7 @@ function finalizeAgentRow(
   // pending): a row replaced since is not ours to repoint.
   const patched = db
     .prepare(
-      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, updated_at = ?
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, repo = ?, updated_at = ?
       WHERE id = ? AND pane_id = ?
         AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
@@ -1193,6 +1202,7 @@ function finalizeAgentRow(
       commandSource,
       spawner,
       host ?? null,
+      staged.host !== undefined ? staged.root : null,
       new Date().toISOString(),
       staged.incarnation,
       pendingPaneIdFor(opts.name),

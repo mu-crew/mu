@@ -96,6 +96,8 @@ function assertWorktreeFlags(opts: SpawnOpts): void {
     return;
   }
   for (const flag of ["from", "root"] as const) {
+    // With --host, --root alone names the remote repo the agent starts in.
+    if (flag === "root" && opts.host !== undefined) continue;
     if (opts[flag] !== undefined) throw new UsageError(say("agent.spawn_needs_worktree", flag));
   }
 }
@@ -1313,11 +1315,11 @@ export function wireAgentCommands(program: Command): void {
     .option("--from <ref>", "with --worktree: start at this commit or branch (default: HEAD)")
     .option(
       "--root <repo>",
-      "with --worktree: the repo to add it to (default: the git root of your cwd)",
+      "with --worktree: the repo to add it to (default: the git root of your cwd). With --host: a REMOTE repo (default the profile's --repo), also without --worktree, as the start directory",
     )
     .option(
       "--host <profile>",
-      "run on this host profile (mu host add): the pane runs its --shell template, which starts the remote pi and forwards its control socket here; --cwd and --worktree name REMOTE paths (the worktree is made by its --exec, under ~/.local/state/mu-next/remote-worktrees/<ws>/<name>); the pane dying is the agent dying. tmux only; not with --root",
+      "run on this host profile (mu host add): the pane runs its --shell template, which starts the remote pi and forwards its control socket here; --cwd and --worktree name REMOTE paths (the worktree is made by its --exec, under ~/.local/state/mu-next/remote-worktrees/<ws>/<name>); --root names the remote repo; the pane dying is the agent dying. tmux only",
     )
     .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
     .option(

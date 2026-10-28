@@ -80,6 +80,7 @@ function orphaned(
     cwd: over.cwd ?? WT,
     base: BASE,
     host: "dev",
+    repo: "/srv/repo",
     ...(over.collectedHead === undefined ? {} : { collectedHead: over.collectedHead }),
   });
   expect(deleteAgent(db, name, workstream)).toBe(true);
@@ -319,6 +320,28 @@ describe("guards before any host command", () => {
     await expect(close()).rejects.toMatchObject({ reason: "profile" });
     expect(execCalls()).toEqual([]);
   });
+
+  it("a record with a pinned exec but no repo refuses; nothing runs", async () => {
+    orphaned();
+    db.prepare("UPDATE remote_recovery SET host_repo = NULL").run();
+    await expect(close()).rejects.toMatchObject({ reason: "profile" });
+    expect(execCalls()).toEqual([]);
+    expect(records()).toHaveLength(1);
+  });
+
+  it("a changed default repo does not refuse: the record's own repo is the root", async () => {
+    orphaned();
+    db.prepare("UPDATE host_profiles SET repo = '/srv/other'").run();
+    const r = await close();
+    expect(r.worktree).toMatchObject({ action: "removed" });
+    const calls = execCalls();
+    expect(calls.length).toBeGreaterThan(0);
+    for (const c of calls) {
+      expect(c).toContain("/srv/repo");
+      expect(c).not.toContain("/srv/other");
+    }
+    expect(records()).toEqual([]);
+  });
 });
 
 describe("races during the slow step", () => {
@@ -512,7 +535,7 @@ describe("guards that only a precise window or a corrupt record reaches", () => 
     ).run();
   }
   const swapProfile = (): void => {
-    db.prepare("UPDATE host_profiles SET repo = '/srv/other'").run();
+    db.prepare("UPDATE host_profiles SET exec = '/bin/sh -c {cmd} #other'").run();
   };
 
   it("close: a profile replaced between the pre-exec guard and admission runs nothing", async () => {
@@ -601,6 +624,7 @@ describe("cli", () => {
       cwd: WT,
       base: BASE,
       host: "dev",
+      repo: "/srv/repo",
     });
     await teardownWorkstream(db, {
       workstream: "auth",

@@ -197,7 +197,7 @@ describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
     expect(gitIn(path, "rev-parse", "HEAD")).toBe(head);
     expect(gitIn(path, "rev-parse", "--abbrev-ref", "HEAD")).toBe("HEAD"); // detached
     const agent = getAgent(db, "worker-1", ws);
-    expect(agent).toMatchObject({ host: "dev", cwd: path, base: head });
+    expect(agent).toMatchObject({ host: "dev", cwd: path, base: head, repo: realpathSync(repo) });
     expect(getTask(db, "t1", ws)).toMatchObject({ ownerId: agent?.incarnation });
     expect(out.receipt).toMatchObject({ state: "sent", incarnation: "inc-it", transport: "ctl" });
 

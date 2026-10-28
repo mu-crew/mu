@@ -193,6 +193,47 @@ describe("mu host check", () => {
     });
   });
 
+  it("with no repo anywhere the repo step is skipped and passes; --root checks one", async () => {
+    addHost(db, {
+      name: "bare",
+      shell: "s",
+      exec: "sh -c {cmd}",
+      fetch: "f",
+      repo: null,
+      max_sessions: null,
+    });
+    const a = await runCliJson(["host", "check", "bare", "--json"], dbPath);
+    expect(a.exitCode).toBeNull();
+    expect(a.data.ok).toBe(true);
+    expect(a.data.steps.find((s: { step: string }) => s.step === "repo")).toMatchObject({
+      ok: null,
+    });
+    const b = await runCliJson(
+      ["host", "check", "bare", "--root", join(dir, "absent"), "--json"],
+      dbPath,
+    );
+    expect(b.exitCode).toBe(5);
+    expect(b.data.steps.find((s: { step: string }) => s.step === "repo")).toMatchObject({
+      ok: false,
+    });
+  });
+
+  it("a {cwd} exec template still runs without a repo: it gets `.`, the login directory", async () => {
+    addHost(db, {
+      name: "cwdexec",
+      shell: "s",
+      exec: "cd {cwd} && sh -c {cmd}",
+      fetch: "f",
+      repo: null,
+      max_sessions: null,
+    });
+    const a = await runCliJson(["host", "check", "cwdexec", "--json"], dbPath);
+    expect(a.data.steps.find((s: { step: string }) => s.step === "reachable")).toMatchObject({
+      ok: true,
+    });
+    expect(a.exitCode).toBeNull();
+  });
+
   it("a timeout is a failure of that step, not a hang", async () => {
     addHost(db, {
       name: "slow",

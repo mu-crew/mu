@@ -186,6 +186,7 @@ function agent(name: string, cli = "pi"): AgentRow {
     spawner: null,
     host: null,
     collectedHead: null,
+    repo: null,
     gateToken: null,
     createdAt: now,
     updatedAt: now,

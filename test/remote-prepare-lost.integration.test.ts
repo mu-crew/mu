@@ -68,6 +68,7 @@ const prepare = async (reclaim = true) => {
     name: "worker-1",
     worktree: true,
     reclaim,
+    root: repo,
   });
 };
 const lose = () => writeFileSync(join(dir, "mode"), "lost");
@@ -83,7 +84,7 @@ describe("a lost prepare answer", () => {
     expect(existsSync(wt())).toBe(true);
     answer();
     const site = await prepare();
-    expect(site).toEqual({ cwd: wt(), base: head() });
+    expect(site).toEqual({ cwd: wt(), base: head(), repo });
     expect(gitIn(repo, "worktree", "list")).toContain(wt());
   });
 
@@ -122,5 +123,33 @@ describe("a lost prepare answer", () => {
     } finally {
       holder.kill("SIGKILL");
     }
+  });
+});
+
+describe("the repo the host reports (agents.repo)", () => {
+  const prepareIn = async (root: string) => {
+    const lease = await reserveHostChannel(db, "dev", `r:${leases.length}`);
+    leases.push(lease);
+    return prepareRemote(db, lease, getHost(db, "dev"), {
+      workstream: "ws",
+      name: "worker-1",
+      worktree: true,
+      root,
+    });
+  };
+
+  it("a bare repo: the worktree is made and the bare repo's own path is recorded", async () => {
+    const bare = join(dir, "bare.git");
+    gitIn(dir, "clone", "-q", "--bare", repo, bare);
+    const site = await prepareIn(bare);
+    expect(site).toEqual({ cwd: wt(), base: head(), repo: bare });
+    expect(gitIn(bare, "worktree", "list")).toContain(wt());
+  });
+
+  it("a path with a trailing space and a newline comes back byte for byte", async () => {
+    const odd = join(dir, "odd repo \nx");
+    gitIn(dir, "clone", "-q", repo, odd);
+    const site = await prepareIn(odd);
+    expect(site.repo).toBe(odd);
   });
 });

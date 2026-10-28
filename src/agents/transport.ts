@@ -197,7 +197,8 @@ export async function outdatedRecovery(
  * The `mu agent spawn` line that recreates `agent`, or undefined for a row
  * older than the stored command. An explicit --command is replayed
  * verbatim; an env or cli-key command is replayed as --cli only (the same
- * resolution happens again). A worktree agent respawns with --worktree.
+ * resolution happens again). A worktree agent respawns with --worktree (a
+ * remote one with --root, its recorded repo).
  */
 export function respawnCommand(agent: AgentRow): string | undefined {
   if (agent.command === null || agent.commandSource === null) return undefined;
@@ -213,8 +214,11 @@ export function respawnCommand(agent: AgentRow): string | undefined {
   if (agent.host !== null) parts.push("--host", shellWord(agent.host));
   if (agent.role !== "full-access") parts.push("--role", shellWord(agent.role));
   if (agent.tab !== null) parts.push("--tab", shellWord(agent.tab));
-  if (agent.base !== null) parts.push("--worktree");
-  else if (agent.cwd !== null) parts.push("--cwd", shellWord(agent.cwd));
+  if (agent.base !== null) {
+    parts.push("--worktree");
+    // A remote worktree's repo was chosen at spawn: without it the respawn lands in the default.
+    if (agent.host !== null && agent.repo !== null) parts.push("--root", shellWord(agent.repo));
+  } else if (agent.cwd !== null) parts.push("--cwd", shellWord(agent.cwd));
   return parts.join(" ");
 }
 

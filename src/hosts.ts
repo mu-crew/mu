@@ -140,7 +140,8 @@ export interface HostProfile {
   shell: string;
   exec: string;
   fetch: string;
-  repo: string;
+  /** Default remote repo for a spawn without `--root`; null: none. */
+  repo: string | null;
   max_sessions: number | null;
 }
 
@@ -162,7 +163,7 @@ export function listHosts(db: Db): HostProfile[] {
   return db.prepare("SELECT * FROM host_profiles ORDER BY name").all() as HostProfile[];
 }
 
-/** Store a profile. Validates the name, cap, repo and every template first; stores nothing on refusal. */
+/** Store a profile. Validates the name, cap, default repo and every template first; stores nothing on refusal. */
 export function addHost(db: Db, p: HostProfile): HostProfile {
   if (!isValidHostName(p.name)) {
     throw new HostProfileError(
@@ -172,7 +173,9 @@ export function addHost(db: Db, p: HostProfile): HostProfile {
   if (p.max_sessions !== null && !(Number.isInteger(p.max_sessions) && p.max_sessions > 0)) {
     throw new HostProfileError("--max-sessions must be a positive integer");
   }
-  if (p.repo.trim() === "") throw new HostProfileError("--repo must not be empty");
+  if (p.repo !== null && p.repo.trim() === "") {
+    throw new HostProfileError("--repo must not be empty");
+  }
   for (const f of ["shell", "exec", "fetch"] as const) {
     try {
       validateHostTemplate(p[f]);
@@ -721,6 +724,8 @@ export interface HostCheckOptions extends ChannelOpts {
   timeoutMs?: number;
   /** Also probe this agent's derived local control socket: the forward rides its pane. */
   agent?: { name: string; workstream: string };
+  /** The remote repo the `repo` step checks (default the profile's); with neither it is skipped. */
+  root?: string;
 }
 
 const firstLine = (s: string): string =>
@@ -739,7 +744,8 @@ const lastLine = (s: string): string =>
 
 /**
  * Check a host through its own stored templates, under ONE channel: the
- * host answers `exec`, the repo is a git repo, pi runs under the login
+ * host answers `exec`, the repo (`root`, else the profile's default; skipped
+ * with neither) is a git repo, pi runs under the login
  * shell, `pi list` names mu, and with `agent` the forwarded socket answers
  * hello. Each failure is reported; none is retried; an unreachable host
  * skips the rest. The ctl probe only reads an existing forward.
@@ -759,6 +765,7 @@ export async function checkHost(
     host,
     `check:${process.pid}`,
     async (profile, lease) => {
+      const root = opts.root ?? profile.repo ?? undefined;
       // One remote command through `exec`; `good` turns a clean exit into a detail, or undefined.
       const step = async (
         name: HostCheckStep["step"],
@@ -774,7 +781,8 @@ export async function checkHost(
             lease,
             profile,
             "exec",
-            { cmd, cwd: profile.repo },
+            // `.` without a repo: a template's `cd {cwd:sh}` stays in the login directory.
+            { cmd, cwd: root ?? "." },
             timeoutMs,
           );
           const why = firstLine(r.stderr) || firstLine(r.stdout);
@@ -795,12 +803,11 @@ export async function checkHost(
         return ok;
       };
       if (await step("reachable", "true", () => "exec answered", "")) {
-        await step(
-          "repo",
-          `git -C ${remotePathWord(profile.repo)} rev-parse --git-dir`,
-          () => profile.repo,
-          "",
-        );
+        if (root === undefined) {
+          steps.push({ step: "repo", ok: null, detail: "skipped: no repo given (--root)" });
+        } else {
+          await step("repo", `git -C ${remotePathWord(root)} rev-parse --git-dir`, () => root, "");
+        }
         await step(
           "pi",
           login("pi --version"),
@@ -846,5 +853,5 @@ export async function checkHost(
     },
     opts,
   );
-  return { host, ok: steps.every((s) => s.ok === true), steps };
+  return { host, ok: steps.every((s) => s.ok !== false), steps };
 }

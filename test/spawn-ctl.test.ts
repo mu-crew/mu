@@ -274,6 +274,7 @@ describe("spawn records its spawner (agents.spawner)", () => {
       spawner: null,
       host: null,
       collectedHead: null,
+      repo: null,
     });
   });
 });

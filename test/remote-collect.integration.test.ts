@@ -78,6 +78,7 @@ async function remoteAgent(name: string, o: { host?: string; pane?: boolean } = 
     cwd: wtPath(name),
     base,
     host,
+    repo: remote,
   });
   if (o.pane !== false) {
     const { lease } = await admitHostChannel(db, host, `spawn:auth/${name}`);
@@ -233,6 +234,7 @@ describe("collect", () => {
       workstream: "auth",
       paneId: "%99",
       host: "wide",
+      repo: remote,
       cwd: wtPath("worker-1"),
       base,
     });
@@ -408,6 +410,7 @@ describe("round-2 fences", () => {
       workstream: "auth",
       paneId: "%99",
       host: "wide",
+      repo: remote,
       cwd: wtPath("worker-1"),
       base,
     });
@@ -447,6 +450,7 @@ describe("round-2 fences", () => {
       workstream: "auth",
       paneId: "%99",
       host: "wide",
+      repo: remote,
       cwd: wtPath("worker-1"),
       base,
     });

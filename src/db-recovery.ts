@@ -39,12 +39,18 @@ const COLUMNS = `agent_id, workstream, workstream_id, workstream_created_at, nam
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
+/** Trigger names an older v13 file may still hold; dropped by the upgrade (their bodies read the profile's repo). */
+export const LEGACY_RECOVERY_TRIGGERS = [
+  "remote_recovery_agent_del",
+  "remote_recovery_workstream_del",
+];
+
 export const REMOTE_RECOVERY_DDL = `
 -- remote_recovery: what a finalized remote worker row said about its
 -- worktree, written by triggers when the row is deleted (machine-local; see
 -- src/db-recovery.ts). No foreign key on purpose: it must outlive the agent,
--- its workstream and its host profile. host_exec / host_repo pin the
--- profile's identity when the profile existed. A receipt of the resource,
+-- its workstream and its host profile. host_exec pins the profile's
+-- identity when the profile existed; host_repo is the worktree's repo. A receipt of the resource,
 -- not a live channel.
 CREATE TABLE IF NOT EXISTS remote_recovery (
   agent_id             INTEGER PRIMARY KEY,
@@ -64,7 +70,7 @@ CREATE TABLE IF NOT EXISTS remote_recovery (
   preserved_at         TEXT NOT NULL
 );
 
-CREATE TRIGGER IF NOT EXISTS remote_recovery_agent_del
+CREATE TRIGGER IF NOT EXISTS remote_recovery_agent_del_v2
 AFTER DELETE ON agents
 WHEN ${OWNED("OLD")}
   AND EXISTS (SELECT 1 FROM workstreams WHERE id = OLD.workstream_id)
@@ -73,19 +79,19 @@ BEGIN
   SELECT OLD.id, ws.name, ws.id, ws.created_at, OLD.name, OLD.pane_id, OLD.host, OLD.cwd,
          OLD.base, OLD.collected_head, OLD.cwd || '.mu-removing-' || OLD.id,
          (SELECT exec FROM host_profiles WHERE name = OLD.host),
-         (SELECT repo FROM host_profiles WHERE name = OLD.host),
+         OLD.repo,
          ${REASON}, ${NOW}
     FROM workstreams ws WHERE ws.id = OLD.workstream_id;
 END;
 
-CREATE TRIGGER IF NOT EXISTS remote_recovery_workstream_del
+CREATE TRIGGER IF NOT EXISTS remote_recovery_workstream_del_v2
 BEFORE DELETE ON workstreams
 BEGIN
   INSERT OR IGNORE INTO remote_recovery (${COLUMNS})
   SELECT a.id, OLD.name, OLD.id, OLD.created_at, a.name, a.pane_id, a.host, a.cwd,
          a.base, a.collected_head, a.cwd || '.mu-removing-' || a.id,
          (SELECT exec FROM host_profiles WHERE name = a.host),
-         (SELECT repo FROM host_profiles WHERE name = a.host),
+         a.repo,
          'workstream-delete', ${NOW}
     FROM agents a
    WHERE a.workstream_id = OLD.id AND ${OWNED("a")};

@@ -79,16 +79,18 @@ const fromRaw = (r: RawReceipt): SpawnReceipt => ({
   updatedAt: r.updated_at,
 });
 
-/** The request's identity: same name, same --next-free, same text, same host. */
+/** The request's identity: same name, same --next-free, same text, same host, same remote --root. */
 export function requestSha(req: {
   name: string;
   nextFree: boolean;
   text: string;
   host?: string | undefined;
+  root?: string | undefined;
 }): string {
-  // A local request hashes exactly as before this field existed (saved receipts stay valid).
+  // A local request hashes exactly as before these fields existed (saved receipts stay valid).
   const parts: unknown[] = [req.name, req.nextFree, req.text];
   if (req.host !== undefined) parts.push(req.host);
+  if (req.host !== undefined && req.root !== undefined) parts.push({ root: req.root });
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 

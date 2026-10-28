@@ -245,6 +245,10 @@ describe("profile storage", () => {
     expect(listHosts(db)).toEqual([]);
   });
 
+  it("a profile names a machine: the default repo is optional", () => {
+    expect(addHost(db, { ...base, repo: null }).repo).toBeNull();
+  });
+
   it("host profiles leave no ops (machine-local)", () => {
     const before = (db.prepare("SELECT COUNT(*) AS c FROM ops").get() as { c: number }).c;
     addHost(db, base);
@@ -281,6 +285,16 @@ describe("mu host (CLI)", () => {
     expect(human.stdout).toContain("dev");
     const r = await runCliJson(["host", "rm", "dev", "--json"], dbPath);
     expect(r.data).toMatchObject({ removed: true });
+  });
+
+  it("a profile with no --repo: list and show print the default as -", async () => {
+    const a = await runCliJson([...add.slice(0, -2), "--json"], dbPath);
+    expect(a.exitCode).toBeNull();
+    expect(a.data.host.repo).toBeNull();
+    const list = await runCli(["host", "list"], dbPath);
+    expect(list.stdout).toMatch(/DEFAULT REPO/);
+    expect(list.stdout).toMatch(/dev\s+│\s+-\s+│/);
+    expect((await runCli(["host", "show", "dev"], dbPath)).stdout).toContain("default repo -");
   });
 
   it("maps typed errors to exit codes: unknown 3, duplicate 4, bad template 2", async () => {
@@ -331,6 +345,8 @@ describe("host init --ssh prints a starter and never runs it", () => {
       expect(r.stdout).toContain("mu host add dev");
       expect(r.stdout).toContain("{local_sock}:{remote_sock}");
       expect(r.stdout).toContain("ssh");
+      // A profile names a machine: the starter picks no repo.
+      expect(r.stdout).not.toContain("--repo");
     } finally {
       process.env.PATH = oldPath;
     }

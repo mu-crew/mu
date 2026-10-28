@@ -59,7 +59,7 @@ import {
   sqliteTooOld,
   storedCaptureVersion,
 } from "./capture.js";
-import { REMOTE_RECOVERY_DDL } from "./db-recovery.js";
+import { LEGACY_RECOVERY_TRIGGERS, REMOTE_RECOVERY_DDL } from "./db-recovery.js";
 import { say } from "./messages.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
@@ -503,8 +503,20 @@ export function upgradeSchema(db: Db): void {
   }
 }
 
+/** A v13 file from before host profiles stopped requiring a repo: `repo` is NOT NULL. */
+function hostProfilesRepoRequired(db: Db): boolean {
+  const row = db
+    .prepare("SELECT \"notnull\" AS nn FROM pragma_table_info('host_profiles') WHERE name = 'repo'")
+    .get() as { nn: number } | undefined;
+  return row?.nn === 1;
+}
+
 /** The DDL half of upgradeSchema; the caller owns the transaction. */
 function applySchemaDdl(db: Db): void {
+  // No migration (the profile names a machine now): an older file's profiles
+  // are dropped, and its recovery triggers replaced by the _v2 ones below.
+  if (hostProfilesRepoRequired(db)) db.exec("DROP TABLE host_profiles");
+  for (const t of LEGACY_RECOVERY_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
   db.exec(CURRENT_SCHEMA);
   // Columns a v13 DB written before they existed still lacks.
   for (const [table, column, ddl] of ADDED_COLUMNS) {
@@ -617,6 +629,8 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   ["agents", "collected_head", "TEXT"],
   // The remote command gate's spawn-unique token (machine-local): its marker and result key.
   ["agents", "gate_token", "TEXT"],
+  // A remote worktree's repo, chosen per spawn (a host profile names a machine).
+  ["agents", "repo", "TEXT"],
   ["wait_registrations", "baselines_json", "TEXT NOT NULL DEFAULT '{}'"],
   ["task_auto", "enabled", "INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))"],
   ...["request", "verdict", "agent"].map((c) => ["delegate_calls", c, "TEXT"] as const),
@@ -647,6 +661,8 @@ function schemaIsCurrent(db: Db): boolean {
   if (expected.tables.some((t) => !have.has(`table:${t}`))) return false;
   if (expected.triggers.some((t) => !have.has(`trigger:${t}`))) return false;
   if (ADDED_COLUMNS.some(([t, c]) => !hasColumn(db, t, c))) return false;
+  if (LEGACY_RECOVERY_TRIGGERS.some((t) => have.has(`trigger:${t}`))) return false;
+  if (hostProfilesRepoRequired(db)) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
     if (have.get(`view:${name}`) !== sql) return false;
@@ -1042,6 +1058,7 @@ CREATE TABLE IF NOT EXISTS agents (
   spawner       TEXT,                           -- who spawned it: '<workstream>/<agent>' or 'pi:<session>' (machine-local); NULL: unknown
   host          TEXT,                           -- the remote host profile it runs on (machine-local); NULL: local
   collected_head TEXT,                          -- HEAD last collected from a remote worktree (machine-local)
+  repo          TEXT,                           -- a remote worktree's repo on its host, made absolute at spawn (machine-local); NULL: none
   gate_token    TEXT,                           -- remote command gate: spawn-unique token, also the key of its remote result record (machine-local); NULL: not a gate
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
@@ -1287,7 +1304,7 @@ CREATE TABLE IF NOT EXISTS host_profiles (
   shell        TEXT NOT NULL,
   exec         TEXT NOT NULL,
   fetch        TEXT NOT NULL,
-  repo         TEXT NOT NULL,
+  repo         TEXT,                           -- default remote repo for spawns without --root; NULL: none
   max_sessions INTEGER CHECK (max_sessions > 0)
 );
 

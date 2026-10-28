@@ -135,7 +135,11 @@ case "$1" in
   *'worktree add'*)
     [ "$mode" = addfail ] && { echo boom >&2; exit 3; }
     [ "$mode" = noise ] && { echo garbage; exit 0; }
-    echo "MU_WT ${SHA} ${WT}" ;;
+    # The root the script names: run its own lines up to wt= (the root assignment, which may
+    # span lines) under a fake HOME, then print it.
+    body=$(eval "printf '%s' $(printf '%s' "$1" | sed 's/^sh -c //')")
+    r=$(printf '%s\n' "$body" | sed '/^wt=/,$d' > '${execLog}.root'; HOME=/home/u sh -c '. "$0"; printf "%s" "$root"' '${execLog}.root')
+    echo "MU_REPO $(printf '%s' "$r" | od -An -v -tx1 | tr -d ' \n')"; echo "MU_WT ${SHA} ${WT}" ;;
   *'worktree remove'*) exit 0 ;;
   *MU_CWD*) [ "$mode" = cwdfail ] && { echo "no such dir" >&2; exit 1; }; echo "MU_CWD /srv/repo/sub" ;;
 esac
@@ -260,12 +264,14 @@ describe("refusals before any effect", () => {
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
-  it("--root names a LOCAL repo: refused with --host", async () => {
-    const err = await spawn({ worktree: true, root: "/x" }).catch((e: unknown) => e);
+  it("--worktree on a profile with no default repo and no --root: refused, nothing touched", async () => {
+    db.prepare("UPDATE host_profiles SET repo = NULL WHERE name = 'dev'").run();
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HostProfileError);
     expect((err as Error).message).toMatch(/--root/);
     expect(execCalls()).toEqual([]);
     expect(channels()).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 });
 
@@ -321,6 +327,53 @@ describe("the pane is the transport", () => {
     expect(only).toContain("/srv/repo");
   });
 
+  it("--root picks the remote repo per spawn; the row records the host's absolute toplevel", async () => {
+    const a = await spawn({ worktree: true, root: "~/other" });
+    const [only] = execCalls();
+    expect(only).toContain('"$HOME"/');
+    expect(only).toContain("other");
+    expect(only).not.toContain("/srv/repo'");
+    expect(a.repo).toBe("/home/u/other");
+    expect(getAgent(db, "worker-1", "auth")?.repo).toBe("/home/u/other");
+  });
+
+  it("the host's repo answer is hex: a trailing space or a newline in the path survives", async () => {
+    const odd = "/srv/odd repo \nx";
+    const a = await spawn({ worktree: true, root: odd });
+    expect(a.repo).toBe(odd);
+  });
+
+  it("one profile is one machine: a second repo's spawn at the cap is refused naming the holder", async () => {
+    await spawn({ worktree: true, root: "/srv/a" });
+    const err = await spawn({ name: "worker-2", worktree: true, root: "/srv/b" }).catch(
+      (e: unknown) => e,
+    );
+    expect((err as Error).message).toContain("spawn:auth/worker-1");
+    expect(execCalls()).toHaveLength(1);
+  });
+
+  it("without --cwd or a default repo the remote cwd is the login directory", async () => {
+    db.prepare("UPDATE host_profiles SET repo = NULL WHERE name = 'dev'").run();
+    await spawn();
+    const [only] = execCalls();
+    expect(only).toContain("MU_CWD");
+    expect(only).toContain('"$HOME"');
+  });
+
+  it("an exec template that enters {cwd} gets `.` without a repo, never a quoted ~", async () => {
+    const seen = join(dir, "seen-cwd");
+    addHost(db, {
+      name: "cwdexec",
+      shell: "echo {cmd}",
+      exec: `printf '%s' {cwd} > '${seen}'; echo MU_CWD /home/u`,
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    await spawn({ host: "cwdexec" });
+    expect(readFileSync(seen, "utf8")).toBe(".");
+  });
+
   it("--worktree: one remote exec makes a detached worktree and records host, path and base", async () => {
     const a = await spawn({ worktree: true, from: "main" });
     const [only, ...rest] = execCalls();
@@ -356,6 +409,8 @@ describe("the pane is the transport", () => {
     expect(row?.command).toBe("pi --approve");
     expect(row && respawnCommand(row)).toContain("--host dev");
     expect(row && respawnCommand(row)).toContain("--worktree");
+    // The repo it was spawned in, so the respawn never lands in the profile default.
+    expect(row && respawnCommand(row)).toContain("--root /srv/repo");
     const plain = insertAgent(db, {
       name: "loc-1",
       workstream: "auth",
@@ -666,6 +721,33 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     await expect(
       spawnForTask(db, req({ spawn: { name: "worker-1", workstream: "auth" } })),
     ).rejects.toBeInstanceOf(SpawnReceiptConflictError);
+    // The same attempt in another remote repo is another request, never the first one's replay.
+    await expect(
+      spawnForTask(
+        db,
+        req({ spawn: { name: "worker-1", workstream: "auth", host: "dev", root: "/srv/b" } }),
+      ),
+    ).rejects.toBeInstanceOf(SpawnReceiptConflictError);
+  });
+
+  it("rollback of a task attempt in a --root repo removes the tree through that repo", async () => {
+    extensionOn = false;
+    const err = await spawnForTask(
+      db,
+      req({
+        spawn: {
+          name: "worker-1",
+          workstream: "auth",
+          host: "dev",
+          worktree: true,
+          root: "/srv/b",
+        },
+      }),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentCtlUnreachableError);
+    const rm = execCalls().find((c) => c.includes("MU_RM")) ?? "";
+    expect(rm).toContain("/srv/b");
+    expect(rm).not.toContain("/srv/repo");
   });
 
   it("an unreachable forward is UNSENT: claim released, pane killed, lease freed, remote worktree removed", async () => {
@@ -736,6 +818,25 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
 describe("the CLI", () => {
   const dbPath = (): string => join(dir, "mu.db");
 
+  it("--host --root without --worktree names the remote directory the agent starts in", async () => {
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--root", "/srv/b", "--json"],
+      dbPath(),
+    );
+    expect(r.exitCode).toBeNull();
+    const [only] = execCalls();
+    expect(only).toContain("MU_CWD");
+    expect(only).toContain("/srv/b");
+  });
+
+  it("--root without --worktree is still refused for a local agent", async () => {
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--root", "/srv/b", "--json"],
+      dbPath(),
+    );
+    expect(r.exitCode).toBe(2);
+  });
+
   it("--host reaches spawn: the JSON agent names its host, cwd and base", async () => {
     const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--worktree", "--json"],
@@ -760,21 +861,10 @@ describe("the CLI", () => {
     expect(closed.data).toMatchObject({ deletedRow: true });
   });
 
-  it("--host with --root is a usage error (exit 2) before any effect", async () => {
+  it("--host with --worktree and no repo anywhere is a usage error (exit 2) before any effect", async () => {
+    db.prepare("UPDATE host_profiles SET repo = NULL WHERE name = 'dev'").run();
     const r = await runCliJson(
-      [
-        "agent",
-        "spawn",
-        "worker-1",
-        "-w",
-        "auth",
-        "--host",
-        "dev",
-        "--worktree",
-        "--root",
-        "/x",
-        "--json",
-      ],
+      ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--worktree", "--json"],
       dbPath(),
     );
     expect(r.exitCode).toBe(2);
