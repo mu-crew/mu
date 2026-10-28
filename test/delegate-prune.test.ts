@@ -1,14 +1,20 @@
 // `mu delegates prune` (src/delegate-prune.ts) and doctor's `delegates-old` row.
 // Real SQLite in temp dirs; two DBs for the peer case.
 
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cmdDelegatesPrune } from "../src/cli/delegates.js";
 import { type Db, openDb } from "../src/db.js";
 import { checkOldDelegates, planDelegatePrune, pruneDelegates } from "../src/delegate-prune.js";
-import { finishDelegate, getDelegateCall, registerDelegateCall } from "../src/delegates.js";
+import {
+  delegateProcessDir,
+  delegateSessionDir,
+  finishDelegate,
+  getDelegateCall,
+  registerDelegateCall,
+} from "../src/delegates.js";
 import { checkDrift } from "../src/drift.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
 import { ingestFromDb } from "../src/sync.js";
@@ -336,6 +342,109 @@ describe("cli", () => {
       const none = envelopeData(out.mock.calls.at(-1)?.[0]) as Record<string, unknown>;
       expect(none).toMatchObject({ dryRun: false, pruned: 0 });
       expect(none.backup).toBeUndefined();
+    } finally {
+      out.mockRestore();
+    }
+  });
+});
+
+describe("session files", () => {
+  const sessionOf = (task: string): string => {
+    const d = delegateSessionDir(db.name, "scratch", task);
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, "s.jsonl"), "x".repeat(100));
+    return d;
+  };
+  const processOf = (id: string): string => {
+    const d = delegateProcessDir(db.name, id);
+    mkdirSync(join(d, "session"), { recursive: true });
+    writeFileSync(join(d, "receipt.json"), "{}");
+    return d;
+  };
+  /** A first-layout file, `delegate-sessions/<ws>/<name>`, last written `ageDays` ago. */
+  const loose = (name: string, ageDays: number): string => {
+    ensureWorkstream(db, "scratch");
+    const d = join(dir, "delegate-sessions", "scratch");
+    mkdirSync(d, { recursive: true });
+    const p = join(d, name);
+    writeFileSync(p, "y".repeat(10));
+    const t = (Date.now() - ageDays * DAY) / 1000;
+    utimesSync(p, t, t);
+    return p;
+  };
+
+  it("a pruned call's pane session and process dir go; a kept call's stay, receipt included", () => {
+    const oldTask = call("old", 31);
+    const freshTask = call("fresh", 1);
+    const oldSession = sessionOf(oldTask);
+    const oldProcess = processOf("old");
+    const freshSession = sessionOf(freshTask);
+    const freshProcess = processOf("fresh");
+    const plan = planDelegatePrune(db, { ownHistory: true });
+    expect(plan.files.paths.sort()).toEqual([oldProcess, oldSession].sort());
+    expect(plan.files.bytes).toBe(102);
+    const r = pruneDelegates(db, plan);
+    expect(r).toMatchObject({ tasks: 1, files: 2 });
+    expect(existsSync(oldSession)).toBe(false);
+    expect(existsSync(oldProcess)).toBe(false);
+    expect(existsSync(freshSession)).toBe(true);
+    expect(existsSync(join(freshProcess, "receipt.json"))).toBe(true);
+  });
+
+  it("a call whose row survived the delete (touched since the plan) keeps its files", () => {
+    const task = call("old", 31);
+    const session = sessionOf(task);
+    const plan = planDelegatePrune(db, { ownHistory: true });
+    db.prepare("UPDATE tasks SET updated_at = ? WHERE local_id = ?").run(
+      new Date().toISOString(),
+      task,
+    );
+    expect(pruneDelegates(db, plan)).toMatchObject({ tasks: 0, files: 0 });
+    expect(existsSync(session)).toBe(true);
+  });
+
+  it("loose first-layout session files go by age; fresh ones and non-sessions stay", () => {
+    const old = loose("2026-01-01_old.jsonl", 40);
+    const fresh = loose("2026-10-01_new.jsonl", 2);
+    const other = loose("notes.txt", 40);
+    const plan = planDelegatePrune(db, { ownHistory: true });
+    expect(plan.candidates).toEqual([]);
+    expect(plan.files.paths).toEqual([old]);
+    expect(pruneDelegates(db, plan)).toMatchObject({ tasks: 0, files: 1 });
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(other)).toBe(true);
+  });
+
+  it("loose files: never younger than a day, never another DB's workstream", () => {
+    const young = loose("young.jsonl", 0.5);
+    const d = join(dir, "delegate-sessions", "elsewhere");
+    mkdirSync(d, { recursive: true });
+    const foreign = join(d, "f.jsonl");
+    writeFileSync(foreign, "z");
+    const t = (Date.now() - 40 * DAY) / 1000;
+    utimesSync(foreign, t, t);
+    const plan = planDelegatePrune(db, { days: 0.01, ownHistory: true });
+    expect(plan.files.paths).toEqual([]);
+    pruneDelegates(db, plan);
+    expect(existsSync(young)).toBe(true);
+    expect(existsSync(foreign)).toBe(true);
+  });
+
+  it("--yes with only loose files deletes them without a backup", async () => {
+    const old = loose("a.jsonl", 40);
+    const out = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await cmdDelegatesPrune(db, { json: true });
+      const dry = envelopeData(out.mock.calls.at(-1)?.[0]) as { files: { paths: string[] } };
+      expect(dry.files.paths).toEqual([old]);
+      expect(existsSync(old)).toBe(true);
+      out.mockClear();
+      await cmdDelegatesPrune(db, { json: true, yes: true });
+      const done = envelopeData(out.mock.calls.at(-1)?.[0]) as Record<string, unknown>;
+      expect(done).toMatchObject({ dryRun: false, pruned: 0, deletedFiles: 1 });
+      expect(done.backup).toBeUndefined();
+      expect(existsSync(old)).toBe(false);
     } finally {
       out.mockRestore();
     }

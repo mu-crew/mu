@@ -311,8 +311,11 @@ export async function cmdDelegatesPrune(
     ...(opts.workstream !== undefined ? { workstream: opts.workstream } : {}),
   });
   const n = plan.candidates.length;
-  if (opts.yes === true && n === 0) {
-    if (opts.json) return emitJson({ dryRun: false, ...plan, pruned: 0, deletedOps: 0 });
+  const files = plan.files.paths.length;
+  const filesNote = files > 0 ? `, ${files} pi session(s) (${formatBytes(plan.files.bytes)})` : "";
+  if (opts.yes === true && n === 0 && files === 0) {
+    if (opts.json)
+      return emitJson({ dryRun: false, ...plan, pruned: 0, deletedOps: 0, deletedFiles: 0 });
     console.log(pc.dim(`nothing to prune: no closed delegate task older than ${plan.days} days`));
     const kept = keptLine(plan);
     if (kept) console.log(pc.dim(kept));
@@ -320,7 +323,7 @@ export async function cmdDelegatesPrune(
   }
   if (opts.yes !== true) {
     if (opts.json) return emitJson({ dryRun: true, ...plan });
-    if (n === 0)
+    if (n === 0 && files === 0)
       console.log(pc.dim(`nothing to prune: no closed delegate task older than ${plan.days} days`));
     else {
       const t = muTable({ head: ["TASK", "CALL", "CLOSED"] });
@@ -329,7 +332,7 @@ export async function cmdDelegatesPrune(
       console.log(t.toString());
       if (n > 20) console.log(pc.dim(`... and ${n - 20} more`));
       console.log(
-        `${n} closed delegate task(s) older than ${plan.days} days: ${plan.ops} ops (${formatBytes(plan.bytes)}). Dry run; nothing changed (--yes applies; irreversible).`,
+        `${n} closed delegate task(s) older than ${plan.days} days: ${plan.ops} ops (${formatBytes(plan.bytes)})${filesNote}. Dry run; nothing changed (--yes applies; irreversible).`,
       );
       if (!plan.ownHistory)
         console.log(
@@ -342,6 +345,14 @@ export async function cmdDelegatesPrune(
     if (kept) console.log(pc.dim(kept));
     return;
   }
+  if (n === 0) {
+    // Only loose session files are old: no row changes, so no backup or VACUUM.
+    const r = pruneDelegates(db, plan);
+    if (opts.json)
+      return emitJson({ dryRun: false, ...plan, pruned: 0, deletedOps: 0, deletedFiles: r.files });
+    console.log(`Pruned ${r.files} pi session(s); no delegate task was old enough.`);
+    return;
+  }
   const backup = backupBeside(db, "prune");
   const r = pruneDelegates(db, plan);
   const size = vacuumAndCheck(db, backup);
@@ -351,11 +362,12 @@ export async function cmdDelegatesPrune(
       ...plan,
       pruned: r.tasks,
       deletedOps: r.ops,
+      deletedFiles: r.files,
       backup,
       ...size,
     });
   console.log(
-    `Pruned ${r.tasks} delegate task(s), ${r.ops} ops: ${formatBytes(size.before)} → ${formatBytes(size.after)}. Drift check clean.`,
+    `Pruned ${r.tasks} delegate task(s), ${r.ops} ops${r.files > 0 ? `, ${r.files} pi session(s)` : ""}: ${formatBytes(size.before)} → ${formatBytes(size.after)}. Drift check clean.`,
   );
   const kept = keptLine(plan);
   if (kept) console.log(pc.dim(kept));
@@ -485,7 +497,7 @@ export function wireDelegatesCommands(program: Command): void {
     });
   d.command("prune")
     .description(
-      `Delete this machine's closed delegate tasks older than --older-than days (default ${PRUNE_DEFAULT_DAYS}); the deletion syncs. Dry run without --yes; --yes backs up, VACUUMs, checks drift`,
+      `Delete this machine's closed delegate tasks older than --older-than days (default ${PRUNE_DEFAULT_DAYS}) and their pi session files; the deletion syncs. Dry run without --yes; --yes backs up, VACUUMs, checks drift`,
     )
     .option("--older-than <days>", "age in days since the task closed", parsePositiveNumber)
     .option("--yes", "apply (default: dry run)")

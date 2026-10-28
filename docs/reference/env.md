@@ -53,7 +53,7 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_CTL_SOCK` | The agent's control socket path, derived from state dir, workstream, and agent. The mu pi extension serves it. |
 | `MU_MANAGED_AGENT` | `1`. Hides `mu_delegate` inside agents, so a helper cannot spawn helpers. |
 | `MU_DB_PATH`, `MU_STATE_DIR` | The absolute DB path and state dir the spawn used, so the worker's `mu` reads the same DB from any cwd. Local agents only. |
-| `PI_CODING_AGENT_SESSION_DIR` | `<DB dir>/delegate-sessions/<workstream>`, set when `mu agent spawn --task <id> --send` (what `mu_delegate` and `mu next --refute` run) starts a pi agent for a `delegate`-kind task, so delegate sessions stay out of the caller's pi `/resume` list. Not set by a plain `mu agent spawn`. Local agents only. |
+| `PI_CODING_AGENT_SESSION_DIR` | `<DB dir>/delegate-sessions/<workstream>/<task>`, set when `mu agent spawn --task <id> --send` (what `mu_delegate` and `mu next --refute` run) starts a pi agent for a `delegate`-kind task, so delegate sessions stay out of the caller's pi `/resume` list. Not set by a plain `mu agent spawn`. Local agents only. |
 | `SSH_AUTH_SOCK` | The caller's, when it is a socket (a detached tmux session would otherwise hand the pane a stale one). Local agents only. |
 | `MU_REMOTE` | `1`, only for an agent spawned with `--host`. Tells its pi extension there is no mu DB on that host: it skips the close nudge (you close the task) and the settle wait. |
 

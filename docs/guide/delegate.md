@@ -81,8 +81,8 @@ parallel.
   when it wrote anything, its last message so far, in the report.
   Quitting pi or `/reload` lists each running delegate's session file.
   A call whose pane is gone fails when the next runtime re-adopts it.
-- Delegate pi sessions live under `<state dir>/delegate-sessions/<workstream>/`,
-  not in your `/resume` list. mu never prunes them; delete them freely.
+- Delegate pi sessions live under `<state dir>/delegate-sessions/<workstream>/<task>/`,
+  not in your `/resume` list. `mu delegates prune` removes them with their calls.
 
 `MU_DELEGATE=0` hides the tool ([env vars](../reference/env.md)).
 
@@ -237,6 +237,7 @@ than 30 days (`--older-than <days>`), dry run first, `--yes` to apply
 after a backup. It deletes only calls this machine made (the deletion
 syncs to peers). It keeps a task with edges and a refute check of a task
 with `mu task auto` enabled, and the verdicts stay on the judged tasks.
+The pruned calls' pi session files go with them.
 With sync on, it keeps this machine's own history of them in the ops log.
 `mu doctor` says when there are some to prune.
 
