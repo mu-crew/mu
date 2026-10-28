@@ -89,12 +89,19 @@ export function nudgeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MU_NUDGE !== "0";
 }
 
-/** The keep-driving paragraph from SKILL.md, or undefined without the markers. */
+/** The keep-driving paragraph from SKILL.md, one line per paragraph, or undefined without the markers. */
 export function keepDrivingRule(skillMd: string): string | undefined {
   const i = skillMd.indexOf(MARK_START);
   const j = skillMd.indexOf(MARK_END);
   if (i < 0 || j < i) return undefined;
-  const text = skillMd.slice(i + MARK_START.length, j).trim();
+  // Unwrap the source's hard line breaks (paragraphs stay apart): the TUI wraps
+  // the entry to the terminal, and kept breaks show as ragged mid-sentence cuts.
+  const text = skillMd
+    .slice(i + MARK_START.length, j)
+    .trim()
+    .split(/\n\s*\n/)
+    .map((p) => p.replace(/\s*\n\s*/g, " "))
+    .join("\n\n");
   return text === "" ? undefined : text;
 }
 
