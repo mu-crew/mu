@@ -10,35 +10,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
-### Changed
-
-- **A host profile names a machine; the repo is chosen at spawn.** A profile
-  carried one `repo`, so two repos on one box meant two profiles, and each
-  profile counted its own `max_sessions`: the cap no longer protected the
-  machine. `mu agent spawn --host <p> --worktree --root <remote repo>` now picks
-  the repo per spawn (`--root` was refused with `--host`); the profile's
-  `--repo` is an optional default. The repo's absolute toplevel is recorded as
-  `agents.repo` (new machine-local column), and close, rollback and recovery
-  run against it, never against the profile; a respawn hint carries it as
-  `--root`, and it is part of a `--task` attempt's identity. With `--host`,
-  `--root` alone (no `--worktree`) names the start directory. A bare repo works:
-  the host reports the root's physical path, hex-encoded so no byte of it is
-  lost. Without a repo, templates get `.` for `{cwd}`, never a quoted `~`, and
-  a gate reads its result through `.`, not its own cwd. A recovery record's `host_repo`
-  is that repo; the profile check is `exec` only, so editing a default repo no
-  longer strands older workers. `host check` takes `--root` and skips the repo
-  step without one; `host list`/`show` print the default repo, `-` when none;
-  `host init --ssh` no longer prints `--repo`. No migration (schema stays 13):
-  opening an older file drops its host profiles (re-add them) and replaces the
-  recovery triggers with `remote_recovery_*_v2`. Spec:
-  [docs/specs/2026-10-28-host-profile-per-machine.md](docs/specs/2026-10-28-host-profile-per-machine.md).
-
-### Fixed
-
-- **A delegate's timeout is one deadline across `/reload`.** The reloaded runtime
-  re-adopted a running call with its whole `timeout` again, so each reload restarted
-  the countdown. It now waits only for what is left, counted from when the call went
-  `running` (at least 1 s, so an answer that landed meanwhile is still recorded).
+## [4.1.0] — 2026-10-28
 
 ### Added
 
@@ -72,6 +44,27 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **A host profile names a machine; the repo is chosen at spawn.** A profile
+  carried one `repo`, so two repos on one box meant two profiles, and each
+  profile counted its own `max_sessions`: the cap no longer protected the
+  machine. `mu agent spawn --host <p> --worktree --root <remote repo>` now picks
+  the repo per spawn (`--root` was refused with `--host`); the profile's
+  `--repo` is an optional default. The repo's absolute toplevel is recorded as
+  `agents.repo` (new machine-local column), and close, rollback and recovery
+  run against it, never against the profile; a respawn hint carries it as
+  `--root`, and it is part of a `--task` attempt's identity. With `--host`,
+  `--root` alone (no `--worktree`) names the start directory. A bare repo works:
+  the host reports the root's physical path, hex-encoded so no byte of it is
+  lost. Without a repo, templates get `.` for `{cwd}`, never a quoted `~`, and
+  a gate reads its result through `.`, not its own cwd. A recovery record's `host_repo`
+  is that repo; the profile check is `exec` only, so editing a default repo no
+  longer strands older workers. `host check` takes `--root` and skips the repo
+  step without one; `host list`/`show` print the default repo, `-` when none;
+  `host init --ssh` no longer prints `--repo`. No migration (schema stays 13):
+  opening an older file drops its host profiles (re-add them) and replaces the
+  recovery triggers with `remote_recovery_*_v2`. Spec:
+  [docs/specs/2026-10-28-host-profile-per-machine.md](docs/specs/2026-10-28-host-profile-per-machine.md).
+
 - **The dashboard's notes drill draws each note under a header rule.** The
   rule shows `#n`, the kind in its colour (brief cyan, report green, verdict
   yellow), `pinned`, the author and the time. The content is indented under it,
@@ -87,6 +80,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   their own `--session-dir`. Workers on `work` tasks are unchanged.
 
 ### Fixed
+
+- **A delegate's timeout is one deadline across `/reload`.** The reloaded runtime
+  re-adopted a running call with its whole `timeout` again, so each reload restarted
+  the countdown. It now waits only for what is left, counted from when the call went
+  `running` (at least 1 s, so an answer that landed meanwhile is still recorded).
 
 - **The keep-driving nudge no longer shows ragged line breaks.** The rule quoted
   from SKILL.md kept the source's hard wraps, which the TUI then wrapped again.
