@@ -1452,14 +1452,20 @@ export function wireAgentCommands(program: Command): void {
 
   agent
     .command("list")
-    .description("List agents in the current workstream (reconciled with the active mux)")
+    .description(
+      "List agents in the current workstream (reconciled with the active mux). One JSON document by default; --table for the human table",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
+    .option("--table", "print the human table instead of the JSON document")
     .action(function () {
       const opts = (this as Command).opts() as {
         workstream?: string;
         json?: boolean;
+        table?: boolean;
       };
+      // JSON unless --table; an explicit --json wins (isJsonMode reads argv the same way).
+      opts.json = opts.json === true || opts.table !== true;
       return handle((db) => cmdList(db, opts), this as Command)();
     });
 

@@ -198,7 +198,7 @@ export function isJsonMode(): boolean {
   const argv = process.argv;
   return (
     argv.some((a) => a === "--json" || a.startsWith("--json=")) ||
-    (isSqlVerbArgv(argv) && !argv.includes("--table")) ||
+    ((isSqlVerbArgv(argv) || isAgentListArgv(argv)) && !argv.includes("--table")) ||
     isStateVerbArgv(argv) ||
     isWaitVerbArgv(argv) ||
     // `mu next` prints ONE JSON result for every outcome; its failures too.
@@ -226,6 +226,12 @@ function verbWords(argv: readonly string[]): string[] {
 export function isSqlVerbArgv(argv: readonly string[]): boolean {
   const words = verbWords(argv);
   return words[0] === "sql" || (words[0] === "db" && words[1] === "query");
+}
+
+/** Is this invocation `mu agent list`? It prints JSON unless `--table`. */
+export function isAgentListArgv(argv: readonly string[]): boolean {
+  const [first, second] = verbWords(argv);
+  return first === "agent" && second === "list";
 }
 
 /**

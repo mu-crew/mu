@@ -10,6 +10,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **`mu agent list` prints JSON by default; `--table` for the human table.** The
+  4.0 interface design names agent list beside waits, `sql` and `state` as a JSON
+  verb, but it printed a coloured table unless `--json`. It now prints the same
+  `{workstreamName, agents, orphans}` envelope with no flag, failures included
+  (stdout, real exit code); `--table` prints the old table. As with `mu state`, a
+  machine with no multiplexer still gets the one human install line. A script
+  that scraped the table must add `--table`; `--json` callers are unaffected.
+
 ### Fixed
 
 - **`mu next` failures are its one JSON document.** `next` prints ONE JSON result

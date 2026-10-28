@@ -89,7 +89,14 @@ import {
 } from "../mux.js";
 import { NextArgError } from "../next.js";
 import { capPlan, computeNext, NEXT_BYTES, type NextOutcome } from "../next-hints.js";
-import { isJsonMode, isStateVerbArgv, pc, printUsageHuman, usageLines } from "../output.js";
+import {
+  isAgentListArgv,
+  isJsonMode,
+  isStateVerbArgv,
+  pc,
+  printUsageHuman,
+  usageLines,
+} from "../output.js";
 import { encodeEnvelope, type NextPlan, RESULT_BYTES } from "../output-contract.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-agent.js";
@@ -751,11 +758,12 @@ function emitError(err: unknown): number {
     });
   }
 
-  // `mu state` is JSON without asking; a machine with no multiplexer is still the one human
-  // line on stderr every other verb prints (the install hint), not a document on stdout.
+  // `mu state` and `mu agent list` are JSON without asking; a machine with no multiplexer is
+  // still the one human line on stderr every other verb prints (the install hint), not a
+  // document on stdout.
   const humanNoMux =
     err instanceof NoMultiplexerError &&
-    isStateVerbArgv(process.argv) &&
+    (isStateVerbArgv(process.argv) || isAgentListArgv(process.argv)) &&
     !process.argv.some((a) => a === "--json" || a.startsWith("--json="));
   if (isJsonMode() && !humanNoMux) {
     // ONE failure document on STDOUT, the real exit code beside it: a caller

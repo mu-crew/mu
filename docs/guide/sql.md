@@ -29,7 +29,7 @@ Every verb takes `--json`.
   it again would write again. Errors are the failure document on stdout, with or
   without `--json`.
 - `mu state` and bare `mu me` print the document by default too (no `--json` needed); a read over 4 KB is cut and names `mu state ... --full`.
-- `mu next` and `mu wait` print their one result by default, failures included.
+- `mu next`, `mu wait` and `mu agent list` print their one result by default, failures included (`agent list --table` prints the table).
 - `mu log --tail` (no `--json` needed) is the exception: one raw JSON object per line, keyed by the `ops` column names.
 - A failure is `{"ok": false, "error", "message", "next", "exit"}` on
   **stdout** (plus, for usage errors, `usage`, at most 3 lines), with
