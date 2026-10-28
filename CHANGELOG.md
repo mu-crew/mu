@@ -24,6 +24,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   with the delegate history; a new index, `idx_delegate_calls_state`, serves the
   attention scan (created on open, no schema bump).
 
+### Changed
+
+- **The dashboard's notes drill draws each note under a header rule.** The
+  rule shows `#n`, the kind in its colour (brief cyan, report green, verdict
+  yellow), `pinned`, the author and the time. The content is indented under it,
+  and a `VERDICT:` line is green, red or yellow by its label.
+
 ### Fixed
 
 - **The keep-driving nudge no longer shows ragged line breaks.** The rule quoted
