@@ -35,6 +35,7 @@ import {
   type CarrierJob,
   fillCarrierJob,
   getCarrierJobByName,
+  keepCarrierJobForTree,
   listCarrierJobs,
   markCarrierLaunch,
   noteCarrierJob,
@@ -188,6 +189,7 @@ function leaseAgent(
     workstream: "auth",
     paneId,
     host: "dev",
+    hostTransport: "lease",
     reservation: r.token,
     ...(over.worktree === true ? { cwd: WT, base: BASE, repo: "/srv/repo" } : { cwd: "/srv/repo" }),
   });
@@ -199,6 +201,133 @@ function leaseAgent(
   }
   return { row, r };
 }
+
+// The reviewer-23 probes (fix_mu_lease_close): each failed on 53b6f549.
+describe("reviewer-23 probes: no pointer, wrong tree, raw-delete socket", () => {
+  it("no-pointer: a lease agent with neither reservation nor job file refuses spawn-in-progress, row and tree kept", async () => {
+    leaseAgent({ handle: null, worktree: true });
+    db.prepare("DELETE FROM carrier_jobs").run();
+    const err = await failure(close());
+    expect(err).toBeInstanceOf(CarrierJobUnresolvedError);
+    expect((err as Error).message).toMatch(/spawn in progress/);
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+    expect(order()).not.toContain("exec rm");
+    expect(order().some((l) => l.startsWith("stop"))).toBe(false);
+  });
+
+  it("no-pointer: lease-ness is the row's recorded transport, not the profile as it is now", async () => {
+    leaseAgent({ handle: null, worktree: true });
+    db.prepare("DELETE FROM carrier_jobs").run();
+    // The profile is gone (or redefined): the row still says it was spawned as a lease.
+    db.prepare("DELETE FROM host_profiles").run();
+    expect(await failure(close())).toBeInstanceOf(CarrierJobUnresolvedError);
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined();
+    expect(order()).not.toContain("exec rm");
+  });
+
+  it("no-pointer: a row spawned on a SESSION profile closes as before even if the profile is a lease now", async () => {
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: pane("%9"),
+      host: "dev",
+      hostTransport: "session",
+      cwd: "/srv/repo",
+    });
+    const res = await close();
+    expect(res.deletedRow).toBe(true);
+    expect(order()).toEqual(["kill %9", "alive? %9"]);
+  });
+
+  it("wrong-tree: closing a different recovery does not release the only pointer to an unremoved tree", async () => {
+    // A former session agent's recovery coexists with a later lease spawn on another root.
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%old",
+      host: "dev",
+      cwd: WT,
+      base: BASE,
+      repo: "/srv/repo",
+    });
+    deleteAgent(db, "worker-1", "auth");
+    const r = reserveCarrierJob(db, {
+      workstream: "auth",
+      name: "worker-1",
+      host: "dev",
+      hostStop: STOP(stopScript),
+      creatorPid: process.pid,
+    });
+    if (r === undefined) throw new Error("reserve");
+    markCarrierLaunch(db, r.token);
+    fillCarrierJob(db, r.token, "new-job");
+    writeJobFile("new-job");
+    keepCarrierJobForTree(db, r.token, {
+      path: "/different/repo/worker-1",
+      agentId: 999,
+      reason: "remote worktree /different/repo/worker-1 on dev was not removed",
+    });
+    const e = await failure(close());
+    expect(e).toBeInstanceOf(CarrierJobKeptError);
+    expect((e as Error).message).toContain("/different/repo/worker-1");
+    expect(reservation()?.reason).toContain("/different/repo/worker-1");
+    expect(reservation()?.treePath).toBe("/different/repo/worker-1");
+  });
+
+  it("wrong-tree: a reason with no recorded tree never releases on another tree's close", async () => {
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%old",
+      host: "dev",
+      cwd: WT,
+      base: BASE,
+      repo: "/srv/repo",
+    });
+    deleteAgent(db, "worker-1", "auth");
+    const r = reserveCarrierJob(db, {
+      workstream: "auth",
+      name: "worker-1",
+      host: "dev",
+      hostStop: STOP(stopScript),
+      creatorPid: process.pid,
+    });
+    if (r === undefined) throw new Error("reserve");
+    markCarrierLaunch(db, r.token);
+    fillCarrierJob(db, r.token, "new-job");
+    writeJobFile("new-job");
+    noteCarrierJob(db, r.token, "remote worktree /different/repo/worker-1 on dev was not removed");
+    expect(await failure(close())).toBeInstanceOf(CarrierJobKeptError);
+    expect(reservation()?.job).toBe("new-job");
+  });
+
+  it("raw-delete pointer: close-by-name removes the leftover ctl socket before releasing", async () => {
+    leaseAgent();
+    const socket = ctlSocketPath("auth", "worker-1", dir);
+    mkdirSync(dirname(socket), { recursive: true });
+    writeFileSync(socket, "stale forward");
+    db.prepare("DELETE FROM agents").run();
+    state.panes.delete("%5");
+    expect(existsSync(socket)).toBe(true);
+    await close();
+    expect(order()).toEqual(["stop job-1"]);
+    expect(listCarrierJobs(db)).toEqual([]);
+    expect(existsSync(socket)).toBe(false);
+  });
+
+  it("raw-delete pointer: a stop that fails keeps the socket with the reservation", async () => {
+    leaseAgent();
+    const socket = ctlSocketPath("auth", "worker-1", dir);
+    mkdirSync(dirname(socket), { recursive: true });
+    writeFileSync(socket, "stale forward");
+    db.prepare("DELETE FROM agents").run();
+    state.panes.delete("%5");
+    setStopExit(1);
+    expect(await failure(close())).toBeInstanceOf(CarrierStopFailedError);
+    expect(existsSync(socket)).toBe(true);
+    expect(reservation()?.job).toBe("job-1");
+  });
+});
 
 describe("close of a live lease agent: stop after the liveness proof, before the tree", () => {
   it("order by log: kill, liveness proof, stop, then the worktree rule; everything is gone after", async () => {

@@ -45,7 +45,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   it; `mu rebuild` reports it lost), `runStop` (runs `stop` only if the profile's
   `stop` still equals the recorded one; exit 3 hands back; a failure keeps the
   handle) and the job-file path `<state dir>/carrier/<ws>/<agent>.job`. Close
-  and `doctor` follow in a later unit.
+  and `doctor` are part 3 below.
 - **Lease transport, part 2: `agent spawn --host` on a lease profile.** Prepare
   rides a transient channel that is released once prepare ends, and the pane
   binds no `host_channels` row, so `--max-sessions 1` still admits `collect`
@@ -120,6 +120,32 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   refused by a reservation that a failed, never-launched spawn kept for its
   remote tree now names the tree and `--abandon-job` instead of "in progress"
   (`CarrierJobUnstoppedError.reason`).
+  - **A kept reservation names its own tree.** A rollback that cannot remove
+    the remote worktree it prepared records which tree it kept the reservation
+    for (`carrier_jobs.tree_path`, `tree_agent_id`: the path on its host and
+    the placeholder incarnation). A close with no agent row releases that
+    reservation only after closing that very tree (host, path and
+    incarnation). Closing another recovery of the same name, such as an older
+    incarnation's tree, leaves it in place and refuses
+    (`CarrierJobKeptError`, naming both trees).
+  - **No pointer refuses.** A lease agent with neither a reservation nor a job
+    file now refuses with `CarrierJobUnresolvedError` (spawn in progress).
+    The row and the tree are kept and nothing is stopped. Before, it fell
+    through to a session close and removed the tree. Lease-ness comes from the
+    transport recorded on the row at spawn (`agents.host_transport`), not from
+    the profile as it is now. A row from before that column falls back to the
+    profile or a job file. `--abandon-job` is the way past.
+  - **Close-by-name unlinks the ctl socket.** With no agent row (for example,
+    after a raw `mu sql --write` delete), the close unlinks the local ctl
+    socket for (workstream, name) after the stop and the tree, before
+    releasing the reservation.
+- **`mu doctor` lease-job hint.** A `lease-job` housekeeping row lists each
+  `carrier_jobs` reservation whose agent row is gone, or that was never bound
+  while no agent holds the name. Each entry shows its handle (or its launch
+  state and reason) and `mu agent close <name> -w <ws>`. It is a hint, never a
+  FAIL and never a non-zero exit, because a job that ended normally leaves one
+  until the next close. `--json` carries the list as
+  `housekeeping.leaseJobs`.
 
 ### Changed
 
@@ -131,7 +157,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   name. Agents with a hashed path get the new one on their next spawn; a running
   one keeps its old socket file.
 - **Schema (still v13, additive):** `host_profiles` gains `transport` (default
-  `session`) and `stop`; the 27th table `carrier_jobs` joins `MACHINE_LOCAL_TABLES`.
+  `session`) and `stop`; `agents` gains `host_transport` (the profile's
+  transport at spawn, nullable); `carrier_jobs` gains `tree_path` and
+  `tree_agent_id` (nullable); the 27th table `carrier_jobs` joins `MACHINE_LOCAL_TABLES`.
   An existing file is completed in the one upgrade transaction. `carrier_jobs`
   has its final reservation shape (surrogate id, unique `token`, `ordinal`,
   `launch`, `creator_pid`/`creator_start`, nullable `agent_id`, `pane_id`, `job`

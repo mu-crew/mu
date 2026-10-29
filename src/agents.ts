@@ -275,6 +275,8 @@ export interface InsertAgentInput {
   collectedHead?: string | null;
   repo?: string | null;
   gateToken?: string | null;
+  /** The transport of the profile `host` names, as spawned (`agents.host_transport`); null: local. */
+  hostTransport?: string | null;
   /** The lease spawn's own `carrier_jobs` reservation token: the one the name fence lets through. */
   reservation?: string;
 }
@@ -381,10 +383,10 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
     // carrier_jobs reservation other than the caller's own (src/carrier-jobs.ts).
     inserted = db
       .prepare(
-        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, created_at, updated_at)
+        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, created_at, updated_at)
        SELECT @name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
                COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource,
-               @spawner, @host, @collectedHead, @repo, @gateToken, @now, @now
+               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @now, @now
        WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs c
                          WHERE c.workstream = @workstream AND c.name = @name AND c.token IS NOT @reservation)`,
       )
@@ -405,6 +407,7 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
         collectedHead: input.collectedHead ?? null,
         repo: input.repo ?? null,
         gateToken: input.gateToken ?? null,
+        hostTransport: input.hostTransport ?? null,
         reservation: input.reservation ?? null,
         now,
       }).changes;
