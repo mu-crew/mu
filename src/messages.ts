@@ -331,12 +331,39 @@ export const MESSAGES = {
         : `job handle ${JSON.stringify(handle)} on host ${host} is not a valid handle (A-Z a-z 0-9 . _ : @ -, 1 to 128 bytes); nothing was run`,
   "carrier.stop_failed": (host: string, handle: string, detail: string) =>
     `host ${host}: stopping job ${handle} failed${detail === "" ? "" : `: ${detail}`}; its handle is kept`,
-  "carrier.job_unstopped": (name: string, handle: string, host: string) =>
-    `${name} has an unstopped job ${handle} on ${host}: mu agent close ${name}`,
-  "carrier.job_reserved": (name: string, host: string, launch: string, pane: string | null) =>
+  "carrier.job_unstopped": (
+    name: string,
+    handle: string,
+    host: string,
+    reason: string | null = null,
+  ) =>
+    reason === null
+      ? `${name} has an unstopped job ${handle} on ${host}: mu agent close ${name}`
+      : `${name} has job ${handle} on ${host} kept with its reservation (${reason}): mu agent close ${name}`,
+  "carrier.job_reserved": (
+    name: string,
+    host: string,
+    launch: string,
+    pane: string | null,
+    reason: string | null = null,
+  ) =>
     launch === "none"
-      ? `${name} is reserved by a lease spawn on ${host} that has not launched its carrier (in progress, or its spawn was killed): mu agent close ${name}`
-      : `${name} is reserved by a lease spawn on ${host} whose carrier may have been launched (pane ${pane ?? "unknown"}) and whose job handle is unknown: mu agent close ${name}, or mu agent close ${name} --abandon-job once that job is dealt with`,
+      ? reason !== null
+        ? `${name} is reserved by a lease spawn on ${host} that failed before launching its carrier and kept the reservation as the only pointer to what it left: ${reason}. Remove that on the host if it is still there, then drop the reservation: mu agent close ${name} --abandon-job`
+        : `${name} is reserved by a lease spawn on ${host} that has not launched its carrier (in progress, or its spawn was killed): mu agent close ${name}`
+      : `${name} is reserved by a lease spawn on ${host} whose carrier may have been launched (pane ${pane ?? "unknown"}) and whose job handle is unknown${reason === null ? "" : ` (${reason})`}: mu agent close ${name}, or mu agent close ${name} --abandon-job once that job is dealt with`,
+  "carrier.job_unresolved": (
+    name: string,
+    ws: string,
+    host: string,
+    facts: string,
+    keptForTree: boolean,
+  ) =>
+    keptForTree
+      ? `${name}: its lease spawn on ${host} failed before launching a carrier and kept the reservation for what it left (${facts}); nothing was closed. Remove that on the host if it is still there, then: mu agent close ${name} -w ${ws} --abandon-job`
+      : `${name}: spawn in progress, or its lease carrier on ${host} may still publish a job handle (${facts}); nothing was closed. Retry once the spawn settles; once that job is dealt with: mu agent close ${name} -w ${ws} --abandon-job`,
+  "carrier.job_kept": (name: string, ws: string, host: string, why: string) =>
+    `${name}: ${why}; its reservation on ${host} is kept: check that job, then mu agent close ${name} -w ${ws} again, or --abandon-job`,
   "carrier.job_unreadable": (name: string, file: string, detail: string) =>
     `agent ${name}: the job file ${file} exists but cannot be read (${detail}); rolled back, its reservation and any remote worktree kept`,
   "carrier.rollback_reserved": (name: string, ws: string, host: string, why: string) =>

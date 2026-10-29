@@ -772,7 +772,13 @@ describe("the reservation: name-exclusive, before any effect", () => {
     expect(kept?.reason).toContain(WT);
     // Fenced: neither a respawn nor a close-by-name drops it (the facts name the tree).
     rmFixtureDir(ctlSocketPath("auth", "worker-1", dir));
-    await expect(spawn({ cwd: "/srv/repo" })).rejects.toBeInstanceOf(CarrierJobUnstoppedError);
+    const refused = await spawn({ cwd: "/srv/repo" }).catch((e: unknown) => e);
+    expect(refused).toBeInstanceOf(CarrierJobUnstoppedError);
+    // The refusal names the kept tree and the way out, not a spawn in progress.
+    expect((refused as CarrierJobUnstoppedError).reason).toContain(WT);
+    expect((refused as Error).message).toContain(WT);
+    expect((refused as Error).message).toContain("--abandon-job");
+    expect((refused as Error).message).not.toMatch(/in progress/);
     db.prepare("UPDATE carrier_jobs SET creator_pid = ?").run(deadPid());
     const out = await resolveEmptyReservation(db, reservation() as CarrierJob);
     expect(out.released).toBe(false);

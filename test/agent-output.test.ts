@@ -118,9 +118,11 @@ describe("closePreviewToOutput", () => {
       worktree: null,
       remote: null,
       recovery: null,
+      carrierJob: null,
       refusesDirty: false,
       discard: false,
       keepBranch: false,
+      abandonJob: false,
     });
     expect(out).toMatchObject({ kind: "agent", revision: 9, id: 4, pane_id: "%1", agentName: "w" });
     expect(out).toMatchObject({ recovery_id: null });

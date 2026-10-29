@@ -90,23 +90,66 @@ export class CarrierJobUnstoppedError extends Error {
   override readonly name = "CarrierJobUnstoppedError";
   public readonly handle: string | null;
   public readonly host: string;
+  /** Why the reservation was kept without a handle (e.g. a remote tree its rollback did not remove). */
+  public readonly reason: string | null;
   constructor(
     public readonly agentName: string,
-    reservation: Pick<CarrierJob, "job" | "host" | "launch" | "paneId">,
+    reservation: Pick<CarrierJob, "job" | "host" | "launch" | "paneId"> & {
+      reason?: string | null;
+    },
   ) {
+    const reason = reservation.reason ?? null;
     super(
       reservation.job !== null
-        ? say("carrier.job_unstopped", agentName, reservation.job, reservation.host)
+        ? say("carrier.job_unstopped", agentName, reservation.job, reservation.host, reason)
         : say(
             "carrier.job_reserved",
             agentName,
             reservation.host,
             reservation.launch,
             reservation.paneId,
+            reason,
           ),
     );
     this.handle = reservation.job;
     this.host = reservation.host;
+    this.reason = reason;
+  }
+}
+
+/**
+ * `agent close` found a lease reservation with no handle it can stop: a spawn in
+ * progress, a carrier that may still publish one, or a job file it cannot read.
+ * Nothing was closed; `--abandon-job` is the way past it. Exit 4.
+ */
+export class CarrierJobUnresolvedError extends Error {
+  override readonly name = "CarrierJobUnresolvedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly host: string,
+    /** The facts the close decided on (launch, pane, creator, job file, reason). */
+    public readonly facts: string,
+    /** Never launched, kept by its rollback for a remote tree it could not remove. */
+    keptForTree = false,
+  ) {
+    super(say("carrier.job_unresolved", agentName, workstream, host, facts, keptForTree));
+  }
+}
+
+/**
+ * `agent close` stopped (or would drop) a lease job but kept its reservation: the job
+ * file names something else, or the reservation changed under the close. Exit 4.
+ */
+export class CarrierJobKeptError extends Error {
+  override readonly name = "CarrierJobKeptError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly host: string,
+    public readonly why: string,
+  ) {
+    super(say("carrier.job_kept", agentName, workstream, host, why));
   }
 }
 

@@ -15,6 +15,8 @@ export {
   UNKNOWN_REASON,
 } from "./agent-state.js";
 export {
+  CarrierJobKeptError,
+  CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
   LeaseJobInvalidError,
   LeaseJobTimeoutError,

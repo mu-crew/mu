@@ -97,6 +97,29 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   This fixes four review findings: a finalize failure lost the only handle; a
   respawn erased an invalid job file; an unreadable file removed the tree; a
   rollback stopped the replacement's job.
+- **Lease transport, part 3: `agent close` stops the job.** On a lease agent,
+  the fenced check-then-kill is unchanged; after the liveness proof, close runs
+  the profile's `stop` for the name's reservation and only then frees channels,
+  unlinks the ctl socket and job file and applies the remote worktree rule
+  ([spec](docs/specs/2026-10-28-lease-transport.md) § agent close). Exit 0
+  releases the reservation, last. Exit 3 is `HostHandbackError`; any other
+  failure names the template's first stderr line; a changed `stop` refuses
+  naming the handle. Each keeps the agent row and the reservation. A handle the
+  handshake had not recorded yet is read from the job file. A reservation with
+  no handle refuses (`CarrierJobUnresolvedError`, exit 4: spawn in progress,
+  or a carrier that may still publish) unless it was provably never launched.
+  `--force` never skips the stop. New **`mu agent close <name> --abandon-job`**
+  drops the handle without a stop and logs an event naming the host and the
+  handle (the job file is left). It is the only way past a host that is gone
+  for good. The reservation (handle, launch, pane, incarnation) joins
+  `agentRevision`, so a preview taken before the handle landed fails `--if`.
+  With no agent row left (reconcile, teardown, workstream delete, a raw `mu sql
+  --write` delete), `agent close <name>` previews `kind: "lease-job"` (or the
+  recovery), stops the reservation first, then closes the `remote_recovery`
+  worktree. `agent collect` never stops a job. A respawn
+  refused by a reservation that a failed, never-launched spawn kept for its
+  remote tree now names the tree and `--abandon-job` instead of "in progress"
+  (`CarrierJobUnstoppedError.reason`).
 
 ### Changed
 
