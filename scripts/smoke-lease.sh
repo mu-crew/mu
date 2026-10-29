@@ -12,7 +12,8 @@
 # list:
 #   1. spawn: a job handle, no host channel, the ctl forward bound by the master;
 #      `ssh -S <default master> host true` succeeds while the worker runs
-#   2. send + wait: the fake pi's settled lastText echoes the sent text
+#   2. send + wait (and send --wait): a ctl-settled run (snapshot settled:true,
+#      only for a reply that ended "settled") whose lastText echoes the sent text
 #   3. close: no job, no forward, no socket, no job file, no worktree, no
 #      carrier_jobs row
 #   4. kill -9 the carrier: the job survives, reconcile reaps the row, close by
@@ -354,7 +355,22 @@ GOT=$(js 'd.data.agents?.[0]?.lastText ?? d.data.snapshots?.[0]?.lastText' <"$R/
   fail "wait printed no lastText"
 }
 [ "$GOT" = "smoke-echo: $TEXT" ] || fail "lastText '$GOT' is not the echo of '$TEXT'"
-pass "send runs=$RUNS inc=$INC; wait --after-runs $RUNS settled with lastText '$GOT'"
+# `mu agent wait` also fires on a reply that never said `ended: "settled"`
+# (an older extension), and its `outcome` comes from lastText alone. `mu wait`
+# returns the same run at once (it settled past $RUNS), and its snapshot's
+# `settled` is true only for a ctl reply that ended settled.
+mu wait "agent:$WS/$AGENT@$RUNS#$INC" --timeout 10 --json >"$R/settled.json" || {
+  cat "$R/settled.json"
+  fail "mu wait agent:$WS/$AGENT@$RUNS#$INC"
+}
+settled_run() {
+  js "d.data.firing?.kind === 'settled' && d.data.snapshots?.[0]?.settled === true && d.data.snapshots[0].runs === $2 && d.data.snapshots[0].lastText === '$3'" <"$1" >/dev/null || {
+    cat "$1"
+    fail "$4: not ctl-settled run $2 with lastText '$3' (firing.kind settled, snapshots[0].settled true)"
+  }
+}
+settled_run "$R/settled.json" "$((RUNS + 1))" "$GOT" "mu wait after mu agent wait"
+pass "send runs=$RUNS inc=$INC; wait --after-runs $RUNS: lastText '$GOT', ctl-settled run $((RUNS + 1))"
 
 # ── 3. close leaves nothing ──────────────────────────────────────────────────
 say "3. close $AGENT"
@@ -401,7 +417,9 @@ mu agent send "$AGENT" -w "$WS" "$TEXT" --wait --json >"$R/sendwait.json" || {
 }
 GOT=$(js 'd.data.snapshots?.[0]?.lastText' <"$R/sendwait.json") || fail "send --wait printed no lastText"
 [ "$GOT" = "smoke-echo: $TEXT" ] || fail "send --wait lastText '$GOT' is not the echo of '$TEXT'"
-pass "send --wait through the re-bound forward: lastText '$GOT'"
+SENT_RUNS=$(js 'd.data.sent.runs' <"$R/sendwait.json") || fail "send --wait printed no sent.runs"
+settled_run "$R/sendwait.json" "$((SENT_RUNS + 1))" "$GOT" "send --wait"
+pass "send --wait through the re-bound forward: lastText '$GOT', ctl-settled run $((SENT_RUNS + 1))"
 close_clean "respawned agent"
 
 # Nothing of the carriers outlives them: no lease, no detached `mule rm`.
