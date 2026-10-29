@@ -149,6 +149,8 @@ const CARRIER_JOBS_COLUMNS = [
   "reason",
   "created_at",
   "recorded_at",
+  "tree_path",
+  "tree_agent_id",
 ];
 
 /** A current v13 copy whose carrier_jobs has the pre-reservation shape, with three handles. */
@@ -544,6 +546,29 @@ describe("a populated v13 DB is completed in place", () => {
     expect(stamps(p)).toEqual({ version: 13, capture: 3 });
     expect(columns(p, "host_profiles")).not.toContain("transport");
     expect(tables(p)).not.toContain("carrier_jobs");
+  });
+
+  it("a reservation-shaped carrier_jobs without tree_path/tree_agent_id, and agents without host_transport, gain them with rows intact", () => {
+    const p = v13Copy();
+    track(openDb({ path: p })).close();
+    open.pop();
+    raw(p, (r) => {
+      r.exec(
+        "INSERT INTO carrier_jobs (token, workstream, name, host, host_stop, launch, job, reason, created_at) VALUES ('t1', 'd', 'w', 'h', 'stop {job}', 'intent', 'j1', 'kept', 'c')",
+      );
+      r.exec("ALTER TABLE carrier_jobs DROP COLUMN tree_path");
+      r.exec("ALTER TABLE carrier_jobs DROP COLUMN tree_agent_id");
+      r.exec("ALTER TABLE agents DROP COLUMN host_transport");
+    });
+    expect(columns(p, "carrier_jobs")).not.toContain("tree_path");
+    expect(columns(p, "agents")).not.toContain("host_transport");
+    const db = track(openDb({ path: p }));
+    expect(columns(p, "carrier_jobs")).toEqual(CARRIER_JOBS_COLUMNS);
+    expect(columns(p, "agents")).toContain("host_transport");
+    expect(
+      db.prepare("SELECT token, job, reason, tree_path, tree_agent_id FROM carrier_jobs").all(),
+    ).toEqual([{ token: "t1", job: "j1", reason: "kept", tree_path: null, tree_agent_id: null }]);
+    expect(checkDrift(db).clean).toBe(true);
   });
 
   it("an old-shaped carrier_jobs (one row per incarnation, no token) is rebuilt losslessly as filled reservations", () => {

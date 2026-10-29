@@ -73,6 +73,7 @@ async function prestageRemote(
       cwd: null,
       spawner,
       host: profile.name,
+      hostTransport: profile.transport,
     });
     try {
       const made = await prepareRemote(db, lease, profile, {

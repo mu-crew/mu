@@ -26,6 +26,7 @@ import {
   bindCarrierJobAgent,
   getCarrierJobByAgent,
   getCarrierJobByName,
+  keepCarrierJobForTree,
   markCarrierLaunch,
   noteCarrierJob,
   recordCarrierPane,
@@ -780,6 +781,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           commandSource,
           spawner,
           host: profile?.name,
+          hostTransport: profile?.transport,
           gateToken,
           reservation: carrier?.token,
         });
@@ -1088,12 +1090,15 @@ function finalizeAgentRow(
     commandSource: CommandSource;
     spawner: string | null;
     host: string | undefined;
+    /** The admitted profile's transport, recorded on the row (`agents.host_transport`). */
+    hostTransport: string | undefined;
     gateToken: string | undefined;
     /** A lease spawn's reservation token: the insert passes the name fence with it. */
     reservation: string | undefined;
   },
 ): AgentRow {
   const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host, gateToken } = args;
+  const hostTransport = args.hostTransport ?? null;
   if (staged === undefined) {
     return insertAgent(db, {
       ...(args.reservation !== undefined ? { reservation: args.reservation } : {}),
@@ -1108,6 +1113,7 @@ function finalizeAgentRow(
       commandSource,
       spawner,
       host: host ?? null,
+      hostTransport,
       gateToken: gateToken ?? null,
     });
   }
@@ -1117,7 +1123,7 @@ function finalizeAgentRow(
   // pending): a row replaced since is not ours to repoint.
   const patched = db
     .prepare(
-      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, repo = ?, updated_at = ?
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, repo = ?, updated_at = ?
       WHERE id = ? AND pane_id = ?
         AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
@@ -1130,6 +1136,7 @@ function finalizeAgentRow(
       commandSource,
       spawner,
       host ?? null,
+      hostTransport,
       staged.host !== undefined ? staged.root : null,
       new Date().toISOString(),
       staged.incarnation,
@@ -1329,14 +1336,13 @@ export async function rollbackSpawn(
   }
 }
 
-/** Note on a kept reservation the remote tree its rollback did not remove. Never throws. */
+/** Record on a kept reservation WHICH remote tree its rollback did not remove. Never throws. */
 function keepForTree(db: Db, token: string, staged: StagedWorktree | undefined): void {
   try {
-    noteCarrierJob(
-      db,
-      token,
-      `remote worktree ${staged?.path ?? "?"} on ${staged?.host ?? "?"} was not removed`,
-    );
+    const reason = `remote worktree ${staged?.path ?? "?"} on ${staged?.host ?? "?"} was not removed`;
+    if (staged === undefined) noteCarrierJob(db, token, reason);
+    else
+      keepCarrierJobForTree(db, token, { path: staged.path, agentId: staged.incarnation, reason });
   } catch {
     // best-effort: the kept reservation fences the name either way
   }

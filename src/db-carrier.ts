@@ -14,7 +14,10 @@ export const CARRIER_JOBS_DDL = `
 -- handshake. No FK, no trigger, no op: agent deletion never touches it. Released
 -- (deleted) only after a successful stop and the job file's and tree's cleanup, by
 -- its creator when nothing was launched, or by an explicit abandon. 'host_stop' is
--- the admitted stop template.
+-- the admitted stop template. 'tree_path'/'tree_agent_id': the remote worktree a
+-- --worktree spawn prepared for it (path on 'host', and the placeholder incarnation a
+-- recovery record would carry); a close with no agent row releases the reservation
+-- only once THAT tree's close succeeded.
 CREATE TABLE IF NOT EXISTS carrier_jobs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   token         TEXT NOT NULL UNIQUE,
@@ -31,7 +34,9 @@ CREATE TABLE IF NOT EXISTS carrier_jobs (
   job           TEXT,
   reason        TEXT,
   created_at    TEXT NOT NULL,
-  recorded_at   TEXT
+  recorded_at   TEXT,
+  tree_path     TEXT,
+  tree_agent_id INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_jobs_name ON carrier_jobs (workstream, name, ordinal);
 `;

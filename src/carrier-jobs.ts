@@ -43,8 +43,15 @@ export interface CarrierJob {
   paneId: string | null;
   /** The opaque handle the carrier wrote to its job file; null until the handshake reads it. */
   job: string | null;
-  /** Why the reservation was kept without a handle (an unreadable or invalid job file). */
+  /** Why the reservation was kept without a handle (an unreadable or invalid job file), or for its tree. */
   reason: string | null;
+  /**
+   * The remote worktree a rollback kept the reservation for (`keepCarrierJobForTree`): its
+   * path on `host` and the placeholder incarnation a recovery record of it would carry. A
+   * close with no agent row releases the reservation only after THAT tree's close.
+   */
+  treePath: string | null;
+  treeAgentId: number | null;
   createdAt: string;
   recordedAt: string | null;
 }
@@ -62,6 +69,8 @@ interface Raw {
   pane_id: string | null;
   job: string | null;
   reason: string | null;
+  tree_path: string | null;
+  tree_agent_id: number | null;
   created_at: string;
   recorded_at: string | null;
 }
@@ -79,6 +88,8 @@ const toJob = (r: Raw): CarrierJob => ({
   paneId: r.pane_id,
   job: r.job,
   reason: r.reason,
+  treePath: r.tree_path,
+  treeAgentId: r.tree_agent_id,
   createdAt: r.created_at,
   recordedAt: r.recorded_at,
 });
@@ -228,6 +239,21 @@ export function fillCarrierJob(db: Db, token: string, job: string): boolean {
 /** Why a reservation is kept without a handle (an unreadable or invalid job file). */
 export function noteCarrierJob(db: Db, token: string, reason: string): void {
   db.prepare("UPDATE carrier_jobs SET reason = ? WHERE token = ?").run(reason, token);
+}
+
+/**
+ * A rollback could not remove the remote worktree it prepared: the reservation is kept as
+ * that tree's pointer, recording WHICH tree (path on the reservation's host, and the
+ * placeholder incarnation) with the reason.
+ */
+export function keepCarrierJobForTree(
+  db: Db,
+  token: string,
+  tree: { path: string; agentId: number; reason: string },
+): void {
+  db.prepare(
+    "UPDATE carrier_jobs SET reason = ?, tree_path = ?, tree_agent_id = ? WHERE token = ?",
+  ).run(tree.reason, tree.path, tree.agentId, token);
 }
 
 /**

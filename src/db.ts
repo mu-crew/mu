@@ -651,6 +651,12 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   // in place) and a lease profile's stop template (hosts.ts).
   ["host_profiles", "transport", "TEXT NOT NULL DEFAULT 'session'"],
   ["host_profiles", "stop", "TEXT"],
+  // The transport of the profile a remote agent was spawned on ('session' | 'lease'): a close
+  // decides lease-ness from the row, never from the profile as it is now.
+  ["agents", "host_transport", "TEXT"],
+  // A lease reservation's remote worktree (src/carrier-jobs.ts): which tree it belongs to.
+  ["carrier_jobs", "tree_path", "TEXT"],
+  ["carrier_jobs", "tree_agent_id", "INTEGER"],
 ];
 
 function hasColumn(db: Db, table: string, column: string): boolean {
@@ -1083,6 +1089,7 @@ CREATE TABLE IF NOT EXISTS agents (
   collected_head TEXT,                          -- HEAD last collected from a remote worktree (machine-local)
   repo          TEXT,                           -- a remote worktree's repo on its host, made absolute at spawn (machine-local); NULL: none
   gate_token    TEXT,                           -- remote command gate: spawn-unique token, also the key of its remote result record (machine-local); NULL: not a gate
+  host_transport TEXT,                          -- the transport of the profile it was spawned on, 'session' | 'lease' (machine-local); NULL: local, or a row older than the column
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   UNIQUE (workstream_id, name),

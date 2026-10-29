@@ -34,6 +34,7 @@
 
 import { type AgentRow, deleteAgent, getAgentForCleanup, isPendingPaneId } from "../agents.js";
 import { type CarrierJob, getCarrierJobByName, listCarrierJobsByName } from "../carrier-jobs.js";
+import { unlinkCtlSocket } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { getHost, releaseHostChannelsForAgent } from "../hosts.js";
 import { emitEvent } from "../logs.js";
@@ -398,22 +399,32 @@ async function closeLocked(
       cleanLeaseJobFile(db, c);
       closes.push(c);
     }
-    const result = await closeTreeWithoutRow(db, name, opts, orphan, fence, jobs.length > 0);
-    const treeClosed = result.worktree !== null || result.recovery !== undefined;
+    const { result, tree } = await closeTreeWithoutRow(
+      db,
+      name,
+      opts,
+      orphan,
+      fence,
+      jobs.length > 0,
+    );
     for (const c of closes) {
-      // A reservation its rollback kept for a remote tree it could not remove (the reason)
-      // is that tree's pointer: released only once a close handled a tree.
+      // A reservation its rollback kept for a remote tree it could not remove (the reason) is
+      // THAT tree's pointer: released only once a close handled that very tree (its host, path
+      // and incarnation), never because another tree of the name was closed.
       const r = c.reservation;
-      if (c.action === "stopped" && r.reason !== null && !treeClosed) {
+      if (c.action === "stopped" && r.reason !== null && !closedKeptTree(r, tree)) {
         throw new CarrierJobKeptError(
           name,
           opts.workstream,
           r.host,
-          `job ${r.job} is stopped, but ${r.reason}`,
+          `job ${r.job} is stopped, but ${r.reason}${tree === undefined ? "" : ` (the close handled ${tree.path} on ${tree.host}, another tree)`}`,
         );
       }
-      releaseLeaseClose(db, c);
     }
+    // No agent row holds the name: a raw delete skipped deleteAgent's socket unlink, so the
+    // local ctl socket (the carrier's forward) goes here, before the reservation.
+    if (closes.length > 0) unlinkCtlSocket(db, name, opts.workstream);
+    for (const c of closes) releaseLeaseClose(db, c);
     if (closes.length === 0) return result;
     emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, null, closes));
     return { ...result, carrierJobs: closes.map(closedJob) };
@@ -537,11 +548,29 @@ async function closeLocked(
   };
 }
 
+/** The remote tree a close with no agent row handled: the recovery record it closed. */
+interface ClosedTree {
+  host: string;
+  path: string;
+  agentId: number;
+}
+
+/** Did the close handle the tree reservation `r` was kept for (same host, path, incarnation)? */
+function closedKeptTree(r: CarrierJob, tree: ClosedTree | undefined): boolean {
+  return (
+    tree !== undefined &&
+    r.treePath !== null &&
+    tree.host === r.host &&
+    tree.path === r.treePath &&
+    tree.agentId === r.treeAgentId
+  );
+}
+
 /**
  * The tree a close with no agent row handles, after the name's lease jobs are stopped:
  * a removed agent's remote worktree (`remote_recovery`: by id, or the one left when
  * there is no local orphan; a gone record is a no-op), else the local orphan. `fenced`:
- * the revision was checked already.
+ * the revision was checked already. `tree`: the remote tree closed, if any.
  */
 async function closeTreeWithoutRow(
   db: Db,
@@ -550,16 +579,17 @@ async function closeTreeWithoutRow(
   orphan: ReturnType<typeof getWorktreeFor>,
   fence: () => void,
   fenced: boolean,
-): Promise<CloseAgentResult> {
+): Promise<{ result: CloseAgentResult; tree?: ClosedTree }> {
   const nothing: CloseAgentResult = { killedPane: false, deletedRow: false, worktree: null };
   if (opts.recoveryId !== undefined || orphan === undefined) {
     const rec = selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId);
-    if (rec === undefined) return nothing;
+    if (rec === undefined) return { result: nothing };
     if (!fenced) fence();
-    return closeRecovery(db, rec, {
+    const result = await closeRecovery(db, rec, {
       keepBranch: opts.keepBranch === true,
       force: opts.force === true,
     });
+    return { result, tree: { host: rec.host, path: rec.cwd, agentId: rec.agentId } };
   }
   if (!fenced) fence();
   const worktree = await releaseWorktree(db, orphan, {
@@ -567,7 +597,7 @@ async function closeTreeWithoutRow(
     force: opts.force === true,
   });
   emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, worktree));
-  return { ...nothing, worktree };
+  return { result: { ...nothing, worktree } };
 }
 
 /**
@@ -584,22 +614,39 @@ async function stopAgentLease(
   const mine =
     jobs.find((j) => j.agentId === agent.incarnation) ?? jobs.find((j) => j.agentId === null);
   if (mine !== undefined) return stopLeaseReservation(db, mine, { abandon });
-  // No reservation (a session agent, or a raw delete of a lease one): a job file is then
-  // the only pointer to a job, and mu has no admitted stop for it. Refuse naming it;
-  // `--abandon-job` goes on and leaves the file. No file: nothing was dispatched.
-  if (agent.host === null || abandon || !isLeaseHost(db, agent.host)) return undefined;
+  // No reservation (a session agent, or a raw delete of a lease one). Lease-ness is the
+  // row's recorded transport, never the profile as it is now; a row from before that
+  // column falls back to the profile and to a job file at the derived path. A lease agent
+  // with no reservation refuses: a job file is then the only pointer to a job, and without
+  // one nothing proves that none was dispatched (a spawn in progress, or a carrier that may
+  // still publish). `--abandon-job` goes on and leaves any file.
+  if (agent.host === null || abandon) return undefined;
   const file = leaseJobFile(db, agent.workstreamName, agent.name);
   const read = readJobFile(file);
-  if (read.kind === "none") return undefined;
+  const transport = hostTransportOf(db, agent.incarnation);
+  const lease =
+    transport === "lease" ||
+    (transport === null && (read.kind !== "none" || isLeaseHost(db, agent.host)));
+  if (!lease) return undefined;
   throw new CarrierJobUnresolvedError(
     agent.name,
     agent.workstreamName,
     agent.host,
-    `no carrier_jobs reservation records its job, but its job file ${file} ${read.kind === "handle" ? `names ${read.job}: stop it by hand` : `is ${read.kind}`}`,
+    read.kind === "none"
+      ? `no carrier_jobs reservation records its job and no job file is at ${file}`
+      : `no carrier_jobs reservation records its job, but its job file ${file} ${read.kind === "handle" ? `names ${read.job}: stop it by hand` : `is ${read.kind}`}`,
   );
 }
 
-/** Is `host` a lease profile now? A gone profile says nothing, so no. */
+/** The transport the row recorded at spawn (`agents.host_transport`); null: none recorded. */
+function hostTransportOf(db: Db, incarnation: number): string | null {
+  const r = db.prepare("SELECT host_transport AS t FROM agents WHERE id = ?").get(incarnation) as
+    | { t: string | null }
+    | undefined;
+  return r?.t ?? null;
+}
+
+/** Is `host` a lease profile now (only for a row that recorded no transport)? A gone profile says nothing, so no. */
 function isLeaseHost(db: Db, host: string): boolean {
   try {
     return getHost(db, host).transport === "lease";

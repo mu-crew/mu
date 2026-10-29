@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -21,6 +22,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  CarrierJobKeptError,
   CarrierJobUnstoppedError,
   defaultSpawnJobMs,
   LeaseJobInvalidError,
@@ -36,6 +38,7 @@ import {
   AgentDiedOnSpawnError,
   AgentLockBusyError,
   AgentSpawnStartupError,
+  closeAgent,
   deleteAgent,
   getAgent,
   insertAgent,
@@ -475,6 +478,64 @@ describe("rollback after the handle: stop first, then the worktree", () => {
 // The four reviewer-17 probes (lease_spawn_finalize_handle_lost, _invalid_pointer_erased,
 // _read_error_removes_tree, _rollback_stops_replacement): each failed on b190f90a.
 describe("reviewer probes: the job file is never an ownerless pointer", () => {
+  // reviewer-23 (high_closing_an_unrelated_recovery): failed on 53b6f549, where close
+  // removed the OLD recovery, stopped new-job and released the reservation.
+  it("reviewer wrong-tree end-to-end: failed finalize at a new root cannot release its tree pointer by closing an older recovery", async () => {
+    const prior = insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%old",
+      host: "dev",
+      cwd: "/old/root/worker-1",
+      base: SHA,
+      repo: "/old/root",
+    });
+    deleteAgent(db, "worker-1", "auth");
+    carrier = { handle: "new-job", ctl: false };
+    writeFileSync(join(dir, "rm-fail"), "1");
+    db.exec(
+      "CREATE TRIGGER deny_finalize BEFORE UPDATE OF pane_id ON agents BEGIN SELECT RAISE(ABORT, 'finalize failed'); END",
+    );
+    const err = await spawn({ worktree: true, root: "/srv/repo", ctl: false }).catch(
+      (e: unknown) => e,
+    );
+    expect((err as Error).message).toContain("finalize failed");
+    expect(reservation()).toMatchObject({ job: "new-job", treePath: WT });
+    expect(reservation()?.reason).toContain(WT);
+    expect(listRemoteRecoveries(db).map((r) => r.agentId)).toEqual([prior.incarnation]);
+    writeFileSync(
+      join(dir, "fake-exec.sh"),
+      `#!/bin/sh\ncase "$1" in\n *MU_STATE*) echo "MU_STATE clean ${SHA}";;\n *MU_RM*) echo "MU_RM removed";;\nesac\n`,
+    );
+    const result = await closeAgent(db, "worker-1", { workstream: "auth" }).catch(
+      (e: unknown) => e,
+    );
+    expect(result).toBeInstanceOf(CarrierJobKeptError);
+    expect((result as Error).message).toContain(WT);
+    expect(reservation()?.reason).toContain(WT);
+  });
+
+  it("a stopped rollback that kept its tree: close-by-name closes THAT tree's recovery and only then releases", async () => {
+    process.env.MU_SPAWN_LIVENESS_MS = "1500";
+    carrier = { handle: "job-9", ctl: true, scrollback: "Error: invalid API key" };
+    writeFileSync(join(dir, "rm-fail"), "1");
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentSpawnStartupError);
+    const kept = reservation();
+    expect(kept).toMatchObject({ job: "job-9", treePath: WT });
+    const recs = listRemoteRecoveries(db);
+    expect(recs).toMatchObject([{ cwd: WT, agentId: kept?.treeAgentId }]);
+    rmSync(join(dir, "rm-fail"));
+    writeFileSync(
+      join(dir, "fake-exec.sh"),
+      `#!/bin/sh\ncase "$1" in\n *MU_STATE*) echo "MU_STATE clean ${SHA}";;\n *MU_RM*) echo "MU_RM removed";;\nesac\n`,
+    );
+    const res = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(res.recovery).toEqual({ id: kept?.treeAgentId, deleted: true });
+    expect(res.carrierJobs).toEqual([{ host: "dev", job: "job-9", action: "stopped" }]);
+    expect(listCarrierJobs(db)).toEqual([]);
+  });
+
   it("finalize failure and failed stop must not lose the only handle on respawn", async () => {
     carrier = { handle: "orphan-job", ctl: false };
     setStopExit(1);
