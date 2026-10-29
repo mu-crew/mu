@@ -546,7 +546,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "stop_worker",
     group: "agents",
-    text: "Stop worker-3 in the initiative called auth safely: it has work that is not merged yet.",
+    text: "Retire worker-3 in the initiative called auth safely: it has work that is not merged yet.",
     role: "headline",
     families: ALL,
     async seed(sb, f) {
