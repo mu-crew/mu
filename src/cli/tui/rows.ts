@@ -50,6 +50,8 @@ export interface Row {
   line: Line;
   /** Enter opens this; absent = nothing to open. */
   drill?: DrillTarget;
+  /** What `y` copies instead of the drill's command: the attention item's fix. */
+  fix?: string;
 }
 
 /** Task status filter, cycled with `o`. `active` is the dashboard default (CLOSED hidden). */
@@ -460,13 +462,10 @@ export function attentionStrip(attention: readonly DashboardAttention[], ws: str
   ];
 }
 
-/** 3.x attention colours: a dead agent (or a failed delegate call) red, everything else that needs you yellow. */
-const attentionRole = (a: DashboardAttention): Role =>
-  a.kind === "dead" || (a.kind === "delegate" && a.text.startsWith("delegate failed"))
-    ? "bad"
-    : "warn";
+/** 3.x attention colours: a dead agent red, everything else that needs you yellow. */
+const attentionRole = (a: DashboardAttention): Role => (a.kind === "dead" ? "bad" : "warn");
 
-/** The Overview's cursor stops: every attention item (all workstreams), Enter opens its agent or task. */
+/** The Overview's cursor stops: every attention item (all workstreams), Enter opens its agent or task, `y` copies its fix. */
 function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
   return snap.attention.map((a) => {
     const agent = snap.agents.find((x) => x.key === a.target);
@@ -480,11 +479,10 @@ function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
       : a.workstream !== null && id
         ? { kind: "notes", workstream: a.workstream, id, title: a.text }
         : undefined;
-    return rowOf(
-      a.key,
-      [{ text: attentionLabel(a, ws), role: attentionRole(a) }],
-      drill ? { drill } : {},
-    );
+    return rowOf(a.key, [{ text: attentionLabel(a, ws), role: attentionRole(a) }], {
+      ...(drill ? { drill } : {}),
+      ...(a.fix !== undefined ? { fix: a.fix } : {}),
+    });
   });
 }
 

@@ -86,7 +86,7 @@ export function layout(
 
 // `q quit` comes right after the tab keys: a narrow terminal cuts the hint from the right.
 const HINT_HEAD = `←/→ tab  q quit  [/] workstream  ${NAV_HINT} move`;
-const HINT_OVERVIEW = `${HINT_HEAD}  Enter open  y copy  +/- rate`;
+const HINT_OVERVIEW = `${HINT_HEAD}  Enter open  y copy fix  +/- rate`;
 const HINT = `${HINT_HEAD}  Enter open  / filter  c clear  y copy  +/- rate`;
 const HINT_TASKS = `${HINT_HEAD}  Enter open  s sort  o status  / filter  c clear  y copy  +/- rate`;
 const hintAgents = (attachKey: string): string =>
@@ -335,7 +335,7 @@ export function App({
         const target = all[sel]?.drill;
         if (target?.kind === "scrollback") void attach(target);
       } else if (input === "y") {
-        const target = all[sel]?.drill;
+        const target = all[sel]?.fix ?? all[sel]?.drill;
         if (target !== undefined) void yank(target).then(setFlash);
       }
     },

@@ -404,6 +404,10 @@ describe("scopeWorkstream: the shown workstream's tasks, everything else machine
       "dead:other/dead",
       expect.stringMatching(/^human:other\//),
     ]);
+    const human = snap.attention.find((a) => a.kind === "human");
+    expect(human?.fix).toBe(
+      `mu task close ${human?.target?.slice("other/".length)} -w other --evidence '<what you decided>'`,
+    );
   });
 
   it("null reads no tasks; a name that is not live reads none and does not throw", async () => {
@@ -638,7 +642,14 @@ describe("attention: trouble across every workstream, filters ignored", () => {
     const snap = await loadDashboard(db, { caller: null });
     expect(snap.agents.find((a) => a.name === "mute")?.state).toBe("unknown");
     expect(snap.attention).toEqual([
-      { key: "dead:ws/dead", workstream: "ws", kind: "dead", text: "dead dead", target: "ws/dead" },
+      {
+        key: "dead:ws/dead",
+        workstream: "ws",
+        kind: "dead",
+        text: "dead dead",
+        target: "ws/dead",
+        fix: "mu agent close dead -w ws",
+      },
     ]);
   });
 
@@ -698,7 +709,7 @@ describe("attention: trouble across every workstream, filters ignored", () => {
     expect(kinds(narrow)).toEqual(["dead:dead dead"]);
   });
 
-  it("a refused or recently failed delegate call is an item for anyone; done, old failures and other states are not", async () => {
+  it("a refused delegate call is an item for anyone, with a cancel fix; failed, done and other states are not", async () => {
     task("judged");
     const reg = (id: string, label: string, wave?: string) =>
       registerDelegateCall(db, {
@@ -729,12 +740,17 @@ describe("attention: trouble across every workstream, filters ignored", () => {
       caller: null,
       status: ["OPEN", "IN_PROGRESS", "CLOSED"],
     });
-    // Workstream, then task id; a refused item says how to clear it.
+    // A failed call is final and already settled: only the refused one needs you.
     expect(kinds(snap)).toEqual([
-      "delegate:delegate failed: api check",
-      "delegate:delegate refused: lint check (reissue or cancel it from pi)",
+      "delegate:delegate refused: lint check (reissue from pi, or y copies the cancel)",
     ]);
     const refused = snap.attention.find((a) => a.text.includes("refused"));
+    expect(refused?.fix).toBe(
+      'mu delegates finish c-refused --outcome cancelled --no-record --author "$USER"',
+    );
+    // The fix clears it: a refused call finishes as cancelled without its pi session.
+    finishDelegate(db, "c-refused", { outcome: "cancelled", author: "me", record: false });
+    expect(kinds(await loadDashboard(db, { caller: null }))).toEqual([]);
     const call = snap.tasks.find((t) => t.key === refused?.target)?.call;
     expect(call).toEqual({
       call_id: "c-refused",
@@ -758,24 +774,15 @@ describe("attention: trouble across every workstream, filters ignored", () => {
     ]);
   });
 
-  it("failed calls: an item inside 24 h, gone just past it; torn-down workstreams never", async () => {
-    const failAt = (id: string, ageMs: number, ws = "ws") => {
-      registerDelegateCall(db, {
-        callId: id,
-        caller: "pi:s",
-        workstream: ws,
-        request: { text: id, label: id },
-      });
-      finishDelegate(db, id, { outcome: "died", author: "d" });
-      db.prepare("UPDATE delegate_calls SET updated_at = ? WHERE call_id = ?").run(
-        new Date(Date.now() - ageMs).toISOString(),
-        id,
-      );
-    };
-    failAt("inside", 23 * 3_600_000 + 59 * 60_000); // 24 h, literal: the constant is under test
-    failAt("past", 24 * 3_600_000 + 60_000);
+  it("refused calls in torn-down workstreams are never items; failed ones never are", async () => {
+    registerDelegateCall(db, {
+      callId: "live-failed",
+      caller: "pi:s",
+      workstream: "ws",
+      request: { text: "f", label: "live-failed" },
+    });
+    finishDelegate(db, "live-failed", { outcome: "died", author: "d" });
     ensureWorkstream(db, "gone");
-    failAt("gone-failed", 0, "gone");
     registerDelegateCall(db, {
       callId: "gone-refused",
       caller: "pi:s",
@@ -786,9 +793,7 @@ describe("attention: trouble across every workstream, filters ignored", () => {
     db.prepare("UPDATE workstreams SET torn_down_at = ? WHERE name = 'gone'").run(
       new Date().toISOString(),
     );
-    expect(kinds(await loadDashboard(db, { caller: null }))).toEqual([
-      "delegate:delegate failed: inside",
-    ]);
+    expect(kinds(await loadDashboard(db, { caller: null }))).toEqual([]);
   });
 
   it("waves: the WAVE_MAX most recently updated, newest first, from closed calls too", async () => {
