@@ -20,7 +20,7 @@
 // (caller-scoped like `human_needs`, empty for a human shell), while a task's
 // `call`, `waves` and the `delegate` attention items read every caller's, because
 // they describe tasks and waves anyone can see. Each delegate read is bounded in
-// SQL (shown task statuses, the newest waves, the failed-call window), so a tick
+// SQL (shown task statuses, the newest waves, refused calls only), so a tick
 // does not grow with the delegate history in `scratch`.
 
 import { type AgentOutput, liveAgentToOutput } from "./agent-output.js";
@@ -37,6 +37,7 @@ import { parseOpKey } from "./log-render.js";
 import { latestSeq, listLogs } from "./logs.js";
 import { computeNext } from "./next-hints.js";
 import type { NextPlan } from "./output-contract.js";
+import { shellWord } from "./shell-quote.js";
 import type { TaskStatus } from "./tasks/status.js";
 import { listTasks, type TaskRow } from "./tasks.js";
 import { isScratchWorkstream } from "./workstream.js";
@@ -194,7 +195,8 @@ export interface DashboardDelegate {
  * - `input`: `needs_input` past the idle threshold on an agent that owns work
  *   (the registry's `idle` flag; `MU_IDLE_THRESHOLD_MS`, 0 disables).
  * - `delegate`: a delegate call that is `refused` (parked until its pi session
- *   reissues it) or `failed` within `FAILED_CALL_MS`, whoever made it.
+ *   reissues it), whoever made it. A failed call is not one: it is final, its
+ *   caller had the settle, and its task row shows it.
  * - `human`: an OPEN `kind=human` task, whoever recorded it (`human_needs`
  *   is caller-scoped and empty for a human shell).
  * - `next_unavailable`: `computeNext` failed.
@@ -220,6 +222,8 @@ export interface DashboardAttention {
   text: string;
   /** Qualified key to drill into: the agent (dead/permission/input/stalled) or the task (delegate, human); null otherwise. */
   target: string | null;
+  /** The `mu` command that clears it, for `y` to copy (absent: attach or read instead). */
+  fix?: string;
 }
 
 export interface DashboardSnapshot {
@@ -291,8 +295,6 @@ const DEFAULT_LOG_LIMIT = 100;
 /** A tool running this long counts as stalled. */
 export const STALLED_TOOL_MS = 15 * 60_000;
 const FINISHED_CALL: readonly string[] = ["done", "failed", "cancelled"];
-/** A failed call is an attention item this long after it failed. */
-export const FAILED_CALL_MS = 24 * 60 * 60_000;
 /** Waves kept per workstream. */
 export const WAVE_MAX = 5;
 
@@ -454,17 +456,22 @@ const ATTENTION_ORDER: readonly AttentionKind[] = [
 ];
 
 function agentAttention(a: DashboardAgent, now: number): DashboardAttention[] {
-  const item = (kind: AttentionKind, text: string): DashboardAttention => ({
+  const item = (kind: AttentionKind, text: string, fix?: string): DashboardAttention => ({
     key: `${kind}:${a.key}`,
     workstream: a.workstream,
     kind,
     text: `${a.name} ${text}`,
     target: a.key,
+    ...(fix !== undefined ? { fix } : {}),
   });
   const since = a.since == null ? Number.NaN : Date.parse(a.since);
   const waited = Number.isFinite(since) ? ` ${formatElapsed(now - since)}` : "";
   const out: DashboardAttention[] = [];
-  if (isDead(a)) out.push(item("dead", "dead"));
+  // `agent close` previews first; its `--if` is the human's second step.
+  if (isDead(a))
+    out.push(
+      item("dead", "dead", `mu agent close ${shellWord(a.name)} -w ${shellWord(a.workstream)}`),
+    );
   if (a.state === "needs_permission") out.push(item("permission", `permission${waited}`));
   if (a.idle === true) out.push(item("input", `input${waited}`));
   const ran = a.tool?.elapsed_ms;
@@ -645,25 +652,21 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
 
   const attention: DashboardAttention[] = everyAgent.flatMap((a) => agentAttention(a, now));
   const liveNames = new Set(live.map((w) => w.name));
-  const troubled = [
-    ...listDelegates(db, undefined, undefined, { states: ["refused"] }),
-    ...listDelegates(db, undefined, undefined, {
-      states: ["failed"],
-      updatedAfter: new Date(now - FAILED_CALL_MS).toISOString(),
-    }),
-  ];
-  // Workstream, then task id, like the human items.
-  troubled.sort((a, b) => keyOf(a.workstream, a.task).localeCompare(keyOf(b.workstream, b.task)));
-  for (const c of troubled) {
+  // Workstream, then task id, like the human items (listDelegates orders by task row id).
+  const refused = listDelegates(db, undefined, undefined, { states: ["refused"] }).sort((a, b) =>
+    keyOf(a.workstream, a.task).localeCompare(keyOf(b.workstream, b.task)),
+  );
+  for (const c of refused) {
     if (!liveNames.has(c.workstream)) continue;
-    // A refused call has no expiry: say how to clear it.
-    const how = c.state === "refused" ? " (reissue or cancel it from pi)" : "";
+    // A refused call has no expiry, and its pi session may be gone: the fix cancels it
+    // from a shell (it never ran, so the judged task is left alone).
     attention.push({
       key: `delegate:${keyOf(c.workstream, c.task)}`,
       workstream: c.workstream,
       kind: "delegate",
-      text: `delegate ${c.state}: ${c.request.label ?? c.task}${how}`,
+      text: `delegate refused: ${c.request.label ?? c.task} (reissue from pi, or y copies the cancel)`,
       target: keyOf(c.workstream, c.task),
+      fix: `mu delegates finish ${shellWord(c.callId)} --outcome cancelled --no-record --author "$USER"`,
     });
   }
   for (const t of db
@@ -679,6 +682,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
       kind: "human",
       text: t.title,
       target: keyOf(t.ws, t.id),
+      fix: `mu task close ${shellWord(t.id)} -w ${shellWord(t.ws)} --evidence '<what you decided>'`,
     });
   }
   if (next.source === "unavailable") {

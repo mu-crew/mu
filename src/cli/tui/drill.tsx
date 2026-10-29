@@ -187,13 +187,18 @@ export function taskLine(t: TaskRow | undefined): string {
 /**
  * Copy a target's command with OSC 52 and say what happened: the command is always
  * in the message. A scrollback copies the attach line for a shell OUTSIDE any client
- * (its absence is said, then `mu agent read` is copied instead).
+ * (its absence is said, then `mu agent read` is copied instead). A string is copied as is.
  */
-export function useYank(): (target: DrillTarget, all?: boolean) => Promise<string> {
+export function useYank(): (target: DrillTarget | string, all?: boolean) => Promise<string> {
   const { stdout } = useStdout();
   return async (target, all = false) => {
-    const plan = target.kind === "scrollback" ? await planAttach(target) : null;
-    const command = copyCommand(target, { all, attachLine: plan?.line ?? null });
+    // A string is the command itself (an attention item's fix).
+    const plan =
+      typeof target !== "string" && target.kind === "scrollback" ? await planAttach(target) : null;
+    const command =
+      typeof target === "string"
+        ? target
+        : copyCommand(target, { all, attachLine: plan?.line ?? null });
     const y = yankSequence(command);
     const why = plan !== null && !plan.ok ? `  (attach unavailable: ${plan.reason})` : "";
     if (!y.ok) return `not copied (${y.why}): ${command}${why}`;

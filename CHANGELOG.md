@@ -52,12 +52,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **The dashboard shows delegate calls.** A `kind=delegate` task row on the Tasks
   tab carries its call: state, verdict and the task it judges
-  (`done REFUTED > ws/fix_auth`); the `/` filter matches them. A refused call, or
-  one failed in the last 24 hours, is an attention item (`delegate`) for any
-  caller, a human shell included; Enter opens the delegate task's notes. The
+  (`done REFUTED > ws/fix_auth`); the `/` filter matches them. A refused call is
+  an attention item (`delegate`) for any caller, a human shell included; Enter
+  opens the delegate task's notes. A failed call is not: it is final, its caller
+  had the settle, and its row on the Tasks tab shows it in red. The
   Overview gains a Waves card when the shown workstream has waves: each of the five
-  newest with its calls, verdict counts and how many were refused. A refused call's
-  item says to reissue or cancel it from pi. Read-only, from `delegate_calls`
+  newest with its calls, verdict counts and how many were refused.
+
+- **Attention items carry their fix; `y` copies it.** On the Overview, `y` on an
+  attention item copies the `mu` command that clears it instead of the drill's
+  read command: `mu agent close <name> -w <ws>` for a dead agent (it previews;
+  `--if` applies), `mu delegates finish <call-id> --outcome cancelled --no-record
+  --author "$USER"` for a refused delegate call (so a call whose pi session is
+  gone can be cleared from any shell), and `mu task close <id> -w <ws> --evidence
+  '…'` for a human task. Permission, input and stalled items keep Enter and
+  attach. The dashboard stays read-only: the operator runs the copied command
+  (`DashboardAttention.fix`, `Row.fix`). Read-only, from `delegate_calls`
   (`loadDashboard`'s new `call` and `waves`), bounded in SQL so a tick does not grow
   with the delegate history; a new index, `idx_delegate_calls_state`, serves the
   attention scan (created on open, no schema bump).

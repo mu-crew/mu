@@ -464,27 +464,30 @@ describe("tabs (Ink over a real snapshot)", () => {
       expect(text).toEqual(plain);
     });
 
-    it("Overview: Enter on a delegate attention item opens that delegate task's notes", () => {
+    it("Overview: Enter on a delegate attention item opens its task's notes; the row carries the fix", () => {
+      const fix = 'mu delegates finish c1 --outcome cancelled --no-record --author "$USER"';
       const snap = empty({
         attention: [
           {
             key: "delegate:scratch/delegate_x",
             workstream: "scratch",
             kind: "delegate",
-            text: "delegate failed: api check",
+            text: "delegate refused: api check",
             target: "scratch/delegate_x",
+            fix,
           },
         ],
       });
       const [r] = tabRows("overview", snap, "w", NO_FILTER, 0);
-      expect(r?.text).toBe("scratch/delegate failed: api check");
+      expect(r?.text).toBe("scratch/delegate refused: api check");
       expect(r?.drill).toEqual({
         kind: "notes",
         workstream: "scratch",
         id: "delegate_x",
-        title: "delegate failed: api check",
+        title: "delegate refused: api check",
       });
-      expect(r?.line[0]?.role).toBe("bad");
+      expect(r?.fix).toBe(fix);
+      expect(r?.line[0]?.role).toBe("warn");
     });
 
     it("Agents: host column is `local` or the host; columns do not move under a filter", () => {
