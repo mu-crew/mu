@@ -674,6 +674,20 @@ describe("attention: trouble across every workstream, filters ignored", () => {
     expect(snap.attention.map((a) => a.target)).toEqual(["ws/perm", "ws/slow", "ws/idle"]);
   });
 
+  it("stalled counts quiet time (no output) when the extension reports it, else run time", async () => {
+    const now = Date.now();
+    for (const n of ["chatty", "silent", "old"])
+      insertAgent(db, { name: n, workstream: "ws", paneId: `%${n}`, cli: "pi" });
+    const hours = (h: number) => now - h * 3_600_000;
+    await serve("ws", "chatty", { tool: { name: "bash", since: hours(2), quiet_ms: 5_000 } });
+    await serve("ws", "silent", { tool: { name: "bash", since: hours(2), quiet_ms: 3_600_000 } });
+    await serve("ws", "old", { tool: { name: "bash", since: hours(3) } });
+    expect(kinds(await loadDashboard(db, { caller: null })).sort()).toEqual([
+      "stalled:old bash 3h00m",
+      "stalled:silent bash quiet 1h00m",
+    ]);
+  });
+
   it("an OPEN human task shows for a human shell, any recorder, every workstream; CLOSED does not", async () => {
     ensureWorkstream(db, "other");
     recordHumanNeeded(db, { workstream: "ws", caller: "pi:s1", reason: "pick a licence" });
