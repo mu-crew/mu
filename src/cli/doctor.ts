@@ -23,6 +23,8 @@ import {
   ctlSocketsDoctorCheck,
   type DoctorCheck,
   extensionLive,
+  leaseJobHintLine,
+  leaseJobHints,
   murmurDoctorCheck,
 } from "../doctor-summary.js";
 import {
@@ -373,6 +375,17 @@ export async function cmdDoctor(
     console.log("");
     for (const line of oldDelegates.remediation) console.log(`  ${line}`);
   }
+  // A hint, never a hazard: a lease job that ended normally leaves its reservation
+  // until the next close of the name, and that is ordinary.
+  const leaseJobs = leaseJobHints(db);
+  console.log(
+    `  ${"lease-job".padEnd(16)} : ${
+      leaseJobs.length === 0
+        ? `${pc.green("ok")} ${pc.dim("no lease job reservation outlives its agent")}`
+        : `${pc.yellow("hint")} ${pc.dim(`${leaseJobs.length} lease job reservation(s) whose agent is gone; each close stops its job (a host gone for good: --abandon-job)`)}`
+    }`,
+  );
+  for (const h of leaseJobs) console.log(pc.dim(`      ${leaseJobHintLine(h)}`));
 
   // ─ Disk ↔ DB reconciliation
   //
@@ -648,6 +661,7 @@ export async function cmdDoctorJson(
       workstreams: findDormantWorkstreams(db, { currentWorkstream }),
       thresholds: { finishedIdleDays: FINISHED_IDLE_DAYS, abandonedIdleDays: ABANDONED_IDLE_DAYS },
     },
+    leaseJobs: leaseJobHints(db),
     oldDelegates: (() => {
       const h = checkOldDelegates(db);
       return {
