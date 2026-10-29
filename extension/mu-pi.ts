@@ -94,6 +94,7 @@ export interface MuPiApi extends MuDelegateApi {
       | "agent_end"
       | "agent_settled"
       | "tool_execution_start"
+      | "tool_execution_update"
       | "tool_execution_end"
       | "message_start"
       | "ui_prompt_start"
@@ -134,6 +135,18 @@ export const LIVE_PROBE_MS = 500;
 
 type Reply = CtlReply;
 const V = CTL_PROTOCOL_VERSION;
+
+/** A running tool as `status` reports it; an entry from older code (a /reload) may lack `output`. */
+function toolStatus(
+  t: { name: string; since: number; output?: number } | undefined,
+): CtlTool | null {
+  if (t === undefined) return null;
+  return {
+    name: t.name,
+    since: t.since,
+    quiet_ms: Math.max(0, Date.now() - (t.output ?? t.since)),
+  };
+}
 
 function fail(error: string): Reply {
   return { v: V, ok: false, error };
@@ -215,8 +228,8 @@ type Shared = {
   state: CtlState;
   since: number;
   runs: number;
-  /** Tools executing now by toolCallId, insertion order (the last is the one `status` reports). */
-  tools: Map<string, CtlTool>;
+  /** Tools executing now by toolCallId, insertion order (the last is the one `status` reports); `output` is when it last reported output. */
+  tools: Map<string, { name: string; since: number; output: number }>;
   /** Final assistant text of the last settled run; served by `wait`. */
   lastText: string;
   /** True when `lastText` lost its head to the tail cap. */
@@ -477,7 +490,7 @@ function serveCtl(pi: MuPiApi): () => boolean {
     since: g.since,
     runs: g.runs,
     pending: g.ctx?.hasPendingMessages() ?? false,
-    tool: [...g.tools.values()].at(-1) ?? null,
+    tool: toolStatus([...g.tools.values()].at(-1)),
     ...sessionFileOf(g.ctx),
     ...blockedField(),
   });
@@ -530,7 +543,20 @@ function serveCtl(pi: MuPiApi): () => boolean {
   pi.on("tool_execution_start", (e) => {
     const { toolCallId, toolName } = (e ?? {}) as { toolCallId?: unknown; toolName?: unknown };
     if (typeof toolCallId === "string" && typeof toolName === "string") {
-      g.tools.set(toolCallId, { name: toolName, since: Date.now() });
+      const now = Date.now();
+      g.tools.set(toolCallId, { name: toolName, since: now, output: now });
+    }
+  });
+  // Output from a tool, or from a tool it called (codemode), means it is not quiet.
+  pi.on("tool_execution_update", (e) => {
+    const { toolCallId, parentToolCallId } = (e ?? {}) as {
+      toolCallId?: unknown;
+      parentToolCallId?: unknown;
+    };
+    const now = Date.now();
+    for (const id of [toolCallId, parentToolCallId]) {
+      const t = typeof id === "string" ? g.tools.get(id) : undefined;
+      if (t) t.output = now;
     }
   });
   pi.on("tool_execution_end", (e) => {

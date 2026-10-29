@@ -35,11 +35,11 @@ export const slowerTick = (ms: number): number => clampTick(ms * 2);
 
 /**
  * What a snapshot shows, as one string: two snapshots with the same key render the
- * same frame. A running tool's elapsed time counts in whole seconds, the unit shown.
+ * same frame. A running tool's elapsed and quiet times count in whole seconds, the unit shown.
  */
 export const snapshotKey = (s: DashboardSnapshot): string =>
   JSON.stringify(s, (k, v: unknown) =>
-    k === "elapsed_ms" && typeof v === "number" ? Math.floor(v / 1000) : v,
+    (k === "elapsed_ms" || k === "quiet_ms") && typeof v === "number" ? Math.floor(v / 1000) : v,
   );
 
 export interface SnapshotState {

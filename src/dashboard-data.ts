@@ -49,6 +49,8 @@ export interface AgentTool {
   since: number;
   /** Calculated at read time (`now - since`), when known. */
   elapsed_ms?: number;
+  /** How long since the tool last reported output, by the agent's clock; absent from older extensions. */
+  quiet_ms?: number;
 }
 
 export interface DashboardWorkstream {
@@ -191,7 +193,8 @@ export interface DashboardDelegate {
  *
  * - `dead`: the agent's pane (or gate process) is gone.
  * - `permission`: `needs_permission`; `text` carries how long.
- * - `stalled`: one tool has run over `STALLED_TOOL_MS`.
+ * - `stalled`: one tool has been quiet (no output) for `STALLED_TOOL_MS`; an
+ *   older extension that cannot say counts from the tool's start.
  * - `input`: `needs_input` past the idle threshold on an agent that owns work
  *   (the registry's `idle` flag; `MU_IDLE_THRESHOLD_MS`, 0 disables).
  * - `delegate`: a delegate call that is `refused` (parked until its pi session
@@ -292,7 +295,7 @@ export interface DashboardOptions {
 
 const DEFAULT_STATUS: readonly TaskStatus[] = ["OPEN", "IN_PROGRESS"];
 const DEFAULT_LOG_LIMIT = 100;
-/** A tool running this long counts as stalled. */
+/** A tool quiet this long (no output; run time from an older extension) counts as stalled. */
 export const STALLED_TOOL_MS = 15 * 60_000;
 const FINISHED_CALL: readonly string[] = ["done", "failed", "cancelled"];
 /** Waves kept per workstream. */
@@ -474,9 +477,11 @@ function agentAttention(a: DashboardAgent, now: number): DashboardAttention[] {
     );
   if (a.state === "needs_permission") out.push(item("permission", `permission${waited}`));
   if (a.idle === true) out.push(item("input", `input${waited}`));
-  const ran = a.tool?.elapsed_ms;
+  const quiet = a.tool?.quiet_ms;
+  const ran = quiet ?? a.tool?.elapsed_ms;
   if (a.tool != null && ran !== undefined && ran >= STALLED_TOOL_MS) {
-    out.push(item("stalled", `${a.tool.name} ${formatElapsed(ran)}`));
+    const how = quiet !== undefined ? "quiet " : "";
+    out.push(item("stalled", `${a.tool.name} ${how}${formatElapsed(ran)}`));
   }
   return out;
 }

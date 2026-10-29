@@ -120,8 +120,13 @@ export const CTL_MSGID_MAX_LENGTH = 64;
 /** Error text of a `wait`, `send` or `fresh` that named another pi process's incarnation. */
 export const INCARNATION_MISMATCH = "incarnation mismatch";
 
-/** The tool pi is executing (innermost, latest started); `since` is ms epoch. */
-export type CtlTool = { name: string; since: number };
+/**
+ * The tool pi is executing (innermost, latest started); `since` is ms epoch.
+ * `quiet_ms`: how long since the tool last reported output (or started), measured
+ * by the extension's own clock so a remote host's skew cannot distort it; absent
+ * from older extensions.
+ */
+export type CtlTool = { name: string; since: number; quiet_ms?: number };
 
 export type CtlStatus = {
   state: CtlState;

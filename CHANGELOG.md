@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **A stalled tool means a quiet one, not a long one.** The dashboard's
+  `stalled` attention item fired on any tool that had run 15 minutes, so a long
+  build or test run that was printing away read as needing you. The pi
+  extension now tracks each running tool's last `tool_execution_update` (bash
+  streams one per output chunk; a nested call's update counts for its parent,
+  so a codemode script that logs is not quiet) and the ctl status's tool
+  carries `quiet_ms`. `stalled` now means no output for 15 minutes, labelled
+  `<agent> <tool> quiet <age>`. `quiet_ms` is measured on the agent's machine,
+  so a remote host's clock skew cannot distort it. An agent running an older
+  extension (including a remote host on an older mu) sends no `quiet_ms` and
+  keeps the old run-time rule. A command that is silent by design
+  (`cargo test -q | grep …`, a long `sleep`) still flags.
+
 ## [4.2.0] — 2026-10-29
 
 ### Added

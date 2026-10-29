@@ -142,6 +142,28 @@ describe("mu pi extension", () => {
     expect(await tool()).toMatchObject({ status: { tool: null } });
   });
 
+  it("status reports a tool's quiet_ms: output from it or a tool it called resets it", async () => {
+    await fake.emit("session_start");
+    await fake.emit("agent_start");
+    const quiet = async () => {
+      const p = await ctlProbe(sock);
+      return p.kind === "ok" ? p.status.tool?.quiet_ms : undefined;
+    };
+    vi.useFakeTimers({ now: 1_000_000, toFake: ["Date"] });
+    try {
+      await fake.emit("tool_execution_start", { toolCallId: "c1", toolName: "codemode" });
+      vi.setSystemTime(1_060_000);
+      expect(await quiet()).toBe(60_000);
+      await fake.emit("tool_execution_update", { toolCallId: "c1/1", parentToolCallId: "c1" });
+      vi.setSystemTime(1_065_000);
+      expect(await quiet()).toBe(5_000);
+      await fake.emit("tool_execution_update", { toolCallId: "c1" });
+      expect(await quiet()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("send: plain when idle, followUp when busy, steer when asked", async () => {
     await fake.emit("session_start");
     expect(await ctlRequest(sock, { op: "send", text: "a" })).toMatchObject({ v: 1, ok: true });
