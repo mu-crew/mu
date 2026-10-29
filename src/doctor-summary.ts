@@ -1,15 +1,18 @@
 // Doctor check helpers shared by `mu doctor` (src/cli/doctor.ts): the check
 // row shape, the murmur / pi-extension / ctl-socket probes and the version
-// helpers behind them.
+// helpers behind them, and the `lease-job` hint (a lease reservation whose
+// agent is gone).
 
 import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
 import { delimiter, dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
 import { type AgentRow, expectsCtl } from "./agents.js";
+import { type CarrierLaunch, listCarrierJobs } from "./carrier-jobs.js";
 import { type CtlProbe, ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import { CTL_OPS } from "./ctl/protocol.js";
+import type { Db } from "./db.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -298,4 +301,57 @@ export async function ctlSocketsDoctorCheck(
     };
   }
   return { check, agents: reports };
+}
+
+/**
+ * A `carrier_jobs` reservation whose agent is gone (its row deleted: a close that
+ * refused at the stop, reconcile, teardown, a raw delete) or was never bound (a spawn
+ * that died before finalize). A HINT, never a fail: a job that ended normally leaves
+ * one until the next close, and that is ordinary. `close` is the command that stops it.
+ */
+export interface LeaseJobHint {
+  workstream: string;
+  name: string;
+  host: string;
+  /** The handle, or null when the carrier never published one (the close refuses then; see `--abandon-job`). */
+  job: string | null;
+  launch: CarrierLaunch;
+  /** The incarnation it was bound to; null when finalize never ran. */
+  agentId: number | null;
+  reason: string | null;
+  close: string;
+}
+
+/** Every reservation whose agent is gone or never bound (doctor's `lease-job` hint). Read only. */
+export function leaseJobHints(db: Db): LeaseJobHint[] {
+  const agentIds = new Set(
+    (db.prepare("SELECT id FROM agents").all() as { id: number }[]).map((r) => r.id),
+  );
+  const named = db.prepare(
+    `SELECT 1 FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+      WHERE w.name = ? AND a.name = ?`,
+  );
+  return listCarrierJobs(db)
+    .filter((j) =>
+      j.agentId === null ? named.get(j.workstream, j.name) === undefined : !agentIds.has(j.agentId),
+    )
+    .map((j) => ({
+      workstream: j.workstream,
+      name: j.name,
+      host: j.host,
+      job: j.job,
+      launch: j.launch,
+      agentId: j.agentId,
+      reason: j.reason,
+      close: `mu agent close ${j.name} -w ${j.workstream}`,
+    }));
+}
+
+/** One line per hint, for the human doctor. */
+export function leaseJobHintLine(h: LeaseJobHint): string {
+  const what =
+    h.job !== null
+      ? `job ${h.job}`
+      : `no job handle (launch ${h.launch}${h.reason === null ? "" : `, ${h.reason}`})`;
+  return `${h.workstream}/${h.name} on ${h.host}: ${what}, agent ${h.agentId === null ? "never bound" : "gone"}: ${h.close}`;
 }
