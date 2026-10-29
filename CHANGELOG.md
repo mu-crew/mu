@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.2.0] — 2026-10-29
+
 ### Added
 
 - **A host template's exit 3 is a hand-back.** The remote-workers recipe already
