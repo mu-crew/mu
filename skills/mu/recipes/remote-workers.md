@@ -18,8 +18,9 @@ mu agent close worker-1 -w <ws> --if <rev>
 
 End the brief with: commit, then `CLOSE: task=<id> evidence="<command + result>"`. Cherry-pick the collected commits and re-run the evidence before you close.
 
-- At `--max-sessions 1` the live pane holds the only channel: `collect` refuses; raise the cap.
+- A capped host (`--max-sessions 1`): use a lease (`host init --mule`).
 - Long remote gates are panes (`--command`).
 - `close` refuses a dirty or uncollected tree: collect again.
-- Exit 3 from a host command is a hand-back (hardware key): stop and ask; never retry or ssh yourself.
-- A `shell` template must not ride a shared ssh master (it outlives the pane). A capped host wants a lease (forthcoming).
+- Exit 3 from a host command is a hand-back: stop and ask; never retry or ssh yourself.
+- A `shell` template must not ride a shared ssh master.
+- A dead lease pane leaves its job running: `close` stops it; only `--abandon-job` passes an unreachable host.

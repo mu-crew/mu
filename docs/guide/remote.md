@@ -217,5 +217,19 @@ mu host check dev --root '~/repo'
   until `mu agent close <name>` stops the job. A lease profile runs no command
   gates.
 
-`agent close` and `doctor` on a lease agent land in the next unit.
+- `agent close` on a lease agent kills the pane and proves it gone as usual,
+  then runs `stop` for the job, and only then removes the worktree. A stop that
+  fails (the template's first stderr line is named), hands back (exit 3) or
+  finds the `stop` template changed keeps the agent and its handle: fix that,
+  then close again. `--force` never skips the stop. A handle the spawn had not
+  recorded yet is read from the job file; with neither, close refuses (`spawn in
+  progress`).
+- With no agent row left (the carrier was `kill -9`ed and reconcile reaped it,
+  a teardown, a raw delete), `mu agent close <name> -w <ws>` stops the job
+  first, then closes the recovery worktree, if any. `agent collect` never
+  stops a job.
+- A host that is gone for good: `mu agent close <name> --abandon-job` drops the
+  handle without a stop and logs the host and handle; the job may still run
+  there. It is the only way past an unreachable host.
+
 Spec: [lease transport](../specs/2026-10-28-lease-transport.md).

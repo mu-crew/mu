@@ -206,14 +206,20 @@ export function withTaskFence<T>(
  *  that (workstream, name). With no agent row but a registered worktree (an
  *  orphan: a failed spawn or an earlier close left it) the hash is of those
  *  rows alone, so an orphan has a revision of its own and a replaced registry
- *  row moves it. Read only. */
+ *  row moves it. The name's lease `carrier_jobs` reservation (its handle, or
+ *  its absence, and its launch, pane and incarnation) joins every one of these
+ *  hashes, so a preview taken before a handle landed fails `--if`; a name with
+ *  only a reservation left has a revision of its own. Read only. */
 export function agentRevision(
   db: Db,
   workstream: string,
   name: string,
   recoveryId?: number,
 ): number {
-  if (recoveryId !== undefined) return recoveryRevision(db, workstream, name, recoveryId);
+  const carrier = carrierJobsOf(db, workstream, name);
+  if (recoveryId !== undefined) {
+    return recoveryRevision(db, workstream, name, carrier, recoveryId);
+  }
   const agent = db
     .prepare(
       `SELECT a.id, a.pane_id, a.cli, a.role, a.tab, a.cwd, a.base, a.command, a.command_source,
@@ -237,28 +243,59 @@ export function agentRevision(
         WHERE workstream = ? AND agent = ? ORDER BY path`,
     )
     .all(workstream, name) as unknown[];
-  if (agent === undefined && worktrees.length === 0) return recoveryRevision(db, workstream, name);
-  const digest = createHash("sha256")
-    .update(JSON.stringify([agent ?? null, owned, worktrees]))
-    .digest();
+  if (agent === undefined && worktrees.length === 0) {
+    return recoveryRevision(db, workstream, name, carrier);
+  }
+  const state: unknown[] = [agent ?? null, owned, worktrees];
+  if (carrier.length > 0) state.push(carrier);
+  const digest = createHash("sha256").update(JSON.stringify(state)).digest();
   return digest.readUIntBE(0, 6);
 }
 
-/** The revision of the remote recovery record(s) of `workstream/name` (`remote_recovery`, src/remote-recovery.ts): a hash of every column of the selected record (`recoveryId`) or, unselected, of every record of the name, so a second record moves it; plus the id of an agent that holds the name now, so a replacement does too. 0 when no record is selected. Read only. */
-function recoveryRevision(db: Db, workstream: string, name: string, recoveryId?: number): number {
+/** The lease reservation(s) of `workstream/name` as a revision sees them (src/carrier-jobs.ts). */
+function carrierJobsOf(db: Db, workstream: string, name: string): unknown[] {
+  return db
+    .prepare(
+      `SELECT token, host, host_stop, launch, agent_id, pane_id, job, reason FROM carrier_jobs
+        WHERE workstream = ? AND name = ? ORDER BY id`,
+    )
+    .all(workstream, name) as unknown[];
+}
+
+/** The revision of the remote recovery record(s) of `workstream/name` (`remote_recovery`, src/remote-recovery.ts): a hash of every column of the selected record (`recoveryId`) or, unselected, of every record of the name, so a second record moves it; plus the id of an agent that holds the name now, so a replacement does too, and the name's lease reservation. With no record selected, the reservation's alone; 0 when there is neither. Read only. */
+function recoveryRevision(
+  db: Db,
+  workstream: string,
+  name: string,
+  carrier: unknown[],
+  recoveryId?: number,
+): number {
   const rows = db
     .prepare(
       `SELECT * FROM remote_recovery WHERE workstream = ? AND name = ?${recoveryId === undefined ? "" : " AND agent_id = ?"} ORDER BY agent_id`,
     )
     .all(...(recoveryId === undefined ? [workstream, name] : [workstream, name, recoveryId]));
-  if (rows.length === 0) return 0;
+  if (rows.length === 0) {
+    // A named record that is gone is "nothing", whatever else the name holds.
+    if (carrier.length === 0 || recoveryId !== undefined) return 0;
+    return createHash("sha256")
+      .update(JSON.stringify(["lease-job", carrier]))
+      .digest()
+      .readUIntBE(0, 6);
+  }
   const live = db
     .prepare(
       "SELECT a.id FROM agents a JOIN workstreams w ON w.id = a.workstream_id WHERE w.name = ? AND a.name = ?",
     )
     .get(workstream, name) as { id: number } | undefined;
   const digest = createHash("sha256")
-    .update(JSON.stringify(["recovery", rows, live?.id ?? null]))
+    .update(
+      JSON.stringify(
+        carrier.length > 0
+          ? ["recovery", rows, live?.id ?? null, carrier]
+          : ["recovery", rows, live?.id ?? null],
+      ),
+    )
     .digest();
   return digest.readUIntBE(0, 6);
 }

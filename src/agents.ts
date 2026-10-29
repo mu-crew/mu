@@ -68,6 +68,8 @@ export {
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  CarrierJobKeptError,
+  CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
   SpawnAttemptBusyError,
   SpawnAttemptFailedError,

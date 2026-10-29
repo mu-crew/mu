@@ -21,10 +21,21 @@
 //
 // Without `ifRevision` the SDK closes at once (internal callers, tests);
 // guards 2 and 3 still apply. The CLI previews unless `--if` is given.
+//
+// A LEASE agent (spec 2026-10-28-lease-transport.md § agent close): its pane's
+// death is not its job's death. After the liveness proof and `replaced()`, the
+// name's `carrier_jobs` reservation is stopped (src/agents/lease-carrier.ts,
+// `stopLeaseReservation`): exit 0 is the proof; a hand-back (exit 3), a failure
+// or a refusal throws with the agent row and the reservation kept. Then
+// `replaced()` again, the job file, the channels and the remote worktree rule,
+// unchanged; the reservation is released last. `--force` never skips the stop;
+// `--abandon-job` drops the handle without one. With no agent row left, close
+// stops the name's reservation the same way before the recovery close.
 
 import { type AgentRow, deleteAgent, getAgentForCleanup, isPendingPaneId } from "../agents.js";
+import { type CarrierJob, getCarrierJobByName, listCarrierJobsByName } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
-import { releaseHostChannelsForAgent } from "../hosts.js";
+import { getHost, releaseHostChannelsForAgent } from "../hosts.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
@@ -41,8 +52,21 @@ import {
   worktreeState,
 } from "../worktree.js";
 import { closeRecovery, recoveryPreview } from "./close-recovery.js";
-import { AgentPaneStillAliveError, AgentReplacedError } from "./errors.js";
+import {
+  AgentPaneStillAliveError,
+  AgentReplacedError,
+  CarrierJobKeptError,
+  CarrierJobUnresolvedError,
+} from "./errors.js";
 import { cleanGateResult } from "./gate.js";
+import {
+  cleanLeaseJobFile,
+  type LeaseClose,
+  leaseJobFile,
+  readJobFile,
+  releaseLeaseClose,
+  stopLeaseReservation,
+} from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
 
 export interface CloseAgentOptions {
@@ -82,6 +106,20 @@ export interface CloseAgentOptions {
    * state `unknown`, `WorktreeHeldError`) with everything kept.
    */
   force?: boolean;
+  /**
+   * Drop the name's lease job handle (`carrier_jobs` reservation) WITHOUT stopping
+   * the job: for a host that is gone for good. Emits an event naming the host and
+   * the handle; the job file is left in place. The only way past a stop that cannot
+   * run. `force` never stands in for it.
+   */
+  abandonJob?: boolean;
+}
+
+/** What a close did to a lease job: stopped, abandoned, or (never launched) released. */
+export interface ClosedCarrierJob {
+  host: string;
+  job: string | null;
+  action: LeaseClose["action"];
 }
 
 export interface CloseAgentResult {
@@ -91,6 +129,8 @@ export interface CloseAgentResult {
   worktree: ReleasedWorktree | null;
   /** Set when a remote recovery record was closed: its id and whether the record was removed. */
   recovery?: { id: number; deleted: boolean };
+  /** Set when a lease job's reservation was closed. */
+  carrierJobs?: ClosedCarrierJob[];
 }
 
 /** What `agent close` would do, read only. */
@@ -99,8 +139,9 @@ export interface ClosePreview {
   workstream: string;
   /** `agent`: a registry row; `orphan-worktree`: only a registered worktree
    *  is left (a failed spawn or an earlier close); `recovery`: the agent row
-   *  is gone but `remote_recovery` kept its remote worktree; `none`: nothing. */
-  kind: "agent" | "orphan-worktree" | "recovery" | "none";
+   *  is gone but `remote_recovery` kept its remote worktree; `lease-job`: only
+   *  a lease job's `carrier_jobs` reservation is left; `none`: nothing. */
+  kind: "agent" | "orphan-worktree" | "recovery" | "lease-job" | "none";
   /** `agentRevision`: the value for `--if`. 0 when `kind` is `none`. */
   revision: number;
   /** The registry incarnation (`AgentRow.incarnation`); null without a row. */
@@ -130,10 +171,23 @@ export interface ClosePreview {
     preservedAt: string;
     refusal: string | null;
   } | null;
+  /**
+   * The name's lease job reservation (`carrier_jobs`), stopped (or with
+   * `abandonJob` dropped) before the tree is touched. Null when there is none.
+   */
+  carrierJob: Pick<CarrierJob, "host" | "job" | "launch" | "paneId" | "reason"> | null;
   /** True when the close would refuse for uncommitted work (no `discard`). */
   refusesDirty: boolean;
   discard: boolean;
   keepBranch: boolean;
+  abandonJob: boolean;
+}
+
+function carrierJobOf(db: Db, workstream: string, name: string): ClosePreview["carrierJob"] {
+  const r = getCarrierJobByName(db, workstream, name);
+  return r === undefined
+    ? null
+    : { host: r.host, job: r.job, launch: r.launch, paneId: r.paneId, reason: r.reason };
 }
 
 function remoteOf(agent: AgentRow | undefined): ClosePreview["remote"] {
@@ -180,9 +234,16 @@ function worktreeOf(db: Db, workstream: string, name: string, agent?: AgentRow) 
 export async function previewClose(
   db: Db,
   name: string,
-  opts: { workstream: string; discard?: boolean; keepBranch?: boolean; recoveryId?: number },
+  opts: {
+    workstream: string;
+    discard?: boolean;
+    keepBranch?: boolean;
+    recoveryId?: number;
+    abandonJob?: boolean;
+  },
 ): Promise<ClosePreview> {
   const discard = opts.discard === true;
+  const abandonJob = opts.abandonJob === true;
   for (let attempt = 0; attempt < 3; attempt++) {
     const agent = getAgentForCleanup(db, name, opts.workstream);
     const row = worktreeOf(db, opts.workstream, name, agent);
@@ -220,11 +281,14 @@ export async function previewClose(
           worktree: null,
           remote: null,
           recovery: null,
+          carrierJob: null,
           refusesDirty: false,
           discard,
           keepBranch: opts.keepBranch === true,
+          abandonJob,
         };
       }
+      const carrierJob = carrierJobOf(db, opts.workstream, name);
       if (rec !== undefined) {
         return {
           agentName: name,
@@ -236,15 +300,23 @@ export async function previewClose(
           ownedTasks: [],
           worktree: null,
           ...recoveryPreview(db, rec),
+          carrierJob,
           refusesDirty: false,
           discard,
           keepBranch: opts.keepBranch === true,
+          abandonJob,
         };
       }
       return {
         agentName: name,
         workstream: opts.workstream,
-        kind: now ? "agent" : nowRow ? "orphan-worktree" : "none",
+        kind: now
+          ? "agent"
+          : nowRow
+            ? "orphan-worktree"
+            : carrierJob !== null
+              ? "lease-job"
+              : "none",
         revision: opts.recoveryId === undefined ? agentRevision(db, opts.workstream, name) : 0,
         incarnation: now?.incarnation ?? null,
         paneId: now?.paneId ?? null,
@@ -252,9 +324,11 @@ export async function previewClose(
         worktree: nowRow && state ? { path: nowRow.path, state } : null,
         remote: remoteOf(now),
         recovery: null,
+        carrierJob,
         refusesDirty: state === "dirty" && !discard,
         discard,
         keepBranch: opts.keepBranch === true,
+        abandonJob,
       };
     })();
     if (preview !== undefined) return preview;
@@ -300,23 +374,49 @@ async function closeLocked(
   };
   const agent = getAgentForCleanup(db, name, opts.workstream);
   const orphan = agent ? undefined : getWorktreeFor(db, opts.workstream, name);
-  // A removed agent's remote worktree (`remote_recovery`): by id, or the one
-  // left when there is no row and no local orphan. A gone record is a no-op.
-  if (opts.recoveryId !== undefined || (agent === undefined && orphan === undefined)) {
-    const rec = selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId);
-    if (rec === undefined) return { killedPane: false, deletedRow: false, worktree: null };
-    fence();
-    return closeRecovery(db, rec, {
-      keepBranch: opts.keepBranch === true,
-      force: opts.force === true,
-    });
-  }
-  if (!agent) {
-    if (orphan === undefined) return { killedPane: false, deletedRow: false, worktree: null };
-    fence();
-    const worktree = await releaseWorktree(db, orphan, { discard, force: opts.force === true });
-    emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, worktree));
-    return { killedPane: false, deletedRow: false, worktree };
+  const nothing: CloseAgentResult = { killedPane: false, deletedRow: false, worktree: null };
+  if (agent === undefined || opts.recoveryId !== undefined) {
+    // A named recovery record that is gone is "nothing": no job is stopped for it.
+    if (
+      opts.recoveryId !== undefined &&
+      selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId) === undefined
+    ) {
+      return nothing;
+    }
+    // No agent row left: the name's lease job is stopped first (same rule as below), its
+    // reservation released only after the tree's close. (A live agent's is its close's.)
+    const jobs = agent === undefined ? listCarrierJobsByName(db, opts.workstream, name) : [];
+    if (jobs.length > 0) {
+      fence();
+      // Several recovery records refuse (ambiguous) before any job is stopped.
+      if (orphan === undefined) selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId);
+    }
+    const closes: LeaseClose[] = [];
+    for (const j of jobs) {
+      const c = await stopLeaseReservation(db, j, { abandon: opts.abandonJob === true });
+      if (c === undefined) continue;
+      cleanLeaseJobFile(db, c);
+      closes.push(c);
+    }
+    const result = await closeTreeWithoutRow(db, name, opts, orphan, fence, jobs.length > 0);
+    const treeClosed = result.worktree !== null || result.recovery !== undefined;
+    for (const c of closes) {
+      // A reservation its rollback kept for a remote tree it could not remove (the reason)
+      // is that tree's pointer: released only once a close handled a tree.
+      const r = c.reservation;
+      if (c.action === "stopped" && r.reason !== null && !treeClosed) {
+        throw new CarrierJobKeptError(
+          name,
+          opts.workstream,
+          r.host,
+          `job ${r.job} is stopped, but ${r.reason}`,
+        );
+      }
+      releaseLeaseClose(db, c);
+    }
+    if (closes.length === 0) return result;
+    emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, null, closes));
+    return { ...result, carrierJobs: closes.map(closedJob) };
   }
   const row = worktreeOf(db, opts.workstream, name, agent);
   if (row !== undefined) await assertReleasable(row, { discard });
@@ -367,6 +467,11 @@ async function closeLocked(
     throw new AgentPaneStillAliveError(name, agent.workstreamName, agent.paneId, alive, why);
   }
   if (replaced()) throw new AgentReplacedError(name, opts.workstream);
+  // A lease job: its pane is proven gone, but not its job. Stop it now, before the
+  // tree is touched; any refusal or failure keeps the row and the reservation.
+  const lease = await stopAgentLease(db, agent, opts.abandonJob === true);
+  if (replaced()) throw new AgentReplacedError(name, opts.workstream);
+  if (lease !== undefined) cleanLeaseJobFile(db, lease);
   // Re-checks the state: a write after the pre-check still refuses, with
   // the agent row kept so the close can be retried. A remote worktree is
   // judged only now, after the kill: the pane held the host's channel (at cap
@@ -409,22 +514,123 @@ async function closeLocked(
     { preserve: !remoteHandled },
   );
   if (!deletedRow && replaced()) throw new AgentReplacedError(name, opts.workstream);
+  // Last: the reservation, once its job is stopped and its job file and tree are dealt with.
+  if (lease !== undefined) releaseLeaseClose(db, lease);
   // A deliberate close of a worker with no open task and no run in flight is the end of its work,
   // not a death: the wait engine drops its ref (src/wait-owed.ts). A busy one is still news.
   if (deletedRow && !running && openAtClose === 0)
     setAgentDone(db, agent.workstreamName, name, true);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.
-  emitEvent(db, agent.workstreamName, "agent.close", closeLine(name, agent.paneId, worktree));
-  return { killedPane: true, deletedRow, worktree };
+  const closes = lease === undefined ? [] : [lease];
+  emitEvent(
+    db,
+    agent.workstreamName,
+    "agent.close",
+    closeLine(name, agent.paneId, worktree, closes),
+  );
+  return {
+    killedPane: true,
+    deletedRow,
+    worktree,
+    ...(lease === undefined ? {} : { carrierJobs: [closedJob(lease)] }),
+  };
 }
+
+/**
+ * The tree a close with no agent row handles, after the name's lease jobs are stopped:
+ * a removed agent's remote worktree (`remote_recovery`: by id, or the one left when
+ * there is no local orphan; a gone record is a no-op), else the local orphan. `fenced`:
+ * the revision was checked already.
+ */
+async function closeTreeWithoutRow(
+  db: Db,
+  name: string,
+  opts: CloseAgentOptions & { workstream: string },
+  orphan: ReturnType<typeof getWorktreeFor>,
+  fence: () => void,
+  fenced: boolean,
+): Promise<CloseAgentResult> {
+  const nothing: CloseAgentResult = { killedPane: false, deletedRow: false, worktree: null };
+  if (opts.recoveryId !== undefined || orphan === undefined) {
+    const rec = selectRemoteRecovery(db, opts.workstream, name, opts.recoveryId);
+    if (rec === undefined) return nothing;
+    if (!fenced) fence();
+    return closeRecovery(db, rec, {
+      keepBranch: opts.keepBranch === true,
+      force: opts.force === true,
+    });
+  }
+  if (!fenced) fence();
+  const worktree = await releaseWorktree(db, orphan, {
+    discard: opts.discard === true,
+    force: opts.force === true,
+  });
+  emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, worktree));
+  return { ...nothing, worktree };
+}
+
+/**
+ * Step 4 for a live agent: the name's reservation (bound to this incarnation, or not
+ * bound yet: a spawn between its pane and its handshake), stopped or with `abandon`
+ * dropped. Undefined for an agent with no reservation (a session agent).
+ */
+async function stopAgentLease(
+  db: Db,
+  agent: AgentRow,
+  abandon: boolean,
+): Promise<LeaseClose | undefined> {
+  const jobs = listCarrierJobsByName(db, agent.workstreamName, agent.name);
+  const mine =
+    jobs.find((j) => j.agentId === agent.incarnation) ?? jobs.find((j) => j.agentId === null);
+  if (mine !== undefined) return stopLeaseReservation(db, mine, { abandon });
+  // No reservation (a session agent, or a raw delete of a lease one): a job file is then
+  // the only pointer to a job, and mu has no admitted stop for it. Refuse naming it;
+  // `--abandon-job` goes on and leaves the file. No file: nothing was dispatched.
+  if (agent.host === null || abandon || !isLeaseHost(db, agent.host)) return undefined;
+  const file = leaseJobFile(db, agent.workstreamName, agent.name);
+  const read = readJobFile(file);
+  if (read.kind === "none") return undefined;
+  throw new CarrierJobUnresolvedError(
+    agent.name,
+    agent.workstreamName,
+    agent.host,
+    `no carrier_jobs reservation records its job, but its job file ${file} ${read.kind === "handle" ? `names ${read.job}: stop it by hand` : `is ${read.kind}`}`,
+  );
+}
+
+/** Is `host` a lease profile now? A gone profile says nothing, so no. */
+function isLeaseHost(db: Db, host: string): boolean {
+  try {
+    return getHost(db, host).transport === "lease";
+  } catch {
+    return false;
+  }
+}
+
+const closedJob = (c: LeaseClose): ClosedCarrierJob => ({
+  host: c.reservation.host,
+  job: c.reservation.job,
+  action: c.action,
+});
 
 function sameIncarnation(a: AgentRow, b: AgentRow): boolean {
   return a.incarnation === b.incarnation && a.paneId === b.paneId;
 }
 
-function closeLine(name: string, paneId: string | undefined, wt: ReleasedWorktree | null): string {
+function closeLine(
+  name: string,
+  paneId: string | undefined,
+  wt: ReleasedWorktree | null,
+  jobs: readonly LeaseClose[] = [],
+): string {
   const bits = [paneId === undefined ? undefined : `pane=${paneId}`];
+  for (const j of jobs) {
+    const what = j.reservation.job === null ? "lease reservation" : `job ${j.reservation.job}`;
+    const did =
+      j.action === "stopped" ? "stopped" : j.action === "abandon" ? "abandoned" : "released";
+    bits.push(`${what} on ${j.reservation.host} ${did}`);
+  }
   if (wt !== null) {
     bits.push(`worktree ${wt.action}${wt.branch === undefined ? "" : ` as ${wt.branch}`}`);
   }

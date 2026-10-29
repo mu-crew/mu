@@ -43,9 +43,15 @@ import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode } from "../output.js";
-import { AgentDiedOnSpawnError, AgentExistsError, CarrierJobUnstoppedError } from "./errors.js";
+import {
+  AgentDiedOnSpawnError,
+  AgentExistsError,
+  CarrierJobKeptError,
+  CarrierJobUnresolvedError,
+  CarrierJobUnstoppedError,
+} from "./errors.js";
 
-export { CarrierJobUnstoppedError };
+export { CarrierJobKeptError, CarrierJobUnresolvedError, CarrierJobUnstoppedError };
 
 import { withAgentLock } from "./lock.js";
 
@@ -380,13 +386,41 @@ export interface EmptyReservationResolution {
 }
 
 /**
+ * The facts of a reservation that holds NO handle (launch, pane, creator, job file,
+ * reason), and whether its carrier was provably never launched: `launch` 'none', no
+ * pane recorded, no reason noted (a rollback that kept it for a remote tree it could
+ * not remove), and its creator proven gone (pid + start time). Read only.
+ */
+export async function describeEmptyReservation(
+  db: Db,
+  r: CarrierJob,
+): Promise<{ facts: string; unlaunched: boolean }> {
+  const jobFile = leaseJobFile(db, r.workstream, r.name);
+  const creator =
+    r.creatorPid === null
+      ? "unknown"
+      : pidProvenGone(r.creatorPid, r.creatorStart)
+        ? "gone"
+        : "not proven gone";
+  let pane = "none";
+  if (r.paneId !== null) {
+    const alive = await activeMux()
+      .then((m) => m.paneAlive(r.paneId ?? ""))
+      .catch(() => undefined);
+    pane = `${r.paneId} (${alive === undefined ? "unknown" : alive ? "alive" : "dead"})`;
+  }
+  const facts = `launch ${r.launch}, pane ${pane}, creator pid ${r.creatorPid ?? "?"} ${creator}, job file ${describeRead(readJobFile(jobFile))}${r.reason === null ? "" : `, ${r.reason}`}`;
+  const unlaunched =
+    r.launch === "none" && r.paneId === null && r.reason === null && creator === "gone";
+  return { facts, unlaunched };
+}
+
+/**
  * Resolve a reservation that holds NO handle (close-by-name, `--abandon-job`). Without
- * abandon it is released only when its carrier was provably never launched: `launch`
- * 'none', no pane recorded, no reason noted (a rollback that kept it for a remote tree it
- * could not remove), and its creator proven gone (pid + start time). Every other
- * case is unknown and refuses with the facts (launch, pane, creator, job file). With
- * `abandon` it is dropped with an event naming the host and the job file, which is left
- * in place so a late-published handle can still be found. Under the strict agent lock.
+ * abandon it is released only when its carrier was provably never launched
+ * (`describeEmptyReservation`). Every other case is unknown and refuses with the facts.
+ * With `abandon` it is dropped with an event naming the host and the job file, which is
+ * left in place so a late-published handle can still be found. Under the strict agent lock.
  */
 export async function resolveEmptyReservation(
   db: Db,
@@ -400,37 +434,149 @@ export async function resolveEmptyReservation(
     if (r.job !== null) {
       return { released: false, abandoned: false, facts: `holds job ${r.job}: stop it first` };
     }
-    const jobFile = leaseJobFile(db, workstream, name);
-    const creator =
-      r.creatorPid === null
-        ? "unknown"
-        : pidProvenGone(r.creatorPid, r.creatorStart)
-          ? "gone"
-          : "not proven gone";
-    let pane = "none";
-    if (r.paneId !== null) {
-      const alive = await activeMux()
-        .then((m) => m.paneAlive(r.paneId ?? ""))
-        .catch(() => undefined);
-      pane = `${r.paneId} (${alive === undefined ? "unknown" : alive ? "alive" : "dead"})`;
-    }
-    const facts = `launch ${r.launch}, pane ${pane}, creator pid ${r.creatorPid ?? "?"} ${creator}, job file ${describeRead(readJobFile(jobFile))}${r.reason === null ? "" : `, ${r.reason}`}`;
+    const { facts, unlaunched } = await describeEmptyReservation(db, r);
     if (opts.abandon === true) {
       const abandoned = abandonCarrierJob(db, r);
-      if (abandoned) {
-        emitEvent(
-          db,
-          workstream,
-          "agent.close",
-          say("carrier.reservation_abandoned", name, r.host, jobFile, facts),
-        );
-      }
+      if (abandoned) emitAbandoned(db, r, facts);
       return { released: abandoned, abandoned, facts };
     }
-    // A reason means the rollback kept it on purpose (a remote tree it did not remove).
-    if (r.launch !== "none" || r.paneId !== null || r.reason !== null || creator !== "gone") {
-      return { released: false, abandoned: false, facts };
-    }
+    if (!unlaunched) return { released: false, abandoned: false, facts };
     return { released: releaseCarrierJob(db, r), abandoned: false, facts };
   });
+}
+
+function emitAbandoned(db: Db, r: CarrierJob, facts: string): void {
+  emitEvent(
+    db,
+    r.workstream,
+    "agent.close",
+    say(
+      "carrier.reservation_abandoned",
+      r.name,
+      r.host,
+      leaseJobFile(db, r.workstream, r.name),
+      facts,
+    ),
+  );
+}
+
+/**
+ * What step 4 of a lease close decided for the name's reservation: its job `stopped`
+ * (exit 0 of the stop template), `abandon` (`--abandon-job`: no stop; dropped at once,
+ * with its event), or `unlaunched` (no handle and provably never launched: nothing to
+ * stop). A stopped or unlaunched reservation is released by `releaseLeaseClose`, only
+ * after the job file and the tree are dealt with.
+ */
+export interface LeaseClose {
+  reservation: CarrierJob;
+  action: "stopped" | "abandon" | "unlaunched";
+  /** What the abandon event names (the handle, or the empty reservation's facts). */
+  facts: string;
+}
+
+/**
+ * Step 4 of `agent close` on a lease agent, and of a close of a name whose agent row is
+ * gone (spec § agent close, § No agent row left). The caller holds the agent lock and,
+ * for a live agent, has proven its pane gone. A reservation with a handle runs `stop`
+ * (`runStop`): exit 0 is the proof; exit 3 is `HostHandbackError` and any other failure
+ * `CarrierStopFailedError` (a changed or gone profile `CarrierStopRefusedError`), each
+ * thrown with the reservation kept. One with no handle yet reads the job file (once a
+ * carrier may have been launched): a handle is filled in, token-guarded, then stopped;
+ * an unreadable or invalid file is noted and refuses; no file is released only when
+ * provably never launched, else refuses with the facts (`CarrierJobUnresolvedError`:
+ * a spawn in progress, or a carrier that may still publish). `--abandon-job` stops
+ * nothing. Undefined when the reservation is already gone.
+ */
+export async function stopLeaseReservation(
+  db: Db,
+  reservation: CarrierJob,
+  opts: { abandon?: boolean } = {},
+): Promise<LeaseClose | undefined> {
+  let r = getCarrierJob(db, reservation.token);
+  if (r === undefined) return undefined;
+  const ws = r.workstream;
+  if (opts.abandon === true) {
+    // Dropped now, with its event: the tree's close may still refuse (a host gone for
+    // good), and the handle must not block it. The job file is left in place.
+    const facts =
+      r.job !== null
+        ? `job ${r.job}${r.reason === null ? "" : `, ${r.reason}`}`
+        : (await describeEmptyReservation(db, r)).facts;
+    if (!abandonCarrierJob(db, r)) {
+      throw new CarrierJobKeptError(r.name, ws, r.host, "the reservation changed during the close");
+    }
+    emitAbandoned(db, r, facts);
+    return { reservation: r, action: "abandon", facts };
+  }
+  if (r.job === null) {
+    const jobFile = leaseJobFile(db, ws, r.name);
+    // Before the launch intent no carrier of this reservation ran: a file there is not its.
+    const read: JobFile = r.launch === "intent" ? readJobFile(jobFile) : { kind: "none" };
+    if (read.kind === "handle") {
+      if (!fillCarrierJob(db, r.token, read.job)) {
+        throw new CarrierJobUnresolvedError(r.name, ws, r.host, `the reservation changed`);
+      }
+      r = getCarrierJob(db, r.token);
+      if (r?.job == null) return undefined;
+    } else if (read.kind !== "none") {
+      const why = `the job file ${jobFile} is ${describeRead(read)}`;
+      noteCarrierJob(db, r.token, why);
+      throw new CarrierJobUnresolvedError(r.name, ws, r.host, why);
+    } else {
+      const { facts, unlaunched } = await describeEmptyReservation(db, r);
+      if (!unlaunched) {
+        const forTree = r.launch === "none" && r.paneId === null && r.reason !== null;
+        throw new CarrierJobUnresolvedError(r.name, ws, r.host, facts, forTree);
+      }
+      return { reservation: r, action: "unlaunched", facts };
+    }
+  }
+  const handle = r.job;
+  await runStop(db, r.host, handle, r.hostStop);
+  return { reservation: r, action: "stopped", facts: `job ${handle}` };
+}
+
+/**
+ * After the stop, before the tree is touched: the job file goes only while it holds the
+ * stopped handle (absent is fine). Anything else there (another handle, an invalid or
+ * unreadable file) may name a job still running: the reservation is kept and the close
+ * refuses (`CarrierJobKeptError`). An abandon leaves the file in
+ * place, so a late-published handle can still be found.
+ */
+export function cleanLeaseJobFile(db: Db, close: LeaseClose): void {
+  if (close.action !== "stopped") return;
+  const r = close.reservation;
+  const jobFile = leaseJobFile(db, r.workstream, r.name);
+  const now = readJobFile(jobFile);
+  if (now.kind === "none") return;
+  if (now.kind === "handle" && now.job === r.job) {
+    rmSync(jobFile, { force: true });
+    return;
+  }
+  throw new CarrierJobKeptError(
+    r.name,
+    r.workstream,
+    r.host,
+    `job ${r.job} is stopped, but the job file ${jobFile} is ${describeRead(now)}`,
+  );
+}
+
+/**
+ * Last step of a lease close, once the job file and the tree are dealt with: release the
+ * reservation, compare-and-set on its token and the handle it was closed with (an abandon
+ * was released at its decision). A reservation that changed meanwhile (a handle landed)
+ * refuses with it kept.
+ */
+export function releaseLeaseClose(db: Db, close: LeaseClose): void {
+  if (close.action === "abandon") return;
+  const r = close.reservation;
+  if (!releaseCarrierJob(db, r)) {
+    if (getCarrierJob(db, r.token) === undefined) return;
+    throw new CarrierJobKeptError(
+      r.name,
+      r.workstream,
+      r.host,
+      "the reservation changed during the close (a job handle landed)",
+    );
+  }
 }

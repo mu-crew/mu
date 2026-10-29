@@ -22,7 +22,11 @@
 //       (`WaitResult.exit`, src/wait.ts); no error class maps here.
 
 import { type Command, CommanderError } from "commander";
-import { CarrierJobUnstoppedError } from "../agents/lease-carrier.js";
+import {
+  CarrierJobKeptError,
+  CarrierJobUnresolvedError,
+  CarrierJobUnstoppedError,
+} from "../agents/lease-carrier.js";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -474,6 +478,9 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof CarrierStopRefusedError ||
     // A respawn of a name whose older incarnation's job was never stopped.
     err instanceof CarrierJobUnstoppedError ||
+    // A lease close with no handle it can stop, or a reservation it had to keep.
+    err instanceof CarrierJobUnresolvedError ||
+    err instanceof CarrierJobKeptError ||
     err instanceof HostInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
