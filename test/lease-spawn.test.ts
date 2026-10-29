@@ -311,6 +311,26 @@ describe("a lease spawn records its job and holds no channel", () => {
     expect(getCarrierJobByAgent(db, b.incarnation)?.job).toBe("job-2");
   });
 
+  // close_hardening (reviewer-24 mutant M6): close reads lease-ness from the row, so the
+  // spawn must record it, for both row paths (insert for --cwd, the staged patch for --worktree).
+  const transportOf = (id: number): unknown =>
+    (
+      db.prepare("SELECT host_transport FROM agents WHERE id = ?").get(id) as
+        | { host_transport: unknown }
+        | undefined
+    )?.host_transport;
+
+  it("a --cwd lease spawn records agents.host_transport = 'lease'", async () => {
+    const a = await spawn({ cwd: "/srv/repo" });
+    expect(transportOf(a.incarnation)).toBe("lease");
+  });
+
+  it("a --worktree lease spawn records agents.host_transport = 'lease'", async () => {
+    const a = await spawn({ worktree: true });
+    expect(a.cwd).toBe(WT);
+    expect(transportOf(a.incarnation)).toBe("lease");
+  });
+
   it("MU_SPAWN_JOB_MS defaults to 30 s and is never 0", () => {
     delete process.env.MU_SPAWN_JOB_MS;
     expect(defaultSpawnJobMs()).toBe(30_000);
