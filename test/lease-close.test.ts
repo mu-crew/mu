@@ -301,6 +301,71 @@ describe("reviewer-23 probes: no pointer, wrong tree, raw-delete socket", () => 
     expect(reservation()?.job).toBe("new-job");
   });
 
+  // close_hardening (reviewer-24 mutants M2, M3): a tree is matched on host, path AND
+  // incarnation; each test below differs from the closed recovery in exactly one of them.
+  const keptBesideRecovery = (tree: (prior: AgentRow) => { path: string; agentId: number }) => {
+    const prior = insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%old",
+      host: "dev",
+      cwd: WT,
+      base: BASE,
+      repo: "/srv/repo",
+    });
+    deleteAgent(db, "worker-1", "auth");
+    const r = reserveCarrierJob(db, {
+      workstream: "auth",
+      name: "worker-1",
+      host: "dev",
+      hostStop: STOP(stopScript),
+      creatorPid: process.pid,
+    });
+    if (r === undefined) throw new Error("reserve");
+    markCarrierLaunch(db, r.token);
+    fillCarrierJob(db, r.token, "new-job");
+    writeJobFile("new-job");
+    const t = tree(prior);
+    keepCarrierJobForTree(db, r.token, {
+      ...t,
+      reason: `remote worktree ${t.path} on dev was not removed`,
+    });
+    return prior;
+  };
+
+  it("wrong-tree: a recovery at the SAME path but another incarnation does not release", async () => {
+    const prior = keptBesideRecovery((p) => ({ path: WT, agentId: p.incarnation + 1000 }));
+    expect(listRemoteRecoveries(db)).toMatchObject([{ agentId: prior.incarnation, cwd: WT }]);
+    const e = await failure(close());
+    expect(e).toBeInstanceOf(CarrierJobKeptError);
+    expect(reservation()).toMatchObject({ job: "new-job", treePath: WT });
+    expect(reservation()?.treeAgentId).toBe(prior.incarnation + 1000);
+  });
+
+  it("wrong-tree: a recovery of the SAME incarnation at another path does not release", async () => {
+    const prior = keptBesideRecovery((p) => ({
+      path: "/different/repo/worker-1",
+      agentId: p.incarnation,
+    }));
+    expect(listRemoteRecoveries(db)).toMatchObject([{ agentId: prior.incarnation, cwd: WT }]);
+    const e = await failure(close());
+    expect(e).toBeInstanceOf(CarrierJobKeptError);
+    expect((e as Error).message).toContain("/different/repo/worker-1");
+    expect(reservation()).toMatchObject({
+      job: "new-job",
+      treePath: "/different/repo/worker-1",
+      treeAgentId: prior.incarnation,
+    });
+  });
+
+  it("right tree: the recovery at the kept path AND incarnation releases (control for the two above)", async () => {
+    keptBesideRecovery((p) => ({ path: WT, agentId: p.incarnation }));
+    const res = await close();
+    expect(res.carrierJobs).toEqual([{ host: "dev", job: "new-job", action: "stopped" }]);
+    expect(listCarrierJobs(db)).toEqual([]);
+    expect(listRemoteRecoveries(db)).toEqual([]);
+  });
+
   it("raw-delete pointer: close-by-name removes the leftover ctl socket before releasing", async () => {
     leaseAgent();
     const socket = ctlSocketPath("auth", "worker-1", dir);
