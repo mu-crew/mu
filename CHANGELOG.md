@@ -146,6 +146,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   FAIL and never a non-zero exit, because a job that ended normally leaves one
   until the next close. `--json` carries the list as
   `housekeeping.leaseJobs`.
+- **`scripts/smoke-lease.sh`: the lease operator smoke.** You invoke it
+  yourself; vitest never runs it. It builds mule and mu and drives the real
+  mule from a lease profile against a loopback `sshd MaxSessions 1`, with a
+  ctl-speaking fake pi (`scripts/smoke-fake-pi.mjs`) as the remote job. It
+  asserts the spec's smoke list: spawn, `ssh -S <second master> host true`
+  during the worker, send and wait with the settled echo, a close that leaves
+  no job, forward, socket, job file, worktree or `carrier_jobs` row, and
+  `kill -9` of the carrier, then reconcile, then a close by name that stops
+  the job. A missing prerequisite fails it (exit 2). All state is private, and
+  an exit trap stops every process it started. How to run it is in
+  [remote.md](docs/guide/remote.md#smoke-test-a-lease-end-to-end).
 
 ### Changed
 

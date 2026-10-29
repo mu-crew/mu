@@ -232,4 +232,29 @@ mu host check dev --root '~/repo'
   handle without a stop and logs the host and handle; the job may still run
   there. It is the only way past an unreachable host.
 
+### Smoke-test a lease end to end
+
+`scripts/smoke-lease.sh` drives a real mule against a loopback `sshd
+MaxSessions 1` on this machine (no other host), with a ctl-speaking fake pi
+(`scripts/smoke-fake-pi.mjs`) as the remote job. Vitest never runs it:
+
+```bash
+MU=~/hacking/crew/mu MULE=~/hacking/crew/mule bash scripts/smoke-lease.sh
+```
+
+- It builds both (`cargo build --release`, `npm run build`), then checks spawn
+  (a job handle, no host channel, the forward bound by mule's master), a
+  second master with `ssh -S` during the worker, `collect` at `--max-sessions
+  1`, send and wait (the settled `lastText` must echo the sent text), and a
+  close that leaves no job, forward, socket, job file, worktree or
+  `carrier_jobs` row. It then `kill -9`s a carrier, lets reconcile reap the
+  row, and closes by name, which must stop the job.
+- Exit 0 is a pass. A missing prerequisite (sshd, ssh, tmux, node, cargo,
+  lsof, `MULE`, `node_modules`) exits 2. It is never a pass.
+- Everything is private: its own `/tmp/mu-smoke.*` dir, `HOME`, `TMPDIR`,
+  `XDG_*`, `MU_DB_PATH`, a blank `MU_SYNC_DIR`, a private tmux server and
+  mule `--config`. Your mule config, mule state and mu DB are never read. An
+  exit trap stops every process it started, on failure too. `SMOKE_KEEP=1`
+  keeps the dir for a post-mortem.
+
 Spec: [lease transport](../specs/2026-10-28-lease-transport.md).
