@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.2.2] — 2026-10-30
+
 ### Added
 
 - **`mu human-needed --no-stop <reason>`: a human to-do that does not stop
