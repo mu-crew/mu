@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.2.1] — 2026-10-30
+
 ### Changed
 
 - **A stalled tool means a quiet one, not a long one.** The dashboard's
