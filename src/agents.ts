@@ -72,6 +72,7 @@ export {
   CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
   SpawnAttemptBusyError,
+  SpawnAttemptEndedError,
   SpawnAttemptFailedError,
   SpawnAttemptGuardError,
   SpawnReceiptConflictError,

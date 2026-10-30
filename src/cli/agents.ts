@@ -507,7 +507,11 @@ async function cmdSpawnTask(
   );
   if (out.stale !== undefined) {
     console.log(
-      pc.yellow(`  the agent of this attempt is ${out.stale}; the replacement was left alone`),
+      pc.yellow(
+        out.stale === "deleted"
+          ? `  the agent of this attempt is gone; nothing runs for it`
+          : `  the name now belongs to another agent; it was left alone`,
+      ),
     );
   }
   if (out.state === "unknown") {
@@ -1336,7 +1340,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--attempt <key>",
-      "with --task: name this attempt (default: the task id). The same key replays its saved outcome and never sends a second prompt; reopened work needs a new key",
+      "with --task: name this attempt (default: the task id). The same key replays its saved outcome and never sends a second prompt; a delivered attempt whose agent is gone (closed, reaped) exits 4 and names the next key; reopened work needs a new key",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)

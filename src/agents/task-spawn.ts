@@ -19,7 +19,9 @@
 //
 // Replay (same task + attempt key). The saved registry id + pane are compared
 // with the agent now holding the name; a deleted or replaced one is reported
-// `stale`, never swapped for the replacement. The attempt lock is strict
+// `stale`, never swapped for the replacement. A manual DELIVERED attempt whose
+// agent is stale has ended: the replay refuses (`SpawnAttemptEndedError`,
+// naming the next free key) instead of re-reporting the old delivery. The attempt lock is strict
 // (fails closed); the advisory spawn lock stays inside spawnAgent.
 
 import { type AgentRow, getAgentForCleanup } from "../agents.js";
@@ -44,6 +46,7 @@ import {
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   SpawnAttemptBusyError,
+  SpawnAttemptEndedError,
   SpawnAttemptFailedError,
   SpawnReceiptConflictError,
   SpawnTaskStateError,
@@ -52,6 +55,7 @@ import {
 import { withSpawnAttemptLock } from "./lock.js";
 import {
   getReceipt,
+  nextAttemptKey,
   requestSha,
   reserveReceipt,
   resetReceipt,
@@ -303,6 +307,17 @@ async function run(
   const id = savedIdentity(db, saved);
 
   if (saved.state === "sent") {
+    // A manual replay whose agent is gone is not a delivery: nothing runs for
+    // it. Refuse (exit 4) with the key that starts again; never act under it.
+    if (!auto && id.stale !== undefined) {
+      throw new SpawnAttemptEndedError(
+        req.task,
+        key,
+        saved.name,
+        id.stale,
+        nextAttemptKey(db, taskId, key),
+      );
+    }
     const brief = await tryPinBrief(db, req);
     return {
       state: "sent",

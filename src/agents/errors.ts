@@ -646,6 +646,25 @@ export class SpawnTaskStateError extends Error {
 }
 
 /**
+ * `agent spawn --task` replayed a DELIVERED attempt whose agent is gone
+ * (`deleted`: closed or reaped) or whose name now belongs to another agent
+ * (`replaced`). The attempt is over and nothing runs for it; the key never
+ * sends a second prompt, so starting again takes a new key. Exit 4.
+ */
+export class SpawnAttemptEndedError extends Error {
+  override readonly name = "SpawnAttemptEndedError";
+  constructor(
+    public readonly task: string,
+    public readonly attemptKey: string,
+    public readonly agentName: string,
+    public readonly stale: "deleted" | "replaced",
+    public readonly nextKey: string,
+  ) {
+    super(say("agent.attempt_ended", task, attemptKey, agentName, stale, nextKey));
+  }
+}
+
+/**
  * `agent spawn --task` replayed an attempt key with a different request
  * (name, text or --next-free): a second prompt must be a new attempt. Exit 4.
  */

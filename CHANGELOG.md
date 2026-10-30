@@ -10,6 +10,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **Re-spawning a task whose worker died no longer pretends to restart it.**
+  `mu agent spawn <name> --task <t>` after the attempt's worker was closed
+  (or reaped, or its name reused) replayed the old delivery: it printed
+  `prompt delivered`, exited 0 and started nothing. Such an attempt has
+  ended, so the replay now exits 4 (`SpawnAttemptEndedError`) and names the
+  next free key: `pass --attempt <t>-2`. The key still never sends a second
+  prompt. A `mu next --refute` checker whose agent is gone ends as an error
+  instead of being marked running.
+
 ## [4.2.2] — 2026-10-30
 
 ### Added

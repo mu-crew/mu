@@ -101,6 +101,21 @@ export function getReceipt(db: Db, taskId: number, attemptKey: string): SpawnRec
   return row ? fromRaw(row) : undefined;
 }
 
+/**
+ * The first unused key after `attemptKey` (`manual:t1` -> `t1-2`, `t1-2` ->
+ * `t1-3`), without its namespace: what `--attempt` takes to start again.
+ */
+export function nextAttemptKey(db: Db, taskId: number, attemptKey: string): string {
+  const colon = attemptKey.indexOf(":");
+  const ns = colon === -1 ? "" : attemptKey.slice(0, colon + 1);
+  const bare = attemptKey.slice(ns.length);
+  const m = /^(.*)-(\d+)$/.exec(bare);
+  const stem = m?.[1] ?? bare;
+  let n = m === null ? 2 : Number(m[2]) + 1;
+  while (getReceipt(db, taskId, `${ns}${stem}-${n}`) !== undefined) n++;
+  return `${stem}-${n}`;
+}
+
 /** Write the reservation. Throws on a duplicate key (the caller holds the attempt lock and checked). */
 export function reserveReceipt(
   db: Db,

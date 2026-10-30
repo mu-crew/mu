@@ -55,6 +55,7 @@ import {
   insertAgent,
   resetCommandResolverForTests,
   SpawnAttemptBusyError,
+  SpawnAttemptEndedError,
   SpawnReceiptConflictError,
   SpawnTaskStateError,
   SpawnTrustDialogError,
@@ -329,24 +330,48 @@ describe("replay: never a second prompt", () => {
     expect(sends()).toHaveLength(1);
   });
 
-  it("replay after the agent was DELETED: the historical delivery, marked stale", async () => {
+  it("replay after the agent was DELETED: the attempt ended, exit 4 naming the next key, nothing sent", async () => {
     await spawnForTask(db, req());
     deleteAgent(db, "worker-1", "auth");
-    const again = await spawnForTask(db, req());
-    expect(again).toMatchObject({ state: "sent", replay: true, stale: "deleted" });
-    expect(again.agent).toBeUndefined();
+    const err = await spawnForTask(db, req()).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SpawnAttemptEndedError);
+    expect(err).toMatchObject({ stale: "deleted", attemptKey: "manual:t1", nextKey: "t1-2" });
+    expect(String(err)).toMatch(/pass --attempt t1-2/);
     expect(sends()).toHaveLength(1);
+    // The named key starts a real attempt.
+    const next = await spawnForTask(db, req({ attempt: "t1-2" }));
+    expect(next).toMatchObject({ state: "sent", replay: false });
+    expect(sends()).toHaveLength(2);
+    // ...and once that one ends too, the next key skips the used ones.
+    deleteAgent(db, "worker-1", "auth");
+    await expect(spawnForTask(db, req())).rejects.toMatchObject({ nextKey: "t1-3" });
+    await expect(spawnForTask(db, req({ attempt: "t1-2" }))).rejects.toMatchObject({
+      nextKey: "t1-3",
+    });
   });
 
-  it("replay after delete + recreate: stale 'replaced'; the replacement is never claimed or sent to", async () => {
+  it("replay after delete + recreate: stale 'replaced' refuses; the replacement is never claimed or sent to", async () => {
     await spawnForTask(db, req());
     deleteAgent(db, "worker-1", "auth");
     const replacement = insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%50" });
-    const again = await spawnForTask(db, req());
-    expect(again).toMatchObject({ state: "sent", replay: true, stale: "replaced" });
-    expect(again.agent).toBeUndefined();
+    await expect(spawnForTask(db, req())).rejects.toMatchObject({
+      name: "SpawnAttemptEndedError",
+      stale: "replaced",
+    });
     expect(task()?.ownerId).not.toBe(replacement.incarnation);
     expect(sends()).toHaveLength(1);
+  });
+
+  it("CLI: a replay whose agent was closed exits 4 and says so, never 'prompt delivered'", async () => {
+    await spawnForTask(db, req());
+    deleteAgent(db, "worker-1", "auth");
+    const r = await runCliWire(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--task", "t1", "--send", "do the thing"],
+      join(dir, "mu.db"),
+    );
+    expect(r.exitCode).toBe(4);
+    expect(r.stdout + r.stderr).not.toMatch(/prompt delivered/);
+    expect(r.stdout + r.stderr).toMatch(/--attempt t1-2/);
   });
 });
 
