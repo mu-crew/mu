@@ -118,6 +118,9 @@ mu delegates prune         # dry run: what goes, and what is kept
 mu delegates prune --yes   # backs up beside the DB first; irreversible
 ```
 
+`--older-than 0` takes every closed delegate task, however fresh. Workstream
+teardown never touches `scratch`, so this is how scratch gets cleaned.
+
 ## Free disk space
 
 ```bash

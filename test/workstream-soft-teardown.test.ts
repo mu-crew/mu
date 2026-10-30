@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { applyOp, type Op } from "../src/apply.js";
 import { type Db, openDb, WorkstreamTornDownError } from "../src/db.js";
+import { finishDelegate, registerDelegateCall } from "../src/delegates.js";
 import { formatHlc } from "../src/hlc.js";
 import {
   decodeLine,
@@ -171,6 +172,39 @@ describe("preview writes nothing", () => {
       mode: "alt",
       commands: [`mu workstream teardown ws --if ${j.revision}`],
     });
+  });
+});
+
+describe("the scratch prune hint", () => {
+  it("an applied teardown names `mu delegates prune --older-than 0` only when scratch holds closed delegate tasks", async () => {
+    seed("ws");
+    const quiet = await run(
+      "workstream",
+      "teardown",
+      "ws",
+      "--if",
+      String(workstreamRevision(db, "ws")),
+    );
+    expect(quiet.stdout).not.toContain("delegates prune");
+    seed("ws2");
+    registerDelegateCall(db, {
+      callId: "c1",
+      caller: "pi:s",
+      workstream: "scratch",
+      request: { text: "brief", label: "c1" },
+      state: "starting",
+    });
+    finishDelegate(db, "c1", { outcome: "done", text: "VERDICT: CONFIRMED", author: "d" });
+    const r = await run(
+      "workstream",
+      "teardown",
+      "ws2",
+      "--if",
+      String(workstreamRevision(db, "ws2")),
+    );
+    expect(r.stdout).toContain(
+      "scratch holds 1 closed delegate task(s); teardown never touches scratch. Dry run: mu delegates prune --older-than 0",
+    );
   });
 });
 

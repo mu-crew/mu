@@ -30,6 +30,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   reasons. It ends the turn when nothing is owed. A wave is no longer cut
   short by a stop. `mu next`, its hints and the guarded stall release still
   refuse under a stop.
+- **Scratch cleanup is discoverable.** `mu delegates prune --older-than 0`
+  now means every closed delegate task (0 was refused as not positive).
+  Teardown, which never touches `scratch`, ends with that command when scratch
+  holds closed delegate tasks, and doctor's `delegates-old` row counts the
+  newer ones too.
 
 ## [4.2.1] — 2026-10-30
 

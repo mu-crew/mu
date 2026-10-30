@@ -7,6 +7,7 @@ import {
   parseImpact,
   parseLines,
   parseNonNegativeInt,
+  parseNonNegativeNumber,
   parsePositiveNumber,
   parseQualifiedRef,
   parseStatusesOption,
@@ -241,6 +242,11 @@ describe("CLI parser properties", () => {
         expect(() => parsePositiveNumber(raw)).toThrow();
       }
       expect(parsePositiveNumber("1e-1")).toBe(0.1);
+      expect(parseNonNegativeNumber("0")).toBe(0);
+      expect(parseNonNegativeNumber("2.5")).toBe(2.5);
+      for (const raw of ["", "-0.1", "NaN", "1x", "Infinity"]) {
+        expect(() => parseNonNegativeNumber(raw)).toThrow();
+      }
       expect(parseImpact(" 7 ")).toBe(7);
     });
   });
