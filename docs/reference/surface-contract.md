@@ -47,8 +47,9 @@ their guarantees:
   wait (`extension/nudge.ts`): every completed settle of an orchestrator
   runs `mu wait --first --on-stall exit --json` as its callers (no shell
   line parsed, no once-per-prompt latch) and continues the turn with the
-  event. It stops when nothing is owed, a `mu human-needed` stop is open,
-  the user cancels, or the wait fails. A cancelled wait drains through
+  event. It stops when nothing is owed, the user cancels, or the wait
+  fails. Under a `mu human-needed` stop it still collects owned work, led
+  by a drain rule (start nothing new) instead of the keep-driving rule. A cancelled wait drains through
   `MuRunOpts.drainMs`. Skipped under `MU_REMOTE=1` and in a nested pi.
   Delegate answers arrive through it (`v_settle_delivery`): a `delegate`
   event's continuation carries that call's report (capped, with the

@@ -5,10 +5,11 @@
  * `mu wait --first --on-stall exit --json` as this session's callers (the
  * inherited managed identity and pi:<session>). Producers (spawn/send/claim)
  * arm that wait from state, so no shell line is parsed. The turn ends only when
- * nothing is owed, a `mu human-needed` stop is open (what is already ready is
- * still shown, without a blocking wait), the wait fails (shown), or the user
- * cancels it. The rule text lives in skills/mu/SKILL.md between the
- * keep-driving markers and heads the wait's result.
+ * nothing is owed, the wait fails (shown), or the user cancels it. The rule
+ * text lives in skills/mu/SKILL.md between the keep-driving markers and heads
+ * the wait's result; under a `mu human-needed` stop HUMAN_STOP_DRAIN heads it
+ * instead (collect what runs, start nothing), and a stuck worker that is the
+ * only owed work keeps the settle waiting until Esc or input.
  *
  * Its worker-side twin, the close nudge: a mu-spawned pi worker
  * ($MU_AGENT_NAME + $MU_WORKSTREAM) that settles while it still owns an
@@ -242,20 +243,12 @@ export const SETTLE_DRAIN_MS = 3000;
 /** The one wait the settle runs: whatever this caller owns, first event. */
 export const SETTLE_WAIT_ARGS = ["wait", "--first", "--on-stall", "exit", "--json"] as const;
 /**
- * Under an open human stop the settle does not block: this wait returns an event
- * already ready, or times out within a second.
+ * The head of a settle entry while a human stop is open: the stop ends new work,
+ * not the collection of what is already running (else results sit unmerged until
+ * the human types). Replaces the keep-driving rule, which says "stop" there.
  */
-export const SETTLE_READY_ARGS = [
-  "wait",
-  "--first",
-  "--on-stall",
-  "exit",
-  "--timeout",
-  "1",
-  "--json",
-] as const;
-/** At most this many ready events are shown by one settle under a human stop. */
-const READY_MAX = 50;
+export const HUMAN_STOP_DRAIN =
+  "A human stop is open (mu human-needed). Collect and merge what you already started; start nothing new (no `mu next`, no spawn, no new delegate, no restart of a stalled or dead worker: tell the human). The settle keeps waiting while work you own is still running, and ends the turn when nothing is.";
 /** Escape, plain or in the kitty keyboard protocol. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ESC is the point
 const ESC = /^\u001b(\[27(;\d+)*u)?$/;
@@ -438,14 +431,16 @@ const noDelivered: SettleDelivered = () => {};
  * no shell parsing: producers arm the wait from state) runs the ONE wait,
  * `mu wait --first --on-stall exit --json`, as this session's callers. The turn
  * then ends only when the wait says nothing is owed (WaitNothingError, or drained),
- * a human stop is open (ready events are still shown: no blocking wait, no
- * continue), the wait failed (shown), or the user cancelled it (Esc,
+ * the wait failed (shown), or the user cancelled it (Esc,
  * typed input, a dialog, shutdown). A heartbeat timeout with work still owed waits
  * again. An event continues the turn with the wait's own result (a wave's summary
  * replaces it: its snapshots predate the siblings' answers), which survives a
  * late hold (it was consumed). A delegate event adds that call's report; one of a
  * wave first waits for the rest of the wave (refused calls are listed, never
- * waited on) and adds ONE summary.
+ * waited on) and adds ONE summary. An open human stop does not end the loop
+ * while work is owed: the entry leads with HUMAN_STOP_DRAIN (collect, start
+ * nothing) instead of the keep-driving rule; `mu next`, its hints and stall
+ * release refuse on their own.
  */
 export function registerNudge(
   pi: MuNudgeApi,
@@ -493,8 +488,8 @@ export function registerNudge(
      * The report block(s) of a consumed delegate event. One of a wave keeps
      * running the same owned wait while siblings are pending (refused ones are
      * not waited on: they need a reissue), folding each sibling's answer into ONE
-     * summary; any other event ends that and is shown after it. `stop`: a human
-     * stop came with one of those results.
+     * summary; any other event ends that and is shown after it. A human stop does
+     * not end it: the wave is work already started.
      */
     const answers = async (
       callId: string,
@@ -502,7 +497,6 @@ export function registerNudge(
       first: Record<string, unknown>,
     ): Promise<{
       blocks: string[];
-      stop: boolean;
       /** A wave's: its label, whether every call was handed over, and its waits' notices. */
       wave?: { label: string; complete: boolean; notices: string[] };
     }> => {
@@ -513,10 +507,9 @@ export function registerNudge(
           blocks: [
             `Delegate answer: call ${callId}. Its row is unreadable here: mu delegates show ${callId}`,
           ],
-          stop: false,
         };
       const wave = c.wave;
-      if (!wave) return { blocks: [await answerBlock(mu, c, REPORT_CAP)], stop: false };
+      if (!wave) return { blocks: [await answerBlock(mu, c, REPORT_CAP)] };
       const listed = async () => {
         const v = await mu(["delegates", "list", "--wave", wave, "--json"]);
         const items = (v?.ok === true ? v.data?.items : undefined) as CallRow[] | undefined;
@@ -524,7 +517,6 @@ export function registerNudge(
       };
       const after: string[] = [];
       const notices = new Set<string>(noticesOf(first));
-      let stop = false;
       let rows = await listed();
       // Owed: a pending sibling, or a finished one whose event this wait has not yet handed over
       // (the cursor still owes it: leaving it would repeat the summary one settle per call). The
@@ -549,11 +541,10 @@ export function registerNudge(
         for (const n of noticesOf(d)) notices.add(n);
         picture = pictureOf(d);
         if (d.timedOut === true) continue;
-        if (Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0) stop = true;
         const id = firingDelegate(d);
         const sibling = id !== undefined && rows.some((x) => x.callId === id);
         if (id !== undefined) shown.add(id);
-        if (sibling && !stop) {
+        if (sibling) {
           rows = await listed();
           continue;
         }
@@ -570,52 +561,8 @@ export function registerNudge(
       );
       return {
         blocks: [waveSummary(wave, rows), ...bodies, ...after],
-        stop,
         wave: { label: wave, complete, notices: [...notices] },
       };
-    };
-    /**
-     * The settle under an open human stop: drain the events already ready (each
-     * delegate answer with its report), show them, and never continue. Nothing
-     * ready: the turn ends quietly.
-     */
-    const ready = async (): Promise<SettleResult> => {
-      const blocks: string[] = [];
-      const shown: string[] = [];
-      for (let i = 0; i < READY_MAX && !ctl.signal.aborted; i++) {
-        const started = Date.now();
-        const r = await wait(SETTLE_READY_ARGS);
-        const v = envelopeOf(r.stdout);
-        if (v?.ok === false && v.error === "WaitNothingError") {
-          delivered({ before: started });
-          break;
-        }
-        const d = v?.ok === true ? v.data : undefined;
-        if (d === undefined) {
-          const why = (r.stdout.trim() || r.stderr.trim()).slice(0, 2000);
-          blocks.push(`mu wait failed (exit ${r.code}): ${why}`);
-          break;
-        }
-        if (d.drained === true) delivered({ before: started });
-        if (d.interrupted === true || d.drained === true || d.timedOut === true) break;
-        blocks.push(JSON.stringify(d));
-        const id = firingDelegate(d);
-        if (id === undefined) continue;
-        shown.push(id);
-        const c = await call(id);
-        blocks.push(
-          c === undefined
-            ? `Delegate answer: call ${id}. Its row is unreadable here: mu delegates show ${id}`
-            : await answerBlock(mu, c, REPORT_CAP),
-        );
-      }
-      if (shown.length > 0) delivered(shown);
-      if (blocks.length === 0) return undefined;
-      const text = [
-        "[mu] A human stop is open (mu human-needed), so the settle did not wait. It showed what was already ready:",
-        ...blocks.flatMap((b) => ["", b]),
-      ].join("\n");
-      return { entries: [entry(text)], receipt: true };
     };
     let result: SettleResult;
     try {
@@ -631,7 +578,6 @@ export function registerNudge(
                 ),
               ],
             };
-          if (needs > 0) return ready(); // a deliberate human stop: show what is ready, never block
           const started = Date.now();
           const r = await wait(SETTLE_WAIT_ARGS);
           const v = envelopeOf(r.stdout);
@@ -652,15 +598,15 @@ export function registerNudge(
           const got = callId === undefined ? undefined : await answers(callId, shown, d);
           const blocks = got?.blocks ?? [];
           if (shown.size > 0) delivered([...shown]);
-          const humanStop = Array.isArray(d.humanNeeds) && d.humanNeeds.length > 0;
-          const stop = humanStop || got?.stop === true;
+          const stops = Array.isArray(d.humanNeeds) ? (d.humanNeeds as { reason?: unknown }[]) : [];
+          const humanStop = needs > 0 || stops.length > 0;
           const ran = `Work you own is still running, so the settle ran \`mu ${SETTLE_WAIT_ARGS.join(" ")}\` for you.`;
           // A wave's summary supersedes the first wait's result: its snapshots predate the
-          // siblings' answers (they would still read "running"). Kept when it carries a human need.
-          // Its notices (a course check due) are never cut by the wait, so they stay.
+          // siblings' answers (they would still read "running"). Its notices (a course check
+          // due) are never cut by the wait, so they stay.
           const w = got?.wave;
           const head =
-            w !== undefined && !humanStop
+            w !== undefined
               ? [
                   w.complete
                     ? `${ran} It waited until wave ${w.label} was in:`
@@ -668,8 +614,16 @@ export function registerNudge(
                   ...w.notices.map((n) => `Notice: ${n}`),
                 ]
               : [`${ran} Its result:`, JSON.stringify(d)];
-          const text = [`[mu] ${rule}`, "", ...head, ...blocks.flatMap((b) => ["", b])].join("\n");
-          return { entries: [entry(text)], ...(stop ? {} : { continue: true }), receipt: true };
+          const lead = humanStop
+            ? [
+                `[mu] ${HUMAN_STOP_DRAIN}`,
+                ...stops.flatMap((h) =>
+                  typeof h.reason === "string" ? [`Stop: ${h.reason}`] : [],
+                ),
+              ]
+            : [`[mu] ${rule}`];
+          const text = [...lead, "", ...head, ...blocks.flatMap((b) => ["", b])].join("\n");
+          return { entries: [entry(text)], continue: true, receipt: true };
         }
       })();
     } finally {

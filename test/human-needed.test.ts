@@ -285,6 +285,35 @@ describe("resolution: only an explicit task close", () => {
   });
 });
 
+describe("--no-stop: a human item that never stops the loop", () => {
+  const item = (caller: string, reason: string, workstream = "a") =>
+    recordHumanNeeded(db, { workstream, caller, reason, stop: false });
+
+  it("is a parked human task with no stop row; one task per reason, an identical one is a no-op", async () => {
+    const tag = item("a/orch", "tag 0.2.0");
+    const week = item("a/orch", "the rollout week");
+    expect(tag.id).not.toBe(week.id);
+    expect(getTask(db, tag.id, "a")).toMatchObject({ kind: "human", substate: "parked" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM human_needs").get()).toEqual({ n: 0 });
+    expect(openHumanNeeds(db, "a/orch")).toEqual([]);
+    const before = opCount();
+    expect(item("pi:other", " tag 0.2.0 ")).toEqual({ id: tag.id, changed: false });
+    expect(opCount()).toBe(before);
+    await expect(
+      claimTask(db, tag.id, { workstream: "a", self: true, actor: "me", force: true }),
+    ).rejects.toThrow(HumanTaskError);
+  });
+
+  it("never joins a stop, and a stop never absorbs it", () => {
+    const stop = need("a/orch", "pick the licence");
+    const later = item("a/orch", "pick the licence");
+    expect(later.id).not.toBe(stop.id);
+    expect(openHumanNeeds(db, "a/orch").map((n) => n.id)).toEqual([stop.id]);
+    closeTask(db, later.id, { workstream: "a", evidence: "done" });
+    expect(item("a/orch", "pick the licence").changed).toBe(true); // closed: a new one
+  });
+});
+
 describe("machine-local storage", () => {
   it("leaves no metadata op, cascades with its task, and rebuild reports the loss", () => {
     const r = need("a/orch", "decide");
@@ -335,7 +364,15 @@ describe("mu human-needed (in-process CLI)", () => {
       expect(again.data).toMatchObject({ changed: false });
       const other = await runCliJson(["human-needed", "other", "-w", "b", "--json"], dbPath);
       expect(other.data).toMatchObject({ workstream: "b", changed: true });
+      const later = await runCliJson(["human-needed", "tag it", "--no-stop", "--json"], dbPath);
+      expect(later.data).toMatchObject({ workstream: "a", changed: true, stop: false });
     });
+    const rows = openDb({ path: dbPath });
+    try {
+      expect(rows.prepare("SELECT COUNT(*) AS n FROM human_needs").get()).toEqual({ n: 2 });
+    } finally {
+      rows.close();
+    }
     const check = openDb({ path: dbPath });
     try {
       expect(openHumanNeeds(check, "a/orch").map((n) => [n.workstream, n.reason])).toEqual([

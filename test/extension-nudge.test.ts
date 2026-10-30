@@ -3,13 +3,13 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuResult, MuRunOpts } from "../extension/mu-run.js";
 import {
+  HUMAN_STOP_DRAIN,
   keepDrivingRule,
   type MuNudgeCtx,
   NUDGE_MESSAGE_TYPE,
   parallelSettle,
   registerNudge,
   SETTLE_DRAIN_MS,
-  SETTLE_READY_ARGS,
   SETTLE_WAIT_ARGS,
   type SettleDelivered,
 } from "../extension/nudge.js";
@@ -171,20 +171,28 @@ describe("the settle wait", () => {
     expect(mu.calls.filter((c) => c.args[0] === "state")).toHaveLength(2);
   });
 
+  it("a heartbeat under a human stop waits again: owed work is not abandoned", async () => {
+    const mu = fakeMu([okWait({ firing: { kind: "heartbeat" }, timedOut: true }), okWait({})], 1);
+    const r = (await setup(mu).emit("agent_before_settle", settled)) as Settle;
+    expect(r.continue).toBe(true);
+    expect(mu.waits()).toHaveLength(2);
+    expect(r.entries?.[0]?.content).toContain(HUMAN_STOP_DRAIN);
+  });
+
   it("drained (everything already delivered) lets the turn end", async () => {
     const mu = fakeMu([okWait({ firing: { kind: "heartbeat" }, drained: true })]);
     expect(await setup(mu).emit("agent_before_settle", settled)).toBeUndefined();
   });
 
-  it("an open human stop with nothing ready ends the turn after one short wait", async () => {
-    const mu = fakeMu([okWait({ firing: { kind: "heartbeat" }, timedOut: true })], 1);
+  it("an open human stop with nothing owed ends the turn after the one wait", async () => {
+    const mu = fakeMu([NOTHING], 1);
     expect(await setup(mu).emit("agent_before_settle", settled)).toBeUndefined();
-    expect(mu.waits().map((w) => w.args)).toEqual([[...SETTLE_READY_ARGS]]);
+    expect(mu.waits().map((w) => w.args)).toEqual([[...SETTLE_WAIT_ARGS]]);
   });
 
-  // d8: one `mu human-needed` (for the release) silenced every later settle, while
-  // the delegate wakes promised "the settle shows them".
-  it("an open human stop still shows every ready answer, without continuing", async () => {
+  // muzzle-v1 (2026-10-30): an open stop froze the loop, so workers dispatched before it
+  // finished unseen and their results sat unmerged until the human typed.
+  it("an open human stop still collects owned work: each event continues, led by the drain rule", async () => {
     const fire = (id: string) => okWait({ firing: { kind: "delegate", ref: `delegate:${id}` } });
     const mu = fakeMu([fire("c1"), fire("c2"), NOTHING], 1);
     const run: typeof mu.run = async (args, ...rest) => {
@@ -207,22 +215,39 @@ describe("the settle wait", () => {
     const shown: unknown[] = [];
     const f = fakePi(SESSION);
     registerNudge(f.pi, run, SKILL, undefined, undefined, (s) => shown.push(s));
-    const r = (await f.emit("agent_before_settle", settled)) as Settle;
-    expect(r.continue).toBeUndefined();
-    const text = r.entries?.map((e) => e.content).join("\n") ?? "";
-    expect(text).toContain("report of t_c1");
-    expect(text).toContain("report of t_c2");
-    expect(text).toContain("human stop is open");
-    expect(text).not.toContain("Work you own is still running");
-    expect(mu.waits().every((w) => w.args.join(" ") === SETTLE_READY_ARGS.join(" "))).toBe(true);
-    expect(shown).toContainEqual(["c1", "c2"]);
+    const texts: string[] = [];
+    for (const id of ["c1", "c2"]) {
+      const r = (await f.emit("agent_before_settle", settled)) as Settle;
+      expect(r.continue).toBe(true);
+      const text = r.entries?.map((e) => e.content).join("\n") ?? "";
+      expect(text).toContain(`report of t_${id}`);
+      texts.push(text);
+    }
+    for (const text of texts) {
+      expect(text.startsWith(`[mu] ${HUMAN_STOP_DRAIN}`)).toBe(true);
+      expect(text).not.toContain(keepDrivingRule(SKILL) ?? "unreachable");
+    }
+    expect(await f.emit("agent_before_settle", settled)).toBeUndefined();
+    expect(mu.waits().every((w) => w.args.join(" ") === SETTLE_WAIT_ARGS.join(" "))).toBe(true);
+    expect(shown).toEqual([["c1"], ["c2"], { before: expect.any(Number) }]);
   });
 
-  it("a human stop in the wait's result shows the result but does not continue", async () => {
+  it("a stall under an open human stop is shown, never silent, and the drain rule says tell the human", async () => {
+    const mu = fakeMu([okWait({ firing: { kind: "stall", ref: "ws/t1" }, exit: 7 })], 1);
+    const r = (await setup(mu).emit("agent_before_settle", settled)) as Settle;
+    expect(r.continue).toBe(true);
+    const text = r.entries?.[0]?.content ?? "";
+    expect(text).toContain('"kind":"stall"');
+    expect(text).toContain("no restart of a stalled or dead worker: tell the human");
+  });
+
+  it("a human stop in the wait's result names its reason and keeps collecting", async () => {
     const mu = fakeMu([okWait({ humanNeeds: [{ workstream: "ws", id: "h1", reason: "spend" }] })]);
     const r = (await setup(mu).emit("agent_before_settle", settled)) as Settle;
-    expect(r.continue).toBeUndefined();
-    expect(r.entries?.[0]?.content).toContain("spend");
+    expect(r.continue).toBe(true);
+    const text = r.entries?.[0]?.content ?? "";
+    expect(text).toContain(HUMAN_STOP_DRAIN);
+    expect(text).toContain("Stop: spend");
   });
 
   it.each([
