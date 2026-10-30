@@ -474,12 +474,26 @@ describe("cli text", () => {
   });
 });
 
+describe("--older-than 0", () => {
+  it("plans every closed delegate task, however fresh", () => {
+    call("today", 0);
+    call("week", 7);
+    expect(
+      planDelegatePrune(db, { days: 0 })
+        .candidates.map((c) => c.callId)
+        .sort(),
+    ).toEqual(["today", "week"]);
+  });
+});
+
 describe("doctor: delegates-old", () => {
   it("is ok and quiet with nothing old; ok with the count and the remedy otherwise", () => {
+    expect(checkOldDelegates(db).remediation).toBeUndefined();
     call("fresh", 5);
-    const quiet = checkOldDelegates(db);
-    expect(quiet).toMatchObject({ name: "delegates-old", severity: "ok" });
-    expect(quiet.remediation).toBeUndefined();
+    const fresh = checkOldDelegates(db);
+    expect(fresh).toMatchObject({ name: "delegates-old", severity: "ok" });
+    expect(fresh.detail).toMatch(/older than 30 days; 1 newer closed$/);
+    expect(fresh.remediation?.join("\n")).toContain("mu delegates prune --older-than 0");
     call("old", 31);
     const note = checkOldDelegates(db);
     expect(note.severity).toBe("ok");

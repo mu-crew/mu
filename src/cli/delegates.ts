@@ -18,6 +18,7 @@ import {
   handle,
   JSON_OPT,
   parseNonNegativeInt,
+  parseNonNegativeNumber,
   parsePositiveNumber,
   resolveExistingWorkstream,
   UsageError,
@@ -497,9 +498,13 @@ export function wireDelegatesCommands(program: Command): void {
     });
   d.command("prune")
     .description(
-      `Delete this machine's closed delegate tasks older than --older-than days (default ${PRUNE_DEFAULT_DAYS}) and their pi session files; the deletion syncs. Dry run without --yes; --yes backs up, VACUUMs, checks drift`,
+      `Delete this machine's closed delegate tasks older than --older-than days (default ${PRUNE_DEFAULT_DAYS}; 0: every closed one) and their pi session files; the deletion syncs. Dry run without --yes; --yes backs up, VACUUMs, checks drift`,
     )
-    .option("--older-than <days>", "age in days since the task closed", parsePositiveNumber)
+    .option(
+      "--older-than <days>",
+      "age in days since the task closed (0: all)",
+      parseNonNegativeNumber,
+    )
     .option("--yes", "apply (default: dry run)")
     .option("-w, --workstream <name>", "only this workstream (default: every live one)")
     .option(...JSON_OPT)

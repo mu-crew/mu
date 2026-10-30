@@ -187,7 +187,7 @@ export function planDelegatePrune(
          FROM tasks t
          JOIN workstreams w ON w.id = t.workstream_id AND w.torn_down_at IS NULL
          JOIN delegate_calls d ON d.task_id = t.id
-        WHERE t.kind = 'delegate' AND t.status = 'CLOSED' AND t.updated_at < ?
+        WHERE t.kind = 'delegate' AND t.status = 'CLOSED' AND t.updated_at <= ?
           AND (? IS NULL OR w.name = ?)
         ORDER BY w.name, t.updated_at, t.local_id`,
     )
@@ -312,12 +312,24 @@ export function pruneDelegates(
 export function checkOldDelegates(db: Db, opts: { now?: number } = {}): FleetHazard {
   const plan = planDelegatePrune(db, opts);
   const n = plan.candidates.length;
-  if (n === 0)
+  if (n === 0) {
+    // Fresh ones pile up too (a busy day of checks): say so, with the way to drop them.
+    const all = planDelegatePrune(db, { ...opts, days: 0 }).candidates.length;
+    if (all > 0)
+      return {
+        name: "delegates-old",
+        severity: "ok",
+        detail: `no closed delegate task older than ${plan.days} days; ${all} newer closed`,
+        remediation: [
+          "  mu delegates prune --older-than 0   # dry run: every closed delegate task",
+        ],
+      };
     return {
       name: "delegates-old",
       severity: "ok",
       detail: `no closed delegate task older than ${plan.days} days`,
     };
+  }
   return {
     name: "delegates-old",
     severity: "ok",

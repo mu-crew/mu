@@ -9,6 +9,7 @@
 import { basename } from "node:path";
 import { emitJson, parseNonNegativeInt, resolveWorkstream, UsageError } from "../cli.js";
 import { type Db, tornDownAtOf } from "../db.js";
+import { planDelegatePrune } from "../delegate-prune.js";
 import { type AttachTarget, activeMux, attachShellLine, type MuxBackend } from "../mux.js";
 import { muTable, pc } from "../output.js";
 import {
@@ -350,6 +351,19 @@ export async function cmdTeardown(
       );
     }
   }
+  printPruneHint(db); // a torn-down scratch is no longer live: no hint
+}
+
+/** Teardown never touches `scratch`, where closed delegate tasks pile up: name the verb that does. */
+function printPruneHint(db: Db): void {
+  const n = planDelegatePrune(db, { days: 0, workstream: "scratch" }).candidates.length;
+  if (n === 0) return;
+  console.log("");
+  console.log(
+    pc.dim(
+      `scratch holds ${n} closed delegate task(s); teardown never touches scratch. Dry run: mu delegates prune --older-than 0`,
+    ),
+  );
 }
 
 // ─── cmdTeardownEmpty ─────────────────────────────────────────────────
@@ -521,6 +535,7 @@ async function cmdTeardownEmpty(
   }
   console.log("");
   console.log(pc.dim(`Sweep complete: tornDown=${results.length}, failed=${failed.length}.`));
+  printPruneHint(db);
 }
 
 // ─── commander wiring ────────────────────────────────────────────────
