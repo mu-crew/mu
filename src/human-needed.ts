@@ -7,6 +7,11 @@
 // lives in the machine-local `human_needs` row (rebuild cannot restore it;
 // a note author is never trusted for ownership). The task closes only by an
 // explicit `mu task close`.
+//
+// `stop: false` (`--no-stop`) records a human item that is NOT a stop: the
+// same `human` task with no `human_needs` row, so the settle, `mu next` and
+// the hints never see it. The dashboard's attention lists it like any OPEN
+// human task. One task per reason; an identical open one is a no-op.
 
 import { type Db, resolveWorkstreamId } from "./db.js";
 import { withOpContext } from "./op-context.js";
@@ -22,6 +27,8 @@ export interface HumanNeededOptions {
   /** Who is stopping: `spawnerFromEnv()` (managed `<ws>/<agent>` or `pi:<session>`). */
   caller: string;
   reason: string;
+  /** false: a human item that never stops the loop (no `human_needs` row). Default true. */
+  stop?: boolean;
 }
 
 export interface HumanNeeded {
@@ -52,6 +59,11 @@ export function recordHumanNeeded(
   return withOpContext(db, { intent: "task.note", actor: caller, group: "new" }, () =>
     db
       .transaction(() => {
+        if (opts.stop === false) {
+          const same = openItemWith(db, opts.workstream, reason);
+          if (same !== undefined) return { id: same, changed: false };
+          return { id: addHumanTask(db, opts.workstream, caller, reason), changed: true };
+        }
         const open = openNeedFor(db, caller, opts.workstream);
         if (open !== undefined) {
           if (open.briefs.includes(reason)) return { id: open.id, changed: false };
@@ -62,14 +74,7 @@ export function recordHumanNeeded(
           });
           return { id: open.id, changed: true };
         }
-        const title = `human needed: ${reason.replace(/\s+/g, " ").slice(0, TITLE_CHARS)}`;
-        const { ids } = addTasks(db, [{ title, note: reason }], {
-          workstream: opts.workstream,
-          kind: "human",
-          noteAuthor: caller,
-        });
-        const id = ids[0];
-        if (id === undefined) throw new Error("recordHumanNeeded: no task created");
+        const id = addHumanTask(db, opts.workstream, caller, reason);
         const taskId = (
           db
             .prepare("SELECT id FROM tasks WHERE workstream_id = ? AND local_id = ?")
@@ -80,6 +85,36 @@ export function recordHumanNeeded(
       })
       .immediate(),
   );
+}
+
+/** Add the parked `human` task (title from the reason, brief = reason); its local id. */
+function addHumanTask(db: Db, workstream: string, caller: string, reason: string): string {
+  const title = `human needed: ${reason.replace(/\s+/g, " ").slice(0, TITLE_CHARS)}`;
+  const { ids } = addTasks(db, [{ title, note: reason }], {
+    workstream,
+    kind: "human",
+    noteAuthor: caller,
+  });
+  const id = ids[0];
+  if (id === undefined) throw new Error("recordHumanNeeded: no task created");
+  return id;
+}
+
+/** An OPEN `human` item (no stop row) in `workstream` whose first brief is `reason`. */
+function openItemWith(db: Db, workstream: string, reason: string): string | undefined {
+  const row = db
+    .prepare(
+      `SELECT t.local_id AS id
+         FROM tasks t
+         JOIN workstreams w ON w.id = t.workstream_id
+        WHERE w.name = ? AND t.kind = 'human' AND t.status = 'OPEN'
+          AND NOT EXISTS (SELECT 1 FROM human_needs h WHERE h.task_id = t.id)
+          AND (SELECT n.content FROM task_notes n
+                WHERE n.task_id = t.id AND n.kind = 'brief' ORDER BY n.id LIMIT 1) = ?
+        LIMIT 1`,
+    )
+    .get(workstream, reason) as { id: string } | undefined;
+  return row?.id;
 }
 
 interface OpenNeedRow {

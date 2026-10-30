@@ -10,6 +10,27 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **`mu human-needed --no-stop <reason>`: a human to-do that does not stop
+  the loop.** It records the same parked `human` task (shown in the
+  dashboard's attention, closed only by `mu task close`) without the stop, so
+  the settle, `mu next` and its hints go on. One task per reason; an identical
+  open one is a no-op. Use it for "tag it" or "the rollout week": orchestrators
+  had been piling those into one standing stop.
+
+### Changed
+
+- **A human stop no longer strands work already running.** With a stop open,
+  the settle used to show only what was ready and end the turn, so workers and
+  delegates dispatched before it finished unseen until the human typed. Now
+  the settle waits as usual while the caller owns work and continues on each
+  event, led by a drain rule ("collect and merge what you started; start
+  nothing new; a stalled or dead worker: tell the human") and the stop's
+  reasons. It ends the turn when nothing is owed. A wave is no longer cut
+  short by a stop. `mu next`, its hints and the guarded stall release still
+  refuse under a stop.
+
 ## [4.2.1] — 2026-10-30
 
 ### Changed

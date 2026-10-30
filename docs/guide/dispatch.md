@@ -226,7 +226,9 @@ mu task release build -w auth
 - A parked task leaves the ready set, and its dependents keep waiting.
 - `mu human-needed <reason>` records a parked `human` task for a decision only a
   person can make. It never becomes ready and resolves only by `mu task close`
-  (unpark, claim and a CLOSE block are refused).
+  (unpark, claim and a CLOSE block are refused). The settle still collects
+  work already running; nothing new starts. `--no-stop` records a human to-do
+  that stops nothing.
 - `release` clears the owner and returns `IN_PROGRESS` to `OPEN`.
 
 ## Authorise tasks for the executor

@@ -28,7 +28,8 @@ show` do not); workers get it.
 **While workers run, keep driving.** Your turn ends only when everything you own
 is closed, or only a human can decide (scope, spend, irreversible or external
 action, hardware-key handback): record it with `mu human-needed -w <ws>
-"<reason>"`, then stop. A status summary is a `mu log` line, not a stopping
+"<reason>"`, then stop. A to-do for the human that blocks nothing ("tag it",
+"the rollout week") is `--no-stop`. A status summary is a `mu log` line, not a stopping
 point: one per wave, then back to waiting. An error never means a
 human is needed. Ending a turn mid-run stalls the crew.
 <!-- /mu:keep-driving -->

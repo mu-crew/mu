@@ -1773,7 +1773,7 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     expect(text).not.toContain('"snapshots"');
   });
 
-  it("a wave entry whose first wait carries a human need keeps that wait's JSON", async () => {
+  it("a human need does not cut a wave short: the summary stands, led by the drain rule", async () => {
     const t = await setup();
     await t.p.fire("agent_start", {});
     const a = await delegate(t, { task: "c1", wave: "w" });
@@ -1788,10 +1788,10 @@ describe("the settle wait delivers delegate answers (muPi wiring)", () => {
     await t.answerWait(failed(3, "WaitNothingError", "nothing owed"));
     const r = await settling;
     const text = content(r);
-    expect(text).toContain("Its result:");
-    expect(text).toContain('"reason":"spend approval"');
+    expect(text).toContain("A human stop is open");
+    expect(text).toContain("Stop: spend approval");
     expect(text).toContain("Wave w:");
-    expect(r?.continue).toBeUndefined(); // a human stop ends the turn
+    expect(r?.continue).toBe(true); // collecting started work goes on; nothing new starts
   });
 
   it("no wait while a wake is queued; the wake's own turn waits and shows the report", async () => {

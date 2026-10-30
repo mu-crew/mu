@@ -389,6 +389,14 @@ describe("stops and fences between effects", () => {
     expect(runsOf("b")).toBe(0);
   });
 
+  it("a --no-stop human item never stops dispatch", async () => {
+    task("a");
+    recordHumanNeeded(db, { workstream: "d", caller: "orch", reason: "tag it", stop: false });
+    const r = await run();
+    expect(r.stopped).toBeUndefined();
+    expect(r.moves).toHaveLength(1);
+  });
+
   it("a need that appears mid-batch stops the rest", async () => {
     task("a");
     task("b");
