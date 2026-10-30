@@ -25,6 +25,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   keeps the old run-time rule. A command that is silent by design
   (`cargo test -q | grep …`, a long `sleep`) still flags.
 
+### Fixed
+
+- **The attention strip no longer says `human: human needed:`.** A human task's
+  item drops the `human needed: ` title prefix, since the strip already labels
+  it `human: `.
+
 ## [4.2.0] — 2026-10-29
 
 ### Added

@@ -405,6 +405,7 @@ describe("scopeWorkstream: the shown workstream's tasks, everything else machine
       expect.stringMatching(/^human:other\//),
     ]);
     const human = snap.attention.find((a) => a.kind === "human");
+    expect(human?.text).toBe("fx policy"); // the strip says `human: `; no `human needed: ` echo
     expect(human?.fix).toBe(
       `mu task close ${human?.target?.slice("other/".length)} -w other --evidence '<what you decided>'`,
     );

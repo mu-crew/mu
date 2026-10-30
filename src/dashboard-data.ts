@@ -685,7 +685,8 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
       key: `human:${keyOf(t.ws, t.id)}`,
       workstream: t.ws,
       kind: "human",
-      text: t.title,
+      // The strip labels it `human: ` already; drop recordHumanNeeded's `human needed: ` title prefix.
+      text: t.title.replace(/^human needed:\s*/i, ""),
       target: keyOf(t.ws, t.id),
       fix: `mu task close ${shellWord(t.id)} -w ${shellWord(t.ws)} --evidence '<what you decided>'`,
     });
