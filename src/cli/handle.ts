@@ -50,6 +50,7 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   SpawnAttemptBusyError,
+  SpawnAttemptEndedError,
   SpawnAttemptFailedError,
   SpawnAttemptGuardError,
   SpawnReceiptConflictError,
@@ -602,6 +603,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentReplacedError ||
     err instanceof AgentLockBusyError ||
     err instanceof SpawnAttemptBusyError ||
+    err instanceof SpawnAttemptEndedError ||
     err instanceof SpawnAttemptFailedError ||
     err instanceof SpawnAttemptGuardError ||
     err instanceof SpawnTaskStateError ||

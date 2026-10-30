@@ -86,6 +86,7 @@ export {
   type SendResult,
   type SpawnAgentOptions,
   SpawnAttemptBusyError,
+  SpawnAttemptEndedError,
   SpawnAttemptFailedError,
   SpawnAttemptGuardError,
   type SpawnReceipt,

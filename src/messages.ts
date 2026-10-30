@@ -145,6 +145,18 @@ export const MESSAGES = {
   "agent.attempt_stopped": (task: string, key: string, reason: string) =>
     `attempt ${key} of task ${task} was stopped: ${reason}`,
   "agent.task_state": (task: string, reason: string) => `task ${task} ${reason}; nothing was sent`,
+  "agent.attempt_ended": (
+    task: string,
+    key: string,
+    agent: string,
+    stale: "deleted" | "replaced",
+    nextKey: string,
+  ) =>
+    `attempt ${key} of task ${task} already delivered its prompt and has ended: ${
+      stale === "deleted"
+        ? `its agent ${agent} is gone (closed or reaped)`
+        : `the name ${agent} now belongs to another agent, left alone`
+    }. Nothing was started. To start the task again: pass --attempt ${nextKey}`,
   "agent.receipt_conflict": (task: string, key: string, savedName: string) =>
     `attempt ${key} of task ${task} already ran with a different request (agent ${savedName}); a second prompt is a new attempt: pass --attempt <new key>`,
   "agent.trust_dialog": (name: string) =>

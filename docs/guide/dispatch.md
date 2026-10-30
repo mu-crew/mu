@@ -91,7 +91,9 @@ written before each step, so the same command never sends a second prompt.
 - Same command again = replay: it returns the saved delivery
   (`task.replay: true`, same `msgId`). `--attempt <key>` names the attempt
   (default: the task id); a changed text or name under one key exits 4, and
-  reopened work needs a new key.
+  reopened work needs a new key. A replay whose agent is gone (a worker
+  that died and was closed) exits 4 and names the next key: re-dispatch
+  with `--attempt <task>-2`.
 - Fails **before** the prompt could be written (no ctl, Claude's trust
   dialog, a claim that lost the task, the extension refused): its own pane,
   claim and worktree are rolled back, the key is reusable.

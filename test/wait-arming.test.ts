@@ -921,7 +921,9 @@ describe("arming guards", () => {
     db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
     seedAgent("worker-1");
     const again = await spawnTask("t5");
-    expect(again.data).toMatchObject({ task: { replay: true, stale: "replaced" } });
+    expect(again.exitCode).toBe(4);
+    expect(again.doc.error).toBe("SpawnAttemptEndedError");
+    expect(again.doc.message).toContain("now belongs to another agent");
     expect(reg(CALLER)).toBeUndefined();
   });
 
@@ -932,7 +934,9 @@ describe("arming guards", () => {
     db.prepare("DELETE FROM wait_registrations").run();
     db.prepare("DELETE FROM agents WHERE name = 'worker-1'").run();
     const again = await spawnTask("t5");
-    expect(again.data).toMatchObject({ task: { replay: true, stale: "deleted" } });
+    expect(again.exitCode).toBe(4);
+    expect(again.doc.error).toBe("SpawnAttemptEndedError");
+    expect(again.doc.message).toContain("its agent worker-1 is gone");
     expect(reg(CALLER)).toBeUndefined();
   });
 
