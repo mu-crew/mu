@@ -345,6 +345,17 @@ describe("herdr panes", () => {
     expect(await herdrBackend.paneAlive("w1:p9")).toBe(false);
   });
 
+  it("paneOccupied: a pane its agent left (a bare shell) is unoccupied; a missing one too", async () => {
+    mockHerdr([["pane get w1:p1", PANE_GET]]);
+    expect(await herdrBackend.paneOccupied?.("w1:p1")).toBe(false);
+    const withPi = JSON.parse(PANE_GET) as { result: { pane: Record<string, unknown> } };
+    withPi.result.pane.agent = "pi";
+    mockHerdr([["pane get w1:p1", JSON.stringify(withPi)]]);
+    expect(await herdrBackend.paneOccupied?.("w1:p1")).toBe(true);
+    mockHerdr([["pane get", serverError(PANE_NOT_FOUND)]]);
+    expect(await herdrBackend.paneOccupied?.("w1:p9")).toBe(false);
+  });
+
   it("paneAlive is false for a tmux id without shelling out", async () => {
     const calls = mockHerdr([["", OK]]);
     expect(await herdrBackend.paneAlive("%15")).toBe(false);

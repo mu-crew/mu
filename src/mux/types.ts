@@ -336,6 +336,11 @@ export interface MuxBackend {
    *  or is gone. Unlike `paneAlive` (handle existence), an exited pane is NOT
    *  running here. Throws when the probe itself fails: unknown, never a result. */
   paneResult?(paneId: string): Promise<PaneResult>;
+  /** herdr only: whether an agent still occupies the pane. A herdr pane
+   *  outlives its occupant (it falls back to a shell), so existence is not
+   *  life. False when the pane is gone or herdr detects no agent in it;
+   *  throws when the probe itself fails. */
+  paneOccupied?(paneId: string): Promise<boolean>;
   /** tmux only: the pid of the pane's first process (`#{pane_pid}`), so a
    *  caller can tell the agent's own processes from others; undefined when
    *  the pane is gone. Throws when the probe itself fails. */

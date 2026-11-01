@@ -633,6 +633,13 @@ export async function paneAlive(paneId: string): Promise<boolean> {
   return pane !== undefined;
 }
 
+/** Whether herdr detects an agent in the pane (its `agent` kind); false when the pane is gone. */
+export async function paneOccupied(paneId: string): Promise<boolean> {
+  if (!isValidPaneId(paneId)) return false;
+  const pane = await getPane(paneId);
+  return pane !== undefined && pane.command !== "";
+}
+
 /** `pane get`, or undefined when the pane (or its workspace) is gone. */
 async function getPane(paneId: string): Promise<MuxPane | undefined> {
   const result = await herdrTolerating(
@@ -1220,6 +1227,7 @@ export const herdrBackend: MuxBackend = Object.freeze({
 
   reloadCommands,
   paneStatus,
+  paneOccupied,
   sendToPane,
   currentSessionName,
   healthCheck,
