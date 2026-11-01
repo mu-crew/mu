@@ -20,6 +20,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   next free key: `pass --attempt <t>-2`. The key still never sends a second
   prompt. A `mu next --refute` checker whose agent is gone ends as an error
   instead of being marked running.
+- **A dropped lease connection no longer reads as a dead agent.** When a
+  watched agent's control socket stopped answering, the wait called it
+  dead (`exit 6`, "its pane died or it was closed") even with the pane up.
+  A lease's forwarded socket goes down with the mule master while the pane
+  and the job live on, so a drop reported every remote agent dead and
+  invited a second copy of each run. Now only a pane that is gone (or
+  exited) is a death; a lost socket on a live pane is `unknown`
+  ("control socket lost; the pane is alive") and the wait keeps polling.
 
 ## [4.2.2] — 2026-10-30
 
