@@ -18,10 +18,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the shape (aiv-blog: 67 refusals; seen across 70 earlier sessions). Now
   the wait that sees the refusal sends the worker one fixed **close
   notice**: the reason, the exact shape, and "if it is not done, do not
-  write CLOSE: at all". Any wait of the caller that spawned the worker
-  sends it, `--on-stall` or not; once per run and at most 3 per pi
-  incarnation, after which the stall is the orchestrator's as before.
-  Other refusals (not the owner, a human task) are not sent.
+  write CLOSE: at all". A `mu wait` or `mu task wait` of the caller that
+  spawned the worker sends it, `--on-stall` and `--until-text` or not, also
+  when another caller's wait saw the run first (`mu agent wait` applies no
+  CLOSE blocks and never sends it). Once per run and at most 3 per pi
+  incarnation, after which the stall is the orchestrator's as before; a
+  run that got the notice is not also steered (`--on-stall steer`). Other
+  refusals (not the owner, a human task) are not sent. A returning wait
+  gives notices in flight at most 3 s and never outlives its own timeout
+  or abort for them.
 
 ### Fixed
 
@@ -30,7 +35,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (or reaped, or its name reused) replayed the old delivery: it printed
   `prompt delivered`, exited 0 and started nothing. Such an attempt has
   ended, so the replay now exits 4 (`SpawnAttemptEndedError`) and names the
-  next free key: `pass --attempt <t>-2`. The key still never sends a second
+  next free key: `pass --attempt <t>-2` (a numeric suffix longer than 9
+  digits counts as part of the key). The key still never sends a second
   prompt. A `mu next --refute` checker whose agent is gone ends as an error
   instead of being marked running.
 - **A dropped lease connection no longer reads as a dead agent.** When a
@@ -38,9 +44,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   dead (`exit 6`, "its pane died or it was closed") even with the pane up.
   A lease's forwarded socket goes down with the mule master while the pane
   and the job live on, so a drop reported every remote agent dead and
-  invited a second copy of each run. Now only a pane that is gone (or
-  exited) is a death; a lost socket on a live pane is `unknown`
-  ("control socket lost; the pane is alive") and the wait keeps polling.
+  invited a second copy of each run. Now a lost socket is a death only
+  when the pane is gone or exited (tmux), or no agent occupies it any more
+  (herdr, whose pane outlives its pi as a shell). A lost socket on a live
+  pane, or a multiplexer that cannot answer, is `unknown` and the wait
+  keeps polling.
 - **A run that finishes while a lease connection is down still closes its
   task.** A mule master drop breaks the wait's held ctl watch, and the wait
   falls back to polling. A run that settled before the forward came back
@@ -49,27 +57,36 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the task IN_PROGRESS. Now a poll that sees a pi agent's run past the
   baseline re-opens the watch at that baseline (once per run); the
   extension answers at once with the settled run's text, and the block
-  applies as usual.
+  applies as usual. A wait that starts while the forward is already down
+  sets its watch up once the socket answers again.
 - **A remote close accepts a HEAD already on a branch.** `mu agent close`
   refused a remote worktree whose HEAD was "never collected" even after it
   was merged in the root repo (`git merge --ff-only` there), so every
   close needed `--keep-branch` and left a redundant `mu/<ws>/<agent>-<sha>`
   branch. A HEAD that any branch or remote-tracking ref of the root
-  contains now removes with no branch.
+  contains now removes with no branch. The removal checks that again just
+  before it runs: a branch deleted or moved meanwhile refuses ("no longer
+  on any branch"), so the commits are never lost.
 - **`mu agent close`'s preview names the processes inside the worktree.**
   The apply removes a tree under a reader (a reviewer still reading it)
   and refuses a writer, but the preview never said who was there: the
   warning came after the tree was gone (seen 3 times, aiv-blog among
   them). The preview now runs the same holder scan, leaves out the
-  agent's own pane processes (its pi and their children, which the kill
-  ends), and lists each other process with what the apply will do;
-  `--json` carries `worktree.holders`. New optional mux method
-  `panePid` (tmux; herdr shows every holder).
+  agent's own pane processes that the kill ends (its pi and their
+  children in the pane's session; a `setsid` one survives the kill and is
+  listed), lists each other process with what the apply will do, and
+  names the processes it could not inspect. `--json` carries
+  `worktree.holders` and `worktree.hidden`. New optional mux methods
+  `panePid` (tmux; herdr shows every holder) and `paneOccupied` (herdr).
 - **`mu human-needed` says when it extended an open stop.** A second
   reason joins the caller's open stop (one task, closed as a whole); it
   printed "Recorded" with the old id. It now says the reason was added,
-  names the close, and points at `--no-stop` for a separate to-do;
-  `--json` carries `extended`.
+  names the close command (with `--evidence`), and points at `--no-stop`
+  for a separate to-do; `--json` carries `extended`.
+- **A mu_delegate call whose attempt ended is not parked forever.** A
+  delegate's replayed attempt whose agent is gone (`SpawnAttemptEndedError`)
+  was parked as reissuable, but every reissue hit the same attempt; it now
+  ends the call with "issue a new mu_delegate call".
 
 ## [4.2.2] — 2026-10-30
 

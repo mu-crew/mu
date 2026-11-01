@@ -18,7 +18,7 @@ mu task close <id> -w <ws> --evidence "$v"   # command + result
 - **Ask for evidence**: commands and exit codes.
 - **Refutation.** A brief naming a cause, fix, threshold or code fact needs the recorded refutation ([SKILL](../SKILL.md)); any other carries `REFUTE-EXEMPT: <why>`.
 - Never tell a worker to `cd`: its cwd is its worktree.
-- `CLOSE:` only when done: an interim one is refused.
+- `CLOSE:` only when done: a well-formed one closes the task.
 
 ## Quoting
 

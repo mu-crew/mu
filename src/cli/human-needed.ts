@@ -26,7 +26,7 @@ async function cmdHumanNeeded(
   }
   console.log(
     r.extended === true
-      ? `Added this reason to your open stop ${pc.bold(r.id)} in ${ws}: one stop, closed as a whole (mu task close ${r.id} -w ${ws}). A separate to-do: --no-stop`
+      ? `Added this reason to your open stop ${pc.bold(r.id)} in ${ws}: one stop, closed as a whole (mu task close ${r.id} -w ${ws} --evidence "<what was decided>"). A separate to-do: --no-stop`
       : r.changed
         ? `Recorded human-needed ${pc.bold(r.id)} in ${ws}${stop ? "" : " (no stop: the loop goes on)"}`
         : pc.dim(`${r.id} already records this reason (no-op)`),
