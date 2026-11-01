@@ -84,9 +84,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   names the close command (with `--evidence`), and points at `--no-stop`
   for a separate to-do; `--json` carries `extended`.
 - **A mu_delegate call whose attempt ended is not parked forever.** A
-  delegate's replayed attempt whose agent is gone (`SpawnAttemptEndedError`)
-  was parked as reissuable, but every reissue hit the same attempt; it now
-  ends the call with "issue a new mu_delegate call".
+  delegate's replayed attempt whose agent is gone (`SpawnAttemptEndedError`,
+  or a delivery-unknown replay reporting `task.stale`) was parked as
+  reissuable, but every reissue replayed the same attempt; it now ends the
+  call (failed) with "issue a new mu_delegate call".
 
 ## [4.2.2] — 2026-10-30
 
