@@ -43,7 +43,13 @@ vi.mock("../src/agents.js", async (orig) => {
   };
 });
 
-import { getReceipt, requestSha, reserveReceipt, updateReceipt } from "../src/agents/receipts.js";
+import {
+  getReceipt,
+  nextAttemptKey,
+  requestSha,
+  reserveReceipt,
+  updateReceipt,
+} from "../src/agents/receipts.js";
 import {
   AgentCtlUnreachableError,
   AgentExistsError,
@@ -348,6 +354,13 @@ describe("replay: never a second prompt", () => {
     await expect(spawnForTask(db, req({ attempt: "t1-2" }))).rejects.toMatchObject({
       nextKey: "t1-3",
     });
+  });
+
+  it("nextAttemptKey: counts past a short numeric suffix; a huge one is part of the stem (no endless loop)", () => {
+    const id = taskIdFor(db, "t1", "auth") ?? 0;
+    expect(nextAttemptKey(db, id, "manual:t1")).toBe("t1-2");
+    expect(nextAttemptKey(db, id, "manual:t1-7")).toBe("t1-8");
+    expect(nextAttemptKey(db, id, "manual:pass-9007199254740992")).toBe("pass-9007199254740992-2");
   });
 
   it("replay after delete + recreate: stale 'replaced' refuses; the replacement is never claimed or sent to", async () => {

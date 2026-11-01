@@ -109,7 +109,8 @@ export function nextAttemptKey(db: Db, taskId: number, attemptKey: string): stri
   const colon = attemptKey.indexOf(":");
   const ns = colon === -1 ? "" : attemptKey.slice(0, colon + 1);
   const bare = attemptKey.slice(ns.length);
-  const m = /^(.*)-(\d+)$/.exec(bare);
+  // A suffix too large to count past exactly is part of the stem: `<key>-2` then.
+  const m = /^(.*)-(\d{1,9})$/.exec(bare);
   const stem = m?.[1] ?? bare;
   let n = m === null ? 2 : Number(m[2]) + 1;
   while (getReceipt(db, taskId, `${ns}${stem}-${n}`) !== undefined) n++;
