@@ -80,12 +80,18 @@ async function servePi(inc = INC): Promise<{
   server: Server;
   drop: () => Promise<void>;
   back: () => Promise<void>;
+  /** Resolves once a `wait` request is held (a watch is up), counting from now. */
+  watched: () => Promise<void>;
+  /** Every `wait` request's afterRuns, in order. */
+  waits: (number | undefined)[];
 }> {
   let state: "busy" | "idle" = "busy";
   let runs = 0;
   let since = Date.now();
   let lastText = "";
   const held: { sock: Socket; afterRuns?: number }[] = [];
+  const waits: (number | undefined)[] = [];
+  let onHeld: (() => void) | undefined;
   const status = () => ({
     v: 1,
     ok: true,
@@ -114,13 +120,17 @@ async function servePi(inc = INC): Promise<{
         const req = JSON.parse(line) as { op: string; afterRuns?: number };
         if (req.op === "hello") sock.end(encode(helloReply({ incarnation: inc })));
         else if (req.op === "wait") {
+          waits.push(req.afterRuns);
           if (req.afterRuns !== undefined && runs > req.afterRuns && state === "idle") {
             sock.end(encode(reply()));
-          } else
+          } else {
             held.push({
               sock,
               ...(req.afterRuns !== undefined ? { afterRuns: req.afterRuns } : {}),
             });
+            onHeld?.();
+            onHeld = undefined;
+          }
         } else sock.end(encode(status()));
       }
     });
@@ -130,6 +140,11 @@ async function servePi(inc = INC): Promise<{
   return {
     settle,
     server,
+    waits,
+    watched: () =>
+      new Promise<void>((r) => {
+        onHeld = r;
+      }),
     /** The forward goes down (a mule master drop): held waits break, the socket is gone. */
     drop: async () => {
       for (const h of held.splice(0)) h.sock.destroy();
@@ -173,13 +188,13 @@ async function setup(): Promise<Awaited<ReturnType<typeof servePi>>> {
 describe("a later run supersedes a settled latch (fix_latch_later_run)", () => {
   it("a run that settles while the forward is down still closes its task once the forward is back", async () => {
     const pi = await setup();
-    // The worker is mid-run; the wait holds a ctl watch. The forward drops, the run settles
-    // with a valid CLOSE while nothing can reach the socket, then the forward is re-armed.
-    setTimeout(async () => {
+    // The worker is mid-run; the wait holds a ctl watch. Only THEN the forward drops, the run
+    // settles with a valid CLOSE while nothing can reach the socket, and the forward is re-armed.
+    void pi.watched().then(async () => {
       await pi.drop();
       pi.settle(VALID);
       setTimeout(() => void pi.back(), 150);
-    }, 150);
+    });
     const out = await asCaller([
       "task",
       "wait",
@@ -197,6 +212,33 @@ describe("a later run supersedes a settled latch (fix_latch_later_run)", () => {
     expect(JSON.parse(out.stdout).data).toMatchObject({ timedOut: false, exit: 0 });
     expect(getTask(db, "t1", "w")).toMatchObject({ status: "CLOSED" });
     expect(settles()).toEqual([1]);
+    // The held watch (past run 0), then the re-watch past the same baseline once the forward was back.
+    expect(pi.waits).toEqual([0, 0]);
+  });
+
+  it("a wait that STARTS while the forward is down watches once it is back, and closes the task", async () => {
+    const pi = await setup();
+    await pi.drop(); // the forward is already gone when the wait starts
+    setTimeout(async () => {
+      pi.settle(VALID);
+      await pi.back();
+    }, 300);
+    const out = await asCaller([
+      "task",
+      "wait",
+      "t1",
+      "-w",
+      "w",
+      "--status",
+      "CLOSED",
+      "--on-stall",
+      "warn",
+      "--timeout",
+      "5",
+      "--json",
+    ]);
+    expect(JSON.parse(out.stdout).data).toMatchObject({ timedOut: false, exit: 0 });
+    expect(getTask(db, "t1", "w")).toMatchObject({ status: "CLOSED" });
   });
 
   it("P1a: the resume after a malformed-CLOSE stall applies run 2's valid CLOSE (exit 0)", async () => {

@@ -71,7 +71,7 @@
 
 import { agentKey } from "./agent-state.js";
 import { AgentNotFoundError, AgentRestartedError } from "./agents/errors.js";
-import { startCloseNotice } from "./close-notice.js";
+import { closeNotices } from "./close-notice.js";
 import type { Db } from "./db.js";
 import {
   DelegateNotFoundError,
@@ -121,7 +121,7 @@ import {
   snapshotsOf,
   urgency,
 } from "./wait-item.js";
-import { type AgentTrack, rearmLatch, supersededBy } from "./wait-latch.js";
+import { type AgentTrack, rearmLatch, rewatchOnPoll, supersededBy } from "./wait-latch.js";
 import { agentOwed, hasDoneMark, setAgentDone } from "./wait-owed.js";
 import { compileTextMatcher, type TextMatcher } from "./wait-regex.js";
 import {
@@ -475,7 +475,13 @@ export async function waitForEvents(
     if (got.lost) return;
     got.v.forEach((h, i) => {
       const t = want[i];
-      if (t === undefined || h === undefined) return;
+      if (t === undefined) return;
+      // No watch could be set up (its control socket did not answer: a lease forward that is
+      // down). Watch again once a poll reads the socket answering (advance).
+      if (h === undefined) {
+        t.watchLost = true;
+        return;
+      }
       t.handle = h;
       t.reading = h.initial;
       if (t.baseline === undefined && h.afterRuns !== undefined) t.baseline = h.afterRuns;
@@ -502,18 +508,10 @@ export async function waitForEvents(
     });
   };
 
-  /** Close notices in flight; awaited before the wait returns (each bounded by ctl timeouts). */
-  const notices: Promise<unknown>[] = [];
-  const notifyRefused = (t: AgentTrack, r: AgentReading, close: CloseOutcome | undefined): void => {
-    const p = startCloseNotice(
-      db,
-      t.ref,
-      { ...r, agentId: r.agentId ?? agentRowId(db, t.ref) },
-      close,
-      callers,
-    );
-    if (p !== undefined) notices.push(p);
-  };
+  /** Close notices (src/close-notice.ts): started on a refused settle, awaited briefly on return. */
+  const notices = closeNotices(db, callers, watchAbort.signal, () => wake());
+  const notifyRefused = (t: AgentTrack, r: AgentReading, close: CloseOutcome | undefined): void =>
+    notices.start(t.ref, { ...r, agentId: r.agentId ?? agentRowId(db, t.ref) }, close);
 
   const settle = (t: AgentTrack, r: AgentReading): void => {
     const consumed =
@@ -526,6 +524,8 @@ export async function waitForEvents(
       (r.lastError === undefined &&
         (r.lastText ?? "").trim() !== "" &&
         matcher.test(r.lastText ?? ""));
+    // A refused block is the worker's to fix, whatever this wait was looking for.
+    if (!consumed) notifyRefused(t, r, close);
     if (!textOk || consumed) {
       // Not the text asked for, or already delivered: count past this run and wait for the next.
       if (r.runs !== undefined) t.baseline = r.runs;
@@ -537,7 +537,6 @@ export async function waitForEvents(
     }
     t.latched = { kind: "settled", reading: r };
     if (close !== undefined) t.close = close;
-    notifyRefused(t, r, close);
   };
 
   const rearm = (t: AgentTrack, baseline: number): void =>
@@ -587,23 +586,10 @@ export async function waitForEvents(
       // No settle seen (`unknown`): the watch ends and the agent is polled instead.
       if (r.status === "unknown") t.handle = undefined;
       else settle(t, r);
+    } else if (opts.watchAgent !== undefined && rewatchOnPoll(t, r)) {
+      // A watch is set up again (see rewatchOnPoll): the settled run is read from it.
     } else if (r.status === "busy") {
       t.wasBusy = true;
-    } else if (
-      r.status !== "unknown" &&
-      opts.watchAgent !== undefined &&
-      r.source === "ctl" &&
-      r.runs !== undefined &&
-      t.baseline !== undefined &&
-      r.runs > t.baseline &&
-      t.rewatchedAt !== r.runs
-    ) {
-      // A run settled while no watch held it (its connection dropped: a lease
-      // forward lost with the mule master). A poll has no run text, so its CLOSE
-      // block would never apply: watch again past the same baseline, which the
-      // extension answers at once with the settled run's facts. Once per run.
-      t.rewatchedAt = r.runs;
-      t.needWatch = true;
     } else if (r.status !== "unknown" && t.wasBusy) {
       settle(t, r);
     }
@@ -1169,6 +1155,11 @@ export async function waitForEvents(
         continue;
       }
       const { token, owner, ownerRef } = it.stall;
+      // The close notice already answers this run: no steer on top of it; wait for the next run.
+      if (opts.onStall === "steer" && notices.answers(ownerRef, owner.runs)) {
+        it.ready = false;
+        continue;
+      }
       let st = stallStates.get(token);
       if (st === undefined) {
         const own = db
@@ -1477,8 +1468,8 @@ export async function waitForEvents(
   } finally {
     clearTimeout(deadlineTimer);
     opts.signal?.removeEventListener("abort", onAbort);
+    await notices.settle(stopReason === undefined);
     watchAbort.abort();
-    await Promise.all(notices);
     if (consumes) {
       if (!committed) commit();
       if (result !== undefined) {

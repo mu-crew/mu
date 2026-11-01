@@ -27,6 +27,8 @@ export interface AgentTrack {
   unknownBaseline: boolean;
   /** The run count a polled settle last re-opened a watch for (once per run: no loop). */
   rewatchedAt?: number;
+  /** A watch was wanted but could not be set up (no answering socket); retried when it answers. */
+  watchLost?: boolean;
 }
 
 /**
@@ -59,4 +61,37 @@ export function supersededBy(t: AgentTrack, r: AgentReading): number | undefined
   if (differs(held.agentId, r.agentId) || differs(held.incarnation, r.incarnation)) return 0;
   if (held.runs !== undefined && r.runs > held.runs) return held.runs;
   return undefined;
+}
+
+/**
+ * A poll reading of a ctl agent that calls for a (new) watch: sets `needWatch` and says so. Two
+ * cases, each at most once per run count (`rewatchedAt`), so a watch that cannot be set up is never
+ * retried on every poll (a pending retry counts as a settle owed and would hide a stall):
+ *   - the watch could not be set up (`watchLost`: no answering socket, a lease forward that is
+ *     down) and the socket answers again;
+ *   - a run settled past the baseline while no watch held it (its connection dropped). A poll has
+ *     no run text, so its CLOSE block would never apply: the extension answers a watch past the
+ *     same baseline at once with the settled run's facts.
+ */
+export function rewatchOnPoll(t: AgentTrack, r: AgentReading): boolean {
+  if (t.watchLost === true && r.ctl === "ok" && t.rewatchedAt !== (r.runs ?? -1)) {
+    t.watchLost = false;
+    t.rewatchedAt = r.runs ?? -1;
+    t.needWatch = true;
+    return true;
+  }
+  if (
+    r.status !== "unknown" &&
+    r.status !== "busy" &&
+    r.source === "ctl" &&
+    r.runs !== undefined &&
+    t.baseline !== undefined &&
+    r.runs > t.baseline &&
+    t.rewatchedAt !== r.runs
+  ) {
+    t.rewatchedAt = r.runs;
+    t.needWatch = true;
+    return true;
+  }
+  return false;
 }
