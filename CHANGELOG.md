@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.3.0] — 2026-11-01
+
 ### Added
 
 - **A worker is told when its CLOSE block was refused.** A malformed block
