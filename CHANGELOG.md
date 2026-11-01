@@ -10,6 +10,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **A worker is told when its CLOSE block was refused.** A malformed block
+  (the line after `CLOSE:` is not `REPORT:`, an empty report, bad quoting)
+  was recorded on the task and never reported back, so the worker repeated
+  the shape (aiv-blog: 67 refusals; seen across 70 earlier sessions). Now
+  the wait that sees the refusal sends the worker one fixed **close
+  notice**: the reason, the exact shape, and "if it is not done, do not
+  write CLOSE: at all". Any wait of the caller that spawned the worker
+  sends it, `--on-stall` or not; once per run and at most 3 per pi
+  incarnation, after which the stall is the orchestrator's as before.
+  Other refusals (not the owner, a human task) are not sent.
+
 ### Fixed
 
 - **Re-spawning a task whose worker died no longer pretends to restart it.**

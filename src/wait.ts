@@ -71,6 +71,7 @@
 
 import { agentKey } from "./agent-state.js";
 import { AgentNotFoundError, AgentRestartedError } from "./agents/errors.js";
+import { startCloseNotice } from "./close-notice.js";
 import type { Db } from "./db.js";
 import {
   DelegateNotFoundError,
@@ -136,6 +137,7 @@ import {
 } from "./wait-registration.js";
 import {
   type AgentReading,
+  type CloseOutcome,
   DEFAULT_CTL_STUCK_AFTER_MS,
   DEFAULT_STUCK_AFTER_MS,
   type StallActionResult,
@@ -500,6 +502,19 @@ export async function waitForEvents(
     });
   };
 
+  /** Close notices in flight; awaited before the wait returns (each bounded by ctl timeouts). */
+  const notices: Promise<unknown>[] = [];
+  const notifyRefused = (t: AgentTrack, r: AgentReading, close: CloseOutcome | undefined): void => {
+    const p = startCloseNotice(
+      db,
+      t.ref,
+      { ...r, agentId: r.agentId ?? agentRowId(db, t.ref) },
+      close,
+      callers,
+    );
+    if (p !== undefined) notices.push(p);
+  };
+
   const settle = (t: AgentTrack, r: AgentReading): void => {
     const consumed =
       !t.explicit &&
@@ -522,6 +537,7 @@ export async function waitForEvents(
     }
     t.latched = { kind: "settled", reading: r };
     if (close !== undefined) t.close = close;
+    notifyRefused(t, r, close);
   };
 
   const rearm = (t: AgentTrack, baseline: number): void =>
@@ -1462,6 +1478,7 @@ export async function waitForEvents(
     clearTimeout(deadlineTimer);
     opts.signal?.removeEventListener("abort", onAbort);
     watchAbort.abort();
+    await Promise.all(notices);
     if (consumes) {
       if (!committed) commit();
       if (result !== undefined) {

@@ -201,6 +201,7 @@ are re-export hubs.
 | `src/next-refute.ts` | `executeNext --refute` (slice C): `nextCheck` (CLOSED/done permitted attempts with no call, or this caller's unfinished call), `runCheck` (register `starting` → `spawnForTask` → `running`; or read once and `finishDelegate`), `checkerRefs`; the call id `refute:<ws>:<task>:<attempt>` is the once-key |
 | `src/cli/next.ts` | `mu next`: signals before the DB, one bounded envelope (`nextData`), exit mapping (`nextExit`) |
 | `src/close-block.ts` | the CLOSE block of a settled pi run: `parseCloseBlock` (one grammar: last column-0 `CLOSE:` line outside a fence, exact marker lines, escaped evidence) and `applySettledClose` (report note, close note and status flip in ONE op group, once per (agent, incarnation, runs) through `agent_settles`; refuses delegate and human tasks; malformed reads "no close (malformed)") |
+| `src/close-notice.ts` | the close notice: `noticeRefusedClose` sends a worker whose CLOSE block was refused as malformed one fixed note (reason + exact shape), guarded and marked in the ctl write fence (`beforeWrite`): the caller spawned it, it owns the IN_PROGRESS work task, once per (row, incarnation, run), `NOTICE_CAP` per incarnation (marks in `wait_cursors` under a reserved caller); `startCloseNotice` is the wait's hook |
 | `src/tasks/claim.ts` | atomic claim and release; `resolveWorkerIdentity` |
 | `src/tasks/lifecycle.ts`, `status.ts` | close, open and cascade; `TaskStatus` |
 | `src/tasks/errors.ts` | typed task errors |
