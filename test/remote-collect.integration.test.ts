@@ -649,6 +649,29 @@ describe.each([
     },
   );
 
+  it_(
+    "a HEAD kept only by a branch that is deleted before the removal refuses; the commit stays",
+    async () => {
+      const row = await remoteAgent("worker-1", { pane: false });
+      const head = commitIn("worker-1", "w.txt");
+      gitIn(remote, "branch", "feature", head);
+      const agent = getAgent(db, "worker-1", "auth");
+      if (agent === undefined) throw new Error("no row");
+      const err = await closeRemoteWorktree(db, agent, {
+        keepBranch: true,
+        beforeRemove: () => gitIn(remote, "branch", "-D", "feature"),
+      }).catch((e: unknown) => e);
+      expect(err).toMatchObject({ reason: "uncollected" });
+      expect((err as Error).message).toMatch(/no longer on any branch/);
+      expect(existsSync(wt())).toBe(true);
+      expect(existsSync(aside(row.incarnation))).toBe(false);
+      expect(gitIn(wt(), "rev-parse", "HEAD")).toBe(head);
+      // Still on the branch: removed with no branch made.
+      gitIn(remote, "branch", "feature", head);
+      expect((await closeRemoteWorktree(db, agent, {})).action).toBe("removed");
+    },
+  );
+
   it_("an aside beside a live path is never guessed at: refuse, remove nothing", async () => {
     const row = await remoteAgent("worker-1");
     mkdirSync(aside(row.incarnation));
