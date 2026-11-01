@@ -31,14 +31,20 @@ import { AgentRestartedError } from "./errors.js";
 import { type GateReading, readGate } from "./gate.js";
 import { expectsCtl } from "./transport.js";
 
-/** Whether the pane still runs (an exited retained pane does not); false when the mux cannot say. */
-async function paneUp(paneId: string): Promise<boolean> {
+/**
+ * Whether the pane still holds a running agent: tmux, the pane runs (an
+ * exited retained pane does not); herdr, an agent still occupies the pane
+ * (it outlives its occupant as a shell). `undefined` when the mux cannot
+ * say: unknown, never a death.
+ */
+async function paneUp(paneId: string): Promise<boolean | undefined> {
   try {
     const mux = await activeMux();
     if (mux.paneResult !== undefined) return (await mux.paneResult(paneId)).state === "running";
+    if (mux.paneOccupied !== undefined) return await mux.paneOccupied(paneId);
     return await mux.paneAlive(paneId);
   } catch {
-    return false;
+    return undefined;
   }
 }
 
@@ -324,9 +330,9 @@ export async function watchAgentRun(
       // is a forward that a dropped connection (a lease's mule master) takes
       // down while the pane and the job on the host live on. Only a pane that
       // is gone (or unreadable as alive) is a dead pi.
-      return (await paneUp(agent.paneId))
-        ? lost("unknown", "control socket lost; the pane is alive")
-        : lost(null);
+      const up = await paneUp(agent.paneId);
+      if (up === undefined) return lost("unknown", "control socket lost; the mux cannot say");
+      return up ? lost("unknown", "control socket lost; the pane is alive") : lost(null);
     },
   );
   return { initial, afterRuns, settled };
