@@ -513,31 +513,40 @@ export async function worktreeHolders(
 }
 
 /**
- * `root` and every process under it (`ps -A -o pid= -o ppid=`, Linux and
- * macOS). Just `root` when ps cannot run: a caller then shows more, never less.
+ * `root` and every process under it that stays in `root`'s session
+ * (`ps -A -o pid= -o ppid= -o sid=`, Linux and macOS): what a pane kill (its
+ * session's hangup) ends. A descendant that left the session (`setsid`,
+ * a daemon) survives the kill, so it is not in the set. Just `root` when ps
+ * cannot run: a caller then shows more, never less.
  */
 export async function processTree(root: number): Promise<Set<number>> {
   const tree = new Set([root]);
   let out: string;
   try {
-    out = (await exec("ps", ["-A", "-o", "pid=", "-o", "ppid="])).stdout;
+    out = (await exec("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "sid="])).stdout;
   } catch {
     return tree;
   }
   const kids = new Map<number, number[]>();
+  const sid = new Map<number, number>();
   for (const l of out.split("\n")) {
-    const [pid, ppid] = l.trim().split(/\s+/).map(Number);
+    const [pid, ppid, s] = l.trim().split(/\s+/).map(Number);
     if (pid === undefined || ppid === undefined || Number.isNaN(pid) || Number.isNaN(ppid))
       continue;
     kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
+    if (s !== undefined && !Number.isNaN(s)) sid.set(pid, s);
   }
+  const session = sid.get(root);
+  const seen = new Set([root]);
   const todo = [root];
   for (let p = todo.pop(); p !== undefined; p = todo.pop()) {
     for (const k of kids.get(p) ?? []) {
-      if (!tree.has(k)) {
-        tree.add(k);
-        todo.push(k);
-      }
+      if (seen.has(k)) continue;
+      seen.add(k);
+      // Left the pane's session (setsid): it survives the kill, and so do its own children.
+      if (session !== undefined && sid.get(k) !== session) continue;
+      tree.add(k);
+      todo.push(k);
     }
   }
   return tree;
