@@ -28,6 +28,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   invited a second copy of each run. Now only a pane that is gone (or
   exited) is a death; a lost socket on a live pane is `unknown`
   ("control socket lost; the pane is alive") and the wait keeps polling.
+- **A run that finishes while a lease connection is down still closes its
+  task.** A mule master drop breaks the wait's held ctl watch, and the wait
+  falls back to polling. A run that settled before the forward came back
+  was then seen only by a poll, which carries no run text: the wait
+  reported "finished its run" and the CLOSE block never applied, leaving
+  the task IN_PROGRESS. Now a poll that sees a pi agent's run past the
+  baseline re-opens the watch at that baseline (once per run); the
+  extension answers at once with the settled run's text, and the block
+  applies as usual.
 - **A remote close accepts a HEAD already on a branch.** `mu agent close`
   refused a remote worktree whose HEAD was "never collected" even after it
   was merged in the root repo (`git merge --ff-only` there), so every

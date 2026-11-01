@@ -25,6 +25,8 @@ export interface AgentTrack {
   muted: boolean;
   /** Owed with no fence, no cursor: counted from now, said so in the snapshot. */
   unknownBaseline: boolean;
+  /** The run count a polled settle last re-opened a watch for (once per run: no loop). */
+  rewatchedAt?: number;
 }
 
 /**

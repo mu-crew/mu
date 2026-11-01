@@ -52,9 +52,11 @@ beforeEach(() => {
     stdout:
       args[0] === "list-panes"
         ? args[1] === "-a"
-          ? `%w1\tidle\t${Date.now() - 600_000}\n`
-          : "@1\t%w1\tagent\tsh\n"
-        : "",
+          ? `%41\tidle\t${Date.now() - 600_000}\n`
+          : "@1\t%41\tagent\tsh\n"
+        : args[0] === "display-message"
+          ? "%41|0||\n"
+          : "",
     stderr: "",
     exitCode: 0,
   }));
@@ -72,9 +74,13 @@ afterEach(async () => {
 });
 
 /** A pi the test drives: `settle(text)` ends a run (idle since now), `busy()` starts one. */
-async function servePi(
-  inc = INC,
-): Promise<{ settle: (text: string) => void; busy: () => void; server: Server }> {
+async function servePi(inc = INC): Promise<{
+  settle: (text: string) => void;
+  busy: () => void;
+  server: Server;
+  drop: () => Promise<void>;
+  back: () => Promise<void>;
+}> {
   let state: "busy" | "idle" = "busy";
   let runs = 0;
   let since = Date.now();
@@ -124,6 +130,16 @@ async function servePi(
   return {
     settle,
     server,
+    /** The forward goes down (a mule master drop): held waits break, the socket is gone. */
+    drop: async () => {
+      for (const h of held.splice(0)) h.sock.destroy();
+      await new Promise<void>((r) => server.close(() => r()));
+      rmSync(path, { force: true });
+    },
+    /** The forward is re-armed: the same pi answers again. */
+    back: async () => {
+      await new Promise<void>((r) => server.listen(path, () => r()));
+    },
     busy: () => {
       state = "busy";
       since = Date.now();
@@ -149,12 +165,40 @@ async function asCaller(args: string[]): Promise<Awaited<ReturnType<typeof runCl
 
 async function setup(): Promise<Awaited<ReturnType<typeof servePi>>> {
   addTask(db, { localId: "t1", workstream: "w", title: "t1", impact: 50, effortDays: 1 });
-  insertAgent(db, { name: "w1", workstream: "w", paneId: "%w1", cli: "pi", spawner: CALLER });
+  insertAgent(db, { name: "w1", workstream: "w", paneId: "%41", cli: "pi", spawner: CALLER });
   await claimTask(db, "t1", { workstream: "w", agentName: "w1" });
   return servePi();
 }
 
 describe("a later run supersedes a settled latch (fix_latch_later_run)", () => {
+  it("a run that settles while the forward is down still closes its task once the forward is back", async () => {
+    const pi = await setup();
+    // The worker is mid-run; the wait holds a ctl watch. The forward drops, the run settles
+    // with a valid CLOSE while nothing can reach the socket, then the forward is re-armed.
+    setTimeout(async () => {
+      await pi.drop();
+      pi.settle(VALID);
+      setTimeout(() => void pi.back(), 150);
+    }, 150);
+    const out = await asCaller([
+      "task",
+      "wait",
+      "t1",
+      "-w",
+      "w",
+      "--status",
+      "CLOSED",
+      "--on-stall",
+      "warn",
+      "--timeout",
+      "5",
+      "--json",
+    ]);
+    expect(JSON.parse(out.stdout).data).toMatchObject({ timedOut: false, exit: 0 });
+    expect(getTask(db, "t1", "w")).toMatchObject({ status: "CLOSED" });
+    expect(settles()).toEqual([1]);
+  });
+
   it("P1a: the resume after a malformed-CLOSE stall applies run 2's valid CLOSE (exit 0)", async () => {
     const pi = await setup();
     pi.settle('CLOSE: task=t1 evidence="e"\nREPORT:\n');
@@ -220,7 +264,7 @@ describe("a later run supersedes a settled latch (fix_latch_later_run)", () => {
       second = insertAgent(db, {
         name: "w1",
         workstream: "w",
-        paneId: "%w1",
+        paneId: "%41",
         cli: "pi",
         spawner: CALLER,
       }).incarnation;

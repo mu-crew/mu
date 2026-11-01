@@ -573,6 +573,21 @@ export async function waitForEvents(
       else settle(t, r);
     } else if (r.status === "busy") {
       t.wasBusy = true;
+    } else if (
+      r.status !== "unknown" &&
+      opts.watchAgent !== undefined &&
+      r.source === "ctl" &&
+      r.runs !== undefined &&
+      t.baseline !== undefined &&
+      r.runs > t.baseline &&
+      t.rewatchedAt !== r.runs
+    ) {
+      // A run settled while no watch held it (its connection dropped: a lease
+      // forward lost with the mule master). A poll has no run text, so its CLOSE
+      // block would never apply: watch again past the same baseline, which the
+      // extension answers at once with the settled run's facts. Once per run.
+      t.rewatchedAt = r.runs;
+      t.needWatch = true;
     } else if (r.status !== "unknown" && t.wasBusy) {
       settle(t, r);
     }
