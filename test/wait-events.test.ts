@@ -986,6 +986,60 @@ describe("an agent wait with its own refs (mu agent wait)", () => {
     expect(r.refs[0]).toMatchObject({ fired: false, status: "needs_permission", blocked });
   });
 
+  it("a run that settles while its watch is dropped is re-watched for its text, not fired from the poll", async () => {
+    mkAgent(env.db, "w1");
+    const dropped = controllableWatch();
+    dropped.settle({ status: "unknown", reason: "control socket lost; the pane is alive" });
+    const bases: (number | undefined)[] = [];
+    const r = await waitForEvents(env.db, [agentRef("w1")], {
+      ...own,
+      timeoutMs: 5000,
+      // The forward is back: the poll sees the run already settled past the baseline.
+      readAgents: async () =>
+        new Map([["w/w1", { status: "needs_input", source: "ctl", runs: 4, incarnation: "i1" }]]),
+      watchAgent: async (ref) => {
+        bases.push(ref.afterRuns);
+        if (bases.length === 1) return { ...dropped.handle, afterRuns: 3 };
+        return {
+          initial: { status: "needs_input" },
+          afterRuns: 3,
+          settled: Promise.resolve({
+            status: "needs_input",
+            settled: true,
+            runs: 4,
+            incarnation: "i1",
+            lastText: "done\nCLOSE: task=t1",
+          }),
+        };
+      },
+    });
+    expect(bases).toEqual([undefined, 3]);
+    expect(r.event.kind).toBe("settled");
+    expect(r.refs[0]).toMatchObject({ fired: true, runs: 4, lastText: "done\nCLOSE: task=t1" });
+  });
+
+  it("the re-watch is once per run: a second drop fires from the poll instead of looping", async () => {
+    mkAgent(env.db, "w1");
+    let watches = 0;
+    const r = await waitForEvents(env.db, [agentRef("w1")], {
+      ...own,
+      timeoutMs: 5000,
+      readAgents: async () =>
+        new Map([["w/w1", { status: "needs_input", source: "ctl", runs: 4, incarnation: "i1" }]]),
+      watchAgent: async () => {
+        watches += 1;
+        return {
+          initial: { status: "busy" },
+          afterRuns: 3,
+          settled: Promise.resolve({ status: "unknown", reason: "ctl wait interrupted" }),
+        };
+      },
+    });
+    expect(watches).toBe(2);
+    expect(r.event.kind).toBe("settled");
+    expect(r.refs[0]).toMatchObject({ fired: true, runs: 4 });
+  });
+
   it("a timeout aborts the watch signal", async () => {
     mkAgent(env.db, "w1");
     let signal: AbortSignal | undefined;
