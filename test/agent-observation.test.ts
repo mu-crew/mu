@@ -314,6 +314,26 @@ describe("watchAgentRun", () => {
     expect(await w?.settled).toMatchObject({ status: null, settled: false });
   });
 
+  it("a dropped connection to a dead socket while the pane runs is unknown, not a death (a lost lease forward)", async () => {
+    setTmuxExecutor(async (args) =>
+      args[0] === "display-message"
+        ? { stdout: "%1|0||\n", stderr: "", exitCode: 0 }
+        : { stdout: "", stderr: "", exitCode: 0 },
+    );
+    const ext = await fake({ state: "busy", since: 1, runs: 3 });
+    const w = await watchAgentRun(pia, agentCtlSocket(db, pia), ctl().signal, {});
+    await ext.held();
+    for (const s of servers) s.close();
+    servers = [];
+    (await import("node:fs")).rmSync(agentCtlSocket(db, pia), { force: true });
+    await ext.drop();
+    expect(await w?.settled).toMatchObject({
+      status: "unknown",
+      reason: "control socket lost; the pane is alive",
+      settled: false,
+    });
+  });
+
   it("aborting the signal cancels the watch: unknown, not a death and not a settle", async () => {
     await fake({ state: "busy", since: 1, runs: 3 });
     const abort = new AbortController();

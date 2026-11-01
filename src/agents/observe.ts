@@ -26,9 +26,21 @@ import type { SettledCloseInput } from "../close-block.js";
 import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import { type CtlBlocked, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
+import { activeMux } from "../mux.js";
 import { AgentRestartedError } from "./errors.js";
 import { type GateReading, readGate } from "./gate.js";
 import { expectsCtl } from "./transport.js";
+
+/** Whether the pane still runs (an exited retained pane does not); false when the mux cannot say. */
+async function paneUp(paneId: string): Promise<boolean> {
+  try {
+    const mux = await activeMux();
+    if (mux.paneResult !== undefined) return (await mux.paneResult(paneId)).state === "running";
+    return await mux.paneAlive(paneId);
+  } catch {
+    return false;
+  }
+}
 
 /** Who an observation is about. */
 export type ObservedAgent = Pick<
@@ -307,7 +319,14 @@ export async function watchAgentRun(
       ) {
         throw restarted(again.incarnation);
       }
-      return again.kind === "ok" ? lost("unknown", "ctl wait interrupted") : lost(null);
+      if (again.kind === "ok") return lost("unknown", "ctl wait interrupted");
+      // No answer is not a death while the pane is up: a remote agent's socket
+      // is a forward that a dropped connection (a lease's mule master) takes
+      // down while the pane and the job on the host live on. Only a pane that
+      // is gone (or unreadable as alive) is a dead pi.
+      return (await paneUp(agent.paneId))
+        ? lost("unknown", "control socket lost; the pane is alive")
+        : lost(null);
     },
   );
   return { initial, afterRuns, settled };
