@@ -17,6 +17,8 @@ export interface FakePane {
   scrollback?: string;
   /** A pane that kept its row after its command ended (remain-on-exit): set by a test to model the exit. */
   exit?: { code: number | null; signal: number | null };
+  /** `#{pane_pid}`: the pane's first process. */
+  pid?: number;
 }
 
 export interface MockState {
@@ -188,6 +190,7 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       if (!pane) return fail(`can't find pane: ${paneId}`);
       const fmt = args[args.indexOf("-p") + 1] ?? "";
       // The exit facts of a retained pane (`pane_dead`, `pane_dead_status`, `pane_dead_signal`).
+      if (fmt.includes("pane_pid")) return ok(`${paneId}|${pane.pid ?? ""}\n`);
       if (fmt.includes("pane_dead")) {
         const e = pane.exit;
         return ok(`${paneId}|${e ? 1 : 0}|${e?.code ?? ""}|${e?.signal ?? ""}\n`);

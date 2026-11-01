@@ -22,6 +22,7 @@ import {
   closeAgent,
   deleteAgent,
   getAgent,
+  previewClose,
   resetCommandResolverForTests,
   setCommandResolverForTests,
   spawnAgent,
@@ -32,6 +33,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import {
   getWorktreeAt,
   listWorktrees,
+  processTree,
   reclaimWorktreePath,
   releaseWorktree,
   WorktreeHeldError,
@@ -262,6 +264,49 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
       expect(r.worktree?.warnings?.join("\n")).toContain(String(holder?.pid));
     },
   );
+
+  it.runIf(procOk)(
+    "the preview names a process inside the tree, but not the agent's own pane processes",
+    async () => {
+      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      hold(wt.path);
+      tmuxState.panes.set("%1", { windowId: "@1", paneId: "%1", command: "pi" });
+      const p = await previewClose(db, "worker-1", { workstream: "auth" });
+      expect(p.worktree?.holders?.map((h) => h.pid)).toEqual([holder?.pid]);
+      expect(p.worktree?.holders?.[0]).toMatchObject({ command: "sleep", writer: false });
+      // The same process as the pane's own (its pi, or a tool under it): the kill ends it, not news.
+      tmuxState.panes.set("%1", {
+        windowId: "@1",
+        paneId: "%1",
+        command: "pi",
+        pid: holder?.pid ?? 0,
+      });
+      const own = await previewClose(db, "worker-1", { workstream: "auth" });
+      expect(own.worktree?.holders).toEqual([]);
+      expect(existsSync(wt.path)).toBe(true);
+    },
+  );
+
+  it("processTree holds a pane's grandchildren (its pi's tools), never the caller", async () => {
+    const sh = spawnChild("sh", ["-c", "sleep 30 & sleep 30; wait"], {
+      stdio: "ignore",
+      detached: true,
+    });
+    try {
+      let tree = new Set<number>();
+      for (let i = 0; i < 20 && tree.size < 3; i++) {
+        await new Promise((r) => setTimeout(r, 50));
+        tree = await processTree(sh.pid ?? 0);
+      }
+      expect(tree.size).toBeGreaterThanOrEqual(3);
+      expect(tree.has(sh.pid ?? 0)).toBe(true);
+      expect(tree.has(process.pid)).toBe(false);
+    } finally {
+      try {
+        process.kill(-(sh.pid ?? 0), "SIGKILL"); // the group: no orphaned sleeps
+      } catch {}
+    }
+  });
 
   const lsofOk = (() => {
     try {

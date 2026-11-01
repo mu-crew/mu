@@ -244,6 +244,22 @@ function printClosePreview(p: ClosePreview): void {
   }
   if (p.worktree !== null) {
     console.log(`  worktree ${p.worktree.path}: ${p.worktree.state}`);
+    const held = p.worktree.holders;
+    for (const h of held ?? []) {
+      const who = `process ${h.pid}${h.command === "" ? "" : ` (${h.command})`}`;
+      console.log(
+        pc.yellow(
+          h.writer
+            ? `  ${who} has a file in it open for writing: close refuses (--force removes it under the process)`
+            : `  ${who} is inside it (its cwd or a file open for reading): close removes the tree under it`,
+        ),
+      );
+    }
+    if (held === undefined && p.worktree.state !== "missing") {
+      console.log(
+        pc.yellow("  no process scan ran (no /proc, no lsof): close refuses without --force"),
+      );
+    }
     if (p.refusesDirty) {
       console.log(
         pc.yellow("  uncommitted work: close refuses. Commit it, or preview with --discard"),

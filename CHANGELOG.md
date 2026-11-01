@@ -43,6 +43,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   close needed `--keep-branch` and left a redundant `mu/<ws>/<agent>-<sha>`
   branch. A HEAD that any branch or remote-tracking ref of the root
   contains now removes with no branch.
+- **`mu agent close`'s preview names the processes inside the worktree.**
+  The apply removes a tree under a reader (a reviewer still reading it)
+  and refuses a writer, but the preview never said who was there: the
+  warning came after the tree was gone (seen 3 times, aiv-blog among
+  them). The preview now runs the same holder scan, leaves out the
+  agent's own pane processes (its pi and their children, which the kill
+  ends), and lists each other process with what the apply will do;
+  `--json` carries `worktree.holders`. New optional mux method
+  `panePid` (tmux; herdr shows every holder).
 - **`mu human-needed` says when it extended an open stop.** A second
   reason joins the caller's open stop (one task, closed as a whole); it
   printed "Recorded" with the old id. It now says the reason was added,

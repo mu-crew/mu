@@ -336,6 +336,10 @@ export interface MuxBackend {
    *  or is gone. Unlike `paneAlive` (handle existence), an exited pane is NOT
    *  running here. Throws when the probe itself fails: unknown, never a result. */
   paneResult?(paneId: string): Promise<PaneResult>;
+  /** tmux only: the pid of the pane's first process (`#{pane_pid}`), so a
+   *  caller can tell the agent's own processes from others; undefined when
+   *  the pane is gone. Throws when the probe itself fails. */
+  panePid?(paneId: string): Promise<number | undefined>;
   /** herdr only: atomic `agent prompt`. tmux has no reliable paste (cut in
    *  4.0), so callers branch on the method's presence, never on
    *  `mux.name`, and refuse when it is absent. */
