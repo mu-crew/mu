@@ -489,6 +489,20 @@ export async function paneResult(paneId: string): Promise<PaneResult> {
   return { state: "exited", code: num(status), signal: num(signal) };
 }
 
+/** The pid of the pane's first process; undefined when the pane or server is gone. */
+export async function panePid(paneId: string): Promise<number | undefined> {
+  if (!isValidPaneId(paneId)) return undefined;
+  const args = ["display-message", "-t", paneId, "-p", "#{pane_id}|#{pane_pid}"];
+  const result = await currentExecutor(args);
+  if (result.exitCode !== 0) {
+    if (/can't find pane|pane not found|no current target/i.test(result.stderr)) return undefined;
+    if (NO_SERVER_RE.test(result.stderr)) return undefined;
+    throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
+  }
+  const [id, pid] = result.stdout.trim().split("|");
+  return id === paneId && pid !== undefined && /^\d+$/.test(pid) ? Number(pid) : undefined;
+}
+
 /**
  * Name of the tmux session this process is running inside, or
  * undefined outside tmux. Gated on `$TMUX` so a call from a plain
@@ -659,6 +673,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   listPanes,
   paneAlive,
   paneResult,
+  panePid,
   killPane,
   capture,
 

@@ -47,9 +47,12 @@ import {
   assertReleasable,
   getWorktreeAt,
   getWorktreeFor,
+  processTree,
   type ReleasedWorktree,
   releaseWorktree,
+  type WorktreeHolder,
   type WorktreeState,
+  worktreeHolders,
   worktreeState,
 } from "../worktree.js";
 import { closeRecovery, recoveryPreview } from "./close-recovery.js";
@@ -151,7 +154,16 @@ export interface ClosePreview {
   /** Tasks the row owns, any workstream. IN_PROGRESS ones go back to OPEN. */
   ownedTasks: { ref: string; status: string; reverts: boolean }[];
   /** The worktree the close rule would handle; null when none is registered. */
-  worktree: { path: string; state: WorktreeState } | null;
+  worktree: {
+    path: string;
+    state: WorktreeState;
+    /**
+     * Other processes inside it now (cwd or an open file), the agent's own
+     * pane processes left out: the apply removes the tree under a reader and
+     * refuses a writer. Undefined when no scan could prove the answer.
+     */
+    holders?: WorktreeHolder[];
+  } | null;
   /**
    * The remote worktree of a `--host --worktree` agent that the close removes
    * under the remote rule (`closeRemoteWorktree`), read from the row alone:
@@ -249,6 +261,10 @@ export async function previewClose(
     const agent = getAgentForCleanup(db, name, opts.workstream);
     const row = worktreeOf(db, opts.workstream, name, agent);
     const state = row === undefined ? undefined : await worktreeState(row.path, row.base, row.root);
+    const holders =
+      row === undefined || state === undefined || state === "missing"
+        ? undefined
+        : await previewHolders(row.path, agent);
     // No await from here to the return, and ONE read transaction: under WAL
     // its first read pins a snapshot, so another mu process committing a
     // replacement cannot land between the identity and the revision.
@@ -322,7 +338,10 @@ export async function previewClose(
         incarnation: now?.incarnation ?? null,
         paneId: now?.paneId ?? null,
         ownedTasks: now ? ownedTasksOf(db, now) : [],
-        worktree: nowRow && state ? { path: nowRow.path, state } : null,
+        worktree:
+          nowRow && state
+            ? { path: nowRow.path, state, ...(holders !== undefined ? { holders } : {}) }
+            : null,
         remote: remoteOf(now),
         recovery: null,
         carrierJob,
@@ -335,6 +354,27 @@ export async function previewClose(
     if (preview !== undefined) return preview;
   }
   throw new AgentReplacedError(name, opts.workstream);
+}
+
+/**
+ * Who is inside `path` now, for the preview: the holder scan the apply runs,
+ * minus the agent's own pane and everything under it (its pi, its tools),
+ * which the kill ends first. Undefined when the scan proves nothing.
+ */
+async function previewHolders(
+  path: string,
+  agent: AgentRow | undefined,
+): Promise<WorktreeHolder[] | undefined> {
+  const holders = await worktreeHolders(path);
+  if (holders === undefined || holders.length === 0 || agent === undefined) return holders;
+  let own = new Set<number>();
+  try {
+    const pid = await (await activeMux()).panePid?.(agent.paneId);
+    if (pid !== undefined) own = await processTree(pid);
+  } catch {
+    // no pane pid: every holder is shown
+  }
+  return holders.filter((h) => !own.has(h.pid));
 }
 
 /**

@@ -513,6 +513,37 @@ export async function worktreeHolders(
 }
 
 /**
+ * `root` and every process under it (`ps -A -o pid= -o ppid=`, Linux and
+ * macOS). Just `root` when ps cannot run: a caller then shows more, never less.
+ */
+export async function processTree(root: number): Promise<Set<number>> {
+  const tree = new Set([root]);
+  let out: string;
+  try {
+    out = (await exec("ps", ["-A", "-o", "pid=", "-o", "ppid="])).stdout;
+  } catch {
+    return tree;
+  }
+  const kids = new Map<number, number[]>();
+  for (const l of out.split("\n")) {
+    const [pid, ppid] = l.trim().split(/\s+/).map(Number);
+    if (pid === undefined || ppid === undefined || Number.isNaN(pid) || Number.isNaN(ppid))
+      continue;
+    kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
+  }
+  const todo = [root];
+  for (let p = todo.pop(); p !== undefined; p = todo.pop()) {
+    for (const k of kids.get(p) ?? []) {
+      if (!tree.has(k)) {
+        tree.add(k);
+        todo.push(k);
+      }
+    }
+  }
+  return tree;
+}
+
+/**
  * Move a worktree (`git worktree move` while its repo lives, so git keeps
  * tracking it; a plain rename once the repo is gone).
  */
