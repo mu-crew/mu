@@ -519,6 +519,13 @@ export function registerDelegate(
       // A refusal that fails the same on every reissue is final, not 'reissue'.
       if (out?.error === "WorktreeVcsRequiredError")
         throw new SpawnFail(`${msg}. Pass cwd: <a git repo>`, "refused");
+      // The call's one attempt (--attempt <its task>) was delivered and its agent is gone: every
+      // reissue would hit the same receipt. Final: the call ends; a new mu_delegate starts afresh.
+      if (out?.error === "SpawnAttemptEndedError")
+        throw new SpawnFail(
+          `${msg}. This call cannot run again (its attempt ended); issue a new ${DELEGATE_TOOL} call`,
+          "refused",
+        );
       throw new SpawnFail(msg, out?.error === "UsageError" ? "refused" : "unsent");
     }
     const name = spawned;

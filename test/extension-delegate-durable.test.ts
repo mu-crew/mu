@@ -288,7 +288,7 @@ describe("spawn receipts", () => {
     expect(mu.calls.some((c) => c[1] === "close")).toBe(false); // the pane is kept
   });
 
-  it("a stale receipt (its agent was closed) refuses the call: parked, reissuable, the replacement untouched", async () => {
+  it("a stale replay envelope (an older mu) refuses the call: parked, reissuable, the replacement untouched", async () => {
     const mu = fakeMu({
       on: {
         spawn: () =>
@@ -301,14 +301,37 @@ describe("spawn receipts", () => {
       .execute("a", { task: "x", label: "r" })
       .catch((e: Error) => e);
     expect(String(err)).toMatch(/is stale: its agent was closed; the replacement was left alone/);
-    expect(String(err)).toContain(DELEGATE_REISSUE_TOOL);
-    const c = taskOf(mu);
-    expect(c?.state).toBe("refused");
-    expect(getTask(mu.db, c?.task ?? "", "scratch")).toMatchObject({
-      status: "OPEN",
-      substate: "parked",
-    });
+    expect(taskOf(mu)?.state).toBe("refused");
     expect(mu.calls.some((x) => x[1] === "close")).toBe(false); // nothing of ours to close
+  });
+
+  it("an ended attempt (SpawnAttemptEndedError) ends the call: never parked for a reissue that cannot work", async () => {
+    let spawns = 0;
+    const mu = fakeMu({
+      on: {
+        spawn: () => {
+          spawns++;
+          return Promise.resolve(
+            failed(
+              4,
+              "SpawnAttemptEndedError",
+              "attempt manual:t of task t already delivered its prompt and has ended: its agent delegate-r is gone (closed or reaped). Nothing was started. To start the task again: pass --attempt t-2",
+            ),
+          );
+        },
+      },
+    });
+    const p = fakePi();
+    registerDelegate(p.pi, mu.run);
+    const err = await tool(p)
+      .execute("a", { task: "x", label: "r" })
+      .catch((e: Error) => e);
+    expect(String(err)).toMatch(/cannot run again/);
+    expect(String(err)).not.toContain(DELEGATE_REISSUE_TOOL);
+    const c = taskOf(mu);
+    expect(c?.state).not.toBe("refused");
+    expect(["failed", "done"]).toContain(c?.state);
+    expect(spawns).toBe(1);
   });
 });
 
