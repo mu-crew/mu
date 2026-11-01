@@ -262,7 +262,7 @@ export class RemoteCloseRefusedError extends Error {
 
 const REMOTE_STATE_RE = /^MU_STATE (clean|dirty|gone)(?: ([0-9a-f]{40,64}))?( merged)?$/;
 const REMOTE_RM_RE =
-  /^MU_RM (removed|gone|moved|dirty|branch-collision|branch-failed|failed|stuck|unproven|held(?: (\d+))?)$/;
+  /^MU_RM (removed|gone|moved|dirty|unmerged|branch-collision|branch-failed|failed|stuck|unproven|held(?: (\d+))?)$/;
 const lastMatch = (out: string, re: RegExp): RegExpExecArray | null => {
   for (const l of out.split("\n").reverse()) {
     const m = re.exec(l.trim());
@@ -415,6 +415,9 @@ export async function closeRemoteWorktree(
         );
       }
       const branch = known ? undefined : `mu/${ws}/${name}-${short}`;
+      // Kept only because a branch of the root held it: that branch may move
+      // before the removal, so the removal checks again (fail unmerged).
+      const viaRef = head !== base && (collectedHead === null || head !== collectedHead);
       opts.beforeRemove?.();
       // Move aside, prove nothing holds the tree, THEN re-check and remove
       // (see the header): a writer that raced the observation either left a
@@ -432,6 +435,11 @@ export async function closeRemoteWorktree(
           `[ "$(git -C "$aside" rev-parse --verify HEAD)" = "$want" ] || fail moved`,
           `st=$(git -C "$aside" status --porcelain) || fail failed`,
           `[ -z "$st" ] || fail dirty`,
+          ...(branch === undefined && viaRef
+            ? [
+                `[ -n "$(git -C "$root" for-each-ref --contains "$want" --count=1 --format=x refs/heads refs/remotes 2>/dev/null)" ] || fail unmerged`,
+              ]
+            : []),
           ...(branch === undefined
             ? []
             : [
@@ -466,6 +474,12 @@ export async function closeRemoteWorktree(
         return refuse("moved", `HEAD moved while closing (was ${short}); nothing was removed`);
       if (r === "dirty")
         return refuse("dirty", `${path} changed while closing; nothing was removed`);
+      if (r === "unmerged") {
+        return refuse(
+          "uncollected",
+          `HEAD ${short} is no longer on any branch of the root (it moved while closing); nothing was removed. Collect it, or close with --keep-branch`,
+        );
+      }
       if (r?.startsWith("held")) {
         const pid = lastMatch(removed.out, REMOTE_RM_RE)?.[2];
         return refuse(
