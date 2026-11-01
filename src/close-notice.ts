@@ -15,15 +15,19 @@
 //   - the task is an IN_PROGRESS `work` task that row owns;
 //   - at most once per (worker row, pi incarnation, run), and at most
 //     NOTICE_CAP per incarnation (a worker that loops goes back to the
-//     orchestrator as a stall).
+//     orchestrator as a stall);
+//   - the workstream is not torn down.
 // The marks are reserved-caller rows in `wait_cursors` (like logStallOnce),
-// written BEFORE the write: at most once, never resent. A veto writes nothing
-// and marks nothing. Only malformed blocks get a note; any other refusal
-// (not the owner, a human task, already closed) is the orchestrator's.
+// keyed by the row and incarnation, written BEFORE the write: at most once,
+// never resent. A veto writes nothing and marks nothing. Only malformed
+// blocks get a note; any other refusal (not the owner, a human task, already
+// closed) is the orchestrator's. A run another caller's wait applied first
+// ("already applied") is parsed again from its text, so its spawner's wait
+// still tells the worker.
 
 import { agentCtlSocket, recordSend, sendViaTransport } from "./agents/transport.js";
 import { getAgent } from "./agents.js";
-import { CLOSE_MALFORMED } from "./close-block.js";
+import { CLOSE_MALFORMED, parseCloseBlock } from "./close-block.js";
 import { CTL_DEFAULT_TIMEOUT_MS, CtlWriteVetoedError } from "./ctl/client.js";
 import type { Db } from "./db.js";
 import { cursorKey } from "./wait-cursor.js";
@@ -31,6 +35,9 @@ import type { CloseOutcome, WaitRef } from "./wait-types.js";
 
 /** Notes per pi incarnation; past it the refusal is left to the orchestrator. */
 export const NOTICE_CAP = 3;
+
+/** How long a returning wait gives its notices in flight (a ctl send, not a mux read). */
+export const NOTICE_GRACE_MS = 3000;
 
 /** The reserved caller of the notice marks: no caller is spelled like it. */
 const NOTICE_CALLER = "mu:close-notice";
@@ -80,6 +87,7 @@ export async function noticeRefusedClose(
   db: Db,
   r: RefusedClose,
   callers: readonly string[],
+  signal?: AbortSignal,
 ): Promise<NoticeOutcome> {
   const task = r.task;
   if (task === null || !noticeable(r) || callers.length === 0) return "skipped";
@@ -88,9 +96,10 @@ export async function noticeRefusedClose(
     return "skipped";
   }
   const text = closeNoticeText(r.workstream, task, r.reason);
-  const runKey = `close-notice|${cursorKey("agent", r.workstream, r.agent)}`;
-  const capKey = `close-notice-n|${cursorKey("agent", r.workstream, r.agent)}`;
+  // Keyed by the incarnation itself: a late notice for an old pi never touches the live one's marks.
   const who = `${r.agentId}|${r.incarnation}`;
+  const runKey = `close-notice|${cursorKey("agent", r.workstream, r.agent)}|${who}`;
+  const capKey = `close-notice-n|${cursorKey("agent", r.workstream, r.agent)}|${who}`;
   let won = false;
   const beforeWrite = (): boolean =>
     db
@@ -98,7 +107,8 @@ export async function noticeRefusedClose(
         const row = db
           .prepare(
             `SELECT a.cli, a.spawner, w.name AS ws, a.name
-               FROM agents a JOIN workstreams w ON w.id = a.workstream_id WHERE a.id = ?`,
+               FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+              WHERE a.id = ? AND w.torn_down_at IS NULL`,
           )
           .get(r.agentId) as
           | { cli: string; spawner: string | null; ws: string; name: string }
@@ -121,14 +131,10 @@ export async function noticeRefusedClose(
         const mark = db.prepare(
           "SELECT incarnation, runs FROM wait_cursors WHERE caller = ? AND ref = ?",
         );
-        const last = mark.get(NOTICE_CALLER, runKey) as
-          | { incarnation: string | null; runs: number | null }
-          | undefined;
-        if (last?.incarnation === who && (last.runs ?? -1) >= r.runs) return false;
-        const sent = mark.get(NOTICE_CALLER, capKey) as
-          | { incarnation: string | null; runs: number | null }
-          | undefined;
-        const count = sent?.incarnation === who ? (sent.runs ?? 0) : 0;
+        const last = mark.get(NOTICE_CALLER, runKey) as { runs: number | null } | undefined;
+        if ((last?.runs ?? -1) >= r.runs) return false;
+        const sent = mark.get(NOTICE_CALLER, capKey) as { runs: number | null } | undefined;
+        const count = sent?.runs ?? 0;
         if (count >= NOTICE_CAP) return false;
         const put = db.prepare(
           `INSERT INTO wait_cursors (caller, ref, incarnation, runs) VALUES (?, ?, ?, ?)
@@ -144,7 +150,11 @@ export async function noticeRefusedClose(
     const sent = await sendViaTransport(agent, text, {
       socket: agentCtlSocket(db, agent),
       expectIncarnation: r.incarnation,
-      ctlGuard: { timeoutMs: CTL_DEFAULT_TIMEOUT_MS, beforeWrite },
+      ctlGuard: {
+        timeoutMs: CTL_DEFAULT_TIMEOUT_MS,
+        beforeWrite,
+        ...(signal !== undefined ? { signal } : {}),
+      },
     });
     try {
       recordSend(
@@ -174,12 +184,23 @@ export async function noticeRefusedClose(
 export function startCloseNotice(
   db: Db,
   ref: WaitRef,
-  r: { incarnation?: string; runs?: number; agentId: number },
+  r: {
+    incarnation?: string;
+    runs?: number;
+    agentId: number;
+    lastText?: string;
+    lastTextTruncated?: boolean;
+  },
   close: CloseOutcome | undefined,
   callers: readonly string[],
+  signal?: AbortSignal,
 ): Promise<NoticeOutcome> | undefined {
-  if (close === undefined || close.applied || !noticeable(close) || callers.length === 0) return;
+  if (close === undefined || close.applied || callers.length === 0) return;
   if (r.incarnation === undefined || r.runs === undefined || r.agentId === 0) return;
+  // Another wait (another caller's) applied this run first: the refusal is
+  // the same parse of the same text, so read it again here.
+  const refused = close.reason === "already applied" ? reparse(db, ref, r) : close;
+  if (refused === undefined || !noticeable(refused)) return;
   return noticeRefusedClose(
     db,
     {
@@ -188,9 +209,84 @@ export function startCloseNotice(
       agentId: r.agentId,
       incarnation: r.incarnation,
       runs: r.runs,
-      task: close.task,
-      reason: close.reason,
+      task: refused.task,
+      reason: refused.reason,
     },
     callers,
+    signal,
   ).catch((): NoticeOutcome => "unknown");
+}
+
+/** The malformed refusal of an already-applied run, from its text: on the agent's one open task. */
+function reparse(
+  db: Db,
+  ref: WaitRef,
+  r: { agentId: number; lastText?: string; lastTextTruncated?: boolean },
+): CloseOutcome | undefined {
+  if (r.lastText === undefined || r.lastTextTruncated === true) return;
+  const block = parseCloseBlock(r.lastText);
+  if (block.kind !== "malformed") return;
+  const open = db
+    .prepare(
+      `SELECT t.local_id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+        WHERE t.owner_id = ? AND t.status = 'IN_PROGRESS' AND w.name = ?`,
+    )
+    .all(r.agentId, ref.workstream) as { local_id: string }[];
+  const task = open.length === 1 ? (open[0]?.local_id ?? null) : null;
+  return { applied: false, task, reason: `${CLOSE_MALFORMED}: ${block.reason}` };
+}
+
+/**
+ * One wait's close notices: `start` on a refused settle, `answers` tells the
+ * stall driver a run already has a notice (in flight or written: no steer on
+ * top of it), `settle` gives the notices in flight at most NOTICE_GRACE_MS
+ * when the wait returns (none when it was stopped) and never longer: a
+ * notice still pending finishes or not; its mark means it is never resent.
+ */
+export function closeNotices(
+  db: Db,
+  callers: readonly string[],
+  signal: AbortSignal,
+  wake: () => void,
+): {
+  start: (
+    ref: WaitRef,
+    r: Parameters<typeof startCloseNotice>[2],
+    close: CloseOutcome | undefined,
+  ) => void;
+  answers: (agent: { workstreamName: string; name: string }, runs: number | undefined) => boolean;
+  settle: (graceful: boolean) => Promise<void>;
+} {
+  const inFlight: Promise<unknown>[] = [];
+  const told = new Map<string, number>();
+  const keyOf = (ws: string, name: string): string => `${ws}/${name}`;
+  return {
+    start: (ref, r, close) => {
+      const p = startCloseNotice(db, ref, r, close, callers, signal);
+      if (p === undefined || r.runs === undefined) return;
+      inFlight.push(p);
+      const key = keyOf(ref.workstream, ref.id);
+      const runs = r.runs;
+      told.set(key, runs);
+      void p.then((o) => {
+        if (o === "skipped" && told.get(key) === runs) told.delete(key);
+        wake();
+      });
+    },
+    answers: (agent, runs) => {
+      const t = told.get(keyOf(agent.workstreamName, agent.name));
+      return t !== undefined && (runs ?? 0) <= t;
+    },
+    settle: async (graceful) => {
+      if (inFlight.length === 0) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        Promise.all(inFlight),
+        new Promise<void>((r) => {
+          timer = setTimeout(r, graceful ? NOTICE_GRACE_MS : 0);
+        }),
+      ]);
+      clearTimeout(timer);
+    },
+  };
 }

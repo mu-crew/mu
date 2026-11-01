@@ -13,10 +13,17 @@ import {
   setCommandResolverForTests,
 } from "../src/agents.js";
 import { CLOSE_MALFORMED } from "../src/close-block.js";
-import { closeNoticeText, NOTICE_CAP, noticeable } from "../src/close-notice.js";
+import {
+  closeNotices,
+  closeNoticeText,
+  NOTICE_CAP,
+  noticeable,
+  noticeRefusedClose,
+} from "../src/close-notice.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
+import { authorizeTasks } from "../src/task-auto.js";
 import { claimTask } from "../src/tasks/claim.js";
 import { addTask, getTask } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
@@ -37,6 +44,12 @@ let servers: Server[];
 let mux: MuxHarness;
 /** Every `send` the fake pi received, by text. */
 let sends: string[];
+/** The fake pi takes a `send` and never answers it. */
+let silentSends: boolean;
+/** The fake pi answers sends but never starts a next run. */
+let silentAfterNotice: boolean;
+/** Runs once when the fake pi answers its next `hello` (the window before the write fence). */
+let onHello: (() => string | undefined) | undefined;
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mu-close-notice-"));
@@ -45,6 +58,9 @@ beforeEach(() => {
   ensureWorkstream(db, "w");
   servers = [];
   sends = [];
+  silentSends = false;
+  silentAfterNotice = false;
+  onHello = undefined;
   setSleepForTests(async () => {});
   setWaitSleepForTests(async (ms) => {
     await new Promise((r) => setTimeout(r, Math.min(ms, 5)));
@@ -113,16 +129,20 @@ async function servePi(texts: string[], spawner = CALLER): Promise<void> {
           text?: string;
           msgId?: string;
         };
-        if (req.op === "hello") sock.end(encode(helloReply({ incarnation: INC })));
-        else if (req.op === "wait") {
+        if (req.op === "hello") {
+          const h = onHello;
+          onHello = undefined;
+          sock.end(encode(helloReply({ incarnation: h?.() ?? INC })));
+        } else if (req.op === "wait") {
           if (req.afterRuns !== undefined && runs > req.afterRuns) {
             sock.end(encode({ ...status(), lastText, ended: "settled" }));
           } else held.push(sock);
         } else if (req.op === "send") {
           sends.push(req.text ?? "");
+          if (silentSends) continue;
           sock.end(encode({ ...status(), msgId: req.msgId }));
           // The worker answers the note with its next run.
-          setTimeout(next, 20);
+          if (!silentAfterNotice) setTimeout(next, 20);
         } else sock.end(encode(status()));
       }
     });
@@ -132,9 +152,12 @@ async function servePi(texts: string[], spawner = CALLER): Promise<void> {
   next();
 }
 
-async function asCaller(args: string[]): Promise<Awaited<ReturnType<typeof runCli>>> {
+async function asCaller(
+  args: string[],
+  session = "s",
+): Promise<Awaited<ReturnType<typeof runCli>>> {
   let out: Awaited<ReturnType<typeof runCli>> | undefined;
-  await withEnv("PI_SESSION_ID", "s", () =>
+  await withEnv("PI_SESSION_ID", session, () =>
     withEnv("MU_MANAGED_AGENT", undefined, async () => {
       out = await runCli(args, dbPath);
     }),
@@ -195,5 +218,127 @@ describe("a wait that sees a malformed CLOSE tells the worker once", () => {
     await servePi([BAD], "pi:someone-else");
     await taskWait("0.5");
     expect(sends).toEqual([]);
+  });
+
+  it("a wait whose --until-text the refused run does not match still tells the worker", async () => {
+    await servePi([BAD]);
+    await asCaller([
+      "wait",
+      "agent:w/w1",
+      "-w",
+      "w",
+      "--until-text",
+      "NEVERMATCH",
+      "--timeout",
+      "0.5",
+      "--json",
+    ]);
+    expect(sends).toHaveLength(1);
+  });
+
+  it("another caller's wait applying the run first does not cost the spawner its notice", async () => {
+    await servePi([BAD]);
+    await asCaller(
+      ["wait", "agent:w/w1", "-w", "w", "--after-runs", "0", "--timeout", "0.5", "--json"],
+      "other",
+    );
+    expect(sends).toEqual([]);
+    await taskWait("0.5");
+    expect(sends).toHaveLength(1);
+  });
+});
+
+describe("with --on-stall steer", () => {
+  it("a run that got the close notice is not steered as well", async () => {
+    // The worker stays quiet after the note (no next run): a stall on that run must not add a steer.
+    await servePi([BAD]);
+    authorizeTasks(db, ["t1"], { workstream: "w", cli: "pi", worktree: false, maxRuns: 1 });
+    silentAfterNotice = true;
+    await asCaller([
+      "task",
+      "wait",
+      "t1",
+      "-w",
+      "w",
+      "--all",
+      "--on-stall",
+      "steer",
+      "--stuck-after",
+      "0.05",
+      "--timeout",
+      "1",
+      "--json",
+    ]);
+    expect(sends.filter((t) => t.includes("was not applied"))).toHaveLength(1);
+    expect(sends.filter((t) => t.includes("is still yours"))).toEqual([]);
+  });
+});
+
+describe("the fence", () => {
+  const refused = (over: Partial<Parameters<typeof noticeRefusedClose>[1]> = {}) => ({
+    workstream: "w",
+    agent: "w1",
+    agentId: 0,
+    incarnation: INC,
+    runs: 1,
+    task: "t1",
+    reason: `${CLOSE_MALFORMED}: the report is empty`,
+    ...over,
+  });
+  const rowId = (): number =>
+    (db.prepare("SELECT id FROM agents WHERE name = 'w1'").get() as { id: number }).id;
+
+  it("a workstream torn down while the hello is in flight gets no notice", async () => {
+    await servePi([]);
+    const id = rowId();
+    onHello = () => {
+      db.prepare("UPDATE workstreams SET torn_down_at = ? WHERE name = 'w'").run(
+        new Date().toISOString(),
+      );
+      return undefined;
+    };
+    expect(await noticeRefusedClose(db, refused({ agentId: id }), [CALLER])).toBe("skipped");
+    expect(sends).toEqual([]);
+  });
+
+  it("an old incarnation's marks never reset the live one's count", async () => {
+    await servePi([]);
+    const id = rowId();
+    for (let runs = 1; runs <= NOTICE_CAP; runs++) {
+      expect(await noticeRefusedClose(db, refused({ agentId: id, runs }), [CALLER])).toBe("sent");
+    }
+    // A late notice for the previous pi, whose hello it still answers: it passes the fence (and
+    // marks), then the write is refused by the live pi. It must mark only its own incarnation.
+    onHello = () => "old-pi";
+    await noticeRefusedClose(db, refused({ agentId: id, incarnation: "old-pi", runs: 9 }), [
+      CALLER,
+    ]);
+    expect(
+      await noticeRefusedClose(db, refused({ agentId: id, runs: NOTICE_CAP + 1 }), [CALLER]),
+    ).toBe("skipped");
+    expect(await noticeRefusedClose(db, refused({ agentId: id, runs: 2 }), [CALLER])).toBe(
+      "skipped",
+    );
+  });
+});
+
+describe("a wait's notices (closeNotices)", () => {
+  it("a notice that hangs never holds a stopped wait, and a graceful one only up to the grace", async () => {
+    await servePi([]);
+    silentSends = true;
+    const id = (db.prepare("SELECT id FROM agents WHERE name = 'w1'").get() as { id: number }).id;
+    const ac = new AbortController();
+    const n = closeNotices(db, [CALLER], ac.signal, () => {});
+    n.start(
+      { kind: "agent", workstream: "w", id: "w1" },
+      { agentId: id, incarnation: INC, runs: 1 },
+      { applied: false, task: "t1", reason: `${CLOSE_MALFORMED}: the report is empty` },
+    );
+    await new Promise((r) => setTimeout(r, 50)); // the send is written and held
+    expect(n.answers({ workstreamName: "w", name: "w1" }, 1)).toBe(true);
+    const t0 = Date.now();
+    await n.settle(false);
+    expect(Date.now() - t0).toBeLessThan(200);
+    ac.abort();
   });
 });
