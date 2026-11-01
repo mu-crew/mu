@@ -101,9 +101,10 @@ written before each step, so the same command never sends a second prompt.
   exit 1, the pane and the claim stay, `task.state` is `unknown`, and a
   replay asks the extension once. Never reaped, never resent. Check it
   with `mu agent check`, read the pane, then decide.
-- A replay after the agent was deleted, or its name reused, reports the
-  historical delivery with `task.stale` (`deleted` | `replaced`); the
-  replacement is never claimed or sent to.
+- A replay whose agent was deleted, or whose name another agent now
+  holds, exits 4 (`SpawnAttemptEndedError`) naming the next key; the
+  replacement is never claimed or sent to. Only a delivery-**unknown**
+  replay still reports `task.stale` (its prompt may be running).
 - The prompt goes only to the agent the spawn created (also plain
   `spawn --send`): a replaced name, a closed task, or a task someone else
   owns now refuses it (exit 4) with nothing sent.

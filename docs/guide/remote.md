@@ -35,7 +35,9 @@ mu host check dev --root '~/repo'   # host answers, repo, pi, mu extension
 ## Spawn the agent
 
 ```bash
-mu agent spawn worker-1 -w auth --host dev --worktree --root '~/repo' --task build --send 'Read: mu task notes build -w auth'
+mu agent spawn worker-1 -w auth --host dev --worktree --root '~/repo' --task build --send - <<'EOF'
+<the whole brief: the host has no mu DB, so no `Read: mu task notes` line>
+EOF
 ```
 
 - The pane runs the profile's `--shell` template, filled with the remote
@@ -101,8 +103,10 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   `--max-sessions 1`, `collect` is refused with the holder named; raise the
   cap to collect while the worker runs.
 - `close` kills the pane first (that frees the channel), then removes the
-  remote worktree **only if** it is clean and its HEAD is the base or the
-  collected HEAD, and no process on the host is inside it. Its `git worktree
+  remote worktree **only if** it is clean, its HEAD is the base, the
+  collected HEAD or on a branch (or remote-tracking ref) of the root repo
+  (checked again just before the removal), and no process on the host is
+  inside it. Its `git worktree
   remove` never uses git's `--force`. A process inside it, or a host with
   neither /proc nor lsof to check, refuses naming `close --force`, which
   removes past either with a warning. A newer HEAD refuses with one line:

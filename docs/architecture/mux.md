@@ -76,7 +76,8 @@ The `MuxBackend` surface is `available`, `ensureSession`,
 `capture`, `attachCommands` and `healthCheck`, plus optional `paneStatus`
 and `sendToPane` (herdr only), `paneResult` (an exited pane's status, for
 remote command gates), `panePid` (tmux: the pane's first process, so a close
-preview leaves the agent's own processes out of the worktree holders) and `reloadCommands`, and `currentSessionName`
+preview leaves the agent's own processes out of the worktree holders), `paneOccupied` (herdr: an agent still occupies the
+pane, which outlives its pi as a shell; what a lost socket's death check reads) and `reloadCommands`, and `currentSessionName`
 (only the suggestion in the missing-`-w` error).
 The mux holds no workstream list: the DB owns it, and `mu-*` sessions
 with no row are not discovered.
