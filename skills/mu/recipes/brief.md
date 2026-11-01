@@ -15,9 +15,10 @@ mu task close <id> -w <ws> --evidence "$v"   # command + result
 - **End on a criterion** both checkable and exhaustive: "every file in UNITS compiles under `npm run typecheck`", not "update the call sites".
 - **Share once.** Common context goes on the umbrella; each brief says `Read:` and holds only what differs.
 - **State the target, not the ban**: "edit only `src/auth/`".
-- **Ask for evidence**: commands run and exit codes.
+- **Ask for evidence**: commands and exit codes.
 - **Refutation.** A brief naming a cause, fix, threshold or code fact needs the recorded refutation ([SKILL](../SKILL.md)); any other carries `REFUTE-EXEMPT: <why>`.
 - Never tell a worker to `cd`: its cwd is its worktree.
+- `CLOSE:` only when done: an interim one is refused unseen.
 
 ## Quoting
 
