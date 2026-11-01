@@ -163,6 +163,8 @@ export interface ClosePreview {
      * refuses a writer. Undefined when no scan could prove the answer.
      */
     holders?: WorktreeHolder[];
+    /** This user's processes the scan could not inspect: unknown, never taken as absent. */
+    hidden?: number[];
   } | null;
   /**
    * The remote worktree of a `--host --worktree` agent that the close removes
@@ -253,6 +255,8 @@ export async function previewClose(
     keepBranch?: boolean;
     recoveryId?: number;
     abandonJob?: boolean;
+    /** Test seam: the holder scan's /proc and lsof. */
+    probe?: { proc: string; lsof: string };
   },
 ): Promise<ClosePreview> {
   const discard = opts.discard === true;
@@ -261,10 +265,10 @@ export async function previewClose(
     const agent = getAgentForCleanup(db, name, opts.workstream);
     const row = worktreeOf(db, opts.workstream, name, agent);
     const state = row === undefined ? undefined : await worktreeState(row.path, row.base, row.root);
-    const holders =
+    const scan =
       row === undefined || state === undefined || state === "missing"
         ? undefined
-        : await previewHolders(row.path, agent);
+        : await previewHolders(row.path, agent, opts.probe);
     // No await from here to the return, and ONE read transaction: under WAL
     // its first read pins a snapshot, so another mu process committing a
     // replacement cannot land between the identity and the revision.
@@ -340,7 +344,12 @@ export async function previewClose(
         ownedTasks: now ? ownedTasksOf(db, now) : [],
         worktree:
           nowRow && state
-            ? { path: nowRow.path, state, ...(holders !== undefined ? { holders } : {}) }
+            ? {
+                path: nowRow.path,
+                state,
+                ...(scan?.holders !== undefined ? { holders: scan.holders } : {}),
+                ...(scan !== undefined && scan.hidden.length > 0 ? { hidden: scan.hidden } : {}),
+              }
             : null,
         remote: remoteOf(now),
         recovery: null,
@@ -358,15 +367,21 @@ export async function previewClose(
 
 /**
  * Who is inside `path` now, for the preview: the holder scan the apply runs,
- * minus the agent's own pane and everything under it (its pi, its tools),
- * which the kill ends first. Undefined when the scan proves nothing.
+ * minus the agent's own pane processes that the kill ends first (its pi, its
+ * tools; not one that left the pane's session: processTree). `holders` is
+ * undefined when the scan proves nothing; `hidden` names this user's
+ * processes /proc would not show (unknown, said as the apply says it).
  */
 async function previewHolders(
   path: string,
   agent: AgentRow | undefined,
-): Promise<WorktreeHolder[] | undefined> {
-  const holders = await worktreeHolders(path);
-  if (holders === undefined || holders.length === 0 || agent === undefined) return holders;
+  probe?: { proc: string; lsof: string },
+): Promise<{ holders: WorktreeHolder[] | undefined; hidden: number[] }> {
+  const hidden: number[] = [];
+  const holders = await worktreeHolders(path, probe, hidden);
+  if (holders === undefined || holders.length === 0 || agent === undefined) {
+    return { holders, hidden };
+  }
   let own = new Set<number>();
   try {
     const pid = await (await activeMux()).panePid?.(agent.paneId);
@@ -374,7 +389,7 @@ async function previewHolders(
   } catch {
     // no pane pid: every holder is shown
   }
-  return holders.filter((h) => !own.has(h.pid));
+  return { holders: holders.filter((h) => !own.has(h.pid)), hidden };
 }
 
 /**

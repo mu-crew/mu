@@ -287,26 +287,81 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     },
   );
 
-  it("processTree holds a pane's grandchildren (its pi's tools), never the caller", async () => {
-    const sh = spawnChild("sh", ["-c", "sleep 30 & sleep 30; wait"], {
+  it("processTree holds a pane's grandchildren (its pi's tools), never the caller, never a setsid one", async () => {
+    // sh (its own session) -> sleep (same session) + setsid sleep (a new session).
+    const sh = spawnChild("sh", ["-c", "sleep 30 & setsid sleep 31 & wait"], {
       stdio: "ignore",
       detached: true,
     });
+    const rows = (): number[][] =>
+      execFileSync("ps", ["-A", "-o", "pid=,ppid=,sid="], { encoding: "utf8" })
+        .split("\n")
+        .filter(Boolean)
+        .map((l) => l.trim().split(/\s+/).map(Number));
+    let kids: number[][] = [];
     try {
-      let tree = new Set<number>();
-      for (let i = 0; i < 20 && tree.size < 3; i++) {
+      for (let i = 0; i < 40 && kids.length < 2; i++) {
         await new Promise((r) => setTimeout(r, 50));
-        tree = await processTree(sh.pid ?? 0);
+        kids = rows().filter((r) => r[1] === sh.pid);
       }
-      expect(tree.size).toBeGreaterThanOrEqual(3);
+      const same = kids.filter((r) => r[2] === sh.pid).map((r) => r[0]);
+      const fled = kids.filter((r) => r[2] !== sh.pid).map((r) => r[0]);
+      expect(same).toHaveLength(1);
+      expect(fled).toHaveLength(1);
+      const tree = await processTree(sh.pid ?? 0);
       expect(tree.has(sh.pid ?? 0)).toBe(true);
+      expect(tree.has(same[0] ?? -1)).toBe(true);
+      expect(tree.has(fled[0] ?? -1)).toBe(false);
       expect(tree.has(process.pid)).toBe(false);
     } finally {
-      try {
-        process.kill(-(sh.pid ?? 0), "SIGKILL"); // the group: no orphaned sleeps
-      } catch {}
+      for (const pid of [sh.pid ?? 0, ...kids.map((r) => r[0] ?? 0)]) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {}
+      }
     }
   });
+
+  it.runIf(procOk)(
+    "the preview names a setsid writer under the pane (it survives the kill)",
+    async () => {
+      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
+      // The pane's process, and a writer it started in a new session.
+      const pane = spawnChild(
+        "sh",
+        ["-c", `setsid sh -c 'exec 3>>"${wt.path}/log.txt"; exec sleep 30' & wait`],
+        {
+          cwd: tmp,
+          stdio: "ignore",
+          detached: true,
+        },
+      );
+      let writer: number | undefined;
+      try {
+        for (let i = 0; i < 40 && writer === undefined; i++) {
+          await new Promise((r) => setTimeout(r, 50));
+          const p = (await previewClose(db, "worker-1", { workstream: "auth" })).worktree;
+          writer = p?.holders?.find((h) => h.writer)?.pid;
+        }
+        tmuxState.panes.set("%1", {
+          windowId: "@1",
+          paneId: "%1",
+          command: "pi",
+          pid: pane.pid ?? 0,
+        });
+        const p = await previewClose(db, "worker-1", { workstream: "auth" });
+        expect(writer).toBeDefined();
+        expect(p.worktree?.holders?.map((h) => h.pid)).toContain(writer);
+      } finally {
+        for (const pid of [pane.pid ?? 0, writer ?? 0]) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {}
+        }
+      }
+    },
+  );
 
   const lsofOk = (() => {
     try {
@@ -348,7 +403,11 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     writeFileSync(join(proc, "4242", "comm"), "secretive\n");
     chmodSync(join(proc, "4242"), 0o000); // as PR_SET_DUMPABLE=0 leaves it
     try {
-      const r = await releaseWorktree(db, wt, { probe: { proc, lsof: join(tmp, "no-lsof") } });
+      const probe = { proc, lsof: join(tmp, "no-lsof") };
+      // The preview says it too, before anything is removed.
+      const p = await previewClose(db, "worker-1", { workstream: "auth", probe });
+      expect(p.worktree?.hidden).toEqual([4242]);
+      const r = await releaseWorktree(db, wt, { probe });
       expect(r.action).toBe("removed");
       expect(r.warnings?.join("\n")).toMatch(/could not inspect.*4242/);
     } finally {

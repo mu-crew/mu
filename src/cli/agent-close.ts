@@ -220,7 +220,7 @@ function printClosePreview(p: ClosePreview): void {
       `${pc.bold(p.agentName)} has no agent row, only the remote worktree it left (recovery ${p.recovery.id}, kept on ${p.recovery.preservedAt}, rev ${p.revision}): no pane is killed, no task changes`,
     );
     console.log(
-      `  remote worktree ${p.remote.path} on ${p.remote.host}: removed only if clean and at ${p.remote.base.slice(0, 12)}${head === null ? "" : ` or ${head.slice(0, 12)} (collected)`}; otherwise it refuses${p.keepBranch ? " (--keep-branch: unmerged commits go on a remote branch first; dirty still refuses)" : ""}`,
+      `  remote worktree ${p.remote.path} on ${p.remote.host}: removed only if clean and at ${p.remote.base.slice(0, 12)}${head === null ? "" : ` or ${head.slice(0, 12)} (collected)`}, or on a branch of the root repo; otherwise it refuses${p.keepBranch ? " (--keep-branch: unmerged commits go on a remote branch first; dirty still refuses)" : ""}`,
     );
     printCarrierJob(p);
     if (p.recovery.refusal !== null)
@@ -239,7 +239,7 @@ function printClosePreview(p: ClosePreview): void {
   if (p.remote !== null) {
     const head = p.remote.collectedHead;
     console.log(
-      `  remote worktree ${p.remote.path} on ${p.remote.host}: removed after the pane dies, only if clean and at ${p.remote.base.slice(0, 12)}${head === null ? "" : ` or ${head.slice(0, 12)} (collected)`}; otherwise it refuses${p.keepBranch ? " (--keep-branch: unmerged commits go on a remote branch first; dirty still refuses)" : ""}`,
+      `  remote worktree ${p.remote.path} on ${p.remote.host}: removed after the pane dies, only if clean and at ${p.remote.base.slice(0, 12)}${head === null ? "" : ` or ${head.slice(0, 12)} (collected)`}, or on a branch of the root repo; otherwise it refuses${p.keepBranch ? " (--keep-branch: unmerged commits go on a remote branch first; dirty still refuses)" : ""}`,
     );
   }
   if (p.worktree !== null) {
@@ -252,6 +252,13 @@ function printClosePreview(p: ClosePreview): void {
           h.writer
             ? `  ${who} has a file in it open for writing: close refuses (--force removes it under the process)`
             : `  ${who} is inside it (its cwd or a file open for reading): close removes the tree under it`,
+        ),
+      );
+    }
+    if (p.worktree.hidden !== undefined) {
+      console.log(
+        pc.yellow(
+          `  could not inspect ${p.worktree.hidden.length} process(es) of yours (${p.worktree.hidden.join(", ")}): mu cannot say whether they are inside it`,
         ),
       );
     }
