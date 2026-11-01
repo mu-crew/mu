@@ -28,6 +28,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   invited a second copy of each run. Now only a pane that is gone (or
   exited) is a death; a lost socket on a live pane is `unknown`
   ("control socket lost; the pane is alive") and the wait keeps polling.
+- **A remote close accepts a HEAD already on a branch.** `mu agent close`
+  refused a remote worktree whose HEAD was "never collected" even after it
+  was merged in the root repo (`git merge --ff-only` there), so every
+  close needed `--keep-branch` and left a redundant `mu/<ws>/<agent>-<sha>`
+  branch. A HEAD that any branch or remote-tracking ref of the root
+  contains now removes with no branch.
 
 ## [4.2.2] — 2026-10-30
 

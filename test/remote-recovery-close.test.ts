@@ -241,6 +241,18 @@ describe("apply", () => {
     expect(records()).toEqual([]);
   });
 
+  it("a HEAD a branch of the root already contains removes with no branch, under --keep-branch too", async () => {
+    orphaned();
+    answer(`MU_STATE clean ${OTHER} merged`);
+    expect((await close()).worktree).toMatchObject({ action: "removed" });
+    expect(execCalls()[0]).toContain("for-each-ref --contains");
+    orphaned();
+    answer(`MU_STATE clean ${OTHER} merged`);
+    const r = await close({ keepBranch: true });
+    expect(r.worktree).toMatchObject({ action: "removed" });
+    expect(execCalls().at(-1)).not.toContain("update-ref");
+  });
+
   it.each([
     ["dirty", {}],
     ["dirty", { keepBranch: true }],
