@@ -29,7 +29,7 @@ import {
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
-import { runCli, runCliJson } from "./_runCli.js";
+import { runCli, runCliJson, runCliWire } from "./_runCli.js";
 
 let dir: string;
 let dbPath: string;
@@ -93,7 +93,7 @@ describe("recordHumanNeeded", () => {
     const before = opCount();
     expect(need("a/orch", "  pick the licence ")).toEqual({ id: first.id, changed: false });
     expect(opCount()).toBe(before);
-    expect(need("a/orch", "and the name")).toEqual({ id: first.id, changed: true });
+    expect(need("a/orch", "and the name")).toEqual({ id: first.id, changed: true, extended: true });
     expect(listNotes(db, first.id, "a").map((n) => n.content)).toEqual([
       "pick the licence",
       "and the name",
@@ -366,6 +366,11 @@ describe("mu human-needed (in-process CLI)", () => {
       expect(other.data).toMatchObject({ workstream: "b", changed: true });
       const later = await runCliJson(["human-needed", "tag it", "--no-stop", "--json"], dbPath);
       expect(later.data).toMatchObject({ workstream: "a", changed: true, stop: false });
+      const more = await runCliJson(["human-needed", "mule dropped", "--json"], dbPath);
+      expect(more.data).toMatchObject({ id: r.data.id, changed: true, extended: true });
+      const human = await runCliWire(["human-needed", "and a third"], dbPath);
+      expect(human.stdout).toContain(`mu task close ${r.data.id} -w a`);
+      expect(human.stdout).toContain("--no-stop");
     });
     const rows = openDb({ path: dbPath });
     try {
@@ -376,7 +381,7 @@ describe("mu human-needed (in-process CLI)", () => {
     const check = openDb({ path: dbPath });
     try {
       expect(openHumanNeeds(check, "a/orch").map((n) => [n.workstream, n.reason])).toEqual([
-        ["a", "pick one"],
+        ["a", "pick one; mule dropped; and a third"],
         ["b", "other"],
       ]);
     } finally {
