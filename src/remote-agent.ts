@@ -260,7 +260,7 @@ export class RemoteCloseRefusedError extends Error {
   }
 }
 
-const REMOTE_STATE_RE = /^MU_STATE (clean|dirty|gone)(?: ([0-9a-f]{40,64}))?$/;
+const REMOTE_STATE_RE = /^MU_STATE (clean|dirty|gone)(?: ([0-9a-f]{40,64}))?( merged)?$/;
 const REMOTE_RM_RE =
   /^MU_RM (removed|gone|moved|dirty|branch-collision|branch-failed|failed|stuck|unproven|held(?: (\d+))?)$/;
 const lastMatch = (out: string, re: RegExp): RegExpExecArray | null => {
@@ -391,7 +391,9 @@ export async function closeRemoteWorktree(
           `head=$(git -C "$wt" rev-parse --verify HEAD) || exit 5`,
           `st=$(git -C "$wt" status --porcelain) || exit 6`,
           `if [ -z "$st" ]; then s=clean; else s=dirty; fi`,
-          `printf 'MU_STATE %s %s\\n' "$s" "$head"`,
+          // Already on a branch of the root (a merge there, a push): nothing to lose.
+          `m=; [ -z "$(git -C "$root" for-each-ref --contains "$head" --count=1 --format=x refs/heads refs/remotes 2>/dev/null)" ] || m=' merged'`,
+          `printf 'MU_STATE %s %s%s\\n' "$s" "$head" "$m"`,
         ].join("\n"),
       );
       const m = lastMatch(observed.out, REMOTE_STATE_RE);
@@ -404,7 +406,8 @@ export async function closeRemoteWorktree(
         // A branch keeps commits, not files: no flag overrides this.
         return refuse("dirty", `uncommitted work in ${path}; commit or remove it on the host`);
       }
-      const known = head === base || (collectedHead !== null && head === collectedHead);
+      const known =
+        head === base || (collectedHead !== null && head === collectedHead) || m[3] !== undefined;
       if (!known && opts.keepBranch !== true) {
         return refuse(
           "uncollected",
