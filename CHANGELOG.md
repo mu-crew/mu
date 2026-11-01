@@ -34,6 +34,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   close needed `--keep-branch` and left a redundant `mu/<ws>/<agent>-<sha>`
   branch. A HEAD that any branch or remote-tracking ref of the root
   contains now removes with no branch.
+- **`mu human-needed` says when it extended an open stop.** A second
+  reason joins the caller's open stop (one task, closed as a whole); it
+  printed "Recorded" with the old id. It now says the reason was added,
+  names the close, and points at `--no-stop` for a separate to-do;
+  `--json` carries `extended`.
 
 ## [4.2.2] — 2026-10-30
 

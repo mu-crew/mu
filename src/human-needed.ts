@@ -42,12 +42,13 @@ const TITLE_CHARS = 60;
 /**
  * Record (or extend) the caller's open human need in a workstream, in ONE
  * transaction. Same caller + workstream with an open need: the same reason
- * is a no-op (`changed: false`), a different one appends a brief to it.
+ * is a no-op (`changed: false`), a different one appends a brief to it
+ * (`extended`: the stop is still ONE task, closed as a whole).
  */
 export function recordHumanNeeded(
   db: Db,
   opts: HumanNeededOptions,
-): { id: string; changed: boolean } {
+): { id: string; changed: boolean; extended?: boolean } {
   const reason = opts.reason.trim();
   const caller = opts.caller.trim();
   if (reason === "") throw new HumanNeededInvalidError("human-needed: reason is blank");
@@ -72,7 +73,7 @@ export function recordHumanNeeded(
             author: caller,
             kind: "brief",
           });
-          return { id: open.id, changed: true };
+          return { id: open.id, changed: true, extended: true };
         }
         const id = addHumanTask(db, opts.workstream, caller, reason);
         const taskId = (
