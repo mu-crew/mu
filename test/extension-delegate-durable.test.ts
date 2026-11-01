@@ -288,21 +288,39 @@ describe("spawn receipts", () => {
     expect(mu.calls.some((c) => c[1] === "close")).toBe(false); // the pane is kept
   });
 
-  it("a stale replay envelope (an older mu) refuses the call: parked, reissuable, the replacement untouched", async () => {
-    const mu = fakeMu({
-      on: {
-        spawn: () =>
-          Promise.resolve(ok({ task: { id: "t", state: "sent", replay: true, stale: "closed" } })),
-      },
-    });
-    const p = fakePi();
-    registerDelegate(p.pi, mu.run);
-    const err = await tool(p)
-      .execute("a", { task: "x", label: "r" })
-      .catch((e: Error) => e);
-    expect(String(err)).toMatch(/is stale: its agent was closed; the replacement was left alone/);
-    expect(taskOf(mu)?.state).toBe("refused");
-    expect(mu.calls.some((x) => x[1] === "close")).toBe(false); // nothing of ours to close
+  it("a stale replay ends the call (never parked for a reissue that replays it again); the replacement untouched", async () => {
+    for (const [state, want] of [
+      ["sent", "failed"], // an older mu's delivered replay
+      ["unknown", "failed"], // the prompt may have landed; its agent is gone
+    ] as const) {
+      let spawns = 0;
+      const mu = fakeMu({
+        on: {
+          spawn: () => {
+            spawns++;
+            return Promise.resolve(
+              ok({ task: { id: "t", state, replay: true, stale: "deleted" } }),
+            );
+          },
+        },
+      });
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      const err = await tool(p)
+        .execute("a", { task: "x", label: "r" })
+        .catch((e: Error) => e);
+      expect(String(err), state).toMatch(/is stale: its agent was deleted/);
+      expect(String(err), state).toMatch(/cannot run again/);
+      expect(String(err), state).not.toContain(DELEGATE_REISSUE_TOOL);
+      const c = taskOf(mu);
+      expect(c?.state, state).toBe(want);
+      expect(c?.state, state).not.toBe("refused");
+      expect(spawns).toBe(1);
+      expect(
+        mu.calls.some((x) => x[1] === "close"),
+        state,
+      ).toBe(false); // nothing of ours to close
+    }
   });
 
   it("an ended attempt (SpawnAttemptEndedError) ends the call: never parked for a reissue that cannot work", async () => {

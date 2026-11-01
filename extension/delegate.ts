@@ -500,11 +500,14 @@ export function registerDelegate(
     // An abort SIGTERMs the spawn, which rolls itself back; the runner returns once it exited.
     const r = await mu(args, signal);
     const out = json(r);
-    const stale = (out?.task as { stale?: unknown } | undefined)?.stale;
-    if (typeof stale === "string")
+    // A replay whose agent is gone: the call's one attempt (--attempt <its task>) is over, and
+    // every reissue would replay the same receipt. End the call: `unknown` when its prompt may
+    // have landed (nothing will answer it now), else failed; a new mu_delegate starts afresh.
+    const task = out?.task as { stale?: unknown; state?: unknown } | undefined;
+    if (typeof task?.stale === "string")
       throw new SpawnFail(
-        `the attempt of ${ws}/${call.task} is stale: its agent was ${stale}; the replacement was left alone`,
-        "unsent",
+        `the attempt of ${ws}/${call.task} is stale: its agent was ${task.stale}; the replacement was left alone. This call cannot run again; issue a new ${DELEGATE_TOOL} call`,
+        task.state === "unknown" ? "unknown" : "refused",
       );
     const spawned = (out?.agent as { name?: unknown } | undefined)?.name;
     // No multiplexer, nothing spawned: start() runs it as a child pi instead.
