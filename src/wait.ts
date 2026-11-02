@@ -72,7 +72,7 @@
 import { agentKey } from "./agent-state.js";
 import { AgentNotFoundError, AgentRestartedError } from "./agents/errors.js";
 import { closeNotices } from "./close-notice.js";
-import type { Db } from "./db.js";
+import { type Db, tryResolveWorkstreamId } from "./db.js";
 import {
   DelegateNotFoundError,
   type DelegateRow,
@@ -127,6 +127,7 @@ import { compileTextMatcher, type TextMatcher } from "./wait-regex.js";
 import {
   beginWait,
   checkCaller,
+  deadRefs,
   dropOwnedRefs,
   endWait,
   fenceAgentRef,
@@ -388,6 +389,12 @@ export async function waitForEvents(
     }
   };
 
+  /** A task as a tick reads it; undefined when it or its workstream is gone. Never throws. */
+  const liveTask = (ref: WaitRef) =>
+    tryResolveWorkstreamId(db, ref.workstream) === null
+      ? undefined
+      : getTask(db, ref.id, ref.workstream);
+
   /** The callers' registered refs, merged (each ref once); records which caller owes which. */
   const ownedRefs = (): WaitRef[] => {
     if (!consumes) return [];
@@ -398,9 +405,16 @@ export async function waitForEvents(
       if (reg === undefined) continue;
       // Owed only while work or a run is owed (src/wait-owed.ts): an agent whose row is gone and
       // which was marked finished is DONE, not dead. Its ref leaves the registration, no event.
-      const done = reg.refs.filter(
-        (r) => r.kind === "agent" && !agentExists(db, r) && hasDoneMark(db, c, r),
-      );
+      // Into a torn-down or deleted workstream: owed nothing (src/wait-registration.ts deadRefs).
+      const dead = deadRefs(db, reg.refs);
+      if (dead.length > 0) opts.onDroppedRefs?.(dead);
+      const done = [
+        ...dead,
+        ...reg.refs.filter(
+          (r) =>
+            !dead.includes(r) && r.kind === "agent" && !agentExists(db, r) && hasDoneMark(db, c, r),
+        ),
+      ];
       if (done.length > 0) dropOwnedRefs(db, c, done);
       for (const r of reg.refs) {
         if (done.includes(r)) continue;
@@ -651,7 +665,7 @@ export async function waitForEvents(
     if (observeOwners) {
       const taskRefs = [...explicit.values(), ...owned].filter((r) => r.kind === "task");
       for (const r of taskRefs) {
-        const row = getTask(db, r.id, r.workstream);
+        const row = liveTask(r);
         const o = row?.status === "IN_PROGRESS" ? getTaskOwner(db, r.id, r.workstream) : undefined;
         if (o !== undefined) {
           const ref: WaitRef = { kind: "agent", workstream: o.workstreamName, id: o.name };
@@ -770,8 +784,8 @@ export async function waitForEvents(
     suppressible: boolean,
     order: number,
   ): Item => {
-    const row = getTask(db, ref.id, ref.workstream);
-    // A task deleted mid-wait reads as OPEN: never reached.
+    const row = liveTask(ref);
+    // A task deleted mid-wait (or its workstream torn down) reads as OPEN: never reached.
     const status = row?.status ?? "OPEN";
     const ownerRef = row === undefined ? undefined : getTaskOwner(db, ref.id, ref.workstream);
     const ownerName = ownerRef?.name ?? row?.ownerName ?? null;
@@ -1170,8 +1184,8 @@ export async function waitForEvents(
           .get(ownerRef.name, ownerRef.workstreamName) as
           | { id: number; pane_id: string }
           | undefined;
-        const taskId = taskIdFor(db, it.ref.id, it.ref.workstream);
-        if (own === undefined || taskId === null) {
+        const taskId = liveTask(it.ref) && taskIdFor(db, it.ref.id, it.ref.workstream);
+        if (own === undefined || taskId === undefined || taskId === null) {
           it.ready = true;
           continue;
         }

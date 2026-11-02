@@ -363,6 +363,61 @@ describe("agent events", () => {
   });
 });
 
+describe("refs into a torn-down workstream", () => {
+  it("are not owed: dropped from the registration, and the wait goes on with the live ones", async () => {
+    const caller = "pi:td";
+    mkTask(env.db, "gone", "dead");
+    mkTask(env.db, "live", "w");
+    mkAgent(env.db, "a1", "dead");
+    registerOwnedWait(env.db, caller, [
+      taskRef("gone", "dead"),
+      agentRef("a1", "dead"),
+      taskRef("live"),
+    ]);
+    env.db
+      .prepare("UPDATE workstreams SET torn_down_at = ? WHERE name = 'dead'")
+      .run(new Date().toISOString());
+    closeTask(env.db, "live", { workstream: "w", evidence: "e" });
+    const r = await waitForEvents(env.db, [], {
+      ...fast,
+      callers: [caller],
+      timeoutMs: 1000,
+      ...scriptedAgents(new Map()),
+    });
+    expect(r.event).toMatchObject({
+      kind: "closed",
+      ref: { kind: "task", workstream: "w", id: "live" },
+    });
+    const left = env.db
+      .prepare("SELECT refs_json FROM wait_registrations WHERE caller = ?")
+      .get(caller) as { refs_json: string };
+    expect(left.refs_json).not.toContain('"dead"');
+  });
+});
+
+describe("a workstream torn down during a wait", () => {
+  it("an explicit ref into it reads as gone (never a throw); the wait ends on a live ref", async () => {
+    await mkOwnedTask(env.db, "gone", "a1", "dead");
+    mkTask(env.db, "live", "w");
+    let tick = 0;
+    const r = await waitForEvents(env.db, [taskRef("gone", "dead"), taskRef("live")], {
+      ...fast,
+      timeoutMs: 2000,
+      ...scriptedAgents(new Map([["dead/a1", { status: "busy" }]])),
+      beforePoll: async () => {
+        tick++;
+        if (tick === 2) {
+          env.db
+            .prepare("UPDATE workstreams SET torn_down_at = ? WHERE name = 'dead'")
+            .run(new Date().toISOString());
+        }
+        if (tick === 4) closeTask(env.db, "live", { workstream: "w", evidence: "e" });
+      },
+    });
+    expect(r.event).toMatchObject({ kind: "closed", ref: { workstream: "w", id: "live" } });
+  });
+});
+
 describe("all: urgent events and unrelated refs", () => {
   it("an owned delegate report ends an all wait early without counting toward all; unrelated closed owned tasks never count", async () => {
     const caller = "pi:s4";

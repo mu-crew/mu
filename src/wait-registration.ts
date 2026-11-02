@@ -25,7 +25,7 @@
 
 import { isValidAgentName } from "./agents.js";
 import { compareStrings } from "./compare.js";
-import type { Db } from "./db.js";
+import { type Db, tryResolveWorkstreamId } from "./db.js";
 import { isValidTaskId } from "./tasks/id.js";
 import { cursorKey, doneKey } from "./wait-cursor.js";
 import { isValidWorkstreamName } from "./workstream.js";
@@ -379,6 +379,18 @@ export function callersOwing(db: Db, ref: RegisteredRef): string[] {
  * neither `state` nor `generation`, so it never disturbs a wait in flight. A no-op for a ref that is
  * not registered.
  */
+/**
+ * The refs of a registration owed nothing because their workstream is torn
+ * down or deleted: their work cannot finish, and every read of them refuses
+ * (`WorkstreamTornDownError`). A delegate call is keyed by its call, not its
+ * workstream, and is never dropped here.
+ */
+export function deadRefs(db: Db, refs: readonly RegisteredRef[]): RegisteredRef[] {
+  return refs.filter(
+    (r) => r.kind !== "delegate" && tryResolveWorkstreamId(db, r.workstream) === null,
+  );
+}
+
 export function dropOwnedRefs(db: Db, caller: string, refs: readonly RegisteredRef[]): void {
   const gone = new Set(refs.map(keyOf));
   db.transaction(() => {

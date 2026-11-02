@@ -10,6 +10,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mu wait` no longer fails for good after a workstream is torn down.** A
+  caller's wait registration kept task and agent refs into the torn-down
+  workstream, and every read of them threw `WorkstreamTornDownError`, so
+  every ownerless `mu wait` (and every pi settle) exited 3 and live work in
+  other workstreams was never waited on. Such refs are now owed nothing: the
+  wait drops them from the registration with one stderr line (`mu wait:
+  dropped N ref(s) into torn-down workstream <ws>`) and waits on the rest.
+  The wait's per-ref task reads never throw either, so a workstream torn down
+  mid-wait (or an explicit ref into one) reads as gone.
+
 ### Test health
 
 - **The eval unit tests no longer leak temp dirs.** `test/eval/lifecycle.test.ts`

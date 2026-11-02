@@ -393,6 +393,15 @@ export async function runWait(
       timeoutMs: Math.round(timeoutS * 1000),
       ...(spec.since !== undefined ? { sinceSeq: spec.since } : {}),
       signal: sig.signal,
+      onDroppedRefs: (refs) => {
+        const by = new Map<string, number>();
+        for (const r of refs) by.set(r.workstream, (by.get(r.workstream) ?? 0) + 1);
+        for (const [ws, n] of by) {
+          process.stderr.write(
+            `mu wait: dropped ${n} ref(s) into torn-down workstream ${ws}; nothing is owed there\n`,
+          );
+        }
+      },
       ...ctlAgentHooks(db, { paneText: spec.untilText !== undefined }),
       beforePoll: reconcileHook(db, spec, () =>
         last.length > 0 ? last.map((s) => s.ref) : spec.refs,
