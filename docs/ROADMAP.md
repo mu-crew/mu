@@ -82,6 +82,7 @@ track them; delete the row when one ships.
 | **Known-idle stalls** (aiv-blog 2026-11-01) | A worker deliberately idle on another task re-fires `--on-stall exit` on every settle. | Fire a stall once per (incarnation, runs), or a waiting-on substate that `--on-stall exit` skips. | ~60 LOC |
 | **Remote close preview runs no host command** (aiv-blog) | A remote preview cannot see an uncollected HEAD until apply (a HEAD already on a branch no longer refuses). | Say "HEAD unknown until apply; a refusal names --keep-branch", or probe when the host has a spare channel. | ~20 LOC |
 | **Delegate answers read elsewhere** (aiv-blog) | Answers read through `mu task notes` are re-announced as "not shown" after an interrupt. | Mark a call delivered when its answer reaches the caller by a `mu wait` result too. | ~30 LOC |
+| **Merges as the serial bottleneck** (vtmux 2026-11) | Past a handful of workers the orchestrator cherry-picks and gates every merge itself, so finished work queues behind it. One sighting, the vtmux run, where the broken settle (fixed) may have been the real cause. | orchestrator-loop step 5: past N workers, delegate cherry-pick + gate to one long-lived merger worker with its own worktree; the orchestrator only verifies the pinned batch. A recipe line, no code. | recipe |
 | **Subscription-based wakeups** | `mu log --tail` polls once a second. | SQLite update hooks or `fs.watch` on the WAL. Lower latency for more machinery. | — |
 
 ## Next breaking release
