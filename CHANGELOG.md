@@ -21,6 +21,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   dropped N ref(s) into torn-down workstream <ws>`) and waits on the rest.
   The wait's per-ref task reads never throw either, so a workstream torn down
   mid-wait (or an explicit ref into one) reads as gone.
+- **A deliberately closed agent is never a `dead` event, and registrations
+  shrink.** An agent's ref stayed in every caller's wait registration unless
+  the close found it idle with no open task, or a wait had seen it finished,
+  so a worker closed mid-run (or while it still owned a task) later fired
+  `dead` (exit 6) on some unrelated wait, and the registration grew without
+  bound (one session held 249 refs). `mu agent close` now drops the agent's
+  ref from every caller's registration. Work it left unfinished is still owed
+  through the task refs (the reaper reopens those tasks), and a pane that
+  dies on its own is still `dead`.
 
 ### Test health
 

@@ -7,15 +7,12 @@
 //
 // A row that is gone cannot say what it owned, so DONE is recorded while the agent can still be
 // read: `agentOwed` over a reading, kept as a mark (`setAgentDone`: a cursor under
-// `done|agent:<ws>/<name>`, machine-local) by every wait tick, and by `agent close` of an agent
-// holding no unfinished task (closing on purpose is the end of its work). The engine
-// (src/wait.ts `ownedRefs`) drops a registered agent ref whose row is gone and which carries a mark:
-// no event, no dead. Arming new work for the agent (`registerOwnedWait`) and a tick that finds it
-// owed again clear the mark.
+// `done|agent:<ws>/<name>`, machine-local) by every wait tick. The engine (src/wait.ts `ownedRefs`)
+// drops a registered agent ref whose row is gone and which carries a mark: no event, no dead.
+// Arming new work for the agent (`registerOwnedWait`) and a tick that finds it owed again clear the
+// mark. A deliberate `agent close` needs no mark: it drops the agent's ref from every registration
+// itself (closing on purpose is never a death; unfinished work stays owed through its task refs).
 
-import { expectsCtl } from "./agents/transport.js";
-import { ctlProbe } from "./ctl/client.js";
-import { ctlSocketPath } from "./ctl/path.js";
 import type { Db } from "./db.js";
 import { doneKey, readCursors } from "./wait-cursor.js";
 import { callersOwing, type RefBaseline } from "./wait-registration.js";
@@ -91,22 +88,4 @@ export function setAgentDone(
       ).run(caller, key);
     } else db.prepare("DELETE FROM wait_cursors WHERE caller = ? AND ref = ?").run(caller, key);
   }
-}
-
-/**
- * Is a run in flight in this pi (busy, a queued message, a dialog)? Asked before `agent close` kills
- * the pane. A pi that cannot be asked, or an agent with no control socket, has none we can see: what
- * it owes is what its tasks say (`workOf`).
- */
-export async function runInFlight(agent: {
-  name: string;
-  workstreamName: string;
-  cli: string;
-}): Promise<boolean> {
-  const sock = ctlSocketPath(agent.workstreamName, agent.name);
-  if (!expectsCtl(agent, sock)) return false;
-  const probe = await ctlProbe(sock, 1000, { hello: false });
-  if (probe.kind !== "ok") return false;
-  const { state, pending, blocked } = probe.status;
-  return state === "busy" || pending === true || blocked !== undefined;
 }
