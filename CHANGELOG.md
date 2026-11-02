@@ -10,6 +10,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Test health
+
+- **The eval unit tests no longer leak temp dirs.** `test/eval/lifecycle.test.ts`
+  and `test/eval/judges-effects.test.ts` left 11 `lifecycle-test-*`, `judges-fx-*`
+  and `judges-effects-*` dirs in `$TMPDIR` per fast run; they now remove them in
+  `afterAll`.
+
 ## [4.3.0] — 2026-11-01
 
 ### Added

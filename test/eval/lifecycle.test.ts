@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { MetricsCollector } from "../../tools/eval/events.ts";
 import {
   deliveries,
@@ -26,9 +26,15 @@ import {
 } from "../../tools/eval/observe.ts";
 import type { RunMetrics, Sandbox } from "../../tools/eval/types.ts";
 
+const dirs: string[] = [];
+afterAll(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+});
+
 /** A sandbox whose workers dir holds a mu-call log (and tee'd outputs) and an empty ops DB. */
 function sandbox(calls: string[], outs: Record<string, string> = {}): Sandbox {
   const dir = mkdtempSync(join(tmpdir(), "lifecycle-test-"));
+  dirs.push(dir);
   const workerDir = join(dir, "workers");
   mkdirSync(join(workerDir, "mu-out"), { recursive: true });
   writeFileSync(join(workerDir, "mu-calls.log"), `${calls.join("\n")}\n`);
