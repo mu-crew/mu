@@ -42,7 +42,7 @@ import { activeMux } from "../mux.js";
 import { closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
 import { selectRemoteRecovery } from "../remote-recovery.js";
 import { agentRevision, assertRevision } from "../revision.js";
-import { runInFlight, setAgentDone, workOf } from "../wait-owed.js";
+import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
 import {
   assertReleasable,
   getWorktreeAt,
@@ -487,8 +487,6 @@ async function closeLocked(
   const row = worktreeOf(db, opts.workstream, name, agent);
   if (row !== undefined) await assertReleasable(row, { discard });
   const mux = await activeMux().catch(() => undefined);
-  // Before the kill (the pane then answers nothing): is its run still going?
-  const running = await runInFlight(agent);
   // The awaits above are where a replacement lands. Nothing below may act
   // on a name that is not the incarnation this close captured.
   const replaced = (): boolean => {
@@ -571,7 +569,6 @@ async function closeLocked(
     await cleanGateResult(db, agent);
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   }
-  const openAtClose = workOf(db, agent.incarnation).open;
   const deletedRow = deleteAgent(
     db,
     name,
@@ -582,10 +579,10 @@ async function closeLocked(
   if (!deletedRow && replaced()) throw new AgentReplacedError(name, opts.workstream);
   // Last: the reservation, once its job is stopped and its job file and tree are dealt with.
   if (lease !== undefined) releaseLeaseClose(db, lease);
-  // A deliberate close of a worker with no open task and no run in flight is the end of its work,
-  // not a death: the wait engine drops its ref (src/wait-owed.ts). A busy one is still news.
-  if (deletedRow && !running && openAtClose === 0)
-    setAgentDone(db, agent.workstreamName, name, true);
+  // A deliberate close ends the agent's ref in every caller's registration: closing on purpose is
+  // never a death. Work it left unfinished is still owed through the task refs (the reaper reopens
+  // those tasks, and a wait reports them), so nothing owed is lost; the registration shrinks.
+  if (deletedRow) dropClosedAgentRefs(db, agent.workstreamName, name);
   // Machine-local table (`agents`): no trigger, so this emit is the
   // only record.
   const closes = lease === undefined ? [] : [lease];
@@ -738,4 +735,10 @@ function closeLine(
   }
   const detail = bits.filter((b) => b !== undefined).join(", ");
   return `agent close ${name}${detail === "" ? "" : ` (${detail})`}`;
+}
+
+/** Drop `<ws>/<name>`'s agent ref (with its fence and DONE mark) from every caller that owes it. */
+function dropClosedAgentRefs(db: Db, workstream: string, name: string): void {
+  const ref = { kind: "agent" as const, workstream, id: name };
+  for (const caller of callersOwing(db, ref)) dropOwnedRefs(db, caller, [ref]);
 }

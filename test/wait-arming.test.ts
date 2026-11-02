@@ -807,18 +807,23 @@ describe("owed vs done: an agent ref is owed only while it owns open work or an 
     expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "agent:auth/worker-1" } });
   });
 
-  it("agent close while its run is still going is NOT the end of the work: dead", async () => {
+  it("agent close while its run is still going is a decision, not a death: the ref leaves every registration", async () => {
     seedAgent("worker-1");
     seedTask("t2");
     pi.state = "busy";
     await serve("worker-1");
     await as(SESSION, ["agent", "send", "worker-1", "go", "-w", "auth", "--json"]);
+    await as({ pi: "other" }, ["agent", "send", "worker-1", "hi", "-w", "auth", "--json"]);
+    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent")).toBe(true);
+    expect(reg("pi:other")?.refs).toHaveLength(1);
     const p = await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--json"]);
     const rev = (p.data as { revision: number }).revision;
     await as(SESSION, ["agent", "close", "worker-1", "-w", "auth", "--if", String(rev), "--json"]);
+    // The close itself shrank both registrations, before any wait ran.
+    expect(reg(CALLER)?.refs.some((x) => x.kind === "agent") ?? false).toBe(false);
+    expect(reg("pi:other")?.refs ?? []).toEqual([]);
     const r = await as(SESSION, ["task", "wait", "t2", "-w", "auth", "--timeout", "0.3"]);
-    expect(r.exitCode).toBe(6);
-    expect(r.data).toMatchObject({ firing: { kind: "dead", ref: "agent:auth/worker-1" } });
+    expect(r.data).toMatchObject({ exit: 0, timedOut: true });
   });
 
   it("agent close with NO wait in between still ends the work (the close itself marks)", async () => {
