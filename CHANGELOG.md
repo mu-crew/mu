@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.3.1] — 2026-11-02
+
 ### Fixed
 
 - **`mu wait` no longer fails for good after a workstream is torn down.** A
