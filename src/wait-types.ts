@@ -294,6 +294,8 @@ export interface WaitOptions {
   sync?: boolean;
   /** Called every iteration with the snapshots of everything the wait is watching (the CLI's heartbeat and stall warning). */
   onPicture?: (snaps: readonly WaitSnapshot[]) => void;
+  /** Called with the owned refs dropped because their workstream is torn down or gone. */
+  onDroppedRefs?: (refs: readonly WaitRef[]) => void;
   /** Called once when every watched agent target reads unknown on the first iteration. */
   onInitialUnknown?: (agents: readonly WaitSnapshot[]) => void;
   /** Poll sleep seam. Default: an abortable timer. */
