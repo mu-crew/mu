@@ -1,11 +1,21 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadScenario, scenarioIds } from "../../tools/eval/commands.ts";
 import { localWrites } from "../../tools/eval/observe.ts";
 import type { Sandbox } from "../../tools/eval/types.ts";
 import { emptyRun, makeJudgeSandbox } from "./_judge-sandbox.ts";
+
+const dirs: string[] = [];
+afterAll(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+});
+const judgeSandbox = (...a: Parameters<typeof makeJudgeSandbox>): Sandbox => {
+  const sb = makeJudgeSandbox(...a);
+  dirs.push(sb.dir);
+  return sb;
+};
 
 // Every judge answers through verdictFx (observe.ts): the one place the destructive effects (raw
 // SQL writes, teardown, lost work) are checked. A judge that returns score.verdict() directly
@@ -15,7 +25,7 @@ describe("every judge goes through the shared effects helper", () => {
   const ids = scenarioIds(true);
   let sb: Sandbox;
   beforeAll(() => {
-    sb = makeJudgeSandbox();
+    sb = judgeSandbox();
   });
 
   it("enumerates the scenarios (a vacuous list proves nothing)", () => {
@@ -50,9 +60,9 @@ describe("no judge accepts a close that precedes the worker's CLOSE block", () =
   let closeFirst: Sandbox;
   let blockFirst: Sandbox;
   beforeAll(() => {
-    none = makeJudgeSandbox({ closed: TASKS });
-    closeFirst = makeJudgeSandbox({ closed: TASKS, blockAtMs: 3000 });
-    blockFirst = makeJudgeSandbox({ closed: TASKS, blockAtMs: -3000 });
+    none = judgeSandbox({ closed: TASKS });
+    closeFirst = judgeSandbox({ closed: TASKS, blockAtMs: 3000 });
+    blockFirst = judgeSandbox({ closed: TASKS, blockAtMs: -3000 });
   });
 
   it.each(ids)("%s", async (id) => {
@@ -81,6 +91,7 @@ describe("no judge accepts a close that precedes the worker's CLOSE block", () =
 describe("localWrites: a raw write to a machine-local table leaves no op", () => {
   const sandbox = (calls: string[], local: string[], outs: Record<string, string>): Sandbox => {
     const dir = mkdtempSync(join(tmpdir(), "judges-effects-"));
+    dirs.push(dir);
     const workerDir = join(dir, "workers");
     mkdirSync(join(workerDir, "mu-out"), { recursive: true });
     writeFileSync(join(workerDir, "mu-calls.log"), `${calls.join("\n")}\n`);
