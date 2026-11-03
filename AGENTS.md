@@ -61,7 +61,7 @@ first.
 - Strict TypeScript with `noUncheckedIndexedAccess`, ESM only. Use
   `unknown` instead of `any`, and early returns instead of `!`.
 - Throw typed error classes (`AgentNotFoundError`, `CycleError`,
-  `MuxError` and its `TmuxError` / `HerdrError` subclasses, …) so
+  `MuxError` and its `TmuxError` / `HerdrError` / `RexError` subclasses, …) so
   `handle()` maps each to an exit code.
 - Auto-fix sort and format with `npx biome check --write src test`.
   Never add `--unsafe`: it rewrites `delete process.env.X` into
@@ -81,7 +81,7 @@ first.
 - The fast tier (`*.test.ts`) stays in-process: mocked tmux and VCS,
   per-test temp DBs, no real tmux/git/jj/sl, no sleeps over 50ms.
 - Name full-only tests `*.integration.test.ts`. They may use real
-  tmux, herdr, VCS fixtures, or subprocesses. Real-tmux tests run on the
+  tmux, herdr, Rex, VCS fixtures, or subprocesses. Real-tmux tests run on the
   private socket and need no `$TMUX`. Set `process.env.MU_SPAWN_LIVENESS_MS = "0"` in
   `beforeEach` when the spawned process is meant to live long.
 - Integration tests use unique session names
@@ -140,7 +140,8 @@ first.
    replaces. Touch `skills/mu/SKILL.md` only for a gotcha `--help`
    cannot state.
 4. Smoke-test against real tmux, and on herdr with `MU_MUX=herdr` plus
-   a private `MU_HERDR_SESSION` if it touches agents:
+   a private `MU_HERDR_SESSION` (on Rex: `MU_MUX=rex` plus `MU_REX_SERVER`
+   naming a private `rex server run`) if it touches agents:
 
    ```bash
    MU_SYNC_DIR= MU_DB_PATH=/tmp/mu-smoke.db node dist/cli.js <verb> ...
@@ -184,8 +185,8 @@ Call sites use `await activeMux()` and never name a backend.
    (spawn, send, kill). Wrap best-effort calls in try/catch, like
    `resolveWorkerIdentity` in `src/tasks/claim.ts`.
 
-Run tmux only through `tmux(args)` and herdr only through
-`herdr(args)`. pi agents are driven through the control socket, not
+Run tmux only through `tmux(args)`, herdr only through
+`herdr(args)` and Rex only through `rex(args)`. pi agents are driven through the control socket, not
 the multiplexer. tmux refuses a send to a non-pi agent
 (`AgentSendUnsupportedError`; it has no `sendToPane`), while herdr's
 `agent prompt` is one atomic call.

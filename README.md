@@ -18,7 +18,7 @@ task DAG in SQLite. Each agent gets its own git worktree.
   `resume` command. In pi, the extension runs it for you, so an
   orchestrator keeps driving until nothing is owed.
 - **Delegates without a pane.** A `mu_delegate` call is a fresh-context
-  helper recorded as a task with a durable id. With no tmux or herdr it
+  helper recorded as a task with a durable id. With no multiplexer it
   runs as a child pi.
 - **A capped skill.** One `mu` skill (under 600 words) and twelve short recipes,
   checked by an eval matrix (`tools/eval`). `mu --help` holds the rest.
@@ -47,8 +47,10 @@ first: pin which `mu` the harness runs, and see what works without pi.
 You need:
 
 - Node 22.12–26 (see `.nvmrc`).
-- tmux ≥ 3.0 or [herdr](https://github.com/herdrdev/herdr) for agents.
-  `mu doctor` reports which one is active. Without either, task verbs
+- tmux ≥ 3.0, [herdr](https://github.com/herdrdev/herdr) or
+  [Rex](https://www.superlogical.com/rex) for agents
+  ([choosing one](docs/guide/backends.md)). `mu doctor` reports which one
+  is active. Without any, task verbs
   and pi's `mu_delegate` still work (a delegate runs as a child pi).
 - pi, or another agent CLI.
 - git on `PATH` for `--worktree`.
@@ -56,14 +58,15 @@ You need:
 [murmur](https://github.com/mu-crew/murmur) is optional for pi agents.
 Non-pi agents on tmux need it for state: without it their state is
 `unknown`, so a wait never sees them finish and stall detection never fires.
-On herdr, herdr reports state.
+On herdr, herdr reports state. On Rex, the agent's own OSC 7501 report does
+(claude and codex send one).
 
 Updating, keeping 3.x runnable beside 4.0, and running from a checkout:
 [How to upgrade mu](docs/guide/upgrade.md).
 
 ## Quick start
 
-Run this inside tmux or herdr, in a git repository:
+Run this inside tmux, herdr or Rex, in a git repository:
 
 ```bash
 mu workstream init auth                             # every verb below names it with -w
@@ -145,7 +148,7 @@ in [skills/mu/recipes/](skills/mu/recipes/).
 
 - **Not a hidden subagent.** Every agent, including a one-off
   `mu_delegate` helper, is an ordinary agent you can steer, abort, or keep
-  talking to, in a pane you can attach to (with no tmux or herdr, a child
+  talking to, in a pane you can attach to (with no multiplexer, a child
   pi and a task record). That costs a pi process per agent; for many tiny
   calls a hidden subagent is lighter. See
   [the comparison](docs/guide/delegate.md#delegates-vs-hidden-subagents).

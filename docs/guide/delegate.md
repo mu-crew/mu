@@ -24,13 +24,13 @@ parallel.
 | `timeout` | Seconds to wait for the answer (default 3600), counted from the start: a `/reload` does not restart it. After it, the answer does not come back to pi; it still lands on the delegate task, whose report names a wait command. |
 | `workspace` | Own git worktree, for delegates that edit files. The tool result names its path. It isolates repository edits only. |
 | `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`). Only keys set in pi's environment exist. |
-| `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux only: herdr refuses a command override. |
+| `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux and Rex: herdr refuses a command override. |
 | `keep` | Keep the pane after it finishes, to talk to it again. |
 | `record` | `{ task, workstream? }` (or `task: "<ws>/<task>"`): write the answer's verdict onto that task as a note. See [Record a verdict](#record-a-verdict). |
 | `wave` | A label for one fan-out; `mu delegates tally` counts its verdicts per judged task. |
 | `workstream` | Holds the delegate task and runs the delegate (default `scratch`). |
 
-- No tmux or herdr: the same tool runs the delegate as a child pi
+- No multiplexer: the same tool runs the delegate as a child pi
   (`mu delegates run <call-id>`), with no pane and no attach command.
   Its report names the session file and, when it fails, the log tail.
   `keep` is dropped. Cancel stops the child. `/reload` lets it finish
@@ -175,12 +175,12 @@ carries the previous task's context.
 ### With no multiplexer
 
 `mu delegates run <call-id>` runs one registered call in a child
-`pi --mode rpc` in the foreground: no tmux, no herdr, no pane. Register
+`pi --mode rpc` in the foreground: no multiplexer, no pane. Register
 the call first (`mu delegates register <call-id> --caller <id> --text -`),
 then run it; it sends once, waits, records the verdict, report and close
 on the call's task, and prints the child's log and session paths.
-SIGINT cancels. `mu_delegate` does this by itself when no tmux or
-herdr is installed (see above).
+SIGINT cancels. `mu_delegate` does this by itself when no multiplexer
+is installed (see above).
 
 ## Keep a helper
 

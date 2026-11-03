@@ -22,7 +22,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
 │  (capture, apply, sync, drift)                                  │
 └───────────────┬──────────────────┬──────────────────┬───────────┘
                 ▼                  ▼                  ▼
-   SQLite (~/.local/state/mu-next/mu.db) · tmux/herdr panes · git worktrees
+   SQLite (~/.local/state/mu-next/mu.db) · tmux/herdr/Rex panes · git worktrees
                    pi agents: control socket per agent
 ```
 

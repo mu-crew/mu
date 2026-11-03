@@ -17,7 +17,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   terminal block. mu drives Rex through its server API (`rex api call`),
   so spawn is one call that never takes focus. Agent state for non-pi CLIs
   comes from the program's own OSC 7501 report (`program_status`), and
-  non-pi sends are a bracketed paste plus Enter. Attach asks Rex.app to
+  non-pi sends are a paste event plus Enter (a multi-line text is refused
+  unless the agent turned on bracketed paste). Panes run the command through
+  `$SHELL -ic`, so agents see the environment of the user's own Rex tabs. Attach asks Rex.app to
   switch (`rex do session.select`), which needs Remote Control on.
   `MU_REX_SERVER` points mu at another server. See
   [backends](docs/guide/backends.md).

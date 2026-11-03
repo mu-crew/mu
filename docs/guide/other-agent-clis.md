@@ -47,12 +47,15 @@ mu wait task:auth/build
 
 On herdr, `--send` and `agent send` work (herdr's `agent prompt`, see
 [dispatch](dispatch.md#non-pi-agents)), but herdr refuses `--command`.
+On Rex, `--send`, `agent send` and `--command` all work.
 
 - **Dialogs.** A new folder makes codex ask "Trust this folder?", and
-  unreviewed hooks ask again. On tmux mu cannot answer them. Pre-trust the
+  unreviewed hooks ask again. On tmux and Rex mu cannot answer them. Pre-trust the
   repo (`-c 'projects."<repo>".trust_level="trusted"'`; worktrees inherit the
   root's trust), or attach and press the key.
-- **State** comes from murmur on tmux, from herdr on herdr. Wire murmur to
+- **State** comes from murmur on tmux, from herdr on herdr, and on Rex
+  from the agent's own OSC 7501 report (claude and codex send one; no
+  hook needed). On tmux, wire murmur to
   the harness's stop hook (cursor: `.cursor/hooks.json` `stop`, see murmur's
   `docs/setup.md`). Without it the agent is `unknown` throughout. With it,
   you see `needs_input` when a turn ends, but never `busy`.

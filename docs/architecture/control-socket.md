@@ -95,7 +95,7 @@ not serve returns `unknown op: <op>` with its `ops` list and raises the
 same error. Its next steps, in order: `mu agent send <a> /reload` when
 the extension serves `command`; else the mux's own reload line when the
 backend can type one (`MuxBackend.reloadCommands`, herdr's `agent
-prompt <pane> /reload`; tmux has none, so the step is omitted); else
+prompt <pane> /reload`; tmux and Rex have none, so the step is omitted); else
 `mu agent close <a>` then the spawn line rebuilt from the agent row
 (`agents.command` and `command_source`, machine-local: an explicit
 `--command` is replayed verbatim, an env or cli-key command as `--cli`;
@@ -147,8 +147,8 @@ A pi agent whose socket does not answer raises
 with reason `ctl missing` or `ctl refused` for state. mu never pastes
 into it or asks murmur instead.
 
-Only non-pi CLIs reach `MuxBackend.sendToPane`, which herdr alone
-implements (its atomic `agent prompt`). On tmux, a send to a non-pi
+Only non-pi CLIs reach `MuxBackend.sendToPane`, which herdr (its atomic
+`agent prompt`) and Rex (a paste event, then Enter) implement. On tmux, a send to a non-pi
 agent raises `AgentSendUnsupportedError` (exit 4): a bracketed paste
 cannot be confirmed, so mu has none.
 

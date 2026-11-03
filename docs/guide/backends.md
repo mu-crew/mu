@@ -42,6 +42,7 @@ copy backend.
 | Other agents' state | murmur | herdr | the program's own OSC 7501 reports |
 | Send to non-pi agents | refused (exit 4) | one atomic `agent prompt` | a paste event, then Enter |
 | Spawn | one command | bare pane, then `agent start` | one API call |
+| `--host` (remote agents) | yes | refused | yes |
 | Pane borders, layout | set by mu | left to herdr | left to Rex |
 | Test isolation | `MU_TMUX_SOCKET` | `MU_HERDR_SESSION` | `MU_REX_SERVER` |
 
@@ -72,9 +73,14 @@ Where each agent's state comes from, per backend:
 - A non-pi agent has a state only if it reports one with OSC 7501
   (claude and codex do). Only reports from the agent's own process count,
   not from tools it runs. With none, mu shows `unknown`.
-- A multi-line send needs the agent to have bracketed paste on (pi,
-  claude and codex do); otherwise mu refuses rather than submit line by
-  line.
+- A multi-line send to a non-pi agent needs it to have bracketed paste
+  on (claude and codex do); otherwise mu refuses rather than submit line
+  by line. pi agents are sent to over their control socket, as on tmux.
+- mu runs `$REX_BIN_DIR/rex` (Rex sets it in its terminals), else `rex` on
+  `PATH`. The attach line it prints says `rex`, so put Rex's CLI on `PATH`
+  to paste it from a shell outside Rex.
+- An agent's window is created with `focus: false`; Rex.app shows it
+  only when you attach.
 
 ## Expect loud failures, not silent ones
 

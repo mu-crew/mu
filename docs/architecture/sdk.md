@@ -115,7 +115,7 @@ bring back a global namespace.
 ## Errors
 
 Errors are typed classes per layer (`src/agents/errors.ts`,
-`src/tasks/errors.ts`, `MuxError` with `TmuxError` / `HerdrError`, and
+`src/tasks/errors.ts`, `MuxError` with `TmuxError` / `HerdrError` / `RexError`, and
 so on). Nothing swallows them. `src/cli/handle.ts` maps them to exit
 codes:
 
@@ -143,7 +143,7 @@ so `mu doctor` can show them readably.
 Fast tier (`npm run test:fast`) excludes `*.integration.test.ts` and
 `*.smoke.test.ts`. It uses real SQLite in per-test temp DBs and a
 mocked mux (`installMux()` from `test/_mux.ts`). Integration tests use
-real tmux or herdr, and real git in `os.tmpdir()`. Conventions live in
+real tmux, herdr or Rex, and real git in `os.tmpdir()`. Conventions live in
 [AGENTS.md](../../AGENTS.md) and `test/README.md`.
 
 | Area | What the tests pin |

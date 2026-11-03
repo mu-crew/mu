@@ -66,7 +66,7 @@ EOF
   timeout), spawning the same name again takes that tree over while it is
   clean, at its base and unused; anything else at the path refuses.
 - The pane is the transport: closing it, or its death, ends the agent
-  and frees the slot. tmux only; herdr refuses `--host` in one line.
+  and frees the slot. tmux and Rex; herdr refuses `--host` in one line.
 - A non-pi `--command` (`--host dev --command 'npm test'`, no `--cli pi`) is a
   **command gate**, not a worker: its pane is kept after the command ends, and
   `mu wait agent:auth/gate-1` returns the command's own exit status (the
