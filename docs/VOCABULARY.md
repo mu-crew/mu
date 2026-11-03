@@ -16,15 +16,15 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | --- | --- | --- |
 | **workstream** | The unit of organization: one **mux session** and one DB partition. | "project", "session" (alone), "context" |
 | **scratch workstream** | The reserved workstream `scratch` for helpers outside any task DAG. Auto-created by `task add` and `agent spawn`; any other unknown `-w` is exit 3 (only `agent spawn` still creates its workstream) (`mu workstream init <name>` creates it); `mu workstream init scratch` is rejected. Its session keeps a `_mu` window, so it stays open after the last agent closes; `teardown --empty` skips it. | "throwaway ws", "temp workstream" |
-| **multiplexer** / **mux** | The terminal program that owns panes: **tmux** or **herdr**. "mux" in code (`src/mux/`, `MU_MUX`), "multiplexer" in prose; one is active per invocation. | "terminal", "emulator", "backend" (alone) |
-| **mux backend** | An implementation of `MuxBackend` (`src/mux/tmux.ts`, `src/mux/herdr.ts`). Owns everything backend-specific. | "driver", "provider", "adapter" |
-| **mux detection** | Picks the mux backend: `MU_MUX` → `HERDR_ENV=1` → `$TMUX` → binary on `PATH` (tmux wins a tie) → `NoMultiplexerError`. | "auto-detect", "probe" |
-| **mux session** | The container for one workstream's panes: tmux session `mu-<workstream>`, or herdr workspace labelled `mu-<workstream>`. | "mux workspace", "session" (alone) |
+| **multiplexer** / **mux** | The terminal program that owns panes: **tmux**, **herdr** or **Rex**. "mux" in code (`src/mux/`, `MU_MUX`), "multiplexer" in prose; one is active per invocation. | "terminal", "emulator", "backend" (alone) |
+| **mux backend** | An implementation of `MuxBackend` (`src/mux/tmux.ts`, `src/mux/herdr.ts`, `src/mux/rex.ts`). Owns everything backend-specific. | "driver", "provider", "adapter" |
+| **mux detection** | Picks the mux backend: `MU_MUX` → `HERDR_ENV=1` → `$TMUX` → a Rex terminal (`$REX_SESSION`) → binary on `PATH` (tmux, herdr, rex in that order) → `NoMultiplexerError`. | "auto-detect", "probe" |
+| **mux session** | The container for one workstream's panes: tmux session `mu-<workstream>`, or herdr workspace or Rex session labelled `mu-<workstream>`. | "mux workspace", "session" (alone) |
 | **tmux session** | The tmux flavour of a **mux session**. | "session" (alone) |
-| **window** | The grouping inside a mux session (tmux window, herdr tab), named by **window name**. | "tab" (except the `--tab` flag) |
+| **window** | The grouping inside a mux session (tmux window, herdr tab, Rex window), named by **window name**. | "tab" (except the `--tab` flag) |
 | **window name** | A window's name: the agent's `--tab` value, or the agent name. | "tab name" |
 | **pane** | One shell view inside a **window**. | "terminal", "shell" |
-| **pane id** | The mux's stable pane handle: tmux `%15`, herdr `w1:p1`. Not the volatile tmux pane index, which is never stored. | "pane number", "pane index" |
+| **pane id** | The mux's stable pane handle: tmux `%15`, herdr `w1:p1`, Rex `block:<uuid>`. Not the volatile tmux pane index, which is never stored. | "pane number", "pane index" |
 | **substrate** | An external system mu depends on: tmux, herdr, git, SQLite. | "dependency" (an npm dep), "service" |
 | **crew** | Informal: the agents in a workstream. Prose only. | |
 
@@ -52,7 +52,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **delegate process** | The mux-free way to run a **delegate call** (`mu delegates run <call-id>`, `src/delegate-process.ts`): one child `pi --mode rpc` with its own ctl socket, log and session, no pane and no agents row (`transport: "process"`, `attach: null`). The call and its task stay the authority. Its **attempt receipt** (`<state dir>/delegate-process/<hash>/receipt.json`, machine-local) marks that a child may have run: a call with one left behind finishes `unknown`, never respawned or resent. | "headless agent", "background agent" |
 | **hidden subagent** | A child agent in other tools (pi-subagents, Claude Code and Codex task tools) with no pane to attach or steer. mu's counterpart is the **delegate**. | "subagent" (alone) |
 | **agent state** | `busy`, `needs_input`, `needs_permission`, or `unknown`, from the **state source**. Not persisted; see [Agent state values](#agent-state-values). | "agent status", "lifecycle state" |
-| **state source** | The **control socket** for pi agents; else herdr's `paneStatus()` or, on tmux, murmur. A silent pi socket gives `unknown` (`ctl missing`, `ctl refused`). | "scraper" |
+| **state source** | The **control socket** for pi agents; else the mux's `paneStatus()` (herdr's classifier, or on Rex the program's OSC 7501 report) or, on tmux, murmur. A silent pi socket gives `unknown` (`ctl missing`, `ctl refused`). | "scraper" |
 | **control socket** / **ctl** | The per-agent unix socket (`$MU_CTL_SOCK`) the mu pi extension serves inside pi. **ctl state** is `ok`, `missing`, or `refused`. | "rpc", "daemon" |
 | **session command** | `/new`, `/reload`, or `/compact [instructions]` sent to a pi agent. mu runs it inside pi through the ctl `command` op, never as a paste. Any other slash command to a pi agent is refused. | "slash paste" |
 | **outdated extension** | A running pi whose loaded extension is older than mu (exit 4 on a missing op). pi's `/reload` fixes it. | |
@@ -113,7 +113,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | --- | --- | --- |
 | **worktree** | A git worktree for one agent (`spawn --worktree`): `git worktree add --detach`, the agent's cwd. Closed by the one rule: dirty refuses, merged is removed, unmerged commits keep a branch. Git only. | "workspace", "checkout" |
 | **worktree registry** | The machine-local `worktrees` table (path, agent, workstream, root, base, last collected head). Outlives the agent row; only closing the worktree removes it. | "workspace row" |
-| **backend** | An implementation of `MuxBackend` (tmux, herdr). | "driver", "provider" |
+| **backend** | An implementation of `MuxBackend` (tmux, herdr, rex). | "driver", "provider" |
 | **missing worktree dir** | A `worktrees` row whose path is gone. Read surfaces still call it healthy. | "dangling row" |
 | **dormant** | An idle workstream with no agents or worktrees: **finished** (all closed, 14 days) or **abandoned** (open tasks, 60 days). | "stale", "dead", "empty" |
 | **residue** | Bytes in `<state-dir>` that no row references and no code reads. Reported by `mu doctor`, never removed. | "garbage", "junk" |

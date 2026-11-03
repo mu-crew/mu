@@ -7,10 +7,11 @@ import { ctlSocketPath } from "./ctl/path.js";
 import type { CtlBlocked, CtlState, CtlTool } from "./ctl/protocol.js";
 import { execFileCapture } from "./exec-file.js";
 import { activeMux } from "./mux/detect.js";
+import type { MuxBackendName } from "./mux/types.js";
 import { tmux } from "./tmux.js";
 
 export type RuntimeState = "busy" | "needs_input" | "needs_permission" | "unknown";
-export type StateSource = "murmur" | "herdr" | "ctl" | "none";
+export type StateSource = "murmur" | MuxBackendName | "ctl" | "none";
 /** How a pi agent's control socket answered; "n/a" for non-pi agents. */
 export type CtlLink = "ok" | "missing" | "refused" | "n/a";
 
@@ -236,18 +237,21 @@ function remoteReading(agent: StateAgentRef, panes: readonly MurmurPane[]): Stat
   };
 }
 
-async function readHerdrStates(
+/** State from the mux's own per-pane status (herdr's classifier, Rex's OSC 7501 records). */
+async function readMuxStates(
   agents: readonly StateAgentRef[],
   mux: Awaited<ReturnType<typeof activeMux>>,
 ): Promise<Map<string, StateReading>> {
   const readings = new Map<string, StateReading>();
+  const source = mux.name;
+  const none = `${mux.name} reports no state`;
   for (const agent of agents) {
     try {
       const status = await mux.paneStatus?.(agent.paneId);
       if (status !== undefined) {
         readings.set(agentKey(agent), {
           state: status,
-          source: "herdr",
+          source,
           since: null,
           alive: true,
         });
@@ -256,14 +260,12 @@ async function readHerdrStates(
       const alive = await mux.paneAlive(agent.paneId);
       readings.set(
         agentKey(agent),
-        alive
-          ? unknown(UNKNOWN_REASON.herdrNone, true, "herdr")
-          : unknown(UNKNOWN_REASON.paneGone, false),
+        alive ? unknown(none, true, source) : unknown(UNKNOWN_REASON.paneGone, false),
       );
     } catch (error) {
       readings.set(
         agentKey(agent),
-        unknown(`herdr: ${error instanceof Error ? error.message : String(error)}`),
+        unknown(`${source}: ${error instanceof Error ? error.message : String(error)}`),
       );
     }
   }
@@ -397,7 +399,7 @@ async function readBaseStates(
     for (const agent of agents) readings.set(agentKey(agent), unknown(reason));
     return readings;
   }
-  if (mux.paneStatus !== undefined) return await readHerdrStates(agents, mux);
+  if (mux.paneStatus !== undefined) return await readMuxStates(agents, mux);
 
   let stdout: string;
   try {

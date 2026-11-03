@@ -17,13 +17,18 @@ import {
   NoMultiplexerError,
   resetHerdrExecutor,
   resetMux,
+  resetRexExecutor,
+  rexBackend,
   setHerdrExecutor,
   setMuxForTests,
+  setRexExecutor,
   tmuxBackend,
 } from "../src/mux.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 
 const MU_MUX = "MU_MUX";
+/** The developer's own value: tests set and clear it, then put it back. */
+const INHERITED_TERM_PROGRAM = process.env.TERM_PROGRAM;
 const TMUX = "TMUX";
 const HERDR_ENV = "HERDR_ENV";
 
@@ -63,6 +68,7 @@ describe("detectMux", () => {
     delete process.env[HERDR_ENV];
     delete process.env.TMUX_PANE;
     makeHerdrUnavailable();
+    setRexExecutor(async () => ({ stdout: "", stderr: "not found", exitCode: 127 }));
     resetMux();
   });
 
@@ -73,6 +79,10 @@ describe("detectMux", () => {
     delete process.env.TMUX_PANE;
     resetTmuxExecutor();
     resetHerdrExecutor();
+    resetRexExecutor();
+    delete process.env.REX_SESSION;
+    if (INHERITED_TERM_PROGRAM === undefined) delete process.env.TERM_PROGRAM;
+    else process.env.TERM_PROGRAM = INHERITED_TERM_PROGRAM;
     resetMux();
   });
 
@@ -134,7 +144,46 @@ describe("detectMux", () => {
 
   it("NoMultiplexerError names what it tried, so the message is actionable", async () => {
     makeTmuxUnavailable();
-    await expect(detectMux()).rejects.toThrow(/tried: tmux, herdr/);
+    await expect(detectMux()).rejects.toThrow(/tried: tmux, herdr, rex/);
+  });
+
+  it("a Rex terminal selects rex without shelling out", async () => {
+    makeTmuxAvailable();
+    setRexExecutor(async () => {
+      throw new Error("the ambient signal is conclusive; no probe expected");
+    });
+    process.env.REX_SESSION = "session:01a1a0d3-ec66-7aa6-9558-c70476578a93";
+    process.env.TERM_PROGRAM = "rex";
+    expect((await detectMux()).name).toBe("rex");
+  });
+
+  it("tmux run inside a Rex terminal wins over Rex", async () => {
+    // tmux inherits $REX_SESSION from the Rex pane it was started in.
+    makeTmuxAvailable();
+    process.env.REX_SESSION = "session:01a1a0d3-ec66-7aa6-9558-c70476578a93";
+    process.env.TERM_PROGRAM = "rex";
+    process.env[TMUX] = "/tmp/tmux-1000/default,1,0";
+    expect((await detectMux()).name).toBe("tmux");
+  });
+
+  it("a stale $REX_SESSION outside a Rex terminal does not select rex", async () => {
+    makeTmuxAvailable();
+    process.env.REX_SESSION = "session:01a1a0d3-ec66-7aa6-9558-c70476578a93";
+    process.env.TERM_PROGRAM = "iTerm.app";
+    expect((await detectMux()).name).toBe("tmux");
+  });
+
+  it("$HERDR_ENV=1 wins over a Rex terminal (herdr run in a Rex tab)", async () => {
+    makeHerdrAvailable();
+    process.env[HERDR_ENV] = "1";
+    process.env.REX_SESSION = "session:01a1a0d3-ec66-7aa6-9558-c70476578a93";
+    process.env.TERM_PROGRAM = "rex";
+    expect((await detectMux()).name).toBe("herdr");
+  });
+
+  it("MU_MUX=rex selects the rex backend", async () => {
+    process.env[MU_MUX] = "rex";
+    expect(await detectMux()).toBe(rexBackend);
   });
 
   it("MU_MUX=herdr selects the herdr backend", async () => {
@@ -203,9 +252,14 @@ describe("muxByName", () => {
 });
 
 describe("activeMux memoization", () => {
+  beforeEach(() => {
+    // A real Rex install would otherwise answer `rex version` here.
+    setRexExecutor(async () => ({ stdout: "", stderr: "not found", exitCode: 127 }));
+  });
   afterEach(() => {
     delete process.env[TMUX];
     resetTmuxExecutor();
+    resetRexExecutor();
     resetMux();
   });
 

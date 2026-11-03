@@ -80,11 +80,11 @@ export const MURMUR_NOT_NEEDED_DETAIL =
  * pi agents report state over their control socket and a missing murmur only affects other CLIs.
  */
 export function murmurDoctorCheck(
-  agentStateSource: "murmur" | "herdr",
+  agentStateSource: "murmur" | "herdr" | "rex",
   opts: { muExtOk?: boolean } = {},
 ): DoctorCheck {
-  if (agentStateSource === "herdr") {
-    return { name: "murmur", status: "ok", detail: "agent state from herdr" };
+  if (agentStateSource !== "murmur") {
+    return { name: "murmur", status: "ok", detail: `agent state from ${agentStateSource}` };
   }
 
   const executable = resolveExecutable("murmur");

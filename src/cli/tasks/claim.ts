@@ -75,7 +75,7 @@ export async function cmdTaskRelease(
   if (opts.evidence) console.log(pc.dim(`  evidence: ${opts.evidence}`));
 }
 
-/** Whether the active mux can type into a non-pi pane (herdr yes, tmux no). No mux: true. */
+/** Whether the active mux can type into a non-pi pane (herdr and Rex yes, tmux no). No mux: true. */
 async function muxCanSendToPanes(): Promise<boolean> {
   try {
     return (await activeMux()).sendToPane !== undefined;

@@ -6,13 +6,15 @@
 
 import { say } from "../messages.js";
 import { herdrBackend } from "./herdr.js";
+import { insideRex, rexBackend } from "./rex.js";
 import { tmuxBackend } from "./tmux.js";
 import { type MuxBackend, type MuxBackendName, NoMultiplexerError } from "./types.js";
 
 /** Every backend mu knows about, in detection-precedence order. tmux is
  *  the incumbent and wins pure availability ties; herdr is selected by
- *  the narrower `$HERDR_ENV` ambient signal (see `detectMux`). */
-const BACKENDS: readonly MuxBackend[] = [tmuxBackend, herdrBackend];
+ *  the narrower `$HERDR_ENV` ambient signal and Rex by a Rex terminal
+ *  (see `detectMux`). */
+const BACKENDS: readonly MuxBackend[] = [tmuxBackend, herdrBackend, rexBackend];
 
 /** Look up a backend by name. Throws on unknown name. Backs `MU_MUX`. */
 export function muxByName(name: MuxBackendName): MuxBackend {
@@ -35,7 +37,7 @@ const KNOWN_NAMES: readonly string[] = BACKENDS.map((b) => b.name);
  *      typo'd backend name should fail loud, not quietly run on tmux.
  *   2. Ambient signal    — an env var proving the CALLER is already
  *      inside a managed pane of that mux ($HERDR_ENV for herdr, $TMUX
- *      or $TMUX_PANE for tmux). The most specific signal wins, since a
+ *      or $TMUX_PANE for tmux, $REX_SESSION with TERM_PROGRAM=rex for Rex). The most specific signal wins, since a
  *      mux can run nested inside another: herdr panes routinely host a
  *      tmux server, so BOTH sets of vars can be present at once and
  *      $HERDR_ENV — the narrower claim — is checked first.
@@ -67,6 +69,10 @@ export async function detectMux(): Promise<MuxBackend> {
   // pass one through but not the other. Either one proves we are in a
   // tmux pane, which is what this rung is asking.
   if (process.env.TMUX || process.env.TMUX_PANE) return tmuxBackend;
+
+  // A Rex terminal, last: tmux or herdr run inside Rex, never the reverse,
+  // and both set their own vars in their panes ($REX_SESSION is inherited).
+  if (insideRex()) return rexBackend;
 
   for (const backend of BACKENDS) {
     if (await backend.available()) return backend;

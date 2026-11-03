@@ -1,6 +1,6 @@
 # Mux topology, backends and reconciliation
 
-mu runs agents in multiplexer panes, tmux or herdr, behind one
+mu runs agents in multiplexer panes, tmux, herdr or Rex, behind one
 `MuxBackend` interface. Overview: [ARCHITECTURE.md](../ARCHITECTURE.md).
 
 ## One mux session per workstream
@@ -9,14 +9,17 @@ One workstream is one mux session and one `workstream_id` partition in
 `~/.local/state/mu-next/mu.db`. Workstreams on one machine are independent
 mux sessions.
 
-| mu term | tmux | herdr |
-| --- | --- | --- |
-| **mux session** | session | workspace |
-| **window** | window | tab |
-| **pane** | pane (`%15`) | pane (`w1:p1`) |
+| mu term | tmux | herdr | Rex |
+| --- | --- | --- | --- |
+| **mux session** | session | workspace | session |
+| **window** | window | tab | window |
+| **pane** | pane (`%15`) | pane (`w1:p1`) | block (`block:<uuid>`) |
 
 herdr's own "session" is server-level (one socket), which is the wrong
-granularity, so a herdr workspace plays the mux-session role.
+granularity, so a herdr workspace plays the mux-session role. Rex
+addresses sessions and windows by id; mu finds its own by label and then
+works in ids, and a block call carries the block's session (resolved
+with `target.resolve`), since Rex scopes block lookups to one session.
 
 ```
   tmux session: mu-auth-refactor              (one mu workstream)
@@ -106,10 +109,16 @@ closes the bare pane when the start fails. spawn.ts never sees the two
 halves; it branches on the capability flag `spawnAgentWaitsReady`, not
 on a name:
 
-| | tmux | herdr |
+| | tmux, Rex | herdr |
 | --- | --- | --- |
 | `spawnAgentWaitsReady` | false | true |
 | after `spawnAgent` | mu checks pane life and startup errors | the mux returned once the agent is ready |
+
+Rex creates the window or split and starts the command in one
+`session.new_window` / `session.new_split` call, with `focus: false`.
+Retention is a creation option (`exit.on_completion: false`), so a
+retained pane needs no placeholder respawn; a plain pane sets the quick-exit
+hold to 0 so it closes on any exit, like a tmux pane.
 
 - **tmux.** After `MU_SPAWN_LIVENESS_MS` (default 1500, `0` skips) mu
   verifies the pane survived and scans its tail for provider or auth
@@ -166,6 +175,7 @@ Runtime state is read on demand and never persisted.
 | --- | --- |
 | pi (`expectsCtl`) | its control socket, probed in parallel for all pi agents |
 | other CLI on herdr | herdr's native `paneStatus()` |
+| other CLI on Rex | `paneStatus()`: the terminal's OSC 7501 records (`program_status`). A blocked record wins (`kind=permission` → `needs_permission`), else the root record (`working` → `busy`, at rest → `needs_input`) |
 | other CLI on tmux | murmur: one `list-panes -a` reads `@murmur_pane_state` / `@murmur_pane_since`; agents without a local option fall back to `murmur status --json`, cached 10s |
 
 - ctl `idle` maps to `needs_input`. murmur maps `working` → `busy`,
@@ -175,6 +185,6 @@ Runtime state is read on demand and never persisted.
 - An absent reading is `unknown` with a reason: `ctl missing`,
   `ctl refused`, `murmur not installed`, `murmur pi extension not
   linked`, `murmur has no row`, `remote snapshot stale`, `herdr reports
-  no state`, or `pane gone`.
+  no state`, `rex: no program status reported`, or `pane gone`.
 - `agents.status` is deprecated. Inserts write `spawning` to satisfy the
   schema; nothing reads it as runtime state.
