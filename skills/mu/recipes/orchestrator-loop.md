@@ -20,8 +20,7 @@ For dispatch and merge.
 
 ## Merging
 
-- Cherry-pick new commits as workers close; gate one pinned batch ([test-health](test-health.md)); push the verified tree.
-- Accept evidence, not close notes: rerun the check.
+Follow [merge](merge.md): inline, or past ~4 workers through a merge task.
 
 ## Sending
 

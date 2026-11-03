@@ -10,6 +10,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **Recipes: merge a batch through a short-lived merge task.** Past about 4
+  workers, the new [merge](skills/mu/recipes/merge.md) recipe
+  hands each batch to a `merge_<n>` task in its own worktree. The task
+  cherry-picks, resolves append-only conflicts and runs the gate, and it never
+  pushes. The orchestrator checks the GATE record and pushes fast-forward
+  only. This keeps gate and conflict noise out of the orchestrator's context
+  without a long-lived merger role. [course-correct](skills/mu/recipes/course-correct.md)
+  now measures merge latency split into gate/CI time and queue wait.
+
 ## [4.3.1] — 2026-11-02
 
 ### Fixed

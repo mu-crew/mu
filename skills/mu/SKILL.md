@@ -67,6 +67,7 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Alwa
 | Recipe | Read when |
 | --- | --- |
 | [orchestrator-loop](recipes/orchestrator-loop.md) | you dispatch and merge |
+| [merge](recipes/merge.md) | units are ready to land |
 | [brief](recipes/brief.md) | you write what a worker reads |
 | [tasks-or-calls](recipes/tasks-or-calls.md) | a step spawns an agent |
 | [findings](recipes/findings.md) | a check reports problems |

@@ -18,6 +18,7 @@ Use when a hint says `course check due: <n> closed since <date>`, or a human ask
    - Review cost: rounds per unit, findings by severity. Bar: high = fix + re-review; medium = fix, evidence in the close note; low = one batch.
    - Code budget: `src/` vs baseline; units >30% over budget.
    - Real use: last dogfood date; what it found that review missed.
+   - Merge latency: gate+CI vs queue.
 4. **Propose at most 7 changes**, each tied to a number.
 5. **Stop**: `mu human-needed -w <ws> "course check: <n> proposed changes, see note"`.
 6. **Approved**: one umbrella note starting `COURSE CHECK <date>` (the hint counts from it) and the DAG diff, then dispatch.
