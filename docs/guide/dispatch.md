@@ -114,11 +114,14 @@ written before each step, so the same command never sends a second prompt.
 ### Non-pi agents
 
 Agents other than pi have no control socket. On herdr, mu sends the
-text with herdr's atomic `agent prompt`. To start a new session, send
+text with herdr's atomic `agent prompt`. On Rex, mu pastes it and then
+presses Enter; a multi-line text needs the agent to have turned on
+bracketed paste (claude and codex do), otherwise the send is refused. To start a new session, send
 `/new` (codex: `/clear`), then the prompt. If mu prints
 `warning: ... was NOT submitted`, the agent has not seen the text.
 Read the pane before you wait. On tmux, a send to a non-pi agent exits
-4 (`AgentSendUnsupportedError`): spawn it on herdr (`MU_MUX=herdr`), start
+4 (`AgentSendUnsupportedError`): spawn it on herdr or Rex (`MU_MUX=herdr`,
+`MU_MUX=rex`), start
 it with the prompt as an argument, or use pi
 ([other agent CLIs](other-agent-clis.md)).
 

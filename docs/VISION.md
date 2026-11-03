@@ -109,16 +109,17 @@ which task.
 ### 5. One workstream per mux session
 
 A workstream is a mux session: a tmux session on tmux, a herdr workspace
-on herdr. Its agents are panes in that session, so
+on herdr, a Rex session on Rex. Its agents are panes in that session, so
 `tmux a -t mu-<workstream>` shows the whole crew. Workstreams on one
 machine are separate sessions, partitioned in the DB by `workstream_id`.
 The crew survives detach and reattach.
 
 The multiplexer is a backend chosen by detection
-(`MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH`).
-Topology, herdr's atomic send, scrollback capture, pane-id validation,
-and identity fallback live behind `MuxBackend` in `src/mux/`. There are
-two implementations. A third needs its own friction evidence.
+(`MU_MUX` → `HERDR_ENV` → `$TMUX` → a Rex terminal → `PATH`).
+Topology, the non-pi send (herdr's atomic `agent prompt`, Rex's paste),
+scrollback capture, pane-id validation, and identity fallback live behind
+`MuxBackend` in `src/mux/`. There are three implementations: tmux, herdr
+and Rex. A fourth needs its own friction evidence.
 
 ### 6. Pi-first, with reported agent state
 
@@ -128,6 +129,7 @@ mu never infers agent state from pane text. Each state source reports it:
 | --- | --- | --- |
 | pi (any backend, local or remote over `ssh -L` or a carrier's forward) | control socket, exact | control socket |
 | other CLI on herdr | mux | herdr |
+| other CLI on Rex | mux (paste, then Enter) | the agent's own OSC 7501 report |
 | other CLI on tmux | none: send refused | murmur |
 
 With no source, state is `unknown` with a reason. A pi agent whose
@@ -266,7 +268,7 @@ previous surface on the same scenarios ([reports](eval/README.md)).
 
 ## Key constraints
 
-1. **Agents need a multiplexer** (tmux or herdr). `mu doctor` reports
+1. **Agents need a multiplexer** (tmux, herdr or Rex). `mu doctor` reports
    the backend. Agent verbs exit 5 when none is reachable; task verbs
    and `mu_delegate` (a child pi process) work without one.
 2. **The agent never acknowledges a send.** For pi, the control socket

@@ -133,7 +133,7 @@ hold to 0 so it closes on any exit, like a tmux pane.
   subsumes both checks. A command override (`MU_<CLI>_COMMAND`,
   `--command`) is refused with `HerdrCommandOverrideError` before herdr
   is touched.
-- **pi, either backend.** After the agent starts, mu polls its control
+- **pi, any backend.** After the agent starts, mu polls its control
   socket until the extension answers (`MU_SPAWN_CTL_MS`, default 30s;
   `--no-ctl` or `0` skips). A timeout is reported but not rolled back:
   the pane and pi are fine, only control is missing. See
@@ -175,16 +175,17 @@ Runtime state is read on demand and never persisted.
 | --- | --- |
 | pi (`expectsCtl`) | its control socket, probed in parallel for all pi agents |
 | other CLI on herdr | herdr's native `paneStatus()` |
-| other CLI on Rex | `paneStatus()`: the terminal's OSC 7501 records (`program_status`). A blocked record wins (`kind=permission` → `needs_permission`), else the root record (`working` → `busy`, at rest → `needs_input`) |
+| other CLI on Rex | `paneStatus()`: the terminal's OSC 7501 records (`program_status`), only those whose `owner.pid` is the block's own program (a tool the agent runs reports into the same terminal). A blocked record wins (`kind=permission` → `needs_permission`, else `needs_input`), then the root record (`working` → `busy`, at rest → `needs_input`) |
 | other CLI on tmux | murmur: one `list-panes -a` reads `@murmur_pane_state` / `@murmur_pane_since`; agents without a local option fall back to `murmur status --json`, cached 10s |
 
 - ctl `idle` maps to `needs_input`. murmur maps `working` → `busy`,
   `blocked` → `needs_permission`, and `idle` / `done` / `crashed` →
-  `needs_input`. herdr supplies mu's states directly. See murmur's
+  `needs_input`. herdr supplies mu's states directly; Rex's OSC 7501
+  states map like murmur's (`idle` / `done` / `error` → `needs_input`). See murmur's
   [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
 - An absent reading is `unknown` with a reason: `ctl missing`,
   `ctl refused`, `murmur not installed`, `murmur pi extension not
   linked`, `murmur has no row`, `remote snapshot stale`, `herdr reports
-  no state`, `rex: no program status reported`, or `pane gone`.
+  no state`, `rex reports no state`, or `pane gone`.
 - `agents.status` is deprecated. Inserts write `spawning` to satisfy the
   schema; nothing reads it as runtime state.

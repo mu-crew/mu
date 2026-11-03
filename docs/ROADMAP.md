@@ -125,7 +125,7 @@ track them; delete the row when one ships.
   (`worker-1`, `reviewer-1`).
 - **Pane scraping as a state fallback.** No state source means `unknown`.
 - **Runtime agent state in `mu.db`.** The copy goes stale. The control
-  socket, herdr, or murmur owns the current reading.
+  socket, herdr, Rex, or murmur owns the current reading.
 - **Reading murmur's `state.db`.** Use its public contract.
 - **murmur as a hard dependency.** pi agents and the task graph do not
   need it.

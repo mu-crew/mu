@@ -1,7 +1,7 @@
 ---
 name: mu
 description: >-
-  Fresh-context delegates and crews in tmux/herdr panes. Check before you
+  Fresh-context delegates and crews in tmux/herdr/Rex panes. Check before you
   commit: have a `mu_delegate` call refute a claim, root cause, plan, fix or
   brief before you act on it. Also parallel read-only research, fan-out,
   background helpers, and persistent crews with a task DAG, review gates and
@@ -12,7 +12,7 @@ description: >-
 
 # mu
 
-Agents in tmux/herdr panes, coordinated by a SQLite task DAG. **`mu --help` and
+Agents in tmux/herdr/Rex panes, coordinated by a SQLite task DAG. **`mu --help` and
 `mu <verb> --help` outrank this skill**; a verb they omit does not exist. A verb takes
 `-w <workstream>` only if its `--help` lists it (`doctor`, `sync`, `delegates
 show` do not); workers get it.

@@ -25,7 +25,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **window name** | A window's name: the agent's `--tab` value, or the agent name. | "tab name" |
 | **pane** | One shell view inside a **window**. | "terminal", "shell" |
 | **pane id** | The mux's stable pane handle: tmux `%15`, herdr `w1:p1`, Rex `block:<uuid>`. Not the volatile tmux pane index, which is never stored. | "pane number", "pane index" |
-| **substrate** | An external system mu depends on: tmux, herdr, git, SQLite. | "dependency" (an npm dep), "service" |
+| **substrate** | An external system mu depends on: tmux, herdr, Rex, git, SQLite. | "dependency" (an npm dep), "service" |
 | **crew** | Informal: the agents in a workstream. Prose only. | |
 
 ### Agents
@@ -43,7 +43,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **persistent** | An agent that stays alive across tasks. | "long-lived" (prose only) |
 | **one-shot** | An agent that exists for one task. | "ephemeral", "transient" |
 | **nudge** | A pi extension continuation at settle. The keep-driving one is the **settle wait**: every completed settle of an orchestrator runs `mu wait` as its callers and continues the turn with the event, until nothing is owed or the user cancels (under a `mu human-needed` stop it still collects owned work, led by the drain rule, and starts nothing). The close nudge tells a worker once per prompt to close the task it still owns (never a delegate's own `kind=delegate` task: its call closes it). | "goal", "loop" |
-| **delegate** | A scratch agent started for one check. Its call is a `delegate`-kind task; its answer is that task's report, and the settle wait shows it to pi (a wave's as one **wave summary**). The `mu_delegate` tool does it in one call; the pane stays attachable, and its pi session is kept under `<DB dir>/delegate-sessions/`, out of the caller's `/resume` list. With no tmux or herdr the tool runs it as a **delegate process** instead (no pane). | "subagent", "child agent" |
+| **delegate** | A scratch agent started for one check. Its call is a `delegate`-kind task; its answer is that task's report, and the settle wait shows it to pi (a wave's as one **wave summary**). The `mu_delegate` tool does it in one call; the pane stays attachable, and its pi session is kept under `<DB dir>/delegate-sessions/`, out of the caller's `/resume` list. With no multiplexer the tool runs it as a **delegate process** instead (no pane). | "subagent", "child agent" |
 | **wake** | The one pi message the delegate side sends for a recorded answer when no settle wait will show it (pi idle, `MU_NUDGE=0`): a pointer per answer (`mu task notes <task> -w <ws>`), no answer text, that starts a turn whose settle shows the report. Losing or repeating one loses or repeats nothing. | "echo", "follow-up answer" |
 | **wave summary** | What the settle wait shows for a delegate of a wave: it waits while siblings run (never on refused ones), then ONE entry with counts per verdict, a line per call and the answers, instead of one per call. | "wave echo" |
 | **envelope** | The one JSON document a `--json` invocation prints on stdout: `{ok:true,data,next}`, or on failure `{ok:false,error,message,next,exit}` with the real non-zero exit (`src/output-contract.ts`). A failed verb that already produced evidence (a spawn whose `--send` failed, a `doctor` report) carries it in `data`. `mu log --tail` is always NDJSON (one item per line), never enveloped. | "wrapper", "result object" |
@@ -248,7 +248,7 @@ Terms the [4.0 contract](reference/surface-contract.md) added.
 ```
   workstream  (one DB partition)
   ┌──────────────────────────────────────────────────────────────┐
-  │  mux session: mu-auth-refactor  (tmux session / herdr ws)    │
+  │  mux session: mu-auth-refactor  (tmux/Rex session, herdr ws) │
   │  ┌──────────────────────────┐  ┌──────────────────────────┐  │
   │  │ window: Backend          │  │ window: Review           │  │
   │  │ ┌──────────┐ ┌─────────┐ │  │ ┌──────────────────────┐ │  │
@@ -283,11 +283,11 @@ deprecated, always `spawning`, and never read.
 | Avoid | Why | Use instead |
 | --- | --- | --- |
 | "subagent" | Means a hidden child in other tools; mu has none | "agent", "delegate", or "hidden subagent" when contrasting |
-| "session" | pi, tmux, and herdr each have one | "workstream", "mux session", "tmux session" |
+| "session" | pi, tmux, herdr and Rex each have one | "workstream", "mux session", "tmux session" |
 | "workspace" | The retired word for a worktree; in the mux sense only "herdr workspace", about herdr's CLI | "worktree"; "mux session" |
 | "project" | Means a `.pi/` project root | "workstream" |
 | "context" | LLM, project, and fork context | Be specific: "task context" |
-| "tab" | tmux has windows (herdr calls them tabs) | "window"; `--tab` is the flag |
+| "tab" | tmux and Rex have windows (herdr calls them tabs; Rex.app shows windows as tabs) | "window"; `--tab` is the flag |
 | "thread" | OS, chat, and git threads | Be specific |
 | "message" | LLM message, log message, pane input | "log entry", "send" |
 | "config" | mu has no config file | "settings", "options" |
@@ -307,6 +307,7 @@ deprecated, always `spawning`, and never read.
 | **mux session** | The backend-agnostic container for a workstream's panes |
 | **tmux session** | The tmux session `mu-<workstream>` |
 | **herdr session** | herdr's server-level unit (one socket). Not a mux session: a workstream maps to a herdr workspace, one level down |
+| **Rex session** | Rex's session, labelled `mu-<workstream>`: the Rex flavour of a **mux session** |
 | **pi session** | pi's conversation |
 | **agent session** | Colloquial for an agent's lifetime; avoid in code |
 

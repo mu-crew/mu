@@ -21,8 +21,8 @@ with the multiplexer:
   its `IN_PROGRESS` task returns to `OPEN`. A `mu wait` on that
   task exits 6.
 - A pane in the session that runs an agent CLI but has no row is an
-  orphan. mu lists it and does not register it. Close the pane with
-  tmux or herdr, or ignore it.
+  orphan. mu lists it and does not register it. Close the pane in
+  your multiplexer, or ignore it.
 
 A `mu agent spawn --task` after a dead worker, with the same attempt
 key but a new request, is refused (`already ran with a different
