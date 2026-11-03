@@ -12,6 +12,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **The dashboard names its window `mu`, not `node`.** Bare `mu` sets
+  `process.title` (tmux's automatic window name) and the terminal title (OSC 2),
+  then restores the caller's title on exit.
 - **Recipes: merge a batch through a short-lived merge task.** Past about 4
   workers, the new [merge](skills/mu/recipes/merge.md) recipe
   hands each batch to a `merge_<n>` task in its own worktree. The task
