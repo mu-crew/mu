@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.3.2] — 2026-11-03
+
 ### Added
 
 - **Rex as a third mux backend** (`MU_MUX=rex`, or run mu in a Rex
@@ -19,8 +21,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   comes from the program's own OSC 7501 report (`program_status`), and
   non-pi sends are a paste event plus Enter (a multi-line text is refused
   unless the agent turned on bracketed paste). Panes run the command through
-  `$SHELL -ic`, so agents see the environment of the user's own Rex tabs. Attach asks Rex.app to
-  switch (`rex do session.select`), which needs Remote Control on.
+  `$SHELL -ic`, so agents see the environment of the user's own Rex tabs.
+  Attach asks Rex.app to switch (`rex do session.select`), which needs
+  Remote Control on.
   `MU_REX_SERVER` points mu at another server. See
   [backends](docs/guide/backends.md).
 
