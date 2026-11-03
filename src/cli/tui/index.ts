@@ -33,9 +33,17 @@ export async function runDashboard(opts: RunDashboardOptions): Promise<void> {
     syncDb: opts.syncDb,
     caller: spawnerFromEnv(),
   });
+  // The terminal's title and tmux's window name show `node` otherwise:
+  // process.title renames the process (tmux automatic-rename reads it); OSC 2
+  // sets the title, between an XTWINOPS push and pop of the caller's title.
+  process.title = "mu";
+  process.stdout.write("\u001b[22;0t\u001b]2;mu\u0007");
   let app: Instance | undefined;
   // Steps run in order: restore the terminal first, then drain and close.
   opts.shutdown.add(() => app?.unmount());
+  opts.shutdown.add(() => {
+    process.stdout.write("\u001b[23;0t");
+  });
   opts.shutdown.add(() => runtime.close());
   app = render(
     createElement(App, {
