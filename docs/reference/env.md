@@ -19,12 +19,16 @@ milliseconds; `0` disables a wait unless noted.
 
 | Name | Effect | Default |
 | --- | --- | --- |
-| `MU_MUX` | Force `tmux` or `herdr`, skipping mux detection. An unknown value fails the invocation. | detected |
+| `MU_MUX` | Force `tmux`, `herdr` or `rex`, skipping mux detection. An unknown value fails the invocation. | detected |
 | `HERDR_ENV` | Read only. `1` (set by herdr in its panes) selects herdr; outranks `$TMUX`. | |
 | `TMUX`, `TMUX_PANE` | Read only. Either one (set by tmux in its panes) selects tmux. `$TMUX` gates reading the current session name, used only as the suggestion in the missing-`-w` error: it never routes a verb. `mu me` / `mu state --me` never read `$TMUX_PANE` (identity is the injected `MU_AGENT_NAME` or `PI_SESSION_ID`); only `mu task list --mine` and a few older self-readers still fall back to it when no `MU_AGENT_NAME` is injected. | |
 | `HERDR_WORKSPACE_ID` | Read only. Set by herdr in its panes; pane listing with no target reads this workspace first. | |
 | `HERDR_PANE_ID` | Read only. Set by herdr in its panes. | |
 | `MU_TMUX_SOCKET` | Run every tmux call on a private server (`-L <name>`) with `-f /dev/null`, so `~/.tmux.conf` is not loaded. The test suite uses it, and so can you to keep a crew off your own tmux server (a demo, a smoke test). Attach lines mu prints then carry `-L <name>`, and the dashboard's `a` nests a client on purpose when you are inside another tmux. tmux only. | unset: tmux's default server |
+| `REX_SESSION`, `REX_BLOCK` | Read only. Set by Rex in its terminals; `$REX_SESSION` with `TERM_PROGRAM=rex` selects rex, below tmux and herdr. | |
+| `REX_BIN_DIR` | Read only. Set by Rex in its terminals; mu runs `$REX_BIN_DIR/rex`, else `rex` on `PATH`. | |
+| `REX_CLIENT` | The Rex app an attach switches when several are connected (read by `rex` itself). | the only app |
+| `MU_REX_SERVER` | Run every rex call against this server (`rex -S <server>`), e.g. a private `rex server run --listen unix://…` for tests. rex only. | the local Rex server |
 | `MU_HERDR_SESSION` | Named herdr server (`--session <name>`). herdr only. Tests must set it to a non-default name. | herdr default session |
 
 ## Spawn

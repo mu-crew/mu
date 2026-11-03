@@ -314,6 +314,10 @@ export const MESSAGES = {
     `herdr refused to close workspace ${workspaceId} (${session}): it has linked worktree workspaces, which mu did not create and will not close on your behalf. herdr said: ${detail}`,
   "mux.herdr_no_panes": (tab: string, session: string) =>
     `spawnAgent: tab ${tab} in session ${session} has no panes to split (it vanished mid-spawn?)`,
+  "mux.rex_failed": (args: readonly string[], exit: number | null, detail: string) =>
+    `rex ${args.join(" ")} failed (exit ${exit}): ${detail}`,
+  "mux.rex_no_bracketed_paste": (pane: string) =>
+    `rex pane ${pane} has not turned on bracketed paste, so a multi-line send would submit line by line; send one line, or start the agent with a CLI that reads pastes`,
   "mux.unknown_backend": (name: string) => `unknown mux backend: ${name}`,
   "sync.peer_not_found": (ref: string, known: readonly string[]) =>
     `no peer matches ${JSON.stringify(ref)}${

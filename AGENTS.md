@@ -1,7 +1,7 @@
 # Repo guide for AI coding agents
 
-This repo builds **mu**: a CLI that runs AI agents in tmux or herdr
-panes, coordinated through a task DAG.
+This repo builds **mu**: a CLI that runs AI agents in tmux, herdr or
+Rex panes, coordinated through a task DAG.
 
 ## Read these first
 
@@ -176,7 +176,7 @@ Call sites use `await activeMux()` and never name a backend.
 
 1. Add the method to `MuxBackend` (`src/mux/types.ts`) with a comment
    saying what it means.
-2. Implement it in `src/mux/tmux.ts` and `src/mux/herdr.ts`. A backend
+2. Implement it in `src/mux/tmux.ts`, `src/mux/herdr.ts` and `src/mux/rex.ts`. A backend
    with no equivalent no-ops instead of throwing.
 3. If only one backend can do it, make it optional and branch on the
    method's presence, not on `mux.name`.

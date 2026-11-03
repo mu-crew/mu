@@ -10,6 +10,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **Rex as a third mux backend** (`MU_MUX=rex`, or run mu in a Rex
+  terminal). A workstream is a Rex session labelled `mu-<ws>`, an agent a
+  terminal block. mu drives Rex through its server API (`rex api call`),
+  so spawn is one call that never takes focus. Agent state for non-pi CLIs
+  comes from the program's own OSC 7501 report (`program_status`), and
+  non-pi sends are a bracketed paste plus Enter. Attach asks Rex.app to
+  switch (`rex do session.select`), which needs Remote Control on.
+  `MU_REX_SERVER` points mu at another server. See
+  [backends](docs/guide/backends.md).
+
 ### Changed
 
 - **The dashboard names its window `mu`, not `node`.** Bare `mu` sets

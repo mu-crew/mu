@@ -29,6 +29,7 @@ import {
   muxByName,
   setHerdrExecutor,
   setMuxForTests,
+  setRexExecutor,
 } from "../src/mux.js";
 import { setTmuxExecutor } from "../src/tmux.js";
 
@@ -124,8 +125,10 @@ export function installMux(
   };
 
   const previousBackend = setMuxForTests(muxByName(backend));
-  const previousExecutor =
-    backend === "herdr" ? setHerdrExecutor(executor) : setTmuxExecutor(executor);
+  const setExecutor = { herdr: setHerdrExecutor, rex: setRexExecutor, tmux: setTmuxExecutor }[
+    backend
+  ];
+  const previousExecutor = setExecutor(executor);
 
   let restored = false;
   return {
@@ -138,11 +141,7 @@ export function installMux(
       restored = true;
       // An outermost install saw `undefined`, so this re-arms detection.
       setMuxForTests(previousBackend);
-      if (backend === "herdr") {
-        setHerdrExecutor(previousExecutor);
-      } else {
-        setTmuxExecutor(previousExecutor);
-      }
+      setExecutor(previousExecutor);
     },
   };
 }
@@ -186,11 +185,13 @@ export function installNoMux(): { restore(): void } {
   const previousBackend = setMuxForTests(undefined);
   const previousTmux = setTmuxExecutor(gone);
   const previousHerdr = setHerdrExecutor(gone);
+  const previousRex = setRexExecutor(gone);
   return {
     restore() {
       setMuxForTests(previousBackend);
       setTmuxExecutor(previousTmux);
       setHerdrExecutor(previousHerdr);
+      setRexExecutor(previousRex);
     },
   };
 }

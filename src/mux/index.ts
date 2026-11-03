@@ -12,6 +12,12 @@ export {
   resetHerdrExecutor,
   setHerdrExecutor,
 } from "./herdr.js";
+export {
+  RexError,
+  resetRexExecutor,
+  rexBackend,
+  setRexExecutor,
+} from "./rex.js";
 export { tmuxAttachMode, tmuxBackend } from "./tmux.js";
 export {
   type AttachTarget,

@@ -86,12 +86,15 @@ export function checkDbIntegrity(
 const LABEL_WIDTH = 19;
 const pad = (s: string): string => s.padEnd(LABEL_WIDTH);
 
-/** Where agent state comes from: herdr on herdr, murmur otherwise. A
+/** Where agent state comes from: the mux itself on herdr and Rex, murmur on tmux. A
  *  live mu extension makes murmur optional for pi agents. */
 function agentStateCheck(health: MuxHealth | undefined, muExtLive: boolean): DoctorCheck {
-  return murmurDoctorCheck(health?.name === "herdr" ? "herdr" : "murmur", {
-    muExtOk: muExtLive,
-  });
+  return murmurDoctorCheck(
+    health === undefined || health.name === "tmux" ? "murmur" : health.name,
+    {
+      muExtOk: muExtLive,
+    },
+  );
 }
 
 function cycleFix(c: EdgeCycle): string {
@@ -123,7 +126,7 @@ async function muxHealth(): Promise<MuxHealth | undefined> {
  *  NOT this case: detached servers start on demand. */
 function noMuxFailure(health: MuxHealth | undefined): NoMultiplexerError | null {
   if (health?.ok === true) return null;
-  return new NoMultiplexerError(health === undefined ? ["tmux", "herdr"] : [health.name]);
+  return new NoMultiplexerError(health === undefined ? ["tmux", "herdr", "rex"] : [health.name]);
 }
 
 /** Render a hazard list as doctor rows plus a remediation block per

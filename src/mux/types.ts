@@ -5,11 +5,11 @@
 // Everything backend-specific lives behind `MuxBackend`:
 //
 //   - session / window / pane topology, behind `ensureSession` and
-//     `spawnAgent` (a spawn is ONE backend operation: tmux creates and
-//     runs in one step, herdr creates a shell pane and starts the agent)
-//   - the send protocol (herdr only: atomic `agent prompt`)
+//     `spawnAgent` (a spawn is ONE backend operation: tmux and Rex create
+//     and run in one step, herdr creates a shell pane and starts the agent)
+//   - the send protocol (herdr: atomic `agent prompt`; Rex: paste + Enter)
 //   - scrollback capture
-//   - PANE ID VALIDATION — tmux `%15` vs herdr `w1:p1`, which is why
+//   - PANE ID VALIDATION — tmux `%15`, herdr `w1:p1`, Rex `block:<uuid>`, which is why
 //     there is no global pane-id regex
 //
 // Agent identity is `$MU_AGENT_NAME`; no backend reads or writes pane
@@ -22,7 +22,7 @@ import { say } from "../messages.js";
 import { shellWord } from "../shell-quote.js";
 
 /** The multiplexers mu can drive. */
-export type MuxBackendName = "herdr" | "tmux";
+export type MuxBackendName = "herdr" | "rex" | "tmux";
 
 /** Runtime states a mux backend can report directly for one pane. */
 export type MuxPaneStatus = "busy" | "needs_input" | "needs_permission";
@@ -330,9 +330,10 @@ export interface MuxBackend {
 
   // — optional capabilities —
   /** The pane's runtime state as the mux itself reports it, or undefined
-   *  when the pane is gone or unclassified. herdr only: for non-pi agents. */
+   *  when the pane is gone or unclassified. herdr (its classifier) and Rex
+   *  (the program's OSC 7501 report): for non-pi agents. */
   paneStatus?(paneId: string): Promise<MuxPaneStatus | undefined>;
-  /** tmux only: whether the pane runs, exited (a retained pane: `retainOnExit`)
+  /** tmux and Rex: whether the pane runs, exited (a retained pane: `retainOnExit`)
    *  or is gone. Unlike `paneAlive` (handle existence), an exited pane is NOT
    *  running here. Throws when the probe itself fails: unknown, never a result. */
   paneResult?(paneId: string): Promise<PaneResult>;
@@ -341,12 +342,12 @@ export interface MuxBackend {
    *  life. False when the pane is gone or herdr detects no agent in it;
    *  throws when the probe itself fails. */
   paneOccupied?(paneId: string): Promise<boolean>;
-  /** tmux only: the pid of the pane's first process (`#{pane_pid}`), so a
+  /** tmux (`#{pane_pid}`) and Rex: the pid of the pane's first process, so a
    *  caller can tell the agent's own processes from others; undefined when
    *  the pane is gone. Throws when the probe itself fails. */
   panePid?(paneId: string): Promise<number | undefined>;
-  /** herdr only: atomic `agent prompt`. tmux has no reliable paste (cut in
-   *  4.0), so callers branch on the method's presence, never on
+  /** herdr: atomic `agent prompt`; Rex: a paste event, then Enter. tmux has
+   *  no reliable paste (cut in 4.0), so callers branch on the method's presence, never on
    *  `mux.name`, and refuse when it is absent. */
   sendToPane?(paneId: string, text: string, opts?: SendOptions): Promise<void>;
   /** The argv steps that type pi's `/reload` into `paneId` from outside, for

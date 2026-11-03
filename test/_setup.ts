@@ -67,6 +67,8 @@ const ALLOWED: ReadonlySet<string> = new Set([
   "MU_TMUX_SOCKET",
   // The herdr equivalent: an isolated named herdr server.
   "MU_HERDR_SESSION",
+  // The Rex equivalent: a private `rex server run --listen unix://…`.
+  "MU_REX_SERVER",
 ]);
 
 for (const key of Object.keys(process.env)) {
@@ -79,6 +81,12 @@ for (const key of Object.keys(process.env)) {
 // (and spawn would stamp) a real session's work. Tests that need one set it.
 {
   const key = "PI_SESSION_ID";
+  delete process.env[key];
+}
+
+// A run from inside a Rex pane inherits its location: detection would pick Rex,
+// and the rex backend would drive the user's real server. Rex tests set theirs.
+for (const key of ["REX_SESSION", "REX_BLOCK", "REX_SERVER", "REX_BIN_DIR", "REX_CLIENT"]) {
   delete process.env[key];
 }
 

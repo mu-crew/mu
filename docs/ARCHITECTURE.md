@@ -45,12 +45,12 @@ claim keyed on `$MU_AGENT_NAME` coordinate the crew:
 [architecture/dag.md](architecture/dag.md).
 
 **Multiplexer and reconciliation.** One workstream is one mux session
-(a tmux session or a herdr workspace). Call sites reach the backend
+(a tmux session, a herdr workspace or a Rex session). Call sites reach the backend
 only through `activeMux()` and branch on capabilities, never on the
 backend name. `mu agent list` prunes ghost rows and surfaces orphan
 panes against mux reality. Runtime agent state is read on demand, never
 stored: the control socket for pi agents, herdr's native status on
-herdr, and murmur for other CLIs on tmux:
+herdr, the program's OSC 7501 report on Rex, and murmur for other CLIs on tmux:
 [architecture/mux.md](architecture/mux.md).
 
 **The control socket.** mu's pi extension serves a unix socket inside
@@ -164,9 +164,10 @@ are re-export hubs.
 | `src/reconcile.ts` | ghost prune and orphan surfacing |
 | `src/mux/index.ts` | cluster barrel that `src/mux.ts` re-exports |
 | `src/mux/types.ts` | `MuxBackend` interface (`ensureSession`, `spawnAgent`, `listPanes`, `paneAlive`, `capture`, `attachCommands`), `attachShellLine`; `MuxError`, `PaneNotFoundError`, `NoMultiplexerError` |
-| `src/mux/detect.ts` | `MU_MUX` → `HERDR_ENV` → `$TMUX` → `PATH` ladder; `activeMux()` |
+| `src/mux/detect.ts` | `MU_MUX` → `HERDR_ENV` → `$TMUX` → `$REX_SESSION` → `PATH` ladder; `activeMux()` |
 | `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, one-step `spawnAgent`, pane validation; no send |
 | `src/mux/herdr.ts` | herdr backend: JSON socket API, atomic send, native pane status, `spawnAgent` (bare pane, `agent start`) |
+| `src/mux/rex.ts` | Rex backend: the `rex()` wrapper over the server API (`rex api call`), one-call `spawnAgent`, OSC 7501 pane status, paste send, attach as the app's `session.select` |
 | `src/tmux.ts` | tmux-only re-exports: `MU_TMUX_SOCKET` seam, `sleep` / `setSleepForTests` |
 | `src/ctl/path.ts` | `ctlSocketPath`, `remoteCtlSocketPath`, `carrierJobFilePath` (`<state dir>/carrier/<ws>/<agent>.job`, hashed by the same bound), `MU_CTL_SOCK` |
 | `src/ctl/protocol.ts` | protocol v1 types, `CTL_OPS`, line framing; imports nothing from mu |
