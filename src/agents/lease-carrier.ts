@@ -143,7 +143,7 @@ export function readJobFile(path: string): JobFile {
   return JOB_HANDLE_RE.test(line) ? { kind: "handle", job: line } : { kind: "invalid", line };
 }
 
-const describeRead = (r: JobFile): string =>
+export const describeRead = (r: JobFile): string =>
   r.kind === "handle"
     ? `handle ${r.job}`
     : r.kind === "invalid"
