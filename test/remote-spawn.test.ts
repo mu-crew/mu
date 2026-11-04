@@ -851,12 +851,12 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
 // crashed leaves the canonical path empty, and a new tree there would strand the record.
 describe("a recovery record fences a same-host --worktree spawn of its name", () => {
   /** A finalized remote worktree agent of dev whose row went away: its record stays. */
-  const recorded = (): number => {
+  const recorded = (host = "dev"): number => {
     const row = insertAgent(db, {
       name: "worker-1",
       workstream: "auth",
       paneId: "%old",
-      host: "dev",
+      host,
       cwd: WT,
       base: SHA,
       repo: "/srv/repo",
@@ -888,6 +888,18 @@ describe("a recovery record fences a same-host --worktree spawn of its name", ()
     recorded();
     const err = await spawn({ worktree: true }).catch((e: unknown) => e);
     expect((err as Error).message).toContain("mu agent close worker-1 -w auth --recovery <id>");
+  });
+
+  it("one record here and one on another host: collect and close name this host's --recovery id", async () => {
+    const here = recorded();
+    recorded("free");
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RemoteRecoveryPendingError);
+    const msg = (err as Error).message;
+    expect(msg).toContain(`(recovery ${here})`);
+    expect(msg).toContain(`mu agent collect worker-1 -w auth --recovery ${here},`);
+    expect(msg).toMatch(new RegExp(`mu agent close worker-1 -w auth --recovery ${here}$`));
+    expect(execCalls()).toEqual([]);
   });
 
   it("another host's --worktree spawn is not refused by it", async () => {

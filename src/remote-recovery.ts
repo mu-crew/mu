@@ -209,8 +209,10 @@ export class RemoteRecoveryPendingError extends Error {
     public readonly host: string,
     /** The records in the way (original incarnations). */
     public readonly candidates: readonly number[],
+    /** Records of the name on every host: collect and close select across all of them. */
+    public readonly total: number = candidates.length,
   ) {
-    super(say("remote.recovery_pending", workstream, agentName, host, candidates));
+    super(say("remote.recovery_pending", workstream, agentName, host, candidates, total));
   }
 }
 
@@ -221,10 +223,9 @@ export function refuseRecoveredWorktree(
   name: string,
   host: string,
 ): void {
-  const ids = recoveriesFor(db, workstream, name)
-    .filter((r) => r.host === host)
-    .map((r) => r.agentId);
-  if (ids.length > 0) throw new RemoteRecoveryPendingError(workstream, name, host, ids);
+  const all = recoveriesFor(db, workstream, name);
+  const ids = all.filter((r) => r.host === host).map((r) => r.agentId);
+  if (ids.length > 0) throw new RemoteRecoveryPendingError(workstream, name, host, ids, all.length);
 }
 
 /** The profile at the time of use must be the one the record pinned. Missing provenance refuses. */
