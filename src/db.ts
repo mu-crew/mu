@@ -651,6 +651,8 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   // in place) and a lease profile's stop template (hosts.ts).
   ["host_profiles", "transport", "TEXT NOT NULL DEFAULT 'session'"],
   ["host_profiles", "stop", "TEXT"],
+  // A lease profile's attach template: a new carrier for a job that still runs (hosts.ts).
+  ["host_profiles", "attach", "TEXT"],
   // The transport of the profile a remote agent was spawned on ('session' | 'lease'): a close
   // decides lease-ness from the row, never from the profile as it is now.
   ["agents", "host_transport", "TEXT"],
@@ -1337,7 +1339,8 @@ CREATE TABLE IF NOT EXISTS host_profiles (
   repo         TEXT,                           -- default remote repo for spawns without --root; NULL: none
   max_sessions INTEGER CHECK (max_sessions > 0),
   transport    TEXT NOT NULL DEFAULT 'session', -- 'session' | 'lease' (validated in addHost, no CHECK: ADDED_COLUMNS cannot add one)
-  stop         TEXT                            -- lease only: the template that ends a job given its handle ({job}); NULL for session
+  stop         TEXT,                           -- lease only: the template that ends a job given its handle ({job}); NULL for session
+  attach       TEXT                            -- lease only, optional: a new carrier for a running job ({job}, {job_file}); NULL: none
 );
 
 ${CARRIER_JOBS_DDL}

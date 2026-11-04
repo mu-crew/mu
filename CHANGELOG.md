@@ -10,6 +10,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **`mu host add --attach <template>`**: a lease profile's optional template
+  that opens a new carrier for a job that still runs (2026-11-04 aiv-blog
+  incident; the reattach verb builds on it). It takes `{job}` and `{job_file}`
+  exactly once, `{local_sock}` and `{remote_sock}`, and `{cwd}` (always `.`);
+  `{cmd}` and `{env}` are refused, as is `--attach` on a session profile.
+  `host init --mule` prints the `mule run --lease --attach` starter line;
+  `host show` and `host list` print it; `host check` expands it with a dummy
+  handle and never runs it. Stored as `host_profiles.attach`, added in place
+  to a v13 file (no version bump).
+
 ### Fixed
 
 - **`mu agent close <name>` with no agent row no longer leaves a stopped lease

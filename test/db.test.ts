@@ -319,6 +319,26 @@ describe("openDb", () => {
     db.close();
   });
 
+  it("a fresh DB has host_profiles.attach (nullable), and reopening it runs no DDL", () => {
+    const db = openDb({ path: dbPath });
+    const col = db
+      .prepare(
+        "SELECT type, \"notnull\" AS nn FROM pragma_table_info('host_profiles') WHERE name = 'attach'",
+      )
+      .get();
+    db.close();
+    expect(col).toEqual({ type: "TEXT", nn: 0 });
+    const cookie = () => {
+      const raw = new Database(dbPath, { readonly: true });
+      const v = raw.pragma("schema_version", { simple: true });
+      raw.close();
+      return v;
+    };
+    const before = cookie();
+    openDb({ path: dbPath }).close();
+    expect(cookie()).toBe(before);
+  });
+
   it("reopening an up-to-date DB runs no DDL (schema cookie unchanged)", () => {
     openDb({ path: dbPath }).close();
     const cookie = () => {

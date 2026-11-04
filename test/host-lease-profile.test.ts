@@ -2,10 +2,12 @@
 // scopes the lexer enforces per field, `host init --mule`, and the CLI surface. mu stays
 // ssh-free and mule-agnostic: every template here is a fake run through /bin/sh.
 
+import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { carrierJobFilePath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
 import {
   addHost,
@@ -18,6 +20,7 @@ import {
   placeholderUses,
   validateHostTemplate,
 } from "../src/hosts.js";
+import { attachCommand, LOCAL_ONLY_ENV } from "../src/remote-agent.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -126,6 +129,83 @@ describe("profile validation matrix", () => {
   });
 });
 
+describe("the attach template (mu_profile)", () => {
+  const ATTACH = "carrier --attach {job} --job-file {job_file} -L {local_sock}:{remote_sock}";
+
+  it("a lease profile round-trips attach; without one it is null", () => {
+    expect(addHost(db, lease({ attach: ATTACH })).attach).toBe(ATTACH);
+    expect(addHost(db, lease({ name: "dev2" })).attach).toBeNull();
+    expect(addHost(db, session({ name: "s1" })).attach).toBeNull();
+  });
+
+  it.each([
+    ["{cmd}", `${ATTACH} {cmd}`, /--attach: \{cmd\} is not valid in the attach template/],
+    ["{env}", `${ATTACH} {env}`, /--attach: \{env\} is not valid in the attach template/],
+    ["no {job}", ATTACH.replace("{job} ", ""), /\{job\} exactly once \(found 0\)/],
+    ["{job} twice", `${ATTACH} {job}`, /\{job\} exactly once \(found 2\)/],
+    ["no {job_file}", ATTACH.replace("{job_file}", "x"), /\{job_file\} exactly once \(found 0\)/],
+    ["{job_file} twice", `${ATTACH} {job_file}`, /\{job_file\} exactly once \(found 2\)/],
+    [
+      "no {local_sock}",
+      ATTACH.replace("{local_sock}", "x"),
+      /attach template must contain \{local_sock\}/,
+    ],
+    [
+      "no {remote_sock}",
+      ATTACH.replace("{remote_sock}", "x"),
+      /attach template must contain \{remote_sock\}/,
+    ],
+    ["{{job}} only", ATTACH.replace("{job} ", "{{job}} "), /\{job\} exactly once \(found 0\)/],
+  ])("refuses an attach with %s and stores nothing", (_what, attach, re) => {
+    expect(() => addHost(db, lease({ attach }))).toThrow(re);
+    expect(listHosts(db)).toEqual([]);
+  });
+
+  it("a session profile refuses --attach", () => {
+    expect(() => addHost(db, session({ attach: ATTACH }))).toThrow(
+      /--attach is only for --transport lease/,
+    );
+    expect(() => addHost(db, session({ attach: ATTACH }))).toThrow(HostProfileError);
+    expect(listHosts(db)).toEqual([]);
+  });
+
+  it("attachCommand fills the template and wraps it like the shell; a hashed long job_file stays one word", () => {
+    const h = addHost(
+      db,
+      lease({ attach: "printf '%s\\n' {job} {job_file} {local_sock}:{remote_sock} {cwd}" }),
+    );
+    const jobFile = carrierJobFilePath("ws", `${"w".repeat(120)} it's`, join(dir, "st ate"));
+    expect(jobFile).toContain("/carrier/_h/");
+    const cmd = attachCommand(h, {
+      job: "j-1",
+      jobFile,
+      localSock: "/l s.sock",
+      remoteSock: "/r.sock",
+    });
+    expect(cmd.startsWith("exec env ")).toBe(true);
+    for (const k of LOCAL_ONLY_ENV) expect(cmd).toContain(`-u ${k} `);
+    const out = execFileSync("/bin/sh", ["-c", cmd], { encoding: "utf8" });
+    expect(out).toBe(`j-1\n${jobFile}\n/l s.sock:/r.sock\n.\n`);
+  });
+
+  it("attachCommand refuses a profile with no attach", () => {
+    expect(() =>
+      attachCommand(addHost(db, lease()), {
+        job: "j",
+        jobFile: "/j",
+        localSock: "/l",
+        remoteSock: "/r",
+      }),
+    ).toThrow(/no attach template/);
+  });
+
+  it("an attach permits {cwd} and repeated socks", () => {
+    expect(() =>
+      addHost(db, lease({ attach: `cd {cwd} && ${ATTACH} {local_sock} {remote_sock}` })),
+    ).not.toThrow();
+  });
+});
+
 describe("template grammar: the lexer decides, never a substring", () => {
   it("{{job_file}} is a literal, so a session shell may carry it", () => {
     expect(() =>
@@ -184,6 +264,7 @@ describe("host init --mule", () => {
     "--shell 'mule run --host dev --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}'",
     "--exec 'mule exec --host dev -- sh -c {cmd}'",
     "--stop 'mule rm --host dev {job}'",
+    "--attach 'mule run --host dev --lease --attach {job} --job-file {job_file} --forward-unix {local_sock}:{remote_sock}'",
     "--fetch 'git fetch ssh://dev{cwd} HEAD'",
   ].join(" \\\n  ");
 
@@ -202,6 +283,7 @@ describe("host init --mule", () => {
     ).not.toThrow();
     expect(s.shell).toContain("env {env} sh -c {cmd}");
     expect(s.stop).toBe("mule rm --host dev {job}");
+    expect(getHost(db, "dev").attach).toBe(s.attach);
   });
 
   it("--json carries the starter fields and the command", async () => {
@@ -254,6 +336,24 @@ describe("mu host add | list | show with a transport", () => {
     expect(show.stdout).toContain("stop   x rm {job}");
     const js = await runCliJson(["host", "show", "dev", "--json"], dbPath);
     expect(js.data.host).toMatchObject({ transport: "lease", stop: "x rm {job}" });
+  });
+
+  it("adds --attach; show, list and --json print it; a session refuses it (exit 2)", async () => {
+    const ATTACH = "c --attach {job} --job-file {job_file} {local_sock}:{remote_sock}";
+    const a = await runCliJson(
+      [...add(["--transport", "lease", "--stop", "x rm {job}", "--attach", ATTACH]), "--json"],
+      dbPath,
+    );
+    expect(a.exitCode).toBeNull();
+    expect(a.data.host).toMatchObject({ attach: ATTACH });
+    expect((await runCli(["host", "list"], dbPath)).stdout).toMatch(/ATTACH/);
+    expect((await runCli(["host", "show", "dev"], dbPath)).stdout).toContain(`attach ${ATTACH}`);
+    const s = await runCli(
+      ["host", "add", "s1", "--shell", "s", "--exec", "e", "--fetch", "f", "--attach", ATTACH],
+      dbPath,
+    );
+    expect(s.exitCode).toBe(2);
+    expect(listHosts(db).map((h) => h.name)).toEqual(["dev"]);
   });
 
   it("a session profile shows transport session and no stop line", async () => {

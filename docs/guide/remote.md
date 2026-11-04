@@ -184,6 +184,7 @@ mu host add dev --transport lease \
   --shell 'mule run --host dev --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}' \
   --exec  'mule exec --host dev -- sh -c {cmd}' \
   --stop  'mule rm --host dev {job}' \
+  --attach 'mule run --host dev --lease --attach {job} --job-file {job_file} --forward-unix {local_sock}:{remote_sock}' \
   --fetch 'git fetch ssh://dev{cwd} HEAD'
 mu host check dev --root '~/repo'
 ```
@@ -197,6 +198,11 @@ mu host check dev --root '~/repo'
   `mu agent close <name>`.
   `--stop` must contain `{job}`, and must be idempotent: exit 0 for a job that
   already ended. `{env}` is refused there, `{cwd}` is always `.`.
+- `--attach` is optional: it opens a new carrier for a job that still runs
+  (reattaching a reaped lease agent). It must contain `{job}` and `{job_file}`
+  once each, `{local_sock}` and `{remote_sock}`; `{cmd}` and `{env}` are refused
+  (nothing is dispatched). There is no `host update`: `host rm`, then `host add`
+  with a byte-equal `--stop`, so every reservation stays stoppable.
 - `local_sock` determines `remote_sock`: both derive from (workstream, agent),
   so a carrier's forward table never maps one local socket to two remote ones.
 - A lease pane holds no host channel, so `--max-sessions` counts only what mu
