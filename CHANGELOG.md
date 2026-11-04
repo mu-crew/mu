@@ -22,8 +22,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   reservation a rollback kept as one tree's pointer is still released only by
   that tree's close. While a removed agent's `remote_recovery` record exists, a
   `--worktree` spawn of its name on its host refuses (exit 4,
-  `RemoteRecoveryPendingError`, naming `mu agent collect` and `mu agent close`)
-  instead of making a new tree beside one the record may have parked aside.
+  `RemoteRecoveryPendingError`, naming `mu agent collect` and `mu agent close`, with `--recovery` whenever
+  the name has records on more than one host or several here) instead of
+  making a new tree beside one the record may have parked aside.
 
 ## [4.3.3] — 2026-11-05
 
