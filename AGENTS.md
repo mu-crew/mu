@@ -163,7 +163,7 @@ file missing a later addition is completed) and refuses older DBs
 1. Bump `CURRENT_SCHEMA_VERSION` and mirror the shape in
    `CURRENT_SCHEMA`. A column an existing DB lacks also goes in
    `ADDED_COLUMNS` (plain nullable or defaulted: SQLite adds nothing else
-   in place). Changing `CAPTURED_COLUMNS` or a trigger generator means
+   in place); such a column alone needs no bump. Changing `CAPTURED_COLUMNS` or a trigger generator means
    bumping `CAPTURE_VERSION` and the pinned checksum in
    `test/capture-persistent.test.ts`. Test the upgrade on a populated
    file (`test/fixtures/v13-populated.db.gz`, `test/loop-storage.test.ts`).

@@ -281,7 +281,9 @@ describe("a populated v13 DB is completed in place", () => {
     expect(columns(p, "tasks").filter((c) => c === "kind")).toHaveLength(1);
     expect(columns(p, "tasks")).toContain("wave");
     expect(columns(p, "agents")).toContain("collected_head");
-    expect(columns(p, "host_profiles")).toEqual(expect.arrayContaining(["transport", "stop"]));
+    expect(columns(p, "host_profiles")).toEqual(
+      expect.arrayContaining(["transport", "stop", "attach"]),
+    );
     expect(columns(p, "carrier_jobs")).toEqual(CARRIER_JOBS_COLUMNS);
     expect(tables(p)).toEqual([...EXPECTED_TABLES].sort());
     expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
@@ -571,6 +573,29 @@ describe("a populated v13 DB is completed in place", () => {
     expect(checkDrift(db).clean).toBe(true);
   });
 
+  it("a v13 file without host_profiles.attach gains it with no version bump, rows intact; a second open runs no DDL", () => {
+    const p = v13Copy();
+    track(openDb({ path: p })).close();
+    open.pop();
+    raw(p, (r) => {
+      r.exec(
+        "INSERT INTO host_profiles (name, shell, exec, fetch, transport, stop) VALUES ('l', 's', 'e', 'f', 'lease', 'x rm {job}')",
+      );
+      r.exec("ALTER TABLE host_profiles DROP COLUMN attach");
+    });
+    expect(columns(p, "host_profiles")).not.toContain("attach");
+    const before = stamps(p);
+    track(openDb({ path: p })).close();
+    expect(columns(p, "host_profiles")).toContain("attach");
+    expect(stamps(p)).toEqual(before);
+    expect(
+      raw(p, (r) => r.prepare("SELECT name, transport, stop, attach FROM host_profiles").all()),
+    ).toEqual([{ name: "l", transport: "lease", stop: "x rm {job}", attach: null }]);
+    const cookie = raw(p, (r) => r.pragma("schema_version", { simple: true }));
+    track(openDb({ path: p })).close();
+    expect(raw(p, (r) => r.pragma("schema_version", { simple: true }))).toBe(cookie);
+  });
+
   it("an old-shaped carrier_jobs (one row per incarnation, no token) is rebuilt losslessly as filled reservations", () => {
     const p = oldCarrierJobsCopy();
     const before = raw(p, (r) => r.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all());
@@ -656,8 +681,8 @@ describe("a populated v13 DB is completed in place", () => {
     const p = staleCopy();
     const db = track(openDb({ path: p }));
     expect(
-      db.prepare("SELECT transport, stop FROM host_profiles WHERE name = 'old'").get(),
-    ).toEqual({ transport: "session", stop: null });
+      db.prepare("SELECT transport, stop, attach FROM host_profiles WHERE name = 'old'").get(),
+    ).toEqual({ transport: "session", stop: null, attach: null });
   });
 
   it("refuses a v12 file untouched", () => {

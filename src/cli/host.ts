@@ -50,6 +50,7 @@ export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
     max_sessions: opts.maxSessions ?? null,
     transport: (opts.transport ?? "session") as HostTransport,
     stop: opts.stop ?? null,
+    attach: opts.attach ?? null,
   });
   if (isJsonMode()) {
     emitJson({ host });
@@ -70,12 +71,13 @@ export function cmdHostList(db: Db): void {
   }
   const held = new Map<string, number>();
   for (const c of listHostChannels(db)) held.set(c.host, (held.get(c.host) ?? 0) + 1);
-  const t = muTable({ head: ["HOST", "TRANSPORT", "STOP", "DEFAULT REPO", "CHANNELS"] });
+  const t = muTable({ head: ["HOST", "TRANSPORT", "STOP", "ATTACH", "DEFAULT REPO", "CHANNELS"] });
   for (const h of hosts) {
     t.push([
       h.name,
       h.transport,
       h.stop ?? "-",
+      h.attach ?? "-",
       h.repo ?? "-",
       `${held.get(h.name) ?? 0}/${h.max_sessions ?? "∞"}`,
     ]);
@@ -95,6 +97,7 @@ export function cmdHostShow(db: Db, name: string): void {
   );
   for (const f of ["shell", "exec", "fetch"] as const) console.log(`  ${f.padEnd(6)} ${host[f]}`);
   if (host.stop !== null) console.log(`  ${"stop".padEnd(6)} ${host.stop}`);
+  if (host.attach !== null) console.log(`  ${"attach".padEnd(6)} ${host.attach}`);
   console.log(
     channels.length === 0
       ? "  channels: none held"
@@ -126,7 +129,7 @@ export function cmdHostInit(name: string, opts: { ssh?: boolean; mule?: boolean 
     );
   }
   const lease = opts.mule === true;
-  const s: { shell: string; exec: string; fetch: string; stop?: string } = lease
+  const s: { shell: string; exec: string; fetch: string; stop?: string; attach?: string } = lease
     ? hostMuleStarter(name)
     : hostStarter(name);
   const command = [
@@ -134,6 +137,7 @@ export function cmdHostInit(name: string, opts: { ssh?: boolean; mule?: boolean 
     `--shell ${shellQuote(s.shell)}`,
     `--exec ${shellQuote(s.exec)}`,
     ...(s.stop === undefined ? [] : [`--stop ${shellQuote(s.stop)}`]),
+    ...(s.attach === undefined ? [] : [`--attach ${shellQuote(s.attach)}`]),
     `--fetch ${shellQuote(s.fetch)}`,
     ...(lease ? [] : ["--max-sessions 1"]),
   ].join(" \\\n  ");
@@ -192,6 +196,7 @@ export interface HostAddOptions {
   maxSessions?: number;
   transport?: string;
   stop?: string;
+  attach?: string;
 }
 
 export function wireHostCommands(program: Command): void {
@@ -219,6 +224,10 @@ export function wireHostCommands(program: Command): void {
     .option(
       "--stop <template>",
       "lease only: ends a job given its handle ({job}, required; {cwd} is `.`). Must be idempotent: exit 0 for a job already ended",
+    )
+    .option(
+      "--attach <template>",
+      "lease only, optional: opens a new carrier for a job that still runs ({job} and {job_file} once, {local_sock}, {remote_sock}; no {cmd} or {env}), for reattaching a reaped lease agent",
     )
     .option(
       "--max-sessions <n>",

@@ -92,6 +92,31 @@ describe("host check on a lease profile", () => {
     expect(existsSync(stopRan)).toBe(false);
   });
 
+  it("expands a stored attach with a dummy handle and never runs it; a bad one fails the attach step", async () => {
+    const attachRan = join(dir, "attach-ran");
+    db.prepare("UPDATE host_profiles SET attach = ?").run(
+      `touch ${attachRan}; c --attach {job} --job-file {job_file} {local_sock}:{remote_sock}`,
+    );
+    const r = await checkHost(db, "lease");
+    expect(r.ok).toBe(true);
+    expect(stepsOf(r).slice(0, 3)).toEqual([
+      ["shell", true],
+      ["stop", true],
+      ["attach", true],
+    ]);
+    const attach = r.steps.find((s) => s.step === "attach");
+    expect(attach?.detail).toContain("expands (not run)");
+    expect(attach?.detail).toContain("--attach 'check-job'");
+    expect(existsSync(attachRan)).toBe(false);
+    db.prepare("UPDATE host_profiles SET attach = 'c {job} {local_sock}:{remote_sock}'").run();
+    const bad = await checkHost(db, "lease");
+    expect(bad.ok).toBe(false);
+    expect(bad.steps.find((s) => s.step === "attach")).toMatchObject({ ok: false });
+    expect(bad.steps.find((s) => s.step === "attach")?.detail).toContain(
+      "{job_file} exactly once (found 0)",
+    );
+  });
+
   it("runs pi and `pi list` WITHOUT a login shell: the job's non-login `sh -c` is what is proven", async () => {
     await checkHost(db, "lease");
     const handed = readFileSync(cmds, "utf8").trim().split("\n");

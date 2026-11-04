@@ -21,6 +21,7 @@ import {
   expandHostTemplate,
   type HostLease,
   type HostProfile,
+  HostTemplateError,
   hostEnvWords,
   remotePathWord,
   runHostTemplate,
@@ -563,8 +564,41 @@ export function remoteShellCommand(
     cwd: a.cwd,
     ...(a.jobFile !== undefined ? { job_file: a.jobFile } : {}),
   });
+  return wrapLocal(filled);
+}
+
+/** A filled template as the local pane runs it: one `sh -c` word, the local-only mu variables unset. */
+function wrapLocal(filled: string): string {
   const unset = LOCAL_ONLY_ENV.map((k) => `-u ${k}`).join(" ");
   return `exec env ${unset} /bin/sh -c ${shellQuote(filled)}`;
+}
+
+/**
+ * The command a new carrier pane runs to hold a lease job that still runs: the profile's
+ * `attach` template filled with the handle, its job file and the two sockets, wrapped like
+ * `remoteShellCommand`. Throws HostTemplateError when the profile has no `attach`.
+ */
+export function attachCommand(
+  profile: HostProfile,
+  a: { job: string; jobFile: string; localSock: string; remoteSock: string },
+): string {
+  if (profile.attach === null) {
+    throw new HostTemplateError(
+      `host ${profile.name} has no attach template (mu host add --attach)`,
+    );
+  }
+  const filled = expandHostTemplate(
+    profile.attach,
+    {
+      job: a.job,
+      job_file: a.jobFile,
+      local_sock: a.localSock,
+      remote_sock: a.remoteSock,
+      cwd: ".",
+    },
+    "attach",
+  );
+  return wrapLocal(filled);
 }
 
 /**

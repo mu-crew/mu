@@ -222,7 +222,7 @@ describe("profile storage", () => {
   };
 
   it("add / get / list / remove round-trips the exact fields", () => {
-    const full = { ...base, max_sessions: 2, transport: "session", stop: null };
+    const full = { ...base, max_sessions: 2, transport: "session", stop: null, attach: null };
     expect(addHost(db, { ...base, max_sessions: 2 })).toEqual(full);
     addHost(db, { ...base, name: "aaa" });
     expect(getHost(db, "dev")).toEqual(full);

@@ -8,7 +8,8 @@
 // A profile has a TRANSPORT. `session` (the default): the pane runs the `shell`
 // template, a held ssh. `lease`: the pane runs a local CARRIER that owns a
 // detached remote job and writes its handle to `{job_file}`; a `stop` template
-// ends a job given its handle (`{job}`). A lease pane holds no channel.
+// ends a job given its handle (`{job}`), and an optional `attach` template opens
+// a new carrier for a job that still runs. A lease pane holds no channel.
 //
 // ─── Template grammar (one pass over the ORIGINAL template) ─────────────
 //   {{ and }}   literal braces. A lone `{` or `}`, or an unknown name, is an
@@ -17,8 +18,9 @@
 //               The value is substituted once and never rescanned, so braces
 //               inside a value are inert. A placeholder valid only in some
 //               fields is refused elsewhere (`TEMPLATE_SCOPES`): `job_file`
-//               only in a lease `shell`, `job` only in `stop`, and `stop`
-//               takes nothing but `job` and `cwd` (always `.`). The lexer
+//               only in a lease `shell` and `attach`, `job` only in `stop`
+//               and `attach`, `stop` takes nothing but `job` and `cwd`
+//               (always `.`), and `attach` no `env` or `cmd`. The lexer
 //               decides, so `{{job}}` and a `:sh` modifier are read right.
 // A small lexer tracks '...' and "..." so every value stays exactly the text
 // the template author asked for. Quote characters never imply a second shell;
@@ -175,14 +177,16 @@ export interface HostProfile {
   transport: HostTransport;
   /** Lease only: the template that ends a job given its handle (`{job}`); null for a session profile. */
   stop: string | null;
+  /** Lease only, optional: a new carrier for a running job (`{job}`, `{job_file}`, both socks); null: none. */
+  attach: string | null;
 }
 
 export const HOST_TRANSPORTS = ["session", "lease"] as const;
 export type HostTransport = (typeof HOST_TRANSPORTS)[number];
 
-/** What `addHost` takes: a session profile needs neither `transport` nor `stop`. */
-export type NewHostProfile = Omit<HostProfile, "transport" | "stop"> &
-  Partial<Pick<HostProfile, "transport" | "stop">>;
+/** What `addHost` takes: a session profile needs neither `transport`, `stop` nor `attach`. */
+export type NewHostProfile = Omit<HostProfile, "transport" | "stop" | "attach"> &
+  Partial<Pick<HostProfile, "transport" | "stop" | "attach">>;
 
 /** A job handle is opaque to mu: one line of these bytes, never parsed further. */
 export const JOB_HANDLE_RE = /^[A-Za-z0-9._:@-]{1,128}$/;
@@ -211,6 +215,7 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
     ...input,
     transport: input.transport ?? "session",
     stop: input.stop ?? null,
+    attach: input.attach ?? null,
   };
   if (!isValidHostName(p.name)) {
     throw new HostProfileError(
@@ -238,11 +243,16 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
       "--stop is only for --transport lease: a session has no job to stop",
     );
   }
+  if (p.transport === "session" && p.attach !== null) {
+    throw new HostProfileError(
+      "--attach is only for --transport lease: a session has no job to attach to",
+    );
+  }
   const problem = profileTemplateProblem(p);
   if (problem !== undefined) throw new HostTemplateError(problem);
   try {
     db.prepare(
-      "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop)",
+      "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach)",
     ).run(p);
   } catch (e) {
     if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
@@ -297,12 +307,14 @@ export function hostMuleStarter(host: string): {
   exec: string;
   fetch: string;
   stop: string;
+  attach: string;
 } {
   return {
     shell: `mule run --host ${host} --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}`,
     exec: `mule exec --host ${host} -- sh -c {cmd}`,
     fetch: `git fetch ssh://${host}{cwd} HEAD`,
     stop: `mule rm --host ${host} {job}`,
+    attach: `mule run --host ${host} --lease --attach {job} --job-file {job_file} --forward-unix {local_sock}:{remote_sock}`,
   };
 }
 
@@ -321,7 +333,7 @@ export type HostPlaceholder = (typeof HOST_PLACEHOLDERS)[number];
 export type HostTemplateValues = Partial<Record<HostPlaceholder, string>>;
 
 /** The field a template is stored in; `lease-shell` is the `shell` of a lease profile. */
-export type HostTemplateScope = "shell" | "lease-shell" | "exec" | "fetch" | "stop";
+export type HostTemplateScope = "shell" | "lease-shell" | "exec" | "fetch" | "stop" | "attach";
 
 const LEGACY_PLACEHOLDERS: readonly HostPlaceholder[] = [
   "env",
@@ -338,6 +350,7 @@ const TEMPLATE_SCOPES: Record<HostTemplateScope, readonly HostPlaceholder[]> = {
   exec: LEGACY_PLACEHOLDERS,
   fetch: LEGACY_PLACEHOLDERS,
   stop: ["job", "cwd"],
+  attach: ["job", "job_file", "local_sock", "remote_sock", "cwd"],
 };
 
 const SCOPE_LABEL: Record<HostTemplateScope, string> = {
@@ -346,6 +359,7 @@ const SCOPE_LABEL: Record<HostTemplateScope, string> = {
   exec: "exec",
   fetch: "fetch",
   stop: "stop",
+  attach: "attach",
 };
 
 /**
@@ -486,37 +500,50 @@ export function placeholderUses(
   return n;
 }
 
-/** What a lease `shell` must contain: `{job_file}` exactly once, `{local_sock}` and `{remote_sock}` at least once. */
-function leaseShellProblems(shell: string): string[] {
-  const n = placeholderUses(shell, "lease-shell");
+/**
+ * What a lease `shell` must contain: `{job_file}` exactly once, `{local_sock}` and `{remote_sock}`
+ * at least once. An `attach` must also contain `{job}` exactly once.
+ */
+function leaseShellProblems(
+  shell: string,
+  scope: "lease-shell" | "attach" = "lease-shell",
+): string[] {
+  const n = placeholderUses(shell, scope);
+  const what = scope === "attach" ? "an attach" : "a lease shell";
   return [
+    ...(scope === "attach" && n.job !== 1
+      ? [`an attach template must contain {job} exactly once (found ${n.job})`]
+      : []),
     ...(n.job_file === 1
       ? []
-      : [`a lease shell template must contain {job_file} exactly once (found ${n.job_file})`]),
-    ...(n.local_sock > 0 ? [] : ["a lease shell template must contain {local_sock}"]),
-    ...(n.remote_sock > 0 ? [] : ["a lease shell template must contain {remote_sock}"]),
+      : [`${what} template must contain {job_file} exactly once (found ${n.job_file})`]),
+    ...(n.local_sock > 0 ? [] : [`${what} template must contain {local_sock}`]),
+    ...(n.remote_sock > 0 ? [] : [`${what} template must contain {remote_sock}`]),
   ];
 }
 
 /**
  * The first reason a profile's templates are refused, `--field:`-prefixed, or undefined.
- * Grammar and per-field placeholders for all four; a lease shell's shape; a stop's `{job}`.
+ * Grammar and per-field placeholders for all five; a lease shell's and an attach's shape; a stop's `{job}`.
  */
 function profileTemplateProblem(
-  p: Pick<HostProfile, "shell" | "exec" | "fetch" | "transport" | "stop">,
+  p: Pick<HostProfile, "shell" | "exec" | "fetch" | "transport" | "stop" | "attach">,
 ): string | undefined {
   const fields: [string, string, HostTemplateScope][] = [
     ["shell", p.shell, p.transport === "lease" ? "lease-shell" : "shell"],
     ["exec", p.exec, "exec"],
     ["fetch", p.fetch, "fetch"],
     ...(p.stop === null ? [] : [["stop", p.stop, "stop"] as [string, string, HostTemplateScope]]),
+    ...(p.attach === null
+      ? []
+      : [["attach", p.attach, "attach"] as [string, string, HostTemplateScope]]),
   ];
   for (const [f, t, scope] of fields) {
     try {
       validateHostTemplate(t, scope);
       const extra =
-        scope === "lease-shell"
-          ? leaseShellProblems(t)
+        scope === "lease-shell" || scope === "attach"
+          ? leaseShellProblems(t, scope)
           : scope === "stop" && placeholderUses(t, scope).job === 0
             ? ["a stop template must contain {job}"]
             : [];
@@ -903,7 +930,17 @@ export async function runHostTemplate(
 // ─── Check ──────────────────────────────────────────────────────────────
 
 export interface HostCheckStep {
-  step: "shell" | "stop" | "reachable" | "repo" | "pi" | "extension" | "ctl" | "job" | "handback";
+  step:
+    | "shell"
+    | "stop"
+    | "attach"
+    | "reachable"
+    | "repo"
+    | "pi"
+    | "extension"
+    | "ctl"
+    | "job"
+    | "handback";
   /** null: skipped because the host was not reachable. */
   ok: boolean | null;
   detail: string;
@@ -1086,7 +1123,10 @@ export async function checkHost(
 /** The dummy handle `host check` expands a lease profile's `stop` with. Never run. */
 const DUMMY_JOB = "check-job";
 
-/** A lease profile's template structure: the shell's three placeholders, and `stop` expanded with a dummy handle (never run). */
+/**
+ * A lease profile's template structure: the shell's three placeholders, and `stop` (and `attach`,
+ * when set) expanded with a dummy handle (never run).
+ */
 function leaseTemplateSteps(profile: HostProfile): HostCheckStep[] {
   const problems = (() => {
     try {
@@ -1116,7 +1156,28 @@ function leaseTemplateSteps(profile: HostProfile): HostCheckStep[] {
     if (!(e instanceof HostTemplateError)) throw e;
     stop = { step: "stop", ok: false, detail: e.message };
   }
-  return [shell, stop];
+  if (profile.attach === null) return [shell, stop];
+  let attach: HostCheckStep;
+  try {
+    const problems = leaseShellProblems(profile.attach, "attach");
+    if (problems.length > 0) throw new HostTemplateError(problems.join("; "));
+    const line = expandHostTemplate(
+      profile.attach,
+      {
+        job: DUMMY_JOB,
+        job_file: "/tmp/check.job",
+        local_sock: "/tmp/check.sock",
+        remote_sock: "/tmp/check-remote.sock",
+        cwd: ".",
+      },
+      "attach",
+    );
+    attach = { step: "attach", ok: true, detail: `expands (not run) to: ${line}` };
+  } catch (e) {
+    if (!(e instanceof HostTemplateError)) throw e;
+    attach = { step: "attach", ok: false, detail: e.message };
+  }
+  return [shell, stop, attach];
 }
 
 /** `check --agent` on a lease agent: the job handle recorded for it. */
