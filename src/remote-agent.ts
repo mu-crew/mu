@@ -115,7 +115,7 @@ export async function prepareRemote(
     worktree: boolean;
     from?: string;
     cwd?: string;
-    /** May a leftover at the path be reclaimed (false while a recovery record names it). */
+    /** May a leftover at the path be reclaimed (spawn refuses first while a recovery record names the name on this host). */
     reclaim?: boolean;
     /** The remote repo: the worktree is added to it, and it is the default cwd without one. */
     root?: string;

@@ -23,7 +23,7 @@ import {
   type RemoteSite,
   removeRemoteWorktree,
 } from "../remote-agent.js";
-import { recoveriesFor } from "../remote-recovery.js";
+import { refuseRecoveredWorktree } from "../remote-recovery.js";
 import { withAgentLock } from "./lock.js";
 import type { SpawnAgentOptions, StagedWorktree } from "./spawn.js";
 
@@ -42,6 +42,9 @@ export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise
       `host ${host} has no default repo: pass --root <remote repo path> with --worktree`,
     );
   }
+  // A removed agent's tree on this host may still sit at the name's path, or parked beside
+  // it: a new tree there could strand that record. Refused before any effect.
+  if (opts.worktree) refuseRecoveredWorktree(db, opts.workstream, opts.name, host);
   const mux = await activeMux();
   if (!mux.runsShellCommand) throw new HostSpawnUnsupportedError(host, mux.name);
   return profile;
@@ -62,6 +65,7 @@ async function prestageRemote(
   reservation: string | undefined,
 ): Promise<StagedWorktree> {
   return withAgentLock(db, opts.workstream, opts.name, async () => {
+    refuseRecoveredWorktree(db, opts.workstream, opts.name, profile.name);
     const placeholder = insertAgent(db, {
       ...(reservation !== undefined ? { reservation } : {}),
       name: opts.name,
@@ -82,11 +86,9 @@ async function prestageRemote(
         worktree: true,
         ...(opts.from !== undefined ? { from: opts.from } : {}),
         ...remoteRoot(opts, profile),
-        // An unused leftover of a prepare whose answer was lost is taken over;
-        // never while a removed agent's recovery record may name that tree.
-        reclaim: !recoveriesFor(db, opts.workstream, opts.name).some(
-          (r) => r.host === profile.name,
-        ),
+        // An unused leftover of a prepare whose answer was lost is taken over: no
+        // removed agent's recovery record names a tree there (checked above, under the lock).
+        reclaim: true,
       });
       return {
         path: made.cwd,

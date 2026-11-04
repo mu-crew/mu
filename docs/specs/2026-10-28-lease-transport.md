@@ -214,6 +214,12 @@ A **session** agent's close is unchanged.
    above, then delete the row.
 2. Then the existing `remote_recovery` worktree close, if there is a record.
 
+The row goes before the tree's close, so a tree that refuses (dirty,
+uncollected) never fences the name; only a row a rollback kept as one tree's
+pointer (its `reason`) waits for that very tree's close. While a record
+exists, a same-host `--worktree` spawn of the name refuses before any effect,
+so no new tree lands beside a tree the record may have parked aside.
+
 `agent collect <name>` never stops a job; it only fetches.
 
 ### `next`, `doctor`

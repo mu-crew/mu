@@ -439,8 +439,10 @@ async function closeLocked(
     ) {
       return nothing;
     }
-    // No agent row left: the name's lease job is stopped first (same rule as below), its
-    // reservation released only after the tree's close. (A live agent's is its close's.)
+    // No agent row left: the name's lease job is stopped first (same rule as below). A
+    // stopped reservation is released before the tree's close, so a tree that refuses
+    // (dirty, uncollected) never fences the name; one kept as a tree's pointer (its
+    // reason) only after that very tree's close. (A live agent's is its close's.)
     const jobs = agent === undefined ? listCarrierJobsByName(db, opts.workstream, name) : [];
     if (jobs.length > 0) {
       fence();
@@ -454,6 +456,20 @@ async function closeLocked(
       cleanLeaseJobFile(db, c);
       closes.push(c);
     }
+    // Every reservation of the name is decided by now: a stop that failed, or one with no
+    // handle it could stop, threw above with all of them kept. Those that point at no tree
+    // go first: the stop proved their job gone (or never launched) and the job file is clean.
+    const early = closes.filter((c) => c.action !== "abandon" && c.reservation.reason === null);
+    const late = closes.filter((c) => !early.includes(c));
+    // No agent row holds the name: a raw delete skipped deleteAgent's socket unlink, so the
+    // local ctl socket (the carrier's forward) goes here, before the first release. Every
+    // job of the name is stopped by now, so the forward is no one's.
+    const unlinkEarly = early.length > 0;
+    if (unlinkEarly) unlinkCtlSocket(db, name, opts.workstream);
+    for (const c of early) releaseLeaseClose(db, c);
+    if (early.length > 0) {
+      emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, null, early));
+    }
     const { result, tree } = await closeTreeWithoutRow(
       db,
       name,
@@ -462,7 +478,7 @@ async function closeLocked(
       fence,
       jobs.length > 0,
     );
-    for (const c of closes) {
+    for (const c of late) {
       // A reservation its rollback kept for a remote tree it could not remove (the reason) is
       // THAT tree's pointer: released only once a close handled that very tree (its host, path
       // and incarnation), never because another tree of the name was closed.
@@ -476,12 +492,14 @@ async function closeLocked(
         );
       }
     }
-    // No agent row holds the name: a raw delete skipped deleteAgent's socket unlink, so the
-    // local ctl socket (the carrier's forward) goes here, before the reservation.
-    if (closes.length > 0) unlinkCtlSocket(db, name, opts.workstream);
-    for (const c of closes) releaseLeaseClose(db, c);
+    // (An abandon, or a reservation kept for this tree: the socket goes before its release.)
+    if (closes.length > 0 && !unlinkEarly) unlinkCtlSocket(db, name, opts.workstream);
+    for (const c of late) releaseLeaseClose(db, c);
     if (closes.length === 0) return result;
-    emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, null, closes));
+    // The early releases were reported before the tree's close.
+    if (late.length > 0) {
+      emitEvent(db, opts.workstream, "agent.close", closeLine(name, undefined, null, late));
+    }
     return { ...result, carrierJobs: closes.map(closedJob) };
   }
   const row = worktreeOf(db, opts.workstream, name, agent);

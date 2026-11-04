@@ -52,7 +52,7 @@ import {
 import { listLogs } from "../src/logs.js";
 import { reconcile } from "../src/reconcile.js";
 import { LOCAL_ONLY_ENV, RemotePrepareError } from "../src/remote-agent.js";
-import { listRemoteRecoveries } from "../src/remote-recovery.js";
+import { listRemoteRecoveries, RemoteRecoveryPendingError } from "../src/remote-recovery.js";
 import { stateSnapshot } from "../src/state.js";
 import { claimTask } from "../src/tasks/claim.js";
 import { addTask } from "../src/tasks/edit.js";
@@ -810,17 +810,17 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     expect(channels()).toEqual([]);
   });
 
-  it("while that record names the path, the next spawn's prepare may not reclaim a leftover there", async () => {
+  it("while that record names the path, the next --worktree spawn there refuses before any exec", async () => {
     extensionOn = false;
     setMode("rmkept");
     await expect(spawnForTask(db, req())).rejects.toBeInstanceOf(AgentCtlUnreachableError);
     setMode("ok");
     extensionOn = true;
     const before = execCalls().length;
-    await spawn({ worktree: true }).catch(() => undefined);
-    const prep = execCalls()[before] ?? "";
-    expect(prep).toContain("worktree add");
-    expect(prep).not.toContain("not an unused mu leftover");
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RemoteRecoveryPendingError);
+    expect(execCalls().length).toBe(before);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
   it("with no record for the name, prepare may reclaim its own lost-answer leftover", async () => {
@@ -843,6 +843,63 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     await expect(spawnForTask(db, req())).rejects.toThrow();
     expect(execCalls()).toEqual([]);
     expect(channels()).toEqual([]);
+  });
+});
+
+// fix2 (2026-11-04 aiv-blog incident): with the reservation no longer fencing the name, a
+// removed agent's recovery record must: a close that parked the tree at its aside and then
+// crashed leaves the canonical path empty, and a new tree there would strand the record.
+describe("a recovery record fences a same-host --worktree spawn of its name", () => {
+  /** A finalized remote worktree agent of dev whose row went away: its record stays. */
+  const recorded = (): number => {
+    const row = insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%old",
+      host: "dev",
+      cwd: WT,
+      base: SHA,
+      repo: "/srv/repo",
+    });
+    deleteAgent(db, "worker-1", "auth");
+    expect(listRemoteRecoveries(db).at(-1)).toMatchObject({ agentId: row.incarnation, cwd: WT });
+    return row.incarnation;
+  };
+
+  it("(e) parked aside, canonical path absent: refused before any exec, naming collect and close", async () => {
+    const id = recorded();
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RemoteRecoveryPendingError);
+    expect((err as Error).message).toBe(
+      `agent auth/worker-1: a removed agent's remote worktree on dev is still recorded (recovery ${id}); a new --worktree spawn of the name there could land beside it. Keep its commits with mu agent collect worker-1 -w auth, then mu agent close worker-1 -w auth`,
+    );
+    expect(execCalls()).toEqual([]);
+    expect(channels()).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--worktree", "--json"],
+      join(dir, "mu.db"),
+    );
+    expect(r.exitCode).toBe(4);
+  });
+
+  it("several records name --recovery <id> in the way out", async () => {
+    recorded();
+    recorded();
+    const err = await spawn({ worktree: true }).catch((e: unknown) => e);
+    expect((err as Error).message).toContain("mu agent close worker-1 -w auth --recovery <id>");
+  });
+
+  it("another host's --worktree spawn is not refused by it", async () => {
+    recorded();
+    await spawn({ worktree: true, host: "free" });
+    expect(getAgent(db, "worker-1", "auth")?.host).toBe("free");
+  });
+
+  it("a same-host --cwd spawn is not refused by it", async () => {
+    recorded();
+    await spawn({ cwd: "/srv/repo/sub" });
+    expect(getAgent(db, "worker-1", "auth")?.host).toBe("dev");
   });
 });
 
