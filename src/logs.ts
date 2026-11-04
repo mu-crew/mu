@@ -577,6 +577,7 @@ export type LocalIntent =
   | "agent.spawn_failed"
   | "agent.close"
   | "agent.adopt"
+  | "agent.reattach"
   | "agent.kick"
   | "agent.send"
   | "agent.abort"

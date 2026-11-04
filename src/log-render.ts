@@ -183,6 +183,7 @@ const VERBS: Record<KnownIntent, string> = {
   "agent.spawn_failed": "agent spawn failed",
   "agent.close": "agent close",
   "agent.adopt": "agent adopt",
+  "agent.reattach": "agent reattach",
   "agent.kick": "agent kick",
   "agent.send": "agent send",
   "agent.abort": "agent abort",
@@ -381,6 +382,7 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
     case "agent.spawn_failed":
     case "agent.close":
     case "agent.adopt":
+    case "agent.reattach":
     case "agent.kick":
     case "agent.send":
     case "agent.abort":

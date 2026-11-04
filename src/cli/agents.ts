@@ -56,6 +56,7 @@ import { type WaitRef, type WaitSnapshot, waitForEvents } from "../wait.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
+import { wireReattachCommand } from "./agent-reattach.js";
 import { setNextOutcome } from "./handle.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 import { installWaitSignals, runWait, type WaitSignals } from "./wait.js";
@@ -1490,6 +1491,7 @@ export function wireAgentCommands(program: Command): void {
 
   wireCloseCommand(agent);
   wireCollectCommand(agent);
+  wireReattachCommand(agent);
 
   // `mu agent abort` — stop a pi agent's turn through its control socket.
   agent

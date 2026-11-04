@@ -23,6 +23,15 @@ export {
   LeaseJobUnreadableError,
 } from "./agents/lease-carrier.js";
 export {
+  type Blocker,
+  previewReattach,
+  ReattachFailedError,
+  ReattachRefusedError,
+  type ReattachResult,
+  reattachAgent,
+  reattachBlockers,
+} from "./agents/reattach.js";
+export {
   type AbortAgentOptions,
   type AbortResult,
   AgentAbortNeedsCtlError,

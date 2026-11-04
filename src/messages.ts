@@ -414,6 +414,14 @@ export const MESSAGES = {
     `host ${host}: collect failed: ${detail}`,
   "agent.reattach_refused": (name: string, why: string, close: string) =>
     `agent ${name} cannot be reattached: ${why}; nothing was changed. Preview its close: ${close}`,
+  "agent.reattach_failed": (
+    name: string,
+    rollback: string,
+    why: string,
+    close: string,
+    tail = "",
+  ) =>
+    `agent ${name} was not reattached (rollback: ${rollback}): ${why}. Preview its close: ${close}${tail}`,
   "remote.recovery_refused": (ws: string, agent: string, detail: string) =>
     `agent ${ws}/${agent}: remote recovery refused: ${detail}`,
   "remote.recovery_pending": (
