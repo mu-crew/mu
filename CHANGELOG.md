@@ -21,6 +21,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `host show` and `host list` print it; `host check` expands it with a dummy
   handle and never runs it. Stored as `host_profiles.attach`, added in place
   to a v13 file (no version bump).
+- **`mu agent reattach <name> -w <ws> [--if <rev>]`**: open a new carrier pane
+  for a reaped lease agent whose job still runs (2026-11-04 aiv-blog incident:
+  a tmux restart killed six lease panes, reconcile reaped the rows, and the
+  jobs on a host with no master kept running with no way back). Bare previews
+  (read only, `rev`); `--if <rev>` applies. The preflight refuses (exit 4,
+  `ReattachRefusedError`, nothing changed, the close preview in `close`) unless
+  the name has no row, one reservation bound to a spawned incarnation with a
+  handle, a previous pane and spawn process proven gone, a lease profile with an
+  `attach` and the admitted `stop`, a usable recovery record (if any) and a job
+  file that is absent or names the handle. The apply runs the profile's attach
+  template in a new pane and, in one transaction, inserts the row (pi, the
+  record's tree), rebinds the reservation and drops the record. A carrier that
+  ends (job not running, no master) is rolled back with the record restored
+  (`ReattachFailedError`, exit 4, the pane's scrollback); ctl `missing`/`refused`
+  keeps the row (`ready: false`). Pi only: no other cli is stored. Logs
+  `agent.reattach`. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_adopt.
 
 ### Fixed
 

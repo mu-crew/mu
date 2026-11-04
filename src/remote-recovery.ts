@@ -337,6 +337,17 @@ export function deleteRemoteRecovery(db: Db, rec: RemoteRecovery): boolean {
   );
 }
 
+/** Put back exactly `r`, every column (a reattach's readiness rollback). Throws when its `agent_id` exists. */
+export function restoreRemoteRecovery(db: Db, r: RemoteRecovery): void {
+  const row = Object.fromEntries(
+    Object.entries(r).map(([k, v]) => [k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), v]),
+  );
+  const cols = Object.keys(row);
+  db.prepare(
+    `INSERT INTO remote_recovery (${cols.join(", ")}) VALUES (${cols.map((c) => `@${c}`).join(", ")})`,
+  ).run(row);
+}
+
 /** Record a collected HEAD on exactly this record (compare-and-set). False when it moved. */
 export function setRecoveryCollectedHead(db: Db, rec: RemoteRecovery, head: string): boolean {
   return (

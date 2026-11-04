@@ -226,6 +226,22 @@ export function bindCarrierJobAgent(
   );
 }
 
+/** Reattach and its rollback: move the reservation between incarnations, compare-and-set on
+ *  token, handle and the old pair (`bindCarrierJobAgent` refuses a stale `agent_id` on purpose). */
+export function rebindCarrierJobAgent(
+  db: Db,
+  r: { token: string; job: string },
+  from: { agentId: number; paneId: string },
+  to: { agentId: number; paneId: string },
+): boolean {
+  const sql =
+    "UPDATE carrier_jobs SET agent_id = ?, pane_id = ? WHERE token = ? AND job = ? AND agent_id = ? AND pane_id = ?";
+  return (
+    db.prepare(sql).run(to.agentId, to.paneId, r.token, r.job, from.agentId, from.paneId)
+      .changes === 1
+  );
+}
+
 /**
  * The handle the carrier published, guarded by the token only: the reservation is the
  * name's, so a handle read from its job file is its job whatever became of the agent row.

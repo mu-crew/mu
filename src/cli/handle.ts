@@ -27,6 +27,7 @@ import {
   CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
 } from "../agents/lease-carrier.js";
+import { ReattachFailedError, ReattachRefusedError } from "../agents/reattach.js";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -484,6 +485,9 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // A lease close with no handle it can stop, or a reservation it had to keep.
     err instanceof CarrierJobUnresolvedError ||
     err instanceof CarrierJobKeptError ||
+    // A reattach whose preflight refused, or whose new carrier did not take.
+    err instanceof ReattachRefusedError ||
+    err instanceof ReattachFailedError ||
     err instanceof HostInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
@@ -806,6 +810,8 @@ function emitError(err: unknown): number {
       extra.candidate_ids = err.candidateIds;
     }
     if (err instanceof NameAmbiguousError) extra.candidates = err.candidates;
+    // A reattach refusal's way out, a read (so not in `next`): the close preview.
+    if (err instanceof ReattachRefusedError) extra.close = err.closeCommand;
     // A send whose delivery is unknown still names its receipt, structurally.
     if (err instanceof AgentSendIndeterminateError && err.msgId !== undefined) {
       extra.msgId = err.msgId;
