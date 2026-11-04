@@ -196,6 +196,37 @@ export const recoveryGone = (
 
 // ─── Guards ─────────────────────────────────────────────────────────────────
 
+/**
+ * A same-host `--worktree` spawn of a name a removed agent's recovery record still
+ * names: refused before any effect, so no new tree lands at the canonical path while
+ * the record may need it or its aside beside it. Exit 4.
+ */
+export class RemoteRecoveryPendingError extends Error {
+  override readonly name = "RemoteRecoveryPendingError";
+  constructor(
+    public readonly workstream: string,
+    public readonly agentName: string,
+    public readonly host: string,
+    /** The records in the way (original incarnations). */
+    public readonly candidates: readonly number[],
+  ) {
+    super(say("remote.recovery_pending", workstream, agentName, host, candidates));
+  }
+}
+
+/** Refuse a `--worktree` spawn of (workstream, name) on `host` while a recovery record of it on that host exists. Read only. */
+export function refuseRecoveredWorktree(
+  db: Db,
+  workstream: string,
+  name: string,
+  host: string,
+): void {
+  const ids = recoveriesFor(db, workstream, name)
+    .filter((r) => r.host === host)
+    .map((r) => r.agentId);
+  if (ids.length > 0) throw new RemoteRecoveryPendingError(workstream, name, host, ids);
+}
+
 /** The profile at the time of use must be the one the record pinned. Missing provenance refuses. */
 export function assertRecoveryProfile(
   rec: RemoteRecovery,

@@ -431,6 +431,7 @@ export {
   getRemoteRecovery,
   listRemoteRecoveries,
   type RemoteRecovery,
+  RemoteRecoveryPendingError,
   type RemoteRecoveryReason,
   RemoteRecoveryRefusedError,
   recoveriesFor,

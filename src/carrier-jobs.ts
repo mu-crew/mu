@@ -11,7 +11,9 @@
 //
 // Agent deletion (close, reconcile prune, teardown, workstream delete, the reaper,
 // raw `mu sql`) never touches it. It is released (deleted) only after a successful
-// stop AND the job file's cleanup AND the tree's, by its creator's rollback when
+// stop AND the job file's cleanup AND the tree's (a close with no agent row releases
+// it before the recovery tree's close, unless it was kept as one tree's pointer: a
+// refusing tree must not fence the name), by its creator's rollback when
 // nothing was launched, or by an explicit abandon. `host_stop` is the stop template
 // as it was admitted; a later stop runs from the current profile only if its `stop`
 // is byte-identical (the twin of `host_exec` on a recovery record).

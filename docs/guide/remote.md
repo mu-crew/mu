@@ -124,6 +124,8 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   worktree under the rule above (no pane, no task; the recorded host profile only), and
   `mu agent collect <name>` fetches from it. Several records of one name need
   `--recovery <id>`; a current agent of the name or path, a newer record of the same path, or a changed `--exec`, refuses (a changed default repo does not).
+  While a record exists, a `--worktree` spawn of that name on that host
+  refuses (exit 4): collect, then close the record first.
 
 ## Host profiles
 
@@ -230,8 +232,9 @@ mu host check dev --root '~/repo'
   progress`).
 - With no agent row left (the carrier was `kill -9`ed and reconcile reaped it,
   a teardown, a raw delete), `mu agent close <name> -w <ws>` stops the job
-  first, then closes the recovery worktree, if any. `agent collect` never
-  stops a job.
+  and drops its handle first, then closes the recovery worktree, if any. A
+  tree that refuses (dirty, uncollected) no longer keeps the name fenced: the
+  retry only closes the tree. `agent collect` never stops a job.
 - A host that is gone for good: `mu agent close <name> --abandon-job` drops the
   handle without a stop and logs the host and handle; the job may still run
   there. It is the only way past an unreachable host.

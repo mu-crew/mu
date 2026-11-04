@@ -501,16 +501,6 @@ describe("reviewer probes: the job file is never an ownerless pointer", () => {
   // reviewer-23 (high_closing_an_unrelated_recovery): failed on 53b6f549, where close
   // removed the OLD recovery, stopped new-job and released the reservation.
   it("reviewer wrong-tree end-to-end: failed finalize at a new root cannot release its tree pointer by closing an older recovery", async () => {
-    const prior = insertAgent(db, {
-      name: "worker-1",
-      workstream: "auth",
-      paneId: "%old",
-      host: "dev",
-      cwd: "/old/root/worker-1",
-      base: SHA,
-      repo: "/old/root",
-    });
-    deleteAgent(db, "worker-1", "auth");
     carrier = { handle: "new-job", ctl: false };
     writeFileSync(join(dir, "rm-fail"), "1");
     db.exec(
@@ -520,6 +510,21 @@ describe("reviewer probes: the job file is never an ownerless pointer", () => {
       (e: unknown) => e,
     );
     expect((err as Error).message).toContain("finalize failed");
+    db.exec("DROP TRIGGER deny_finalize");
+    // An older recovery of the name at another root lands after the spawn (a same-host
+    // --worktree spawn refuses while one exists): the close below must not take it for the
+    // tree the reservation was kept for.
+    const prior = insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%old",
+      host: "dev",
+      cwd: "/old/root/worker-1",
+      base: SHA,
+      repo: "/old/root",
+      reservation: reservation()?.token,
+    });
+    deleteAgent(db, "worker-1", "auth");
     expect(reservation()).toMatchObject({ job: "new-job", treePath: WT });
     expect(reservation()?.reason).toContain(WT);
     expect(listRemoteRecoveries(db).map((r) => r.agentId)).toEqual([prior.incarnation]);

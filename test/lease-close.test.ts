@@ -11,6 +11,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -28,6 +29,7 @@ import {
   getAgent,
   insertAgent,
   previewClose,
+  spawnAgent,
 } from "../src/agents.js";
 import { applyOp, type Op } from "../src/apply.js";
 import {
@@ -49,8 +51,9 @@ import { formatHlc } from "../src/hlc.js";
 import { addHost, HostHandbackError } from "../src/hosts.js";
 import { listLogs } from "../src/logs.js";
 import { reconcile } from "../src/reconcile.js";
+import { RemoteCloseRefusedError } from "../src/remote-agent.js";
 import { collectRemoteAgent } from "../src/remote-collect.js";
-import { listRemoteRecoveries } from "../src/remote-recovery.js";
+import { listRemoteRecoveries, RemoteRecoveryPendingError } from "../src/remote-recovery.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { teardownWorkstream, workstreamRevision } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -106,7 +109,8 @@ beforeEach(() => {
     `#!/bin/sh
 case "$1" in
   *MU_RM*) echo "exec rm" >> '${orderLog}'; echo "MU_RM removed" ;;
-  *MU_STATE*) echo "exec observe" >> '${orderLog}'; echo "MU_STATE clean ${BASE}" ;;
+  *MU_STATE*) echo "exec observe" >> '${orderLog}'
+    if [ -f '${dir}/tree-dirty' ]; then echo "MU_STATE dirty ${BASE}"; else echo "MU_STATE clean ${BASE}"; fi ;;
   *) echo "exec other" >> '${orderLog}' ;;
 esac
 `,
@@ -775,5 +779,96 @@ describe("a reservation kept for a tree its never-launched rollback could not re
     const res = await close({ abandonJob: true });
     expect(res.carrierJobs).toEqual([{ host: "dev", job: null, action: "abandon" }]);
     expect(listCarrierJobs(db)).toEqual([]);
+  });
+});
+
+// fix2 (2026-11-04 aiv-blog incident): `mule rm` exited 0 for a job already gone, but the
+// recovery tree was dirty, the close threw, and the reservation it had proven stopped was
+// kept: every later spawn of the name refused "has an unstopped job".
+describe("no agent row: a stopped reservation is released before the recovery tree's close", () => {
+  const dirty = (): void => writeFileSync(join(dir, "tree-dirty"), "1");
+  /** A --worktree lease agent whose row the reaper removed: reservation + recovery left. */
+  const reaped = (): AgentRow => {
+    const { row } = leaseAgent({ worktree: true });
+    state.panes.delete("%5");
+    deleteAgent(db, "worker-1", "auth");
+    return row;
+  };
+  const respawn = (over: Partial<Parameters<typeof spawnAgent>[1]> = {}) =>
+    spawnAgent(db, { name: "worker-1", workstream: "auth", host: "dev", ...over });
+
+  it("(a) a dirty tree refuses AFTER the stop, the release and its event; the recovery stays", async () => {
+    const row = reaped();
+    dirty();
+    const err = await failure(close());
+    expect(err).toBeInstanceOf(RemoteCloseRefusedError);
+    expect((err as Error).message).toMatch(/uncommitted work/);
+    expect(order()).toEqual(["stop job-1", "exec observe"]);
+    expect(reservation()).toBeUndefined();
+    expect(existsSync(jobFile())).toBe(false);
+    expect(listRemoteRecoveries(db)).toMatchObject([{ agentId: row.incarnation, cwd: WT }]);
+    const said = listLogs(db, { workstream: "auth" }).map((l) => l.payload);
+    expect(said).toContain("agent close worker-1 (job job-1 on dev stopped)");
+    // The name is no longer fenced by the reservation; a same-host --worktree spawn is
+    // refused by the recovery record instead, naming collect and close.
+    const spawnErr = await failure(respawn({ worktree: true }));
+    expect(spawnErr).toBeInstanceOf(RemoteRecoveryPendingError);
+    expect((spawnErr as Error).message).toContain("mu agent collect worker-1 -w auth");
+    expect((spawnErr as Error).message).toContain("mu agent close worker-1 -w auth");
+  });
+
+  it("(b) a retry after the tree refused runs no second stop and goes straight to the tree", async () => {
+    reaped();
+    dirty();
+    expect(await failure(close())).toBeInstanceOf(RemoteCloseRefusedError);
+    rmSync(join(dir, "tree-dirty"));
+    writeFileSync(orderLog, "");
+    const res = await close();
+    expect(order()).toEqual(["exec observe", "exec rm"]);
+    expect(res.carrierJobs).toBeUndefined();
+    expect(res.recovery?.deleted).toBe(true);
+    expect(listRemoteRecoveries(db)).toEqual([]);
+    // One event for the stop, none repeated by the retry.
+    const stops = listLogs(db, { workstream: "auth" }).filter((l) =>
+      l.payload.includes("job job-1 on dev stopped"),
+    );
+    expect(stops).toHaveLength(1);
+  });
+
+  it("(c) a reservation kept as a tree's pointer (its reason) is still retained on a dirty tree", async () => {
+    const row = reaped();
+    const r = reservation();
+    if (r === undefined) throw new Error("no reservation");
+    keepCarrierJobForTree(db, r.token, {
+      path: WT,
+      agentId: row.incarnation,
+      reason: `remote worktree ${WT} on dev was not removed`,
+    });
+    dirty();
+    expect(await failure(close())).toBeInstanceOf(RemoteCloseRefusedError);
+    expect(order()).toEqual(["stop job-1", "exec observe"]);
+    expect(reservation()).toMatchObject({ job: "job-1", treePath: WT });
+    expect(listRemoteRecoveries(db)).toHaveLength(1);
+  });
+
+  it("(d) the ctl socket is unlinked before the early release, even when the tree then refuses", async () => {
+    reaped();
+    const socket = ctlSocketPath("auth", "worker-1", dir);
+    mkdirSync(dirname(socket), { recursive: true });
+    writeFileSync(socket, "stale forward");
+    dirty();
+    // The release is a DELETE on carrier_jobs: the socket must already be gone when it runs.
+    let socketAtRelease: boolean | undefined;
+    db.function("socket_at_release", () => {
+      socketAtRelease = existsSync(socket);
+      return 0;
+    });
+    db.exec(
+      "CREATE TRIGGER probe_release BEFORE DELETE ON carrier_jobs BEGIN SELECT socket_at_release(); END",
+    );
+    expect(await failure(close())).toBeInstanceOf(RemoteCloseRefusedError);
+    expect(socketAtRelease).toBe(false);
+    expect(existsSync(socket)).toBe(false);
+    expect(reservation()).toBeUndefined();
   });
 });

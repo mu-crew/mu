@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Fixed
+
+- **`mu agent close <name>` with no agent row no longer leaves a stopped lease
+  job fencing the name.** It stopped the job (`stop` exit 0), then closed the
+  removed agent's remote worktree, and only then dropped the reservation. So a
+  dirty or uncollected tree made the close refuse, the reservation stayed, and
+  every `mu agent spawn <name>` refused with "has an unstopped job". The
+  reservation and the local ctl socket now go right after the stop, with their
+  `agent.close` event, before the tree's close. A retry runs no second stop. A
+  reservation a rollback kept as one tree's pointer is still released only by
+  that tree's close. While a removed agent's `remote_recovery` record exists, a
+  `--worktree` spawn of its name on its host refuses (exit 4,
+  `RemoteRecoveryPendingError`, naming `mu agent collect` and `mu agent close`)
+  instead of making a new tree beside one the record may have parked aside.
+
 ## [4.3.3] — 2026-11-05
 
 ### Fixed

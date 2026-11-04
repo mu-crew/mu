@@ -414,6 +414,10 @@ export const MESSAGES = {
     `host ${host}: collect failed: ${detail}`,
   "remote.recovery_refused": (ws: string, agent: string, detail: string) =>
     `agent ${ws}/${agent}: remote recovery refused: ${detail}`,
+  "remote.recovery_pending": (ws: string, agent: string, host: string, ids: readonly number[]) => {
+    const pick = ids.length > 1 ? " --recovery <id>" : "";
+    return `agent ${ws}/${agent}: a removed agent's remote worktree on ${host} is still recorded (recovery ${ids.join(", ")}); a new --worktree spawn of the name there could land beside it. Keep its commits with mu agent collect ${agent} -w ${ws}${pick}, then mu agent close ${agent} -w ${ws}${pick}`;
+  },
   "rebuild.target_exists": (path: string) => `rebuild target already exists: ${path}`,
   "rebuild.target_is_source": (path: string) => `rebuild target is the source DB: ${path}`,
   "rebuild.no_identity": () => "source DB has no machine_identity row; not a mu DB",

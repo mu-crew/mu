@@ -109,7 +109,7 @@ import { encodeEnvelope, type NextPlan, RESULT_BYTES } from "../output-contract.
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-agent.js";
 import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
-import { RemoteRecoveryRefusedError } from "../remote-recovery.js";
+import { RemoteRecoveryPendingError, RemoteRecoveryRefusedError } from "../remote-recovery.js";
 import { RevisionMismatchError } from "../revision.js";
 import { syncDir } from "../segments.js";
 import {
@@ -475,6 +475,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RemoteCloseRefusedError ||
     // A recovery record that is ambiguous, claimed, changed or pinned to another profile.
     err instanceof RemoteRecoveryRefusedError ||
+    // A same-host --worktree spawn of a name a recovery record still names.
+    err instanceof RemoteRecoveryPendingError ||
     // A recorded job handle whose stop template changed, or whose profile is gone: nothing ran.
     err instanceof CarrierStopRefusedError ||
     // A respawn of a name whose older incarnation's job was never stopped.
