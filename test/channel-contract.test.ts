@@ -1,8 +1,10 @@
 // The AgentChannel contract (spec D4): one suite, run against every channel.
 // Each channel declares what it can do (the D4 table); the suite holds it to
-// exactly that, through the channel and through the wait seam that reads it.
-// A real unix socket stands in for the mu pi extension; tmux is a stub whose
-// murmur pane option reports the non-pi pane.
+// exactly that, through the channel, through the wait seam that reads it, and
+// through the delivery verbs (send, fresh, command, interrupt, abort). A real
+// unix socket stands in for the mu pi extension; tmux is a stub whose murmur
+// pane option reports the non-pi pane. The channel is the one the agents row
+// recorded: neither its cli nor the env moves an agent to another channel.
 
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -10,7 +12,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetAgentStateCacheForTests, setMurmurRunnerForTests } from "../src/agent-state.js";
-import { type AgentRow, insertAgent } from "../src/agents.js";
+import {
+  AgentAbortNeedsCtlError,
+  AgentCtlUnreachableError,
+  AgentFreshNeedsCtlError,
+  AgentSendUnsupportedError,
+} from "../src/agents/errors.js";
+import { type AgentRow, getAgent, insertAgent, sendToAgent } from "../src/agents.js";
 import {
   type AgentChannel,
   agentChannel,
@@ -18,16 +26,19 @@ import {
   type ChannelTarget,
   channelTarget,
   ctlChannel,
+  type DeliveryTarget,
+  deliver,
   muxChannel,
   readAgentStates,
 } from "../src/channels/index.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
-import { setMuxForTests, tmuxBackend } from "../src/mux.js";
+import { type MuxBackend, setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { helloReply, INC } from "./_ctl-ext.js";
+import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 
 const WS = "chan";
@@ -35,6 +46,10 @@ const KNOWN_MSG = "msg-known";
 let dir: string;
 let db: Db;
 let servers: Server[];
+/** Every request the fake extension received, in order. */
+let ctlReqs: Record<string, unknown>[];
+/** Every `sendToPane` a sending backend received. */
+let pasted: { paneId: string; text: string }[];
 
 /** A fake extension: status (and `status {msgId}`), and a `wait` answered at once with a settled run. */
 async function serveCtl(agent: AgentRow): Promise<void> {
@@ -47,9 +62,12 @@ async function serveCtl(agent: AgentRow): Promise<void> {
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
         const req = JSON.parse(line) as { op: string; msgId?: string; afterRuns?: number };
+        ctlReqs.push(req);
         const base = { v: 1, ok: true, incarnation: INC };
         if (req.op === "hello") sock.end(encode(helloReply()));
-        else if (req.op === "wait") {
+        else if (["send", "fresh", "command", "interrupt"].includes(req.op)) {
+          sock.end(encode({ ...base, state: "busy", since: 30, runs: 3, wasBusy: false }));
+        } else if (req.op === "wait") {
           sock.end(
             encode({
               ...base,
@@ -95,15 +113,23 @@ interface Contract {
   lastText: boolean;
 }
 
+/** A live pi agent, its fake extension serving. */
+async function liveCtl(): Promise<AgentRow> {
+  const a = insertAgent(db, { name: "pia", workstream: WS, paneId: "%1", cli: "pi" });
+  await serveCtl(a);
+  return a;
+}
+
+/** A live non-pi pane that murmur reports working. */
+async function liveMux(): Promise<AgentRow> {
+  return insertAgent(db, { name: "cla", workstream: WS, paneId: "%2", cli: "claude" });
+}
+
 const CONTRACTS: Contract[] = [
   {
     name: "ctl",
     channel: ctlChannel,
-    live: async () => {
-      const a = insertAgent(db, { name: "pia", workstream: WS, paneId: "%1", cli: "pi" });
-      await serveCtl(a);
-      return a;
-    },
+    live: liveCtl,
     gone: () => insertAgent(db, { name: "pig", workstream: WS, paneId: "%9", cli: "pi" }),
     source: "ctl",
     liveState: "needs_input",
@@ -116,7 +142,7 @@ const CONTRACTS: Contract[] = [
   {
     name: "mux",
     channel: muxChannel,
-    live: async () => insertAgent(db, { name: "cla", workstream: WS, paneId: "%2", cli: "claude" }),
+    live: liveMux,
     gone: () => insertAgent(db, { name: "clg", workstream: WS, paneId: "%9", cli: "claude" }),
     source: "murmur",
     liveState: "busy",
@@ -132,6 +158,8 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mch-"));
   db = openDb({ path: join(dir, "mu.db") });
   servers = [];
+  ctlReqs = [];
+  pasted = [];
   setMuxForTests(tmuxBackend);
   // %1 holds pi (no murmur option: ctl is its source); %2 a non-pi pane murmur reports working.
   setTmuxExecutor(async (args) =>
@@ -239,5 +267,260 @@ describe.each(CONTRACTS)("AgentChannel contract: $name", (c) => {
     }
     expect(handle?.afterRuns).toBe(3);
     expect(handle?.unknownBaseline).toMatchObject({ afterRuns: 3, incarnation: INC });
+  });
+});
+
+/** The tmux stub plus a backend `sendToPane` (herdr's and Rex's delivery). */
+function sendingMux(): void {
+  const backend: MuxBackend = {
+    ...tmuxBackend,
+    sendToPane: async (paneId: string, text: string) => {
+      pasted.push({ paneId, text });
+    },
+  };
+  setMuxForTests(backend);
+}
+
+/** What each channel's delivery verbs do (the D4 table, `ctl` and `mux` columns). */
+interface DeliveryContract {
+  name: ChannelName;
+  live: () => Promise<AgentRow>;
+  /** True when a delivery writes a ctl op; false when it goes to the backend's `sendToPane`. */
+  ctlOp: boolean;
+  /** Without a backend `sendToPane` (tmux): a send is refused. */
+  needsSendToPane: boolean;
+  fresh: "delivers" | typeof AgentFreshNeedsCtlError;
+  interrupt: "delivers" | typeof AgentAbortNeedsCtlError;
+  abort: "delivers" | typeof AgentAbortNeedsCtlError;
+}
+
+const DELIVERY: DeliveryContract[] = [
+  {
+    name: "ctl",
+    live: liveCtl,
+    ctlOp: true,
+    needsSendToPane: false,
+    fresh: "delivers",
+    interrupt: "delivers",
+    abort: "delivers",
+  },
+  {
+    name: "mux",
+    live: liveMux,
+    ctlOp: false,
+    needsSendToPane: true,
+    fresh: AgentFreshNeedsCtlError,
+    interrupt: AgentAbortNeedsCtlError,
+    abort: AgentAbortNeedsCtlError,
+  },
+];
+
+const writes = () => ctlReqs.filter((r) => r.op !== "hello" && r.op !== "status");
+
+describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
+  let target: DeliveryTarget;
+  beforeEach(async () => {
+    target = channelTarget(db, await c.live());
+  });
+
+  it("send: delivered on this channel, or refused where the backend cannot send", async () => {
+    if (c.needsSendToPane) {
+      await expect(deliver(target, "hello", {})).rejects.toBeInstanceOf(AgentSendUnsupportedError);
+      expect(pasted).toEqual([]);
+      sendingMux();
+    }
+    const sent = await deliver(target, "hello", {});
+    expect(sent.transport).toBe(c.name);
+    if (c.ctlOp) {
+      expect(sent).toMatchObject({ runs: 3, incarnation: INC });
+      expect(sent.msgId).toBeTypeOf("string");
+      expect(writes()).toMatchObject([{ op: "send", text: "hello", mode: "followUp" }]);
+      expect(pasted).toEqual([]);
+    } else {
+      expect(writes()).toEqual([]);
+      expect(pasted).toEqual([{ paneId: target.agent.paneId, text: "hello" }]);
+    }
+  });
+
+  it("command: a session command runs as the channel's command, else is typed as text", async () => {
+    sendingMux();
+    const sent = await deliver(target, "/compact keep it short", {});
+    expect(sent.transport).toBe(c.name);
+    if (c.ctlOp) {
+      expect(sent.command).toBe("compact");
+      expect(writes()).toMatchObject([
+        { op: "command", name: "compact", instructions: "keep it short" },
+      ]);
+    } else {
+      expect(pasted.map((p) => p.text)).toEqual(["/compact keep it short"]);
+    }
+    const direct = await agentChannel(target).command(target, { name: "reload" }, {});
+    expect(direct.transport).toBe(c.name);
+    if (c.ctlOp) expect(writes().at(-1)).toMatchObject({ op: "command", name: "reload" });
+    else expect(pasted.at(-1)?.text).toBe("/reload");
+  });
+
+  it("fresh: a new session with the text, or the typed refusal", async () => {
+    sendingMux();
+    if (c.fresh !== "delivers") {
+      await expect(deliver(target, "start", { fresh: true })).rejects.toBeInstanceOf(c.fresh);
+      expect(pasted).toEqual([]);
+      return;
+    }
+    const sent = await deliver(target, "start", { fresh: true });
+    expect(sent.transport).toBe(c.name);
+    expect(writes()).toMatchObject([{ op: "fresh", text: "start" }]);
+  });
+
+  it("interrupt: abort and send as one step, or the typed refusal", async () => {
+    sendingMux();
+    const run = agentChannel(target).interrupt(target, "now", { timeoutMs: 1000 });
+    if (c.interrupt !== "delivers") {
+      await expect(run).rejects.toBeInstanceOf(c.interrupt);
+      expect(pasted).toEqual([]);
+      return;
+    }
+    const r = await run;
+    expect(r).toMatchObject({ wasBusy: false, runs: 3, incarnation: INC });
+    expect(writes()).toMatchObject([{ op: "interrupt", text: "now", timeoutMs: 1000 }]);
+  });
+
+  it("abort: an idle agent gets no abort, or the typed refusal", async () => {
+    const run = agentChannel(target).abort(target, { timeoutMs: 1000 });
+    if (c.abort !== "delivers") {
+      await expect(run).rejects.toBeInstanceOf(c.abort);
+      return;
+    }
+    expect(await run).toEqual({
+      before: "idle",
+      after: "idle",
+      settled: true,
+      aborted: false,
+      pending: false,
+    });
+    expect(writes()).toEqual([]);
+  });
+
+  it("a write fence it cannot honour is refused, never skipped", async () => {
+    sendingMux();
+    let fenced = 0;
+    const ctlGuard = {
+      beforeWrite: () => {
+        fenced += 1;
+        return true;
+      },
+    };
+    if (c.ctlOp) {
+      await deliver(target, "fenced", { ctlGuard });
+      expect(fenced).toBe(1);
+      // A session command has no fence on ctl: refused rather than run unfenced.
+      await expect(deliver(target, "/new", { ctlGuard })).rejects.toBeInstanceOf(
+        AgentSendUnsupportedError,
+      );
+      expect(writes().map((w) => w.op)).toEqual(["send"]);
+    } else {
+      await expect(deliver(target, "fenced", { ctlGuard })).rejects.toBeInstanceOf(
+        AgentSendUnsupportedError,
+      );
+      expect(fenced).toBe(0);
+      expect(pasted).toEqual([]);
+    }
+  });
+});
+
+// D4: mu records each agent's channel on its row, and every verb reads the
+// row, never the cli key or the env. A row older than the column (channel
+// NULL) keeps the derived rule; each case below shows the two disagree.
+describe("the agents row decides the channel", () => {
+  const rowWith = (name: string, cli: string, channel: ChannelName | null): AgentRow =>
+    insertAgent(db, { name, workstream: WS, paneId: "%2", cli, channel });
+  // %2 answers display-message too, so a silent socket on it is unreachable, not a dead pane.
+  beforeEach(() => {
+    setTmuxExecutor(async (args) =>
+      args[0] === "list-panes"
+        ? { stdout: "%1\t\t\n%2\tworking\t1000\n", stderr: "", exitCode: 0 }
+        : args[0] === "display-message"
+          ? { stdout: `${args[2] ?? ""}\n`, stderr: "", exitCode: 0 }
+          : { stdout: "", stderr: "", exitCode: 0 },
+    );
+  });
+
+  it("insertAgent stores the channel, and getAgent reads it back", () => {
+    rowWith("rc", "helper", "ctl");
+    rowWith("rn", "helper", null);
+    expect(getAgent(db, "rc", WS)?.channel).toBe("ctl");
+    expect(getAgent(db, "rn", WS)?.channel).toBeNull();
+    const raw = db.prepare("SELECT channel FROM agents WHERE name = 'rc'").get() as {
+      channel: string | null;
+    };
+    expect(raw.channel).toBe("ctl");
+  });
+
+  it("an unknown stored value reads null, so the row is derived", () => {
+    rowWith("rx", "pi", null);
+    db.prepare("UPDATE agents SET channel = 'later' WHERE name = 'rx'").run();
+    expect(getAgent(db, "rx", WS)?.channel).toBeNull();
+  });
+
+  it("a `ctl` row of a non-pi cli key is on ctl: its silent socket is unreachable, not a send-unsupported", async () => {
+    const legacy = channelTarget(db, rowWith("hn", "helper", null));
+    expect(agentChannel(legacy)).toBe(muxChannel);
+    await expect(deliver(legacy, "hi", {})).rejects.toBeInstanceOf(AgentSendUnsupportedError);
+
+    const recorded = channelTarget(db, rowWith("hc", "helper", "ctl"));
+    expect(agentChannel(recorded)).toBe(ctlChannel);
+    await expect(deliver(recorded, "hi", {})).rejects.toBeInstanceOf(AgentCtlUnreachableError);
+    await expect(sendToAgent(db, "hc", "hi", { workstream: WS })).rejects.toBeInstanceOf(
+      AgentCtlUnreachableError,
+    );
+  });
+
+  it("a `mux` row is never on ctl because its cli key names pi", async () => {
+    const legacy = channelTarget(db, rowWith("pn", "pi", null));
+    expect(agentChannel(legacy)).toBe(ctlChannel);
+
+    const recorded = channelTarget(db, rowWith("pm", "pi", "mux"));
+    expect(agentChannel(recorded)).toBe(muxChannel);
+    await expect(deliver(recorded, "hi", {})).rejects.toBeInstanceOf(AgentSendUnsupportedError);
+    await expect(
+      agentChannel(recorded).interrupt(recorded, "now", { timeoutMs: 100 }),
+    ).rejects.toBeInstanceOf(AgentAbortNeedsCtlError);
+    expect(ctlReqs).toEqual([]);
+  });
+
+  it("the env does not move a recorded row: MU_<KEY>_COMMAND naming pi leaves a `mux` row on mux", async () => {
+    await withEnv("MU_HELPER_COMMAND", "pi --flag", async () => {
+      expect(agentChannel(channelTarget(db, rowWith("en", "helper", null)))).toBe(ctlChannel);
+      expect(agentChannel(channelTarget(db, rowWith("em", "helper", "mux")))).toBe(muxChannel);
+    });
+  });
+
+  it("a `mux` row stays on mux when a socket answers at its derived path: a remote non-pi worker's ssh forward", async () => {
+    const a = rowWith("wr", "helper", "mux");
+    await serveCtl(a);
+    const target = channelTarget(db, a);
+    expect(agentChannel(target)).toBe(muxChannel);
+    await expect(deliver(target, "hi", {})).rejects.toBeInstanceOf(AgentSendUnsupportedError);
+    expect(ctlReqs).toEqual([]);
+  });
+
+  it("a row older than the column still falls back to its socket file", async () => {
+    const a = rowWith("wl", "helper", null);
+    await serveCtl(a);
+    const target = channelTarget(db, a);
+    expect(agentChannel(target)).toBe(ctlChannel);
+    expect((await deliver(target, "hi", {})).transport).toBe("ctl");
+  });
+
+  it("a gate is on mux whatever its row says", () => {
+    const g = insertAgent(db, {
+      name: "gt",
+      workstream: WS,
+      paneId: "%2",
+      cli: "pi",
+      channel: "ctl",
+      gateToken: "tok",
+    });
+    expect(agentChannel(channelTarget(db, g))).toBe(muxChannel);
   });
 });

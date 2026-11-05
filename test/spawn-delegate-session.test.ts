@@ -9,9 +9,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/agents/transport.js", async (orig) => {
-  const real = await orig<typeof import("../src/agents/transport.js")>();
-  return { ...real, sendViaTransport: async () => ({ transport: "mux" }) };
+vi.mock("../src/channels/deliver.js", async (orig) => {
+  const real = await orig<typeof import("../src/channels/deliver.js")>();
+  return { ...real, deliver: async () => ({ transport: "mux" }) };
 });
 
 import {

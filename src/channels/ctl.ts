@@ -3,7 +3,8 @@
 // State is one `status` per agent (no hello) per read; the watch is one ctl
 // `wait` that the extension answers on `agent_settled`; the baseline is a
 // probe's run count and incarnation; a receipt is `status {msgId}`; the last
-// text is a `wait` past the previous run, answered at once. The write fence
+// text is a `wait` past the previous run, answered at once. Delivery (send,
+// fresh, command, interrupt, abort) is in ./ctl-deliver.ts. The write fence
 // (`beforeWrite`, CtlWriteVetoedError) and msgIds are ctl's, re-exported here
 // for the callers that reserve and fence a send.
 
@@ -15,22 +16,15 @@ import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import { type CtlBlocked, type CtlState, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import { activeMux } from "../mux.js";
-import { expectsCtl } from "./select.js";
-import type {
-  AgentChannel,
-  ChannelReadOptions,
-  ChannelTarget,
-  MessageCheck,
-  RunBaseline,
-} from "./types.js";
+import { checkMessage, ctlDelivery } from "./ctl-deliver.js";
+import { expectsCtl, targetSocket } from "./select.js";
+import type { AgentChannel, ChannelReadOptions, ChannelTarget, RunBaseline } from "./types.js";
 
 export { CTL_DEFAULT_TIMEOUT_MS, CtlWriteVetoedError, newMsgId } from "../ctl/client.js";
+export { checkMessage } from "./ctl-deliver.js";
 
 /** Per-agent budget for the control-socket status read (one connection). */
 const CTL_STATE_PROBE_MS = 1000;
-
-/** The one `status {msgId}` probe a failed send gets, and `mu agent check`. */
-const MSG_PROBE_MS = 5000;
 
 /** ctl's idle maps to needs_input, the same as murmur's idle; an open
  *  extension dialog (`blocked`) maps to needs_permission. */
@@ -43,9 +37,6 @@ export function ctlRuntimeState(state: CtlState, blocked?: CtlBlocked): RuntimeS
 export function blockedReason(blocked: CtlBlocked): string {
   return `dialog ${blocked.kind}${blocked.title !== undefined ? `: ${blocked.title}` : ""}`;
 }
-
-const socketOf = (t: ChannelTarget): string =>
-  ctlSocketPath(t.agent.workstreamName, t.agent.name, t.stateDir);
 
 /** One status probe per agent; a socket that does not answer reads `unknown` with its link. */
 async function readCtlStates(
@@ -236,39 +227,9 @@ export async function watchAgentRun(
   return { initial, afterRuns, settled };
 }
 
-/**
- * Ask the extension whether it accepted the send/fresh/interrupt that
- * carried `msgId`: one `status {msgId}` request. Never throws: a socket
- * that is silent, missing, or an extension that does not answer with a
- * `msg` is `unreachable`, which is not the same as `not-accepted`.
- */
-export async function checkMessage(
-  sock: string,
-  msgId: string,
-  timeoutMs: number = MSG_PROBE_MS,
-): Promise<MessageCheck> {
-  try {
-    const r = await ctlRequest(sock, { op: "status", msgId }, { timeoutMs });
-    if (!r.ok) return { state: "unreachable", id: msgId, reason: r.error };
-    if (r.msg === undefined) {
-      return { state: "unreachable", id: msgId, reason: "the extension does not report receipts" };
-    }
-    if (!r.msg.accepted) return { state: "not-accepted", id: msgId };
-    return {
-      state: "accepted",
-      id: msgId,
-      ...(r.msg.runs !== undefined ? { runs: r.msg.runs } : {}),
-      ...(r.msg.at !== undefined ? { at: r.msg.at } : {}),
-      ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
-    };
-  } catch (e) {
-    return { state: "unreachable", id: msgId, reason: e instanceof Error ? e.message : String(e) };
-  }
-}
-
 /** The probed run count and incarnation; undefined when the agent is not on ctl or does not answer. */
 async function ctlBaseline(t: ChannelTarget): Promise<RunBaseline | undefined> {
-  const sock = socketOf(t);
+  const sock = targetSocket(t);
   if (!expectsCtl(t.agent, sock)) return undefined;
   const probe = await ctlProbe(sock);
   if (probe.kind !== "ok") return undefined;
@@ -288,7 +249,7 @@ async function ctlLastRun(
   const onAbort = (): void => stop.abort();
   o.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    const watch = await watchAgentRun(t.agent, socketOf(t), stop.signal, {
+    const watch = await watchAgentRun(t.agent, targetSocket(t), stop.signal, {
       afterRuns: o.afterRuns,
       ...(o.inc !== undefined ? { inc: o.inc } : {}),
     });
@@ -303,8 +264,9 @@ export const ctlChannel: AgentChannel = {
   name: "ctl",
   fence: true,
   readStates: readCtlStates,
-  watch: (t, signal, opts) => watchAgentRun(t.agent, socketOf(t), signal, opts),
+  watch: (t, signal, opts) => watchAgentRun(t.agent, targetSocket(t), signal, opts),
   baseline: ctlBaseline,
-  receipt: (t, msgId, timeoutMs) => checkMessage(socketOf(t), msgId, timeoutMs),
+  receipt: (t, msgId, timeoutMs) => checkMessage(targetSocket(t), msgId, timeoutMs),
   lastRun: ctlLastRun,
+  ...ctlDelivery,
 };

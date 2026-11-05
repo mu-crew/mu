@@ -10,8 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../src/agents/spawn.js", async (importOriginal) =>
   (await import("./_next-fakes.js")).spawnFake(await importOriginal()),
 );
-vi.mock("../src/agents/transport.js", async (importOriginal) =>
-  (await import("./_next-fakes.js")).transportFake(await importOriginal()),
+vi.mock("../src/channels/deliver.js", async (importOriginal) =>
+  (await import("./_next-fakes.js")).deliverFake(await importOriginal()),
 );
 vi.mock("../src/channels/ctl.js", async (importOriginal) =>
   (await import("./_next-fakes.js")).ctlChannelFake(await importOriginal()),

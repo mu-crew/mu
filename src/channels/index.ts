@@ -2,9 +2,9 @@
 //
 // ctl's raw-socket functions (`checkMessage`, `watchAgentRun`,
 // `ctlRuntimeState`) are deliberately not re-exported: a call site reaches an
-// agent through `agentChannel`, not a socket path. Only the SDK hubs and
-// ctl delivery (until U6) import them from ./ctl.js, and
-// test/channel-imports.test.ts holds that list.
+// agent through `agentChannel` or `deliver`, not a socket path. Only the SDK
+// hubs import them from ./ctl.js, and test/channel-imports.test.ts holds that
+// list.
 
 export {
   blockedReason,
@@ -13,17 +13,35 @@ export {
   ctlChannel,
   newMsgId,
 } from "./ctl.js";
+export {
+  CTL_SLASH_COMMANDS,
+  isSlashCommand,
+  parseSessionCommand,
+  requireFeature,
+  respawnCommand,
+} from "./ctl-deliver.js";
+export { deliver } from "./deliver.js";
 export { agentChannel, channelTarget, readAgentStates } from "./dispatch.js";
 export { muxChannel } from "./mux.js";
-export { channelOf, expectsCtl } from "./select.js";
-export type {
-  AgentChannel,
-  ChannelName,
-  ChannelReadOptions,
-  ChannelTarget,
-  CtlBlocked,
-  CtlState,
-  CtlTool,
-  MessageCheck,
-  RunBaseline,
+export { agentCtlSocket, channelOf, expectsCtl } from "./select.js";
+export {
+  type AbortOutcome,
+  type AgentChannel,
+  CHANNEL_NAMES,
+  type ChannelDelivery,
+  type ChannelName,
+  type ChannelReadOptions,
+  type ChannelTarget,
+  type CtlBlocked,
+  type CtlCommandName,
+  type CtlGuard,
+  type CtlState,
+  type CtlTool,
+  type DeliveryOptions,
+  type DeliveryTarget,
+  type InterruptResult,
+  type MessageCheck,
+  type RunBaseline,
+  type SendResult,
+  type SessionCommand,
 } from "./types.js";

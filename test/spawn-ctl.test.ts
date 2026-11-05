@@ -174,6 +174,56 @@ describe("spawn records the command it ran (agents.command / command_source)", (
   });
 });
 
+// agents.channel (spec D4): spawn records the channel once, from what the pane
+// runs, and every verb reads it from the row. Read back through getAgent AND
+// the raw column: a dropped write must fail here.
+describe("spawn records its channel (agents.channel)", () => {
+  const raw = (name: string) =>
+    (
+      db
+        .prepare(
+          "SELECT channel FROM agents WHERE name = ? AND workstream_id = (SELECT id FROM workstreams WHERE name = 'auth')",
+        )
+        .get(name) as { channel: string | null }
+    ).channel;
+
+  it("a pi cli key is ctl, in the stored row and the returned one", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    expect(raw("worker-1")).toBe("ctl");
+    expect(agent.channel).toBe("ctl");
+    expect(getAgent(db, "worker-1", "auth")?.channel).toBe("ctl");
+  });
+
+  it("a --command whose argv0 is pi-meta is ctl, whatever the cli key", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await spawnAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      cli: "helper",
+      command: "pi-meta --no-solo",
+    });
+    expect(raw("worker-1")).toBe("ctl");
+  });
+
+  it("an $MU_<CLI>_COMMAND that runs pi is ctl, and the row keeps it once the env is gone", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await withEnv("MU_HELPER_COMMAND", "pi --flag", async () => {
+      await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "helper" });
+    });
+    expect(raw("worker-1")).toBe("ctl");
+    expect(getAgent(db, "worker-1", "auth")?.channel).toBe("ctl");
+  });
+
+  it("a non-pi cli is mux, and --no-ctl leaves a pi on ctl", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "claude" });
+    await spawnAgent(db, { name: "worker-2", workstream: "auth", ctl: false });
+    expect(raw("worker-1")).toBe("mux");
+    expect(raw("worker-2")).toBe("ctl");
+  });
+});
+
 // agents.spawner: who called spawn, read from the PARENT's env before the
 // child's env replaces it. Never guessed from task ownership.
 describe("spawn records its spawner (agents.spawner)", () => {

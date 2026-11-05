@@ -25,9 +25,14 @@
 // ("already applied") is parsed again from its text, so its spawner's wait
 // still tells the worker.
 
-import { agentCtlSocket, recordSend, sendViaTransport } from "./agents/transport.js";
+import { recordSend } from "./agents/transport.js";
 import { getAgent } from "./agents.js";
-import { CTL_DEFAULT_TIMEOUT_MS, CtlWriteVetoedError } from "./channels/index.js";
+import {
+  CTL_DEFAULT_TIMEOUT_MS,
+  CtlWriteVetoedError,
+  channelTarget,
+  deliver,
+} from "./channels/index.js";
 import { CLOSE_MALFORMED, parseCloseBlock } from "./close-block.js";
 import type { Db } from "./db.js";
 import { cursorKey } from "./wait-cursor.js";
@@ -147,8 +152,7 @@ export async function noticeRefusedClose(
       })
       .immediate();
   try {
-    const sent = await sendViaTransport(agent, text, {
-      socket: agentCtlSocket(db, agent),
+    const sent = await deliver(channelTarget(db, agent), text, {
       expectIncarnation: r.incarnation,
       ctlGuard: {
         timeoutMs: CTL_DEFAULT_TIMEOUT_MS,

@@ -21,7 +21,13 @@ import {
   type StateSource,
 } from "./agent-state.js";
 import { reapAgentRow } from "./agents/reap.js";
-import { readAgentStates } from "./channels/index.js";
+import {
+  CHANNEL_NAMES,
+  type ChannelName,
+  channelTarget,
+  deliver,
+  readAgentStates,
+} from "./channels/index.js";
 import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
 import type { CommandSource } from "./mux/types.js";
 import { withOpContext } from "./op-context.js";
@@ -116,19 +122,23 @@ export {
   type TaskSpawnRequest,
 } from "./agents/task-spawn.js";
 export {
-  agentCtlSocket,
-  CTL_SLASH_COMMANDS,
-  isSlashCommand,
-  parseSessionCommand,
-  requireFeature,
-  respawnCommand,
   type SendResult,
   sendViaTransport,
   type Transport,
   type TransportSendOptions,
 } from "./agents/transport.js";
 export { checkMessage, watchAgentRun } from "./channels/ctl.js";
-export { expectsCtl, type MessageCheck } from "./channels/index.js";
+export {
+  agentCtlSocket,
+  type ChannelName,
+  CTL_SLASH_COMMANDS,
+  expectsCtl,
+  isSlashCommand,
+  type MessageCheck,
+  parseSessionCommand,
+  requireFeature,
+  respawnCommand,
+} from "./channels/index.js";
 
 import {
   AgentExistsError,
@@ -136,13 +146,7 @@ import {
   AgentReplacedError,
   CarrierJobUnstoppedError,
 } from "./agents/errors.js";
-import {
-  agentCtlSocket,
-  recordSend,
-  type SendResult,
-  sendViaTransport,
-  type TransportSendOptions,
-} from "./agents/transport.js";
+import { recordSend, type SendResult, type TransportSendOptions } from "./agents/transport.js";
 import { getCarrierJobByName } from "./carrier-jobs.js";
 import type { CtlTool } from "./channels/index.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
@@ -186,6 +190,12 @@ export interface AgentRow {
   repo: string | null;
   /** Set for a remote command gate (`spawn --host` of a non-pi command): its spawn-unique token, the key of the remote result record. Null for every other agent. */
   gateToken: string | null;
+  /**
+   * The channel spawn recorded (`agents.channel`, machine-local): every verb
+   * reaches the agent through it (src/channels). Null for a row older than
+   * the column, whose channel is derived (see `expectsCtl`).
+   */
+  channel: ChannelName | null;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
@@ -276,6 +286,8 @@ export interface InsertAgentInput {
   gateToken?: string | null;
   /** The transport of the profile `host` names, as spawned (`agents.host_transport`); null: local. */
   hostTransport?: string | null;
+  /** The channel the agent is reached through (`agents.channel`); null: derived on each read. */
+  channel?: ChannelName | null;
   /** The lease spawn's own `carrier_jobs` reservation token: the one the name fence lets through. */
   reservation?: string;
 }
@@ -298,6 +310,7 @@ interface RawAgentRow {
   collected_head: string | null;
   repo: string | null;
   gate_token: string | null;
+  channel: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -322,6 +335,7 @@ const SELECT_AGENT_COLS = `
   a.collected_head AS collected_head,
   a.repo AS repo,
   a.gate_token AS gate_token,
+  a.channel AS channel,
   a.created_at AS created_at,
   a.updated_at AS updated_at
 `;
@@ -351,6 +365,7 @@ function rowFromDb(row: RawAgentRow): AgentRow {
     collectedHead: row.collected_head,
     repo: row.repo,
     gateToken: row.gate_token,
+    channel: CHANNEL_NAMES.find((c) => c === row.channel) ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -382,10 +397,10 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
     // carrier_jobs reservation other than the caller's own (src/carrier-jobs.ts).
     inserted = db
       .prepare(
-        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, created_at, updated_at)
+        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, channel, created_at, updated_at)
        SELECT @name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
                COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource,
-               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @now, @now
+               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @channel, @now, @now
        WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs c
                          WHERE c.workstream = @workstream AND c.name = @name AND c.token IS NOT @reservation)`,
       )
@@ -407,6 +422,7 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
         repo: input.repo ?? null,
         gateToken: input.gateToken ?? null,
         hostTransport: input.hostTransport ?? null,
+        channel: input.channel ?? null,
         reservation: input.reservation ?? null,
         now,
       }).changes;
@@ -625,11 +641,12 @@ export function isValidAgentName(name: string): boolean {
 }
 
 /**
- * Send text to an agent and submit it. A pi agent gets it through its
- * control socket (AgentCtlUnreachableError when that does not answer —
- * never a silent paste), `/new` / `/reload` / `/compact` included; a
- * non-pi CLI gets one atomic herdr `agent prompt`; on tmux it is refused
- * (AgentSendUnsupportedError). See src/agents/transport.ts.
+ * Send text to an agent and submit it, through the channel its row records.
+ * A pi agent (`ctl`) gets it through its control socket
+ * (AgentCtlUnreachableError when that does not answer — never a silent
+ * paste), `/new` / `/reload` / `/compact` included; a non-pi CLI (`mux`)
+ * gets one atomic herdr `agent prompt`; on tmux it is refused
+ * (AgentSendUnsupportedError). See src/channels.
  */
 export async function sendToAgent(
   db: Db,
@@ -653,10 +670,7 @@ export async function sendToAgent(
   ) {
     throw new AgentReplacedError(name, opts.workstream, "sent to");
   }
-  const sent = await sendViaTransport(agent, text, {
-    ...opts,
-    socket: opts.socket ?? agentCtlSocket(db, agent),
-  });
+  const sent = await deliver(channelTarget(db, agent, opts.socket), text, opts);
   const source = await resolveActorIdentity();
   recordSend(
     db,

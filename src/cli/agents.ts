@@ -14,16 +14,13 @@ import {
   AgentNotFoundError,
   AgentSendIndeterminateError,
   abortAgent,
-  agentCtlSocket,
   delegateOutcome,
-  expectsCtl,
   getAgent,
   interruptAgent,
   isSlashCommand,
   listLiveAgents,
   parseSessionCommand,
   readAgent,
-  requireFeature,
   resolveCliCommand,
   resolveCliCommandWithSource,
   type SpawnedAgent,
@@ -32,7 +29,14 @@ import {
   spawnForTask,
   type Transport,
 } from "../agents.js";
-import { blockedReason, channelTarget, ctlChannel, readAgentStates } from "../channels/index.js";
+import {
+  agentChannel,
+  blockedReason,
+  channelTarget,
+  ctlChannel,
+  readAgentStates,
+  requireFeature,
+} from "../channels/index.js";
 import {
   applyQualifiedRef,
   assertAgentInWorkstream,
@@ -1140,7 +1144,7 @@ export async function cmdAgentWait(
   if (opts.afterRuns !== undefined) {
     for (const ref of refs) {
       const agent = getAgent(db, ref.name, ref.workstreamName);
-      if (agent !== undefined && !expectsCtl(agent, agentCtlSocket(db, agent))) {
+      if (agent !== undefined && agentChannel(channelTarget(db, agent)).name !== "ctl") {
         throw new UsageError(
           say("agent.wait_after_runs_pi", `${ref.workstreamName}/${ref.name}`, agent.cli),
         );
@@ -1158,13 +1162,13 @@ export async function cmdAgentWait(
     for (const ref of refs) {
       const agent = getAgent(db, ref.name, ref.workstreamName);
       if (agent === undefined) continue;
-      const sock = agentCtlSocket(db, agent);
-      if (!expectsCtl(agent, sock)) {
+      const target = channelTarget(db, agent);
+      if (agentChannel(target).name !== "ctl") {
         throw new UsageError(
           say("agent.wait_inc_pi", `${ref.workstreamName}/${ref.name}`, agent.cli),
         );
       }
-      await requireFeature(agent, sock, "incarnation");
+      await requireFeature(target, "incarnation");
     }
   }
 

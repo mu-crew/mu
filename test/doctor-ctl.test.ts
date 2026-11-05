@@ -188,6 +188,7 @@ function agent(name: string, cli = "pi"): AgentRow {
     collectedHead: null,
     repo: null,
     gateToken: null,
+    channel: null,
     createdAt: now,
     updatedAt: now,
   };

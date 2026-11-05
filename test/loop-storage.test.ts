@@ -596,6 +596,24 @@ describe("a populated v13 DB is completed in place", () => {
     expect(raw(p, (r) => r.pragma("schema_version", { simple: true }))).toBe(cookie);
   });
 
+  it("agents without channel gain it with rows intact, and a NULL channel stays derived", () => {
+    const p = v13Copy();
+    track(openDb({ path: p })).close();
+    open.pop();
+    raw(p, (r) => {
+      r.exec("ALTER TABLE agents DROP COLUMN channel");
+    });
+    expect(columns(p, "agents")).not.toContain("channel");
+    const before = raw(p, (r) => r.prepare("SELECT id, name, cli, pane_id FROM agents").all());
+    const db = track(openDb({ path: p }));
+    expect(columns(p, "agents")).toContain("channel");
+    expect(db.prepare("SELECT id, name, cli, pane_id FROM agents").all()).toEqual(before);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM agents WHERE channel IS NOT NULL").get()).toEqual({
+      n: 0,
+    });
+    expect(checkDrift(db).clean).toBe(true);
+  });
+
   it("an old-shaped carrier_jobs (one row per incarnation, no token) is rebuilt losslessly as filled reservations", () => {
     const p = oldCarrierJobsCopy();
     const before = raw(p, (r) => r.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all());

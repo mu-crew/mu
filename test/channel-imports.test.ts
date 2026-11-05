@@ -1,6 +1,7 @@
-// The channel seam holds (spec D4, U5): the call sites that read an agent's
-// state, watch its run, count its baseline, ask a receipt, fence a write or
-// read its last text import those from src/channels, never from src/ctl. The
+// The channel seam holds (spec D4, U5, U6): the call sites that read an
+// agent's state, watch its run, count its baseline, ask a receipt, fence a
+// write, read its last text, or deliver to it (send, fresh, command,
+// interrupt, abort) import those from src/channels, never from src/ctl. The
 // files that still import src/ctl are listed with exactly what they import:
 // a new importer, or a new symbol in a listed one, fails here.
 
@@ -15,8 +16,10 @@ const SRC = join(ROOT, "src");
 /** The call sites that reach a pane agent's channel through src/channels only. */
 const CHANNEL_CALL_SITES = [
   "src/agent-state.ts",
+  "src/agents/abort.ts",
   "src/agents/observe.ts",
   "src/agents/task-spawn.ts",
+  "src/agents/transport.ts",
   "src/auto-attempt.ts",
   "src/cli/agents.ts",
   "src/close-notice.ts",
@@ -43,23 +46,49 @@ const VERB_CALL_SITES = [
 ];
 
 /** The channel entry points a verb call site reaches an agent through. */
-const CHANNEL_ENTRY_POINTS = ["agentChannel", "ctlChannel", "readAgentStates"];
+const CHANNEL_ENTRY_POINTS = ["agentChannel", "ctlChannel", "deliver", "readAgentStates"];
+
+/**
+ * The delivery call sites (U6): each sends, freshens, interrupts or aborts an
+ * agent through `deliver` or its `agentChannel`, the routes that read the
+ * channel from the agents row. `ctlChannel` alone is not enough here: a
+ * delivery must never assume ctl.
+ */
+const DELIVERY_CALL_SITES = [
+  "src/agents.ts",
+  "src/agents/abort.ts",
+  "src/agents/task-spawn.ts",
+  "src/agents/transport.ts",
+  "src/cli/agents.ts",
+  "src/close-notice.ts",
+  "src/wait-actions.ts",
+];
+const DELIVERY_ENTRY_POINTS = ["agentChannel", "deliver"];
+
+/** The delivery verbs of `AgentChannel`, and the raw ctl ops they replace. */
+const DELIVERY_VERBS = ["send", "fresh", "command", "interrupt", "abort"];
+const CTL_DELIVERY_NAMES = [
+  "ctlFailure",
+  "ctlRequestFor",
+  "ctlSendWithReceipt",
+  "fencedHello",
+  "runSessionCommand",
+];
 
 /**
  * ctl's raw-socket functions: they take a socket path, so a caller holding one
  * bypasses `AgentChannel`. The barrel does not export them; only these files
- * import them from src/channels/ctl.ts (the SDK hubs re-export them, and ctl
- * delivery asks receipts until U6).
+ * import them from src/channels/ctl.ts (the SDK hubs re-export them).
  */
 const RAW_CTL_NAMES = ["checkMessage", "ctlRuntimeState", "watchAgentRun"];
-const RAW_CTL_IMPORTERS = ["src/agents.ts", "src/agents/transport.ts", "src/index.ts"];
+const RAW_CTL_IMPORTERS = ["src/agents.ts", "src/index.ts"];
 
 /**
  * Files outside src/ctl and src/channels that still import src/ctl, and the
  * only symbols each may import. Stays on ctl by D4: delegates, the spawn
  * handshake, doctor and host check, the lease carrier and remote socket
  * plumbing, and the socket file's cleanup. Delivery (send, interrupt, fresh,
- * command) moves with U6.
+ * command, abort) is on the channel since U6.
  */
 const CTL_IMPORTS: Record<string, readonly string[]> = {
   // socket file cleanup on close and teardown
@@ -84,26 +113,6 @@ const CTL_IMPORTS: Record<string, readonly string[]> = {
   "src/agents/spawn-ready.ts": ["CtlProbe", "ctlProbe"],
   "src/agents/lease-carrier.ts": ["carrierJobFilePath"],
   "src/remote-agent.ts": ["remoteCtlSocketPath"],
-  // delivery, until U6
-  "src/agents/abort.ts": ["CtlState", "INCARNATION_MISMATCH"],
-  "src/agents/transport.ts": [
-    "CTL_COMMANDS",
-    "CtlCommandName",
-    "CtlDeliveryUnknownError",
-    "CtlFeature",
-    "CtlReply",
-    "CtlRequest",
-    "CtlState",
-    "CtlUnknownOpError",
-    "CtlVersionError",
-    "CtlWriteVetoedError",
-    "INCARNATION_MISMATCH",
-    "ctlRequest",
-    "ctlServes",
-    "ctlSocketPath",
-    "errCode",
-    "newMsgId",
-  ],
 };
 
 interface ImportStmt {
@@ -238,5 +247,45 @@ describe("channel import boundary", () => {
       );
       expect(bad, file).toEqual([]);
     }
+  });
+
+  it.each(DELIVERY_CALL_SITES)("%s delivers through deliver or agentChannel", (file) => {
+    const imports = importsOf(file, read(file));
+    const used = imports
+      .filter((i) => isChannels(i.target) && !i.typeOnly)
+      .flatMap((i) => i.names)
+      .filter((n) => DELIVERY_ENTRY_POINTS.includes(n));
+    expect(used).not.toEqual([]);
+    // No ctl delivery op from src/ctl, and none of the old transport helpers from anywhere.
+    expect(imports.filter((i) => isCtl(i.target) && !(file in CTL_IMPORTS))).toEqual([]);
+    const names = imports.flatMap((i) => i.names);
+    expect(
+      names.filter((n) => CTL_DELIVERY_NAMES.includes(n) || RAW_CTL_NAMES.includes(n)),
+    ).toEqual(file === "src/agents.ts" ? ["checkMessage", "watchAgentRun"] : []);
+  });
+
+  it("no delivery call site sends through ctlChannel directly", () => {
+    // `ctlChannel.receipt(...)` asks about an earlier ctl write; a delivery verb on it would skip the row.
+    const verb = new RegExp(`ctlChannel\\.(${DELIVERY_VERBS.join("|")})\\(`);
+    expect(DELIVERY_CALL_SITES.filter((f) => verb.test(read(f)))).toEqual([]);
+  });
+
+  it("no file outside src/channels imports ctl delivery or the delivery router by path", () => {
+    const found = sourceFiles(SRC)
+      .map(repoPath)
+      .filter((file) => !file.startsWith("src/channels/"))
+      .filter((file) =>
+        importsOf(file, read(file)).some(
+          (i) =>
+            i.target === "src/channels/ctl-deliver.ts" || i.target === "src/channels/deliver.ts",
+        ),
+      );
+    expect(found).toEqual([]);
+  });
+
+  it("every delivery call site but the hub is a listed call site", () => {
+    expect(
+      DELIVERY_CALL_SITES.filter((f) => f !== "src/agents.ts" && !CHANNEL_CALL_SITES.includes(f)),
+    ).toEqual([]);
   });
 });

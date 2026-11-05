@@ -25,7 +25,16 @@
 // (fails closed); the advisory spawn lock stays inside spawnAgent.
 
 import { type AgentRow, getAgentForCleanup } from "../agents.js";
-import { channelTarget, ctlChannel, expectsCtl, newMsgId } from "../channels/index.js";
+import {
+  agentChannel,
+  channelTarget,
+  ctlChannel,
+  deliver,
+  isSlashCommand,
+  newMsgId,
+  parseSessionCommand,
+  type SendResult,
+} from "../channels/index.js";
 import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
@@ -69,14 +78,7 @@ import {
   type StagedWorktree,
   spawnAgent,
 } from "./spawn.js";
-import {
-  agentCtlSocket,
-  isSlashCommand,
-  parseSessionCommand,
-  recordSend,
-  type SendResult,
-  sendViaTransport,
-} from "./transport.js";
+import { recordSend } from "./transport.js";
 
 export interface TaskSpawnRequest {
   /** The spawn itself (name, workstream, cli, worktree, ...). `onIdentity` is this module's. */
@@ -515,7 +517,7 @@ async function drive(
         }
         const journaled = updateReceipt(db, taskId, key, {
           state: "sending",
-          transport: expectsCtl(now, agentCtlSocket(db, now)) ? "ctl" : "mux",
+          transport: agentChannel(channelTarget(db, now)).name,
         });
         return { row: now, rec: journaled };
       })
@@ -531,8 +533,7 @@ async function drive(
   let undelivered: string | undefined;
   let sent: SendResult;
   try {
-    sent = await sendViaTransport(row, req.text, {
-      socket: agentCtlSocket(db, row),
+    sent = await deliver(channelTarget(db, row), req.text, {
       msgId: rec.msgId,
       ...(rec.incarnation !== null ? { expectIncarnation: rec.incarnation } : {}),
       onUndelivered: (w) => {

@@ -8,11 +8,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const hook = vi.hoisted(() => ({ texts: [] as string[] }));
-vi.mock("../src/agents/transport.js", async (orig) => {
-  const real = await orig<typeof import("../src/agents/transport.js")>();
+vi.mock("../src/channels/deliver.js", async (orig) => {
+  const real = await orig<typeof import("../src/channels/deliver.js")>();
   return {
     ...real,
-    sendViaTransport: async (_agent: unknown, text: string) => {
+    deliver: async (_target: unknown, text: string) => {
       hook.texts.push(text);
       return { transport: "mux" };
     },

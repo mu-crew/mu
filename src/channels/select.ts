@@ -1,39 +1,63 @@
 // mu — which channel an agent is on.
 //
-// Today the rule is derived: an agent that runs pi (or left its control
-// socket file behind) is on `ctl`; every other pane is on `mux`. A remote
-// command gate is never on `ctl`.
+// The agents row records the channel at spawn (`agents.channel`), and a verb
+// reads it from there, never from the env. A row older than the column falls
+// back to the derived rule: an agent that runs pi (or left its control socket
+// file behind) is on `ctl`; every other pane is on `mux`. A remote command
+// gate is never on `ctl`.
 
 import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 import { resolveCliCommand, speaksMuCtl } from "../agents/spawn.js";
 import type { AgentRow } from "../agents.js";
 import { ctlSocketPath } from "../ctl/path.js";
-import type { ChannelName } from "./types.js";
+import type { Db } from "../db.js";
+import type { ChannelName, ChannelTarget } from "./types.js";
+
+type ChannelRef = Pick<AgentRow, "cli" | "name" | "workstreamName"> & {
+  gateToken?: string | null;
+  channel?: ChannelName | null;
+};
 
 /**
  * True when the agent runs pi, so sends go through its control socket.
- * The cli key decides when it names pi (or MU_<KEY>_COMMAND here runs
- * pi). Otherwise the agent's own socket file decides: spawn removes any
- * stale file before the pane starts, so a file at the derived path was
- * bound by this agent's extension (or its ssh forward). That covers
- * `--cli helper --command "pi-meta ..."`, whose command is not stored,
- * without a schema change. `sock` defaults to the derived path; pass
- * agentCtlSocket(db, agent) when a DB is at hand. A command gate (`gateToken`)
- * never speaks ctl: the discriminator beats both rules.
+ *
+ * A row that recorded its channel at spawn is final: `ctl` is on ctl, `mux`
+ * is on mux whatever files sit at the derived socket path. A remote non-pi
+ * worker's ssh `-L` binds that path locally whatever runs remotely, so the
+ * file proves nothing for a recorded row; an opaque wrapper around pi names
+ * `--cli pi` (see isCommandGate). A row older than the column (`channel`
+ * null) is derived: the cli key decides when it names pi (or
+ * MU_<KEY>_COMMAND here runs pi), else the socket file does. Spawn removes
+ * any stale file before the pane starts, so a file at the derived path was
+ * bound by this agent's extension (or its ssh forward).
+ *
+ * `sock` defaults to the derived path; pass agentCtlSocket(db, agent) when a
+ * DB is at hand. A command gate (`gateToken`) never speaks ctl: the
+ * discriminator beats every other rule.
  */
 export function expectsCtl(
-  agent: Pick<AgentRow, "cli" | "name" | "workstreamName"> & { gateToken?: string | null },
+  agent: ChannelRef,
   sock: string = ctlSocketPath(agent.workstreamName, agent.name),
 ): boolean {
   // A remote command gate runs no pi, whatever its `cli` says or a forward leaves behind.
   if (agent.gateToken != null) return false;
+  if (agent.channel != null) return agent.channel === "ctl";
   return speaksMuCtl(agent.cli, resolveCliCommand(agent.cli)) || existsSync(sock);
 }
 
-/** The channel of `agent`, its control socket rooted at `stateDir`. An agent with no cli key is on `mux`. */
+/**
+ * The channel of `agent`, its control socket at `socket` or else rooted at
+ * `stateDir`. An agent with no cli key is on `mux`.
+ */
 export function channelOf(
-  agent: Pick<AgentRow, "name" | "workstreamName"> & { cli?: string; gateToken?: string | null },
+  agent: Pick<AgentRow, "name" | "workstreamName"> & {
+    cli?: string;
+    gateToken?: string | null;
+    channel?: ChannelName | null;
+  },
   stateDir?: string,
+  socket?: string,
 ): ChannelName {
   if (agent.cli === undefined) return "mux";
   const ref = {
@@ -41,6 +65,18 @@ export function channelOf(
     name: agent.name,
     workstreamName: agent.workstreamName,
     gateToken: agent.gateToken,
+    channel: agent.channel,
   };
-  return expectsCtl(ref, ctlSocketPath(agent.workstreamName, agent.name, stateDir)) ? "ctl" : "mux";
+  const sock = socket ?? ctlSocketPath(agent.workstreamName, agent.name, stateDir);
+  return expectsCtl(ref, sock) ? "ctl" : "mux";
+}
+
+/** The control socket of a channel target: its explicit `socket`, else the path derived under its state dir. */
+export function targetSocket(t: ChannelTarget): string {
+  return t.socket ?? ctlSocketPath(t.agent.workstreamName, t.agent.name, t.stateDir);
+}
+
+/** The agent's derived control socket, rooted at the DB's directory (as spawn does). */
+export function agentCtlSocket(db: Db, agent: Pick<AgentRow, "name" | "workstreamName">): string {
+  return ctlSocketPath(agent.workstreamName, agent.name, dirname(db.name));
 }
