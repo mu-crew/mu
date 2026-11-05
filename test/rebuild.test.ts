@@ -681,6 +681,7 @@ describe("rebuildInto", () => {
       expect(report.opsCopied).toBeGreaterThan(0);
       expect(report.opsProjected).toBeGreaterThan(0);
       expect(Object.keys(report.rebuiltRows).sort()).toEqual([
+        "checks",
         "ops",
         "task_edges",
         "task_notes",

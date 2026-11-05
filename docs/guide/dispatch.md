@@ -227,8 +227,14 @@ mu task release build -w auth
   with a reason under 40 characters and no `VERDICT:` or `REFUTER` note
   prints a warning. The exit code stays the same. A `REJECTED` or `SUPERSEDED`
   note appends the title of each task id it names.
-- `--if-ready` closes only when every blocker is closed. Otherwise it
-  lists the open blockers and exits 0.
+- `--if-ready` closes only when every blocker is closed and every check
+  recorded on a blocker has a verdict. Otherwise it lists the open blockers
+  and the unanswered checks and exits 0.
+- A check a native subagent or a cross-family pane runs is recorded:
+  `mu task check <id> --by claude/opus --brief - <<'EOF'` prints
+  `check=<id>`, and `mu task verdict <id> --check <check> - <<'EOF'` records
+  its `VERDICT:` and `EVIDENCE:` lines. `mu state` lists every check still
+  without a verdict, so the next orchestrator sees what a crash lost.
 - A parked task leaves the ready set, and its dependents keep waiting.
 - `mu human-needed <reason>` records a parked `human` task for a decision only a
   person can make. It never becomes ready and resolves only by `mu task close`

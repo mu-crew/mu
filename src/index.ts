@@ -155,6 +155,19 @@ export { CarrierStopFailedError, CarrierStopRefusedError, runStop } from "./carr
 export { ctlRuntimeState } from "./channels/ctl.js";
 export { readAgentStates } from "./channels/index.js";
 export {
+  CheckArgError,
+  CheckNotFoundError,
+  type CheckRow,
+  type IssueCheckOptions,
+  issueCheck,
+  listChecks,
+  newCheckId,
+  type RecordVerdictOptions,
+  type RecordVerdictResult,
+  recordCheckVerdict,
+  unansweredChecksOn,
+} from "./checks.js";
+export {
   FRONTIER_CLOSED_PER_NODE,
   FRONTIER_MAX_DEPTH,
   FRONTIER_MAX_NODES,
@@ -207,6 +220,7 @@ export {
   WorkstreamNotFoundError,
   WorkstreamTornDownError,
 } from "./db.js";
+export { CHECK_STATES, type CheckState } from "./db-checks.js";
 export {
   DelegateCallConflictError,
   DelegateNotFoundError,

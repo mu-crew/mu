@@ -130,6 +130,8 @@ describe("syncability constants", () => {
           return "a task note";
         case "message":
           return "an agent message";
+        case "check":
+          return "a recorded check";
       }
     };
     expect(SYNCED_ENTITIES.map(describeEntity)).toHaveLength(SYNCED_ENTITIES.length);

@@ -49,6 +49,8 @@ const ARGS: Record<string, string[]> = {
   "task show": ["t1"],
   "task tree": ["t1"],
   "task notes": ["t1"],
+  "task check": ["t1", "--by", "claude/opus", "--brief", "is it right?"],
+  "task verdict": ["t1", "--check", "01JC0000000000000000000000", "VERDICT: REFUTED"],
   "task close": ["t1"],
   "task open": ["t1"],
   "task park": ["t1"],

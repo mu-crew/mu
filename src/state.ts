@@ -6,6 +6,7 @@
 
 import { type AgentOutput, liveAgentToOutput } from "./agent-output.js";
 import { type AgentRow, readLiveAgents } from "./agents.js";
+import { listChecks } from "./checks.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "./db.js";
 import {
   type DelegateRow,
@@ -59,6 +60,18 @@ export interface StateDelegate {
   updated_at: string;
 }
 
+/** A recorded check with no verdict yet (`mu task check`, spec D5): whoever
+ *  issued it, so a replacement orchestrator sees what is still owed. */
+export interface StateCheck {
+  id: string;
+  /** The checked task's local id, in this workstream. */
+  task: string;
+  /** `<harness>/<model>`. */
+  by: string;
+  brief: string;
+  created_at: string;
+}
+
 /** One wave of the caller's own calls in this workstream, tallied per call (`verdictTally`'s findings summed). */
 export interface StateWave {
   wave: string;
@@ -105,6 +118,8 @@ export interface WorkstreamState {
   /** Registry rows (host/cwd/base/collected_head included) with their runtime state; unknown stays unknown. */
   agents?: AgentOutput[];
   delegates: StateDelegate[];
+  /** Every check in the workstream still without a verdict, oldest first (portable: not caller-scoped). */
+  checks: StateCheck[];
   waves: StateWave[];
   human_needs: StateHumanNeed[];
   /** Set when the workstream is mostly history (past BIG_WORKSTREAM_TASKS tasks, under 10% open): start the next effort in a new one. */
@@ -302,8 +317,8 @@ export function callerWorkstreams(db: Db, caller: string): string[] {
  * own), so the dashboard can reuse it. Async only for the ctl probes. The
  * result is whole; the CLI bounds it (`mu state`).
  *
- * `me` narrows each workstream to counts, ready, delegates, waves and human
- * needs, and adds the caller's identity block. The delegate queue and human
+ * `me` narrows each workstream to counts, ready, delegates, checks, waves and
+ * human needs, and adds the caller's identity block. The delegate queue and human
  * needs are the CALLER's own, never another session's.
  */
 export async function stateSnapshot(db: Db, opts: StateSnapshotOptions): Promise<StateSnapshot> {
@@ -322,6 +337,13 @@ export async function stateSnapshot(db: Db, opts: StateSnapshotOptions): Promise
       counts: countsOf(db, wsId),
       ready: listReady(db, ws).sort(byRoiDesc).map(task),
       ...delegatesOf(db, ws, callers),
+      checks: listChecks(db, ws, { open: true }).map((c) => ({
+        id: c.id,
+        task: c.task,
+        by: c.by,
+        brief: c.brief,
+        created_at: c.createdAt,
+      })),
       human_needs: needs
         .filter((h) => h.workstream === ws)
         .map((h) => ({ id: h.id, reason: h.reason })),

@@ -155,6 +155,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   codex read exit 2 as a block (`--json` prints the decision as an envelope). codex's title-generation Stop and cursor-agent's
   aborted or failed stop are let go. Muse Code always passes: its block does
   not deliver the reason. `MU_NUDGE=0` turns it off. pi is unchanged.
+- **Recorded checks: `mu task check` and `mu task verdict`** (spec D5, U11).
+  An orchestrator that checks a finding with a native subagent or a
+  cross-family pane records it: `mu task check <id> --by <harness>/<model>
+  --brief -` stores the brief and prints `check=<id>` (a ULID, so two synced
+  machines never collide); `mu task verdict <id> --check <id> -` stores the
+  `VERDICT: CONFIRMED | REFUTED | UNVERIFIED` line and its `EVIDENCE:` lines
+  (no VERDICT line: `CheckArgError`, exit 2; a check of another task:
+  `CheckNotFoundError`, exit 3; the same verdict again writes nothing, a
+  different one replaces it). `mu state` lists every check of a workstream
+  that has no verdict (`checks`, whoever issued it), so the orchestrator that
+  replaces a killed one sees which checks were issued and which were lost.
+  `mu task close --if-ready` now waits until every blocker is CLOSED **and**
+  every check on them has a verdict; a skip lists them in `pendingChecks`.
+  `mu_delegate`, delegate calls and `next --refute` are unchanged.
 
 ### Changed
 
@@ -209,6 +223,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   hook's consecutive empty blocks and whether its close nudge fired), created
   in place in a v13 file by `upgradeSchema` (no version bump; 28 tables). Rows
   idle for a week go with the next write; `mu rebuild` does not carry it.
+- **Schema: `checks`** (portable: id, task, checker, brief, verdict, state;
+  op entity `check` under `<task key>#<id>`, which now syncs), created in
+  place in a v13 file by `upgradeSchema` (no version bump; 29 tables;
+  `CAPTURE_VERSION` 6; `SEGMENT_FORMAT_VERSION` unchanged). The fold is
+  per-field LWW under the task's horizon, so a verdict that arrives before
+  its brief lands either way. In the same transaction that creates the table,
+  every `check` op already in the log is re-applied, so checks a peer synced
+  before this machine upgraded appear. A 4.3 peer records `check` ops without
+  projecting them, so it reports an `--if-ready` umbrella as ready without
+  its verdicts. `check` is now a reserved `mu log --kind`; an older log line
+  of that kind is ignored by apply. A local write (`mu db query --write`)
+  must name a ULID id (anything else would file an op under a key no peer can
+  project) and keep `state` matching `verdict`.
 
 ### Fixed
 

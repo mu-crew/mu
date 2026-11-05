@@ -4,8 +4,9 @@
 // enables WAL + foreign keys, applies the schema idempotently, and
 // exposes the live Database handle.
 //
-// Schema (v13; EXPECTED_TABLES below is the exact list, 28 tables), by group:
-//   - entity (portable: they sync): workstreams, tasks, task_edges, task_notes.
+// Schema (v13; EXPECTED_TABLES below is the exact list, 29 tables), by group:
+//   - entity (portable: they sync): workstreams, tasks, task_edges, task_notes,
+//     checks (src/db-checks.ts).
 //     tasks carries substate (status qualifier; a composite FK
 //     (status, substate) -> task_substates, DEFERRABLE INITIALLY DEFERRED,
 //     checked at COMMIT so apply's one-field-at-a-time UPDATEs pass), kind,
@@ -26,19 +27,11 @@
 //   - views:    ready, blocked, blockers, goals
 // PORTABLE_TABLES / MACHINE_LOCAL_TABLES classify every table.
 //
-// v9 dropped v8's separate change-recording mechanisms (`agent_logs`,
-// `snapshots`, `workstream_sync`, the `archived_*` tables) for the one
-// **ops log**; sync and history are queries or replays over it
-// (docs/VOCABULARY.md § op, ops log, watermark).
-//
-// The surrogate-INTEGER-PK discipline introduced in v5 is unchanged:
-// per docs/architecture/sdk.md § Surrogate-PK and SDK-boundary discipline,
-// every entity table has an INTEGER PK; FKs reference INTEGER ids;
-// the operator-facing TEXT name is per-scope unique via
-// UNIQUE (<scope_id>, <name>). `ops` is the deliberate exception: it
-// holds the NATURAL key (`ws/local_id`) in `ops.key`, never a
-// surrogate id, which is exactly why keys don't collide across
-// machines.
+// The surrogate-INTEGER-PK discipline (docs/architecture/sdk.md): every
+// entity table has an INTEGER PK (`checks`: a ULID); FKs reference INTEGER
+// ids; the operator-facing TEXT name is per-scope unique via UNIQUE
+// (<scope_id>, <name>). `ops` is the exception: `ops.key` holds the NATURAL
+// key (`ws/local_id`), never a surrogate id, so keys don't collide across machines.
 //
 // IMPORTANT: there is no migration ladder. openDb accepts only
 // CURRENT_SCHEMA_VERSION (13) and completes a v13 file that lacks later
@@ -60,6 +53,7 @@ import {
   storedCaptureVersion,
 } from "./capture.js";
 import { CARRIER_JOBS_DDL, CARRIER_JOBS_REBUILD, carrierJobsPreReservation } from "./db-carrier.js";
+import { CHECKS_DDL, checksTableMissing, refoldStoredChecks } from "./db-checks.js";
 import { LEGACY_RECOVERY_TRIGGERS, REMOTE_RECOVERY_DDL } from "./db-recovery.js";
 import { say } from "./messages.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
@@ -213,9 +207,7 @@ function closeQuietly(db: Db): void {
  * the moment the offending openDb() call is made; the failing test's
  * stack trace then names the leak source directly.
  *
- * Test mode = `process.env.VITEST` is defined OR `NODE_ENV === "test"`.
- * vitest sets VITEST="true" in every fork; the NODE_ENV branch is for
- * other runners that may invoke openDb during tests.
+ * Test mode = `VITEST` set (every vitest fork) or `NODE_ENV === "test"`.
  *
  * The user's REAL DB path is computed from HOME / XDG_STATE_HOME
  * directly (NOT from defaultDbPath() — which would honour MU_DB_PATH
@@ -224,8 +216,7 @@ function closeQuietly(db: Db): void {
  * the user's MU_* vars in every fork, so any MU_STATE_DIR seen here was
  * set by a test to a temp dir (test/disk-recon.test.ts opens
  * <MU_STATE_DIR>/mu.db), and guarding it would refuse that temp DB.
- * Production code paths (the `mu` CLI binary) never set VITEST, so
- * the guard is a complete no-op outside the test runner.
+ * Outside the test runner the guard is a no-op.
  */
 function refuseUserDbDuringTests(path: string): void {
   const inTest = process.env.VITEST !== undefined || process.env.NODE_ENV === "test";
@@ -482,6 +473,8 @@ export function upgradeSchema(db: Db): void {
   try {
     const version = detectExistingSchemaVersion(db);
     refuseUnusableStamps(version, storedCaptureVersion(db));
+    // An older v13 file holds `check` ops it recorded but never projected (spec D8).
+    const refoldChecks = version !== null && checksTableMissing(db);
     if (version !== CURRENT_SCHEMA_VERSION || !schemaIsCurrent(db)) applySchemaDdl(db);
     // Stamp after the DDL, in the same transaction. A fresh DB gets its
     // row here; an older capture stamp is raised to this build.
@@ -492,6 +485,7 @@ export function upgradeSchema(db: Db): void {
     // The triggers mint HLCs from this row.
     seedMachineIdentity(db);
     installCaptureLocked(db);
+    if (refoldChecks) refoldStoredChecks(db);
     db.exec("COMMIT");
   } catch (err) {
     try {
@@ -731,11 +725,12 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it; nor did keep_driving). Sorted; exactly 28 entries. */
+ *  additive, and an older mu ignores it; nor did keep_driving or checks). Sorted; exactly 29 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
   "carrier_jobs",
+  "checks",
   "delegate_calls",
   "host_channels",
   "host_profiles",
@@ -780,7 +775,7 @@ export const EXPECTED_TABLES: readonly string[] = [
 /** Op entities that cross machines. Everything else is machine-local.
  *  Readonly tuple (not `string[]`) so `SyncedEntity` is a real union
  *  and downstream code gets compile-time checking, not raw strings. */
-export const SYNCED_ENTITIES = ["workstream", "task", "edge", "note", "message"] as const;
+export const SYNCED_ENTITIES = ["workstream", "task", "edge", "note", "message", "check"] as const;
 
 /** One of the op entities that sync. Derived from the tuple, so
  *  adding an entity is a one-line change with no type to keep in step. */
@@ -812,7 +807,13 @@ export type MachineLocalEntity = (typeof MACHINE_LOCAL_ENTITIES)[number];
 
 /** **Portable** tables: their rows mean the same thing on any machine,
  *  so their ops ship. Mirrors docs/VOCABULARY.md § portable exactly. */
-export const PORTABLE_TABLES = ["task_edges", "task_notes", "tasks", "workstreams"] as const;
+export const PORTABLE_TABLES = [
+  "checks",
+  "task_edges",
+  "task_notes",
+  "tasks",
+  "workstreams",
+] as const;
 
 export type PortableTable = (typeof PORTABLE_TABLES)[number];
 
@@ -1006,9 +1007,7 @@ CREATE VIEW goals AS
 const CURRENT_SCHEMA = `
 -- ─── Schema versioning ────────────────────────────────────────────────
 --
--- Single-row table tracking which schema version this DB is at. Migrations
--- read and update this; the row is INSERT-OR-IGNOREd by applySchema with
--- the current version on a fresh DB.
+-- Single-row table: the schema version this DB is at (stamped by upgradeSchema).
 --
 -- capture_version stamps the revision of the capture triggers stored in
 -- this file (CAPTURE_VERSION, src/capture.ts). It is separate from
@@ -1138,8 +1137,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   substate      TEXT NOT NULL,
   -- Qualifies status. No DEFAULT on purpose: a writer that forgets it
   -- must fail loudly rather than silently pick one.
-  -- NOT NULL with defaults until flag day: a peer's partial op must be
-  -- able to create the row. \`scored\` says whether they were given.
+  -- NOT NULL with defaults: a peer's partial op must create the row; \`scored\` says if given.
   impact        INTEGER NOT NULL DEFAULT 50,
   effort_days   REAL NOT NULL DEFAULT 1,
   scored        INTEGER NOT NULL DEFAULT 0 CHECK (scored IN (0, 1)),
@@ -1187,6 +1185,7 @@ CREATE TABLE IF NOT EXISTS task_notes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes (task_id);
+${CHECKS_DDL}
 
 -- task_auto: per-task auto-dispatch state (machine-local, never synced).
 CREATE TABLE IF NOT EXISTS task_auto (

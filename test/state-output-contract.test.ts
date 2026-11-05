@@ -86,6 +86,7 @@ describe("mu state: one JSON document, SQL names, by default", () => {
       [
         "agents",
         "blocked",
+        "checks",
         "counts",
         "delegates",
         "human_needs",

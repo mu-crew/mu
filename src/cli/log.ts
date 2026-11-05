@@ -423,7 +423,7 @@ export function wireLogCommand(program: Command): void {
     .option("--as <name>", "override the source name (default: $MU_AGENT_NAME, else 'user')")
     .option(
       "--kind <kind>",
-      "operator-chosen channel tag: sets it on write, filters to it on read (log-ledger pattern); workstream, task, edge and note are reserved",
+      "operator-chosen channel tag: sets it on write, filters to it on read (log-ledger pattern); workstream, task, edge, note and check are reserved",
     )
     .option(
       "--intent <intent>",

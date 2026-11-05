@@ -99,6 +99,7 @@ export {
   type CloseSubstate,
   type CloseTaskOptions,
   type CloseTaskResult,
+  closeReadiness,
   closeTask,
   type EvidenceOption,
   openTask,

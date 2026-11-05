@@ -28,6 +28,10 @@
 //   edge      LWW element: present iff a put is newer than its own `del`
 //             and both endpoints' horizons; created_at is the first live
 //             put's.
+//   check     per-field LWW like a task, under its own `del` and its task's
+//             horizon; state is derived from the folded verdict (answered
+//             iff one is set), so a verdict that arrives before its brief
+//             still lands, and the brief fills in when it comes.
 //
 // A payload is decoded leniently: a field with a value the schema would
 // refuse (CHECK, NOT NULL) or of an unsupported type is dropped like an
@@ -41,6 +45,7 @@ import {
   TASK_KINDS,
   type TaskKind,
 } from "./db.js";
+import type { CheckState } from "./db-checks.js";
 import { compareHlc, parseHlc } from "./hlc.js";
 import {
   DEFAULT_SUBSTATE,
@@ -369,4 +374,36 @@ export function foldEdge(
   if (first === undefined) return null;
   const stamped = fieldsOf(first.payload).created_at;
   return { createdAt: typeof stamped === "string" ? stamped : isoOfHlc(first.hlc) };
+}
+
+// ─── check ────────────────────────────────────────────────────────────
+
+export interface CheckFold {
+  checker: string;
+  brief: string;
+  verdict: string | null;
+  state: CheckState;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * The check's row, or null when it is dead: no put newer than its own newest
+ * `del` and `taskHorizon` (the newest `del` of its task or workstream).
+ */
+export function foldCheck(ops: readonly LogOp[], taskHorizon: string | null): CheckFold | null {
+  const horizon = laterHlc(newestDel(ops), taskHorizon);
+  const puts = livePuts(ops, horizon).map((o) => ({ hlc: o.hlc, fields: fieldsOf(o.payload) }));
+  const began = puts[0]?.hlc;
+  if (began === undefined) return null;
+  const born = isoOfHlc(began);
+  const verdict = lww(puts, "verdict", strOrNull)?.value ?? null;
+  return {
+    checker: lww(puts, "checker", str)?.value ?? "",
+    brief: lww(puts, "brief", str)?.value ?? "",
+    verdict,
+    state: verdict === null ? "open" : "answered",
+    createdAt: lww(puts, "created_at", str)?.value ?? born,
+    updatedAt: lww(puts, "updated_at", str)?.value ?? born,
+  };
 }

@@ -483,6 +483,14 @@ export const MESSAGES = {
     `no such wait resume handle: ${id} (a handle is kept ${days} days; name the refs again with \`mu wait <ref>...\`)`,
   "task.brief_missing": (task: string, reason: string) =>
     `task ${task} cannot be briefed: ${reason}`,
+  // ── checks (src/checks.ts) ──
+  "check.not_found": (id: string, task: string) =>
+    `no check ${id} on task ${task} (\`mu state\` lists the checks still without a verdict)`,
+  "check.by_invalid": (by: string, harnesses: readonly string[]) =>
+    `--by needs <harness>/<model> with harness one of ${harnesses.join(", ")}, got ${JSON.stringify(by)}`,
+  "check.brief_empty": () => "the check's brief is empty; pass it with --brief - <<'EOF'",
+  "check.verdict_line": () =>
+    "a verdict needs a line starting VERDICT: CONFIRMED | REFUTED | UNVERIFIED, then the EVIDENCE: lines",
 } as const satisfies Record<string, (...facts: never[]) => string>;
 
 export type MessageKey = keyof typeof MESSAGES;

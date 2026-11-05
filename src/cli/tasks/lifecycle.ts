@@ -17,9 +17,9 @@ import {
   acceptTask,
   CloseNeedsEvidenceError,
   type CloseSubstate,
+  closeReadiness,
   closeTask,
   getTask,
-  getTaskEdgesWithStatus,
   openTask,
   parkTask,
   resolveActorIdentity,
@@ -86,11 +86,13 @@ export async function cmdTaskClose(
   // none; with --if-ready the SDK decides (a skip writes nothing).
   const closeAs = sdkOpts.as ?? (taskRow?.status === "CLOSED" ? taskRow.substate : "done");
   const retry = taskRow?.status === "CLOSED" && taskRow.substate === closeAs;
-  // The --if-ready skip (a blocker not CLOSED) is the one case left to the SDK.
+  // The --if-ready skip (a blocker not CLOSED, or a check on one without a
+  // verdict) is the one case left to the SDK.
+  const readiness =
+    opts.ifReady === true && taskRow !== undefined ? closeReadiness(db, localId, ws) : undefined;
   const wouldSkip =
-    opts.ifReady === true &&
-    taskRow !== undefined &&
-    getTaskEdgesWithStatus(db, localId, ws).blockers.some((e) => e.status !== "CLOSED");
+    readiness !== undefined &&
+    (readiness.blockingIds.length > 0 || readiness.pendingChecks.length > 0);
   if (
     taskRow &&
     !retry &&
@@ -111,12 +113,19 @@ export async function cmdTaskClose(
       emitJson({ taskName: localId, ...r });
       return;
     }
-    const total = r.blockingIds.length;
-    const shown = r.blockingIds.slice(0, 8).join(", ");
-    const tail = total > 8 ? ", \u2026" : "";
+    const list = (xs: readonly string[]): string =>
+      `${xs.slice(0, 8).join(", ")}${xs.length > 8 ? ", \u2026" : ""}`;
+    const waits: string[] = [];
+    if (r.blockingIds.length > 0) {
+      waits.push(`blocked by ${r.blockingIds.length} task(s) (${list(r.blockingIds)})`);
+    }
+    if (r.pendingChecks.length > 0) {
+      const checks = r.pendingChecks.map((c) => `${c.task}#${c.check}`);
+      waits.push(`${checks.length} check(s) without a verdict (${list(checks)})`);
+    }
     console.log(
       pc.dim(
-        `Skipped ${pc.bold(localId)}: blocked by ${total} task(s) (${shown}${tail}); close again once they are CLOSED`,
+        `Skipped ${pc.bold(localId)}: ${waits.join("; ")}; close again once they are CLOSED and answered`,
       ),
     );
     return;
