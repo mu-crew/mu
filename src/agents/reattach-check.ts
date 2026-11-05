@@ -41,6 +41,31 @@ export interface Plan {
   jobFile: string;
 }
 
+/**
+ * Preflight 7's predicate: the record (if any) is this name's on this host and workstream
+ * generation, and nothing else owns or claims its path (`assertRecoveryUsable`: no other
+ * current agent on host+cwd, no newer record of it, the pinned profile). Read only. The
+ * install re-runs it inside its immediate transaction: another workstream's spawn holds
+ * neither the name's nor the session's lock, so it can take the path during the apply's awaits.
+ */
+export function recoveryBlocker(
+  db: Db,
+  p: { name: string; host: string; wsId: number; rec: recovery.RemoteRecovery | undefined },
+): Blocker | undefined {
+  const { rec } = p;
+  if (rec === undefined) return undefined;
+  const no = (detail: string): Blocker => ({ code: "recovery", detail });
+  if (rec.name !== p.name || rec.host !== p.host || rec.workstreamId !== p.wsId) {
+    return no(`recovery ${rec.agentId} belongs to another workstream, name or host`);
+  }
+  try {
+    recovery.assertRecoveryUsable(db, rec);
+  } catch (e) {
+    return no(e instanceof Error ? e.message : String(e));
+  }
+  return undefined;
+}
+
 async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Plan> {
   const no = (code: Blocker["code"], detail: string): Blocker => ({ code, detail });
   if (getAgentForCleanup(db, name, ws) !== undefined) return no("row", "it has an agent row");
@@ -75,17 +100,8 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   }
   if (profile.stop !== r.hostStop) return no("profile", `host ${r.host}'s stop changed`);
   const rec = recovery.getRemoteRecovery(db, agentId);
-  try {
-    if (
-      rec !== undefined &&
-      (rec.name !== name || rec.host !== r.host || rec.workstreamId !== w.id)
-    ) {
-      throw new Error(`recovery ${agentId} belongs to another workstream, name or host`);
-    }
-    if (rec !== undefined) recovery.assertRecoveryUsable(db, rec);
-  } catch (e) {
-    return no("recovery", e instanceof Error ? e.message : String(e));
-  }
+  const tree = recoveryBlocker(db, { name, host: r.host, wsId: w.id, rec });
+  if (tree !== undefined) return tree;
   const jobFile = leaseJobFile(db, ws, name);
   const read = readJobFile(jobFile);
   if (read.kind !== "none" && !(read.kind === "handle" && read.job === job)) {

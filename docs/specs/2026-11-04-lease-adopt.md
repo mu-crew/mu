@@ -320,6 +320,11 @@ spawn does.
 2. `mux.spawnAgent` (window = name) with `attachCommand(...)`, up to
    `onPaneCreated`.
 3. **Install, one immediate transaction:**
+   - preflight 7's predicate again (`recoveryBlocker`, shared with the
+     preflight), before `insertAgent` (its same-name check would see the new
+     row). The name and spawn locks do not cover another workstream's spawn,
+     which can take the record's path during step 2's pane I/O or the
+     preflight's last await, so a check of the snapshot alone is not enough;
    - `insertAgent` with the reservation token (passes the name fence),
      `host`, `host_transport='lease'`, the tree fields and the new pane;
    - `rebindCarrierJobAgent(token, job, oldAgent, oldPane, newId, newPane)`
@@ -339,6 +344,9 @@ spawn does.
    writer lock that failed install, or lose its compare-and-set: it never
    skips the kill. An unproven kill retries it once; still unwritten, the
    error says the reservation does not name the pane (close it first).
+   When it was preflight 7's predicate that failed and the kill is proven, the
+   result is that blocker's refusal (`ReattachRefusedError`, naming the killed
+   pane): the reservation only moved from one dead pane to another.
 4. Release the locks.
 
 **Readiness:** `awaitCtlHandshake(sock, assertAlive)` with `localPaneAlive`;
@@ -406,8 +414,11 @@ a fake carrier script that holds or exits 1). Real holding carriers go in
   record (the new one) · install transaction fails → pane killed, the
   reservation names it, nothing else changed · the kill fails with the pane
   alive → `pane-unknown`, the next preflight refuses on the new pane · the
-  reservation replaced during the preview's probe → the preview describes the
-  job its rev applies; replaced on every attempt → refused.
+  record's path taken (another workstream's agent on it, or a newer record of
+  it) in the preflight's final await or during the pane creation → refused at
+  install, the new pane killed, the record kept · the reservation replaced
+  during the preview's probe → the preview describes the job its rev applies;
+  replaced on every attempt → refused.
 - **After a reattach:** a reap writes a NEW record under the new incarnation;
   `agent close` stops the job and closes the tree.
 
