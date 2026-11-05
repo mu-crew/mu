@@ -10,6 +10,7 @@
 // front (AgentExtensionOutdatedError), never half-served.
 
 import { getAgent } from "../agents.js";
+import { expectsCtl } from "../channels/index.js";
 import { type CtlState, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
 import { emitEvent } from "../logs.js";
@@ -26,7 +27,6 @@ import {
 import {
   agentCtlSocket,
   ctlSendWithReceipt,
-  expectsCtl,
   fencedHello,
   recordSend,
   ctlRequestFor as request,

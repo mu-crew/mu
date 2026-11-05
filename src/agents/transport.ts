@@ -9,9 +9,10 @@
 // silent fallback: a pi agent whose socket does not answer is an
 // AgentCtlUnreachableError, never a paste.
 
-import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentRow } from "../agents.js";
+import { checkMessage } from "../channels/ctl.js";
+import { expectsCtl, type MessageCheck } from "../channels/index.js";
 import {
   CtlDeliveryUnknownError,
   CtlUnknownOpError,
@@ -50,7 +51,6 @@ import {
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
 } from "./errors.js";
-import { resolveCliCommand, speaksMuCtl } from "./spawn.js";
 
 export type Transport = "ctl" | "mux";
 
@@ -123,26 +123,6 @@ export interface CtlGuard {
 /** The agent's derived control socket, rooted at the DB's directory (as spawn does). */
 export function agentCtlSocket(db: Db, agent: AgentRow): string {
   return ctlSocketPath(agent.workstreamName, agent.name, dirname(db.name));
-}
-
-/**
- * True when the agent runs pi, so sends go through its control socket.
- * The cli key decides when it names pi (or MU_<KEY>_COMMAND here runs
- * pi). Otherwise the agent's own socket file decides: spawn removes any
- * stale file before the pane starts, so a file at the derived path was
- * bound by this agent's extension (or its ssh forward). That covers
- * `--cli helper --command "pi-meta ..."`, whose command is not stored,
- * without a schema change. `sock` defaults to the derived path; pass
- * agentCtlSocket(db, agent) when a DB is at hand. A command gate (`gateToken`)
- * never speaks ctl: the discriminator beats both rules.
- */
-export function expectsCtl(
-  agent: Pick<AgentRow, "cli" | "name" | "workstreamName"> & { gateToken?: string | null },
-  sock: string = ctlSocketPath(agent.workstreamName, agent.name),
-): boolean {
-  // A remote command gate runs no pi, whatever its `cli` says or a forward leaves behind.
-  if (agent.gateToken != null) return false;
-  return speaksMuCtl(agent.cli, resolveCliCommand(agent.cli)) || existsSync(sock);
 }
 
 /** The slash commands a pi agent runs over ctl, as typed. */
@@ -372,44 +352,6 @@ export async function ctlFailure(
     errCode(e) === "ENOENT" ? "missing" : "refused",
     agent.host,
   );
-}
-
-/** The one `status {msgId}` probe a failed send gets, and `mu agent check`. */
-const MSG_PROBE_MS = 5000;
-
-export type MessageCheck =
-  | { state: "accepted"; id: string; runs?: number; at?: number; incarnation?: string }
-  | { state: "not-accepted"; id: string }
-  | { state: "unreachable"; id: string; reason: string };
-
-/**
- * Ask the extension whether it accepted the send/fresh/interrupt that
- * carried `msgId`: one `status {msgId}` request. Never throws: a socket
- * that is silent, missing, or an extension that does not answer with a
- * `msg` is `unreachable`, which is not the same as `not-accepted`.
- */
-export async function checkMessage(
-  sock: string,
-  msgId: string,
-  timeoutMs: number = MSG_PROBE_MS,
-): Promise<MessageCheck> {
-  try {
-    const r = await ctlRequest(sock, { op: "status", msgId }, { timeoutMs });
-    if (!r.ok) return { state: "unreachable", id: msgId, reason: r.error };
-    if (r.msg === undefined) {
-      return { state: "unreachable", id: msgId, reason: "the extension does not report receipts" };
-    }
-    if (!r.msg.accepted) return { state: "not-accepted", id: msgId };
-    return {
-      state: "accepted",
-      id: msgId,
-      ...(r.msg.runs !== undefined ? { runs: r.msg.runs } : {}),
-      ...(r.msg.at !== undefined ? { at: r.msg.at } : {}),
-      ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
-    };
-  } catch (e) {
-    return { state: "unreachable", id: msgId, reason: e instanceof Error ? e.message : String(e) };
-  }
 }
 
 /**

@@ -27,8 +27,8 @@
 
 import { agentCtlSocket, recordSend, sendViaTransport } from "./agents/transport.js";
 import { getAgent } from "./agents.js";
+import { CTL_DEFAULT_TIMEOUT_MS, CtlWriteVetoedError } from "./channels/index.js";
 import { CLOSE_MALFORMED, parseCloseBlock } from "./close-block.js";
-import { CTL_DEFAULT_TIMEOUT_MS, CtlWriteVetoedError } from "./ctl/client.js";
 import type { Db } from "./db.js";
 import { cursorKey } from "./wait-cursor.js";
 import type { CloseOutcome, WaitRef } from "./wait-types.js";

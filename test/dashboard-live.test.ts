@@ -14,15 +14,16 @@ import { installMux, type MuxHarness } from "./_mux.js";
 
 // Agent probes: counted, their state set by the test.
 const probe = vi.hoisted(() => ({ calls: 0, state: "busy" as string }));
-vi.mock("../src/agent-state.js", async (orig) => {
-  const real = await orig<typeof import("../src/agent-state.js")>();
+vi.mock("../src/channels/dispatch.js", async (orig) => {
+  const real = await orig<typeof import("../src/channels/dispatch.js")>();
+  const { agentKey } = await import("../src/agent-state.js");
   return {
     ...real,
     readAgentStates: async (agents: readonly { name: string; workstreamName: string }[]) => {
       probe.calls++;
       return new Map<string, StateReading>(
         agents.map((a) => [
-          real.agentKey(a),
+          agentKey(a),
           { state: probe.state as StateReading["state"], source: "ctl", since: null, alive: true },
         ]),
       );

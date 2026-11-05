@@ -25,7 +25,7 @@
 // (fails closed); the advisory spawn lock stays inside spawnAgent.
 
 import { type AgentRow, getAgentForCleanup } from "../agents.js";
-import { newMsgId } from "../ctl/client.js";
+import { channelTarget, ctlChannel, expectsCtl, newMsgId } from "../channels/index.js";
 import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
@@ -71,8 +71,6 @@ import {
 } from "./spawn.js";
 import {
   agentCtlSocket,
-  checkMessage,
-  expectsCtl,
   isSlashCommand,
   parseSessionCommand,
   recordSend,
@@ -625,7 +623,7 @@ async function reconcile(
   };
   if (id.agent === undefined) return stay(`the sending agent is ${id.stale ?? "gone"}`);
   if (saved.transport !== "ctl") return stay("the send went through the pane: no receipt to ask");
-  const check = await checkMessage(agentCtlSocket(db, id.agent), saved.msgId);
+  const check = await ctlChannel.receipt(channelTarget(db, id.agent), saved.msgId);
   if (check.state !== "accepted") {
     return stay(
       check.state === "unreachable"

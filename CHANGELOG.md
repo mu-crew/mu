@@ -22,6 +22,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   handle and never runs it. Stored as `host_profiles.attach`, added in place
   to a v13 file (no version bump).
 
+### Changed
+
+- **Agent reads go through one channel seam (internal; no behaviour change).**
+  `src/channels/` holds the `AgentChannel` interface at the wait seam, with a
+  `ctl` implementation (pi's control socket) and a `mux` one (every other
+  pane): state, watch, run baseline, msgId receipt, write fence and last text.
+  The wait engine, `mu agent check`, the stall steer, the CLOSE notice, the
+  `next` recovery and refute readers and `spawn --task` replay read through it;
+  `test/channel-imports.test.ts` keeps them off `src/ctl` and off ctl's
+  raw-socket functions, and one contract suite runs against both channels.
+  `src/harnesses.ts` holds the frozen table of the five blessed harnesses, in
+  murmur's names and with its argv-match fields. The SDK exports are unchanged. First unit of
+  the every-harness-first-class spec (D4, D6).
+
 ### Fixed
 
 - **`mu agent close <name>` with no agent row no longer leaves a stopped lease

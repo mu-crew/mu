@@ -17,11 +17,11 @@ import {
   agentKey,
   type CtlLink,
   type RuntimeState,
-  readAgentStates,
   type StateReading,
   type StateSource,
 } from "./agent-state.js";
 import { reapAgentRow } from "./agents/reap.js";
+import { readAgentStates } from "./channels/index.js";
 import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
 import type { CommandSource } from "./mux/types.js";
 import { withOpContext } from "./op-context.js";
@@ -87,7 +87,6 @@ export {
   observationFromReading,
   observeAgentStates,
   settledCloseInput,
-  watchAgentRun,
 } from "./agents/observe.js";
 export type { SpawnReceipt } from "./agents/receipts.js";
 export {
@@ -119,10 +118,7 @@ export {
 export {
   agentCtlSocket,
   CTL_SLASH_COMMANDS,
-  checkMessage,
-  expectsCtl,
   isSlashCommand,
-  type MessageCheck,
   parseSessionCommand,
   requireFeature,
   respawnCommand,
@@ -131,6 +127,8 @@ export {
   type Transport,
   type TransportSendOptions,
 } from "./agents/transport.js";
+export { checkMessage, watchAgentRun } from "./channels/ctl.js";
+export { expectsCtl, type MessageCheck } from "./channels/index.js";
 
 import {
   AgentExistsError,
@@ -146,8 +144,8 @@ import {
   type TransportSendOptions,
 } from "./agents/transport.js";
 import { getCarrierJobByName } from "./carrier-jobs.js";
+import type { CtlTool } from "./channels/index.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
-import type { CtlTool } from "./ctl/protocol.js";
 import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
 import { resolveActorIdentity } from "./tasks/claim.js";
 import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";

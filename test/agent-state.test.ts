@@ -6,12 +6,12 @@ import {
   agentKey,
   ambiguousReason,
   murmurAvailable,
-  readAgentStates,
   resetAgentStateCacheForTests,
   type StateAgentRef,
   setMurmurRunnerForTests,
   UNKNOWN_REASON,
 } from "../src/agent-state.js";
+import { readAgentStates } from "../src/channels/index.js";
 import { type MuxBackend, setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 

@@ -1,11 +1,13 @@
 // Shared fakes for the `executeNext` suites (next-executor, next-refute, next-recover):
-// spawnAgent and the send transport are the only things faked, the journal, claim and
-// replay are real. A suite installs them with
+// spawnAgent, the send transport and the ctl receipt are the only things faked; the
+// journal, claim and replay are real. A suite installs them with
 //
 //   vi.mock("../src/agents/spawn.js", async (orig) =>
 //     (await import("./_next-fakes.js")).spawnFake(await orig()));
 //   vi.mock("../src/agents/transport.js", async (orig) =>
 //     (await import("./_next-fakes.js")).transportFake(await orig()));
+//   vi.mock("../src/channels/ctl.js", async (orig) =>
+//     (await import("./_next-fakes.js")).ctlChannelFake(await orig()));
 //
 // and calls `resetHook()` in beforeEach. The knobs on `hook` are per suite.
 //
@@ -92,13 +94,23 @@ export function transportFake<T extends object>(actual: T): T {
       }
       return { transport: "ctl", runs: hook.sendRuns, msgId: o.msgId, incarnation: "pi-inc" };
     },
-    checkMessage: async (_s: string, msgId: string) => {
-      hook.checks.push(msgId);
-      return hook.checkState === "accepted"
-        ? { state: "accepted", incarnation: "pi-inc", runs: 1 }
-        : hook.checkState === "not-accepted"
-          ? { state: "not-accepted" }
-          : { state: "unreachable", id: msgId, reason: "no socket" };
+  };
+}
+
+/** The ctl channel with its receipt (`status {msgId}`) faked by `hook.checkState`. */
+export function ctlChannelFake<T extends { ctlChannel: object }>(actual: T): T {
+  return {
+    ...actual,
+    ctlChannel: {
+      ...actual.ctlChannel,
+      receipt: async (_target: unknown, msgId: string) => {
+        hook.checks.push(msgId);
+        return hook.checkState === "accepted"
+          ? { state: "accepted", incarnation: "pi-inc", runs: 1 }
+          : hook.checkState === "not-accepted"
+            ? { state: "not-accepted" }
+            : { state: "unreachable", id: msgId, reason: "no socket" };
+      },
     },
   };
 }

@@ -25,9 +25,9 @@
 //   - `seq` is never truncated: `capPlan` drops a too-big seq whole, and cuts
 //     an `alt` from its tail.
 
-import { expectsCtl } from "./agents/transport.js";
 import { getAgent } from "./agents.js";
 import { pendingAttempts } from "./auto-attempt.js";
+import { expectsCtl } from "./channels/index.js";
 import type { Db } from "./db.js";
 import { openHumanNeeds } from "./human-needed.js";
 import type { NextPlan } from "./output-contract.js";

@@ -9,12 +9,12 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   agentKey,
-  readAgentStates,
   resetAgentStateCacheForTests,
   setMurmurRunnerForTests,
   UNKNOWN_REASON,
 } from "../src/agent-state.js";
 import { insertAgent, listLiveAgents } from "../src/agents.js";
+import { readAgentStates } from "../src/channels/index.js";
 import { formatAgentsTable } from "../src/cli/format.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, INCARNATION_MISMATCH, LineDecoder } from "../src/ctl/protocol.js";
