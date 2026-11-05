@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.4.1] — 2026-11-05
+
 ### Changed
 
 - **A remote spawn refuses another owner's tree** (follow-up of reattach's
