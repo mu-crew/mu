@@ -99,6 +99,29 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   baseline shows. A dialog at the paste is refused and rolled back.
   `spawn_receipts.transport` takes `hooks` (a v13 file's table is rebuilt in
   place, rows kept).
+- **The executor on `hooks`** (spec D17, U22). `mu task auto --cli claude`
+  (or codex, cursor-agent, muse) dispatches through the brief file and its
+  pointer, and `mu next` now recovers such a worker. One whose last turn
+  ended in `turn_failed` (claude's `StopFailure`, cursor-agent's error
+  `stop`), with nothing in the pane since, is retried in place once per
+  failure, up to the run ceiling as on ctl: one run charged, the stored brief
+  written to the retry attempt's brief file and its pointer pasted again into
+  the same pane, the harness `session_id` standing in for pi's incarnation
+  and the `run_count` read before the paste going into `receipt.runs`. murmur
+  keeps an `error` through later turns and keeps its first time on a repeat,
+  so only an error raised by the pane's newest event counts, and the retry
+  first clears the one it answers (`murmur clear --pane`, confirmed by a
+  read): each later failure is raised afresh. One murmur could not clear is
+  an `attention` move, nothing charged. A failure in another session than the
+  brief's is an `attention` move. On muse, whose `StopFailure` murmur maps
+  but whose `turn_failed` row is unverified (and pi on the fallback), a
+  failed turn parks the attempt `needs_human`, its human need naming the
+  failed turn. codex reports no failed turn at all (murmur writes no
+  `turn_failed` for it), so a failed codex turn is neither retried nor
+  parked. An unconfirmed `hooks` attempt is now resumed through the inbox
+  (promoted to `sent` once its run shows) instead of parked unasked. Charging
+  is unchanged. `murmur pane --json`'s attention `requested_at` is read as
+  `errorAt`.
 - **Remote mixed crews: host capabilities and remote task briefs** (spec D17,
   U21). `mu host check` now probes each harness's literal launcher
   (`claude`, `codex`, `cursor-agent`, `muse`, `pi`) by name in the profile's

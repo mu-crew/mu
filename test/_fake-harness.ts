@@ -26,18 +26,25 @@
 // read back as tmux reads them (a final `;` is a separator).
 //
 // Install `fake.pane` with setMurmurPaneRunnerForTests (and `fake.hook` with
-// setMurmurHookRunnerForTests) and route the tmux executor through `fake.tmux`
-// first.
+// setMurmurHookRunnerForTests, `fake.clear` with setMurmurClearRunnerForTests)
+// and route the tmux executor through `fake.tmux` first.
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { MurmurHookRunner, MurmurPaneRunner } from "../src/channels/hooks-pane.js";
+import type {
+  MurmurClearRunner,
+  MurmurHookRunner,
+  MurmurPaneRunner,
+} from "../src/channels/hooks-pane.js";
 
 interface PaneState {
   /** The agent row's activity; null: no agent row (no session, or one that ended). */
   activity: "running" | "stopped" | null;
-  /** Pending attention, kind to message. Persists until an event clears it, as murmur's does. */
-  attention: Map<string, string>;
+  /**
+   * Pending attention, kind to message and first time. Persists until an event
+   * clears it, and a repeat keeps its first `requested_at`, as murmur's does.
+   */
+  attention: Map<string, { message: string; at: number }>;
   sessionId: string | null;
   runCount: number;
   updatedAt: number;
@@ -96,6 +103,13 @@ export interface FakeHarness {
   hook: MurmurHookRunner;
   /** Every event mu wrote through `hook`, in order. */
   readonly muEvents: Record<string, unknown>[];
+  /**
+   * The fake `murmur clear --pane`: drops every attention of this pane, as
+   * murmur's `acknowledgePane` does (no drain, no activity or counts touched).
+   */
+  clear: MurmurClearRunner;
+  /** How many times `clear` ran for this pane. */
+  readonly clears: number;
   /** The `@murmur_pane_state` word the drain published (empty: none). */
   option(): string;
   /** Answer a tmux call that targets this pane or its buffers; undefined: not ours. */
@@ -126,7 +140,14 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     generation: null,
   };
   let claimed = false;
+  let clears = 0;
   const buffers = new Map<string, string>();
+
+  /** Raise an attention kind: a new message, the first time kept (murmur's upsert). */
+  const raise = (kind: string, message: unknown, now: number): void => {
+    const at = st.attention.get(kind)?.at ?? now;
+    st.attention.set(kind, { message: typeof message === "string" ? message : "", at });
+  };
 
   /** murmur's vocabulary, as its store applies it (stepTurn, for a mu-managed agent). */
   const apply = (e: Record<string, unknown>): void => {
@@ -168,7 +189,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
         st.activity = "running";
         break;
       case "permission_requested":
-        st.attention.set("blocked", typeof e.message === "string" ? e.message : "");
+        raise("blocked", e.message, now);
         break;
       case "interrupted":
         st.activity = "stopped";
@@ -189,7 +210,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
       case "turn_failed":
         st.activity = "stopped";
         st.failed = true;
-        st.attention.set("error", typeof e.message === "string" ? e.message : "");
+        raise("error", e.message, now);
         break;
       case "session_end":
         // Not `/clear`: the agent row goes, its attention stays.
@@ -199,7 +220,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
         }
         break;
       case "crashed":
-        st.attention.set("crashed", "");
+        raise("crashed", "", now);
         break;
     }
   };
@@ -268,9 +289,10 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
                 confirmed: st.confirmed,
                 updated_at: st.updatedAt,
               },
-        attention: [...st.attention].map(([kind, message]) => ({
+        attention: [...st.attention].map(([kind, { message, at }]) => ({
           kind,
           message,
+          requested_at: at,
           source: "hook",
           driver: "orchestrated",
         })),
@@ -283,6 +305,15 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
       // `murmur hook mu` stamps who wrote it: mu's `interrupted` is unconfirmed.
       fake.emit(String(name), { ...fields, by: "mu" });
       return true;
+    },
+    clear: async (pane) => {
+      if (pane !== paneId) return true;
+      clears += 1;
+      st.attention.clear();
+      return true;
+    },
+    get clears() {
+      return clears;
     },
     option: () => {
       drain();

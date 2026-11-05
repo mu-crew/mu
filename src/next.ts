@@ -12,7 +12,10 @@
 //      DEAD local one is reaped through `deleteAgent`'s id + pane CAS (its task
 //      reopens and falls to rule 2 as a retried attempt); a LIVE one whose last
 //      run ended in an API error is retried IN PLACE (one run charged, the same
-//      pane, a reserved msgId bound to pi's incarnation). A remote worker's
+//      pane, a reserved msgId bound to pi's incarnation; on `hooks`, the brief
+//      file written again and its pointer pasted, bound to the harness session,
+//      and only where the harness's `turn_failed` is verified: elsewhere the
+//      attempt is parked `needs_human`). A remote worker's
 //      tree is never touched; what cannot be acted on is an `attention` move;
 //   1. a stored attempt in flight (reserved … unknown) of a permitted task is
 //      RESUMED under its own key, even at its run ceiling (`pendingAttempts`);
@@ -59,12 +62,13 @@ import {
   reserveAttempt,
   reserveRetry,
 } from "./auto-attempt.js";
+import { acknowledgeTurnFailure, channelTarget } from "./channels/index.js";
 import type { Db } from "./db.js";
 import { type HumanNeeded, openHumanNeeds, recordHumanNeeded } from "./human-needed.js";
 import { NoMultiplexerError } from "./mux/types.js";
 import {
   exhaustedAfterDeath,
-  idleOnCtl,
+  idleAtError,
   inFlightWorkers,
   liveWorkers,
   OBSERVE_MS,
@@ -342,7 +346,7 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
 
   /** One pass: recover, resume, then allocate, until nothing is left, the cap, a human need, a failure or a signal. */
   const pass = async (): Promise<void> => {
-    let actions: Extract<RecoveryAction, { kind: "reap" | "retry" }>[] | undefined;
+    let actions: Extract<RecoveryAction, { kind: "reap" | "retry" | "park" }>[] | undefined;
     for (;;) {
       if (aborted()) return;
       if (out.used >= cap) {
@@ -381,7 +385,8 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
       if (act !== undefined && !out.dry) {
         const move = await recover(ctx, act, observe, opts.signal);
         // A retried worker is done for this pass: its own unknown send is probed by the NEXT invocation.
-        if (act.kind === "retry") done.add(act.task);
+        // A parked one is done for good.
+        if (act.kind !== "reap") done.add(act.task);
         out.moves.push(move);
         if (counts(move)) out.used++;
         if (move.kind === "failed") {
@@ -574,7 +579,8 @@ function unreconcilable(
   if (id.stale !== undefined) {
     return lost(`the agent of this attempt is ${id.stale}`);
   }
-  if (sent && receipt.transport !== "ctl") {
+  // A hooks receipt is asked through the inbox (a run past its baseline, spec D17).
+  if (sent && receipt.transport !== "ctl" && receipt.transport !== "hooks") {
     return lost("the send went through the pane: there is no receipt to ask");
   }
   return undefined;
@@ -585,13 +591,25 @@ function unreconcilable(
  * `needs_human` end first records the caller's one-line human need (a repeat
  * is a no-op), so a crash between the two leaves the attempt retryable.
  */
-function park(ctx: Ctx, task: string, record: AttemptRecord, end: AttemptEnd): NextMove {
+/**
+ * End a stored attempt. A `needs_human` end records this caller's human need:
+ * `need` when the caller knows the cause, else the unconfirmed-delivery one.
+ */
+function park(
+  ctx: Ctx,
+  task: string,
+  record: AttemptRecord,
+  end: AttemptEnd,
+  need?: string,
+): NextMove {
   // A caller with no identity (a plain shell) has no human-need record to keep: the move says it.
   if (end.state === "needs_human" && ctx.caller !== "") {
     recordHumanNeeded(ctx.db, {
       workstream: ctx.ws,
       caller: ctx.caller,
-      reason: `attempt ${record.key} of task ${task} may have been delivered and cannot be confirmed (${end.reason}); never resent`,
+      reason:
+        need ??
+        `attempt ${record.key} of task ${task} may have been delivered and cannot be confirmed (${end.reason}); never resent`,
     });
   }
   const taskId = taskIdFor(ctx.db, task, ctx.ws);
@@ -748,12 +766,16 @@ async function allocate(ctx: Ctx, task: string): Promise<NextMove> {
  *          is allocated again by the same pass, with the brief saying the
  *          previous attempt died. Local workers only.
  *   retry  re-read the worker (still idle on the same pi, at the errored run,
- *          nothing pending, no dialog), then one transaction charges the run
- *          and reserves the in-place attempt, then the guarded journaled send.
+ *          nothing pending, no dialog), on `hooks` clear the failed turn's
+ *          `error` in murmur (else `attention`, nothing charged), then one
+ *          transaction charges the run and reserves the in-place attempt,
+ *          then the guarded journaled send.
+ *   park   end the delivered attempt `needs_human` (a failed turn on a harness
+ *          whose `turn_failed` is unverified): recorded, never retried.
  */
 async function recover(
   ctx: Ctx,
-  act: Extract<RecoveryAction, { kind: "reap" | "retry" }>,
+  act: Extract<RecoveryAction, { kind: "reap" | "retry" | "park" }>,
   observe: ObserveWorkers,
   signal: AbortSignal | undefined,
 ): Promise<NextMove> {
@@ -778,6 +800,21 @@ async function recover(
       ? { kind: "reap", task: act.task, agent: a.name, reason: act.why }
       : skip("the worker was replaced before it could be reaped");
   }
+  if (act.kind === "park") {
+    // Compare and set on the scanned key: an attempt that moved on is not parked.
+    const { record } = readAttempt(db, taskId);
+    if (record === undefined || record.key !== act.key || record.end !== undefined) {
+      return skip("the attempt moved on before it could be parked");
+    }
+    // Delivered and run: its turn failed, which is no unconfirmed delivery.
+    return park(
+      ctx,
+      act.task,
+      record,
+      { state: "needs_human", reason: act.reason },
+      `attempt ${record.key} of task ${act.task} was delivered and its turn failed: ${act.reason}; take it over or retry it by hand`,
+    );
+  }
   const { agent } = act.target;
   const row = getAgentRow(db, agent.name, ws);
   if (row === undefined) return skip("the worker is gone");
@@ -786,12 +823,23 @@ async function recover(
   ).get(workerKey(row));
   if (
     now === undefined ||
-    !idleOnCtl(now) ||
+    !idleAtError(now) ||
     now.incarnation !== act.target.pi ||
     now.runs !== act.target.errorRuns ||
     now.lastError === undefined
   ) {
     return skip("the worker is no longer idle at the errored run: left to the wait");
+  }
+  // hooks: murmur keeps the error and its first time until it is cleared, so the
+  // retry acknowledges the one it answers, before anything is charged: a later
+  // failure in the pane is then raised afresh, never read as this one.
+  if (now.channel === "hooks" && !(await acknowledgeTurnFailure(channelTarget(db, row)))) {
+    return {
+      kind: "attention",
+      task: act.task,
+      agent: row.name,
+      reason: `${row.name} stopped on a failed turn, but murmur could not clear its error (murmur clear --pane ${row.paneId}): not retried, as a later failure would read as this one`,
+    };
   }
   const reserved = reserveRetry(db, ws, act.task, act.target);
   if (!reserved.ok) {

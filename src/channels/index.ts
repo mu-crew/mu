@@ -25,10 +25,13 @@ export { agentChannel, channelTarget, readAgentStates } from "./dispatch.js";
 export { ANSWER_KEY_NAMES, hooksChannel, hooksFence } from "./hooks.js";
 export { sendAckMs, writeMuEvent } from "./hooks-pane.js";
 export {
+  acknowledgeTurnFailure,
   awaitHooksSession,
   type HooksReadiness,
   type HooksRunCheck,
+  type HooksTurnFailure,
   hooksRunSince,
+  hooksTurnFailure,
   spawnAckMs,
 } from "./hooks-spawn.js";
 export { muxChannel } from "./mux.js";

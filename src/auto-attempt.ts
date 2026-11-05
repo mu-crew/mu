@@ -366,9 +366,12 @@ export function endAttempt(db: Db, taskId: number, key: string, end: AttemptEnd)
 export interface RetryTarget {
   /** The registry row the attempt saved: id + pane, and the name. */
   agent: { incarnation: number; paneId: string; name: string };
-  /** pi's process incarnation the error was read from: the send is bound to it. */
+  /**
+   * pi's process incarnation the error was read from: the send is bound to it.
+   * On `hooks` (spec D17), the harness session the failed turn ran in.
+   */
   pi: string;
-  /** pi's settled-run count of the errored run. */
+  /** pi's settled-run count of the errored run (on `hooks`, the session's settled turns). */
   errorRuns: number;
 }
 
@@ -380,7 +383,10 @@ export interface RetryTarget {
  * unless, in this transaction: the task is permitted and IN_PROGRESS, owned by the
  * very registry row the delivered attempt saved (id + pane), under its run
  * ceiling, and the error run is a newer one than the delivered send (so a retry
- * already sent is never charged twice for the same error).
+ * already sent is never charged twice for the same error). On `hooks` (spec
+ * D17) the journaled send writes the stored brief to the new attempt's brief
+ * file and pastes the one-line pointer again; the receipt's incarnation is the
+ * harness session, and its runs the `run_count` the send read before the paste.
  */
 export function reserveRetry(
   db: Db,

@@ -34,6 +34,13 @@ export interface HooksPane {
   /** The `error` attention's message (a failed turn), when the pane carries one. */
   error: string | null;
   /**
+   * When that `error` was first raised (epoch ms, murmur's `requested_at`).
+   * murmur keeps an attention through later turns and keeps its first time on
+   * a repeat, so an error older than `updatedAt` was not raised by the row's
+   * last event. null: no error, or a murmur that does not report the time.
+   */
+  errorAt: number | null;
+  /**
    * The last settled turn's assistant text (`turn_stopped`, head-capped at 64
    * KB by murmur); null: none in this session. A turn that ended without text
    * (an interrupt, a failure) leaves the previous turn's text here.
@@ -106,6 +113,40 @@ export async function writeMuEvent(
   }
 }
 
+/** Acknowledge every attention request on a pane (`murmur clear --pane`); true when murmur ran. */
+export type MurmurClearRunner = (paneId: string) => Promise<boolean>;
+
+let clearRunnerForTests: MurmurClearRunner | null = null;
+
+const defaultClearRunner: MurmurClearRunner = async (paneId) => {
+  // `murmur clear` takes no socket: it finds the server from `$TMUX`, else the default one.
+  try {
+    const r = await execFileCapture("murmur", ["clear", "--pane", paneId], { timeoutMs: 5_000 });
+    return r.exitCode === 0;
+  } catch {
+    return false;
+  }
+};
+
+/** Replace `murmur clear` (tests: a fake harness's attention). null restores the real one. */
+export function setMurmurClearRunnerForTests(run: MurmurClearRunner | null): void {
+  clearRunnerForTests = run;
+}
+
+/**
+ * Acknowledge the pane's attention through `murmur clear --pane` (the focus
+ * hook's own write: attention only, never activity, counts or session).
+ * murmur reports nothing back, so a caller that needs it gone reads the pane
+ * after. Best effort: false when murmur is absent or failed.
+ */
+export async function clearPaneAttention(paneId: string): Promise<boolean> {
+  try {
+    return await (clearRunnerForTests ?? defaultClearRunner)(paneId);
+  } catch {
+    return false;
+  }
+}
+
 const str = (v: unknown): string | null => (typeof v === "string" ? v : null);
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
@@ -122,7 +163,7 @@ export function parseHooksPane(stdout: string): HooksPane | undefined {
   const agent =
     typeof d.agent === "object" && d.agent !== null ? (d.agent as Record<string, unknown>) : null;
   const attention = (Array.isArray(d.attention) ? d.attention : []).filter(
-    (a): a is { kind: string; message?: unknown } =>
+    (a): a is { kind: string; message?: unknown; requested_at?: unknown } =>
       typeof a === "object" && a !== null && typeof (a as { kind?: unknown }).kind === "string",
   );
   const blocked = attention.find((a) => a.kind === "blocked");
@@ -137,6 +178,7 @@ export function parseHooksPane(stdout: string): HooksPane | undefined {
     updatedAt: num(agent?.updated_at),
     blocked: blocked === undefined ? null : (str(blocked.message) ?? ""),
     error: error === undefined ? null : (str(error.message) ?? ""),
+    errorAt: error === undefined ? null : num(error.requested_at),
     lastText: str(agent?.last_text),
     confirmed: agent?.confirmed !== false && d.state !== "idle?",
   };
