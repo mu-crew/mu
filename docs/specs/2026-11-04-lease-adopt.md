@@ -1,6 +1,7 @@
 # Reattaching a reaped lease agent, leftovers, and visible stop failures
 
-Status: proposed (v2 after three refutations; § Review) · Date: 2026-11-04
+Status: shipped in mu 4.4.0 / mule 0.4.0; reread against that code 2026-11-05
+(§ Review, § After review) · Date: 2026-11-04
 Builds on: [2026-10-28-lease-transport.md](2026-10-28-lease-transport.md) (mu) and
 mule `docs/specs/2026-10-28-mu-lease.md`
 Evidence: the 2026-11-04 aiv-blog incident (cite it in every commit)
@@ -46,6 +47,8 @@ reattach`**, intent `agent.reattach`.
 `mu_list` comes last: its `next` prints `mu agent reattach`, which must exist
 ("executable as printed", surface contract § Next). Per-file estimates are in
 each **Files**; a mu unit over 300 LOC at review splits at its named seam.
+`mu_adopt` took its seam; unit reviews split `mu_adopt` and `mu_list` further
+(§ After review).
 
 ## The cross-repo contract (both sides implement exactly this)
 
@@ -70,13 +73,16 @@ each **Files**; a mu unit over 300 LOC at review splits at its named seam.
 
 **Command.** `RealSignalSteps::spawn_stop` detaches
 `mule --quiet [--config C] rm --host H <id> --retry-for 600 --fence-gen <G> --failed-file <job_file>.<id>.stop-failed`,
-`<G>` being the generation the carrier owns (mule `src/lease.rs`, `Owned`):
+`600` being `STOP_RETRY_FOR` (`MULE_STOP_RETRY_FOR` overrides it, a test
+seam) and `<G>` the generation the carrier owns (mule `src/lease.rs`, `Owned`):
 fixed before the carrier can own the job (a lease reads it before its
 dispatch; an attach owns the number it bumped to) and never re-read at
 signal time. A signal thread descheduled after its pane went could otherwise
 read an attach's new generation and kill the reattached job, and a read
 error there would leave the stop unfenced. A lease whose fence cannot be read
-dispatches nothing. `exec`'s signal path omits `--failed-file` (no job file).
+dispatches nothing. `exec`'s signal path passes `--retry-for` alone: no
+`--fence-gen` (nothing reattaches to an exec job) and no `--failed-file` (no
+job file).
 
 New `rm` flags (`Commands::Rm`), all conflicting with `--all`:
 `--retry-for <SECS>` (retry until this much monotonic time has passed;
@@ -267,44 +273,51 @@ agent instead.
   revision come from ONE read transaction taken after it, like
   `previewClose`: the row's absence, the workstream, the reservation and the
   record are re-read there, and a plan they no longer match is retried. After
-  3 attempts it refuses (`AgentReplacedError`, exit 4, next = the preview).
+  3 attempts it refuses (`AgentReplacedError`, exit 4, its message naming
+  the preview). The plan and the revision come from `planSnapshot`.
 - **Apply:** a different revision refuses (exit 4) before any effect. The
   apply takes its plan and revision the same way.
 
-**Preflight** (`reattachBlockers(db, ws, name): Promise<Blocker[]>`,
-exported for `mu_list`). It is local only: DB, local files, and a local mux
-probe. Each blocker is a refusal (exit 4, typed `ReattachRefusedError`) with
-`next: mu agent close <name> -w <ws>`, the close preview, plus
-`--recovery <id>` when the name has more than one record.
+**Preflight** (`src/agents/reattach-check.ts`; `reattachBlockers(db, ws,
+name): Promise<Blocker[]>`, exported for `mu_list`, holds the first blocker
+found, or none). It is local only: DB, local files, and local mux probes. The
+steps run in this order. A row refuses as `AgentExistsError`; every other
+blocker is a refusal (exit 4, typed `ReattachRefusedError`, nothing changed)
+whose message names the close preview `mu agent close <name> -w <ws>`. That
+is a read, so `--json` carries it as the failure's `close` field, not as
+`next`. It adds `--recovery <id>` when the name has more than one record and
+one of them is its reservation's incarnation (`closeCommand`).
 1. **No agent row of the name** (else `AgentExistsError`).
-2. **Workstream** exists and is not torn down (`tornDownAtOf`, as spawn
-   checks), and the reservation's `carrier_jobs.workstream_id` is the live
-   workstream's id, so a re-created workstream refuses. The bind
-   (`bindCarrierJobAgent`, at finalize, after `insertAgent` ensured the
-   workstream) stamps it with the bound row's `workstream_id`; a rebind keeps
-   it. NULL (a reservation bound before the column, added in place to a v13
-   file) refuses as unknown. Neither `created_at` (a reservation can predate
-   an auto-created workstream) nor `recorded_at` (when the handle was learned,
-   possibly by a close after a teardown and reinit) is a generation.
+2. **Workstream** exists and is not torn down (its `torn_down_at`).
 3. **Exactly one reservation of (ws, name)**: legacy ordinals can leave
    several.
-4. **The reservation** has `job`, `launch='intent'`, `agent_id` and
-   `pane_id` set (it was bound to a spawned incarnation), and `reason` and
-   `tree_path` null.
+4. **The reservation** is of this workstream generation: its
+   `carrier_jobs.workstream_id` is the live workstream's id, so a re-created
+   workstream refuses. The bind (`bindCarrierJobAgent`, at finalize, after
+   `insertAgent` ensured the workstream) stamps it with the bound row's
+   `workstream_id`; a rebind keeps it. NULL (a reservation bound before the
+   column, added in place to a v13 file) refuses as unknown. Neither
+   `created_at` (a reservation can predate an auto-created workstream) nor
+   `recorded_at` (when the handle was learned, possibly by a close after a
+   teardown and reinit) is a generation. It has `job`, `launch='intent'`,
+   `agent_id` and `pane_id` set (it was bound to a spawned incarnation), and
+   `reason` and `tree_path` null.
 5. **The previous carrier is proven gone:**
-   - `localPaneAlive(pane_id)` is false; an exited retained pane counts as
-     gone, and a probe that throws refuses as unknown. A raw row deletion can
-     leave a live carrier, and two carriers must never share a forward.
-   - `pidProvenGone(creator_pid, creator_start)`; a null pid refuses as
-     unknown.
    - No **pending-carrier marker** (Apply 2) whose pane may run. A marker is
      a file, `<db dir>/locks/agent-<ws>.<name>.reattach-pending`, beside the
      agent lock but not in it: a pid-owned lock is stolen once its process
      dies, and the DB write is what can fail. One naming a pane that
      `localPaneAlive` proves gone is stale (the apply replaces it). One with
-     a live or unknown pane, no pane, or unreadable or malformed contents
-     refuses, naming the file and its cleanup: close that pane, or `rm` it
-     once no carrier of its job runs.
+     a live or unknown pane, no pane (or a pane id the mux does not accept),
+     or unreadable or malformed contents refuses, naming the file and its
+     cleanup: close that pane, or `rm -- <path>` once no carrier of its job
+     runs. The path is shell-quoted (`shellQuote`): the DB directory is the
+     operator's and may hold a space or a quote.
+   - `localPaneAlive(pane_id)` is false; an exited retained pane counts as
+     gone, and a probe that throws refuses as unknown. A raw row deletion can
+     leave a live carrier, and two carriers must never share a forward.
+   - `pidProvenGone(creator_pid, creator_start)`; a null pid refuses as
+     unknown.
 6. **Profile** exists, is `lease`, has an `attach`, and its `stop` is
    byte-identical to `host_stop` (the identity proof `runStop` uses).
 7. **Tree** = `getRemoteRecovery(db, reservation.agentId)`, unique because
@@ -324,7 +337,9 @@ the readiness matrix.
 
 **Apply.** Take the agent lock (strict), then the session's spawn lock, as
 spawn does.
-1. Re-run the preflight and the `--if` check. `rmSync` the stale ctl socket.
+1. Re-run the preflight through `planSnapshot` and the `--if` check
+   (`assertRevision`); a signal already received aborts here. `rmSync` the
+   stale ctl socket.
 2. Publish the pending-carrier marker (`{job, pid}`, exclusive create,
    after removing a stale one) BEFORE the pane is requested: a failed write
    refuses (`ReattachRefusedError`) with no pane opened. Then
@@ -334,6 +349,7 @@ spawn does.
    after install commits, after the fallback pointer names the pane, or once
    the pane is proven gone; a process that dies in between leaves it.
 3. **Install, one immediate transaction:**
+   - the workstream is still live with the planned id, else install fails;
    - preflight 7's predicate again (`recoveryBlocker`, shared with the
      preflight), before `insertAgent` (its same-name check would see the new
      row). The name and spawn locks do not cover another workstream's spawn,
@@ -341,9 +357,10 @@ spawn does.
      preflight's last await, so a check of the snapshot alone is not enough;
    - `insertAgent` with the reservation token (passes the name fence),
      `host`, `host_transport='lease'`, the tree fields and the new pane;
-   - `rebindCarrierJobAgent(token, job, oldAgent, oldPane, newId, newPane)`
-     (new, `src/carrier-jobs.ts`): a compare-and-set UPDATE. It is separate
-     from `bindCarrierJobAgent`, which refuses a stale `agent_id` on purpose;
+   - `rebindCarrierJobAgent(db, {token, job}, from, to)` (new,
+     `src/carrier-jobs.ts`; `from` and `to` are `{agentId, paneId}` pairs): a
+     compare-and-set UPDATE that keeps `workstream_id`. It is separate from
+     `bindCarrierJobAgent`, which refuses a stale `agent_id` on purpose;
    - `deleteRemoteRecovery(rec)` (compare-and-set) when there is a record.
 
    Install can still fail (teardown and reconcile take no agent lock). Then
@@ -356,7 +373,8 @@ spawn does.
    the next preflight probes that pane and refuses while it may run, so two
    carriers never share the job's forward. The pointer write can fail on the
    writer lock that failed install, or lose its compare-and-set: it never
-   skips the kill. An unproven kill retries it once; still unwritten, the
+   skips the kill. When the kill is unproven and the write failed, the write
+   is retried once (the writer may be done by then); still unwritten, the
    error says the reservation does not name the pane, and the marker it
    keeps makes the next preflight refuse while that pane may run.
    When it was preflight 7's predicate that failed and the kill is proven, the
@@ -364,19 +382,21 @@ spawn does.
    pane): the reservation only moved from one dead pane to another.
 4. Release the locks.
 
-**Readiness:** `awaitCtlHandshake(sock, assertAlive)` with `localPaneAlive`;
-no spawn startup-health rollback (it can throw on a live pane's auth text).
+**Readiness:** `awaitCtlHandshake(sock, assertAlive, signal)`, where
+`assertAlive` keeps the pane's last 50 lines and probes `localPaneAlive`; no
+spawn startup-health rollback (it can throw on a live pane's auth text).
 
 | Outcome | Action | Result |
 | --- | --- | --- |
 | ctl ok, final `localPaneAlive` true | success; record removal (§ mu_list) | exit 0 |
-| pane proven not running (absent, or exited and retained) | readiness rollback | `ReattachFailedError` exit 4, scrollback (mule's `not running` / `no master`), `next` = close preview |
+| pane proven not running (absent, or exited and retained) | readiness rollback | `ReattachFailedError` exit 4, scrollback (mule's `not running` / `no master`), the message names the close preview |
 | ctl `missing` (ENOENT) or `refused` (timeout) with the pane running | keep the row: the pane holds the job, only control is missing | exit 0, `ready:false`, `ctl` given |
 | mux probe throws | keep the row; reconcile decides later | exit 0, `ready:false`, `ctl:"unknown"` |
 | SIGINT/SIGTERM | keep the row | exit 130/143 |
 
 **Readiness rollback** (the pane is proven not running, so it kills
-nothing). Under the agent lock, in one immediate transaction:
+nothing). Under the agent lock, in one immediate transaction; it reports
+`rollback:"restored"` when all three steps commit:
 1. `deleteAgent(name, ws, {incarnation: new, paneId: newPane}, {preserve:
    false})`. **False** means someone else already reaped or closed the new
    row: **restore nothing**, report `rollback:"already-handled"`. That state
@@ -393,8 +413,8 @@ whose reap records the tree under the new incarnation, consistent by agent id
 `aside` (`<cwd>.mu-removing-<old id>`) pointing where a crashed close parked
 the tree.
 
-On success, emit `agent.reattach` (new in `LogIntent`, `VERBS`,
-`log-render.ts`) naming host, job and pane.
+Every outcome that keeps the row (ready or not) emits `agent.reattach` (new
+in `LocalIntent`, `VERBS`, `log-render.ts`) naming host, job, pane and ctl.
 
 **Files** (est.): `src/agents/reattach.ts` (new, ~200: preflight ~70,
 preview ~20, apply ~55, readiness and rollback ~55); `src/cli/agent-reattach.ts`
@@ -404,7 +424,11 @@ preview ~20, apply ~55, readiness and rollback ~55); `src/cli/agent-reattach.ts`
 classes → exit 4, ~3).
 
 **Split seam if over 300:** preflight and preview move to
-`src/agents/reattach-check.ts`, its own commit within the unit.
+`src/agents/reattach-check.ts`, its own commit within the unit. Taken. As
+shipped: `src/agents/reattach-check.ts` (preflight, preview,
+`recoveryBlocker`, `closeCommand`), `src/agents/reattach-marker.ts` (the
+pending-carrier marker), `src/agents/reattach.ts` (apply, install,
+readiness, rollback), `src/cli/agent-reattach.ts`.
 
 **Acceptance tests** (`test/lease-reattach.test.ts`, fast tier, `installMux`,
 a fake carrier script that holds or exits 1). Real holding carriers go in
@@ -459,6 +483,11 @@ another worker.
 
 The `[reaper]` note is the park reason:
 `[reaper] previous owner <name> gone (pane died); its lease job <job> on <host> may still run, so the task is parked: resume with mu agent reattach <name> -w <ws> --task <id>, or mu agent close <name> -w <ws> then mu task unpark <id>`.
+The words are shell-quoted. A task owned from another workstream (`claim
+--for <ws>/<name>`) gets two steps instead, because `--task` resolves ids in
+the agent's workstream: `mu agent reattach <name> -w <ws> then mu task claim
+<id> -w <task-ws> --for <ws>/<name> --force, or mu agent close <name> -w <ws>
+then mu task unpark <id> -w <task-ws>` (`resumeHint`, `src/agents/reap.ts`).
 
 Option (i), a note only, still lets `mu next` dispatch a duplicate worker
 over a running job: incident (b).
@@ -477,8 +506,8 @@ Each claim calls `claimTask({agentName, workstream, expectedAgentId:
 newIncarnation, force: true, onlyOpen: true})`. `force` is there because the
 reaper parked the task. `onlyOpen` is a new `ClaimTaskOptions` field, checked
 inside the immediate transaction: `claimTask` alone accepts unowned CLOSED
-tasks. `expectedAgentId` keeps a replacement that appears during readiness
-from getting the task.
+tasks. The ids resolve in the agent's workstream. `expectedAgentId` keeps a
+replacement that appears during readiness from getting the task.
 
 A refused claim is a warning (`claims: [{task, ok, error?}]`), exit 0: the
 reattach succeeded. mu never guesses tasks; the reaper note names them.
@@ -497,8 +526,8 @@ refused, exit 0 · task owned by another → warning · ctl not ready → skippe
 ## G4 — mu_list: leftovers in `mu agent list`
 
 `listLeftovers(db, ws)` in a new root file `src/leftovers.ts`. It reads the
-DB and local files and runs one local mux probe per reservation through
-`reattachBlockers`. It runs no host command.
+DB and local files and, per reservation, runs `reattachBlockers` with its
+local mux probes. It runs no host command.
 
 ```ts
 interface Leftover {          // output keys follow SQL names (surface contract)
@@ -508,13 +537,14 @@ interface Leftover {          // output keys follow SQL names (surface contract)
   job: string | null;         // reservation handle (lease-job)
   agent_id: number | null;    // the reaped incarnation
   recovery_id: number | null; // the record folded in, or the record itself
-  stop_failed: string | null; // the record line, escaped, ≤160 chars + " cut=<n>"
+  stop_failed: string | null; // the record after "<job> ", escaped, cut (below)
   next: string;               // one command, executable as printed
 }
 ```
 
-- **`lease-job`:** each reservation in ws whose agent is gone. This is the
-  `leaseJobHints` filter, moved here; doctor imports it. One leftover per
+- **`lease-job`:** each reservation in ws whose agent row is gone, or that
+  was never bound while the name has no row: `goneReservations`, moved here
+  from doctor's `leaseJobHints`, which now calls it. One leftover per
   reservation, legacy ordinals included. A record is **folded in by agent
   id**: `record.agent_id == reservation.agent_id`. That is one-to-one,
   because `agent_id` is the record's key. Name and host never fold.
@@ -535,12 +565,17 @@ interface Leftover {          // output keys follow SQL names (surface contract)
     and names collect when it is needed.
   - A job that already ended (dev0) is unknowable here: the reattach apply
     rolls back with `not running` and names the close preview.
-- **`stop_failed`:** read from `<job_file>.<job>.stop-failed`, only for a
-  lease-job with a handle, and shown only when the line starts with
-  `<job> `. A record whose name or content belongs to another id is never
-  shown. The cut keeps a record under 400 chars: ` cut=<n> full: mu doctor`,
-  `cut=<n>` alone with no room, or null when even that passes 400. The cap
-  bounds stop_failed; identity and next are never cut. At mu's limits (32-char
+- **`stop_failed`:** read from `<job_file>.<job>.stop-failed`
+  (`readStopFailed`), only for a lease-job with a handle, and shown only when
+  the line starts with `<job> `, as the text after it (the item's `job`
+  carries the id). A record whose name or content belongs to another id is
+  never shown. The text is escaped like a task record (`clipEscaped`: C0, C1,
+  bidi controls, U+2028/9 and backslash; other Unicode as is) and cut at 160
+  chars, and so the whole record stays within 400 chars, measured as printed
+  (the longer of its `--json` item and its `--table` line; `withStopFailed`):
+  a cut ends ` cut=<n> full: mu doctor`, or `cut=<n>` alone with no room, or
+  the field is null when even that passes 400. The cap bounds stop_failed
+  only; identity and next are never cut. At mu's limits (32-char
   name, host and workstream, a 128-char handle, `close --recovery <id>`)
   identity and next alone pass 400 from id 100. The full line is in that
   file, whose path doctor's `lease-job` hint prints.
@@ -549,14 +584,15 @@ interface Leftover {          // output keys follow SQL names (surface contract)
   adds `data.leftovers`, always present (`[]` when empty), for bare `list`
   and `--json`. A per-item `next` is data, like doctor's `close` field. The
   envelope `next` (`computeNext`) is unchanged, because reads are never
-  hinted. `--table` prints `Leftovers (n)` after Orphan panes (dim note: "work
-  of agents whose rows are gone"), then one escaped line each:
+  hinted. `--table` prints `Leftovers (n)` after Orphan panes (dim note: "Work
+  of agents whose rows are gone. Run each one's next."), then one line each:
   `  <name>  <kind> on <host>[ job=<h>][ recovery=<id>][ stop failed: <text>]  → <next>`.
   The renderer lives in `src/leftovers.ts`, and `cmdList` gains ~6 lines.
   `docs/reference/surface-contract.md` gets one Output line: a list record
   may carry a per-item `next` string, which is data, not a `NextPlan`.
-- **`mu state`:** not mirrored; doctor's `lease-job` line prints record path
-  and `next`.
+- **`mu state`:** not mirrored; doctor's `lease-job` line prints the
+  record's path and the bare close preview (`close`), not the leftover's
+  `next`.
 - **Record lifecycle (mu side).** mu removes `<job_file>.<job>.stop-failed`
   only for a handle it has just proven stopped or reattached. The path names
   the handle, so mu never touches another job's record, and the removal does
@@ -602,7 +638,8 @@ and nobody changes its order.
   reaped lease agent's still-running job; not the removed `agent adopt`,
   which registered any pane"), **leftover** ("a reservation with no agent
   row, or a remote recovery record; not an **orphan**, which is a pane"),
-  **stop-failure record** (`<job_file>.<job>.stop-failed`). Amend **host
+  **stop-failure record** (`<job_file>.<job>.stop-failed`), **pending-carrier
+  marker** (the reattach's file, Apply 2). Amend **host
   template** (`attach`), **reservation** (reattach rebinds it), **park** (the
   reaper parks a lease agent's tasks).
 - `docs/guide/remote.md` § Session-capped hosts: the `--attach` starter line;
@@ -614,7 +651,7 @@ and nobody changes its order.
   a leftover in `agent list`, and its tasks are parked: run its `next`
   (reattach, `--task` to hand the work back; else close, then unpark)."
 - `docs/ARCHITECTURE.md`: rows for `src/leftovers.ts`, `src/agents/reattach.ts`.
-- `CHANGELOG.md` [Unreleased]: `### Added` `agent reattach`, `host add
+- `CHANGELOG.md` [4.4.0]: `### Added` `agent reattach`, `host add
   --attach`, leftovers in `agent list`; `### Changed` the reaper parks a
   still-reserved lease agent's tasks.
 - mule `CHANGELOG.md`: `### Added` `rm --retry-for/--fence-gen/--failed-file`,
@@ -662,3 +699,20 @@ orchestrator's direction (A, B, F in part), each for a flaw stated inline.
 | list 6 | Accepted. Removal does not depend on the job file; rollback path covered; the id path makes late writes and deletes harmless; no move needed. | mu_list lifecycle |
 | list 7 | Accepted (G). Envelope pinned; `data.leftovers` in bare and `--json`; SQL-name keys; escaped and cut under 400 chars; surface-contract line; `agent-output` pins. | mu_list |
 | list 8 | Accepted (H). `ADDED_COLUMNS` with no bump (v13 precedents); one AGENTS.md clause; fresh, populated and second-open tests; host-check step; `mu_profile` split out. | mu_profile |
+
+## After review (2026-11-05)
+
+Unit reviews changed the design after the table above. Each change is
+stated in its section.
+
+| Unit (commit) | Change | Where |
+| --- | --- | --- |
+| mule_stop (mule a2f2fc0) | The stop's fence generation is the one the carrier owns (read before dispatch, or bumped by attach), never read at signal time. | mule_stop Command |
+| mu_adopt_fix (3a47350d) | The bind stamps `carrier_jobs.workstream_id`, the reservation's generation; an install failure points the reservation at the new pane before the kill; preview and apply plan from one snapshot. | Preflight 4, Apply 3, Preview |
+| mu_adopt_fence (03b5acd4) | A failed pointer write never skips the kill; with the kill unproven it is retried once. | Apply 3 |
+| mu_adopt_owner (029b07af) | Install re-runs preflight 7's predicate (`recoveryBlocker`) in its transaction; a path taken by then kills the new pane and refuses. | Apply 3 |
+| mu_adopt_fence_2 (edf0476b) | The pending-carrier marker, published before the pane request, makes a reattach that could neither install, fence nor prove its pane gone refuse the next one. | Preflight 5, Apply 2 |
+| quote (8cdfc834) | The marker's `rm -- <path>` is shell-quoted; the close and `--if` previews pass their words through `shellWord`. | Preflight 5 |
+| reap_fix (8b2fb912) | A task owned from another workstream gets a two-step resume hint. | mu_reap |
+| list_fix (7763e25f) | `stop_failed` is escaped like a task record and budgeted against the whole printed record. | mu_list |
+| list_cap (311ec968) | With no room the fallback is `cut=<n>` alone or null: `stop_failed` is the only cut field. | mu_list |
