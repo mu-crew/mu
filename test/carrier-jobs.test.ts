@@ -107,6 +107,17 @@ describe("carrier_jobs reservations", () => {
       job: "job-1",
     });
     expect(getCarrierJobByAgent(db, 7)?.token).toBe(a.token);
+    // No agent row 7 in this workstream: no generation to stamp.
+    expect(getCarrierJob(db, a.token)?.workstreamId).toBeNull();
+  });
+
+  it("the bind stamps the workstream generation of the bound row", () => {
+    const r = reserve();
+    const a = insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1", reservation: r.token });
+    expect(getCarrierJob(db, r.token)?.workstreamId).toBeNull();
+    bindCarrierJobAgent(db, r.token, a.incarnation, "%1");
+    const ws = db.prepare("SELECT id FROM workstreams WHERE name = 'ws'").get() as { id: number };
+    expect(getCarrierJob(db, r.token)?.workstreamId).toBe(ws.id);
   });
 
   it("deleting the agent row (any path, even raw SQL) leaves the reservation", () => {

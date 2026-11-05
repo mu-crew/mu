@@ -12,7 +12,7 @@ import { activeMux } from "../mux.js";
 import { localPaneAlive } from "../remote-agent.js";
 import * as recovery from "../remote-recovery.js";
 import { agentRevision } from "../revision.js";
-import { AgentExistsError } from "./errors.js";
+import { AgentExistsError, AgentReplacedError } from "./errors.js";
 import { describeRead, leaseJobFile, readJobFile } from "./lease-carrier.js";
 
 /** One reason the name cannot be reattached now; `code` names the preflight step. */
@@ -44,8 +44,8 @@ export interface Plan {
 async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Plan> {
   const no = (code: Blocker["code"], detail: string): Blocker => ({ code, detail });
   if (getAgentForCleanup(db, name, ws) !== undefined) return no("row", "it has an agent row");
-  const w = db.prepare("SELECT * FROM workstreams WHERE name = ?").get(ws) as
-    | { id: number; created_at: string; torn_down_at: string | null }
+  const w = db.prepare("SELECT id, torn_down_at FROM workstreams WHERE name = ?").get(ws) as
+    | { id: number; torn_down_at: string | null }
     | undefined;
   if (w?.torn_down_at !== null) return no("workstream", `workstream ${ws} is gone or torn down`);
   const all = listCarrierJobsByName(db, ws, name);
@@ -53,9 +53,9 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   if (r === undefined || all.length !== 1) {
     return no("reservation", `the name has ${all.length} lease reservations, not one`);
   }
-  // The handle landed after the row, so after its workstream existed (a reservation itself may
-  // predate an auto-created one): a workstream newer than the handle was created again.
-  if ((r.recordedAt ?? "") < w.created_at) return no("workstream", `${ws} was created again since`);
+  // The bind stamped the generation its row lived in; NULL predates the column: unknown.
+  if (r.workstreamId === null) return no("workstream", `its binding's workstream is unknown`);
+  if (r.workstreamId !== w.id) return no("workstream", `${ws} was created again since`);
   const { job, agentId, paneId } = r;
   if (job === null || r.launch !== "intent" || agentId === null || paneId === null) {
     return no("reservation", "its reservation holds no job handle bound to a spawned agent");
@@ -133,7 +133,34 @@ export const factsOf = (ws: string, { r, rec }: Plan) => ({
 });
 export type ReattachFacts = ReturnType<typeof factsOf>;
 
+/**
+ * The plan and the revision of ONE snapshot. The plan awaits a mux probe, so the name may be
+ * closed and spawned again meanwhile: the plan's DB facts are re-read with the revision in one
+ * read transaction (under WAL its first read pins a snapshot) and the plan retried when they
+ * moved. A name that will not hold still refuses (AgentReplacedError), like `previewClose`.
+ */
+export async function planSnapshot(db: Db, ws: string, name: string) {
+  const facts = (agentId: number) => ({
+    row: getAgentForCleanup(db, name, ws) !== undefined,
+    ws: db.prepare("SELECT id, torn_down_at FROM workstreams WHERE name = ?").get(ws),
+    jobs: listCarrierJobsByName(db, ws, name),
+    rec: recovery.getRemoteRecovery(db, agentId),
+  });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const p = await plan(db, ws, name);
+    const was = { row: false, ws: { id: p.wsId, torn_down_at: null }, jobs: [p.r], rec: p.rec };
+    const revision = db.transaction(() =>
+      JSON.stringify(facts(p.r.agentId)) === JSON.stringify(was)
+        ? agentRevision(db, ws, name)
+        : undefined,
+    )();
+    if (revision !== undefined) return { p, revision };
+  }
+  throw new AgentReplacedError(name, ws, "reattached");
+}
+
 /** Bare `agent reattach`: the preflight, its facts, and the revision `--if` needs. Read only. */
 export async function previewReattach(db: Db, ws: string, name: string) {
-  return { ...factsOf(ws, await plan(db, ws, name)), revision: agentRevision(db, ws, name) };
+  const { p, revision } = await planSnapshot(db, ws, name);
+  return { ...factsOf(ws, p), revision };
 }

@@ -111,12 +111,18 @@ export const MESSAGES = {
     state === true
       ? `agent ${name}: pane ${pane} is still alive after the kill; its row is kept. Close the pane in your multiplexer, then preview: mu agent close ${name} -w ${ws}`
       : `agent ${name}: pane ${pane} could not be checked${reason === undefined ? "" : ` (${reason})`}; its row, tasks and worktree are kept. Retry once the multiplexer answers, or if you know the pane is gone preview with --force: mu agent close ${name} -w ${ws} --force`,
-  "agent.replaced": (name: string, ws: string, during: "closed" | "sent to" | "collected") =>
+  "agent.replaced": (
+    name: string,
+    ws: string,
+    during: "closed" | "sent to" | "collected" | "reattached",
+  ) =>
     during === "closed"
       ? `agent ${name} was replaced while it was being closed; the replacement was left alone. Preview it: mu agent close ${name} -w ${ws}`
-      : during === "collected"
-        ? `agent ${name} was replaced while its commits were being collected; the replacement's record was left alone. Look at it: mu agent list -w ${ws}`
-        : `agent ${name} was replaced before the prompt was written; nothing was sent to the replacement. Look at it: mu agent list -w ${ws}`,
+      : during === "reattached"
+        ? `agent ${name}'s lease reservation kept changing while its reattach was planned; nothing was changed. Preview again: mu agent reattach ${name} -w ${ws}`
+        : during === "collected"
+          ? `agent ${name} was replaced while its commits were being collected; the replacement's record was left alone. Look at it: mu agent list -w ${ws}`
+          : `agent ${name} was replaced before the prompt was written; nothing was sent to the replacement. Look at it: mu agent list -w ${ws}`,
   "agent.lock_busy": (name: string, ws: string) =>
     `agent ${name} is being changed by another mu process (its lock is held); nothing was done. Retry: mu agent close ${name} -w ${ws}`,
   "agent.pane_dead": (name: string, pane: string, msgId?: string) =>

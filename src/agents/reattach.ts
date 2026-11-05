@@ -14,17 +14,17 @@ import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { attachCommand, localPaneAlive } from "../remote-agent.js";
 import { deleteRemoteRecovery, restoreRemoteRecovery } from "../remote-recovery.js";
-import { agentRevision, assertRevision } from "../revision.js";
+import { assertRevision } from "../revision.js";
 import { isScratchWorkstream } from "../workstream.js";
 import { withAgentLock } from "./lock.js";
-import { closeCommand, factsOf, type Plan, plan } from "./reattach-check.js";
+import { closeCommand, factsOf, type Plan, planSnapshot } from "./reattach-check.js";
 import { spawnerFromEnv } from "./spawn.js";
 import { withSpawnLock } from "./spawn-lock.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
 
 export * from "./reattach-check.js";
 
-type Rollback = "pane-killed" | "restored" | "already-handled" | "left-for-reap";
+type Rollback = "pane-killed" | "pane-unknown" | "restored" | "already-handled" | "left-for-reap";
 
 /** The new carrier did not take; `rollback` says what mu did about it. Exit 4. */
 export class ReattachFailedError extends Error {
@@ -59,8 +59,8 @@ export async function reattachAgent(
   const session = `mu-${ws}`;
   const { p, pid, row } = await withAgentLock(db, ws, name, () =>
     withSpawnLock(session, async () => {
-      const p = await plan(db, ws, name);
-      assertRevision(opts.ifRevision, agentRevision(db, ws, name), {
+      const { p, revision } = await planSnapshot(db, ws, name);
+      assertRevision(opts.ifRevision, revision, {
         subject: `agent ${name}`,
         previewCommand: `mu agent reattach ${name} -w ${ws}`,
       });
@@ -88,9 +88,17 @@ export async function reattachAgent(
         return { p, pid, row: install(db, ws, p, pid) };
       } catch (e) {
         // A carrier must not hold a job with no row: its death stops the job (its signal path).
+        // The reservation names the new pane first (the old one is proven dead), so while the
+        // kill is unproven the next preflight probes THIS pane and refuses while it may run.
+        rebindCarrierJobAgent(db, p.r, p.r, { agentId: p.r.agentId, paneId: pid });
         await mux.killPane(pid).catch(() => {});
-        const why = `install failed (${e instanceof Error ? e.message : e}); its pane ${pid} was killed, so its signal path stops job ${p.r.job}`;
-        throw new ReattachFailedError(name, "pane-killed", why, closeCommand(db, ws, name));
+        const gone = (await localPaneAlive(pid).catch(() => undefined)) === false;
+        const failed = `install failed (${e instanceof Error ? e.message : e})`;
+        const why = gone
+          ? `${failed}; its pane ${pid} was killed, so its signal path stops job ${p.r.job}`
+          : `${failed}; its pane ${pid} may still run job ${p.r.job} (the kill is not proven): close that pane, then reattach or close`;
+        const rollback = gone ? "pane-killed" : "pane-unknown";
+        throw new ReattachFailedError(name, rollback, why, closeCommand(db, ws, name));
       }
     }),
   );

@@ -659,6 +659,8 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   // A lease reservation's remote worktree (src/carrier-jobs.ts): which tree it belongs to.
   ["carrier_jobs", "tree_path", "TEXT"],
   ["carrier_jobs", "tree_agent_id", "INTEGER"],
+  // The workstream generation the reservation was bound in (src/carrier-jobs.ts).
+  ["carrier_jobs", "workstream_id", "INTEGER"],
 ];
 
 function hasColumn(db: Db, table: string, column: string): boolean {

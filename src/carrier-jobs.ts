@@ -54,6 +54,12 @@ export interface CarrierJob {
    */
   treePath: string | null;
   treeAgentId: number | null;
+  /**
+   * The id of the workstream the bound agent row lived in, stamped by the bind (a torn-down
+   * and re-created workstream gets a new id); null before the bind, or on a reservation
+   * older than the column. Reattach refuses unless it is the live workstream's.
+   */
+  workstreamId: number | null;
   createdAt: string;
   recordedAt: string | null;
 }
@@ -73,6 +79,7 @@ interface Raw {
   reason: string | null;
   tree_path: string | null;
   tree_agent_id: number | null;
+  workstream_id: number | null;
   created_at: string;
   recorded_at: string | null;
 }
@@ -92,6 +99,7 @@ const toJob = (r: Raw): CarrierJob => ({
   reason: r.reason,
   treePath: r.tree_path,
   treeAgentId: r.tree_agent_id,
+  workstreamId: r.workstream_id,
   createdAt: r.created_at,
   recordedAt: r.recorded_at,
 });
@@ -209,7 +217,11 @@ export function recordCarrierPane(db: Db, token: string, paneId: string): boolea
   );
 }
 
-/** Finalize: the agent incarnation (and its pane) the reservation belongs to. */
+/**
+ * Finalize: the agent incarnation (and its pane) the reservation belongs to, and the
+ * workstream generation that row lives in (`workstream_id`, NULL when no such row of this
+ * workstream exists), read in the same statement.
+ */
 export function bindCarrierJobAgent(
   db: Db,
   token: string,
@@ -219,15 +231,18 @@ export function bindCarrierJobAgent(
   return (
     db
       .prepare(
-        `UPDATE carrier_jobs SET agent_id = ?, pane_id = ?
+        `UPDATE carrier_jobs SET agent_id = ?, pane_id = ?,
+           workstream_id = (SELECT a.workstream_id FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+                             WHERE a.id = ? AND w.name = carrier_jobs.workstream)
          WHERE token = ? AND (agent_id IS NULL OR agent_id = ?) AND (pane_id IS NULL OR pane_id = ?)`,
       )
-      .run(agentId, paneId, token, agentId, paneId).changes === 1
+      .run(agentId, paneId, agentId, token, agentId, paneId).changes === 1
   );
 }
 
 /** Reattach and its rollback: move the reservation between incarnations, compare-and-set on
- *  token, handle and the old pair (`bindCarrierJobAgent` refuses a stale `agent_id` on purpose). */
+ *  token, handle and the old pair (`bindCarrierJobAgent` refuses a stale `agent_id` on purpose).
+ *  `workstream_id` stays: the reattach installs into the generation it was bound in. */
 export function rebindCarrierJobAgent(
   db: Db,
   r: { token: string; job: string },
