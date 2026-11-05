@@ -14,6 +14,7 @@ import * as recovery from "../remote-recovery.js";
 import { agentRevision } from "../revision.js";
 import { AgentExistsError, AgentReplacedError } from "./errors.js";
 import { describeRead, leaseJobFile, readJobFile } from "./lease-carrier.js";
+import { readMarker } from "./reattach-marker.js";
 
 /** One reason the name cannot be reattached now; `code` names the preflight step. */
 export interface Blocker {
@@ -39,6 +40,8 @@ export interface Plan {
   rec: recovery.RemoteRecovery | undefined;
   wsId: number;
   jobFile: string;
+  /** A pending-carrier marker whose pane is proven gone: the apply replaces it. */
+  staleMarker: boolean;
 }
 
 /**
@@ -86,6 +89,9 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
     return no("reservation", "its reservation holds no job handle bound to a spawned agent");
   }
   if (r.reason !== null || r.treePath !== null) return no("reservation", `kept: ${r.reason}`);
+  // A carrier an earlier apply could neither install, fence nor prove gone (or died with).
+  const marker = await readMarker(db, ws, name);
+  if (marker !== "none" && marker !== "stale") return no("carrier", marker);
   const alive = await localPaneAlive(paneId).catch(() => undefined);
   if (alive !== false)
     return no("carrier", `its previous pane ${paneId} is ${alive ? "alive" : "unknown"}`);
@@ -109,7 +115,8 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   }
   const mux = await activeMux();
   if (!mux.runsShellCommand) return no("carrier", `${mux.name} cannot run the attach template`);
-  return { r: { ...r, job, agentId, paneId }, profile, rec, wsId: w.id, jobFile };
+  const staleMarker = marker === "stale";
+  return { r: { ...r, job, agentId, paneId }, profile, rec, wsId: w.id, jobFile, staleMarker };
 }
 
 /** Why (workstream, name) cannot be reattached now; empty when it can. Read only. */

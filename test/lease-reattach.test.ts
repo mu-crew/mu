@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { agentLockPath } from "../src/agents/lock.js";
 import {
   previewReattach,
   ReattachFailedError,
@@ -18,6 +19,8 @@ import {
   reattachAgent,
   reattachBlockers,
 } from "../src/agents/reattach.js";
+import { markerPath } from "../src/agents/reattach-marker.js";
+import { lockPathForSession } from "../src/agents/spawn-lock.js";
 import {
   AgentExistsError,
   AgentReplacedError,
@@ -75,6 +78,8 @@ let stop: string;
 let carrier: "ctl" | "noctl" | "exit" | "exit-after-ctl" | "retained-exit";
 /** Runs before every tmux call. */
 let beforeTmux: ((args: readonly string[]) => void) | undefined;
+/** Awaited after a pane call created its pane, before tmux answers. */
+let afterPane: ((pane: string) => Promise<void>) | undefined;
 /** The pane the `exit` carrier leaves at its first liveness probe. */
 let dieAfterCapture: string | undefined;
 let saved: Record<string, string | undefined>;
@@ -120,6 +125,7 @@ beforeEach(() => {
   servers = [];
   carrier = "ctl";
   beforeTmux = undefined;
+  afterPane = undefined;
   dieAfterCapture = undefined;
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   process.env.MU_DB_PATH = dbPath;
@@ -158,6 +164,7 @@ esac`,
     const res = await fake(args);
     if (!isPaneCall(args)) return res;
     const pane = res.stdout.trim();
+    await afterPane?.(pane);
     if (carrier === "ctl" || carrier === "exit-after-ctl") {
       await serveCtl(ctlSocketPath("auth", "worker-1", dir));
     }
@@ -782,6 +789,14 @@ describe("finding reattach_install_fence_db_error: the fence write fails on the 
     expect((e as Error).message).toContain(`${pane} may still run job job-1`);
     expect((e as Error).message).toContain("the reservation does not name it");
     expect(reservation()?.paneId).toBe("%90");
+    // finding reattach_unfenced_retry: the writer done, the marker still refuses the retry.
+    release();
+    beforeTmux = undefined;
+    const retry = await failure(apply());
+    expect(retry).toBeInstanceOf(ReattachRefusedError);
+    expect((retry as Error).message).toContain(`its pane ${pane} (alive) may run job job-1`);
+    expect([...state.panes.keys()]).toEqual([pane]);
+    expect((e as Error).message).toContain(markerPath(db, "auth", "worker-1"));
   });
 
   it("a fence that loses its compare-and-set still kills, and says so when the kill is unproven", async () => {
@@ -798,6 +813,12 @@ describe("finding reattach_install_fence_db_error: the fence write fails on the 
     expect((e as Error).message).toContain("the reservation does not name it");
     expect(kills).toEqual([...state.panes.keys()]);
     expect(reservation()?.paneId).toBe("%77");
+    // finding reattach_unfenced_retry: %77 is not a live pane, but the marker names ours.
+    beforeTmux = undefined;
+    const retry = await failure(apply());
+    expect(retry).toBeInstanceOf(ReattachRefusedError);
+    expect((retry as Error).message).toContain(markerPath(db, "auth", "worker-1"));
+    expect([...state.panes.keys()]).toEqual(kills);
   });
 });
 
@@ -988,5 +1009,75 @@ describe("finding reattach_snapshot_recovery_owner: install re-checks the recove
     const [pane] = [...state.panes.keys()].filter((id) => id !== "%99");
     expect(reservation()?.paneId).toBe(pane);
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+});
+
+describe("finding reattach_unfenced_retry: a pending-carrier marker outlives an unproven attempt", () => {
+  const marker = () => markerPath(db, "auth", "worker-1");
+  const leave = (body: string): void => {
+    mkdirSync(dirname(marker()), { recursive: true });
+    writeFileSync(marker(), body);
+  };
+
+  it("the process dies after the pane opens, before install: the retry refuses on the marker", async () => {
+    reaped();
+    let die: (e: Error) => void = () => {};
+    afterPane = () =>
+      new Promise((_, reject) => {
+        die = reject;
+      });
+    const first = failure(apply());
+    await vi.waitFor(() => expect(state.panes.size).toBe(1));
+    afterPane = undefined;
+    // Death: no catch, no kill; its locks are stolen once its pid is gone.
+    rmSync(agentLockPath(db, "auth", "worker-1"), { recursive: true, force: true });
+    rmSync(lockPathForSession("mu-auth"), { recursive: true, force: true });
+    const retry = await failure(apply());
+    expect(retry).toBeInstanceOf(ReattachRefusedError);
+    expect((retry as Error).message).toContain(`left ${marker()}`);
+    expect((retry as Error).message).toContain("never named");
+    expect(state.panes.size).toBe(1);
+    die(new Error("killed"));
+    await first;
+    expect(existsSync(marker())).toBe(true);
+  });
+
+  it("a marker that cannot be written exclusively (another writer took it) opens no pane", async () => {
+    reaped();
+    // After the preflight read no marker: the previous pane's probe.
+    beforeTmux = (a) => {
+      if (a[a.indexOf("-t") + 1] === "%90" && !existsSync(marker()))
+        writeFileSync(marker(), "theirs");
+    };
+    const e = await failure(apply());
+    expect(e).toBeInstanceOf(ReattachRefusedError);
+    expect((e as Error).message).toContain("could not be written, so no pane was opened");
+    expect(state.panes.size).toBe(0);
+    expect(readFileSync(marker(), "utf8")).toBe("theirs");
+  });
+
+  it("a malformed marker refuses, naming it and its cleanup", async () => {
+    reaped();
+    leave("{");
+    const [b] = await reattachBlockers(db, "auth", "worker-1");
+    expect(b).toMatchObject({ code: "carrier" });
+    expect(b?.detail).toContain(
+      `unreadable or malformed; once no carrier of its job runs: rm ${marker()}`,
+    );
+  });
+
+  it("a stale marker whose pane is proven gone is cleared, and the retry runs one carrier", async () => {
+    reaped();
+    leave(JSON.stringify({ job: "job-1", pid: deadPid(), pane: "%55" }));
+    expect(await reattachBlockers(db, "auth", "worker-1")).toEqual([]);
+    const res = await apply();
+    expect([...state.panes.keys()]).toEqual([res.pane_id]);
+    expect(existsSync(marker())).toBe(false);
+  });
+
+  it("a successful reattach leaves no marker", async () => {
+    reaped();
+    await apply();
+    expect(existsSync(marker())).toBe(false);
   });
 });

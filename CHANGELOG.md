@@ -48,7 +48,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   refuses while it may run. A pointer write that fails (the writer lock that
   failed install) or loses its compare-and-set never skips the kill; an
   unproven kill retries it once, and if it still fails the error says the
-  reservation does not name the pane. Preview and apply take the facts and the rev from
+  reservation does not name the pane. Before the pane is requested the apply
+  publishes a pending-carrier marker (`<db dir>/locks/agent-<ws>.<name>.reattach-pending`;
+  a failed write opens no pane) and removes it only once the pane is installed,
+  named on the reservation or proven gone: after a double fault or a process
+  killed mid-apply, the next reattach refuses while that pane may run (an
+  unreadable or malformed marker, or one naming no pane, refuses too, naming
+  the file to `rm`). Preview and apply take the facts and the rev from
   one snapshot after the pane probe; a reservation that keeps changing refuses
   (`AgentReplacedError`, exit 4). Pi only: no other cli is stored. Logs
   `agent.reattach`. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_adopt.

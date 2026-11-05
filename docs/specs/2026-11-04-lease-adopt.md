@@ -297,6 +297,14 @@ probe. Each blocker is a refusal (exit 4, typed `ReattachRefusedError`) with
      leave a live carrier, and two carriers must never share a forward.
    - `pidProvenGone(creator_pid, creator_start)`; a null pid refuses as
      unknown.
+   - No **pending-carrier marker** (Apply 2) whose pane may run. A marker is
+     a file, `<db dir>/locks/agent-<ws>.<name>.reattach-pending`, beside the
+     agent lock but not in it: a pid-owned lock is stolen once its process
+     dies, and the DB write is what can fail. One naming a pane that
+     `localPaneAlive` proves gone is stale (the apply replaces it). One with
+     a live or unknown pane, no pane, or unreadable or malformed contents
+     refuses, naming the file and its cleanup: close that pane, or `rm` it
+     once no carrier of its job runs.
 6. **Profile** exists, is `lease`, has an `attach`, and its `stop` is
    byte-identical to `host_stop` (the identity proof `runStop` uses).
 7. **Tree** = `getRemoteRecovery(db, reservation.agentId)`, unique because
@@ -317,8 +325,14 @@ the readiness matrix.
 **Apply.** Take the agent lock (strict), then the session's spawn lock, as
 spawn does.
 1. Re-run the preflight and the `--if` check. `rmSync` the stale ctl socket.
-2. `mux.spawnAgent` (window = name) with `attachCommand(...)`, up to
-   `onPaneCreated`.
+2. Publish the pending-carrier marker (`{job, pid}`, exclusive create,
+   after removing a stale one) BEFORE the pane is requested: a failed write
+   refuses (`ReattachRefusedError`) with no pane opened. Then
+   `mux.spawnAgent` (window = name) with `attachCommand(...)`, up to
+   `onPaneCreated`, which adds the pane id to the marker (a failed write
+   keeps the marker without it: still a refusal). The marker is removed only
+   after install commits, after the fallback pointer names the pane, or once
+   the pane is proven gone; a process that dies in between leaves it.
 3. **Install, one immediate transaction:**
    - preflight 7's predicate again (`recoveryBlocker`, shared with the
      preflight), before `insertAgent` (its same-name check would see the new
@@ -343,7 +357,8 @@ spawn does.
    carriers never share the job's forward. The pointer write can fail on the
    writer lock that failed install, or lose its compare-and-set: it never
    skips the kill. An unproven kill retries it once; still unwritten, the
-   error says the reservation does not name the pane (close it first).
+   error says the reservation does not name the pane, and the marker it
+   keeps makes the next preflight refuse while that pane may run.
    When it was preflight 7's predicate that failed and the kill is proven, the
    result is that blocker's refusal (`ReattachRefusedError`, naming the killed
    pane): the reservation only moved from one dead pane to another.
@@ -403,7 +418,8 @@ a fake carrier script that holds or exits 1). Real holding carriers go in
   handle lands after a real teardown and reinit refuses; a reservation bound
   in the re-created ws is allowed) · NULL `workstream_id` · two reservations · no
   handle · a `reason` · unbound reservation · previous pane alive · pane
-  probe throws · creator alive · no `attach` · changed `stop` · session
+  probe throws · creator alive · a marker that is malformed or names a
+  live or unrecorded pane (a stale one is cleared and the apply runs) · no `attach` · changed `stop` · session
   profile · record with another `workstream_id` · newer record on the path ·
   job file naming another handle · stale `--if`.
 - **Readiness:** carrier exits at once → record restored byte for byte,
@@ -414,6 +430,9 @@ a fake carrier script that holds or exits 1). Real holding carriers go in
   record (the new one) · install transaction fails → pane killed, the
   reservation names it, nothing else changed · the kill fails with the pane
   alive → `pane-unknown`, the next preflight refuses on the new pane · the
+  fallback pointer also failing (writer lock, lost compare-and-set) or the
+  process dying after the pane opens → the next reattach refuses on the
+  marker, one carrier · the marker's exclusive create failing → no pane · the
   record's path taken (another workstream's agent on it, or a newer record of
   it) in the preflight's final await or during the pane creation → refused at
   install, the new pane killed, the record kept · the reservation replaced
