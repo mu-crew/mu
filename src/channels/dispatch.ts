@@ -10,6 +10,7 @@ import { dirname } from "node:path";
 import { agentKey, readGatePanes, type StateAgentRef, type StateReading } from "../agent-state.js";
 import type { ObservedAgent } from "../agents/observe.js";
 import type { Db } from "../db.js";
+import { queuedPanes } from "../muzzle-queue.js";
 import { ctlChannel } from "./ctl.js";
 import { muxChannel } from "./mux.js";
 import { channelOf } from "./select.js";
@@ -48,13 +49,39 @@ export async function readAgentStates(
   opts: { now?: number; stateDir?: string } = {},
 ): Promise<Map<string, StateReading>> {
   const gates = agents.filter((a) => a.gateToken !== undefined && a.gateToken !== null);
-  if (gates.length === 0) return readChannelStates(agents, opts);
-  const readings = await readChannelStates(
-    agents.filter((a) => !gates.includes(a)),
-    opts,
-  );
+  const rest = agents.filter((a) => !gates.includes(a));
+  const readings = await readChannelStates(rest, opts);
+  await markQueued(rest, readings, opts);
+  if (gates.length === 0) return readings;
   for (const [key, reading] of await readGatePanes(gates)) readings.set(key, reading);
   return readings;
+}
+
+/**
+ * Spec D14: a live agent off ctl whose pane holds a muzzle run waiting for
+ * slots reads `queued`, so no stall rule fires on its silence. pi agents are
+ * not looked up: ctl reports their running tool, and their readings stay as
+ * they were.
+ */
+async function markQueued(
+  agents: readonly StateAgentRef[],
+  readings: Map<string, StateReading>,
+  opts: { now?: number; stateDir?: string },
+): Promise<void> {
+  const offCtl = agents.filter(
+    (a) => readings.get(agentKey(a))?.alive === true && channelOf(a, opts.stateDir) !== "ctl",
+  );
+  if (offCtl.length === 0) return;
+  const queued = await queuedPanes(
+    offCtl.map((a) => a.paneId),
+    opts.now !== undefined ? { now: opts.now } : {},
+  );
+  for (const a of offCtl) {
+    const reading = readings.get(agentKey(a));
+    if (reading !== undefined && queued.has(a.paneId)) {
+      readings.set(agentKey(a), { ...reading, queued: true });
+    }
+  }
 }
 
 async function readChannelStates(

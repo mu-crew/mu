@@ -52,6 +52,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   handle and never runs it. Stored as `host_profiles.attach`, added in place
   to a v13 file (no version bump).
 
+- **Queued is not stalled** (spec D14). An agent off ctl whose pane holds a
+  `muzzle run` waiting for slots fires no hook events while it waits. mu now
+  asks `muzzle status --json` (muzzle with waiter `pid`s, cached 5 s; nothing
+  when muzzle is absent or nothing waits) and places each waiter by its
+  process tree under the agent's pane. Such an agent reads `queued: true`
+  (its agent `--json` record, its state with `(queued in muzzle)` in
+  `mu agent list`, distinct from a delegate call's `queued` state), a
+  wait never reports its task stalled, and the dashboard raises no `input`
+  or `stalled` item for it. pi agents are never looked up.
+
 ### Changed
 
 - **`mu state` and `mu next` read every identity of the caller.** A managed pi

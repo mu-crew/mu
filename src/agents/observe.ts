@@ -69,6 +69,8 @@ export interface AgentObservation {
   lastError?: string;
   /** The pi session file holding the run's full transcript. */
   sessionFile?: string;
+  /** Off ctl: a muzzle run in the pane waits for slots (spec D14): waiting, never stalled. */
+  queued?: boolean;
 }
 
 /** A status read as an observation. `reading` undefined = the reader had no row. */
@@ -90,6 +92,7 @@ export function observationFromReading(
     ...(reading?.runs !== undefined ? { runs: reading.runs } : {}),
     ...(reading?.pending !== undefined ? { pending: reading.pending } : {}),
     ...(reading?.blocked !== undefined ? { blocked: reading.blocked } : {}),
+    ...(reading?.queued === true ? { queued: true } : {}),
     settled: false,
   };
 }

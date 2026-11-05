@@ -153,7 +153,9 @@ export function formatAgentsTable(agents: readonly LiveAgent[]): string {
       a.cli,
       (a.state === "unknown" || a.state === "needs_permission") && a.reason !== undefined
         ? `${a.state}: ${a.reason}`
-        : a.state,
+        : a.queued === true
+          ? `${a.state} (queued in muzzle)`
+          : a.state,
       a.tab ?? a.name,
       a.role === "read-only" ? pc.yellow("read-only") : "",
       a.cwd === null ? pc.dim("—") : truncateFront(a.cwd, CWD_BUDGET - 2),

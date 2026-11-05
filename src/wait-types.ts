@@ -200,6 +200,8 @@ export interface AgentReading {
   source?: StateReading["source"];
   /** How the control socket answered (pi agents). */
   ctl?: StateReading["ctl"];
+  /** A muzzle run in the owner's pane waits for slots (spec D14): never a stall. */
+  queued?: boolean;
 }
 
 /** The unconsumed run baseline a producer registered for an agent ref. */

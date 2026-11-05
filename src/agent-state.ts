@@ -32,6 +32,12 @@ export interface StateReading {
   blocked?: CtlBlocked;
   /** ctl only: the running tool, null when none; absent from older extensions (unknown). */
   tool?: CtlTool | null;
+  /**
+   * Off ctl only: a muzzle run in the agent's pane is waiting for slots
+   * (spec D14). The agent fires no events while it waits: it is waiting,
+   * never stalled. Absent: not queued, or not known.
+   */
+  queued?: boolean;
 }
 
 export interface StateAgentRef {

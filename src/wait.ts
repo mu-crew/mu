@@ -64,7 +64,8 @@
 //
 // Stalls. The engine detects them (an IN_PROGRESS work task whose owner needs
 // input or has a broken control socket, `stuckAfterMs`); `handleStall` (raced,
-// once per stallToken) owns the policy and effects.
+// once per stallToken) owns the policy and effects. An owner whose pane holds
+// a muzzle run waiting for slots (`queued`, spec D14) is never stalled.
 //
 // Not here: the CLI and signal wiring, arming from spawn/send/claim
 // (v_wait_cli).
@@ -741,6 +742,8 @@ export async function waitForEvents(
   /** How long (ms) the owner has needed attention, or null when it does not. */
   const stallAgeMs = (ownerKey: string, r: AgentReading | undefined): number | null => {
     if (r === undefined || r.status === null) return null;
+    // Waiting for muzzle's slots fires no events (spec D14): queued is never stalled.
+    if (r.queued === true) return null;
     const alive = true;
     // A pi owner whose control socket does not answer (pane alive): nothing will report it settling.
     if (alive && (r.ctl === "missing" || r.ctl === "refused")) {
