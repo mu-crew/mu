@@ -35,3 +35,19 @@ export async function readStdinText(what: string): Promise<string> {
   }
   return text;
 }
+
+/**
+ * All of stdin as given (a hook payload), or "" from a terminal. Reads at
+ * most `cap` bytes' worth of text; the rest is left unread.
+ */
+export async function readStdinRaw(cap: number): Promise<string> {
+  if (reader !== null) return (await reader()).slice(0, cap);
+  if (process.stdin.isTTY) return "";
+  let text = "";
+  process.stdin.setEncoding("utf8");
+  for await (const chunk of process.stdin) {
+    text += chunk;
+    if (text.length >= cap) break;
+  }
+  return text.slice(0, cap);
+}

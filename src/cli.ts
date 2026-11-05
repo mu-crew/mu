@@ -35,6 +35,7 @@ import {
   setNextScope,
   UsageError,
 } from "./cli/handle.js";
+import { hookArgv, hookParseFailure, wireHookCommand } from "./cli/hook.js";
 import { wireHostCommands } from "./cli/host.js";
 import { wireHumanNeededCommand } from "./cli/human-needed.js";
 import { wireLogCommand } from "./cli/log.js";
@@ -895,6 +896,7 @@ export function buildProgram(): Command {
   wireStateCommands(program);
   wireSyncCommand(program);
   wireHostCommands(program);
+  wireHookCommand(program);
   wireHumanNeededCommand(program);
   wireDelegatesCommands(program);
   wireRebuildCommand(program);
@@ -1050,6 +1052,8 @@ export async function runCli(rawArgv: readonly string[]): Promise<void> {
   try {
     await program.parseAsync(argv);
   } catch (err) {
+    // A hook entry never fails its harness's turn (src/cli/hook.ts).
+    if (hookArgv(argv.slice(2))) process.exit(hookParseFailure(err));
     // CommanderError (parse-time) lands here because every command in
     // the tree had .exitOverride() applied. Locate the deepest matching
     // subcommand from argv so emitError can render its --help (human)

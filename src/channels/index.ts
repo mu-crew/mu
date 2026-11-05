@@ -23,7 +23,7 @@ export {
 export { deliver } from "./deliver.js";
 export { agentChannel, channelTarget, readAgentStates } from "./dispatch.js";
 export { ANSWER_KEY_NAMES, hooksChannel, hooksFence } from "./hooks.js";
-export { sendAckMs } from "./hooks-pane.js";
+export { sendAckMs, writeMuEvent } from "./hooks-pane.js";
 export { muxChannel } from "./mux.js";
 export { agentCtlSocket, channelOf, expectsCtl } from "./select.js";
 export {

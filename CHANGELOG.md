@@ -131,6 +131,31 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   wait never reports its task stalled, and the dashboard raises no `input`
   or `stalled` item for it. pi agents are never looked up.
 
+- **`mu hook stop <harness>`: keep-driving and the close nudge for claude,
+  codex and cursor-agent** (spec D7, U10). A Stop hook entry (until `mu init`
+  writes it, added by hand: `docs/guide/other-agent-clis.md`) that reads the
+  harness's Stop payload on stdin. It acts only for a pane agent mu started:
+  it walks its process chain to the first anchor with a matching start time
+  whose cli is the hook's harness, refusing a second harness on the way or a
+  one-shot one (`claude -p`, `codex exec`: U0 saw codex's and muse's directly
+  under the parent's binary), a remote anchor, and, with nothing anchored, a
+  managed env whose `MU_AGENT_CLI` names another harness. For an orchestrator
+  (`mu orchestrate`), a live process already waiting as its caller lets the
+  turn end; otherwise it runs a consuming `mu wait --first --timeout <T> --as
+  <caller>` (T is `--timeout`, the entry's own timeout, default 600, less
+  10 s): an event blocks the stop with the wait's result under the SKILL.md
+  keep-driving rule; a timeout with work still owed blocks with "run `mu wait`
+  in the background", at most `MU_KEEP_DRIVING_MAX` (default 20) times in a
+  row; nothing owed lets it end. A worker still owning an IN_PROGRESS task is
+  told once per session to close it or say why not. Every block writes
+  `continued` through `murmur hook mu`. The answer is claude's and codex's
+  `{"decision":"block","reason":…}` or cursor-agent's `followup_message`;
+  nothing lets the turn end, and the verb always exits 0, even for a malformed
+  entry (a bad `--timeout` means 600, an unknown option is ignored): claude and
+  codex read exit 2 as a block (`--json` prints the decision as an envelope). codex's title-generation Stop and cursor-agent's
+  aborted or failed stop are let go. Muse Code always passes: its block does
+  not deliver the reason. `MU_NUDGE=0` turns it off. pi is unchanged.
+
 ### Changed
 
 - **`mu state` and `mu next` read every identity of the caller.** A managed pi
@@ -180,6 +205,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   derived path (a remote non-pi worker's ssh `-L` binds one) no longer moves
   it to ctl, so an opaque wrapper around pi names `--cli pi`. A row older than
   the column keeps the derived rule, socket file included.
+- **Schema: `keep_driving`** (machine-local: per harness session, the Stop
+  hook's consecutive empty blocks and whether its close nudge fired), created
+  in place in a v13 file by `upgradeSchema` (no version bump; 28 tables). Rows
+  idle for a week go with the next write; `mu rebuild` does not carry it.
 
 ### Fixed
 

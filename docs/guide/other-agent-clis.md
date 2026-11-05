@@ -113,6 +113,22 @@ its caller is `<ws>/<name>` (printed), and a bare `mu wait` owns what it
 spawns. Run tmux from a terminal first: mu will not start a tmux server from
 inside an agent, because every pane would inherit that agent's sandbox.
 
+- **Keep driving with `mu hook stop`.** pi's settle wait has a twin for
+  claude, codex and cursor-agent: a Stop hook entry that keeps an orchestrator
+  `mu orchestrate` started from ending its turn while its workers run. It
+  waits as the orchestrator (`mu wait --as <ws>/<name>`) and hands the model
+  the event, or tells it to run `mu wait` in the background, at most
+  `MU_KEEP_DRIVING_MAX` (20) times in a row; a background `mu wait` already
+  holding the caller lets the turn end. A worker that stops still owning its
+  task is told once per session to close it. Until `mu init` writes it, add the
+  entry by hand: `mu hook stop claude --timeout 600 || true` under `Stop` in
+  `~/.claude/settings.json` with `"timeout": 600`, the same in
+  `~/.codex/hooks.json` (`codex`), and a `stop` hook in `~/.cursor/hooks.json`
+  (`cursor-agent`). Keep the `|| true`: claude and codex read a Stop hook's
+  exit 2 as "block and hand stderr to the model", and a mu on `PATH` older than
+  the verb exits 2 on it (this mu itself always exits 0). It acts only for a pane mu started, never for a
+  `claude -p` or `codex exec` that pane runs. Muse Code ignores a stop block's
+  reason, so it gets no entry and follows the skill's rule.
 - **Wait on refs.** A bare `mu wait` owns only what a pi session or a managed
   pane started. From codex or cursor in a plain shell it is a usage error.
   Name what you started (`mu wait task:<ws>/<a> task:<ws>/<b>`), or the
