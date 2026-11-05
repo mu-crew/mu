@@ -8,14 +8,22 @@
 // `set-buffer` / `paste-buffer` type into it, and `Enter` submits it, which
 // fires `prompt_submitted` like a real harness's UserPromptSubmit hook
 // (unless `acks` is off). Keys typed while a permission dialog is open fire
-// the next event (unless `answers` is off).
+// the next event (unless `answers` is off). Escape on a running turn does what
+// `onEscape` says: the harness's own `interrupted` (codex, muse,
+// cursor-agent), nothing (claude: the turn stops silently), or nothing because
+// it only closed an overlay (the turn runs on). Submitting `freshCommand`
+// starts a new session as `freshMode` says: at once (claude's `/clear`:
+// `session_end` clear, then `session_start` clear), on the next prompt (codex,
+// muse), or never (a harness that refused it); it fires no `prompt_submitted`.
 //
 // Its report follows murmur's model, not one word per event: attention
 // (`blocked`, `error`, `done`, `crashed`) persists until an event clears it and
 // outranks activity in the rendered `state`, so a running agent after a failed
 // turn still reads `error`, and a pane whose session ended reads its attention
-// with no agent row. tmux argv words are read back as tmux reads them (a final
-// `;` is a separator).
+// with no agent row. A `turn_stopped` that names its `generation_id` sets the
+// text it carries, or none, and a later one for that ended generation only
+// fills the text in (cursor-agent's text after its stop). tmux argv words are
+// read back as tmux reads them (a final `;` is a separator).
 //
 // Install `fake.pane` with setMurmurPaneRunnerForTests (and `fake.hook` with
 // setMurmurHookRunnerForTests) and route the tmux executor through `fake.tmux`
@@ -36,6 +44,8 @@ interface PaneState {
   confirmed: boolean;
   failed: boolean;
   lastText: string | null;
+  /** The last ended turn's `generation_id` (cursor-agent, muse name their turns); null: none. */
+  generation: string | null;
 }
 
 /** murmur's ATTENTION_PRIORITY: the first kind present is the rendered word, ahead of activity. */
@@ -58,6 +68,14 @@ export interface FakeHarness {
   answers: boolean;
   /** The event an answered dialog fires. Default `turn_stopped`. */
   answeredWith: string;
+  /** What Escape on a running turn does. Default `event`. */
+  onEscape: "event" | "silent" | "overlay";
+  /** The harness's fresh command. Default `/new`. */
+  freshCommand: string;
+  /** When the fresh command's new session reports itself. Default `immediate`. */
+  freshMode: "immediate" | "first-prompt" | "ignored";
+  /** The session new events belong to (a fresh command moves it). */
+  readonly session: string;
   /** Every tmux argv mu sent to this pane (and its paste buffers), in order. */
   readonly calls: string[][];
   /** Every text submitted with Enter, in order. */
@@ -86,6 +104,10 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
   const inbox = join(root, "inbox", paneId.replace("%", "p"));
   mkdirSync(inbox, { recursive: true });
   let seq = 0;
+  let current = sessionId;
+  let sessions = 1;
+  /** A fresh command a first-prompt harness has taken: the session its next prompt starts. */
+  let pendingSession: string | null = null;
   const st: PaneState = {
     activity: null,
     attention: new Map(),
@@ -95,6 +117,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     confirmed: true,
     failed: false,
     lastText: null,
+    generation: null,
   };
   let claimed = false;
   const buffers = new Map<string, string>();
@@ -106,6 +129,14 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     const now = typeof e.now === "number" ? e.now : Date.now();
     if (st.sessionId !== null && sid !== st.sessionId && event !== "session_start") return;
     if (event === "session_start" && e.source === "compact") return;
+    const generation = typeof e.generation_id === "string" ? e.generation_id : null;
+    // As murmur: a named turn that already ended takes only its late text (cursor-agent's
+    // `afterAgentResponse` after its `stop`).
+    if (event === "turn_stopped" && generation !== null && generation === st.generation) {
+      if (typeof e.text === "string") st.lastText = e.text;
+      st.updatedAt = now;
+      return;
+    }
     st.updatedAt = now;
     claimed = true;
     // Every event but a new dialog clears `blocked`; nothing but an abort clears `error`.
@@ -118,6 +149,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
           st.runCount = 0;
           st.lastText = null;
           st.failed = false;
+          st.generation = null;
         }
         st.activity = "stopped";
         break;
@@ -141,7 +173,12 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
         // A mu-managed agent's settle raises no `done`.
         st.activity = "stopped";
         st.failed = false;
-        st.lastText = typeof e.text === "string" ? e.text : null;
+        // As murmur: a turn that names no text keeps the previous one, unless it names
+        // its generation, whose text may still be on its way.
+        if (generation !== null) {
+          st.lastText = typeof e.text === "string" ? e.text : null;
+          st.generation = generation;
+        } else if (typeof e.text === "string") st.lastText = e.text;
         break;
       case "turn_failed":
         st.activity = "stopped";
@@ -185,13 +222,19 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     acks: true,
     answers: true,
     answeredWith: "turn_stopped",
+    onEscape: "event",
+    freshCommand: "/new",
+    freshMode: "immediate",
+    get session() {
+      return current;
+    },
     calls: [],
     submitted: [],
     muEvents: [],
     input: "",
     emit(event, fields = {}) {
       seq += 1;
-      const body = { v: 1, event, session_id: sessionId, now: Date.now(), ...fields };
+      const body = { v: 1, event, session_id: current, now: Date.now(), ...fields };
       writeFileSync(
         join(inbox, `${String(seq).padStart(12, "0")}-${process.pid}.json`),
         JSON.stringify(body),
@@ -230,7 +273,8 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
       if (pane !== paneId) return false;
       fake.muEvents.push({ ...event });
       const { event: name, ...fields } = event;
-      fake.emit(String(name), fields);
+      // `murmur hook mu` stamps who wrote it: mu's `interrupted` is unconfirmed.
+      fake.emit(String(name), { ...fields, by: "mu" });
       return true;
     },
     option: () => {
@@ -274,10 +318,28 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
           // Any key answers the open dialog; the harness moves on.
           if (fake.answers) fake.emit(fake.answeredWith, { text: "answered" });
         } else if (!literal && key === "C-u") fake.input = "";
-        else if (!literal && key === "Enter") {
-          fake.submitted.push(fake.input);
+        else if (!literal && key === "Escape") {
+          if (st.activity === "running" && fake.onEscape === "event") fake.emit("interrupted");
+        } else if (!literal && key === "Enter") {
+          const text = fake.input;
+          fake.submitted.push(text);
           fake.input = "";
-          if (fake.acks) fake.emit("prompt_submitted");
+          if (text === fake.freshCommand) {
+            sessions += 1;
+            const next = `${sessionId}-${sessions}`;
+            if (fake.freshMode === "immediate") {
+              fake.emit("session_end", { reason: "clear" });
+              current = next;
+              fake.emit("session_start", { source: "clear" });
+            } else if (fake.freshMode === "first-prompt") pendingSession = next;
+          } else if (fake.acks) {
+            if (pendingSession !== null) {
+              current = pendingSession;
+              pendingSession = null;
+              fake.emit("session_start", { source: "startup" });
+            }
+            fake.emit("prompt_submitted");
+          }
         } else fake.input += key;
       }
       return OK;

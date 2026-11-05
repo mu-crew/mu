@@ -1,4 +1,4 @@
-// mu — abort: stop a pi agent's current turn, through its channel.
+// mu — abort: stop an agent's current turn, through its channel.
 //
 // On ctl: status → abort → wait(afterRuns). The wait keys on the run counter
 // the extension bumps on agent_settled, so an abort that settles before the
@@ -7,8 +7,10 @@
 //
 // interruptAgent (`mu agent send --interrupt`) is abort + send as one
 // ctl op with a msgId receipt; an extension without msgId is refused up
-// front (AgentExtensionOutdatedError), never half-served. A channel that
-// cannot abort (mux) refuses both with AgentAbortNeedsCtlError.
+// front (AgentExtensionOutdatedError), never half-served. On hooks both
+// press the harness's interrupt key, confirmed by its own event where it has
+// one (claude has none: `idle?`). A channel that cannot abort (mux) refuses
+// both with AgentAbortNeedsCtlError.
 
 import { getAgent } from "../agents.js";
 import {
@@ -74,9 +76,10 @@ export async function abortAgent(
 }
 
 /**
- * Make a pi agent act on `text` now: abort a running turn, wait for pi to
+ * Make an agent act on `text` now: abort a running turn, wait for it to
  * settle (AgentAbortTimeoutError after timeoutMs, text not sent), then
- * send `text` as a new run. Never pastes: non-pi agents get
+ * send `text` as a new run. On `hooks` the abort is the harness's interrupt
+ * key and the text a paste (spec D4); a `mux` agent gets
  * AgentAbortNeedsCtlError.
  */
 export async function interruptAgent(
@@ -98,7 +101,12 @@ export async function interruptAgent(
     { name, workstreamName: opts.workstream },
     "interrupt",
     Buffer.byteLength(text),
-    { transport: "ctl", wasBusy: r.wasBusy },
+    {
+      transport: r.transport ?? "ctl",
+      wasBusy: r.wasBusy,
+      ...(r.stopped !== undefined ? { stopped: r.stopped } : {}),
+      ...(r.ack !== undefined ? { ack: r.ack } : {}),
+    },
     await resolveActorIdentity(),
   );
   return r;

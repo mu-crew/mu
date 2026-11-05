@@ -1,5 +1,5 @@
-// mu — every `mu agent ...` verb + spawn / send / read / list / show /
-// close + the top-level `mu me` agent-self
+// mu — every `mu agent ...` verb + spawn / read / list / show / close
+// (send is `agent-send.ts`) + the top-level `mu me` agent-self
 // verb (default + `tasks` / `next` subcommands).
 //
 // `mu me` / `mu me tasks` / `mu me next` are the agent-self verbs
@@ -16,10 +16,7 @@ import {
   abortAgent,
   delegateOutcome,
   getAgent,
-  interruptAgent,
-  isSlashCommand,
   listLiveAgents,
-  parseSessionCommand,
   readAgent,
   resolveCliCommand,
   resolveCliCommandWithSource,
@@ -32,7 +29,6 @@ import {
 import {
   agentChannel,
   blockedReason,
-  type ChannelName,
   channelTarget,
   ctlChannel,
   readAgentStates,
@@ -53,18 +49,19 @@ import {
 } from "../cli.js";
 import type { Db } from "../db.js";
 import { say } from "../messages.js";
-import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
+import { activeMux, attachShellLine } from "../mux.js";
 import { pc } from "../output.js";
 import { buildTaskBrief, TaskBriefMissingError } from "../task-brief.js";
 import { getTask } from "../tasks/queries.js";
-import { type WaitRef, type WaitSnapshot, waitForEvents } from "../wait.js";
+import { type WaitSnapshot, waitForEvents } from "../wait.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
 import { wireAnswerCommand } from "./agent-answer.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
+import { cmdSend } from "./agent-send.js";
 import { setNextOutcome } from "./handle.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
-import { installWaitSignals, runWait, type WaitSignals } from "./wait.js";
+import { installWaitSignals, type WaitSignals } from "./wait.js";
 import { armSend, taskRef } from "./wait-arm.js";
 
 interface SpawnOpts {
@@ -613,276 +610,6 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
   }
 }
 
-export async function cmdSend(
-  db: Db,
-  rawName: string,
-  rawText: string,
-  opts: {
-    workstream?: string;
-    json?: boolean;
-    steer?: boolean;
-    fresh?: boolean;
-    force?: boolean;
-    interrupt?: boolean;
-    timeout?: number;
-    /** Enter the wait for the run this send starts (one JSON document: the receipt in `sent`, then the wait). */
-    wait?: boolean;
-  } = {},
-  sig?: WaitSignals,
-): Promise<void> {
-  const text = rawText === STDIN_ARG ? await readStdinText("send text") : rawText;
-  if (opts.interrupt) {
-    for (const [on, flag] of [
-      [opts.fresh, "--fresh"],
-      [opts.steer, "--steer"],
-      [opts.force, "--force"],
-    ] as const) {
-      if (on) throw new UsageError(say("agent.send_interrupt_excl", flag));
-    }
-    if (isSlashCommand(text)) {
-      throw new UsageError(say("agent.send_interrupt_slash"));
-    }
-    // Refuse before the abort: an empty prompt would kill the running turn
-    // and then send nothing.
-    if (text === "") throw new UsageError(say("agent.send_interrupt_empty"));
-  } else if (opts.timeout !== undefined) {
-    throw new UsageError(say("agent.send_timeout"));
-  }
-  if (opts.fresh && opts.steer) throw new UsageError(say("agent.send_fresh_steer"));
-  if (opts.wait) {
-    if (sig === undefined) throw new UsageError(say("agent.send_wait_sig"));
-    // A slash command starts no run: there is nothing to wait for (refused before the send).
-    if (isSlashCommand(text)) {
-      throw new UsageError(say("agent.send_wait_slash"));
-    }
-  }
-  if (opts.interrupt) return cmdSendInterrupt(db, rawName, text, opts, sig);
-  const { name } = await resolveEntityRef(db, rawName, opts, "agent");
-  assertAgentInWorkstream(db, name, opts.workstream);
-  const ws = await resolveExistingWorkstream(db, opts.workstream);
-  // A plain --force is the hooks send gate's override (paste into a running or unknown agent).
-  if (opts.force && !opts.fresh && parseSessionCommand(text) === undefined) {
-    const row = getAgent(db, name, ws);
-    if (row === undefined || agentChannel(channelTarget(db, row)).name !== "hooks") {
-      throw new UsageError(say("agent.send_force"));
-    }
-  }
-  // dogfood_send_after_new_dropped: capture the undelivered warning
-  // rather than letting it print raw, so it lands in the JSON payload
-  // too. `exit 0` must not be able to mean "silently dropped".
-  let undelivered: SendWarning | undefined;
-  const sent = await sendToAgent(db, name, text, {
-    workstream: ws,
-    ...(opts.steer ? { mode: "steer" as const } : {}),
-    ...(opts.fresh ? { fresh: true } : {}),
-    ...(opts.force ? { force: true } : {}),
-    onUndelivered: (w) => {
-      undelivered = w;
-    },
-  });
-  // Arm the wait this send owes (a delivered prompt; fenced by the runs measured BEFORE it).
-  const armed =
-    undelivered === undefined
-      ? armSend(db, { name, workstreamName: ws }, sent)
-      : { armed: false as const };
-  const warnings = armed.warning === undefined ? [] : [armed.warning];
-  if (!opts.json && !opts.wait) for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
-  if (opts.wait && sig !== undefined) {
-    return enterSendWait(db, { name, workstreamName: ws }, sent, {
-      sig,
-      verb: "mu agent send --wait",
-      undelivered: undelivered === undefined ? undefined : undelivered.message,
-      receipt: {
-        agentName: name,
-        sentBytes: Buffer.byteLength(text),
-        transport: sent.transport,
-        ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
-        ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
-        ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
-        ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
-      },
-      warnings,
-    });
-  }
-  // ONE next: a delivered ctl reply with runs gives the exact wait baseline (the wait
-  // returns the run's final text). An undelivered or mux send owes no wait.
-  if (sent.transport === "ctl" && sent.runs !== undefined && undelivered === undefined) {
-    setNextOutcome({
-      kind: "sent",
-      agent: { name, workstream: ws },
-      runs: sent.runs,
-      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
-    });
-  }
-  if (opts.json) {
-    emitJson({
-      agentName: name,
-      sentBytes: Buffer.byteLength(text),
-      transport: sent.transport,
-      fresh: opts.fresh === true,
-      ...(sent.command !== undefined ? { command: sent.command } : {}),
-      ...(sent.state !== undefined ? { state: sent.state } : {}),
-      ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
-      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
-      ...(sent.msgId !== undefined ? { msgId: sent.msgId, delivery: "delivered" } : {}),
-      ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
-      ...(sent.ack !== undefined ? { ack: sent.ack } : {}),
-      ...(sent.runCount !== undefined ? { runCount: sent.runCount } : {}),
-      delivered: undelivered === undefined,
-      ...(undelivered !== undefined
-        ? { undelivered: { reason: undelivered.reason, message: undelivered.message } }
-        : {}),
-      ...(warnings.length > 0 ? { warnings } : {}),
-    });
-    return;
-  }
-  if (undelivered !== undefined) {
-    console.error(pc.yellow(`warning: ${undelivered.message}`));
-  } else {
-    const how =
-      sent.transport === "mux"
-        ? "via mux"
-        : sent.transport === "hooks"
-          ? `via hooks, confirmed${sent.runCount !== undefined ? `: run ${sent.runCount}` : ""}`
-          : opts.fresh
-            ? "via ctl, fresh session"
-            : sent.command !== undefined
-              ? `via ctl, pi ran /${sent.command}`
-              : sent.runs !== undefined
-                ? `via ctl, pi was ${sent.state ?? "?"}, runs ${sent.runs}`
-                : `via ctl, pi ${sent.state ?? "?"}`;
-    const receipt =
-      sent.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
-    console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how}${receipt})`));
-  }
-}
-
-/**
- * `send --wait`: the prompt is delivered (and armed); now wait for exactly the run it
- * started: one explicit agent ref pinned by the measured runs + incarnation, `all` mode so a
- * sibling's event does not end it (an urgent one still does: the worker died, a dialog, a
- * delegate report). ONE document: the wait's, with the send's receipt as `sent`.
- * An UNDELIVERED send waits for nothing: it fails with the receipt (the prompt may not have landed).
- */
-async function enterSendWait(
-  db: Db,
-  agent: { name: string; workstreamName: string },
-  sent: { transport?: ChannelName; runs?: number; incarnation?: string },
-  o: {
-    sig: WaitSignals;
-    verb: string;
-    receipt: Record<string, unknown>;
-    warnings: string[];
-    undelivered?: string | undefined;
-  },
-): Promise<void> {
-  if (o.undelivered !== undefined) {
-    throw new CliExitError(1, {
-      error: "SendUndelivered",
-      message: say("agent.send_undelivered", o.undelivered),
-      data: { sent: { ...o.receipt, delivered: false } },
-    });
-  }
-  const ref: WaitRef = {
-    kind: "agent",
-    workstream: agent.workstreamName,
-    id: agent.name,
-    ...(sent.transport === "ctl" && sent.runs !== undefined ? { afterRuns: sent.runs } : {}),
-    ...(sent.transport === "ctl" && sent.incarnation !== undefined
-      ? { incarnation: sent.incarnation }
-      : {}),
-  };
-  await runWait(
-    db,
-    {
-      refs: [ref],
-      mode: "all",
-      onStall: "exit",
-      verb: o.verb,
-      scope: agent.workstreamName,
-    },
-    o.sig,
-    {
-      extraData: {
-        sent: { ...o.receipt, delivered: true },
-        ...(o.warnings.length > 0 ? { warnings: o.warnings } : {}),
-      },
-    },
-  );
-}
-
-/** `mu agent send --interrupt`: abort a busy pi, wait for settle, send. */
-async function cmdSendInterrupt(
-  db: Db,
-  rawName: string,
-  text: string,
-  opts: { workstream?: string; json?: boolean; timeout?: number; wait?: boolean },
-  sig?: WaitSignals,
-): Promise<void> {
-  const { name } = await resolveEntityRef(db, rawName, opts, "agent");
-  assertAgentInWorkstream(db, name, opts.workstream);
-  const ws = await resolveExistingWorkstream(db, opts.workstream);
-  const r = await interruptAgent(db, name, text, {
-    workstream: ws,
-    ...(opts.timeout === undefined ? {} : { timeoutMs: Math.round(opts.timeout * 1000) }),
-  });
-  // The interrupt is delivered (it threw otherwise): arm the run it started, same fence rule.
-  const armed = armSend(db, { name, workstreamName: ws }, { transport: "ctl", ...r });
-  const warnings = armed.warning === undefined ? [] : [armed.warning];
-  if (!opts.json && !opts.wait) for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
-  if (opts.wait && sig !== undefined) {
-    return enterSendWait(
-      db,
-      { name, workstreamName: ws },
-      { transport: "ctl", ...r },
-      {
-        sig,
-        verb: "mu agent send --interrupt --wait",
-        receipt: {
-          agentName: name,
-          sentBytes: Buffer.byteLength(text),
-          transport: "ctl",
-          interrupt: true,
-          wasBusy: r.wasBusy,
-          ...(r.pending ? { pending: true } : {}),
-          ...(r.runs !== undefined ? { runs: r.runs } : {}),
-          ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
-          msgId: r.msgId,
-          ...(r.receipt !== undefined ? { receipt: r.receipt } : {}),
-        },
-        warnings,
-      },
-    );
-  }
-  if (r.runs !== undefined) {
-    setNextOutcome({
-      kind: "sent",
-      agent: { name, workstream: ws },
-      runs: r.runs,
-      ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
-    });
-  }
-  if (opts.json) {
-    emitJson({
-      agentName: name,
-      sentBytes: Buffer.byteLength(text),
-      transport: "ctl",
-      interrupt: true,
-      ...r,
-      ...(r.msgId !== undefined ? { delivery: "delivered" } : {}),
-      ...(warnings.length > 0 ? { warnings } : {}),
-    });
-    return;
-  }
-  const what = r.wasBusy ? "interrupted a busy run" : "pi was idle";
-  const runs = r.runs !== undefined ? `, runs ${r.runs}` : "";
-  const receipt = r.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
-  console.log(
-    pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (via ctl, ${what}${runs}${receipt})`),
-  );
-  if (r.pending) console.log(pc.yellow("queued messages went back to the pane's editor unsent"));
-}
-
 /** Lines in captured scrollback: a final newline ends the last line, it
  *  does not start an empty one, and empty text has none. `scrollbackLines`
  *  in `agent read --json` and `agent show --json` both mean this. */
@@ -1073,11 +800,15 @@ export async function cmdAbort(
     emitJson(result);
     return;
   }
+  // hooks: a harness that reports no interrupt (claude) reads idle? until its next event.
+  const after = result.stopped === "unconfirmed" ? "idle?" : result.after;
   console.log(
     result.aborted
-      ? `Aborted ${pc.bold(name)} ${pc.dim(`(${result.before} → ${result.after} in ${result.elapsedMs}ms)`)}`
+      ? `Aborted ${pc.bold(name)} ${pc.dim(`(${result.before} → ${after} in ${result.elapsedMs}ms)`)}`
       : `${pc.bold(name)} was ${result.before}; nothing to abort`,
   );
+  if (result.stopped === "unconfirmed")
+    console.error(pc.yellow(say("agent.interrupt_unconfirmed", name)));
 }
 
 /** One agent of the `mu agent wait` document (the extension reads these fields; JSON drops the undefined ones). A gate that exited nonzero is a failure here: never a clean finish. */
@@ -1393,7 +1124,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--interrupt",
-      "pi only: if busy, abort the current run (kills the running tool; queued messages go back to the editor), wait for pi to settle, then send the text as a new run. Exit 5 if pi does not settle; the text is then not sent",
+      "if busy, abort the current run (pi: kills the running tool, queued messages go back to the editor; a hook harness: Escape, confirmed by its interrupt event, or idle? on claude), wait for it to settle, then send the text as a new run. Exit 5 if it does not settle; the text is then not sent",
     )
     .option(
       "--timeout <seconds>",
@@ -1402,7 +1133,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--fresh",
-      "pi only: new session + this prompt, one operation (refused with exit 4 while pi is busy)",
+      "new session + this prompt: pi in one operation, a hook harness by its fresh command (/clear, /new, /new-chat) then a paste; refused with exit 4 while it is busy",
     )
     .option(
       "--force",
@@ -1510,7 +1241,7 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("abort <name>")
     .description(
-      "Stop a pi agent's current turn over its control socket (Esc) and wait for pi to settle; idle agents are left alone; a queued follow-up returns to the editor unsent. Exit 5 if still busy after --timeout. Non-pi: `mu agent close`.",
+      "Stop an agent's turn and wait for it to settle: pi over its control socket, a hook harness by Escape (claude: idle?). Idle agents are left alone. Exit 5 if still busy after --timeout. Else: `mu agent close`.",
     )
     .option(
       "--timeout <seconds>",

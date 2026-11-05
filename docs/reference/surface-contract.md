@@ -36,14 +36,18 @@ their guarantees:
   (a local claude, codex, cursor-agent or muse pane on tmux), `agent send`
   pastes after clearing the input line, gated on murmur's report and
   confirmed by `run_count` (`ack`), never resent; `--steer` is refused;
-  `mu agent answer` types a pending dialog's answer.
+  `mu agent answer` types a pending dialog's answer; `--interrupt` and
+  `mu agent abort` press Escape (confirmed by the harness's interrupt event,
+  else `idle?`), `--fresh` sends the harness's fresh command first, and a
+  wait settles on its `turn_stopped` with that turn's text.
 - **Executor.** `mu task auto` and `mu next` (`--dry`, `--hold`,
   `--workers`, `--refute`), `dispatch_host`.
 - **Delegates.** A `mu_delegate` call is a `kind=delegate` task with a
   durable `call_id` (`mu delegates`, wave tally, `mu_delegate_reissue`),
   and `mu delegates run <call-id>` runs one with no multiplexer.
 - **CLOSE block.** A pi worker's final `CLOSE:` lines are applied once
-  per settled run by the wait engine (`src/close-block.ts`).
+  per settled run by the wait engine (`src/close-block.ts`), and so are a
+  `hooks` worker's, from its `turn_stopped` text.
 - **Remote.** Host profiles, remote spawn, `agent collect`, the close
   rule, remote command gates, recovery records.
 - **Surfaces.** In-process `mu db query` (alias `mu sql`), five-tab

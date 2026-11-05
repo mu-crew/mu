@@ -64,6 +64,8 @@ export {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentFreshUnconfirmedError,
+  AgentInterruptUnrecordedError,
   AgentLockBusyError,
   AgentNameExhaustedError,
   AgentNotBlockedError,

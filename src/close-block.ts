@@ -178,7 +178,7 @@ const no = (reason: string, task: string | null = null): SettledCloseResult => (
 });
 
 /**
- * Apply a settled pi run's CLOSE block exactly once. One transaction owns
+ * Apply a settled pi (or `hooks`) run's CLOSE block exactly once. One transaction owns
  * the decision, the notes, the status flip and the replay row (inserted
  * last), so a refused or failed close leaves nothing and a retry is safe.
  * Guard errors (open blockers) propagate and roll everything back.
@@ -194,12 +194,16 @@ export function applySettledClose(db: Db, input: SettledCloseInput): SettledClos
 function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
   const agent = db
     .prepare(
-      `SELECT a.cli FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+      `SELECT a.cli, a.channel FROM agents a JOIN workstreams w ON w.id = a.workstream_id
         WHERE a.id = ? AND a.name = ? AND w.name = ? AND w.torn_down_at IS NULL`,
     )
-    .get(input.agentId, input.agent, input.workstream) as { cli: string } | undefined;
+    .get(input.agentId, input.agent, input.workstream) as
+    | { cli: string; channel: string | null }
+    | undefined;
   if (!agent) return no("unknown agent");
-  if (agent.cli !== "pi") return no("not a pi agent");
+  // A `hooks` agent's turn text comes from its `turn_stopped` event, applied with
+  // the same trust as pi's ctl last text (spec D3); its session id is the incarnation.
+  if (agent.cli !== "pi" && agent.channel !== "hooks") return no("not a pi agent");
   const seen = db
     .prepare("SELECT 1 FROM agent_settles WHERE agent_id = ? AND incarnation = ? AND runs = ?")
     .get(input.agentId, input.incarnation, input.runs);

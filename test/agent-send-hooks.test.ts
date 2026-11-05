@@ -1,6 +1,8 @@
 // `mu agent send` and `mu agent answer` on the `hooks` channel (spec D4, U8),
-// through the CLI: a fake hook harness (test/_fake-harness.ts) writes murmur
-// inbox events for pane %3 and answers the keys mu types into it.
+// and its `--interrupt`, `--fresh`, `--wait` (settle and last text) and `mu
+// agent abort` (U9), through the CLI: a fake hook harness
+// (test/_fake-harness.ts) writes murmur inbox events for pane %3 and answers
+// the keys mu types into it.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,6 +14,9 @@ import {
   setMurmurPaneRunnerForTests,
 } from "../src/channels/hooks-pane.js";
 import { type Db, openDb } from "../src/db.js";
+import { claimTask } from "../src/tasks/claim.js";
+import { addTask } from "../src/tasks/edit.js";
+import { getTask } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
@@ -48,7 +53,19 @@ beforeEach(() => {
     "tmux",
     async (args) =>
       fake.tmux(args) ?? {
-        stdout: args[0] === "list-panes" ? `%1\t\t\n%3\t${fake.option()}\t1\n` : "",
+        stdout:
+          args[0] === "display-message"
+            ? // A live pane, for a held watch's liveness check.
+              `${(args.at(-1) ?? "")
+                .replace("#{pane_id}", args[args.indexOf("-t") + 1] ?? "")
+                .replace("#{pane_dead}", "0")
+                .replace(/#\{[^}]+\}/g, "")}\n`
+            : args[0] !== "list-panes"
+              ? ""
+              : args.includes("-s")
+                ? // The session's panes, as the reconcile before a wait lists them.
+                  "@1\t%1\tpi\n@1\t%3\tcodex\n"
+                : `%1\t\t\n%3\t${fake.option()}\t1\n`,
         stderr: "",
         exitCode: 0,
       },
@@ -204,5 +221,172 @@ describe("mu agent answer", () => {
     expect(bad.exitCode).toBe(2);
     expect(bad.doc).toMatchObject({ error: "UsageError" });
     expect(fake.calls).toEqual([]);
+  });
+});
+
+describe("mu agent send --interrupt, --fresh, --wait and mu agent abort on hooks (U9)", () => {
+  const asClaude = (): void => {
+    db.prepare("UPDATE agents SET cli = 'claude' WHERE name = 'cdx'").run();
+    fake.onEscape = "silent";
+    fake.freshCommand = "/clear";
+  };
+
+  it("--interrupt a running codex: Escape, its Interrupt, the paste; the run is fenced for the next wait", async () => {
+    fake.emit("prompt_submitted");
+    const { data, doc, exitCode } = await runCliJson(
+      ["agent", "send", "cdx", "stop that", "-w", "auth", "--interrupt", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(data).toMatchObject({
+      transport: "hooks",
+      interrupt: true,
+      wasBusy: true,
+      stopped: "confirmed",
+      ack: "confirmed",
+      runCount: 2,
+      runs: 1,
+      incarnation: "sess-1",
+      delivered: true,
+    });
+    expect(fake.calls[0]).toEqual(["send-keys", "-t", "%3", "--", "Escape"]);
+    expect(fake.submitted).toEqual(["stop that"]);
+    expect(JSON.stringify(doc)).toContain("agent:auth/cdx@1#sess-1");
+    expect(sendOps()).toEqual([
+      expect.stringContaining("mode=interrupt transport=hooks wasBusy=true stopped=confirmed"),
+    ]);
+  });
+
+  it("--interrupt a running claude: mu records idle?, says so, and the send still lands", async () => {
+    asClaude();
+    fake.emit("prompt_submitted");
+    const r = await runCli(
+      ["agent", "send", "cdx", "stop that", "-w", "auth", "--interrupt"],
+      dbPath,
+    );
+    expect(r.exitCode).toBeNull();
+    expect(r.stdout).toContain(
+      "via hooks, interrupted a busy run, unconfirmed: idle?, confirmed: run 2",
+    );
+    expect(r.stderr).toContain("idle? (unconfirmed)");
+    expect(fake.muEvents).toEqual([{ event: "interrupted", session_id: "sess-1" }]);
+  });
+
+  it("--interrupt whose paste is not acknowledged: delivered false, unconfirmed, nothing armed", async () => {
+    asClaude();
+    fake.emit("prompt_submitted");
+    fake.acks = false;
+    let r: Awaited<ReturnType<typeof runCliJson>> | undefined;
+    await withEnv("MU_SEND_ACK_MS", "500", async () => {
+      r = await runCliJson(
+        ["agent", "send", "cdx", "stop that", "-w", "auth", "--interrupt", "--json"],
+        dbPath,
+      );
+    });
+    expect(r?.exitCode).toBeNull();
+    expect(r?.data).toMatchObject({
+      stopped: "unconfirmed",
+      ack: "unknown",
+      delivered: false,
+      undelivered: { reason: "unconfirmed" },
+    });
+    expect(r?.data).not.toHaveProperty("runs");
+    expect(fake.calls.filter((c) => c[0] === "paste-buffer")).toHaveLength(1);
+  });
+
+  it("mu agent abort: codex confirmed and settled; claude reads idle?, unsettled", async () => {
+    fake.emit("prompt_submitted");
+    const codex = await runCliJson(["agent", "abort", "cdx", "-w", "auth", "--json"], dbPath);
+    expect(codex.exitCode).toBeNull();
+    expect(codex.data).toMatchObject({
+      before: "busy",
+      after: "idle",
+      aborted: true,
+      settled: true,
+      stopped: "confirmed",
+    });
+    expect(fake.submitted).toEqual([]);
+    asClaude();
+    fake.emit("prompt_submitted");
+    const claude = await runCli(["agent", "abort", "cdx", "-w", "auth"], dbPath);
+    expect(claude.exitCode).toBeNull();
+    expect(claude.stdout).toContain("busy → idle?");
+    const idle = await runCli(["agent", "abort", "cdx", "-w", "auth"], dbPath);
+    expect(idle.stdout).toContain("nothing to abort");
+  });
+
+  it("--fresh: the harness's fresh command, then the text, confirmed by a run in the new session", async () => {
+    fake.freshMode = "first-prompt";
+    const { data, exitCode } = await runCliJson(
+      ["agent", "send", "cdx", "start over", "-w", "auth", "--fresh", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(data).toMatchObject({
+      transport: "hooks",
+      fresh: true,
+      ack: "confirmed",
+      runCount: 1,
+      delivered: true,
+    });
+    expect(fake.submitted).toEqual(["/new", "start over"]);
+  });
+
+  it("--fresh to claude with no new session after /clear: exit 5, the text not sent", async () => {
+    asClaude();
+    fake.freshMode = "ignored";
+    let r: Awaited<ReturnType<typeof runCliJson>> | undefined;
+    await withEnv("MU_SEND_ACK_MS", "500", async () => {
+      r = await runCliJson(
+        ["agent", "send", "cdx", "start over", "-w", "auth", "--fresh", "--json"],
+        dbPath,
+      );
+    });
+    expect(r?.exitCode).toBe(5);
+    expect(r?.doc).toMatchObject({ error: "AgentFreshUnconfirmedError" });
+    expect(fake.submitted).toEqual(["/clear"]);
+  });
+
+  it("send --wait: settle returns the turn's last text, and its CLOSE block closes the task", async () => {
+    addTask(db, { workstream: "auth", localId: "t1", title: "t1" });
+    await claimTask(db, "t1", { workstream: "auth", agentName: "cdx" });
+    const text = 'Done.\n\nCLOSE: task=t1 evidence="npm test: 3 passed"\nREPORT:\nall done';
+    let reads = 0;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      // The harness ends the turn after the paste's ack and the wait's first read saw it running:
+      // a text read only once the turn is over cannot be told from an earlier turn's.
+      if (fake.submitted.length > 0 && ++reads === 3) fake.emit("turn_stopped", { text });
+      return fake.pane(pane);
+    });
+    const { data, exitCode } = await runCliJson(
+      ["agent", "send", "cdx", "do t1", "-w", "auth", "--wait", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(data).toMatchObject({
+      firing: { kind: "settled", ref: "agent:auth/cdx", incarnation: "sess-1", runs: 1 },
+      sent: { transport: "hooks", ack: "confirmed", delivered: true },
+      snapshots: [{ settled: true, lastText: text, close: { applied: true, task: "t1" } }],
+    });
+    expect(getTask(db, "t1", "auth")?.status).toBe("CLOSED");
+  });
+
+  it("send --wait: a dialog the turn opens ends the wait as input, never as a finished run", async () => {
+    let reads = 0;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      if (fake.submitted.length > 0 && ++reads === 2) {
+        fake.emit("permission_requested", { message: "Bash" });
+      }
+      return fake.pane(pane);
+    });
+    const { data, exitCode } = await runCliJson(
+      ["agent", "send", "cdx", "do t1", "-w", "auth", "--wait", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBe(7);
+    expect(data).toMatchObject({
+      firing: { kind: "input", ref: "agent:auth/cdx" },
+      snapshots: [{ blocked: { kind: "permission", title: "Bash" } }],
+    });
   });
 });

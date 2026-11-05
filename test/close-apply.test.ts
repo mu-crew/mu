@@ -215,6 +215,24 @@ describe("applySettledClose: ownership", () => {
     });
     expect(settles()).toEqual([]);
   });
+
+  it("a `hooks` agent is closed from its turn_stopped text, once per session and turn (D3)", () => {
+    db.prepare("UPDATE agents SET cli = 'claude', channel = 'hooks' WHERE name = 'w1'").run();
+    const turn = input({ lastText: block("t1"), incarnation: "claude-session", runs: 4 });
+    expect(applySettledClose(db, turn)).toEqual({ applied: true, task: "t1", reason: "closed" });
+    expect(applySettledClose(db, turn)).toMatchObject({
+      applied: false,
+      reason: "already applied",
+    });
+    expect(settles()).toEqual([
+      {
+        agent_id: agentId("w1"),
+        incarnation: "claude-session",
+        runs: 4,
+        task_id: expect.any(Number),
+      },
+    ]);
+  });
 });
 
 describe("applySettledClose: no inferred close", () => {

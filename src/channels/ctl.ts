@@ -82,7 +82,7 @@ async function readCtlStates(
  * (it outlives its occupant as a shell). `undefined` when the mux cannot
  * say: unknown, never a death.
  */
-async function paneUp(paneId: string): Promise<boolean | undefined> {
+export async function paneUp(paneId: string): Promise<boolean | undefined> {
   try {
     const mux = await activeMux();
     if (mux.paneResult !== undefined) return (await mux.paneResult(paneId)).state === "running";

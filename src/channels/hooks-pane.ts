@@ -31,6 +31,16 @@ export interface HooksPane {
   updatedAt: number | null;
   /** The pending dialog's message (the tool name), when the pane is blocked. */
   blocked: string | null;
+  /** The `error` attention's message (a failed turn), when the pane carries one. */
+  error: string | null;
+  /**
+   * The last settled turn's assistant text (`turn_stopped`, head-capped at 64
+   * KB by murmur); null: none in this session. A turn that ended without text
+   * (an interrupt, a failure) leaves the previous turn's text here.
+   */
+  lastText: string | null;
+  /** False after an interrupt mu wrote that no harness event has confirmed (`idle?`). */
+  confirmed: boolean;
 }
 
 export type MurmurPaneRunner = (paneId: string) => Promise<string | null>;
@@ -116,6 +126,7 @@ export function parseHooksPane(stdout: string): HooksPane | undefined {
       typeof a === "object" && a !== null && typeof (a as { kind?: unknown }).kind === "string",
   );
   const blocked = attention.find((a) => a.kind === "blocked");
+  const error = attention.find((a) => a.kind === "error");
   return {
     state: str(d.state),
     // A row without an activity word is still a row: unknown activity, never "no row".
@@ -125,6 +136,9 @@ export function parseHooksPane(stdout: string): HooksPane | undefined {
     runCount: num(agent?.run_count),
     updatedAt: num(agent?.updated_at),
     blocked: blocked === undefined ? null : (str(blocked.message) ?? ""),
+    error: error === undefined ? null : (str(error.message) ?? ""),
+    lastText: str(agent?.last_text),
+    confirmed: agent?.confirmed !== false && d.state !== "idle?",
   };
 }
 
@@ -260,4 +274,43 @@ export async function pollPane(
     if (Date.now() >= deadline) break;
   }
   return undefined;
+}
+
+/**
+ * Turns settled in the pane's session. `run_count` counts submitted prompts,
+ * so a running (or blocked) pane's current turn has not settled yet; pi's
+ * `runs`, which the wait baselines mirror, counts settled runs. undefined: no
+ * agent row.
+ */
+export function settledRuns(pane: HooksPane): number | undefined {
+  if (pane.runCount === null || pane.activity === null) return undefined;
+  return pane.activity === "running" ? Math.max(0, pane.runCount - 1) : pane.runCount;
+}
+
+/**
+ * True when `after` shows a fresh session that `before` did not: another
+ * session id, or the same one started over from run 0 (murmur resets
+ * `run_count` on every `session_start` that is not a resume). With no
+ * baseline nothing confirms.
+ */
+export function freshStarted(before: HooksPane | undefined, after: HooksPane | undefined): boolean {
+  if (before === undefined || after === undefined) return false;
+  if (after.activity === null || after.sessionId === null) return false;
+  if (before.sessionId === null) return after.runCount === 0;
+  if (after.sessionId !== before.sessionId) return true;
+  return after.runCount === 0 && (before.runCount ?? 0) > 0;
+}
+
+/**
+ * True when `after` shows a run in a session other than `before`'s: what
+ * confirms a fresh session's first prompt on a harness whose new session
+ * reports itself only on that prompt (codex, muse).
+ */
+export function runInNewSession(
+  before: HooksPane | undefined,
+  after: HooksPane | undefined,
+): boolean {
+  if (before === undefined || after === undefined || after.sessionId === null) return false;
+  if (after.runCount === null || after.runCount < 1) return false;
+  return after.sessionId !== before.sessionId;
 }

@@ -38,6 +38,8 @@ import {
   AgentExistsError,
   AgentExtensionOutdatedError,
   AgentFreshNeedsCtlError,
+  AgentFreshUnconfirmedError,
+  AgentInterruptUnrecordedError,
   AgentLockBusyError,
   AgentNameExhaustedError,
   AgentNotBlockedError,
@@ -642,9 +644,13 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // hooks: the agent's state refuses the paste or the keys; nothing was sent.
     return { label: "conflict", exitCode: 4 };
   }
-  if (err instanceof AgentAbortTimeoutError) {
-    // Still busy after --timeout: substrate lane, try again.
+  if (err instanceof AgentAbortTimeoutError || err instanceof AgentFreshUnconfirmedError) {
+    // Still busy after --timeout, or no new session after a fresh command: substrate lane.
     return { label: "timeout", exitCode: 5 };
+  }
+  if (err instanceof AgentInterruptUnrecordedError) {
+    // Escape went out, but murmur would not record mu's interrupted: substrate lane.
+    return { label: "murmur", exitCode: 5 };
   }
   if (
     err instanceof RemotePrepareError ||
