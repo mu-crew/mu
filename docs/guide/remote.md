@@ -76,8 +76,10 @@ EOF
   owner, so a second user loses work. The refusal names the owner and the way
   out: close it, collect then close the record (`--recovery <id>`), or give
   the new agent its own tree (`--worktree --from <the owner's commit>`, also
-  for a reviewer). Agents sharing an unmanaged checkout (the repo root, a
-  user directory) are not refused. Only the exact path is checked, per
+  for a reviewer). A command gate cannot take `--worktree`: it is offered the
+  owner's close or the gate in an unmanaged checkout (`--cwd <repo root>`).
+  Agents sharing an unmanaged checkout (the repo root, a user directory) are
+  not refused. Only the exact path is checked, per
   profile name: a subdirectory of the tree, or the same host reached through
   another profile, is not. The check runs before any pane, so the agent never
   starts, and again with the row's insert. An owner that lands while the pane
@@ -88,7 +90,8 @@ EOF
   CLI overrides within the default workstream session. Use the refusal's
   backend-specific kill command. Its session channel may be reclaimed once
   the spawning process exits, so `host check` and the channel count can
-  undercount until it is killed.
+  undercount until it is killed. A pane id another agent's row holds by then
+  is left alone, and the error says so with no kill command.
 - A non-pi `--command` (`--host dev --command 'npm test'`, no `--cli pi`) is a
   **command gate**, not a worker: its pane is kept after the command ends, and
   `mu wait agent:auth/gate-1` returns the command's own exit status (the

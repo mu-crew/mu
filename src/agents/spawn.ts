@@ -559,6 +559,9 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         leaseCheck,
         reservation?.token,
       ));
+      // The resolved path, before any pane: another agent's managed tree or a recovery's is
+      // refused here, and again with the row's insert (an owner may land meanwhile).
+      if (site) refuseOwnedRemotePath(db, opts, profile.name, site.cwd, gateToken && opts.command);
     } else if (opts.worktree) {
       staged = await prestageWorktree(db, opts, cli, spawner);
     }
@@ -895,9 +898,9 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     // Record first: a throwing cleanup must neither skip the record nor
     // mask the original error.
     emitSpawnFailed(db, opts, phase, err);
-    let paneGone = false;
+    let rolled: { gone: boolean; heldBy?: string } = { gone: false };
     try {
-      paneGone = await rollbackSpawn(
+      rolled = await rollbackSpawn(
         db,
         opts.name,
         paneId,
@@ -920,15 +923,9 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     if (err instanceof RemotePathOwnedError && err.pane === undefined && paneId !== undefined) {
       const mux = await activeMux().catch(() => undefined);
       const kill = mux === undefined ? "" : attachShellLine([mux.killPaneCommand(paneId)]);
-      const pane = { id: paneId, backend: mux?.name ?? "mux", gone: paneGone, kill };
-      throw new RemotePathOwnedError(
-        err.workstream,
-        err.agentName,
-        err.host,
-        err.cwd,
-        err.owner,
-        pane,
-      );
+      const pane = { id: paneId, backend: mux?.name ?? "mux", ...rolled, kill };
+      const { workstream, agentName, host, cwd, owner, gate } = err;
+      throw new RemotePathOwnedError(workstream, agentName, host, cwd, owner, gate, pane);
     }
     throw err;
   }
@@ -1136,7 +1133,7 @@ function finalizeAgentRow(
     // The remote path admission again, atomic with the row: no remote I/O in here.
     return db
       .transaction(() => {
-        refuseOwnedRemotePath(db, opts, host, cwd);
+        refuseOwnedRemotePath(db, opts, host, cwd, gateToken && opts.command);
         return insertAgent(db, row);
       })
       .immediate();
@@ -1194,7 +1191,8 @@ function finalizeAgentRow(
  * another agent and is left alone. Otherwise only that incarnation is
  * deleted, never a replacement under the same name.
  *
- * Returns whether the pane is proven gone (no pane counts as gone).
+ * Returns whether the pane is proven gone (no pane counts as gone), or which agent's row
+ * now holds its id (left alone: not proven gone).
  */
 type SpawnPhase = "worktree" | "pane" | "finalize" | "liveness";
 
@@ -1230,9 +1228,10 @@ export async function rollbackSpawn(
   lease?: HostLease,
   /** A lease spawn's carrier_jobs reservation: the only job this rollback may stop or release. */
   carrier?: { token: string },
-): Promise<boolean> {
+): Promise<{ gone: boolean; heldBy?: string }> {
   // Is the pane (the host transport) proven gone? A channel is freed only on that proof.
   let paneGone = paneId === undefined;
+  let heldBy: string | undefined;
   if (paneId !== undefined) {
     // Best-effort: rollback runs on an already-failing path and must not
     // mask the original error, even if the mux itself went away.
@@ -1243,8 +1242,11 @@ export async function rollbackSpawn(
     // A pane id registered to ANY other incarnation (any name, any
     // workstream) is not ours either: leave it alone and say so.
     const foreign = db
-      .prepare("SELECT 1 FROM agents WHERE pane_id = ? AND id IS NOT ? LIMIT 1")
-      .get(paneId, ownedIncarnation ?? null);
+      .prepare(
+        "SELECT ws.name || '/' || a.name AS who FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.pane_id = ? AND a.id IS NOT ? LIMIT 1",
+      )
+      .get(paneId, ownedIncarnation ?? null) as { who: string } | undefined;
+    heldBy = foreign?.who;
     if (foreign === undefined) {
       await mux?.killPane(paneId).catch(() => {});
       paneGone = mux !== undefined && (await mux.paneAlive(paneId).catch(() => true)) === false;
@@ -1341,7 +1343,7 @@ export async function rollbackSpawn(
     } catch {
       // best-effort
     }
-    return paneGone;
+    return heldBy === undefined ? { gone: paneGone } : { gone: false, heldBy };
   }
   // Only the row this spawn inserted: never a replacement under the name. A remote
   // tree this rollback removed (or found gone) leaves no `remote_recovery` record:
@@ -1360,7 +1362,7 @@ export async function rollbackSpawn(
     if (treeDone) releaseLeaseReservation(db, carrier.token, job);
     else keepForTree(db, carrier.token, staged);
   }
-  return paneGone;
+  return heldBy === undefined ? { gone: paneGone } : { gone: false, heldBy };
 }
 
 /** Record on a kept reservation WHICH remote tree its rollback did not remove. Never throws. */

@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { isCommandGate } from "../src/agents/spawn.js";
 import {
   deleteAgent,
   getAgent,
@@ -227,11 +228,6 @@ describe("stage a: refused after prepare resolved the path, before any pane", ()
     expect(listRemoteRecoveries(db)).toEqual(recs);
   });
 
-  it("a command gate into a managed tree refuses too", async () => {
-    managedOwner();
-    await refusedBeforePane(spawn({ command: "npm test" }));
-  });
-
   it("a lease profile: refused before the carrier, its reservation released", async () => {
     managedOwner("lz");
     await refusedBeforePane(spawn({ host: "lz" }), "lz");
@@ -337,6 +333,30 @@ describe("stage b: an owner landing while the pane opens is refused at the inser
     expect(listHostChannels(db, "dev").map((c) => c.holder)).toEqual(["spawn:auth/worker-1"]);
   });
 
+  it("a pane id another agent's row now holds: left alone, never reported killed nor its kill offered", async () => {
+    atPaneCreation(() => {
+      insertAgent(db, {
+        name: "w-9",
+        workstream: "other",
+        host: "dev",
+        cwd: P,
+        paneId: "%1",
+        base: SHA,
+      });
+    });
+    const e = (await failure(spawn())) as Error;
+    expect(e).toBeInstanceOf(RemotePathOwnedError);
+    expect(livePanes()).toEqual(["%1"]);
+    expect(mux.calls.filter((a) => a[0] === "kill-pane")).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(getAgent(db, "w-9", "other")?.paneId).toBe("%1");
+    expect(e.message).toMatch(
+      /tmux pane %1 now belongs to other\/w-9 and was left alone; this spawn's transport may still run in it\. No agent was registered$/,
+    );
+    expect(e.message).not.toContain("killed");
+    expect(e.message).not.toContain("kill-pane");
+  });
+
   it("a lease spawn whose stop fails keeps its reservation; a clean stop releases it", async () => {
     atPaneCreation(() => managedOwner("lz"));
     writeFileSync(join(dir, "stop-exit"), "1");
@@ -386,6 +406,27 @@ describe("the refusal's way out", () => {
         SHA2,
       ]),
     );
+  });
+
+  it("a command gate: the owner's close and the gate in an unmanaged checkout, never --worktree", async () => {
+    managedOwner("dev", "/srv/my repo");
+    const e = (await refusedBeforePane(spawn({ command: "npm test" }))) as RemotePathOwnedError;
+    const [close = "", gate = ""] = e.next;
+    expect(e.next).toHaveLength(2);
+    expect(e.message).toContain(close);
+    expect(e.message).toContain(`run the gate in an unmanaged checkout: ${gate}`);
+    expect(argvOf(close)).toEqual(["agent", "close", "w-9", "-w", "other"]);
+    const argv = argvOf(gate);
+    expect(argv).toEqual(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev"].concat([
+        "--cwd",
+        "/srv/my repo",
+        "--command",
+        "npm test",
+      ]),
+    );
+    const flag = (f: string) => argv[argv.indexOf(f) + 1];
+    expect(isCommandGate({ host: flag("--host"), command: flag("--command") })).toBe(true);
   });
 
   it("several records of one name (one on another profile): collect and close select the reported one", async () => {

@@ -260,11 +260,13 @@ export function remotePathOwner(db: Db, host: string, cwd: string): RemotePathOw
   return rec === undefined ? undefined : { kind: "recovery", rec: rowToRecovery(rec) };
 }
 
-/** The pane a refusal found already open, and whether its rollback proved it gone. */
+/** The pane a refusal found already open: proven gone, or held by another agent's row (left alone), or neither. */
 export interface RefusedPane {
   id: string;
   backend: string;
   gone: boolean;
+  /** `<workstream>/<name>` of the agent whose row now holds the pane id. */
+  heldBy?: string;
   /** The backend's own kill of that pane, one shell line. */
   kill: string;
 }
@@ -272,8 +274,9 @@ export interface RefusedPane {
 /**
  * A remote spawn whose resolved cwd another agent's managed remote worktree, or a recovery
  * record, owns on that host: a second user could lose its work or its commits' attribution.
- * Exit 4. `next` holds the owner's executable way out; `pane` is set when the owner appeared
- * while the spawn's pane was opening.
+ * Exit 4. `next` holds the owner's executable way out, of the refused spawn's kind: a command
+ * gate (`gate` is its --command) is offered an unmanaged checkout, never --worktree. `pane` is
+ * set when the owner appeared while the spawn's pane was opening.
  */
 export class RemotePathOwnedError extends Error {
   override readonly name = "RemotePathOwnedError";
@@ -284,33 +287,29 @@ export class RemotePathOwnedError extends Error {
     public readonly host: string,
     public readonly cwd: string,
     public readonly owner: RemotePathOwner,
+    public readonly gate?: string,
     public readonly pane?: RefusedPane,
   ) {
     const w = shellWord;
+    const root = (flag: string) =>
+      owner.kind === "agent" && owner.repo !== null ? ` ${flag} ${w(owner.repo)}` : "";
+    const again = `mu agent spawn ${w(agentName)} -w ${w(workstream)} --host ${w(host)}`;
     const next =
       owner.kind === "agent"
         ? [
             `mu agent close ${w(owner.name)} -w ${w(owner.workstream)}`,
-            `mu agent spawn ${w(agentName)} -w ${w(workstream)} --host ${w(host)} --worktree${owner.repo === null ? "" : ` --root ${w(owner.repo)}`} --from ${w(owner.head)}`,
+            gate === undefined
+              ? `${again} --worktree${root("--root")} --from ${w(owner.head)}`
+              : `${again}${root("--cwd")} --command ${w(gate)}`,
           ]
         : ["collect", "close"].map(
             (verb) =>
               `mu agent ${verb} ${w(owner.rec.name)} -w ${w(owner.rec.workstream)} --recovery ${owner.rec.agentId}`,
           );
-    const [first = "", second = ""] = next;
     const what =
       owner.kind === "agent"
-        ? say("remote.path_owned_agent", workstream, agentName, host, cwd, owner, first, second)
-        : say(
-            "remote.path_owned_recovery",
-            workstream,
-            agentName,
-            host,
-            cwd,
-            owner.rec,
-            first,
-            second,
-          );
+        ? say("remote.path_owned_agent", workstream, agentName, host, cwd, owner, next, gate)
+        : say("remote.path_owned_recovery", workstream, agentName, host, cwd, owner.rec, next);
     super(what + say("remote.path_owned_pane", host, pane));
     this.next = next;
   }
@@ -322,10 +321,12 @@ export function refuseOwnedRemotePath(
   spawn: { workstream: string; name: string },
   host: string,
   cwd: string,
+  /** A command gate's --command: its way out stays a gate. */
+  gate?: string,
 ): void {
   const owner = remotePathOwner(db, host, cwd);
   if (owner !== undefined) {
-    throw new RemotePathOwnedError(spawn.workstream, spawn.name, host, cwd, owner);
+    throw new RemotePathOwnedError(spawn.workstream, spawn.name, host, cwd, owner, gate);
   }
 }
 
