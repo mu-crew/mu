@@ -49,6 +49,7 @@ import { reconcile } from "../src/reconcile.js";
 import { listRemoteRecoveries, type RemoteRecovery } from "../src/remote-recovery.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { shellQuote } from "../src/shell-quote.js";
+import { addTask, claimTask, closeTask, getTask } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import {
   previewReinit,
@@ -208,6 +209,8 @@ function reaped(
     fill?: boolean;
     job?: string;
     pane?: string;
+    /** Tasks the agent held IN_PROGRESS when it was reaped. */
+    tasks?: string[];
   } = {},
 ): {
   agentId: number;
@@ -244,6 +247,12 @@ function reaped(
   if (over.fill !== false) fillCarrierJob(db, r.token, job);
   mkdirSync(dirname(jobFile()), { recursive: true });
   writeFileSync(jobFile(), `${job}\n`);
+  for (const id of over.tasks ?? []) {
+    addTask(db, { localId: id, workstream: "auth", title: id, impact: 50, effortDays: 1 });
+    db.prepare(
+      "UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active', owner_id = ? WHERE local_id = ?",
+    ).run(row.incarnation, id);
+  }
   deleteAgent(db, "worker-1", "auth");
   const out = reservation();
   if (out === undefined) throw new Error("no reservation");
@@ -946,6 +955,74 @@ describe("after a reattach", () => {
     ]);
     expect(listCarrierJobs(db)).toEqual([]);
     expect(listRemoteRecoveries(db)).toEqual([]);
+  });
+});
+
+describe("--task: the reaper parked the work; a ready reattach claims it back (§ mu_reap)", () => {
+  const ownerId = (id: string): unknown =>
+    (db.prepare("SELECT owner_id FROM tasks WHERE local_id = ?").get(id) as { owner_id: unknown })
+      .owner_id;
+  const withTasks = (tasks: string[]) =>
+    reattachAgent(db, "auth", "worker-1", { ifRevision: rev(), tasks });
+
+  it("claims a parked task as the new incarnation", async () => {
+    reaped({ tasks: ["t1"] });
+    expect(getTask(db, "t1", "auth")).toMatchObject({ status: "OPEN", substate: "parked" });
+    const res = await withTasks(["t1"]);
+    expect(res.claims).toEqual([{ task: "t1", ok: true }]);
+    expect(getTask(db, "t1", "auth")).toMatchObject({ status: "IN_PROGRESS", substate: "active" });
+    expect(ownerId("t1")).toBe(res.agent_id);
+  });
+
+  it("a CLOSED task is refused, a warning; the CLI exits 0 (its preview's apply carries --task)", async () => {
+    reaped();
+    addTask(db, { localId: "t2", workstream: "auth", title: "t2", impact: 50, effortDays: 1 });
+    closeTask(db, "t2", { workstream: "auth", evidence: "done" });
+    const argv = ["agent", "reattach", "worker-1", "-w", "auth", "--task", "t2", "--json"];
+    const pre = await runCliJson(argv, dbPath);
+    expect(pre.doc.next).toEqual({
+      mode: "alt",
+      commands: [`mu agent reattach worker-1 -w auth --task t2 --if ${rev()}`],
+    });
+    const r = await runCliJson([...argv, "--if", String(rev())], dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(r.data).toMatchObject({
+      ready: true,
+      claims: [{ task: "t2", ok: false, error: expect.stringContaining("not OPEN") }],
+    });
+    expect(getTask(db, "t2", "auth")).toMatchObject({ status: "CLOSED", ownerName: null });
+  });
+
+  it("a task owned by another agent is a warning, and stays its", async () => {
+    reaped({ tasks: ["t1"] });
+    insertAgent(db, { name: "other", workstream: "auth", paneId: "%5" });
+    await claimTask(db, "t1", { agentName: "other", workstream: "auth", force: true });
+    const res = await withTasks(["t1", "t1x"]);
+    expect(res.claims).toEqual([
+      { task: "t1", ok: false, error: expect.stringContaining("other") },
+      { task: "t1x", ok: false, error: expect.stringContaining("t1x") },
+    ]);
+    expect(getTask(db, "t1", "auth")?.ownerName).toBe("other");
+  });
+
+  it("ctl not ready: every claim is skipped, the task stays parked", async () => {
+    reaped({ tasks: ["t1"] });
+    carrier = "noctl";
+    const res = await withTasks(["t1"]);
+    expect(res).toMatchObject({ ready: false });
+    expect(res.claims).toEqual([{ task: "t1", ok: false, error: "skipped: ctl not ready" }]);
+    expect(getTask(db, "t1", "auth")).toMatchObject({ status: "OPEN", substate: "parked" });
+  });
+
+  it("agent close of the live lease row reopens its task as todo, not parked", async () => {
+    reaped({ tasks: ["t1"] });
+    await withTasks(["t1"]);
+    await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(getTask(db, "t1", "auth")).toMatchObject({
+      status: "OPEN",
+      substate: "todo",
+      ownerName: null,
+    });
   });
 });
 

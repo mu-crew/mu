@@ -43,6 +43,8 @@ export const MESSAGES = {
     status === "IN_PROGRESS"
       ? `cannot park ${id}: it is IN_PROGRESS (release it first)`
       : `cannot park ${id}: it is CLOSED (open it first)`,
+  "task.not_open": (id: string, status: string, owner: string | null) =>
+    `task ${id} is ${status}${owner === null ? "" : ` (owned by ${owner})`}, not OPEN`,
   "task.in_triage": (id: string) =>
     `task ${id} is in triage (OPEN/triage); accept it or claim with --force`,
   "task.parked": (id: string) =>

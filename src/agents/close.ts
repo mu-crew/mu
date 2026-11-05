@@ -592,7 +592,8 @@ async function closeLocked(
     name,
     agent.workstreamName,
     { incarnation: agent.incarnation, paneId: agent.paneId },
-    { preserve: !remoteHandled },
+    // Its lease job is stopped (or abandoned on purpose): the tasks reopen as todo.
+    { preserve: !remoteHandled, leaseSettled: true },
   );
   if (!deletedRow && replaced()) throw new AgentReplacedError(name, opts.workstream);
   // Last: the reservation, once its job is stopped and its job file and tree are dealt with.

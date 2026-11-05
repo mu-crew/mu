@@ -16,6 +16,7 @@ import { attachCommand, localPaneAlive } from "../remote-agent.js";
 import { deleteRemoteRecovery, restoreRemoteRecovery } from "../remote-recovery.js";
 import { assertRevision } from "../revision.js";
 import { shellWord } from "../shell-quote.js";
+import { claimTask } from "../tasks/claim.js";
 import { isScratchWorkstream } from "../workstream.js";
 import { withAgentLock } from "./lock.js";
 import {
@@ -70,7 +71,7 @@ export async function reattachAgent(
   db: Db,
   ws: string,
   name: string,
-  opts: { ifRevision: number; signal?: AbortSignal },
+  opts: { ifRevision: number; signal?: AbortSignal; tasks?: readonly string[] },
 ) {
   const sock = ctlSocketPath(ws, name, dirname(db.name));
   const mux = await activeMux();
@@ -179,7 +180,21 @@ export async function reattachAgent(
   if (ready) rmSync(`${p.jobFile}.${p.r.job}.stop-failed`, { force: true });
   const what = `host=${p.r.host}, job=${p.r.job}, pane=${pid}, ctl=${ctl}`;
   emitEvent(db, ws, "agent.reattach", `agent reattach ${name} (${what})`);
-  return { ...factsOf(ws, p), agent_id: row, pane_id: pid, ready, ctl };
+  // `--task`: the reaper parked them (hence force). A refusal is a warning: the reattach took.
+  const claims: Array<{ task: string; ok: boolean; error?: string }> = [];
+  for (const task of opts.tasks ?? []) {
+    if (!ready) {
+      claims.push({ task, ok: false, error: "skipped: ctl not ready" });
+      continue;
+    }
+    const claim = { agentName: name, workstream: ws, expectedAgentId: row, force: true };
+    await claimTask(db, task, { ...claim, onlyOpen: true }).then(
+      () => claims.push({ task, ok: true }),
+      (e: unknown) =>
+        claims.push({ task, ok: false, error: e instanceof Error ? e.message : `${e}` }),
+    );
+  }
+  return { ...factsOf(ws, p), agent_id: row, pane_id: pid, ready, ctl, claims };
 }
 export type ReattachResult = Awaited<ReturnType<typeof reattachAgent>>;
 

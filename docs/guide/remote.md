@@ -244,7 +244,9 @@ mu host check dev --root '~/repo'
   `mu agent reattach <name> -w <ws>` previews, `--if <rev>` opens a new carrier
   on the job through the profile's `--attach`. It refuses while the old pane or
   spawn process may live, and rolls back if the job has ended (close it then).
-  Reattach is pi only: close a reaped non-pi lease agent instead.
+  Reattach is pi only: close a reaped non-pi lease agent instead. The reaper
+  parked the agent's tasks (the job may still write); `--task <id>` claims
+  each back once ctl answers. After a close instead, `mu task unpark <id>`.
 - A host that is gone for good: `mu agent close <name> --abandon-job` drops the
   handle without a stop and logs the host and handle; the job may still run
   there. It is the only way past an unreachable host.
