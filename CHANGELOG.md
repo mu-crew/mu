@@ -64,6 +64,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   only while the name is still this incarnation). A refused claim is a warning
   in `claims: [{task, ok, error}]`, exit 0; with ctl not ready every claim is
   `skipped: ctl not ready`.
+- **Leftovers in `mu agent list`** (2026-11-04 aiv-blog incident: the list
+  printed `"orphans": []` while reservations and recovery records were left).
+  `data.leftovers` (bare and `--json`, `[]` when empty; the envelope and its
+  `next` are unchanged) lists each lease reservation whose agent is gone
+  (`kind: lease-job`, its recovery record folded in by agent id) and each
+  other remote recovery record (`kind: recovery`), keys `kind name host job
+  agent_id recovery_id stop_failed next`. `next` is one preview: `mu agent
+  reattach <name> -w <ws>` when reattach's preflight is clear, else `mu agent
+  close <name> -w <ws>` (a record's always with `--recovery <id>`). A lease
+  job's stop-failure record (`<job_file>.<job>.stop-failed`) shows escaped and
+  cut at 160 chars, only when it names that handle. `--table` prints a
+  `Leftovers (n)` section. No host command runs. mu removes the record once a
+  stop (close or spawn rollback) or a ready reattach proves the job; an
+  abandon keeps it. Doctor's `lease-job` hint prints the record's path.
+  Spec: docs/specs/2026-11-04-lease-adopt.md § mu_list.
 
 ### Changed
 

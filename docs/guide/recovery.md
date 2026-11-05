@@ -22,6 +22,12 @@ with the multiplexer:
   task exits 6. A lease agent whose job may still run leaves its task
   `OPEN/parked`: its `[reaper]` note names `mu agent reattach --task` and
   the close-then-unpark way out.
+- What a reaped agent left behind is a leftover (`data.leftovers`;
+  `--table` prints a `Leftovers` section): a lease job whose agent is gone,
+  or a remote recovery record. Each names one `next` to run, a preview:
+  `mu agent reattach` when the job can be reattached, else `mu agent close`
+  (with `--recovery <id>` for a record). A lease job's stop-failure record,
+  if its carrier left one, shows as `stop failed: ...`.
 - A pane in the session that runs an agent CLI but has no row is an
   orphan. mu lists it and does not register it. Close the pane in
   your multiplexer, or ignore it.

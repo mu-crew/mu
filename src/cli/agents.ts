@@ -47,6 +47,7 @@ import {
   UsageError,
 } from "../cli.js";
 import type { Db } from "../db.js";
+import { leftoverLines, listLeftovers } from "../leftovers.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine, type SendWarning } from "../mux.js";
 import { pc } from "../output.js";
@@ -909,12 +910,14 @@ export async function cmdList(
 ): Promise<void> {
   const workstream = await resolveExistingWorkstream(db, opts.workstream);
   const view = await listLiveAgents(db, { workstream });
+  const leftovers = await listLeftovers(db, workstream);
   if (opts.json) {
     const wsId = workstreamIdOf(db, workstream);
     emitJson({
       workstreamName: workstream,
       agents: view.agents.map((a) => liveAgentToOutput(a, wsId)),
       orphans: view.orphans,
+      leftovers,
     });
     return;
   }
@@ -929,6 +932,7 @@ export async function cmdList(
       console.log(`  ${pc.dim(orphan.paneId)} cli=${orphan.command}`);
     }
   }
+  for (const line of leftoverLines(leftovers)) console.log(line);
 }
 
 export async function cmdAgentShow(

@@ -241,8 +241,9 @@ mu host check dev --root '~/repo'
   and drops its handle first, then closes the recovery worktree, if any. A
   tree that refuses (dirty, uncollected) no longer keeps the name fenced: the
   retry only closes the tree. `agent collect` never stops a job.
-- A reaped lease agent whose job still runs (a tmux restart, a `kill -9`):
-  `mu agent reattach <name> -w <ws>` previews, `--if <rev>` opens a new carrier
+- A reaped lease agent whose job still runs (a tmux restart, a `kill -9`)
+  shows in `mu agent list` as a leftover whose `next` is the reattach or the
+  close preview. `mu agent reattach <name> -w <ws>` previews, `--if <rev>` opens a new carrier
   on the job through the profile's `--attach`. It refuses while the old pane or
   spawn process may live, and rolls back if the job has ended (close it then).
   Reattach is pi only: close a reaped non-pi lease agent instead. The reaper

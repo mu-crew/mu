@@ -205,11 +205,16 @@ describe("agent list is JSON by default", () => {
     expect(doc).toMatchObject({ ok: true, data: { workstreamName: "auth" } });
     expect(doc.data.agents[0]).toMatchObject({ name: "worker-1", pane_id: "%7" });
     expect(Object.keys(doc.data)).toEqual(Object.keys(JSON.parse(flagged.stdout).data));
+    // The envelope is pinned (legacy camelCase); leftovers are always present, [] when empty.
+    expect(Object.keys(doc.data)).toEqual(["workstreamName", "agents", "orphans", "leftovers"]);
+    expect(doc.data.leftovers).toEqual([]);
+    expect(doc.next).toBeNull();
 
     const table = await runCliWire(["agent", "list", "-w", "auth", "--table"], dbPath);
     expect(() => JSON.parse(table.stdout)).toThrow();
     expect(table.stdout).toContain("mu-auth");
     expect(table.stdout).toContain("worker-1");
+    expect(table.stdout).not.toContain("Leftovers");
   });
 
   it("a failure is one envelope on stdout; --table keeps the human line", async () => {
