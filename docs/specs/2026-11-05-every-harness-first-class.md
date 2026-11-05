@@ -1,7 +1,7 @@
 # Every harness first-class (mu-crew 4.x)
 
-Status: draft 7, not approved. Written 2026-11-05 after four refutation
-rounds. It replaces the "mu 5: harness-agnostic" drafts 1–3 (see
+Status: draft 8, not approved. Written 2026-11-05 after four refutation
+rounds and the local U0 spike ([U0 results](#u0-results-local-2026-11-05)). It replaces the "mu 5: harness-agnostic" drafts 1–3 (see
 [History](#history)). Covers six repos: mu, murmur, museum, muzzle, the
 crew dotfiles and org.
 
@@ -81,35 +81,56 @@ murmur status / pane / dash / export ─► drain the inbox into the store under
   partial event, whatever its size or filesystem. The hook opens no
   database, takes no lock, calls no tmux and prints nothing. It exits 0 even
   when the write fails, so a hook never breaks a turn.
-- **Nested agents are dropped.** A harness started by another agent (a pi
-  bash tool running `claude -p`, a codex `exec` checker) inherits
-  `$TMUX_PANE` and would report as the pane's agent.
-  - The hook reads the process table once (`ps -A -o pid=,ppid=,args=`)
-    and walks parents from its own process up to the tmux server, whose pid
-    is field 2 of `$TMUX`.
-  - Processes are matched to harnesses by argv, not by process name: pi
-    can be `bun`, `pi` or `node`, and cursor-agent is `node`.
+- **The process chain, not the environment, places an event.** Muse Code
+  starts every non-managed hook, plugin or settings, with `env_clear()` and
+  a fixed allowlist (per Muse's source), so its hooks see no
+  `$TMUX`, `$TMUX_PANE` or `MU_*` (U0). Only managed hooks can request more
+  variables, under a policy ceiling the launcher sets, and no user or
+  plugin setting widens the list. So every hook reads the process table once
+  (`ps -A -o pid=,ppid=,args=`) and walks parents from its own process up
+  to the tmux server, which it recognises by argv, or by field 2 of `$TMUX`
+  when that is set.
+  - The pane root is the ancestor whose parent is the tmux server. The
+    event carries the root pid and the server pid, plus `$TMUX` and
+    `$TMUX_PANE` when present, as a cross-check.
+  - Processes are matched to harnesses by argv, not by process name: pi can
+    be `bun`, `pi` or `node`, and cursor-agent is `node`.
   - A run of adjacent processes of the same harness, with nothing else
     between them, is one harness: a launcher and the binary it starts.
+    Every harness in U0 runs that way (`claude < claude`,
+    `codex < codex.real`, `muse < muse.real`).
   - If the walk meets a second, separate harness before the server, the
-    event is from a nested agent and nothing is written.
+    event is from a nested agent, and nothing is written. U0 saw every
+    nested run as a second harness behind a shell.
+  - If the walk never reaches a tmux server, nothing is written. U0 saw
+    claude's detached children, owned by launchd, fire `SessionEnd` with
+    `$TMUX_PANE` still set.
   - Only the vocabulary's events are hooked, never `PreToolUse` or
-    `PostToolUse`, so this costs one `ps` per turn boundary, not per tool
-    call.
+    `PostToolUse`. A hook call cost 60–150 ms in U0, 316 ms at worst,
+    `ps` included.
+- **Agent identity comes from an anchor file.** mu starts every harness
+  through a small wrapper that writes
+  `~/.local/state/mu-next/anchors/<pid>.json` and then `exec`s the
+  harness, so the pid stays the same. The file holds the agent name,
+  workstream, cli, orchestrator flag, remote key and the process start time.
+  A hook takes the first ancestor that has an anchor whose start time
+  matches. Every U0 harness's hooks could read and write the crew state
+  directories. Environment variables are used only as a fallback.
 - **Last text travels in the event.** `turn_stopped` carries the last
-  assistant text, capped at 64 KB. codex, muse and cursor-agent put it in
-  the payload. For claude the hook reads `transcript_path` when it runs
-  (Stop fires after the turn's text is written; VERIFY in U0). Nothing reads
-  a transcript at drain time.
-- **Keys.** The hook takes the tmux socket path and server pid from `$TMUX`
-  and the pane from `$TMUX_PANE`, without calling tmux. The inbox directory
-  is a hash of the three, so a restarted server never shares an inbox with
-  the old one. The event carries the raw socket path and server pid, and
-  the drain, which may call tmux, maps them to the store's `server_kind`
-  and `server_value` the way the collector does. A hook whose environment
-  sees a different `TMUX_TMPDIR` therefore cannot invent a second row.
-  `reconcileLocal` still owns pane-id reuse. The drain deletes inbox
-  directories whose server is gone.
+  assistant text from the payload, capped at 64 KB:
+  `last_assistant_message` for claude, codex and muse, and
+  `afterAgentResponse.text` for cursor-agent. Nothing reads a transcript,
+  in the hook or at drain time: U0 saw a hook-time read of claude's
+  transcript return the previous turn's text. cursor-agent's text can
+  arrive after its `stop`, so the drain attaches it to the turn with the
+  same `generation_id`.
+- **Keys.** The inbox directory is a hash of the server pid and the pane
+  root pid. The drain, which may call tmux, maps the root pid to a pane
+  with `list-panes -F '#{pane_pid} #{pane_id}'` on the server with that
+  pid. It also maps the server to the store's `server_kind` and
+  `server_value` the way the collector does, so a hook can never invent a
+  second row. `reconcileLocal` still owns pane-id reuse. The drain deletes
+  inbox directories whose server is gone.
 - **Readers drain.** Under the store lock, a reader lists each inbox in name
   order, applies each event to the store, and deletes the file. Applied
   events are gone: nothing is retained or rotated, and a store rebuild loses
@@ -134,11 +155,12 @@ murmur status / pane / dash / export ─► drain the inbox into the store under
   the inbox only costs disk. The hook stops writing for a pane past 10,000
   files, and `murmur doctor` reports it.
 - **Ownership.** An event whose `session_id` differs from the claimed
-  session is ignored unless it is `session_start`. claude exports
-  `CLAUDE_PID` to children, so the hook records it as the owner pid. For the
-  others the hook walks parent pids to the first process named in the row
-  (D6). The drain claims an unclaimed pane on the first event of any kind,
-  so a hook installed mid-session recovers.
+  session is ignored unless it is `session_start`. The owner pid is the
+  harness process found in the chain (`CLAUDE_PID` when set). The drain
+  claims an unclaimed pane on the first event of any kind, so a hook
+  installed mid-session recovers. Each row's drop rules (D6) run before
+  any of this: codex's title-generation session, for example, would
+  otherwise reset the pane on every first prompt.
 - **State is advisory.** Any process under the user can write an event file.
   mu never closes a task on a state transition alone. A CLOSE block in a
   `turn_stopped` text is applied with the same trust as pi's ctl last text.
@@ -184,17 +206,20 @@ processes, not panes), the spawn handshake (`hello`, features, outdated
 recovery), doctor, the lease carrier and remote socket plumbing,
 `--no-ctl`, and the argv0 rule for ctl-speaking pi builds.
 
-| Verb      | `ctl` (pi, unchanged) | `hooks`                                                                                                                                  | `mux` (herdr, Rex, unchanged) |
-| --------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| send      | exact, acknowledged   | paste through the backend; confirmed when `run_count` rises within `MU_SEND_ACK_MS` (default 10 s), otherwise `unknown` and never resent | `sendToPane`                  |
-| steer     | mid-turn input        | refused with a typed error naming the channel                                                                                            | refused                       |
-| answer    | ctl                   | `mu agent answer <w> <choice>`: keys for a pending permission dialog; confirmed by the next event                                        | keys                          |
-| interrupt | exact abort           | Escape; codex confirms with its `Interrupt` hook, others read unconfirmed idle (`idle?`)                                                 | Escape                        |
-| fresh     | ctl                   | the row's fresh command, sent like a prompt; confirmed by `session_start` with source `clear` or a new `session_id`                      | sent like a prompt            |
-| abort     | exact                 | interrupt, then `mu agent close`                                                                                                         | same                          |
-| settle    | exact                 | `turn_stopped` from the inbox                                                                                                            | backend state                 |
-| last text | ctl (64 KB)           | the `turn_stopped` event's text (64 KB)                                                                                                  | none                          |
+| Verb      | `ctl` (pi, unchanged) | `hooks`                                                                                                                                                                                   | `mux` (herdr, Rex, unchanged) |
+| --------- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| send      | exact, acknowledged   | clear the input line (the row's clear key), then paste through the backend; confirmed when `run_count` rises within `MU_SEND_ACK_MS` (default 10 s), otherwise `unknown` and never resent | `sendToPane`                  |
+| steer     | mid-turn input        | refused with a typed error naming the channel                                                                                                                                             | refused                       |
+| answer    | ctl                   | `mu agent answer <w> <choice>`: keys for a pending permission dialog; confirmed by the next event                                                                                         | keys                          |
+| interrupt | exact abort           | Escape; codex and muse confirm with `Interrupt`, cursor-agent with an `aborted` stop; claude reads unconfirmed idle (`idle?`)                                                             | Escape                        |
+| fresh     | ctl                   | the row's fresh command, sent like a prompt; confirmed by `session_start` with source `clear` or a new `session_id`                                                                       | sent like a prompt            |
+| abort     | exact                 | interrupt, then `mu agent close`                                                                                                                                                          | same                          |
+| settle    | exact                 | `turn_stopped` from the inbox                                                                                                                                                             | backend state                 |
+| last text | ctl (64 KB)           | the `turn_stopped` event's text (64 KB)                                                                                                                                                   | none                          |
 
+- **Clear before paste.** An interrupted claude puts its prompt back in the
+  input box, and U0 saw the next paste merge into it and resubmit. `C-u`
+  cleared the box on all four harnesses.
 - The `hooks` send gate refuses `blocked` (use `answer`) and `running` (use
   `interrupt`, or `--force`). A `running` state with no event for
   `MU_STALE_MS` reads `unknown`, and a send needs `--force`. `idle?` is
@@ -247,33 +272,39 @@ recovery), doctor, the lease carrier and remote socket plumbing,
 Values come from the installed binaries on 2026-11-04. `VERIFY` cells are
 filled by U0.
 
-| Field                  | claude                                                            | codex                                                                  | cursor-agent                                   | muse                                                         | pi                                               |
-| ---------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------ |
-| default channel        | `hooks`                                                           | `hooks`                                                                | `hooks`                                        | `hooks`                                                      | `ctl`                                            |
-| process name           | `claude` (use `CLAUDE_PID`)                                       | `codex`                                                                | `node`? VERIFY                                 | VERIFY                                                       | `pi`                                             |
-| hook config            | `~/.claude/settings.json`                                         | `~/.codex/hooks.json` (feature flag VERIFY)                            | `~/.cursor/hooks.json`                         | a plugin's `hooks/hooks.json`; a changed hook asks for trust | murmur's and mu's pi extensions                  |
-| prompt_submitted       | `UserPromptSubmit`                                                | `UserPromptSubmit`                                                     | `beforeSubmitPrompt`                           | `UserPromptSubmit`                                           | the input event (fallback)                       |
-| permission_requested   | `PermissionRequest`, `Notification`                               | `PermissionRequest`                                                    | none                                           | `PermissionRequest`                                          | `ui_prompt_start`                                |
-| turn_stopped           | `Stop`                                                            | `Stop`                                                                 | `stop`                                         | `Stop`                                                       | `agent_settled`                                  |
-| turn_failed            | `StopFailure`                                                     | VERIFY                                                                 | `stop` with error status                       | VERIFY                                                       | VERIFY                                           |
-| interrupted            | none (mu writes)                                                  | `Interrupt`                                                            | none                                           | `Interrupt`? VERIFY                                          | none                                             |
-| session start / end    | `SessionStart` (source) / `SessionEnd` (reason)                   | same                                                                   | `sessionStart` / `sessionEnd`                  | same as claude                                               | `session_start` / `session_shutdown`             |
-| last text              | read from `transcript_path` in the hook                           | `last_assistant_message`                                               | `afterAgentResponse.text`                      | `last_assistant_message`                                     | event payload                                    |
-| fresh command          | `/clear`                                                          | `/new`                                                                 | `/new-chat`                                    | `/new`                                                       | `/new`                                           |
-| interrupt key          | Escape                                                            | Escape                                                                 | VERIFY                                         | Escape                                                       | Escape                                           |
-| can block on stop      | yes                                                               | yes                                                                    | yes (`followup_message`)                       | policy-dependent                                             | yes (`agent_before_settle`)                      |
-| sandbox marker env     | `CLAUDECODE`                                                      | `CODEX_SANDBOX`, `CODEX_THREAD_ID`                                     | `CURSOR_AGENT`                                 | `MUSE_THREAD_ID`? VERIFY                                     | none                                             |
-| sessions (museum, D12) | `~/.claude/projects/<slug>/<uuid>.jsonl` and `<uuid>/subagents/*` | `~/.codex/sessions/YYYY/MM/DD/*.jsonl`                                 | SQLite chats; not backed up                    | VERIFY                                                       | `~/.pi/agent/sessions/**/*.jsonl`                |
-| initial prompt         | none: launched without a prompt (D17)                             | none (D17)                                                             | none (D17)                                     | none (D17)                                                   | ctl send (unchanged)                             |
-| trust flag             | none: the D10 spawn-ready trust scan                              | `--dangerously-bypass-hook-trust` only for mu-created worktrees VERIFY | `--trust` VERIFY                               | VERIFY                                                       | none                                             |
-| model flag             | `--model`                                                         | `-m` / `--model`                                                       | `--model`                                      | VERIFY                                                       | `--model`                                        |
-| auto-approve flag      | `--permission-mode acceptEdits` or `auto`                         | `-s workspace-write -a never`                                          | `--sandbox`; `--force` only by explicit opt-in | VERIFY                                                       | none (`--approve` is folder trust, not approval) |
-| skill location         | `~/.claude/skills/`                                               | VERIFY, never `~/.agents/skills/`                                      | VERIFY, never `~/.agents/skills/`              | a plugin                                                     | pi package (unchanged)                           |
+| Field                  | claude                                                            | codex                                                                  | cursor-agent                                                    | muse                                                                                                                                                                                                       | pi                                               |
+| ---------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| default channel        | `hooks`                                                           | `hooks`                                                                | `hooks`                                                         | `hooks`                                                                                                                                                                                                    | `ctl`                                            |
+| process chain          | `claude < claude` (launcher, binary)                              | `codex < codex.real` (launcher, binary)                                | `cursor-agent` (node, matched by argv)                          | `muse < muse.real`                                                                                                                                                                                         | `pi`                                             |
+| hook config            | `~/.claude/settings.json` (or project `.claude/settings.json`)    | `~/.codex/hooks.json`; new or changed hooks need trust once            | `~/.cursor/hooks.json` or project `.cursor/hooks.json`          | the `hooks` key in `~/.config/muse/settings.json` or `<project>/.muse/hooks.json` (Muse format); a Claude-format plugin also works but cannot take `Interrupt` and sits behind `MUSE_EXPERIMENTAL_PLUGINS` | murmur's and mu's pi extensions                  |
+| hook environment       | full                                                              | full                                                                   | full                                                            | `env_clear()` plus a fixed allowlist (`HOME`, `PATH`, `USER`, `LOGNAME`, `TMPDIR`, `SHELL`, `LANG`, `TERM`, proxy): no `TMUX*`, no `MU_*`; only managed hooks can request more                             | n/a                                              |
+| hooks sandboxed        | yes; crew state dirs writable                                     | no, once trusted                                                       | no ("Run Everything")                                           | yes; crew state dirs writable                                                                                                                                                                              | n/a                                              |
+| prompt_submitted       | `UserPromptSubmit`                                                | `UserPromptSubmit`                                                     | `beforeSubmitPrompt`                                            | `UserPromptSubmit`                                                                                                                                                                                         | the input event (fallback)                       |
+| permission_requested   | `PermissionRequest`, `Notification`                               | `PermissionRequest`                                                    | none                                                            | `PermissionRequest` (seen under auto-review)                                                                                                                                                               | `ui_prompt_start`                                |
+| turn_stopped           | `Stop`                                                            | `Stop`                                                                 | `stop` (`status: completed`)                                    | `Stop`                                                                                                                                                                                                     | `agent_settled`                                  |
+| turn_failed            | `StopFailure`                                                     | VERIFY                                                                 | `stop` with `status: error`, not following an `aborted`         | VERIFY                                                                                                                                                                                                     | VERIFY                                           |
+| interrupted            | none (mu writes)                                                  | `Interrupt` (with `turn_id`)                                           | `stop` with `status: aborted`                                   | `Interrupt` (with `turn_id`) in Muse-format hooks, declared `async: true`; rejected in Claude-format plugins                                                                                               | none                                             |
+| session start / end    | `SessionStart` (source) / `SessionEnd` (reason)                   | same; `SessionStart` fires on the first prompt                         | `sessionStart` / `sessionEnd`                                   | same as claude                                                                                                                                                                                             | `session_start` / `session_shutdown`             |
+| last text              | `Stop.last_assistant_message`                                     | `Stop.last_assistant_message`                                          | `afterAgentResponse.text`, may follow `stop`                    | `Stop.last_assistant_message`                                                                                                                                                                              | event payload                                    |
+| events to drop         | chains that do not reach tmux (detached children)                 | `transcript_path: null` (title-generation session)                     | the `error` `stop` after `aborted` for the same `generation_id` | `SubagentStop`                                                                                                                                                                                             | none                                             |
+| never store            |                                                                   |                                                                        | `user_email`, `CURSOR_USER_EMAIL`, `CURSOR_ASKPASS_SECRET`      |                                                                                                                                                                                                            |                                                  |
+| fresh command          | `/clear`                                                          | `/new`                                                                 | `/new-chat`                                                     | `/new` (refused while a subagent runs)                                                                                                                                                                     | `/new`                                           |
+| interrupt key          | Escape                                                            | Escape                                                                 | Escape                                                          | Escape                                                                                                                                                                                                     | Escape                                           |
+| clear-input key        | `C-u`                                                             | `C-u`                                                                  | `C-u`                                                           | `C-u`                                                                                                                                                                                                      | n/a                                              |
+| can block on stop      | yes; the reason reaches the model                                 | yes; the reason reaches the model                                      | yes (`followup_message`)                                        | no: a block re-checks the answer and the reason is not followed                                                                                                                                            | yes (`agent_before_settle`)                      |
+| sandbox marker env     | `CLAUDECODE`, `CLAUDE_PID`                                        | `CODEX_SESSION_ID`, `CODEX_THREAD_ID`                                  | `CURSOR_AGENT`, `CURSOR_CONVERSATION_ID`                        | `MUSE_SESSION_ID`, `MUSE_THREAD_ID` (in hooks)                                                                                                                                                             | none                                             |
+| sessions (museum, D12) | `~/.claude/projects/<slug>/<uuid>.jsonl` and `<uuid>/subagents/*` | `~/.codex/sessions/YYYY/MM/DD/*.jsonl`                                 | SQLite chats; not backed up                                     | VERIFY                                                                                                                                                                                                     | `~/.pi/agent/sessions/**/*.jsonl`                |
+| initial prompt         | none: launched without a prompt (D17)                             | none (D17)                                                             | none (D17)                                                      | none (D17)                                                                                                                                                                                                 | ctl send (unchanged)                             |
+| trust flag             | none: the D10 spawn-ready trust scan                              | `--dangerously-bypass-hook-trust` only for mu-created worktrees VERIFY | `--trust` VERIFY                                                | `--trust-workspace`                                                                                                                                                                                        | none                                             |
+| model flag             | `--model`                                                         | `-m` / `--model`                                                       | `--model`                                                       | `--model`                                                                                                                                                                                                  | `--model`                                        |
+| auto-approve flag      | `--permission-mode acceptEdits` or `auto`                         | `-s workspace-write -a never`                                          | `--sandbox`; `--force` only by explicit opt-in                  | `--approval-mode never`                                                                                                                                                                                    | none (`--approve` is folder trust, not approval) |
+| skill location         | `~/.claude/skills/`                                               | VERIFY, never `~/.agents/skills/`                                      | VERIFY, never `~/.agents/skills/`                               | `muse skills` or a plugin                                                                                                                                                                                  | pi package (unchanged)                           |
 
 cursor-agent has no permission hook. Its `blocked` state is unknown, and mu
-says so. claude subagents share the parent's `session_id`, but they fire
-`SubagentStop`, not `Stop`, and no `UserPromptSubmit` (VERIFY in U0), so
-they reach no hooked event.
+says so. claude subagents fire `SubagentStop`, not `Stop`, so they reach no
+hooked event. In U0, permission dialogs were rare everywhere: auto modes
+and sandboxes refused or approved an out-of-repo write without asking, so
+`blocked` is the exception, and a refusal reads as an ordinary turn.
 
 ### D7. Keep-driving and the close nudge for the four: a mu-owned Stop hook
 
@@ -281,12 +312,18 @@ pi keeps its settle nudge. For the other four, mu installs one Stop hook
 entry, `mu hook stop` (D13), with the harness's longest allowed hook timeout
 (VERIFY in U0).
 
-- **Guards.** The hook does nothing unless `MU_MANAGED_AGENT=1`, the
-  hook's harness equals `MU_AGENT_CLI` (exported by spawn), the hook's
-  harness process has no harness ancestor in the pane (the D3 nested rule),
-  and `MU_REMOTE` is unset. These mirror pi's nudge, which already skips a
-  nested pi and `MU_REMOTE=1`. A checker that a managed agent starts never
-  consumes its parent's events or gets its parent's close nudge.
+- **Guards.** The hook acts only for a pane agent mu started: it walks its
+  process chain to an anchor (D3) whose cli matches the hook's harness,
+  with no other harness in between, and whose agent is not remote. The
+  orchestrator flag also comes from the anchor. Environment variables are
+  a fallback only, because Muse Code strips them from plugin hooks. These
+  rules mirror pi's nudge, which already skips a nested pi and
+  `MU_REMOTE=1`. A checker that a managed agent starts never consumes its
+  parent's events or gets its parent's close nudge.
+- **Muse Code cannot keep driving.** In U0 a Muse Stop block made it
+  re-check its answer without following the reason, so the resume text
+  never reaches the model. Muse orchestrators and workers use the SKILL.md
+  rule, and `mu hook stop` is not installed for Muse.
 - **Orchestrator pane** (`MU_ORCHESTRATOR=1`):
   - A live process already waits as this caller, such as a background
     `mu wait`: allow the stop. That wait wakes the agent when it returns.
@@ -405,7 +442,9 @@ pi's remote workers keep the control socket and the
 - Remote spawn passes `MU_REMOTE_KEY=<origin host>/<origin pane key>`,
   `MU_MANAGED_AGENT`, `MU_AGENT_CLI`, `MU_AGENT_NAME` and `MU_WORKSTREAM`
   through the host profile's `{env}`.
-- With `MU_REMOTE_KEY` set, the remote hook writes to
+- The remote wrapper writes the same anchor (D3) with the remote key, so a
+  hook finds the key without the environment.
+- With a remote key, the remote hook writes to
   `~/.local/state/murmur/remote/<key>/`, not the inbox. The remote node's
   own drain never reads it, its store never holds the row, and its snapshot
   never exports it.
@@ -430,8 +469,9 @@ flush, footer and in-transcript `museum` record. For the others:
 - **Metadata from the transcripts and one start record.** claude records
   `cwd` and `gitBranch` on every line. codex records the cwd, git branch,
   commit and repository URL in `session_meta`. Agent, role and workstream
-  exist only in the agent's env, so a `museum hook <harness>` entry on
-  `SessionStart` writes them, with the session id and the cwd's git state,
+  exist only in mu's anchor (D3) or the agent's env, so a
+  `museum hook <harness>` entry on `SessionStart` reads them from there and
+  writes them, with the session id and the cwd's git state,
   to `~/.local/state/museum/meta/<harness>/<session id>.json`. museum never
   writes into another harness's transcript.
 - **Sources** come from the D6 `sessions` row, walked recursively. claude
@@ -489,9 +529,12 @@ muzzle (`muzzle hook`) write entries into the same config files
 - Each tool owns only entries whose command starts with its own name. Its
   `init` adds or updates those entries and never touches others.
 - Its `doctor` verifies its own entries and reports drift.
-- Muse Code takes hooks from plugins. Each tool ships a small Muse plugin
-  with its `hooks/hooks.json`, and `init` installs it. Muse asks the user to
-  trust a new or changed hook once (VERIFY the install path in U0).
+- Muse Code: each tool's `init` writes Muse-format entries under the
+  `hooks` key of `~/.config/muse/settings.json`, merge-safe like the
+  others. That is the only route to Muse's `Interrupt` event: Claude-format
+  plugins cannot subscribe to it, need `muse plugins approve`, and sit
+  behind the experimental plugin gate. codex likewise asks the user to trust
+  new or changed hooks once.
 - Availability is per harness: `murmurAvailable(cli)` checks the pi
   extension for pi and the hook entries for the others, so a missing pi
   extension still warns on a machine that has claude hooks.
@@ -654,7 +697,7 @@ hooked for state, because they fire on every tool call.
 
 - Mid-turn steering.
 - An exact send acknowledgement. `run_count` confirmation is close.
-- An exact interrupt acknowledgement, except on codex.
+- An exact interrupt acknowledgement on claude (codex, muse and cursor-agent report one).
 - A write fence. At-most-once rests on never resending.
 - A blocked state that clears the moment a human approves in the pane.
 - Telling a long tool call from a hung one.
@@ -725,6 +768,31 @@ Everything in D16.
 mule needs no change; U0 checks that `mule exec` carries the D11 read. The
 Rex backend branch should merge or park before U5, because U5 and U6 move
 the paths it touches.
+
+## U0 results (local, 2026-11-05)
+
+The local half of U0 ran on macOS with Claude Code 2.1.310, Codex 0.164.0,
+cursor-agent 2026.10.22 and Muse Code 1.4.15. Each ran in a pane of the
+user's tmux server, through the kit in `spike/u0/`: a logging hook on every
+event, plus a driver that pastes test prompts. The D6 table holds the
+per-harness facts. In summary:
+
+- Hooks of all four could write all four crew state directories and reach
+  tmux. Only Muse strips the hook environment.
+- A 3 KB multi-line paste arrived intact in all four.
+- A Stop block continued the turn in all four. The reason reached the model
+  in claude, codex and cursor-agent, not in Muse.
+- Interrupts: codex fires `Interrupt`, and so does Muse from Muse-format
+  hooks (asynchronous handlers only); cursor-agent fires a `stop` with
+  `status: aborted`; claude fires nothing.
+- Every nested run (`claude -p`, `codex exec`, `cursor-agent -p`,
+  `muse exec`) appeared as a second harness behind a shell in the chain.
+- codex runs a hidden title-generation session that fires the full event
+  set with `transcript_path: null`.
+
+Still open: hook and folder trust in a fresh mu worktree, the remote
+phase, `turn_failed` for codex and Muse, codex and cursor-agent skill
+locations, and Muse's session store.
 
 ## Units
 
@@ -886,6 +954,11 @@ is reflected above.
   | A `hooks` pi still serves ctl                                                                              | low      | D15: ctl for handshake, delegates and doctor only                                  |
   | D6 flag cells from `--help`                                                                                | low      | D6                                                                                 |
   | U20 and U22 checks could not fail                                                                          | low      | U20, U22                                                                           |
+
+- **U0, local** (2026-11-05): the results above changed D3 (chain-based
+  placement, anchor identity, payload text), D4 (clear before paste), D6
+  (every cell observed), D7 (anchor guards, no keep-driving on Muse), D11
+  and D12 (anchor fields).
 
 Findings that only concerned removing pi no longer apply: `next --refute`
 losing its once-key, pi having two state sources during the switch, and the
