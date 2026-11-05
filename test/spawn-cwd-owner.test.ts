@@ -429,6 +429,24 @@ describe("the refusal's way out", () => {
     expect(isCommandGate({ host: flag("--host"), command: flag("--command") })).toBe(true);
   });
 
+  it("a command gate whose owner's repo is itself a managed tree (--worktree --root <tree>): only the close", async () => {
+    // What two nested --worktree spawns record: w-8's tree Q, then w-9 at P with --root Q.
+    const Q = "/home/u/.local/state/mu-next/remote-worktrees/other/w-8";
+    insertAgent(db, {
+      ...{ name: "w-8", workstream: "other", paneId: "%89", host: "dev", cwd: Q, base: SHA },
+      repo: "/srv/repo",
+    });
+    managedOwner("dev", Q);
+    const e = (await refusedBeforePane(spawn({ command: "npm test" }))) as RemotePathOwnedError;
+    expect(e.next).toEqual(["mu agent close w-9 -w other"]);
+    expect(e.message).not.toContain("unmanaged checkout");
+    expect(e.message).toContain(`its repo ${Q} is itself a managed tree`);
+    // Running the gate at Q is refused too: offering it would be a false way out.
+    setCwd(Q);
+    const again = await failure(spawn({ command: "npm test" }));
+    expect(again).toBeInstanceOf(RemotePathOwnedError);
+  });
+
   it("several records of one name (one on another profile): collect and close select the reported one", async () => {
     recorded("/a", "w-9", "far");
     const here = recorded(P, "w-9", "dev");

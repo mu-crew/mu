@@ -449,11 +449,11 @@ export const MESSAGES = {
     agent: string,
     host: string,
     cwd: string,
-    owner: { workstream: string; name: string },
+    owner: { workstream: string; name: string; repo: string | null },
     next: readonly string[],
     gate: string | undefined,
   ) =>
-    `agent ${ws}/${agent}: ${cwd} on ${host} is the managed remote worktree of ${owner.workstream}/${owner.name}; a second agent there could lose its work or its commits' attribution. Close it first: ${next[0]}, or ${gate !== undefined ? "run the gate in an unmanaged checkout" : "give this agent its own tree"}: ${next[1]}`,
+    `agent ${ws}/${agent}: ${cwd} on ${host} is the managed remote worktree of ${owner.workstream}/${owner.name}; a second agent there could lose its work or its commits' attribution. Close it first: ${next[0]}${next[1] === undefined ? ` (its repo ${owner.repo} is itself a managed tree)` : `, or ${gate !== undefined ? "run the gate in an unmanaged checkout" : "give this agent its own tree"}: ${next[1]}`}`,
   "remote.path_owned_recovery": (
     ws: string,
     agent: string,

@@ -232,7 +232,14 @@ export function refuseRecoveredWorktree(
 
 /** What owns a remote path a non-`--worktree` spawn resolved: a managed remote worktree's agent, or a recovery record. */
 export type RemotePathOwner =
-  | { kind: "agent"; workstream: string; name: string; repo: string | null; head: string }
+  | {
+      kind: "agent";
+      workstream: string;
+      name: string;
+      repo: string | null;
+      head: string;
+      repoOwned?: boolean;
+    }
   | { kind: "recovery"; rec: RemoteRecovery };
 
 /**
@@ -275,7 +282,7 @@ export interface RefusedPane {
  * A remote spawn whose resolved cwd another agent's managed remote worktree, or a recovery
  * record, owns on that host: a second user could lose its work or its commits' attribution.
  * Exit 4. `next` holds the owner's executable way out, of the refused spawn's kind: a command
- * gate (`gate` is its --command) is offered an unmanaged checkout, never --worktree. `pane` is
+ * gate (`gate` is its --command) is offered its repo unless that is owned too, never --worktree. `pane` is
  * set when the owner appeared while the spawn's pane was opening.
  */
 export class RemotePathOwnedError extends Error {
@@ -301,7 +308,7 @@ export class RemotePathOwnedError extends Error {
             gate === undefined
               ? `${again} --worktree${root("--root")} --from ${w(owner.head)}`
               : `${again}${root("--cwd")} --command ${w(gate)}`,
-          ]
+          ].slice(0, gate !== undefined && owner.repoOwned === true ? 1 : 2)
         : ["collect", "close"].map(
             (verb) =>
               `mu agent ${verb} ${w(owner.rec.name)} -w ${w(owner.rec.workstream)} --recovery ${owner.rec.agentId}`,
@@ -326,6 +333,9 @@ export function refuseOwnedRemotePath(
 ): void {
   const owner = remotePathOwner(db, host, cwd);
   if (owner !== undefined) {
+    // A --worktree --root <managed tree> spawn records that tree as its repo: not unmanaged.
+    if (owner.kind === "agent" && owner.repo !== null)
+      owner.repoOwned = remotePathOwner(db, host, owner.repo) !== undefined;
     throw new RemotePathOwnedError(spawn.workstream, spawn.name, host, cwd, owner, gate);
   }
 }
