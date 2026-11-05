@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentReplacedError } from "../src/agents/errors.js";
 import { closeAgent, getAgent, insertAgent } from "../src/agents.js";
+import { setMurmurHookRunnerForTests } from "../src/channels/hooks-pane.js";
 import { classifyError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
 import {
@@ -40,7 +41,11 @@ import {
   removeRemoteWorktree,
 } from "../src/remote-agent.js";
 import { collectRef, collectRemoteAgent, RemoteCollectError } from "../src/remote-collect.js";
+import { claimTask } from "../src/tasks/claim.js";
+import { addTask } from "../src/tasks/edit.js";
+import { getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { fakeRemoteNode } from "./_fake-remote-node.js";
 import { rmFixtureDir } from "./_fs.js";
 import { commitFileIn, gitIn, gitSupportsReftable, initGitRepo } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
@@ -159,6 +164,54 @@ describe("collect", () => {
     // The pin survives a gc of an otherwise unreferenced commit.
     gitIn(local, "gc", "-q", "--prune=now");
     expect(gitIn(local, "cat-file", "-t", head)).toBe("commit");
+  });
+
+  it("a remote hook harness worker (spec D11): its commits, then its last turn's CLOSE block closes its task once", async () => {
+    const node = fakeRemoteNode(dir);
+    addHost(db, {
+      name: "hk",
+      shell: "true",
+      exec: node.exec,
+      fetch: "git fetch -q {cwd} HEAD",
+      repo: remote,
+      max_sessions: null,
+    });
+    const row = await remoteAgent("worker-1", { host: "hk" });
+    db.prepare(
+      "UPDATE agents SET cli = 'claude', channel = 'hooks', remote_key = 'origin/auth.worker-1.0a' WHERE id = ?",
+    ).run(row.incarnation);
+    addTask(db, { workstream: "auth", localId: "t1", title: "t1" });
+    await claimTask(db, "t1", { workstream: "auth", agentName: "worker-1" });
+    const relayed: string[] = [];
+    setMurmurHookRunnerForTests(async (_pane, event) => {
+      relayed.push(String(event.event));
+      return true;
+    });
+    try {
+      const head = commitIn("worker-1", "a.txt");
+      node.emit("session_start", { source: "startup" });
+      node.emit("prompt_submitted");
+      node.emit("turn_stopped", {
+        text: 'did it\nCLOSE: task=t1 evidence="make: ok"\nREPORT:\nall',
+      });
+      const r = await collect("worker-1");
+      expect(r).toMatchObject({ head, changed: true, close: { applied: true, task: "t1" } });
+      expect(getTask(db, "t1", "auth")?.status).toBe("CLOSED");
+      expect(relayed).toEqual(["session_start", "prompt_submitted", "turn_stopped"]);
+      // A second collect reads the same turn: applied once.
+      expect((await collect("worker-1")).close).toMatchObject({
+        applied: false,
+        reason: "already applied",
+      });
+    } finally {
+      setMurmurHookRunnerForTests(null);
+    }
+  });
+
+  it("a pi worker's collect reads no node and carries no close", async () => {
+    await remoteAgent("worker-1");
+    commitIn("worker-1", "a.txt");
+    expect((await collect("worker-1")).close).toBeUndefined();
   });
 
   it("is idempotent for an unchanged HEAD and advances for a new one", async () => {

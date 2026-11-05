@@ -39,6 +39,70 @@ export interface ChannelTarget {
   agent: ObservedAgent;
   stateDir?: string;
   socket?: string;
+  /**
+   * A remote hook harness worker (spec D11): its state lives on its host and
+   * reaches the local pane's inbox only through this reader. Set by
+   * `channelTarget` for a `hooks` row with a remote key.
+   */
+  remote?: RemoteReader;
+}
+
+/**
+ * What a remote worker's node reported on one read (`murmur pane --remote
+ * <key> --json`), after its events were relayed into the local pane's inbox.
+ */
+export interface RemoteSnapshot {
+  /** murmur's word for the worker (`working`, `idle`, `idle?`, `blocked`, ...); null: nothing claimed the key. */
+  state: string | null;
+  harness: string | null;
+  sessionId: string | null;
+  runCount: number | null;
+  /** `running` or `stopped`; null: no harness ever claimed the key. */
+  activity: string | null;
+  lastText: string | null;
+  /** False after an interrupt mu wrote that no harness event has confirmed. */
+  confirmed: boolean;
+  /** Whether a live harness holds the key; a released key keeps its last turn. */
+  claimed: boolean;
+  /** The attention kinds the worker carries (`blocked`, `error`, `done`). */
+  attention: string[];
+  /** The pending dialog's message, when the worker is blocked. */
+  blocked: string | null;
+  /** The `error` attention's message, when the worker carries one. */
+  error: string | null;
+  /**
+   * Whether `lastText` is the last ended turn's own: mu saw the
+   * `turn_stopped` that carried it arrive in run `runCount` of `sessionId`.
+   * False when that turn ended without text (an interrupt, a failure) and
+   * murmur kept an earlier turn's, or when mu never saw the text arrive.
+   */
+  textTied: boolean;
+  /** The events this read applied (and relayed), oldest first. */
+  events: number;
+  /** Of those, the ones the harness wrote (not mu). */
+  harnessEvents: number;
+}
+
+export type RemoteReadResult =
+  | { ok: true; snapshot: RemoteSnapshot }
+  | { ok: false; reason: string };
+
+/**
+ * Reads a remote hook harness worker's state on its node through the host
+ * profile's `exec` template and relays the events it applied into the local
+ * (ssh or carrier) pane's inbox with `murmur hook mu --pane` (spec D11). One
+ * exec per read, so only a wait, a collect and a send gate read: never an ack
+ * poll.
+ */
+export interface RemoteReader {
+  readonly host: string;
+  readonly key: string;
+  /**
+   * Read now, or reuse a successful read younger than `maxAgeMs`. `write`
+   * first records one of mu's own events on the node (`murmur hook mu
+   * --remote`, an interrupt it sent) in the same exec.
+   */
+  read(opts?: { maxAgeMs?: number; write?: Record<string, unknown> }): Promise<RemoteReadResult>;
 }
 
 /** A delivery's target: the whole agents row, which the typed errors and recovery hints name. */
@@ -119,9 +183,11 @@ export type SendResult = {
   /**
    * hooks only: `confirmed` when the agent's `run_count` rose (or a new
    * session started a run) within `MU_SEND_ACK_MS` of the paste, else
-   * `unknown`. An `unknown` send is never resent.
+   * `unknown`. An `unknown` send is never resent. A remote worker's paste is
+   * `sent`: its node is read again only by the next wait or send gate, which
+   * confirms it (spec D11).
    */
-  ack?: "confirmed" | "unknown";
+  ack?: "confirmed" | "unknown" | "sent";
   /** hooks only: the agent's `run_count` at the ack, else the one the gate read before the paste. */
   runCount?: number;
   /** hooks only: the harness session the run count belongs to. */
@@ -223,7 +289,7 @@ export type InterruptResult = {
    */
   stopped?: "confirmed" | "unconfirmed";
   /** hooks only: the text's paste, confirmed by `run_count` as a send is (SendResult.ack). */
-  ack?: "confirmed" | "unknown";
+  ack?: "confirmed" | "unknown" | "sent";
   /** hooks only: the agent's `run_count` at the ack, else the one read before the paste. */
   runCount?: number;
   /** hooks only: the harness session the run count belongs to. */

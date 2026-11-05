@@ -406,6 +406,42 @@ describe("the pane is the transport", () => {
     expect(out.trim()).toBe(`MU_CWD ${join(home, "it's here")}`);
   });
 
+  it("a remote claude worker (spec D11): its harness and remote key in {env}, an anchor holding the key, channel hooks", async () => {
+    extensionOn = false;
+    const a = await spawn({ cli: "claude" });
+    const key = (
+      db.prepare("SELECT remote_key FROM agents WHERE id = ?").get(a.incarnation) as {
+        remote_key: string | null;
+      }
+    ).remote_key;
+    expect(key).toMatch(/^[^/]+\/auth\.worker-1\.[0-9a-f]{12}$/);
+    const cmd = filled();
+    expect(cmd).toContain("MU_AGENT_CLI='claude'");
+    expect(cmd).toContain(`MU_REMOTE_KEY='${key}'`);
+    // The command the remote shell runs: the anchor wrapper, writing under the REMOTE home.
+    expect(cmd).toContain("mu-anchor");
+    expect(cmd).toContain('"$HOME"/.local/state/mu-next/anchors');
+    expect(cmd).toContain(`"remote_key":"${key}"`);
+    // No local path reaches the remote command (the local socket is the template's `-L` side).
+    expect(cmd.slice(cmd.indexOf(" -- "))).not.toContain(dir);
+    expect(getAgent(db, "worker-1", "auth")).toMatchObject({ channel: "hooks", host: "dev" });
+    // Unset for the transport pane itself: only {env} hands them to the remote side.
+    expect(paneCommand()).toContain("-u MU_REMOTE_KEY ");
+    expect(paneCommand()).toContain("-u MU_AGENT_CLI ");
+  });
+
+  it("a remote pi worker keeps ctl: no harness, no remote key, no anchor", async () => {
+    const a = await spawn();
+    const cmd = filled();
+    expect(cmd).not.toContain("MU_AGENT_CLI");
+    expect(cmd).not.toContain("MU_REMOTE_KEY");
+    expect(cmd).not.toContain("mu-anchor");
+    expect(getAgent(db, "worker-1", "auth")?.channel).toBe("ctl");
+    expect(db.prepare("SELECT remote_key FROM agents WHERE id = ?").get(a.incarnation)).toEqual({
+      remote_key: null,
+    });
+  });
+
   it("the row keeps the user's command (not the filled template), so a respawn keeps --host", async () => {
     const a = await spawn({ worktree: true, command: "pi --approve" });
     const row = getAgent(db, a.name, "auth");

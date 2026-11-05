@@ -10,24 +10,52 @@ import { dirname } from "node:path";
 import { agentKey, readGatePanes, type StateAgentRef, type StateReading } from "../agent-state.js";
 import type { ObservedAgent } from "../agents/observe.js";
 import type { Db } from "../db.js";
+import { harnessOfCli } from "../harnesses.js";
 import { queuedPanes } from "../muzzle-queue.js";
 import { ctlChannel } from "./ctl.js";
 import { hooksChannel } from "./hooks.js";
+import { remoteReader } from "./hooks-remote.js";
 import { muxChannel } from "./mux.js";
 import { channelOf } from "./select.js";
-import type { AgentChannel, ChannelTarget } from "./types.js";
+import type { AgentChannel, ChannelTarget, RemoteReader } from "./types.js";
 
 /**
  * `agent` as a channel target: its control socket is rooted at the DB's
  * directory, as spawn does, unless `socket` names it. Pass the whole row
- * (`AgentRow`) to get a target the delivery verbs take.
+ * (`AgentRow`) to get a target the delivery verbs take. A `hooks` row with a
+ * remote key (a hook harness worker on a host) gets the reader of its node
+ * (spec D11).
  */
 export function channelTarget<A extends ObservedAgent>(
   db: Db,
   agent: A,
   socket?: string,
 ): ChannelTarget & { agent: A } {
-  return { agent, stateDir: dirname(db.name), ...(socket !== undefined ? { socket } : {}) };
+  const remote = agent.channel === "hooks" ? remoteOf(db, agent) : undefined;
+  return {
+    agent,
+    stateDir: dirname(db.name),
+    ...(socket !== undefined ? { socket } : {}),
+    ...(remote !== undefined ? { remote } : {}),
+  };
+}
+
+/** The remote reader of a `hooks` row spawned on a host, from its row; undefined for a local one. */
+function remoteOf(db: Db, agent: ObservedAgent): RemoteReader | undefined {
+  const row = db
+    .prepare("SELECT host, remote_key, command FROM agents WHERE id = ? AND pane_id = ?")
+    .get(agent.incarnation, agent.paneId) as
+    | { host: string | null; remote_key: string | null; command: string | null }
+    | undefined;
+  if (row?.host == null || row.remote_key == null) return undefined;
+  return remoteReader(db, {
+    name: agent.name,
+    workstreamName: agent.workstreamName,
+    paneId: agent.paneId,
+    harness: harnessOfCli(agent.cli, row.command ?? undefined) ?? agent.cli,
+    host: row.host,
+    key: row.remote_key,
+  });
 }
 
 /** The channel `target.agent` is on: the one its row recorded at spawn (see `expectsCtl`). */

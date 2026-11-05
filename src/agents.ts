@@ -299,6 +299,8 @@ export interface InsertAgentInput {
   hostTransport?: string | null;
   /** The channel the agent is reached through (`agents.channel`); null: derived on each read. */
   channel?: ChannelName | null;
+  /** A remote hook-harness worker's key on its node (`agents.remote_key`, spec D11); null: none. */
+  remoteKey?: string | null;
   /** The lease spawn's own `carrier_jobs` reservation token: the one the name fence lets through. */
   reservation?: string;
 }
@@ -408,10 +410,10 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
     // carrier_jobs reservation other than the caller's own (src/carrier-jobs.ts).
     inserted = db
       .prepare(
-        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, channel, created_at, updated_at)
+        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, channel, remote_key, created_at, updated_at)
        SELECT @name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
                COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource,
-               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @channel, @now, @now
+               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @channel, @remoteKey, @now, @now
        WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs c
                          WHERE c.workstream = @workstream AND c.name = @name AND c.token IS NOT @reservation)`,
       )
@@ -434,6 +436,7 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
         gateToken: input.gateToken ?? null,
         hostTransport: input.hostTransport ?? null,
         channel: input.channel ?? null,
+        remoteKey: input.remoteKey ?? null,
         reservation: input.reservation ?? null,
         now,
       }).changes;

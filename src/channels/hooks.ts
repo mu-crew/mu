@@ -28,6 +28,14 @@
 // text, from the event, never a transcript) when it can tie the text to the
 // turn (ownText); a dialog ends it as `blocked`, the wait's `input`. State reads are the pane option
 // murmur's drain publishes (the same read as `mux`). No msgId receipts.
+//
+// A remote worker (`--host`, spec D11) reports on its own node; its target's
+// `remote` reader brings that node's events into the local pane's inbox
+// (./hooks-remote.ts). It reads on a send gate (send, `command`, interrupt,
+// abort, answer), at the start of a watch and every few polls after, and on
+// collect; never in an ack poll. So a remote paste is `sent`, confirmed by
+// the next read; a remote interrupt records mu's `interrupted` on the node in
+// the same exec; `--fresh` is refused (its confirmation needs a poll).
 
 import { readBaseStates } from "../agent-state.js";
 import {
@@ -70,6 +78,8 @@ import type {
   DeliveryOptions,
   DeliveryTarget,
   InterruptResult,
+  RemoteReader,
+  RemoteReadResult,
   SendResult,
 } from "./types.js";
 
@@ -84,17 +94,34 @@ function clearKeyOf(t: DeliveryTarget): string | null {
   return rowOf(t.agent)?.clearInputKey ?? null;
 }
 
+/** How long a verb's second remote read may reuse its first (an interrupt's gate, then its send's). */
+const REMOTE_REUSE_MS = 5000;
+
+/** A remote worker's node, read and relayed into the local inbox; undefined for a local agent. */
+async function readRemote(t: ChannelTarget, maxAgeMs = 0): Promise<RemoteReadResult | undefined> {
+  return t.remote === undefined ? undefined : await t.remote.read({ maxAgeMs });
+}
+
+/** The gate's refusal reason for a remote worker whose node could not be read. */
+const unread = (r: { reason: string }): string => `its host was not read: ${r.reason}`;
+
 /**
  * Gate on the pane's state, then clear and paste `text` through the backend
  * (tmux's `pasteToPane`, else a backend's own `sendToPane`). Returns the pane
- * the gate read: the ack's baseline.
+ * the gate read: the ack's baseline. A remote worker's node is read first
+ * (spec D11); a read that fails reads `unknown`, which `force` overrides.
  */
 async function gateAndPaste(
   t: DeliveryTarget,
   text: string,
   force: boolean,
+  remoteMaxAgeMs = 0,
 ): Promise<HooksPane | undefined> {
   const { name, workstreamName, cli, paneId } = t.agent;
+  const remote = await readRemote(t, remoteMaxAgeMs);
+  if (remote !== undefined && !remote.ok && !force) {
+    throw new AgentSendGateError(name, workstreamName, "unknown", unread(remote));
+  }
   const before = await readHooksPane(paneId);
   const gate = sendGate(before, Date.now(), staleMs());
   // A paste into a dialog would answer it with the text: never, --force or not.
@@ -125,12 +152,20 @@ function counts(seen: HooksPane | undefined): Pick<SendResult, "runCount" | "ses
   };
 }
 
-async function send(t: DeliveryTarget, text: string, opts: DeliveryOptions): Promise<SendResult> {
+async function send(
+  t: DeliveryTarget,
+  text: string,
+  opts: DeliveryOptions,
+  remoteMaxAgeMs = 0,
+): Promise<SendResult> {
   const { name, workstreamName } = t.agent;
   refuseFence(t, opts);
   if (opts.mode === "steer") throw new AgentSteerUnsupportedError(name, workstreamName, "hooks");
   if (text === "") throw new AgentEmptySendError(name, workstreamName, "hooks");
-  const before = await gateAndPaste(t, text, opts.force === true);
+  const before = await gateAndPaste(t, text, opts.force === true, remoteMaxAgeMs);
+  // D11: a remote paste is not polled for (each read is an exec); the next
+  // wait or send gate reads the node, which confirms it.
+  if (t.remote !== undefined) return { transport: "hooks", ack: "sent", ...counts(before) };
   const ms = sendAckMs();
   const acked = await pollPane(t.agent.paneId, ms, (now) => runStarted(before, now));
   if (acked === undefined) {
@@ -178,6 +213,10 @@ async function stopTurn(
   onKey?: () => Promise<void>,
 ): Promise<Stopped> {
   const { name, workstreamName, cli, paneId } = t.agent;
+  const remote = await readRemote(t);
+  if (remote !== undefined && !remote.ok) {
+    throw new AgentSendGateError(name, workstreamName, "unknown", unread(remote));
+  }
   const before = await readHooksPane(paneId);
   if (before === undefined || (before.activity !== "running" && before.activity !== "stopped")) {
     const gate = sendGate(before, Date.now(), staleMs());
@@ -192,6 +231,7 @@ async function stopTurn(
   const row = rowOf(t.agent);
   await mux.sendKeys(paneId, [row?.interruptKey ?? "Escape"]);
   await onKey?.();
+  if (t.remote !== undefined) return remoteStopped(t, t.remote, before);
   if (row !== undefined && row.events.interrupted.length > 0) {
     const done = await pollPane(paneId, timeoutMs, (now) => stoppedSince(before, now));
     if (done === undefined) throw new AgentAbortTimeoutError(name, workstreamName, timeoutMs);
@@ -210,15 +250,43 @@ async function stopTurn(
 }
 
 /**
+ * A remote worker's stop, once its key was pressed (spec D11): mu records
+ * `interrupted` on the worker's node and reads it back in one exec, so the
+ * local pane reads `idle?` until the harness's next event replaces it. No
+ * poll: a harness's own interrupt event arrives with that read or the next.
+ * A node that did not record it is AgentInterruptUnrecordedError.
+ */
+async function remoteStopped(
+  t: DeliveryTarget,
+  remote: RemoteReader,
+  before: HooksPane,
+): Promise<Stopped> {
+  const r = await remote.read({
+    write: {
+      event: "interrupted",
+      ...(before.sessionId !== null ? { session_id: before.sessionId } : {}),
+    },
+  });
+  if (!r.ok) throw new AgentInterruptUnrecordedError(t.agent.name, t.agent.workstreamName);
+  const after = await readHooksPane(t.agent.paneId);
+  return {
+    wasBusy: true,
+    stopped: stoppedSince(before, after) && after?.confirmed === true ? "confirmed" : "unconfirmed",
+  };
+}
+
+/**
  * The fence a confirmed paste gives a wait: the turns settled before its run
- * (`run_count` less one) in its session. An unconfirmed paste gives none.
+ * (`run_count` less one) in its session. A remote paste (`sent`) gives the
+ * prompts the gate counted before it, so the next read confirms its run. An
+ * unconfirmed paste gives none.
  */
 export function hooksFence(
   sent: Pick<SendResult, "ack" | "runCount" | "sessionId">,
 ): Pick<InterruptResult, "runs" | "incarnation"> {
-  if (sent.ack !== "confirmed" || sent.runCount === undefined) return {};
+  if (sent.ack === "unknown" || sent.ack === undefined || sent.runCount === undefined) return {};
   return {
-    runs: Math.max(0, sent.runCount - 1),
+    runs: sent.ack === "sent" ? sent.runCount : Math.max(0, sent.runCount - 1),
     ...(sent.sessionId !== undefined ? { incarnation: sent.sessionId } : {}),
   };
 }
@@ -232,7 +300,7 @@ async function interrupt(
   // Before the key: an empty prompt would stop the turn and then send nothing.
   if (text === "") throw new AgentEmptySendError(name, workstreamName, "hooks");
   const stop = await stopTurn(t, opts.timeoutMs);
-  const sent = await send(t, text, {});
+  const sent = await send(t, text, {}, REMOTE_REUSE_MS);
   return {
     transport: "hooks",
     wasBusy: stop.wasBusy,
@@ -264,6 +332,11 @@ async function fresh(t: DeliveryTarget, text: string, opts: DeliveryOptions): Pr
   const row = rowOf(t.agent);
   if (row === undefined) throw new AgentFreshNeedsCtlError(name, workstreamName, cli);
   const command = row.freshCommand;
+  // D11: a fresh session is confirmed by polling for it, and a remote node is never polled.
+  if (t.remote !== undefined) {
+    const why = say("agent.fresh_remote", name, workstreamName, command);
+    throw new AgentSendUnsupportedError(name, workstreamName, cli, why);
+  }
   const ms = sendAckMs();
   if (opts.force === true) {
     const now = await readHooksPane(paneId);
@@ -306,6 +379,12 @@ const WATCH_MISSES = 3;
  * may keep a dead pane's row running, and a held watch is never polled.
  */
 const WATCH_PANE_CHECK_MS = 5000;
+/**
+ * A remote worker's watch reads its node every this many polls (about 5 s
+ * apart, plus the exec itself): each read is an exec, several serialized ssh
+ * round trips on a lease host (spec D11).
+ */
+const REMOTE_WATCH_POLLS = 5;
 /** murmur's cap on a turn's text (bytes); it keeps the head, so a capped text lost its tail. */
 const LAST_TEXT_CAP_BYTES = 64 * 1024;
 /**
@@ -413,6 +492,25 @@ function settledObservation(
   };
 }
 
+/** The agent as a watch reports it when murmur's pane says nothing about its turn. */
+function lostObservation(
+  agent: ObservedAgent,
+  reason?: string,
+  status: "unknown" | "busy" | null = "unknown",
+): AgentObservation {
+  return {
+    workstream: agent.workstreamName,
+    name: agent.name,
+    agentId: agent.incarnation,
+    paneId: agent.paneId,
+    status,
+    source: "murmur",
+    since: null,
+    ...(reason !== undefined ? { reason } : {}),
+    settled: false,
+  };
+}
+
 /**
  * Watch the agent's current or next turn end past `afterRuns` (spec D4
  * `settle`): poll `murmur pane` until a turn past it has stopped, a dialog
@@ -423,38 +521,114 @@ function settledObservation(
  * the baseline is the turns settled now, so a running turn's end counts. A
  * new session (a fresh command) counts its own turns from zero; `inc` pins
  * the session, and another one rejects with AgentRestartedError. undefined:
- * murmur has no run count for the pane, so the caller polls. `signal` ends
- * the watch `unknown`, never settled.
+ * murmur has no run count for the pane, so the caller polls; a remote
+ * worker's pane with no row yet is watched until its node reports one
+ * (awaitRow). `signal` ends the watch `unknown`, never settled.
  */
 async function watchHooks(
   t: ChannelTarget,
   signal: AbortSignal,
   opts: { afterRuns?: number; inc?: string },
 ): Promise<ObservedWatch | undefined> {
-  const { agent } = t;
+  const { agent, remote } = t;
+  // A remote worker's events reach the local inbox only by a read of its node;
+  // a failed read is retried on the next round, never a reason to give the
+  // agent up. The local pane read before it is what the relayed turns found
+  // (ownText's witness); a pane with no row then had seen no session, so a
+  // session the read brings in is new to the watch (ownText's new-session rule).
+  const before = remote !== undefined ? await readHooksPane(agent.paneId) : undefined;
+  await remote?.read();
   const first = await readHooksPane(agent.paneId);
-  const firstRuns = first === undefined ? undefined : settledRuns(first);
-  if (first === undefined || firstRuns === undefined) return undefined;
-  const afterRuns = opts.afterRuns ?? firstRuns;
+  if (first === undefined) return undefined;
+  if (settledRuns(first) === undefined) {
+    return remote === undefined ? undefined : awaitRow(t, remote, signal, opts);
+  }
+  const unseen = before !== undefined && settledRuns(before) === undefined;
+  return follow(t, signal, opts, first, before, unseen ? null : first.sessionId);
+}
+
+/**
+ * A remote worker whose local pane has no row yet: just spawned, its harness
+ * not yet started, or its node not read yet (no admission slot, an ssh
+ * hiccup). Poll the pane, reading the node every few polls, until a row
+ * appears, then watch from it (`follow`, the session new to the watch).
+ * Reported busy meanwhile; `afterRuns` stands as given, and without one the
+ * baseline is fixed at the first row (so a turn the node ran before mu could
+ * read it never counts as this one).
+ */
+function awaitRow(
+  t: ChannelTarget,
+  remote: RemoteReader,
+  signal: AbortSignal,
+  opts: { afterRuns?: number; inc?: string },
+): ObservedWatch {
+  const { agent } = t;
+  const settled = (async (): Promise<AgentObservation> => {
+    let misses = 0;
+    let polls = 0;
+    let checkedAt = Date.now();
+    for (;;) {
+      await sleep(WATCH_POLL_MS);
+      await yieldTurn();
+      if (signal.aborted) return lostObservation(agent);
+      if (Date.now() - checkedAt >= WATCH_PANE_CHECK_MS) {
+        checkedAt = Date.now();
+        if ((await paneUp(agent.paneId)) === false) {
+          return lostObservation(agent, "the pane is gone", null);
+        }
+      }
+      polls += 1;
+      if (polls % REMOTE_WATCH_POLLS === 0) {
+        await remote.read();
+        if (signal.aborted) return lostObservation(agent);
+      }
+      const pane = await readHooksPane(agent.paneId);
+      if (pane === undefined) {
+        misses += 1;
+        if (misses >= WATCH_MISSES) return lostObservation(agent, "murmur pane did not answer");
+        continue;
+      }
+      misses = 0;
+      if (settledRuns(pane) === undefined) continue;
+      return await follow(t, signal, opts, pane, undefined, null).settled;
+    }
+  })();
+  return {
+    initial: lostObservation(agent, "its node has reported no session yet", "busy"),
+    ...(opts.afterRuns !== undefined ? { afterRuns: opts.afterRuns } : {}),
+    settled,
+  };
+}
+
+/**
+ * The watch from its first pane read that has a run count. `textSession` is
+ * the session the watch saw first, for ownText: null when the turns arrived in
+ * a session the watch never saw (a remote worker's first read).
+ */
+function follow(
+  t: ChannelTarget,
+  signal: AbortSignal,
+  opts: { afterRuns?: number; inc?: string },
+  first: HooksPane,
+  before: HooksPane | undefined,
+  textSession: string | null,
+): ObservedWatch & { afterRuns: number } {
+  const { agent, remote } = t;
+  const afterRuns = opts.afterRuns ?? settledRuns(first) ?? 0;
   const session = first.sessionId;
   const past = (p: HooksPane): boolean => {
     const runs = settledRuns(p) ?? -1;
     return p.sessionId === session ? runs > afterRuns : runs >= 1;
   };
   // Updated on every read before the turn ends: what an earlier turn left (ownText).
-  let witness = past(first) ? undefined : witnessOf(first);
+  let witness = !past(first)
+    ? witnessOf(first)
+    : before !== undefined && before.sessionId === session && !past(before)
+      ? witnessOf(before)
+      : undefined;
   const row = rowOf(agent);
-  const lost = (reason?: string, status: "unknown" | null = "unknown"): AgentObservation => ({
-    workstream: agent.workstreamName,
-    name: agent.name,
-    agentId: agent.incarnation,
-    paneId: agent.paneId,
-    status,
-    source: "murmur",
-    since: null,
-    ...(reason !== undefined ? { reason } : {}),
-    settled: false,
-  });
+  const lost = (reason?: string, status: "unknown" | null = "unknown"): AgentObservation =>
+    lostObservation(agent, reason, status);
   const restarted = (actual: string): AgentRestartedError =>
     new AgentRestartedError(agent.name, agent.workstreamName, opts.inc ?? "", actual);
   // With a baseline the turn past it is the pending work: busy until it ends.
@@ -466,6 +640,7 @@ async function watchHooks(
     let pane: HooksPane | undefined = first;
     let misses = 0;
     let checkedAt = Date.now();
+    let polls = 0;
     for (;;) {
       if (signal.aborted) return lost();
       if (pane === undefined) {
@@ -483,9 +658,9 @@ async function watchHooks(
         if (pane.activity === "stopped" && past(pane)) {
           const late =
             row?.textFollowsStop === true
-              ? await lateText(agent.paneId, pane, witness, session)
+              ? await lateText(agent.paneId, pane, witness, textSession, remote)
               : undefined;
-          return settledObservation(agent, late ?? pane, witness, session);
+          return settledObservation(agent, late ?? pane, witness, textSession);
         }
         if (!past(pane)) witness = witnessOf(pane);
       }
@@ -496,6 +671,11 @@ async function watchHooks(
         checkedAt = Date.now();
         // Gone is dead; a mux that cannot say is not a death.
         if ((await paneUp(agent.paneId)) === false) return lost("the pane is gone", null);
+      }
+      polls += 1;
+      if (remote !== undefined && polls % REMOTE_WATCH_POLLS === 0) {
+        await remote.read();
+        if (signal.aborted) return lost();
       }
       pane = await readHooksPane(agent.paneId);
     }
@@ -514,11 +694,14 @@ async function lateText(
   pane: HooksPane,
   witness: Witness | undefined,
   session: string | null,
+  remote?: RemoteReader,
 ): Promise<HooksPane | undefined> {
   if (!pane.confirmed || pane.lastText !== null) return undefined;
   const counts =
     witness?.session === pane.sessionId || (pane.sessionId !== session && settledRuns(pane) === 1);
   if (!counts) return undefined;
+  // A remote worker's late text is on its node: one more read brings it in.
+  await remote?.read();
   return await pollPane(
     paneId,
     LATE_TEXT_MS,
@@ -558,6 +741,10 @@ export const hooksChannel: AgentChannel = {
   readStates: (agents, opts) => readBaseStates(agents, opts, opts.livenessOnly),
   watch: watchHooks,
   // D4: settled turns and `session_id` stand in for pi's runs and incarnation.
+  // A remote worker's baseline is the local count, not a fresh read of its node:
+  // the watch that follows reads the node, and a turn that read brings in must
+  // still find the text it replaced (ownText's witness). A remote pane with no
+  // row yet has no baseline here; the wait watches it anyway (src/wait-ctl.ts).
   baseline: async (t) => {
     const pane = await readHooksPane(t.agent.paneId);
     const runs = pane === undefined ? undefined : settledRuns(pane);
@@ -599,6 +786,10 @@ export const hooksChannel: AgentChannel = {
   },
   answer: async (t, keys, opts) => {
     const { name, workstreamName, paneId } = t.agent;
+    const remote = await readRemote(t);
+    if (remote !== undefined && !remote.ok && opts.force !== true) {
+      throw new AgentSendGateError(name, workstreamName, "unknown", unread(remote));
+    }
     const before = await readHooksPane(paneId);
     const blocked = before !== undefined && before.blocked !== null;
     if (!blocked && opts.force !== true) {
@@ -606,6 +797,31 @@ export const hooksChannel: AgentChannel = {
     }
     const mux = await activeMux();
     if (!mux.sendKeys) throw new AgentAnswerUnsupportedError(name, workstreamName, "hooks");
+    if (t.remote !== undefined) {
+      // D11: no poll for the next event. mu records `continued` on the node
+      // BEFORE the keys, so the dialog stops reading pending and every event
+      // the answer causes lands after it; the next read relays them. (Written
+      // after, it could land after the turn the answer let finish, and read
+      // that turn as running.) As locally, `mu agent answer` clears the dialog
+      // whatever the keys did with it; keys that never reached the pane put it
+      // back.
+      const session = before?.sessionId != null ? { session_id: before.sessionId } : {};
+      if (blocked) {
+        const w = await t.remote.read({ write: { event: "continued", ...session } });
+        if (!w.ok) throw new AgentSendGateError(name, workstreamName, "unknown", unread(w));
+      }
+      try {
+        await typeKeys(mux.sendKeys, paneId, keys);
+      } catch (e) {
+        if (blocked) {
+          await t.remote.read({
+            write: { event: "permission_requested", message: before.blocked ?? "", ...session },
+          });
+        }
+        throw e;
+      }
+      return { transport: "hooks", keys, ack: "unknown" };
+    }
     await typeKeys(mux.sendKeys, paneId, keys);
     // D4: confirmed by the next event (the dialog closing, or the turn moving on).
     const next = await pollPane(paneId, sendAckMs(), (now) => eventArrived(before, now));

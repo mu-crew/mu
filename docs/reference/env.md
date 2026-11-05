@@ -59,12 +59,13 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_WORKSTREAM` | The agent's workstream. With `MU_MANAGED_AGENT=1` it is the scope of every verb that has no `-w` (no tmux lookup); without it, ignored. `MU_SESSION` is not read: a verb with no `-w` and no injected scope fails with `no workstream: pass -w <name>`. |
 | `MU_CTL_SOCK` | The agent's control socket path, derived from state dir, workstream, and agent. The mu pi extension serves it. |
 | `MU_MANAGED_AGENT` | `1`. Hides `mu_delegate` inside agents, so a helper cannot spawn helpers (unless `MU_ORCHESTRATOR=1`). |
-| `MU_AGENT_CLI` | The harness the pane runs (`claude`, `codex`, `cursor-agent`, `muse`, `pi`), mapped from the cli key and command; the cli key itself for any other CLI. murmur's hooks read it when they find no anchor. Local agents only. |
+| `MU_AGENT_CLI` | The harness the pane runs (`claude`, `codex`, `cursor-agent`, `muse`, `pi`), mapped from the cli key and command; the cli key itself for any other CLI. murmur's hooks read it when they find no anchor. Local agents, and a remote claude, codex, cursor-agent or muse worker (in `{env}`). |
 | `MU_ORCHESTRATOR` | `1`, only in a pane `mu orchestrate` started. Keeps `mu_delegate` visible to a pi there; turns off what only a worker gets (the close nudge, and `MU_WORKSTREAM` as the implicit `-w`). Never set in a worker or a delegate, and unset in a remote pane. |
 | `MU_DB_PATH`, `MU_STATE_DIR` | The absolute DB path and state dir the spawn used, so the worker's `mu` reads the same DB from any cwd. Local agents only. |
 | `PI_CODING_AGENT_SESSION_DIR` | `<DB dir>/delegate-sessions/<workstream>/<task>`, set when `mu agent spawn --task <id> --send` (what `mu_delegate` and `mu next --refute` run) starts a pi agent for a `delegate`-kind task, so delegate sessions stay out of the caller's pi `/resume` list. Not set by a plain `mu agent spawn`. Local agents only. |
 | `SSH_AUTH_SOCK` | The caller's, when it is a socket (a detached tmux session would otherwise hand the pane a stale one). Local agents only. |
 | `MU_REMOTE` | `1`, only for an agent spawned with `--host`. Tells its pi extension there is no mu DB on that host: it skips the close nudge (you close the task) and the settle wait. |
+| `MU_REMOTE_KEY` | `<origin host>/<ws>.<agent>.<nonce>`, only for a claude, codex, cursor-agent or muse worker spawned with `--host` (spec D11): the key its hooks on that host report under, in murmur's remote area rather than its inbox. Its anchor holds the same key, for a hook whose env is cleared. Unset in the local pane. |
 
 A local `claude`, `codex`, `cursor-agent` or `muse` pane on tmux starts
 through a small `sh` wrapper that writes
@@ -79,8 +80,11 @@ and herdr and Rex panes, start unwrapped.
 
 A `--host` agent gets exactly `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,
 `MU_WORKSTREAM`, `MU_CTL_SOCK` (the host-side path) and `MU_REMOTE`, written
-into its profile's shell template (`{env}`). It never gets `MU_DB_PATH`,
-`MU_STATE_DIR` or `MU_SYNC_DIR`; its local pane gets none of the vars above.
+into its profile's shell template (`{env}`); a claude, codex, cursor-agent or
+muse worker also gets `MU_AGENT_CLI` and `MU_REMOTE_KEY`, and its remote
+command starts through the same anchor wrapper, writing under the remote
+`$HOME`. It never gets `MU_DB_PATH`, `MU_STATE_DIR` or `MU_SYNC_DIR`; its
+local pane gets none of the vars above.
 
 ## pi package and `mu pi migrate`
 

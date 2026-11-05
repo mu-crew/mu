@@ -169,6 +169,46 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `mu task close --if-ready` now waits until every blocker is CLOSED **and**
   every check on them has a verdict; a skip lists them in `pendingChecks`.
   `mu_delegate`, delegate calls and `next --refute` are unchanged.
+- **Remote hook harness workers on `hooks`** (spec D11, U12). `mu agent
+  spawn --host` of claude, codex, cursor-agent or muse (from a tmux origin)
+  now records channel `hooks` and a per-spawn remote key,
+  `<origin host>/<ws>.<agent>.<nonce>` (`agents.remote_key`). The remote
+  command starts through the anchor wrapper, which writes the anchor, key
+  included, under the remote `$HOME`, and `{env}` also carries `MU_AGENT_CLI`
+  and `MU_REMOTE_KEY` (both unset for the local transport pane). The
+  worker's hooks on that node write to murmur's remote area, so the node's
+  store and `murmur status` never list it. mu reads that area with `murmur
+  pane --remote <key> --json` through the profile's `exec` template, under
+  the host's channel admission, and relays each event it applied into the
+  local pane's inbox with `murmur hook mu --pane` (harness and agent named).
+  It reads only on a send gate (send, a session command, `--interrupt`,
+  abort, answer), at the start of a wait's watch and every 5th poll after,
+  and on collect; never in an ack poll. So a remote send returns `ack: sent`
+  (fenced by the run count the gate read) and the next read confirms it. A
+  node that cannot be read (a busy host at `--max-sessions 1`: the worker's
+  pane holds the only channel) makes the gate read `unknown`; `--force`
+  pastes anyway. `--interrupt` and abort press Escape, then record
+  `interrupted` on the node and read it back in one exec (`stopped:
+  unconfirmed`, `idle?`); a node that will not record it is
+  `AgentInterruptUnrecordedError` and the text is not sent. `answer` records
+  `continued` on the node before typing the keys (`ack: unknown`), and puts
+  the dialog back there when the keys never reach the pane. `--fresh`
+  is refused (`AgentSendUnsupportedError`): its new session is confirmed only
+  by polling. Events the node applied that never reached the local pane (an
+  exec that timed out, a relay murmur refused) are not lost for good: every
+  read that succeeds compares the local pane with the node's report and
+  writes the events that bring it back in line. A wait on a worker whose
+  local pane has no row yet (just spawned, or its node not yet readable)
+  reads the node every few polls until one appears, from the spawn's
+  baseline. `mu agent collect` on such a worker, once its commits are
+  pinned, reads the node and applies the `CLOSE:` block of its last ended
+  turn (`close: {applied, task, reason}`), once per session and turn, as `mu
+  wait` does, and only when that turn wrote the text: mu counts which run
+  each relayed text arrived in (a small record per key beside the DB's
+  locks), so a turn that failed, was interrupted or ended without text never
+  applies an earlier turn's block. A remote pi worker is unchanged (ctl, no key, no anchor). A
+  check against a live host is still owed: the tests drive a fake node
+  through a fake exec template.
 
 ### Changed
 
@@ -219,6 +259,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   derived path (a remote non-pi worker's ssh `-L` binds one) no longer moves
   it to ctl, so an opaque wrapper around pi names `--cli pi`. A row older than
   the column keeps the derived rule, socket file included.
+- **Schema: `agents.remote_key`** (machine-local), added in place to a v13
+  file (no version bump): a remote hook harness worker's key on its node
+  (spec D11); null for every other agent.
+- **`{env}` may carry `MU_AGENT_CLI` and `MU_REMOTE_KEY`** besides the five
+  identity variables; mu sets them only for a remote hook harness worker.
 - **Schema: `keep_driving`** (machine-local: per harness session, the Stop
   hook's consecutive empty blocks and whether its close nudge fired), created
   in place in a v13 file by `upgradeSchema` (no version bump; 28 tables). Rows

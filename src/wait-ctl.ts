@@ -67,7 +67,25 @@ export function ctlAgentHooks(
         // With neither, an owed ref counts from the run count probed now and
         // says so (`unknownBaseline`): a historical run is never completion.
         const probe = await channel.baseline(target);
-        if (probe === undefined) return undefined;
+        if (probe === undefined) {
+          // A remote hooks worker whose pane has no row yet (just spawned, its
+          // node not read yet): its producer's baseline, when it names no
+          // incarnation to check, still holds, and the watch reads the node
+          // until a row appears. Without one it counts from that first row.
+          if (target.remote === undefined) return undefined;
+          const b = ctx.baseline;
+          if (
+            b !== undefined &&
+            b.incarnation === undefined &&
+            (b.agentId === undefined || b.agentId === agent.incarnation)
+          ) {
+            afterRuns = b.afterRuns;
+          }
+          return await channel.watch(target, signal, {
+            ...(afterRuns !== undefined ? { afterRuns } : {}),
+            ...(ref.incarnation !== undefined ? { inc: ref.incarnation } : {}),
+          });
+        }
         const inc = probe.incarnation;
         const b = ctx.baseline;
         const baseOk =

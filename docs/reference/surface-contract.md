@@ -52,7 +52,11 @@ their guarantees:
   per settled run by the wait engine (`src/close-block.ts`), and so are a
   `hooks` worker's, from its `turn_stopped` text.
 - **Remote.** Host profiles, remote spawn, `agent collect`, the close
-  rule, remote command gates, recovery records.
+  rule, remote command gates, recovery records. A remote claude, codex,
+  cursor-agent or muse worker is on `hooks` with a remote key: mu reads its
+  node through `--exec` on a send gate, a wait and a collect (never an ack
+  poll), so its send is `ack: sent`, `--fresh` is refused, and `collect`
+  applies its last turn's `CLOSE:` block (`close`).
 - **Surfaces.** In-process `mu db query` (alias `mu sql`), five-tab
   read-only dashboard, pi package (3.x's link verb is gone), `mu pi migrate`.
 

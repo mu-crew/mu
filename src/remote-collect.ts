@@ -15,6 +15,13 @@
 // agent's id, pane, host, cwd and base). The merge command printed names the
 // exact sha, never FETCH_HEAD. A per-repo lock stops two collects from sharing
 // one FETCH_HEAD. mu never merges.
+//
+// A hook harness worker (claude, codex, cursor-agent, muse on `--host`) has no
+// pi to settle through ctl: once its commits are collected, collect reads its
+// node (spec D11, src/channels/hooks-remote.ts) and applies the CLOSE block of
+// its last ended turn's text, when that turn wrote it, once per session and
+// turn, with the trust of a pi's ctl text. `mu wait` applies the same block when it sees the turn end;
+// whichever comes first applies it, the other reads "already applied".
 
 import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -22,6 +29,8 @@ import { dirname, join, resolve } from "node:path";
 import { AgentLockBusyError, AgentNotFoundError, AgentReplacedError } from "./agents/errors.js";
 import { withAgentLock } from "./agents/lock.js";
 import { type AgentRow, getAgent } from "./agents.js";
+import { channelTarget } from "./channels/index.js";
+import { applySettledClose } from "./close-block.js";
 import type { Db } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { runLeasedTemplate, withHostChannel } from "./hosts.js";
@@ -74,6 +83,16 @@ export interface CollectResult {
   changed: boolean;
   /** Set when the commits were collected for a removed agent's recovery record (its id), not a live agent. */
   recoveryId?: number;
+  /** A remote hook harness worker: what its last turn's CLOSE block did (spec D11). */
+  close?: RemoteClose;
+}
+
+/** What collect did with a remote hook harness worker's last turn text. */
+export interface RemoteClose {
+  applied: boolean;
+  /** The task the block named, when it named one. */
+  task: string | null;
+  reason: string;
 }
 
 /** What a collect works on: a live agent's row, or a removed agent's recovery record. */
@@ -236,12 +255,15 @@ export async function collectRemoteAgent(
         }
         const changed = head !== (target.collectedHead ?? base);
         await recordCollected(target, head, ref, repo, prior);
+        const close =
+          rec === undefined && agent !== undefined ? await remoteClose(db, agent) : undefined;
         return {
           head,
           ref,
           merge: `git merge ${head}`,
           changed,
           ...(rec === undefined ? {} : { recoveryId: rec.agentId }),
+          ...(close !== undefined ? { close } : {}),
         };
       },
       {
@@ -252,6 +274,52 @@ export async function collectRemoteAgent(
       },
     ),
   );
+}
+
+/** murmur's cap on a turn's text (bytes); it keeps the head, so a capped text lost its tail. */
+const LAST_TEXT_CAP_BYTES = 64 * 1024;
+
+/**
+ * Read a remote hook harness worker's node and apply the CLOSE block of its
+ * last ended turn (spec D11), when that turn wrote the text (the read's
+ * `textTied`). undefined for any other agent. Never throws: a node that
+ * cannot be read, a turn still running, interrupted or failed, a text an
+ * earlier turn left, or a refused close is a reason, and the collect stands.
+ */
+export async function remoteClose(db: Db, agent: AgentRow): Promise<RemoteClose | undefined> {
+  const target = channelTarget(db, agent);
+  if (target.remote === undefined) return undefined;
+  const no = (reason: string): RemoteClose => ({ applied: false, task: null, reason });
+  const read = await target.remote.read();
+  if (!read.ok) return no(`its host was not read: ${read.reason}`);
+  const s = read.snapshot;
+  if (s.activity !== "stopped" || s.sessionId === null || s.runCount === null) {
+    return no("its last turn has not ended");
+  }
+  if (!s.confirmed) return no("its last turn was interrupted");
+  if (s.lastText === null) return no("its last turn left no text");
+  // murmur keeps an earlier turn's text when a turn ends without one (a
+  // failure, an interrupt): a CLOSE block not tied to the turn is never applied.
+  if (!s.textTied) return no("its last turn's text cannot be tied to that turn");
+  try {
+    return applySettledClose(db, {
+      workstream: agent.workstreamName,
+      agent: agent.name,
+      agentId: agent.incarnation,
+      incarnation: s.sessionId,
+      runs: s.runCount,
+      lastText: s.lastText,
+      ...(Buffer.byteLength(s.lastText) > LAST_TEXT_CAP_BYTES - 4
+        ? { lastTextTruncated: true }
+        : {}),
+      // The text is this turn's own (textTied), so the turn did not fail; murmur
+      // keeps an `error` until an interrupt clears it, so one still shown is an
+      // earlier turn's. Applied once per turn.
+      settled: true,
+    });
+  } catch (e) {
+    return no(e instanceof Error ? e.message : String(e));
+  }
 }
 
 /** A live agent as a collect target: remote worktree rows only. */

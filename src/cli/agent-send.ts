@@ -167,7 +167,9 @@ export async function cmdSend(
       sent.transport === "mux"
         ? "via mux"
         : sent.transport === "hooks"
-          ? `via hooks${opts.fresh ? ", fresh session" : ""}, confirmed${sent.runCount !== undefined ? `: run ${sent.runCount}` : ""}`
+          ? sent.ack === "sent"
+            ? "via hooks to its host, sent: the next wait confirms it"
+            : `via hooks${opts.fresh ? ", fresh session" : ""}, confirmed${sent.runCount !== undefined ? `: run ${sent.runCount}` : ""}`
           : opts.fresh
             ? "via ctl, fresh session"
             : sent.command !== undefined
@@ -327,10 +329,9 @@ async function cmdSendInterrupt(
     if (undelivered !== undefined) console.error(pc.yellow(`warning: ${undelivered}`));
     else {
       const run = r.runCount !== undefined ? `: run ${r.runCount}` : "";
+      const how = r.ack === "sent" ? "sent: the next wait confirms it" : `confirmed${run}`;
       console.log(
-        pc.dim(
-          `sent ${Buffer.byteLength(text)} bytes to ${name} (via hooks, ${what}, confirmed${run})`,
-        ),
+        pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (via hooks, ${what}, ${how})`),
       );
     }
     return;

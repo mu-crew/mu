@@ -365,7 +365,10 @@ const SCOPE_LABEL: Record<HostTemplateScope, string> = {
 /**
  * The only variables a remote worker is given: its identity, never the local
  * DB, state or sync dir. `MU_REMOTE=1` tells the remote extension there is no
- * mu DB over there (it skips the close nudge; CLOSE is applied here).
+ * mu DB over there (it skips the close nudge; CLOSE is applied here). A hook
+ * harness worker (claude, codex, cursor-agent, muse) also gets its harness,
+ * `MU_AGENT_CLI`, and `MU_REMOTE_KEY`, the key its hooks report under on its
+ * node (spec D11); a pi worker gets neither.
  */
 export const HOST_ENV_KEYS = [
   "MU_MANAGED_AGENT",
@@ -373,6 +376,8 @@ export const HOST_ENV_KEYS = [
   "MU_WORKSTREAM",
   "MU_CTL_SOCK",
   "MU_REMOTE",
+  "MU_AGENT_CLI",
+  "MU_REMOTE_KEY",
 ] as const;
 
 /** One shell-quoted value as `shellQuote` writes it: single-quoted runs and `"'"`. */
