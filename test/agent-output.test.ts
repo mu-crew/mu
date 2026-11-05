@@ -57,6 +57,7 @@ const SQL_KEYS = [
   "collected_head",
   "repo",
   "gate_token",
+  "channel",
   "created_at",
   "updated_at",
 ];
@@ -66,7 +67,9 @@ describe("agentToOutput", () => {
     const row = getAgent(db, "worker-1", "auth");
     if (!row) throw new Error("seed");
     const out = agentToOutput(row, resolveWorkstreamId(db, "auth"));
-    expect(Object.keys(out)).toEqual(SQL_KEYS);
+    // Then the one fact computed from the columns alone: the harness (spec D17).
+    expect(Object.keys(out)).toEqual([...SQL_KEYS, "harness"]);
+    expect(out.harness).toBe("claude");
     expect(out).toMatchObject({
       id: row.incarnation,
       name: "worker-1",

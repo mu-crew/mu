@@ -2,7 +2,15 @@
 // observed, and `null` exactly where U0 left a fact unverified.
 
 import { describe, expect, it } from "vitest";
-import { HARNESS_TABLE, HARNESSES, harnessFor, isHarness } from "../src/harnesses.js";
+import {
+  HARNESS_TABLE,
+  HARNESSES,
+  type Harness,
+  harnessFor,
+  harnessOfCli,
+  isHarness,
+  withSpawnPresets,
+} from "../src/harnesses.js";
 
 function deeplyFrozen(value: unknown): boolean {
   if (typeof value !== "object" || value === null) return true;
@@ -115,5 +123,97 @@ describe("harnessFor", () => {
     expect(isHarness("codex")).toBe(true);
     expect(isHarness("toString")).toBe(false);
     expect(isHarness(7)).toBe(false);
+  });
+});
+
+describe("harness from key (spec D17)", () => {
+  it("argv0's basename first, then the key, then the key's prefix before - or _", () => {
+    expect(harnessOfCli("big", "/opt/bin/codex.real --x")).toBe("codex");
+    expect(harnessOfCli("claude-big")).toBe("claude");
+    expect(harnessOfCli("muse_fast")).toBe("muse");
+    expect(harnessOfCli("cursor-agent")).toBe("cursor-agent");
+    expect(harnessOfCli("pi-meta")).toBe("pi");
+    expect(harnessOfCli("aider")).toBeUndefined();
+  });
+
+  it("a fresh session reports itself at startup except in codex and muse (U0)", () => {
+    expect(
+      HARNESSES.filter((h) => HARNESS_TABLE[h].startupSessionStart === "first-prompt"),
+    ).toEqual(["codex", "muse"]);
+  });
+});
+
+describe("withSpawnPresets (spec D6, D17)", () => {
+  it("adds the row's auto-approve flags to a worker, and pi gets none", () => {
+    expect(withSpawnPresets("claude", "claude", { approve: true })).toBe(
+      "claude --permission-mode acceptEdits",
+    );
+    expect(withSpawnPresets("codex", "codex", { approve: true })).toBe(
+      "codex -s workspace-write -a never",
+    );
+    expect(withSpawnPresets("cursor-agent", "cursor-agent", { approve: true })).toBe(
+      "cursor-agent --sandbox enabled",
+    );
+    expect(withSpawnPresets("muse", "muse", { approve: true })).toBe("muse --approval-mode never");
+    expect(withSpawnPresets("pi-meta --no-solo", "pi", { approve: true })).toBe(
+      "pi-meta --no-solo",
+    );
+    expect(withSpawnPresets("aider", undefined, { approve: true, model: "x" })).toBe("aider");
+  });
+
+  it("adds no auto-approve flag to a command that already picks its approval or sandbox mode", () => {
+    const keeps = (command: string, harness: Harness): void => {
+      expect(withSpawnPresets(command, harness, { approve: true })).toBe(command);
+    };
+    keeps("codex -s read-only", "codex");
+    keeps("codex -sread-only", "codex");
+    keeps("codex --sandbox danger-full-access", "codex");
+    keeps("codex --sandbox=read-only", "codex");
+    keeps("codex --ask-for-approval=untrusted", "codex");
+    keeps("codex --yolo", "codex");
+    keeps("codex --full-auto", "codex");
+    keeps("codex --dangerously-bypass-approvals-and-sandbox", "codex");
+    keeps("claude --permission-mode plan", "claude");
+    keeps("claude --permission-mode=plan", "claude");
+    keeps("claude --dangerously-skip-permissions", "claude");
+    keeps("cursor-agent --sandbox=disabled", "cursor-agent");
+    keeps("cursor-agent --force", "cursor-agent");
+    keeps("muse --yolo", "muse");
+    keeps("muse --approval-mode=on-request", "muse");
+    // Other options do not count: the model flag still gets the preset.
+    expect(withSpawnPresets("codex --model gpt-5", "codex", { approve: true })).toBe(
+      "codex --model gpt-5 -s workspace-write -a never",
+    );
+  });
+
+  it("lists every auto-approve option among the row's approval options", () => {
+    for (const h of HARNESSES) {
+      const row = HARNESS_TABLE[h];
+      for (const word of row.autoApproveFlags.filter((w) => w.startsWith("-"))) {
+        expect(row.approvalOptions).toContain(word);
+      }
+    }
+  });
+
+  it("passes --model through the row's model flag, pi included", () => {
+    expect(withSpawnPresets("pi", "pi", { approve: false, model: "sonnet:high" })).toBe(
+      "pi --model sonnet:high",
+    );
+    expect(withSpawnPresets("codex", "codex", { approve: false, model: "gpt 5" })).toBe(
+      "codex --model 'gpt 5'",
+    );
+  });
+
+  it("fills the trust flag with the worktree's real path, as one shell word", () => {
+    expect(withSpawnPresets("codex", "codex", { approve: false, trustPath: "/w/it's" })).toBe(
+      `codex -c 'projects."/w/it'"'"'s".trust_level="trusted"'`,
+    );
+    expect(withSpawnPresets("muse", "muse", { approve: false, trustPath: "/w" })).toBe(
+      "muse --trust-workspace",
+    );
+    expect(withSpawnPresets("claude", "claude", { approve: false, trustPath: "/w" })).toBe(
+      "claude",
+    );
+    expect(withSpawnPresets("pi", "pi", { approve: false, trustPath: "/w" })).toBe("pi");
   });
 });

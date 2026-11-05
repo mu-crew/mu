@@ -54,6 +54,11 @@ import {
 } from "./capture.js";
 import { CARRIER_JOBS_DDL, CARRIER_JOBS_REBUILD, carrierJobsPreReservation } from "./db-carrier.js";
 import { CHECKS_DDL, checksTableMissing, refoldStoredChecks } from "./db-checks.js";
+import {
+  SPAWN_RECEIPTS_DDL,
+  SPAWN_RECEIPTS_REBUILD,
+  spawnReceiptsPreHooks,
+} from "./db-receipts.js";
 import { LEGACY_RECOVERY_TRIGGERS, REMOTE_RECOVERY_DDL } from "./db-recovery.js";
 import { say } from "./messages.js";
 import { defaultStateDir, xdgStateHome } from "./state-dir.js";
@@ -517,10 +522,18 @@ function applySchemaDdl(db: Db): void {
   // a handle: the copy and the drop commit together or not at all.
   const oldCarrierJobs = carrierJobsPreReservation(db);
   if (oldCarrierJobs) db.exec("ALTER TABLE carrier_jobs RENAME TO carrier_jobs_pre_reservation");
+  // spawn_receipts before the `hooks` transport: set aside and copied whole (same
+  // columns, same order) into the widened CHECK below, in this one transaction.
+  const oldReceipts = spawnReceiptsPreHooks(db);
+  if (oldReceipts) db.exec("ALTER TABLE spawn_receipts RENAME TO spawn_receipts_pre_hooks");
   db.exec(CURRENT_SCHEMA);
   if (oldCarrierJobs) {
     db.exec(CARRIER_JOBS_REBUILD);
     db.exec("DROP TABLE carrier_jobs_pre_reservation");
+  }
+  if (oldReceipts) {
+    db.exec(SPAWN_RECEIPTS_REBUILD);
+    db.exec("DROP TABLE spawn_receipts_pre_hooks");
   }
   // Columns a v13 DB written before they existed still lacks.
   for (const [table, column, ddl] of ADDED_COLUMNS) {
@@ -601,17 +614,7 @@ export type WaitActionState = (typeof WAIT_ACTION_STATES)[number];
 export const WAIT_ACTIONS = ["steer", "release"] as const;
 export type WaitAction = (typeof WAIT_ACTIONS)[number];
 
-/** The states of a task-bound spawn attempt (`spawn_receipts.state`). */
-export const SPAWN_RECEIPT_STATES = [
-  "reserved",
-  "pane",
-  "claimed",
-  "sending",
-  "sent",
-  "unknown",
-  "failed",
-] as const;
-export type SpawnReceiptState = (typeof SPAWN_RECEIPT_STATES)[number];
+export { SPAWN_RECEIPT_STATES, type SpawnReceiptState } from "./db-receipts.js";
 
 /**
  * Columns added to a table after a v13 DB may already exist, as
@@ -686,6 +689,7 @@ function schemaIsCurrent(db: Db): boolean {
   if (LEGACY_RECOVERY_TRIGGERS.some((t) => have.has(`trigger:${t}`))) return false;
   if (hostProfilesRepoRequired(db)) return false;
   if (carrierJobsPreReservation(db)) return false;
+  if (spawnReceiptsPreHooks(db)) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
     if (have.get(`view:${name}`) !== sql) return false;
@@ -1269,35 +1273,7 @@ CREATE TABLE IF NOT EXISTS agent_settles (
   PRIMARY KEY (agent_id, incarnation, runs)
 );
 
--- spawn_receipts: one row per task-bound spawn attempt (machine-local). The
--- journal agent spawn --task writes BEFORE each external effect and that a
--- replay reads back. agent_id/pane_id name the registry incarnation it
--- created and carry NO foreign key on purpose: the receipt must outlive the
--- agent (a deleted or replaced name is "stale", never the replacement).
--- state: reserved (nothing happened yet) < pane (agent row + pane exist)
--- < claimed (task owned by agent_id) < sending (the send MAY have been
--- written: never resend) < sent | unknown; failed = definitely unsent and
--- rolled back. attempt_key is 'manual:<k>' for a manual spawn.
-CREATE TABLE IF NOT EXISTS spawn_receipts (
-  task_id     INTEGER NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
-  attempt_key TEXT NOT NULL,
-  name        TEXT NOT NULL,
-  workstream  TEXT NOT NULL,
-  request_sha TEXT NOT NULL,
-  msg_id      TEXT NOT NULL,
-  agent_id    INTEGER,
-  pane_id     TEXT,
-  transport   TEXT CHECK (transport IN ('ctl', 'mux')),
-  incarnation TEXT,
-  runs        INTEGER,
-  state       TEXT NOT NULL
-              CHECK (state IN (${sqlList(SPAWN_RECEIPT_STATES)})),
-  detail      TEXT,
-  created_at  TEXT NOT NULL,
-  updated_at  TEXT NOT NULL,
-  PRIMARY KEY (task_id, attempt_key)
-);
-
+${SPAWN_RECEIPTS_DDL}
 -- wait_resumes: the stored condition set of a wait that ended with something
 -- still owed (machine-local; src/wait-resume.ts owns the JSON shape). The
 -- result prints only 'mu wait --resume <id>': the refs (with the run baseline

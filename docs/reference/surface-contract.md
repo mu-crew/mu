@@ -42,7 +42,11 @@ their guarantees:
   `mu agent answer` types a pending dialog's answer; `--interrupt` and
   `mu agent abort` press Escape (confirmed by the harness's interrupt event,
   else `idle?`), `--fresh` sends the harness's fresh command first, and a
-  wait settles on its `turn_stopped` with that turn's text.
+  wait settles on its `turn_stopped` with that turn's text. A task-bound
+  spawn of a `hooks` worker writes the brief file and pastes a one-line
+  pointer after `session_start`, and its replay promotes an `unknown`
+  receipt from the inbox. Spawn presets: `--model` and each harness's
+  auto-approve and trust flags. `mu agent list` shows harness and channel.
 - **Executor.** `mu task auto` and `mu next` (`--dry`, `--hold`,
   `--workers`, `--refute`), `dispatch_host`.
 - **Delegates.** A `mu_delegate` call is a `kind=delegate` task with a

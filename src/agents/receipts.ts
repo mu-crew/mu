@@ -32,10 +32,14 @@ export interface SpawnReceipt {
   msgId: string;
   agentId: number | null;
   paneId: string | null;
-  /** How the prompt went: `ctl` (a receipt id was carried) or `mux` (no receipt). */
-  transport: "ctl" | "mux" | null;
-  /** pi's incarnation, once a reply (or a receipt check) named it. */
+  /**
+   * How the prompt went: `ctl` (a receipt id was carried), `hooks` (a brief file
+   * and a pasted pointer, confirmed by `run_count`: spec D17) or `mux` (no receipt).
+   */
+  transport: "ctl" | "hooks" | "mux" | null;
+  /** pi's incarnation, once a reply (or a receipt check) named it. On `hooks`: the harness `session_id`. */
   incarnation: string | null;
+  /** ctl: pi's runs before the prompt. hooks: the session's `run_count` before the pointer (its baseline). */
   runs: number | null;
   state: SpawnReceiptState;
   detail: string | null;
@@ -52,7 +56,7 @@ interface RawReceipt {
   msg_id: string;
   agent_id: number | null;
   pane_id: string | null;
-  transport: "ctl" | "mux" | null;
+  transport: "ctl" | "hooks" | "mux" | null;
   incarnation: string | null;
   runs: number | null;
   state: SpawnReceiptState;

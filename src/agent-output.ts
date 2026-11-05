@@ -12,6 +12,7 @@
 import type { ClosePreview } from "./agents/close.js";
 import type { AgentRow, LiveAgent } from "./agents.js";
 import type { Db } from "./db.js";
+import { harnessOfCli } from "./harnesses.js";
 
 /** `workstreams.id` for a name, torn down or not (an agent row can outlive its workstream's teardown). */
 export function workstreamIdOf(db: Db, workstream: string): number {
@@ -54,8 +55,16 @@ export interface AgentOutput {
   collected_head: string | null;
   repo: string | null;
   gate_token: string | null;
+  /** The channel spawn recorded (`ctl`, `hooks`, `mux`); null: a row older than the column (derived per read). */
+  channel: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Computed: the blessed harness the agent runs (`claude`, `codex`, `cursor-agent`,
+   * `muse`, `pi`; spec D17), from its command's argv0, else its cli key and the key's
+   * prefix; a ctl or hooks row that names none runs pi. null: a CLI outside the five.
+   */
+  harness: string | null;
   state?: string;
   source?: string;
   ctl?: string;
@@ -66,6 +75,18 @@ export interface AgentOutput {
   trust_dialog?: boolean;
   /** A muzzle run in the pane waits for slots (spec D14); present only when true. */
   queued?: boolean;
+}
+
+/** The harness a row runs (see `AgentOutput.harness`). Pure: reads only the row. */
+export function harnessOf(
+  row: Pick<AgentRow, "cli" | "command" | "channel" | "gateToken">,
+): string | null {
+  // A remote command gate runs a command, not an agent.
+  if (row.gateToken !== null) return null;
+  const harness = harnessOfCli(row.cli, row.command ?? undefined);
+  if (harness !== undefined) return harness;
+  // Only pi speaks ctl, and only pi (on its fallback) is on hooks without a harness name.
+  return row.channel === "ctl" || row.channel === "hooks" ? "pi" : null;
 }
 
 /** Boundary mapper: AgentRow (camelCase) plus its real workstream id → output record. */
@@ -92,8 +113,10 @@ export function agentToOutput(
     collected_head: row.collectedHead,
     repo: row.repo,
     gate_token: row.gateToken,
+    channel: row.channel,
     created_at: row.createdAt,
     updated_at: row.updatedAt,
+    harness: harnessOf(row),
     ...(live.state !== undefined ? { state: live.state } : {}),
     ...(live.source !== undefined ? { source: live.source } : {}),
     ...(live.ctl !== undefined ? { ctl: live.ctl } : {}),

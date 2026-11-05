@@ -24,6 +24,13 @@ export { deliver } from "./deliver.js";
 export { agentChannel, channelTarget, readAgentStates } from "./dispatch.js";
 export { ANSWER_KEY_NAMES, hooksChannel, hooksFence } from "./hooks.js";
 export { sendAckMs, writeMuEvent } from "./hooks-pane.js";
+export {
+  awaitHooksSession,
+  type HooksReadiness,
+  type HooksRunCheck,
+  hooksRunSince,
+  spawnAckMs,
+} from "./hooks-spawn.js";
 export { muxChannel } from "./mux.js";
 export { agentCtlSocket, channelOf, expectsCtl, piOnHooks, servesCtl } from "./select.js";
 export {
