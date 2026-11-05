@@ -44,13 +44,14 @@
 // msgId. Post-send storage failure keeps `sending`: the exclusion survives.
 
 import { AgentReplacedError, AgentSendRefusedError } from "./agents/errors.js";
-import { agentCtlSocket, recordSend, sendViaTransport } from "./agents/transport.js";
+import { recordSend } from "./agents/transport.js";
 import { getAgent } from "./agents.js";
 import {
   CTL_DEFAULT_TIMEOUT_MS,
   CtlWriteVetoedError,
   channelTarget,
   ctlChannel,
+  deliver,
   newMsgId,
 } from "./channels/index.js";
 import type { Db } from "./db.js";
@@ -461,13 +462,16 @@ export async function steerStall(
     return go;
   };
   try {
-    const sent = await sendViaTransport(agent, steerText(found.workstream, found.localId), {
-      socket: agentCtlSocket(db, agent),
-      mode: "steer",
-      msgId,
-      expectIncarnation: key.incarnation,
-      ctlGuard: { signal: ctx.signal, timeoutMs, beforeWrite },
-    });
+    const sent = await deliver(
+      channelTarget(db, agent),
+      steerText(found.workstream, found.localId),
+      {
+        mode: "steer",
+        msgId,
+        expectIncarnation: key.incarnation,
+        ctlGuard: { signal: ctx.signal, timeoutMs, beforeWrite },
+      },
+    );
     try {
       const patch = {
         ...(sent.runs !== undefined ? { runs: sent.runs } : {}),

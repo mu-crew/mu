@@ -12,12 +12,12 @@ const hook = vi.hoisted(() => ({
   texts: [] as string[],
   mode: "ok" as "ok" | "undelivered" | "throws",
 }));
-vi.mock("../src/agents/transport.js", async (orig) => {
-  const real = await orig<typeof import("../src/agents/transport.js")>();
+vi.mock("../src/channels/deliver.js", async (orig) => {
+  const real = await orig<typeof import("../src/channels/deliver.js")>();
   return {
     ...real,
-    sendViaTransport: async (
-      _agent: unknown,
+    deliver: async (
+      _target: unknown,
       text: string,
       o: { onUndelivered?: (w: unknown) => void },
     ) => {

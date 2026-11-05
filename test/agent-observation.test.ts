@@ -15,9 +15,9 @@ import {
   observeAgentStates,
   settledCloseInput,
 } from "../src/agents/observe.js";
-import { agentCtlSocket } from "../src/agents/transport.js";
 import { type AgentRow, insertAgent } from "../src/agents.js";
 import { watchAgentRun } from "../src/channels/ctl.js";
+import { agentCtlSocket } from "../src/channels/index.js";
 import { applySettledClose } from "../src/close-block.js";
 import { encode, INCARNATION_MISMATCH, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";

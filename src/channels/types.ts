@@ -7,23 +7,41 @@
 // wait engine (src/wait.ts) reads agents through this seam
 // (`WaitOptions.readAgents` / `watchAgent`, built in src/wait-ctl.ts).
 //
-// Delivery (send, interrupt, fresh, command) still goes through
-// src/agents/transport.ts. Delegates, the spawn handshake, doctor and the
-// remote socket plumbing stay on src/ctl directly.
+// Delivery goes through the same seam: send, fresh, `command` (pi's session
+// commands), interrupt and abort. Each agents row records its channel at spawn
+// (`agents.channel`), and every verb reads it from the row. Delegates, the
+// spawn handshake, doctor and the remote socket plumbing stay on src/ctl
+// directly.
 
 import type { StateAgentRef, StateReading } from "../agent-state.js";
 import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
+import type { AgentRow } from "../agents.js";
+import type { CtlCommandName, CtlState } from "../ctl/protocol.js";
+import type { SendOptions } from "../mux.js";
 
 /** The ctl protocol's state facts, as the rest of mu names them. */
-export type { CtlBlocked, CtlState, CtlTool } from "../ctl/protocol.js";
+export type { CtlBlocked, CtlCommandName, CtlState, CtlTool } from "../ctl/protocol.js";
 
-/** How mu reaches a pane agent. */
+/** How mu reaches a pane agent; also the values of `agents.channel`. */
 export type ChannelName = "ctl" | "mux";
 
-/** One agent on a channel: who it is, and the state dir that roots its control socket. */
+/** The values `agents.channel` may hold, in the order a row is checked. */
+export const CHANNEL_NAMES: readonly ChannelName[] = ["ctl", "mux"];
+
+/**
+ * One agent on a channel: who it is, and the state dir that roots its control
+ * socket. `socket` overrides the derived socket path (a caller that already
+ * holds it, or a test's fake extension).
+ */
 export interface ChannelTarget {
   agent: ObservedAgent;
-  stateDir: string;
+  stateDir?: string;
+  socket?: string;
+}
+
+/** A delivery's target: the whole agents row, which the typed errors and recovery hints name. */
+export interface DeliveryTarget extends ChannelTarget {
+  agent: AgentRow;
 }
 
 /** The run a wait counts from: the settled-run count, and pi's process when the channel names one. */
@@ -49,7 +67,7 @@ export interface ChannelReadOptions {
   livenessOnly?: ReadonlySet<string>;
 }
 
-export interface AgentChannel {
+export interface AgentChannel extends ChannelDelivery {
   readonly name: ChannelName;
   /**
    * True when a write can carry a synchronous fence (ctl's `beforeWrite`:
@@ -91,4 +109,144 @@ export interface AgentChannel {
     target: ChannelTarget,
     opts: { afterRuns: number; inc?: string; signal?: AbortSignal; ms: number },
   ): Promise<AgentObservation | undefined>;
+}
+
+/** What a delivery did. The ctl-only fields are absent on `mux`. */
+export type SendResult = {
+  transport: ChannelName;
+  state?: CtlState;
+  /**
+   * ctl only: pi's completed-run count. For a plain send it is measured
+   * before dispatch (the `mu agent wait --after-runs` baseline); for
+   * `--fresh` it is the new session's count once its run started.
+   * Absent from an extension that predates it.
+   */
+  runs?: number;
+  /** ctl only: when pi entered `state` (epoch ms), from the same status. */
+  since?: number;
+  /** ctl only: pi's session file, from the same status. */
+  sessionFile?: string;
+  /** Set when the text ran as a pi session command over ctl. */
+  command?: CtlCommandName;
+  /** ctl send/fresh/interrupt: the id this send carried; `mu agent check` asks about it later. */
+  msgId?: string;
+  /** ctl only: the pi process's incarnation, the `--inc` for `mu agent wait`. */
+  incarnation?: string;
+  /** Set when the reply never arrived and a `status {msgId}` probe confirmed the send landed. */
+  receipt?: "confirmed-after-timeout";
+};
+
+/** See DeliveryOptions.ctlGuard. */
+export interface CtlGuard {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+  beforeWrite?: () => boolean;
+}
+
+export type DeliveryOptions = SendOptions & {
+  /** How a busy pi queues the message. Default followUp. ctl only. */
+  mode?: "steer" | "followUp";
+  /** With fresh or a session command: abandon a running turn instead of refusing. */
+  force?: boolean;
+  /**
+   * Internal: a msgId the caller reserved (and journaled) BEFORE the send, so
+   * a crash leaves a receipt a later `status {msgId}` can ask about. ctl
+   * send/fresh only; absent, the send mints its own. Never reuse one that was
+   * already written: a saved id is checked, never resent.
+   */
+  msgId?: string;
+  /**
+   * Internal: the ctl incarnation the caller's own handshake saw (a spawn's
+   * hello). The send is refused, nothing written, when the socket's pi is
+   * another process (AgentReplacedError); the extension re-checks it
+   * atomically with the dispatch (`expectIncarnation`). ctl send/fresh only.
+   */
+  expectIncarnation?: string;
+  /**
+   * Internal, opt-in (a stall action): bound the ctl round trips and fence the
+   * write. `signal` aborts the hello and the request (an abort before the
+   * write writes nothing; after it the delivery is indeterminate and probed,
+   * never resent); `timeoutMs` bounds each ctl request; `beforeWrite` runs
+   * synchronously on connect, immediately before the one write: false or a
+   * throw writes nothing and the send throws CtlWriteVetoedError. ctl
+   * send only; a route that cannot honour it (mux, session command) refuses rather than skip it.
+   */
+  ctlGuard?: CtlGuard;
+};
+
+/** A pi session command: `/new`, `/reload`, or `/compact` with optional instructions. */
+export interface SessionCommand {
+  name: CtlCommandName;
+  instructions?: string;
+}
+
+export type InterruptResult = {
+  /** pi was busy, so its turn was aborted before the send. */
+  wasBusy: boolean;
+  /** pi had queued messages before the abort; pi put them back in the pane's editor. */
+  pending: boolean;
+  /**
+   * pi's run count after the aborted run settled and before the send: the
+   * `mu agent wait --after-runs` baseline for the run the text starts.
+   */
+  runs?: number;
+  /** The id the interrupt carried: `mu agent check <agent> <msgId>` asks whether it landed. */
+  msgId: string;
+  /** pi's incarnation: the `--inc` for `mu agent wait`. */
+  incarnation?: string;
+  /** Set when the reply never arrived and `status {msgId}` confirmed the interrupt landed. */
+  receipt?: "confirmed-after-timeout";
+};
+
+/** What an abort found and did. */
+export interface AbortOutcome {
+  before: CtlState;
+  after: CtlState;
+  /** True when pi settled (or was never busy). */
+  settled: boolean;
+  /** False when the agent was not busy, so no abort was sent. */
+  aborted: boolean;
+  /** pi had queued messages before the abort (pi returns them to the editor). */
+  pending: boolean;
+}
+
+/**
+ * The delivery verbs of a channel (spec D4). A channel that cannot do one
+ * refuses with a typed error naming the agent's cli, and never falls back to
+ * another channel.
+ */
+export interface ChannelDelivery {
+  /**
+   * Deliver `text` as a prompt. On ctl an empty text is refused, a session
+   * command runs as `command`, and any other slash command is refused.
+   */
+  send(target: DeliveryTarget, text: string, opts: DeliveryOptions): Promise<SendResult>;
+  /** Start a new session and send `text` into it, as one step. */
+  fresh(target: DeliveryTarget, text: string, opts: DeliveryOptions): Promise<SendResult>;
+  /** Run a session command (`/new`, `/reload`, `/compact`). */
+  command(
+    target: DeliveryTarget,
+    cmd: SessionCommand,
+    opts: { force?: boolean; expectIncarnation?: string },
+  ): Promise<SendResult>;
+  /**
+   * Abort a running turn, wait for the agent to settle (AgentAbortTimeoutError
+   * after `timeoutMs`, text not sent), then send `text` as a new run.
+   */
+  interrupt(
+    target: DeliveryTarget,
+    text: string,
+    opts: { timeoutMs: number; expectIncarnation?: string },
+  ): Promise<InterruptResult>;
+  /**
+   * Stop the current turn and wait for it to settle. An agent that is not
+   * busy gets no abort. `onAbort` runs once, only when an abort was sent.
+   */
+  abort(
+    target: DeliveryTarget,
+    opts: {
+      timeoutMs: number;
+      onAbort?: (o: { before: CtlState; pending: boolean }) => Promise<void>;
+    },
+  ): Promise<AbortOutcome>;
 }

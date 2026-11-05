@@ -30,7 +30,7 @@ import { type GateReading, readGate } from "./gate.js";
 /** Who an observation is about. */
 export type ObservedAgent = Pick<
   AgentRow,
-  "name" | "workstreamName" | "paneId" | "cli" | "incarnation" | "gateToken"
+  "name" | "workstreamName" | "paneId" | "cli" | "incarnation" | "gateToken" | "channel"
 >;
 
 export interface AgentObservation {

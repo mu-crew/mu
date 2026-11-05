@@ -22,7 +22,6 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rollbackSpawn } from "../src/agents/spawn.js";
-import { respawnCommand } from "../src/agents/transport.js";
 import {
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
@@ -36,6 +35,7 @@ import {
   spawnAgent,
   spawnForTask,
 } from "../src/agents.js";
+import { respawnCommand } from "../src/channels/index.js";
 import { ctlProbe } from "../src/ctl/client.js";
 import { ctlSocketPath, MAX_SOCK_PATH, remoteCtlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";

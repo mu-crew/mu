@@ -3,7 +3,8 @@
 // `agentChannel` picks one agent's channel; `readAgentStates` is the one
 // batched state read over a mixed set: ctl agents first, then every other
 // pane (and the liveness of a ctl agent whose socket did not answer) from
-// the mux channel. A remote command gate is read from its pane.
+// the mux channel. A remote command gate is read from its pane. Delivery is
+// routed the same way, by `deliver` (./deliver.ts).
 
 import { dirname } from "node:path";
 import { agentKey, readGatePanes, type StateAgentRef, type StateReading } from "../agent-state.js";
@@ -14,14 +15,24 @@ import { muxChannel } from "./mux.js";
 import { channelOf } from "./select.js";
 import type { AgentChannel, ChannelTarget } from "./types.js";
 
-/** `agent` as a channel target: its control socket is rooted at the DB's directory, as spawn does. */
-export function channelTarget(db: Db, agent: ObservedAgent): ChannelTarget {
-  return { agent, stateDir: dirname(db.name) };
+/**
+ * `agent` as a channel target: its control socket is rooted at the DB's
+ * directory, as spawn does, unless `socket` names it. Pass the whole row
+ * (`AgentRow`) to get a target the delivery verbs take.
+ */
+export function channelTarget<A extends ObservedAgent>(
+  db: Db,
+  agent: A,
+  socket?: string,
+): ChannelTarget & { agent: A } {
+  return { agent, stateDir: dirname(db.name), ...(socket !== undefined ? { socket } : {}) };
 }
 
-/** The channel `target.agent` is on. */
+/** The channel `target.agent` is on: the one its row recorded at spawn (see `expectsCtl`). */
 export function agentChannel(target: ChannelTarget): AgentChannel {
-  return channelOf(target.agent, target.stateDir) === "ctl" ? ctlChannel : muxChannel;
+  return channelOf(target.agent, target.stateDir, target.socket) === "ctl"
+    ? ctlChannel
+    : muxChannel;
 }
 
 /**

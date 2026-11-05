@@ -1099,6 +1099,8 @@ function finalizeAgentRow(
 ): AgentRow {
   const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host, gateToken } = args;
   const hostTransport = args.hostTransport ?? null;
+  // The channel every verb reaches it through, decided once from what the pane runs.
+  const channel = gateToken === undefined && speaksMuCtl(cli, command) ? "ctl" : "mux";
   if (staged === undefined) {
     return insertAgent(db, {
       ...(args.reservation !== undefined ? { reservation: args.reservation } : {}),
@@ -1115,6 +1117,7 @@ function finalizeAgentRow(
       host: host ?? null,
       hostTransport,
       gateToken: gateToken ?? null,
+      channel,
     });
   }
   // Scope the patch to the spawn's workstream so a same-named worker
@@ -1123,7 +1126,7 @@ function finalizeAgentRow(
   // pending): a row replaced since is not ours to repoint.
   const patched = db
     .prepare(
-      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, repo = ?, updated_at = ?
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, repo = ?, updated_at = ?
       WHERE id = ? AND pane_id = ?
         AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
@@ -1137,6 +1140,7 @@ function finalizeAgentRow(
       spawner,
       host ?? null,
       hostTransport,
+      channel,
       staged.host !== undefined ? staged.root : null,
       new Date().toISOString(),
       staged.incarnation,

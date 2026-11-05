@@ -35,6 +35,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `src/harnesses.ts` holds the frozen table of the five blessed harnesses, in
   murmur's names and with its argv-match fields. The SDK exports are unchanged. First unit of
   the every-harness-first-class spec (D4, D6).
+- **Delivery goes through the channel seam too (internal; no behaviour change).**
+  `AgentChannel` gains send, fresh, `command` (pi's `/new`, `/reload`,
+  `/compact`), interrupt and abort. `ctl` runs them over the control socket
+  exactly as before (`src/channels/ctl-deliver.ts`); `mux` hands a send to the
+  backend's `sendToPane` and refuses the rest with the same typed errors as
+  before. `mu agent send`, `--interrupt`, `--fresh`, `mu agent abort`, the
+  stall steer, the CLOSE notice and `spawn --task` deliver through `deliver` or
+  the agent's channel, and `test/channel-imports.test.ts` keeps every delivery
+  call site off `src/ctl`. `sendViaTransport`, `abortAgent` and
+  `interruptAgent` keep their signatures. Second unit of the
+  every-harness-first-class spec (D4, D8).
+- **Schema: `agents.channel`** (machine-local, `'ctl' | 'mux'`), added in place
+  to a v13 file (no version bump). Spawn records the channel from the command
+  it runs, and every verb reads it from the row, never from `MU_<KEY>_COMMAND`
+  or the cli key. A recorded row is final: a socket file at a `mux` row's
+  derived path (a remote non-pi worker's ssh `-L` binds one) no longer moves
+  it to ctl, so an opaque wrapper around pi names `--cli pi`. A row older than
+  the column keeps the derived rule, socket file included.
 
 ### Fixed
 

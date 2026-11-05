@@ -1,11 +1,11 @@
 // Shared fakes for the `executeNext` suites (next-executor, next-refute, next-recover):
-// spawnAgent, the send transport and the ctl receipt are the only things faked; the
+// spawnAgent, the channel delivery and the ctl receipt are the only things faked; the
 // journal, claim and replay are real. A suite installs them with
 //
 //   vi.mock("../src/agents/spawn.js", async (orig) =>
 //     (await import("./_next-fakes.js")).spawnFake(await orig()));
-//   vi.mock("../src/agents/transport.js", async (orig) =>
-//     (await import("./_next-fakes.js")).transportFake(await orig()));
+//   vi.mock("../src/channels/deliver.js", async (orig) =>
+//     (await import("./_next-fakes.js")).deliverFake(await orig()));
 //   vi.mock("../src/channels/ctl.js", async (orig) =>
 //     (await import("./_next-fakes.js")).ctlChannelFake(await orig()));
 //
@@ -73,14 +73,15 @@ export function spawnFake<T extends object>(actual: T): T {
   };
 }
 
-export function transportFake<T extends object>(actual: T): T {
+export function deliverFake<T extends object>(actual: T): T {
   return {
     ...actual,
-    sendViaTransport: async (
-      a: { name: string },
+    deliver: async (
+      t: { agent: { name: string } },
       text: string,
       o: { msgId?: string; expectIncarnation?: string },
     ) => {
+      const a = t.agent;
       hook.sends.push({
         agent: a.name,
         text,

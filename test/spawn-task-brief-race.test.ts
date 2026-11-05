@@ -34,11 +34,11 @@ vi.mock("../src/agents/spawn.js", async (importOriginal) => {
     },
   };
 });
-vi.mock("../src/agents/transport.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/agents/transport.js")>();
+vi.mock("../src/channels/deliver.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/channels/deliver.js")>();
   return {
     ...actual,
-    sendViaTransport: async (_a: unknown, text: string, o: { msgId?: string }) => {
+    deliver: async (_target: unknown, text: string, o: { msgId?: string }) => {
       hits.sends.push(text);
       return { transport: "ctl", runs: 0, msgId: o.msgId, incarnation: "pi-inc" };
     },

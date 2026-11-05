@@ -1,7 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import type { CtlBlocked, CtlTool } from "./channels/types.js";
+import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
 import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
@@ -41,6 +41,8 @@ export interface StateAgentRef {
   cli?: string;
   /** A remote command gate (see src/agents/gate.ts): no control socket, whatever `cli` says. */
   gateToken?: string | null;
+  /** The channel the row recorded at spawn; null or absent: derived (see `expectsCtl`). */
+  channel?: ChannelName | null;
 }
 
 export const UNKNOWN_REASON = {
