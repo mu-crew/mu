@@ -55,6 +55,7 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   AgentSteerUnsupportedError,
+  RemoteBriefTooLargeError,
   SpawnAttemptBusyError,
   SpawnAttemptEndedError,
   SpawnAttemptFailedError,
@@ -82,6 +83,7 @@ import {
 import { DriftDetectedError } from "../drift.js";
 import { editDistance } from "../edit-distance.js";
 import { checkDbInsideSyncDir, DbInsideSyncDirError, HazardFailError } from "../fleet-hazards.js";
+import { HostHarnessMissingError } from "../host-harnesses.js";
 import {
   HostChannelBusyError,
   HostCheckFailedError,
@@ -433,6 +435,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RemoteCollectUnsupportedError ||
     // The active mux cannot run a profile's shell template: refused before any effect.
     err instanceof HostSpawnUnsupportedError ||
+    // The host's recorded probe found no such harness, or a remote brief too large for its
+    // exec template: refused before any effect (spec D17).
+    err instanceof HostHarnessMissingError ||
+    err instanceof RemoteBriefTooLargeError ||
     // Same typed-*Invalid* class: a task id or a title the operator
     // typed that cannot become an id. isUsageClassError prints --help.
     err instanceof TaskIdInvalidError ||

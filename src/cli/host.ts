@@ -16,6 +16,7 @@ import {
   WORKSTREAM_OPT,
 } from "../cli.js";
 import type { Db } from "../db.js";
+import { advertised, hostCapabilities } from "../host-harnesses.js";
 import {
   addHost,
   checkHost,
@@ -35,6 +36,19 @@ import { isJsonMode, muTable, pc } from "../output.js";
 import { shellQuote } from "../shell-quote.js";
 import { failureWithData } from "./handle.js";
 
+/** A profile as `--json` prints it: the recorded harness probe parsed (null: never probed). */
+function hostJson(h: HostProfile): Omit<HostProfile, "capabilities"> & { capabilities: unknown } {
+  return { ...h, capabilities: hostCapabilities(h) ?? null };
+}
+
+/** The harnesses the last `host check` found, or `-` when it never ran. */
+function harnessesCell(h: HostProfile): string {
+  const caps = hostCapabilities(h);
+  if (caps === undefined) return "-";
+  const found = advertised(caps);
+  return found.length === 0 ? "none" : found.join(",");
+}
+
 function channelLine(c: HostChannel): string {
   const on = c.kind === "attached" ? `pane ${c.pane_id}` : `pid ${c.pid}`;
   return `${c.holder} (${c.kind}, ${on})`;
@@ -53,7 +67,7 @@ export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
     attach: opts.attach ?? null,
   });
   if (isJsonMode()) {
-    emitJson({ host });
+    emitJson({ host: hostJson(host) });
     return;
   }
   console.log(`added host ${pc.bold(host.name)}`);
@@ -62,7 +76,7 @@ export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
 export function cmdHostList(db: Db): void {
   const hosts = listHosts(db);
   if (isJsonMode()) {
-    emitJsonCollection(hosts);
+    emitJsonCollection(hosts.map(hostJson));
     return;
   }
   if (hosts.length === 0) {
@@ -71,7 +85,9 @@ export function cmdHostList(db: Db): void {
   }
   const held = new Map<string, number>();
   for (const c of listHostChannels(db)) held.set(c.host, (held.get(c.host) ?? 0) + 1);
-  const t = muTable({ head: ["HOST", "TRANSPORT", "STOP", "ATTACH", "DEFAULT REPO", "CHANNELS"] });
+  const t = muTable({
+    head: ["HOST", "TRANSPORT", "STOP", "ATTACH", "DEFAULT REPO", "CHANNELS", "HARNESSES"],
+  });
   for (const h of hosts) {
     t.push([
       h.name,
@@ -80,6 +96,7 @@ export function cmdHostList(db: Db): void {
       h.attach ?? "-",
       h.repo ?? "-",
       `${held.get(h.name) ?? 0}/${h.max_sessions ?? "∞"}`,
+      harnessesCell(h),
     ]);
   }
   console.log(t.toString());
@@ -89,7 +106,7 @@ export function cmdHostShow(db: Db, name: string): void {
   const host: HostProfile = getHost(db, name);
   const channels = listHostChannels(db, name);
   if (isJsonMode()) {
-    emitJson({ host, channels });
+    emitJson({ host: hostJson(host), channels });
     return;
   }
   console.log(
@@ -98,6 +115,12 @@ export function cmdHostShow(db: Db, name: string): void {
   for (const f of ["shell", "exec", "fetch"] as const) console.log(`  ${f.padEnd(6)} ${host[f]}`);
   if (host.stop !== null) console.log(`  ${"stop".padEnd(6)} ${host.stop}`);
   if (host.attach !== null) console.log(`  ${"attach".padEnd(6)} ${host.attach}`);
+  const caps = hostCapabilities(host);
+  console.log(
+    caps === undefined
+      ? "  harnesses: not probed (mu host check)"
+      : `  harnesses: ${harnessesCell(host)} (probed ${caps.probedAt})`,
+  );
   console.log(
     channels.length === 0
       ? "  channels: none held"
@@ -277,7 +300,7 @@ export function wireHostCommands(program: Command): void {
   host
     .command("check <name>")
     .description(
-      "Run the profile's --exec under one channel: host answers, repo is git, pi runs, `pi list` names mu. A lease profile's templates are checked too (stop expanded, not run). --agent probes its control socket and job. Exit 5 on failure.",
+      "Run the profile's --exec under one channel: host answers, repo is git, harnesses and murmur hooks (recorded), pi and `pi list` if pi is there; lease templates expanded, not run. --agent probes its socket and job. Exit 5 on failure.",
     )
     .option("--agent <name>", "also probe this agent's control socket (the forward rides its pane)")
     .option("--root <path>", "the remote repo the repo step checks (default: the profile's)")

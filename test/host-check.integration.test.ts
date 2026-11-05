@@ -50,10 +50,15 @@ beforeEach(() => {
     "pi",
     'if [ "$1" = "--version" ]; then echo 0.99.1; elif [ "$1" = list ]; then echo "  npm:@mu-crew/mu"; fi',
   );
+  // The login shell runs no rc file, and PATH holds no harness this machine has installed:
+  // the harness probe (spec D17) sees only the shims here.
+  shim("login-sh", '[ "$1" = -ilc ] && shift\nexec /bin/sh -c "$1"');
+  // The cross-process tests run the built CLI with the `node` on PATH: this one.
+  shim("node", `exec ${JSON.stringify(process.execPath)} "$@"`);
   oldPath = process.env.PATH;
   oldShell = process.env.SHELL;
-  process.env.PATH = `${bin}:${oldPath}`;
-  process.env.SHELL = "/bin/sh";
+  process.env.PATH = `${bin}:/usr/bin:/bin`;
+  process.env.SHELL = join(bin, "login-sh");
   // The fake "ssh": a local sh -c that records each invocation. Not ssh.
   addHost(db, {
     name: "dev",
@@ -112,17 +117,20 @@ async function serveExtension(ws: string, agent: string, hello = helloReply()): 
 }
 
 describe("mu host check", () => {
-  it("passes: reachable, repo, pi and the extension, each reported; the channel is freed", async () => {
+  it("passes: reachable, repo, harnesses, pi and the extension, each reported; the channel is freed", async () => {
     const r = await runCliJson(["host", "check", "dev", "--json"], dbPath);
     expect(r.exitCode).toBeNull();
     expect(r.data.ok).toBe(true);
     expect(r.data.steps.map((s: { step: string; ok: boolean }) => [s.step, s.ok])).toEqual([
       ["reachable", true],
       ["repo", true],
+      ["harnesses", true],
+      ["hooks", null],
       ["pi", true],
       ["extension", true],
     ]);
-    expect(r.data.steps[2].detail).toContain("0.99.1");
+    expect(r.data.steps[2].detail).toContain(`pi (${join(bin, "pi")})`);
+    expect(r.data.steps[4].detail).toContain("0.99.1");
     expect(db.prepare("SELECT COUNT(*) AS c FROM host_channels").get()).toEqual({ c: 0 });
     const human = await runCli(["host", "check", "dev"], dbPath);
     expect(human.stdout).toContain("pi");
@@ -166,6 +174,8 @@ describe("mu host check", () => {
     expect(r.data.steps.map((s: { step: string; ok: boolean | null }) => [s.step, s.ok])).toEqual([
       ["reachable", false],
       ["repo", null],
+      ["harnesses", null],
+      ["hooks", null],
       ["pi", null],
       ["extension", null],
     ]);
@@ -187,6 +197,8 @@ describe("mu host check", () => {
       ["reachable", null],
       ["handback", false],
       ["repo", null],
+      ["harnesses", null],
+      ["hooks", null],
       ["pi", null],
       ["extension", null],
     ]);
@@ -216,6 +228,8 @@ describe("mu host check", () => {
       ["reachable", true],
       ["repo", null],
       ["handback", false],
+      ["harnesses", null],
+      ["hooks", null],
       ["pi", null],
       ["extension", null],
       ["ctl", null],

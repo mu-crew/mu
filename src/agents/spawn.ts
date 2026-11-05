@@ -97,7 +97,12 @@ import {
   defaultSpawnLivenessMs,
   type SpawnCtl,
 } from "./spawn-ready.js";
-import { admitRemoteSpawn, requireHostSpawn, rollbackRemoteWorktree } from "./spawn-remote.js";
+import {
+  admitRemoteSpawn,
+  isCommandGate,
+  requireHostSpawn,
+  rollbackRemoteWorktree,
+} from "./spawn-remote.js";
 import { reclaimDeadStagings } from "./staging.js";
 
 export {
@@ -110,6 +115,7 @@ export {
   type SpawnCtl,
   setHandshakeClockForTests,
 } from "./spawn-ready.js";
+export { isCommandGate } from "./spawn-remote.js";
 
 /**
  * Smallest-unused-suffix naming convention for agent names: a role
@@ -419,20 +425,6 @@ export const PI_CHANNEL_ENV = "MU_PI_CHANNEL";
  */
 export function piHooksRequested(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[PI_CHANNEL_ENV] === "hooks";
-}
-
-/**
- * True when a REMOTE spawn is a command gate, not a worker: an explicit
- * `--command` that is not pi. An explicit `--cli pi` and a `pi` / `pi-meta`
- * argv0 stay workers (an opaque wrapper around pi needs `--cli pi`). Decided
- * before any effect; `--cli` omitted classifies by the command alone, so
- * `--host dev --command 'npm test'` is a gate even though `cli` defaults to pi.
- */
-export function isCommandGate(opts: { host?: string; cli?: string; command?: string }): boolean {
-  if (opts.host === undefined || opts.command === undefined) return false;
-  if (opts.cli === "pi") return false;
-  const argv0 = basename(parseFirstToken(opts.command));
-  return argv0 !== "pi" && argv0 !== "pi-meta";
 }
 
 /**

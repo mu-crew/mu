@@ -9,10 +9,15 @@
 // What it read (the session and its `run_count`) is the receipt's baseline: a
 // replay that finds a run past it in the inbox promotes an `unknown` receipt
 // to `sent`, as a ctl receipt is promoted by its msgId. Nothing here pastes.
+//
+// A remote worker (spec D11) reports on its node, so its readiness reads the
+// node (one exec each, a few seconds apart, as a watch does) and its local
+// pane once per read, never the pane alone in a tight poll.
 
+import { sleep } from "../tmux.js";
 import { rowOf } from "./hooks.js";
 import { type HooksPane, pollPane, readHooksPane } from "./hooks-pane.js";
-import type { DeliveryTarget } from "./types.js";
+import type { DeliveryTarget, RemoteReader } from "./types.js";
 
 /** How long a hooks spawn waits for `session_start`: `MU_SPAWN_ACK_MS`, parsed like `MU_SPAWN_CTL_MS`. */
 export function spawnAckMs(): number {
@@ -36,9 +41,35 @@ export interface HooksReadiness {
 const hasSession = (p: HooksPane | undefined): boolean =>
   p !== undefined && p.sessionId !== null && p.activity !== null;
 
+/** How far apart a remote worker's readiness reads its node: each read is an exec (spec D11). */
+const REMOTE_READY_POLL_MS = 5000;
+
+/**
+ * A remote worker's readiness: read its node (relaying its events into the
+ * local pane's inbox), then the pane, until it has a session or `ms` passed.
+ * Bounded by the clock and the read count, so a test's no-op sleep ends it.
+ */
+async function awaitRemoteSession(
+  paneId: string,
+  remote: RemoteReader,
+  ms: number,
+): Promise<HooksPane | undefined> {
+  const deadline = Date.now() + ms;
+  const reads = Math.ceil(ms / REMOTE_READY_POLL_MS) + 1;
+  let last: HooksPane | undefined;
+  for (let i = 0; i < reads; i++) {
+    if (i > 0) await sleep(REMOTE_READY_POLL_MS);
+    await remote.read();
+    last = (await readHooksPane(paneId)) ?? last;
+    if (hasSession(last) || Date.now() >= deadline) break;
+  }
+  return last;
+}
+
 /**
  * Wait up to `ms` for the agent's `session_start`, where its harness reports a
- * session at startup; otherwise read the pane once. Never throws: a pane
+ * session at startup; otherwise read the pane once (a remote worker: its node,
+ * then the pane). Never throws: a pane
  * murmur cannot report reads as no session and no row, which the paste's own
  * gate then judges.
  */
@@ -48,11 +79,13 @@ export async function awaitHooksSession(
 ): Promise<HooksReadiness> {
   const atStartup = rowOf(t.agent)?.startupSessionStart !== "first-prompt";
   let last: HooksPane | undefined;
-  const seen = await pollPane(t.agent.paneId, atStartup ? ms : 0, (p) => {
-    last = p ?? last;
-    return !atStartup || hasSession(p);
-  });
-  const pane = seen ?? last;
+  const pane =
+    t.remote !== undefined
+      ? await awaitRemoteSession(t.agent.paneId, t.remote, atStartup ? ms : 0)
+      : ((await pollPane(t.agent.paneId, atStartup ? ms : 0, (p) => {
+          last = p ?? last;
+          return !atStartup || hasSession(p);
+        })) ?? last);
   return {
     ready: hasSession(pane),
     sessionId: pane?.sessionId ?? null,

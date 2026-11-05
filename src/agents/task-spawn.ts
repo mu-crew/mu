@@ -22,7 +22,11 @@
 // `.mu/brief-<agent>-<key>.md` in its cwd (with `.mu/.gitignore`), journal
 // `sending` with that read as the baseline, then paste ONE line pointing at
 // the file, confirmed by `run_count`. An unconfirmed paste is UNKNOWN; a
-// replay reads the inbox for a run past the baseline instead of a msgId.
+// replay reads the inbox for a run past the baseline instead of a msgId. A
+// remote `hooks` worker (spec D11) is read on its node for the session, its
+// file is written there through the host's exec template (a brief over 96 KB
+// is refused before the spawn), and its paste is `sent`, confirmed by the
+// next read.
 //
 // Replay (same task + attempt key). The saved registry id + pane are compared
 // with the agent now holding the name; a deleted or replaced one is reported
@@ -47,6 +51,7 @@ import {
 } from "../channels/index.js";
 import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
+import { harnessOfCli } from "../harnesses.js";
 import { say } from "../messages.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
 import { addNote } from "../tasks/edit.js";
@@ -74,7 +79,12 @@ import {
   SpawnTaskStateError,
   SpawnTrustDialogError,
 } from "./errors.js";
-import { briefPointer, writeBriefFile } from "./hooks-brief.js";
+import {
+  assertRemoteBriefFits,
+  briefPointer,
+  writeBriefFile,
+  writeRemoteBriefFile,
+} from "./hooks-brief.js";
 import { withSpawnAttemptLock } from "./lock.js";
 import {
   getReceipt,
@@ -86,6 +96,7 @@ import {
   updateReceipt,
 } from "./receipts.js";
 import {
+  isCommandGate,
   rollbackSpawn,
   type SpawnAgentOptions,
   type SpawnedAgent,
@@ -126,6 +137,21 @@ export interface TaskSpawnOutcome {
 }
 
 const manualKey = (req: TaskSpawnRequest): string => `manual:${req.attempt ?? req.task}`;
+
+/**
+ * A remote spawn of a hook harness gets its brief as a file written through
+ * the host's exec template (spec D17): one over the cap is refused before the
+ * spawn (a manual attempt before its reservation too; the write itself
+ * refuses it again). pi keeps ctl remotely, and a command gate takes no brief.
+ */
+function assertBriefFitsSpawn(req: TaskSpawnRequest): void {
+  const s = req.spawn;
+  if (s.host === undefined || isCommandGate(s)) return;
+  const cli = s.cli ?? "pi";
+  const harness = harnessOfCli(cli, s.command ?? cli);
+  if (harness === undefined || harness === "pi") return;
+  assertRemoteBriefFits(s.name, s.host, req.text);
+}
 
 /**
  * The executor's `auto:<n>` namespace (src/auto-attempt.ts reserves it and
@@ -257,6 +283,7 @@ export async function spawnForTask(db: Db, req: TaskSpawnRequest): Promise<TaskS
   if (parseSessionCommand(req.text) !== undefined || isSlashCommand(req.text)) {
     throw new AgentSlashCommandUnsupportedError(req.spawn.name, ws, req.text, []);
   }
+  assertBriefFitsSpawn(req);
   const key = manualKey(req);
   return withSpawnAttemptLock(
     db,
@@ -278,6 +305,8 @@ export async function spawnAutoAttempt(db: Db, req: AutoAttemptRequest): Promise
   if (parseSessionCommand(req.text) !== undefined || isSlashCommand(req.text)) {
     throw new AgentSlashCommandUnsupportedError(req.spawn.name, ws, req.text, []);
   }
+  // No brief cap before the lock: the attempt is reserved and charged, so an oversized remote
+  // brief fails inside it, before the spawn (the receipt `failed`), never left `reserved`.
   return withSpawnAttemptLock(
     db,
     taskId,
@@ -466,6 +495,8 @@ async function drive(
   let row: AgentRow;
   try {
     if (agent === undefined) {
+      // An executor attempt's oversized remote brief: nothing is spawned for it.
+      assertBriefFitsSpawn(req);
       spawnThrew = true;
       const spawned = await spawnAgent(db, {
         ...req.spawn,
@@ -510,16 +541,21 @@ async function drive(
       rec = updateReceipt(db, taskId, key, { state: "claimed" });
     }
     // hooks: the harness's hello, then the brief file. Both before `sending`: a
-    // failure here is unsent, and a replay writes the same bytes again.
+    // failure here is unsent, and a replay writes the same bytes again. A remote
+    // worker's file is written on its host, in its remote cwd (spec D17).
     const hooksTarget = channelTarget(db, target);
     if (agentChannel(hooksTarget).name === "hooks") {
       const t = hooksTarget.agent;
-      if (t.host !== null || t.cwd === null) {
-        const why = say("agent.task_brief_hooks", t.name, t.host);
+      if (t.cwd === null) {
+        const why = say("agent.task_brief_hooks", t.name);
         throw new AgentSendUnsupportedError(t.name, ws, t.cli, why);
       }
       ready = await awaitHooksSession(hooksTarget);
-      hooksText = briefPointer(writeBriefFile(t.cwd, t.name, key, req.text));
+      const file =
+        t.host !== null
+          ? await writeRemoteBriefFile(db, t.host, t.cwd, t.name, ws, key, req.text)
+          : writeBriefFile(t.cwd, t.name, key, req.text);
+      hooksText = briefPointer(file);
     }
     // One immediate transaction right before the write (no await inside):
     // the delivery targets the SAVED registry id + pane, never whatever holds
