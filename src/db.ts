@@ -662,6 +662,8 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   // A lease reservation's remote worktree (src/carrier-jobs.ts): which tree it belongs to.
   ["carrier_jobs", "tree_path", "TEXT"],
   ["carrier_jobs", "tree_agent_id", "INTEGER"],
+  // The last `host check` harness probe and its time, JSON (spec D17; src/host-harnesses.ts).
+  ["host_profiles", "capabilities", "TEXT"],
 ];
 
 function hasColumn(db: Db, table: string, column: string): boolean {
@@ -1340,7 +1342,8 @@ CREATE TABLE IF NOT EXISTS host_profiles (
   max_sessions INTEGER CHECK (max_sessions > 0),
   transport    TEXT NOT NULL DEFAULT 'session', -- 'session' | 'lease' (validated in addHost, no CHECK: ADDED_COLUMNS cannot add one)
   stop         TEXT,                           -- lease only: the template that ends a job given its handle ({job}); NULL for session
-  attach       TEXT                            -- lease only, optional: a new carrier for a running job ({job}, {job_file}); NULL: none
+  attach       TEXT,                           -- lease only, optional: a new carrier for a running job ({job}, {job_file}); NULL: none
+  capabilities TEXT                            -- the last host check's harness probe and its time (JSON); NULL: never probed
 );
 
 ${CARRIER_JOBS_DDL}

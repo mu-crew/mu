@@ -58,9 +58,15 @@ their guarantees:
 - **Remote.** Host profiles, remote spawn, `agent collect`, the close
   rule, remote command gates, recovery records. A remote claude, codex,
   cursor-agent or muse worker is on `hooks` with a remote key: mu reads its
-  node through `--exec` on a send gate, a wait and a collect (never an ack
-  poll), so its send is `ack: sent`, `--fresh` is refused, and `collect`
-  applies its last turn's `CLOSE:` block (`close`).
+  node through `--exec` on a send gate, a wait, a collect and `spawn --task`
+  readiness (one read every 5 s until its session starts, up to
+  `MU_SPAWN_ACK_MS`), never an ack poll, so its send is `ack: sent`,
+  `--fresh` is refused, and `collect` applies its last turn's `CLOSE:` block
+  (`close`). Its task brief file is written on the host through `--exec` (at
+  most 96 KB with `\` and `'` counted escaped, and a filled template under
+  128 KiB). `host check` records
+  which harnesses the host has (`host_profiles.capabilities`), runs the pi
+  steps only on a host with pi, and a spawn for a harness it lacks is refused.
 - **Surfaces.** In-process `mu db query` (alias `mu sql`), five-tab
   read-only dashboard, pi package (3.x's link verb is gone), `mu pi migrate`.
 

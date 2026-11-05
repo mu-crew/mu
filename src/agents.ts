@@ -85,6 +85,7 @@ export {
   CarrierJobKeptError,
   CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
+  RemoteBriefTooLargeError,
   SpawnAttemptBusyError,
   SpawnAttemptEndedError,
   SpawnAttemptFailedError,

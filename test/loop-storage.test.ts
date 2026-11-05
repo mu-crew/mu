@@ -283,7 +283,7 @@ describe("a populated v13 DB is completed in place", () => {
     expect(columns(p, "tasks")).toContain("wave");
     expect(columns(p, "agents")).toContain("collected_head");
     expect(columns(p, "host_profiles")).toEqual(
-      expect.arrayContaining(["transport", "stop", "attach"]),
+      expect.arrayContaining(["transport", "stop", "attach", "capabilities"]),
     );
     expect(columns(p, "carrier_jobs")).toEqual(CARRIER_JOBS_COLUMNS);
     expect(tables(p)).toEqual([...EXPECTED_TABLES].sort());
@@ -613,6 +613,29 @@ describe("a populated v13 DB is completed in place", () => {
     expect(
       raw(p, (r) => r.prepare("SELECT name, transport, stop, attach FROM host_profiles").all()),
     ).toEqual([{ name: "l", transport: "lease", stop: "x rm {job}", attach: null }]);
+    const cookie = raw(p, (r) => r.pragma("schema_version", { simple: true }));
+    track(openDb({ path: p })).close();
+    expect(raw(p, (r) => r.pragma("schema_version", { simple: true }))).toBe(cookie);
+  });
+
+  it("a v13 file without host_profiles.capabilities gains it with no version bump, rows intact (never probed)", () => {
+    const p = v13Copy();
+    track(openDb({ path: p })).close();
+    open.pop();
+    raw(p, (r) => {
+      r.exec(
+        "INSERT INTO host_profiles (name, shell, exec, fetch, repo) VALUES ('h', 's', 'e', 'f', '/r')",
+      );
+      r.exec("ALTER TABLE host_profiles DROP COLUMN capabilities");
+    });
+    expect(columns(p, "host_profiles")).not.toContain("capabilities");
+    const before = stamps(p);
+    track(openDb({ path: p })).close();
+    expect(columns(p, "host_profiles")).toContain("capabilities");
+    expect(stamps(p)).toEqual(before);
+    expect(
+      raw(p, (r) => r.prepare("SELECT name, repo, capabilities FROM host_profiles").all()),
+    ).toEqual([{ name: "h", repo: "/r", capabilities: null }]);
     const cookie = raw(p, (r) => r.pragma("schema_version", { simple: true }));
     track(openDb({ path: p })).close();
     expect(raw(p, (r) => r.pragma("schema_version", { simple: true }))).toBe(cookie);

@@ -96,9 +96,35 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   to read the file, confirmed by `run_count`. An unconfirmed paste is
   `unknown`, pane and claim kept, never resent; a replay of the attempt reads
   the inbox and promotes it to `sent` (pinning the brief) once a run past that
-  baseline shows. A dialog at the paste is refused and rolled back. A remote
-  `hooks` worker still refuses `--task`. `spawn_receipts.transport` takes
-  `hooks` (a v13 file's table is rebuilt in place, rows kept).
+  baseline shows. A dialog at the paste is refused and rolled back.
+  `spawn_receipts.transport` takes `hooks` (a v13 file's table is rebuilt in
+  place, rows kept).
+- **Remote mixed crews: host capabilities and remote task briefs** (spec D17,
+  U21). `mu host check` now probes each harness's literal launcher
+  (`claude`, `codex`, `cursor-agent`, `muse`, `pi`) by name in the profile's
+  own shell mode (a session's login shell, a lease job's bare `sh -c`, which
+  reads no rc files), and reads each hook harness's config for murmur's
+  `murmur hook <harness>` entries (missing: the new `hooks` step fails) and
+  mu's `mu hook stop` entry (missing: a warning). A `harnesses` step lists
+  what it found and fails only when it found none. The pi and `extension`
+  steps run only on a host with pi, so a claude-only host passes. The result
+  and its probe time are recorded in a new `host_profiles.capabilities`
+  column (added in place at schema 13), shown by `host show`, a `HARNESSES`
+  column in `host list` and the `--json` records. A spawn whose command is a
+  harness the record says the host lacks is refused before any effect
+  (`HostHarnessMissingError`, exit 2, naming host and harness); a host never
+  checked, or a wrapper command, is not. `spawn --task` of a remote claude,
+  codex, cursor-agent or muse worker now hands it its brief: mu reads the
+  host until the worker reports its session, writes
+  `<remote cwd>/.mu/brief-<agent>-<attempt key>.md` and `.mu/.gitignore`
+  through one `--exec` with the brief as one argument, and pastes the
+  one-line pointer (`sent`, confirmed by the next read). Exec templates have
+  no stdin, so a brief over 96 KB (its `\` and `'` counted escaped) is
+  refused before anything is spawned (`RemoteBriefTooLargeError`, exit 2),
+  executor attempts included. On `--host`, a `--command` whose argv0
+  is a harness, or a `--cli` key that maps to one (`claude-big`), is a worker,
+  not a command gate. pi is unchanged, except that a host checked without pi
+  now refuses a pi spawn.
 - **Spawn presets and `--model`** (spec D6, D17). `mu agent spawn --model
   <id>` passes the model through the harness's own flag (`--model`, pi
   included). A worker of claude, codex, cursor-agent or muse launched from

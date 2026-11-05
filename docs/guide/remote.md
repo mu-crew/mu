@@ -29,7 +29,7 @@ table.
 ```bash
 mu host init dev --ssh   # prints a starter `mu host add`; runs nothing
 mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
-mu host check dev --root '~/repo'   # host answers, repo, pi, mu extension
+mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
 ```
 
 ## Spawn the agent
@@ -110,6 +110,43 @@ and `murmur` must be on the PATH the profile's `--exec` sees.
   `collect` applies it too, once its commits are pinned, but only from the
   turn that wrote it: a turn that failed or ended without text applies
   nothing. Either way it is applied once.
+- `--task` hands it the brief as a local `hooks` worker gets it: mu reads the
+  host until the worker reports its session (claude and cursor-agent; codex
+  and muse are read once), writes the brief to
+  `<remote cwd>/.mu/brief-<agent>-<attempt key>.md` (with `.mu/.gitignore`)
+  through one `--exec`, and pastes a one-line pointer (`ack: sent`, confirmed
+  by the next read). The brief travels inside that command as one argument:
+  exec templates have no stdin, so a brief over 96 KB (its `\` and `'`
+  counted escaped) is refused before anything is spawned
+  (`RemoteBriefTooLargeError`, exit 2), and so is a write whose filled exec
+  template would reach Linux's 128 KiB on one argument. At
+  `--max-sessions 1` the pane holds the only slot and the write is refused
+  (unsent, rolled back).
+- A `--command` whose argv0 is a harness (`claude --model opus`), or a
+  `--cli` key that maps to one (`--cli claude-big`), is a worker, not a
+  command gate.
+
+## What a host can run
+
+`mu host check` resolves each harness's launcher by name (`claude`, `codex`,
+`cursor-agent`, `muse`, `pi`) in the shell a spawn's command gets: a session
+profile's login shell (`$SHELL -ilc`), a lease job's bare `sh -c` (no rc
+files, so a `MU_<KEY>_COMMAND` set in a shell rc there proves nothing). A
+remote spawn runs its literal command and never reads your local
+`MU_<KEY>_COMMAND`.
+
+- The `harnesses` step lists what it found; it fails only when it found none.
+  The `hooks` step needs murmur's `murmur hook <harness>` entries in each found
+  hook harness's own config (`murmur init` on the host); a missing
+  `mu hook stop` entry is a warning (it never acts for a remote worker).
+- The pi and `extension` steps run only when the host has pi, so a
+  claude-only host passes.
+- The result and its time are recorded on the profile (`host show`, the
+  `HARNESSES` column of `host list`). A spawn whose command is a harness the
+  last check did not find is refused before any effect
+  (`HostHarnessMissingError`, exit 2, naming host and harness). A host never
+  checked, or a wrapper command the check did not try, is not refused.
+- Logging each harness in on each host stays your job.
 
 ## Collect and close
 
@@ -163,7 +200,7 @@ collect` runs the `--fetch` template.
 ```bash
 mu host init dev --ssh        # prints a starter `mu host add`; runs nothing
 mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
-mu host check dev --root '~/repo'   # host answers, repo, pi, mu extension
+mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
 mu host show dev              # templates and the holders of its channels
 ```
 

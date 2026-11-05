@@ -83,6 +83,7 @@ export {
   observationFromReading,
   observeAgentStates,
   previewClose,
+  RemoteBriefTooLargeError,
   readAgent,
   readLiveAgents,
   resetCommandResolverForTests,
@@ -292,6 +293,12 @@ export {
   parseHlc,
   receiveHlc,
 } from "./hlc.js";
+export {
+  type HarnessProbe,
+  type HostCapabilities,
+  HostHarnessMissingError,
+  hostCapabilities,
+} from "./host-harnesses.js";
 export {
   addHost,
   admitHostChannel,

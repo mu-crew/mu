@@ -25,7 +25,6 @@ import { rollbackSpawn } from "../src/agents/spawn.js";
 import {
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
-  AgentSendUnsupportedError,
   closeAgent,
   deleteAgent,
   getAgent,
@@ -808,13 +807,26 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     ).rejects.toBeInstanceOf(SpawnReceiptConflictError);
   });
 
-  it("a remote hooks worker cannot take a brief file yet: refused before any paste, rolled back", async () => {
-    const err = await spawnForTask(
-      db,
-      req({ spawn: { name: "worker-1", workstream: "auth", host: "dev", cli: "claude" } }),
-    ).catch((e: unknown) => e);
-    expect(err).toBeInstanceOf(AgentSendUnsupportedError);
-    expect(String((err as Error).message)).toContain("runs on dev on the hooks channel");
+  it("a remote hooks worker's brief file goes through the host's exec; one it cannot write is unsent, rolled back", async () => {
+    const hooksReq = req({
+      spawn: { name: "worker-1", workstream: "auth", host: "dev", cli: "claude" },
+    });
+    // At --max-sessions 1 the worker's own pane holds the only channel: the write is refused.
+    const busy = await spawnForTask(db, hooksReq).catch((e: unknown) => e);
+    expect(busy).toBeInstanceOf(HostChannelBusyError);
+    expect(execCalls().filter((c) => c.includes("MU_BRIEF"))).toEqual([]);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(getTask(db, "t1", "auth")).toMatchObject({ ownerId: null, status: "OPEN" });
+    expect(channels()).toEqual([]);
+    // With room for it, the file is written in the agent's remote cwd through one exec; a host
+    // whose answer names no file is unsent too.
+    db.prepare("UPDATE host_profiles SET max_sessions = NULL WHERE name = 'dev'").run();
+    const err = await spawnForTask(db, hooksReq).catch((e: unknown) => e);
+    expect(err).toMatchObject({ name: "RemotePrepareError", host: "dev" });
+    expect(String((err as Error).message)).toContain("writing the task brief file failed");
+    const brief = execCalls().filter((c) => c.includes("MU_BRIEF"));
+    expect(brief).toHaveLength(1);
+    expect(brief[0]).toContain("/srv/repo/sub");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
     expect(getTask(db, "t1", "auth")).toMatchObject({ ownerId: null, status: "OPEN" });
   });

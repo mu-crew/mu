@@ -2,10 +2,14 @@
 // before any effect (requireHostSpawn), admit the host channel and prepare the
 // remote site or worktree (admitRemoteSpawn, prestageRemote), and remove a
 // remote worktree on rollback (rollbackRemoteWorktree). Split from spawn.ts;
-// it takes types from spawn.ts only (no runtime import back).
+// it takes types from spawn.ts only (no runtime import back). It also decides
+// whether a remote spawn is a command gate (isCommandGate, re-exported there).
 
+import { basename } from "node:path";
 import { deleteAgent, getAgent, insertAgent, pendingPaneIdFor } from "../agents.js";
 import type { Db } from "../db.js";
+import { harnessOfCli } from "../harnesses.js";
+import { refuseMissingHarness } from "../host-harnesses.js";
 import {
   admitHostChannel,
   getHost,
@@ -33,10 +37,40 @@ function remoteRoot(opts: SpawnAgentOptions, profile: HostProfile): { root?: str
   return root === undefined ? {} : { root };
 }
 
-/** The profile `--host` names, once the spawn is known to be runnable on it. Nothing is touched. */
+/**
+ * True when a REMOTE spawn is a command gate, not a worker: an explicit
+ * `--command` that runs no harness. An explicit `--cli pi` and a `pi` /
+ * `pi-meta` argv0 stay workers (an opaque wrapper around pi needs `--cli pi`),
+ * as does a command or cli key that maps to a hook harness row (`claude ...`,
+ * `--cli claude-big`: spec D17, the harness from argv0, then the key and its
+ * prefix), so worktrees and lease profiles work for it. Decided before any
+ * effect; `--cli` omitted classifies by the command alone, so
+ * `--host dev --command 'npm test'` is a gate even though `cli` defaults to pi.
+ */
+export function isCommandGate(opts: { host?: string; cli?: string; command?: string }): boolean {
+  if (opts.host === undefined || opts.command === undefined) return false;
+  if (opts.cli === "pi") return false;
+  const argv0 = basename(opts.command.trim().split(/\s+/)[0] ?? "");
+  if (argv0 === "pi" || argv0 === "pi-meta") return false;
+  // pi keeps the rule above exactly: a key like `pi-meta` around another command is still a gate.
+  const harness = harnessOfCli(opts.cli ?? "", opts.command);
+  return harness === undefined || harness === "pi";
+}
+
+/**
+ * The profile `--host` names, once the spawn is known to be runnable on it. Nothing is touched.
+ * A spawn of a harness whose launcher the host's recorded probe did not find is refused here
+ * (`HostHarnessMissingError`, spec D17).
+ */
 export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise<HostProfile> {
   const host = opts.host ?? "";
   const profile = getHost(db, host);
+  if (!isCommandGate(opts)) {
+    // The literal command a remote spawn runs: never the local MU_<KEY>_COMMAND.
+    const cli = opts.cli ?? "pi";
+    const command = opts.command ?? cli;
+    refuseMissingHarness(profile, harnessOfCli(cli, command), command);
+  }
   if (opts.worktree && opts.root === undefined && profile.repo === null) {
     throw new HostProfileError(
       `host ${host} has no default repo: pass --root <remote repo path> with --worktree`,

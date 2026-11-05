@@ -71,6 +71,15 @@ import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import type { Db } from "./db.js";
 import { execGroupCapture } from "./exec-file.js";
+import {
+  type HostCapabilities,
+  harnessesDetail,
+  harnessProbeScript,
+  hooksStep,
+  noHarnessDetail,
+  parseHarnessProbe,
+  recordHostCapabilities,
+} from "./host-harnesses.js";
 import { say } from "./messages.js";
 import { shellQuote } from "./shell-quote.js";
 
@@ -179,13 +188,18 @@ export interface HostProfile {
   stop: string | null;
   /** Lease only, optional: a new carrier for a running job (`{job}`, `{job_file}`, both socks); null: none. */
   attach: string | null;
+  /**
+   * The last `host check` harness probe (JSON, src/host-harnesses.ts: what the host can run, and
+   * when it was probed); null: never probed. Read it with `hostCapabilities`.
+   */
+  capabilities?: string | null;
 }
 
 export const HOST_TRANSPORTS = ["session", "lease"] as const;
 export type HostTransport = (typeof HOST_TRANSPORTS)[number];
 
-/** What `addHost` takes: a session profile needs neither `transport`, `stop` nor `attach`. */
-export type NewHostProfile = Omit<HostProfile, "transport" | "stop" | "attach"> &
+/** What `addHost` takes: a session profile needs neither `transport`, `stop` nor `attach`; a probe is never given. */
+export type NewHostProfile = Omit<HostProfile, "transport" | "stop" | "attach" | "capabilities"> &
   Partial<Pick<HostProfile, "transport" | "stop" | "attach">>;
 
 /** A job handle is opaque to mu: one line of these bytes, never parsed further. */
@@ -212,7 +226,12 @@ export function listHosts(db: Db): HostProfile[] {
 /** Store a profile. Validates the name, cap, default repo, transport and every template first; stores nothing on refusal. */
 export function addHost(db: Db, input: NewHostProfile): HostProfile {
   const p: HostProfile = {
-    ...input,
+    name: input.name,
+    shell: input.shell,
+    exec: input.exec,
+    fetch: input.fetch,
+    repo: input.repo,
+    max_sessions: input.max_sessions,
     transport: input.transport ?? "session",
     stop: input.stop ?? null,
     attach: input.attach ?? null,
@@ -941,6 +960,8 @@ export interface HostCheckStep {
     | "attach"
     | "reachable"
     | "repo"
+    | "harnesses"
+    | "hooks"
     | "pi"
     | "extension"
     | "ctl"
@@ -957,6 +978,8 @@ export interface HostCheckReport {
   steps: HostCheckStep[];
   /** Advice that never fails the check (a heuristic, said as one). */
   warnings: string[];
+  /** The harness probe this check took and recorded on the profile; absent when it got no answer. */
+  capabilities?: HostCapabilities;
 }
 
 export interface HostCheckOptions extends ChannelOpts {
@@ -984,9 +1007,12 @@ const lastLine = (s: string): string =>
 /**
  * Check a host through its own stored templates, under ONE channel: the
  * host answers `exec`, the repo (`root`, else the profile's default; skipped
- * with neither) is a git repo, pi runs under the login
- * shell, `pi list` names mu, and with `agent` the forwarded socket answers
- * hello. Each failure is reported; none is retried; an unreachable host
+ * with neither) is a git repo, which harnesses resolve in the profile's shell
+ * mode (recorded on the profile, src/host-harnesses.ts) with murmur's hook
+ * entries for each hook harness found, and, when the host has pi (or the probe
+ * got no answer), pi runs and `pi list` names mu; with `agent` the forwarded
+ * socket answers hello. A host with no pi skips the pi steps, so a claude-only
+ * host passes. Each failure is reported; none is retried; an unreachable host
  * skips the rest. The ctl probe only reads an existing forward.
  */
 export async function checkHost(
@@ -1000,6 +1026,7 @@ export async function checkHost(
   let warnings: string[] = [];
   // A template exited 3: the rest is skipped, as for an unreachable host.
   let handedBack = false;
+  let capabilities: HostCapabilities | undefined;
 
   await withHostChannel(
     db,
@@ -1021,7 +1048,7 @@ export async function checkHost(
         name: HostCheckStep["step"],
         cmd: string,
         good: (r: HostRun) => string | undefined,
-        unmet: string,
+        unmet: string | (() => string),
       ): Promise<boolean> => {
         if (handedBack) {
           steps.push({ step: name, ok: null, detail: "skipped: the host handed back" });
@@ -1047,7 +1074,9 @@ export async function checkHost(
             (r.exitCode === null
               ? `timed out after ${timeoutMs}ms`
               : r.exitCode === 0
-                ? unmet
+                ? typeof unmet === "string"
+                  ? unmet
+                  : unmet()
                 : `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);
         } catch (e) {
           if (e instanceof HostHandbackError) {
@@ -1068,24 +1097,54 @@ export async function checkHost(
         } else {
           await step("repo", `git -C ${remotePathWord(root)} rev-parse --git-dir`, () => root, "");
         }
+        // The literal launchers, in the shell a spawn's command gets (spec D17): recorded even
+        // when none is found, so a spawn for a missing harness is refused by name.
+        const shell = profile.transport === "lease" ? "sh" : "login";
         await step(
-          "pi",
-          login("pi --version"),
-          (r) => lastLine(r.stdout) || undefined,
-          "pi printed no version",
+          "harnesses",
+          login(harnessProbeScript()),
+          (r) => {
+            capabilities = parseHarnessProbe(r.stdout, shell);
+            return capabilities === undefined ? undefined : harnessesDetail(capabilities);
+          },
+          () => noHarnessDetail(capabilities),
         );
-        await step(
-          "extension",
-          login("pi list"),
-          (r) =>
-            r.stdout
-              .split("\n")
-              .find((l) => /\bmu\b/.test(l))
-              ?.trim(),
-          "pi list does not name mu",
-        );
+        if (capabilities !== undefined) {
+          recordHostCapabilities(db, profile, capabilities);
+          const hooks = hooksStep(capabilities);
+          steps.push(hooks.step);
+          warnings.push(...hooks.warnings);
+        } else {
+          steps.push({
+            step: "hooks",
+            ok: null,
+            detail: handedBack ? "skipped: the host handed back" : "skipped: no harness report",
+          });
+        }
+        if (capabilities !== undefined && capabilities.harnesses.pi.command === null) {
+          for (const s of ["pi", "extension"] as const) {
+            steps.push({ step: s, ok: null, detail: "skipped: the host has no pi" });
+          }
+        } else {
+          await step(
+            "pi",
+            login("pi --version"),
+            (r) => lastLine(r.stdout) || undefined,
+            "pi printed no version",
+          );
+          await step(
+            "extension",
+            login("pi list"),
+            (r) =>
+              r.stdout
+                .split("\n")
+                .find((l) => /\bmu\b/.test(l))
+                ?.trim(),
+            "pi list does not name mu",
+          );
+        }
       } else {
-        for (const s of ["repo", "pi", "extension"] as const) {
+        for (const s of ["repo", "harnesses", "hooks", "pi", "extension"] as const) {
           steps.push({
             step: s,
             ok: null,
@@ -1122,7 +1181,13 @@ export async function checkHost(
     },
     opts,
   );
-  return { host, ok: steps.every((s) => s.ok !== false), steps, warnings };
+  return {
+    host,
+    ok: steps.every((s) => s.ok !== false),
+    steps,
+    warnings,
+    ...(capabilities !== undefined ? { capabilities } : {}),
+  };
 }
 
 /** The dummy handle `host check` expands a lease profile's `stop` with. Never run. */

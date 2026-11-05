@@ -26,6 +26,7 @@ let cmds: string;
 let stopRan: string;
 let gitLog: string;
 let oldPath: string | undefined;
+let oldShell: string | undefined;
 // The fast tier runs no real git: the repo step's `git -C <root> rev-parse` is answered by the
 // exec template itself (exit 0), every other command runs through a plain sh.
 let execT: string;
@@ -50,8 +51,17 @@ beforeEach(() => {
   gitLog = join(dir, "git-log");
   writeFileSync(join(bin, "git"), `#!/bin/sh\necho "$@" >> ${gitLog}\nexit 0\n`);
   chmodSync(join(bin, "git"), 0o755);
+  // A login shell that runs no rc file, and a PATH with no harness this machine has installed:
+  // the harness probe (spec D17) sees only the shims here.
+  writeFileSync(
+    join(bin, "login-sh"),
+    '#!/bin/sh\n[ "$1" = -ilc ] && shift\nexec /bin/sh -c "$1"\n',
+  );
+  chmodSync(join(bin, "login-sh"), 0o755);
   oldPath = process.env.PATH;
-  process.env.PATH = `${bin}:${oldPath}`;
+  oldShell = process.env.SHELL;
+  process.env.PATH = `${bin}:/usr/bin:/bin`;
+  process.env.SHELL = join(bin, "login-sh");
   db = openDb({ path: dbPath });
   addHost(db, {
     name: "lease",
@@ -67,6 +77,10 @@ beforeEach(() => {
 });
 afterEach(() => {
   process.env.PATH = oldPath;
+  if (oldShell === undefined) {
+    const k = "SHELL";
+    delete process.env[k];
+  } else process.env.SHELL = oldShell;
   // The whole fast file runs no real git (checked before the fixture dir goes).
   const ranGit = existsSync(gitLog) ? readFileSync(gitLog, "utf8") : "";
   db.close();
@@ -83,6 +97,8 @@ describe("host check on a lease profile", () => {
       ["stop", true],
       ["reachable", true],
       ["repo", true],
+      ["harnesses", true],
+      ["hooks", null],
       ["pi", true],
       ["extension", true],
     ]);
@@ -138,7 +154,14 @@ describe("host check on a lease profile", () => {
       max_sessions: null,
     });
     const r = await checkHost(db, "sess");
-    expect(stepsOf(r).map(([s]) => s)).toEqual(["reachable", "repo", "pi", "extension"]);
+    expect(stepsOf(r).map(([s]) => s)).toEqual([
+      "reachable",
+      "repo",
+      "harnesses",
+      "hooks",
+      "pi",
+      "extension",
+    ]);
     expect(readFileSync(cmds, "utf8")).toMatch(/-ilc/);
   });
 
@@ -176,8 +199,19 @@ describe("host check on a lease profile", () => {
     expect(existsSync(stopRan)).toBe(false);
   });
 
-  it("a missing pi is named (no login shell to find it through)", async () => {
+  it("a host with no harness at all fails the harnesses step (no login shell to find one through); pi is skipped", async () => {
     process.env.PATH = "/usr/bin:/bin";
+    const r = await checkHost(db, "lease");
+    expect(r.ok).toBe(false);
+    expect(r.steps.find((s) => s.step === "harnesses")).toMatchObject({
+      ok: false,
+      detail: expect.stringContaining("resolves in a bare sh -c"),
+    });
+    expect(r.steps.find((s) => s.step === "pi")).toMatchObject({ ok: null });
+  });
+
+  it("a pi that is there but broken is named", async () => {
+    writeFileSync(join(dir, "bin", "pi"), "#!/bin/sh\nexit 127\n");
     const r = await checkHost(db, "lease");
     expect(r.steps.find((s) => s.step === "pi")).toMatchObject({ ok: false });
   });

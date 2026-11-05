@@ -613,6 +613,34 @@ export class AgentSendUnsupportedError extends Error {
 }
 
 /**
+ * A task brief too large for a remote `hooks` worker's brief file (spec D17):
+ * it is written through the host's exec template as one argument, and exec
+ * templates have no stdin path. `bytes` is the brief, `escaped` the operand
+ * the write carries (`\` and `'` escaped), `cap` the limit it went over:
+ * the 96 KB brief cap, or, with `command` (the filled template's bytes),
+ * Linux's 128 KiB on one argument. Refused before anything is sent: before
+ * the spawn, or on a resumed attempt before the pointer (unsent, rolled
+ * back). Exit 2.
+ */
+export class RemoteBriefTooLargeError extends Error {
+  override readonly name = "RemoteBriefTooLargeError";
+  constructor(
+    public readonly agentName: string,
+    public readonly host: string,
+    public readonly bytes: number,
+    public readonly cap: number,
+    public readonly escaped: number = bytes,
+    public readonly command?: number,
+  ) {
+    super(
+      command === undefined
+        ? say("agent.remote_brief_too_large", agentName, host, bytes, cap, escaped)
+        : say("agent.remote_brief_command_too_large", agentName, host, bytes, cap, command),
+    );
+  }
+}
+
+/**
  * `mu agent send --steer` to an agent whose channel has no mid-turn input
  * (`hooks`: a paste lands in the input box, not in the running turn).
  * Nothing was sent. Exit 2 (wrong recipe).

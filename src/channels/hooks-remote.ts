@@ -25,7 +25,9 @@
 // an earlier turn's text that murmur kept when a later turn ended without one.
 //
 // A read costs one exec (several serialized ssh round trips on a lease host),
-// so only a wait, a collect and a send gate read; an ack poll never does. A
+// so only a wait, a collect, a send gate and a task spawn's readiness (every
+// 5 s until the session starts, src/channels/hooks-spawn.ts) read; an ack
+// poll never does. A
 // read passes the host's channel admission like every remote command: at
 // `--max-sessions 1` the worker's own pane holds the only channel and the read
 // is refused (the send gate then reads `unknown`). Reads of one key are

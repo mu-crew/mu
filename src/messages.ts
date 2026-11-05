@@ -150,10 +150,24 @@ export const MESSAGES = {
   "agent.send_refused": (reason: string) => `control socket refused the send: ${reason}`,
   "agent.empty_send_hooks": (name: string) =>
     `agent ${name} is on the hooks channel: an empty message submits nothing; press Enter in the pane yourself`,
-  "agent.task_brief_hooks": (name: string, host: string | null) =>
-    host !== null
-      ? `agent ${name} runs on ${host} on the hooks channel, where mu cannot write a task brief file yet: nothing was sent; spawn it without --task and send the brief with mu agent send`
-      : `agent ${name} is on the hooks channel and has no cwd to write its task brief file in: nothing was sent`,
+  "agent.task_brief_hooks": (name: string) =>
+    `agent ${name} is on the hooks channel and has no cwd to write its task brief file in: nothing was sent`,
+  "agent.remote_brief_too_large": (
+    name: string,
+    host: string,
+    bytes: number,
+    cap: number,
+    escaped: number,
+  ) =>
+    `the task brief for ${name} is ${bytes} bytes${escaped === bytes ? "" : ` (${escaped} with its \\ and ' escaped)`}; on ${host} it is written through the host's exec template as one argument, which takes at most ${cap} bytes (${cap / 1024} KB) of brief: nothing was sent; shorten the brief and point at files in the repo for the rest`,
+  "agent.remote_brief_command_too_large": (
+    name: string,
+    host: string,
+    bytes: number,
+    cap: number,
+    command: number,
+  ) =>
+    `the task brief for ${name} is ${bytes} bytes, and the command that writes it on ${host} through the host's exec template comes to ${command} bytes as one argument, over the ${cap}-byte limit: nothing was sent; shorten the brief (or the exec template or the cwd)`,
   "agent.task_brief_hooks_unseen": (name: string) =>
     `the brief pointer was pasted to ${name}, but its inbox shows no run since: still unknown, never resent (if it never started, send the pointer yourself)`,
   "agent.fence_unsupported": (name: string, channel: string) =>
@@ -380,6 +394,8 @@ export const MESSAGES = {
     `host ${host} still holds channels (${holders.join(", ")}): close those agents first`,
   "host.spawn_unsupported": (host: string, mux: string) =>
     `--host ${host} needs a multiplexer that runs a shell command in its pane; ${mux} starts agents itself and cannot run the profile's shell template (use tmux)`,
+  "host.harness_missing": (host: string, harness: string, probedAt: string) =>
+    `host ${host} has no ${harness}: mu host check ${host} (${probedAt}) found no ${harness} command in the profile's shell, where a spawn's command runs; nothing was spawned. Install ${harness} there (and log it in), run mu host check ${host} again, or spawn another harness`,
   "host.check_failed": (host: string, failed: readonly string[]) =>
     `host ${host} check failed: ${failed.join(", ")}`,
   "host.handback": (host: string, field: string, detail: string) =>
