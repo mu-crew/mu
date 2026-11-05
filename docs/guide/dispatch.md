@@ -264,6 +264,11 @@ mu next --workers 2 -w auth        # never more than 2 working; a CLOSED task's 
 attempt; a live worker whose run ended in an API error is sent its brief again in place (never
 reaped, never duplicated). Each retry costs one run of the ceiling; a remote worker's tree is never
 touched. At the ceiling, or for anything it will not guess, it reports an `attention` move.
+On a claude or cursor-agent worker the API error is its failed turn (`StopFailure`, an error
+`stop`): the retry clears the pane's `error` in murmur, writes a new brief file and pastes its
+pointer again, so each later failure gets its own retry. muse's failed turn reaches murmur but
+its row is unverified, so it parks the attempt as a human need instead. codex reports no failed
+turn at all: a failed codex turn is neither retried nor parked.
 
 `mu next --refute [--refute-cli <key>]` also launches ONE checker per task a worker closed as `done`
 (a delegate call in `scratch`, wave `refute-<ws>`, briefed from the task's pinned brief and its

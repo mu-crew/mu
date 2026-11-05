@@ -13,11 +13,24 @@
 // A remote worker (spec D11) reports on its node, so its readiness reads the
 // node (one exec each, a few seconds apart, as a watch does) and its local
 // pane once per read, never the pane alone in a tight poll.
+//
+// The executor's in-place retry (spec D17) reads here too: a worker whose
+// last turn ended in `turn_failed`, with nothing in the pane since, is the
+// hooks counterpart of a pi worker idle on an API error. murmur keeps an
+// `error` until something clears it, and keeps its first time on a repeat, so
+// the retry acknowledges the failure it answers (`acknowledgeTurnFailure`)
+// before it pastes: a later failure in the pane is then raised afresh.
 
 import { sleep } from "../tmux.js";
 import { rowOf } from "./hooks.js";
-import { type HooksPane, pollPane, readHooksPane } from "./hooks-pane.js";
-import type { DeliveryTarget, RemoteReader } from "./types.js";
+import {
+  clearPaneAttention,
+  type HooksPane,
+  pollPane,
+  readHooksPane,
+  settledRuns,
+} from "./hooks-pane.js";
+import type { ChannelTarget, DeliveryTarget, RemoteReader } from "./types.js";
 
 /** How long a hooks spawn waits for `session_start`: `MU_SPAWN_ACK_MS`, parsed like `MU_SPAWN_CTL_MS`. */
 export function spawnAckMs(): number {
@@ -130,4 +143,55 @@ export async function hooksRunSince(
   const runs = baseline.runCount ?? 0;
   if (pane.runCount <= runs) return { state: "none" };
   return { state: "ran", runs, sessionId: pane.sessionId };
+}
+
+/** A hooks worker's last turn, ended in `turn_failed` (spec D17). */
+export interface HooksTurnFailure {
+  /** The harness session the failed turn ran in; null: none reported. */
+  sessionId: string | null;
+  /** Turns settled in that session, the failed one included: the retry's error run. */
+  runs: number;
+  /** The failure's message (`""` when the harness gave none). */
+  error: string;
+}
+
+/**
+ * The agent's last turn when it ended in `turn_failed` and nothing has
+ * happened in the pane since: stopped, no dialog, and the `error` attention
+ * raised by the newest event murmur applied to the pane's row. murmur keeps an
+ * `error` through later turns, and keeps its first time on a repeat, so an
+ * error older than the row's last event reads as no failure: a turn that
+ * settled after it (a human's, say) is not mistaken for a failed one. The
+ * executor's retry clears the error it answers ({@link acknowledgeTurnFailure}),
+ * so each later failure raises a new one. undefined: no such failure, or
+ * murmur did not answer. Reads the local pane only (a remote worker's events
+ * reach it through a wait's reads). Never throws.
+ */
+export async function hooksTurnFailure(t: ChannelTarget): Promise<HooksTurnFailure | undefined> {
+  const pane = await readHooksPane(t.agent.paneId);
+  if (pane === undefined || pane.activity !== "stopped" || pane.blocked !== null) return undefined;
+  if (pane.error === null || pane.errorAt === null || pane.updatedAt === null) return undefined;
+  if (pane.errorAt < pane.updatedAt) return undefined;
+  const runs = settledRuns(pane);
+  if (runs === undefined || runs < 1) return undefined;
+  return { sessionId: pane.sessionId, runs, error: pane.error };
+}
+
+/**
+ * Acknowledge a failed turn before its in-place retry: `murmur clear --pane`,
+ * then a read of the pane. True only when the pane then reads with no `error`
+ * and still stopped with no dialog, so a later failure raises a fresh `error`
+ * that {@link hooksTurnFailure} sees. false: murmur could not clear it (absent,
+ * or routed to another tmux server): the retry must not go ahead, since every
+ * later failure in the pane would read as the old one. Never throws.
+ */
+export async function acknowledgeTurnFailure(t: ChannelTarget): Promise<boolean> {
+  await clearPaneAttention(t.agent.paneId);
+  const pane = await readHooksPane(t.agent.paneId);
+  return (
+    pane !== undefined &&
+    pane.error === null &&
+    pane.activity === "stopped" &&
+    pane.blocked === null
+  );
 }

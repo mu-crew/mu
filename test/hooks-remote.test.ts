@@ -230,6 +230,7 @@ describe("a read whose events never reached the pane", () => {
     updatedAt: 1,
     blocked: null,
     error: null,
+    errorAt: null,
     lastText: null,
     confirmed: true,
     ...over,

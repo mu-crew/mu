@@ -14,6 +14,18 @@
 // ever probed, never resent). The error text lives only on the ctl `wait`
 // reply (a status read does not carry it), so it is read there, bounded.
 //
+// A `hooks` worker (spec D17) is read from murmur's pane instead: its last
+// turn ended in `turn_failed`, with nothing in the pane since. Its harness
+// session stands in for pi's incarnation and its settled turns for pi's runs.
+// Only a harness whose `turn_failed` row is verified (src/harnesses.ts: claude's
+// `StopFailure`, cursor-agent's error `stop`) is retried in place, and the
+// retry clears the `error` it answers so the next failure is raised afresh.
+// On any other the failure cannot be trusted to be one, so the attempt is
+// parked `needs_human`: muse's `StopFailure`, which murmur maps but no run has
+// recorded. codex reports no failed turn at all (murmur writes no
+// `turn_failed` for it), so a failed codex turn is never seen as one: never
+// retried, never parked.
+//
 // Never acted on, only reported (`attention`): a remote worker (its tree and
 // host channel are not ours to reap or collect; the recovery record keeps
 // the tree), an error at the run ceiling or with no run baseline, and any
@@ -28,8 +40,15 @@ import { savedIdentity } from "./agents/task-spawn.js";
 import type { AgentRow } from "./agents.js";
 import { deliveredOf, type RetryTarget } from "./auto-attempt.js";
 import { getCarrierJobByAgent } from "./carrier-jobs.js";
-import { agentChannel, type CtlBlocked, channelTarget } from "./channels/index.js";
+import {
+  agentChannel,
+  type ChannelName,
+  type CtlBlocked,
+  channelTarget,
+  hooksTurnFailure,
+} from "./channels/index.js";
 import type { Db } from "./db.js";
+import { HARNESS_TABLE, harnessOfCli } from "./harnesses.js";
 import { say } from "./messages.js";
 import { localMachineId } from "./segments.js";
 import { autoPermitted, getAutoConfig } from "./task-auto.js";
@@ -41,12 +60,14 @@ export interface WorkerFacts {
   ctl?: "ok" | "missing" | "refused";
   pending?: boolean;
   blocked?: CtlBlocked;
-  /** pi's process incarnation. */
+  /** pi's process incarnation; on `hooks`, the harness session. */
   incarnation?: string;
   /** The settled run's count when `lastError` was read, else the current count. */
   runs?: number;
-  /** The error that ended the latest settled run (ctl `wait` reply only). */
+  /** The error that ended the latest settled run (ctl `wait` reply; on `hooks`, its `turn_failed`). */
   lastError?: string;
+  /** The channel the facts were read through; absent: ctl (or a reader that predates it). */
+  channel?: ChannelName;
 }
 
 /** Reads the facts of `agents` (keyed `<workstream>/<name>`), within `ms`. Injected by tests. */
@@ -64,10 +85,32 @@ export const idleOnCtl = (
 ): boolean =>
   f.status === "needs_input" && f.ctl === "ok" && f.pending !== true && f.blocked === undefined;
 
+/**
+ * Idle where a worker's last error is acted on: on ctl, {@link idleOnCtl}; on
+ * `hooks`, stopped with no dialog (the reader sets that only for a failed turn
+ * with nothing in the pane since).
+ */
+export const idleAtError = (
+  f: Pick<WorkerFacts, "status" | "ctl" | "pending" | "blocked" | "channel">,
+): boolean =>
+  f.channel === "hooks"
+    ? f.status === "needs_input" && f.blocked === undefined && f.pending !== true
+    : idleOnCtl(f);
+
+/** True when the agent's harness reports a failed turn through a verified `turn_failed` row (spec D6, D17). */
+export function turnFailedVerified(agent: Pick<AgentRow, "cli" | "command">): boolean {
+  const harness = harnessOfCli(agent.cli, agent.command ?? undefined);
+  return harness !== undefined && HARNESS_TABLE[harness].events.turn_failed !== null;
+}
+
 export const workerKey = (a: Pick<AgentRow, "workstreamName" | "name">): string =>
   `${a.workstreamName}/${a.name}`;
 
-/** The production reader: one batched state read, then the error of each idle pi worker. */
+/**
+ * The production reader: one batched state read, then the error of each idle
+ * pi worker, and of each `hooks` worker whose last turn failed (one `murmur
+ * pane` read each, which drains its inbox).
+ */
 export const observeWorkers =
   (db: Db): ObserveWorkers =>
   async (agents, { signal, ms }) => {
@@ -87,9 +130,27 @@ export const observeWorkers =
           ...(s.runs !== undefined ? { runs: s.runs } : {}),
         };
         out.set(key, facts);
-        if (!idleOnCtl(s) || s.runs === undefined || s.runs < 1) return;
         const target = channelTarget(db, agent);
         const channel = agentChannel(target);
+        if (channel.name === "hooks") {
+          out.set(key, { ...facts, channel: "hooks" });
+          // A gone pane is the reap's; murmur may still hold its row.
+          if (s.status === null) return;
+          const failed = await hooksTurnFailure(target);
+          if (failed === undefined) return;
+          // The pane option ranks an old error above a running turn: the pane read decides.
+          const { blocked: _b, pending: _p, ...rest } = facts;
+          out.set(key, {
+            ...rest,
+            channel: "hooks",
+            status: "needs_input",
+            runs: failed.runs,
+            lastError: failed.error,
+            ...(failed.sessionId !== null ? { incarnation: failed.sessionId } : {}),
+          });
+          return;
+        }
+        if (!idleOnCtl(s) || s.runs === undefined || s.runs < 1) return;
         try {
           // A settled run is answered at once: the bound only covers a socket that stops answering.
           const settled = await channel.lastRun(target, {
@@ -117,6 +178,8 @@ export const observeWorkers =
 export type RecoveryAction =
   | { kind: "reap"; task: string; agent: AgentRow; why: string }
   | { kind: "retry"; task: string; target: RetryTarget; error: string }
+  /** A failed turn on a harness whose `turn_failed` row is unverified: the delivered attempt is parked `needs_human`. */
+  | { kind: "park"; task: string; key: string; agent: string; reason: string }
   | { kind: "attention"; task: string; reason: string; agent?: string };
 
 /** A task whose delivered attempt's worker still owns it. */
@@ -124,9 +187,11 @@ export interface InFlightWorker {
   task: string;
   taskId: number;
   agent: AgentRow;
-  /** The delivered attempt's run baseline and pi process, for a receipt-bound wait. */
+  /** The delivered attempt's run baseline and pi process (on `hooks`, its session), for a receipt-bound wait. */
   runs: number | null;
   incarnation: string | null;
+  /** The delivered attempt's key (`auto:<n>`): what a park ends. */
+  key: string;
 }
 
 /**
@@ -164,6 +229,7 @@ export function inFlightWorkers(db: Db, workstream: string): InFlightWorker[] {
       agent: id.agent,
       runs: receipt.runs,
       incarnation: receipt.incarnation,
+      key: delivered.record.key,
     });
   }
   return out;
@@ -206,6 +272,9 @@ export function exhaustedAfterDeath(
  *   pane gone, remote           attention: the tree is not ours to touch
  *   alive, last run API error   retry in place (needs a run baseline, a pi
  *                               incarnation, a free run and a local host)
+ *   hooks, last turn failed     the same, keyed on the harness session, when
+ *                               its `turn_failed` row is verified; else park
+ *                               the attempt `needs_human`
  *   anything else               nothing (busy, dialog, pending, idle, unknown)
  */
 export async function scanRecovery(
@@ -248,25 +317,44 @@ export async function scanRecovery(
         continue;
       }
       if (f.lastError === undefined) continue;
-      if (!idleOnCtl(f)) continue;
+      if (!idleAtError(f)) continue;
       const attention = (reason: string): void => {
         out.push({ kind: "attention", task: w.task, agent: w.agent.name, reason });
       };
+      const hooks = f.channel === "hooks";
+      const what = hooks ? "a failed turn" : "an API error";
       if (w.agent.host !== null) {
-        attention(`remote worker ${w.agent.name} stopped on an API error: not retried from here`);
+        attention(`remote worker ${w.agent.name} stopped on ${what}: not retried from here`);
         continue;
       }
       if (f.incarnation === undefined || f.runs === undefined || w.runs === null) {
         attention(
-          `${w.agent.name} stopped on an API error but no run baseline or pi incarnation is known: not retried`,
+          `${w.agent.name} stopped on ${what} but no run baseline or ${hooks ? "session" : "pi incarnation"} is known: not retried`,
+        );
+        continue;
+      }
+      if (hooks && w.incarnation !== null && f.incarnation !== w.incarnation) {
+        // Turns count from zero in each session: a run count from another is no comparison.
+        attention(
+          `${w.agent.name} stopped on a failed turn in another session than its brief's: not retried`,
         );
         continue;
       }
       if (f.runs <= w.runs) continue; // the error run was already answered
+      if (hooks && !turnFailedVerified(w.agent)) {
+        out.push({
+          kind: "park",
+          task: w.task,
+          key: w.key,
+          agent: w.agent.name,
+          reason: `${w.agent.name} stopped on a failed turn (${f.lastError.slice(0, 200) || "no message"}), and ${w.agent.cli}'s turn_failed is not verified: not retried in place`,
+        });
+        continue;
+      }
       const auto = getAutoConfig(db, w.taskId);
       if (auto !== undefined && auto.runs >= auto.maxRuns) {
         attention(
-          `${w.agent.name} stopped on an API error and ${w.task} used its ${auto.maxRuns} run(s): raise the ceiling (mu task auto --max) or take it over`,
+          `${w.agent.name} stopped on ${what} and ${w.task} used its ${auto.maxRuns} run(s): raise the ceiling (mu task auto --max) or take it over`,
         );
         continue;
       }
