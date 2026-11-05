@@ -73,8 +73,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   agent_id recovery_id stop_failed next`. `next` is one preview: `mu agent
   reattach <name> -w <ws>` when reattach's preflight is clear, else `mu agent
   close <name> -w <ws>` (a record's always with `--recovery <id>`). A lease
-  job's stop-failure record (`<job_file>.<job>.stop-failed`) shows escaped and
-  cut at 160 chars, only when it names that handle. `--table` prints a
+  job's stop-failure record (`<job_file>.<job>.stop-failed`) shows only when it
+  names that handle, as the text after `<job> ` escaped like a task record (C0,
+  C1, bidi, U+2028/9; other Unicode as is), cut at 160 chars and so the whole
+  record (JSON item and table line) stays <= 400: ` cut=<n> full: mu doctor`,
+  or `cut=<n>` alone with no room; `name`, `job`, `next` are never cut. `--table` prints a
   `Leftovers (n)` section. No host command runs. mu removes the record once a
   stop (close or spawn rollback) or a ready reattach proves the job; an
   abandon keeps it. Doctor's `lease-job` hint prints the record's path.
