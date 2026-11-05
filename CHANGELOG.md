@@ -10,6 +10,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.3.3] — 2026-11-05
+
+### Fixed
+
+- **pi built on Bun hung with the mu extension loaded.** The extension ran
+  its bundled CLI with `process.execPath`, which under a single-file Bun pi is
+  pi itself, so every mu call (`mu delegates list` at session start, `mu wait`
+  at settle) started a second pi that waited. `pi -p` never returned. Under Bun
+  the extension now runs the CLI with `node` from `PATH`; under Node nothing
+  changes.
+
 ## [4.3.2] — 2026-11-03
 
 ### Added
