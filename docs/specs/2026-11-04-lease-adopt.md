@@ -70,8 +70,13 @@ each **Files**; a mu unit over 300 LOC at review splits at its named seam.
 
 **Command.** `RealSignalSteps::spawn_stop` detaches
 `mule --quiet [--config C] rm --host H <id> --retry-for 600 --fence-gen <G> --failed-file <job_file>.<id>.stop-failed`,
-`<G>` being the fence generation read at signal time. `exec`'s signal path
-omits `--failed-file` (no job file).
+`<G>` being the generation the carrier owns (mule `src/lease.rs`, `Owned`):
+fixed before the carrier can own the job (a lease reads it before its
+dispatch; an attach owns the number it bumped to) and never re-read at
+signal time. A signal thread descheduled after its pane went could otherwise
+read an attach's new generation and kill the reattached job, and a read
+error there would leave the stop unfenced. A lease whose fence cannot be read
+dispatches nothing. `exec`'s signal path omits `--failed-file` (no job file).
 
 New `rm` flags (`Commands::Rm`), all conflicting with `--all`:
 `--retry-for <SECS>` (retry until this much monotonic time has passed;
@@ -90,7 +95,8 @@ holds one decimal generation (missing = 0).
   flight) and bumps the generation only after proving the job Running. A
   child that is sleeping or polling for the master wakes, locks, sees the new
   generation and exits. A later stop by the attached carrier's own signal
-  reads the bumped generation, so the fence never disarms a future stop.
+  carries the bumped generation it owns, so the fence never disarms a future
+  stop.
   Direction A's cancel marker fails one of two ways: removed by attach, it
   re-arms a sleeping old child; left in place, it cancels the next carrier's
   stop of the same id.
@@ -257,8 +263,13 @@ agent instead.
 - **Preview:** read-only. Runs the preflight and prints host, job, tree,
   previous pane and `rev = agentRevision(ws, name)`, which with no row
   already hashes the reservation and records. `next` is the apply with
-  `--if <rev>`.
-- **Apply:** a different revision refuses (exit 4) before any effect.
+  `--if <rev>`. The preflight awaits a mux probe, so the facts and the
+  revision come from ONE read transaction taken after it, like
+  `previewClose`: the row's absence, the workstream, the reservation and the
+  record are re-read there, and a plan they no longer match is retried. After
+  3 attempts it refuses (`AgentReplacedError`, exit 4, next = the preview).
+- **Apply:** a different revision refuses (exit 4) before any effect. The
+  apply takes its plan and revision the same way.
 
 **Preflight** (`reattachBlockers(db, ws, name): Promise<Blocker[]>`,
 exported for `mu_list`). It is local only: DB, local files, and a local mux
@@ -267,8 +278,14 @@ probe. Each blocker is a refusal (exit 4, typed `ReattachRefusedError`) with
 `--recovery <id>` when the name has more than one record.
 1. **No agent row of the name** (else `AgentExistsError`).
 2. **Workstream** exists and is not torn down (`tornDownAtOf`, as spawn
-   checks), and the reservation's `created_at` is not older than the
-   workstream's, so a re-created workstream refuses.
+   checks), and the reservation's `carrier_jobs.workstream_id` is the live
+   workstream's id, so a re-created workstream refuses. The bind
+   (`bindCarrierJobAgent`, at finalize, after `insertAgent` ensured the
+   workstream) stamps it with the bound row's `workstream_id`; a rebind keeps
+   it. NULL (a reservation bound before the column, added in place to a v13
+   file) refuses as unknown. Neither `created_at` (a reservation can predate
+   an auto-created workstream) nor `recorded_at` (when the handle was learned,
+   possibly by a close after a teardown and reinit) is a generation.
 3. **Exactly one reservation of (ws, name)**: legacy ordinals can leave
    several.
 4. **The reservation** has `job`, `launch='intent'`, `agent_id` and
@@ -311,9 +328,14 @@ spawn does.
    - `deleteRemoteRecovery(rec)` (compare-and-set) when there is a record.
 
    Install can still fail (teardown and reconcile take no agent lock). Then
-   mu **kills the new pane** and reports that its signal path is stopping
-   the job: a carrier must not hold a job with no row ("pane death is agent
-   death").
+   mu first points the reservation at the new pane (`rebindCarrierJobAgent`
+   from the old pair to the old agent id and the new pane; the old pane is
+   proven dead already), then **kills the new pane**: a carrier must not hold
+   a job with no row ("pane death is agent death"). Only a `localPaneAlive`
+   false after the kill reports `rollback:"pane-killed"` (its signal path is
+   stopping the job). Otherwise `rollback:"pane-unknown"`, naming the pane:
+   the next preflight probes that pane and refuses while it may run, so two
+   carriers never share the job's forward.
 4. Release the locks.
 
 **Readiness:** `awaitCtlHandshake(sock, assertAlive)` with `localPaneAlive`;
@@ -366,7 +388,9 @@ a fake carrier script that holds or exits 1). Real holding carriers go in
   `repo`; record gone; reservation rebound; ctl ok; event logged. A `--cwd`
   agent: tree fields NULL.
 - **Preflight refusals**, each with nothing changed and the close preview in
-  `next`: live row · torn-down ws · re-created ws · two reservations · no
+  `next`: live row · torn-down ws · re-created ws (an old binding whose
+  handle lands after a real teardown and reinit refuses; a reservation bound
+  in the re-created ws is allowed) · NULL `workstream_id` · two reservations · no
   handle · a `reason` · unbound reservation · previous pane alive · pane
   probe throws · creator alive · no `attach` · changed `stop` · session
   profile · record with another `workstream_id` · newer record on the path ·
@@ -376,8 +400,11 @@ a fake carrier script that holds or exits 1). Real holding carriers go in
   = dead · ctl `refused` and `missing` with a live pane → row kept,
   `ready:false` · handshake ok but pane gone at the final check → rollback.
 - **Races:** new row reaped during readiness → `already-handled`, exactly one
-  record (the new one) · install transaction fails → pane killed, nothing
-  else changed.
+  record (the new one) · install transaction fails → pane killed, the
+  reservation names it, nothing else changed · the kill fails with the pane
+  alive → `pane-unknown`, the next preflight refuses on the new pane · the
+  reservation replaced during the preview's probe → the preview describes the
+  job its rev applies; replaced on every attempt → refused.
 - **After a reattach:** a reap writes a NEW record under the new incarnation;
   `agent close` stops the job and closes the tree.
 
