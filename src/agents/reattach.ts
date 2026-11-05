@@ -18,6 +18,7 @@ import { assertRevision } from "../revision.js";
 import { shellWord } from "../shell-quote.js";
 import { claimTask } from "../tasks/claim.js";
 import { isScratchWorkstream } from "../workstream.js";
+import { dropStopFailed } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
 import {
   type Blocker,
@@ -177,7 +178,7 @@ export async function reattachAgent(
     }
   }
   const ready = ctl === "ok";
-  if (ready) rmSync(`${p.jobFile}.${p.r.job}.stop-failed`, { force: true });
+  if (ready) dropStopFailed(p.jobFile, p.r.job);
   const what = `host=${p.r.host}, job=${p.r.job}, pane=${pid}, ctl=${ctl}`;
   emitEvent(db, ws, "agent.reattach", `agent reattach ${name} (${what})`);
   // `--task`: the reaper parked them (hence force). A refusal is a warning: the reattach took.

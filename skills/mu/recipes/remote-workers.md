@@ -21,7 +21,7 @@ End the brief with: commit, then `CLOSE: task=<id> evidence="<command + result>"
 - A capped host (`--max-sessions 1`): use a lease (`host init --mule`).
 - Long remote gates are panes (`--command`).
 - `close` refuses a dirty or uncollected tree: collect again.
-- Exit 3 from a host command is a hand-back: stop and ask; never retry or ssh.
+- Host-command exit 3 is a hand-back: stop and ask; never retry or ssh.
 - A `shell` template never rides a shared ssh master.
-- A dead lease pane leaves its job running: `close` stops it; only `--abandon-job` passes an unreachable host.
+- A dead lease pane's job runs on, tasks parked: run its leftover's `next` (`agent list`); only `--abandon-job` passes unreachable hosts.
 - A lease shell is non-login: the brief or `--command` sets PATH (`~/.elan/bin`).

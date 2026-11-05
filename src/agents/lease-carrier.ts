@@ -119,6 +119,21 @@ export function leaseJobFile(db: Db, workstream: string, name: string): string {
   return carrierJobFilePath(workstream, name, dirname(db.name));
 }
 
+/**
+ * The stop-failure record a carrier writes beside the job file when its signal-path stop
+ * gives up (spec 2026-11-04-lease-adopt.md, contract 2). Its path names the job, so mu
+ * reads or removes only the record of the handle it holds.
+ */
+export const stopFailedPath = (jobFile: string, job: string): string =>
+  `${jobFile}.${job}.stop-failed`;
+
+/** Remove `job`'s record once mu has proven that job stopped or reattached. Best effort. */
+export function dropStopFailed(jobFile: string, job: string): void {
+  try {
+    rmSync(stopFailedPath(jobFile, job), { force: true });
+  } catch {}
+}
+
 export type JobFile =
   | { kind: "none" }
   | { kind: "handle"; job: string }
@@ -348,6 +363,7 @@ export async function rollbackLeaseJob(
     } catch (e) {
       return kept(job.host, handle, `stop failed: ${e instanceof Error ? e.message : String(e)}`);
     }
+    dropStopFailed(jobFile, handle);
     const now = readJobFile(jobFile);
     if (now.kind === "handle" && now.job === handle) rmSync(jobFile, { force: true });
     else if (now.kind !== "none") {
@@ -533,6 +549,8 @@ export async function stopLeaseReservation(
   }
   const handle = r.job;
   await runStop(db, r.host, handle, r.hostStop);
+  // Proven stopped: its record goes now, whether or not a job file is left to clean.
+  dropStopFailed(leaseJobFile(db, ws, r.name), handle);
   return { reservation: r, action: "stopped", facts: `job ${handle}` };
 }
 
