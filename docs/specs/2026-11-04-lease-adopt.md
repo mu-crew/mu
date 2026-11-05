@@ -55,8 +55,11 @@ each **Files**; a mu unit over 300 LOC at review splits at its named seam.
 1. **Attach command.** Written in the user's host template; mu never names
    mule. Starter shape:
    `mule run --host H --lease --attach {job} --job-file {job_file} --forward-unix {local_sock}:{remote_sock}`.
-   It exits 3 (no master) or 1 (job not running, conflicting job file) before
-   holding or changing anything. It may wait on mule's ticket queue and on an
+   It exits 3 (no master) before touching anything, or 1 (job not running, a
+   probe error, a conflicting job file) before it holds the job: no job file
+   written, no fence generation bumped, no `rm`. The fence lock taken before
+   that exit 1 may create the fence file, empty (generation 0, which is what
+   a missing one means). It may wait on mule's ticket queue and on an
    in-flight stop attempt, so no time bound is promised. Otherwise it holds
    exactly like a lease, and SIGHUP stops the job.
 2. **Stop-failure record.** A lease's signal-path stop that gives up writes
@@ -113,11 +116,13 @@ holds one decimal generation (missing = 0).
 
 **Retry loop** (`jobs::remove_with_retry(t, host, id, policy, clock, fence)`,
 pure over `Transport` plus an injected clock, sleep and fence for layer 1):
-- **Master down** (`!t.master_alive(host)`): no `rm`; check again every
+Each pass with `--fence-gen` first locks the fence and checks the
+generation, then looks at the master.
+- **Master down** (`!t.master_alive(host)`): unlock, no `rm`; check again every
   **5 s** (`-O check` is lock-free, opens no session, killed after 2 s). The
   child never opens a master or prompts; it waits on the human the dead pane
   already asked.
-- **Master up:** lock the fence, check the generation, run
+- **Master up:** run
   `remove(Target::One)` through the normal ticketed `Transport::run`, then
   unlock. Exit 0, or "nothing to remove": done (exit 0, remove the record,
   unlink the fence). Any other error: keep its first line as `last_reason`
@@ -181,10 +186,13 @@ wiring):
 2. Take the stop fence lock for `<id>`, waiting out an in-flight stop.
 3. Probe once (`probe(…, From::StateOnly)`). `Running` → go on. `Done(n)`,
    `Orphan`, `Missing` → `mule: job <id> is not running (<state>)`, exit 1; a
-   probe error → exit 1. On exit 1 the fence and job file are untouched.
+   probe error → exit 1. On exit 1 the job file is untouched and the fence
+   generation unchanged; step 2's lock may have created the fence file
+   (and its directory), empty: generation 0, as a missing file reads.
 4. Job file, never replaced. Missing: write a temp file, then
    `link(temp, path)`, re-reading the file on EEXIST. Same id: keep it.
-   Another id, empty, invalid or unreadable: exit 1, untouched.
+   Another id, empty, invalid or unreadable: exit 1, the job file untouched
+   and the generation unchanged.
 5. Bump the fence generation, set `named = Some(id)` under the signal mutex
    that `on_signal` reads, then release the fence lock. A signal before
    `named` stops nothing (if it lands after the bump, the job runs on and mu
@@ -209,7 +217,7 @@ a running job), `SPEC.md` (§ Leases: attach is not a re-dispatch),
 
 **Acceptance tests:**
 - L1: Running → hold, job file written, generation bumped · Done, Missing,
-  Orphan → exit 1, zero `rm`, no file, generation unchanged · a file naming
+  Orphan → exit 1, zero `rm`, no job file, generation unchanged · a file naming
   another id, empty, or unreadable → exit 1, unchanged · a racing writer
   between read and publish → the publish loses, the re-read decides · same id
   → kept · a signal after `named` → `spawn_stop` with the new generation ·
@@ -251,9 +259,10 @@ wiring (~15), `src/remote-agent.ts` (~25), `AGENTS.md` (1 clause).
 
 **Acceptance tests:** `test/host-lease-profile.test.ts` (refuses `{cmd}` and
 `{env}`; placeholder counts; session refuses `--attach`) · `test/db.test.ts`
-(fresh file has the column; added to `v13-populated.db.gz` with rows kept; a
-second open runs no DDL) · `test/host-check-lease.test.ts` (attach expands,
-never runs) · `attachCommand` quotes a hashed long `job_file`.
+(fresh file has the column; a second open runs no DDL) ·
+`test/loop-storage.test.ts` (a `v13-populated.db.gz` copy without the column
+gains it, rows kept, no version bump; a second open runs no DDL) ·
+`test/host-check-lease.test.ts` (attach expands, never runs) · `attachCommand` quotes a hashed long `job_file`.
 
 ## G3 — mu_adopt: `mu agent reattach <name> -w <ws> [--if <rev>]`
 
@@ -392,7 +401,7 @@ spawn startup-health rollback (it can throw on a live pane's auth text).
 | pane proven not running (absent, or exited and retained) | readiness rollback | `ReattachFailedError` exit 4, scrollback (mule's `not running` / `no master`), the message names the close preview |
 | ctl `missing` (ENOENT) or `refused` (timeout) with the pane running | keep the row: the pane holds the job, only control is missing | exit 0, `ready:false`, `ctl` given |
 | mux probe throws | keep the row; reconcile decides later | exit 0, `ready:false`, `ctl:"unknown"` |
-| SIGINT/SIGTERM | keep the row | exit 130/143 |
+| SIGINT/SIGTERM | keep the row; no event | exit 130/143 |
 
 **Readiness rollback** (the pane is proven not running, so it kills
 nothing). Under the agent lock, in one immediate transaction; it reports
@@ -413,8 +422,13 @@ whose reap records the tree under the new incarnation, consistent by agent id
 `aside` (`<cwd>.mu-removing-<old id>`) pointing where a crashed close parked
 the tree.
 
-Every outcome that keeps the row (ready or not) emits `agent.reattach` (new
-in `LocalIntent`, `VERBS`, `log-render.ts`) naming host, job, pane and ctl.
+A readiness that returns a ctl (`ok`, `missing`, `refused` or `unknown`)
+emits `agent.reattach` (new in `LocalIntent`, `VERBS`, `log-render.ts`)
+naming host, job, pane and ctl, before any `--task` claim. Nothing else
+emits it: a signal during readiness keeps the row and exits 130/143 with no
+event, a rollback ending `left-for-reap` keeps the row and throws
+`ReattachFailedError` with no event, and no refusal or other failure emits
+one.
 
 **Files** (est.): `src/agents/reattach.ts` (new, ~200: preflight ~70,
 preview ~20, apply ~55, readiness and rollback ~55); `src/cli/agent-reattach.ts`
@@ -431,21 +445,28 @@ pending-carrier marker), `src/agents/reattach.ts` (apply, install,
 readiness, rollback), `src/cli/agent-reattach.ts`.
 
 **Acceptance tests** (`test/lease-reattach.test.ts`, fast tier, `installMux`,
-a fake carrier script that holds or exits 1). Real holding carriers go in
+its mocked pane serving ctl, serving none, or exiting). Real carriers (a
+fake carrier script that holds or exits 1) go in
 `test/lease-reattach.integration.test.ts`.
 - **Happy path** (reaped `--worktree` lease agent): preview prints a rev;
   apply gives a row with the record's `cwd`, `base`, `collected_head`,
   `repo`; record gone; reservation rebound; ctl ok; event logged. A `--cwd`
   agent: tree fields NULL.
-- **Preflight refusals**, each with nothing changed and the close preview in
-  `next`: live row · torn-down ws · re-created ws (an old binding whose
-  handle lands after a real teardown and reinit refuses; a reservation bound
-  in the re-created ws is allowed) · NULL `workstream_id` · two reservations · no
-  handle · a `reason` · unbound reservation · previous pane alive · pane
-  probe throws · creator alive · a marker that is malformed or names a
-  live or unrecorded pane (a stale one is cleared and the apply runs) · no `attach` · changed `stop` · session
-  profile · record with another `workstream_id` · newer record on the path ·
-  job file naming another handle · stale `--if`.
+- **Preflight refusals**, each with nothing changed and no pane requested,
+  as `ReattachRefusedError` (exit 4) whose message names the close preview;
+  `--json` carries it as the failure's `close` field, never `next`:
+  torn-down ws · re-created ws (an old binding whose handle lands after a
+  real teardown and reinit refuses; a reservation bound in the re-created ws
+  is allowed) · NULL `workstream_id` · two reservations · no handle · a
+  `reason` · unbound reservation · previous pane alive · pane probe throws ·
+  creator alive · a marker that is malformed or names a live or unrecorded
+  pane (a stale one is cleared and the apply runs) · no `attach` · changed
+  `stop` · session profile · record with another `workstream_id` · newer record on the path ·
+  job file naming another handle. Two refusals are other classes and carry
+  no `close`: a live row is `AgentExistsError` (exit 4, `agent already
+  exists in this workstream: <name>`), and a stale `--if` is
+  `RevisionMismatchError` (exit 4, `expected_rev` and `current_rev` in
+  `--json`, the message naming the reattach preview to run again).
 - **Readiness:** carrier exits at once → record restored byte for byte,
   reservation rebound to the old values, no stop ran · retained exited pane
   = dead · ctl `refused` and `missing` with a live pane → row kept,
