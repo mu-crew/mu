@@ -49,7 +49,7 @@ import { reconcile } from "../src/reconcile.js";
 import { listRemoteRecoveries, type RemoteRecovery } from "../src/remote-recovery.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { shellQuote } from "../src/shell-quote.js";
-import { addTask, claimTask, closeTask, getTask } from "../src/tasks.js";
+import { addTask, claimTask, closeTask, getTask, listNotes } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import {
   previewReinit,
@@ -209,7 +209,7 @@ function reaped(
     fill?: boolean;
     job?: string;
     pane?: string;
-    /** Tasks the agent held IN_PROGRESS when it was reaped. */
+    /** Tasks the agent held IN_PROGRESS when it was reaped: `id` in auth, or `ws/id`. */
     tasks?: string[];
   } = {},
 ): {
@@ -247,11 +247,13 @@ function reaped(
   if (over.fill !== false) fillCarrierJob(db, r.token, job);
   mkdirSync(dirname(jobFile()), { recursive: true });
   writeFileSync(jobFile(), `${job}\n`);
-  for (const id of over.tasks ?? []) {
-    addTask(db, { localId: id, workstream: "auth", title: id, impact: 50, effortDays: 1 });
+  for (const ref of over.tasks ?? []) {
+    const [ws, id] = ref.includes("/") ? ref.split("/") : ["auth", ref];
+    if (ws === undefined || id === undefined) throw new Error(`bad task ref ${ref}`);
+    const task = addTask(db, { localId: id, workstream: ws, title: id, impact: 50, effortDays: 1 });
     db.prepare(
-      "UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active', owner_id = ? WHERE local_id = ?",
-    ).run(row.incarnation, id);
+      "UPDATE tasks SET status = 'IN_PROGRESS', substate = 'active', owner_id = ? WHERE workstream_id = ? AND local_id = ?",
+    ).run(row.incarnation, task.workstreamId, id);
   }
   deleteAgent(db, "worker-1", "auth");
   const out = reservation();
@@ -962,6 +964,14 @@ describe("--task: the reaper parked the work; a ready reattach claims it back (Â
   const ownerId = (id: string): unknown =>
     (db.prepare("SELECT owner_id FROM tasks WHERE local_id = ?").get(id) as { owner_id: unknown })
       .owner_id;
+  const ownerIn = (id: string, ws: string): unknown =>
+    (
+      db
+        .prepare(
+          "SELECT t.owner_id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE t.local_id = ? AND w.name = ?",
+        )
+        .get(id, ws) as { owner_id: unknown }
+    ).owner_id;
   const withTasks = (tasks: string[]) =>
     reattachAgent(db, "auth", "worker-1", { ifRevision: rev(), tasks });
 
@@ -1012,6 +1022,58 @@ describe("--task: the reaper parked the work; a ready reattach claims it back (Â
     expect(res).toMatchObject({ ready: false });
     expect(res.claims).toEqual([{ task: "t1", ok: false, error: "skipped: ctl not ready" }]);
     expect(getTask(db, "t1", "auth")).toMatchObject({ status: "OPEN", substate: "parked" });
+  });
+
+  it("finding reap_cross_workstream_resume: a task owned across workstreams is resumed by the note's two steps, not by a same-id task", async () => {
+    reaped({ tasks: ["other/shared"] });
+    addTask(db, {
+      localId: "shared",
+      workstream: "auth",
+      title: "unrelated",
+      impact: 50,
+      effortDays: 1,
+    });
+    expect(getTask(db, "shared", "other")).toMatchObject({ status: "OPEN", substate: "parked" });
+    const note = listNotes(db, "shared", "other").at(-1)?.content ?? "";
+    const hint = note.split("resume with ")[1] ?? "";
+    expect(hint).toBe(
+      "mu agent reattach worker-1 -w auth then mu task claim shared -w other --for auth/worker-1 --force, or mu agent close worker-1 -w auth then mu task unpark shared -w other",
+    );
+    // Paste the first way out, step by step (the reattach previews, then applies with --if).
+    const [reattach, claim] = (hint.split(", or ")[0] ?? "")
+      .split(" then ")
+      .map((c) => c.split(" ").slice(1));
+    if (reattach === undefined || claim === undefined) throw new Error(`unparsed hint ${hint}`);
+    const out = await runCliJson([...reattach, "--if", String(rev()), "--json"], dbPath);
+    expect(out.data).toMatchObject({ ready: true });
+    expect((await runCliJson([...claim, "--json"], dbPath)).exitCode).toBeNull();
+    expect(getTask(db, "shared", "other")).toMatchObject({ status: "IN_PROGRESS" });
+    expect(ownerIn("shared", "other")).toBe(out.data.agent_id);
+    expect(getTask(db, "shared", "auth")).toMatchObject({ status: "OPEN", ownerName: null });
+  });
+
+  it("finding reattach_task_fence_test_gap: a replacement row arriving during readiness gets no --task", async () => {
+    reaped({ tasks: ["t1"] });
+    let replaced = false;
+    beforeTmux = (a) => {
+      // The installed row is in and its locks released; the original pane stays alive.
+      if (a[0] !== "capture-pane" || replaced) return;
+      replaced = true;
+      const r = reservation();
+      if (r === undefined) throw new Error("no reservation");
+      releaseCarrierJob(db, r);
+      deleteAgent(db, "worker-1", "auth");
+      insertAgent(db, { name: "worker-1", workstream: "auth", paneId: "%9" });
+      state.panes.set("%9", { windowId: "@9", paneId: "%9", command: "pi" });
+    };
+    const res = await withTasks(["t1"]);
+    expect(replaced).toBe(true);
+    expect(res.ready).toBe(true);
+    expect(res.claims).toEqual([
+      { task: "t1", ok: false, error: expect.stringContaining("not a registered mu agent") },
+    ]);
+    expect(ownerId("t1")).toBeNull();
+    expect(getAgent(db, "worker-1", "auth")?.paneId).toBe("%9");
   });
 
   it("agent close of the live lease row reopens its task as todo, not parked", async () => {
