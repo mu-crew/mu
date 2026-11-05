@@ -31,6 +31,20 @@ function childEnv(over: MuRunOpts["env"]): NodeJS.ProcessEnv | undefined {
   return env;
 }
 
+/**
+ * The program that runs the bundled CLI. Under Node it is this process's own
+ * binary. Under Bun it is `node` from PATH: there `process.execPath` is the host
+ * app (pi built as a single-file Bun executable), so running it would start
+ * another pi that loads this extension and waits, and the turn hangs. Bun could
+ * not run the CLI anyway: it loads better-sqlite3's native addon.
+ */
+export function cliInterpreter(
+  bunVersion: string | undefined = (process.versions as Record<string, string | undefined>).bun,
+  execPath: string = process.execPath,
+): string {
+  return bunVersion === undefined ? execPath : "node";
+}
+
 /** The CLI this extension ships with (dist/cli.js next to dist/extension/), else `mu` on PATH. */
 export function defaultRunner(): MuRunner {
   let cli: string | undefined;
@@ -42,7 +56,7 @@ export function defaultRunner(): MuRunner {
   }
   return (args, signal, stdin, opts) =>
     cli
-      ? runChild(process.execPath, [cli, ...args], signal, stdin, opts)
+      ? runChild(cliInterpreter(), [cli, ...args], signal, stdin, opts)
       : runChild("mu", args, signal, stdin, opts);
 }
 
