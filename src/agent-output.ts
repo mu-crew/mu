@@ -31,6 +31,7 @@ export interface AgentLiveFacts {
   reason?: string;
   idle?: boolean;
   trustDialog?: boolean;
+  queued?: boolean;
 }
 
 /** One agent as `--json` emits it. */
@@ -63,6 +64,8 @@ export interface AgentOutput {
   reason?: string;
   idle?: boolean;
   trust_dialog?: boolean;
+  /** A muzzle run in the pane waits for slots (spec D14); present only when true. */
+  queued?: boolean;
 }
 
 /** Boundary mapper: AgentRow (camelCase) plus its real workstream id → output record. */
@@ -99,6 +102,7 @@ export function agentToOutput(
     ...(live.reason !== undefined ? { reason: live.reason } : {}),
     ...(live.idle !== undefined ? { idle: live.idle } : {}),
     ...(live.trustDialog !== undefined ? { trust_dialog: live.trustDialog } : {}),
+    ...(live.queued === true ? { queued: true } : {}),
   };
 }
 
@@ -122,5 +126,6 @@ export function liveAgentToOutput(agent: LiveAgent, workstreamId: number): Agent
     since: agent.since,
     ...(agent.reason !== undefined ? { reason: agent.reason } : {}),
     ...(agent.idle !== undefined ? { idle: agent.idle } : {}),
+    ...(agent.queued === true ? { queued: true } : {}),
   });
 }

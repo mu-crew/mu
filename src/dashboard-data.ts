@@ -197,6 +197,8 @@ export interface DashboardDelegate {
  *   older extension that cannot say counts from the tool's start.
  * - `input`: `needs_input` past the idle threshold on an agent that owns work
  *   (the registry's `idle` flag; `MU_IDLE_THRESHOLD_MS`, 0 disables).
+ *   Neither `stalled` nor `input` is raised for an agent `queued` in muzzle
+ *   (spec D14): it is waiting for slots.
  * - `delegate`: a delegate call that is `refused` (parked until its pi session
  *   reissues it), whoever made it. A failed call is not one: it is final, its
  *   caller had the settle, and its task row shows it.
@@ -476,6 +478,9 @@ function agentAttention(a: DashboardAgent, now: number): DashboardAttention[] {
       item("dead", "dead", `mu agent close ${shellWord(a.name)} -w ${shellWord(a.workstream)}`),
     );
   if (a.state === "needs_permission") out.push(item("permission", `permission${waited}`));
+  // Queued in muzzle (spec D14): its command is waiting for slots, so neither its
+  // silence nor a lingering idle reading needs a human.
+  if (a.queued === true) return out;
   if (a.idle === true) out.push(item("input", `input${waited}`));
   const quiet = a.tool?.quiet_ms;
   const ran = quiet ?? a.tool?.elapsed_ms;

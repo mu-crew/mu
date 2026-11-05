@@ -60,6 +60,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inject } from "vitest";
 import { sandboxMarkerEnvNames } from "../src/harnesses.js";
+import { setMuzzleRunnerForTests } from "../src/muzzle-queue.js";
 import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
 
@@ -104,6 +105,12 @@ for (const key of ["REX_SESSION", "REX_BLOCK", "REX_SERVER", "REX_BIN_DIR", "REX
 // session (rr_r6_tmux_gate_env). Tests of detection itself clear MU_MUX
 // (test/mux-detect.test.ts); herdr tests set theirs.
 process.env.MU_MUX = "tmux";
+
+// Baseline: no real muzzle. An agent read off ctl asks `muzzle status --json`
+// whether its pane is queued (spec D14); the fast tier spawns no subprocess,
+// and a developer's own queue must not leak in. test/muzzle-queue.test.ts
+// scripts it.
+setMuzzleRunnerForTests(async () => null);
 
 // Baseline: no spawn-time control-socket handshake. No test pane runs
 // the mu pi extension, so the 30s default would stall every pi spawn.

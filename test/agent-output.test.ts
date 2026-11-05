@@ -102,6 +102,10 @@ describe("agentToOutput", () => {
     });
     expect(out).not.toHaveProperty("reason");
     expect(out).not.toHaveProperty("idle");
+    expect(out).not.toHaveProperty("queued");
+    // Spec D14: a pane queued in muzzle says so; not queued is absent, never false.
+    expect(agentToOutput(row, 1, { queued: true })).toMatchObject({ queued: true });
+    expect(agentToOutput(row, 1, { queued: false })).not.toHaveProperty("queued");
   });
 });
 
