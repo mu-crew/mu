@@ -5,7 +5,7 @@
 // order log, so "no stop ran" is read from it. No real host, no mule.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -17,7 +17,14 @@ import {
   reattachAgent,
   reattachBlockers,
 } from "../src/agents/reattach.js";
-import { AgentExistsError, closeAgent, deleteAgent, getAgent, insertAgent } from "../src/agents.js";
+import {
+  AgentExistsError,
+  AgentReplacedError,
+  closeAgent,
+  deleteAgent,
+  getAgent,
+  insertAgent,
+} from "../src/agents.js";
 import {
   bindCarrierJobAgent,
   type CarrierJob,
@@ -26,6 +33,7 @@ import {
   listCarrierJobs,
   markCarrierLaunch,
   noteCarrierJob,
+  releaseCarrierJob,
   reserveCarrierJob,
 } from "../src/carrier-jobs.js";
 import { carrierJobFilePath, ctlSocketPath } from "../src/ctl/path.js";
@@ -37,6 +45,12 @@ import { reconcile } from "../src/reconcile.js";
 import { listRemoteRecoveries, type RemoteRecovery } from "../src/remote-recovery.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
+import {
+  previewReinit,
+  reinitWorkstream,
+  teardownWorkstream,
+  workstreamRevision,
+} from "../src/workstream.js";
 import { helloReply, withHello } from "./_ctl-ext.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
@@ -178,7 +192,15 @@ afterEach(async () => {
  * (the trigger wrote a recovery for a `--worktree` row), its reservation (launched, bound,
  * handle known) and its job file kept. Its spawn's process is gone.
  */
-function reaped(over: { worktree?: boolean; collected?: string } = {}): {
+function reaped(
+  over: {
+    worktree?: boolean;
+    collected?: string;
+    fill?: boolean;
+    job?: string;
+    pane?: string;
+  } = {},
+): {
   agentId: number;
   r: CarrierJob;
 } {
@@ -195,7 +217,7 @@ function reaped(over: { worktree?: boolean; collected?: string } = {}): {
   const row = insertAgent(db, {
     name: "worker-1",
     workstream: "auth",
-    paneId: "%90",
+    paneId: over.pane ?? "%90",
     host: "dev",
     hostTransport: "lease",
     reservation: r.token,
@@ -208,10 +230,11 @@ function reaped(over: { worktree?: boolean; collected?: string } = {}): {
         }
       : { cwd: "/srv/repo" }),
   });
-  bindCarrierJobAgent(db, r.token, row.incarnation, "%90");
-  fillCarrierJob(db, r.token, "job-1");
+  const job = over.job ?? "job-1";
+  bindCarrierJobAgent(db, r.token, row.incarnation, over.pane ?? "%90");
+  if (over.fill !== false) fillCarrierJob(db, r.token, job);
   mkdirSync(dirname(jobFile()), { recursive: true });
-  writeFileSync(jobFile(), "job-1\n");
+  writeFileSync(jobFile(), `${job}\n`);
   deleteAgent(db, "worker-1", "auth");
   const out = reservation();
   if (out === undefined) throw new Error("no reservation");
@@ -342,13 +365,22 @@ describe("preflight refusals: nothing changed, the close preview named", () => {
       /torn down/,
       "workstream",
     ));
-  it("re-created workstream (a handle older than it)", () =>
+  it("bound in another workstream generation", () =>
     refuses(
       () => {
         reaped();
-        db.prepare("UPDATE carrier_jobs SET recorded_at = '2000-01-01T00:00:00Z'").run();
+        db.prepare("UPDATE carrier_jobs SET workstream_id = workstream_id + 100").run();
       },
       /created again/,
+      "workstream",
+    ));
+  it("a binding older than the generation stamp (NULL) is unknown", () =>
+    refuses(
+      () => {
+        reaped();
+        db.prepare("UPDATE carrier_jobs SET workstream_id = NULL").run();
+      },
+      /binding's workstream is unknown/,
       "workstream",
     ));
   it("two reservations (legacy ordinals)", () =>
@@ -614,7 +646,7 @@ describe("races", () => {
     expect(recs[0]?.agentId).toBe(reservation()?.agentId);
   });
 
-  it("the install transaction fails → the new pane killed, nothing else changed", async () => {
+  it("the install transaction fails → the new pane killed and named on the reservation, nothing else changed", async () => {
     reaped();
     const before = snapshot();
     beforeTmux = (a) => {
@@ -625,10 +657,13 @@ describe("races", () => {
     expect((e as Error).message).toMatch(/recovery \d+ changed/);
     const pane = [...state.panes.keys()];
     expect(pane).toEqual([]);
-    expect(order().some((l) => l.startsWith("kill %"))).toBe(true);
+    const killed = order()
+      .find((l) => l.startsWith("kill %"))
+      ?.slice("kill ".length);
+    expect(killed).toBeDefined();
     const after = snapshot();
     expect(after.agents).toEqual(before.agents);
-    expect(after.jobs).toEqual(before.jobs);
+    expect(after.jobs).toEqual(before.jobs.map((j) => ({ ...j, paneId: killed })));
   });
 
   it("a teardown between preflight and install → pane killed, nothing installed", async () => {
@@ -640,6 +675,113 @@ describe("races", () => {
     expect((e as ReattachFailedError).rollback).toBe("pane-killed");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
     expect(listRemoteRecoveries(db)).toHaveLength(1);
+  });
+});
+
+describe("finding reattach_failed_kill_fence: a kill that fails after a failed install", () => {
+  it("names the new pane on the reservation, reports pane-unknown, and the next preflight refuses on it", async () => {
+    reaped();
+    beforeTmux = (a) => {
+      if (isPaneCall(a)) db.prepare("UPDATE remote_recovery SET collected_head = 'moved'").run();
+      if (a[0] === "kill-pane") throw new Error("tmux transport broke");
+    };
+    const e = await failure(apply());
+    expect(e).toBeInstanceOf(ReattachFailedError);
+    expect((e as ReattachFailedError).rollback).toBe("pane-unknown");
+    const [pane] = [...state.panes.keys()];
+    expect(pane).toBeDefined();
+    expect((e as Error).message).toContain(`${pane}`);
+    expect(reservation()?.paneId).toBe(pane);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    beforeTmux = undefined;
+    const blockers = await reattachBlockers(db, "auth", "worker-1");
+    expect(blockers[0]).toMatchObject({ code: "carrier" });
+    expect(blockers[0]?.detail).toContain(`${pane} is alive`);
+  });
+
+  it("a kill that throws but leaves the pane gone is pane-killed", async () => {
+    reaped();
+    beforeTmux = (a) => {
+      if (isPaneCall(a)) db.prepare("UPDATE remote_recovery SET collected_head = 'moved'").run();
+      if (a[0] === "kill-pane") {
+        state.panes.clear();
+        throw new Error("tmux answered late");
+      }
+    };
+    const e = await failure(apply());
+    expect((e as ReattachFailedError).rollback).toBe("pane-killed");
+    expect(await reattachBlockers(db, "auth", "worker-1")).toEqual([]);
+  });
+});
+
+describe("finding reattach_workstream_generation: the binding's workstream, not the handle's time", () => {
+  const recreate = async (): Promise<void> => {
+    await teardownWorkstream(db, {
+      workstream: "auth",
+      ifRevision: workstreamRevision(db, "auth"),
+    });
+    await reinitWorkstream(db, "auth", previewReinit(db, "auth")?.revision ?? 0);
+  };
+
+  it("an old --cwd binding whose handle lands after a real teardown + reinit refuses", async () => {
+    const { r } = reaped({ worktree: false, fill: false });
+    await recreate();
+    // The late fill: a close of the name learns the handle (and its stop fails).
+    expect(fillCarrierJob(db, r.token, "job-1")).toBe(true);
+    const blockers = await reattachBlockers(db, "auth", "worker-1");
+    expect(blockers[0]).toMatchObject({ code: "workstream" });
+    expect(await failure(apply())).toBeInstanceOf(ReattachRefusedError);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+  });
+
+  it("a reservation bound in the recreated workstream is allowed", async () => {
+    reaped({ worktree: false });
+    await recreate();
+    // The old reservation is released (its close ran); the name is spawned and reaped anew.
+    const old = reservation();
+    if (old) releaseCarrierJob(db, old);
+    reaped({ worktree: false });
+    expect(await reattachBlockers(db, "auth", "worker-1")).toEqual([]);
+  });
+});
+
+describe("finding reattach_preview_snapshot: facts and revision of one snapshot", () => {
+  /** Close + respawn + reap of the name: a new token, incarnation and handle. */
+  const replace = (job: string): void => {
+    const old = reservation();
+    if (old) releaseCarrierJob(db, old);
+    reaped({ worktree: false, job, pane: "%91" });
+    // No job file (the preflight accepts its absence), so the file cannot give the race away.
+    rmSync(jobFile(), { force: true });
+  };
+
+  it("the reservation replaced during the pane probe: the preview describes what its rev applies", async () => {
+    reaped({ worktree: false });
+    let replaced = false;
+    beforeTmux = (a) => {
+      if (a[0] === "display-message" && !replaced) {
+        replaced = true;
+        replace("job-2");
+      }
+    };
+    const p = await previewReattach(db, "auth", "worker-1");
+    beforeTmux = undefined;
+    expect(p.revision).toBe(rev());
+    expect(p.job).toBe(reservation()?.job);
+    expect(p.job).toBe("job-2");
+    const res = await apply(p.revision);
+    expect(res.job).toBe(p.job);
+  });
+
+  it("a name that will not hold still is refused, not described half and half", async () => {
+    reaped({ worktree: false });
+    let n = 0;
+    beforeTmux = (a) => {
+      if (a[0] === "display-message") replace(`job-r${++n}`);
+    };
+    const e = await failure(previewReattach(db, "auth", "worker-1"));
+    expect(e).toBeInstanceOf(AgentReplacedError);
+    expect((e as Error).message).toContain("mu agent reattach worker-1 -w auth");
   });
 });
 
