@@ -108,7 +108,7 @@ const UNRESOLVED = "<unresolved>";
  * a capture revision is upgradeable in place, so it must not be folded
  * into it (an older schema number is refused before any trigger work).
  */
-export const CAPTURE_VERSION = 5;
+export const CAPTURE_VERSION = 6;
 
 /** Lowest SQLite that mints correct HLCs: `unixepoch('subsec')` arrived
  *  in 3.42; before it the call yields NULL and every op gets a zero-time
@@ -216,12 +216,15 @@ const CREATED_AT = `strftime('%Y-%m-%dT%H:%M:%fZ', 'now')`;
 //   task         <workstream>/<local_id>       demo/fix-auth
 //   note         <workstream>/<local_id>#<id>  demo/fix-auth#12
 //   edge         <blocker> -> <blocked>        demo/a->demo/b
+//   check        <workstream>/<local_id>#<id>  demo/fix-auth#01JC…
 //
 // Notes keep their surrogate `id` as a suffix because a note has no
 // natural identity of its own — same author and text twice is two
 // notes. Notes are append-only (a local edit raises), so the suffix only
 // needs to be locally unique, and `<task-key>#<id>` is. A rebuild can
-// reassign ids, so a tombstone also names the note it kills.
+// reassign ids, so a tombstone also names the note it kills. A check's id
+// is a ULID minted by `mu task check`, unique on every machine, so its key
+// names the same check everywhere.
 
 /** Workstream name for a workstream id, or the dying-stash value if the
  *  workstream row is already gone (FK cascade). */
@@ -365,6 +368,7 @@ const CAPTURED_COLUMNS = {
   ],
   task_notes: ["author", "content", "created_at", "kind"],
   task_edges: ["created_at"],
+  checks: ["checker", "brief", "verdict", "state", "created_at", "updated_at"],
 } as const satisfies Record<(typeof PORTABLE_TABLES)[number], readonly string[]>;
 
 /** Columns that make up (or resolve to) each table's natural key.
@@ -387,6 +391,7 @@ const KEY_COLUMNS = {
   tasks: ["workstream_id", "local_id"],
   task_notes: ["id", "task_id"],
   task_edges: ["from_task_id", "to_task_id"],
+  checks: ["id", "task_id"],
 } as const satisfies Record<(typeof PORTABLE_TABLES)[number], readonly string[]>;
 
 /** One stored trigger. `sql` is exactly the text SQLite keeps in
@@ -436,6 +441,8 @@ const INSERT_COLLISION = {
   // (The other three tables' `id` IS the rowid.)
   task_edges:
     "SELECT 1 FROM task_edges WHERE (NEW.rowid <> -1 AND rowid = NEW.rowid) OR (from_task_id = NEW.from_task_id AND to_task_id = NEW.to_task_id)",
+  // A TEXT primary key: the hidden rowid is a second identity, as for edges.
+  checks: "SELECT 1 FROM checks WHERE (NEW.rowid <> -1 AND rowid = NEW.rowid) OR id = NEW.id",
 } as const satisfies Record<keyof typeof KEY_COLUMNS, string>;
 
 /** BEFORE INSERT trigger refusing an insert that collides with an existing
@@ -456,6 +463,10 @@ BEGIN
   );
 }
 
+/** The tables whose id is an integer the writer may name (not `checks`,
+ *  whose id is a ULID string). */
+type IntIdTable = Exclude<keyof typeof KEY_COLUMNS, "checks">;
+
 /** The id column each table's INSERT guard and id check read. `NEW.rowid`
  *  for task_edges: its key is composite, so the hidden rowid is the id. */
 const ID_EXPR = {
@@ -463,7 +474,7 @@ const ID_EXPR = {
   tasks: "NEW.id",
   task_notes: "NEW.id",
   task_edges: "NEW.rowid",
-} as const satisfies Record<keyof typeof KEY_COLUMNS, string>;
+} as const satisfies Record<IntIdTable, string>;
 
 /** AFTER INSERT trigger refusing an explicit id <= 0 (local writes only).
  *
@@ -473,7 +484,7 @@ const ID_EXPR = {
  *  here was named by the writer. Refusing them keeps -1 free to mean
  *  "omitted" in the guard, and aborts the statement, rolling back the row
  *  and the op the capture trigger just minted. */
-function positiveIdGuard(table: keyof typeof KEY_COLUMNS): CaptureTrigger {
+function positiveIdGuard(table: IntIdTable): CaptureTrigger {
   return trigger(
     `_cap_${table}_posid`,
     `AFTER INSERT ON ${table}
@@ -490,7 +501,7 @@ BEGIN
  *  full" with no mu-side repair (`sqlite_sequence` is protected). Ids past
  *  2^53-1 also lose precision as JSON numbers. Aborts the statement, so the
  *  counter bump rolls back with the row. */
-function hugeIdGuard(table: keyof typeof KEY_COLUMNS): CaptureTrigger {
+function hugeIdGuard(table: IntIdTable): CaptureTrigger {
   return trigger(
     `_cap_${table}_hugeid`,
     `AFTER INSERT ON ${table}
@@ -499,6 +510,22 @@ BEGIN
   SELECT RAISE(ABORT, '${GUARD_HUGE_ID}');`,
   );
 }
+
+/** BEFORE INSERT trigger refusing a check id that is not a ULID (local
+ *  writes only): the `checks` sibling of positiveIdGuard. The id ends the op
+ *  key `<task key>#<id>`, which apply splits at the last '#', so an empty id
+ *  or one holding '#' would be captured under a key no peer or rebuild can
+ *  project. A TEXT primary key also admits NULL, hence the explicit test.
+ *  Ingest is exempt: a RAISE there would stall sync. */
+export const GUARD_CHECK_ID = "mu: a check id must be a ULID: 26 Crockford base32 characters";
+const CHECK_ID_GUARD = trigger(
+  "_cap_checks_ulid",
+  `BEFORE INSERT ON checks
+  WHEN ${NOT_APPLYING}
+   AND (NEW.id IS NULL OR length(NEW.id) <> 26 OR NEW.id GLOB '*[^0-9A-HJKMNP-TV-Z]*')
+BEGIN
+  SELECT RAISE(ABORT, '${GUARD_CHECK_ID}');`,
+);
 
 /** BEFORE UPDATE triggers: a note is append-only, an edge's `created_at`
  *  is set once. A note's identity is (author, content, created_at), so an
@@ -677,6 +704,7 @@ function buildTriggers(): CaptureTrigger[] {
   const taskCols = CAPTURED_COLUMNS.tasks;
   const noteCols = CAPTURED_COLUMNS.task_notes;
   const edgeCols = CAPTURED_COLUMNS.task_edges;
+  const checkCols = CAPTURED_COLUMNS.checks;
 
   const taskKeyNew = `${wsKey("NEW.workstream_id")} || '/' || NEW.local_id`;
   const taskKeyOld = `${wsKey("OLD.workstream_id")} || '/' || OLD.local_id`;
@@ -684,14 +712,18 @@ function buildTriggers(): CaptureTrigger[] {
   const noteKeyOld = `${taskKey("OLD.task_id")} || '#' || OLD.id`;
   const edgeKeyNew = `${taskKey("NEW.from_task_id")} || '->' || ${taskKey("NEW.to_task_id")}`;
   const edgeKeyOld = `${taskKey("OLD.from_task_id")} || '->' || ${taskKey("OLD.to_task_id")}`;
+  const checkKeyNew = `${taskKey("NEW.task_id")} || '#' || NEW.id`;
+  const checkKeyOld = `${taskKey("OLD.task_id")} || '#' || OLD.id`;
 
-  const tables = ["workstreams", "tasks", "task_notes", "task_edges"] as const;
+  const intIdTables = ["workstreams", "tasks", "task_notes", "task_edges"] as const;
+  const tables = [...intIdTables, "checks"] as const;
   return [
     // natural-key guards (see KEY_COLUMNS)
     ...tables.map(keyGuard),
     ...tables.map(insertGuard),
-    ...tables.map(positiveIdGuard),
-    ...tables.map(hugeIdGuard),
+    ...intIdTables.map(positiveIdGuard),
+    ...intIdTables.map(hugeIdGuard),
+    CHECK_ID_GUARD,
     NOTE_APPEND_ONLY_GUARD,
     EDGE_CREATED_GUARD,
     ...localGuards(),
@@ -786,6 +818,26 @@ BEGIN
       "BEFORE DELETE ON task_edges",
       undefined,
       emitOp("edge", "del", edgeKeyOld, "'{}'"),
+    ),
+
+    // checks: BEFORE DELETE, so a cascade from a task still resolves the key.
+    emitting(
+      "_cap_checks_ins",
+      "AFTER INSERT ON checks",
+      undefined,
+      emitOp("check", "put", checkKeyNew, fullPayload(checkCols)),
+    ),
+    emitting(
+      "_cap_checks_upd",
+      "AFTER UPDATE ON checks",
+      anyChanged(checkCols),
+      emitOp("check", "put", checkKeyNew, changedPayload(checkCols)),
+    ),
+    emitting(
+      "_cap_checks_del",
+      "BEFORE DELETE ON checks",
+      undefined,
+      emitOp("check", "del", checkKeyOld, "'{}'"),
     ),
   ];
 }

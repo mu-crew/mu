@@ -191,6 +191,17 @@ export function checkCheapDriftInvariant(db: Db): CheapDriftReport {
               JOIN task_notes n ON n.task_id = b.task_id
              ORDER BY n.task_id, n.id`,
     },
+    {
+      // A check's id is a ULID, the same on every machine: its key is exact.
+      table: "checks",
+      sql: `SELECT w.name || '/' || t.local_id || '#' || c.id AS key
+              FROM checks c
+              JOIN tasks t ON t.id = c.task_id
+              JOIN workstreams w ON w.id = t.workstream_id
+             WHERE NOT EXISTS (
+               SELECT 1 FROM ops o
+                WHERE o.entity = 'check' AND o.key = w.name || '/' || t.local_id || '#' || c.id)`,
+    },
   ];
 
   for (const probe of probes) {
@@ -245,6 +256,7 @@ const COMPARED: Record<string, readonly string[]> = {
   ],
   task_notes: ["author", "content", "created_at", "kind"],
   task_edges: ["created_at"],
+  checks: ["checker", "brief", "verdict", "state", "created_at", "updated_at"],
 };
 
 /** SELECTs that project each portable table to (key, ...COMPARED) so
@@ -280,6 +292,11 @@ const SNAPSHOT_SQL: Record<string, string> = {
                  JOIN tasks t ON t.id = e.to_task_id
                  JOIN workstreams wf ON wf.id = f.workstream_id
                  JOIN workstreams wt ON wt.id = t.workstream_id`,
+  checks: `SELECT w.name || '/' || t.local_id || '#' || c.id AS key,
+                  c.checker, c.brief, c.verdict, c.state, c.created_at, c.updated_at
+             FROM checks c
+             JOIN tasks t ON t.id = c.task_id
+             JOIN workstreams w ON w.id = t.workstream_id`,
 };
 
 type Row = Record<string, string | number | null>;

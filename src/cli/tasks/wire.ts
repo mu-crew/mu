@@ -24,6 +24,7 @@ import { TASK_SUBSTATES } from "../../tasks/status.js";
 import { TASK_STATUS_LIST } from "../../tasks.js";
 import { installWaitSignals } from "../wait.js";
 import { cmdTaskAuto } from "./auto.js";
+import { cmdTaskCheck, cmdTaskVerdict } from "./checks.js";
 import { cmdClaim, cmdTaskRelease, cmdTaskWait } from "./claim.js";
 import { cmdTaskBlock, cmdTaskDelete, cmdTaskReparent, cmdTaskUnblock } from "./edges.js";
 import {
@@ -351,9 +352,48 @@ export function wireTaskCommands(program: Command): void {
   ] as const;
 
   task
+    .command("check <id>")
+    .description(
+      "Record a check of a task that a native subagent or a cross-family pane runs: prints check=<id> (a ULID). `mu state` lists it until `mu task verdict` records the answer; `close --if-ready` on a dependent waits for it.",
+    )
+    .option("--by <harness>/<model>", "who checks, e.g. claude/opus or codex/gpt-5")
+    .option(
+      "--brief <text>",
+      "what the checker is asked; `-` reads it from stdin (--brief - <<'EOF')",
+    )
+    .option(...WORKSTREAM_OPT)
+    .option(...JSON_OPT)
+    .action(function (id: string) {
+      const opts = (this as Command).opts() as {
+        by?: string;
+        brief?: string;
+        workstream?: string;
+        json?: boolean;
+      };
+      return handle((db) => cmdTaskCheck(db, id, opts), this as Command)();
+    });
+
+  task
+    .command("verdict <id> [text]")
+    .description(
+      "Record a check's answer: a `VERDICT: CONFIRMED | REFUTED | UNVERIFIED` line, then EVIDENCE lines. `-` reads it from stdin (mu task verdict <id> --check <check> - <<'EOF'). The last verdict wins.",
+    )
+    .option("--check <id>", "the check id `mu task check` printed")
+    .option(...WORKSTREAM_OPT)
+    .option(...JSON_OPT)
+    .action(function (id: string, text: string | undefined) {
+      const opts = (this as Command).opts() as {
+        check?: string;
+        workstream?: string;
+        json?: boolean;
+      };
+      return handle((db) => cmdTaskVerdict(db, id, text, opts), this as Command)();
+    });
+
+  task
     .command("close <id>")
     .description(
-      'Mark a task CLOSED (idempotent). `done` needs --evidence/--note "<command + result>" and closed blockers (exit 4); --report adds the report. --as <substate> needs --why. --if-ready waits for blockers.',
+      'Mark a task CLOSED (idempotent). `done` needs --evidence/--note "<command + result>" and closed blockers (exit 4); --report adds the report. --as <substate> needs --why. --if-ready waits for blockers and their checks.',
     )
     .option(
       "--as <substate>",
@@ -365,7 +405,7 @@ export function wireTaskCommands(program: Command): void {
     )
     .option(
       "--if-ready",
-      "only close when every blocker is CLOSED; otherwise no-op + list the still-blocking ids",
+      "only close when every blocker is CLOSED and every check on them has a verdict; otherwise no-op + list what it waits for",
     )
     .option(
       "--report <text>",

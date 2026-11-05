@@ -1,7 +1,7 @@
 // mu — `mu state` and `mu me` (the canonical state read).
 //
-//   mu state -w <ws>[,<ws>…] | --all      tasks, agents, the caller's delegate queue
-//                                         and waves, its open human needs
+//   mu state -w <ws>[,<ws>…] | --all      tasks, agents, unanswered checks, the caller's
+//                                         delegate queue and waves, its open human needs
 //   mu state --me                         the same, from the caller's own identity
 //   mu me                                 exactly `mu state --me`
 //
@@ -134,6 +134,7 @@ const LISTS = [
   "agents",
   "orphans",
   "delegates",
+  "checks",
   "waves",
   "human_needs",
 ] as const;
@@ -269,7 +270,7 @@ export function wireStateCommands(program: Command): void {
   program
     .command("state")
     .description(
-      "ONE JSON document of canonical state: per workstream task counts and lists, agents with runtime state, orphan panes, and the CALLER'S delegates and human needs. -w repeats; --all; --me (own identity). 4 KB cap; a cut names --full.",
+      "ONE JSON document of canonical state: per workstream task counts and lists, agents, orphan panes, unanswered checks, and the CALLER'S delegates and human needs. -w repeats; --all; --me (own identity). 4 KB cap; a cut names --full.",
     )
     .option(
       "-w, --workstream <names...>",

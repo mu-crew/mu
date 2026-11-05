@@ -378,7 +378,7 @@ export function rebuildInto(source: Db, opts: RebuildOptions): RebuildReport {
     replay.immediate();
 
     const rebuiltRows: Record<string, number> = {};
-    for (const table of ["workstreams", "tasks", "task_edges", "task_notes", "ops"]) {
+    for (const table of ["workstreams", "tasks", "task_edges", "task_notes", "checks", "ops"]) {
       const row = target.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
       rebuiltRows[table] = row.n;
     }

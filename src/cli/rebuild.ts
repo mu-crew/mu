@@ -48,7 +48,7 @@ export async function cmdRebuild(
 
   console.log(`Rebuilt ${pc.bold(report.targetPath)} from ${report.opsCopied} ops`);
   const rows = report.rebuiltRows;
-  const shape = ["workstreams", "tasks", "task_edges", "task_notes"]
+  const shape = ["workstreams", "tasks", "task_edges", "task_notes", "checks"]
     .map((t) => `${rows[t] ?? 0} ${t}`)
     .join(", ");
   console.log(pc.dim(`  projected ${report.opsProjected} ops -> ${shape}`));

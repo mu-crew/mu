@@ -7,7 +7,7 @@ drift detection are all queries or replays over it. Overview:
 ## Capture is a trigger
 
 Every INSERT, UPDATE and DELETE on a portable table (`workstreams`,
-`tasks`, `task_edges`, `task_notes`) is recorded as an **op** by a
+`tasks`, `task_edges`, `task_notes`, `checks`) is recorded as an **op** by a
 SQLite trigger, in the same transaction as the mutation. No SDK
 function decides to record history, so no call site can forget to, and
 the log cannot drift from the data, even on power loss.

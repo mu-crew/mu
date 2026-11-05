@@ -50,11 +50,11 @@ SIGINT/SIGTERM during a wait. A wait that hits its cap
 
 ## Read the schema
 
-The schema (version 13) has 28 tables and 4 views (`ready`, `blocked`,
+The schema (version 13) has 29 tables and 4 views (`ready`, `blocked`,
 `blockers`, `goals`). Views skip torn-down workstreams. `blockers` has one
 row per open edge: `task_local_id` is held up by `blocker_local_id`.
-Four tables travel between machines: `workstreams`, `tasks`,
-`task_edges`, and `task_notes`. List them all:
+Five tables travel between machines: `workstreams`, `tasks`,
+`task_edges`, `task_notes` and `checks`. List them all:
 
 ```bash
 mu db query "SELECT type, name FROM sqlite_master WHERE type IN ('table','view') ORDER BY type, name"
@@ -116,7 +116,9 @@ statement checked by SQLite itself (a table or column named `begin` or
 `end` is fine, a leading `;` hides nothing); a failed statement rolls the call
 back. An `INSERT` that names an `id` of 0 or below is refused too (omit it), and
 so is an `UPDATE` of `id` (or `rowid`) on `workstreams`, `tasks`, `task_notes`
-and `task_edges`: ids are set once. Notes are append-only: an `UPDATE` of a
+and `task_edges`, or of a check's `id` or `task_id`: ids are set once. A
+check's `id` must be a ULID (26 Crockford base32 characters), and its `state`
+must match its `verdict` (`open` iff no verdict). Notes are append-only: an `UPDATE` of a
 note's `author`, `content`, `created_at` or `kind` is refused (add a new
 note), and so is an `UPDATE` of an edge's `created_at`. A rebuild or peer
 would replay either as a different row than the one you edited.

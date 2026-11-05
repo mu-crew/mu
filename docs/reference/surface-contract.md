@@ -14,8 +14,9 @@ that has not shipped.
 
 ## What ships
 
-Schema 13, `CAPTURE_VERSION` 5, 26 classified tables and 4 views
-(`PORTABLE_TABLES`: `workstreams`, `tasks`, `task_edges`, `task_notes`;
+Schema 13, `CAPTURE_VERSION` 6, 29 classified tables and 4 views
+(`PORTABLE_TABLES`: `workstreams`, `tasks`, `task_edges`, `task_notes`,
+`checks`;
 every other table is machine-local, see `src/db.ts`). The verbs and
 their guarantees:
 
@@ -30,7 +31,9 @@ their guarantees:
 - **Tasks and agents.** Batch `task add`, `--blocks`, note kinds,
   `--if <rev>` fences on membership changes and destructive verbs,
   task-bound spawn with receipts and replay, `mu agent check`, soft
-  teardown with a preview revision, `mu human-needed`, `mu orchestrate`
+  teardown with a preview revision, `mu human-needed`, recorded checks
+  (`mu task check`/`verdict`, listed by `mu state` until answered, awaited by
+  `close --if-ready`), `mu orchestrate`
   (an orchestrator of any harness as a managed pane, `MU_ORCHESTRATOR=1`),
   `--as <caller>` on `wait`, `state` and `next`. On the `hooks` channel
   (a local claude, codex, cursor-agent or muse pane on tmux), `agent send`

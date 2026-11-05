@@ -64,6 +64,7 @@ import {
   SpawnTrustDialogError,
 } from "../agents.js";
 import { CarrierStopFailedError, CarrierStopRefusedError } from "../carrier-stop.js";
+import { CheckArgError, CheckNotFoundError } from "../checks.js";
 import {
   type Db,
   defaultDbPath,
@@ -443,6 +444,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SubstateReasonRequiredError ||
     // A blank reason or missing caller identity for `mu human-needed`.
     err instanceof HumanNeededInvalidError ||
+    // A check's --by, brief or verdict text that cannot be recorded.
+    err instanceof CheckArgError ||
     // The operator asked the ACTIVE backend for something it cannot do:
     // a `--cli` the mux does not recognise as an agent kind, or a
     // `--command` / `MU_<CLI>_COMMAND` override it cannot honour. The
@@ -460,6 +463,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   }
   if (
     err instanceof AgentNotFoundError ||
+    err instanceof CheckNotFoundError ||
     err instanceof DelegateNotFoundError ||
     err instanceof WaitResumeNotFoundError ||
     err instanceof WaveNotFoundError ||

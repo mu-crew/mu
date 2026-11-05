@@ -8,6 +8,7 @@
 // file.
 
 import { GUARD_NEEDS_EVIDENCE, GUARD_OPEN_BLOCKERS } from "../capture.js";
+import { unansweredChecksOn } from "../checks.js";
 import type { Db, NoteKind } from "../db.js";
 import { withOpContext } from "../op-context.js";
 import { taskIdFor } from "./core.js";
@@ -189,7 +190,7 @@ function openBlockerIds(db: Db, localId: string, workstream: string): string[] {
 
 /** Result of `closeTask` when called with `ifReady: true` and the
  *  task is NOT yet ready to close (still has at least one OPEN /
- *  IN_PROGRESS blocker). Distinguished from a regular `SetStatusResult`
+ *  IN_PROGRESS blocker, or a check on a blocker without a verdict). Distinguished from a regular `SetStatusResult`
  *  by the literal `skipped` field; the CLI keys on it to switch
  *  between the "closed" and "waiting" rendering paths.
  *
@@ -213,16 +214,47 @@ export interface CloseSkippedResult {
   /** Always false on a skip (no row mutated). */
   changed: false;
   /** Local ids of every blocker still in OPEN or IN_PROGRESS, sorted
-   *   alphabetically for deterministic rendering. Empty list is
-   *   impossible on this branch — the no-op only fires when ≥1
-   *   blocker is non-terminal. */
+   *   alphabetically for deterministic rendering. Empty only when
+   *   `pendingChecks` is not. */
   blockingIds: string[];
+  /** Checks issued on a direct blocker (CLOSED or not) that have no
+   *   verdict yet (spec D5), by blocker then age. */
+  pendingChecks: { task: string; check: string }[];
+}
+
+/** What an `--if-ready` close of `localId` still waits for: its direct
+ *  blockers that are not CLOSED, and every check issued on a direct blocker
+ *  that has no verdict (spec D5). Both empty: ready. The umbrella
+ *  convention is one hop (umbrella -[blocked-by]→ each wave task). */
+export function closeReadiness(
+  db: Db,
+  localId: string,
+  workstream: string,
+): { blockingIds: string[]; pendingChecks: { task: string; check: string }[] } {
+  const blockingIds = getTaskEdgesWithStatus(db, localId, workstream)
+    .blockers.filter((e) => e.status !== "CLOSED")
+    .map((e) => e.name)
+    .sort();
+  const id = taskIdFor(db, localId, workstream);
+  const blockerIds =
+    id === null
+      ? []
+      : (
+          db.prepare("SELECT from_task_id AS id FROM task_edges WHERE to_task_id = ?").all(id) as {
+            id: number;
+          }[]
+        ).map((r) => r.id);
+  const pendingChecks = unansweredChecksOn(db, blockerIds)
+    .map((c) => ({ task: c.task, check: c.id }))
+    .sort((a, b) => (a.task < b.task ? -1 : a.task > b.task ? 1 : 0));
+  return { blockingIds, pendingChecks };
 }
 
 export interface CloseTaskOptions extends EvidenceOption {
   workstream: string;
-  /** When true, no-op the close unless every blocker is CLOSED.
-   *   Returns a `CloseSkippedResult` carrying the still-blocking ids.
+  /** When true, no-op the close unless every blocker is CLOSED and every
+   *   check issued on them has a verdict (`closeReadiness`).
+   *   Returns a `CloseSkippedResult` carrying what it waits for.
    *   When false / omitted, behaves as bare `closeTask`
    *   (closes regardless of blocker status). */
   ifReady?: boolean;
@@ -302,15 +334,10 @@ function closeTaskImpl(
   const alreadyThere = before?.status === "CLOSED" && before.substate === as;
   const evidence = (opts.evidence ?? "").trim() === "" ? undefined : opts.evidence;
   if (opts.ifReady && before) {
-    // Inspect direct blockers only — the umbrella convention is one
-    // hop (umbrella -[blocked-by]→ each wave task). If any direct
-    // blocker is not CLOSED, the umbrella isn't ready.
-    const edges = getTaskEdgesWithStatus(db, localId, before.workstreamName);
-    const blocking = edges.blockers
-      .filter((e) => e.status !== "CLOSED")
-      .map((e) => e.name)
-      .sort();
-    if (blocking.length > 0) {
+    // Direct blockers only: a blocker not CLOSED, or a check on one with no
+    // verdict, and the umbrella isn't ready.
+    const { blockingIds, pendingChecks } = closeReadiness(db, localId, before.workstreamName);
+    if (blockingIds.length > 0 || pendingChecks.length > 0) {
       return {
         skipped: "not_ready",
         previousStatus: before.status,
@@ -318,7 +345,8 @@ function closeTaskImpl(
         previousSubstate: before.substate,
         substate: before.substate,
         changed: false,
-        blockingIds: blocking,
+        blockingIds,
+        pendingChecks,
       };
     }
   }

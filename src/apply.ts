@@ -28,6 +28,8 @@
 //   task del         the same, always.
 //   note put / del   that task's notes.
 //   edge put / del   that edge.
+//   check put / del  that check (and a task coming into or going out of
+//                    existence re-folds its checks, like its notes).
 //
 // PROVENANCE IS THE LOG
 // ---------------------
@@ -49,6 +51,7 @@ import {
   type SyncedEntity,
 } from "./db.js";
 import {
+  foldCheck,
   foldEdge,
   foldNotes,
   foldTask,
@@ -163,6 +166,17 @@ function parseNoteKey(key: string): { taskKey: string } {
   const hash = key.lastIndexOf("#");
   if (hash <= 0 || hash === key.length - 1) throw new OpKeyMalformedError("note", key);
   return { taskKey: key.slice(0, hash) };
+}
+
+/** `<task-key>#<check-id>` -> its parts, or null when it is not one. Like a
+ *  note key, the LAST '#' separates (task ids cannot contain it). */
+function parseCheckKey(key: string): { taskKey: string; id: string } | null {
+  const hash = key.lastIndexOf("#");
+  if (hash <= 0 || hash === key.length - 1) return null;
+  const taskKey = key.slice(0, hash);
+  const slash = taskKey.indexOf("/");
+  if (slash <= 0 || slash === taskKey.length - 1) return null;
+  return { taskKey, id: key.slice(hash + 1) };
 }
 
 /** `<blocker>-><blocked>` -> its parts. Task ids MAY end in '-', so
@@ -533,10 +547,81 @@ function syncEdge(db: Db, log: Log, key: string): boolean {
   return true;
 }
 
-/** Re-fold a task's notes and every edge touching it: its existence or
- *  horizon changed. */
+/** Make the `checks` row of one check key equal its fold. A check whose
+ *  task row is absent has no row (the FK), and comes back with the task. */
+function syncCheck(db: Db, log: Log, key: string): boolean {
+  const parts = parseCheckKey(key);
+  if (parts === null) return false;
+  const state = foldCheck(log.ofKey("check", key), taskHorizon(log, parts.taskKey));
+  const taskId = taskRowId(db, parts.taskKey);
+  const existing = prepareCached(
+    db,
+    "SELECT task_id, checker, brief, verdict, state, created_at, updated_at FROM checks WHERE id = ?",
+  ).get(parts.id) as (Fields & { task_id: number }) | undefined;
+  // The id names another task's row (a hand-made key): the natural key is
+  // immutable, so the row goes and comes back under this task.
+  const moved = existing !== undefined && existing.task_id !== taskId;
+  if (state === null || taskId === null || moved) {
+    if (existing === undefined) return false;
+    prepareCached(db, "DELETE FROM checks WHERE id = ?").run(parts.id);
+    if (state === null || taskId === null) return true;
+  }
+  const want: Fields = {
+    checker: state.checker,
+    brief: state.brief,
+    verdict: state.verdict,
+    state: state.state,
+    created_at: state.createdAt,
+    updated_at: state.updatedAt,
+  };
+  if (existing === undefined || moved) {
+    prepareCached(
+      db,
+      `INSERT INTO checks (id, task_id, checker, brief, verdict, state, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      parts.id,
+      taskId,
+      state.checker,
+      state.brief,
+      state.verdict,
+      state.state,
+      state.createdAt,
+      state.updatedAt,
+    );
+    return true;
+  }
+  if (differing(want, existing).length === 0) return false;
+  prepareCached(
+    db,
+    `UPDATE checks SET checker = ?, brief = ?, verdict = ?, state = ?, created_at = ?, updated_at = ?
+      WHERE id = ?`,
+  ).run(
+    state.checker,
+    state.brief,
+    state.verdict,
+    state.state,
+    state.createdAt,
+    state.updatedAt,
+    parts.id,
+  );
+  return true;
+}
+
+/** Re-fold every check of one task. */
+function syncChecks(db: Db, log: Log, taskKey: string): boolean {
+  let changed = false;
+  for (const key of log.range("check", `${taskKey}#`, `${taskKey}$`).keys()) {
+    if (syncCheck(db, log, key)) changed = true;
+  }
+  return changed;
+}
+
+/** Re-fold a task's notes, its checks and every edge touching it: its
+ *  existence or horizon changed. */
 function syncDependents(db: Db, log: Log, taskKey: string): boolean {
   let changed = syncNotes(db, log, taskKey);
+  if (syncChecks(db, log, taskKey)) changed = true;
   for (const key of log.edgeKeysTouching({ task: taskKey })) {
     if (syncEdge(db, log, key)) changed = true;
   }
@@ -556,6 +641,7 @@ function applyWorkstream(db: Db, log: Log, op: Op): ApplyResult {
     const taskKeys = [...log.range("task", prefix, hi(prefix)).keys()];
     for (const key of taskKeys) if (syncTask(db, log, key).changed) changed = true;
     for (const key of taskKeys) if (syncNotes(db, log, key)) changed = true;
+    for (const key of taskKeys) if (syncChecks(db, log, key)) changed = true;
     const edges = log.edgeKeysTouching({ workstream: name });
     for (const key of edges) if (syncEdge(db, log, key)) changed = true;
   }
@@ -576,6 +662,13 @@ function applyTask(db: Db, log: Log, op: Op): ApplyResult {
 function applyNote(db: Db, log: Log, op: Op): ApplyResult {
   const { taskKey } = parseNoteKey(op.key);
   return { changed: syncNotes(db, log, taskKey), appliedFields: [] };
+}
+
+/** A key that is not `<task-key>#<id>` is a no-op, not a malformed-key
+ *  error: before `check` synced, `mu log --kind check` wrote prose ops with
+ *  that entity, and one must not wedge ingest or the upgrade's re-fold. */
+function applyCheck(db: Db, log: Log, op: Op): ApplyResult {
+  return { changed: syncCheck(db, log, op.key), appliedFields: [] };
 }
 
 function applyEdge(db: Db, log: Log, op: Op): ApplyResult {
@@ -631,6 +724,8 @@ export function applyOp(db: Db, op: Op): ApplyResult {
             return applyTask(db, log, op);
           case "note":
             return applyNote(db, log, op);
+          case "check":
+            return applyCheck(db, log, op);
           default:
             return applyEdge(db, log, op);
         }
@@ -669,6 +764,7 @@ export function projectLog(db: Db): number {
         for (const name of workstreams) if (syncWorkstream(db, log, name).changed) written += 1;
         for (const key of taskKeys) if (syncTask(db, log, key).changed) written += 1;
         for (const key of noteTasks) if (syncNotes(db, log, key)) written += 1;
+        for (const key of keys("check")) if (syncCheck(db, log, key)) written += 1;
         for (const key of keys("edge")) if (syncEdge(db, log, key)) written += 1;
         return written;
       })

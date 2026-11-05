@@ -942,8 +942,8 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(28);
-    expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
+    expect(EXPECTED_TABLES).toHaveLength(29);
+    expect(PORTABLE_TABLES).toEqual(["checks", "task_edges", "task_notes", "tasks", "workstreams"]);
   });
 
   it("writes to them and to agents.spawner/host/collected_head leave no ops", () => {
