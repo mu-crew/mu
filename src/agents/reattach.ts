@@ -90,13 +90,25 @@ export async function reattachAgent(
         // A carrier must not hold a job with no row: its death stops the job (its signal path).
         // The reservation names the new pane first (the old one is proven dead), so while the
         // kill is unproven the next preflight probes THIS pane and refuses while it may run.
-        rebindCarrierJobAgent(db, p.r, p.r, { agentId: p.r.agentId, paneId: pid });
+        // The fence can fail on the very writer lock that failed install: it never skips the
+        // kill, and an unproven kill retries it once (the writer may be done by then).
+        const fence = (): boolean => {
+          try {
+            return rebindCarrierJobAgent(db, p.r, p.r, { agentId: p.r.agentId, paneId: pid });
+          } catch {
+            return false;
+          }
+        };
+        let fenced = fence();
         await mux.killPane(pid).catch(() => {});
         const gone = (await localPaneAlive(pid).catch(() => undefined)) === false;
+        if (!gone && !fenced) fenced = fence();
         const failed = `install failed (${e instanceof Error ? e.message : e})`;
         const why = gone
           ? `${failed}; its pane ${pid} was killed, so its signal path stops job ${p.r.job}`
-          : `${failed}; its pane ${pid} may still run job ${p.r.job} (the kill is not proven): close that pane, then reattach or close`;
+          : fenced
+            ? `${failed}; its pane ${pid} may still run job ${p.r.job} (the kill is not proven): close that pane, then reattach or close`
+            : `${failed}; its pane ${pid} may still run job ${p.r.job} (the kill is not proven) and the reservation does not name it, so a reattach would not see it: close that pane before any reattach or close`;
         const rollback = gone ? "pane-killed" : "pane-unknown";
         throw new ReattachFailedError(name, rollback, why, closeCommand(db, ws, name));
       }

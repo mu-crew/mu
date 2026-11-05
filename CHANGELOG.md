@@ -40,7 +40,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   keeps the row (`ready: false`). An install that fails points the
   reservation at the new pane, then kills it: a kill not proven by a pane
   probe reports `rollback: pane-unknown` with the pane, and the next reattach
-  refuses while it may run. Preview and apply take the facts and the rev from
+  refuses while it may run. A pointer write that fails (the writer lock that
+  failed install) or loses its compare-and-set never skips the kill; an
+  unproven kill retries it once, and if it still fails the error says the
+  reservation does not name the pane. Preview and apply take the facts and the rev from
   one snapshot after the pane probe; a reservation that keeps changing refuses
   (`AgentReplacedError`, exit 4). Pi only: no other cli is stored. Logs
   `agent.reattach`. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_adopt.
