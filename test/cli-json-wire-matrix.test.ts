@@ -14,6 +14,7 @@ import Database from "better-sqlite3";
 import type { Command } from "commander";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetCommandResolverForTests, setCommandResolverForTests } from "../src/agents.js";
+import { setStdinReaderForTests } from "../src/cli/stdin.js";
 import { buildProgram } from "../src/cli.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -89,6 +90,7 @@ const ARGS: Record<string, string[]> = {
   "host rm": ["dev"],
   "host init": ["dev", "--ssh"],
   "host check": ["dev"],
+  "hook stop": ["claude"],
   "human-needed": ["needs a decision"],
   next: ["--dry", "--workers", "2"],
   orchestrate: ["--name", "orchestrator-1"],
@@ -142,6 +144,8 @@ beforeAll(async () => {
   process.env.MU_PI_HOME = join(dir, "home");
   mkdirSync(process.env.MU_PI_HOME, { recursive: true });
   setSleepForTests(async () => {});
+  // `mu hook stop` reads its hook payload from stdin; the test process has none.
+  setStdinReaderForTests(async () => "{}");
   setCommandResolverForTests(async (c) => ({ ok: true, binary: c, resolvedPath: `/bin/${c}` }));
   process.env.MU_SPAWN_LIVENESS_MS = "0";
   process.env.MU_SPAWN_CTL_MS = "50"; // no extension answers: ctl "missing"
@@ -149,6 +153,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   resetSleep();
+  setStdinReaderForTests(null);
   resetCommandResolverForTests();
   for (const k of ["MU_SPAWN_LIVENESS_MS", "MU_SPAWN_CTL_MS"]) delete process.env[k];
   if (savedHome === undefined) delete process.env.MU_PI_HOME;

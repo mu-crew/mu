@@ -67,6 +67,16 @@ their guarantees:
   summary. The pi message is only a **wake** (a pointer, no answer text)
   when no settle wait will show an answer.
 
+- **Stop hook.** `mu hook stop <harness>` is the settle wait's twin for
+  claude, codex and cursor-agent: for an orchestrator pane mu started (an
+  anchor in its process chain, never a nested or remote agent), a consuming
+  `mu wait --as <caller>` whose event blocks the stop, a block while work is
+  owed (`MU_KEEP_DRIVING_MAX` in a row) and an allow when nothing is owed or a
+  live wait holds the caller; for a worker, the close nudge once per session.
+  stdout is the harness's block answer, empty to allow; exit is always 0,
+  parse errors included (claude and codex read exit 2 as a block).
+  Never for Muse Code.
+
 - **Delegates without a multiplexer.** `mu_delegate` registers in any
   unmanaged pi. A spawn that fails `NoMultiplexerError` (only that error)
   runs the call through `mu delegates run <call-id>`: one child

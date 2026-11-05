@@ -4,7 +4,7 @@
 // enables WAL + foreign keys, applies the schema idempotently, and
 // exposes the live Database handle.
 //
-// Schema (v13; EXPECTED_TABLES below is the exact list, 27 tables), by group:
+// Schema (v13; EXPECTED_TABLES below is the exact list, 28 tables), by group:
 //   - entity (portable: they sync): workstreams, tasks, task_edges, task_notes.
 //     tasks carries substate (status qualifier; a composite FK
 //     (status, substate) -> task_substates, DEFERRABLE INITIALLY DEFERRED,
@@ -14,7 +14,7 @@
 //     collected_head), worktrees, task_auto, delegate_calls, human_needs,
 //     wait_cursors, wait_registrations, wait_resumes, wait_action_receipts,
 //     agent_settles, spawn_receipts, host_profiles, host_channels,
-//     remote_recovery, carrier_jobs
+//     remote_recovery, carrier_jobs, keep_driving
 //   - ops log:  ops (the single append-only record of every change:
 //               VISION.md § 2b)
 //   - sync:     sync_peers (per-peer watermarks),
@@ -731,7 +731,7 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it). Sorted; exactly 27 entries. */
+ *  additive, and an older mu ignores it; nor did keep_driving). Sorted; exactly 28 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
@@ -740,6 +740,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "host_channels",
   "host_profiles",
   "human_needs",
+  "keep_driving",
   "machine_identity",
   "op_ctx",
   "op_dying",
@@ -839,6 +840,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     unconsumed run baselines of its agent refs.
     human_needs      which caller recorded a `human` task (`mu human-needed`).
                      Rebuild cannot restore it (UNREBUILDABLE_TABLES).
+ *    keep_driving     per harness session, the Stop hook's consecutive empty
+ *                     blocks and whether its close nudge fired (src/hook-stop.ts).
  *    agent_settles    settled runs already applied (settle replay).
  *    host_profiles    ssh-free command templates per remote host.
  *    host_channels    the connection slots a host's `max_sessions` counts:
@@ -883,6 +886,7 @@ export const MACHINE_LOCAL_TABLES = [
   "host_channels",
   "host_profiles",
   "human_needs",
+  "keep_driving",
   "machine_identity",
   "op_ctx",
   "op_dying",
@@ -1331,6 +1335,19 @@ CREATE TABLE IF NOT EXISTS wait_action_receipts (
   created_at       TEXT NOT NULL,
   updated_at       TEXT NOT NULL,
   PRIMARY KEY (task_id, owner_id, incarnation, action)
+);
+
+-- keep_driving: per harness session, what \`mu hook stop\` has done
+-- (machine-local; src/hook-stop.ts). empty_blocks counts the consecutive
+-- blocks that delivered no event (capped by MU_KEEP_DRIVING_MAX); a block
+-- with events and a turn the user started reset it. close_nudged: the
+-- worker's close nudge fired in this session (once per session). Rows idle
+-- for a week go with the next write. Additive at schema 13: no bump.
+CREATE TABLE IF NOT EXISTS keep_driving (
+  session_id   TEXT PRIMARY KEY,
+  empty_blocks INTEGER NOT NULL DEFAULT 0 CHECK (empty_blocks >= 0),
+  close_nudged INTEGER NOT NULL DEFAULT 0 CHECK (close_nudged IN (0, 1)),
+  updated_at   TEXT NOT NULL
 );
 
 -- host_profiles: ssh-free command templates for a remote host

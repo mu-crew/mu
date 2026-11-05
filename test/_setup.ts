@@ -64,6 +64,7 @@ import {
   setMurmurPaneRunnerForTests,
 } from "../src/channels/hooks-pane.js";
 import { sandboxMarkerEnvNames } from "../src/harnesses.js";
+import { setProcessTableReaderForTests } from "../src/hook-chain.js";
 import { setMuzzleRunnerForTests } from "../src/muzzle-queue.js";
 import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
@@ -122,6 +123,11 @@ setMuzzleRunnerForTests(async () => null);
 // harness through it. Likewise `murmur hook mu`, which writes into that inbox.
 setMurmurPaneRunnerForTests(async () => null);
 setMurmurHookRunnerForTests(async () => false);
+
+// Baseline: no real process table for `mu hook stop`. Its walk reads anchors
+// under the real HOME, where a developer's own mu panes live; a test run from
+// such a pane would act as that agent. test/hook-stop.test.ts injects tables.
+setProcessTableReaderForTests(() => null);
 
 // Baseline: no spawn-time control-socket handshake. No test pane runs
 // the mu pi extension, so the 30s default would stall every pi spawn.

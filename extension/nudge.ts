@@ -30,13 +30,15 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { closeNudgeText, keepDrivingRule } from "../src/nudge-text.js";
 import { defaultRunner, type MuRunner, parseEnvelope } from "./delegate.js";
+
+// The words are shared with the Stop hook of the other harnesses (src/hook-stop.ts).
+export { closeNudgeText, keepDrivingRule };
 
 export const NUDGE_MESSAGE_TYPE = "mu-keep-driving";
 export const NUDGE_LOG_KIND = "nudge";
 export const CLOSE_NUDGE_MESSAGE_TYPE = "mu-close-task";
-const MARK_START = "<!-- mu:keep-driving -->";
-const MARK_END = "<!-- /mu:keep-driving -->";
 
 /** The slice of pi's ExtensionContext the nudges read. */
 export type MuNudgeCtx = {
@@ -88,22 +90,6 @@ function noUI(ctx: MuNudgeCtx | undefined): boolean {
 /** `MU_NUDGE=0` turns the nudge off. */
 export function nudgeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MU_NUDGE !== "0";
-}
-
-/** The keep-driving paragraph from SKILL.md, one line per paragraph, or undefined without the markers. */
-export function keepDrivingRule(skillMd: string): string | undefined {
-  const i = skillMd.indexOf(MARK_START);
-  const j = skillMd.indexOf(MARK_END);
-  if (i < 0 || j < i) return undefined;
-  // Unwrap the source's hard line breaks (paragraphs stay apart): the TUI wraps
-  // the entry to the terminal, and kept breaks show as ragged mid-sentence cuts.
-  const text = skillMd
-    .slice(i + MARK_START.length, j)
-    .trim()
-    .split(/\n\s*\n/)
-    .map((p) => p.replace(/\s*\n\s*/g, " "))
-    .join("\n\n");
-  return text === "" ? undefined : text;
 }
 
 /** SKILL.md next to this file in either layout (source or dist/extension). */
@@ -670,19 +656,6 @@ async function ownedInProgress(
   } catch {
     return undefined;
   }
-}
-
-/** The close-nudge text: name each task and the two ways out. */
-export function closeNudgeText(workstream: string, names: string[]): string {
-  const close = names
-    .map((n) => `mu task close ${n} -w ${workstream} --evidence "<what you verified>"`)
-    .join("\n  ");
-  return [
-    `[mu] You are stopping while you still own ${names.map((n) => `${workstream}/${n}`).join(", ")} (IN_PROGRESS).`,
-    "If the work is done and verified, close it now:",
-    `  ${close}`,
-    "If you are blocked or need an answer, say so in one line and stop; the orchestrator will read your pane.",
-  ].join("\n");
 }
 
 export function registerCloseNudge(

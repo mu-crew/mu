@@ -72,6 +72,7 @@ const NEW_TABLES = [
   "host_channels",
   "host_profiles",
   "human_needs",
+  "keep_driving",
   "remote_recovery",
   "spawn_receipts",
   "wait_action_receipts",
@@ -331,6 +332,27 @@ describe("a populated v13 DB is completed in place", () => {
     const db = track(openDb({ path: p }));
     expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
     expect(db.prepare("SELECT COUNT(*) AS c FROM spawn_receipts").get()).toEqual({ c: 0 });
+    expect(getAgent(db, "w1", "alpha")).toBeDefined();
+    expect(getTask(db, "t1", "alpha")).toBeDefined();
+  });
+
+  it("the populated fixture, which predates keep_driving, gains it at open: no version bump, rows intact", () => {
+    const p = v13Copy();
+    const before = raw(p, (r) =>
+      r
+        .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'keep_driving'")
+        .get(),
+    );
+    expect(before).toBeUndefined();
+    const db = track(openDb({ path: p }));
+    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(columns(p, "keep_driving")).toEqual([
+      "session_id",
+      "empty_blocks",
+      "close_nudged",
+      "updated_at",
+    ]);
+    expect(db.prepare("SELECT COUNT(*) AS c FROM keep_driving").get()).toEqual({ c: 0 });
     expect(getAgent(db, "w1", "alpha")).toBeDefined();
     expect(getTask(db, "t1", "alpha")).toBeDefined();
   });
@@ -920,7 +942,7 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(27);
+    expect(EXPECTED_TABLES).toHaveLength(28);
     expect(PORTABLE_TABLES).toEqual(["task_edges", "task_notes", "tasks", "workstreams"]);
   });
 

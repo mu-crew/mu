@@ -146,6 +146,8 @@ const UNREBUILDABLE_TABLES = [
   // The human task and its reason rebuild from ops; WHO recorded it does
   // not. Ownership is never inferred from a note author.
   "human_needs",
+  // The Stop hook's per-session counters: no op carries them, and a lost row only resets a cap.
+  "keep_driving",
 ] as const;
 
 /** Entities that exist only in the log: there is no portable table to
