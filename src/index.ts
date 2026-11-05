@@ -376,6 +376,13 @@ export {
   latestSeq,
   listLogs,
 } from "./logs.js";
+export {
+  type InitItem,
+  type InitOptions,
+  type InitResult,
+  type InitState,
+  runInit,
+} from "./mu-init.js";
 export * as mux from "./mux.js";
 export {
   activeMux,

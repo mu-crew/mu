@@ -129,11 +129,13 @@ function defaultPackageRoot(): string {
 
 /** SHA-256 over the sorted `relative path NUL file-sha256` lines of a
  *  directory tree. undefined if it holds anything but regular files and
- *  directories (a symlink is never part of a released skill). */
-export function skillDirDigest(dir: string): string | undefined {
+ *  directories (a symlink is never part of a released skill). `skip` names
+ *  one top-level entry left out (`mu init`'s ownership marker). */
+export function skillDirDigest(dir: string, skip?: string): string | undefined {
   const lines: string[] = [];
   const walk = (d: string): boolean => {
     for (const ent of readdirSync(d, { withFileTypes: true })) {
+      if (d === dir && ent.name === skip) continue;
       const p = join(d, ent.name);
       if (ent.isDirectory()) {
         if (!walk(p)) return false;

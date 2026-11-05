@@ -17,6 +17,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { HARNESSES } from "../src/harnesses.js";
+import { runInit } from "../src/mu-init.js";
 import { migratePi } from "../src/pi-migrate.js";
 
 const root = join(import.meta.dirname, "..");
@@ -97,6 +99,12 @@ describe.skipIf(!ready)("pi package (real pi resolver + loader)", () => {
       "mu_delegate_reissue",
       "mu_delegate_cancel",
     ]);
+  });
+
+  it("still resolves exactly one skill after `mu init` writes every harness's", () => {
+    const r = runInit({ home, harnesses: [...HARNESSES], packageRoot: root });
+    expect(r.skills.filter((i) => i.state === "written").length).toBeGreaterThan(0);
+    expect(load().skills).toBe(1);
   });
 
   it("a legacy shim doubles the factories until `mu pi migrate --apply`", () => {

@@ -114,7 +114,15 @@ On Rex, `--send`, `agent send` and `--command` all work.
 
 ## Run one as the orchestrator
 
-Install the skill (`npx skills add mu-crew/mu`) and point the harness at it.
+Run `mu init` once (and again after upgrading mu). It copies mu's skill into
+each harness's own skill directory (`~/.claude/skills`, `~/.codex/skills`,
+`~/.cursor/skills`) and adds the Stop hook entry below, for each harness set
+up here (`--harness <names>|all` writes the rest). It touches only what it
+wrote, and never `~/.agents/skills`, where pi would find a second `mu`
+skill. If an older `npx skills add mu-crew/mu` put mu's skill there, `init`
+leaves it (and any link to it) as found and says so; remove it
+(`~/.agents/skills/mu` and the links in each harness's skill directory) and
+run `mu init` again. codex asks you to trust the new hook once (`/hooks`).
 It dispatches pi workers as usual (`spawn --worktree --task --send -`).
 
 Start it with `mu orchestrate -w <ws> --cli <key>` so it has an identity:
@@ -129,11 +137,14 @@ inside an agent, because every pane would inherit that agent's sandbox.
   the event, or tells it to run `mu wait` in the background, at most
   `MU_KEEP_DRIVING_MAX` (20) times in a row; a background `mu wait` already
   holding the caller lets the turn end. A worker that stops still owning its
-  task is told once per session to close it. Until `mu init` writes it, add the
-  entry by hand: `mu hook stop claude --timeout 600 || true` under `Stop` in
+  task is told once per session to close it. `mu init` writes the entry:
+  `mu hook stop claude --timeout 600 || true` under `Stop` in
   `~/.claude/settings.json` with `"timeout": 600`, the same in
   `~/.codex/hooks.json` (`codex`), and a `stop` hook in `~/.cursor/hooks.json`
-  (`cursor-agent`). Keep the `|| true`: claude and codex read a Stop hook's
+  (`cursor-agent`, with `"loop_limit": null`). An entry you wrote yourself
+  that runs `mu hook stop` stays as it is, and `init` keeps none of its own
+  beside it.
+  Keep the `|| true`: claude and codex read a Stop hook's
   exit 2 as "block and hand stderr to the model", and a mu on `PATH` older than
   the verb exits 2 on it (this mu itself always exits 0). It acts only for a pane mu started, never for a
   `claude -p` or `codex exec` that pane runs. Muse Code ignores a stop block's

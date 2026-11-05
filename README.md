@@ -40,8 +40,8 @@ mu doctor
 ```
 
 To drive mu from another agent CLI (claude-code, codex, cursor-agent),
-install the skill with `npx skills add mu-crew/mu` instead of the pi
-package. Read [Run mu with other agent CLIs](docs/guide/other-agent-clis.md)
+run `mu init` instead of the pi package: it installs mu's skill and Stop hook
+entry where each harness reads them. Read [Run mu with other agent CLIs](docs/guide/other-agent-clis.md)
 first: pin which `mu` the harness runs, and see what works without pi.
 
 You need:

@@ -38,6 +38,7 @@ import {
 import { hookArgv, hookParseFailure, wireHookCommand } from "./cli/hook.js";
 import { wireHostCommands } from "./cli/host.js";
 import { wireHumanNeededCommand } from "./cli/human-needed.js";
+import { wireInitCommand } from "./cli/init.js";
 import { wireLogCommand } from "./cli/log.js";
 import { wireNextCommand } from "./cli/next.js";
 import { wireOrchestrateCommand } from "./cli/orchestrate.js";
@@ -897,6 +898,7 @@ export function buildProgram(): Command {
   wireSyncCommand(program);
   wireHostCommands(program);
   wireHookCommand(program);
+  wireInitCommand(program);
   wireHumanNeededCommand(program);
   wireDelegatesCommands(program);
   wireRebuildCommand(program);

@@ -71,14 +71,7 @@ describe("HARNESS_TABLE", () => {
       if (h.skillLocation === null) open.push(`${id}.skillLocation`);
     }
     expect(open.sort()).toEqual(
-      [
-        "codex.turn_failed",
-        "muse.turn_failed",
-        "pi.turn_failed",
-        "muse.sessions",
-        "codex.skillLocation",
-        "cursor-agent.skillLocation",
-      ].sort(),
+      ["codex.turn_failed", "muse.turn_failed", "pi.turn_failed", "muse.sessions"].sort(),
     );
   });
 
