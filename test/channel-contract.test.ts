@@ -8,6 +8,9 @@
 // answers the keys mu types into it (Escape, the fresh command, a dialog's
 // choice) as a harness's hooks would. The channel is the one the agents row
 // recorded: neither its cli nor the env moves an agent to another channel.
+// pi on its `hooks` fallback (spec D15) runs the whole suite too: its row says
+// hooks, its pane reports like a hook harness's, and its mu extension still
+// serves a control socket that no verb may reach.
 
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -43,6 +46,7 @@ import {
   muxChannel,
   readAgentStates,
 } from "../src/channels/index.js";
+import { cmdAgentCheck } from "../src/cli/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -112,6 +116,8 @@ async function serveCtl(agent: AgentRow): Promise<void> {
 
 /** What each channel promises (the D4 table). */
 interface Contract {
+  /** The suite's title: the channel, and the harness when two runs share a channel. */
+  label: string;
   name: ChannelName;
   channel: AgentChannel;
   /** A live agent on this channel, ready to read. */
@@ -150,7 +156,8 @@ async function liveMux(): Promise<AgentRow> {
 /**
  * A live hook harness on `hooks`: started, three runs settled, idle. Codex by
  * default (its new session starts on the first prompt); `cli` names another
- * harness on the same pane.
+ * harness on the same pane. claude and pi report a fresh session at once and
+ * no interrupt of their own (spec D6).
  */
 async function liveHooks(cli = "codex"): Promise<AgentRow> {
   const a = insertAgent(db, {
@@ -160,9 +167,10 @@ async function liveHooks(cli = "codex"): Promise<AgentRow> {
     cli,
     channel: "hooks",
   });
+  const own = cli === "claude" || cli === "pi";
   fake.freshCommand = cli === "claude" ? "/clear" : "/new";
-  fake.freshMode = cli === "claude" ? "immediate" : "first-prompt";
-  fake.onEscape = cli === "claude" ? "silent" : "event";
+  fake.freshMode = own ? "immediate" : "first-prompt";
+  fake.onEscape = own ? "silent" : "event";
   fake.emit("session_start", { source: "startup" });
   for (let i = 0; i < 3; i++) {
     fake.emit("prompt_submitted");
@@ -171,8 +179,40 @@ async function liveHooks(cli = "codex"): Promise<AgentRow> {
   return a;
 }
 
+/**
+ * A live pi on the `hooks` fallback (spec D15): murmur's pi extension writes
+ * its pane's inbox like a hook harness, and mu's extension still serves the
+ * control socket (for the spawn handshake, delegates and doctor only).
+ */
+async function livePiHooks(): Promise<AgentRow> {
+  const a = await liveHooks("pi");
+  await serveCtl(a);
+  return a;
+}
+
+/** The `hooks` contract's promises, whatever harness runs on the channel. */
+const HOOKS_PROMISES = {
+  name: "hooks",
+  channel: hooksChannel,
+  source: "murmur",
+  liveState: "needs_input",
+  fence: false,
+  // Settle is the pane's `turn_stopped`, polled from murmur (D4).
+  watches: true,
+  // Settled turns and `session_id` stand in for pi's runs and incarnation (D4).
+  baseline: true,
+  receipts: false,
+  lastText: true,
+  endedText: false,
+  drive: () => {
+    fake.emit("prompt_submitted");
+    fake.emit("turn_stopped", { text: "run 4" });
+  },
+} as const;
+
 const CONTRACTS: Contract[] = [
   {
+    label: "ctl",
     name: "ctl",
     channel: ctlChannel,
     live: liveCtl,
@@ -187,6 +227,7 @@ const CONTRACTS: Contract[] = [
     endedText: true,
   },
   {
+    label: "mux",
     name: "mux",
     channel: muxChannel,
     live: liveMux,
@@ -201,8 +242,8 @@ const CONTRACTS: Contract[] = [
     endedText: false,
   },
   {
-    name: "hooks",
-    channel: hooksChannel,
+    ...HOOKS_PROMISES,
+    label: "hooks",
     live: liveHooks,
     gone: () =>
       insertAgent(db, {
@@ -212,20 +253,13 @@ const CONTRACTS: Contract[] = [
         cli: "codex",
         channel: "hooks",
       }),
-    source: "murmur",
-    liveState: "needs_input",
-    fence: false,
-    // Settle is the pane's `turn_stopped`, polled from murmur (D4).
-    watches: true,
-    // Settled turns and `session_id` stand in for pi's runs and incarnation (D4).
-    baseline: true,
-    receipts: false,
-    lastText: true,
-    endedText: false,
-    drive: () => {
-      fake.emit("prompt_submitted");
-      fake.emit("turn_stopped", { text: "run 4" });
-    },
+  },
+  {
+    ...HOOKS_PROMISES,
+    label: "hooks (pi fallback)",
+    live: livePiHooks,
+    gone: () =>
+      insertAgent(db, { name: "pih", workstream: WS, paneId: "%9", cli: "pi", channel: "hooks" }),
   },
 ];
 
@@ -273,12 +307,16 @@ afterEach(() => {
 
 const signal = () => new AbortController().signal;
 
-describe.each(CONTRACTS)("AgentChannel contract: $name", (c) => {
+describe.each(CONTRACTS)("AgentChannel contract: $label", (c) => {
   let agent: AgentRow;
   let target: ChannelTarget;
   beforeEach(async () => {
     agent = await c.live();
     target = channelTarget(db, agent);
+  });
+  // Off ctl, nothing reaches a control socket: pi's on its hooks fallback serves one (D15).
+  afterEach(() => {
+    if (c.name !== "ctl") expect(ctlReqs).toEqual([]);
   });
 
   it("the agent routes to this channel, which declares its name and fence", () => {
@@ -387,6 +425,7 @@ function sendingMux(): void {
 
 /** What each channel's delivery verbs do (the D4 table). */
 interface DeliveryContract {
+  label: string;
   name: ChannelName;
   live: () => Promise<AgentRow>;
   /**
@@ -409,6 +448,7 @@ interface DeliveryContract {
 
 const DELIVERY: DeliveryContract[] = [
   {
+    label: "ctl",
     name: "ctl",
     live: liveCtl,
     via: "ctl",
@@ -419,6 +459,7 @@ const DELIVERY: DeliveryContract[] = [
     answer: "refused",
   },
   {
+    label: "mux",
     name: "mux",
     live: liveMux,
     via: "sendToPane",
@@ -429,8 +470,20 @@ const DELIVERY: DeliveryContract[] = [
     answer: "unconfirmed",
   },
   {
+    label: "hooks",
     name: "hooks",
     live: liveHooks,
+    via: "paste",
+    fresh: "delivers",
+    interrupt: "delivers",
+    abort: "delivers",
+    steer: AgentSteerUnsupportedError,
+    answer: "confirmed",
+  },
+  {
+    label: "hooks (pi fallback)",
+    name: "hooks",
+    live: livePiHooks,
     via: "paste",
     fresh: "delivers",
     interrupt: "delivers",
@@ -444,10 +497,14 @@ const writes = () => ctlReqs.filter((r) => r.op !== "hello" && r.op !== "status"
 /** The tmux verbs mu sent the hook harness's pane, in order. */
 const typed = () => fake.calls.map((c) => [c[0], ...c.filter((a) => a === "C-u" || a === "Enter")]);
 
-describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
+describe.each(DELIVERY)("AgentChannel delivery contract: $label", (c) => {
   let target: DeliveryTarget;
   beforeEach(async () => {
     target = channelTarget(db, await c.live());
+  });
+  // Off ctl, no verb reaches a control socket: pi's on its hooks fallback serves one (D15).
+  afterEach(() => {
+    if (c.name !== "ctl") expect(ctlReqs).toEqual([]);
   });
 
   it("send: delivered on this channel, or refused where the backend cannot send", async () => {
@@ -878,37 +935,104 @@ describe("the hooks channel: send gate, ack, never resent", () => {
     expect(await hooksChannel.answer(target, ["1"], {})).toMatchObject({ ack: "confirmed" });
     expect(fake.muEvents).toEqual([]);
   });
+});
 
-  it("no verb on a hooks agent falls back to ctl, even with a socket at its derived path", async () => {
-    await serveCtl(target.agent);
-    expect(agentChannel(target)).toBe(hooksChannel);
-    await deliver(target, "hello", {});
-    fake.emit("turn_stopped");
-    await agentChannel(target).command(target, { name: "compact" }, {});
-    fake.emit("turn_stopped");
-    await agentChannel(target).baseline(target);
-    await agentChannel(target).receipt(target, KNOWN_MSG);
-    expect(await deliver(target, "x", { fresh: true })).toMatchObject({ transport: "hooks" });
-    const fresh = await agentChannel(target).watch(target, signal(), { afterRuns: 0 });
-    fake.emit("turn_stopped", { text: "fresh done" });
-    expect(await fresh?.settled).toMatchObject({ settled: true, lastText: "fresh done" });
-    fake.emit("prompt_submitted");
-    expect(await agentChannel(target).interrupt(target, "y", { timeoutMs: 1000 })).toMatchObject({
-      transport: "hooks",
-      wasBusy: true,
-      stopped: "confirmed",
+describe("the hooks channel never falls back to ctl (D4, D15)", () => {
+  // A codex row with a socket at its derived path, and pi on its fallback (spec D15),
+  // whose mu extension really serves ctl: every verb, `mu agent check` too, stays on hooks.
+  it.each(["codex", "pi"])(
+    "no verb on a hooks %s falls back to ctl, even with a socket at its derived path",
+    async (cli) => {
+      const target = channelTarget(db, await liveHooks(cli));
+      await serveCtl(target.agent);
+      expect(agentChannel(target)).toBe(hooksChannel);
+      await deliver(target, "hello", {});
+      fake.emit("turn_stopped");
+      await agentChannel(target).command(target, { name: "compact" }, {});
+      fake.emit("turn_stopped");
+      await agentChannel(target).baseline(target);
+      await agentChannel(target).receipt(target, KNOWN_MSG);
+      expect(await deliver(target, "x", { fresh: true })).toMatchObject({ transport: "hooks" });
+      const fresh = await agentChannel(target).watch(target, signal(), { afterRuns: 0 });
+      fake.emit("turn_stopped", { text: "fresh done" });
+      expect(await fresh?.settled).toMatchObject({ settled: true, lastText: "fresh done" });
+      fake.emit("prompt_submitted");
+      expect(await agentChannel(target).interrupt(target, "y", { timeoutMs: 1000 })).toMatchObject({
+        transport: "hooks",
+        wasBusy: true,
+        // pi, like claude, reports no interrupt of its own: mu records it, unconfirmed.
+        stopped: cli === "pi" ? "unconfirmed" : "confirmed",
+      });
+      fake.emit("prompt_submitted");
+      expect(await agentChannel(target).abort(target, { timeoutMs: 1000 })).toMatchObject({
+        aborted: true,
+      });
+      await expect(agentChannel(target).answer(target, ["1"], {})).rejects.toThrow();
+      const w = await agentChannel(target).watch(target, signal(), {});
+      fake.emit("prompt_submitted");
+      fake.emit("turn_stopped", { text: "watched" });
+      expect(await w?.settled).toMatchObject({ settled: true, lastText: "watched" });
+      await readAgentStates([target.agent], { stateDir: target.stateDir });
+      await cmdAgentCheck(db, target.agent.name, KNOWN_MSG, { workstream: WS, json: true }).catch(
+        () => {},
+      );
+      expect(ctlReqs).toEqual([]);
+    },
+  );
+});
+
+// Spec D15: a pi on its fallback named only by its command (`--cli helper
+// --command 'pi-meta …'`) still gets pi's harness row: its clear key and fresh command.
+describe("a hooks pi named by its command gets pi's harness row (D15)", () => {
+  let target: DeliveryTarget;
+  beforeEach(async () => {
+    insertAgent(db, {
+      name: "pim",
+      workstream: WS,
+      paneId: "%3",
+      cli: "helper",
+      command: "pi-meta --x",
+      channel: "hooks",
     });
-    fake.emit("prompt_submitted");
-    expect(await agentChannel(target).abort(target, { timeoutMs: 1000 })).toMatchObject({
-      aborted: true,
-    });
-    await expect(agentChannel(target).answer(target, ["1"], {})).rejects.toThrow();
-    const w = await agentChannel(target).watch(target, signal(), {});
-    fake.emit("prompt_submitted");
-    fake.emit("turn_stopped", { text: "watched" });
-    expect(await w?.settled).toMatchObject({ settled: true, lastText: "watched" });
-    await readAgentStates([target.agent], { stateDir: target.stateDir });
+    fake.freshCommand = "/new";
+    fake.freshMode = "immediate";
+    fake.onEscape = "silent";
+    fake.emit("session_start", { source: "startup" });
+    for (let i = 0; i < 3; i++) {
+      fake.emit("prompt_submitted");
+      fake.emit("turn_stopped", { text: `run ${i + 1}` });
+    }
+    const row = getAgent(db, "pim", WS);
+    if (row === undefined) throw new Error("no row");
+    await serveCtl(row);
+    target = channelTarget(db, row);
+  });
+  afterEach(() => {
     expect(ctlReqs).toEqual([]);
+  });
+
+  it("send clears the input with pi's C-u before the paste", async () => {
+    expect(await deliver(target, "hello", {})).toMatchObject({
+      transport: "hooks",
+      ack: "confirmed",
+    });
+    expect(typed()).toEqual([
+      ["send-keys", "C-u"],
+      ["set-buffer"],
+      ["paste-buffer"],
+      ["send-keys", "Enter"],
+    ]);
+  });
+
+  it("fresh pastes pi's /new, confirmed by the new session", async () => {
+    const sent = await deliver(target, "start", { fresh: true });
+    expect(fake.submitted).toEqual(["/new", "start"]);
+    expect(sent).toEqual({
+      transport: "hooks",
+      ack: "confirmed",
+      runCount: 1,
+      sessionId: `${INC}-2`,
+    });
   });
 });
 

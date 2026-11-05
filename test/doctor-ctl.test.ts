@@ -14,6 +14,7 @@ import {
   type AgentCtlReport,
   ctlExtensionDoctorCheck,
   ctlSocketsDoctorCheck,
+  extensionLive,
   MURMUR_NOT_NEEDED_DETAIL,
   murmurDoctorCheck,
 } from "../src/doctor-summary.js";
@@ -308,5 +309,43 @@ describe("ctl row", () => {
     const r = await ctlSocketsDoctorCheck([agent("c1", "claude")]);
     expect(r.check).toEqual({ name: "ctl", status: "ok", detail: "no pi agents" });
     expect(r.agents).toEqual([]);
+  });
+
+  // Spec D15: a pi on the `hooks` fallback still serves ctl for doctor, though
+  // every verb reaches it through hooks; a hook harness on `hooks` serves none.
+  it("probes a pi on the hooks fallback, and still skips a hooks claude", async () => {
+    await serveV1("w1");
+    const pi = { ...agent("w1"), channel: "hooks" as const };
+    const claude = { ...agent("c1", "claude"), channel: "hooks" as const };
+    const r = await ctlSocketsDoctorCheck([pi, claude]);
+    expect(r.check).toEqual({ name: "ctl", status: "ok", detail: "1/1 pi agents reachable" });
+    expect(r.agents.map((a) => a.agent)).toEqual(["w1"]);
+  });
+
+  // A hooks pi's live hello proves the extension, never that pi's state is free of murmur.
+  it("a reachable pi on the hooks fallback keeps the murmur-missing warning", async () => {
+    await serveV1("w1");
+    await serveV1("w2");
+    const hooksPi = { ...agent("w1"), channel: "hooks" as const };
+    const r = await ctlSocketsDoctorCheck([hooksPi, agent("w2")]);
+    expect(r.agents.map((a) => [a.agent, a.probe, a.hooksFallback])).toEqual([
+      ["w1", "ok", true],
+      ["w2", "ok", undefined],
+    ]);
+    expect(extensionLive(r.agents)).toBe(false);
+    expect(extensionLive(r.agents.filter((a) => a.agent === "w2"))).toBe(true);
+    expect(ctlExtensionDoctorCheck(r.agents).status).toBe("ok");
+    process.env.PATH = join(home, "empty-bin");
+    expect(murmurDoctorCheck("murmur", { muExtOk: extensionLive(r.agents) })).toEqual({
+      name: "murmur",
+      status: "warn",
+      detail: "murmur not installed: agent state shows unknown",
+    });
+  });
+
+  it("probes a pi on the hooks fallback by its command when the cli key names no harness", async () => {
+    const pi = { ...agent("w1", "helper"), channel: "hooks" as const, command: "pi-meta --x" };
+    const r = await ctlSocketsDoctorCheck([pi]);
+    expect(r.check).toEqual({ name: "ctl", status: "warn", detail: "ws/w1: missing" });
   });
 });

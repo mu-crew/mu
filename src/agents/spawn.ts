@@ -403,6 +403,21 @@ export function speaksMuCtl(cli: string, command: string): boolean {
   return argv0 === "pi" || argv0 === "pi-meta";
 }
 
+/** The env var that asks for the pi fallback (spec D15). murmur's pi extension reads the same one. */
+export const PI_CHANNEL_ENV = "MU_PI_CHANNEL";
+
+/**
+ * True when the caller asks for the pi fallback (spec D15): `MU_PI_CHANNEL=hooks`
+ * spawns a local pi on tmux on the `hooks` channel, for a pi build that breaks
+ * murmur's store or a native module. Only `hooks` selects it, exactly as
+ * murmur's pi extension reads the variable, so the two never disagree; unset
+ * or any other value, pi stays on ctl. Read at spawn only: every verb after
+ * reads the agents row.
+ */
+export function piHooksRequested(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[PI_CHANNEL_ENV] === "hooks";
+}
+
 /**
  * True when a REMOTE spawn is a command gate, not a worker: an explicit
  * `--command` that is not pi. An explicit `--cli pi` and a `pi` / `pi-meta`
@@ -779,6 +794,25 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           remoteKey !== undefined && mux.anchorsPanes && mux.pasteToPane !== undefined
             ? remoteKey
             : undefined;
+        // The pi fallback (spec D15): a local pi on tmux, asked for with MU_PI_CHANNEL=hooks,
+        // is on `hooks`. Its pane gets the variable too, so murmur's pi extension writes
+        // inbox events and never opens its store. mu's extension still serves ctl (the
+        // handshake below, delegates, doctor). A remote pi, a pi on herdr or Rex, and a
+        // gate stay as they were: murmur's walk places events only under a tmux server.
+        const piHooks =
+          !profile &&
+          gateToken === undefined &&
+          mux.anchorsPanes &&
+          mux.pasteToPane !== undefined &&
+          speaksMuCtl(cli, command) &&
+          piHooksRequested();
+        // Every other local pi pins it empty: a tmux server a fallback spawn started holds
+        // `hooks` in its global env, and a pane would inherit it, putting murmur's extension
+        // in store-free mode under a row that says ctl. murmur takes only `hooks`.
+        if (piHooks) paneEnv[PI_CHANNEL_ENV] = "hooks";
+        else if (!profile && gateToken === undefined && speaksMuCtl(cli, command)) {
+          paneEnv[PI_CHANNEL_ENV] = "";
+        }
         // Built before the launch intent: a template error launches nothing.
         const paneCommand = profile
           ? remoteShellCommand(profile, {
@@ -856,6 +890,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
             mux.pasteToPane !== undefined &&
             harness !== undefined &&
             harness !== "pi",
+          piHooks,
           ...(hooksKey !== undefined ? { remoteKey: hooksKey } : {}),
         });
         ownedIncarnation = row.incarnation;
@@ -1170,6 +1205,8 @@ function finalizeAgentRow(
     reservation: string | undefined;
     /** The pane runs a hook harness (claude, codex, cursor-agent, muse) on tmux, locally or remotely. */
     hooks: boolean;
+    /** The pane runs pi on the `hooks` fallback (spec D15): local, on tmux, `MU_PI_CHANNEL=hooks`. */
+    piHooks: boolean;
     /** A remote hook harness worker's key on its node (spec D11). */
     remoteKey?: string;
   },
@@ -1177,15 +1214,18 @@ function finalizeAgentRow(
   const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host, gateToken } = args;
   const hostTransport = args.hostTransport ?? null;
   // The channel every verb reaches it through, decided once from what the pane runs:
-  // pi's control socket, a local hook harness's pane inbox on tmux, else the mux.
+  // pi's control socket (or, on the D15 fallback, its pane inbox), a local hook
+  // harness's pane inbox on tmux, else the mux.
   const channel =
     gateToken !== undefined
       ? "mux"
-      : speaksMuCtl(cli, command)
-        ? "ctl"
-        : args.hooks
-          ? "hooks"
-          : "mux";
+      : args.piHooks
+        ? "hooks"
+        : speaksMuCtl(cli, command)
+          ? "ctl"
+          : args.hooks
+            ? "hooks"
+            : "mux";
   if (staged === undefined) {
     return insertAgent(db, {
       ...(args.reservation !== undefined ? { reservation: args.reservation } : {}),

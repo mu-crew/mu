@@ -1,6 +1,6 @@
 // mu — the `hooks` channel: a hook harness's pane on tmux (claude, codex,
-// cursor-agent, muse), reached by paste and read from murmur's pane inbox
-// (spec D3, D4).
+// cursor-agent, muse, and pi on its fallback, spec D15), reached by paste and
+// read from murmur's pane inbox (spec D3, D4).
 //
 // Its harness's hooks write events into murmur's inbox; `murmur pane <pane>
 // --json` drains them and reports the pane's state, `session_id`, `run_count`
@@ -53,6 +53,7 @@ import {
   AgentSteerUnsupportedError,
 } from "../agents/errors.js";
 import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
+import { speaksMuCtl } from "../agents/spawn.js";
 import { HARNESS_TABLE, type HarnessRow, harnessOfCli } from "../harnesses.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
@@ -83,9 +84,15 @@ import type {
   SendResult,
 } from "./types.js";
 
-/** The harness row of an agent; undefined for a cli outside the blessed five. */
+/**
+ * The harness row of an agent; undefined for a cli outside the blessed five. A
+ * pi on the fallback (spec D15) whose cli key names no harness (`--cli helper
+ * --command 'pi-meta …'`) still gets pi's row: its keys and fresh command.
+ */
 function rowOf(agent: { cli: string; command?: string | null }): HarnessRow | undefined {
-  const harness = harnessOfCli(agent.cli, agent.command ?? undefined);
+  const harness =
+    harnessOfCli(agent.cli, agent.command ?? undefined) ??
+    (speaksMuCtl(agent.cli, agent.command ?? "") ? "pi" : undefined);
   return harness === undefined ? undefined : HARNESS_TABLE[harness];
 }
 

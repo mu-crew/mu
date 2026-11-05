@@ -29,12 +29,9 @@ describe("HARNESS_TABLE", () => {
     }
   });
 
-  it("the key-driven four clear the input with C-u and interrupt with Escape; pi has no clear key", () => {
+  it("every harness clears the input with C-u and interrupts with Escape (pi only on its hooks fallback)", () => {
     for (const id of HARNESSES) expect(HARNESS_TABLE[id].interruptKey).toBe("Escape");
-    for (const id of HARNESSES.filter((h) => h !== "pi")) {
-      expect(HARNESS_TABLE[id].clearInputKey).toBe("C-u");
-    }
-    expect(HARNESS_TABLE.pi.clearInputKey).toBeNull();
+    for (const id of HARNESSES) expect(HARNESS_TABLE[id].clearInputKey).toBe("C-u");
   });
 
   it("records the per-harness facts U0 observed", () => {
