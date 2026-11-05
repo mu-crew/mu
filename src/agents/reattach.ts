@@ -26,6 +26,7 @@ import {
   ReattachRefusedError,
   recoveryBlocker,
 } from "./reattach-check.js";
+import { clearMarker, markerPane, markerPath, publishMarker } from "./reattach-marker.js";
 import { spawnerFromEnv } from "./spawn.js";
 import { withSpawnLock } from "./spawn-lock.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
@@ -90,9 +91,23 @@ export async function reattachAgent(
         ? { SSH_AUTH_SOCK: ssh }
         : {};
       if (isScratchWorkstream(ws)) await mux.ensureSession(session);
+      // The pending-carrier marker, before the pane is requested: no pane without it.
+      try {
+        publishMarker(db, ws, name, p.r.job, p.staleMarker);
+      } catch (e) {
+        const detail = `its pending-carrier marker could not be written, so no pane was opened (${e instanceof Error ? e.message : e})`;
+        throw new ReattachRefusedError(
+          name,
+          [{ code: "carrier", detail }],
+          closeCommand(db, ws, name),
+        );
+      }
       let onPaneCreated: (id: string) => void = () => {};
       const created = new Promise<string>((res) => {
-        onPaneCreated = res;
+        onPaneCreated = (id) => {
+          markerPane(db, ws, name, p.r.job, id);
+          res(id);
+        };
       });
       const done = mux.spawnAgent({
         ...{ session, window: name, name, cli: "pi", env, onPaneCreated },
@@ -101,7 +116,9 @@ export async function reattachAgent(
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
       try {
-        return { p, pid, row: install(db, ws, p, pid) };
+        const row = install(db, ws, p, pid);
+        clearMarker(db, ws, name); // the row and the reservation name the pane now
+        return { p, pid, row };
       } catch (e) {
         // A carrier must not hold a job with no row: its death stops the job (its signal path).
         // The reservation names the new pane first (the old one is proven dead), so while the
@@ -119,6 +136,8 @@ export async function reattachAgent(
         await mux.killPane(pid).catch(() => {});
         const gone = (await localPaneAlive(pid).catch(() => undefined)) === false;
         if (!gone && !fenced) fenced = fence();
+        // Named on the reservation or proven gone: the next preflight sees it without the marker.
+        if (gone || fenced) clearMarker(db, ws, name);
         if (e instanceof InstallBlocked && gone) {
           // The new pane is gone and nothing else moved: the preflight's refusal, found late.
           const detail = `${e.blocker.detail} (found at install; its new pane ${pid} was killed)`;
@@ -130,7 +149,7 @@ export async function reattachAgent(
           ? `${failed}; its pane ${pid} was killed, so its signal path stops job ${p.r.job}`
           : fenced
             ? `${failed}; its pane ${pid} may still run job ${p.r.job} (the kill is not proven): close that pane, then reattach or close`
-            : `${failed}; its pane ${pid} may still run job ${p.r.job} (the kill is not proven) and the reservation does not name it, so a reattach would not see it: close that pane before any reattach or close`;
+            : `${failed}; its pane ${pid} may still run job ${p.r.job} (the kill is not proven) and the reservation does not name it; the marker ${markerPath(db, ws, name)} makes a reattach refuse while it may run: close that pane`;
         const rollback = gone ? "pane-killed" : "pane-unknown";
         throw new ReattachFailedError(name, rollback, why, closeCommand(db, ws, name));
       }
