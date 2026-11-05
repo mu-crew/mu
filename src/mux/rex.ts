@@ -684,6 +684,7 @@ export const rexBackend: MuxBackend = Object.freeze({
   name: "rex" as const,
   spawnAgentWaitsReady: false,
   runsShellCommand: true,
+  anchorsPanes: false,
   available: rexAvailable,
 
   isValidPaneId,

@@ -65,6 +65,16 @@ describe("registration guards", () => {
     expect(delegateEnabled({ MU_MANAGED_AGENT: "1", TMUX: "/tmp/x,1,0" })).toBe(false);
   });
 
+  it("stays visible to an orchestrator `mu orchestrate` started (MU_MANAGED_AGENT=1 with MU_ORCHESTRATOR=1)", () => {
+    expect(delegateEnabled({ MU_MANAGED_AGENT: "1", MU_ORCHESTRATOR: "1" })).toBe(true);
+    // Only the exact flag opens it, and the kill switch still wins.
+    expect(delegateEnabled({ MU_MANAGED_AGENT: "1", MU_ORCHESTRATOR: "0" })).toBe(false);
+    expect(delegateEnabled({ MU_MANAGED_AGENT: "1", MU_ORCHESTRATOR: "" })).toBe(false);
+    expect(delegateEnabled({ MU_MANAGED_AGENT: "1", MU_ORCHESTRATOR: "1", MU_DELEGATE: "0" })).toBe(
+      false,
+    );
+  });
+
   it("is hidden by the MU_DELEGATE=0 kill switch", () => {
     process.env.MU_DELEGATE = "0";
     expect(delegateEnabled()).toBe(false);

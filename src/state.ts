@@ -7,7 +7,13 @@
 import { type AgentOutput, liveAgentToOutput } from "./agent-output.js";
 import { type AgentRow, readLiveAgents } from "./agents.js";
 import { type Db, tryResolveLiveWorkstreamId, WorkstreamNotFoundError } from "./db.js";
-import { type DelegateRow, listDelegates, type VerdictTally, verdictTally } from "./delegates.js";
+import {
+  type DelegateRow,
+  listDelegates,
+  listDelegatesOf,
+  type VerdictTally,
+  verdictTally,
+} from "./delegates.js";
 import { openHumanNeeds } from "./human-needed.js";
 import { byRoiDesc } from "./tasks/sort.js";
 import {
@@ -127,6 +133,13 @@ export interface StateSnapshotOptions {
   /** The scope, already resolved (variadic/comma/repeated `-w` and `--all` live in the CLI). Empty is legal. */
   workstreams: readonly string[];
   caller: string | null;
+  /**
+   * Whose delegates, waves and human needs to read: every identity of this
+   * process (`currentCallers()`), since a managed pi orchestrator's delegate
+   * calls are owned by `pi:<session>` while its spawns are owned by
+   * `<ws>/<name>` (spec D9). Default: `caller` alone.
+   */
+  callers?: readonly string[];
   /** A `me` read: adds the caller's identity block (`agent` is its registry row, null for a pi session) and narrows each workstream. */
   me?: { agent: AgentRow | null };
 }
@@ -188,10 +201,10 @@ const FINISHED_CALL: readonly string[] = ["done", "failed", "cancelled"];
 function delegatesOf(
   db: Db,
   workstream: string,
-  caller: string | null,
+  callers: readonly string[],
 ): { delegates: StateDelegate[]; waves: StateWave[] } {
-  if (caller === null) return { delegates: [], waves: [] };
-  const calls: DelegateRow[] = listDelegates(db, caller, workstream);
+  if (callers.length === 0) return { delegates: [], waves: [] };
+  const calls: DelegateRow[] = listDelegatesOf(db, callers, workstream);
   const delegates = calls
     .filter((c) => !FINISHED_CALL.includes(c.state))
     .map((c) => ({
@@ -206,7 +219,7 @@ function delegatesOf(
       updated_at: c.updatedAt,
     }));
   const labels = [...new Set(calls.flatMap((c) => (c.wave === null ? [] : [c.wave])))].reverse();
-  const waves = labels.map((wave) => waveOf(verdictTally(db, workstream, wave, [caller]), wave));
+  const waves = labels.map((wave) => waveOf(verdictTally(db, workstream, wave, callers), wave));
   return { delegates, waves };
 }
 
@@ -294,7 +307,8 @@ export function callerWorkstreams(db: Db, caller: string): string[] {
  * needs are the CALLER's own, never another session's.
  */
 export async function stateSnapshot(db: Db, opts: StateSnapshotOptions): Promise<StateSnapshot> {
-  const needs = opts.caller === null ? [] : openHumanNeeds(db, opts.caller);
+  const callers = opts.callers ?? (opts.caller === null ? [] : [opts.caller]);
+  const needs = [...new Set(callers)].flatMap((c) => openHumanNeeds(db, c));
   const workstreams: WorkstreamState[] = [];
   let me: StateMe | null = null;
   for (const ws of opts.workstreams) {
@@ -307,7 +321,7 @@ export async function stateSnapshot(db: Db, opts: StateSnapshotOptions): Promise
       workstream_id: wsId,
       counts: countsOf(db, wsId),
       ready: listReady(db, ws).sort(byRoiDesc).map(task),
-      ...delegatesOf(db, ws, opts.caller),
+      ...delegatesOf(db, ws, callers),
       human_needs: needs
         .filter((h) => h.workstream === ws)
         .map((h) => ({ id: h.id, reason: h.reason })),

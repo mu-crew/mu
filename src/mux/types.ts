@@ -283,6 +283,11 @@ export interface MuxBackend {
    *  run a host profile's shell template (`spawn --host`). A capability
    *  flag, never a backend-name check. */
   readonly runsShellCommand: boolean;
+  /** True when a hook harness's pane starts through the anchor wrapper
+   *  (src/anchors.ts, spec D3): murmur's hooks place an event through the
+   *  tmux server the pane belongs to, so only tmux panes have a reader. Implies
+   *  `runsShellCommand`. A capability flag, never a backend-name check. */
+  readonly anchorsPanes: boolean;
 
   /** True iff this backend can drive panes on this machine right now.
    *  Consulted by `detectMux()` in precedence order. */

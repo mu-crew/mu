@@ -136,6 +136,21 @@ export function delegateProcessPaths(
   };
 }
 
+/**
+ * The child pi's env: the caller's, with the delegate's identity on top and
+ * without `MU_ORCHESTRATOR`. An orchestrator's `mu delegates run` inherits that
+ * flag, and a delegate that kept it would see `mu_delegate` (spec D9).
+ */
+export function delegateChildEnv(
+  parent: NodeJS.ProcessEnv,
+  identity: Record<string, string>,
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...parent, ...identity };
+  const key = "MU_ORCHESTRATOR";
+  delete env[key];
+  return env;
+}
+
 function shippedExtension(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   for (const p of [
@@ -352,15 +367,15 @@ export async function runDelegateProcess(
           cwd: workspace ?? resolve(req.cwd ?? process.cwd()),
           detached: true,
           stdio: ["pipe", logFd, logFd],
-          env: {
-            ...process.env,
+          env: delegateChildEnv(process.env, {
             MU_MANAGED_AGENT: "1",
             MU_AGENT_NAME: call.task,
             MU_WORKSTREAM: call.workstream,
+            MU_AGENT_CLI: "pi",
             [CTL_SOCK_ENV]: p.sock,
             MU_DB_PATH: resolve(db.name),
             MU_STATE_DIR: resolve(defaultStateDir()),
-          },
+          }),
         },
       );
     } finally {

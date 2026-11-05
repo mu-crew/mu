@@ -12,6 +12,36 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu orchestrate -w <ws> [--cli <key>]`**: start an orchestrator of any
+  agent CLI as a managed pane, with an explicit identity (caller
+  `<ws>/<name>`, default `orchestrator-1`, else the next free one). Its pane
+  gets `MU_ORCHESTRATOR=1`: a pi orchestrator keeps `mu_delegate` (the gate is
+  now "hidden under `MU_MANAGED_AGENT` unless `MU_ORCHESTRATOR=1`"; VISION key
+  constraint 3), and it gets none of a worker's extras: no close nudge, no
+  implicit `-w`. The flag never reaches a helper: spawn builds every pane's
+  env, a mux-free delegate's child pi has it removed, and it joins
+  `LOCAL_ONLY_ENV`. Third unit of the every-harness-first-class spec (D9).
+- **`MU_AGENT_CLI`** in every local agent pane: the harness it runs
+  (`claude`, `codex`, `cursor-agent`, `muse`, `pi`, mapped from the command's
+  argv0, else the cli key and its prefix), else the cli key.
+- **Anchors.** A local `claude`, `codex`, `cursor-agent` or `muse` pane on
+  tmux starts through a small `sh` wrapper that writes
+  `~/.local/state/mu-next/anchors/<pid>.json` (agent, workstream, role,
+  harness, orchestrator flag, remote key, `ps` start time; also under
+  `$XDG_STATE_HOME` when that is set elsewhere) and then `exec`s the command
+  in `$SHELL`, as tmux ran it before, so a hook whose harness clears its env
+  finds the agent (murmur's reader, spec D3). pi panes, and herdr and Rex
+  panes, start unwrapped; the agent row keeps the command as given. A dead
+  pid's anchor is pruned at the next spawn.
+- **`--as <caller>`** on `mu wait`, `mu state` and `mu next`: a process with no
+  managed env (a harness's Stop hook, a script) names its caller,
+  `<ws>/<agent>` or `pi:<session>`. A wait `--as` a caller another live
+  process already waits as is refused (`CallerBusyError`, exit 4); every wait
+  marks its callers under `<state>/waiters/` while it runs, and a dead or
+  reused pid's mark is ignored. An `--as` wait marks first and checks after,
+  so two started together never both run. `mu next --as` refuses only with
+  `--hold`.
+
 - **`mu host add --attach <template>`**: a lease profile's optional template
   that opens a new carrier for a job that still runs (2026-11-04 aiv-blog
   incident; the reattach verb builds on it). It takes `{job}` and `{job_file}`
@@ -23,6 +53,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   to a v13 file (no version bump).
 
 ### Changed
+
+- **`mu state` and `mu next` read every identity of the caller.** A managed pi
+  orchestrator is both `<ws>/<name>` (its spawns, its human stops) and
+  `pi:<session>` (its delegate calls): its delegates, waves, human needs and
+  `--refute` checkers are the union, as `mu wait` already did (spec D9).
+  `state.caller` still names one identity. New records stay owned by the
+  managed name.
+- **No agent starts a tmux server.** Spawn and `ensureSession` refuse with
+  `TmuxServerInAgentError` (exit 5, "start tmux from a terminal") when no tmux
+  server is running and the caller is inside an agent: `MU_MANAGED_AGENT=1`
+  or any harness's sandbox marker env (`CLAUDECODE`, `CODEX_THREAD_ID`, …). A
+  server's panes inherit the server's sandbox, not the client's (spec D10). A
+  running server is used as before.
+- **`murmurAvailable(cli)`** is per harness: pi needs murmur's pi extension, a
+  hook harness its `murmur hook <harness>` entries in its own config file. A
+  missing pi extension still warns in `mu doctor` when claude hooks are
+  installed, and an unreported non-pi agent reads `murmur hooks not
+  installed` (spec D13).
 
 - **Agent reads go through one channel seam (internal; no behaviour change).**
   `src/channels/` holds the `AgentChannel` interface at the wait seam, with a

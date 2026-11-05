@@ -276,8 +276,11 @@ previous surface on the same scenarios ([reports](eval/README.md)).
    only that the text reached the pane and warns when it cannot confirm
    submission. Use `mu wait` or `mu log --tail` to see the effect.
 3. **Recursion is opt-in.** `mu_delegate` is hidden in agents mu spawned
-   (`MU_MANAGED_AGENT`). Agents have `mu` on PATH, but the skill tells
-   them they are not the orchestrator.
+   (`MU_MANAGED_AGENT`), unless mu started the agent as an orchestrator
+   (`mu orchestrate`, `MU_ORCHESTRATOR=1`). That flag never reaches a
+   helper: spawn builds every pane's env, a delegate's child pi has it
+   removed, and a remote pane unsets it. Workers and delegates have `mu`
+   on PATH, but the skill tells them they are not the orchestrator.
 4. **Every invocation is short-lived, except two interactive readers.**
    No daemon, no resident state outside SQLite, no background process.
    The exceptions are `mu log --tail` and the dashboard. Both are:

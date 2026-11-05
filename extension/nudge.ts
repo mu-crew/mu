@@ -634,10 +634,12 @@ export function registerNudge(
   });
 }
 
-/** The mu-spawned worker this pi runs as, or undefined outside mu. */
+/** The mu-spawned worker this pi runs as, or undefined outside mu. An
+ *  orchestrator (`MU_ORCHESTRATOR=1`) is not a worker: no close nudge (D9). */
 export function workerIdentity(
   env: NodeJS.ProcessEnv = process.env,
 ): { agent: string; workstream: string } | undefined {
+  if (env.MU_ORCHESTRATOR === "1") return undefined;
   const agent = env.MU_AGENT_NAME;
   const workstream = env.MU_WORKSTREAM;
   if (!agent || !workstream || workstream === "scratch") return undefined;

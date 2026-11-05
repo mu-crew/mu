@@ -152,10 +152,13 @@ export function delegateMax(env: NodeJS.ProcessEnv = process.env): number {
 }
 const W = DELEGATE_WORKSTREAM;
 
-/** Registration guards: an unmanaged pi, not switched off. No mux needed:
+/** Registration guards: an unmanaged pi, or an orchestrator `mu orchestrate`
+ *  started (`MU_ORCHESTRATOR=1`), not switched off. A worker or a delegate is
+ *  managed and never an orchestrator: spawn builds every pane's env, and the
+ *  child pi of a mux-free delegate has the variable removed. No mux needed:
  *  without one a delegate runs as a child pi process (`mu delegates run`). */
 export function delegateEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.MU_MANAGED_AGENT) return false; // no helper-spawns-helper
+  if (env.MU_MANAGED_AGENT && env.MU_ORCHESTRATOR !== "1") return false; // no helper-spawns-helper
   return env.MU_DELEGATE !== "0";
 }
 

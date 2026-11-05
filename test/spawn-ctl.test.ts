@@ -342,7 +342,7 @@ describe("spawn control socket", () => {
     expect(agent.ctl).toBe("skipped");
   });
 
-  it("injects exactly the six identity keys, with no MU_* var set in the caller", async () => {
+  it("injects exactly the seven identity keys, with no MU_* var set in the caller", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
     // The caller has no MU_* var of its own: the injected values come from mu, not from inheritance.
     const stripped = Object.entries(process.env).filter(
@@ -360,6 +360,7 @@ describe("spawn control socket", () => {
         ),
       );
       expect(Object.keys(env).sort()).toEqual([
+        "MU_AGENT_CLI",
         "MU_AGENT_NAME",
         "MU_CTL_SOCK",
         "MU_DB_PATH",
@@ -370,6 +371,7 @@ describe("spawn control socket", () => {
       expect(env).toMatchObject({
         MU_MANAGED_AGENT: "1",
         MU_AGENT_NAME: "worker-1",
+        MU_AGENT_CLI: "pi",
         MU_WORKSTREAM: "auth",
         MU_CTL_SOCK: sockFor("worker-1"),
         MU_DB_PATH: dbPath,

@@ -22,6 +22,7 @@ import {
   MAX_AGENT_NAME_LEN,
   pendingPaneIdFor,
 } from "../agents.js";
+import { anchorWrapper, pruneAnchors } from "../anchors.js";
 import {
   bindCarrierJobAgent,
   getCarrierJobByAgent,
@@ -40,6 +41,7 @@ import {
   tornDownAtOf,
   WorkstreamTornDownError,
 } from "../db.js";
+import { harnessOfCli } from "../harnesses.js";
 import {
   bindHostChannel,
   type HostLease,
@@ -333,6 +335,10 @@ export interface SpawnAgentOptions {
    *  in the pane env) instead of pi's per-cwd default. Set for delegates, so
    *  their sessions stay out of the caller's `/resume` list. */
   piSessionDir?: string;
+  /** Start an orchestrator (`mu orchestrate`): the pane also gets
+   *  `MU_ORCHESTRATOR=1`, which keeps `mu_delegate` visible to a pi and turns
+   *  off the worker-only close nudge and implicit `-w`. Local only. */
+  orchestrator?: boolean;
 }
 
 /** How many taken names a `nextFree` spawn skips past before it gives up. */
@@ -597,19 +603,25 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   // a test DB in a temp dir keeps its sockets there too.
   const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
   mkdirSync(dirname(ctlSocket), { recursive: true, mode: 0o700 });
-  // Exactly these six (plus SSH_AUTH_SOCK and piSessionDir below). tmux
+  // Exactly these (plus SSH_AUTH_SOCK and piSessionDir below). tmux
   // panes inherit the tmux server's env, not ours: pin the DB and state dir this spawn used,
   // absolute and always (the default ones too), so the worker's `mu` hits
   // the same taskgraph from any cwd.
   // A remote agent's identity travels in the filled shell template (`{env}`:
   // five whitelisted variables, never the local DB, state or sync dir); the
   // local pane (the transport) is given none of it.
+  // MU_AGENT_CLI names the harness the pane runs (the cli key outside the
+  // blessed five); MU_ORCHESTRATOR marks an orchestrator (spec D9). Neither
+  // is inherited by anything the agent spawns: every pane's env is built here.
+  const harness = harnessOfCli(cli, command);
   const paneEnv: Record<string, string> = profile
     ? {}
     : {
         MU_MANAGED_AGENT: "1",
         MU_AGENT_NAME: opts.name,
         MU_WORKSTREAM: opts.workstream,
+        MU_AGENT_CLI: harness ?? cli,
+        ...(opts.orchestrator === true ? { MU_ORCHESTRATOR: "1" } : {}),
         [CTL_SOCK_ENV]: ctlSocket,
         MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
         MU_STATE_DIR: resolve(defaultStateDir()),
@@ -631,6 +643,26 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       // missing or unreadable: skip forwarding
     }
   }
+
+  // A local hook harness on tmux starts through the anchor wrapper
+  // (src/anchors.ts), so its hooks find the agent without mu's env (spec D3).
+  // pi keeps its plain command: its extensions read the env in-process. Other
+  // backends keep it too: herdr starts the agent kind itself, and murmur's
+  // hooks have no tmux server to place a Rex pane's event through (Rex keeps
+  // its `$SHELL -ic` launch).
+  const anchored = (cmd: string, anchorsPanes: boolean): string => {
+    if (!anchorsPanes || harness === undefined || harness === "pi") return cmd;
+    pruneAnchors();
+    const orchestrator = opts.orchestrator === true;
+    return anchorWrapper(cmd, {
+      agent_name: opts.name,
+      workstream: opts.workstream,
+      role: orchestrator ? "orchestrator" : "worker",
+      cli: harness,
+      orchestrator,
+      remote_key: null,
+    });
+  };
 
   const hasWorktree = staged !== undefined;
 
@@ -733,7 +765,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
               cwd: paneCwd,
               ...(jobFile !== undefined ? { jobFile } : {}),
             })
-          : command;
+          : anchored(command, mux.anchorsPanes);
         // Resolves with the pane id at creation; `done` settles when the
         // backend considers the agent started.
         let onCreated: (pid: string) => void = () => {};

@@ -643,6 +643,7 @@ export {
   type TmuxExecResult,
   type TmuxExecutor,
   type TmuxPane,
+  TmuxServerInAgentError,
 } from "./tmux.js";
 export { getParallelTracks, type Track } from "./tracks.js";
 export {
@@ -683,7 +684,7 @@ export {
   steerText,
   waitWithActions,
 } from "./wait-actions.js";
-export { currentCallers } from "./wait-callers.js";
+export { callerNameProblem, currentCallers } from "./wait-callers.js";
 export { ctlAgentHooks } from "./wait-ctl.js";
 export {
   type CursorKind,
@@ -695,6 +696,7 @@ export {
   readCursors,
   recordCursors,
 } from "./wait-cursor.js";
+export { CallerBusyError, liveHolder } from "./wait-holders.js";
 export {
   checkRegexGrammar,
   compileTextMatcher,

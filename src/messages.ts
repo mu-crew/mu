@@ -300,6 +300,8 @@ export const MESSAGES = {
   "mux.pane_not_found": (backend: string, pane: string) => `${backend} pane not found: ${pane}`,
   "mux.none_found": (tried: readonly string[]) =>
     `no supported multiplexer found (tried: ${tried.join(", ")}); install tmux ≥ 3.0 (task, DAG and sql verbs work without one)`,
+  "mux.tmux_no_server_in_agent": () =>
+    "no tmux server is running, and mu will not start one from inside an agent: every pane would inherit this agent's sandbox. Start tmux from a terminal (tmux new-session -d), then retry",
   "mux.tmux_failed": (args: readonly string[], exit: number | null, detail: string) =>
     `tmux ${args.join(" ")} failed (exit ${exit}): ${detail}`,
   "mux.herdr_failed": (args: readonly string[], exit: number | null, detail: string) =>

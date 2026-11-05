@@ -109,6 +109,14 @@ export interface ExecuteNextOptions {
   workstream: string;
   /** Who is asking (`spawnerFromEnv()`): its open human needs stop dispatch. */
   caller: string;
+  /**
+   * Every identity of the asker (`currentCallers()`): whose human needs stop
+   * dispatch, whose checkers a hold waits on, and whose events it consumes. A
+   * managed pi orchestrator is both `<ws>/<name>` and `pi:<session>` (spec D9).
+   * Default: `caller` alone. New records (a human need, a checker) are owned by
+   * `caller`.
+   */
+  callers?: readonly string[];
   /** Plan only: zero writes. */
   dry?: boolean;
   /** Effect budget, an integer 1..100 (default 5). */
@@ -302,8 +310,11 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
   const out: NextResult = { workstream: ws, dry: opts.dry === true, cap, used: 0, moves: [] };
   const done = new Set<string>();
   const ingest = opts.ingest ?? (() => ambientIngest(db, { quiet: true }));
+  const callers = [
+    ...new Set([...(opts.caller === "" ? [] : [opts.caller]), ...(opts.callers ?? [])]),
+  ];
   const humanStop = (): boolean => {
-    const needs = openHumanNeeds(db, opts.caller);
+    const needs = callers.flatMap((c) => openHumanNeeds(db, c));
     if (needs.length === 0) return false;
     out.stopped = "human";
     out.human_needed = needs;
@@ -339,7 +350,7 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
           out.stopped === undefined &&
           (select(db, ws, done) !== undefined ||
             (actions?.length ?? 0) > 0 ||
-            (refute && nextCheck(db, ws, opts.caller, done) !== undefined))
+            (refute && nextCheck(db, ws, callers, done) !== undefined))
         ) {
           out.stopped = "cap";
         }
@@ -382,7 +393,7 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
       const next = select(db, ws, done);
       if (next === undefined) {
         // Dispatch first; a checker is the last thing a pass does.
-        const check = refute ? nextCheck(db, ws, opts.caller, done) : undefined;
+        const check = refute ? nextCheck(db, ws, callers, done) : undefined;
         if (check !== undefined) {
           done.add(check.callId);
           const move = out.dry
@@ -436,7 +447,7 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
     if (opts.hold !== true || out.dry || (out.stopped !== undefined && !atCeiling)) return out;
     if (waits > 0 && out.used === before) return out; // the event was the executor's, and it could do nothing
     const inFlight = inFlightWorkers(db, ws);
-    const checkers = refute ? checkerRefs(db, ws, opts.caller) : [];
+    const checkers = refute ? checkerRefs(db, ws, callers) : [];
     if (inFlight.length === 0 && checkers.length === 0) {
       out.held = { waits, event: "none", ref: null, exit: 0, timedOut: false, open: [] };
       return out;
@@ -462,7 +473,7 @@ export async function executeNext(db: Db, opts: ExecuteNextOptions): Promise<Nex
     let res: WaitResult;
     try {
       res = await (opts.wait ?? waitWithActions)(db, refs, {
-        callers: opts.caller === "" ? [] : [opts.caller],
+        callers,
         mode: "first",
         eventScope: "refs",
         timeoutMs: left,

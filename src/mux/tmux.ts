@@ -10,6 +10,7 @@
 
 import { basename } from "node:path";
 import { execFileCapture } from "../exec-file.js";
+import { insideAgent } from "../harnesses.js";
 import { say } from "../messages.js";
 import {
   type AttachTarget,
@@ -52,6 +53,20 @@ export class TmuxError extends MuxError {
     const detail = stderr.trim() || stdout.trim() || "no output";
     super(say("mux.tmux_failed", args, exitCode, detail));
     this.name = "TmuxError";
+  }
+}
+
+/**
+ * Thrown instead of starting a tmux server from inside an agent (a mu-managed
+ * one, or any harness whose sandbox marker env is set). A server's panes
+ * inherit the server's sandbox, not the client's, so a server born in an
+ * agent would run every later agent in that agent's sandbox (spec D10). A
+ * running server is used as is; only the no-server path refuses.
+ */
+export class TmuxServerInAgentError extends MuxError {
+  override name = "TmuxServerInAgentError";
+  constructor() {
+    super(say("mux.tmux_no_server_in_agent"));
   }
 }
 
@@ -202,9 +217,22 @@ function exactSessionTarget(name: string): string {
  */
 const NO_SERVER_RE = /no server running|error connecting to .*\(No such file or directory\)/i;
 
-async function sessionExists(name: string): Promise<boolean> {
+/** `has-session`: the session exists, is missing, or no server answers at all. */
+async function sessionState(name: string): Promise<"exists" | "missing" | "no-server"> {
   const result = await currentExecutor(["has-session", "-t", exactSessionTarget(name)]);
-  return result.exitCode === 0;
+  if (result.exitCode === 0) return "exists";
+  return NO_SERVER_RE.test(result.stderr) ? "no-server" : "missing";
+}
+
+/**
+ * Whether `session` exists, refusing (TmuxServerInAgentError) when it does not
+ * because no server runs and this process is inside an agent: the
+ * `new-session` that follows would start the server here.
+ */
+async function sessionExistsOrMayStart(name: string): Promise<boolean> {
+  const state = await sessionState(name);
+  if (state === "no-server" && insideAgent()) throw new TmuxServerInAgentError();
+  return state === "exists";
 }
 
 /**
@@ -240,7 +268,7 @@ async function listWindows(session: string): Promise<{ id: string; name: string 
  * agent kills the last window and tmux destroys the session.
  */
 export async function ensureSession(session: string): Promise<EnsureSessionResult> {
-  if (!(await sessionExists(session))) {
+  if (!(await sessionExistsOrMayStart(session))) {
     await tmux(["new-session", "-d", ...DETACHED_SIZE, "-s", session, "-n", MU_PLACEHOLDER_WINDOW]);
     return { created: true, repaired: false };
   }
@@ -341,7 +369,7 @@ export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
     return paneId;
   };
 
-  if (!(await sessionExists(opts.session))) {
+  if (!(await sessionExistsOrMayStart(opts.session))) {
     return created(
       tail(["new-session", "-d", ...DETACHED_SIZE, "-s", opts.session, "-n", opts.window]),
     );
@@ -661,6 +689,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   name: "tmux" as const,
   spawnAgentWaitsReady: false,
   runsShellCommand: true,
+  anchorsPanes: true,
   available: tmuxAvailable,
 
   isValidPaneId,
