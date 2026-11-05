@@ -29,7 +29,9 @@ export interface Leftover {
   recovery_id: number | null;
   /**
    * The stop-failure record after its `<job> ` prefix, escaped; cut at 160 chars, and so
-   * the record stays <= 400, with ` cut=<n> full: mu doctor` (no room: `cut=<n>` alone).
+   * the record stays <= 400, with ` cut=<n> full: mu doctor` (no room: `cut=<n>` alone, or
+   * null when even that passes 400). The cap bounds stop_failed; identity and next are never
+   * cut, so at mu's limits (close --recovery id >= 100) the record alone may pass 400.
    */
   stop_failed: string | null;
   /** One command, executable as printed. */
@@ -89,11 +91,12 @@ function recordChars(l: Leftover): number {
 /**
  * `l` with `body` as its `stop_failed`: escaped, cut at STOP_FAILED_CHARS and so the whole
  * record (JSON item and table line, measured as printed) stays within RECORD_CHARS. A cut
- * ends ` cut=<n> full: mu doctor`, or only `cut=<n>` when nothing else fits. `name`, `job`
- * and `next` are never shortened.
+ * ends ` cut=<n> full: mu doctor`, or only `cut=<n>` when nothing else fits, or the field is
+ * null when `cut=<n>` does not fit either. The cap bounds stop_failed: `name`, `job` and
+ * `next` are never shortened, so a record they alone push past RECORD_CHARS stays past it.
  */
 export function withStopFailed(l: Leftover, body: string): Leftover {
-  const at = (stop_failed: string): Leftover => ({ ...l, stop_failed });
+  const at = (stop_failed: string | null): Leftover => ({ ...l, stop_failed });
   const whole = clipEscaped(body, STOP_FAILED_CHARS);
   if (whole.cut === 0 && recordChars(at(whole.text)) <= RECORD_CHARS) return at(whole.text);
   const shown = (n: number): Leftover => {
@@ -103,7 +106,10 @@ export function withStopFailed(l: Leftover, body: string): Leftover {
   // Longer kept text never shortens the record, so the largest n that fits is a bisection.
   let lo = 0;
   let hi = STOP_FAILED_CHARS;
-  if (recordChars(shown(lo)) > RECORD_CHARS) return at(`cut=${codePoints(body).length}`);
+  if (recordChars(shown(lo)) > RECORD_CHARS) {
+    const bare = at(`cut=${codePoints(body).length}`);
+    return recordChars(bare) <= RECORD_CHARS ? bare : at(null);
+  }
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
     if (recordChars(shown(mid)) <= RECORD_CHARS) lo = mid;

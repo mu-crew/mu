@@ -538,7 +538,11 @@ interface Leftover {          // output keys follow SQL names (surface contract)
 - **`stop_failed`:** read from `<job_file>.<job>.stop-failed`, only for a
   lease-job with a handle, and shown only when the line starts with
   `<job> `. A record whose name or content belongs to another id is never
-  shown. The cut keeps a record under 400 chars. The full line is in that
+  shown. The cut keeps a record under 400 chars: ` cut=<n> full: mu doctor`,
+  `cut=<n>` alone with no room, or null when even that passes 400. The cap
+  bounds stop_failed; identity and next are never cut. At mu's limits (32-char
+  name, host and workstream, a 128-char handle, `close --recovery <id>`)
+  identity and next alone pass 400 from id 100. The full line is in that
   file, whose path doctor's `lease-job` hint prints.
 - **Output:** the envelope is unchanged: `{ok,data,next}` with
   `data.{workstreamName,agents,orphans}` (legacy camelCase, pinned). The list

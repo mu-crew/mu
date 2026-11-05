@@ -296,7 +296,8 @@ describe("recovery leftovers", () => {
 /** Code points of one leftover as `--json` prints it (the envelope's encoder re-escapes). */
 const jsonChars = (l: Leftover): number => [...safeJsonLine(JSON.stringify(l))].length;
 /** Code points of one leftover's `--table` line. */
-const tableChars = (l: Leftover): number => [...(leftoverLines([l]).at(-1) ?? "")].length;
+const tableLine = (l: Leftover): string => leftoverLines([l]).at(-1) ?? "";
+const tableChars = (l: Leftover): number => [...tableLine(l)].length;
 const FULL = "full: mu doctor";
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
 const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u;
@@ -349,22 +350,156 @@ describe("stop_failed", () => {
     }
   });
 
-  it("with no room left the field is `cut=N` alone; name, job and next are never shortened", () => {
-    const base: Leftover = {
+  /** A lease-job leftover at mu's name limits (32-char name, host, workstream; 128-char handle). */
+  const atLimits = (id: number, next: "reattach" | "close" | "recovery" = "recovery"): Leftover => {
+    const name = "n".repeat(32);
+    const ws = "w".repeat(32);
+    return {
       kind: "lease-job",
-      name: "n".repeat(32),
+      name,
       host: "h".repeat(32),
       job: "j".repeat(128),
-      agent_id: 123456,
-      recovery_id: 123456,
+      agent_id: id,
+      recovery_id: id,
       stop_failed: null,
-      next: `mu agent close ${"n".repeat(32)} -w ${"w".repeat(32)} --recovery 123456`,
+      next:
+        next === "reattach"
+          ? `mu agent reattach ${name} -w ${ws}`
+          : `mu agent close ${name} -w ${ws}${next === "recovery" ? ` --recovery ${id}` : ""}`,
     };
+  };
+
+  it("with no room for the way back the field is `cut=N` alone, if that fits", () => {
+    const base = atLimits(1);
     const l = withStopFailed(base, "x".repeat(400));
     expect(l.stop_failed).toBe("cut=400");
+    expect([jsonChars(l), tableChars(l)]).toEqual([400, 346]);
     expect({ ...l, stop_failed: null }).toEqual(base);
     // With room, a short body is shown whole.
     expect(withStopFailed({ ...base, job: "job-1" }, "ok").stop_failed).toBe("ok");
+  });
+
+  it("when `cut=N` does not fit either the field is null; identity and next are never cut", () => {
+    // Review fixture: was 415 JSON chars with `cut=400`. Identity and next alone are 410: the
+    // cap bounds stop_failed, so this valid record stays over 400.
+    const base = atLimits(123456);
+    const l = withStopFailed(base, "x".repeat(400));
+    expect(l).toEqual(base);
+    expect([jsonChars(l), tableChars(l)]).toEqual([410, 335]);
+  });
+
+  it("a valid 511-byte record whose `cut=N` would pass 400 lists with stop_failed null (CLI)", async () => {
+    // Review reproducer: incarnation 11, an ambiguous folded recovery, no attach: was a
+    // 403-char JSON item with `cut=381`.
+    const ws = "s".repeat(32);
+    const name = "n".repeat(32);
+    const host = "h".repeat(32);
+    const job = "j".repeat(128);
+    ensureWorkstream(db, ws);
+    addHost(db, {
+      name: host,
+      transport: "lease",
+      shell: "carrier {job_file} {local_sock} {remote_sock} {cwd} {env} -- {cmd}",
+      exec: "true {cmd}",
+      stop: "true {job}",
+      fetch: "true",
+      repo: "/srv/repo",
+      max_sessions: 1,
+    });
+    for (let i = 0; i < 9; i++) {
+      insertAgent(db, { name: `dummy-${i}`, workstream: ws, paneId: `%${200 + i}` });
+      deleteAgent(db, `dummy-${i}`, ws);
+    }
+    insertAgent(db, {
+      name,
+      workstream: ws,
+      paneId: "%80",
+      host,
+      cwd: "/old",
+      base: BASE,
+      repo: "/srv/repo",
+    });
+    deleteAgent(db, name, ws);
+    const r = reserveCarrierJob(db, {
+      workstream: ws,
+      name,
+      host,
+      hostStop: "true {job}",
+      creatorPid: deadPid(),
+    });
+    if (r === undefined) throw new Error("reserved already");
+    markCarrierLaunch(db, r.token);
+    const row = insertAgent(db, {
+      name,
+      workstream: ws,
+      paneId: "%90",
+      host,
+      hostTransport: "lease",
+      reservation: r.token,
+      cwd: "/new",
+      base: BASE,
+      repo: "/srv/repo",
+    });
+    expect(row.incarnation).toBe(11);
+    bindCarrierJobAgent(db, r.token, row.incarnation, "%90");
+    fillCarrierJob(db, r.token, job);
+    deleteAgent(db, name, ws);
+    const jf = carrierJobFilePath(ws, name, dir);
+    mkdirSync(dirname(jf), { recursive: true });
+    writeFileSync(jf, `${job}\n`);
+    const text = `${job} ${"x".repeat(381)}\n`;
+    expect(Buffer.byteLength(text)).toBe(511);
+    writeFileSync(`${jf}.${job}.stop-failed`, text);
+    const next = `mu agent close ${name} -w ${ws} --recovery 11`;
+    const j = await runCliJson(["agent", "list", "-w", ws, "--json"], dbPath);
+    expect(j.exitCode, j.stderr).toBeNull();
+    const l = j.data.leftovers[0] as Leftover;
+    expect(l).toMatchObject({
+      name,
+      host,
+      job,
+      agent_id: 11,
+      recovery_id: 11,
+      stop_failed: null,
+      next,
+    });
+    expect(jsonChars(l)).toBe(398);
+    const t = await runCli(["agent", "list", "-w", ws, "--table"], dbPath);
+    const line = t.stdout.split("\n").find((x) => x.startsWith(`  ${name}  lease-job`));
+    expect([...(line ?? "")].length).toBe(327);
+    expect(line).toBe(tableLine(l));
+  });
+
+  it("at mu's limits: <= 400 whenever identity and next fit, else stop_failed null; never cut", () => {
+    // Worst case: the 128-char handle, 32-char name/host/workstream and close --recovery <id>
+    // put identity and next alone at 392 + 3 x digits(id) JSON chars: over 400 from id 100.
+    expect(jsonChars(atLimits(99))).toBe(398);
+    expect(jsonChars(atLimits(100))).toBe(401);
+    expect(jsonChars(atLimits(Number.MAX_SAFE_INTEGER))).toBe(440);
+    const bodies = [
+      "ok",
+      "x".repeat(510),
+      '"'.repeat(300),
+      "\\".repeat(300),
+      "é".repeat(250),
+      "\u202e".repeat(160),
+      "😀".repeat(120),
+    ];
+    for (const id of [1, 9, 10, 99, 100, 123456, Number.MAX_SAFE_INTEGER]) {
+      for (const kind of ["reattach", "close", "recovery"] as const) {
+        const base = atLimits(id, kind);
+        const fits = Math.max(jsonChars(base), tableChars(base)) <= 400;
+        for (const body of bodies) {
+          const l = withStopFailed(base, body);
+          const at = `${id} ${kind} ${body.slice(0, 3)}`;
+          expect({ ...l, stop_failed: null }, at).toEqual(base);
+          if (fits) {
+            expect(jsonChars(l), at).toBeLessThanOrEqual(400);
+            expect(tableChars(l), at).toBeLessThanOrEqual(400);
+          } else expect(l.stop_failed, at).toBeNull();
+        }
+      }
+    }
   });
 
   it("a record of another id, by path or by content, is not shown and the file is kept", async () => {
