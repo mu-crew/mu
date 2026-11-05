@@ -653,6 +653,9 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   // The channel a pane agent is reached through ('ctl' | 'hooks' | 'mux', machine-local), recorded at
   // spawn: every verb reads it from the row, never from the env (src/channels).
   ["agents", "channel", "TEXT"],
+  // A remote hook-harness worker's key on its node, `<origin host>/<pane key>` (spec D11, machine-local):
+  // `murmur pane --remote <key>` reads its state there.
+  ["agents", "remote_key", "TEXT"],
   // A lease reservation's remote worktree (src/carrier-jobs.ts): which tree it belongs to.
   ["carrier_jobs", "tree_path", "TEXT"],
   ["carrier_jobs", "tree_agent_id", "INTEGER"],
@@ -1099,6 +1102,7 @@ CREATE TABLE IF NOT EXISTS agents (
   gate_token    TEXT,                           -- remote command gate: spawn-unique token, also the key of its remote result record (machine-local); NULL: not a gate
   host_transport TEXT,                          -- the transport of the profile it was spawned on, 'session' | 'lease' (machine-local); NULL: local, or a row older than the column
   channel       TEXT,                           -- the channel mu reaches it through, 'ctl' | 'hooks' | 'mux' (machine-local), recorded at spawn; NULL: a row older than the column (derived)
+  remote_key    TEXT,                           -- a remote hook-harness worker's key on its node, '<origin host>/<pane key>' (machine-local, spec D11); NULL: none
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   UNIQUE (workstream_id, name),

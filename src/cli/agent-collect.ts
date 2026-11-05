@@ -51,6 +51,9 @@ export async function cmdCollect(
       : `${pc.bold(name)} has nothing new: still ${r.head.slice(0, 12)} (pinned as ${r.ref})`,
   );
   console.log(pc.dim(`  merge it yourself (mu never merges): ${r.merge}`));
+  if (r.close?.applied === true)
+    console.log(`  its CLOSE block closed ${pc.bold(r.close.task ?? "")}`);
+  else if (r.close !== undefined) console.log(pc.dim(`  no CLOSE applied: ${r.close.reason}`));
 }
 
 export function wireCollectCommand(agent: Command): void {

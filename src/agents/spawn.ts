@@ -22,7 +22,7 @@ import {
   MAX_AGENT_NAME_LEN,
   pendingPaneIdFor,
 } from "../agents.js";
-import { anchorWrapper, pruneAnchors } from "../anchors.js";
+import { anchorWrapper, newRemoteKey, pruneAnchors, remoteAnchorWrapper } from "../anchors.js";
 import {
   bindCarrierJobAgent,
   getCarrierJobByAgent,
@@ -663,6 +663,24 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       remote_key: null,
     });
   };
+  // A hook harness worker on a host (spec D11): its hooks on that node write to
+  // murmur's remote area under this key (in its anchor and its env), and mu
+  // reads them there through the profile's exec template (src/channels/hooks-remote.ts).
+  // Fixed before the pane exists: it travels in the launch command. pi keeps ctl,
+  // a command gate runs no harness.
+  const remoteKey =
+    profile !== undefined && gateToken === undefined && harness !== undefined && harness !== "pi"
+      ? newRemoteKey(opts.workstream, opts.name)
+      : undefined;
+  const remoteAnchored = (cmd: string, key: string): string =>
+    remoteAnchorWrapper(cmd, {
+      agent_name: opts.name,
+      workstream: opts.workstream,
+      role: "worker",
+      cli: harness ?? cli,
+      orchestrator: false,
+      remote_key: key,
+    });
 
   const hasWorktree = staged !== undefined;
 
@@ -755,15 +773,29 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         // `scratch` is never `workstream init`-ed: ensure its session (with
         // the placeholder `_mu` window) so it outlives its last agent.
         if (isScratchWorkstream(opts.workstream)) await mux.ensureSession(session);
+        // A remote hook harness worker is on `hooks` where the local pane is
+        // one mu pastes into and murmur can relay to (tmux); elsewhere it stays on `mux`.
+        const hooksKey =
+          remoteKey !== undefined && mux.anchorsPanes && mux.pasteToPane !== undefined
+            ? remoteKey
+            : undefined;
         // Built before the launch intent: a template error launches nothing.
         const paneCommand = profile
           ? remoteShellCommand(profile, {
               workstream: opts.workstream,
               name: opts.name,
-              command: gateToken === undefined ? command : gateWrapper(command, gateToken),
+              command:
+                gateToken !== undefined
+                  ? gateWrapper(command, gateToken)
+                  : hooksKey !== undefined
+                    ? remoteAnchored(command, hooksKey)
+                    : command,
               localSock: ctlSocket,
               cwd: paneCwd,
               ...(jobFile !== undefined ? { jobFile } : {}),
+              ...(hooksKey !== undefined && harness !== undefined
+                ? { hooks: { cli: harness, key: hooksKey } }
+                : {}),
             })
           : anchored(command, mux.anchorsPanes);
         // Resolves with the pane id at creation; `done` settles when the
@@ -816,13 +848,15 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           hostTransport: profile?.transport,
           gateToken,
           reservation: carrier?.token,
-          // A local hook harness on a backend that anchors and pastes (tmux) is on `hooks`.
+          // A hook harness on a backend that anchors and pastes (tmux) is on `hooks`:
+          // locally, or remotely with its remote key (spec D11).
           hooks:
-            !profile &&
+            (!profile || hooksKey !== undefined) &&
             mux.anchorsPanes &&
             mux.pasteToPane !== undefined &&
             harness !== undefined &&
             harness !== "pi",
+          ...(hooksKey !== undefined ? { remoteKey: hooksKey } : {}),
         });
         ownedIncarnation = row.incarnation;
         if (carrier && !bindCarrierJobAgent(db, carrier.token, row.incarnation, pid)) {
@@ -1134,8 +1168,10 @@ function finalizeAgentRow(
     gateToken: string | undefined;
     /** A lease spawn's reservation token: the insert passes the name fence with it. */
     reservation: string | undefined;
-    /** The pane runs a hook harness (claude, codex, cursor-agent, muse) locally on tmux. */
+    /** The pane runs a hook harness (claude, codex, cursor-agent, muse) on tmux, locally or remotely. */
     hooks: boolean;
+    /** A remote hook harness worker's key on its node (spec D11). */
+    remoteKey?: string;
   },
 ): AgentRow {
   const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host, gateToken } = args;
@@ -1167,6 +1203,7 @@ function finalizeAgentRow(
       hostTransport,
       gateToken: gateToken ?? null,
       channel,
+      remoteKey: args.remoteKey ?? null,
     });
   }
   // Scope the patch to the spawn's workstream so a same-named worker
@@ -1175,7 +1212,7 @@ function finalizeAgentRow(
   // pending): a row replaced since is not ours to repoint.
   const patched = db
     .prepare(
-      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, repo = ?, updated_at = ?
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, remote_key = ?, repo = ?, updated_at = ?
       WHERE id = ? AND pane_id = ?
         AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
@@ -1190,6 +1227,7 @@ function finalizeAgentRow(
       host ?? null,
       hostTransport,
       channel,
+      args.remoteKey ?? null,
       staged.host !== undefined ? staged.root : null,
       new Date().toISOString(),
       staged.incarnation,

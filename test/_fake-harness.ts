@@ -64,6 +64,12 @@ export interface FakeHarness {
   readonly inbox: string;
   /** A submitted paste fires `prompt_submitted`. Default true. */
   acks: boolean;
+  /**
+   * A remote worker (spec D11): its harness runs on another node, so a
+   * submitted paste fires nothing here but this (the test writes that node's
+   * events). Default null.
+   */
+  onSubmit: ((text: string) => void) | null;
   /** Keys typed into an open dialog fire `answeredWith`. Default true. */
   answers: boolean;
   /** The event an answered dialog fires. Default `turn_stopped`. */
@@ -220,6 +226,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     paneId,
     inbox,
     acks: true,
+    onSubmit: null,
     answers: true,
     answeredWith: "turn_stopped",
     onEscape: "event",
@@ -324,7 +331,8 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
           const text = fake.input;
           fake.submitted.push(text);
           fake.input = "";
-          if (text === fake.freshCommand) {
+          if (fake.onSubmit !== null) fake.onSubmit(text);
+          else if (text === fake.freshCommand) {
             sessions += 1;
             const next = `${sessionId}-${sessions}`;
             if (fake.freshMode === "immediate") {

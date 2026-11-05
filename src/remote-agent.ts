@@ -529,15 +529,18 @@ export const LOCAL_ONLY_ENV = [
   "MU_AGENT_NAME",
   "MU_WORKSTREAM",
   "MU_MANAGED_AGENT",
-  // An orchestrator's flag and harness never reach a remote worker (spec D9).
+  // An orchestrator's flag and harness never reach a remote worker (spec D9): a hook harness
+  // worker's own harness and remote key travel in `{env}` instead (spec D11).
   "MU_ORCHESTRATOR",
   "MU_AGENT_CLI",
+  "MU_REMOTE_KEY",
 ] as const;
 
 /**
  * The command the LOCAL pane runs: the profile's `shell` template filled with
  * the remote identity (never the local DB, state or sync dir), the user's
  * command and the two socket paths, as one `sh -c` word, run with the local-only mu variables unset.
+ * A hook harness worker (`hooks`) also gets its harness and remote key (spec D11).
  */
 export function remoteShellCommand(
   profile: HostProfile,
@@ -549,6 +552,8 @@ export function remoteShellCommand(
     cwd: string;
     /** A lease profile's `{job_file}`: where its carrier writes the job handle. */
     jobFile?: string;
+    /** A remote hook harness worker: its harness (`MU_AGENT_CLI`) and key (`MU_REMOTE_KEY`). */
+    hooks?: { cli: string; key: string };
   },
 ): string {
   const remoteSock = remoteCtlSocketPath(a.workstream, a.name, process.getuid?.() ?? 0);
@@ -558,6 +563,7 @@ export function remoteShellCommand(
     MU_WORKSTREAM: a.workstream,
     MU_CTL_SOCK: remoteSock,
     MU_REMOTE: "1",
+    ...(a.hooks !== undefined ? { MU_AGENT_CLI: a.hooks.cli, MU_REMOTE_KEY: a.hooks.key } : {}),
   });
   const filled = expandHostTemplate(profile.shell, {
     env,

@@ -179,8 +179,12 @@ export function settledCloseInput(obs: SettleFacts): SettledCloseInput | undefin
 export interface ObservedWatch {
   /** The agent's state when the watch started. */
   initial: AgentObservation;
-  /** The run count the watch waits past (ctl `afterRuns`). */
-  afterRuns: number;
+  /**
+   * The run count the watch waits past (ctl `afterRuns`). undefined: not known
+   * yet (a remote hooks worker whose pane has no row; the watch fixes it at
+   * the first row it reads).
+   */
+  afterRuns?: number;
   /** Resolves when the run ends. A REJECTION (AgentRestartedError) is fatal:
    *  the incarnation the run belonged to is gone. */
   settled: Promise<AgentObservation>;

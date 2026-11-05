@@ -85,6 +85,32 @@ EOF
 socket and behave as they do locally. `mu state` shows remote workers
 as agent records with `host`, `cwd`, `base` and `collected_head`.
 
+## A claude, codex, cursor-agent or muse worker
+
+`--cli claude` (or `codex`, `cursor-agent`, `muse`) on a host runs that
+harness behind the pane and reaches it on the `hooks` channel, as a local
+one on tmux. Its hooks on the host must be installed (`murmur init` there),
+and `murmur` must be on the PATH the profile's `--exec` sees.
+
+- The spawn gives the worker a remote key (`MU_REMOTE_KEY` and its anchor).
+  Its hooks on the host write under that key to murmur's remote area, never
+  the host's own `murmur status`.
+- mu reads that area with `murmur pane --remote <key> --json` through
+  `--exec`, and copies what it read into the local pane's inbox, only on a
+  send (and `--interrupt`, abort, answer), during `mu agent wait` and `mu
+  wait` (every few seconds), and on `collect`. Each read is one `--exec`
+  and passes the host's channel admission: at `--max-sessions 1` the
+  worker's pane holds the only slot, so give such a host 2 or more.
+- `mu agent send` pastes into the pane and returns `ack: sent`; the next
+  wait confirms the run. A host that cannot be read makes the send `unknown`
+  (`--force` pastes anyway). `--interrupt` and abort press Escape and record
+  the interrupt on the host (`idle?`). `--fresh` is refused: send the
+  harness's fresh command, then the text.
+- `mu wait` applies the worker's `CLOSE:` block when it sees the turn end;
+  `collect` applies it too, once its commits are pinned, but only from the
+  turn that wrote it: a turn that failed or ended without text applies
+  nothing. Either way it is applied once.
+
 ## Collect and close
 
 ```bash

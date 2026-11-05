@@ -83,8 +83,8 @@ export interface SentFence {
   transport?: ChannelName;
   runs?: number;
   incarnation?: string;
-  /** hooks: the paste's ack and the run count and session it was confirmed by. */
-  ack?: "confirmed" | "unknown";
+  /** hooks: the paste's ack and the run count and session it was confirmed by (`sent`: read before it). */
+  ack?: "confirmed" | "unknown" | "sent";
   runCount?: number;
   sessionId?: string;
 }

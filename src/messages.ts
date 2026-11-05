@@ -133,6 +133,8 @@ export const MESSAGES = {
     `agent ${name}'s harness reports no interrupt: mu pressed Escape and recorded it as idle? (unconfirmed); if the Escape only closed an overlay, the send that follows reads unknown`,
   "agent.interrupt_unrecorded": (name: string, ws: string) =>
     `pressed Escape on agent ${name}, whose harness reports no interrupt, but murmur did not record mu's interrupted event (murmur absent, older than murmur hook mu, or it refused it): the agent still reads running, and nothing was sent; read the pane (mu agent read ${name} -w ${ws}) before trying again`,
+  "agent.fresh_remote": (name: string, ws: string, command: string) =>
+    `agent ${name} runs on a host: a fresh session there is confirmed only by polling its node, which mu never does; nothing was sent. Send ${command} first (mu agent send ${name} ${command} -w ${ws}), then the text once the pane shows the new session (mu agent read ${name} -w ${ws})`,
   "agent.fresh_needs_ctl": (name: string, cli: string) =>
     `agent ${name} runs ${cli} without a control socket: --fresh needs the mu pi extension`,
   "agent.extension_outdated": (name: string, version: string, feature: boolean, op: string) =>

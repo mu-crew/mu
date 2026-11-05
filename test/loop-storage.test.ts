@@ -636,6 +636,21 @@ describe("a populated v13 DB is completed in place", () => {
     expect(checkDrift(db).clean).toBe(true);
   });
 
+  it("agents without remote_key gain it with rows intact (spec D11, no version bump)", () => {
+    const p = v13Copy();
+    track(openDb({ path: p })).close();
+    open.pop();
+    raw(p, (r) => {
+      r.exec("ALTER TABLE agents DROP COLUMN remote_key");
+    });
+    expect(columns(p, "agents")).not.toContain("remote_key");
+    const before = raw(p, (r) => r.prepare("SELECT id, name, cli, pane_id FROM agents").all());
+    const db = track(openDb({ path: p }));
+    expect(columns(p, "agents")).toContain("remote_key");
+    expect(db.prepare("SELECT id, name, cli, pane_id FROM agents").all()).toEqual(before);
+    expect(checkDrift(db).clean).toBe(true);
+  });
+
   it("an old-shaped carrier_jobs (one row per incarnation, no token) is rebuilt losslessly as filled reservations", () => {
     const p = oldCarrierJobsCopy();
     const before = raw(p, (r) => r.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all());
