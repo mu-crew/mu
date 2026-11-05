@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   previewReattach,
@@ -711,6 +712,92 @@ describe("finding reattach_failed_kill_fence: a kill that fails after a failed i
     const e = await failure(apply());
     expect((e as ReattachFailedError).rollback).toBe("pane-killed");
     expect(await reattachBlockers(db, "auth", "worker-1")).toEqual([]);
+  });
+});
+
+describe("finding reattach_install_fence_db_error: the fence write fails on the writer lock that failed install", () => {
+  // A second connection holds the SQLite writer lock from pane creation on, so install's
+  // BEGIN IMMEDIATE and the fence's UPDATE both throw SQLITE_BUSY (a real lock; the short
+  // busy_timeout only keeps the fast tier fast).
+  let writer: Database.Database | undefined;
+  const hold = (): void => {
+    writer = new Database(dbPath);
+    writer.exec("BEGIN IMMEDIATE");
+  };
+  const release = (): void => {
+    writer?.exec("ROLLBACK");
+    writer?.close();
+    writer = undefined;
+  };
+  beforeEach(() => {
+    db.pragma("busy_timeout = 50");
+    reaped({ worktree: false });
+    carrier = "noctl";
+  });
+  afterEach(release);
+
+  it("still kills the new pane (pane-killed), and a retry after the writer finishes runs one carrier", async () => {
+    beforeTmux = (a) => {
+      if (isPaneCall(a)) hold();
+    };
+    const e = await failure(apply());
+    release();
+    beforeTmux = undefined;
+    expect((e as ReattachFailedError).rollback).toBe("pane-killed");
+    expect((e as Error).message).toContain("database is locked");
+    expect(order().filter((l) => l.startsWith("kill"))).toEqual(["kill %1"]);
+    expect([...state.panes.keys()]).toEqual([]);
+    expect(reservation()?.paneId).toBe("%90");
+    const retry = await apply();
+    expect([...state.panes.keys()]).toEqual([retry.pane_id]);
+  });
+
+  it("a failed kill retries the fence once: the writer done by then, the reservation names the pane", async () => {
+    beforeTmux = (a) => {
+      if (isPaneCall(a)) hold();
+      if (a[0] === "kill-pane") {
+        release();
+        throw new Error("tmux transport broke");
+      }
+    };
+    const e = await failure(apply());
+    beforeTmux = undefined;
+    expect((e as ReattachFailedError).rollback).toBe("pane-unknown");
+    const [pane] = [...state.panes.keys()];
+    expect(reservation()?.paneId).toBe(pane);
+    const blockers = await reattachBlockers(db, "auth", "worker-1");
+    expect(blockers[0]?.detail).toContain(`${pane} is alive`);
+    expect(await failure(apply())).toBeInstanceOf(ReattachRefusedError);
+    expect(state.panes.size).toBe(1);
+  });
+
+  it("neither fenced nor killed: pane-unknown, and the message says the reservation does not name it", async () => {
+    beforeTmux = (a) => {
+      if (isPaneCall(a)) hold();
+      if (a[0] === "kill-pane") throw new Error("tmux transport broke");
+    };
+    const e = await failure(apply());
+    expect((e as ReattachFailedError).rollback).toBe("pane-unknown");
+    const [pane] = [...state.panes.keys()];
+    expect((e as Error).message).toContain(`${pane} may still run job job-1`);
+    expect((e as Error).message).toContain("the reservation does not name it");
+    expect(reservation()?.paneId).toBe("%90");
+  });
+
+  it("a fence that loses its compare-and-set still kills, and says so when the kill is unproven", async () => {
+    const kills: string[] = [];
+    beforeTmux = (a) => {
+      if (isPaneCall(a)) db.prepare("UPDATE carrier_jobs SET pane_id = '%77'").run();
+      if (a[0] !== "kill-pane") return;
+      kills.push(a[2] ?? "");
+      throw new Error("tmux transport broke");
+    };
+    const e = await failure(apply());
+    expect((e as Error).message).toContain("the reservation changed");
+    expect((e as ReattachFailedError).rollback).toBe("pane-unknown");
+    expect((e as Error).message).toContain("the reservation does not name it");
+    expect(kills).toEqual([...state.panes.keys()]);
+    expect(reservation()?.paneId).toBe("%77");
   });
 });
 

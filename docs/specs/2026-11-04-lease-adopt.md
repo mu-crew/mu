@@ -335,7 +335,10 @@ spawn does.
    false after the kill reports `rollback:"pane-killed"` (its signal path is
    stopping the job). Otherwise `rollback:"pane-unknown"`, naming the pane:
    the next preflight probes that pane and refuses while it may run, so two
-   carriers never share the job's forward.
+   carriers never share the job's forward. The pointer write can fail on the
+   writer lock that failed install, or lose its compare-and-set: it never
+   skips the kill. An unproven kill retries it once; still unwritten, the
+   error says the reservation does not name the pane (close it first).
 4. Release the locks.
 
 **Readiness:** `awaitCtlHandshake(sock, assertAlive)` with `localPaneAlive`;
