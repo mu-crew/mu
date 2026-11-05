@@ -77,7 +77,8 @@ EOF
   out: close it, collect then close the record (`--recovery <id>`), or give
   the new agent its own tree (`--worktree --from <the owner's commit>`, also
   for a reviewer). A command gate cannot take `--worktree`: it is offered the
-  owner's close or the gate in an unmanaged checkout (`--cwd <repo root>`).
+  owner's close or the gate in an unmanaged checkout (`--cwd <repo root>`,
+  unless that root is itself a managed tree).
   Agents sharing an unmanaged checkout (the repo root, a user directory) are
   not refused. Only the exact path is checked, per
   profile name: a subdirectory of the tree, or the same host reached through

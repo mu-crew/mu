@@ -24,8 +24,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `--worktree --from <the worker's commit>`; the error prints that command,
   or the owner's close, or the record's collect and close with
   `--recovery <id>`. A refused command gate is offered the owner's close or
-  the gate in an unmanaged checkout (`--cwd <repo root> --command <cmd>`),
-  never `--worktree`. Unmanaged checkouts stay shareable; subdirectories and
+  the gate in an unmanaged checkout (`--cwd <repo root> --command <cmd>`;
+  only the close when that root is itself a managed tree), never `--worktree`. Unmanaged checkouts stay shareable; subdirectories and
   other profiles naming the same host are not checked. The check runs right
   after prepare's exec (no pane, the agent never starts) and again in one
   immediate transaction with the row's insert; an owner that landed while
