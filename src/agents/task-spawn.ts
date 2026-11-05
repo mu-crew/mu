@@ -28,7 +28,6 @@ import { type AgentRow, getAgentForCleanup } from "../agents.js";
 import {
   agentChannel,
   channelTarget,
-  ctlChannel,
   deliver,
   isSlashCommand,
   newMsgId,
@@ -634,7 +633,8 @@ async function reconcile(
   };
   if (id.agent === undefined) return stay(`the sending agent is ${id.stale ?? "gone"}`);
   if (saved.transport !== "ctl") return stay("the send went through the pane: no receipt to ask");
-  const check = await ctlChannel.receipt(channelTarget(db, id.agent), saved.msgId);
+  const target = channelTarget(db, id.agent);
+  const check = await agentChannel(target).receipt(target, saved.msgId);
   if (check.state !== "accepted") {
     return stay(
       check.state === "unreachable"

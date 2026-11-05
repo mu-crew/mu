@@ -65,6 +65,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `send --wait` and the next hint wait for exactly that turn, and its `CLOSE:`
   block is applied once per session and turn, with the trust of pi's ctl
   text (spec D3). pi is unchanged.
+- **The pi fallback: `MU_PI_CHANNEL=hooks`** (spec D15, U13). `mu agent
+  spawn` of a local pi on tmux with `MU_PI_CHANNEL=hooks` in the caller's
+  environment records channel `hooks` on the agents row and hands the pane
+  the variable, so murmur's pi extension writes inbox events instead of
+  opening its store (for a pi build that breaks the store or a native module;
+  not one that loads no extensions). Every verb then follows the row:
+  send, interrupt, abort, fresh (`/new`, confirmed by its `session_start`),
+  settle, last text and answer go through `hooks`, with pi's clear key
+  (`C-u`) and no interrupt event of its own (`idle?`, as claude). mu's pi
+  extension still serves its control socket, for the spawn handshake,
+  delegates and `mu doctor`'s ctl row only. `mu agent check` now asks the
+  row's channel, so it never probes that socket. The contract suite runs
+  against pi on `hooks` and asserts no verb reaches ctl. Only `hooks`
+  selects the fallback; unset or anything else, and for a remote pi or a pi
+  on herdr or Rex, pi stays on ctl, unchanged. A ctl pi's pane pins the
+  variable empty, so a tmux server a fallback spawn started never hands it
+  `hooks`. Like every `hooks` agent, a pi on the fallback cannot take a task
+  brief yet: a task-bound spawn (`--task`, `mu task auto`) is refused and
+  rolled back; spawn without `--task` and send the brief. `mu doctor` no
+  longer reports murmur as not needed while a pi runs on the fallback.
 - **`mu agent answer <name> <choice...>`**: type a pending permission
   dialog's answer into the pane (text literally; `Enter`, `Escape`, `Tab`,
   `Space` and arrows as keys). On `hooks` it is refused unless murmur reads

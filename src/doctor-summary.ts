@@ -7,8 +7,9 @@ import { accessSync, constants, existsSync, readFileSync, realpathSync } from "n
 import { delimiter, dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
-import { type AgentRow, expectsCtl } from "./agents.js";
+import type { AgentRow } from "./agents.js";
 import { type CarrierLaunch, listCarrierJobs } from "./carrier-jobs.js";
+import { piOnHooks, servesCtl } from "./channels/index.js";
 import { type CtlProbe, ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import { CTL_OPS } from "./ctl/protocol.js";
@@ -127,8 +128,14 @@ export function murmurDoctorCheck(
 /** What to run when no live extension answers: the package is the only install path. */
 export const INSTALL_ADVICE = "pi install npm:@mu-crew/mu, then restart pi";
 
-/** A pi agent answered hello: the only proof the extension is loaded. */
+/**
+ * A pi agent on ctl answered hello: the only proof the extension is loaded,
+ * and that pi's state does not need murmur. Never while a pi runs on the
+ * `hooks` fallback (spec D15): its hello answers too, but every verb on it
+ * reads murmur's pane inbox, so murmur stays needed for pi.
+ */
 export function extensionLive(reports: readonly AgentCtlReport[]): boolean {
+  if (reports.some((r) => r.hooksFallback === true)) return false;
   return reports.some((r) => r.probe === "ok");
 }
 
@@ -168,6 +175,8 @@ export interface AgentCtlReport {
   agent: string;
   socket: string;
   probe: CtlProbe["kind"];
+  /** A pi on the `hooks` fallback (spec D15): it serves ctl for doctor, but its state is murmur's. */
+  hooksFallback?: true;
   /** ok probes: the mu version the agent's extension was built from. */
   extVersion?: string;
   /** ok probes whose extension is older than the installed mu, or lacks ops. */
@@ -234,7 +243,9 @@ function probeMissingOps(probe: CtlProbe): string[] {
 
 /**
  * The "ctl" row: probe the control socket of every agent that runs pi
- * (per `expectsCtl`, the rule send, state and abort use). `stateDir`
+ * (per `servesCtl`: every `ctl` agent, by the rule send, state and abort
+ * use, and a pi on the `hooks` fallback, whose extension still serves ctl
+ * for doctor, spec D15). `stateDir`
  * roots the derived socket path like spawn's (the DB's directory); it
  * defaults to ctlSocketPath's env-derived base. Probes run in
  * parallel, each bounded by `timeoutMs`. Async, so `mu doctor` only:
@@ -249,7 +260,7 @@ export async function ctlSocketsDoctorCheck(
     opts.installedVersion !== undefined ? opts.installedVersion : installedMuVersion();
   const piAgents = agents
     .map((a) => ({ a, socket: ctlSocketPath(a.workstreamName, a.name, opts.stateDir) }))
-    .filter(({ a, socket }) => expectsCtl(a, socket));
+    .filter(({ a, socket }) => servesCtl(a, socket));
   const reports = await Promise.all(
     piAgents.map(async ({ a, socket }): Promise<AgentCtlReport> => {
       const probe = await ctlProbe(socket, timeoutMs);
@@ -260,6 +271,7 @@ export async function ctlSocketsDoctorCheck(
         agent: a.name,
         socket,
         probe: probe.kind,
+        ...(piOnHooks(a) ? { hooksFallback: true as const } : {}),
         ...(probe.kind === "ok" && probe.extVersion !== undefined
           ? { extVersion: probe.extVersion }
           : {}),

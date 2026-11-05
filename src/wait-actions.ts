@@ -47,10 +47,10 @@ import { AgentReplacedError, AgentSendRefusedError } from "./agents/errors.js";
 import { recordSend } from "./agents/transport.js";
 import { getAgent } from "./agents.js";
 import {
+  agentChannel,
   CTL_DEFAULT_TIMEOUT_MS,
   CtlWriteVetoedError,
   channelTarget,
-  ctlChannel,
   deliver,
   newMsgId,
 } from "./channels/index.js";
@@ -371,8 +371,10 @@ async function probeSteer(
     return unknown("the owner was replaced: the earlier steer cannot be confirmed (not resent)");
   }
   if (ctx.signal.aborted) return unknown("the wait was aborted before the receipt probe");
-  // A steer only ever went over ctl: its receipt is asked there.
-  const check = await ctlChannel.receipt(channelTarget(db, agent), plan.msgId, timeoutMs);
+  // A steer only ever went over ctl; its receipt is asked through the row's channel, which
+  // for a steer's owner is ctl (a `hooks` row, pi's fallback included, refuses steer).
+  const target = channelTarget(db, agent);
+  const check = await agentChannel(target).receipt(target, plan.msgId, timeoutMs);
   if (check.state !== "accepted" || check.incarnation !== plan.key.incarnation) {
     return unknown(
       check.state === "accepted"

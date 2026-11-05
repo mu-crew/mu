@@ -88,7 +88,7 @@ export interface HarnessRow {
   freshSessionStart: "immediate" | "first-prompt" | null;
   /** tmux key names. */
   interruptKey: string;
-  /** null: the harness is not driven by keys (pi uses its control socket). */
+  /** null: the harness is not driven by keys. pi's is used only on its `hooks` fallback (spec D15). */
   clearInputKey: string | null;
   /** Whether a Stop hook can hold the turn open with a reason the model follows. */
   canBlockOnStop: boolean;
@@ -295,7 +295,9 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     freshCommand: "/new",
     freshSessionStart: "immediate",
     interruptKey: "Escape",
-    clearInputKey: null,
+    // Pressed only on the `hooks` fallback (spec D15); ctl never types keys.
+    // pi's editor binds C-u to delete to the line start.
+    clearInputKey: "C-u",
     canBlockOnStop: true,
     sandboxMarkerEnv: [],
     sessions: "~/.pi/agent/sessions/**/*.jsonl",

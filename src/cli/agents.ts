@@ -30,7 +30,6 @@ import {
   agentChannel,
   blockedReason,
   channelTarget,
-  ctlChannel,
   readAgentStates,
   requireFeature,
 } from "../channels/index.js";
@@ -756,7 +755,9 @@ export async function cmdAgentCheck(
   const ws = await resolveExistingWorkstream(db, opts.workstream);
   const agent = getAgent(db, name, ws);
   if (agent === undefined) throw new AgentNotFoundError(name, ws);
-  const check = await ctlChannel.receipt(channelTarget(db, agent), msgId);
+  // A receipt is the channel's: a pi on the `hooks` fallback is never asked over ctl (spec D15).
+  const target = channelTarget(db, agent);
+  const check = await agentChannel(target).receipt(target, msgId);
   const exit = check.state === "accepted" ? 0 : check.state === "not-accepted" ? 3 : 1;
   if (opts.json) {
     // A check that is not "accepted" fails with ONE document: the verdict

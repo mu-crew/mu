@@ -442,6 +442,24 @@ describe("the pane is the transport", () => {
     });
   });
 
+  // Spec D15: the pi fallback is local only; a remote pi's verbs need its node's ctl.
+  it("a remote pi stays on ctl under MU_PI_CHANNEL=hooks: no remote key, no variable anywhere", async () => {
+    const before = process.env.MU_PI_CHANNEL;
+    process.env.MU_PI_CHANNEL = "hooks";
+    try {
+      const a = await spawn();
+      expect(getAgent(db, "worker-1", "auth")?.channel).toBe("ctl");
+      expect(db.prepare("SELECT remote_key FROM agents WHERE id = ?").get(a.incarnation)).toEqual({
+        remote_key: null,
+      });
+      expect(filled()).not.toContain("MU_PI_CHANNEL");
+      expect(mux.calls.flat().filter((arg) => arg.startsWith("MU_PI_CHANNEL="))).toEqual([]);
+    } finally {
+      if (before === undefined) delete process.env.MU_PI_CHANNEL;
+      else process.env.MU_PI_CHANNEL = before;
+    }
+  });
+
   it("the row keeps the user's command (not the filled template), so a respawn keeps --host", async () => {
     const a = await spawn({ worktree: true, command: "pi --approve" });
     const row = getAgent(db, a.name, "auth");

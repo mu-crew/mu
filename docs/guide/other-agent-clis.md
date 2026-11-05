@@ -138,6 +138,19 @@ inside an agent, because every pane would inherit that agent's sandbox.
   `send --fresh --json -`, then wait on the exact ref the send prints. See
   [tasks-or-calls](../../skills/mu/recipes/tasks-or-calls.md).
 
+## pi on the `hooks` channel
+
+If a pi build cannot load murmur's store or a native module, spawn it with
+`MU_PI_CHANNEL=hooks` set (local, on tmux). Its row records `hooks`, so mu
+drives it like the harnesses above, and murmur's pi extension writes inbox
+events instead of opening its store. mu's pi extension still serves ctl for
+the spawn handshake, delegates and `mu doctor`. It does not help a build that
+loads no extensions. Unset, pi stays on ctl.
+
+Like the harnesses above, a pi on `hooks` cannot take a task brief yet: a
+`--task` spawn, and a `mu task auto` spawn of pi, is refused and rolled back.
+Spawn it without `--task`, then send the brief with `mu agent send`.
+
 ## With no multiplexer
 
 Task, DAG, `sql`, `log` and `mu wait task:` verbs work. `workstream init`,

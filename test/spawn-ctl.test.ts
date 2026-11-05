@@ -247,6 +247,119 @@ describe("spawn records its channel (agents.channel)", () => {
   });
 });
 
+// Spec D15: the pi fallback. MU_PI_CHANNEL=hooks puts a local pi on tmux on
+// `hooks` and hands its pane the variable, which murmur's pi extension reads
+// to write inbox events instead of opening its store. mu's extension still
+// serves ctl, so the spawn handshake runs. Unset, nothing changes.
+describe("the pi fallback: MU_PI_CHANNEL=hooks (spec D15)", () => {
+  const raw = (name: string) =>
+    (
+      db
+        .prepare(
+          "SELECT channel FROM agents WHERE name = ? AND workstream_id = (SELECT id FROM workstreams WHERE name = 'auth')",
+        )
+        .get(name) as { channel: string | null }
+    ).channel;
+  const paneEnv = (): Record<string, string> => {
+    const args = newSessionArgs();
+    return Object.fromEntries(
+      args.flatMap((a, i) =>
+        args[i - 1] === "-e" ? [a.split(/=(.*)/s).slice(0, 2) as [string, string]] : [],
+      ),
+    );
+  };
+
+  it("records a local pi on hooks, gives its pane the variable, and still runs the ctl handshake", async () => {
+    installPanes("worker-1");
+    let agent: Awaited<ReturnType<typeof spawnAgent>> | undefined;
+    await withEnv("MU_PI_CHANNEL", "hooks", async () => {
+      agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    });
+    expect(raw("worker-1")).toBe("hooks");
+    expect(agent?.channel).toBe("hooks");
+    expect(getAgent(db, "worker-1", "auth")?.channel).toBe("hooks");
+    expect(agent?.ctl).toBe("ok");
+    expect(paneEnv()).toMatchObject({
+      MU_PI_CHANNEL: "hooks",
+      MU_CTL_SOCK: sockFor("worker-1"),
+      MU_AGENT_CLI: "pi",
+    });
+    // pi keeps its plain command: its extensions read the env in-process, no anchor wrapper.
+    expect(getAgent(db, "worker-1", "auth")?.command).toBe("pi");
+  });
+
+  it("a pi named by its command (pi-meta under another cli key) takes the fallback too", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await withEnv("MU_PI_CHANNEL", "hooks", async () => {
+      await spawnAgent(db, {
+        name: "worker-1",
+        workstream: "auth",
+        cli: "helper",
+        command: "pi-meta --no-solo",
+      });
+    });
+    expect(raw("worker-1")).toBe("hooks");
+    expect(paneEnv().MU_PI_CHANNEL).toBe("hooks");
+  });
+
+  it("the row keeps hooks once the variable is gone: verbs read the row, never the env", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await withEnv("MU_PI_CHANNEL", "hooks", async () => {
+      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    });
+    await withEnv("MU_PI_CHANNEL", undefined, async () => {
+      expect(getAgent(db, "worker-1", "auth")?.channel).toBe("hooks");
+    });
+  });
+
+  // A ctl pi's pane pins the variable empty: a tmux server a fallback spawn started holds
+  // `hooks` in its global env, and the pane would inherit it. murmur takes only `hooks`.
+  it("unset, or any value but hooks: pi stays on ctl and its pane pins the variable empty", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await withEnv("MU_PI_CHANNEL", undefined, async () => {
+      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    });
+    expect(raw("worker-1")).toBe("ctl");
+    expect(paneEnv().MU_PI_CHANNEL).toBe("");
+    for (const [i, value] of ["ctl", "HOOKS", "hook", ""].entries()) {
+      const name = `worker-${i + 2}`;
+      await withEnv("MU_PI_CHANNEL", value, async () => {
+        await spawnAgent(db, { name, workstream: "auth" });
+      });
+      expect(raw(name)).toBe("ctl");
+    }
+    const envs = mux.calls.flatMap((c) => c.filter((a) => a.startsWith("MU_PI_CHANNEL=")));
+    expect(envs).toEqual(Array(5).fill("MU_PI_CHANNEL="));
+  });
+
+  it("other harnesses ignore it: claude stays on hooks, another cli on mux, neither gets the variable", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    await withEnv("MU_PI_CHANNEL", "hooks", async () => {
+      await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "claude" });
+      await spawnAgent(db, { name: "worker-2", workstream: "auth", cli: "aider" });
+    });
+    expect(raw("worker-1")).toBe("hooks");
+    expect(raw("worker-2")).toBe("mux");
+    const envs = mux.calls.flatMap((c) => c.filter((a) => a.startsWith("MU_PI_CHANNEL=")));
+    expect(envs).toEqual([]);
+  });
+
+  it("a backend without tmux's paste and anchors keeps pi on ctl, its variable pinned empty", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    const tmuxOnly = await activeMux();
+    setMuxForTests({ ...tmuxOnly, anchorsPanes: false });
+    try {
+      await withEnv("MU_PI_CHANNEL", "hooks", async () => {
+        await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+      });
+    } finally {
+      setMuxForTests(tmuxOnly);
+    }
+    expect(raw("worker-1")).toBe("ctl");
+    expect(paneEnv().MU_PI_CHANNEL).toBe("");
+  });
+});
+
 // agents.spawner: who called spawn, read from the PARENT's env before the
 // child's env replaces it. Never guessed from task ownership.
 describe("spawn records its spawner (agents.spawner)", () => {
@@ -365,7 +478,7 @@ describe("spawn control socket", () => {
     expect(agent.ctl).toBe("skipped");
   });
 
-  it("injects exactly the seven identity keys, with no MU_* var set in the caller", async () => {
+  it("injects exactly the seven identity keys and pi's pinned channel, with no MU_* var set in the caller", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
     // The caller has no MU_* var of its own: the injected values come from mu, not from inheritance.
     const stripped = Object.entries(process.env).filter(
@@ -388,10 +501,13 @@ describe("spawn control socket", () => {
         "MU_CTL_SOCK",
         "MU_DB_PATH",
         "MU_MANAGED_AGENT",
+        "MU_PI_CHANNEL",
         "MU_STATE_DIR",
         "MU_WORKSTREAM",
       ]);
       expect(env).toMatchObject({
+        // Pinned empty, so the pane never inherits `hooks` from the tmux server (spec D15).
+        MU_PI_CHANNEL: "",
         MU_MANAGED_AGENT: "1",
         MU_AGENT_NAME: "worker-1",
         MU_AGENT_CLI: "pi",
