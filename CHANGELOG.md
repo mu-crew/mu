@@ -33,8 +33,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   refuses as unknown), a previous pane and spawn process proven gone, a lease profile with an
   `attach` and the admitted `stop`, a usable recovery record (if any) and a job
   file that is absent or names the handle. The apply runs the profile's attach
-  template in a new pane and, in one transaction, inserts the row (pi, the
-  record's tree), rebinds the reservation and drops the record. A carrier that
+  template in a new pane and, in one transaction, re-checks the record's
+  admission (no other agent, in any workstream, on its host and path, no newer
+  record of it, the pinned profile: another workstream's `--cwd` spawn can take
+  the path during the apply's awaits), inserts the row (pi, the record's tree),
+  rebinds the reservation and drops the record. A path taken by then kills the
+  new pane and refuses (`ReattachRefusedError`; `pane-unknown` as below when the
+  kill is not proven). A carrier that
   ends (job not running, no master) is rolled back with the record restored
   (`ReattachFailedError`, exit 4, the pane's scrollback); ctl `missing`/`refused`
   keeps the row (`ready: false`). An install that fails points the

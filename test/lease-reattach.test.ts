@@ -10,7 +10,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   previewReattach,
   ReattachFailedError,
@@ -897,5 +897,96 @@ describe("after a reattach", () => {
     ]);
     expect(listCarrierJobs(db)).toEqual([]);
     expect(listRemoteRecoveries(db)).toEqual([]);
+  });
+});
+
+describe("finding reattach_snapshot_recovery_owner: install re-checks the recovery's path owners", () => {
+  /** A --cwd lease spawn in ANOTHER workstream finishing on the path: its name and session locks are not ours. */
+  const owner = (): void => {
+    const o = reserveCarrierJob(db, {
+      ...{ workstream: "other", name: "other-1", host: "dev", hostStop: stop },
+      creatorPid: deadPid(),
+    });
+    if (o === undefined) throw new Error("other reserved");
+    markCarrierLaunch(db, o.token);
+    const row = insertAgent(db, {
+      ...{ name: "other-1", workstream: "other", paneId: "%99", cwd: WT },
+      ...{ host: "dev", hostTransport: "lease", reservation: o.token },
+    });
+    bindCarrierJobAgent(db, o.token, row.incarnation, "%99");
+    fillCarrierJob(db, o.token, "other-job");
+    state.panes.set("%99", { windowId: "@99", paneId: "%99", command: "carrier" });
+  };
+  /** A newer record of the same host and path, under another name. */
+  const newer = (): void => {
+    db.prepare(
+      "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, 'worker-2', pane_id, host, cwd, base, collected_head, aside, host_exec, host_repo, reason, preserved_at FROM remote_recovery",
+    ).run();
+  };
+  /** The apply's pane creation (mux.spawnAgent's I/O), after the snapshot and the --if. */
+  const atPaneCreation = (intrude: () => void): void => {
+    beforeTmux = (a) => {
+      if (isPaneCall(a)) intrude();
+    };
+  };
+  const refusedAtInstall = async (why: RegExp): Promise<void> => {
+    const recs = listRemoteRecoveries(db);
+    const e = await failure(apply());
+    expect(e).toBeInstanceOf(ReattachRefusedError);
+    expect((e as Error).message).toMatch(why);
+    expect((e as Error).message).toMatch(/found at install; its new pane %\d+ was killed/);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(listRemoteRecoveries(db)).toEqual(expect.arrayContaining(recs));
+    expect([...state.panes.keys()].filter((id) => id !== "%99")).toEqual([]);
+  };
+
+  it("an owner arriving in the preflight's final await (activeMux) is refused at install", async () => {
+    reaped();
+    const realPrepare = db.prepare.bind(db);
+    let queued = false;
+    // Timing only: every query still runs on real SQLite; the owner lands after the
+    // preflight's last DB read (the pinned profile), in the activeMux await that follows it.
+    const spy = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+      if (sql === "SELECT exec FROM host_profiles WHERE name = ?" && !queued) {
+        queued = true;
+        queueMicrotask(owner);
+      }
+      return realPrepare(sql);
+    });
+    try {
+      await refusedAtInstall(/current agent other\/other-1 uses/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("an owner arriving during the pane creation is refused at install", async () => {
+    reaped();
+    atPaneCreation(owner);
+    await refusedAtInstall(/current agent other\/other-1 uses/);
+    expect(getAgent(db, "other-1", "other")?.cwd).toBe(WT);
+  });
+
+  it("a newer record of the path arriving during the pane creation is refused at install", async () => {
+    reaped();
+    atPaneCreation(newer);
+    await refusedAtInstall(/newer recovery \d+ owns/);
+  });
+
+  it("the kill unproven: pane-unknown, naming the owner and the pane", async () => {
+    reaped();
+    atPaneCreation(owner);
+    const was = beforeTmux;
+    beforeTmux = (a) => {
+      was?.(a);
+      if (a[0] === "kill-pane") throw new Error("tmux transport broke");
+    };
+    const e = await failure(apply());
+    expect(e).toBeInstanceOf(ReattachFailedError);
+    expect((e as ReattachFailedError).rollback).toBe("pane-unknown");
+    expect((e as Error).message).toContain("current agent other/other-1 uses");
+    const [pane] = [...state.panes.keys()].filter((id) => id !== "%99");
+    expect(reservation()?.paneId).toBe(pane);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 });

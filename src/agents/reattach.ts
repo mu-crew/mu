@@ -17,7 +17,15 @@ import { deleteRemoteRecovery, restoreRemoteRecovery } from "../remote-recovery.
 import { assertRevision } from "../revision.js";
 import { isScratchWorkstream } from "../workstream.js";
 import { withAgentLock } from "./lock.js";
-import { closeCommand, factsOf, type Plan, planSnapshot } from "./reattach-check.js";
+import {
+  type Blocker,
+  closeCommand,
+  factsOf,
+  type Plan,
+  planSnapshot,
+  ReattachRefusedError,
+  recoveryBlocker,
+} from "./reattach-check.js";
 import { spawnerFromEnv } from "./spawn.js";
 import { withSpawnLock } from "./spawn-lock.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
@@ -43,10 +51,18 @@ export class ReattachFailedError extends Error {
 
 class PaneGone extends Error {}
 
+/** Install found the recovery's path owned or claimed: the preflight's blocker, found late. */
+class InstallBlocked extends Error {
+  constructor(readonly blocker: Blocker) {
+    super(blocker.detail);
+  }
+}
+
 /**
  * `agent reattach --if <rev>`. Refuses (ReattachRefusedError, AgentExistsError,
- * RevisionMismatchError) before any effect; ReattachFailedError when the new carrier did not
- * take. A signal during readiness rethrows with the row kept.
+ * RevisionMismatchError) before any effect, and ReattachRefusedError too when install finds
+ * the recovery's path taken and the new pane is proven killed; ReattachFailedError when the
+ * new carrier did not take. A signal during readiness rethrows with the row kept.
  */
 export async function reattachAgent(
   db: Db,
@@ -103,6 +119,12 @@ export async function reattachAgent(
         await mux.killPane(pid).catch(() => {});
         const gone = (await localPaneAlive(pid).catch(() => undefined)) === false;
         if (!gone && !fenced) fenced = fence();
+        if (e instanceof InstallBlocked && gone) {
+          // The new pane is gone and nothing else moved: the preflight's refusal, found late.
+          const detail = `${e.blocker.detail} (found at install; its new pane ${pid} was killed)`;
+          const blockers = [{ ...e.blocker, detail }];
+          throw new ReattachRefusedError(name, blockers, closeCommand(db, ws, name));
+        }
         const failed = `install failed (${e instanceof Error ? e.message : e})`;
         const why = gone
           ? `${failed}; its pane ${pid} was killed, so its signal path stops job ${p.r.job}`
@@ -141,7 +163,10 @@ export async function reattachAgent(
 }
 export type ReattachResult = Awaited<ReturnType<typeof reattachAgent>>;
 
-/** The install, one immediate transaction: the row, the reservation's rebind, the record's delete. */
+/**
+ * The install, one immediate transaction: the recovery's admission re-checked, then the row,
+ * the reservation's rebind, the record's delete.
+ */
 function install(db: Db, ws: string, p: Plan, pid: string): number {
   const { r, rec } = p;
   return db
@@ -150,6 +175,10 @@ function install(db: Db, ws: string, p: Plan, pid: string): number {
       if ((live.get(ws) as { id: number } | undefined)?.id !== p.wsId) {
         throw new Error(`workstream ${ws} was torn down or created again`);
       }
+      // Before the row: preflight 7 again, under the writer lock (its same-name check would
+      // see the new row). Another workstream's spawn may have taken the path meanwhile.
+      const blocked = recoveryBlocker(db, { name: r.name, host: r.host, wsId: p.wsId, rec });
+      if (blocked !== undefined) throw new InstallBlocked(blocked);
       const { incarnation } = insertAgent(db, {
         ...{ reservation: r.token, name: r.name, workstream: ws, cli: "pi", paneId: pid },
         ...{ tab: r.name, cwd: rec?.cwd ?? null, base: rec?.base ?? null },
