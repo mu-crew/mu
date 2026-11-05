@@ -18,6 +18,7 @@ the others are project-scoped under /tmp/u0-repo.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 HOOK = HERE / "u0_hook.py"
-REPO = Path("/tmp/u0-repo")
+REPO = Path(os.environ.get("U0_REPO", "/tmp/u0-repo"))
 LOGS = [Path("/tmp/u0-logs"), Path.home() / "u0-logs"]
 
 EVENTS = {
