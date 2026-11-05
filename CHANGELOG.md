@@ -10,6 +10,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.4.0] — 2026-11-05
+
 ### Added
 
 - **`mu host add --attach <template>`**: a lease profile's optional template
