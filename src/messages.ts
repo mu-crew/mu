@@ -450,29 +450,31 @@ export const MESSAGES = {
     host: string,
     cwd: string,
     owner: { workstream: string; name: string },
-    close: string,
-    own: string,
+    next: readonly string[],
+    gate: string | undefined,
   ) =>
-    `agent ${ws}/${agent}: ${cwd} on ${host} is the managed remote worktree of ${owner.workstream}/${owner.name}; a second agent there could lose its work or its commits' attribution. Close it first: ${close}, or give this agent its own tree: ${own}`,
+    `agent ${ws}/${agent}: ${cwd} on ${host} is the managed remote worktree of ${owner.workstream}/${owner.name}; a second agent there could lose its work or its commits' attribution. Close it first: ${next[0]}, or ${gate !== undefined ? "run the gate in an unmanaged checkout" : "give this agent its own tree"}: ${next[1]}`,
   "remote.path_owned_recovery": (
     ws: string,
     agent: string,
     host: string,
     cwd: string,
     rec: { agentId: number; workstream: string; name: string; cwd: string },
-    collect: string,
-    close: string,
+    next: readonly string[],
   ) =>
-    `agent ${ws}/${agent}: ${cwd} on ${host} is ${rec.cwd === cwd ? "" : "the parked aside of "}the worktree of recovery ${rec.agentId} (removed agent ${rec.workstream}/${rec.name}); a second agent there could lose its work. Keep its commits with ${collect}, then ${close}`,
+    `agent ${ws}/${agent}: ${cwd} on ${host} is ${rec.cwd === cwd ? "" : "the parked aside of "}the worktree of recovery ${rec.agentId} (removed agent ${rec.workstream}/${rec.name}); a second agent there could lose its work. Keep its commits with ${next[0]}, then ${next[1]}`,
   "remote.path_owned_pane": (
     host: string,
-    pane: { id: string; backend: string; gone: boolean; kill: string } | undefined,
-  ) =>
-    pane === undefined
-      ? ". The agent was not started"
-      : pane.gone
-        ? `. Found after its pane opened: ${pane.backend} pane ${pane.id} was killed; no agent was registered`
-        : `. Found after its pane opened: ${pane.backend} pane ${pane.id} (host ${host}) is not proven gone and may still run its transport; no agent was registered. Kill it: ${pane.kill}`,
+    pane: { id: string; backend: string; gone: boolean; heldBy?: string; kill: string } | undefined,
+  ) => {
+    if (pane === undefined) return ". The agent was not started";
+    const at = `. Found after its pane opened: ${pane.backend} pane ${pane.id}`;
+    if (pane.heldBy !== undefined)
+      return `${at} now belongs to ${pane.heldBy} and was left alone; this spawn's transport may still run in it. No agent was registered`;
+    return pane.gone
+      ? `${at} was killed; no agent was registered`
+      : `${at} (host ${host}) is not proven gone and may still run its transport; no agent was registered. Kill it: ${pane.kill}`;
+  },
   "rebuild.target_exists": (path: string) => `rebuild target already exists: ${path}`,
   "rebuild.target_is_source": (path: string) => `rebuild target is the source DB: ${path}`,
   "rebuild.no_identity": () => "source DB has no machine_identity row; not a mu DB",

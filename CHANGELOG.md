@@ -23,12 +23,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   work: sending a reviewer into a worker's tree. Give it its own tree with
   `--worktree --from <the worker's commit>`; the error prints that command,
   or the owner's close, or the record's collect and close with
-  `--recovery <id>`. Unmanaged checkouts stay shareable; subdirectories and
+  `--recovery <id>`. A refused command gate is offered the owner's close or
+  the gate in an unmanaged checkout (`--cwd <repo root> --command <cmd>`),
+  never `--worktree`. Unmanaged checkouts stay shareable; subdirectories and
   other profiles naming the same host are not checked. The check runs right
   after prepare's exec (no pane, the agent never starts) and again in one
   immediate transaction with the row's insert; an owner that landed while
   the pane opened refuses there, after a kill, and a pane mu cannot prove
-  gone is named with its backend's kill command (new `MuxBackend.killPaneCommand`).
+  gone is named with its backend's kill command (new `MuxBackend.killPaneCommand`);
+  a pane id another agent's row now holds is left alone and said so, with
+  no kill offered.
   Recovery, reattach, collect and close keep their own stricter checks.
 
 ## [4.4.0] — 2026-11-05

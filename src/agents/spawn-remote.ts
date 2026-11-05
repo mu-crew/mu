@@ -23,7 +23,7 @@ import {
   type RemoteSite,
   removeRemoteWorktree,
 } from "../remote-agent.js";
-import { refuseOwnedRemotePath, refuseRecoveredWorktree } from "../remote-recovery.js";
+import { refuseRecoveredWorktree } from "../remote-recovery.js";
 import { withAgentLock } from "./lock.js";
 import type { SpawnAgentOptions, StagedWorktree } from "./spawn.js";
 
@@ -156,9 +156,6 @@ export async function admitRemoteSpawn(
         ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
         ...remoteRoot(opts, admittedProfile),
       });
-      // The resolved path, before any pane: another agent's managed tree or a recovery's is
-      // refused here. spawnAgent re-checks it with the row's insert (an owner may land meanwhile).
-      refuseOwnedRemotePath(db, opts, admittedProfile.name, site.cwd);
     }
     if (transient) releaseHostChannel(db, lease); // prepare is over: nothing binds to the pane
     return { lease: transient ? undefined : lease, profile: admittedProfile, staged, site };
