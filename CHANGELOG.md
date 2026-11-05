@@ -59,6 +59,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   pane probe; a reservation that keeps changing refuses
   (`AgentReplacedError`, exit 4). Pi only: no other cli is stored. Logs
   `agent.reattach`. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_adopt.
+  `--task <id>` (repeatable) claims each task back for the new incarnation
+  once ctl answers (`force`, since the reaper parked it; only an OPEN task, and
+  only while the name is still this incarnation). A refused claim is a warning
+  in `claims: [{task, ok, error}]`, exit 0; with ctl not ready every claim is
+  `skipped: ctl not ready`.
+
+### Changed
+
+- **The reaper parks a still-reserved lease agent's tasks.** When reconcile
+  (or any deleter but `agent close`) removes a lease row whose reservation
+  holds a job, its `IN_PROGRESS` tasks reopen as `OPEN/parked`, not
+  `OPEN/todo`: pane loss proves the carrier gone, not the job, so `mu next`
+  and a plain claim no longer hand the task to a second worker while the
+  original pi may still write (2026-11-04 aiv-blog incident). The `[reaper]`
+  note names the job, the host and both ways out: `mu agent reattach <name>
+  -w <ws> --task <id>`, or `mu agent close` then `mu task unpark <id>`.
+  `agent close` stopped (or abandoned) the job, so its tasks reopen as `todo`
+  as before. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_reap.
 
 ### Fixed
 

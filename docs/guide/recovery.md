@@ -19,7 +19,9 @@ with the multiplexer:
 
 - An agent row whose pane is gone is a ghost. mu deletes the row, and
   its `IN_PROGRESS` task returns to `OPEN`. A `mu wait` on that
-  task exits 6.
+  task exits 6. A lease agent whose job may still run leaves its task
+  `OPEN/parked`: its `[reaper]` note names `mu agent reattach --task` and
+  the close-then-unpark way out.
 - A pane in the session that runs an agent CLI but has no row is an
   orphan. mu lists it and does not register it. Close the pane in
   your multiplexer, or ignore it.

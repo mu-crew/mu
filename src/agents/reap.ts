@@ -7,6 +7,10 @@
 // task with a `[reaper]` note. A throw anywhere rolls the lot back with the
 // caller's transaction: the row stays, nothing is recorded.
 //
+// A lease row whose reservation holds a job is the exception: pane loss proves its carrier
+// gone, not the job, so its tasks reopen OPEN/parked (out of `ready`) unless the caller
+// settled the job itself (`leaseSettled`, a close that stopped or abandoned it).
+//
 // The op context is the CALLER's: `deleteAgent` opens `task.reap`, teardown
 // its own `workstream.teardown` group, and the reaper adds no group of its
 // own. The note is inserted by task id (not through `addNote`, which looks
@@ -21,6 +25,8 @@ import { withOpContext } from "../op-context.js";
 export interface ReapOptions {
   /** False when the caller has itself dealt with the remote worktree (a close that removed it). Default true. */
   preserve?: boolean;
+  /** True when the caller stopped (or abandoned) the row's lease job: its tasks reopen as todo. */
+  leaseSettled?: boolean;
 }
 
 /** Delete agent row `agentId` (named `name`, for the note). False when it is already gone. */
@@ -32,14 +38,25 @@ export function reapAgentRow(
 ): boolean {
   const stuck = db
     .prepare(
-      `SELECT t.id AS taskId FROM tasks t
+      `SELECT t.id AS taskId, t.local_id AS localId FROM tasks t
         WHERE t.owner_id = ? AND t.status = 'IN_PROGRESS'`,
     )
-    .all(agentId) as Array<{ taskId: number }>;
-  const pane = db.prepare("SELECT pane_id FROM agents WHERE id = ?").get(agentId) as
-    | { pane_id: string }
-    | undefined;
+    .all(agentId) as Array<{ taskId: number; localId: string }>;
+  const pane = db
+    .prepare(
+      "SELECT a.pane_id, w.name AS ws FROM agents a JOIN workstreams w ON w.id = a.workstream_id WHERE a.id = ?",
+    )
+    .get(agentId) as { pane_id: string; ws: string } | undefined;
   if (pane === undefined) return false;
+  // The job this row's reservation holds may still run: the tasks wait for a reattach or close.
+  const lease =
+    opts.leaseSettled === true
+      ? undefined
+      : (db
+          .prepare(
+            "SELECT job, host FROM carrier_jobs WHERE agent_id = ? AND job IS NOT NULL ORDER BY id LIMIT 1",
+          )
+          .get(agentId) as { job: string; host: string } | undefined);
   // The row's AFTER DELETE trigger writes its remote recovery record (src/db-recovery.ts).
   if (db.prepare("DELETE FROM agents WHERE id = ?").run(agentId).changes === 0) return false;
   // A close that has itself removed (or found gone) the tree owes no record.
@@ -49,21 +66,22 @@ export function reapAgentRow(
   // channel it held, by registry id + pane (never a name).
   releaseHostChannelsForAgent(db, agentId, pane.pane_id);
   const reopen = db.prepare(
-    "UPDATE tasks SET status = 'OPEN', substate = CASE WHEN kind = 'human' THEN 'parked' ELSE 'todo' END, updated_at = ? WHERE id = ?",
+    "UPDATE tasks SET status = 'OPEN', substate = CASE WHEN kind = 'human' OR ? THEN 'parked' ELSE 'todo' END, updated_at = ? WHERE id = ?",
   );
   const note = db.prepare(
     "INSERT INTO task_notes (task_id, author, content, created_at, kind) VALUES (?, 'reaper', ?, ?, 'note')",
   );
   for (const t of stuck) {
     const now = new Date().toISOString();
-    reopen.run(now, t.taskId);
+    reopen.run(lease === undefined ? 0 : 1, now, t.taskId);
+    const id = t.localId;
+    const content =
+      lease === undefined
+        ? `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`
+        : `[reaper] previous owner ${name} gone (pane died); its lease job ${lease.job} on ${lease.host} may still run, so the task is parked: resume with mu agent reattach ${name} -w ${pane.ws} --task ${id}, or mu agent close ${name} -w ${pane.ws} then mu task unpark ${id}`;
     // The note keeps its own intent (as `addNote` gave it) inside the caller's group.
     withOpContext(db, { intent: "task.note", actor: "reaper" }, () =>
-      note.run(
-        t.taskId,
-        `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`,
-        now,
-      ),
+      note.run(t.taskId, content, now),
     );
   }
   return true;
