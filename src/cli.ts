@@ -39,6 +39,7 @@ import { wireHostCommands } from "./cli/host.js";
 import { wireHumanNeededCommand } from "./cli/human-needed.js";
 import { wireLogCommand } from "./cli/log.js";
 import { wireNextCommand } from "./cli/next.js";
+import { wireOrchestrateCommand } from "./cli/orchestrate.js";
 import { wirePiCommand } from "./cli/pi.js";
 import { wireRebuildCommand } from "./cli/rebuild.js";
 import { wireStateCommands } from "./cli/state.js";
@@ -57,6 +58,7 @@ import {
   TaskNotInWorkstreamError,
   type TaskStatus,
 } from "./tasks.js";
+import { callerNameProblem } from "./wait-callers.js";
 import {
   isScratchWorkstream,
   isValidWorkstreamName,
@@ -101,24 +103,44 @@ export {
 
 // ─── Workstream resolution ─────────────────────────────────────────────
 
-/**
- * The workstream a mu-spawned worker was injected with, or undefined.
- * Spawn sets `MU_MANAGED_AGENT=1` and `MU_WORKSTREAM` together; the gate
- * keeps a stale `$MU_WORKSTREAM` in a user shell from routing anything.
- */
-export function injectedWorkstream(): string | undefined {
+/** The workstream spawn injected into this managed agent, worker or orchestrator. */
+function managedWorkstream(): string | undefined {
   if (process.env.MU_MANAGED_AGENT !== "1") return undefined;
   const ws = process.env.MU_WORKSTREAM;
   if (ws === undefined || ws === "") return undefined;
   return checkWorkstreamName(ws, "$MU_WORKSTREAM");
 }
 
-/** The managed worker this process runs as (spawn-injected), or undefined. */
+/**
+ * The workstream a mu-spawned worker was injected with, or undefined.
+ * Spawn sets `MU_MANAGED_AGENT=1` and `MU_WORKSTREAM` together; the gate
+ * keeps a stale `$MU_WORKSTREAM` in a user shell from routing anything.
+ * An orchestrator (`MU_ORCHESTRATOR=1`, `mu orchestrate`) gets no implicit
+ * `-w`: it names its scope like a hand-started one (spec D9).
+ */
+export function injectedWorkstream(): string | undefined {
+  if (process.env.MU_ORCHESTRATOR === "1") return undefined;
+  return managedWorkstream();
+}
+
+/** The managed agent this process runs as (spawn-injected, orchestrators included), or undefined. */
 export function injectedIdentity(): { name: string; workstream: string } | undefined {
-  const workstream = injectedWorkstream();
+  const workstream = managedWorkstream();
   const name = process.env.MU_AGENT_NAME;
   if (workstream === undefined || name === undefined || name === "") return undefined;
   return { name, workstream };
+}
+
+/**
+ * `--as <caller>`: the caller a process without a managed env waits or acts
+ * as (a harness's Stop hook, a script), checked. A verb that waits refuses it
+ * while another live process waits as that caller (spec D9) when it marks its
+ * own wait: `holdCallers(callers, { refuse })` in src/wait-holders.ts.
+ */
+export function asCaller(raw: string): string {
+  const problem = callerNameProblem(raw);
+  if (problem !== undefined) throw new UsageError(problem, { showHelp: false });
+  return raw;
 }
 
 /**
@@ -868,6 +890,7 @@ export function buildProgram(): Command {
   wireTaskCommands(program);
   wireWaitCommand(program);
   wireNextCommand(program);
+  wireOrchestrateCommand(program);
   wireLogCommand(program);
   wireStateCommands(program);
   wireSyncCommand(program);

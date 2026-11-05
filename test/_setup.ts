@@ -59,6 +59,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inject } from "vitest";
+import { sandboxMarkerEnvNames } from "../src/harnesses.js";
 import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
 
@@ -81,6 +82,13 @@ for (const key of Object.keys(process.env)) {
 // (and spawn would stamp) a real session's work. Tests that need one set it.
 {
   const key = "PI_SESSION_ID";
+  delete process.env[key];
+}
+
+// A run from inside an agent (Claude Code, Codex, …) inherits its sandbox marker
+// env, and spawn would refuse to start a tmux server there (spec D10). Tests
+// that need a marker set it.
+for (const key of sandboxMarkerEnvNames()) {
   delete process.env[key];
 }
 

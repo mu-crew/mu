@@ -292,3 +292,43 @@ export function isHarness(value: unknown): value is Harness {
 export function harnessFor(cli: string): HarnessRow | undefined {
   return isHarness(cli) ? HARNESS_TABLE[cli] : undefined;
 }
+
+/** An executable's basename, with the suffixes murmur strips (`codex.real`, `cli.js`). */
+function executableName(argv0: string): string {
+  const base = argv0.slice(argv0.lastIndexOf("/") + 1);
+  return base.replace(/\.(real|js|mjs|cjs)$/, "");
+}
+
+/**
+ * The harness a spawn runs, or undefined for a CLI outside the blessed five.
+ * cli keys are free-form (`pi-meta`, `claude-big`), so the key alone is not
+ * enough: the command's argv0 decides when it names a harness, then the key
+ * itself, then the key's prefix before `-` or `_` (spec D17).
+ */
+export function harnessOfCli(cli: string, command?: string): Harness | undefined {
+  const argv0 = executableName(command?.trim().split(/\s+/)[0] ?? "");
+  for (const name of [argv0, cli, cli.split(/[-_]/)[0] ?? ""]) {
+    const row = HARNESSES.find((h) => HARNESS_TABLE[h].names.includes(name));
+    if (row !== undefined) return row;
+  }
+  return undefined;
+}
+
+/**
+ * True when this process runs inside an agent: a mu-managed one
+ * (`MU_MANAGED_AGENT=1`), or any harness whose sandbox marker env is set
+ * (`CLAUDECODE`, `CODEX_SESSION_ID`, …). Such a process must not start the
+ * tmux server it would spawn agents into: the server's children inherit the
+ * server's sandbox, not the client's (spec D10).
+ */
+export function insideAgent(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.MU_MANAGED_AGENT === "1") return true;
+  return HARNESSES.some((h) =>
+    HARNESS_TABLE[h].sandboxMarkerEnv.some((k) => (env[k] ?? "") !== ""),
+  );
+}
+
+/** Every harness's sandbox marker env names (test setup clears them all). */
+export function sandboxMarkerEnvNames(): string[] {
+  return HARNESSES.flatMap((h) => [...HARNESS_TABLE[h].sandboxMarkerEnv]);
+}

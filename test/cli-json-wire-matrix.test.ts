@@ -90,6 +90,7 @@ const ARGS: Record<string, string[]> = {
   "host check": ["dev"],
   "human-needed": ["needs a decision"],
   next: ["--dry", "--workers", "2"],
+  orchestrate: ["--name", "orchestrator-1"],
   "pi migrate": [],
   "delegates list": ["--all"],
   "delegates show": ["pi:x:1"],

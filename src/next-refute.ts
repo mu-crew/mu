@@ -110,14 +110,14 @@ export interface Check {
 }
 
 /**
- * The next check owed to `caller` not in `skip`: a CLOSED/done permitted task
- * whose delivered attempt has no call yet, or this caller's call that is
+ * The next check owed to `callers` not in `skip`: a CLOSED/done permitted task
+ * whose delivered attempt has no call yet, or one of these callers' calls that is
  * still `starting`, `running` or `recording`. Read-only.
  */
 export function nextCheck(
   db: Db,
   workstream: string,
-  caller: string,
+  callers: readonly string[],
   skip: ReadonlySet<string>,
 ): Check | undefined {
   const rows = db
@@ -137,7 +137,7 @@ export function nextCheck(
     if (skip.has(callId)) continue;
     const call = getDelegateCall(db, callId);
     if (call === undefined) return { callId, task: r.local_id, attempt, workstream };
-    if (call.caller !== caller) continue;
+    if (!callers.includes(call.caller)) continue;
     if (["starting", "running", "recording"].includes(call.state)) {
       return { callId, task: r.local_id, attempt, workstream, call };
     }
@@ -154,9 +154,9 @@ function checkerOf(db: Db, c: DelegateRow) {
 }
 
 /** This caller's running checkers as wait refs (a hold ends their wait on a settle or death). */
-export function checkerRefs(db: Db, workstream: string, caller: string): WaitRef[] {
+export function checkerRefs(db: Db, workstream: string, callers: readonly string[]): WaitRef[] {
   const refs: WaitRef[] = [];
-  for (const c of liveCalls(db, workstream, caller)) {
+  for (const c of liveCalls(db, workstream, callers)) {
     const held = checkerOf(db, c);
     if (held === undefined) continue;
     const { receipt, agent } = held;
@@ -171,12 +171,13 @@ export function checkerRefs(db: Db, workstream: string, caller: string): WaitRef
   return refs;
 }
 
-function liveCalls(db: Db, workstream: string, caller: string): DelegateRow[] {
+function liveCalls(db: Db, workstream: string, callers: readonly string[]): DelegateRow[] {
+  if (callers.length === 0) return [];
   return db
     .prepare(
-      "SELECT call_id FROM delegate_calls WHERE caller = ? AND call_id LIKE ? AND state IN ('running','recording')",
+      `SELECT call_id FROM delegate_calls WHERE caller IN (${callers.map(() => "?").join(",")}) AND call_id LIKE ? AND state IN ('running','recording')`,
     )
-    .all(caller, `refute:${workstream}:%`)
+    .all(...callers, `refute:${workstream}:%`)
     .map((r) => getDelegateCall(db, (r as { call_id: string }).call_id))
     .filter((c): c is DelegateRow => c !== undefined);
 }

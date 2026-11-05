@@ -4,8 +4,11 @@
 // lost (closes on the send, never accepts it) | drop (accepts the send, reply lost) | refuse (send ok:false) |
 // crash (accepts the send, then exits) | hang (never settles) | blocked | error | empty.
 // FAKE_PI_LOG appends one line per request op, so a test can count sends.
-import { appendFileSync, rmSync } from "node:fs";
+// FAKE_PI_ENV names a file the fake writes its whole env to, as JSON, at start.
+import { appendFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
+
+if (process.env.FAKE_PI_ENV) writeFileSync(process.env.FAKE_PI_ENV, JSON.stringify(process.env));
 
 const mode = process.env.FAKE_PI ?? "answer";
 const sock = process.env.MU_CTL_SOCK;

@@ -529,6 +529,9 @@ export const LOCAL_ONLY_ENV = [
   "MU_AGENT_NAME",
   "MU_WORKSTREAM",
   "MU_MANAGED_AGENT",
+  // An orchestrator's flag and harness never reach a remote worker (spec D9).
+  "MU_ORCHESTRATOR",
+  "MU_AGENT_CLI",
 ] as const;
 
 /**

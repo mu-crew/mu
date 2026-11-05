@@ -1,8 +1,9 @@
-import { accessSync, constants, existsSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
+import { HARNESS_TABLE, type Harness, harnessOfCli } from "./harnesses.js";
 import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
 import { tmux } from "./tmux.js";
@@ -48,6 +49,7 @@ export interface StateAgentRef {
 export const UNKNOWN_REASON = {
   murmurMissing: "murmur not installed",
   extensionMissing: "murmur pi extension not linked",
+  hooksMissing: "murmur hooks not installed",
   noRow: "murmur has no row",
   stale: "remote snapshot stale",
   herdrNone: "herdr reports no state",
@@ -88,8 +90,67 @@ function murmurExtensionLinked(): boolean {
   return existsSync(join(piDir, "extensions", "murmur.ts"));
 }
 
-export function murmurAvailable(): boolean {
-  return murmurOnPath() && murmurExtensionLinked();
+/**
+ * The harness whose murmur wiring an agent's state depends on. A CLI outside
+ * the blessed five reads as pi, as before: murmur reaches it only through
+ * `murmur notify`, and the pi extension is what the check always meant.
+ */
+function murmurHarness(cli: string | undefined): Harness {
+  return (cli === undefined ? undefined : harnessOfCli(cli)) ?? "pi";
+}
+
+/**
+ * True when the harness's own hook config (D6 `hookConfig`, under
+ * `$MURMUR_HOOK_HOME` else the home dir, as murmur resolves it) holds a
+ * handler running `murmur hook <harness>`: what `murmur init` writes.
+ */
+export function murmurHooksInstalled(harness: Exclude<Harness, "pi">): boolean {
+  const rel = HARNESS_TABLE[harness].hookConfig.find((p) => p.startsWith("~/"));
+  if (rel === undefined) return false;
+  const home = process.env.MURMUR_HOOK_HOME ?? homedir();
+  let root: unknown;
+  try {
+    root = JSON.parse(readFileSync(join(home, rel.slice(2)), "utf8"));
+  } catch {
+    return false;
+  }
+  const hooks = (root as { hooks?: unknown } | null)?.hooks;
+  if (typeof hooks !== "object" || hooks === null) return false;
+  const ours = new RegExp(`^murmur\\s+hook\\s+${harness}(?:\\s|$)`);
+  const isOurs = (h: unknown): boolean => {
+    const command = (h as { command?: unknown } | null)?.command;
+    return typeof command === "string" && ours.test(command.trimStart());
+  };
+  for (const entries of Object.values(hooks)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      // Claude Code's grouped shape (`[{ matcher, hooks: [...] }]`), or Cursor's flat one.
+      const inner = (entry as { hooks?: unknown } | null)?.hooks;
+      if (isOurs(entry) || (Array.isArray(inner) && inner.some(isOurs))) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether murmur can report the state of an agent running `cli` (default pi):
+ * murmur on PATH, plus its pi extension for pi, or its hook entries for a
+ * hook harness. Per harness: claude hooks never stand in for a missing pi
+ * extension (spec D13).
+ */
+export function murmurAvailable(cli = "pi"): boolean {
+  if (!murmurOnPath()) return false;
+  const harness = murmurHarness(cli);
+  return harness === "pi" ? murmurExtensionLinked() : murmurHooksInstalled(harness);
+}
+
+/** Why murmur has nothing for an agent running `cli`, when murmur is the source. */
+function murmurMissingReason(cli: string | undefined): string {
+  if (murmurAvailable(cli)) return UNKNOWN_REASON.noRow;
+  if (!murmurOnPath()) return UNKNOWN_REASON.murmurMissing;
+  return murmurHarness(cli) === "pi"
+    ? UNKNOWN_REASON.extensionMissing
+    : UNKNOWN_REASON.hooksMissing;
 }
 
 const defaultMurmurRunner: MurmurRunner = async () => {
@@ -186,11 +247,9 @@ function remoteReading(agent: StateAgentRef, panes: readonly MurmurPane[]): Stat
       pane.agent_name === agent.name &&
       pane.workstream === agent.workstreamName,
   );
-  if (matches.length === 0) {
-    return unknownReading(
-      murmurExtensionLinked() ? UNKNOWN_REASON.noRow : UNKNOWN_REASON.extensionMissing,
-    );
-  }
+  // murmur answered, so it is on PATH: what it lacks is this harness's wiring
+  // (the pi extension, or the hook entries), else simply a row (spec D13).
+  if (matches.length === 0) return unknownReading(murmurMissingReason(agent.cli));
   if (matches.length > 1) return unknownReading(ambiguousReason(matches.length));
   const row = matches[0];
   if (row === undefined) return unknownReading(UNKNOWN_REASON.noRow);
@@ -359,12 +418,9 @@ export async function readBaseStates(
   if (remoteCandidates.length === 0) return readings;
   const remoteStdout = await readMurmur(opts.now ?? Date.now());
   if (remoteStdout === null) {
-    const reason = murmurAvailable()
-      ? UNKNOWN_REASON.noRow
-      : murmurOnPath()
-        ? UNKNOWN_REASON.extensionMissing
-        : UNKNOWN_REASON.murmurMissing;
-    for (const agent of remoteCandidates) readings.set(agentKey(agent), unknownReading(reason));
+    for (const agent of remoteCandidates) {
+      readings.set(agentKey(agent), unknownReading(murmurMissingReason(agent.cli)));
+    }
     return readings;
   }
 

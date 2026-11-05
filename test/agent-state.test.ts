@@ -269,3 +269,105 @@ describe("murmurAvailable", () => {
     expect(murmurAvailable()).toBe(true);
   });
 });
+
+describe("murmurAvailable(cli): per harness (spec D13)", () => {
+  const originalHookHome = process.env.MURMUR_HOOK_HOME;
+  beforeEach(() => {
+    process.env.MURMUR_HOOK_HOME = join(tempDir, "home");
+  });
+  afterEach(() => {
+    if (originalHookHome === undefined) delete process.env.MURMUR_HOOK_HOME;
+    else process.env.MURMUR_HOOK_HOME = originalHookHome;
+  });
+
+  /** One hook config file under the hook home, as `murmur init` (or a user) wrote it. */
+  function hookFile(rel: string, root: unknown): void {
+    const file = join(tempDir, "home", rel);
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, JSON.stringify(root));
+  }
+  const grouped = (command: string) => ({
+    hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command }] }] },
+  });
+
+  it("claude hooks installed: claude is available, a missing pi extension is not hidden", async () => {
+    installMurmur();
+    hookFile(".claude/settings.json", grouped("murmur hook claude"));
+    expect(murmurAvailable("claude")).toBe(true);
+    expect(murmurAvailable("pi")).toBe(false);
+    expect(murmurAvailable()).toBe(false);
+    const { murmurDoctorCheck } = await import("../src/doctor-summary.js");
+    const check = murmurDoctorCheck("murmur");
+    expect(check.status).toBe("warn");
+    expect(check.detail).toContain(UNKNOWN_REASON.extensionMissing);
+  });
+
+  it("the pi extension alone leaves a claude agent without murmur", () => {
+    installMurmur();
+    linkExtension();
+    expect(murmurAvailable("pi")).toBe(true);
+    expect(murmurAvailable("claude")).toBe(false);
+    expect(murmurAvailable("codex")).toBe(false);
+  });
+
+  it("only murmur's own handler counts, in the harness's own file and shape", () => {
+    installMurmur();
+    hookFile(".claude/settings.json", grouped("museum hook claude"));
+    hookFile(".codex/hooks.json", grouped("murmur hook claude"));
+    expect(murmurAvailable("claude")).toBe(false);
+    expect(murmurAvailable("codex")).toBe(false);
+    hookFile(".cursor/hooks.json", {
+      version: 1,
+      hooks: { stop: [{ command: "murmur hook cursor-agent" }] },
+    });
+    hookFile(".config/muse/settings.json", grouped("  murmur hook muse"));
+    expect(murmurAvailable("cursor-agent")).toBe(true);
+    expect(murmurAvailable("muse")).toBe(true);
+  });
+
+  it("a cli key maps to its harness, and murmur off PATH is never available", () => {
+    hookFile(".claude/settings.json", grouped("murmur hook claude"));
+    expect(murmurAvailable("claude-big")).toBe(false);
+    installMurmur();
+    expect(murmurAvailable("claude-big")).toBe(true);
+  });
+
+  it("an unreported claude agent reads `hooks not installed`, a pi agent `extension not linked`", async () => {
+    installMurmur();
+    tmuxOutput("%1\t\t\n%2\t\t");
+    setMurmurRunnerForTests(async () => null);
+    const claude: StateAgentRef = {
+      name: "w2",
+      workstreamName: "demo",
+      paneId: "%2",
+      cli: "claude",
+    };
+    const got = await readAgentStates([agent, claude]);
+    expect(got.get(agentKey(agent))?.reason).toBe(UNKNOWN_REASON.extensionMissing);
+    expect(got.get(agentKey(claude))?.reason).toBe(UNKNOWN_REASON.hooksMissing);
+  });
+
+  it("murmur answering with no row still names the harness's missing wiring", async () => {
+    installMurmur();
+    linkExtension();
+    tmuxOutput("%1\t\t\n%2\t\t");
+    setMurmurRunnerForTests(async () => JSON.stringify({ panes: [] }));
+    const claude: StateAgentRef = {
+      name: "w2",
+      workstreamName: "demo",
+      paneId: "%2",
+      cli: "claude",
+    };
+    let got = await readAgentStates([agent, claude]);
+    expect(got.get(agentKey(agent))?.reason).toBe(UNKNOWN_REASON.noRow);
+    expect(got.get(agentKey(claude))?.reason).toBe(UNKNOWN_REASON.hooksMissing);
+
+    // claude hooks installed, the pi extension gone: the claude pane simply has no row yet.
+    hookFile(".claude/settings.json", grouped("murmur hook claude"));
+    rmSync(join(tempDir, "pi"), { recursive: true, force: true });
+    resetAgentStateCacheForTests();
+    got = await readAgentStates([agent, claude]);
+    expect(got.get(agentKey(agent))?.reason).toBe(UNKNOWN_REASON.extensionMissing);
+    expect(got.get(agentKey(claude))?.reason).toBe(UNKNOWN_REASON.noRow);
+  });
+});

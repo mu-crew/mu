@@ -77,6 +77,22 @@ describe("registerCloseNudge", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("an orchestrator `mu orchestrate` started (MU_ORCHESTRATOR=1) gets no close nudge, even owning an IN_PROGRESS task", async () => {
+    const { emit, run, handlers } = setup(owned([["design", "IN_PROGRESS"]]), {
+      ...WORKER,
+      MU_MANAGED_AGENT: "1",
+      MU_ORCHESTRATOR: "1",
+    });
+    expect(handlers.size).toBe(0);
+    expect(await emit("agent_before_settle", { outcome: "completed" })).toBeUndefined();
+    expect(run).not.toHaveBeenCalled();
+    // The same pane without the flag is a worker, and is nudged.
+    expect(workerIdentity({ ...WORKER, MU_MANAGED_AGENT: "1" })).toEqual({
+      agent: "worker-1",
+      workstream: "auth",
+    });
+  });
+
   it("MU_NUDGE=0: registers nothing", () => {
     const f = fakePi();
     registerCloseNudge(f.pi, vi.fn(), { ...WORKER, MU_NUDGE: "0" });

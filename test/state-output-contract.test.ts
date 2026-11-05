@@ -370,6 +370,46 @@ describe("the caller's own delegate queue, waves and human needs", () => {
     ]);
   });
 
+  it("a managed pi orchestrator (mu orchestrate) sees the delegates its pi session owns, and its own needs (spec D9)", async () => {
+    insertAgent(db, { name: "orchestrator-1", workstream: "ws", paneId: "%5" });
+    reg("pi:s1:c1", "pi:s1");
+    reg("pi:s2:c1", "pi:s2");
+    recordHumanNeeded(db, { workstream: "ws", caller: "ws/orchestrator-1", reason: "managed" });
+    recordHumanNeeded(db, { workstream: "ws", caller: "pi:s1", reason: "session" });
+    const orchestrator = {
+      ...scrub,
+      MU_MANAGED_AGENT: "1",
+      MU_WORKSTREAM: "ws",
+      MU_AGENT_NAME: "orchestrator-1",
+      MU_ORCHESTRATOR: "1",
+      PI_SESSION_ID: "s1",
+    };
+    await asEnv(orchestrator, async () => {
+      // spawnerFromEnv prefers the managed name; the reads take both identities.
+      // (--me first: `-w` reconciles, and the fake mux has no pane for the row.)
+      for (const argv of [
+        ["state", "--me", "--full"],
+        ["state", "-w", "ws"],
+      ]) {
+        const { data, stdout } = await runCliJson(argv, dbPath);
+        expect(data?.caller, `${argv.join(" ")}: ${stdout}`).toBe("ws/orchestrator-1");
+        const w = data.workstreams[0];
+        expect(w.delegates.map((d: { call_id: string }) => d.call_id)).toEqual(["pi:s1:c1"]);
+        expect(w.human_needs.map((h: { reason: string }) => h.reason).sort()).toEqual([
+          "managed",
+          "session",
+        ]);
+      }
+    });
+    // The pi session alone still reads only its own.
+    await asEnv({ ...scrub, PI_SESSION_ID: "s1" }, async () => {
+      const { data } = await runCliJson(["state", "-w", "ws"], dbPath);
+      expect(data.workstreams[0].human_needs.map((h: { reason: string }) => h.reason)).toEqual([
+        "session",
+      ]);
+    });
+  });
+
   it("a long multiline reason is escaped and clipped in the CLI document with a cut count and the way back", async () => {
     recordHumanNeeded(db, {
       workstream: "ws",

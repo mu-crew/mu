@@ -146,6 +146,7 @@ import {
   TaskTitleSlugEmptyError,
 } from "../tasks.js";
 import { currentCallers } from "../wait-callers.js";
+import { CallerBusyError } from "../wait-holders.js";
 import { WaitResumeNotFoundError } from "../wait-resume.js";
 import { WaveNotFoundError } from "../wait-types.js";
 import {
@@ -612,6 +613,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SpawnReceiptConflictError
   ) {
     // The name changed hands, or another mu holds the agent: retry after a preview.
+    return { label: "conflict", exitCode: 4 };
+  }
+  if (err instanceof CallerBusyError) {
+    // Another live process waits as this caller: let it return, or stop it.
     return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof AgentPaneStillAliveError) {

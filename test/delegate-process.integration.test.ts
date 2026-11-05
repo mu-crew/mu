@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type DelegateTool, registerDelegate } from "../extension/delegate.js";
+import { type DelegateTool, delegateEnabled, registerDelegate } from "../extension/delegate.js";
 import { type MuRunner, runChild } from "../extension/mu-run.js";
 import { type Db, openDb } from "../src/db.js";
 import {
@@ -46,6 +46,9 @@ const KEYS = [
   "MU_DB_PATH",
   "FAKE_PI",
   "FAKE_PI_LOG",
+  "FAKE_PI_ENV",
+  "MU_MANAGED_AGENT",
+  "MU_ORCHESTRATOR",
 ] as const;
 const saved: Record<string, string | undefined> = {};
 let dir: string;
@@ -148,6 +151,23 @@ describe("runDelegateProcess (no mux)", () => {
     // a repeat is a no-op: nothing starts, nothing is resent
     expect((await run(callId, "answer")).ran).toBe(false);
     expect(sends()).toBe(1);
+  });
+
+  it("an orchestrator's delegate pi gets the delegate identity, not MU_ORCHESTRATOR (spec D9)", async () => {
+    process.env.MU_MANAGED_AGENT = "1";
+    process.env.MU_ORCHESTRATOR = "1";
+    const envFile = join(dir, "child-env.json");
+    process.env.FAKE_PI_ENV = envFile;
+    const { callId, call } = register();
+    expect((await run(callId, "answer")).outcome).toBe("done");
+    const child = JSON.parse(readFileSync(envFile, "utf8")) as NodeJS.ProcessEnv;
+    expect(child.MU_ORCHESTRATOR).toBeUndefined();
+    expect(child).toMatchObject({
+      MU_MANAGED_AGENT: "1",
+      MU_AGENT_NAME: call.task,
+      MU_AGENT_CLI: "pi",
+    });
+    expect(delegateEnabled(child)).toBe(false);
   });
 
   it("a definite no before the send refuses the call (reissuable) and leaves no child or receipt", async () => {

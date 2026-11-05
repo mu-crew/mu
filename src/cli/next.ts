@@ -13,6 +13,7 @@
 import type { Command } from "commander";
 import { spawnerFromEnv } from "../agents/spawn.js";
 import {
+  asCaller,
   emitJson,
   handle,
   JSON_OPT,
@@ -25,6 +26,8 @@ import {
 import type { Db } from "../db.js";
 import { type ExecuteNextOptions, executeNext, type NextMove, type NextResult } from "../next.js";
 import { encodeEnvelope, okEnvelope, RESULT_BYTES } from "../output-contract.js";
+import { currentCallers } from "../wait-callers.js";
+import { holdCallers } from "../wait-holders.js";
 import { CliExitError } from "./handle.js";
 import { installWaitSignals, parseOnStall, type WaitSignals } from "./wait.js";
 
@@ -37,6 +40,7 @@ interface NextOpts {
   refuteCli?: string;
   timeout?: number;
   onStall?: string;
+  as?: string;
   workstream?: string | string[];
 }
 
@@ -98,9 +102,13 @@ export function nextExit(r: NextResult, signal: "SIGINT" | "SIGTERM" | undefined
 export async function cmdNext(db: Db, o: NextOpts, sig: WaitSignals): Promise<void> {
   const scope = normalizeInheritedWorkstream(o.workstream);
   const workstream = await resolveExistingWorkstream(db, scope);
+  // `--as` acts as one caller; a hold waits as it, so it is refused while another wait does.
+  const as = o.as === undefined ? undefined : asCaller(o.as);
+  const callers = as !== undefined ? [as] : currentCallers();
   const opts: ExecuteNextOptions = {
     workstream,
-    caller: spawnerFromEnv() ?? "",
+    caller: as ?? spawnerFromEnv() ?? "",
+    callers,
     signal: sig.signal,
     ...(o.dry === true ? { dry: true } : {}),
     ...(o.hold === true ? { hold: true } : {}),
@@ -111,7 +119,16 @@ export async function cmdNext(db: Db, o: NextOpts, sig: WaitSignals): Promise<vo
     ...(o.timeout !== undefined ? { timeoutMs: Math.round(o.timeout * 1000) } : {}),
     onStall: parseOnStall(o.onStall),
   };
-  const result = await executeNext(db, opts);
+  const release =
+    o.hold === true && o.dry !== true
+      ? holdCallers(callers, { refuse: as !== undefined ? [as] : [] })
+      : () => {};
+  let result: NextResult;
+  try {
+    result = await executeNext(db, opts);
+  } finally {
+    release();
+  }
   const which = sig.which();
   const exit = nextExit(result, which);
   emitJson(nextData(result, exit, which));
@@ -156,6 +173,10 @@ export function wireNextCommand(program: Command): void {
     .option(
       "--on-stall <action>",
       "--hold: exit (default) ends on a stalled worker; warn; steer sends it ONE reminder; release frees its task",
+    )
+    .option(
+      "--as <caller>",
+      "act as this caller (<workstream>/<agent> or pi:<session>) instead of the env's identities; with --hold, refused while another live process waits as it",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)

@@ -1209,6 +1209,7 @@ export const herdrBackend: MuxBackend = Object.freeze({
   name: "herdr" as const,
   spawnAgentWaitsReady: true,
   runsShellCommand: false,
+  anchorsPanes: false,
   available: herdrAvailable,
 
   isValidPaneId,

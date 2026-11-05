@@ -90,9 +90,15 @@ On Rex, `--send`, `agent send` and `--command` all work.
 Install the skill (`npx skills add mu-crew/mu`) and point the harness at it.
 It dispatches pi workers as usual (`spawn --worktree --task --send -`).
 
+Start it with `mu orchestrate -w <ws> --cli <key>` so it has an identity:
+its caller is `<ws>/<name>` (printed), and a bare `mu wait` owns what it
+spawns. Run tmux from a terminal first: mu will not start a tmux server from
+inside an agent, because every pane would inherit that agent's sandbox.
+
 - **Wait on refs.** A bare `mu wait` owns only what a pi session or a managed
   pane started. From codex or cursor in a plain shell it is a usage error.
-  Name what you started: `mu wait task:<ws>/<a> task:<ws>/<b>`.
+  Name what you started (`mu wait task:<ws>/<a> task:<ws>/<b>`), or the
+  caller (`mu wait --as <ws>/<name>`; refused while another wait holds it).
 - **Delegate through `scratch`**, since there is no `mu_delegate`. Spawn a pi
   agent there (the first spawn creates the workstream; `init` refuses it),
   `send --fresh --json -`, then wait on the exact ref the send prints. See

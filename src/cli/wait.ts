@@ -22,6 +22,7 @@ import type { Command } from "commander";
 import { agentKey } from "../agent-state.js";
 import { getAgent } from "../agents.js";
 import {
+  asCaller,
   checkQualifiedPrefix,
   checkWorkstreamName,
   emitJson,
@@ -53,6 +54,7 @@ import type {
 import { releaseStallHandler, steerStallHandler, waitWithActions } from "../wait-actions.js";
 import { currentCallers } from "../wait-callers.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
+import { holdCallers } from "../wait-holders.js";
 import { compileTextMatcher } from "../wait-regex.js";
 import { loadResume, type ResumeSpec, saveResume } from "../wait-resume.js";
 import { CliExitError, setNextOutcome } from "./handle.js";
@@ -331,6 +333,8 @@ export async function runWait(
   opts: {
     /** A resume runs for the callers the stored wait ran for, not for whoever types it. */
     callers?: readonly string[];
+    /** `--as`: refuse when another live process already waits as these callers (CallerBusyError). */
+    refuseBusy?: boolean;
     /** The producer's receipt (`sent`, `claimed`, `warnings`) when a verb entered the wait: see WaitDataInput.extra. */
     extraData?: Record<string, unknown>;
   } = {},
@@ -361,6 +365,10 @@ export async function runWait(
   }
   const status = spec.status !== undefined ? parseStatusOption(spec.status) : undefined;
   const timeoutS = spec.timeout ?? WAIT_DEFAULT_TIMEOUT_S;
+
+  // Marked as waiting for its callers until it ends: `--as` refuses a caller
+  // this wait holds, and an `--as` wait refuses here, after its own mark.
+  const release = holdCallers(callers, opts.refuseBusy === true ? { refuse: callers } : {});
 
   let open = 0;
   let last: readonly WaitSnapshot[] = [];
@@ -423,6 +431,7 @@ export async function runWait(
     });
   } finally {
     clearInterval(beat);
+    release();
   }
 
   const signal = sig.which();
@@ -508,6 +517,7 @@ interface WaitOpts {
   afterRuns?: number;
   inc?: string;
   resume?: string;
+  as?: string;
   workstream?: string | string[];
 }
 
@@ -599,7 +609,12 @@ export async function cmdWait(
       : {}),
     ...(o.timeout !== undefined ? { timeout: o.timeout } : {}),
   };
-  await runWait(db, spec, sig);
+  await runWait(
+    db,
+    spec,
+    sig,
+    o.as === undefined ? {} : { callers: [asCaller(o.as)], refuseBusy: true },
+  );
 }
 
 /**
@@ -630,6 +645,7 @@ async function cmdWaitResume(
       ["--blockers-of", o.blockersOf !== undefined],
       ["--timeout", o.timeout !== undefined],
       ["--after-runs/--inc", o.afterRuns !== undefined || o.inc !== undefined],
+      ["--as", o.as !== undefined],
     ] as const
   )
     .filter(([, given]) => given)
@@ -705,6 +721,10 @@ export function wireWaitCommand(program: Command): void {
       },
     )
     .option("--inc <incarnation>", "agent refs: pin the pi process; another one is refused")
+    .option(
+      "--as <caller>",
+      "wait as this caller (<workstream>/<agent> or pi:<session>) instead of the env's identity; refused while another live process waits as it",
+    )
     .option(
       "--resume <id>",
       "continue the wait a result's `resume` handle names, with every stored condition (refs with their run baseline and pi incarnation, mode, filters, deadline, callers); only -w may be added (it must match the stored scope)",

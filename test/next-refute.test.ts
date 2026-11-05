@@ -270,6 +270,26 @@ describe("--refute: fences", () => {
     expect(refutes()).toEqual([]);
   });
 
+  it("a managed pi orchestrator resumes the check its pi session issued: both identities are its own (spec D9)", async () => {
+    await closed("a");
+    registerDelegateCall(db, {
+      callId,
+      caller: "pi:s1",
+      workstream: "scratch",
+      wave: "refute-d",
+      record: { workstream: "d", task: "a" },
+      state: "starting",
+      request: { text: "stale text", label: "refute-a", cli: "pi", timeoutS: 1800 },
+    });
+    // The managed name alone does not own it…
+    expect((await run({ caller: "d/orchestrator-1", dry: true })).moves).toEqual([]);
+    // …the union does, and resumes the same call.
+    const r = await run({ caller: "d/orchestrator-1", callers: ["d/orchestrator-1", "pi:s1"] });
+    expect(kinds(r)).toEqual(["refute:a"]);
+    expect(getDelegateCall(db, callId)).toMatchObject({ caller: "pi:s1", state: "running" });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM delegate_calls").get()).toEqual({ n: 1 });
+  });
+
   it("a revoked authorisation stops the checker for that task; a checker never grants permission", async () => {
     await closed("a");
     authorizeTasks(db, ["a"], {

@@ -162,7 +162,9 @@ export function formatAgentsTable(agents: readonly LiveAgent[]): string {
   const needsMurmur = agents.some(
     (a) =>
       a.state === "unknown" &&
-      (a.reason === UNKNOWN_REASON.murmurMissing || a.reason === UNKNOWN_REASON.extensionMissing),
+      (a.reason === UNKNOWN_REASON.murmurMissing ||
+        a.reason === UNKNOWN_REASON.extensionMissing ||
+        a.reason === UNKNOWN_REASON.hooksMissing),
   );
   return needsMurmur
     ? `${table.toString()}\n${pc.dim("agent state needs murmur (see mu doctor)")}`

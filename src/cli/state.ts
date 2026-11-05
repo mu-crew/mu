@@ -15,6 +15,7 @@
 import type { Command } from "commander";
 import { spawnerFromEnv } from "../agents/spawn.js";
 import {
+  asCaller,
   emitJson,
   handle,
   injectedWorkstream,
@@ -35,6 +36,7 @@ import {
   stateSnapshot,
   type WorkstreamState,
 } from "../state.js";
+import { currentCallers } from "../wait-callers.js";
 import { listWorkstreams } from "../workstream.js";
 import { resolveMe } from "./me-identity.js";
 import { clipEscaped, jsonDocument } from "./tasks/records.js";
@@ -44,6 +46,8 @@ export interface StateOpts {
   workstream?: string[];
   all?: boolean;
   me?: boolean;
+  /** `--as <caller>`: read this caller's delegates and human needs. */
+  as?: string;
   /** No cap: the whole snapshot. */
   full?: boolean;
   json?: boolean;
@@ -90,6 +94,7 @@ async function resolveScope(db: Db, opts: StateOpts): Promise<string[]> {
 function fullCommand(opts: StateOpts, scope: readonly string[], short = false): string {
   const parts = ["mu", "state"];
   if (opts.me === true) parts.push("--me");
+  if (opts.as !== undefined) parts.push("--as", shellWord(opts.as));
   if (opts.all === true || short) parts.push("--all");
   else if ((opts.workstream?.length ?? 0) > 0) parts.push("-w", scope.map(shellWord).join(","));
   parts.push("--full");
@@ -210,8 +215,18 @@ export function boundState(
 // ─── cmdState ──────────────────────────────────────────────────────
 
 export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
+  if (opts.as !== undefined && opts.me === true) {
+    throw new UsageError("--as and --me are two identities: pass one", { showHelp: false });
+  }
+  const as = opts.as === undefined ? undefined : asCaller(opts.as);
   const me = opts.me === true ? resolveMe(db) : null;
-  const caller = me?.caller ?? spawnerFromEnv();
+  const caller = as ?? me?.caller ?? spawnerFromEnv();
+  // Every identity of this process: a managed pi orchestrator's delegate calls
+  // belong to pi:<session>, its spawns to <ws>/<name> (spec D9).
+  const callers =
+    as !== undefined
+      ? [as]
+      : [...new Set([...(me !== null ? [me.caller] : []), ...currentCallers()])];
   const scope = await resolveScope(db, opts);
 
   // Explicit reconciliation is the CLI's (it reaps panes that are gone and
@@ -230,6 +245,7 @@ export async function cmdState(db: Db, opts: StateOpts): Promise<void> {
   const snap = await stateSnapshot(db, {
     workstreams: scope,
     caller,
+    callers,
     ...(me !== null ? { me: { agent: me.agent } } : {}),
   });
   for (const w of snap.workstreams) {
@@ -263,6 +279,10 @@ export function wireStateCommands(program: Command): void {
     .option(
       "--me",
       "the caller's own identity and owned tasks, with its delegate queue and human needs",
+    )
+    .option(
+      "--as <caller>",
+      "read this caller's delegates and human needs (<workstream>/<agent> or pi:<session>) instead of the env's identities",
     )
     .option("--full", "no cap: the whole read (a cut result names this command)")
     .option(...JSON_OPT)

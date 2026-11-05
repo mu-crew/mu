@@ -354,7 +354,8 @@ describe("spawn on herdr is create-then-start, in that order", () => {
     expect(startIdx).toBeGreaterThan(createIdx);
     // The pane is created BARE: no command rides along on the creation
     // verb, because herdr has no create-and-run form.
-    expect(issued[createIdx]).not.toContain("pi");
+    // (Only the pane env, `--env K=V`, names the cli: MU_AGENT_CLI=pi.)
+    expect(issued[createIdx]?.replace(/--env \S+/g, "")).not.toContain("pi");
     // …and the start step names the pane the create step returned. Never
     // a predicted id: herdr renumbers moved panes.
     expect(issued[startIdx]).toBe("agent start worker-1 --kind pi --pane w1:p1");
