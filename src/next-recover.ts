@@ -23,13 +23,12 @@
 // executeNext's, each re-validated in its own transaction.
 
 import type { RuntimeState } from "./agent-state.js";
-import { observeAgentStates, watchAgentRun } from "./agents/observe.js";
+import { observeAgentStates } from "./agents/observe.js";
 import { savedIdentity } from "./agents/task-spawn.js";
-import { agentCtlSocket, expectsCtl } from "./agents/transport.js";
 import type { AgentRow } from "./agents.js";
 import { deliveredOf, type RetryTarget } from "./auto-attempt.js";
 import { getCarrierJobByAgent } from "./carrier-jobs.js";
-import type { CtlBlocked } from "./ctl/protocol.js";
+import { agentChannel, type CtlBlocked, channelTarget } from "./channels/index.js";
 import type { Db } from "./db.js";
 import { say } from "./messages.js";
 import { localMachineId } from "./segments.js";
@@ -88,21 +87,18 @@ export const observeWorkers =
           ...(s.runs !== undefined ? { runs: s.runs } : {}),
         };
         out.set(key, facts);
-        const sock = agentCtlSocket(db, agent);
-        if (!idleOnCtl(s) || s.runs === undefined || s.runs < 1 || !expectsCtl(agent, sock)) return;
-        // A settled run is answered at once: the bound only covers a socket that stops answering.
-        const stop = new AbortController();
-        const timer = setTimeout(() => stop.abort(), ms);
-        const onAbort = (): void => stop.abort();
-        signal?.addEventListener("abort", onAbort, { once: true });
+        if (!idleOnCtl(s) || s.runs === undefined || s.runs < 1) return;
+        const target = channelTarget(db, agent);
+        const channel = agentChannel(target);
         try {
-          const watch = await watchAgentRun(agent, sock, stop.signal, {
+          // A settled run is answered at once: the bound only covers a socket that stops answering.
+          const settled = await channel.lastRun(target, {
             afterRuns: s.runs - 1,
             ...(s.incarnation !== undefined ? { inc: s.incarnation } : {}),
+            ...(signal !== undefined ? { signal } : {}),
+            ms,
           });
-          if (watch === undefined) return;
-          const settled = await watch.settled;
-          if (settled.settled) {
+          if (settled?.settled === true) {
             out.set(key, {
               ...facts,
               ...(settled.runs !== undefined ? { runs: settled.runs } : {}),
@@ -112,9 +108,6 @@ export const observeWorkers =
           }
         } catch {
           // A restarted pi, a dropped socket: no error read, and no action on a guess.
-        } finally {
-          clearTimeout(timer);
-          signal?.removeEventListener("abort", onAbort);
         }
       }),
     );

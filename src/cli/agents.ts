@@ -7,7 +7,7 @@
 
 import { dirname } from "node:path";
 import { agentToOutput, liveAgentToOutput, workstreamIdOf } from "../agent-output.js";
-import { agentKey, blockedReason, type RuntimeState, readAgentStates } from "../agent-state.js";
+import { agentKey, type RuntimeState } from "../agent-state.js";
 import { isCommandGate } from "../agents/spawn.js";
 import {
   AgentCtlUnreachableError,
@@ -15,7 +15,6 @@ import {
   AgentSendIndeterminateError,
   abortAgent,
   agentCtlSocket,
-  checkMessage,
   delegateOutcome,
   expectsCtl,
   getAgent,
@@ -33,6 +32,7 @@ import {
   spawnForTask,
   type Transport,
 } from "../agents.js";
+import { blockedReason, channelTarget, ctlChannel, readAgentStates } from "../channels/index.js";
 import {
   applyQualifiedRef,
   assertAgentInWorkstream,
@@ -1015,7 +1015,7 @@ export async function cmdAgentCheck(
   const ws = await resolveExistingWorkstream(db, opts.workstream);
   const agent = getAgent(db, name, ws);
   if (agent === undefined) throw new AgentNotFoundError(name, ws);
-  const check = await checkMessage(agentCtlSocket(db, agent), msgId);
+  const check = await ctlChannel.receipt(channelTarget(db, agent), msgId);
   const exit = check.state === "accepted" ? 0 : check.state === "not-accepted" ? 3 : 1;
   if (opts.json) {
     // A check that is not "accepted" fails with ONE document: the verdict

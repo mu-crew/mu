@@ -10,9 +10,9 @@
 // count, whether it settled, and the text with its truncation flag.
 //
 // This module is a seam, not an engine. It owns no polling and no loop:
-// `observeAgentStates` is one `readAgentStates` pass, and `watchAgentRun` is
-// the probe + ctl `wait` + drop fallback that `cmdAgentWait` carried inline,
-// moved here and returning observations. waitForEvents stays the only loop.
+// `observeAgentStates` is one `readAgentStates` pass; the watch of a run's end
+// is the agent's channel's (`watchAgentRun` on ctl, src/channels/ctl.ts),
+// returning observations. waitForEvents stays the only loop.
 //
 // Identity: `agentId` is the registry row id (a number, never reused);
 // `incarnation` is pi's own string (`--inc`). They are different things
@@ -20,33 +20,12 @@
 
 import { dirname } from "node:path";
 import type { RuntimeState, StateReading, StateSource } from "../agent-state.js";
-import { agentKey, blockedReason, ctlRuntimeState, readAgentStates } from "../agent-state.js";
+import { agentKey } from "../agent-state.js";
 import type { AgentRow } from "../agents.js";
+import { type CtlBlocked, readAgentStates } from "../channels/index.js";
 import type { SettledCloseInput } from "../close-block.js";
-import { ctlProbe, ctlRequest } from "../ctl/client.js";
-import { type CtlBlocked, INCARNATION_MISMATCH } from "../ctl/protocol.js";
 import type { Db } from "../db.js";
-import { activeMux } from "../mux.js";
-import { AgentRestartedError } from "./errors.js";
 import { type GateReading, readGate } from "./gate.js";
-import { expectsCtl } from "./transport.js";
-
-/**
- * Whether the pane still holds a running agent: tmux, the pane runs (an
- * exited retained pane does not); herdr, an agent still occupies the pane
- * (it outlives its occupant as a shell). `undefined` when the mux cannot
- * say: unknown, never a death.
- */
-async function paneUp(paneId: string): Promise<boolean | undefined> {
-  try {
-    const mux = await activeMux();
-    if (mux.paneResult !== undefined) return (await mux.paneResult(paneId)).state === "running";
-    if (mux.paneOccupied !== undefined) return await mux.paneOccupied(paneId);
-    return await mux.paneAlive(paneId);
-  } catch {
-    return undefined;
-  }
-}
 
 /** Who an observation is about. */
 export type ObservedAgent = Pick<
@@ -202,138 +181,4 @@ export interface ObservedWatch {
   /** Resolves when the run ends. A REJECTION (AgentRestartedError) is fatal:
    *  the incarnation the run belonged to is gone. */
   settled: Promise<AgentObservation>;
-}
-
-/**
- * Watch a pi agent's current or next run end over its control socket: one
- * ctl `wait` that the extension answers on `agent_settled`. `afterRuns`
- * (else a status read taken BEFORE the wait: a followUp queued while busy
- * runs in the same pi run) is the baseline; `inc` pins the pi process.
- *
- * undefined when the agent has no control socket or it does not answer
- * (the caller polls it instead). `signal` aborts the wait (`settled` then
- * resolves unknown, never dead and never settled).
- */
-export async function watchAgentRun(
-  agent: ObservedAgent,
-  sock: string,
-  signal: AbortSignal,
-  opts: { afterRuns?: number; inc?: string },
-): Promise<ObservedWatch | undefined> {
-  if (!expectsCtl(agent, sock)) return undefined;
-  const base = {
-    workstream: agent.workstreamName,
-    name: agent.name,
-    agentId: agent.incarnation,
-    paneId: agent.paneId,
-  };
-  // With --after-runs the run past the baseline is the pending work: read
-  // as busy until the wait settles; no status probe needed.
-  let initial: AgentObservation = {
-    ...base,
-    status: "busy",
-    source: "ctl",
-    since: null,
-    settled: false,
-  };
-  let afterRuns = opts.afterRuns;
-  if (afterRuns === undefined) {
-    const probe = await ctlProbe(sock);
-    if (probe.kind !== "ok") return undefined;
-    afterRuns = probe.status.runs;
-    const { blocked } = probe.status;
-    initial = {
-      ...base,
-      status: ctlRuntimeState(probe.status.state, blocked),
-      source: "ctl",
-      since: blocked?.since ?? probe.status.since,
-      runs: probe.status.runs,
-      pending: probe.status.pending,
-      ...(probe.incarnation !== undefined ? { incarnation: probe.incarnation } : {}),
-      ...(blocked !== undefined ? { blocked, reason: blockedReason(blocked) } : {}),
-      settled: false,
-    };
-  }
-  // returnOnBlocked: a dialog opening mid-run ends the wait instead of
-  // holding it to --timeout. Older extensions ignore it.
-  const req = {
-    op: "wait",
-    afterRuns,
-    returnOnBlocked: true,
-    ...(opts.inc !== undefined ? { incarnation: opts.inc } : {}),
-  } as const;
-  const restarted = (actual?: string): AgentRestartedError =>
-    new AgentRestartedError(agent.name, agent.workstreamName, opts.inc ?? "", actual);
-  const lost = (status: null | "unknown", reason?: string): AgentObservation => ({
-    ...base,
-    status,
-    source: "ctl",
-    since: null,
-    ...(reason !== undefined ? { reason } : {}),
-    settled: false,
-  });
-  const settled = ctlRequest(sock, req, { signal }).then(
-    (reply): AgentObservation => {
-      // A refused incarnation is fatal, never "unknown": the run is gone.
-      if (!reply.ok && reply.error === INCARNATION_MISMATCH) throw restarted(reply.incarnation);
-      if (!reply.ok) return lost("unknown", reply.error);
-      const facts = {
-        ...base,
-        source: "ctl" as const,
-        since: reply.since ?? null,
-        ...(reply.incarnation !== undefined ? { incarnation: reply.incarnation } : {}),
-        ...(reply.runs !== undefined ? { runs: reply.runs } : {}),
-        ...(reply.pending !== undefined ? { pending: reply.pending } : {}),
-      };
-      if (reply.ended === "blocked" && reply.blocked !== undefined) {
-        return {
-          ...facts,
-          status: "needs_permission",
-          blocked: reply.blocked,
-          reason: blockedReason(reply.blocked),
-          settled: false,
-        };
-      }
-      if (reply.state === undefined) return lost("unknown", "ctl wait: no state");
-      return {
-        ...facts,
-        status: ctlRuntimeState(reply.state),
-        // Only a reply that says it ended `settled` is a settled run; an
-        // older extension's reply still fires the wait but never closes a task.
-        settled: reply.ended === "settled",
-        ...(reply.lastText !== undefined ? { lastText: reply.lastText } : {}),
-        ...(reply.lastTextTruncated !== undefined
-          ? { lastTextTruncated: reply.lastTextTruncated }
-          : {}),
-        ...(reply.lastError !== undefined ? { lastError: reply.lastError } : {}),
-        ...(reply.sessionFile !== undefined ? { sessionFile: reply.sessionFile } : {}),
-      };
-    },
-    // The connection dropped. A socket that still answers (pi's /new
-    // restarts the session) hands back to polling; one that does not means
-    // the pi that served it is gone. With `inc` an answering process must
-    // also BE that incarnation: another one means the agent restarted and
-    // the run is gone (fatal, never polled).
-    async (): Promise<AgentObservation> => {
-      if (signal.aborted) return lost("unknown");
-      const again = await ctlProbe(sock);
-      if (
-        opts.inc !== undefined &&
-        again.kind === "ok" &&
-        again.incarnation !== undefined &&
-        again.incarnation !== opts.inc
-      ) {
-        throw restarted(again.incarnation);
-      }
-      if (again.kind === "ok") return lost("unknown", "ctl wait interrupted");
-      // No answer is not a death while the pane is up: a remote agent's socket
-      // is a forward that a dropped connection (a lease's mule master) takes
-      // down while the pane and the job on the host live on. Only a pane that
-      // is gone (or unreadable as alive) is a dead pi.
-      const up = await paneUp(agent.paneId);
-      if (up === undefined) return lost("unknown", "control socket lost; the mux cannot say");
-      return up ? lost("unknown", "control socket lost; the pane is alive") : lost(null);
-    },
-  );
-  return { initial, afterRuns, settled };
 }

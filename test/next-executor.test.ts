@@ -13,6 +13,9 @@ vi.mock("../src/agents/spawn.js", async (importOriginal) =>
 vi.mock("../src/agents/transport.js", async (importOriginal) =>
   (await import("./_next-fakes.js")).transportFake(await importOriginal()),
 );
+vi.mock("../src/channels/ctl.js", async (importOriginal) =>
+  (await import("./_next-fakes.js")).ctlChannelFake(await importOriginal()),
+);
 
 import { getReceipt } from "../src/agents/receipts.js";
 import { getAgent } from "../src/agents.js";

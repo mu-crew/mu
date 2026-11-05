@@ -12,6 +12,9 @@ vi.mock("../src/agents/spawn.js", async (importOriginal) =>
 vi.mock("../src/agents/transport.js", async (importOriginal) =>
   (await import("./_next-fakes.js")).transportFake(await importOriginal()),
 );
+vi.mock("../src/channels/ctl.js", async (importOriginal) =>
+  (await import("./_next-fakes.js")).ctlChannelFake(await importOriginal()),
+);
 
 // Loaded before anything else needs the mocked spawn (the next-executor suite imports it too).
 import "../src/agents.js";

@@ -26,7 +26,7 @@ import {
 } from "./agents/receipts.js";
 import { savedIdentity } from "./agents/task-spawn.js";
 import { MAX_AGENT_NAME_LEN } from "./agents.js";
-import { newMsgId } from "./ctl/client.js";
+import { newMsgId } from "./channels/index.js";
 import type { Db } from "./db.js";
 import { taskRevision } from "./revision.js";
 import { localMachineId } from "./segments.js";

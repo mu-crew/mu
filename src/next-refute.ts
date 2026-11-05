@@ -26,13 +26,13 @@
 import { agentKey } from "./agent-state.js";
 import { delegateOutcome } from "./agents/delegate.js";
 import { AgentRestartedError, SpawnAttemptBusyError } from "./agents/errors.js";
-import { observeAgentStates, watchAgentRun } from "./agents/observe.js";
+import { observeAgentStates } from "./agents/observe.js";
 import { getReceipt } from "./agents/receipts.js";
 import { resolveCliCommand, speaksMuCtl } from "./agents/spawn.js";
 import { savedIdentity, spawnForTask } from "./agents/task-spawn.js";
-import { agentCtlSocket } from "./agents/transport.js";
 import type { AgentRow } from "./agents.js";
 import { deliveredOf } from "./auto-attempt.js";
+import { agentChannel, channelTarget } from "./channels/index.js";
 import type { Db } from "./db.js";
 import {
   DelegateCallConflictError,
@@ -80,25 +80,20 @@ export const readChecker: ReadChecker = async (db, agent, base, { signal, ms }) 
   if (!idleOnCtl(live) || live.runs === undefined || live.runs <= base.afterRuns) {
     return { kind: "running" };
   }
-  const stop = new AbortController();
-  const timer = setTimeout(() => stop.abort(), ms);
-  const onAbort = (): void => stop.abort();
-  signal?.addEventListener("abort", onAbort, { once: true });
+  const target = channelTarget(db, agent);
   try {
-    const watch = await watchAgentRun(agent, agentCtlSocket(db, agent), stop.signal, {
+    const done = await agentChannel(target).lastRun(target, {
       afterRuns: base.afterRuns,
       ...(base.inc !== null ? { inc: base.inc } : {}),
+      ...(signal !== undefined ? { signal } : {}),
+      ms,
     });
-    const done = watch === undefined ? undefined : await watch.settled;
     if (done === undefined || !done.settled) return { kind: "running" };
     const outcome = delegateOutcome({ fired: true, dead: false, ...done }, false);
     return { kind: "answer", outcome, text: done.lastText ?? done.lastError };
   } catch (err) {
     if (err instanceof AgentRestartedError) return { kind: "died" };
     throw err;
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", onAbort);
   }
 };
 

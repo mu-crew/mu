@@ -6,10 +6,8 @@
 export {
   agentKey,
   type CtlLink,
-  ctlRuntimeState,
   murmurAvailable,
   type RuntimeState,
-  readAgentStates,
   type StateReading,
   type StateSource,
   UNKNOWN_REASON,
@@ -147,6 +145,8 @@ export {
   reserveCarrierJob,
 } from "./carrier-jobs.js";
 export { CarrierStopFailedError, CarrierStopRefusedError, runStop } from "./carrier-stop.js";
+export { ctlRuntimeState } from "./channels/ctl.js";
+export { readAgentStates } from "./channels/index.js";
 export {
   FRONTIER_CLOSED_PER_NODE,
   FRONTIER_MAX_DEPTH,

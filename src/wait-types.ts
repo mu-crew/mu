@@ -3,7 +3,7 @@
 
 import type { RuntimeState, StateReading } from "./agent-state.js";
 import type { AgentObservation } from "./agents/observe.js";
-import type { CtlBlocked } from "./ctl/protocol.js";
+import type { CtlBlocked } from "./channels/index.js";
 import type { VerdictTally } from "./delegates.js";
 import type { HumanNeeded } from "./human-needed.js";
 import { say } from "./messages.js";

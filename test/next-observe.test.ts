@@ -1,6 +1,8 @@
 // The production worker reader of `mu next` recovery (src/next-recover.ts): a status read
 // carries no error, so an idle pi worker's last settled run is read over a real ctl socket
-// (one immediate `wait` past runs-1). A fake extension stands in for pi; tmux is a stub.
+// (one immediate `wait` past runs-1). The production checker reader of `mu next --refute`
+// (src/next-refute.ts) reads a settled run the same way, past its send's baseline. A fake
+// extension stands in for pi; tmux is a stub.
 
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
@@ -10,10 +12,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetAgentStateCacheForTests, setMurmurRunnerForTests } from "../src/agent-state.js";
 import { agentCtlSocket } from "../src/agents/transport.js";
 import { type AgentRow, insertAgent } from "../src/agents.js";
-import { encode, LineDecoder } from "../src/ctl/protocol.js";
+import { encode, INCARNATION_MISMATCH, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { observeWorkers } from "../src/next-recover.js";
+import { readChecker } from "../src/next-refute.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -53,7 +56,7 @@ afterEach(() => {
 
 async function extension(
   status: Record<string, unknown>,
-  settled: Record<string, unknown> | "hold",
+  settled: Record<string, unknown> | "hold" | "mismatch",
 ): Promise<void> {
   const path = agentCtlSocket(db, pia);
   mkdirSync(dirname(path), { recursive: true });
@@ -68,7 +71,9 @@ async function extension(
         ops.push(req);
         if (req.op === "hello") sock.end(encode(helloReply()));
         else if (req.op === "wait" && settled === "hold") held.push(sock);
-        else if (req.op === "wait") {
+        else if (req.op === "wait" && settled === "mismatch") {
+          sock.end(encode({ v: 1, ok: false, error: INCARNATION_MISMATCH, incarnation: "other" }));
+        } else if (req.op === "wait") {
           sock.end(
             encode({ v: 1, ok: true, incarnation: INC, ended: "settled", ...(settled as object) }),
           );
@@ -147,5 +152,56 @@ describe("observeWorkers", () => {
     setTmuxExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
     const got = (await observeWorkers(db)([pia], { ms: 100 })).get("obs/pia");
     expect(got?.status).toBeNull();
+  });
+});
+
+describe("readChecker", () => {
+  it("a run settled past the baseline is the answer, read with ONE ctl wait bound to the send's incarnation", async () => {
+    await extension({}, { state: "idle", runs: 2, since: 10, lastText: "VERDICT: holds" });
+    const got = await readChecker(db, pia, { afterRuns: 1, inc: INC }, { ms: 1000 });
+    expect(got).toEqual({ kind: "answer", outcome: "done", text: "VERDICT: holds" });
+    expect(ops.filter((o) => o.op === "wait")).toEqual([
+      expect.objectContaining({ op: "wait", afterRuns: 1, incarnation: INC }),
+    ]);
+  });
+
+  it("a settled run error is the answer's text", async () => {
+    await extension({}, { state: "idle", runs: 2, since: 10, lastError: "529 overloaded" });
+    const got = await readChecker(db, pia, { afterRuns: 1, inc: INC }, { ms: 1000 });
+    expect(got).toEqual({ kind: "answer", outcome: "error", text: "529 overloaded" });
+  });
+
+  it("an idle checker not past the baseline is still running: no wait is asked", async () => {
+    await extension({}, { state: "idle", runs: 2, since: 10, lastText: "stale" });
+    const got = await readChecker(db, pia, { afterRuns: 2, inc: INC }, { ms: 1000 });
+    expect(got).toEqual({ kind: "running" });
+    expect(ops.filter((o) => o.op === "wait")).toEqual([]);
+  });
+
+  it("a busy checker is running", async () => {
+    await extension({ state: "busy" }, "hold");
+    const got = await readChecker(db, pia, { afterRuns: 1, inc: INC }, { ms: 1000 });
+    expect(got).toEqual({ kind: "running" });
+    expect(ops.filter((o) => o.op === "wait")).toEqual([]);
+  });
+
+  it("an incarnation mismatch on the wait reads died", async () => {
+    await extension({}, "mismatch");
+    const got = await readChecker(db, pia, { afterRuns: 1, inc: INC }, { ms: 1000 });
+    expect(got).toEqual({ kind: "died" });
+  });
+
+  it("no incarnation pin sends none", async () => {
+    await extension({}, { state: "idle", runs: 2, since: 10, lastText: "ok" });
+    await readChecker(db, pia, { afterRuns: 1, inc: null }, { ms: 1000 });
+    const waits = ops.filter((o) => o.op === "wait");
+    expect(waits).toHaveLength(1);
+    expect(waits[0]?.incarnation).toBeUndefined();
+  });
+
+  it("a gone pane reads died", async () => {
+    setTmuxExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+    const got = await readChecker(db, pia, { afterRuns: 1, inc: INC }, { ms: 100 });
+    expect(got).toEqual({ kind: "died" });
   });
 });

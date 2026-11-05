@@ -1,14 +1,14 @@
-// mu — the ctl-backed agent readers for waitForEvents.
+// mu — the channel-backed agent readers for waitForEvents.
 //
-// `readAgents` is one `readAgentStates` pass (one batched probe per tick);
-// `watchAgent` is the ctl `wait` (`watchAgentRun`) that the extension answers
-// on `agent_settled`. They live apart from src/wait.ts so the engine imports
-// neither the registry nor the ctl client.
+// `readAgents` is one `readAgentStates` pass (one batched read per tick, each
+// agent on its channel); `watchAgent` is the agent's channel's watch (on ctl,
+// the `wait` that the extension answers on `agent_settled`; a channel that
+// cannot watch is polled). They live apart from src/wait.ts so the engine
+// imports neither the registry nor a channel.
 
-import { observeAgentStates, watchAgentRun } from "./agents/observe.js";
-import { agentCtlSocket, expectsCtl } from "./agents/transport.js";
+import { observeAgentStates } from "./agents/observe.js";
 import { getAgent } from "./agents.js";
-import { ctlProbe } from "./ctl/client.js";
+import { agentChannel, channelTarget } from "./channels/index.js";
 import type { Db } from "./db.js";
 import { activeMux } from "./mux.js";
 import { WAIT_TEXT_MAX } from "./wait-regex.js";
@@ -52,7 +52,8 @@ export function ctlAgentHooks(
     watchAgent: async (ref, signal, ctx) => {
       const agent = getAgent(db, ref.id, ref.workstream);
       if (agent === undefined) return undefined;
-      const sock = agentCtlSocket(db, agent);
+      const target = channelTarget(db, agent);
+      const channel = agentChannel(target);
       let afterRuns = ref.afterRuns;
       let unknownBaseline: AgentBaseline | undefined;
       if (
@@ -65,9 +66,8 @@ export function ctlAgentHooks(
         // baseline of another incarnation or registry row is not this agent's.
         // With neither, an owed ref counts from the run count probed now and
         // says so (`unknownBaseline`): a historical run is never completion.
-        if (!expectsCtl(agent, sock)) return undefined;
-        const probe = await ctlProbe(sock);
-        if (probe.kind !== "ok") return undefined;
+        const probe = await channel.baseline(target);
+        if (probe === undefined) return undefined;
         const inc = probe.incarnation;
         const b = ctx.baseline;
         const baseOk =
@@ -82,7 +82,7 @@ export function ctlAgentHooks(
           afterRuns = Math.max(b.afterRuns, fromCursor ?? 0);
         } else if (fromCursor !== undefined) afterRuns = fromCursor;
         else if (ctx.owed) {
-          afterRuns = probe.status.runs;
+          afterRuns = probe.runs;
           unknownBaseline = {
             afterRuns,
             ...(inc !== undefined ? { incarnation: inc } : {}),
@@ -90,7 +90,7 @@ export function ctlAgentHooks(
           };
         }
       }
-      const handle = await watchAgentRun(agent, sock, signal, {
+      const handle = await channel.watch(target, signal, {
         ...(afterRuns !== undefined ? { afterRuns } : {}),
         ...(ref.incarnation !== undefined ? { inc: ref.incarnation } : {}),
       });

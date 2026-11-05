@@ -18,7 +18,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanGateResult, readGate } from "../src/agents/gate.js";
-import { expectsCtl } from "../src/agents/transport.js";
 import {
   closeAgent,
   getAgent,
@@ -28,6 +27,7 @@ import {
   setCommandResolverForTests,
   spawnAgent,
 } from "../src/agents.js";
+import { expectsCtl } from "../src/channels/index.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, HostHandbackError, HostProfileError, listHostChannels } from "../src/hosts.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";

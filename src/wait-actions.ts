@@ -44,9 +44,15 @@
 // msgId. Post-send storage failure keeps `sending`: the exclusion survives.
 
 import { AgentReplacedError, AgentSendRefusedError } from "./agents/errors.js";
-import { agentCtlSocket, checkMessage, recordSend, sendViaTransport } from "./agents/transport.js";
+import { agentCtlSocket, recordSend, sendViaTransport } from "./agents/transport.js";
 import { getAgent } from "./agents.js";
-import { CTL_DEFAULT_TIMEOUT_MS, CtlWriteVetoedError, newMsgId } from "./ctl/client.js";
+import {
+  CTL_DEFAULT_TIMEOUT_MS,
+  CtlWriteVetoedError,
+  channelTarget,
+  ctlChannel,
+  newMsgId,
+} from "./channels/index.js";
 import type { Db } from "./db.js";
 import { openHumanNeeds } from "./human-needed.js";
 import { withOpContext } from "./op-context.js";
@@ -364,7 +370,8 @@ async function probeSteer(
     return unknown("the owner was replaced: the earlier steer cannot be confirmed (not resent)");
   }
   if (ctx.signal.aborted) return unknown("the wait was aborted before the receipt probe");
-  const check = await checkMessage(agentCtlSocket(db, agent), plan.msgId, timeoutMs);
+  // A steer only ever went over ctl: its receipt is asked there.
+  const check = await ctlChannel.receipt(channelTarget(db, agent), plan.msgId, timeoutMs);
   if (check.state !== "accepted" || check.incarnation !== plan.key.incarnation) {
     return unknown(
       check.state === "accepted"

@@ -1,10 +1,7 @@
 import { accessSync, constants, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
-import { expectsCtl } from "./agents/transport.js";
-import { ctlProbe } from "./ctl/client.js";
-import { ctlSocketPath } from "./ctl/path.js";
-import type { CtlBlocked, CtlState, CtlTool } from "./ctl/protocol.js";
+import type { CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
 import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
@@ -44,21 +41,6 @@ export interface StateAgentRef {
   cli?: string;
   /** A remote command gate (see src/agents/gate.ts): no control socket, whatever `cli` says. */
   gateToken?: string | null;
-}
-
-/** Per-agent budget for the control-socket status read (one connection). */
-const CTL_STATE_PROBE_MS = 1000;
-
-/** ctl's idle maps to needs_input, the same as murmur's idle; an open
- *  extension dialog (`blocked`) maps to needs_permission. */
-export function ctlRuntimeState(state: CtlState, blocked?: CtlBlocked): RuntimeState {
-  if (blocked !== undefined) return "needs_permission";
-  return state === "busy" ? "busy" : "needs_input";
-}
-
-/** The reason line for a dialog-blocked pi: `dialog <kind>: <title>`. */
-export function blockedReason(blocked: CtlBlocked): string {
-  return `dialog ${blocked.kind}${blocked.title !== undefined ? `: ${blocked.title}` : ""}`;
 }
 
 export const UNKNOWN_REASON = {
@@ -125,7 +107,12 @@ export function resetAgentStateCacheForTests(): void {
   murmurCache = undefined;
 }
 
-function unknown(reason: string, alive = true, source: StateSource = "none"): StateReading {
+/** An `unknown` reading with its reason; `alive` false = the pane is gone. */
+export function unknownReading(
+  reason: string,
+  alive = true,
+  source: StateSource = "none",
+): StateReading {
   return { state: "unknown", source, since: null, alive, reason };
 }
 
@@ -145,7 +132,7 @@ function mapMurmurState(token: string, since: number | null): StateReading {
       state = "needs_input";
       break;
     default:
-      return unknown(`unrecognised murmur state ${token}`, true, "murmur");
+      return unknownReading(`unrecognised murmur state ${token}`, true, "murmur");
   }
   return { state, source: "murmur", since, alive: true };
 }
@@ -198,14 +185,14 @@ function remoteReading(agent: StateAgentRef, panes: readonly MurmurPane[]): Stat
       pane.workstream === agent.workstreamName,
   );
   if (matches.length === 0) {
-    return unknown(
+    return unknownReading(
       murmurExtensionLinked() ? UNKNOWN_REASON.noRow : UNKNOWN_REASON.extensionMissing,
     );
   }
-  if (matches.length > 1) return unknown(ambiguousReason(matches.length));
+  if (matches.length > 1) return unknownReading(ambiguousReason(matches.length));
   const row = matches[0];
-  if (row === undefined) return unknown(UNKNOWN_REASON.noRow);
-  if (row.freshness !== "fresh") return unknown(UNKNOWN_REASON.stale);
+  if (row === undefined) return unknownReading(UNKNOWN_REASON.noRow);
+  if (row.freshness !== "fresh") return unknownReading(UNKNOWN_REASON.stale);
 
   const kinds = Array.isArray(row.attention)
     ? new Set(
@@ -260,37 +247,15 @@ async function readMuxStates(
       const alive = await mux.paneAlive(agent.paneId);
       readings.set(
         agentKey(agent),
-        alive ? unknown(none, true, source) : unknown(UNKNOWN_REASON.paneGone, false),
+        alive ? unknownReading(none, true, source) : unknownReading(UNKNOWN_REASON.paneGone, false),
       );
     } catch (error) {
       readings.set(
         agentKey(agent),
-        unknown(`${source}: ${error instanceof Error ? error.message : String(error)}`),
+        unknownReading(`${source}: ${error instanceof Error ? error.message : String(error)}`),
       );
     }
   }
-  return readings;
-}
-
-/**
- * Read the runtime state of each agent. Order per agent: control socket
- * (pi agents) → murmur pane option → murmur remote → herdr. A pi agent
- * whose socket does not answer reads `unknown` with reason `ctl missing`
- * or `ctl refused`, never a murmur reading, so the gap stays visible.
- * `stateDir` roots the derived socket path (spawn uses the DB's directory).
- * A remote command gate has neither: it reads from its pane (see `readGatePanes`).
- */
-export async function readAgentStates(
-  agents: readonly StateAgentRef[],
-  opts: { now?: number; stateDir?: string } = {},
-): Promise<Map<string, StateReading>> {
-  const gates = agents.filter((a) => a.gateToken !== undefined && a.gateToken !== null);
-  if (gates.length === 0) return readNonGateStates(agents, opts);
-  const readings = await readNonGateStates(
-    agents.filter((a) => !gates.includes(a)),
-    opts,
-  );
-  for (const [key, reading] of await readGatePanes(gates)) readings.set(key, reading);
   return readings;
 }
 
@@ -299,7 +264,9 @@ export async function readAgentStates(
  * reads busy; an ended or gone pane reads unknown with the reason. The wait
  * path reads the exit code itself (`readGate`).
  */
-async function readGatePanes(gates: readonly StateAgentRef[]): Promise<Map<string, StateReading>> {
+export async function readGatePanes(
+  gates: readonly StateAgentRef[],
+): Promise<Map<string, StateReading>> {
   const readings = new Map<string, StateReading>();
   let mux: Awaited<ReturnType<typeof activeMux>> | undefined;
   let failure = "the multiplexer cannot report a pane's exit";
@@ -312,80 +279,31 @@ async function readGatePanes(gates: readonly StateAgentRef[]): Promise<Map<strin
     const key = agentKey(gate);
     try {
       const pane = await mux?.paneResult?.(gate.paneId);
-      if (pane === undefined) readings.set(key, unknown(failure));
+      if (pane === undefined) readings.set(key, unknownReading(failure));
       else if (pane.state === "running") {
         readings.set(key, { state: "busy", source: "none", since: null, alive: true });
       } else if (pane.state === "absent")
-        readings.set(key, unknown(UNKNOWN_REASON.paneGone, false));
+        readings.set(key, unknownReading(UNKNOWN_REASON.paneGone, false));
       else {
         const how = pane.code !== null ? `exited ${pane.code}` : `killed by signal ${pane.signal}`;
-        readings.set(key, unknown(how, false));
+        readings.set(key, unknownReading(how, false));
       }
     } catch (error) {
-      readings.set(key, unknown(`mux: ${error instanceof Error ? error.message : String(error)}`));
+      readings.set(
+        key,
+        unknownReading(`mux: ${error instanceof Error ? error.message : String(error)}`),
+      );
     }
   }
   return readings;
 }
 
-async function readNonGateStates(
-  agents: readonly StateAgentRef[],
-  opts: { now?: number; stateDir?: string },
-): Promise<Map<string, StateReading>> {
-  const ctlAgents = agents.filter(
-    (a) =>
-      a.cli !== undefined &&
-      expectsCtl(
-        { cli: a.cli, name: a.name, workstreamName: a.workstreamName, gateToken: a.gateToken },
-        ctlSocketPath(a.workstreamName, a.name, opts.stateDir),
-      ),
-  );
-  const probes = await Promise.all(
-    ctlAgents.map((a) =>
-      ctlProbe(ctlSocketPath(a.workstreamName, a.name, opts.stateDir), CTL_STATE_PROBE_MS, {
-        hello: false,
-      }),
-    ),
-  );
-  const readings = new Map<string, StateReading>();
-  const failed = new Map<string, "missing" | "refused">();
-  ctlAgents.forEach((agent, i) => {
-    const probe = probes[i];
-    if (probe?.kind === "ok") {
-      const { blocked } = probe.status;
-      readings.set(agentKey(agent), {
-        state: ctlRuntimeState(probe.status.state, blocked),
-        source: "ctl",
-        since: blocked?.since ?? probe.status.since,
-        alive: true,
-        ...(blocked !== undefined ? { reason: blockedReason(blocked), blocked } : {}),
-        ctl: "ok",
-        pending: probe.status.pending,
-        runs: probe.status.runs,
-        ...(probe.incarnation !== undefined ? { incarnation: probe.incarnation } : {}),
-        ...(probe.status.tool !== undefined ? { tool: probe.status.tool } : {}),
-      });
-    } else {
-      failed.set(agentKey(agent), probe?.kind === "missing" ? "missing" : "refused");
-    }
-  });
-  const rest = agents.filter((a) => !readings.has(agentKey(a)));
-  if (rest.length === 0) return readings;
-  // A ctl-failed agent keeps only the base reading's liveness, so it never
-  // needs the murmur remote read (whose rows are always alive).
-  for (const [key, reading] of await readBaseStates(rest, opts, new Set(failed.keys()))) {
-    const ctl = failed.get(key);
-    if (ctl === undefined) readings.set(key, reading);
-    else if (!reading.alive) readings.set(key, { ...reading, ctl });
-    else {
-      const reason = ctl === "missing" ? UNKNOWN_REASON.ctlMissing : UNKNOWN_REASON.ctlRefused;
-      readings.set(key, { ...unknown(reason), ctl });
-    }
-  }
-  return readings;
-}
-
-async function readBaseStates(
+/**
+ * The mux channel's state read (src/channels/mux.ts): the mux's own pane
+ * status (herdr, Rex), else murmur's tmux pane option, else murmur's remote
+ * snapshot. `livenessOnly` keys read only whether the pane is alive.
+ */
+export async function readBaseStates(
   agents: readonly StateAgentRef[],
   opts: { now?: number },
   livenessOnly: ReadonlySet<string> = new Set(),
@@ -396,7 +314,7 @@ async function readBaseStates(
     mux = await activeMux();
   } catch (error) {
     const reason = `mux: ${error instanceof Error ? error.message : String(error)}`;
-    for (const agent of agents) readings.set(agentKey(agent), unknown(reason));
+    for (const agent of agents) readings.set(agentKey(agent), unknownReading(reason));
     return readings;
   }
   if (mux.paneStatus !== undefined) return await readMuxStates(agents, mux);
@@ -411,7 +329,7 @@ async function readBaseStates(
     ]);
   } catch (error) {
     const reason = `tmux: ${error instanceof Error ? error.message : String(error)}`;
-    for (const agent of agents) readings.set(agentKey(agent), unknown(reason));
+    for (const agent of agents) readings.set(agentKey(agent), unknownReading(reason));
     return readings;
   }
 
@@ -426,9 +344,9 @@ async function readBaseStates(
   for (const agent of agents) {
     const pane = local.get(agent.paneId);
     if (pane === undefined) {
-      readings.set(agentKey(agent), unknown(UNKNOWN_REASON.paneGone, false));
+      readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.paneGone, false));
     } else if (livenessOnly.has(agentKey(agent))) {
-      readings.set(agentKey(agent), unknown(UNKNOWN_REASON.noRow));
+      readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.noRow));
     } else if (pane.token.length > 0) {
       readings.set(agentKey(agent), mapMurmurState(pane.token, pane.since));
     } else {
@@ -444,7 +362,7 @@ async function readBaseStates(
       : murmurOnPath()
         ? UNKNOWN_REASON.extensionMissing
         : UNKNOWN_REASON.murmurMissing;
-    for (const agent of remoteCandidates) readings.set(agentKey(agent), unknown(reason));
+    for (const agent of remoteCandidates) readings.set(agentKey(agent), unknownReading(reason));
     return readings;
   }
 
