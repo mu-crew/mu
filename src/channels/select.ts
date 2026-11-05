@@ -3,8 +3,8 @@
 // The agents row records the channel at spawn (`agents.channel`), and a verb
 // reads it from there, never from the env. A row older than the column falls
 // back to the derived rule: an agent that runs pi (or left its control socket
-// file behind) is on `ctl`; every other pane is on `mux`. A remote command
-// gate is never on `ctl`.
+// file behind) is on `ctl`; every other pane is on `mux`. Only a recorded row
+// is on `hooks`. A remote command gate is on `mux`, whatever its row says.
 
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
@@ -48,7 +48,8 @@ export function expectsCtl(
 
 /**
  * The channel of `agent`, its control socket at `socket` or else rooted at
- * `stateDir`. An agent with no cli key is on `mux`.
+ * `stateDir`. A row that recorded `hooks` is on hooks; an agent with no cli
+ * key is on `mux`.
  */
 export function channelOf(
   agent: Pick<AgentRow, "name" | "workstreamName"> & {
@@ -60,6 +61,7 @@ export function channelOf(
   socket?: string,
 ): ChannelName {
   if (agent.cli === undefined) return "mux";
+  if (agent.channel === "hooks") return agent.gateToken != null ? "mux" : "hooks";
   const ref = {
     cli: agent.cli,
     name: agent.name,

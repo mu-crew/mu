@@ -22,11 +22,13 @@ export {
 } from "./ctl-deliver.js";
 export { deliver } from "./deliver.js";
 export { agentChannel, channelTarget, readAgentStates } from "./dispatch.js";
+export { ANSWER_KEY_NAMES, hooksChannel } from "./hooks.js";
 export { muxChannel } from "./mux.js";
 export { agentCtlSocket, channelOf, expectsCtl } from "./select.js";
 export {
   type AbortOutcome,
   type AgentChannel,
+  type AnswerResult,
   CHANNEL_NAMES,
   type ChannelDelivery,
   type ChannelName,

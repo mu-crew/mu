@@ -30,6 +30,7 @@ const ARGS: Record<string, string[]> = {
   "agent spawn": ["worker-2"],
   "agent send": ["worker-1", "hello"],
   "agent check": ["worker-1", "msg-1"],
+  "agent answer": ["worker-1", "1"],
   "agent read": ["worker-1"],
   "agent list": [],
   "agent show": ["worker-1"],

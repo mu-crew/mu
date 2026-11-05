@@ -21,6 +21,7 @@
 // the verbs do, because only they know whether the effect landed.
 
 import { getAgent } from "../agents.js";
+import type { ChannelName } from "../channels/index.js";
 import type { Db } from "../db.js";
 import { currentCallers } from "../wait-callers.js";
 import { type RefBaseline, type RegisterRef, registerOwnedWait } from "../wait-registration.js";
@@ -79,15 +80,15 @@ export function armWait(db: Db, refs: readonly RegisterRef[]): ArmResult {
 
 /** What a send measured before its effect (the SendResult / InterruptResult / saved receipt fields). */
 export interface SentFence {
-  transport?: "ctl" | "mux";
+  transport?: ChannelName;
   runs?: number;
   incarnation?: string;
 }
 
 /**
  * Arm the wait a DELIVERED prompt owes. A ctl send with a run count is fenced exactly
- * (runs + incarnation + registry id). A delivered mux send (a non-pi pane: its busy-to-idle
- * is all there is) is owed with no fence. A ctl send with no run count (a slash command,
+ * (runs + incarnation + registry id). A delivered mux or hooks send (a non-pi pane: its
+ * busy-to-idle is all there is) is owed with no fence. A ctl send with no run count (a slash command,
  * an extension that predates runs) started no run: no agent ref. `extraRefs` ride in the
  * same registration (the task a spawn bound), so it is all or nothing.
  */
@@ -99,12 +100,12 @@ export function armSend(
 ): ArmResult {
   const row = getAgent(db, agent.name, agent.workstreamName);
   if (row === undefined) return { armed: false };
-  if (sent.transport !== "mux" && sent.runs === undefined) return armWait(db, extraRefs);
+  if (sent.transport === "ctl" && sent.runs === undefined) return armWait(db, extraRefs);
   return armWait(db, [
     ...extraRefs,
     agentRef(
       row,
-      sent.transport === "mux"
+      sent.transport !== "ctl"
         ? {}
         : {
             runs: sent.runs,

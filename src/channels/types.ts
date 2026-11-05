@@ -2,13 +2,15 @@
 //
 // A pane agent is reached through exactly one channel. `ctl` is pi's control
 // socket: exact state, a blocking watch of a run's end, run baselines, msgId
-// receipts, a write fence and the settled run's text. `mux` is what the
-// multiplexer and murmur report for any other pane: state only, polled. The
+// receipts, a write fence and the settled run's text. `hooks` is a hook
+// harness's pane on tmux: state from murmur's pane inbox, delivery by paste,
+// confirmed by the harness's `run_count`. `mux` is what the multiplexer and
+// murmur report for any other pane: state only, polled. The
 // wait engine (src/wait.ts) reads agents through this seam
 // (`WaitOptions.readAgents` / `watchAgent`, built in src/wait-ctl.ts).
 //
 // Delivery goes through the same seam: send, fresh, `command` (pi's session
-// commands), interrupt and abort. Each agents row records its channel at spawn
+// commands), interrupt, abort and answer. Each agents row records its channel at spawn
 // (`agents.channel`), and every verb reads it from the row. Delegates, the
 // spawn handshake, doctor and the remote socket plumbing stay on src/ctl
 // directly.
@@ -23,10 +25,10 @@ import type { SendOptions } from "../mux.js";
 export type { CtlBlocked, CtlCommandName, CtlState, CtlTool } from "../ctl/protocol.js";
 
 /** How mu reaches a pane agent; also the values of `agents.channel`. */
-export type ChannelName = "ctl" | "mux";
+export type ChannelName = "ctl" | "hooks" | "mux";
 
 /** The values `agents.channel` may hold, in the order a row is checked. */
-export const CHANNEL_NAMES: readonly ChannelName[] = ["ctl", "mux"];
+export const CHANNEL_NAMES: readonly ChannelName[] = ["ctl", "hooks", "mux"];
 
 /**
  * One agent on a channel: who it is, and the state dir that roots its control
@@ -111,9 +113,19 @@ export interface AgentChannel extends ChannelDelivery {
   ): Promise<AgentObservation | undefined>;
 }
 
-/** What a delivery did. The ctl-only fields are absent on `mux`. */
+/** What a delivery did. The ctl-only fields are absent on `hooks` and `mux`. */
 export type SendResult = {
   transport: ChannelName;
+  /**
+   * hooks only: `confirmed` when the agent's `run_count` rose (or a new
+   * session started a run) within `MU_SEND_ACK_MS` of the paste, else
+   * `unknown`. An `unknown` send is never resent.
+   */
+  ack?: "confirmed" | "unknown";
+  /** hooks only: the agent's `run_count` at the ack, else the one the gate read before the paste. */
+  runCount?: number;
+  /** hooks only: the harness session the run count belongs to. */
+  sessionId?: string;
   state?: CtlState;
   /**
    * ctl only: pi's completed-run count. For a plain send it is measured
@@ -144,9 +156,13 @@ export interface CtlGuard {
 }
 
 export type DeliveryOptions = SendOptions & {
-  /** How a busy pi queues the message. Default followUp. ctl only. */
+  /** How a busy pi queues the message. Default followUp. ctl only: hooks refuses a steer. */
   mode?: "steer" | "followUp";
-  /** With fresh or a session command: abandon a running turn instead of refusing. */
+  /**
+   * With fresh or a session command: abandon a running turn instead of
+   * refusing. On hooks also a plain send: paste into a running agent, or one
+   * whose state is unknown (never into a blocked one).
+   */
   force?: boolean;
   /**
    * Internal: a msgId the caller reserved (and journaled) BEFORE the send, so
@@ -210,6 +226,18 @@ export interface AbortOutcome {
   pending: boolean;
 }
 
+/** What `mu agent answer` did. */
+export interface AnswerResult {
+  transport: ChannelName;
+  /** The keys typed into the pane. */
+  keys: readonly string[];
+  /**
+   * `confirmed` when the next hook event arrived within `MU_SEND_ACK_MS`
+   * (hooks), else `unknown`; a channel with no events (mux) reads `unknown`.
+   */
+  ack: "confirmed" | "unknown";
+}
+
 /**
  * The delivery verbs of a channel (spec D4). A channel that cannot do one
  * refuses with a typed error naming the agent's cli, and never falls back to
@@ -249,4 +277,14 @@ export interface ChannelDelivery {
       onAbort?: (o: { before: CtlState; pending: boolean }) => Promise<void>;
     },
   ): Promise<AbortOutcome>;
+  /**
+   * Answer a pending permission dialog by typing `keys` into the pane. On
+   * hooks it is refused unless the agent reads `blocked` (`force` skips that
+   * check). A channel that cannot type keys refuses with a typed error.
+   */
+  answer(
+    target: DeliveryTarget,
+    keys: readonly string[],
+    opts: { force?: boolean },
+  ): Promise<AnswerResult>;
 }

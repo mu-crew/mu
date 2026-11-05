@@ -59,6 +59,10 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inject } from "vitest";
+import {
+  setMurmurHookRunnerForTests,
+  setMurmurPaneRunnerForTests,
+} from "../src/channels/hooks-pane.js";
 import { sandboxMarkerEnvNames } from "../src/harnesses.js";
 import { setMuzzleRunnerForTests } from "../src/muzzle-queue.js";
 import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
@@ -111,6 +115,13 @@ process.env.MU_MUX = "tmux";
 // and a developer's own queue must not leak in. test/muzzle-queue.test.ts
 // scripts it.
 setMuzzleRunnerForTests(async () => null);
+
+// Baseline: no real murmur pane. The hooks channel's send gate and ack ask
+// `murmur pane <pane> --json`, which drains the developer's real inbox; the
+// fast tier spawns no subprocess. test/channel-contract.test.ts drives a fake
+// harness through it. Likewise `murmur hook mu`, which writes into that inbox.
+setMurmurPaneRunnerForTests(async () => null);
+setMurmurHookRunnerForTests(async () => false);
 
 // Baseline: no spawn-time control-socket handshake. No test pane runs
 // the mu pi extension, so the 30s default would stall every pi spawn.

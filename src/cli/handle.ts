@@ -30,6 +30,7 @@ import {
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
+  AgentAnswerUnsupportedError,
   AgentBusyError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
@@ -39,16 +40,19 @@ import {
   AgentFreshNeedsCtlError,
   AgentLockBusyError,
   AgentNameExhaustedError,
+  AgentNotBlockedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneStillAliveError,
   AgentReplacedError,
   AgentRestartedError,
+  AgentSendGateError,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  AgentSteerUnsupportedError,
   SpawnAttemptBusyError,
   SpawnAttemptEndedError,
   SpawnAttemptFailedError,
@@ -412,6 +416,9 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof AgentAbortNeedsCtlError ||
     // send --fresh on an agent with no control socket: wrong recipe.
     err instanceof AgentFreshNeedsCtlError ||
+    // a steer or a dialog answer on a channel that has none: wrong recipe.
+    err instanceof AgentSteerUnsupportedError ||
+    err instanceof AgentAnswerUnsupportedError ||
     // an empty send or unsupported slash command to a pi agent: ctl cannot carry it.
     err instanceof AgentEmptySendError ||
     err instanceof AgentSlashCommandUnsupportedError ||
@@ -629,6 +636,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   }
   if (err instanceof AgentBusyError) {
     // The agent's state collides with the request; abort or --force.
+    return { label: "conflict", exitCode: 4 };
+  }
+  if (err instanceof AgentSendGateError || err instanceof AgentNotBlockedError) {
+    // hooks: the agent's state refuses the paste or the keys; nothing was sent.
     return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof AgentAbortTimeoutError) {

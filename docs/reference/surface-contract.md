@@ -32,7 +32,11 @@ their guarantees:
   task-bound spawn with receipts and replay, `mu agent check`, soft
   teardown with a preview revision, `mu human-needed`, `mu orchestrate`
   (an orchestrator of any harness as a managed pane, `MU_ORCHESTRATOR=1`),
-  `--as <caller>` on `wait`, `state` and `next`.
+  `--as <caller>` on `wait`, `state` and `next`. On the `hooks` channel
+  (a local claude, codex, cursor-agent or muse pane on tmux), `agent send`
+  pastes after clearing the input line, gated on murmur's report and
+  confirmed by `run_count` (`ack`), never resent; `--steer` is refused;
+  `mu agent answer` types a pending dialog's answer.
 - **Executor.** `mu task auto` and `mu next` (`--dry`, `--hold`,
   `--workers`, `--refute`), `dispatch_host`.
 - **Delegates.** A `mu_delegate` call is a `kind=delegate` task with a

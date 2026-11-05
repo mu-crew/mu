@@ -128,18 +128,24 @@ mu never infers agent state from pane text. Each state source reports it:
 | Agent | Send, abort, wait | State |
 | --- | --- | --- |
 | pi (any backend, local or remote over `ssh -L` or a carrier's forward) | control socket, exact | control socket |
+| claude, codex, cursor-agent, muse on tmux (`hooks`) | clear the input line, paste, then Enter; confirmed by the harness's `run_count`, never resent | murmur's pane inbox, fed by the harness's own hooks |
 | other CLI on herdr | mux | herdr |
 | other CLI on Rex | mux (paste, then Enter) | the agent's own OSC 7501 report |
 | other CLI on tmux | none: send refused | murmur |
 
 With no source, state is `unknown` with a reason. A pi agent whose
-socket does not answer fails loudly; mu never falls back to pasting. mu has no tmux paste.
-murmur is optional for pi agents.
+socket does not answer fails loudly; mu never falls back to pasting for
+pi. The tmux paste is the `hooks` channel's alone, because there the
+harness's hook event confirms what a paste cannot confirm itself: a send
+is gated on the reported state (never into a permission dialog, which
+`mu agent answer` takes), and one that no event confirms reports
+`unknown` and is never resent. murmur is optional for pi agents.
 
 `MU_PI_COMMAND="pi-alt --some-flag"` swaps the pi command for every
-spawn. First-class support for other CLIs is not planned. It can earn promotion
-under the [ROADMAP](ROADMAP.md) criteria: spawn accepts any command and
-`agents.cli` is TEXT.
+spawn. The other blessed harnesses (claude, codex, cursor-agent, muse) are
+being brought up to pi's level as far as their hooks allow (the
+every-harness-first-class spec); spawn accepts any command and `agents.cli`
+is TEXT.
 
 ### 7. TypeScript on Node
 

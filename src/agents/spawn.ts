@@ -816,6 +816,13 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           hostTransport: profile?.transport,
           gateToken,
           reservation: carrier?.token,
+          // A local hook harness on a backend that anchors and pastes (tmux) is on `hooks`.
+          hooks:
+            !profile &&
+            mux.anchorsPanes &&
+            mux.pasteToPane !== undefined &&
+            harness !== undefined &&
+            harness !== "pi",
         });
         ownedIncarnation = row.incarnation;
         if (carrier && !bindCarrierJobAgent(db, carrier.token, row.incarnation, pid)) {
@@ -1127,12 +1134,22 @@ function finalizeAgentRow(
     gateToken: string | undefined;
     /** A lease spawn's reservation token: the insert passes the name fence with it. */
     reservation: string | undefined;
+    /** The pane runs a hook harness (claude, codex, cursor-agent, muse) locally on tmux. */
+    hooks: boolean;
   },
 ): AgentRow {
   const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host, gateToken } = args;
   const hostTransport = args.hostTransport ?? null;
-  // The channel every verb reaches it through, decided once from what the pane runs.
-  const channel = gateToken === undefined && speaksMuCtl(cli, command) ? "ctl" : "mux";
+  // The channel every verb reaches it through, decided once from what the pane runs:
+  // pi's control socket, a local hook harness's pane inbox on tmux, else the mux.
+  const channel =
+    gateToken !== undefined
+      ? "mux"
+      : speaksMuCtl(cli, command)
+        ? "ctl"
+        : args.hooks
+          ? "hooks"
+          : "mux";
   if (staged === undefined) {
     return insertAgent(db, {
       ...(args.reservation !== undefined ? { reservation: args.reservation } : {}),

@@ -32,6 +32,7 @@ import {
 import {
   agentChannel,
   blockedReason,
+  type ChannelName,
   channelTarget,
   ctlChannel,
   readAgentStates,
@@ -58,6 +59,7 @@ import { buildTaskBrief, TaskBriefMissingError } from "../task-brief.js";
 import { getTask } from "../tasks/queries.js";
 import { type WaitRef, type WaitSnapshot, waitForEvents } from "../wait.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
+import { wireAnswerCommand } from "./agent-answer.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
 import { setNextOutcome } from "./handle.js";
@@ -646,9 +648,6 @@ export async function cmdSend(
   } else if (opts.timeout !== undefined) {
     throw new UsageError(say("agent.send_timeout"));
   }
-  if (opts.force && !opts.fresh && parseSessionCommand(text) === undefined) {
-    throw new UsageError(say("agent.send_force"));
-  }
   if (opts.fresh && opts.steer) throw new UsageError(say("agent.send_fresh_steer"));
   if (opts.wait) {
     if (sig === undefined) throw new UsageError(say("agent.send_wait_sig"));
@@ -661,6 +660,13 @@ export async function cmdSend(
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveExistingWorkstream(db, opts.workstream);
+  // A plain --force is the hooks send gate's override (paste into a running or unknown agent).
+  if (opts.force && !opts.fresh && parseSessionCommand(text) === undefined) {
+    const row = getAgent(db, name, ws);
+    if (row === undefined || agentChannel(channelTarget(db, row)).name !== "hooks") {
+      throw new UsageError(say("agent.send_force"));
+    }
+  }
   // dogfood_send_after_new_dropped: capture the undelivered warning
   // rather than letting it print raw, so it lands in the JSON payload
   // too. `exit 0` must not be able to mean "silently dropped".
@@ -720,6 +726,8 @@ export async function cmdSend(
       ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
       ...(sent.msgId !== undefined ? { msgId: sent.msgId, delivery: "delivered" } : {}),
       ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
+      ...(sent.ack !== undefined ? { ack: sent.ack } : {}),
+      ...(sent.runCount !== undefined ? { runCount: sent.runCount } : {}),
       delivered: undelivered === undefined,
       ...(undelivered !== undefined
         ? { undelivered: { reason: undelivered.reason, message: undelivered.message } }
@@ -734,13 +742,15 @@ export async function cmdSend(
     const how =
       sent.transport === "mux"
         ? "via mux"
-        : opts.fresh
-          ? "via ctl, fresh session"
-          : sent.command !== undefined
-            ? `via ctl, pi ran /${sent.command}`
-            : sent.runs !== undefined
-              ? `via ctl, pi was ${sent.state ?? "?"}, runs ${sent.runs}`
-              : `via ctl, pi ${sent.state ?? "?"}`;
+        : sent.transport === "hooks"
+          ? `via hooks, confirmed${sent.runCount !== undefined ? `: run ${sent.runCount}` : ""}`
+          : opts.fresh
+            ? "via ctl, fresh session"
+            : sent.command !== undefined
+              ? `via ctl, pi ran /${sent.command}`
+              : sent.runs !== undefined
+                ? `via ctl, pi was ${sent.state ?? "?"}, runs ${sent.runs}`
+                : `via ctl, pi ${sent.state ?? "?"}`;
     const receipt =
       sent.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
     console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how}${receipt})`));
@@ -757,7 +767,7 @@ export async function cmdSend(
 async function enterSendWait(
   db: Db,
   agent: { name: string; workstreamName: string },
-  sent: { transport?: "ctl" | "mux"; runs?: number; incarnation?: string },
+  sent: { transport?: ChannelName; runs?: number; incarnation?: string },
   o: {
     sig: WaitSignals;
     verb: string;
@@ -777,8 +787,8 @@ async function enterSendWait(
     kind: "agent",
     workstream: agent.workstreamName,
     id: agent.name,
-    ...(sent.transport !== "mux" && sent.runs !== undefined ? { afterRuns: sent.runs } : {}),
-    ...(sent.transport !== "mux" && sent.incarnation !== undefined
+    ...(sent.transport === "ctl" && sent.runs !== undefined ? { afterRuns: sent.runs } : {}),
+    ...(sent.transport === "ctl" && sent.incarnation !== undefined
       ? { incarnation: sent.incarnation }
       : {}),
   };
@@ -1375,11 +1385,11 @@ export function wireAgentCommands(program: Command): void {
   agent
     .command("send <name> <text>")
     .description(
-      "Send text to an agent: pi through its control socket (no paste fallback), other CLIs on herdr only. --fresh = new session + send in one step. Text `-` reads stdin: mu agent send <name> - <<'EOF' for prose.",
+      "Send text: pi over its control socket, a hook harness on tmux by paste (confirmed by run count), other CLIs on herdr or Rex. --fresh = new session + send. Text `-` reads stdin: mu agent send <name> - <<'EOF'.",
     )
     .option(
       "--steer",
-      "if pi is busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt",
+      "if pi is busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt. Refused on a hook harness",
     )
     .option(
       "--interrupt",
@@ -1396,7 +1406,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--force",
-      "with --fresh or a pi /new, /reload, /compact: abandon a running turn instead of refusing",
+      "with --fresh or a pi /new, /reload, /compact: abandon a running turn instead of refusing; to a hook harness: paste even while it runs or its state is unknown (never into a dialog)",
     )
     .option(
       "--wait",
@@ -1494,6 +1504,7 @@ export function wireAgentCommands(program: Command): void {
 
   wireCloseCommand(agent);
   wireCollectCommand(agent);
+  wireAnswerCommand(agent);
 
   // `mu agent abort` — stop a pi agent's turn through its control socket.
   agent

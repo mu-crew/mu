@@ -7,7 +7,8 @@
 //   - session / window / pane topology, behind `ensureSession` and
 //     `spawnAgent` (a spawn is ONE backend operation: tmux and Rex create
 //     and run in one step, herdr creates a shell pane and starts the agent)
-//   - the send protocol (herdr: atomic `agent prompt`; Rex: paste + Enter)
+//   - the send protocol (herdr: atomic `agent prompt`; Rex: paste + Enter;
+//     tmux: clear, paste + Enter for the `hooks` channel)
 //   - scrollback capture
 //   - PANE ID VALIDATION — tmux `%15`, herdr `w1:p1`, Rex `block:<uuid>`, which is why
 //     there is no global pane-id regex
@@ -171,8 +172,12 @@ export interface SendOptions {
 /** Why a send could not be confirmed as submitted. */
 export interface SendWarning {
   paneId: string;
-  /** 'paste-vanished' — pane looked calm, but the text never registered. */
-  reason: "paste-vanished";
+  /**
+   * 'paste-vanished' — pane looked calm, but the text never registered (herdr).
+   * 'unconfirmed' — the paste was made, but no hook event confirmed that the
+   * agent took it (the `hooks` channel); it is never resent.
+   */
+  reason: "paste-vanished" | "unconfirmed";
   message: string;
 }
 
@@ -351,14 +356,24 @@ export interface MuxBackend {
    *  caller can tell the agent's own processes from others; undefined when
    *  the pane is gone. Throws when the probe itself fails. */
   panePid?(paneId: string): Promise<number | undefined>;
-  /** herdr: atomic `agent prompt`; Rex: a paste event, then Enter. tmux has
-   *  no reliable paste (cut in 4.0), so callers branch on the method's presence, never on
-   *  `mux.name`, and refuse when it is absent. */
+  /** herdr: atomic `agent prompt`; Rex: a paste event, then Enter. The `mux`
+   *  channel's send. tmux has none: its paste is `pasteToPane`, which only the
+   *  `hooks` channel uses, because only there does a hook event confirm it.
+   *  Callers branch on the method's presence, never on `mux.name`, and refuse
+   *  when it is absent. */
   sendToPane?(paneId: string, text: string, opts?: SendOptions): Promise<void>;
+  /** tmux only: clear the input line with `clearKey` (a tmux key name, e.g.
+   *  `C-u`), paste `text` as one bracketed paste, then submit it with Enter.
+   *  The paste itself is unconfirmed: the `hooks` channel (src/channels/hooks.ts)
+   *  confirms it by the harness's `run_count`, and never resends. */
+  pasteToPane?(paneId: string, text: string, opts?: { clearKey?: string | null }): Promise<void>;
+  /** tmux only: type `keys` into the pane, as tmux key names (`Enter`, `Escape`)
+   *  or, with `literal`, as text. `mu agent answer` answers a dialog with it. */
+  sendKeys?(paneId: string, keys: readonly string[], opts?: { literal?: boolean }): Promise<void>;
   /** The argv steps that type pi's `/reload` into `paneId` from outside, for
    *  an agent whose extension cannot take `/reload` over ctl. herdr only
-   *  (its `agent prompt`); tmux has no reliable paste, so it omits this and
-   *  callers branch on presence. */
+   *  (its `agent prompt`); tmux omits it (a paste there is confirmed only on
+   *  the `hooks` channel), so callers branch on presence. */
   reloadCommands?(paneId: string): readonly MuxCommand[];
 
   /**

@@ -78,7 +78,7 @@ afterEach(() => {
 const req = () => ({
   task: "t1",
   text: "do the thing",
-  spawn: { name: "worker-1", workstream: "auth", cli: "claude" },
+  spawn: { name: "worker-1", workstream: "auth", cli: "aider" },
 });
 const receipt = () => getReceipt(db, taskIdFor(db, "t1", "auth") ?? 0, "manual:t1");
 const brief = () =>

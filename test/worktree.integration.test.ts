@@ -365,10 +365,10 @@ gitDescribe("spawn --worktree", () => {
   it("records the channel on the worktree path too (the finalize UPDATE)", async () => {
     const pi = await spawn("worker-1", { cli: "helper", command: "pi-meta --x" });
     const other = await spawn("worker-2", { cli: "claude" });
-    expect([pi.channel, other.channel]).toEqual(["ctl", "mux"]);
+    expect([pi.channel, other.channel]).toEqual(["ctl", "hooks"]);
     expect(db.prepare("SELECT name, channel FROM agents ORDER BY name").all()).toEqual([
       { name: "worker-1", channel: "ctl" },
-      { name: "worker-2", channel: "mux" },
+      { name: "worker-2", channel: "hooks" },
     ]);
   });
 

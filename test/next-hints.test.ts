@@ -172,6 +172,21 @@ describe("computeNext: the outcome's own move", () => {
     ).toMatch(/^mu agent send w1 --fresh /);
   });
 
+  it("claim --for a hooks owner on tmux: a plain send (it is pasted to), never --fresh", () => {
+    insertAgent(db, {
+      name: "hk",
+      workstream: "d",
+      paneId: "%hk",
+      cli: "claude",
+      channel: "hooks",
+    });
+    const task = { workstream: "d", id: "t1" };
+    const owner = { workstream: "d", name: "hk" };
+    expect(
+      next({ outcome: { kind: "claimed-for", task, owner, muxCanSend: false } })?.commands[0],
+    ).toMatch(/^mu agent send hk 'Claim done/);
+  });
+
   it("a preview: the apply, fenced with --if <rev>, and nothing else", () => {
     authorizeTasks(db, [addTask(db, { workstream: "d", localId: "a1", title: "a" }).name], {
       workstream: "d",

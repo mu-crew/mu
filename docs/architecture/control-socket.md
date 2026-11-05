@@ -148,9 +148,15 @@ with reason `ctl missing` or `ctl refused` for state. mu never pastes
 into it or asks murmur instead.
 
 Only non-pi CLIs reach `MuxBackend.sendToPane`, which herdr (its atomic
-`agent prompt`) and Rex (a paste event, then Enter) implement. On tmux, a send to a non-pi
-agent raises `AgentSendUnsupportedError` (exit 4): a bracketed paste
-cannot be confirmed, so mu has none.
+`agent prompt`) and Rex (a paste event, then Enter) implement. On tmux, a
+send to an agent on the `mux` channel raises `AgentSendUnsupportedError`
+(exit 4): tmux has no `sendToPane`. A hook harness on tmux (claude, codex,
+cursor-agent, muse) is on the `hooks` channel instead
+(`src/channels/hooks.ts`): it clears the input line, makes one bracketed
+paste through `MuxBackend.pasteToPane` and submits it. The paste cannot
+confirm itself; the harness's `run_count`, read through `murmur pane`, rising
+within `MU_SEND_ACK_MS` confirms it. Otherwise the send is `unknown` and is
+never resent.
 
 A pi agent's `/new`, `/reload` and `/compact [instructions]` go
 through the `command` op. Any other slash command to a pi agent raises

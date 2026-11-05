@@ -27,6 +27,7 @@ import {
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, defaultStateDir, openDb } from "../src/db.js";
+import { activeMux, setMuxForTests } from "../src/mux.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
 import { getTask, selectTaskNotes } from "../src/tasks/queries.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
@@ -215,12 +216,34 @@ describe("spawn records its channel (agents.channel)", () => {
     expect(getAgent(db, "worker-1", "auth")?.channel).toBe("ctl");
   });
 
-  it("a non-pi cli is mux, and --no-ctl leaves a pi on ctl", async () => {
+  it("a local hook harness on tmux is hooks, another non-pi cli is mux, and --no-ctl leaves a pi on ctl", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
     await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "claude" });
     await spawnAgent(db, { name: "worker-2", workstream: "auth", ctl: false });
-    expect(raw("worker-1")).toBe("mux");
+    await spawnAgent(db, { name: "worker-3", workstream: "auth", cli: "aider" });
+    // A free-form key maps to its harness by the command's argv0 (spec D17).
+    await spawnAgent(db, {
+      name: "worker-4",
+      workstream: "auth",
+      cli: "big",
+      command: "codex --model x",
+    });
+    expect(raw("worker-1")).toBe("hooks");
     expect(raw("worker-2")).toBe("ctl");
+    expect(raw("worker-3")).toBe("mux");
+    expect(raw("worker-4")).toBe("hooks");
+  });
+
+  it("a hook harness on a backend without tmux's paste and anchors stays on mux", async () => {
+    process.env.MU_SPAWN_CTL_MS = "0";
+    const tmuxOnly = await activeMux();
+    setMuxForTests({ ...tmuxOnly, anchorsPanes: false });
+    try {
+      await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "claude" });
+    } finally {
+      setMuxForTests(tmuxOnly);
+    }
+    expect(raw("worker-1")).toBe("mux");
   });
 });
 

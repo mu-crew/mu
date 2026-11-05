@@ -65,8 +65,8 @@ const DELIVERY_CALL_SITES = [
 ];
 const DELIVERY_ENTRY_POINTS = ["agentChannel", "deliver"];
 
-/** The delivery verbs of `AgentChannel`, and the raw ctl ops they replace. */
-const DELIVERY_VERBS = ["send", "fresh", "command", "interrupt", "abort"];
+/** The delivery verbs of `AgentChannel` (answer since U8), and the raw ctl ops they replace. */
+const DELIVERY_VERBS = ["send", "fresh", "command", "interrupt", "abort", "answer"];
 const CTL_DELIVERY_NAMES = [
   "ctlFailure",
   "ctlRequestFor",

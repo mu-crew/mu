@@ -93,7 +93,7 @@ function track(child: ChildProcess, holdUntil = false): () => void {
 export function execFileCapture(
   cmd: string,
   args: readonly string[],
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; input?: string } = {},
 ): Promise<ExecFileResult> {
   return new Promise((resolve) => {
     const child = execFile(
@@ -115,7 +115,9 @@ export function execFileCapture(
     );
     // execa closes stdin when no input is given; do the same so children
     // that read stdin see EOF instead of hanging.
-    child.stdin?.end();
+    // An input to a child that exits without reading it is an EPIPE, not a crash.
+    if (opts.input !== undefined) child.stdin?.on("error", () => {});
+    child.stdin?.end(opts.input);
     track(child);
   });
 }

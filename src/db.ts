@@ -656,7 +656,7 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   // The transport of the profile a remote agent was spawned on ('session' | 'lease'): a close
   // decides lease-ness from the row, never from the profile as it is now.
   ["agents", "host_transport", "TEXT"],
-  // The channel a pane agent is reached through ('ctl' | 'mux', machine-local), recorded at
+  // The channel a pane agent is reached through ('ctl' | 'hooks' | 'mux', machine-local), recorded at
   // spawn: every verb reads it from the row, never from the env (src/channels).
   ["agents", "channel", "TEXT"],
   // A lease reservation's remote worktree (src/carrier-jobs.ts): which tree it belongs to.
@@ -1095,7 +1095,7 @@ CREATE TABLE IF NOT EXISTS agents (
   repo          TEXT,                           -- a remote worktree's repo on its host, made absolute at spawn (machine-local); NULL: none
   gate_token    TEXT,                           -- remote command gate: spawn-unique token, also the key of its remote result record (machine-local); NULL: not a gate
   host_transport TEXT,                          -- the transport of the profile it was spawned on, 'session' | 'lease' (machine-local); NULL: local, or a row older than the column
-  channel       TEXT,                           -- the channel mu reaches it through, 'ctl' | 'mux' (machine-local), recorded at spawn; NULL: a row older than the column (derived)
+  channel       TEXT,                           -- the channel mu reaches it through, 'ctl' | 'hooks' | 'mux' (machine-local), recorded at spawn; NULL: a row older than the column (derived)
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   UNIQUE (workstream_id, name),

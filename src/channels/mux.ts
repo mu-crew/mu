@@ -6,17 +6,22 @@
 //
 // Delivery is the backend's own `sendToPane` (herdr's atomic `agent prompt`,
 // Rex's send), with no receipt. A backend without one (tmux) refuses
-// (AgentSendUnsupportedError): there is no paste. Fresh, interrupt and abort
-// need ctl and are refused with their typed errors; a send that asks for a
-// write fence is refused rather than sent unfenced.
+// (AgentSendUnsupportedError): tmux's paste belongs to the `hooks` channel,
+// where a hook event confirms it, and nothing confirms it here. Fresh,
+// interrupt and abort need ctl and are refused with their typed errors; a send
+// that asks for a write fence is refused rather than sent unfenced. A dialog
+// answer is typed as keys where the backend can (tmux), unconfirmed.
 
-import { readBaseStates } from "../agent-state.js";
+import { agentKey, readBaseStates } from "../agent-state.js";
 import {
   AgentAbortNeedsCtlError,
+  AgentAnswerUnsupportedError,
   AgentFreshNeedsCtlError,
+  AgentNotBlockedError,
   AgentSendUnsupportedError,
 } from "../agents/errors.js";
 import { activeMux, type SendOptions } from "../mux.js";
+import { typeKeys } from "./hooks.js";
 import type { AgentChannel, DeliveryOptions, DeliveryTarget, SendResult } from "./types.js";
 
 /** Refuse a write fence this channel cannot honour. */
@@ -68,5 +73,18 @@ export const muxChannel: AgentChannel = {
   },
   abort: async (t) => {
     throw new AgentAbortNeedsCtlError(t.agent.name, t.agent.workstreamName, t.agent.cli);
+  },
+  answer: async (t, keys, opts) => {
+    const { name, workstreamName, paneId } = t.agent;
+    const mux = await activeMux();
+    if (!mux.sendKeys) throw new AgentAnswerUnsupportedError(name, workstreamName, "mux");
+    if (opts.force !== true) {
+      const reading = (await readBaseStates([t.agent], {})).get(agentKey(t.agent));
+      if (reading?.state !== "needs_permission") {
+        throw new AgentNotBlockedError(name, workstreamName, reading?.state ?? "unknown");
+      }
+    }
+    await typeKeys(mux.sendKeys, paneId, keys);
+    return { transport: "mux", keys, ack: "unknown" };
   },
 };

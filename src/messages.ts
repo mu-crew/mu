@@ -138,6 +138,32 @@ export const MESSAGES = {
   "agent.send_unsupported": (name: string, cli: string) =>
     `agent ${name} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr), start it with the prompt as an argument (--command "${cli} '<prompt>'"), or use pi`,
   "agent.send_refused": (reason: string) => `control socket refused the send: ${reason}`,
+  "agent.empty_send_hooks": (name: string) =>
+    `agent ${name} is on the hooks channel: an empty message submits nothing; press Enter in the pane yourself`,
+  "agent.task_brief_hooks": (name: string) =>
+    `agent ${name} is on the hooks channel, which cannot take a task brief yet: nothing was sent; spawn it without --task and send the brief with mu agent send`,
+  "agent.fence_unsupported": (name: string, channel: string) =>
+    `agent ${name} is on the ${channel} channel, which has no write fence: nothing was sent`,
+  "agent.steer_unsupported": (name: string, ws: string, channel: string) =>
+    `agent ${name} is on the ${channel} channel, which has no mid-turn steer: nothing was sent; send it once the turn ends (mu agent wait ${name} -w ${ws}), or interrupt the turn`,
+  "agent.send_gate": (name: string, ws: string, state: string, reason: string) =>
+    state === "blocked"
+      ? `agent ${name} is blocked on a permission dialog (${reason}): nothing was sent; answer it with mu agent answer ${name} <choice> -w ${ws}`
+      : state === "running"
+        ? `agent ${name} is running a turn (${reason}): nothing was sent; wait for it (mu agent wait ${name} -w ${ws}), or paste anyway with --force`
+        : `agent ${name}'s state is unknown (${reason}): nothing was sent; read the pane (mu agent read ${name} -w ${ws}), then paste anyway with --force`,
+  "agent.send_unconfirmed": (name: string, ms: number) =>
+    `pasted to agent ${name}, but its run count did not rise within ${ms}ms: the send is unconfirmed and is not resent; read the pane before sending again`,
+  "agent.not_blocked": (name: string, ws: string, state: string) =>
+    `agent ${name} has no pending permission dialog (state ${state}): nothing was sent; read the pane (mu agent read ${name} -w ${ws}), or type the keys anyway with --force`,
+  "agent.answer_keys": () =>
+    "give the answer as one or more keys, each one line (e.g. mu agent answer worker-1 1)",
+  "agent.answer_unconfirmed": (name: string, ws: string) =>
+    `no event confirmed the answer: read the pane (mu agent read ${name} -w ${ws}) before answering again`,
+  "agent.answer_unsupported": (name: string, channel: string) =>
+    channel === "ctl"
+      ? `agent ${name} runs pi on the ctl channel: answer its dialog in the pane`
+      : `agent ${name} is on the ${channel} channel, and this multiplexer cannot type keys into its pane: answer the dialog in the pane`,
   "agent.attempt_busy": (task: string, key: string) =>
     `spawn attempt ${key} of task ${task} is running in another mu process; nothing was done. Retry when it finishes (the replay returns its outcome)`,
   "agent.attempt_failed": (task: string, key: string, reason: string) =>
@@ -213,7 +239,8 @@ export const MESSAGES = {
   "agent.send_interrupt_slash": () => "--interrupt sends a prompt, not a slash command",
   "agent.send_interrupt_empty": () => "--interrupt needs a non-empty prompt",
   "agent.send_timeout": () => "--timeout only applies with --interrupt",
-  "agent.send_force": () => "--force only applies with --fresh or a /new, /reload, /compact",
+  "agent.send_force": () =>
+    "--force only applies with --fresh or a /new, /reload, /compact, or to an agent on the hooks channel",
   "agent.send_fresh_steer": () => "--fresh and --steer are mutually exclusive",
   "agent.send_wait_sig": () => "--wait needs the wait's signal handlers",
   "agent.send_wait_slash": () =>

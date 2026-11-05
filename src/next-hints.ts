@@ -51,7 +51,8 @@ export type NextOutcome =
   /** A remote command gate spawned: its wait returns the command's exit. */
   | { kind: "gate-spawned"; agent: NextAgent }
   /** `task claim --for`: the owner still has to be sent the task. `muxCanSend: false` (tmux):
-   *  a non-pi owner cannot be sent anything, so no send is offered. */
+   *  an owner on the `mux` channel cannot be sent anything, so no send is offered (a `hooks`
+   *  owner is pasted to, and a pi owner is sent over ctl). */
   | {
       kind: "claimed-for";
       task: { workstream: string; id: string };
@@ -178,7 +179,8 @@ function outcomeMove(db: Db, o: NextOutcome): HintMove | undefined {
       const owner = getAgent(db, o.owner.name, o.owner.workstream);
       if (owner === undefined) return undefined;
       const ctl = expectsCtl(owner);
-      if (!ctl && o.muxCanSend === false) return undefined;
+      // A `hooks` owner is pasted to on tmux, so only a `mux` owner needs the backend's send.
+      if (!ctl && owner.channel !== "hooks" && o.muxCanSend === false) return undefined;
       const fresh = ctl ? ["--fresh"] : [];
       return {
         argv: [

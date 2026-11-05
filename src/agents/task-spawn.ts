@@ -37,6 +37,7 @@ import {
 } from "../channels/index.js";
 import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
+import { say } from "../messages.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
 import { addNote } from "../tasks/edit.js";
 import { TaskAlreadyOwnedError, TaskNotFoundError } from "../tasks/errors.js";
@@ -51,9 +52,11 @@ import {
   AgentFreshNeedsCtlError,
   AgentPaneDeadError,
   AgentReplacedError,
+  AgentSendGateError,
   AgentSendRefusedError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
+  AgentSteerUnsupportedError,
   SpawnAttemptBusyError,
   SpawnAttemptEndedError,
   SpawnAttemptFailedError,
@@ -145,6 +148,9 @@ export function definitelyUnsent(err: unknown): boolean {
     err instanceof AgentSlashCommandUnsupportedError ||
     err instanceof AgentBusyError ||
     err instanceof AgentSendRefusedError ||
+    // hooks: the gate read the pane and refused, or a steer was refused, before any paste.
+    err instanceof AgentSendGateError ||
+    err instanceof AgentSteerUnsupportedError ||
     // Another pi owns the socket now: refused before (or at) the dispatch.
     err instanceof AgentReplacedError ||
     // A pane that died WITH write evidence (a msgId) may have taken the prompt first.
@@ -515,10 +521,14 @@ async function drive(
           }
           throw new SpawnTaskStateError(req.task, `is no longer claimed by ${now.name}`);
         }
-        const journaled = updateReceipt(db, taskId, key, {
-          state: "sending",
-          transport: agentChannel(channelTarget(db, now)).name,
-        });
+        const transport = agentChannel(channelTarget(db, now)).name;
+        // The hooks write (a brief file and a pointer paste, after session_start) is not
+        // here yet: refuse before the journal, so nothing is sent and the spawn rolls back.
+        if (transport === "hooks") {
+          const why = say("agent.task_brief_hooks", now.name);
+          throw new AgentSendUnsupportedError(now.name, ws, now.cli, why);
+        }
+        const journaled = updateReceipt(db, taskId, key, { state: "sending", transport });
         return { row: now, rec: journaled };
       })
       .immediate();
