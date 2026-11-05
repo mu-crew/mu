@@ -28,7 +28,8 @@ import { carrierJobFilePath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
 import * as execFile from "../src/exec-file.js";
 import { addHost } from "../src/hosts.js";
-import { listLeftovers } from "../src/leftovers.js";
+import { type Leftover, leftoverLines, listLeftovers, withStopFailed } from "../src/leftovers.js";
+import { safeJsonLine } from "../src/output-contract.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
@@ -60,8 +61,8 @@ const ENV_KEYS = ["MU_DB_PATH", "MU_STATE_DIR", "MU_SYNC_DIR"];
 
 const order = (): string[] =>
   existsSync(orderLog) ? readFileSync(orderLog, "utf8").trim().split("\n").filter(Boolean) : [];
-const jobFile = () => carrierJobFilePath("auth", "worker-1", dir);
-const record = (job: string) => `${jobFile()}.${job}.stop-failed`;
+const jobFile = (name = "worker-1") => carrierJobFilePath("auth", name, dir);
+const record = (job: string, name = "worker-1") => `${jobFile(name)}.${job}.stop-failed`;
 const reservation = (): CarrierJob => {
   const r = getCarrierJobByName(db, "auth", "worker-1");
   if (r === undefined) throw new Error("no reservation");
@@ -136,10 +137,11 @@ function reapedTree(name: string, cwd: string): number {
  * A lease agent the reaper removed: its pane gone, its row deleted (a `--worktree` row leaves
  * a recovery record), its reservation (launched, bound, handle known) and job file kept.
  */
-function reaped(over: { worktree?: boolean; job?: string } = {}): number {
+function reaped(over: { worktree?: boolean; job?: string; name?: string } = {}): number {
+  const name = over.name ?? "worker-1";
   const r = reserveCarrierJob(db, {
     workstream: "auth",
-    name: "worker-1",
+    name,
     host: "dev",
     hostStop: stop,
     creatorPid: deadPid(),
@@ -147,7 +149,7 @@ function reaped(over: { worktree?: boolean; job?: string } = {}): number {
   if (r === undefined) throw new Error("reserved already");
   markCarrierLaunch(db, r.token);
   const row = insertAgent(db, {
-    name: "worker-1",
+    name,
     workstream: "auth",
     paneId: "%90",
     host: "dev",
@@ -160,9 +162,9 @@ function reaped(over: { worktree?: boolean; job?: string } = {}): number {
   const job = over.job ?? "job-1";
   bindCarrierJobAgent(db, r.token, row.incarnation, "%90");
   fillCarrierJob(db, r.token, job);
-  mkdirSync(dirname(jobFile()), { recursive: true });
-  writeFileSync(jobFile(), `${job}\n`);
-  deleteAgent(db, "worker-1", "auth");
+  mkdirSync(dirname(jobFile(name)), { recursive: true });
+  writeFileSync(jobFile(name), `${job}\n`);
+  deleteAgent(db, name, "auth");
   return row.incarnation;
 }
 
@@ -291,16 +293,78 @@ describe("recovery leftovers", () => {
   });
 });
 
+/** Code points of one leftover as `--json` prints it (the envelope's encoder re-escapes). */
+const jsonChars = (l: Leftover): number => [...safeJsonLine(JSON.stringify(l))].length;
+/** Code points of one leftover's `--table` line. */
+const tableChars = (l: Leftover): number => [...(leftoverLines([l]).at(-1) ?? "")].length;
+const FULL = "full: mu doctor";
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching control characters is the point
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/u;
+
 describe("stop_failed", () => {
-  it("the record's line, escaped and cut with cut=", async () => {
+  it("the record's text after `<job> `, escaped and cut with cut= and the way back", async () => {
     reaped();
     writeFileSync(record("job-1"), `job-1 x\t${"é".repeat(200)}\n`);
     const [l] = await leftovers();
-    // "job-1 x\\t" is 9 chars once escaped, then 200: 160 kept, 49 cut.
-    expect(l?.stop_failed).toBe(`job-1 x\\t${"é".repeat(151)} cut=49`);
-    expect(JSON.stringify(l).length).toBeLessThan(400);
+    // "x\\t" is 3 chars once escaped, then 200: 160 kept, 43 cut.
+    expect(l?.stop_failed).toBe(`x\\t${"é".repeat(157)} cut=43 ${FULL}`);
     writeFileSync(record("job-1"), "job-1 on dev not stopped: no control master\n");
-    expect((await leftovers())[0]?.stop_failed).toBe("job-1 on dev not stopped: no control master");
+    expect((await leftovers())[0]?.stop_failed).toBe("on dev not stopped: no control master");
+  });
+
+  it("C1, bidi and U+2028 are escaped, ordinary Unicode stays readable; a cut never splits an escape", async () => {
+    reaped();
+    writeFileSync(
+      record("job-1"),
+      "job-1 bad\u009b31m\u202eabcd\u2028nl\u001b[2J\ttab é\u2029\u2066\u061c\u007f\\\n",
+    );
+    const [l] = await leftovers();
+    expect(l?.stop_failed).toBe(
+      "bad\\u{9b}31m\\u{202e}abcd\\u{2028}nl\\u{1b}[2J\\ttab é\\u{2029}\\u{2066}\\u{61c}\\u{7f}\\\\",
+    );
+    const line = leftoverLines(l === undefined ? [] : [l]).at(-1) ?? "";
+    expect(line).not.toMatch(UNSAFE);
+    // 155 kept, then an 8-char escape would pass 160: it is dropped whole with the rest.
+    writeFileSync(record("job-1"), `job-1 ${"x".repeat(155)}\u202e${"y".repeat(10)}\n`);
+    expect((await leftovers())[0]?.stop_failed).toBe(`${"x".repeat(155)} cut=11 ${FULL}`);
+  });
+
+  it("a 32-char name, a 128-char handle and a 511-byte record stay a record <= 400 chars", async () => {
+    const name = "w".repeat(32);
+    const job = "j".repeat(128);
+    reaped({ name, job });
+    const next = `mu agent reattach ${name} -w auth`;
+    for (const fill of ["x", '"', "\\", "é", "\u202e"]) {
+      let body = "";
+      while (Buffer.byteLength(`${job} ${body}${fill}\n`) <= 511) body += fill;
+      const text = `${job} ${body}\n`;
+      expect(Buffer.byteLength(text)).toBeGreaterThan(507);
+      writeFileSync(record(job, name), text);
+      const [l] = await leftovers();
+      if (l === undefined) throw new Error("no leftover");
+      expect(jsonChars(l), fill).toBeLessThanOrEqual(400);
+      expect(tableChars(l), fill).toBeLessThanOrEqual(400);
+      expect(l).toMatchObject({ name, job, next });
+      expect(l.stop_failed).toMatch(new RegExp(`^\\S* ?cut=\\d+ ${FULL}$`));
+    }
+  });
+
+  it("with no room left the field is `cut=N` alone; name, job and next are never shortened", () => {
+    const base: Leftover = {
+      kind: "lease-job",
+      name: "n".repeat(32),
+      host: "h".repeat(32),
+      job: "j".repeat(128),
+      agent_id: 123456,
+      recovery_id: 123456,
+      stop_failed: null,
+      next: `mu agent close ${"n".repeat(32)} -w ${"w".repeat(32)} --recovery 123456`,
+    };
+    const l = withStopFailed(base, "x".repeat(400));
+    expect(l.stop_failed).toBe("cut=400");
+    expect({ ...l, stop_failed: null }).toEqual(base);
+    // With room, a short body is shown whole.
+    expect(withStopFailed({ ...base, job: "job-1" }, "ok").stop_failed).toBe("ok");
   });
 
   it("a record of another id, by path or by content, is not shown and the file is kept", async () => {
@@ -320,7 +384,7 @@ describe("stop_failed", () => {
     writeFileSync(record("job-2"), "job-2 on dev not stopped: mine\n");
     dropStopFailed(jobFile(), "job-1");
     expect(existsSync(record("job-1"))).toBe(false);
-    expect((await leftovers())[0]?.stop_failed).toBe("job-2 on dev not stopped: mine");
+    expect((await leftovers())[0]?.stop_failed).toBe("on dev not stopped: mine");
   });
 });
 
@@ -380,7 +444,7 @@ describe("agent list", () => {
     const t = await runCli(["agent", "list", "-w", "auth", "--table"], dbPath);
     expect(t.stdout).toContain("Leftovers (1)");
     expect(t.stdout).toContain(
-      `  worker-1  lease-job on dev job=job-1 recovery=${agentId} stop failed: job-1 on dev not stopped: no control master  → ${REATTACH}`,
+      `  worker-1  lease-job on dev job=job-1 recovery=${agentId} stop failed: on dev not stopped: no control master  → ${REATTACH}`,
     );
   });
 
