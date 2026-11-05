@@ -21,7 +21,9 @@
 // them); nothing here runs a host command.
 
 import type { Db } from "./db.js";
+import { OWNED } from "./db-recovery.js";
 import { say } from "./messages.js";
+import { shellWord } from "./shell-quote.js";
 
 /** Why the row went away: `reap` (any plain delete), a `teardown`, or its workstream's deletion. */
 export type RemoteRecoveryReason = "reap" | "teardown" | "workstream-delete";
@@ -226,6 +228,105 @@ export function refuseRecoveredWorktree(
   const all = recoveriesFor(db, workstream, name);
   const ids = all.filter((r) => r.host === host).map((r) => r.agentId);
   if (ids.length > 0) throw new RemoteRecoveryPendingError(workstream, name, host, ids, all.length);
+}
+
+/** What owns a remote path a non-`--worktree` spawn resolved: a managed remote worktree's agent, or a recovery record. */
+export type RemotePathOwner =
+  | { kind: "agent"; workstream: string; name: string; repo: string | null; head: string }
+  | { kind: "recovery"; rec: RemoteRecovery };
+
+/**
+ * Who owns path `cwd` on host profile `host`, for a remote spawn's admission. EXACT path and
+ * profile name (no descendants, no host aliases): a registered agent of any workstream whose
+ * managed remote worktree it is (db-recovery's OWNED provenance), else any recovery record
+ * whose canonical or aside path it is (the newest: an older record's close refuses while it
+ * exists). Agents sharing an unmanaged checkout own nothing. A recovery's own admission is
+ * the stricter assertRecoveryUsable. Read only, no liveness probe.
+ */
+export function remotePathOwner(db: Db, host: string, cwd: string): RemotePathOwner | undefined {
+  const agent = db
+    .prepare(
+      `SELECT ws.name AS workstream, a.name AS name, a.repo AS repo, COALESCE(a.collected_head, a.base) AS head
+         FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
+        WHERE a.host = ? AND a.cwd = ? AND ${OWNED("a")} ORDER BY a.id LIMIT 1`,
+    )
+    .get(host, cwd) as Omit<RemotePathOwner & { kind: "agent" }, "kind"> | undefined;
+  if (agent !== undefined) return { kind: "agent", ...agent };
+  const rec = db
+    .prepare(
+      "SELECT * FROM remote_recovery WHERE host = ? AND (cwd = ? OR aside = ?) ORDER BY agent_id DESC LIMIT 1",
+    )
+    .get(host, cwd, cwd) as RawRow | undefined;
+  return rec === undefined ? undefined : { kind: "recovery", rec: rowToRecovery(rec) };
+}
+
+/** The pane a refusal found already open, and whether its rollback proved it gone. */
+export interface RefusedPane {
+  id: string;
+  backend: string;
+  gone: boolean;
+  /** The backend's own kill of that pane, one shell line. */
+  kill: string;
+}
+
+/**
+ * A remote spawn whose resolved cwd another agent's managed remote worktree, or a recovery
+ * record, owns on that host: a second user could lose its work or its commits' attribution.
+ * Exit 4. `next` holds the owner's executable way out; `pane` is set when the owner appeared
+ * while the spawn's pane was opening.
+ */
+export class RemotePathOwnedError extends Error {
+  override readonly name = "RemotePathOwnedError";
+  readonly next: readonly string[];
+  constructor(
+    public readonly workstream: string,
+    public readonly agentName: string,
+    public readonly host: string,
+    public readonly cwd: string,
+    public readonly owner: RemotePathOwner,
+    public readonly pane?: RefusedPane,
+  ) {
+    const w = shellWord;
+    const next =
+      owner.kind === "agent"
+        ? [
+            `mu agent close ${w(owner.name)} -w ${w(owner.workstream)}`,
+            `mu agent spawn ${w(agentName)} -w ${w(workstream)} --host ${w(host)} --worktree${owner.repo === null ? "" : ` --root ${w(owner.repo)}`} --from ${w(owner.head)}`,
+          ]
+        : ["collect", "close"].map(
+            (verb) =>
+              `mu agent ${verb} ${w(owner.rec.name)} -w ${w(owner.rec.workstream)} --recovery ${owner.rec.agentId}`,
+          );
+    const [first = "", second = ""] = next;
+    const what =
+      owner.kind === "agent"
+        ? say("remote.path_owned_agent", workstream, agentName, host, cwd, owner, first, second)
+        : say(
+            "remote.path_owned_recovery",
+            workstream,
+            agentName,
+            host,
+            cwd,
+            owner.rec,
+            first,
+            second,
+          );
+    super(what + say("remote.path_owned_pane", host, pane));
+    this.next = next;
+  }
+}
+
+/** Refuse a remote spawn into `cwd` on `host` while something owns it (remotePathOwner). Read only. */
+export function refuseOwnedRemotePath(
+  db: Db,
+  spawn: { workstream: string; name: string },
+  host: string,
+  cwd: string,
+): void {
+  const owner = remotePathOwner(db, host, cwd);
+  if (owner !== undefined) {
+    throw new RemotePathOwnedError(spawn.workstream, spawn.name, host, cwd, owner);
+  }
 }
 
 /** The profile at the time of use must be the one the record pinned. Missing provenance refuses. */

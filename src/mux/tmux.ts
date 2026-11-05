@@ -430,6 +430,10 @@ function appendEnvFlags(args: string[], env: Record<string, string> | undefined)
 }
 
 /** Idempotent: succeeds even if the pane is already gone. */
+export function killPaneCommand(paneId: string): MuxCommand {
+  return { command: "tmux", args: [...tmuxGlobalFlags(), "kill-pane", "-t", paneId] };
+}
+
 export async function killPane(paneId: string): Promise<void> {
   assertValidPaneId(paneId);
   const result = await currentExecutor(["kill-pane", "-t", paneId]);
@@ -675,6 +679,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   paneResult,
   panePid,
   killPane,
+  killPaneCommand,
   capture,
 
   attachCommands,

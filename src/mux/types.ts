@@ -319,6 +319,9 @@ export interface MuxBackend {
    *  when the probe itself fails, so liveness gates fail closed. */
   paneAlive(paneId: string): Promise<boolean>;
   killPane(paneId: string): Promise<void>;
+  /** The argv an operator runs by hand to do what `killPane(paneId)` does, on the same
+   *  server mu drives (for a diagnostic naming a pane mu could not prove gone). */
+  killPaneCommand(paneId: string): MuxCommand;
   capture(paneId: string, opts?: CaptureOptions): Promise<string>;
 
   // — attach —

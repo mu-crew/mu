@@ -443,6 +443,36 @@ export const MESSAGES = {
     const pick = total <= 1 ? "" : ids.length === 1 ? ` --recovery ${ids[0]}` : " --recovery <id>";
     return `agent ${ws}/${agent}: a removed agent's remote worktree on ${host} is still recorded (recovery ${ids.join(", ")}); a new --worktree spawn of the name there could land beside it. Keep its commits with mu agent collect ${agent} -w ${ws}${pick}, then mu agent close ${agent} -w ${ws}${pick}`;
   },
+  // A remote spawn into a path another owner holds (src/remote-recovery.ts RemotePathOwnedError).
+  "remote.path_owned_agent": (
+    ws: string,
+    agent: string,
+    host: string,
+    cwd: string,
+    owner: { workstream: string; name: string },
+    close: string,
+    own: string,
+  ) =>
+    `agent ${ws}/${agent}: ${cwd} on ${host} is the managed remote worktree of ${owner.workstream}/${owner.name}; a second agent there could lose its work or its commits' attribution. Close it first: ${close}, or give this agent its own tree: ${own}`,
+  "remote.path_owned_recovery": (
+    ws: string,
+    agent: string,
+    host: string,
+    cwd: string,
+    rec: { agentId: number; workstream: string; name: string; cwd: string },
+    collect: string,
+    close: string,
+  ) =>
+    `agent ${ws}/${agent}: ${cwd} on ${host} is ${rec.cwd === cwd ? "" : "the parked aside of "}the worktree of recovery ${rec.agentId} (removed agent ${rec.workstream}/${rec.name}); a second agent there could lose its work. Keep its commits with ${collect}, then ${close}`,
+  "remote.path_owned_pane": (
+    host: string,
+    pane: { id: string; backend: string; gone: boolean; kill: string } | undefined,
+  ) =>
+    pane === undefined
+      ? ". The agent was not started"
+      : pane.gone
+        ? `. Found after its pane opened: ${pane.backend} pane ${pane.id} was killed; no agent was registered`
+        : `. Found after its pane opened: ${pane.backend} pane ${pane.id} (host ${host}) is not proven gone and may still run its transport; no agent was registered. Kill it: ${pane.kill}`,
   "rebuild.target_exists": (path: string) => `rebuild target already exists: ${path}`,
   "rebuild.target_is_source": (path: string) => `rebuild target is the source DB: ${path}`,
   "rebuild.no_identity": () => "source DB has no machine_identity row; not a mu DB",
