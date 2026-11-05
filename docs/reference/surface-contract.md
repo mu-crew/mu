@@ -74,7 +74,8 @@ column names, `id` is `local_id`. Ordinary result <= 4 KB, list record
 <= 400 chars, a cut says `more=N`/`cut=N` and names the exact
 retrieval command. A list record may carry a per-item `next` string
 (`agent list`'s leftovers, doctor's `close`): data, not a `NextPlan`, and
-never hinted by the envelope. Whole pinned brief, report and verdict are exempt
+never hinted by the envelope. A leftover's cap bounds `stop_failed`; identity
+and `next` are never cut. Whole pinned brief, report and verdict are exempt
 from the cap (they are the content). Text record: escaped, one record
 per line; the exemption allows no multiline framing. NDJSON only for
 explicitly streaming logs; `mu wait` is one object.

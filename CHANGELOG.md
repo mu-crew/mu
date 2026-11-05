@@ -77,7 +77,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   names that handle, as the text after `<job> ` escaped like a task record (C0,
   C1, bidi, U+2028/9; other Unicode as is), cut at 160 chars and so the whole
   record (JSON item and table line) stays <= 400: ` cut=<n> full: mu doctor`,
-  or `cut=<n>` alone with no room; `name`, `job`, `next` are never cut. `--table` prints a
+  or `cut=<n>` alone with no room, or null when even that passes 400. The cap
+  bounds stop_failed; identity and next are never cut, so at mu's limits
+  (32-char name, host and workstream, 128-char handle, `--recovery` id >= 100)
+  the record alone may pass 400. `--table` prints a
   `Leftovers (n)` section. No host command runs. mu removes the record once a
   stop (close or spawn rollback) or a ready reattach proves the job; an
   abandon keeps it. Doctor's `lease-job` hint prints the record's path.
