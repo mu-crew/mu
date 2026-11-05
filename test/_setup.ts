@@ -139,6 +139,11 @@ process.env.MU_SPAWN_CTL_MS = "0";
 // test sees an empty home unless it builds its own temp one.
 process.env.MU_PI_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-pi-home-${process.pid}`;
 
+// Baseline: `mu init` writes under MU_INIT_HOME, never the developer's real
+// ~/.claude, ~/.codex or ~/.cursor. The path does not exist, so no harness is
+// set up there and a bare `mu init` writes nothing.
+process.env.MU_INIT_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-init-home-${process.pid}`;
+
 // Real dirs first (from the inherited env), then redirect, then guard.
 const realDirs = realMuDirs();
 const runRoot = (inject as (key: string) => unknown)(RUN_ROOT_KEY);

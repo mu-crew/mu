@@ -254,7 +254,9 @@ documenting" is not a reason.
   inside `src/cli/tui/`. Never a second TUI stack.
 - Don't bundle pi. It is an optional peer dependency.
 - Write files only under `~/.local/state/mu-next/`, `~/.cache/mu/`, or the
-  repo. The cache dir holds only files mu can lose at any time.
+  repo. The one exception is `mu init`, which writes its own hook entries and
+  skill copies into each harness's config (spec D13, D17). The cache dir
+  holds only files mu can lose at any time.
 
 ## When you're done
 

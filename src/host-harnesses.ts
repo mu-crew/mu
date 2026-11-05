@@ -19,7 +19,7 @@
 // not try (`claude-big`, `/opt/x/claude`), is never refused: mu does not guess.
 
 import type { Db } from "./db.js";
-import { HARNESS_TABLE, HARNESSES, type Harness } from "./harnesses.js";
+import { HARNESSES, type Harness, homeHookConfig, takesMuStopHook } from "./harnesses.js";
 import type { HostCheckStep, HostProfile } from "./hosts.js";
 import { say } from "./messages.js";
 import { shellQuote } from "./shell-quote.js";
@@ -58,17 +58,6 @@ export class HostHarnessMissingError extends Error {
 /** The line each harness's answer starts with (a login shell may print rc noise first). */
 const MARK = "MU_HARNESS";
 
-/** The harnesses mu installs `mu hook stop` for: a Stop hook that can block with a reason (D7). */
-function takesMuStopHook(h: Harness): boolean {
-  return h !== "pi" && HARNESS_TABLE[h].canBlockOnStop;
-}
-
-/** The harness's own home config file (D6 `hookConfig`), home-relative; undefined: none (pi). */
-function homeConfig(h: Harness): string | undefined {
-  if (h === "pi") return undefined;
-  return HARNESS_TABLE[h].hookConfig.find((p) => p.startsWith("~/"))?.slice(2);
-}
-
 /** An ERE matching `<words> <harness>` as one command, not a longer harness name. */
 function commandRe(words: string, h: Harness): string {
   return `${words.split(" ").join("[[:space:]]+")}[[:space:]]+${h}([^A-Za-z0-9_.-]|$)`;
@@ -84,7 +73,7 @@ export function harnessProbeScript(): string {
   const lines: string[] = [];
   for (const h of HARNESSES) {
     lines.push(`p=$(command -v ${shellQuote(h)} 2>/dev/null) || p=`);
-    const cfg = homeConfig(h);
+    const cfg = homeHookConfig(h);
     if (cfg === undefined) {
       lines.push(`printf '${MARK} %s - - %s\\n' ${shellQuote(h)} "$p"`);
       continue;
@@ -175,11 +164,11 @@ export function hooksStep(caps: HostCapabilities): { step: HostCheckStep; warnin
   const warnings: string[] = [];
   for (const h of hookHarnesses) {
     const p = caps.harnesses[h];
-    const cfg = `~/${homeConfig(h) ?? ""}`;
+    const cfg = `~/${homeHookConfig(h) ?? ""}`;
     if (p.murmurHooks !== true) missing.push(`${h}: no \`murmur hook ${h}\` entry in ${cfg}`);
     if (p.muHooks === false) {
       warnings.push(
-        `${h}: no \`mu hook stop ${h}\` entry in ${cfg}: an orchestrator started on this host gets no keep-driving (a remote worker never uses it)`,
+        `${h}: no \`mu hook stop ${h}\` entry in ${cfg}: an orchestrator started on this host gets no keep-driving (a remote worker never uses it; run mu init on the host)`,
       );
     }
   }

@@ -225,7 +225,9 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
       "--dangerously-bypass-approvals-and-sandbox",
       "--yolo",
     ],
-    skillLocation: null,
+    // `$CODEX_HOME/skills`, read from codex 0.164's binary. It also reads
+    // `~/.agents/skills`, which is pi's too: never that one.
+    skillLocation: "~/.codex/skills/",
   },
   "cursor-agent": {
     id: "cursor-agent",
@@ -265,7 +267,10 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     // `--sandbox` takes a value (`enabled` or `disabled`): bare, cursor-agent refuses to start.
     autoApproveFlags: ["--sandbox", "enabled"],
     approvalOptions: ["--sandbox", "-f", "--force", "--yolo"],
-    skillLocation: null,
+    // Its first-party personal skills, read from cursor-agent 2026.10.22's
+    // bundle (`skills-cursor/` is its own built-ins). It also reads
+    // `~/.agents/skills`, which is pi's too: never that one.
+    skillLocation: "~/.cursor/skills/",
   },
   muse: {
     id: "muse",
@@ -346,6 +351,21 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     skillLocation: "pi package",
   },
 } satisfies Record<Harness, HarnessRow>);
+
+/**
+ * The harnesses mu installs `mu hook stop` for: a Stop hook that can block
+ * with a reason the model follows (D7). Muse Code cannot, and pi has its
+ * settle nudge.
+ */
+export function takesMuStopHook(h: Harness): boolean {
+  return h !== "pi" && HARNESS_TABLE[h].canBlockOnStop;
+}
+
+/** The harness's own hook config file (D6 `hookConfig`), home-relative; undefined: none (pi). */
+export function homeHookConfig(h: Harness): string | undefined {
+  if (h === "pi") return undefined;
+  return HARNESS_TABLE[h].hookConfig.find((p) => p.startsWith("~/"))?.slice(2);
+}
 
 /** True when `value` names a blessed harness (murmur's `isHarness`). */
 export function isHarness(value: unknown): value is Harness {

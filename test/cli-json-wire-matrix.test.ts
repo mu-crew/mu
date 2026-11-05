@@ -93,6 +93,7 @@ const ARGS: Record<string, string[]> = {
   "host init": ["dev", "--ssh"],
   "host check": ["dev"],
   "hook stop": ["claude"],
+  init: [],
   "human-needed": ["needs a decision"],
   next: ["--dry", "--workers", "2"],
   orchestrate: ["--name", "orchestrator-1"],

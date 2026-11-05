@@ -12,6 +12,31 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu init`: mu's hook entries and skill for every hook harness** (spec
+  D13, D17, U23). It adds `mu hook stop <harness> --timeout 600 || true`
+  (with the entry's own 600 s timeout) on the stop event of
+  `~/.claude/settings.json`, `~/.codex/hooks.json` and `~/.cursor/hooks.json`
+  (cursor's own `loop_limit` on stop follow-ups is lifted: mu caps its blocks
+  with `MU_KEEP_DRIVING_MAX`), and copies `skills/mu` to
+  `~/.claude/skills/mu`, `~/.codex/skills/mu` and `~/.cursor/skills/mu`, for
+  each harness set up here (`--harness <names>|all` writes the rest). The files
+  are shared, so it touches only entries and copies it wrote: other handlers,
+  groups and keys stay in place, an entry mu did not write that already runs
+  `mu hook stop` is left alone and mu keeps none of its own beside it, a skill
+  without mu's marker (a symlink included) or edited since is kept, and an
+  unreadable file is refused
+  (exit 1). A second run changes nothing. Muse Code gets no entry (its stop
+  block drops the reason) and installs skills through its own tooling; pi
+  keeps the package. It never writes into `~/.agents/skills` or
+  `~/.pi/agent/skills`, which pi also reads, and refuses a skill directory
+  that resolves into one, so pi still lists exactly one `mu` skill. An old
+  `npx skills add mu-crew/mu` install in `~/.agents/skills` is left in place
+  and named in the output: remove it, or pi lists two.
+  cursor-agent, which also reads Claude Code's and Codex's skill directories,
+  gets its own copy only while neither holds one. `MU_INIT_HOME` redirects the
+  home directory. The harness table now records codex's and cursor-agent's
+  skill directories, read from their installed builds.
+
 - **The `hooks` channel: paste to claude, codex, cursor-agent and muse on
   tmux** (spec D4, U8). A local pane of one of those harnesses on tmux is now
   spawned on channel `hooks` (`agents.channel`). `mu agent send` to it reads
@@ -233,8 +258,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   or `stalled` item for it. pi agents are never looked up.
 
 - **`mu hook stop <harness>`: keep-driving and the close nudge for claude,
-  codex and cursor-agent** (spec D7, U10). A Stop hook entry (until `mu init`
-  writes it, added by hand: `docs/guide/other-agent-clis.md`) that reads the
+  codex and cursor-agent** (spec D7, U10). A Stop hook entry (`mu init`
+  writes it; see `docs/guide/other-agent-clis.md`) that reads the
   harness's Stop payload on stdin. It acts only for a pane agent mu started:
   it walks its process chain to the first anchor with a matching start time
   whose cli is the hook's harness, refusing a second harness on the way or a
