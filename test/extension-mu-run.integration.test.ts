@@ -7,7 +7,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { defaultRunner, runChild } from "../extension/mu-run.js";
+import { cliInterpreter, defaultRunner, runChild } from "../extension/mu-run.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -42,6 +42,18 @@ afterAll(() => {
 
 const onPath = (fn: () => Promise<void>) => withEnv("PATH", `${dir}:${process.env.PATH}`, fn);
 const started = () => new Promise((r) => setTimeout(r, 300));
+
+describe("cliInterpreter", () => {
+  it("is this process's binary under Node", () => {
+    expect(cliInterpreter(undefined, "/opt/node")).toBe("/opt/node");
+  });
+
+  // Under a Bun-compiled pi, execPath is pi itself: running the CLI with it
+  // started a second pi and hung the first one's turn.
+  it("is node from PATH under Bun, never the host app", () => {
+    expect(cliInterpreter("1.3.14", "/usr/local/bin/pi_cli/pi.real")).toBe("node");
+  });
+});
 
 describe("defaultRunner", () => {
   it("per-call env reaches only that child; undefined deletes a key", () =>
