@@ -9,6 +9,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { Db } from "../db.js";
 import { activeMux } from "../mux.js";
 import { localPaneAlive } from "../remote-agent.js";
+import { shellQuote } from "../shell-quote.js";
 import { agentLockPath } from "./lock.js";
 
 export const markerPath = (db: Db, ws: string, name: string): string =>
@@ -28,7 +29,8 @@ export async function readMarker(
     if ((e as NodeJS.ErrnoException).code === "ENOENT") return "none";
   }
   const left = `an unfinished reattach left ${path}`;
-  const rm = `once no carrier of its job runs: rm ${path}`;
+  // The DB directory is the operator's and may hold a space or a quote: paste-safe.
+  const rm = `once no carrier of its job runs: rm -- ${shellQuote(path)}`;
   if (typeof m?.job !== "string") return `${left}, unreadable or malformed; ${rm}`;
   const pane = m.pane;
   if (typeof pane !== "string" || !(await activeMux()).isValidPaneId(pane)) {

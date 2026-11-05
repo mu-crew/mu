@@ -54,8 +54,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   named on the reservation or proven gone: after a double fault or a process
   killed mid-apply, the next reattach refuses while that pane may run (an
   unreadable or malformed marker, or one naming no pane, refuses too, naming
-  the file to `rm`). Preview and apply take the facts and the rev from
-  one snapshot after the pane probe; a reservation that keeps changing refuses
+  the file to `rm`, shell-quoted so the printed command pastes as is).
+  Preview and apply take the facts and the rev from one snapshot after the
+  pane probe; a reservation that keeps changing refuses
   (`AgentReplacedError`, exit 4). Pi only: no other cli is stored. Logs
   `agent.reattach`. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_adopt.
 

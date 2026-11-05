@@ -12,6 +12,7 @@ import { activeMux } from "../mux.js";
 import { localPaneAlive } from "../remote-agent.js";
 import * as recovery from "../remote-recovery.js";
 import { agentRevision } from "../revision.js";
+import { shellWord } from "../shell-quote.js";
 import { AgentExistsError, AgentReplacedError } from "./errors.js";
 import { describeRead, leaseJobFile, readJobFile } from "./lease-carrier.js";
 import { readMarker } from "./reattach-marker.js";
@@ -130,7 +131,8 @@ export function closeCommand(db: Db, ws: string, name: string): string {
   const own = listCarrierJobsByName(db, ws, name).map((j) => j.agentId);
   const recs = recovery.recoveriesFor(db, ws, name);
   const pick = recs.length > 1 ? recs.find((x) => own.includes(x.agentId)) : undefined;
-  return `mu agent close ${name} -w ${ws}${pick ? ` --recovery ${pick.agentId}` : ""}`;
+  const rec = pick ? ` --recovery ${shellWord(String(pick.agentId))}` : "";
+  return `mu agent close ${shellWord(name)} -w ${shellWord(ws)}${rec}`;
 }
 
 /** The preflight's plan, or its refusal thrown (a live row is AgentExistsError). */

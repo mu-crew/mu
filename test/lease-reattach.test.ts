@@ -48,6 +48,7 @@ import { listLogs } from "../src/logs.js";
 import { reconcile } from "../src/reconcile.js";
 import { listRemoteRecoveries, type RemoteRecovery } from "../src/remote-recovery.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
+import { shellQuote } from "../src/shell-quote.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import {
   previewReinit,
@@ -522,6 +523,33 @@ describe("preflight refusals: nothing changed, the close preview named", () => {
     db.prepare("UPDATE host_profiles SET attach = NULL").run();
     const e = (await failure(previewReattach(db, "auth", "worker-1"))) as ReattachRefusedError;
     expect(e.closeCommand).toBe(`mu agent close worker-1 -w auth --recovery ${agentId}`);
+  });
+  it("the printed close and preview commands paste into /bin/sh as their argv", async () => {
+    const { agentId } = reaped();
+    db.prepare(
+      "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, name, pane_id, host, cwd || '-x', base, collected_head, aside, host_exec, host_repo, reason, preserved_at FROM remote_recovery WHERE agent_id = ?",
+    ).run(agentId);
+    db.prepare("UPDATE host_profiles SET attach = NULL").run();
+    const refused = (await failure(
+      previewReattach(db, "auth", "worker-1"),
+    )) as ReattachRefusedError;
+    db.prepare("DELETE FROM remote_recovery WHERE agent_id = ?").run(agentId + 50);
+    db.prepare("UPDATE host_profiles SET attach = ?").run(ATTACH);
+    const stale = (await failure(apply(rev() + 1))) as RevisionMismatchError;
+    const argv = (cmd: string) =>
+      spawnSync("/bin/sh", ["-c", `mu() { printf '%s\\n' "$@"; }; ${cmd}`], { encoding: "utf8" })
+        .stdout.split("\n")
+        .filter(Boolean);
+    expect(argv(refused.closeCommand)).toEqual([
+      "agent",
+      "close",
+      "worker-1",
+      "-w",
+      "auth",
+      "--recovery",
+      String(agentId),
+    ]);
+    expect(argv(stale.previewCommand)).toEqual(["agent", "reattach", "worker-1", "-w", "auth"]);
   });
   it("stale --if → RevisionMismatchError, nothing changed", async () => {
     reaped();
@@ -1062,7 +1090,7 @@ describe("finding reattach_unfenced_retry: a pending-carrier marker outlives an 
     const [b] = await reattachBlockers(db, "auth", "worker-1");
     expect(b).toMatchObject({ code: "carrier" });
     expect(b?.detail).toContain(
-      `unreadable or malformed; once no carrier of its job runs: rm ${marker()}`,
+      `unreadable or malformed; once no carrier of its job runs: rm -- ${shellQuote(marker())}`,
     );
   });
 
