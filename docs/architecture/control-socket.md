@@ -156,7 +156,10 @@ cursor-agent, muse) is on the `hooks` channel instead
 paste through `MuxBackend.pasteToPane` and submits it. The paste cannot
 confirm itself; the harness's `run_count`, read through `murmur pane`, rising
 within `MU_SEND_ACK_MS` confirms it. Otherwise the send is `unknown` and is
-never resent.
+never resent. Its interrupt and abort are the harness's Escape, confirmed by
+its own interrupt event, or recorded by mu as `interrupted` (`idle?`) where
+it has none (claude); its settle is the pane's `turn_stopped`, whose text is
+the last text. None of it touches ctl.
 
 A pi agent's `/new`, `/reload` and `/compact [instructions]` go
 through the `command` op. Any other slash command to a pi agent raises

@@ -450,6 +450,43 @@ export class AgentAbortTimeoutError extends Error {
 }
 
 /**
+ * `mu agent send --fresh` to a `hooks` agent whose harness reports its new
+ * session at once (claude's `/clear`): the fresh command was pasted, but no
+ * new session showed within `MU_SEND_ACK_MS`, so the text was NOT sent (it
+ * would land in the old conversation). The fresh command is never resent.
+ * Exit 5.
+ */
+export class AgentFreshUnconfirmedError extends Error {
+  override readonly name = "AgentFreshUnconfirmedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly command: string,
+    public readonly timeoutMs: number,
+  ) {
+    super(say("agent.fresh_unconfirmed", agentName, workstream, command, timeoutMs));
+  }
+}
+
+/**
+ * `mu agent abort` or `send --interrupt` to a `hooks` agent whose harness
+ * reports no interrupt (claude): Escape was pressed, but murmur did not take
+ * the `interrupted` mu writes through `murmur hook mu` (murmur absent, older
+ * than `hook mu`, or it refused the event). murmur still reads the agent
+ * running, so no `idle?` is reported and an interrupt's text is NOT sent.
+ * Exit 5.
+ */
+export class AgentInterruptUnrecordedError extends Error {
+  override readonly name = "AgentInterruptUnrecordedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+  ) {
+    super(say("agent.interrupt_unrecorded", agentName, workstream));
+  }
+}
+
+/**
  * `mu agent send --fresh` on an agent without a control socket (non-pi
  * CLI): there is no one-operation new session.
  */

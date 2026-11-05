@@ -40,6 +40,13 @@ describe("HARNESS_TABLE", () => {
   it("records the per-harness facts U0 observed", () => {
     expect(HARNESS_TABLE.claude.freshCommand).toBe("/clear");
     expect(HARNESS_TABLE["cursor-agent"].freshCommand).toBe("/new-chat");
+    // claude's /clear fires SessionStart at once; codex and muse on the first prompt (D6).
+    expect(HARNESS_TABLE.claude.freshSessionStart).toBe("immediate");
+    expect(HARNESS_TABLE.codex.freshSessionStart).toBe("first-prompt");
+    expect(HARNESS_TABLE.muse.freshSessionStart).toBe("first-prompt");
+    expect(HARNESS_TABLE["cursor-agent"].freshSessionStart).toBeNull();
+    // Only cursor-agent's text can arrive after its stop (afterAgentResponse).
+    expect(HARNESSES.filter((h) => HARNESS_TABLE[h].textFollowsStop)).toEqual(["cursor-agent"]);
     expect(HARNESS_TABLE.codex.events.interrupted).toEqual([{ name: "Interrupt" }]);
     expect(HARNESS_TABLE.claude.events.interrupted).toEqual([]);
     expect(HARNESS_TABLE["cursor-agent"].events.permission_requested).toEqual([]);

@@ -5,7 +5,8 @@
 // A real unix socket stands in for the mu pi extension; tmux is a stub whose
 // murmur pane option reports the non-pi panes; a fake hook harness
 // (test/_fake-harness.ts) writes murmur inbox events for the `hooks` pane and
-// answers the keys mu types into it. The channel is the one the agents row
+// answers the keys mu types into it (Escape, the fresh command, a dialog's
+// choice) as a harness's hooks would. The channel is the one the agents row
 // recorded: neither its cli nor the env moves an agent to another channel.
 
 import { mkdirSync, mkdtempSync } from "node:fs";
@@ -125,6 +126,13 @@ interface Contract {
   baseline: boolean;
   receipts: boolean;
   lastText: boolean;
+  /**
+   * A run already over when read still gives its text. false: only a watch that saw the run
+   * unsettled can tie the text to it (hooks: murmur does not say which turn wrote it).
+   */
+  endedText: boolean;
+  /** Run the live agent's next turn to its end, where the channel reads it from the agent's own events. */
+  drive?: () => void;
 }
 
 /** A live pi agent, its fake extension serving. */
@@ -139,19 +147,26 @@ async function liveMux(): Promise<AgentRow> {
   return insertAgent(db, { name: "cla", workstream: WS, paneId: "%2", cli: "claude" });
 }
 
-/** A live hook harness on `hooks`: started, three runs settled, idle. */
-async function liveHooks(): Promise<AgentRow> {
+/**
+ * A live hook harness on `hooks`: started, three runs settled, idle. Codex by
+ * default (its new session starts on the first prompt); `cli` names another
+ * harness on the same pane.
+ */
+async function liveHooks(cli = "codex"): Promise<AgentRow> {
   const a = insertAgent(db, {
-    name: "cdx",
+    name: cli === "codex" ? "cdx" : cli.slice(0, 3),
     workstream: WS,
     paneId: "%3",
-    cli: "codex",
+    cli,
     channel: "hooks",
   });
+  fake.freshCommand = cli === "claude" ? "/clear" : "/new";
+  fake.freshMode = cli === "claude" ? "immediate" : "first-prompt";
+  fake.onEscape = cli === "claude" ? "silent" : "event";
   fake.emit("session_start", { source: "startup" });
   for (let i = 0; i < 3; i++) {
     fake.emit("prompt_submitted");
-    fake.emit("turn_stopped", { text: `run ${i + 1}` });
+    fake.emit("turn_stopped", { text: i === 2 ? "the last text" : `run ${i + 1}` });
   }
   return a;
 }
@@ -169,6 +184,7 @@ const CONTRACTS: Contract[] = [
     baseline: true,
     receipts: true,
     lastText: true,
+    endedText: true,
   },
   {
     name: "mux",
@@ -182,6 +198,7 @@ const CONTRACTS: Contract[] = [
     baseline: false,
     receipts: false,
     lastText: false,
+    endedText: false,
   },
   {
     name: "hooks",
@@ -198,11 +215,17 @@ const CONTRACTS: Contract[] = [
     source: "murmur",
     liveState: "needs_input",
     fence: false,
-    watches: false,
-    // `run_count` and `session_id` stand in for pi's runs and incarnation (D4).
+    // Settle is the pane's `turn_stopped`, polled from murmur (D4).
+    watches: true,
+    // Settled turns and `session_id` stand in for pi's runs and incarnation (D4).
     baseline: true,
     receipts: false,
-    lastText: false,
+    lastText: true,
+    endedText: false,
+    drive: () => {
+      fake.emit("prompt_submitted");
+      fake.emit("turn_stopped", { text: "run 4" });
+    },
   },
 ];
 
@@ -289,6 +312,7 @@ describe.each(CONTRACTS)("AgentChannel contract: $name", (c) => {
       return;
     }
     expect(w?.afterRuns).toBe(3);
+    c.drive?.();
     const settled = await w?.settled;
     expect(settled).toMatchObject({ settled: true, runs: 4, incarnation: INC });
   });
@@ -313,11 +337,20 @@ describe.each(CONTRACTS)("AgentChannel contract: $name", (c) => {
 
   it("last text: the settled run's text where the channel has one", async () => {
     const run = await c.channel.lastRun(target, { afterRuns: 2, ms: 1000 });
-    if (c.lastText) {
-      expect(run).toMatchObject({ settled: true, runs: 3, lastText: "the last text" });
-    } else {
+    if (!c.lastText) {
       expect(run).toBeUndefined();
+      return;
     }
+    if (c.endedText) {
+      expect(run).toMatchObject({ settled: true, runs: 3, lastText: "the last text" });
+      return;
+    }
+    // Over before the read: settled, but its text cannot be told from an earlier turn's.
+    expect(run).toMatchObject({ settled: true, runs: 3 });
+    expect(run?.lastText).toBeUndefined();
+    const w = await c.channel.watch(target, signal(), { afterRuns: 3 });
+    c.drive?.();
+    expect(await w?.settled).toMatchObject({ settled: true, runs: 4, lastText: "run 4" });
   });
 
   it("the wait seam reads and watches through the channel", async () => {
@@ -327,13 +360,17 @@ describe.each(CONTRACTS)("AgentChannel contract: $name", (c) => {
     expect(read.get(`${WS}/${agent.name}`)).toMatchObject({ status: c.liveState });
     // An owed ref with no fence counts from the channel's baseline; no baseline (or no
     // watch), no handle: the wait polls.
-    const handle = await hooks.watchAgent(ref, signal(), { owed: true });
+    const stop = new AbortController();
+    const handle = await hooks.watchAgent(ref, stop.signal, { owed: true });
     if (!c.baseline || !c.watches) {
       expect(handle).toBeUndefined();
       return;
     }
     expect(handle?.afterRuns).toBe(3);
     expect(handle?.unknownBaseline).toMatchObject({ afterRuns: 3, incarnation: INC });
+    // The watch ends with the wait that held it.
+    stop.abort();
+    await handle?.settled;
   });
 });
 
@@ -395,9 +432,9 @@ const DELIVERY: DeliveryContract[] = [
     name: "hooks",
     live: liveHooks,
     via: "paste",
-    fresh: AgentFreshNeedsCtlError,
-    interrupt: AgentAbortNeedsCtlError,
-    abort: AgentAbortNeedsCtlError,
+    fresh: "delivers",
+    interrupt: "delivers",
+    abort: "delivers",
     steer: AgentSteerUnsupportedError,
     answer: "confirmed",
   },
@@ -489,7 +526,19 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
     }
     const sent = await deliver(target, "start", { fresh: true });
     expect(sent.transport).toBe(c.name);
-    expect(writes()).toMatchObject([{ op: "fresh", text: "start" }]);
+    if (c.via === "ctl") {
+      expect(writes()).toMatchObject([{ op: "fresh", text: "start" }]);
+      return;
+    }
+    // codex's fresh command, then the text, confirmed by its run in the new session.
+    expect(fake.submitted).toEqual(["/new", "start"]);
+    expect(sent).toEqual({
+      transport: "hooks",
+      ack: "confirmed",
+      runCount: 1,
+      sessionId: `${INC}-2`,
+    });
+    expect(writes()).toEqual([]);
   });
 
   it("interrupt: abort and send as one step, or the typed refusal", async () => {
@@ -503,7 +552,24 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
     }
     const r = await run;
     expect(r).toMatchObject({ wasBusy: false, runs: 3, incarnation: INC });
-    expect(writes()).toMatchObject([{ op: "interrupt", text: "now", timeoutMs: 1000 }]);
+    if (c.via === "ctl") {
+      expect(writes()).toMatchObject([{ op: "interrupt", text: "now", timeoutMs: 1000 }]);
+      return;
+    }
+    // Idle: no key, just the paste, confirmed by run 4 (the fence is the 3 settled before it).
+    expect(r).toEqual({
+      transport: "hooks",
+      wasBusy: false,
+      pending: false,
+      runs: 3,
+      incarnation: INC,
+      ack: "confirmed",
+      runCount: 4,
+      sessionId: INC,
+    });
+    expect(typed().map((c) => c.join(" "))).not.toContain("send-keys Escape");
+    expect(fake.submitted).toEqual(["now"]);
+    expect(writes()).toEqual([]);
   });
 
   it("abort: an idle agent gets no abort, or the typed refusal", async () => {
@@ -819,12 +885,28 @@ describe("the hooks channel: send gate, ack, never resent", () => {
     await deliver(target, "hello", {});
     fake.emit("turn_stopped");
     await agentChannel(target).command(target, { name: "compact" }, {});
+    fake.emit("turn_stopped");
     await agentChannel(target).baseline(target);
     await agentChannel(target).receipt(target, KNOWN_MSG);
-    await expect(deliver(target, "x", { fresh: true })).rejects.toThrow();
-    await expect(agentChannel(target).interrupt(target, "x", { timeoutMs: 10 })).rejects.toThrow();
-    await expect(agentChannel(target).abort(target, { timeoutMs: 10 })).rejects.toThrow();
+    expect(await deliver(target, "x", { fresh: true })).toMatchObject({ transport: "hooks" });
+    const fresh = await agentChannel(target).watch(target, signal(), { afterRuns: 0 });
+    fake.emit("turn_stopped", { text: "fresh done" });
+    expect(await fresh?.settled).toMatchObject({ settled: true, lastText: "fresh done" });
+    fake.emit("prompt_submitted");
+    expect(await agentChannel(target).interrupt(target, "y", { timeoutMs: 1000 })).toMatchObject({
+      transport: "hooks",
+      wasBusy: true,
+      stopped: "confirmed",
+    });
+    fake.emit("prompt_submitted");
+    expect(await agentChannel(target).abort(target, { timeoutMs: 1000 })).toMatchObject({
+      aborted: true,
+    });
     await expect(agentChannel(target).answer(target, ["1"], {})).rejects.toThrow();
+    const w = await agentChannel(target).watch(target, signal(), {});
+    fake.emit("prompt_submitted");
+    fake.emit("turn_stopped", { text: "watched" });
+    expect(await w?.settled).toMatchObject({ settled: true, lastText: "watched" });
     await readAgentStates([target.agent], { stateDir: target.stateDir });
     expect(ctlReqs).toEqual([]);
   });

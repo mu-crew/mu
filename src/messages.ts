@@ -125,6 +125,14 @@ export const MESSAGES = {
     `agent ${name} runs ${cli}, not pi: abort needs the mu pi extension; close the agent instead`,
   "agent.abort_timeout": (name: string, ms: number) =>
     `agent ${name} was still busy ${ms}ms after the abort`,
+  "agent.fresh_unconfirmed": (name: string, ws: string, command: string, ms: number) =>
+    `pasted ${command} to agent ${name}, but no new session started within ${ms}ms: the text was not sent and ${command} is not resent; read the pane (mu agent read ${name} -w ${ws}) before trying again`,
+  "agent.fresh_text_unconfirmed": (name: string, command: string, ms: number) =>
+    `pasted ${command} and the text to agent ${name}, but no run in a new session showed within ${ms}ms: the send is unconfirmed (it may have reached the old session) and is not resent; read the pane before sending again`,
+  "agent.interrupt_unconfirmed": (name: string) =>
+    `agent ${name}'s harness reports no interrupt: mu pressed Escape and recorded it as idle? (unconfirmed); if the Escape only closed an overlay, the send that follows reads unknown`,
+  "agent.interrupt_unrecorded": (name: string, ws: string) =>
+    `pressed Escape on agent ${name}, whose harness reports no interrupt, but murmur did not record mu's interrupted event (murmur absent, older than murmur hook mu, or it refused it): the agent still reads running, and nothing was sent; read the pane (mu agent read ${name} -w ${ws}) before trying again`,
   "agent.fresh_needs_ctl": (name: string, cli: string) =>
     `agent ${name} runs ${cli} without a control socket: --fresh needs the mu pi extension`,
   "agent.extension_outdated": (name: string, version: string, feature: boolean, op: string) =>

@@ -66,12 +66,26 @@ export interface HarnessRow {
   events: HarnessEvents;
   /** Where a settled turn's final assistant text comes from. */
   lastText: string;
+  /**
+   * Whether that text can arrive after the turn's stop: cursor-agent sends it
+   * in its own `afterAgentResponse`, which can land after `stop` (hooks run
+   * concurrently), so a settled turn with no text yet may still get one.
+   */
+  textFollowsStop: boolean;
   /** Events to drop before they reach state. */
   dropEvents: readonly string[];
   /** Fields and env vars never stored. */
   neverStore: readonly string[];
   /** The command that starts a fresh conversation. */
   freshCommand: string;
+  /**
+   * When the fresh command's new session reports `session_start`:
+   * `immediate` (claude's `/clear` fires `SessionStart` with source `clear`),
+   * or `first-prompt` (codex and muse fire `SessionStart` on the first
+   * prompt). null: not verified; mu treats it as `first-prompt`, which never
+   * waits for an event that may not come.
+   */
+  freshSessionStart: "immediate" | "first-prompt" | null;
   /** tmux key names. */
   interruptKey: string;
   /** null: the harness is not driven by keys (pi uses its control socket). */
@@ -130,9 +144,11 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     hooksSandboxed: true,
     events: CLAUDE_EVENTS,
     lastText: "Stop.last_assistant_message",
+    textFollowsStop: false,
     dropEvents: ["chains that do not reach tmux (detached children)"],
     neverStore: [],
     freshCommand: "/clear",
+    freshSessionStart: "immediate",
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -164,9 +180,11 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
       session_end: on("SessionEnd"),
     },
     lastText: "Stop.last_assistant_message",
+    textFollowsStop: false,
     dropEvents: ["transcript_path: null (title-generation session)"],
     neverStore: [],
     freshCommand: "/new",
+    freshSessionStart: "first-prompt",
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -199,9 +217,11 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
       session_end: on("sessionEnd"),
     },
     lastText: "afterAgentResponse.text",
+    textFollowsStop: true,
     dropEvents: ["the error stop after an aborted stop of the same generation_id"],
     neverStore: ["user_email", "CURSOR_USER_EMAIL", "CURSOR_ASKPASS_SECRET"],
     freshCommand: "/new-chat",
+    freshSessionStart: null,
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -233,9 +253,11 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
       session_end: on("SessionEnd"),
     },
     lastText: "Stop.last_assistant_message",
+    textFollowsStop: false,
     dropEvents: ["SubagentStop"],
     neverStore: [],
     freshCommand: "/new",
+    freshSessionStart: "first-prompt",
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: false,
@@ -267,9 +289,11 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
       session_end: on("session_shutdown"),
     },
     lastText: "event payload",
+    textFollowsStop: false,
     dropEvents: [],
     neverStore: [],
     freshCommand: "/new",
+    freshSessionStart: "immediate",
     interruptKey: "Escape",
     clearInputKey: null,
     canBlockOnStop: true,

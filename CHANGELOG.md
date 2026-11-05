@@ -27,11 +27,44 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   confirms the send when `run_count` rises within `MU_SEND_ACK_MS` (default
   10 s): `ack: confirmed` with `runCount`, else `ack: unknown`
   (`delivered: false`, reason `unconfirmed`), never resent. `--steer` is
-  refused (`AgentSteerUnsupportedError`, exit 2). Fresh, interrupt and abort
-  are still refused on `hooks`, and `spawn --task` refuses a `hooks` agent
-  before anything is sent (the brief-file write is later work). pi, and
+  refused (`AgentSteerUnsupportedError`, exit 2). `spawn --task` refuses a
+  `hooks` agent before anything is sent (the brief-file write is later
+  work). pi, and
   every other CLI on tmux, are unchanged. VISION §6 now says so. `mu task
   claim --for` a `hooks` owner on tmux offers the plain `mu agent send` next.
+- **Interrupt, abort, fresh, settle and last text on `hooks`** (spec D4,
+  U9). `mu agent send --interrupt` and `mu agent abort` press the harness's
+  interrupt key (Escape) on a running or blocked agent; a stopped one gets no
+  key. codex and muse confirm the stop with their `Interrupt` event,
+  cursor-agent with an aborted `stop` (none within `--timeout`:
+  `AgentAbortTimeoutError`, exit 5, the text not sent). claude reports none,
+  so mu writes `interrupted` through `murmur hook mu`, which murmur reads as
+  `idle?` until the harness's next event; `idle?` is sendable, and if the
+  Escape only closed an overlay the paste reads `ack: unknown`. If murmur
+  will not record that event, the verb fails
+  (`AgentInterruptUnrecordedError`, exit 5) and an interrupt's text is not
+  sent. The result
+  says which (`stopped: confirmed | unconfirmed`); an unconfirmed abort is not
+  `settled`. `--fresh` pastes the harness's fresh command (`/clear`, `/new`,
+  `/new-chat`; `--force` stops a running turn first): claude's text waits for
+  the new session's `SessionStart` and is not sent without it
+  (`AgentFreshUnconfirmedError`, exit 5); codex and muse start their session
+  on the first prompt, so the text follows at once and is confirmed only by a
+  run in a new session. A wait on a `hooks` agent now watches it: it settles
+  on the pane's `turn_stopped` past the baseline (a running agent's baseline
+  counts only settled turns) and returns that turn's text, with
+  `lastTextTruncated` at murmur's 64 KB cap. murmur does not say which turn
+  wrote its last text, so the text counts only when it changed since a read
+  taken before the turn ended: a turn ended by an interrupt or a failure, a
+  text equal to the previous turn's, and a wait that first reads the turn
+  already over carry none, and apply no `CLOSE:` block (a failure carries its
+  error). cursor-agent's text, which can follow its `stop`, is awaited for up
+  to 3 s. A dialog ends the wait as its `input` event (blocked on a dialog),
+  as on pi. A confirmed paste fences the wait it arms
+  (`afterRuns` = its `run_count` less one, the session as incarnation), so
+  `send --wait` and the next hint wait for exactly that turn, and its `CLOSE:`
+  block is applied once per session and turn, with the trust of pi's ctl
+  text (spec D3). pi is unchanged.
 - **`mu agent answer <name> <choice...>`**: type a pending permission
   dialog's answer into the pane (text literally; `Enter`, `Escape`, `Tab`,
   `Space` and arrows as keys). On `hooks` it is refused unless murmur reads

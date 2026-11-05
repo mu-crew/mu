@@ -1,9 +1,10 @@
 # How to run mu with other agent CLIs
 
 mu is built around pi, but codex, cursor-agent and claude can be its workers
-or its orchestrator. They get less: they have no control socket, so mu
-cannot hand them a prompt on tmux, abort them, or read their final text, and
-nothing replaces `mu_delegate`. Tested with codex 0.164 and cursor-agent
+or its orchestrator. They get less: they have no control socket, so on tmux
+mu reaches them by paste and reads them from their hook events (the `hooks`
+channel), with no steer and no exact acknowledgement, and nothing replaces
+`mu_delegate`. Tested with codex 0.164 and cursor-agent
 2026.10.22 on tmux ([report](../eval/harnesses.md)).
 
 ## Pin the mu the harness runs
@@ -36,7 +37,14 @@ confirmed when the harness's `run_count` rises (murmur's hook entries,
 `murmur init`). It is refused while the agent waits on a permission dialog
 (answer it: `mu agent answer worker-1 1 -w auth`) and, without `--force`,
 while a turn runs or its state is unknown; an unconfirmed send reports
-`ack: unknown` and is never resent. `--steer` is refused. `spawn --task`
+`ack: unknown` and is never resent. `--steer` is refused. `--interrupt` and
+`mu agent abort` press Escape: codex, muse and cursor-agent confirm it, and
+claude, which reports nothing, reads `idle?` until its next event. `--fresh`
+sends the harness's fresh command (`/clear`, `/new`, `/new-chat`) and then the
+text. A wait on the agent settles when its turn's `Stop` hook fires, with that
+turn's final text, and a `CLOSE:` block in it closes the task. The text is
+known only to a wait that was watching before the turn ended (start it with
+`send --wait`): murmur does not say which turn wrote it. `spawn --task`
 cannot hand it a brief yet, and any other CLI on tmux still exits 4. Put
 the brief in a task note, start the agent with the prompt as its argument,
 then claim:
@@ -90,8 +98,10 @@ On Rex, `--send`, `agent send` and `--command` all work.
   pane's tail instead.
 - **Stalls** mean the owner has read `needs_input` for `--stuck-after` while
   its task is still open. Read the pane (`mu agent read`) before you act.
-- **No abort, no CLOSE block.** Stop it with `mu agent close` (preview, then
-  `--if`). The brief must end with the worker's own `mu task close`.
+- **Abort and CLOSE on `hooks` only.** On tmux, `mu agent abort` stops a turn
+  and a `CLOSE:` block in its final message closes the task. Elsewhere, and
+  for a turn that will not stop, use `mu agent close` (preview, then `--if`),
+  and end the brief with the worker's own `mu task close`.
 
 ## Run one as the orchestrator
 

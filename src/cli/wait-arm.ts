@@ -21,7 +21,7 @@
 // the verbs do, because only they know whether the effect landed.
 
 import { getAgent } from "../agents.js";
-import type { ChannelName } from "../channels/index.js";
+import { type ChannelName, hooksFence } from "../channels/index.js";
 import type { Db } from "../db.js";
 import { currentCallers } from "../wait-callers.js";
 import { type RefBaseline, type RegisterRef, registerOwnedWait } from "../wait-registration.js";
@@ -83,14 +83,36 @@ export interface SentFence {
   transport?: ChannelName;
   runs?: number;
   incarnation?: string;
+  /** hooks: the paste's ack and the run count and session it was confirmed by. */
+  ack?: "confirmed" | "unknown";
+  runCount?: number;
+  sessionId?: string;
+}
+
+/**
+ * The wait fence a delivered send gives: ctl's runs measured before it, or on hooks the
+ * turns settled before the run a confirmed paste started, in its session (an interrupt
+ * already carries them as `runs`). An unconfirmed paste and a mux send give none.
+ */
+export function sentFence(sent: SentFence): { runs?: number; incarnation?: string } {
+  if (sent.transport === "mux") return {};
+  if (sent.runs !== undefined) {
+    return {
+      runs: sent.runs,
+      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
+    };
+  }
+  return sent.transport === "hooks" ? hooksFence(sent) : {};
 }
 
 /**
  * Arm the wait a DELIVERED prompt owes. A ctl send with a run count is fenced exactly
- * (runs + incarnation + registry id). A delivered mux or hooks send (a non-pi pane: its
- * busy-to-idle is all there is) is owed with no fence. A ctl send with no run count (a slash command,
- * an extension that predates runs) started no run: no agent ref. `extraRefs` ride in the
- * same registration (the task a spawn bound), so it is all or nothing.
+ * (runs + incarnation + registry id), and so is a confirmed hooks paste (the turns settled
+ * before its run, in its session: `sentFence`). A delivered mux send, or an unconfirmed
+ * hooks one (a non-pi pane: its busy-to-idle is all there is), is owed with no fence. A
+ * ctl send with no run count (a slash command, an extension that predates runs) started no
+ * run: no agent ref. `extraRefs` ride in the same registration (the task a spawn bound), so
+ * it is all or nothing.
  */
 export function armSend(
   db: Db,
@@ -101,16 +123,5 @@ export function armSend(
   const row = getAgent(db, agent.name, agent.workstreamName);
   if (row === undefined) return { armed: false };
   if (sent.transport === "ctl" && sent.runs === undefined) return armWait(db, extraRefs);
-  return armWait(db, [
-    ...extraRefs,
-    agentRef(
-      row,
-      sent.transport !== "ctl"
-        ? {}
-        : {
-            runs: sent.runs,
-            ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
-          },
-    ),
-  ]);
+  return armWait(db, [...extraRefs, agentRef(row, sentFence(sent))]);
 }

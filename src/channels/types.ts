@@ -197,21 +197,37 @@ export interface SessionCommand {
 }
 
 export type InterruptResult = {
-  /** pi was busy, so its turn was aborted before the send. */
+  /** The channel that carried it; absent from ctl, which predates the field. */
+  transport?: ChannelName;
+  /** The agent was busy, so its turn was aborted before the send. */
   wasBusy: boolean;
   /** pi had queued messages before the abort; pi put them back in the pane's editor. */
   pending: boolean;
   /**
-   * pi's run count after the aborted run settled and before the send: the
-   * `mu agent wait --after-runs` baseline for the run the text starts.
+   * Settled runs before the text's run started: the `mu agent wait
+   * --after-runs` baseline for the run the text starts. On hooks, set only
+   * when the paste was confirmed (its `run_count` less one).
    */
   runs?: number;
-  /** The id the interrupt carried: `mu agent check <agent> <msgId>` asks whether it landed. */
-  msgId: string;
-  /** pi's incarnation: the `--inc` for `mu agent wait`. */
+  /** ctl only: the id the interrupt carried: `mu agent check <agent> <msgId>` asks whether it landed. */
+  msgId?: string;
+  /** pi's incarnation (the `--inc` for `mu agent wait`); on hooks, the harness session of the text's run. */
   incarnation?: string;
-  /** Set when the reply never arrived and `status {msgId}` confirmed the interrupt landed. */
+  /** ctl only: set when the reply never arrived and `status {msgId}` confirmed the interrupt landed. */
   receipt?: "confirmed-after-timeout";
+  /**
+   * hooks only, when the agent was busy: `confirmed` when the harness itself
+   * reported the stop (codex's and muse's `Interrupt`, cursor-agent's aborted
+   * `stop`, or a turn that ended on its own), `unconfirmed` when it reports
+   * none (claude): mu wrote `interrupted`, which murmur reads as `idle?`.
+   */
+  stopped?: "confirmed" | "unconfirmed";
+  /** hooks only: the text's paste, confirmed by `run_count` as a send is (SendResult.ack). */
+  ack?: "confirmed" | "unknown";
+  /** hooks only: the agent's `run_count` at the ack, else the one read before the paste. */
+  runCount?: number;
+  /** hooks only: the harness session the run count belongs to. */
+  sessionId?: string;
 };
 
 /** What an abort found and did. */
@@ -224,6 +240,8 @@ export interface AbortOutcome {
   aborted: boolean;
   /** pi had queued messages before the abort (pi returns them to the editor). */
   pending: boolean;
+  /** hooks only, when an abort was sent: as InterruptResult.stopped (`unconfirmed`: settled is false). */
+  stopped?: "confirmed" | "unconfirmed";
 }
 
 /** What `mu agent answer` did. */
