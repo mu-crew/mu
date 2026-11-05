@@ -15,6 +15,7 @@ import { activeMux } from "../mux.js";
 import { attachCommand, localPaneAlive } from "../remote-agent.js";
 import { deleteRemoteRecovery, restoreRemoteRecovery } from "../remote-recovery.js";
 import { assertRevision } from "../revision.js";
+import { shellWord } from "../shell-quote.js";
 import { isScratchWorkstream } from "../workstream.js";
 import { withAgentLock } from "./lock.js";
 import {
@@ -79,7 +80,7 @@ export async function reattachAgent(
       const { p, revision } = await planSnapshot(db, ws, name);
       assertRevision(opts.ifRevision, revision, {
         subject: `agent ${name}`,
-        previewCommand: `mu agent reattach ${name} -w ${ws}`,
+        previewCommand: `mu agent reattach ${shellWord(name)} -w ${shellWord(ws)}`,
       });
       opts.signal?.throwIfAborted();
       rmSync(sock, { force: true });
