@@ -90,6 +90,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   original pi may still write (2026-11-04 aiv-blog incident). The `[reaper]`
   note names the job, the host and both ways out: `mu agent reattach <name>
   -w <ws> --task <id>`, or `mu agent close` then `mu task unpark <id>`.
+  A task owned from another workstream (`claim --for <ws>/<name>`) gets two
+  steps instead, since `--task` resolves ids in the agent's workstream:
+  reattach, then `mu task claim <id> -w <task-ws> --for <ws>/<name> --force`
+  (or close, then `mu task unpark <id> -w <task-ws>`).
   `agent close` stopped (or abandoned) the job, so its tasks reopen as `todo`
   as before. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_reap.
 

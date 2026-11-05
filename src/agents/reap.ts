@@ -21,6 +21,7 @@
 import type { Db } from "../db.js";
 import { releaseHostChannelsForAgent } from "../hosts.js";
 import { withOpContext } from "../op-context.js";
+import { shellWord } from "../shell-quote.js";
 
 export interface ReapOptions {
   /** False when the caller has itself dealt with the remote worktree (a close that removed it). Default true. */
@@ -38,10 +39,11 @@ export function reapAgentRow(
 ): boolean {
   const stuck = db
     .prepare(
-      `SELECT t.id AS taskId, t.local_id AS localId FROM tasks t
+      `SELECT t.id AS taskId, t.local_id AS localId, w.name AS ws FROM tasks t
+        JOIN workstreams w ON w.id = t.workstream_id
         WHERE t.owner_id = ? AND t.status = 'IN_PROGRESS'`,
     )
-    .all(agentId) as Array<{ taskId: number; localId: string }>;
+    .all(agentId) as Array<{ taskId: number; localId: string; ws: string }>;
   const pane = db
     .prepare(
       "SELECT a.pane_id, w.name AS ws FROM agents a JOIN workstreams w ON w.id = a.workstream_id WHERE a.id = ?",
@@ -74,15 +76,25 @@ export function reapAgentRow(
   for (const t of stuck) {
     const now = new Date().toISOString();
     reopen.run(lease === undefined ? 0 : 1, now, t.taskId);
-    const id = t.localId;
     const content =
       lease === undefined
         ? `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`
-        : `[reaper] previous owner ${name} gone (pane died); its lease job ${lease.job} on ${lease.host} may still run, so the task is parked: resume with mu agent reattach ${name} -w ${pane.ws} --task ${id}, or mu agent close ${name} -w ${pane.ws} then mu task unpark ${id}`;
+        : `[reaper] previous owner ${name} gone (pane died); its lease job ${lease.job} on ${lease.host} may still run, so the task is parked: resume with ${resumeHint(name, pane.ws, t.localId, t.ws)}`;
     // The note keeps its own intent (as `addNote` gave it) inside the caller's group.
     withOpContext(db, { intent: "task.note", actor: "reaper" }, () =>
       note.run(t.taskId, content, now),
     );
   }
   return true;
+}
+
+/**
+ * The two ways out of a parked task, as shell words. `reattach --task` resolves its ids in the
+ * agent's workstream, so a task owned across workstreams is claimed back in a second step.
+ */
+function resumeHint(name: string, aws: string, id: string, tws: string): string {
+  const [n, a, i, t] = [name, aws, id, tws].map(shellWord);
+  if (aws === tws)
+    return `mu agent reattach ${n} -w ${a} --task ${i}, or mu agent close ${n} -w ${a} then mu task unpark ${i}`;
+  return `mu agent reattach ${n} -w ${a} then mu task claim ${i} -w ${t} --for ${shellWord(`${aws}/${name}`)} --force, or mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
 }
