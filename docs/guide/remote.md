@@ -59,7 +59,8 @@ EOF
 - `--task` is the same one journaled attempt as for a local agent: claim
   for the new agent, then the brief, never sent twice.
 - mu reserves the host's channel before its first remote command and
-  keeps it while the pane lives (`--max-sessions` counts it). A full host
+  keeps it while the pane lives (`--max-sessions` counts it; one exception
+  under the path rule below). A full host
   refuses the spawn up front and names the holder. A failed spawn removes
   only the worktree it made (still clean, still at its base) and frees
   the slot. If the host's answer was lost after it made the worktree (a
@@ -67,6 +68,27 @@ EOF
   clean, at its base and unused; anything else at the path refuses.
 - The pane is the transport: closing it, or its death, ends the agent
   and frees the slot. tmux and Rex; herdr refuses `--host` in one line.
+- A spawn without `--worktree` refuses (exit 4, `RemotePathOwnedError`) when
+  the cwd its exec resolved (`pwd -P`) is exactly, on that host profile,
+  another agent's managed remote worktree (one mu made with `--worktree`, in
+  any workstream) or the path or parked aside of any `remote_recovery`
+  record: mu's close removes that tree and collect credits its commits to its
+  owner, so a second user loses work. The refusal names the owner and the way
+  out: close it, collect then close the record (`--recovery <id>`), or give
+  the new agent its own tree (`--worktree --from <the owner's commit>`, also
+  for a reviewer). Agents sharing an unmanaged checkout (the repo root, a
+  user directory) are not refused. Only the exact path is checked, per
+  profile name: a subdirectory of the tree, or the same host reached through
+  another profile, is not. The check runs before any pane, so the agent never
+  starts, and again with the row's insert. An owner that lands while the pane
+  opens is refused there: the pane is killed, or, if mu cannot prove it gone,
+  the error names its id, backend and kill command, and the pane may still
+  run its transport. That pane has no agent row and is not reliably surfaced
+  by `mu agent list`; orphan recognition uses foreground-command names and
+  CLI overrides within the default workstream session. Use the refusal's
+  backend-specific kill command. Its session channel may be reclaimed once
+  the spawning process exits, so `host check` and the channel count can
+  undercount until it is killed.
 - A non-pi `--command` (`--host dev --command 'npm test'`, no `--cli pi`) is a
   **command gate**, not a worker: its pane is kept after the command ends, and
   `mu wait agent:auth/gate-1` returns the command's own exit status (the
@@ -152,7 +174,8 @@ mu host show dev              # templates and the holders of its channels
   braces is refused.
 - A command that times out, or whose caller is killed, takes its whole process
   group with it (TERM, then KILL after 5 s) before its channel is freed, so
-  `--max-sessions` never undercounts a live transport.
+  `--max-sessions` never undercounts a live transport (except a pane a
+  path-owner refusal could not prove gone: see [Spawn the agent](#spawn-the-agent)).
 - An `exec` or `fetch` template that exits 3 is a hand-back (a hardware key, a
   prompt): mu stops with exit 5, `human needed`, and the template's first line.
   Never retried; `host check` reports a `handback` step.

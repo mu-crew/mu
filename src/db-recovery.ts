@@ -29,8 +29,9 @@ const REASON = `CASE COALESCE((SELECT intent FROM op_ctx WHERE id = 1), '')
          WHEN 'workstream.teardown' THEN 'teardown'
          ELSE 'reap' END`;
 
-/** Agent columns that make a row an owned remote worktree (`a` is the row's alias, or OLD). */
-const OWNED = (a: string): string =>
+/** Agent columns that make a row an owned remote worktree (`a` is the row's alias, or OLD).
+ *  Also the provenance a remote spawn's path admission reads (src/remote-recovery.ts). */
+export const OWNED = (a: string): string =>
   `${a}.host IS NOT NULL AND ${a}.cwd IS NOT NULL AND ${a}.cwd <> ''
        AND ${a}.base IS NOT NULL AND ${a}.base <> ''`;
 

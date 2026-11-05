@@ -76,7 +76,8 @@ in-progress tasks. Identity needs no mux: `$MU_AGENT_NAME` only.
 
 The `MuxBackend` surface is `available`, `ensureSession`,
 `killSession`, `spawnAgent`, `listPanes`, `paneAlive`, `killPane`,
-`capture`, `attachCommands` and `healthCheck`, plus optional `paneStatus`
+`killPaneCommand` (the argv that kills a pane by hand on the same server, for a
+diagnostic naming a pane mu could not prove gone), `capture`, `attachCommands` and `healthCheck`, plus optional `paneStatus`
 and `sendToPane` (herdr only), `paneResult` (an exited pane's status, for
 remote command gates), `panePid` (tmux: the pane's first process, so a close
 preview leaves the agent's own processes out of the worktree holders), `paneOccupied` (herdr: an agent still occupies the

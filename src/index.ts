@@ -439,6 +439,8 @@ export {
 export {
   getRemoteRecovery,
   listRemoteRecoveries,
+  RemotePathOwnedError,
+  type RemotePathOwner,
   type RemoteRecovery,
   RemoteRecoveryPendingError,
   type RemoteRecoveryReason,

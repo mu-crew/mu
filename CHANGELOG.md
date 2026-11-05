@@ -10,6 +10,27 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **A remote spawn refuses another owner's tree** (follow-up of reattach's
+  install check, 2026-11-05). `mu agent spawn --host <profile>` without
+  `--worktree` refuses (exit 4, `RemotePathOwnedError`) when the cwd its exec
+  resolved is exactly, on that profile, another agent's managed remote
+  worktree (host, cwd and base recorded; any workstream) or the path or aside
+  of any `remote_recovery` record. Before, it succeeded and left two owners:
+  close removes a managed tree and collect credits its commits to its owner,
+  so the second user lost work or attribution. This refuses what used to
+  work: sending a reviewer into a worker's tree. Give it its own tree with
+  `--worktree --from <the worker's commit>`; the error prints that command,
+  or the owner's close, or the record's collect and close with
+  `--recovery <id>`. Unmanaged checkouts stay shareable; subdirectories and
+  other profiles naming the same host are not checked. The check runs right
+  after prepare's exec (no pane, the agent never starts) and again in one
+  immediate transaction with the row's insert; an owner that landed while
+  the pane opened refuses there, after a kill, and a pane mu cannot prove
+  gone is named with its backend's kill command (new `MuxBackend.killPaneCommand`).
+  Recovery, reattach, collect and close keep their own stricter checks.
+
 ## [4.4.0] — 2026-11-05
 
 ### Added
