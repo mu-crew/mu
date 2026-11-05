@@ -648,8 +648,12 @@ other workstreams not listed · bare `list` and `--json` carry
 ## G1 interaction
 
 G1 makes a row-less `agent close` release a stopped reservation before the
-tree close, so reattach's preflight 3 then refuses (the job is gone), and
-parked tasks stay parked with the note saying to unpark. G1 owns
+tree close, unless a rollback kept that reservation as a tree's pointer
+(`reason` set): that one is released only by its own tree's close, and stays
+when that tree refuses (dirty, uncollected). Reattach then refuses either way:
+preflight 3 when the reservation is gone, preflight 4 (`reason` and
+`tree_path` set) when it was kept. Parked tasks stay parked with the note
+saying to unpark. G1 owns
 `src/agents/close.ts`; `mu_reap` adds one argument there (`leaseSettled`),
 and nobody changes its order.
 
