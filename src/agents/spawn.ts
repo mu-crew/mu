@@ -88,6 +88,7 @@ import {
 } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
 import { withSpawnLock } from "./spawn-lock.js";
+import { launchCommand } from "./spawn-presets.js";
 import {
   awaitCtlHandshake,
   awaitSpawnLiveness,
@@ -339,6 +340,8 @@ export interface SpawnAgentOptions {
    *  `MU_ORCHESTRATOR=1`, which keeps `mu_delegate` visible to a pi and turns
    *  off the worker-only close nudge and implicit `-w`. Local only. */
   orchestrator?: boolean;
+  /** `--model`: passed to the harness through its row's model flag (spec D17). Local only. */
+  model?: string;
 }
 
 /** How many taken names a `nextFree` spawn skips past before it gives up. */
@@ -697,6 +700,15 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
       remote_key: key,
     });
 
+  // Spawn presets (spec D6, D17; ./spawn-presets.ts). The argv0 is untouched.
+  const launch =
+    gateToken !== undefined
+      ? command
+      : launchCommand(command, harness, opts, {
+          remote: profile !== undefined,
+          ...(staged !== undefined ? { worktree: staged.path } : {}),
+        });
+
   const hasWorktree = staged !== undefined;
 
   // Single outer try wrapping every step that can throw AFTER the
@@ -822,8 +834,8 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
                 gateToken !== undefined
                   ? gateWrapper(command, gateToken)
                   : hooksKey !== undefined
-                    ? remoteAnchored(command, hooksKey)
-                    : command,
+                    ? remoteAnchored(launch, hooksKey)
+                    : launch,
               localSock: ctlSocket,
               cwd: paneCwd,
               ...(jobFile !== undefined ? { jobFile } : {}),
@@ -831,7 +843,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
                 ? { hooks: { cli: harness, key: hooksKey } }
                 : {}),
             })
-          : anchored(command, mux.anchorsPanes);
+          : anchored(launch, mux.anchorsPanes);
         // Resolves with the pane id at creation; `done` settles when the
         // backend considers the agent started.
         let onCreated: (pid: string) => void = () => {};
@@ -875,6 +887,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
           paneId: pid,
           cwd: paneCwd,
           staged,
+          // The row keeps the command as given (presets and the anchor wrapper are the launch's).
           command,
           commandSource,
           spawner,

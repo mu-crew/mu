@@ -11,6 +11,8 @@
 // configures or authenticates a harness; each launcher keeps its own sandbox,
 // auth and model access (D1).
 
+import { shellWord } from "./shell-quote.js";
+
 /** The agent CLIs mu treats as first-class. */
 export const HARNESSES = ["claude", "codex", "cursor-agent", "muse", "pi"] as const;
 export type Harness = (typeof HARNESSES)[number];
@@ -86,6 +88,14 @@ export interface HarnessRow {
    * waits for an event that may not come.
    */
   freshSessionStart: "immediate" | "first-prompt" | null;
+  /**
+   * When a newly launched harness reports its session: `immediate` (claude,
+   * cursor-agent and pi fire `session_start` as they start), or `first-prompt`
+   * (codex and muse fire `SessionStart` only with their first prompt, U0). A
+   * hooks task spawn waits for an immediate one before it pastes the brief
+   * pointer, and never for a first-prompt one (spec D17).
+   */
+  startupSessionStart: "immediate" | "first-prompt";
   /** tmux key names. */
   interruptKey: string;
   /** null: the harness is not driven by keys. pi's is used only on its `hooks` fallback (spec D15). */
@@ -103,6 +113,14 @@ export interface HarnessRow {
   modelFlag: string;
   /** argv for the in-sandbox auto-approve mode a spawn preset uses. Empty: none. */
   autoApproveFlags: readonly string[];
+  /**
+   * Every option by which a command picks its own approval or sandbox mode:
+   * the auto-approve options, their aliases, and the modes that conflict with
+   * them. A command that uses any of them (`--opt`, `--opt=v`, `-ov`) gets no
+   * auto-approve flags: mu never overrides the choice, and codex refuses
+   * `--sandbox` twice or `--yolo` with `-a`.
+   */
+  approvalOptions: readonly string[];
   /** Where its skills install; null: not verified. */
   skillLocation: string | null;
 }
@@ -149,6 +167,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     neverStore: [],
     freshCommand: "/clear",
     freshSessionStart: "immediate",
+    startupSessionStart: "immediate",
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -158,6 +177,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     trustFlag: [],
     modelFlag: "--model",
     autoApproveFlags: ["--permission-mode", "acceptEdits"],
+    approvalOptions: ["--permission-mode", "--dangerously-skip-permissions"],
     skillLocation: "~/.claude/skills/",
   },
   codex: {
@@ -185,6 +205,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     neverStore: [],
     freshCommand: "/new",
     freshSessionStart: "first-prompt",
+    startupSessionStart: "first-prompt",
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -194,6 +215,16 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     trustFlag: ["-c", 'projects."<realpath>".trust_level="trusted"'],
     modelFlag: "--model",
     autoApproveFlags: ["-s", "workspace-write", "-a", "never"],
+    approvalOptions: [
+      "-s",
+      "--sandbox",
+      "-a",
+      "--ask-for-approval",
+      "--full-auto",
+      "--approve-for-me",
+      "--dangerously-bypass-approvals-and-sandbox",
+      "--yolo",
+    ],
     skillLocation: null,
   },
   "cursor-agent": {
@@ -222,6 +253,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     neverStore: ["user_email", "CURSOR_USER_EMAIL", "CURSOR_ASKPASS_SECRET"],
     freshCommand: "/new-chat",
     freshSessionStart: null,
+    startupSessionStart: "immediate",
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -230,7 +262,9 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     sessionsBackedUp: false,
     trustFlag: ["--trust"],
     modelFlag: "--model",
-    autoApproveFlags: ["--sandbox"],
+    // `--sandbox` takes a value (`enabled` or `disabled`): bare, cursor-agent refuses to start.
+    autoApproveFlags: ["--sandbox", "enabled"],
+    approvalOptions: ["--sandbox", "-f", "--force", "--yolo"],
     skillLocation: null,
   },
   muse: {
@@ -258,6 +292,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     neverStore: [],
     freshCommand: "/new",
     freshSessionStart: "first-prompt",
+    startupSessionStart: "first-prompt",
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: false,
@@ -267,6 +302,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     trustFlag: ["--trust-workspace"],
     modelFlag: "--model",
     autoApproveFlags: ["--approval-mode", "never"],
+    approvalOptions: ["--approval-mode", "--yolo", "--disable-approval"],
     skillLocation: "muse skills",
   },
   pi: {
@@ -294,6 +330,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     neverStore: [],
     freshCommand: "/new",
     freshSessionStart: "immediate",
+    startupSessionStart: "immediate",
     interruptKey: "Escape",
     // Pressed only on the `hooks` fallback (spec D15); ctl never types keys.
     // pi's editor binds C-u to delete to the line start.
@@ -305,6 +342,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     trustFlag: [],
     modelFlag: "--model",
     autoApproveFlags: [],
+    approvalOptions: [],
     skillLocation: "pi package",
   },
 } satisfies Record<Harness, HarnessRow>);
@@ -357,4 +395,49 @@ export function insideAgent(env: NodeJS.ProcessEnv = process.env): boolean {
 /** Every harness's sandbox marker env names (test setup clears them all). */
 export function sandboxMarkerEnvNames(): string[] {
   return HARNESSES.flatMap((h) => [...HARNESS_TABLE[h].sandboxMarkerEnv]);
+}
+
+/** True when command word `word` uses option `option`: `--opt`, `--opt=v`, or a short `-o` with its value attached (`-sread-only`). */
+function usesOption(word: string, option: string): boolean {
+  if (word === option || word.startsWith(`${option}=`)) return true;
+  return /^-[^-]$/.test(option) && !word.startsWith("--") && word.startsWith(option);
+}
+
+/** What a spawn asks of a harness's launch command (spec D17). */
+export interface SpawnPresets {
+  /** `--model`: passed through the row's model flag. */
+  model?: string;
+  /** Add the row's in-sandbox auto-approve flags (a worker, from a command mu resolved). */
+  approve: boolean;
+  /** A worktree mu created for this spawn: its real path, for the row's trust flag. */
+  trustPath?: string;
+}
+
+/**
+ * `command` with the harness row's spawn presets appended, as shell words
+ * (spec D6, D17): the model flag with `model`; with `approve`, the
+ * auto-approve flags, unless the command already picks its approval or
+ * sandbox mode (any of the row's `approvalOptions`; pi has none: its
+ * `--approve` is folder trust); with `trustPath`, the trust flag, `<realpath>`
+ * filled in. A command outside the blessed five is returned as it is (the
+ * spawn refuses `--model` for one).
+ */
+export function withSpawnPresets(
+  command: string,
+  harness: Harness | undefined,
+  presets: SpawnPresets,
+): string {
+  if (harness === undefined) return command;
+  const row = HARNESS_TABLE[harness];
+  const words = command.trim().split(/\s+/);
+  const extra: string[] = [];
+  const choosesApproval = words.some((w) => row.approvalOptions.some((o) => usesOption(w, o)));
+  if (presets.approve && !choosesApproval) extra.push(...row.autoApproveFlags);
+  if (presets.trustPath !== undefined) {
+    const path = presets.trustPath;
+    extra.push(...row.trustFlag.map((w) => w.replace("<realpath>", path)));
+  }
+  if (presets.model !== undefined) extra.push(row.modelFlag, presets.model);
+  if (extra.length === 0) return command;
+  return [command.trimEnd(), ...extra.map(shellWord)].join(" ");
 }

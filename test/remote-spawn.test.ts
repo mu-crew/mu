@@ -25,6 +25,7 @@ import { rollbackSpawn } from "../src/agents/spawn.js";
 import {
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
+  AgentSendUnsupportedError,
   closeAgent,
   deleteAgent,
   getAgent,
@@ -805,6 +806,17 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
         req({ spawn: { name: "worker-1", workstream: "auth", host: "dev", root: "/srv/b" } }),
       ),
     ).rejects.toBeInstanceOf(SpawnReceiptConflictError);
+  });
+
+  it("a remote hooks worker cannot take a brief file yet: refused before any paste, rolled back", async () => {
+    const err = await spawnForTask(
+      db,
+      req({ spawn: { name: "worker-1", workstream: "auth", host: "dev", cli: "claude" } }),
+    ).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(AgentSendUnsupportedError);
+    expect(String((err as Error).message)).toContain("runs on dev on the hooks channel");
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(getTask(db, "t1", "auth")).toMatchObject({ ownerId: null, status: "OPEN" });
   });
 
   it("rollback of a task attempt in a --root repo removes the tree through that repo", async () => {

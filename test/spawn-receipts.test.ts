@@ -439,10 +439,10 @@ describe("failures BEFORE the prompt could be written: unsent, own resources rol
     rolledBack();
   });
 
-  it("a non-pi agent on tmux has no send: AgentSendUnsupportedError, rolled back", async () => {
+  it("a CLI outside the blessed five on tmux has no send: AgentSendUnsupportedError, rolled back", async () => {
     extensionOn = false;
     await expect(
-      spawnForTask(db, req({ spawn: { name: "worker-1", workstream: "auth", cli: "claude" } })),
+      spawnForTask(db, req({ spawn: { name: "worker-1", workstream: "auth", cli: "aider" } })),
     ).rejects.toBeInstanceOf(AgentSendUnsupportedError);
     rolledBack();
   });

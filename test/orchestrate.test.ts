@@ -171,7 +171,8 @@ describe("anchors: a hook harness starts through the wrapper (spec D3)", () => {
     await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "claude" });
     const cmd = paneCommand("worker-1");
     expect(cmd.startsWith("exec /bin/sh -c ")).toBe(true);
-    expect(cmd.endsWith(" mu-anchor 'claude'")).toBe(true);
+    // A worker gets its row's auto-approve preset (spec D17); the argv0 stays claude.
+    expect(cmd.endsWith(" mu-anchor 'claude --permission-mode acceptEdits'")).toBe(true);
     expect(cmd).toContain(anchorDir());
     expect(cmd).toContain(
       '{"agent_name":"worker-1","workstream":"auth","role":"worker","cli":"claude","orchestrator":false,"remote_key":null,"start_time":',
@@ -209,7 +210,7 @@ describe("anchors: a hook harness starts through the wrapper (spec D3)", () => {
     } finally {
       setMuxForTests(previous);
     }
-    expect(paneCommand("worker-1")).toBe("claude");
+    expect(paneCommand("worker-1")).toBe("claude --permission-mode acceptEdits");
     expect(paneEnv("worker-1").MU_AGENT_CLI).toBe("claude");
   });
 

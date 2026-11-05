@@ -27,9 +27,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   confirms the send when `run_count` rises within `MU_SEND_ACK_MS` (default
   10 s): `ack: confirmed` with `runCount`, else `ack: unknown`
   (`delivered: false`, reason `unconfirmed`), never resent. `--steer` is
-  refused (`AgentSteerUnsupportedError`, exit 2). `spawn --task` refuses a
-  `hooks` agent before anything is sent (the brief-file write is later
-  work). pi, and
+  refused (`AgentSteerUnsupportedError`, exit 2). pi, and
   every other CLI on tmux, are unchanged. VISION §6 now says so. `mu task
   claim --for` a `hooks` owner on tmux offers the plain `mu agent send` next.
 - **Interrupt, abort, fresh, settle and last text on `hooks`** (spec D4,
@@ -81,10 +79,44 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   selects the fallback; unset or anything else, and for a remote pi or a pi
   on herdr or Rex, pi stays on ctl, unchanged. A ctl pi's pane pins the
   variable empty, so a tmux server a fallback spawn started never hands it
-  `hooks`. Like every `hooks` agent, a pi on the fallback cannot take a task
-  brief yet: a task-bound spawn (`--task`, `mu task auto`) is refused and
-  rolled back; spawn without `--task` and send the brief. `mu doctor` no
+  `hooks`. A task-bound spawn hands it the brief as every `hooks` worker
+  gets one (a brief file and a pasted pointer). `mu doctor` no
   longer reports murmur as not needed while a pi runs on the fallback.
+- **Task briefs for `hooks` workers: a brief file and a one-line pointer**
+  (spec D17, U20). `mu agent spawn --task` (and `mu task auto`) now hands a
+  local claude, codex, cursor-agent or muse worker on tmux, or a pi on the
+  fallback, its brief inside the same journaled attempt (reserve, pane,
+  claim, `sending`, write, sent). The worker is launched with no prompt. After
+  the claim mu waits up to `MU_SPAWN_ACK_MS` (default 30 s) for its
+  `session_start` in murmur's inbox (codex and muse report a session only
+  with their first prompt, so they are read once, never waited for), writes
+  the brief to `<cwd>/.mu/brief-<agent>-<attempt key>.md` with
+  `.mu/.gitignore` = `*` (the worktree stays clean), journals `sending` with
+  the session and `run_count` it read, and pastes one line telling the worker
+  to read the file, confirmed by `run_count`. An unconfirmed paste is
+  `unknown`, pane and claim kept, never resent; a replay of the attempt reads
+  the inbox and promotes it to `sent` (pinning the brief) once a run past that
+  baseline shows. A dialog at the paste is refused and rolled back. A remote
+  `hooks` worker still refuses `--task`. `spawn_receipts.transport` takes
+  `hooks` (a v13 file's table is rebuilt in place, rows kept).
+- **Spawn presets and `--model`** (spec D6, D17). `mu agent spawn --model
+  <id>` passes the model through the harness's own flag (`--model`, pi
+  included). A worker of claude, codex, cursor-agent or muse launched from
+  its cli key or `MU_<KEY>_COMMAND` (not a literal `--command`, not an
+  orchestrator) gets its in-sandbox auto-approve flags
+  (`--permission-mode acceptEdits`, `-s workspace-write -a never`,
+  `--sandbox enabled`, `--approval-mode never`), all skipped when the
+  command already picks an approval or sandbox mode (any alias, `=` form or
+  conflicting mode, such as codex `--sandbox=read-only` or `--yolo`); pi
+  gets none. A `--worktree` spawn adds the trust flag for the
+  worktree mu made (codex `-c 'projects."<realpath>".trust_level="trusted"'`,
+  cursor-agent `--trust`, muse `--trust-workspace`). The agents row keeps
+  the command as given. `--model` on a remote command gate, or for a CLI
+  outside the five, is refused.
+- **`mu agent list` names each agent's harness and channel**: a `harness`
+  and a `channel` column in the table, and `channel` (the agents column) and
+  `harness` (computed: argv0, then the cli key and its prefix; null outside
+  the five) in every `--json` agent record.
 - **`mu agent answer <name> <choice...>`**: type a pending permission
   dialog's answer into the pane (text literally; `Enter`, `Escape`, `Tab`,
   `Space` and arrows as keys). On `hooks` it is refused unless murmur reads

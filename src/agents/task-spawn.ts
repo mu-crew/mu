@@ -17,6 +17,13 @@
 // never resends: an extension keeps only its last 64 ids, so "not found" is
 // still UNKNOWN, not unsent.
 //
+// On `hooks` (spec D17) the worker was launched with no prompt, and the write
+// is: wait for its `session_start` (its harness's hello), write the brief to
+// `.mu/brief-<agent>-<key>.md` in its cwd (with `.mu/.gitignore`), journal
+// `sending` with that read as the baseline, then paste ONE line pointing at
+// the file, confirmed by `run_count`. An unconfirmed paste is UNKNOWN; a
+// replay reads the inbox for a run past the baseline instead of a msgId.
+//
 // Replay (same task + attempt key). The saved registry id + pane are compared
 // with the agent now holding the name; a deleted or replaced one is reported
 // `stale`, never swapped for the replacement. A manual DELIVERED attempt whose
@@ -27,8 +34,12 @@
 import { type AgentRow, getAgentForCleanup } from "../agents.js";
 import {
   agentChannel,
+  awaitHooksSession,
   channelTarget,
   deliver,
+  type HooksReadiness,
+  hooksFence,
+  hooksRunSince,
   isSlashCommand,
   newMsgId,
   parseSessionCommand,
@@ -63,6 +74,7 @@ import {
   SpawnTaskStateError,
   SpawnTrustDialogError,
 } from "./errors.js";
+import { briefPointer, writeBriefFile } from "./hooks-brief.js";
 import { withSpawnAttemptLock } from "./lock.js";
 import {
   getReceipt,
@@ -418,6 +430,9 @@ async function drive(
   let sending = false;
   // spawnAgent rolls its own pane, row and worktree back when it throws.
   let spawnThrew = false;
+  // hooks (spec D17): the pane as read before the pointer, and the pointer itself.
+  let ready: HooksReadiness | undefined;
+  let hooksText: string | undefined;
 
   const unsent = async (err: unknown): Promise<never> => {
     // `keep`: a live worker's in-place retry. Its claim and pane are the worker's, not this attempt's.
@@ -494,6 +509,18 @@ async function drive(
       claimed = true;
       rec = updateReceipt(db, taskId, key, { state: "claimed" });
     }
+    // hooks: the harness's hello, then the brief file. Both before `sending`: a
+    // failure here is unsent, and a replay writes the same bytes again.
+    const hooksTarget = channelTarget(db, target);
+    if (agentChannel(hooksTarget).name === "hooks") {
+      const t = hooksTarget.agent;
+      if (t.host !== null || t.cwd === null) {
+        const why = say("agent.task_brief_hooks", t.name, t.host);
+        throw new AgentSendUnsupportedError(t.name, ws, t.cli, why);
+      }
+      ready = await awaitHooksSession(hooksTarget);
+      hooksText = briefPointer(writeBriefFile(t.cwd, t.name, key, req.text));
+    }
     // One immediate transaction right before the write (no await inside):
     // the delivery targets the SAVED registry id + pane, never whatever holds
     // the name now, and only while the claim is still this agent's and the
@@ -521,13 +548,17 @@ async function drive(
           throw new SpawnTaskStateError(req.task, `is no longer claimed by ${now.name}`);
         }
         const transport = agentChannel(channelTarget(db, now)).name;
-        // The hooks write (a brief file and a pointer paste, after session_start) is not
-        // here yet: refuse before the journal, so nothing is sent and the spawn rolls back.
-        if (transport === "hooks") {
-          const why = say("agent.task_brief_hooks", now.name);
-          throw new AgentSendUnsupportedError(now.name, ws, now.cli, why);
+        // The brief file was written for a hooks agent above; a channel that changed
+        // since (it cannot: the row is the same incarnation) never pastes unprepared.
+        if ((transport === "hooks") !== (hooksText !== undefined)) {
+          throw new AgentReplacedError(now.name, ws, "sent to");
         }
-        const journaled = updateReceipt(db, taskId, key, { state: "sending", transport });
+        // hooks: what the readiness read is the baseline a replay confirms the run against.
+        const journaled = updateReceipt(db, taskId, key, {
+          state: "sending",
+          transport,
+          ...(ready !== undefined ? { incarnation: ready.sessionId, runs: ready.runCount } : {}),
+        });
         return { row: now, rec: journaled };
       })
       .immediate();
@@ -541,14 +572,21 @@ async function drive(
   // ── the write ──
   let undelivered: string | undefined;
   let sent: SendResult;
+  const onUndelivered = (w: { message: string }): void => {
+    undelivered = w.message;
+  };
   try {
-    sent = await deliver(channelTarget(db, row), req.text, {
-      msgId: rec.msgId,
-      ...(rec.incarnation !== null ? { expectIncarnation: rec.incarnation } : {}),
-      onUndelivered: (w) => {
-        undelivered = w.message;
-      },
-    });
+    sent =
+      hooksText !== undefined
+        ? // A just-launched worker has no turn to wait for, and a first-prompt harness
+          // (codex, muse) no murmur row yet: the gate's unknown is expected, never a
+          // dialog (a dialog is refused even so). An in-place retry is gated as usual.
+          await deliver(channelTarget(db, row), hooksText, { force: !keep, onUndelivered })
+        : await deliver(channelTarget(db, row), req.text, {
+            msgId: rec.msgId,
+            ...(rec.incarnation !== null ? { expectIncarnation: rec.incarnation } : {}),
+            onUndelivered,
+          });
   } catch (err) {
     if (sending && definitelyUnsent(err)) return unsent(err);
     const reason = err instanceof Error ? err.message : String(err);
@@ -582,12 +620,14 @@ async function drive(
   }
 
   // ── delivered: nothing below may fail the attempt ──
+  // hooks: the confirmed paste's fence (turns settled before its run, its session).
+  const fence = hooksText !== undefined ? hooksFence(sent) : sent;
   try {
     rec = updateReceipt(db, taskId, key, {
       state: "sent",
       detail: null,
-      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
-      ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
+      ...(fence.incarnation !== undefined ? { incarnation: fence.incarnation } : {}),
+      ...(fence.runs !== undefined ? { runs: fence.runs } : {}),
     });
   } catch {
     // stays 'sending': a replay asks the extension and records it
@@ -597,7 +637,7 @@ async function drive(
       db,
       row,
       "plain",
-      Buffer.byteLength(req.text),
+      Buffer.byteLength(hooksText ?? req.text),
       { transport: sent.transport, state: sent.state, since: sent.since },
       await resolveActorIdentity(),
     );
@@ -632,6 +672,7 @@ async function reconcile(
     };
   };
   if (id.agent === undefined) return stay(`the sending agent is ${id.stale ?? "gone"}`);
+  if (saved.transport === "hooks") return reconcileHooks(db, req, saved, id.agent, stay);
   if (saved.transport !== "ctl") return stay("the send went through the pane: no receipt to ask");
   const target = channelTarget(db, id.agent);
   const check = await agentChannel(target).receipt(target, saved.msgId);
@@ -650,4 +691,35 @@ async function reconcile(
   });
   const brief = await tryPinBrief(db, req);
   return { state: "sent", replay: true, receipt: rec, agent: id.agent, checked: "accepted", brief };
+}
+
+/**
+ * The `hooks` branch of a replay (spec D17): no msgId to ask, so read the
+ * agent's inbox for a run past the receipt's baseline (its `session_id` and
+ * `run_count` before the pointer). One promotes the receipt to `sent` and pins
+ * the brief; none (or an unreadable pane) stays `unknown`. Never re-pastes.
+ */
+async function reconcileHooks(
+  db: Db,
+  req: TaskSpawnRequest,
+  saved: SpawnReceipt,
+  agent: AgentRow,
+  stay: (reason: string, checked?: TaskSpawnOutcome["checked"]) => TaskSpawnOutcome,
+): Promise<TaskSpawnOutcome> {
+  const ran = await hooksRunSince(channelTarget(db, agent), {
+    sessionId: saved.incarnation,
+    runCount: saved.runs,
+  });
+  if (ran.state === "unreachable") return stay(ran.reason, "unreachable");
+  if (ran.state === "none") {
+    return stay(say("agent.task_brief_hooks_unseen", agent.name), "not-accepted");
+  }
+  const rec = updateReceipt(db, saved.taskId, saved.attemptKey, {
+    state: "sent",
+    detail: null,
+    runs: ran.runs,
+    ...(ran.sessionId !== null ? { incarnation: ran.sessionId } : {}),
+  });
+  const brief = await tryPinBrief(db, req);
+  return { state: "sent", replay: true, receipt: rec, agent, checked: "accepted", brief };
 }

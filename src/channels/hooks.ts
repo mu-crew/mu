@@ -89,7 +89,7 @@ import type {
  * pi on the fallback (spec D15) whose cli key names no harness (`--cli helper
  * --command 'pi-meta …'`) still gets pi's row: its keys and fresh command.
  */
-function rowOf(agent: { cli: string; command?: string | null }): HarnessRow | undefined {
+export function rowOf(agent: { cli: string; command?: string | null }): HarnessRow | undefined {
   const harness =
     harnessOfCli(agent.cli, agent.command ?? undefined) ??
     (speaksMuCtl(agent.cli, agent.command ?? "") ? "pi" : undefined);

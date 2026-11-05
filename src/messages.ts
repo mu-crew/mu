@@ -150,8 +150,12 @@ export const MESSAGES = {
   "agent.send_refused": (reason: string) => `control socket refused the send: ${reason}`,
   "agent.empty_send_hooks": (name: string) =>
     `agent ${name} is on the hooks channel: an empty message submits nothing; press Enter in the pane yourself`,
-  "agent.task_brief_hooks": (name: string) =>
-    `agent ${name} is on the hooks channel, which cannot take a task brief yet: nothing was sent; spawn it without --task and send the brief with mu agent send`,
+  "agent.task_brief_hooks": (name: string, host: string | null) =>
+    host !== null
+      ? `agent ${name} runs on ${host} on the hooks channel, where mu cannot write a task brief file yet: nothing was sent; spawn it without --task and send the brief with mu agent send`
+      : `agent ${name} is on the hooks channel and has no cwd to write its task brief file in: nothing was sent`,
+  "agent.task_brief_hooks_unseen": (name: string) =>
+    `the brief pointer was pasted to ${name}, but its inbox shows no run since: still unknown, never resent (if it never started, send the pointer yourself)`,
   "agent.fence_unsupported": (name: string, channel: string) =>
     `agent ${name} is on the ${channel} channel, which has no write fence: nothing was sent`,
   "agent.steer_unsupported": (name: string, ws: string, channel: string) =>
@@ -238,6 +242,8 @@ export const MESSAGES = {
     `--${flag} cannot be used with a remote command gate (--host with a non-pi --command): it runs one command and reports its exit; wait on it`,
   "agent.spawn_gate_worktree": () =>
     "--worktree cannot be used with a remote command gate (--host with a non-pi --command): a gate runs in --cwd, else the profile's default repo",
+  "agent.spawn_model_unknown_cli": (cli: string) =>
+    `--model goes through a harness's own model flag, and ${cli} is not claude, codex, cursor-agent, muse or pi: put the model in --command or MU_<KEY>_COMMAND instead`,
   "agent.spawn_attempt_task": () => "--attempt needs --task",
   "agent.spawn_task_default": (task: string, ws: string, title: string) =>
     `Task ${task} (workstream ${ws}): ${title}. Read: mu task notes ${task} -w ${ws}`,

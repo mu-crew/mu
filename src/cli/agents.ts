@@ -47,6 +47,7 @@ import {
   UsageError,
 } from "../cli.js";
 import type { Db } from "../db.js";
+import { harnessOfCli } from "../harnesses.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
 import { pc } from "../output.js";
@@ -85,6 +86,8 @@ interface SpawnOpts {
   task?: string;
   /** With `--task`: the attempt's name (default: the task id). Replays of a name never send twice. */
   attempt?: string;
+  /** Passed to the harness through its row's model flag (spec D17). */
+  model?: string;
   json?: boolean;
   signal?: AbortSignal;
 }
@@ -108,13 +111,24 @@ function assertWorktreeFlags(opts: SpawnOpts): void {
 // brief, task or worktree. Refused before any effect (stdin read included).
 function assertGateFlags(opts: SpawnOpts): void {
   if (!isCommandGate(opts)) return;
-  for (const flag of ["task", "send", "attempt"] as const) {
+  for (const flag of ["task", "send", "attempt", "model"] as const) {
     if (opts[flag] !== undefined) {
       throw new UsageError(say("agent.spawn_gate_flag", flag));
     }
   }
   if (opts.worktree) {
     throw new UsageError(say("agent.spawn_gate_worktree"));
+  }
+}
+
+// `--model` goes through a harness row's model flag: a CLI outside the blessed
+// five has none, so the model would be dropped without a word (spec D17).
+function assertModelFlag(opts: SpawnOpts): void {
+  if (opts.model === undefined || isCommandGate(opts)) return;
+  const cli = opts.cli ?? "pi";
+  const command = opts.command ?? (opts.host !== undefined ? cli : resolveCliCommand(cli));
+  if (harnessOfCli(cli, command) === undefined) {
+    throw new UsageError(say("agent.spawn_model_unknown_cli", cli));
   }
 }
 
@@ -153,6 +167,7 @@ function taskBriefText(db: Db, workstream: string, task: string): string {
 
 async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
   assertGateFlags(opts);
+  assertModelFlag(opts);
   // Spawn is a create path: the first spawn into a workstream creates it (insertAgent), as
   // `scratch` does. Every other verb refuses an unknown -w.
   const workstream = await resolveWorkstream(opts.workstream);
@@ -189,6 +204,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
     ...(opts.ctl === false ? { ctl: false } : {}),
     ...(opts.nextFree === true ? { nextFree: true } : {}),
     ...(opts.host !== undefined ? { host: opts.host } : {}),
+    ...(opts.model !== undefined ? { model: opts.model } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
   });
   // --next-free may have picked another name than the one asked for.
@@ -381,6 +397,7 @@ async function cmdSpawnTask(
       ...(opts.ctl === false ? { ctl: false } : {}),
       ...(opts.nextFree === true ? { nextFree: true } : {}),
       ...(opts.host !== undefined ? { host: opts.host } : {}),
+      ...(opts.model !== undefined ? { model: opts.model } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     },
   });
@@ -1073,6 +1090,10 @@ export function wireAgentCommands(program: Command): void {
     )
     .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
     .option(
+      "--model <id>",
+      "the model, passed through the harness's own model flag (--model for claude, codex, cursor-agent, muse and pi)",
+    )
+    .option(
       "--next-free",
       "if <name> is taken, take the next free one (worker-1 → worker-2, review → review-2); --json's agent.name says which",
     )
@@ -1097,6 +1118,7 @@ export function wireAgentCommands(program: Command): void {
         send?: string;
         task?: string;
         attempt?: string;
+        model?: string;
         cli?: string;
         command?: string;
         tab?: string;

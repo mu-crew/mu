@@ -9,6 +9,7 @@
 // re-exports every symbol for back-compat with the existing import
 // surface (tests + cli/* importers).
 
+import { harnessOf } from "../agent-output.js";
 import { type RuntimeState, UNKNOWN_REASON } from "../agent-state.js";
 import type { LiveAgent } from "../agents.js";
 import { agentStateGlyph, GLYPH } from "../glyphs.js";
@@ -129,12 +130,14 @@ export function formatAgentsTable(agents: readonly LiveAgent[]): string {
       pc.bold(""),
       pc.bold("name"),
       pc.bold("cli"),
+      pc.bold("harness"),
+      pc.bold("channel"),
       pc.bold("state"),
       pc.bold("window"),
       pc.bold("role"),
       pc.bold("cwd"),
     ],
-    colWidths: [null, null, null, null, 32, 14, CWD_BUDGET],
+    colWidths: [null, null, null, null, null, null, 32, 14, CWD_BUDGET],
     style: { head: [] },
   });
   for (const a of agents) {
@@ -151,6 +154,8 @@ export function formatAgentsTable(agents: readonly LiveAgent[]): string {
       glyphCell,
       nameCell,
       a.cli,
+      harnessOf(a) ?? pc.dim("—"),
+      a.channel ?? pc.dim("—"),
       (a.state === "unknown" || a.state === "needs_permission") && a.reason !== undefined
         ? `${a.state}: ${a.reason}`
         : a.queued === true

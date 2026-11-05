@@ -44,19 +44,25 @@ sends the harness's fresh command (`/clear`, `/new`, `/new-chat`) and then the
 text. A wait on the agent settles when its turn's `Stop` hook fires, with that
 turn's final text, and a `CLOSE:` block in it closes the task. The text is
 known only to a wait that was watching before the turn ended (start it with
-`send --wait`): murmur does not say which turn wrote it. `spawn --task`
-cannot hand it a brief yet, and any other CLI on tmux still exits 4. Put
-the brief in a task note, start the agent with the prompt as its argument,
-then claim:
+`send --wait`): murmur does not say which turn wrote it.
+
+`spawn --task` hands it the brief. The worker starts with no prompt; mu
+waits for its `session_start` (claude and cursor-agent report one as they
+start; codex and muse only with their first prompt, so mu does not wait for
+them), writes the brief to `.mu/brief-<agent>-<attempt>.md` in its cwd
+(`.mu/.gitignore` keeps the worktree clean), and pastes one line telling it
+to read that file. An unconfirmed paste leaves the attempt `unknown`; a
+replay of the same command reads the inbox and reports it `sent` once the
+worker's run shows. A worker gets its harness's auto-approve flags
+(`--permission-mode acceptEdits`, `-s workspace-write -a never`,
+`--sandbox enabled`, `--approval-mode never`) unless its command already
+picks an approval or sandbox mode, and `--model` goes through its own
+model flag (a CLI outside the five refuses `--model`). Any other CLI on tmux still exits 4.
 
 ```bash
-mu task note build -w auth - <<'EOF'
+mu agent spawn worker-1 -w auth --cli codex --worktree --task build --send - <<'EOF'
 <brief, ending with: mu task close build -w auth --evidence "...">
 EOF
-export MU_CODEX_COMMAND="codex --disable shell_snapshot --dangerously-bypass-approvals-and-sandbox"
-mu agent spawn worker-1 -w auth --cli codex --worktree \
-  --command "$MU_CODEX_COMMAND 'Do task build. Run: mu task notes build -w auth'"
-mu task claim build -w auth --for worker-1
 mu wait task:auth/build
 ```
 
@@ -66,9 +72,12 @@ On Rex, `--send`, `agent send` and `--command` all work.
 
 - **Dialogs.** A new folder makes codex ask "Trust this folder?", and
   unreviewed hooks ask again. mu cannot answer them (`mu agent answer` is for
-  permission dialogs, and the hooks do not fire before trust). Pre-trust the
-  repo (`-c 'projects."<repo>".trust_level="trusted"'`; worktrees inherit the
-  root's trust), or attach and press the key.
+  permission dialogs, and the hooks do not fire before trust). A `--worktree`
+  spawn passes the harness's trust flag for the worktree it made (codex
+  `-c 'projects."<path>".trust_level="trusted"'`, cursor-agent `--trust`, muse
+  `--trust-workspace`); elsewhere pre-trust the folder, or attach and press
+  the key. A worker that never trusts fires no events, and its task spawn ends
+  `unknown`.
 - **State** comes from murmur on tmux, from herdr on herdr, and on Rex
   from the agent's own OSC 7501 report (claude and codex send one; no
   hook needed). On tmux, wire murmur to
@@ -147,9 +156,8 @@ events instead of opening its store. mu's pi extension still serves ctl for
 the spawn handshake, delegates and `mu doctor`. It does not help a build that
 loads no extensions. Unset, pi stays on ctl.
 
-Like the harnesses above, a pi on `hooks` cannot take a task brief yet: a
-`--task` spawn, and a `mu task auto` spawn of pi, is refused and rolled back.
-Spawn it without `--task`, then send the brief with `mu agent send`.
+A `--task` spawn hands it the brief as the harnesses above get theirs: a
+brief file and a pasted pointer.
 
 ## With no multiplexer
 

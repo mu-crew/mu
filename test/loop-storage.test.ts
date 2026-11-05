@@ -651,6 +651,36 @@ describe("a populated v13 DB is completed in place", () => {
     expect(checkDrift(db).clean).toBe(true);
   });
 
+  it("a spawn_receipts whose CHECK predates the hooks transport is rebuilt losslessly, and takes hooks (spec D17)", () => {
+    const p = v13Copy();
+    track(openDb({ path: p })).close();
+    open.pop();
+    raw(p, (r) => {
+      const sql = (
+        r.prepare("SELECT sql FROM sqlite_master WHERE name = 'spawn_receipts'").get() as {
+          sql: string;
+        }
+      ).sql;
+      r.exec("DROP TABLE spawn_receipts");
+      r.exec(sql.replace("'ctl', 'hooks', 'mux'", "'ctl', 'mux'"));
+      r.exec(`INSERT INTO spawn_receipts
+        (task_id, attempt_key, name, workstream, request_sha, msg_id, transport, runs, state, created_at, updated_at)
+        VALUES (1, 'manual:t1', 'w', 'd', 'sha', 'm1', 'ctl', 7, 'sent', 'c', 'u')`);
+    });
+    const old = raw(p, (r) => r.prepare("SELECT * FROM spawn_receipts").all());
+    expect(() => raw(p, (r) => r.exec("UPDATE spawn_receipts SET transport = 'hooks'"))).toThrow(
+      /CHECK/,
+    );
+    const db = track(openDb({ path: p }));
+    expect(tables(p)).not.toContain("spawn_receipts_pre_hooks");
+    expect(db.prepare("SELECT * FROM spawn_receipts").all()).toEqual(old);
+    db.prepare("UPDATE spawn_receipts SET transport = 'hooks'").run();
+    expect(db.prepare("SELECT transport FROM spawn_receipts").get()).toEqual({
+      transport: "hooks",
+    });
+    expect(stamps(p).version).toBe(CURRENT_SCHEMA_VERSION);
+  });
+
   it("an old-shaped carrier_jobs (one row per incarnation, no token) is rebuilt losslessly as filled reservations", () => {
     const p = oldCarrierJobsCopy();
     const before = raw(p, (r) => r.prepare("SELECT * FROM carrier_jobs ORDER BY agent_id").all());
