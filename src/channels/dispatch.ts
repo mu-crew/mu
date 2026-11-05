@@ -3,7 +3,7 @@
 // `agentChannel` picks one agent's channel; `readAgentStates` is the one
 // batched state read over a mixed set: ctl agents first, then every other
 // pane (and the liveness of a ctl agent whose socket did not answer) from
-// the mux channel. A remote command gate is read from its pane. Delivery is
+// the mux channel, whose read the hooks channel shares (murmur's pane option). A remote command gate is read from its pane. Delivery is
 // routed the same way, by `deliver` (./deliver.ts).
 
 import { dirname } from "node:path";
@@ -12,6 +12,7 @@ import type { ObservedAgent } from "../agents/observe.js";
 import type { Db } from "../db.js";
 import { queuedPanes } from "../muzzle-queue.js";
 import { ctlChannel } from "./ctl.js";
+import { hooksChannel } from "./hooks.js";
 import { muxChannel } from "./mux.js";
 import { channelOf } from "./select.js";
 import type { AgentChannel, ChannelTarget } from "./types.js";
@@ -31,9 +32,8 @@ export function channelTarget<A extends ObservedAgent>(
 
 /** The channel `target.agent` is on: the one its row recorded at spawn (see `expectsCtl`). */
 export function agentChannel(target: ChannelTarget): AgentChannel {
-  return channelOf(target.agent, target.stateDir, target.socket) === "ctl"
-    ? ctlChannel
-    : muxChannel;
+  const name = channelOf(target.agent, target.stateDir, target.socket);
+  return name === "ctl" ? ctlChannel : name === "hooks" ? hooksChannel : muxChannel;
 }
 
 /**

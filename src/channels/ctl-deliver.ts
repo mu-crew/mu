@@ -13,6 +13,7 @@
 
 import {
   AgentAbortTimeoutError,
+  AgentAnswerUnsupportedError,
   AgentBusyError,
   AgentCtlUnreachableError,
   AgentEmptySendError,
@@ -614,4 +615,8 @@ export const ctlDelivery: ChannelDelivery = {
   command: ctlCommand,
   interrupt: ctlInterrupt,
   abort: ctlAbort,
+  // pi's dialogs are its own UI, with no ctl op to answer them: the human answers in the pane.
+  answer: async (t) => {
+    throw new AgentAnswerUnsupportedError(t.agent.name, t.agent.workstreamName, "ctl");
+  },
 };

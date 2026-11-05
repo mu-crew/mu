@@ -30,9 +30,16 @@ Then check from inside the harness:
 
 ## Run one as a worker
 
-On tmux, mu cannot type into a non-pi pane, so `spawn --send` and `agent
-send` exit 4. Put the brief in a task note, start the agent with the prompt
-as its argument, then claim:
+On tmux, a local claude, codex, cursor-agent or muse worker is on the
+`hooks` channel: `agent send` clears its input line, pastes, and is
+confirmed when the harness's `run_count` rises (murmur's hook entries,
+`murmur init`). It is refused while the agent waits on a permission dialog
+(answer it: `mu agent answer worker-1 1 -w auth`) and, without `--force`,
+while a turn runs or its state is unknown; an unconfirmed send reports
+`ack: unknown` and is never resent. `--steer` is refused. `spawn --task`
+cannot hand it a brief yet, and any other CLI on tmux still exits 4. Put
+the brief in a task note, start the agent with the prompt as its argument,
+then claim:
 
 ```bash
 mu task note build -w auth - <<'EOF'
@@ -50,7 +57,8 @@ On herdr, `--send` and `agent send` work (herdr's `agent prompt`, see
 On Rex, `--send`, `agent send` and `--command` all work.
 
 - **Dialogs.** A new folder makes codex ask "Trust this folder?", and
-  unreviewed hooks ask again. On tmux and Rex mu cannot answer them. Pre-trust the
+  unreviewed hooks ask again. mu cannot answer them (`mu agent answer` is for
+  permission dialogs, and the hooks do not fire before trust). Pre-trust the
   repo (`-c 'projects."<repo>".trust_level="trusted"'`; worktrees inherit the
   root's trust), or attach and press the key.
 - **State** comes from murmur on tmux, from herdr on herdr, and on Rex

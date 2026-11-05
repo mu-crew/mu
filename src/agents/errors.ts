@@ -548,15 +548,19 @@ export class AgentEmptySendError extends Error {
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
+    /** The channel that refused; absent: ctl. */
+    public readonly channel?: "hooks",
   ) {
-    super(say("agent.empty_send", agentName));
+    super(say(channel === "hooks" ? "agent.empty_send_hooks" : "agent.empty_send", agentName));
   }
 }
 
 /**
- * `mu agent send` to a non-pi agent on a backend with no `sendToPane`
- * (tmux): its bracketed paste cannot be confirmed, so mu refuses. Maps to
- * exit code 4 (conflict).
+ * `mu agent send` to a non-pi agent on the `mux` channel of a backend with no
+ * `sendToPane` (tmux): nothing would confirm a paste, so mu refuses (the
+ * `hooks` channel pastes, because there a hook event confirms it). Also a
+ * send a channel can take but not this way (`why`). Maps to exit code 4
+ * (conflict).
  */
 export class AgentSendUnsupportedError extends Error {
   override readonly name = "AgentSendUnsupportedError";
@@ -564,8 +568,73 @@ export class AgentSendUnsupportedError extends Error {
     public readonly agentName: string,
     public readonly workstream: string,
     public readonly cli: string,
+    /** Set when the agent's channel can send, but not this way (`hooks`: no write fence). */
+    why?: string,
   ) {
-    super(say("agent.send_unsupported", agentName, cli));
+    super(why ?? say("agent.send_unsupported", agentName, cli));
+  }
+}
+
+/**
+ * `mu agent send --steer` to an agent whose channel has no mid-turn input
+ * (`hooks`: a paste lands in the input box, not in the running turn).
+ * Nothing was sent. Exit 2 (wrong recipe).
+ */
+export class AgentSteerUnsupportedError extends Error {
+  override readonly name = "AgentSteerUnsupportedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly channel: string,
+  ) {
+    super(say("agent.steer_unsupported", agentName, workstream, channel));
+  }
+}
+
+/**
+ * The `hooks` channel's send gate refused: the agent is `blocked` on a
+ * permission dialog (answer it), `running` a turn, or its state is
+ * `unknown` (both take `--force`). Nothing was sent. Exit 4.
+ */
+export class AgentSendGateError extends Error {
+  override readonly name = "AgentSendGateError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly state: "blocked" | "running" | "unknown",
+    public readonly reason: string,
+  ) {
+    super(say("agent.send_gate", agentName, workstream, state, reason));
+  }
+}
+
+/**
+ * `mu agent answer` to an agent with no pending permission dialog: the keys
+ * would land in its input box instead. Nothing was sent. Exit 4.
+ */
+export class AgentNotBlockedError extends Error {
+  override readonly name = "AgentNotBlockedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly state: string,
+  ) {
+    super(say("agent.not_blocked", agentName, workstream, state));
+  }
+}
+
+/**
+ * `mu agent answer` on a channel that cannot type keys into the pane (`ctl`:
+ * pi's dialogs are answered in the pane; `mux` on herdr or Rex). Exit 2.
+ */
+export class AgentAnswerUnsupportedError extends Error {
+  override readonly name = "AgentAnswerUnsupportedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly channel: string,
+  ) {
+    super(say("agent.answer_unsupported", agentName, channel));
   }
 }
 

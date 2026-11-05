@@ -12,6 +12,42 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **The `hooks` channel: paste to claude, codex, cursor-agent and muse on
+  tmux** (spec D4, U8). A local pane of one of those harnesses on tmux is now
+  spawned on channel `hooks` (`agents.channel`). `mu agent send` to it reads
+  `murmur pane <pane> --json` (which drains the harness's hook events first),
+  refuses a `blocked` agent (`AgentSendGateError`, exit 4: answer the dialog)
+  and, without `--force`, a running one or one whose state is unknown (no
+  murmur row or no agent row, murmur silent, a crashed harness, or running
+  with no event for `MU_STALE_MS`, default 10 min). The gate reads murmur's
+  `attention` and the agent row's `activity`, not its rendered word, in which
+  an old `error` outranks a running turn or an open dialog. Then it clears the input line with the
+  harness's clear key (`C-u`: an interrupted claude puts its prompt back in
+  the box), pastes once through a named tmux buffer, presses Enter, and
+  confirms the send when `run_count` rises within `MU_SEND_ACK_MS` (default
+  10 s): `ack: confirmed` with `runCount`, else `ack: unknown`
+  (`delivered: false`, reason `unconfirmed`), never resent. `--steer` is
+  refused (`AgentSteerUnsupportedError`, exit 2). Fresh, interrupt and abort
+  are still refused on `hooks`, and `spawn --task` refuses a `hooks` agent
+  before anything is sent (the brief-file write is later work). pi, and
+  every other CLI on tmux, are unchanged. VISION §6 now says so. `mu task
+  claim --for` a `hooks` owner on tmux offers the plain `mu agent send` next.
+- **`mu agent answer <name> <choice...>`**: type a pending permission
+  dialog's answer into the pane (text literally; `Enter`, `Escape`, `Tab`,
+  `Space` and arrows as keys). On `hooks` it is refused unless murmur reads
+  the agent blocked (`AgentNotBlockedError`, exit 4; `--force` types anyway)
+  and confirmed by the next hook event. With no event within
+  `MU_SEND_ACK_MS` it writes `continued` through `murmur hook mu --pane`, so
+  the answered dialog stops reading `blocked`; a pi agent's dialog is answered in
+  its pane (`AgentAnswerUnsupportedError`, exit 2). Recorded as an
+  `agent.send` op with `mode=answer`.
+- **`MuxBackend.pasteToPane` and `sendKeys`** (tmux only): clear key, one
+  bracketed paste (chunked `set-buffer -a` under tmux's 16 KiB message cap,
+  deleted by the paste, deleted on failure), Enter; and keys as names or
+  literal text. A word ending in `;` goes out as `\;` (`tmuxWord`): tmux
+  splits its argv on a final `;` before parsing, so a prompt ending in `;`
+  would lose it.
+
 - **`mu orchestrate -w <ws> [--cli <key>]`**: start an orchestrator of any
   agent CLI as a managed pane, with an explicit identity (caller
   `<ws>/<name>`, default `orchestrator-1`, else the next free one). Its pane

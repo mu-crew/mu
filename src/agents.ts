@@ -22,6 +22,8 @@ import {
 } from "./agent-state.js";
 import { reapAgentRow } from "./agents/reap.js";
 import {
+  type AnswerResult,
+  agentChannel,
   CHANNEL_NAMES,
   type ChannelName,
   channelTarget,
@@ -54,6 +56,7 @@ export { type DelegateOutcome, delegateOutcome } from "./agents/delegate.js";
 export {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
+  AgentAnswerUnsupportedError,
   AgentBusyError,
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
@@ -63,17 +66,20 @@ export {
   AgentFreshNeedsCtlError,
   AgentLockBusyError,
   AgentNameExhaustedError,
+  AgentNotBlockedError,
   AgentNotFoundError,
   AgentNotInWorkstreamError,
   AgentPaneDeadError,
   AgentPaneStillAliveError,
   AgentReplacedError,
   AgentRestartedError,
+  AgentSendGateError,
   AgentSendIndeterminateError,
   AgentSendUnsupportedError,
   AgentSlashCommandUnsupportedError,
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
+  AgentSteerUnsupportedError,
   CarrierJobKeptError,
   CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
@@ -129,6 +135,7 @@ export {
 } from "./agents/transport.js";
 export { checkMessage, watchAgentRun } from "./channels/ctl.js";
 export {
+  type AnswerResult,
   agentCtlSocket,
   type ChannelName,
   CTL_SLASH_COMMANDS,
@@ -688,6 +695,37 @@ export async function sendToAgent(
     source,
   );
   return sent;
+}
+
+/**
+ * Answer an agent's pending permission dialog by typing `keys` into its pane
+ * (`mu agent answer`), through the channel its row records. On `hooks` it is
+ * refused (AgentNotBlockedError) unless murmur reads the agent `blocked`, and
+ * confirmed by the next hook event; `force` skips the state check. `ctl`
+ * refuses (pi's dialogs are answered in the pane), as does a backend that
+ * cannot type keys (AgentAnswerUnsupportedError).
+ */
+export async function answerAgent(
+  db: Db,
+  name: string,
+  keys: readonly string[],
+  opts: { workstream: string; force?: boolean },
+): Promise<AnswerResult> {
+  const agent = getAgent(db, name, opts.workstream);
+  if (!agent) throw new AgentNotFoundError(name);
+  const target = channelTarget(db, agent);
+  const answered = await agentChannel(target).answer(target, keys, {
+    ...(opts.force ? { force: true } : {}),
+  });
+  recordSend(
+    db,
+    agent,
+    "answer",
+    Buffer.byteLength(keys.join(" ")),
+    { transport: answered.transport, ack: answered.ack },
+    await resolveActorIdentity(),
+  );
+  return answered;
 }
 
 /**

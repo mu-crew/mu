@@ -102,7 +102,7 @@ describe("spawn --task with a non-pi agent", () => {
           "-w",
           "auth",
           "--cli",
-          "claude",
+          "aider",
           "--task",
           "t1",
           "--send",

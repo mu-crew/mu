@@ -1,9 +1,11 @@
 // The AgentChannel contract (spec D4): one suite, run against every channel.
 // Each channel declares what it can do (the D4 table); the suite holds it to
 // exactly that, through the channel, through the wait seam that reads it, and
-// through the delivery verbs (send, fresh, command, interrupt, abort). A real
-// unix socket stands in for the mu pi extension; tmux is a stub whose murmur
-// pane option reports the non-pi pane. The channel is the one the agents row
+// through the delivery verbs (send, fresh, command, interrupt, abort, answer).
+// A real unix socket stands in for the mu pi extension; tmux is a stub whose
+// murmur pane option reports the non-pi panes; a fake hook harness
+// (test/_fake-harness.ts) writes murmur inbox events for the `hooks` pane and
+// answers the keys mu types into it. The channel is the one the agents row
 // recorded: neither its cli nor the env moves an agent to another channel.
 
 import { mkdirSync, mkdtempSync } from "node:fs";
@@ -14,11 +16,19 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetAgentStateCacheForTests, setMurmurRunnerForTests } from "../src/agent-state.js";
 import {
   AgentAbortNeedsCtlError,
+  AgentAnswerUnsupportedError,
   AgentCtlUnreachableError,
   AgentFreshNeedsCtlError,
+  AgentNotBlockedError,
+  AgentSendGateError,
   AgentSendUnsupportedError,
+  AgentSteerUnsupportedError,
 } from "../src/agents/errors.js";
 import { type AgentRow, getAgent, insertAgent, sendToAgent } from "../src/agents.js";
+import {
+  setMurmurHookRunnerForTests,
+  setMurmurPaneRunnerForTests,
+} from "../src/channels/hooks-pane.js";
 import {
   type AgentChannel,
   agentChannel,
@@ -28,6 +38,7 @@ import {
   ctlChannel,
   type DeliveryTarget,
   deliver,
+  hooksChannel,
   muxChannel,
   readAgentStates,
 } from "../src/channels/index.js";
@@ -35,10 +46,11 @@ import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
 import { type MuxBackend, setMuxForTests, tmuxBackend } from "../src/mux.js";
-import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
+import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { withEnv } from "./_env.js";
+import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { rmFixtureDir } from "./_fs.js";
 
 const WS = "chan";
@@ -50,6 +62,8 @@ let servers: Server[];
 let ctlReqs: Record<string, unknown>[];
 /** Every `sendToPane` a sending backend received. */
 let pasted: { paneId: string; text: string }[];
+/** The hook harness in pane %3 (the `hooks` agent's pane). */
+let fake: FakeHarness;
 
 /** A fake extension: status (and `status {msgId}`), and a `wait` answered at once with a settled run. */
 async function serveCtl(agent: AgentRow): Promise<void> {
@@ -125,6 +139,23 @@ async function liveMux(): Promise<AgentRow> {
   return insertAgent(db, { name: "cla", workstream: WS, paneId: "%2", cli: "claude" });
 }
 
+/** A live hook harness on `hooks`: started, three runs settled, idle. */
+async function liveHooks(): Promise<AgentRow> {
+  const a = insertAgent(db, {
+    name: "cdx",
+    workstream: WS,
+    paneId: "%3",
+    cli: "codex",
+    channel: "hooks",
+  });
+  fake.emit("session_start", { source: "startup" });
+  for (let i = 0; i < 3; i++) {
+    fake.emit("prompt_submitted");
+    fake.emit("turn_stopped", { text: `run ${i + 1}` });
+  }
+  return a;
+}
+
 const CONTRACTS: Contract[] = [
   {
     name: "ctl",
@@ -152,6 +183,27 @@ const CONTRACTS: Contract[] = [
     receipts: false,
     lastText: false,
   },
+  {
+    name: "hooks",
+    channel: hooksChannel,
+    live: liveHooks,
+    gone: () =>
+      insertAgent(db, {
+        name: "cdg",
+        workstream: WS,
+        paneId: "%9",
+        cli: "codex",
+        channel: "hooks",
+      }),
+    source: "murmur",
+    liveState: "needs_input",
+    fence: false,
+    watches: false,
+    // `run_count` and `session_id` stand in for pi's runs and incarnation (D4).
+    baseline: true,
+    receipts: false,
+    lastText: false,
+  },
 ];
 
 beforeEach(() => {
@@ -160,17 +212,31 @@ beforeEach(() => {
   servers = [];
   ctlReqs = [];
   pasted = [];
+  fake = fakeHarness(dir, "%3", INC);
   setMuxForTests(tmuxBackend);
-  // %1 holds pi (no murmur option: ctl is its source); %2 a non-pi pane murmur reports working.
-  setTmuxExecutor(async (args) =>
-    args[0] === "list-panes"
-      ? { stdout: "%1\t\t\n%2\tworking\t1000\n", stderr: "", exitCode: 0 }
-      : { stdout: "", stderr: "", exitCode: 0 },
+  // %1 holds pi (no murmur option: ctl is its source); %2 a non-pi pane murmur reports working;
+  // %3 the hook harness, whose option is what murmur's drain of its inbox published.
+  setTmuxExecutor(
+    async (args) =>
+      fake.tmux(args) ??
+      (args[0] === "list-panes"
+        ? {
+            stdout: `%1\t\t\n%2\tworking\t1000\n%3\t${fake.option()}\t2000\n`,
+            stderr: "",
+            exitCode: 0,
+          }
+        : { stdout: "", stderr: "", exitCode: 0 }),
   );
   setMurmurRunnerForTests(async () => null);
+  setMurmurPaneRunnerForTests(fake.pane);
+  setMurmurHookRunnerForTests(fake.hook);
+  setSleepForTests(async () => {});
   resetAgentStateCacheForTests();
 });
 afterEach(() => {
+  setMurmurPaneRunnerForTests(async () => null);
+  setMurmurHookRunnerForTests(async () => false);
+  resetSleep();
   resetTmuxExecutor();
   setMuxForTests(undefined);
   setMurmurRunnerForTests(null);
@@ -259,9 +325,10 @@ describe.each(CONTRACTS)("AgentChannel contract: $name", (c) => {
     const ref = { kind: "agent" as const, workstream: WS, id: agent.name };
     const read = await hooks.readAgents([ref], signal());
     expect(read.get(`${WS}/${agent.name}`)).toMatchObject({ status: c.liveState });
-    // An owed ref with no fence counts from the channel's baseline; no baseline, no watch.
+    // An owed ref with no fence counts from the channel's baseline; no baseline (or no
+    // watch), no handle: the wait polls.
     const handle = await hooks.watchAgent(ref, signal(), { owed: true });
-    if (!c.baseline) {
+    if (!c.baseline || !c.watches) {
       expect(handle).toBeUndefined();
       return;
     }
@@ -281,41 +348,64 @@ function sendingMux(): void {
   setMuxForTests(backend);
 }
 
-/** What each channel's delivery verbs do (the D4 table, `ctl` and `mux` columns). */
+/** What each channel's delivery verbs do (the D4 table). */
 interface DeliveryContract {
   name: ChannelName;
   live: () => Promise<AgentRow>;
-  /** True when a delivery writes a ctl op; false when it goes to the backend's `sendToPane`. */
-  ctlOp: boolean;
-  /** Without a backend `sendToPane` (tmux): a send is refused. */
-  needsSendToPane: boolean;
+  /**
+   * How a send reaches the agent: a ctl op; the backend's `sendToPane` (refused
+   * on a backend without one: tmux); or tmux's paste after clearing the input
+   * line, confirmed by the harness's run count.
+   */
+  via: "ctl" | "sendToPane" | "paste";
   fresh: "delivers" | typeof AgentFreshNeedsCtlError;
   interrupt: "delivers" | typeof AgentAbortNeedsCtlError;
   abort: "delivers" | typeof AgentAbortNeedsCtlError;
+  /** A mid-turn steer: queued over ctl, or the typed refusal. */
+  steer: "delivers" | typeof AgentSteerUnsupportedError;
+  /**
+   * A dialog answer: refused (pi answers in its pane), typed as keys with no
+   * event to confirm it (mux on tmux), or confirmed by the next event (hooks).
+   */
+  answer: "refused" | "unconfirmed" | "confirmed";
 }
 
 const DELIVERY: DeliveryContract[] = [
   {
     name: "ctl",
     live: liveCtl,
-    ctlOp: true,
-    needsSendToPane: false,
+    via: "ctl",
     fresh: "delivers",
     interrupt: "delivers",
     abort: "delivers",
+    steer: "delivers",
+    answer: "refused",
   },
   {
     name: "mux",
     live: liveMux,
-    ctlOp: false,
-    needsSendToPane: true,
+    via: "sendToPane",
     fresh: AgentFreshNeedsCtlError,
     interrupt: AgentAbortNeedsCtlError,
     abort: AgentAbortNeedsCtlError,
+    steer: "delivers",
+    answer: "unconfirmed",
+  },
+  {
+    name: "hooks",
+    live: liveHooks,
+    via: "paste",
+    fresh: AgentFreshNeedsCtlError,
+    interrupt: AgentAbortNeedsCtlError,
+    abort: AgentAbortNeedsCtlError,
+    steer: AgentSteerUnsupportedError,
+    answer: "confirmed",
   },
 ];
 
 const writes = () => ctlReqs.filter((r) => r.op !== "hello" && r.op !== "status");
+/** The tmux verbs mu sent the hook harness's pane, in order. */
+const typed = () => fake.calls.map((c) => [c[0], ...c.filter((a) => a === "C-u" || a === "Enter")]);
 
 describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
   let target: DeliveryTarget;
@@ -324,40 +414,69 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
   });
 
   it("send: delivered on this channel, or refused where the backend cannot send", async () => {
-    if (c.needsSendToPane) {
+    if (c.via === "sendToPane") {
       await expect(deliver(target, "hello", {})).rejects.toBeInstanceOf(AgentSendUnsupportedError);
       expect(pasted).toEqual([]);
       sendingMux();
     }
     const sent = await deliver(target, "hello", {});
     expect(sent.transport).toBe(c.name);
-    if (c.ctlOp) {
+    if (c.via === "ctl") {
       expect(sent).toMatchObject({ runs: 3, incarnation: INC });
       expect(sent.msgId).toBeTypeOf("string");
       expect(writes()).toMatchObject([{ op: "send", text: "hello", mode: "followUp" }]);
       expect(pasted).toEqual([]);
-    } else {
+    } else if (c.via === "sendToPane") {
       expect(writes()).toEqual([]);
       expect(pasted).toEqual([{ paneId: target.agent.paneId, text: "hello" }]);
+    } else {
+      // Cleared, pasted once, submitted; confirmed by the run count rising from 3.
+      expect(sent).toEqual({ transport: "hooks", ack: "confirmed", runCount: 4, sessionId: INC });
+      expect(typed()).toEqual([
+        ["send-keys", "C-u"],
+        ["set-buffer"],
+        ["paste-buffer"],
+        ["send-keys", "Enter"],
+      ]);
+      expect(fake.submitted).toEqual(["hello"]);
+      expect(writes()).toEqual([]);
+      expect(pasted).toEqual([]);
     }
+  });
+
+  it("steer: queued mid-turn where the channel can, else the typed refusal and nothing sent", async () => {
+    sendingMux();
+    const run = deliver(target, "steer me", { mode: "steer" });
+    if (c.steer !== "delivers") {
+      await expect(run).rejects.toBeInstanceOf(c.steer);
+      expect(fake.calls).toEqual([]);
+      expect(pasted).toEqual([]);
+      return;
+    }
+    expect((await run).transport).toBe(c.name);
   });
 
   it("command: a session command runs as the channel's command, else is typed as text", async () => {
     sendingMux();
     const sent = await deliver(target, "/compact keep it short", {});
     expect(sent.transport).toBe(c.name);
-    if (c.ctlOp) {
+    if (c.via === "ctl") {
       expect(sent.command).toBe("compact");
       expect(writes()).toMatchObject([
         { op: "command", name: "compact", instructions: "keep it short" },
       ]);
-    } else {
+    } else if (c.via === "sendToPane") {
       expect(pasted.map((p) => p.text)).toEqual(["/compact keep it short"]);
+    } else {
+      expect(fake.submitted).toEqual(["/compact keep it short"]);
+      // The paste started a run; the harness settles it before the next one.
+      fake.emit("turn_stopped");
     }
     const direct = await agentChannel(target).command(target, { name: "reload" }, {});
     expect(direct.transport).toBe(c.name);
-    if (c.ctlOp) expect(writes().at(-1)).toMatchObject({ op: "command", name: "reload" });
-    else expect(pasted.at(-1)?.text).toBe("/reload");
+    if (c.via === "ctl") expect(writes().at(-1)).toMatchObject({ op: "command", name: "reload" });
+    else if (c.via === "sendToPane") expect(pasted.at(-1)?.text).toBe("/reload");
+    else expect(fake.submitted.at(-1)).toBe("/reload");
   });
 
   it("fresh: a new session with the text, or the typed refusal", async () => {
@@ -365,6 +484,7 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
     if (c.fresh !== "delivers") {
       await expect(deliver(target, "start", { fresh: true })).rejects.toBeInstanceOf(c.fresh);
       expect(pasted).toEqual([]);
+      expect(fake.calls).toEqual([]);
       return;
     }
     const sent = await deliver(target, "start", { fresh: true });
@@ -378,6 +498,7 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
     if (c.interrupt !== "delivers") {
       await expect(run).rejects.toBeInstanceOf(c.interrupt);
       expect(pasted).toEqual([]);
+      expect(fake.calls).toEqual([]);
       return;
     }
     const r = await run;
@@ -401,6 +522,44 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
     expect(writes()).toEqual([]);
   });
 
+  it("answer: keys for a pending dialog, refused while none is pending, or the typed refusal", async () => {
+    const ch = agentChannel(target);
+    if (c.answer === "refused") {
+      await expect(ch.answer(target, ["1"], {})).rejects.toBeInstanceOf(
+        AgentAnswerUnsupportedError,
+      );
+      expect(writes()).toEqual([]);
+      return;
+    }
+    // No dialog is pending (murmur reads it working or idle): nothing is typed.
+    await expect(ch.answer(target, ["1"], {})).rejects.toBeInstanceOf(AgentNotBlockedError);
+    expect(fake.calls).toEqual([]);
+    if (c.answer === "unconfirmed") {
+      // --force types it anyway; nothing reports the dialog, so it stays unconfirmed.
+      const keys: string[][] = [];
+      setTmuxExecutor(async (args) => {
+        if (args[0] === "send-keys") keys.push([...args]);
+        return { stdout: "", stderr: "", exitCode: 0 };
+      });
+      expect(await ch.answer(target, ["1"], { force: true })).toEqual({
+        transport: "mux",
+        keys: ["1"],
+        ack: "unknown",
+      });
+      expect(keys).toEqual([["send-keys", "-t", "%2", "-l", "--", "1"]]);
+      return;
+    }
+    fake.emit("prompt_submitted");
+    fake.emit("permission_requested", { message: "Bash" });
+    const r = await ch.answer(target, ["1"], {});
+    expect(r).toEqual({ transport: "hooks", keys: ["1"], ack: "confirmed" });
+    expect(fake.calls).toEqual([["send-keys", "-t", "%3", "-l", "--", "1"]]);
+    // A named key goes as a key, not as its letters.
+    fake.emit("permission_requested", { message: "Edit" });
+    await ch.answer(target, ["Enter"], {});
+    expect(fake.calls.at(-1)).toEqual(["send-keys", "-t", "%3", "--", "Enter"]);
+  });
+
   it("a write fence it cannot honour is refused, never skipped", async () => {
     sendingMux();
     let fenced = 0;
@@ -410,7 +569,7 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
         return true;
       },
     };
-    if (c.ctlOp) {
+    if (c.via === "ctl") {
       await deliver(target, "fenced", { ctlGuard });
       expect(fenced).toBe(1);
       // A session command has no fence on ctl: refused rather than run unfenced.
@@ -424,7 +583,250 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $name", (c) => {
       );
       expect(fenced).toBe(0);
       expect(pasted).toEqual([]);
+      expect(fake.calls).toEqual([]);
     }
+  });
+});
+
+// The hooks send gate and its ack (D4): what `murmur pane` reads before the
+// paste decides whether it happens; the run count after it decides whether it
+// is confirmed. Nothing is ever pasted twice.
+/** Run `fn` with `key` set, and return what it returned. */
+async function underEnv<T>(key: string, value: string, fn: () => Promise<T>): Promise<T> {
+  let out: { v: T } | undefined;
+  await withEnv(key, value, async () => {
+    out = { v: await fn() };
+  });
+  if (out === undefined) throw new Error("unreachable");
+  return out.v;
+}
+
+describe("the hooks channel: send gate, ack, never resent", () => {
+  let target: DeliveryTarget;
+  beforeEach(async () => {
+    target = channelTarget(db, await liveHooks());
+  });
+  const pastes = () => fake.calls.filter((c) => c[0] === "paste-buffer").length;
+
+  it("no ack within MU_SEND_ACK_MS: unknown, reported as unconfirmed, pasted exactly once", async () => {
+    fake.acks = false;
+    const warnings: { reason: string; message: string }[] = [];
+    const sent = await underEnv("MU_SEND_ACK_MS", "1000", () =>
+      deliver(target, "anyone there?", { onUndelivered: (w) => warnings.push(w) }),
+    );
+    expect(sent).toEqual({ transport: "hooks", ack: "unknown", runCount: 3, sessionId: INC });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatchObject({ reason: "unconfirmed" });
+    expect(warnings[0]?.message).toContain("not resent");
+    expect(pastes()).toBe(1);
+    expect(fake.submitted).toEqual(["anyone there?"]);
+  });
+
+  it("an ack that arrives late, within the window, still confirms it", async () => {
+    fake.acks = false;
+    let reads = 0;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      reads += 1;
+      // The harness's hook lands between the second and third read.
+      if (reads === 3) fake.emit("prompt_submitted");
+      return fake.pane(pane);
+    });
+    const sent = await underEnv("MU_SEND_ACK_MS", "1000", () => deliver(target, "slow", {}));
+    expect(sent).toMatchObject({ ack: "confirmed", runCount: 4 });
+    expect(pastes()).toBe(1);
+  });
+
+  it("a new session that started a run confirms it too", async () => {
+    fake.acks = false;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      if (fake.calls.some((c) => c[0] === "paste-buffer") && fake.pending() === 0) {
+        fake.emit("session_start", { source: "clear", session_id: "s2" });
+        fake.emit("prompt_submitted", { session_id: "s2" });
+      }
+      return fake.pane(pane);
+    });
+    const sent = await deliver(target, "after a clear", {});
+    expect(sent).toMatchObject({ ack: "confirmed", runCount: 1, sessionId: "s2" });
+  });
+
+  it("blocked: refused, --force or not, and nothing typed: answer it instead", async () => {
+    fake.emit("prompt_submitted");
+    fake.emit("permission_requested", { message: "Bash" });
+    for (const force of [false, true]) {
+      const err = await deliver(target, "hello", { force }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AgentSendGateError);
+      expect(err).toMatchObject({ state: "blocked", reason: "Bash" });
+      expect((err as Error).message).toContain("mu agent answer cdx");
+    }
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("running: refused without --force; --force pastes", async () => {
+    fake.emit("prompt_submitted");
+    await expect(deliver(target, "hello", {})).rejects.toMatchObject({
+      name: "AgentSendGateError",
+      state: "running",
+    });
+    expect(fake.calls).toEqual([]);
+    expect(await deliver(target, "hello", { force: true })).toMatchObject({ ack: "confirmed" });
+    expect(pastes()).toBe(1);
+  });
+
+  it("running with no event for MU_STALE_MS reads unknown and needs --force", async () => {
+    fake.emit("prompt_submitted", { now: Date.now() - 60_000 });
+    const err = await underEnv("MU_STALE_MS", "30000", () =>
+      deliver(target, "hello", {}).catch((e: unknown) => e),
+    );
+    expect(err).toMatchObject({ name: "AgentSendGateError", state: "unknown" });
+    expect((err as AgentSendGateError).reason).toMatch(/no event for 60s/);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("idle? (an interrupt mu wrote, unconfirmed) is sendable", async () => {
+    fake.emit("prompt_submitted");
+    fake.emit("interrupted", { by: "mu" });
+    expect(await deliver(target, "go on", {})).toMatchObject({ ack: "confirmed" });
+  });
+
+  it("a crashed harness, or a pane murmur cannot report, is unknown: --force pastes, unconfirmed", async () => {
+    fake.emit("crashed");
+    await expect(deliver(target, "hello", {})).rejects.toMatchObject({ state: "unknown" });
+    setMurmurPaneRunnerForTests(async () => null);
+    await expect(deliver(target, "hello", {})).rejects.toMatchObject({
+      state: "unknown",
+      reason: "murmur pane did not answer",
+    });
+    expect(fake.calls).toEqual([]);
+    const sent = await underEnv("MU_SEND_ACK_MS", "500", () =>
+      deliver(target, "hello", { force: true }),
+    );
+    expect(sent).toEqual({ transport: "hooks", ack: "unknown" });
+    expect(pastes()).toBe(1);
+  });
+
+  it("a forced send whose gate read failed is never confirmed by the row's old run count", async () => {
+    fake.acks = false;
+    let reads = 0;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      reads += 1;
+      // The gate's read times out; every later read is the existing row, run_count 3.
+      return reads === 1 ? null : fake.pane(pane);
+    });
+    const sent = await underEnv("MU_SEND_ACK_MS", "500", () =>
+      deliver(target, "hello", { force: true }),
+    );
+    expect(sent).toMatchObject({ transport: "hooks", ack: "unknown" });
+    expect(pastes()).toBe(1);
+  });
+
+  it("an old error outranks a running turn in murmur's word: the gate still reads it running", async () => {
+    fake.emit("prompt_submitted");
+    fake.emit("turn_failed", { message: "overloaded" });
+    fake.emit("prompt_submitted");
+    expect(JSON.parse((await fake.pane("%3")) ?? "{}")).toMatchObject({ state: "error" });
+    await expect(deliver(target, "hello", {})).rejects.toMatchObject({
+      name: "AgentSendGateError",
+      state: "running",
+    });
+    // A dialog under the same old error: blocked, --force or not, and answer still answers it.
+    fake.emit("permission_requested", { message: "Bash" });
+    expect(JSON.parse((await fake.pane("%3")) ?? "{}")).toMatchObject({ state: "error" });
+    for (const force of [false, true]) {
+      await expect(deliver(target, "hello", { force })).rejects.toMatchObject({
+        state: "blocked",
+        reason: "Bash",
+      });
+    }
+    expect(fake.calls).toEqual([]);
+    expect(await hooksChannel.answer(target, ["1"], {})).toMatchObject({ ack: "confirmed" });
+  });
+
+  it("a pane whose session ended keeps its attention but has no agent row: unknown", async () => {
+    fake.emit("prompt_submitted");
+    fake.emit("turn_failed", { message: "overloaded" });
+    fake.emit("session_end", { reason: "logout" });
+    expect(JSON.parse((await fake.pane("%3")) ?? "{}")).toMatchObject({
+      state: "error",
+      agent: null,
+    });
+    await expect(deliver(target, "hello", {})).rejects.toMatchObject({
+      state: "unknown",
+      reason: "murmur has no harness row for the pane",
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("a text ending in ; or \\; reaches the input box as written", async () => {
+    for (const text of ["fix the bug;", "a\\;", ";"]) {
+      expect(await deliver(target, text, {})).toMatchObject({ ack: "confirmed" });
+      fake.emit("turn_stopped");
+    }
+    expect(fake.submitted).toEqual(["fix the bug;", "a\\;", ";"]);
+  });
+
+  it("an empty send is refused before anything is read", async () => {
+    let reads = 0;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      reads += 1;
+      return fake.pane(pane);
+    });
+    await expect(deliver(target, "", {})).rejects.toMatchObject({ name: "AgentEmptySendError" });
+    await expect(deliver(target, "x", { mode: "steer" })).rejects.toBeInstanceOf(
+      AgentSteerUnsupportedError,
+    );
+    expect(reads).toBe(0);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("a long multi-line text goes through one buffer in chunks, pasted once", async () => {
+    const text = `${"line of a long brief\n".repeat(400)}end`;
+    await deliver(target, text, {});
+    const sets = fake.calls.filter((c) => c[0] === "set-buffer");
+    expect(sets.length).toBeGreaterThan(1);
+    expect(sets.slice(1).every((c) => c.includes("-a"))).toBe(true);
+    expect(pastes()).toBe(1);
+    expect(fake.submitted).toEqual([text]);
+  });
+
+  it("an unanswered dialog answer reads unknown, typed once", async () => {
+    fake.answers = false;
+    fake.emit("permission_requested", { message: "Bash" });
+    const r = await underEnv("MU_SEND_ACK_MS", "500", () => hooksChannel.answer(target, ["n"], {}));
+    expect(r).toEqual({ transport: "hooks", keys: ["n"], ack: "unknown" });
+    expect(fake.calls).toHaveLength(1);
+  });
+
+  it("an answered dialog no harness event follows: mu writes `continued`, so a send is not refused as blocked", async () => {
+    fake.answers = false;
+    fake.emit("prompt_submitted");
+    fake.emit("permission_requested", { message: "Bash" });
+    await underEnv("MU_SEND_ACK_MS", "500", () => hooksChannel.answer(target, ["1"], {}));
+    expect(fake.muEvents).toEqual([{ event: "continued", session_id: INC }]);
+    // The turn runs on (a long tool call): running, which --force overrides; never blocked.
+    await expect(deliver(target, "hello", {})).rejects.toMatchObject({ state: "running" });
+    expect(await deliver(target, "hello", { force: true })).toMatchObject({ ack: "confirmed" });
+  });
+
+  it("a dialog answer the harness confirms writes nothing of mu's own", async () => {
+    fake.emit("permission_requested", { message: "Bash" });
+    expect(await hooksChannel.answer(target, ["1"], {})).toMatchObject({ ack: "confirmed" });
+    expect(fake.muEvents).toEqual([]);
+  });
+
+  it("no verb on a hooks agent falls back to ctl, even with a socket at its derived path", async () => {
+    await serveCtl(target.agent);
+    expect(agentChannel(target)).toBe(hooksChannel);
+    await deliver(target, "hello", {});
+    fake.emit("turn_stopped");
+    await agentChannel(target).command(target, { name: "compact" }, {});
+    await agentChannel(target).baseline(target);
+    await agentChannel(target).receipt(target, KNOWN_MSG);
+    await expect(deliver(target, "x", { fresh: true })).rejects.toThrow();
+    await expect(agentChannel(target).interrupt(target, "x", { timeoutMs: 10 })).rejects.toThrow();
+    await expect(agentChannel(target).abort(target, { timeoutMs: 10 })).rejects.toThrow();
+    await expect(agentChannel(target).answer(target, ["1"], {})).rejects.toThrow();
+    await readAgentStates([target.agent], { stateDir: target.stateDir });
+    expect(ctlReqs).toEqual([]);
   });
 });
 
@@ -489,7 +891,7 @@ describe("the agents row decides the channel", () => {
   });
 
   it("the env does not move a recorded row: MU_<KEY>_COMMAND naming pi leaves a `mux` row on mux", async () => {
-    await withEnv("MU_HELPER_COMMAND", "pi --flag", async () => {
+    await underEnv("MU_HELPER_COMMAND", "pi --flag", async () => {
       expect(agentChannel(channelTarget(db, rowWith("en", "helper", null)))).toBe(ctlChannel);
       expect(agentChannel(channelTarget(db, rowWith("em", "helper", "mux")))).toBe(muxChannel);
     });

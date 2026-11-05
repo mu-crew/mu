@@ -3,10 +3,12 @@
 // Delivery goes through the agent's channel (src/channels): a pi agent
 // (`ctl`) through its control socket, served by the mu pi extension inside
 // the pane's own pi, with `/new`, `/reload` and `/compact` as the ctl
-// `command` op; a non-pi agent (`mux`) through `mux.sendToPane` when the
-// backend has one (herdr's atomic `agent prompt`), else
-// AgentSendUnsupportedError (tmux). No silent fallback: a pi agent whose
-// socket does not answer is an AgentCtlUnreachableError, never a paste.
+// `command` op; a hook harness's pane on tmux (`hooks`) by tmux's paste,
+// after clearing the input line, confirmed by the harness's `run_count`; any
+// other non-pi agent (`mux`) through `mux.sendToPane` when the backend has
+// one (herdr's atomic `agent prompt`), else AgentSendUnsupportedError (tmux:
+// a paste there has nothing to confirm it). No silent fallback: a pi agent
+// whose socket does not answer is an AgentCtlUnreachableError, never a paste.
 //
 // This module keeps the SDK's `sendViaTransport` and the `agent.send` audit
 // op every delivery records.
@@ -34,7 +36,7 @@ export type TransportSendOptions = DeliveryOptions & {
 };
 
 /** How `mu agent send` delivered: the `mode=` of an `agent.send` op. */
-export type SendMode = "plain" | "steer" | "interrupt" | "fresh";
+export type SendMode = "plain" | "steer" | "interrupt" | "fresh" | "answer";
 
 /**
  * Record a delivered send as an `agent.send` op. `agents` is machine-local

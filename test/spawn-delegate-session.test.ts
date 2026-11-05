@@ -79,6 +79,6 @@ describe("delegate session dir", () => {
   });
 
   it("a delegate on a non-pi cli gets no pi env", async () => {
-    expect(await spawnFor("delegate", "claude")).toEqual([]);
+    expect(await spawnFor("delegate", "aider")).toEqual([]);
   });
 });

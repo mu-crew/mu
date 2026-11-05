@@ -4,9 +4,12 @@
 // goes through `tmux(args)`, which wraps child_process and produces structured
 // `TmuxError`s carrying args + stderr.
 //
-// tmux has no `sendToPane`: a bracketed paste cannot be confirmed
-// (cut in 4.0). pi agents use the control socket
-// (src/agents/transport.ts); herdr has its own atomic `agent prompt`.
+// tmux has no `sendToPane`, so the `mux` channel refuses a send on tmux. It
+// has `pasteToPane` (clear the input line, one bracketed paste, Enter) and
+// `sendKeys`, which only the `hooks` channel (src/channels/hooks.ts) uses: a
+// paste cannot confirm itself, and there the harness's own hook event does.
+// pi agents use the control socket (src/channels/ctl-deliver.ts); herdr has
+// its own atomic `agent prompt`.
 
 import { basename } from "node:path";
 import { execFileCapture } from "../exec-file.js";
@@ -583,6 +586,88 @@ function lastLines(text: string, n: number): string {
   return text.endsWith("\n") ? `${kept}\n` : kept;
 }
 
+// ─── Paste and keys (the `hooks` channel) ───────────────────────────────
+
+/** How long a TUI gets to clear its input line before the paste (measured in U0). */
+const CLEAR_SETTLE_MS = 200;
+/** How long a TUI gets to take a paste before the Enter that submits it (measured in U0). */
+const PASTE_SETTLE_MS = 500;
+/**
+ * Code points per `set-buffer` call. tmux carries a command in one message of
+ * at most 16 KiB, so a long text is appended in chunks of at most 8 KiB of
+ * UTF-8.
+ */
+const BUFFER_CHUNK = 2048;
+
+/**
+ * One argv word that tmux keeps as written. tmux splits its argv into
+ * commands before it parses any of them: a word ending in `;` is a command
+ * separator (the `;` is dropped), and one ending in `\;` loses the backslash.
+ * `--` does not stop it. So a final `;` goes out as `\;`, which tmux reads
+ * back as `;`: `fix;` stays `fix;`, `a\;` stays `a\;`, and `;` is not empty.
+ */
+export function tmuxWord(word: string): string {
+  return word.endsWith(";") ? `${word.slice(0, -1)}\\;` : word;
+}
+
+/**
+ * Clear the input line with `clearKey`, paste `text` as ONE bracketed paste
+ * (`paste-buffer -p`: tmux brackets it when the program asked for that, as
+ * every hook harness does, so a multi-line text never submits early), then
+ * submit it with Enter. The text goes through a named buffer that the paste
+ * deletes, so the user's own paste buffers are untouched. Unconfirmed: the
+ * caller confirms it from the agent's own report.
+ */
+export async function pasteToPane(
+  paneId: string,
+  text: string,
+  opts: { clearKey?: string | null } = {},
+): Promise<void> {
+  assertValidPaneId(paneId);
+  if (opts.clearKey) {
+    await tmux(["send-keys", "-t", paneId, opts.clearKey]);
+    await sleep(CLEAR_SETTLE_MS);
+  }
+  if (text.length > 0) {
+    const buffer = `mu-paste-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+    const points = Array.from(text);
+    try {
+      for (let at = 0; at < points.length; at += BUFFER_CHUNK) {
+        const chunk = points.slice(at, at + BUFFER_CHUNK).join("");
+        await tmux(["set-buffer", ...(at > 0 ? ["-a"] : []), "-b", buffer, "--", tmuxWord(chunk)]);
+      }
+      await tmux(["paste-buffer", "-p", "-d", "-b", buffer, "-t", paneId]);
+    } catch (error) {
+      try {
+        await tmux(["delete-buffer", "-b", buffer]);
+      } catch {
+        // already gone, or tmux is: the paste's own error matters more
+      }
+      throw error;
+    }
+    await sleep(PASTE_SETTLE_MS);
+  }
+  await tmux(["send-keys", "-t", paneId, "Enter"]);
+}
+
+/** Type `keys` into the pane: tmux key names, or text with `literal`. */
+export async function sendKeys(
+  paneId: string,
+  keys: readonly string[],
+  opts: { literal?: boolean } = {},
+): Promise<void> {
+  assertValidPaneId(paneId);
+  if (keys.length === 0) return;
+  await tmux([
+    "send-keys",
+    "-t",
+    paneId,
+    ...(opts.literal ? ["-l"] : []),
+    "--",
+    ...keys.map(tmuxWord),
+  ]);
+}
+
 // ─── Backend record ────────────────────────────────────────────────────
 
 /**
@@ -705,6 +790,8 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   panePid,
   killPane,
   capture,
+  pasteToPane,
+  sendKeys,
 
   attachCommands,
 
