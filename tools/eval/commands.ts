@@ -242,13 +242,17 @@ export async function runOne(o: RunOne): Promise<RunResult> {
   if (watch !== null) armWatch(watch);
   let result: RunResult | undefined;
   try {
-    await o.scenario.setup(sb);
     // a live run with real harnesses: trust the sandbox repo (and its hooks) as a user's own repo
-    // is, before the AUT starts, so no worker stops at a dialog only a fresh sandbox shows
-    const trustNotes =
+    // is, before anything spawns a pane, so no worker stops at a dialog only a fresh sandbox shows.
+    // Once before the scenario's setup (E6's setup spawns its workers itself), once after (a host
+    // clone the setup made); a target trusted by the first pass is skipped by the second.
+    const pretrustNow = async (): Promise<string[]> =>
       o.live === true && o.fakeWorkers !== true && hooks
         ? await pretrust(sb, pretrustTargets(sb, o.scenario, { aut: harness, codexHooks }))
         : [];
+    await pretrustNow(); // its notes are superseded by the second pass, which retries
+    await o.scenario.setup(sb);
+    const trustNotes = await pretrustNow();
     for (const n of trustNotes) console.error(`eval: ${n}`);
     const metrics =
       harness === "pi"
