@@ -437,7 +437,23 @@ describe("E6 interrupt and resend", () => {
       }),
       worker("w2", "codex", "x2"),
     ];
-    flagged(await judge("e6_interrupt_resend", golden({ workers })), /w1 accepted 3 prompts/);
+    flagged(
+      await judge("e6_interrupt_resend", golden({ workers })),
+      /w1 accepted 2 resends of the work, not one/,
+    );
+  });
+  it("a later message that is not the work is noted, not a resend", async () => {
+    const workers = [
+      worker("w1", "claude", "x1", {
+        prompts: [
+          [-60000, "brief"],
+          [-30000, RESEND],
+          [-5000, "stop the background eval-slow run now; it is not needed"],
+        ],
+      }),
+      worker("w2", "codex", "x2"),
+    ];
+    clean(await judge("e6_interrupt_resend", golden({ workers })));
   });
   it("a resend no mu call carried", async () => {
     flagged(

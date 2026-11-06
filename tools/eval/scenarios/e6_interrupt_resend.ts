@@ -1,15 +1,15 @@
 // E6 interrupt and resend (spec "Every harness first-class", U24, D4): two workers, w1 on claude
-// and w2 on codex, were briefed with a wrong instruction and are stuck in a turn that never ends
-// (eval-slow). The orchestrator interrupts each and sends the corrected instruction once; both
+// and w2 on codex, were briefed with a wrong instruction and are busy in a long turn (eval-slow, a
+// 20-minute job). The orchestrator interrupts each and sends the corrected instruction once; both
 // then do their task, and the commits are merged.
 //
-// The stuck turn must outlive the harness's own shell-tool timeout (claude's Bash stops a command
+// The busy turn must outlive the harness's own shell-tool timeout (claude's Bash stops a command
 // after 2 minutes by default, codex's exec returns a still-running command after seconds), which
-// ends a call, not the turn: the brief says to run eval-slow again until it prints DONE, and it
-// never does, so a real worker keeps re-running it in the same turn until it is interrupted.
+// ends a call, not the turn: the brief says to run eval-slow in the foreground and stay in the turn
+// until it prints DONE, so a real worker is still in its first turn when it is interrupted.
 //
-// Pass criterion (written): each worker's harness accepted exactly two prompts, the wrong brief and
-// one resend; no turn of it ended between them (the first was interrupted), and a harness that
+// Pass criterion (written): each worker's harness accepted the wrong brief and exactly one resend of
+// the corrected instruction (other later messages are noted, not counted); no turn of it ended between them (the first was interrupted), and a harness that
 // reports interrupts (codex, cursor-agent, Muse) reported one; the resend says eval-worker and does
 // not carry the first prompt's text (mu clears the input line before it pastes: claude puts an
 // interrupted prompt back there); an AUT mu call carried the resend; each task then passes
@@ -126,9 +126,15 @@ const scenario: Scenario = {
     let ok = true;
     for (const w of WORKERS) {
       const prompts = promptsTo(recs, w.agent);
-      const [first, second] = prompts;
-      if (prompts.length !== 2)
-        wrong.push(`${w.agent} accepted ${prompts.length} prompts, not the brief and one resend`);
+      // the work: the brief, then each prompt that carries the corrected instruction. A later
+      // message that does not (live, pi: "stop the background eval-slow run") is no resend.
+      const [first] = prompts;
+      const resends = prompts.slice(1).filter((r) => /eval-worker/.test(r.text ?? ""));
+      const second = resends[0] ?? prompts[1];
+      if (resends.length !== 1)
+        wrong.push(`${w.agent} accepted ${resends.length} resends of the work, not one`);
+      const other = prompts.length - 1 - resends.length;
+      if (other > 0) notes.push(`${w.agent} also got ${other} other message(s) after its brief`);
       if (first !== undefined && second !== undefined) {
         const between = recs.filter(
           (r) => r.agent === w.agent && r.ms > first.ms && r.ms < second.ms,
