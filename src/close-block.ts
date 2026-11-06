@@ -169,6 +169,12 @@ export interface SettledCloseResult {
   applied: boolean;
   task: string | null;
   reason: string;
+  /**
+   * On "already applied": the earlier apply of this same run (a worker's Stop
+   * hook, another caller's wait) closed `task`. Absent when it refused or
+   * applied nothing, and on every first apply.
+   */
+  replayedClose?: true;
 }
 
 const no = (reason: string, task: string | null = null): SettledCloseResult => ({
@@ -205,9 +211,11 @@ function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
   // the same trust as pi's ctl last text (spec D3); its session id is the incarnation.
   if (agent.cli !== "pi" && agent.channel !== "hooks") return no("not a pi agent");
   const seen = db
-    .prepare("SELECT 1 FROM agent_settles WHERE agent_id = ? AND incarnation = ? AND runs = ?")
-    .get(input.agentId, input.incarnation, input.runs);
-  if (seen) return no("already applied");
+    .prepare(
+      "SELECT task_id FROM agent_settles WHERE agent_id = ? AND incarnation = ? AND runs = ?",
+    )
+    .get(input.agentId, input.incarnation, input.runs) as { task_id: number | null } | undefined;
+  if (seen) return replay(db, input, seen.task_id);
   const record = (taskId: number | null): void => {
     db.prepare(
       "INSERT INTO agent_settles (agent_id, incarnation, runs, task_id) VALUES (?, ?, ?, ?)",
@@ -274,4 +282,33 @@ function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
   });
   record(task.id);
   return { applied: true, task: block.task, reason: "closed" };
+}
+
+/**
+ * A replayed settle: what the first apply of this run did, as far as a reader
+ * needs it. It closed task T when the recorded row names T, T is a `work` task
+ * this agent owns and is CLOSED, the run's text still parses to a block for T,
+ * and T's latest report is that block's report by this agent (a refusal also
+ * records a task id: a human or delegate task, or one already closed).
+ */
+function replay(db: Db, input: SettledCloseInput, taskId: number | null): SettledCloseResult {
+  if (taskId === null || input.lastTextTruncated === true) return no("already applied");
+  const block = parseCloseBlock(input.lastText);
+  if (block.kind !== "valid") return no("already applied");
+  const row = db
+    .prepare(
+      `SELECT t.local_id,
+              (SELECT n.author || char(0) || n.content FROM task_notes n
+                WHERE n.task_id = t.id AND n.kind = 'report' ORDER BY n.id DESC LIMIT 1) AS report
+         FROM tasks t JOIN workstreams w ON w.id = t.workstream_id
+        WHERE t.id = ? AND w.name = ? AND t.local_id = ? AND t.kind = 'work'
+          AND t.status = 'CLOSED' AND t.owner_id = ?`,
+    )
+    .get(taskId, input.workstream, block.task, input.agentId) as
+    | { local_id: string; report: string | null }
+    | undefined;
+  if (row === undefined || row.report !== `${input.agent}\0${block.report}`) {
+    return no("already applied");
+  }
+  return { applied: false, task: row.local_id, reason: "already applied", replayedClose: true };
 }

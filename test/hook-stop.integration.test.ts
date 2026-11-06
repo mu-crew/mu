@@ -5,7 +5,8 @@
 // temp HOME exactly as a mu pane's harness does, and it runs the hook entry the
 // way a harness runs one: `sh -c '<entry>'` with the Stop payload on stdin,
 // reading the block answer from stdout. A `murmur` on PATH records the
-// `continued` events. The consuming wait is the real `mu wait --as`.
+// `continued` events and answers `murmur pane` from a file. The consuming wait
+// is the real `mu wait --as`.
 //
 // Needs dist/ (npm run build). DB-only: no mux opens.
 
@@ -31,7 +32,8 @@ import { type Db, openDb } from "../src/db.js";
 import { shellQuote } from "../src/shell-quote.js";
 import { claimTask } from "../src/tasks/claim.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
-import { addTask } from "../src/tasks.js";
+import { addTask, getTask, listNotes } from "../src/tasks.js";
+import { closeSettledRun } from "../src/wait-db.js";
 import { registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 
@@ -44,6 +46,11 @@ const input = process.argv[2] === "nest" ? "" : process.env.FAKE_PAYLOAD;
 process.stdout.write(execFileSync("/bin/sh", ["-c", cmd], { input, encoding: "utf8" }));
 `;
 const FAKE_MURMUR = `#!/bin/sh
+if [ "$1" = pane ]; then
+  [ -n "$MURMUR_PANE_JSON" ] || exit 1
+  cat "$MURMUR_PANE_JSON"
+  exit 0
+fi
 printf '%s|' "$*" >> "$MURMUR_LOG"
 cat >> "$MURMUR_LOG"
 printf '\\n' >> "$MURMUR_LOG"
@@ -326,6 +333,83 @@ describe.skipIf(!built)("mu hook stop under a fake claude", () => {
     const lines = murmurLines();
     expect(lines).toHaveLength(1);
     expect(lines[0]).toContain("--pane %41|");
+  });
+
+  it("a worker whose turn ends with a CLOSE block: the Stop closes its task with the report, and a later wait applies nothing", async () => {
+    const row = insertAgent(db, {
+      name: "w1",
+      workstream: "auth",
+      paneId: "%41",
+      cli: "claude",
+      channel: "hooks",
+    });
+    await claimTask(db, "t1", { workstream: "auth", agentName: "w1" });
+    // murmur's view of %41 mid-Stop: session w-s1, the turn's prompt was run 2.
+    const paneJson = join(dir, "pane.json");
+    writeFileSync(
+      paneJson,
+      JSON.stringify({
+        state: "working",
+        agent: { activity: "running", session_id: "w-s1", run_count: 2, updated_at: 1 },
+        attention: [],
+      }),
+    );
+    const report =
+      'Done.\n\nCLOSE: task=t1 evidence="gate.sh exit 0"\nREPORT:\nFILES: a.ts\nall green\n';
+    const r = await fireStop(
+      WORKER,
+      { session_id: "w-s1", stop_hook_active: false, last_assistant_message: report },
+      { MURMUR_PANE_JSON: paneJson },
+    );
+    expect(r.code, r.stderr).toBe(0);
+    // Let go: no block, so the report stays the turn's last text; no `continued`.
+    expect(r.stdout.trim()).toBe("");
+    expect(murmurLines()).toEqual([]);
+    expect(getTask(db, "t1", "auth")?.status).toBe("CLOSED");
+    expect(listNotes(db, "t1", "auth").map((n) => ({ kind: n.kind, content: n.content }))).toEqual([
+      { kind: "report", content: "FILES: a.ts\nall green\n" },
+      { kind: "close", content: "CLOSE: gate.sh exit 0" },
+    ]);
+    const closeOps = () =>
+      (
+        db
+          .prepare("SELECT COUNT(*) AS n FROM ops WHERE entity = 'task' AND intent = 'close.apply'")
+          .get() as { n: number }
+      ).n;
+    expect(closeOps()).toBe(1);
+    // A wait's settle of that same turn (session, settled runs, text) reads it already applied ...
+    const settle = closeSettledRun(
+      db,
+      { kind: "agent", workstream: "auth", id: "w1" },
+      {
+        status: "needs_input",
+        settled: true,
+        incarnation: "w-s1",
+        runs: 2,
+        lastText: report,
+        agentId: row.incarnation,
+      },
+      true,
+    );
+    expect(settle).toEqual({
+      applied: false,
+      task: "t1",
+      reason: "already applied",
+      replayedClose: true,
+    });
+    expect(closeOps()).toBe(1);
+    // ... and the orchestrator's wait sees the task closed.
+    const w = await run(
+      process.execPath,
+      [CLI, "wait", "task:auth/t1", "--timeout", "5", "--json"],
+      baseEnv(),
+    ).done;
+    expect(w.code, w.stderr).toBe(0);
+    expect(JSON.parse(w.stdout)).toMatchObject({
+      data: { firing: { kind: "closed", ref: "task:auth/t1" } },
+    });
+    expect(closeOps()).toBe(1);
+    expect(listNotes(db, "t1", "auth")).toHaveLength(2);
   });
 
   it("a claude -p run by a managed pi orchestrator, or by the claude one, consumes nothing", async () => {

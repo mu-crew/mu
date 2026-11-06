@@ -235,6 +235,39 @@ describe("applySettledClose: ownership", () => {
   });
 });
 
+describe("applySettledClose: a replay says what the first apply did", () => {
+  it("a replay of the run that closed t1 names t1 (replayedClose), so a wait pairs it with t1's close", () => {
+    const turn = input({ lastText: block("t1") });
+    expect(applySettledClose(db, turn)).toEqual({ applied: true, task: "t1", reason: "closed" });
+    expect(applySettledClose(db, turn)).toEqual({
+      applied: false,
+      task: "t1",
+      reason: "already applied",
+      replayedClose: true,
+    });
+  });
+
+  it("a replay of a refusal, or of a run whose task was closed by someone else first, names nothing", () => {
+    // Refused (not the owner): the row has no task.
+    const notOwner = input({ lastText: block("t2") });
+    expect(applySettledClose(db, notOwner).applied).toBe(false);
+    expect(applySettledClose(db, notOwner)).toEqual({
+      applied: false,
+      task: null,
+      reason: "already applied",
+    });
+    // Refused (already closed): the row names t1, but t1's report is not this block's.
+    closeTask(db, "t1", { workstream: "w", evidence: "by hand", report: "the orchestrator's" });
+    const late = input({ lastText: block("t1"), runs: 2 });
+    expect(applySettledClose(db, late).reason).toBe("task already closed");
+    expect(applySettledClose(db, late)).toEqual({
+      applied: false,
+      task: null,
+      reason: "already applied",
+    });
+  });
+});
+
 describe("applySettledClose: no inferred close", () => {
   it("unsettled (blocked/unknown) and errored runs write nothing, not even a replay row", () => {
     const before = opCount();

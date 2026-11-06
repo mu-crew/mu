@@ -185,7 +185,9 @@ murmur status / pane / dash / export ─► drain the inbox into the store under
   otherwise reset the pane on every first prompt.
 - **State is advisory.** Any process under the user can write an event file.
   mu never closes a task on a state transition alone. A CLOSE block in a
-  `turn_stopped` text is applied with the same trust as pi's ctl last text.
+  `turn_stopped` text is applied with the same trust as pi's ctl last text,
+  once per (agent, `session_id`, `run_count`): by a local claude or codex
+  worker's own Stop hook (D7), else by the first wait that reads the turn.
 
 This amends murmur's ARCHITECTURE in four places:
 
@@ -387,8 +389,16 @@ pi keeps its settle nudge. For claude, codex and cursor-agent, `mu init`
 - **Worker pane** that still owns an `IN_PROGRESS` task: block once per
   session, with "close your task or park it". A turn whose final message
   (`last_assistant_message`) ends with a valid CLOSE block for an owned task
-  is let go: it is the report the orchestrator applies, and a nudge's next
-  turn would replace it as the pane's last text (live E2, 2026-11-06).
+  is let go: a nudge's next turn would replace the report as the pane's last
+  text (live E2, 2026-11-06). For a local claude or codex worker (their
+  payload carries that message) the hook applies the block itself
+  (`applySettledClose`, keyed by the payload's `session_id` and murmur's
+  `run_count`, as a wait's settle of that turn is), so the task closes at the
+  stop, not at the orchestrator's next wait (live E3). The wait's settle of
+  the turn then replays that apply (`replayedClose`, naming the task) and
+  counts as the same event as the task's close. A remote worker's block stays
+  the orchestrator's (D11); cursor-agent's text follows its stop, so a wait
+  applies it. `MU_NUDGE=0` leaves the block to the wait.
 - Every block writes `continued` through `murmur hook mu`, because a resumed
   turn fires no `prompt_submitted`.
 - The machine-local counter `keep_driving(session_id, empty_blocks)` caps

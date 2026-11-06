@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
+import type { HooksPane } from "../src/channels/hooks-pane.js";
 import { type Db, openDb } from "../src/db.js";
 import {
   type AnchorReader,
@@ -32,8 +33,9 @@ import {
   stopWaitSeconds,
 } from "../src/hook-stop.js";
 import { claimTask } from "../src/tasks/claim.js";
-import { addTask } from "../src/tasks.js";
+import { addTask, getTask, listNotes } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
+import { closeSettledRun } from "../src/wait-db.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 
@@ -509,32 +511,197 @@ describe("hook-stop: runStopHook", () => {
     expect(waits).toEqual([]);
   });
 
-  it("a worker whose turn ends with a CLOSE block for its task is let go, its report kept", async () => {
-    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%41", cli: "claude" });
+  /** murmur's report of the worker's pane %41 mid-Stop: session `sid`, run `runs`, still running. */
+  const paneOf = (sid: string | null, runs: number | null): HooksPane => ({
+    state: "working",
+    activity: sid === null ? null : "running",
+    attention: [],
+    sessionId: sid,
+    runCount: runs,
+    updatedAt: 1,
+    blocked: null,
+    error: null,
+    errorAt: null,
+    lastText: null,
+    confirmed: true,
+  });
+  const notes = (id: string) =>
+    listNotes(db, id, "auth").map((n) => ({ kind: n.kind, content: n.content }));
+  const REPORT = 'CLOSE: task=t1 evidence="gate.sh exit 0"\nREPORT:\nVERDICT: REFUTED';
+
+  async function hooksWorker(): Promise<number> {
+    const row = insertAgent(db, {
+      name: "w1",
+      workstream: "auth",
+      paneId: "%41",
+      cli: "claude",
+      channel: "hooks",
+    });
     addTask(db, { localId: "t1", workstream: "auth", title: "t1", impact: 50, effortDays: 1 });
     await claimTask(db, "t1", { workstream: "auth", agentName: "w1" });
-    const worker = { agent_name: "w1", orchestrator: false };
-    const report = 'CLOSE: task=t1 evidence="gate.sh exit 0"\nREPORT:\nVERDICT: REFUTED';
+    return row.incarnation;
+  }
+
+  it("a worker whose turn ends with a CLOSE block for its task: the hook applies it once, the report kept", async () => {
+    const agentId = await hooksWorker();
+    const reads: string[] = [];
+    const worker = {
+      ...deps({ agent_name: "w1", orchestrator: false }),
+      readPane: async (pane: string) => {
+        reads.push(pane);
+        return paneOf("w-s1", 3);
+      },
+    };
     const d = await runStopHook(
       db,
       "claude",
-      stop("w-s1", { last_assistant_message: report }),
+      stop("w-s1", { last_assistant_message: REPORT }),
       {},
-      deps(worker),
+      worker,
     );
     expect(d).toMatchObject({ decision: "allow" });
-    expect(d.decision === "allow" && d.why).toContain("CLOSE block for t1");
+    expect(d.decision === "allow" && d.why).toContain("CLOSE block for t1: applied (t1 closed)");
+    // No block: the report stays the turn's last text, and no `continued` is written.
     expect(events).toEqual([]);
-    // A CLOSE block for a task it does not own is no report: the nudge still fires.
+    expect(reads).toEqual(["%41"]);
+    expect(getTask(db, "t1", "auth")?.status).toBe("CLOSED");
+    expect(notes("t1")).toEqual([
+      { kind: "report", content: "VERDICT: REFUTED" },
+      { kind: "close", content: "CLOSE: gate.sh exit 0" },
+    ]);
+    // The wait's settle of the same turn (session, settled runs, the same text) applies nothing.
+    const ops = (db.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n;
+    const again = closeSettledRun(
+      db,
+      { kind: "agent", workstream: "auth", id: "w1" },
+      {
+        status: "needs_input",
+        settled: true,
+        incarnation: "w-s1",
+        runs: 3,
+        lastText: REPORT,
+        agentId,
+      },
+      true,
+    );
+    expect(again).toMatchObject({ applied: false, reason: "already applied" });
+    expect((db.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n).toBe(ops);
+    expect(notes("t1")).toHaveLength(2);
+    // A second Stop of the same turn (a retried hook) applies nothing either.
+    const twice = await runStopHook(
+      db,
+      "claude",
+      stop("w-s1", { last_assistant_message: REPORT }),
+      {},
+      worker,
+    );
+    expect(twice).toMatchObject({ decision: "allow" });
+    expect(notes("t1")).toHaveLength(2);
+  });
+
+  it("a wait that applied the turn first leaves the hook nothing to apply", async () => {
+    const agentId = await hooksWorker();
+    expect(
+      closeSettledRun(
+        db,
+        { kind: "agent", workstream: "auth", id: "w1" },
+        {
+          status: "needs_input",
+          settled: true,
+          incarnation: "w-s1",
+          runs: 1,
+          lastText: REPORT,
+          agentId,
+        },
+        true,
+      ),
+    ).toMatchObject({ applied: true, task: "t1" });
+    const d = await runStopHook(
+      db,
+      "claude",
+      stop("w-s1", { last_assistant_message: REPORT }),
+      {},
+      {
+        ...deps({ agent_name: "w1", orchestrator: false }),
+        readPane: async () => paneOf("w-s1", 1),
+      },
+    );
+    expect(d).toMatchObject({ decision: "allow" });
+    expect(notes("t1")).toHaveLength(2);
+  });
+
+  it("the turn a close nudge resumed may end with the block: the hook applies it then", async () => {
+    await hooksWorker();
+    const worker = {
+      ...deps({ agent_name: "w1", orchestrator: false }),
+      readPane: async () => paneOf("w-s1", 1),
+    };
+    const n = await runStopHook(db, "claude", stop("w-s1"), {}, worker);
+    expect(n).toMatchObject({ decision: "block", why: "close" });
+    const d = await runStopHook(
+      db,
+      "claude",
+      stop("w-s1", { stop_hook_active: true, last_assistant_message: REPORT }),
+      {},
+      worker,
+    );
+    expect(d.decision === "allow" && d.why).toContain("applied (t1 closed)");
+    expect(getTask(db, "t1", "auth")?.status).toBe("CLOSED");
+  });
+
+  it("without murmur's run of this session, or for a row not on hooks, the hook leaves the block to the wait", async () => {
+    await hooksWorker();
+    const withPane = (pane: HooksPane | undefined) => ({
+      ...deps({ agent_name: "w1", orchestrator: false }),
+      readPane: async () => pane,
+    });
+    for (const pane of [undefined, paneOf("other", 2), paneOf(null, null), paneOf("w-s1", 0)]) {
+      const d = await runStopHook(
+        db,
+        "claude",
+        stop("w-s1", { last_assistant_message: REPORT }),
+        {},
+        withPane(pane),
+      );
+      expect(d).toMatchObject({ decision: "allow" });
+      expect(d.decision === "allow" && d.why).toContain("the wait applies it");
+    }
+    // A row that is not a local hooks agent (here: no recorded channel).
+    insertAgent(db, { name: "w2", workstream: "auth", paneId: "%42", cli: "claude" });
+    addTask(db, { localId: "t2", workstream: "auth", title: "t2", impact: 50, effortDays: 1 });
+    await claimTask(db, "t2", { workstream: "auth", agentName: "w2" });
+    const legacy = await runStopHook(
+      db,
+      "claude",
+      stop("w2-s1", { last_assistant_message: REPORT.replace("t1", "t2") }),
+      {},
+      {
+        ...deps({ agent_name: "w2", orchestrator: false }),
+        readPane: async () => paneOf("w2-s1", 1),
+      },
+    );
+    expect(legacy.decision === "allow" && legacy.why).toContain("not a local hooks agent");
+    expect(getTask(db, "t1", "auth")?.status).toBe("IN_PROGRESS");
+    expect(getTask(db, "t2", "auth")?.status).toBe("IN_PROGRESS");
+    expect(db.prepare("SELECT COUNT(*) AS n FROM agent_settles").get()).toEqual({ n: 0 });
+    expect(events).toEqual([]);
+  });
+
+  it("a CLOSE block for a task the worker does not own is no report: the nudge still fires", async () => {
+    await hooksWorker();
     const other = 'CLOSE: task=t9 evidence="x"\nREPORT:\nVERDICT: REFUTED';
     const n = await runStopHook(
       db,
       "claude",
       stop("w-s2", { last_assistant_message: other }),
       {},
-      deps(worker),
+      {
+        ...deps({ agent_name: "w1", orchestrator: false }),
+        readPane: async () => paneOf("w-s2", 1),
+      },
     );
     expect(n).toMatchObject({ decision: "block", why: "close" });
+    expect(getTask(db, "t1", "auth")?.status).toBe("IN_PROGRESS");
   });
 
   it("a worker with no IN_PROGRESS task, or in scratch, is let go", async () => {

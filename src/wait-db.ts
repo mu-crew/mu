@@ -41,7 +41,12 @@ export function closeSettledRun(
   if (facts === undefined) return undefined;
   try {
     const res = applySettledClose(db, facts);
-    return { applied: res.applied, task: res.task, reason: res.reason };
+    return {
+      applied: res.applied,
+      task: res.task,
+      reason: res.reason,
+      ...(res.replayedClose === true ? { replayedClose: true as const } : {}),
+    };
   } catch (e) {
     return { applied: false, task: null, reason: e instanceof Error ? e.message : String(e) };
   }

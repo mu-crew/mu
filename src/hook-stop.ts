@@ -21,7 +21,11 @@
 //   that delivers events or a turn the user started resets it. Nothing owed:
 //   the turn ends.
 // - Worker: one that still owns an IN_PROGRESS task is told once per session
-//   to close it or park it.
+//   to close it or park it. A turn that ends with a valid CLOSE block for a
+//   task it owns is its report: the hook applies it (applySettledClose, keyed
+//   by the session and murmur's `run_count`, exactly as a wait's settle of that
+//   turn is, so whichever comes second reads "already applied") and lets the
+//   turn end, the report kept as its last text.
 // - Every block records `continued` through `murmur hook mu`: a resumed turn
 //   fires no `prompt_submitted`, so murmur would otherwise read it idle.
 //
@@ -31,8 +35,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgent } from "./agents.js";
+import { type HooksPane, readHooksPane } from "./channels/hooks-pane.js";
 import { writeMuEvent } from "./channels/index.js";
-import { parseCloseBlock } from "./close-block.js";
+import { applySettledClose, parseCloseBlock } from "./close-block.js";
 import type { Db } from "./db.js";
 import { execFileCapture } from "./exec-file.js";
 import { HARNESS_TABLE, type Harness, isHarness } from "./harnesses.js";
@@ -94,6 +99,8 @@ export interface StopHookDeps {
   wait?: (caller: string, timeoutS: number) => Promise<StopWaitOutcome>;
   /** `murmur hook mu --pane <pane>`; true when murmur took the event. */
   writeEvent?: (paneId: string, event: Record<string, unknown>) => Promise<boolean>;
+  /** `murmur pane <pane> --json` after a drain (undefined: murmur did not answer). */
+  readPane?: (paneId: string) => Promise<HooksPane | undefined>;
   /** SKILL.md's text, for the keep-driving rule. */
   skillMd?: () => string | undefined;
   now?: () => Date;
@@ -325,7 +332,7 @@ export async function runStopHook(
         env,
         now,
       )
-    : workerStop(db, agent, key, state, now, p.lastText);
+    : await workerStop(db, agent, key, state, now, p, deps);
   if (decision.decision === "block") {
     // After a block is decided nothing may turn it into an allow: an `events`
     // block carries an event the wait already consumed.
@@ -400,28 +407,78 @@ async function orchestratorStop(
   }
 }
 
-function workerStop(
+async function workerStop(
   db: Db,
   agent: HookAgent,
   key: string,
   state: KeepDriving,
   now: Date,
-  lastText: string | null = null,
-): StopDecision {
+  p: StopPayload,
+  deps: StopHookDeps,
+): Promise<StopDecision> {
   if (agent.workstream === "scratch") return { decision: "allow", why: "a scratch pane" };
-  if (state.closeNudged)
-    return { decision: "allow", why: "the close nudge already fired this session" };
   // A delegate's call task is closed by its call (finishDelegate), never by the pane.
   const names = listTasksByOwner(db, agent.workstream, agent.name)
     .filter((t) => t.status === "IN_PROGRESS" && t.kind !== "delegate")
     .map((t) => t.name);
+  // A turn that ends with a valid CLOSE block for an owned task is the worker's report (D3).
+  // The hook applies it, so the task closes when the worker stops, not at the orchestrator's
+  // next wait; a nudge would start another turn whose text replaces that report. Checked
+  // before the once-per-session nudge mark: the turn a nudge resumed may end with the block.
+  const close = p.lastText === null ? undefined : parseCloseBlock(p.lastText);
+  if (close?.kind === "valid" && names.includes(close.task)) {
+    const applied = await applyStopClose(db, agent, p, deps);
+    return {
+      decision: "allow",
+      why: `the turn ends with a CLOSE block for ${close.task}: ${applied}`,
+    };
+  }
+  if (state.closeNudged)
+    return { decision: "allow", why: "the close nudge already fired this session" };
   if (names.length === 0) return { decision: "allow", why: "owns no IN_PROGRESS task" };
-  // A turn that ends with a valid CLOSE block for an owned task is the worker's report: the
-  // orchestrator applies it from the last text (D3). A nudge would start another turn whose
-  // text replaces that report, so the orchestrator would never read it.
-  const close = lastText === null ? undefined : parseCloseBlock(lastText);
-  if (close?.kind === "valid" && names.includes(close.task))
-    return { decision: "allow", why: `the turn ends with a CLOSE block for ${close.task}` };
   writeKeepDriving(db, key, { ...state, closeNudged: true }, now);
   return { decision: "block", why: "close", reason: closeNudgeText(agent.workstream, names) };
+}
+
+/**
+ * Apply the CLOSE block of the turn this Stop ends, as the wait's settle of the
+ * same turn would: incarnation the payload's `session_id`, runs murmur's
+ * `run_count` (the prompt that started the turn; a resumed turn adds none, and
+ * the settled count a wait reads is the same number), so `agent_settles` lets
+ * exactly one of them apply it. Only a local `hooks` agent of this DB; a remote
+ * worker's block is applied by its orchestrator from the relayed text (D11).
+ * Never throws: what it did, in words. Anything it cannot establish is left to
+ * the wait.
+ */
+async function applyStopClose(
+  db: Db,
+  agent: HookAgent,
+  p: StopPayload,
+  deps: StopHookDeps,
+): Promise<string> {
+  try {
+    if (p.sessionId === null || p.lastText === null) return "no session id; the wait applies it";
+    const row = getAgent(db, agent.name, agent.workstream);
+    if (row === undefined) return "no agents row; the wait applies it";
+    if (row.channel !== "hooks" || row.host !== null) {
+      return "not a local hooks agent; its orchestrator applies it";
+    }
+    const pane = await (deps.readPane ?? readHooksPane)(row.paneId);
+    if (pane === undefined || pane.sessionId !== p.sessionId || pane.runCount === null) {
+      return "murmur does not report this session's run; the wait applies it";
+    }
+    if (pane.runCount < 1) return "murmur reports no run in this session; the wait applies it";
+    const res = applySettledClose(db, {
+      workstream: agent.workstream,
+      agent: agent.name,
+      agentId: row.incarnation,
+      incarnation: p.sessionId,
+      runs: pane.runCount,
+      lastText: p.lastText,
+      settled: true,
+    });
+    return res.applied ? `applied (${res.task} closed)` : `not applied (${res.reason})`;
+  } catch (e) {
+    return `not applied (${e instanceof Error ? e.message : String(e)})`;
+  }
 }

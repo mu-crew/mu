@@ -5,11 +5,13 @@
 import { describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import { reasonOf } from "../src/cli/wait.js";
+import { applySettledClose } from "../src/close-block.js";
 import { releaseTask } from "../src/tasks/claim.js";
 import { closeTask, getTask, listNotes } from "../src/tasks.js";
 import {
   type AgentReading,
   WAIT_HEARTBEAT_CAP_MS,
+  WaitNothingError,
   WaveNotFoundError,
   waitForEvents,
 } from "../src/wait.js";
@@ -663,6 +665,153 @@ describe("one fact, one event: a settle whose CLOSE closed the task, and the tas
     // (The same watch again: an unconsumed settle would be handed out a second time.)
     const second = await waitForEvents(env.db, [], { ...opts, timeoutMs: 60 });
     expect(second.event.kind).toBe("heartbeat");
+  });
+});
+
+describe("one fact, one event: the worker's Stop hook applied the CLOSE before the run settled", () => {
+  const lastText = 'CLOSE: task=t1 evidence="e"\nREPORT:\nok';
+  // What `mu hook stop` does as the turn ends: the same key a wait's settle of the turn uses.
+  const hookApplies = (task = "t1"): void => {
+    const r = applySettledClose(env.db, {
+      workstream: "w",
+      agent: "a1",
+      agentId: agentRowOf("a1"),
+      incarnation: "inc",
+      runs: 1,
+      lastText: lastText.replace("t1", task),
+      settled: true,
+    });
+    expect(r).toMatchObject({ applied: true, task });
+  };
+  // The orchestrator's wait registered t1 and a1 before the turn ended (a wait was in flight).
+  const registerBoss = async (): Promise<void> => {
+    const busy = controllableWatch({ status: "busy" });
+    const r = await waitForEvents(env.db, [], {
+      ...base,
+      timeoutMs: 30,
+      ...reads("busy"),
+      watchAgent: async () => ({ ...busy.handle, afterRuns: 0 }),
+      callers: ["w/boss"],
+    });
+    expect(r.event.kind).toBe("heartbeat");
+  };
+  const settledWatch = (text = lastText) => {
+    const w = controllableWatch({ status: "busy" });
+    w.settle({
+      status: "needs_input",
+      settled: true,
+      runs: 1,
+      incarnation: "inc",
+      lastText: text,
+      agentId: agentRowOf("a1"),
+    });
+    return w;
+  };
+
+  it("t1's close is handed out first; the settle that follows is the same news: the next wait has nothing", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    spawnedBy("a1", "w/boss");
+    await registerBoss();
+    hookApplies();
+    // The turn has not settled yet in murmur: the wait sees only t1 closed.
+    const busy = controllableWatch({ status: "busy" });
+    const first = await waitForEvents(env.db, [], {
+      ...base,
+      timeoutMs: 120,
+      ...reads("busy"),
+      watchAgent: async () => ({ ...busy.handle, afterRuns: 0 }),
+      callers: ["w/boss"],
+    });
+    expect(first.event).toMatchObject({ kind: "closed", ref: { kind: "task", id: "t1" } });
+    const w = settledWatch();
+    const second = await waitForEvents(env.db, [], {
+      ...base,
+      timeoutMs: 60,
+      ...reads("needs_input", { runs: 1, incarnation: "inc" }),
+      watchAgent: async () => ({ ...w.handle, afterRuns: 0 }),
+      callers: ["w/boss"],
+      stuckAfterMs: 0,
+    });
+    expect(second.event.kind).toBe("heartbeat");
+  });
+
+  it("both seen at once: the replayed close pairs the settle with t1's close, consumed together", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    spawnedBy("a1", "w/boss");
+    await registerBoss();
+    hookApplies();
+    const w = settledWatch();
+    const opts = {
+      ...base,
+      timeoutMs: 120,
+      ...reads("needs_input", { runs: 1, incarnation: "inc" }),
+      watchAgent: async () => ({ ...w.handle, afterRuns: 0 }),
+      callers: ["w/boss"],
+      stuckAfterMs: 0,
+    };
+    const first = await waitForEvents(env.db, [], opts);
+    expect(["settled", "closed"]).toContain(first.event.kind);
+    expect(first.refs.find((x) => x.ref.kind === "agent")?.close).toEqual({
+      applied: false,
+      task: "t1",
+      reason: "already applied",
+      replayedClose: true,
+    });
+    // Nothing is owed any more: the same answer as when the wait itself applies the block.
+    await expect(waitForEvents(env.db, [], { ...opts, timeoutMs: 60 })).rejects.toBeInstanceOf(
+      WaitNothingError,
+    );
+  });
+
+  it("an explicit wait on the agent still gets its settle, with the close it made", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    spawnedBy("a1", "w/boss");
+    await registerBoss();
+    hookApplies();
+    const w = settledWatch();
+    const r = await waitForEvents(env.db, [agentRef("a1")], {
+      ...base,
+      timeoutMs: 500,
+      ...reads("needs_input", { runs: 1, incarnation: "inc" }),
+      watchAgent: async () => ({ ...w.handle, afterRuns: 0 }),
+      callers: ["w/boss"],
+    });
+    expect(r.event).toMatchObject({ kind: "settled", ref: { kind: "agent", id: "a1" } });
+    expect(r.refs[0]?.close).toMatchObject({ task: "t1", replayedClose: true });
+  });
+
+  it("a stall on the worker's other task carries no refusal: the hook's apply closed t1", async () => {
+    await mkOwnedTask(env.db, "t1", "a1");
+    await mkOwnedTask(env.db, "t2", "a1");
+    spawnedBy("a1", "w/boss");
+    await registerBoss();
+    hookApplies();
+    const idle = {
+      status: "needs_input",
+      since: Date.now() - 60_000,
+      source: "ctl",
+      ctl: "ok",
+      runs: 1,
+      incarnation: "inc",
+      agentId: agentRowOf("a1"),
+    } as const;
+    const w = controllableWatch({ status: "busy" });
+    w.settle({ ...idle, settled: true, lastText });
+    const r = await waitForEvents(env.db, [taskRef("t2")], {
+      ...base,
+      timeoutMs: 1500,
+      mode: "all",
+      ...reads("needs_input", idle),
+      watchAgent: async () => ({ ...w.handle, afterRuns: 0 }),
+      callers: ["w/boss"],
+      stuckAfterMs: 1000,
+    });
+    expect(r.event).toMatchObject({ kind: "stall", ref: { kind: "task", id: "t2" } });
+    const snap = r.refs.find((x) => x.ref.kind === "task" && x.ref.id === "t2");
+    expect(snap?.close).toBeUndefined();
+    const why = reasonOf(r, undefined, 1);
+    expect(why).not.toContain("refused");
+    expect(why).toContain("owner a1 needs attention");
   });
 });
 
