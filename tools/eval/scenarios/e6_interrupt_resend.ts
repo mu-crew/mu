@@ -129,8 +129,15 @@ const scenario: Scenario = {
       // the work: the brief, then each prompt that carries the corrected instruction. A later
       // message that does not (live, pi: "stop the background eval-slow run") is no resend.
       const [first] = prompts;
-      const resends = prompts.slice(1).filter((r) => /eval-worker/.test(r.text ?? ""));
-      const second = resends[0] ?? prompts[1];
+      const carrying = prompts.slice(1).filter((r) => /eval-worker/.test(r.text ?? ""));
+      const second = carrying[0] ?? prompts[1];
+      // a duplicate resend lands before the worker answered the first; one after its answer is a
+      // follow-up in the conversation (live, codex AUT: a worker that ran eval-worker but still
+      // held to the old brief was told again that the correction replaces it)
+      const answered = recs.find(
+        (r) => r.agent === w.agent && r.kind === "stop" && second !== undefined && r.ms > second.ms,
+      );
+      const resends = carrying.filter((r) => answered === undefined || r.ms < answered.ms);
       if (resends.length !== 1)
         wrong.push(`${w.agent} accepted ${resends.length} resends of the work, not one`);
       const other = prompts.length - 1 - resends.length;

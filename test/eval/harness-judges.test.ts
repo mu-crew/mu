@@ -455,6 +455,20 @@ describe("E6 interrupt and resend", () => {
     ];
     clean(await judge("e6_interrupt_resend", golden({ workers })));
   });
+  it("the instruction repeated after the worker answered is a follow-up, not a second resend", async () => {
+    const workers = [
+      worker("w1", "claude", "x1", {
+        reportAt: -20000,
+        prompts: [
+          [-60000, "brief"],
+          [-30000, RESEND],
+          [-10000, `the correction replaces the brief: ${RESEND}`],
+        ],
+      }),
+      worker("w2", "codex", "x2"),
+    ];
+    clean(await judge("e6_interrupt_resend", golden({ workers })));
+  });
   it("a resend no mu call carried", async () => {
     flagged(
       await judge(
