@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { linkHostHome } from "./harness.ts";
 import { parseRunsLog, type RunRecord } from "./provenance.ts";
 import { mu, sh } from "./sandbox.ts";
 import type { Family, Sandbox } from "./types.ts";
@@ -68,6 +69,7 @@ const DRIVER = String.raw`#!/bin/bash
 W="$EVAL_WORKER_DIR"
 DB="\${MU_DB_PATH:-$EVAL_DB_PATH}"
 AGENT="\${MU_AGENT_NAME:-}"
+ms() { local t; t=$(date +%s%3N); case "$t" in *[!0-9]*) perl -MTime::HiRes=time -e 'printf("%d\n", time()*1000)' ;; *) echo "$t" ;; esac; }
 SQLITE() { sqlite3 -readonly -cmd ".timeout 5000" "$DB" "$1"; }
 claimed() { SQLITE "SELECT t.local_id FROM tasks t JOIN agents a ON a.id=t.owner_id JOIN workstreams w ON w.id=t.workstream_id WHERE a.name='$MU_AGENT_NAME' AND w.name='$MU_WORKSTREAM' AND t.status='IN_PROGRESS' LIMIT 1"; }
 # A delegate (spawned by mu_delegate as delegate-<label>) answers a check and owns no task. Which claim
@@ -90,12 +92,12 @@ fi
 if [ -z "$T" ]; then
   sleep "$(cat "$W/delegate-delay" 2>/dev/null || echo 0)"
   if [ -n "$n" ] && [ -f "$W/answers/$n.txt" ]; then
-    echo "$(date +%s%3N) $AGENT $n" >> "$W/answers.log"; cat "$W/answers/$n.txt"; exit 0
+    echo "$(ms) $AGENT $n" >> "$W/answers.log"; cat "$W/answers/$n.txt"; exit 0
   fi
   for f in "$W"/answers/*.txt; do
     k=$(basename "$f" .txt)
     case "$k" in *[!A-Za-z0-9_]*|[0-9]*) continue ;; esac
-    if grep -qw -- "$k" "$W/last-prompt.$AGENT" 2>/dev/null; then echo "$(date +%s%3N) $AGENT $k" >> "$W/answers.log"; cat "$f"; exit 0; fi
+    if grep -qw -- "$k" "$W/last-prompt.$AGENT" 2>/dev/null; then echo "$(ms) $AGENT $k" >> "$W/answers.log"; cat "$f"; exit 0; fi
   done
   [ -f "$W/delegate-delay" ] || sleep 3
   ask=$(tr '\n' ' ' < "$W/last-prompt.$AGENT" 2>/dev/null | cut -c1-90)
@@ -105,7 +107,7 @@ if [ -z "$T" ]; then
 fi
 # runs.log line: <ms> <agent> <task> <action> <sha|-> <patch-id|-> <cwd>. sha and patch-id are the commit
 # this worker's task script produced (see tools/eval/provenance.ts); "-" when it made none.
-log() { echo "$(date +%s%3N) $AGENT $T $1 $(cat "$W/tasks/$T.commit" 2>/dev/null || echo '- -') $(pwd)" >> "$W/runs.log"; }
+log() { echo "$(ms) $AGENT $T $1 $(cat "$W/tasks/$T.commit" 2>/dev/null || echo '- -') $(pwd)" >> "$W/runs.log"; }
 if [ -e "$W/tasks/$T.die-once" ]; then
   rm -f "$W/tasks/$T.die-once"; touch "$W/die-next.$AGENT"; log die; echo dying; exit 0
 fi
@@ -295,6 +297,14 @@ export async function sshShim(
     }),
   );
   appendFileSync(join(sb.dir, "tmux-sockets"), `${hostSock}\n`);
+  // a live host's harnesses read the caller's config and auth through links in the host's HOME
+  if (sb.env.EVAL_LIVE === "1" && sb.env.HOME) linkHostHome(join(hostRoot, "home"), sb.env.HOME);
+  // a fake codex on the host reads its HOME's ~/.codex/hooks.json, as on this machine
+  const codexHooks = join(sb.dir, "home", ".codex", "hooks.json");
+  if (sb.env.EVAL_LIVE !== "1" && existsSync(codexHooks)) {
+    mkdirSync(join(hostRoot, "home", ".codex"), { recursive: true });
+    writeFileSync(join(hostRoot, "home", ".codex", "hooks.json"), readFileSync(codexHooks, "utf8"));
+  }
   // EVAL_DB_PATH: mu-next strips MU_DB_PATH from the pane's env (the remote pi never gets the DB), but
   // eval-worker still reads the task table (read-only) to know which task is claimed for it.
   write(
@@ -313,7 +323,7 @@ export async function sshShim(
 export async function hostProfile(
   sb: Sandbox,
   host: string,
-  opts: { maxSessions?: number } = {},
+  opts: { maxSessions?: number; repo?: string } = {},
 ): Promise<void> {
   const o = "-o ControlMaster=no -o ControlPath=none";
   await seedViaMu(sb, [
@@ -328,7 +338,7 @@ export async function hostProfile(
       "--fetch",
       `git fetch ssh://${host}{cwd} HEAD`,
       "--repo",
-      "~/repo",
+      opts.repo ?? "~/repo",
       ...(opts.maxSessions === undefined ? [] : ["--max-sessions", String(opts.maxSessions)]),
     ],
   ]);

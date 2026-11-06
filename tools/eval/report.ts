@@ -37,6 +37,10 @@ function row(label: string, surface: string, model: string, rs: RunResult[]): st
   ];
 }
 
+/** The model column: `<model>@<harness>` for a claude or codex AUT, so their rows never merge. */
+export const modelLabel = (r: RunResult): string =>
+  r.harness ? `${r.model}@${r.harness}` : r.model;
+
 function groupBy(rs: RunResult[], key: (r: RunResult) => string): Map<string, RunResult[]> {
   const m = new Map<string, RunResult[]>();
   for (const r of rs) m.set(key(r), [...(m.get(key(r)) ?? []), r]);
@@ -50,14 +54,14 @@ export function toMarkdown(results: RunResult[]): string {
   };
   for (const rs of groupBy(
     results,
-    (r) => `${r.scenario}\u0000${r.surface}\u0000${r.model}`,
+    (r) => `${r.scenario}\u0000${r.surface}\u0000${modelLabel(r)}`,
   ).values()) {
     const first = rs[0];
-    if (first) add(row(first.scenario, first.surface, first.model, rs));
+    if (first) add(row(first.scenario, first.surface, modelLabel(first), rs));
   }
-  for (const rs of groupBy(results, (r) => `${r.surface}\u0000${r.model}`).values()) {
+  for (const rs of groupBy(results, (r) => `${r.surface}\u0000${modelLabel(r)}`).values()) {
     const first = rs[0];
-    if (first) add(row("**total**", first.surface, first.model, rs));
+    if (first) add(row("**total**", first.surface, modelLabel(first), rs));
   }
   // N/A: native guarantees a surface cannot give. Its Completed is a manual workaround, not the guarantee.
   const na = new Map<string, Set<string>>();

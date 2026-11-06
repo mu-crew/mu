@@ -1,0 +1,54 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "R=codex; [ \"$EVAL_AUT_HARNESS\" = codex ] && R=claude; echo \"$R\" > \"$TMPDIR/refuter\"; mu task check f1 -w eval --by \"$(cat \"$TMPDIR/refuter\")/default\" --brief 'Refute or confirm: ./gate.sh drops the last line of notes.txt. Answer VERDICT/EVIDENCE.' | tee \"$TMPDIR/check.out\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn rv -w eval --cli \"$(cat \"$TMPDIR/refuter\")\" --worktree --task rf1 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:rv@0 -w eval --timeout 120 | tee \"$TMPDIR/wait.json\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "node -e 'const d=JSON.parse(require(\"fs\").readFileSync(0,\"utf8\")); const t=(d.data.snapshots||[]).map(s=>s.lastText||\"\").join(\"\\n\"); console.log(t.split(\"\\n\").filter(l=>/^(VERDICT|EVIDENCE):/.test(l)).join(\"\\n\"))' < \"$TMPDIR/wait.json\" > \"$TMPDIR/answer\"; cat \"$TMPDIR/answer\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "C=$(sed -n 's/.*check=\\([0-9A-Za-z]*\\).*/\\1/p' \"$TMPDIR/check.out\" | head -1); mu task verdict f1 -w eval --check \"$C\" - < \"$TMPDIR/answer\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "C=$(sed -n 's/.*check=\\([0-9A-Za-z]*\\).*/\\1/p' \"$TMPDIR/check.out\" | head -1); mu task close f1 -w eval --evidence \"refuted by a $(cat \"$TMPDIR/refuter\") refuter (check $C): notes.txt keeps its last line\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "rev=$(mu agent close rv -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); [ -n \"$rev\" ] && mu agent close rv -w eval --if \"$rev\""
+      }
+    ]
+  },
+  {
+    "text": "A refuter of another model family refuted the f1 finding; the verdict is recorded and f1 is closed."
+  }
+]

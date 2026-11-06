@@ -1,0 +1,12 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu task close f1 -w eval --evidence 'not a bug: notes.txt keeps its last line'"
+      }
+    ]
+  },
+  {
+    "text": "f1 is not a bug; closed."
+  }
+]

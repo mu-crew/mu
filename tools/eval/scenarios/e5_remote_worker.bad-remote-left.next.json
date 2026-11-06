@@ -1,0 +1,40 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --host dev --worktree --cli claude --task r1 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:w1@0 -w eval --timeout 180"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent collect w1 -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick refs/mu/collect/eval/w1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close r1 -w eval --evidence 'the remote worker reported (CLOSE block); its commit is merged'"
+      }
+    ]
+  },
+  {
+    "text": "r1 ran on dev and its commit is merged into main."
+  }
+]

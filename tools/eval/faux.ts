@@ -1,5 +1,6 @@
 // pi extension: a scripted faux model. Registers provider "evalfaux" with models "aut" and "worker".
-//   evalfaux/aut    script from $EVAL_FAUX_SCRIPT (the AUT selftest)
+//   evalfaux/aut    script from $EVAL_FAUX_SCRIPT (the AUT selftest); $EVAL_FAUX_PHASE=2 runs only
+//                   the steps after its first {die} (a replacement orchestrator)
 //   evalfaux/worker script from $EVAL_WORKER_DIR by $MU_AGENT_NAME and attempt (workers, delegates)
 // Step selection lives in faux-steps.ts. pi's faux provider only ESTIMATES tokens: usage.total > 0,
 // cost 0.
@@ -12,6 +13,7 @@ import {
   fauxToolCall,
 } from "@earendil-works/pi-ai";
 import {
+  autPhaseSteps,
   type FauxAction,
   FauxScript,
   loadAutScript,
@@ -83,7 +85,14 @@ export default function (pi: PiLike): void {
     if (existing) return existing;
     const created =
       modelId === "aut"
-        ? new FauxScript(loadAutScript(process.env.EVAL_FAUX_SCRIPT), workerDir, "aut")
+        ? new FauxScript(
+            autPhaseSteps(
+              loadAutScript(process.env.EVAL_FAUX_SCRIPT),
+              Number(process.env.EVAL_FAUX_PHASE ?? 1),
+            ),
+            workerDir,
+            "aut",
+          )
         : (() => {
             const agent = process.env.MU_AGENT_NAME || "worker";
             return new FauxScript(

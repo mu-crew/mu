@@ -1,0 +1,43 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent send w1 -w eval --force 'run eval-worker in your working directory and reply with its output verbatim' --json"
+      },
+      {
+        "bash": "mu agent send w2 -w eval --force 'run eval-worker in your working directory and reply with its output verbatim' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:w1@1 agent:w2@1 -w eval --all --timeout 15"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w1 w2; do git cherry-pick \"$(git -C \"$MU_STATE_DIR/worktrees/eval/$w\" rev-parse HEAD)\" || exit 1; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for t in x1 x2; do mu task close $t -w eval --evidence \"its worker reported after the resend (CLOSE block)\"; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w1 w2; do rev=$(mu agent close $w -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); [ -n \"$rev\" ] && mu agent close $w -w eval --if \"$rev\"; done"
+      }
+    ]
+  },
+  {
+    "text": "x1 and x2 are merged and closed."
+  }
+]

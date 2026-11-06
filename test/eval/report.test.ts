@@ -126,3 +126,34 @@ describe("toMarkdown", () => {
     expect(two.split("\n").filter((l) => l.includes("**total**"))).toHaveLength(2);
   });
 });
+
+describe("a claude or codex AUT gets its own row", () => {
+  it("keys the model column by harness, so the two never merge", () => {
+    const md = toMarkdown([
+      {
+        ...result({
+          scenario: "e1",
+          completed: true,
+          tokens: 0,
+          muCalls: 1,
+          muErrors: 0,
+          model: "default",
+        }),
+        harness: "claude",
+      },
+      {
+        ...result({
+          scenario: "e1",
+          completed: false,
+          tokens: 0,
+          muCalls: 1,
+          muErrors: 0,
+          model: "default",
+        }),
+        harness: "codex",
+      },
+    ]);
+    expect(md).toContain("| e1 | 3x | default@claude | 1/1 |");
+    expect(md).toContain("| e1 | 3x | default@codex | 0/1 |");
+  });
+});

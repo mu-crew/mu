@@ -52,7 +52,7 @@ export interface Usage {
   cost: number;
 }
 
-export type Aborted = null | "timeout" | "token-cap" | "exit";
+export type Aborted = null | "timeout" | "token-cap" | "exit" | "crash";
 
 /** One observed moment of the AUT's life, stamped when the harness read it from the rpc stream. */
 export type LifecycleKind =
@@ -73,7 +73,7 @@ export interface LifecycleEvent {
   id?: string;
   /** tool_start/tool_end: tool name; delegate_msg: the custom message type. */
   name?: string;
-  /** delegate_msg / assistant_text: the message text. */
+  /** delegate_msg / assistant_text: the message text; prompt: what the harness sent. */
   text?: string;
 }
 
@@ -112,6 +112,25 @@ export interface Scenario {
   maxProds?: number;
   /** `check` run mode of this scenario (default quietMs 2000, maxProds 0): prod-enabled when a bad needs a prod to recover. */
   check?: { quietMs?: number; maxProds?: number };
+  /** The families this scenario has scripts for; `check` skips it on the others. Default: both. */
+  families?: Family[];
+  /** The workstream the scenario seeds and a pane AUT orchestrates (default `eval`). */
+  workstream?: string;
+  /**
+   * Hook-harness scenario: the sandbox gets claude, codex, cursor-agent and Muse Code binaries
+   * (fake in `check`, the user's in a live run) and the rig's hook entries (harness.ts).
+   */
+  hookHarnesses?: {
+    /** The worker mix the prompt asks for, for the docs and the report: `claude`, `pi@dev`, ... */
+    workers: string[];
+    /** The AUT harnesses the case runs under; default claude, codex and pi. */
+    aut?: ("pi" | "claude" | "codex")[];
+  };
+  /**
+   * A crash and a replacement orchestrator: the AUT dies (its script's `{die}` in `check`, or the
+   * rig kills it once `crashWhen` holds in a live run), and a second AUT gets `prompt`.
+   */
+  replacement?: { prompt: string; crashWhen?: (sb: Sandbox) => Promise<boolean> };
   setup(sb: Sandbox): Promise<void>;
   judge(sb: Sandbox, run: RunMetrics): Promise<Verdict>;
 }
@@ -120,6 +139,8 @@ export interface RunResult {
   scenario: string;
   surface: string;
   model: string;
+  /** The AUT's harness (absent: pi, every result before hook-harness scenarios). */
+  harness?: string;
   rep: number;
   startedAt: string;
   metrics: RunMetrics;

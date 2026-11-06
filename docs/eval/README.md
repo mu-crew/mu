@@ -14,3 +14,4 @@ measured. The raw JSONL rows are not in the tree; see
 | [cold-guess.md](cold-guess.md) | one-command guesses from help text alone, no skill |
 | [dogfood-1.md](dogfood-1.md) … [dogfood-4.md](dogfood-4.md), [dogfood-switch.md](dogfood-switch.md), [dogfood-full.md](dogfood-full.md) | isolated orchestrator runs on the checkout |
 | [harnesses.md](harnesses.md) | mu driven from codex and cursor-agent |
+| [every-harness.md](every-harness.md) | E1–E7 on claude, codex and pi orchestrators with mixed worker harnesses (template) |

@@ -366,6 +366,35 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   applies an earlier turn's block. A remote pi worker is unchanged (ctl, no key, no anchor). A
   check against a live host is still owed: the tests drive a fake node
   through a fake exec template.
+- **Evals on every harness: cases E1–E7 and the rig for them** (spec U24).
+  `tools/eval` gains `--harness pi|claude|codex` on `run`, `matrix` and
+  `check`: a claude or codex orchestrator runs in a pane started with `mu
+  orchestrate`, prompted through mu's hooks send and settled by murmur's view
+  of its pane; pi keeps its rpc runner. Seven `next`-only cases mix worker
+  harnesses per case: E1 dispatch and merge (claude, codex), E2 finding
+  triage with a cross-family refuter, E3 review gate, E4 crash and
+  replacement orchestrator, E5 remote worker (claude on the ssh shim host),
+  E6 interrupt and resend, E7 a mixed crew (local codex and pi, remote claude
+  and pi). Each has a written pass criterion as its judge, read from effects
+  (ops, `runs.log`, git, and a new observer hook's `hooks.log`), and a golden
+  plus at least three bads, proven at zero model cost by `check` with fake
+  claude, codex, cursor-agent and Muse Code binaries that read their pane
+  and fire the real ones' hooks with the U0 payload keys, and on synthetic
+  end states in `test/eval/harness-judges.test.ts`. The rig's hook entries
+  run the worktree builds of mu, murmur (`EVAL_MURMUR`) and muzzle
+  (`EVAL_MUZZLE`) by absolute path from project files committed in the
+  sandbox repo, which also carries the surface's skill as claude's project
+  skill; codex's global `hooks.json` is backed up and restored around a
+  live run, shared by the sandboxes of one process (or
+  `EVAL_CODEX_HOOKS=codex-home`, which also gives codex the surface's skill).
+  A live run keeps the user's HOME and auth; the ssh host keeps its own HOME
+  with links to the harnesses' config, so mu's remote worktrees stay in the
+  sandbox. [docs/eval/every-harness.md](docs/eval/every-harness.md) lists
+  exactly what a live run changes, which skill each orchestrator reads, that
+  no token budget bounds it, the commands per case and the empty results
+  tables. The rig also runs on macOS now: the mu shim and the worker driver
+  stamp milliseconds without GNU `date`, use `tee -p` only where it exists,
+  and the real pi is linked as `pi` (a launcher may dispatch on its name).
 
 ### Changed
 

@@ -22,6 +22,10 @@ export interface RunOptions {
   graceMs?: number;
   /** Path for the raw rpc JSONL (stderr goes to <log>.stderr). */
   log?: string;
+  /** Extra environment for pi (a replacement orchestrator's EVAL_FAUX_PHASE). */
+  env?: Record<string, string>;
+  /** Checked every tick: true stops the AUT as a crash (aborted "crash"), a live replacement case. */
+  stopWhen?: () => Promise<boolean>;
 }
 
 const TICK_MS = 500;
@@ -83,7 +87,12 @@ export async function runAut(
   const maxProds = opts.maxProds ?? scenario.maxProds ?? 1;
 
   const token = randomBytes(8).toString("hex");
-  const env: Record<string, string> = { ...sb.env, ...scenario.env, EVAL_RUN_TOKEN: token };
+  const env: Record<string, string> = {
+    ...sb.env,
+    ...scenario.env,
+    ...opts.env,
+    EVAL_RUN_TOKEN: token,
+  };
   if (opts.auTScript) env.EVAL_FAUX_SCRIPT = opts.auTScript;
   const args = [
     "--mode",
@@ -171,7 +180,7 @@ export async function runAut(
     child.stdin.end();
   };
   const send = (message: string): void => {
-    collector.markPrompted();
+    collector.markPrompted(message);
     child.stdin.write(`${JSON.stringify({ type: "prompt", message })}\n`);
   };
 
@@ -221,6 +230,8 @@ export async function runAut(
           }
           if (now - started > timeoutMs) {
             aborted = "timeout";
+          } else if (opts.stopWhen !== undefined && !aborted && (await opts.stopWhen())) {
+            aborted = "crash";
           } else if (collector.result({ wallMs: 0, prods, aborted: null }).usage.total > tokenCap) {
             aborted = "token-cap";
           }

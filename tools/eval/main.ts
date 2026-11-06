@@ -8,6 +8,8 @@ import { readRows, runCold, runColdCheck } from "./cold-guess.ts";
 import { toColdMarkdown } from "./cold-report.ts";
 import {
   appendResult,
+  checkHarnesses,
+  isLiveRun,
   loadScenario,
   logPath,
   reportCommand,
@@ -20,6 +22,7 @@ import {
   timestamp,
 } from "./commands.ts";
 import type { FauxStep } from "./faux.ts";
+import { parseAutHarness } from "./harness.ts";
 import { runAut } from "./runner.ts";
 import { createSandbox, FAUX_EXT, mu, sh, tmuxSocketPath } from "./sandbox.ts";
 import { parseFamily, prepareSurface, surfaceFromDir, surfaceId } from "./surface.ts";
@@ -30,16 +33,19 @@ const DEFAULT_PROVIDER_EXT = join(homedir(), ".pi", "agent", "extensions", "llm-
 const USAGE = `usage: node tools/eval/main.ts <command>
   prepare <name> <ref>
   selftest [--surface <dir>]
-  run <scenario> --surface <spec> --model <m> [--family 3x|next] [--scenario-root <dir>] [--provider-ext p] [--keep] [--out f]
-  matrix --surface <spec>... --model <m>... [--family 3x|next] [--scenario-root <dir>] [--scenarios a,b] [--reps 1] [--concurrency 4] [--budget-tokens N] --out <results.jsonl>
+  run <scenario> --surface <spec> --model <m> [--harness pi|claude|codex] [--fake-workers] [--family 3x|next] [--scenario-root <dir>] [--provider-ext p] [--keep] [--out f]
+  matrix --surface <spec>... --model <m>... [--harness h]... [--fake-workers] [--family 3x|next] [--scenario-root <dir>] [--scenarios a,b] [--reps 1] [--concurrency 4] [--budget-tokens N] --out <results.jsonl>
   report <results.jsonl> [--out file.md]
-  check [--surface <spec>] [--scenarios a,b] [--family 3x|next] [--scenario-root <dir>] [--include-underscore] [--no-preflight] [--verbose]
+  check [--surface <spec>] [--scenarios a,b] [--harness h]... [--family 3x|next] [--scenario-root <dir>] [--include-underscore] [--no-preflight] [--verbose]
   cold-guess run --surface [label=]<spec>... --model <m>... [--reps 3] [--intents a,b] [--concurrency 4] [--provider-ext p] --out <cold-guess.jsonl>
   cold-guess check [--surface <spec>] [--intents a,b] [--concurrency 4]
   cold-guess report <cold-guess.jsonl> [--out file.md]
 <spec> = <dir|name>[:<3x|next>[:<scenario-root>]]. A name is a surface under ~/.cache/mu/eval/surfaces. Family and scenario root are per
 surface; --family/--scenario-root only fill specs that leave them out (defaults: 3x, tools/eval/scenarios). A scenario root holds
-<id>.<golden|bad|bad-x>.<family>.json and optional <id>.ts overrides, and must be outside ~/.cache/mu/eval/surfaces.`;
+<id>.<golden|bad|bad-x>.<family>.json and optional <id>.ts overrides, and must be outside ~/.cache/mu/eval/surfaces.
+--harness: the AUT's agent CLI (default pi, over rpc; claude and codex run in a pane). A hook-harness scenario (e1_* .. e7_*) needs
+EVAL_MURMUR=<murmur checkout> (EVAL_MUZZLE=<muzzle checkout> adds muzzle's hooks); its run is live: the user's HOME, auth and harness
+binaries (see docs/eval/every-harness.md). --fake-workers keeps fake worker binaries in a live run.`;
 
 /** The --family / --scenario-root flags: defaults for every --surface spec that leaves them out. */
 function surfaceDefaults(args: string[]): { family?: Family; scenarioRoot?: string } {
@@ -240,6 +246,9 @@ async function main(argv: string[]): Promise<number> {
       if (!id || !surfaceArg || !model) throw new Error(USAGE);
       const surface = resolveSurface(surfaceArg, surfaceDefaults(rest));
       const scenario = await loadScenario(id, surface.scenarioRoot);
+      const harness = parseAutHarness(flag(rest, "--harness") ?? "pi");
+      if (!checkHarnesses(scenario).includes(harness))
+        throw new Error(`${id} does not run under --harness ${harness}`);
       const r = await runOne({
         surface,
         scenario,
@@ -247,10 +256,13 @@ async function main(argv: string[]): Promise<number> {
         providerExt: flag(rest, "--provider-ext") ?? DEFAULT_PROVIDER_EXT,
         rep: 1,
         keep: rest.includes("--keep"),
+        harness,
+        live: isLiveRun(scenario, harness),
+        fakeWorkers: rest.includes("--fake-workers"),
         log: logPath(REPO_ROOT, timestamp(), {
           scenario: id,
           surface: surfaceId(surface),
-          model,
+          model: harness === "pi" ? model : `${model}@${harness}`,
           rep: 1,
         }),
       });
@@ -269,9 +281,12 @@ async function main(argv: string[]): Promise<number> {
       const out = flag(rest, "--out");
       if (surfaces.length === 0 || models.length === 0 || !out) throw new Error(USAGE);
       const only = flag(rest, "--scenarios");
+      const harnesses = flagAll(rest, "--harness").map(parseAutHarness);
       await runMatrix({
         surfaces,
         models,
+        ...(harnesses.length > 0 ? { harnesses } : {}),
+        fakeWorkers: rest.includes("--fake-workers"),
         scenarios: only
           ? only.split(",")
           : scenarioIds(false, ...surfaces.map((s) => s.scenarioRoot)),
@@ -293,9 +308,11 @@ async function main(argv: string[]): Promise<number> {
     case "check": {
       const only = flag(rest, "--scenarios");
       const surface = resolveSurface(flag(rest, "--surface") ?? REPO_ROOT, surfaceDefaults(rest));
+      const harnesses = flagAll(rest, "--harness").map(parseAutHarness);
       return runCheck({
         surface,
         scenarios: only ? only.split(",") : null,
+        ...(harnesses.length > 0 ? { harnesses } : {}),
         includeUnderscore: rest.includes("--include-underscore"),
         family: surface.family ?? "3x",
         preflight: !rest.includes("--no-preflight"),

@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   badFlagged,
@@ -20,8 +20,20 @@ import {
   scriptFile,
 } from "./check-rules.ts";
 import { scenarioDir, sshShim } from "./fixtures.ts";
+import {
+  AUT_HARNESSES,
+  type AutHarness,
+  autSkill,
+  HarnessToolsError,
+  type HookTools,
+  parseCodexHooks,
+  realCodexDir,
+  resolveTools,
+  which,
+} from "./harness.ts";
 import { toMarkdown } from "./report.ts";
 import { runAut } from "./runner.ts";
+import { runPaneAut } from "./runner-pane.ts";
 import { createSandbox, FAUX_EXT, sh } from "./sandbox.ts";
 import {
   checkScenarioRoot,
@@ -30,7 +42,15 @@ import {
   surfaceFromDir,
   surfaceId,
 } from "./surface.ts";
-import type { Family, RunResult, Scenario, Surface, Verdict } from "./types.ts";
+import type {
+  Family,
+  RunMetrics,
+  RunResult,
+  Sandbox,
+  Scenario,
+  Surface,
+  Verdict,
+} from "./types.ts";
 
 export const EVAL_MODEL_FAUX = "evalfaux/aut";
 
@@ -96,22 +116,140 @@ export interface RunOne {
   auTScript?: string;
   quietMs?: number;
   maxProds?: number;
+  /** The AUT's harness (default pi, over rpc); claude and codex run in a pane (runner-pane.ts). */
+  harness?: AutHarness;
+  /** Real HOME, env and auth, and the user's harness binaries for the AUT and its workers (default: fakes). */
+  live?: boolean;
+  /** With `live`: fake worker binaries anyway (only the AUT is real, as in a pi scenario). */
+  fakeWorkers?: boolean;
+  /** Hook tools already resolved (check resolves them once); default: resolveTools(surface). */
+  tools?: HookTools;
+}
+
+/** A live pane AUT's command: EVAL_AUT_COMMAND, else the user's launcher when workers are fakes, plus --model. */
+export function autCommand(o: {
+  harness: AutHarness;
+  model: string;
+  live: boolean;
+  fakeWorkers: boolean;
+  env?: NodeJS.ProcessEnv;
+}): string | undefined {
+  const env = o.env ?? process.env;
+  const fixed = env.EVAL_AUT_COMMAND?.trim();
+  if (fixed) return fixed;
+  if (!o.live) return undefined;
+  const model = o.model === "" || o.model === "default" ? "" : ` --model ${o.model}`;
+  if (o.fakeWorkers) {
+    const real = which(o.harness, env.PATH);
+    return real === null ? undefined : `${real}${model}`;
+  }
+  return model === "" ? undefined : `${o.harness}${model}`;
+}
+
+/** Sum two runs of one case: the crashed orchestrator's and its replacement's. */
+export function mergeMetrics(a: RunMetrics, b: RunMetrics): RunMetrics {
+  const u = (k: keyof RunMetrics["usage"]) => a.usage[k] + b.usage[k];
+  return {
+    usage: {
+      input: u("input"),
+      output: u("output"),
+      cacheRead: u("cacheRead"),
+      cacheWrite: u("cacheWrite"),
+      total: u("total"),
+      cost: u("cost"),
+    },
+    turns: a.turns + b.turns,
+    toolCalls: [...a.toolCalls, ...b.toolCalls],
+    muCalls: a.muCalls + b.muCalls,
+    muErrors: a.muErrors + b.muErrors,
+    prods: a.prods + b.prods,
+    wallMs: a.wallMs + b.wallMs,
+    aborted: b.aborted,
+    lastError: b.lastError ?? a.lastError,
+    finalText: b.finalText,
+    events: [...a.events, ...b.events],
+  };
+}
+
+/** The pi AUT over rpc; a replacement case runs a second pi on the steps after the crash. */
+export async function runPiAut(
+  sb: Sandbox,
+  o: RunOne,
+  run: typeof runAut = runAut,
+): Promise<RunMetrics> {
+  const base = {
+    model: o.model,
+    providerExt: o.providerExt,
+    auTScript: o.auTScript,
+    quietMs: o.quietMs,
+    maxProds: o.maxProds,
+    log: o.log,
+  };
+  const rep = o.scenario.replacement;
+  if (rep === undefined) return run(sb, o.scenario, base);
+  // a fake AUT crashes on its script's {die}; only a live one is killed by the rig
+  const crashWhen = o.live === true ? rep.crashWhen : undefined;
+  const first = await run(sb, o.scenario, {
+    ...base,
+    maxProds: 0,
+    ...(crashWhen !== undefined ? { stopWhen: () => crashWhen(sb) } : {}),
+  });
+  const second = await run(
+    sb,
+    { ...o.scenario, prompt: rep.prompt },
+    { ...base, env: { EVAL_FAUX_PHASE: "2" }, log: o.log ? `${o.log}.2` : undefined },
+  );
+  return mergeMetrics(first, second);
 }
 
 /** One sandbox, one AUT run, one judged result. The sandbox is always closed (unless keep). */
 export async function runOne(o: RunOne): Promise<RunResult> {
   const startedAt = new Date().toISOString();
-  const sb = await createSandbox(o.surface, { env: o.scenario.env });
+  const harness = o.harness ?? "pi";
+  const hooks = o.scenario.hookHarnesses !== undefined || harness !== "pi";
+  const codexHooks = parseCodexHooks(process.env.EVAL_CODEX_HOOKS);
+  const skillNote =
+    o.live === true && harness !== "pi"
+      ? autSkill(harness, o.surface.skillDir, {
+          home: process.env.HOME ?? homedir(),
+          codexDir: realCodexDir(),
+          codexHooks,
+        })
+      : null;
+  if (skillNote !== null) console.error(`eval: ${skillNote}`);
+  const sb = await createSandbox(o.surface, {
+    env: { ...o.scenario.env, EVAL_AUT_HARNESS: harness, EVAL_AUT_MODEL: o.model },
+    live: o.live === true,
+    ...(o.live === true && o.fakeWorkers !== true ? { providerExt: o.providerExt } : {}),
+    ...(hooks
+      ? {
+          harness: {
+            tools: o.tools ?? resolveTools(o.surface),
+            codexHooks,
+            fake: o.live !== true || o.fakeWorkers === true,
+          },
+        }
+      : {}),
+  });
   try {
     await o.scenario.setup(sb);
-    const metrics = await runAut(sb, o.scenario, {
-      model: o.model,
-      providerExt: o.providerExt,
-      auTScript: o.auTScript,
-      quietMs: o.quietMs,
-      maxProds: o.maxProds,
-      log: o.log,
-    });
+    const metrics =
+      harness === "pi"
+        ? await runPiAut(sb, o)
+        : await runPaneAut(sb, o.scenario, {
+            harness,
+            auTScript: o.auTScript,
+            command: autCommand({
+              harness,
+              model: o.model,
+              live: o.live === true,
+              fakeWorkers: o.fakeWorkers === true,
+            }),
+            quietMs: o.quietMs,
+            maxProds: o.maxProds,
+            log: o.log,
+            live: o.live === true,
+          });
     let verdict: Verdict;
     try {
       verdict = await o.scenario.judge(sb, metrics);
@@ -123,11 +261,13 @@ export async function runOne(o: RunOne): Promise<RunResult> {
         notes: [`judge threw: ${e instanceof Error ? e.message : String(e)}`],
       };
     }
+    if (skillNote !== null) verdict.notes.push(skillNote);
     if (o.keep) console.error(`kept sandbox: ${sb.dir} (tmux -L ${sb.tmuxSocket})`);
     return {
       scenario: o.scenario.id,
       surface: surfaceId(o.surface),
       model: o.model,
+      ...(harness !== "pi" ? { harness } : {}),
       rep: o.rep,
       startedAt,
       metrics,
@@ -153,7 +293,7 @@ export function readResults(file: string): RunResult[] {
 
 export function summary(r: RunResult): string {
   const m = r.metrics;
-  return `${r.scenario} ${r.surface} ${r.model} rep${r.rep}: completed=${r.verdict.completed} tokens=${m.usage.total} muCalls=${m.muCalls} muErrors=${m.muErrors} wrong=${r.verdict.wrong.length} na=${r.verdict.na?.length ?? 0} destructive=${r.verdict.destructive.length} prods=${m.prods} aborted=${m.aborted} wall=${Math.round(m.wallMs / 1000)}s`;
+  return `${r.scenario} ${r.surface} ${r.model}${r.harness ? `@${r.harness}` : ""} rep${r.rep}: completed=${r.verdict.completed} tokens=${m.usage.total} muCalls=${m.muCalls} muErrors=${m.muErrors} wrong=${r.verdict.wrong.length} na=${r.verdict.na?.length ?? 0} destructive=${r.verdict.destructive.length} prods=${m.prods} aborted=${m.aborted} wall=${Math.round(m.wallMs / 1000)}s`;
 }
 
 const safe = (s: string): string => s.replace(/[^A-Za-z0-9._-]+/g, "_");
@@ -176,6 +316,10 @@ export const timestamp = (): string => new Date().toISOString().replace(/[:.]/g,
 export interface MatrixOptions {
   surfaces: Surface[];
   models: string[];
+  /** AUT harnesses (default pi); a scenario runs under those of them it names. */
+  harnesses?: AutHarness[];
+  /** Hook-harness scenarios: fake worker binaries even in a live run. */
+  fakeWorkers?: boolean;
   scenarios: string[];
   reps: number;
   concurrency: number;
@@ -195,20 +339,34 @@ export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
   for (const id of o.scenarios) {
     for (const surface of o.surfaces) {
       const scenario = await loadScenario(id, surface.scenarioRoot);
-      for (const model of o.models) {
-        for (let rep = 1; rep <= o.reps; rep++) {
-          queue.push({
-            surface,
-            scenario,
-            model,
-            providerExt: o.providerExt,
-            rep,
-            log: logPath(o.root, stamp, { scenario: id, surface: surfaceId(surface), model, rep }),
-          });
+      for (const harness of checkHarnesses(scenario, o.harnesses ?? ["pi"]))
+        for (const model of o.models) {
+          for (let rep = 1; rep <= o.reps; rep++) {
+            queue.push({
+              surface,
+              scenario,
+              model,
+              providerExt: o.providerExt,
+              rep,
+              harness,
+              live: isLiveRun(scenario, harness),
+              fakeWorkers: o.fakeWorkers === true,
+              log: logPath(o.root, stamp, {
+                scenario: id,
+                surface: surfaceId(surface),
+                model: harness === "pi" ? model : `${model}@${harness}`,
+                rep,
+              }),
+            });
+          }
         }
-      }
     }
   }
+  const uncounted = queue.filter((j) => j.live === true && (j.harness !== "pi" || !j.fakeWorkers));
+  if (uncounted.length > 0)
+    console.error(
+      `eval: ${uncounted.length} live runs with a pane AUT or real workers: their tokens are not counted, so --budget-tokens and the scenarios' tokenCap do not bound them (only each run's timeout does)`,
+    );
   const results: RunResult[] = [];
   let spent = 0;
   let skipped = 0;
@@ -286,6 +444,22 @@ export interface CheckOptions {
   root: string;
   /** Where <id>.<kind>.<family>.json live; test override. Default: surface.scenarioRoot, else the scenarios dir. */
   scriptDir?: string;
+  /** Prove a hook-harness scenario under these AUT harnesses only (default: each the scenario names). */
+  harnesses?: AutHarness[];
+}
+
+/** A run with a real model is live (real HOME, auth and harnesses) when a hook harness is in it. */
+export function isLiveRun(scenario: Scenario, harness: AutHarness): boolean {
+  return scenario.hookHarnesses !== undefined || harness !== "pi";
+}
+
+/** The AUT harnesses `check` proves a scenario under: pi alone for a pi scenario. */
+export function checkHarnesses(scenario: Scenario, only?: AutHarness[]): AutHarness[] {
+  const all: AutHarness[] =
+    scenario.hookHarnesses === undefined
+      ? ["pi"]
+      : (scenario.hookHarnesses.aut ?? [...AUT_HARNESSES]);
+  return only === undefined ? all : all.filter((h) => only.includes(h));
 }
 
 /** Faux-AUT proof of every scenario: golden completes cleanly, bad is flagged. Zero cost (faux model), no real model calls. */
@@ -303,6 +477,15 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     line(fails.length === 0, "preflight ssh shim ok", fails.join("\n"));
   }
   const ids = o.scenarios ?? scenarioIds(o.includeUnderscore, surface.scenarioRoot);
+  // hook-harness scenarios need murmur's build: without it each is skipped, the others still run
+  let tools: HookTools | null = null;
+  let noTools = "";
+  try {
+    tools = resolveTools(surface);
+  } catch (e) {
+    if (!(e instanceof HarnessToolsError)) throw e;
+    noTools = e.message;
+  }
   const scriptDir = mkdtempSync(join(tmpdir(), "mu-eval-check-"));
   try {
     for (const id of ids) {
@@ -313,6 +496,16 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         continue;
       }
       const scenario = await loadScenario(id, surface.scenarioRoot);
+      if (scenario.families !== undefined && !scenario.families.includes(o.family)) {
+        console.log(
+          `${id} ${o.family}: skipped (scripts only for ${scenario.families.join(", ")})`,
+        );
+        continue;
+      }
+      if (scenario.hookHarnesses !== undefined && tools === null) {
+        console.log(`${id} skipped (${noTools})`);
+        continue;
+      }
       const dir = o.scriptDir ?? surface.scenarioRoot ?? scenarioDir();
       const named = (kind: "golden" | "bad") =>
         extraScripts(dir, id, o.family, kind).map((file) => ({
@@ -329,49 +522,54 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         // extra negative controls: <id>.bad-<name>.<family>.json, each must be flagged too
         ...named("bad"),
       ];
-      for (const { kind, label, file } of scripts) {
-        const script = join(dir, file);
-        if (!existsSync(script)) {
-          line(false, `${id} ${label} missing`, script);
-          continue;
+      const harnesses = checkHarnesses(scenario, o.harnesses);
+      for (const harness of harnesses)
+        for (const { kind, label: base, file } of scripts) {
+          const label = scenario.hookHarnesses === undefined ? base : `${base} [${harness}]`;
+          const script = join(dir, file);
+          if (!existsSync(script)) {
+            line(false, `${id} ${label} missing`, script);
+            continue;
+          }
+          const r = await runOne({
+            surface,
+            scenario,
+            model: EVAL_MODEL_FAUX,
+            providerExt: FAUX_EXT,
+            rep: 1,
+            auTScript: script,
+            quietMs: scenario.check?.quietMs ?? 2000,
+            maxProds: scenario.check?.maxProds ?? 0,
+            harness,
+            ...(tools !== null ? { tools } : {}),
+            log: join(scriptDir, `${id}.${base}.${harness}.rpc.jsonl`),
+          });
+          const v = r.verdict;
+          const detail = [
+            ...v.wrong.map((w) => `wrong: ${w}`),
+            ...v.destructive.map((d) => `destructive: ${d}`),
+            ...v.notes.map((n) => `note: ${n}`),
+            `completed=${v.completed} aborted=${r.metrics.aborted} lastError=${r.metrics.lastError ?? ""}`,
+          ].join("\n");
+          if (kind === "golden") {
+            const missing = missingGoldenEvidence(id, v).map(
+              (m) => `missing golden evidence: /${m}/`,
+            );
+            const ok = goldenOk(v) && missing.length === 0;
+            const na = v.na?.length ? ` (manual workaround: ${v.na.length} N/A native)` : "";
+            line(
+              ok,
+              `${id} ${label} ok${na}`,
+              ok && !o.verbose ? "" : [...missing, detail].join("\n"),
+            );
+          } else {
+            line(
+              badFlagged(v),
+              `${id} ${label} flagged ok`,
+              badFlagged(v) && !o.verbose ? "" : detail,
+            );
+          }
         }
-        const r = await runOne({
-          surface,
-          scenario,
-          model: EVAL_MODEL_FAUX,
-          providerExt: FAUX_EXT,
-          rep: 1,
-          auTScript: script,
-          quietMs: scenario.check?.quietMs ?? 2000,
-          maxProds: scenario.check?.maxProds ?? 0,
-          log: join(scriptDir, `${id}.${label}.rpc.jsonl`),
-        });
-        const v = r.verdict;
-        const detail = [
-          ...v.wrong.map((w) => `wrong: ${w}`),
-          ...v.destructive.map((d) => `destructive: ${d}`),
-          ...v.notes.map((n) => `note: ${n}`),
-          `completed=${v.completed} aborted=${r.metrics.aborted} lastError=${r.metrics.lastError ?? ""}`,
-        ].join("\n");
-        if (kind === "golden") {
-          const missing = missingGoldenEvidence(id, v).map(
-            (m) => `missing golden evidence: /${m}/`,
-          );
-          const ok = goldenOk(v) && missing.length === 0;
-          const na = v.na?.length ? ` (manual workaround: ${v.na.length} N/A native)` : "";
-          line(
-            ok,
-            `${id} ${label} ok${na}`,
-            ok && !o.verbose ? "" : [...missing, detail].join("\n"),
-          );
-        } else {
-          line(
-            badFlagged(v),
-            `${id} ${label} flagged ok`,
-            badFlagged(v) && !o.verbose ? "" : detail,
-          );
-        }
-      }
     }
   } finally {
     rmSync(scriptDir, { recursive: true, force: true });

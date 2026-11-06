@@ -156,8 +156,9 @@ export class MetricsCollector {
   }
 
   /** The caller just sent a prompt: not settled until pi says so, and the quiet clock restarts. */
-  markPrompted(): void {
-    this.mark("prompt");
+  /** The harness sent a prompt (the scenario's, a prod, a replacement's); `text` is recorded on the event. */
+  markPrompted(text?: string): void {
+    this.mark("prompt", text === undefined ? {} : { text });
     this.settled = false;
     this.activity = this.now();
   }

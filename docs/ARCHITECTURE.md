@@ -282,7 +282,7 @@ are re-export hubs.
 | `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
 | `scripts/smoke-lease.sh`, `scripts/smoke-fake-pi.mjs` | the lease operator smoke: builds mule and mu, real mule against a loopback `sshd MaxSessions 1`, a ctl-speaking fake pi as the remote job ([remote.md](guide/remote.md#smoke-test-a-lease-end-to-end)); explicitly invoked, never in vitest |
 | `tools/screenshot/` | `dashboard.sh` seeds the dogfood `payments` scene on a private tmux socket, captures it at 200x40 and `ansi-to-png.py` renders the capture to `docs/img/tui-dashboard.png` (README); not shipped |
-| `tools/eval/` | the eval harness: scripted scenarios and judges run against a built surface, the release matrix and the cold-guess probe; reports in [docs/eval/](eval/README.md); not shipped |
+| `tools/eval/` | the eval harness: scripted scenarios and judges run against a built surface (pi, claude or codex orchestrators; fake or real hook-harness workers), the release matrix and the cold-guess probe; reports in [docs/eval/](eval/README.md); not shipped |
 | `docs/history/` | records only: old changelogs and the [4.0 design history](history/mu-next-design/README.md) (design of record, rule destinations, release reviews, the TUI dogfood kit `dashboard.sh` runs); not shipped |
 | `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 
