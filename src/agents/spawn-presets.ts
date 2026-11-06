@@ -3,7 +3,7 @@
 // worker launched from a command mu resolved (its cli key or
 // `MU_<KEY>_COMMAND`, not a literal `--command`), local or remote (approvals
 // are per worker, D17: a remote worker's flags ride in its remote command),
-// the row's in-sandbox auto-approve flags (pi has none: its `--approve` is
+// the row's auto-approve flags (pi has none: its `--approve` is
 // folder trust); and locally, for a worktree mu just created, the row's trust
 // flag on its real path (folder trust is per exact path). The argv0 is
 // untouched, so every rule that reads it (speaksMuCtl, the harness) reads the

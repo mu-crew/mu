@@ -202,7 +202,7 @@ mu coordinates agents and does not reason about them. It does not own:
 - **Prompts.** No system-prompt templates and no role registry. The
   prompt is the spawn command plus the first message.
 - **Tool routing.** The agent CLI owns tool allowlists, MCP servers, and
-  extensions. mu adds only a local worker's in-sandbox auto-approve flag
+  extensions. mu adds only a local worker's auto-approve flag
   and folder trust for a worktree it made, and skips the flag when the
   command already picks a mode.
 - **Output interpretation.** mu does not parse panes for state, facts,

@@ -90,6 +90,11 @@ tmux, because no send is possible. Pre-trust the repo with
 press the key yourself. A worktree under the repo inherits the root's trust.
 mu's Claude trust-dialog detection (`src/cli/agents.ts`) has no codex
 equivalent. Not filed; the guide covers it.
+2026-11-06: that `-c` spelling names no project (codex splits the key on
+dots and keeps the quotes), and the `codexw` above also bypassed the sandbox,
+so this run never tested it. Use the inline table
+`-c 'projects={"<realpath>"={trust_level="trusted"}}'` on the worktree's own
+real path, as mu's preset does (spec D6).
 
 **F3 (P2): codex's `notify` fires mid-turn, so a running worker reads as
 `needs_input` and stalls falsely.** A codex worker was in `sleep 40`. At turn

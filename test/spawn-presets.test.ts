@@ -1,5 +1,5 @@
 // Spawn presets (spec D6, D17): a worker of a blessed harness is launched with
-// its row's model flag for --model and its in-sandbox auto-approve flags; pi
+// its row's model flag for --model and its auto-approve flags; pi
 // gets the model flag only (its --approve is folder trust). `mu agent list`
 // shows each agent's harness and channel.
 
@@ -70,7 +70,9 @@ describe("spawn presets", () => {
   it("a worker gets its row's model and auto-approve flags; the row keeps the command as given", async () => {
     await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "codex", model: "gpt-5" });
     await spawnAgent(db, { name: "worker-2", workstream: "auth", cli: "muse" });
-    expect(launched("worker-1")).toBe("codex -s workspace-write -a never --model gpt-5");
+    expect(launched("worker-1")).toBe(
+      "codex --dangerously-bypass-approvals-and-sandbox --model gpt-5",
+    );
     expect(launched("worker-2")).toBe("muse --approval-mode never");
     expect(getAgent(db, "worker-1", "auth")?.command).toBe("codex");
   });
@@ -159,7 +161,7 @@ describe("spawn presets", () => {
       );
       expect(ok.exitCode).toBeNull();
     });
-    expect(launched("worker-2")).toBe("codex -s workspace-write -a never --model x");
+    expect(launched("worker-2")).toBe("codex --dangerously-bypass-approvals-and-sandbox --model x");
   });
 });
 
