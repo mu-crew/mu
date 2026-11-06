@@ -4,7 +4,7 @@
 // reads it from there, never from the env. A row older than the column falls
 // back to the derived rule: an agent that runs pi (or left its control socket
 // file behind) is on `ctl`; every other pane is on `mux`. Only a recorded row
-// is on `hooks`: a local hook harness on tmux, or pi on its fallback (spec D15).
+// is on `hooks`: a hook harness on tmux (local or remote), or pi on its fallback (spec D15).
 // A remote command gate is on `mux`, whatever its row says.
 
 import { existsSync } from "node:fs";

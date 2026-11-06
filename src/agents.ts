@@ -659,9 +659,10 @@ export function isValidAgentName(name: string): boolean {
  * Send text to an agent and submit it, through the channel its row records.
  * A pi agent (`ctl`) gets it through its control socket
  * (AgentCtlUnreachableError when that does not answer — never a silent
- * paste), `/new` / `/reload` / `/compact` included; a non-pi CLI (`mux`)
- * gets one atomic herdr `agent prompt`; on tmux it is refused
- * (AgentSendUnsupportedError). See src/channels.
+ * paste), `/new` / `/reload` / `/compact` included; a hook harness on tmux
+ * (`hooks`) gets a paste confirmed by its `run_count`, never resent; any other
+ * CLI (`mux`) gets the backend's send (herdr's atomic `agent prompt`, Rex's
+ * paste), and on tmux it is refused (AgentSendUnsupportedError). See src/channels.
  */
 export async function sendToAgent(
   db: Db,

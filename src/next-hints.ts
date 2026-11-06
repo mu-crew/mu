@@ -232,21 +232,24 @@ export const COURSE_CHECK_AGE_MS = 24 * 3600_000;
  * The course-correct trigger (skills/mu/recipes/course-correct.md), read from
  * state, never remembered: since the newest note of `ws` starting `COURSE CHECK` (none: the
  * workstream's creation), count the CLOSED/done work tasks by their close note's time (a later
- * note does not move it). One line when due, else undefined.
- * Read-only; one query.
+ * note does not move it). Notes are ordered by (time, id): a close in the same millisecond as the
+ * check counts only if written after it, and every close counts against the creation (id 0).
+ * One line when due, else undefined. Read-only; one query.
  */
 export function courseCheckHint(db: Db, ws: string, now = Date.now()): string | undefined {
   const row = db
     .prepare(
       `WITH w AS (SELECT id, created_at FROM workstreams WHERE name = ? AND torn_down_at IS NULL),
-            a AS (SELECT COALESCE(
-              (SELECT MAX(n.created_at) FROM task_notes n JOIN tasks t ON t.id = n.task_id
-                WHERE t.workstream_id = w.id AND n.content LIKE 'COURSE CHECK%'),
-              w.created_at) AS since, w.id AS wid FROM w)
+            k AS (SELECT n.created_at, n.id FROM task_notes n JOIN tasks t ON t.id = n.task_id
+                    JOIN w ON t.workstream_id = w.id WHERE n.content LIKE 'COURSE CHECK%'
+                  ORDER BY n.created_at DESC, n.id DESC LIMIT 1),
+            a AS (SELECT COALESCE((SELECT created_at FROM k), w.created_at) AS since,
+                         COALESCE((SELECT id FROM k), 0) AS sid, w.id AS wid FROM w)
        SELECT a.since AS since,
               (SELECT COUNT(*) FROM tasks t WHERE t.workstream_id = a.wid AND t.status = 'CLOSED'
-                  AND t.substate = 'done' AND t.kind = 'work' AND (SELECT MAX(c.created_at)
-                    FROM task_notes c WHERE c.task_id = t.id AND c.kind = 'close') > a.since) AS closed
+                  AND t.substate = 'done' AND t.kind = 'work' AND EXISTS (SELECT 1
+                    FROM task_notes c WHERE c.task_id = t.id AND c.kind = 'close'
+                      AND (c.created_at, c.id) > (a.since, a.sid))) AS closed
          FROM a`,
     )
     .get(ws) as { since: string; closed: number } | undefined;

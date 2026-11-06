@@ -12,18 +12,18 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  Callers: pi shell · bash + jq · pi sub-agent · mu log --tail   │
+│  Callers: agent pane · bash + jq · pi sub-agent · mu log --tail │
 └───────────────┬─────────────────────────────────┬───────────────┘
                 │ subprocess (CLI)                 │ in-proc (SDK)
                 ▼                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  mu core (shared TS modules)                                    │
-│  agents/ mux/ ctl/ · tasks/ tracks · worktree · ops log         │
-│  (capture, apply, sync, drift)                                  │
+│  agents/ channels/ mux/ ctl/ · tasks/ tracks · worktree         │
+│  ops log (capture, apply, sync, drift)                          │
 └───────────────┬──────────────────┬──────────────────┬───────────┘
                 ▼                  ▼                  ▼
    SQLite (~/.local/state/mu-next/mu.db) · tmux/herdr/Rex panes · git worktrees
-                   pi agents: control socket per agent
+          pi agents: control socket · hook harnesses: murmur's inbox
 ```
 
 ## Subsystems
@@ -49,18 +49,22 @@ claim keyed on `$MU_AGENT_NAME` coordinate the crew:
 only through `activeMux()` and branch on capabilities, never on the
 backend name. `mu agent list` prunes ghost rows and surfaces orphan
 panes against mux reality. Runtime agent state is read on demand, never
-stored: the control socket for pi agents, herdr's native status on
-herdr, the program's OSC 7501 report on Rex, and murmur for other CLIs on tmux:
+stored: the control socket for pi agents on `ctl`, herdr's native status on
+herdr, the program's OSC 7501 report on Rex, and murmur for other CLIs on tmux
+and a pi on the `hooks` fallback:
 [architecture/mux.md](architecture/mux.md).
 
 **The control socket.** mu's pi extension serves a unix socket inside
 each spawned pi. Send, `--fresh`, wait, abort and state for pi agents
 go through it, exactly, with no screen reading and no fallback to
-pasting. Remote agents (`spawn --host`) use a socket forward their
-host profile's shell template carries. Non-pi agents are sent to through
+pasting. Remote pi agents (`spawn --host`) use a socket forward their
+host profile's shell template carries. A pi is pasted to only when it was
+spawned on the `hooks` fallback (`MU_PI_CHANNEL=hooks`, recorded on its row),
+never because its socket failed. Non-pi agents are sent to through
 the backend on herdr and Rex (`mux`), and on tmux through the `hooks`
-channel (claude, codex, cursor-agent, muse: a paste confirmed by the
-harness's run count); any other is refused
+channel (claude, codex, cursor-agent, muse: a local paste confirmed by
+the harness's run count, a `--host` one `ack: sent` and confirmed by the
+next wait or send gate's read of the node); any other is refused
 ([architecture/control-socket.md](architecture/control-socket.md#no-silent-fallback)).
 
 **Sync.** With `MU_SYNC_DIR` set, every `mu` invocation ingests peer
@@ -174,7 +178,7 @@ are re-export hubs.
 | `src/channels/ctl.ts` | `ctlChannel`: pi over its control socket: one `status` per read (`ctlRuntimeState`, `blockedReason`), `watchAgentRun` (the probe + `wait` + drop fallback `mu agent wait` uses), the probed baseline, `checkMessage` (`status {msgId}`, never throws), the bounded `wait` past the previous run for the last text; re-exports the write fence (`CtlWriteVetoedError`, `CTL_DEFAULT_TIMEOUT_MS`) and `newMsgId` |
 | `src/channels/ctl-deliver.ts` | the ctl channel's delivery: the incarnation fence (`fencedHello`), msgId receipts probed once and never resent (`checkMessage`), send, fresh, session commands (`parseSessionCommand`, `isSlashCommand`), interrupt, abort (status → abort → wait); the outdated-extension ladder (`requireFeature`, `respawnCommand`) |
 | `src/channels/mux.ts` | `muxChannel`: every other pane, polled: state only, no watch, baseline, receipt, fence or last text; delivery is the backend's `sendToPane` (tmux refuses), fresh, interrupt and abort are refused; an answer is unconfirmed keys where the backend has `sendKeys` |
-| `src/channels/hooks.ts` | `hooksChannel` (spec D4): a local hook harness's pane on tmux, or a pi on its fallback (spec D15, pi's harness row: `C-u`, Escape with no interrupt event, `/new` confirmed at once). Send: gate on the pane's murmur report (`blocked` refused; running or unknown need `force`), clear with the harness row's clear key, paste (`pasteToPane`), ack by `run_count` within `MU_SEND_ACK_MS`, else `unknown` through `onUndelivered`, never resent; steer refused (`AgentSteerUnsupportedError`); `answer` types keys into a blocked pane, confirmed by the next event, else it writes `continued` (`murmur hook mu --pane`) so `blocked` clears; `interrupt` and `abort` press the row's interrupt key, confirmed by the harness's own interrupt event (`AgentAbortTimeoutError` without it), or, where it has none (claude), recorded as mu's `interrupted` (`idle?`); `fresh` pastes the row's fresh command, waits for the new session where it starts at once (`AgentFreshUnconfirmedError`), and confirms the text only by a run in a new session; `watch` polls the pane for a `turn_stopped` past the baseline and `lastRun` returns that turn's text only when it changed since a read before the turn ended (murmur does not say which turn wrote it, so never an earlier turn's, an `idle?` turn's, or one a first read finds already over; cursor-agent's late text is awaited), and a dialog as `blocked` (the wait's `input`); `baseline` is the settled turns and `session_id`; `hooksFence` is a confirmed (or remote `sent`) paste's wait fence; state reads are the mux read (murmur's pane option). A remote worker (the target's `remote` reader) reads its node on each gate, at the start and every 5th poll of a watch, and every 5 s of a task spawn's readiness, never in an ack poll: its send is `ack: sent`, its interrupt records `interrupted` on the node, its answer records `continued` there before the keys (the dialog put back if the keys fail), a watch on a pane with no row yet waits for one (`awaitRow`), and `fresh` is refused |
+| `src/channels/hooks.ts` | `hooksChannel` (spec D4): a hook harness's pane on tmux (local, or remote per spec D11 through `hooks-remote.ts` with `agents.remote_key`), or a pi on its fallback (spec D15, pi's harness row: `C-u`, Escape with no interrupt event, `/new` confirmed at once). Send: gate on the pane's murmur report (`blocked` refused; running or unknown need `force`), clear with the harness row's clear key, paste (`pasteToPane`), ack by `run_count` within `MU_SEND_ACK_MS`, else `unknown` through `onUndelivered`, never resent; steer refused (`AgentSteerUnsupportedError`); `answer` types keys into a blocked pane, confirmed by the next event, else it writes `continued` (`murmur hook mu --pane`) so `blocked` clears; `interrupt` and `abort` press the row's interrupt key, confirmed by the harness's own interrupt event (`AgentAbortTimeoutError` without it), or, where it has none (claude), recorded as mu's `interrupted` (`idle?`); `fresh` pastes the row's fresh command, waits for the new session where it starts at once (`AgentFreshUnconfirmedError`), and confirms the text only by a run in a new session; `watch` polls the pane for a `turn_stopped` past the baseline and `lastRun` returns that turn's text only when it changed since a read before the turn ended (murmur does not say which turn wrote it, so never an earlier turn's, an `idle?` turn's, or one a first read finds already over; cursor-agent's late text is awaited), and a dialog as `blocked` (the wait's `input`); `baseline` is the settled turns and `session_id`; `hooksFence` is a confirmed (or remote `sent`) paste's wait fence; state reads are the mux read (murmur's pane option). A remote worker (the target's `remote` reader) reads its node on each gate, at the start and every 5th poll of a watch, and every 5 s of a task spawn's readiness, never in an ack poll: its send is `ack: sent`, its interrupt records `interrupted` on the node, its answer records `continued` there before the keys (the dialog put back if the keys fail), a watch on a pane with no row yet waits for one (`awaitRow`), and `fresh` is refused |
 | `src/channels/hooks-remote.ts` | the `hooks` channel's remote path (spec D11): `remoteReader` (attached by `channelTarget` to a `hooks` row with `agents.remote_key`) runs `murmur pane --remote <key> --json` on the worker's node through the profile's `exec` template under the host's channel admission (`remotePaneScript`, optionally recording one of mu's events first with `murmur hook mu --remote`), parses the report (`parseRemoteOutput`, `remoteSnapshot`) and relays each applied event into the local pane's inbox (`relayPayload`, `writeMuEvent`), then brings the pane back in line with the node's report where an earlier read's relay was lost (`reconcileEvents`); `textTurnAfter` keeps a per-key record of the run each text arrived in, so the snapshot says whether its text is the last ended turn's own (`textTied`, collect's CLOSE); reads of one key serialized by a strict file lock beside the DB; never throws |
 | `src/channels/hooks-spawn.ts` | the `hooks` side of a task spawn (spec D17): `awaitHooksSession` (wait for `session_start` where the row's `startupSessionStart` is `immediate`, else one read: the receipt's baseline), `hooksRunSince` (a run past that baseline, for the replay's promotion; reads a remote node first), `hooksTurnFailure` (the last turn ended in `turn_failed` and nothing happened since: the executor's in-place retry), `acknowledgeTurnFailure` (that retry clears the pane's `error` first, `murmur clear --pane`, confirmed by a read, so a later failure is raised afresh), `spawnAckMs` (`MU_SPAWN_ACK_MS`) |
 | `src/channels/hooks-pane.ts` | `murmur pane <pane> --json` (drains the inbox first; `setMurmurPaneRunnerForTests`), `writeMuEvent` (`murmur hook mu --pane`; `setMurmurHookRunnerForTests`), `clearPaneAttention` (`murmur clear --pane`; `setMurmurClearRunnerForTests`), `sendGate` (on `attention` and `activity`, never the rendered word), `runStarted` (no baseline, no confirmation), `eventArrived`, `settledRuns`, `freshStarted`, `runInNewSession`, `pollPane`; `MU_SEND_ACK_MS`, `MU_STALE_MS` |

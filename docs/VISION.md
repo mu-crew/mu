@@ -116,10 +116,11 @@ The crew survives detach and reattach.
 
 The multiplexer is a backend chosen by detection
 (`MU_MUX` → `HERDR_ENV` → `$TMUX` → a Rex terminal → `PATH`).
-Topology, the non-pi send (herdr's atomic `agent prompt`, Rex's paste),
-scrollback capture, pane-id validation, and identity fallback live behind
-`MuxBackend` in `src/mux/`. There are three implementations: tmux, herdr
-and Rex. A fourth needs its own friction evidence.
+Topology, the pane send (herdr's atomic `agent prompt`, Rex's paste, the
+tmux paste only the `hooks` channel uses), scrollback capture, pane-id
+validation, and identity fallback live behind `MuxBackend` in `src/mux/`.
+There are three implementations: tmux, herdr and Rex. A fourth needs its
+own friction evidence.
 
 ### 6. Five first-class harnesses, with reported agent state
 
@@ -127,19 +128,22 @@ mu never infers agent state from pane text. Each state source reports it:
 
 | Agent | Send, abort, wait | State |
 | --- | --- | --- |
-| pi (any backend, local or remote over `ssh -L` or a carrier's forward) | control socket, exact | control socket |
-| claude, codex, cursor-agent, muse on tmux (`hooks`) | clear the input line, paste, then Enter; confirmed by the harness's `run_count`, never resent | murmur's pane inbox, fed by the harness's own hooks |
+| pi on `ctl` (any backend, local or remote over `ssh -L` or a carrier's forward) | control socket, exact | control socket |
+| claude, codex, cursor-agent, muse on tmux (`hooks`), local; pi on its `MU_PI_CHANNEL=hooks` fallback | clear the input line, paste, then Enter; confirmed by the harness's `run_count`, never resent | murmur's pane inbox, fed by the harness's own hooks |
+| claude, codex, cursor-agent, muse on tmux (`hooks`), `--host` | clear the input line, paste, then Enter; `ack: sent`, confirmed by the next wait or send gate's read of the node | murmur on the node, relayed into the local pane's inbox |
 | other CLI on herdr | mux | herdr |
 | other CLI on Rex | mux (paste, then Enter) | the agent's own OSC 7501 report |
 | other CLI on tmux | none: send refused | murmur |
 
 With no source, state is `unknown` with a reason. A pi agent whose
 socket does not answer fails loudly; mu never falls back to pasting for
-pi. The tmux paste is the `hooks` channel's alone, because there the
+pi (the `hooks` fallback is chosen at spawn and recorded, never on a
+failure). The tmux paste is the `hooks` channel's alone, because there the
 harness's hook event confirms what a paste cannot confirm itself: a send
 is gated on the reported state (never into a permission dialog, which
-`mu agent answer` takes), and one that no event confirms reports
-`unknown` and is never resent. murmur is optional for pi agents.
+`mu agent answer` takes), and a local one that no event confirms reports
+`unknown` and is never resent. murmur is optional for a pi on `ctl`; a pi
+on the `hooks` fallback needs it.
 
 pi, claude, codex, cursor-agent and muse are first-class: each can
 orchestrate and each can work, mixed in one crew, and one contract suite runs
@@ -193,17 +197,21 @@ the grounding for every change.
 mu coordinates agents and does not reason about them. It does not own:
 
 - **Model selection or thinking levels.** No tiers, no provider matrix.
-  pi already takes `--model` and `--thinking`. Pass them through the
-  spawn command.
+  `spawn --model` hands the name, unread, to the harness's own model
+  flag; anything else (pi's `--thinking`) goes in the spawn command.
 - **Prompts.** No system-prompt templates and no role registry. The
   prompt is the spawn command plus the first message.
 - **Tool routing.** The agent CLI owns tool allowlists, MCP servers, and
-  extensions.
+  extensions. mu adds only a local worker's in-sandbox auto-approve flag
+  and folder trust for a worktree it made, and skips the flag when the
+  command already picks a mode.
 - **Output interpretation.** mu does not parse panes for state, facts,
   or tool calls. `--evidence` is recorded as given.
 
-The whole vendor surface is one lookup: `--cli <key>` reads
-`$MU_<KEY>_COMMAND`. Per-role models are a convention in your shell rc:
+The vendor surface is the frozen harness table (`src/harnesses.ts`: each
+of the five harnesses' hook events, keys and flags) plus one lookup:
+`--cli <key>` reads `$MU_<KEY>_COMMAND`. Per-role models are a
+convention in your shell rc:
 
 ```bash
 export MU_PI_MINI_COMMAND="pi --model haiku:off"   # → --cli pi_mini
@@ -280,11 +288,13 @@ previous surface on the same scenarios ([reports](eval/README.md)).
    the backend. Agent verbs exit 5 when none is reachable; task verbs
    and `mu_delegate` (a child pi process) work without one.
 2. **The agent never acknowledges a send.** For pi, the control socket
-   confirms that pi accepted the message. On the `hooks` path, the
+   confirms that pi accepted the message. On the local `hooks` path, the
    harness's own turn count confirms a paste, or the send reports
-   `unknown` and is never resent. On the mux path, mu confirms
-   only that the text reached the pane and warns when it cannot confirm
-   submission. Use `mu wait` or `mu log --tail` to see the effect.
+   `unknown` and is never resent; a `--host` paste reports `sent`, and
+   the next wait or send gate's read of the node confirms it. On the mux
+   path, mu confirms only that the text reached the pane and warns when
+   it cannot confirm submission. Use `mu wait` or `mu log --tail` to see
+   the effect.
 3. **Recursion is opt-in.** `mu_delegate` is hidden in agents mu spawned
    (`MU_MANAGED_AGENT`), unless mu started the agent as an orchestrator
    (`mu orchestrate`, `MU_ORCHESTRATOR=1`). That flag never reaches a

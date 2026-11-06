@@ -448,6 +448,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **The course check counts a close in the same millisecond as its anchor.**
+  `courseCheckHint` compared each close note's time with a strict `>` against
+  the workstream's creation or the newest `COURSE CHECK` note, so a task
+  closed in the millisecond its workstream was made was never counted, and
+  neither was one closed in the millisecond of the check. Notes are now
+  ordered by time and then id: every close counts against the creation, and a
+  close in the check's millisecond counts only if it was written after it.
+
 - **`mu agent close <name>` with no agent row no longer leaves a stopped lease
   job fencing the name.** It stopped the job (`stop` exit 0), then closed the
   removed agent's remote worktree, and only then dropped the reservation. So a
