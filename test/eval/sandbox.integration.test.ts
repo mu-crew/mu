@@ -66,7 +66,7 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
     await box.close();
     expect(existsSync(dir)).toBe(false);
     // what a SessionEnd hook through murmur does after the close: recreate its compile cache
-    mkdirSync(join(dir, "murmur", "compile-cache"), { recursive: true });
+    mkdirSync(join(dir, "murmur2", "compile-cache"), { recursive: true });
     await new Promise((r) => setTimeout(r, 6_000));
     expect(existsSync(dir)).toBe(false);
   });

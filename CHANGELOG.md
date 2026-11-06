@@ -12,6 +12,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu doctor` checks mu's own hook entries** (spec D13). A new `hooks`
+  section (and `hooks` in `--json`) reads claude's, codex's and
+  cursor-agent's hook config through `mu init`'s own matcher and reports, per
+  harness set up here, a missing `mu hook stop` entry, a drifted one (an
+  older form, a changed timeout, a duplicate: what `init` would change), or a
+  foreign one (an entry mu did not write that runs `mu hook stop`, which
+  `init` leaves alone). Warn rows: doctor still exits 0. Read-only.
+
 - **The prompts as skills for Claude Code and cursor-agent** (spec U19).
   `mu init` now also writes each shipped prompt (`prompts/*.md`, pi's
   `/ultrathink`, `/mu-review`, …) as a skill of the same name beside mu's
@@ -397,6 +405,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   and the real pi is linked as `pi` (a launcher may dispatch on its name).
 
 ### Changed
+
+- **`CLAUDE_CONFIG_DIR` and `CODEX_HOME` are honoured** wherever mu reads or
+  writes a harness's config, as the harnesses, murmur, museum and muzzle read
+  them: `mu init` writes the hook entry, skill and prompt skills to
+  `$CLAUDE_CONFIG_DIR/settings.json` and `$CLAUDE_CONFIG_DIR/skills`,
+  `$CODEX_HOME/hooks.json` and `$CODEX_HOME/skills` when set (a harness is
+  set up when that directory exists), and `mu doctor`, murmur's availability
+  check and `mu host check`'s probe (in the host's own shell) read the moved
+  files. Unset or empty: `~/.claude` and `~/.codex`, as before.
+
+- **murmur keeps its state in `~/.local/state/murmur2`.** The hook-harness
+  inbox needs murmur 2's store, which murmur 1.x refuses, so murmur moved
+  to a new directory and its inbox and remote area always sit under the home
+  directory. mu reads them only through `murmur pane` and writes only through
+  `murmur hook mu`, so nothing in mu moves; the eval rig's sandboxed murmur
+  state is named `murmur2` to match. mu's own state stays in
+  `~/.local/state/mu-next`: its additions are additive at schema 13.
 
 - **Docs: every harness first-class** (spec D16, U19). The skill gains a
   capability section per channel (`ctl`, `hooks`, `mux`), and "Checks are

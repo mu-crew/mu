@@ -67,7 +67,7 @@ const tools: HookTools = {
   observer: "/w/mu/tools/eval/hook-observer.ts",
 };
 const paths: HookPaths = {
-  murmurState: "/sb/murmur",
+  murmurState: "/sb/murmur2",
   workerDir: "/sb/workers",
   stateHome: "/sb/home/.local/state",
   stopTimeoutS: 600,
@@ -122,7 +122,7 @@ describe("the rig's hook entries", () => {
 
   it("Muse's entries name the sandbox paths (its hooks get no env); codex's never do", () => {
     const muse = hookEntries("muse", tools, paths).map((e) => e.command);
-    expect(muse.some((c) => c.startsWith("MURMUR_STATE_DIR='/sb/murmur' "))).toBe(true);
+    expect(muse.some((c) => c.startsWith("MURMUR_STATE_DIR='/sb/murmur2' "))).toBe(true);
     expect(muse.some((c) => c.endsWith("'/sb/workers/hooks.log'"))).toBe(true);
     for (const e of hookEntries("codex", tools, paths)) expect(e.command).not.toContain("/sb/");
   });
@@ -357,7 +357,7 @@ describe("live sandbox environment", () => {
     CLAUDE_CODE_SESSION_ID: "s",
     CLAUDE_CODE_MESSAGING_SOCKET: "/tmp/s",
     MUSE_PLUGIN_ROOT: "/p",
-    MURMUR_STATE_DIR: "/real/murmur",
+    MURMUR_STATE_DIR: "/real/murmur2",
     XDG_CONFIG_HOME: "/home/real/.config",
   };
   const dir = "/tmp/mu-eval-1-2-abc";
@@ -389,7 +389,7 @@ describe("live sandbox environment", () => {
     expect(live).toMatchObject({
       MU_DB_PATH: `${dir}/state/mu.db`,
       MU_STATE_DIR: `${dir}/state`,
-      MURMUR_STATE_DIR: `${dir}/murmur`,
+      MURMUR_STATE_DIR: `${dir}/murmur2`,
       MU_TMUX_SOCKET: "sock",
       TMUX_TMPDIR: `${dir}/tmux-tmp`,
       TMPDIR: dir,
@@ -402,16 +402,16 @@ describe("live sandbox environment", () => {
   it("a fake run keeps its own HOME and gets murmur's state too", () => {
     const fake = sandboxEnv(dir, surface, "sock", base);
     expect(fake.HOME).toBe(`${dir}/home`);
-    expect(fake.MURMUR_STATE_DIR).toBe(`${dir}/murmur`);
+    expect(fake.MURMUR_STATE_DIR).toBe(`${dir}/murmur2`);
     expect(fake.EVAL_LIVE).toBeUndefined();
   });
 });
 
 describe("the ssh host's environment", () => {
-  const shim = { PATH: "/sb/bin", HOME: "/home/real", MURMUR_STATE_DIR: "/sb/murmur" };
+  const shim = { PATH: "/sb/bin", HOME: "/home/real", MURMUR_STATE_DIR: "/sb/murmur2" };
   it("murmur's state on the host is its own", () => {
     expect(remoteEnv(shim, "/sb/hosts/dev", "dev", "s").MURMUR_STATE_DIR).toBe(
-      "/sb/hosts/dev/murmur",
+      "/sb/hosts/dev/murmur2",
     );
   });
   it("the host's HOME is its own, live or fake (mu's remote worktrees stay in the sandbox)", () => {

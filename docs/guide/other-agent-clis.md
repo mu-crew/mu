@@ -33,7 +33,11 @@ Each `init` writes entries for every harness set up here (its config
 directory exists), and touches only entries it wrote: your own handlers, and
 the other tools', stay as they are. `mu init --harness <names>|all` also
 writes harnesses not set up yet. codex asks you to trust a new or changed hook
-once (`/hooks`): until then it fires none of them.
+once (`/hooks`): until then it fires none of them. `CLAUDE_CONFIG_DIR` and
+`CODEX_HOME`, when set, move Claude Code's and codex's files (hooks and
+skills) for every `init`, `doctor` and `mu host check`, as they do for the
+harnesses. `mu doctor`'s `hooks` section reports a missing, drifted or
+foreign `mu hook stop` entry for claude, codex and cursor-agent.
 
 Without murmur's entries a `hooks` agent's state is `unknown`: sends are
 refused without `--force`, waits never see a turn end, and stall detection

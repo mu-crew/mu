@@ -635,3 +635,81 @@ describe("mu init: CLI", () => {
     });
   });
 });
+
+describe("mu init: CLAUDE_CONFIG_DIR and CODEX_HOME", () => {
+  it("writes claude's and codex's hook entry and skills where the variables move them, nothing under ~/.claude or ~/.codex", () => {
+    const env = { CLAUDE_CONFIG_DIR: join(tmp, "claude-cfg"), CODEX_HOME: join(tmp, "codex-home") };
+    mkdirSync(env.CLAUDE_CONFIG_DIR);
+    mkdirSync(env.CODEX_HOME);
+    mkdirSync(at(".cursor"));
+    const r = runInit({ home, packageRoot: root, env });
+    expect(state(r, "hooks")).toMatchObject({
+      claude: "written",
+      codex: "written",
+      "cursor-agent": "written",
+    });
+    const moved = (...p: string[]) => JSON.parse(readFileSync(join(...p), "utf8"));
+    expect(grouped(moved(env.CLAUDE_CONFIG_DIR, "settings.json"), "Stop")).toEqual([
+      muHookCommand("claude"),
+    ]);
+    expect(grouped(moved(env.CODEX_HOME, "hooks.json"), "Stop")).toEqual([muHookCommand("codex")]);
+    expect(readFileSync(join(env.CLAUDE_CONFIG_DIR, "skills", "mu", "SKILL.md"), "utf8")).toBe(
+      shippedSkill,
+    );
+    expect(existsSync(join(env.CODEX_HOME, "skills", "mu", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(env.CLAUDE_CONFIG_DIR, "skills", "mu-review", "SKILL.md"))).toBe(true);
+    // cursor-agent ignores both variables and reads only ~/.claude and ~/.codex:
+    // the moved copies do not cover it, so it gets its own
+    expect(state(r, "skills")["cursor-agent"]).toBe("written");
+    expect(existsSync(at(".cursor", "skills", "mu", "SKILL.md"))).toBe(true);
+    expect(r.prompts.filter((i) => i.harness === "cursor-agent").map((i) => i.state)).not.toContain(
+      "covered",
+    );
+    expect(existsSync(at(".cursor", "skills", "mu-review", "SKILL.md"))).toBe(true);
+    expect(tree().filter((f) => f.startsWith(".claude/") || f.startsWith(".codex/"))).toEqual([]);
+    expect(state(runInit({ home, packageRoot: root, env }), "hooks")).toMatchObject({
+      claude: "unchanged",
+      codex: "unchanged",
+    });
+  });
+
+  it("a skill in ~/.claude/skills still covers cursor-agent when CLAUDE_CONFIG_DIR moves claude's", () => {
+    const env = { CLAUDE_CONFIG_DIR: join(tmp, "claude-cfg") };
+    mkdirSync(env.CLAUDE_CONFIG_DIR);
+    mkdirSync(at(".cursor"));
+    write([".claude", "skills", "mu", "SKILL.md"], "---\nname: mu\n---\nstale\n");
+    const r = runInit({ home, packageRoot: root, env });
+    expect(state(r, "skills")["cursor-agent"]).toBe("covered");
+    expect(r.skills.find((i) => i.harness === "cursor-agent")?.detail).toContain(
+      join(home, ".claude", "skills"),
+    );
+    expect(existsSync(at(".cursor", "skills", "mu"))).toBe(false);
+  });
+
+  it("set up here means the moved directory exists; ~/.codex alone does not count", () => {
+    mkdirSync(at(".codex"));
+    const env = { CODEX_HOME: join(tmp, "codex-home") };
+    const r = runInit({ home, packageRoot: root, env });
+    expect(r.hooks.find((i) => i.harness === "codex")).toMatchObject({
+      state: "skipped",
+      detail: `not set up here (no ${env.CODEX_HOME}); --harness codex writes it`,
+    });
+    expect(existsSync(at(".codex", "hooks.json"))).toBe(false);
+    // an empty value is unset
+    expect(
+      state(runInit({ home, packageRoot: root, env: { CODEX_HOME: "" } }), "hooks").codex,
+    ).toBe("written");
+    expect(existsSync(at(".codex", "hooks.json"))).toBe(true);
+  });
+
+  it("reads them from the environment by default", async () => {
+    const dir = join(tmp, "codex-home");
+    mkdirSync(dir);
+    await withEnv("CODEX_HOME", dir, async () => {
+      runInit({ home, packageRoot: root });
+    });
+    expect(grouped(JSON.parse(readFileSync(join(dir, "hooks.json"), "utf8")), "Stop")).toEqual([
+      muHookCommand("codex"),
+    ]);
+  });
+});

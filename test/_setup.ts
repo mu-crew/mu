@@ -144,6 +144,14 @@ process.env.MU_PI_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-pi-home-${p
 // set up there and a bare `mu init` writes nothing.
 process.env.MU_INIT_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-init-home-${process.pid}`;
 
+// Baseline: no moved harness config. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` move
+// where `mu init` writes and `mu doctor` reads, past MU_INIT_HOME, so a
+// developer's own would take a test's writes into their real config. Tests
+// that need one pass it in an env object or set it.
+for (const key of ["CLAUDE_CONFIG_DIR", "CODEX_HOME"]) {
+  delete process.env[key];
+}
+
 // Real dirs first (from the inherited env), then redirect, then guard.
 const realDirs = realMuDirs();
 const runRoot = (inject as (key: string) => unknown)(RUN_ROOT_KEY);

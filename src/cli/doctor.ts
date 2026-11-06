@@ -6,6 +6,7 @@
 //   - workstream: the injected worker scope, if any (never read from the session)
 //   - state: per-workstream agent / task / log counts + reconcile drift
 //   - disk: state-dir vs DB reconciliation (both directions) + residue
+//   - hooks: mu's own `mu hook stop` entries for claude, codex and cursor-agent
 //
 // Read-only (the reconcile pass uses mode: "report-only" so polling doesn't
 // race in-flight spawns; see PENDING_PANE_PREFIX).
@@ -49,6 +50,7 @@ import {
   type FleetHazard,
   HazardFailError,
 } from "../fleet-hazards.js";
+import { checkMuHooks, initHome } from "../mu-init.js";
 import { activeMux, type MuxHealth, NoMultiplexerError } from "../mux.js";
 import { pc } from "../output.js";
 import { type EdgeCycle, findEdgeCycles } from "../tasks/edges.js";
@@ -349,6 +351,18 @@ export async function cmdDoctor(
     }
   }
 
+  // ─ mu's own Stop hook entries (spec D13: each tool's doctor checks its
+  // own), read through `mu init`'s matcher. Warn rows only.
+  console.log(pc.bold("\nhooks"));
+  const hooks = checkMuHooks(initHome());
+  if (hooks.length === 0) {
+    console.log(
+      `  ${"mu hook stop".padEnd(16)} : ${pc.green("ok")} ${pc.dim("no claude, codex or cursor-agent config here")}`,
+    );
+  } else if (printHazards(hooks)) {
+    sawHazard = true;
+  }
+
   // ─ Housekeeping: workstreams that look torn-down-able
   //
   // Deliberately its own section rather than a `fleet` row: fleet is
@@ -474,9 +488,7 @@ export async function cmdDoctor(
     for (const c of size.commands) console.log(pc.dim(`      ${c}`));
   }
   if (sawHazard) {
-    console.log(
-      pc.dim("\nSee the fleet / disk sections above: at least one finding needs attention."),
-    );
+    console.log(pc.dim("\nSee the sections above: at least one finding needs attention."));
   }
   // A `fail` row (today: the DB inside MU_SYNC_DIR) is a hard failure,
   // not a hint, so it exits non-zero like drift. Thrown last so the
@@ -638,6 +650,12 @@ export async function cmdDoctorJson(
     remediation: h.remediation ?? [],
   }));
   const dagCycles = findEdgeCycles(db).map((c) => ({ ...c, fix: cycleFix(c) }));
+  const hooks = checkMuHooks(initHome()).map((h) => ({
+    name: h.name,
+    severity: h.severity,
+    detail: h.detail,
+    remediation: h.remediation ?? [],
+  }));
 
   // Disk ↔ DB: same checks as the human path. Remediation lines ride
   // along here (unlike `fleet`, which drops them) because the whole
@@ -714,6 +732,7 @@ export async function cmdDoctorJson(
     housekeeping,
     closeGuards,
     dagCycles,
+    hooks,
     disk,
     worktreeUsage,
     drift,
