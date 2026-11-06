@@ -50,6 +50,8 @@ export interface PretrustIO {
 }
 
 const TICK_MS = 500;
+/** How long one unchanged dialog may stay up after an answer before it is answered again. */
+const REANSWER_MS = 5_000;
 /** Default deadline for one harness to show a ready prompt. */
 export const PRETRUST_TIMEOUT_MS = 150_000;
 /** How long a quit harness gets to exit before its pane is killed. */
@@ -129,6 +131,7 @@ export async function pretrustOne(
   const deadline = io.now() + timeoutMs;
   let answered = 0;
   let lastScreen = "";
+  let lastAnswerAt = 0;
   let readyTicks = 0;
   let outcome: "ready" | "exited" | "timeout" = "timeout";
   while (io.now() < deadline) {
@@ -141,11 +144,15 @@ export async function pretrustOne(
     const keys = trustDialogKeys(screen);
     if (keys !== null) {
       readyTicks = 0;
-      // answer each dialog once; a screen that has not changed yet is still redrawing
-      if (screen !== lastScreen && answered < MAX_ANSWERS) {
+      // answer each dialog once; a screen that has not changed yet is still redrawing. The same
+      // dialog still up REANSWER_MS later lost its keys (drawn before the harness read input:
+      // live, claude's dialog sat unanswered for 150 s after one early answer), so answer again.
+      const stale = screen === lastScreen && io.now() - lastAnswerAt >= REANSWER_MS;
+      if ((screen !== lastScreen || stale) && answered < MAX_ANSWERS) {
         for (const k of keys) io.keys(sb, pane, k);
         answered++;
         lastScreen = screen;
+        lastAnswerAt = io.now();
       }
       continue;
     }
