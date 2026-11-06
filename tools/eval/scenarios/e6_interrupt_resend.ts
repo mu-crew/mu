@@ -41,7 +41,7 @@ const WORKERS = [
 const REPORTS_INTERRUPT = new Set(["codex", "cursor-agent", "muse"]);
 
 const WRONG = (task: string): string =>
-  `${task}: run eval-slow in your working directory and wait until it prints DONE (it takes about 20 minutes and prints its progress meanwhile). Stay in this turn until then: if your shell tool stops waiting, wait for it again or run it again. Then reply with its output`;
+  `${task}: run eval-slow in your working directory and wait until it prints DONE (it takes about 20 minutes and prints its progress meanwhile). Run it in the foreground, not as a background task, and stay in this turn until then: if your shell tool stops waiting, wait for it again or run it again. Then reply with its output`;
 
 /**
  * A long, honest job: progress every 20 s, DONE after 20 minutes. Live E6 under a claude AUT: the
