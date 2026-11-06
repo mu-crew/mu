@@ -1,0 +1,75 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --cli codex --worktree --task i1 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:w1@0 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close ship -w eval --evidence 'i1 implemented'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task check i1 -w eval --by claude/default --brief 'Review the i1 commit: is i1.txt one line ending in a newline? Answer VERDICT/EVIDENCE.' | tee \"$TMPDIR/check.out\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn rv -w eval --cli claude --worktree --task rv1 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:rv@0 -w eval --timeout 120 | tee \"$TMPDIR/wait.json\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "node -e 'const d=JSON.parse(require(\"fs\").readFileSync(0,\"utf8\")); const t=(d.data.snapshots||[]).map(s=>s.lastText||\"\").join(\"\\n\"); console.log(t.split(\"\\n\").filter(l=>/^(VERDICT|EVIDENCE):/.test(l)).join(\"\\n\"))' < \"$TMPDIR/wait.json\" > \"$TMPDIR/answer\"; cat \"$TMPDIR/answer\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "C=$(sed -n 's/.*check=\\([0-9A-Za-z]*\\).*/\\1/p' \"$TMPDIR/check.out\" | head -1); mu task verdict i1 -w eval --check \"$C\" - < \"$TMPDIR/answer\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "grep -q '^VERDICT: CONFIRMED' \"$TMPDIR/answer\" && git cherry-pick \"$(git -C \"$MU_STATE_DIR/worktrees/eval/w1\" rev-parse HEAD)\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w1 rv; do rev=$(mu agent close $w -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); [ -n \"$rev\" ] && mu agent close $w -w eval --if \"$rev\"; done"
+      }
+    ]
+  },
+  {
+    "text": "i1 passed review, is merged, and ship is closed."
+  }
+]

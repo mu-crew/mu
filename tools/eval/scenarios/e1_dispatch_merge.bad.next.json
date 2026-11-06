@@ -1,0 +1,47 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "echo d1 >> d1.txt && git add d1.txt && git commit -qm d1"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w2 -w eval --cli codex --worktree --task d2 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:w2@0 -w eval --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w2; do git cherry-pick \"$(git -C \"$MU_STATE_DIR/worktrees/eval/$w\" rev-parse HEAD)\" || exit 1; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close d1 -w eval --evidence 'committed d1 on main myself'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w2; do rev=$(mu agent close $w -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); [ -n \"$rev\" ] && mu agent close $w -w eval --if \"$rev\"; done"
+      }
+    ]
+  },
+  {
+    "text": "d1 is done on main and d2 is merged; both tasks are closed."
+  }
+]

@@ -15,8 +15,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { AUT_NAMES } from "./fake-payloads.ts";
+import { type CodexHooks, type HookTools, setupHarnesses } from "./harness.ts";
 import type { Sandbox, Surface } from "./types.ts";
 
 /** Where the AUT sees the surface's skill: a copy inside the sandbox (a regular tree, so `find /` hits it too), so its own recipes are the first (and shortest) path it meets. */
@@ -98,24 +100,75 @@ function linkTools(binDir: string, pathEnv: string | undefined): void {
   }
 }
 
-/** Pure: the whitelisted environment of a sandbox. Never inherits MU_*, TMUX*, HERDR_*, PI_*. */
+/**
+ * What a live sandbox drops from the caller's environment: mu's, tmux's, herdr's, murmur's and
+ * pi's own variables, and each harness's session and nesting markers (the caller may itself be an
+ * agent), named one by one. A harness's configuration and auth variables (CLAUDE_CODE_USE_*,
+ * CLAUDE_CODE_OAUTH_TOKEN, CODEX_HOME, ANTHROPIC_*, ...) stay.
+ */
+export const LIVE_DROP = new RegExp(
+  `^(MU_|TMUX|HERDR_|MURMUR_|PI_|EVAL_|(${[
+    "CLAUDECODE",
+    "CLAUDE_PID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_CURRENT_SESSION_ID",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ATTENDED",
+    "CLAUDE_CODE_MESSAGING_[A-Z_]+",
+    "CLAUDE_CODE_SSE_PORT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_TMPDIR",
+    "CLAUDE_PROJECT_DIR",
+    "CLAUDE_ENV_FILE",
+    "CLAUDE_PLUGIN_[A-Z_]+",
+    "CLAUDE_LAUNCHER_SESSION_FILE",
+    "CODEX_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "CODEX_TOOL_CALL_ID",
+    "CODEX_CI",
+    "CURSOR_AGENT",
+    "CURSOR_CONVERSATION_ID",
+    "CURSOR_REQUEST_ID",
+    "CURSOR_TRANSCRIPT_PATH",
+    "CURSOR_PROJECT_DIR",
+    "CURSOR_ASKPASS_[A-Z_]+",
+    "MUSE_SESSION_ID",
+    "MUSE_THREAD_ID",
+    "MUSE_PLUGIN_[A-Z_]+",
+  ].join("|")})$)`,
+);
+
+/**
+ * Pure: the environment of a sandbox.
+ *
+ * - Fake run (default): a whitelist. HOME, XDG state and cache, the DB and every crew state dir
+ *   are inside the sandbox; nothing of MU_*, TMUX*, HERDR_*, PI_* is inherited.
+ * - Live run (`live`, real harness binaries): the caller's environment with LIVE_DROP removed, so
+ *   each harness keeps its own HOME, config and auth (D1). The sandbox still owns mu's DB and
+ *   state, murmur's state, the tmux server and TMPDIR; PATH is the sandbox bin, then the caller's.
+ */
 export function sandboxEnv(
   dir: string,
   surface: Surface,
   tmuxSocket: string,
   base: NodeJS.ProcessEnv,
+  opts: { live?: boolean } = {},
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) {
     if (v === undefined) continue;
-    if (KEEP.has(k) || k.startsWith("MODELBRIDGE_")) env[k] = v;
+    if (opts.live ? !LIVE_DROP.test(k) : KEEP.has(k) || k.startsWith("MODELBRIDGE_")) env[k] = v;
   }
   const home = join(dir, "home");
   const state = join(dir, "state");
   env.TERM ??= "xterm-256color";
-  env.HOME = home;
-  env.XDG_STATE_HOME = join(home, ".local", "state");
-  env.XDG_CACHE_HOME = join(home, ".cache");
+  if (!opts.live) {
+    env.HOME = home;
+    env.XDG_STATE_HOME = join(home, ".local", "state");
+    env.XDG_CACHE_HOME = join(home, ".cache");
+  }
+  env.MURMUR_STATE_DIR = join(dir, "murmur");
   env.MU_DB_PATH = join(state, "mu.db");
   env.MU_STATE_DIR = state;
   env.MU_SYNC_DIR = join(dir, "sync");
@@ -130,7 +183,18 @@ export function sandboxEnv(
   env.GIT_COMMITTER_EMAIL = "eval@example.invalid";
   env.EVAL_WORKER_DIR = join(dir, "workers");
   env.EVAL_SURFACE_FAMILY = surface.family ?? "3x";
-  env.PATH = [join(dir, "bin"), ...systemPathDirs(base.PATH)].join(":");
+  if (opts.live) {
+    // the sandbox root as TMPDIR: a harness sandbox that lets its tools write TMPDIR (codex's
+    // workspace-write, cursor-agent's) then reaches the run's logs, DB dir and worktree gitdirs
+    env.TMPDIR = dir;
+    env.EVAL_LIVE = "1";
+    env.EVAL_CALLER_PATH = base.PATH ?? "";
+    env.PATH = [join(dir, "bin"), ...(base.PATH ?? "").split(":").filter((d) => d !== "")].join(
+      ":",
+    );
+  } else {
+    env.PATH = [join(dir, "bin"), ...systemPathDirs(base.PATH)].join(":");
+  }
   return env;
 }
 
@@ -188,7 +252,7 @@ export async function mu(sb: Sandbox, args: string[]): Promise<ExecResult> {
   return exec("node", [sb.surface.cli, ...args], { env: sb.env, cwd: sb.repoDir });
 }
 
-const live = new Set<{ dir: string; sockets: () => string[] }>();
+const live = new Set<{ dir: string; sockets: () => string[]; restore: () => void }>();
 const SOCKET_PATH_MAX = 104; // sun_path is 108 on Linux
 let handlersInstalled = false;
 
@@ -215,12 +279,59 @@ function sandboxSockets(dir: string, tmuxSocket: string): string[] {
   return names.map((n) => tmuxSocketPath(dir, n));
 }
 
+/**
+ * Dirs already removed that a late hook may bring back: a harness killed with its tmux server
+ * fires SessionEnd through murmur, whose CLI recreates `<MURMUR_STATE_DIR>/compile-cache` at
+ * startup. Swept again a few seconds after the close and at exit.
+ */
+const removed = new Set<string>();
+const RESWEEP_MS = 5_000;
+
+function sweepRemoved(): void {
+  for (const dir of [...removed]) {
+    removed.delete(dir);
+    if (existsSync(dir)) removeSandboxDir(dir);
+  }
+}
+
+/** Remove a closed sandbox's dir now and sweep it again once late hooks have exited. */
+function removeClosed(dir: string): void {
+  removeSandboxDir(dir);
+  removed.add(dir);
+  setTimeout(() => {
+    if (removed.delete(dir) && existsSync(dir)) removeSandboxDir(dir);
+  }, RESWEEP_MS).unref();
+}
+
 /** Sync, idempotent: kill every live sandbox's tmux servers and remove its dir. */
 function cleanupAll(): void {
   for (const s of [...live]) {
     live.delete(s);
+    s.restore();
     for (const sock of s.sockets()) killServer(sock);
-    rmSync(s.dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    removeSandboxDir(s.dir);
+  }
+  sweepRemoved();
+}
+
+/**
+ * Remove a sandbox dir without throwing. A hook a dying harness fired as its tmux server went
+ * down (SessionEnd, say) can still be writing murmur state into the dir while it is removed,
+ * which fails the removal with ENOTEMPTY; retry a few times, then leave the dir and say so
+ * rather than fail the run over a leftover temp dir.
+ */
+export function removeSandboxDir(dir: string, attempts = 10, delayMs = 200): void {
+  for (let i = 1; ; i++) {
+    try {
+      rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      return;
+    } catch (e) {
+      if (i >= attempts) {
+        process.stderr.write(`eval: left ${dir} behind: ${(e as Error).message}\n`);
+        return;
+      }
+      if (delayMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+    }
   }
 }
 
@@ -263,24 +374,32 @@ export const LOCAL_TABLES =
 /** The sandbox's `mu`: runs the surface's CLI and records the call (see observe.ts). Exit status and output are untouched. */
 export function muShim(cli: string): string {
   return String.raw`#!/bin/bash
+# a user's own \`mu hook stop\` entry, read by a live harness: the rig's runs the build by path
+[ "$1" = hook ] && [ "$2" = stop ] && exit 0
 D="\${EVAL_WORKER_DIR:-}"
 aut=
+# the AUT: no agent name (pi over rpc), or an orchestrator pane the rig started (aut, aut-2)
 [ -n "$D" ] && [ -z "\${MU_AGENT_NAME:-}" ] && aut=1
+case " ${AUT_NAMES.join(" ")} " in *" \${MU_AGENT_NAME:-} "*) [ -n "$D" ] && aut=1 ;; esac
+# epoch ms: GNU date's %3N, else perl (BSD date prints a literal N)
+ms() { local t; t=$(date +%s%3N); case "$t" in *[!0-9]*) perl -MTime::HiRes=time -e 'printf("%d\n", time()*1000)' ;; *) echo "$t" ;; esac; }
 # "<table>:<cksum>,..." of the db right now (record-only: a read-only open)
 fp() {
   for t in ${LOCAL_TABLES}; do printf '%s:%s,' "$t" "$(sqlite3 -readonly "$MU_DB_PATH" ".timeout 2000" ".dump $t" 2>/dev/null | cksum | cut -d' ' -f1)"; done
 }
 [ -n "$aut" ] && before=$(fp)
-s=$(date +%s%3N)
+s=$(ms)
 if [ -n "$aut" ]; then
   mkdir -p "$D/mu-out"
-  node ${JSON.stringify(cli)} "$@" | tee -p "$D/mu-out/$$"
+  # GNU tee -p survives a reader that went away; BSD tee has no -p
+  if tee -p /dev/null </dev/null 2>/dev/null; then T="tee -p"; else T=tee; fi
+  node ${JSON.stringify(cli)} "$@" | $T "$D/mu-out/$$"
   rc=\${PIPESTATUS[0]}
 else
   node ${JSON.stringify(cli)} "$@"
   rc=$?
 fi
-[ -n "$D" ] && printf '%s %s %s %s %s %s\n' "$s" "$(date +%s%3N)" "$rc" "\${MU_AGENT_NAME:--}" "$$" "$(printf %s "$*" | tr '\n' ' ')" >> "$D/mu-calls.log" 2>/dev/null
+[ -n "$D" ] && printf '%s %s %s %s %s %s\n' "$s" "$(ms)" "$rc" "$([ -n "$aut" ] && echo - || echo "\${MU_AGENT_NAME:--}")" "$$" "$(printf %s "$*" | tr '\n' ' ')" >> "$D/mu-calls.log" 2>/dev/null
 [ -n "$aut" ] && printf '%s|%s|%s\n' "$$" "$before" "$(fp)" >> "$D/mu-local.log" 2>/dev/null
 exit $rc
 `.replace(/\\\$\{/g, "${");
@@ -302,7 +421,8 @@ function hostPiOutput(arg: string, fallback: string): string {
 
 /** Where the sandbox keeps what the AUT must not stumble on: the real pi (as a sandbox-path symlink, so `ps` shows no host path) and the faux pi's real command line. */
 export function sandboxPi(dir: string): string {
-  return join(dir, ".rt", "pi-real");
+  // named `pi`: a launcher may dispatch on its argv0's basename
+  return join(dir, ".rt", "real", "pi");
 }
 
 /**
@@ -320,6 +440,7 @@ function installFauxPi(dir: string, binDir: string, surface: Surface): void {
   );
   writeFileSync(join(rt, "version"), hostPiInfo.version);
   writeFileSync(join(rt, "models"), hostPiInfo.models);
+  mkdirSync(dirname(sandboxPi(dir)), { recursive: true });
   symlinkSync(REAL_PI, sandboxPi(dir));
   writeShim(
     join(rt, "pi"),
@@ -337,10 +458,39 @@ exec ${JSON.stringify(join(rt, "pi"))} "$@"`,
   );
 }
 
-export async function createSandbox(
-  surface: Surface,
-  opts: { env?: Record<string, string> } = {},
-): Promise<Sandbox> {
+/**
+ * A live sandbox's `pi`: the user's pi with the surface's extension and the provider extension
+ * (as the AUT runs), the sandbox's copy of the mu skill, no context files.
+ */
+function installLivePi(dir: string, binDir: string, surface: Surface, providerExt: string): void {
+  mkdirSync(join(dir, ".rt"), { recursive: true });
+  mkdirSync(dirname(sandboxPi(dir)), { recursive: true });
+  symlinkSync(REAL_PI, sandboxPi(dir));
+  writeShim(
+    join(binDir, "pi"),
+    `for a in "$@"; do
+  case "$a" in
+    -v|--version|--list-models) exec ${JSON.stringify(sandboxPi(dir))} "$@";;
+  esac
+done
+exec ${JSON.stringify(sandboxPi(dir))} "$@" --no-extensions -e ${JSON.stringify(providerExt)} -e ${JSON.stringify(surface.extension)} --no-skills --skill ${JSON.stringify(sandboxSkillDir(dir))} --no-context-files`,
+  );
+}
+
+export interface SandboxOptions {
+  env?: Record<string, string>;
+  /**
+   * Real harness binaries (claude, codex, cursor-agent, muse, pi) and the caller's own HOME and
+   * auth (sandboxEnv `live`). Default: fake harnesses and faux pis, HOME inside the sandbox.
+   */
+  live?: boolean;
+  /** The provider extension a live pi worker loads (as the AUT does). */
+  providerExt?: string;
+  /** Hook harnesses: binaries, tool shims and hook entries (harness.ts). */
+  harness?: { tools: HookTools; codexHooks?: CodexHooks; stopTimeoutS?: number; fake?: boolean };
+}
+
+export async function createSandbox(surface: Surface, opts: SandboxOptions = {}): Promise<Sandbox> {
   const tmuxBin = realTmux(); // fail before creating anything on disk
   const id = `mu-eval-${process.pid}-${Date.now()}-${randomBytes(3).toString("hex")}`;
   const dir = join(tmpdir(), id);
@@ -350,7 +500,12 @@ export async function createSandbox(
       `tmux socket path too long (${tmuxSocketPath(dir, tmuxSocket).length}); set TMPDIR shorter`,
     );
   }
-  const env = { ...sandboxEnv(dir, surface, tmuxSocket, process.env), ...opts.env };
+  const isLive = opts.live === true;
+  const env = {
+    ...sandboxEnv(dir, surface, tmuxSocket, process.env, { live: isLive }),
+    ...opts.env,
+  };
+  if (isLive && opts.harness?.codexHooks === "codex-home") env.CODEX_HOME = join(dir, "codex-home");
   const binDir = join(dir, "bin");
   const repoDir = join(dir, "repo");
   const workerDir = join(dir, "workers");
@@ -365,6 +520,7 @@ export async function createSandbox(
     "workers",
     "tmp",
     "skills",
+    "murmur",
   ]) {
     mkdirSync(join(dir, sub), { recursive: true });
   }
@@ -387,7 +543,9 @@ export async function createSandbox(
   // Workers and delegates are scripted: faux model, no mu nudges (they would only rerun the script).
   // The AUT sees a plain `pi` that answers --version / --list-models like the real one; the real pi
   // path, the extension paths and the faux model name sit one level down in <dir>/.rt (never in bin/).
-  installFauxPi(dir, binDir, surface);
+  if (isLive && opts.providerExt !== undefined)
+    installLivePi(dir, binDir, surface, opts.providerExt);
+  else installFauxPi(dir, binDir, surface);
 
   // Bare tmux from the AUT or a worker joins the run's private server (an explicit later -L/-S
   // still wins, but TMUX_TMPDIR keeps even that inside the sandbox).
@@ -404,11 +562,12 @@ export async function createSandbox(
     surface,
     async close(o) {
       live.delete(entry);
+      entry.restore();
       for (const sock of entry.sockets()) killServer(sock);
-      if (!o?.keep) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      if (!o?.keep) removeClosed(dir);
     },
   };
-  const entry = { dir, sockets: () => sandboxSockets(dir, tmuxSocket) };
+  const entry = { dir, sockets: () => sandboxSockets(dir, tmuxSocket), restore: () => {} };
   live.add(entry);
   installHandlers();
 
@@ -420,6 +579,14 @@ export async function createSandbox(
     // `mu workspace refresh` rebases onto origin/HEAD, which a repo with no remote lacks. Point it at
     // local main: always current, no second copy of the repo to keep in step.
     await sh(sb, "git symbolic-ref refs/remotes/origin/HEAD refs/heads/main");
+    if (opts.harness) {
+      const hs = await setupHarnesses(sb, {
+        live: isLive,
+        skillDir: sandboxSkillDir(dir),
+        ...opts.harness,
+      });
+      entry.restore = hs.restore;
+    }
     mkdirSync(env.TMUX_TMPDIR ?? join(dir, "tmux-tmp"), { recursive: true });
     await sh(sb, `tmux -L ${tmuxSocket} -f /dev/null new-session -d -s eval-boot`);
   } catch (e) {

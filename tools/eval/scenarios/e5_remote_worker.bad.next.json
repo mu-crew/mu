@@ -1,0 +1,40 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree --cli claude --task r1 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:w1@0 -w eval --timeout 180"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "git cherry-pick \"$(git -C \"$MU_STATE_DIR/worktrees/eval/w1\" rev-parse HEAD)\""
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close r1 -w eval --evidence 'the remote worker reported (CLOSE block); its commit is merged'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "rev=$(mu agent close w1 -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); [ -n \"$rev\" ] && mu agent close w1 -w eval --if \"$rev\""
+      }
+    ]
+  },
+  {
+    "text": "r1 is merged into main."
+  }
+]

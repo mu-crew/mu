@@ -1,5 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { sandboxEnv, tmuxSocketPath } from "../../tools/eval/sandbox.ts";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { removeSandboxDir, sandboxEnv, tmuxSocketPath } from "../../tools/eval/sandbox.ts";
 import type { Surface } from "../../tools/eval/types.ts";
 
 const surface: Surface = {
@@ -103,4 +106,35 @@ describe("sandboxEnv family", () => {
       "next",
     );
   });
+});
+
+describe("removeSandboxDir", () => {
+  it("removes the dir", () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-eval-rm-"));
+    mkdirSync(join(dir, "murmur", "x"), { recursive: true });
+    writeFileSync(join(dir, "murmur", "x", "f"), "1");
+    removeSandboxDir(dir);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  // root removes a read-only dir anyway
+  it.skipIf(process.getuid?.() === 0)(
+    "warns instead of throwing when the dir cannot be removed",
+    () => {
+      const parent = mkdtempSync(join(tmpdir(), "mu-eval-rm-"));
+      const dir = join(parent, "sb");
+      mkdirSync(join(dir, "murmur"), { recursive: true });
+      writeFileSync(join(dir, "murmur", "f"), "1");
+      chmodSync(join(dir, "murmur"), 0o500);
+      const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+      try {
+        expect(() => removeSandboxDir(dir, 2, 0)).not.toThrow();
+        expect(String(err.mock.calls[0]?.[0])).toContain(`left ${dir} behind`);
+      } finally {
+        err.mockRestore();
+        chmodSync(join(dir, "murmur"), 0o700);
+        rmSync(parent, { recursive: true, force: true });
+      }
+    },
+  );
 });

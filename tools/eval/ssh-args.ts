@@ -106,7 +106,11 @@ export function remoteEnv(
   }
   const db = shimEnv.EVAL_DB_PATH ?? shimEnv.MU_DB_PATH;
   if (db !== undefined) env.EVAL_DB_PATH = db;
+  // The host's own HOME, live or fake, so mu's state there (anchors, remote worktrees) stays in the
+  // sandbox; a live run links the harnesses' config and auth into it (harness.linkHostHome). Its
+  // murmur state is the host's own, so the origin node never drains it.
   env.HOME = `${hostRoot}/home`;
+  env.MURMUR_STATE_DIR = `${hostRoot}/murmur`;
   env.SHELL = `${hostRoot}/bin/eval-shell`;
   env.EVAL_HOST = host;
   env.EVAL_HOST_TMUX_SOCKET = hostTmuxSocket;

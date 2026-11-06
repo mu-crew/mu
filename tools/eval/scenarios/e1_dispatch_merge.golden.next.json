@@ -1,0 +1,43 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --cli claude --worktree --task d1 --json"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --cli codex --worktree --task d2 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:w1@0 agent:w2@0 -w eval --all --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w1 w2; do git cherry-pick \"$(git -C \"$MU_STATE_DIR/worktrees/eval/$w\" rev-parse HEAD)\" || exit 1; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for t in d1 d2; do mu task close $t -w eval --evidence \"its worker reported (CLOSE block); merged\"; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w1 w2; do rev=$(mu agent close $w -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); [ -n \"$rev\" ] && mu agent close $w -w eval --if \"$rev\"; done"
+      }
+    ]
+  },
+  {
+    "text": "d1 (claude) and d2 (codex) are merged into main and closed; both workers are closed."
+  }
+]

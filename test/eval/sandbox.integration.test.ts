@@ -1,6 +1,6 @@
 // Real tmux: no tmux invocation from inside a sandbox may reach the default server.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -56,6 +56,19 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
       await sb?.close();
     } catch {}
     sb = undefined;
+  });
+
+  it("close sweeps the dir again after a late hook brings murmur state back", {
+    timeout: 30_000,
+  }, async () => {
+    const box = await createSandbox(surface);
+    const dir = box.dir;
+    await box.close();
+    expect(existsSync(dir)).toBe(false);
+    // what a SessionEnd hook through murmur does after the close: recreate its compile cache
+    mkdirSync(join(dir, "murmur", "compile-cache"), { recursive: true });
+    await new Promise((r) => setTimeout(r, 6_000));
+    expect(existsSync(dir)).toBe(false);
   });
 
   it("bare tmux, absolute-path tmux and env-scrubbed tmux all resolve under the sandbox dir", async () => {

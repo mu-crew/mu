@@ -45,6 +45,17 @@ export function loadAutScript(path: string | undefined): FauxStep[] {
 }
 
 /**
+ * The steps one AUT phase runs. Phase 1 (the default) is the whole script; a scenario with a
+ * replacement orchestrator ends phase 1 with a `{die}` step (the crash), and phase 2, the
+ * replacement, runs only the steps after the first `{die}`.
+ */
+export function autPhaseSteps(steps: FauxStep[], phase: number): FauxStep[] {
+  if (phase <= 1) return steps;
+  const at = steps.findIndex((s) => (s as { die?: unknown }).die === true);
+  return at < 0 ? DEFAULT_SCRIPT : steps.slice(at + 1);
+}
+
+/**
  * Worker script by attempt: <agent>.<n>.json, then <agent>.json, then default.json.
  * attempt = 1 + prior loads, counted in <workerDir>/<agent>.attempts (bumped here).
  */

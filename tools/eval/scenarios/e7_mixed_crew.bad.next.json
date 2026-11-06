@@ -1,0 +1,56 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --cli codex --worktree --task m1 --json"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --cli pi --worktree --task m2 --json"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval --host dev --worktree --cli claude --task m3 --json"
+      },
+      {
+        "bash": "mu agent spawn w4 -w eval --worktree --cli pi --task m4 --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:w1@0 agent:w2@0 agent:w3@0 agent:w4@0 -w eval --all --timeout 240"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent collect w3 -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w1 w2 w4; do git cherry-pick \"$(git -C \"$MU_STATE_DIR/worktrees/eval/$w\" rev-parse HEAD)\" || exit 1; done && for w in w3; do git cherry-pick refs/mu/collect/eval/$w || exit 1; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for t in m1 m2 m3 m4; do mu task close $t -w eval --evidence \"its worker reported (CLOSE block); merged\"; done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for w in w1 w2 w3 w4; do rev=$(mu agent close $w -w eval | sed -n 's/.*--if \\([0-9][0-9]*\\).*/\\1/p' | head -1); [ -n \"$rev\" ] && mu agent close $w -w eval --if \"$rev\"; done"
+      }
+    ]
+  },
+  {
+    "text": "m1-m4 are merged and closed."
+  }
+]

@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PENDING_NEXT, pendingScripts } from "../../tools/eval/check-rules.ts";
-import { runCheck } from "../../tools/eval/commands.ts";
+import { checkHarnesses, loadScenario, runCheck, scenarioIds } from "../../tools/eval/commands.ts";
+import { autPhaseSteps, type FauxStep } from "../../tools/eval/faux-steps.ts";
 import type { Surface } from "../../tools/eval/types.ts";
 
 const surface: Surface = {
@@ -124,5 +125,100 @@ describe("pending next scenarios", () => {
       expect(pendingScripts(dir, id), id).toEqual([]);
       expect(existsSync(join(dir, `${id}.golden.next.json`)), id).toBe(true);
     }
+  });
+});
+
+describe("hook-harness cases (e1_* .. e7_*)", () => {
+  const dir = join(import.meta.dirname, "../../tools/eval/scenarios");
+  const ids = scenarioIds(false).filter((id) => /^e\d_/.test(id));
+
+  it("E1-E7 are all there", () => {
+    expect(ids.map((id) => id.slice(0, 2))).toEqual(["e1", "e2", "e3", "e4", "e5", "e6", "e7"]);
+  });
+
+  it.each(ids)(
+    "%s: next only, a golden and at least three distinct bads of valid steps",
+    async (id) => {
+      const scenario = await loadScenario(id);
+      expect(scenario.families).toEqual(["next"]);
+      expect(scenario.hookHarnesses?.workers.length).toBeGreaterThan(0);
+      expect(checkHarnesses(scenario)).toEqual(["pi", "claude", "codex"]);
+      const files = readdirSync(dir).filter(
+        (f) => f.startsWith(`${id}.`) && f.endsWith(".next.json"),
+      );
+      expect(files.filter((f) => f === `${id}.golden.next.json`)).toHaveLength(1);
+      const bads = files.filter((f) => f.startsWith(`${id}.bad`));
+      expect(bads.length).toBeGreaterThanOrEqual(3);
+      const bodies = bads.map((f) =>
+        JSON.stringify(JSON.parse(readFileSync(join(dir, f), "utf8"))),
+      );
+      expect(new Set(bodies).size).toBe(bads.length);
+      for (const f of files) {
+        const steps = JSON.parse(readFileSync(join(dir, f), "utf8")) as Record<string, unknown>[];
+        for (const s of steps)
+          expect(
+            ["calls", "text", "die"].some((k) => k in s),
+            f,
+          ).toBe(true);
+      }
+      expect(
+        readdirSync(dir).some((f) => f.startsWith(`${id}.`) && f.endsWith(".3x.json")),
+        id,
+      ).toBe(false);
+    },
+  );
+
+  it("without EVAL_MURMUR, check skips them and goes on to the next scenario", async () => {
+    vi.stubEnv("EVAL_MURMUR", "");
+    const scripts = mkdtempSync(join(tmpdir(), "mu-eval-check-test-"));
+    const out: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+      out.push(a.join(" "));
+    });
+    try {
+      await runCheck({
+        surface,
+        scenarios: ["e1_dispatch_merge", "_smoke"],
+        includeUnderscore: true,
+        family: "next",
+        preflight: false,
+        verbose: false,
+        root: "/s",
+        scriptDir: scripts,
+      });
+    } finally {
+      vi.unstubAllEnvs();
+      rmSync(scripts, { recursive: true, force: true });
+    }
+    const text = out.join("\n");
+    expect(text).toMatch(/e1_dispatch_merge skipped \(.*EVAL_MURMUR/);
+    expect(text).toContain("_smoke golden missing");
+  });
+
+  it("check --family 3x skips them and runs nothing", async () => {
+    const out: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => {
+      out.push(a.join(" "));
+    });
+    const code = await runCheck({
+      surface,
+      scenarios: ids,
+      includeUnderscore: false,
+      family: "3x",
+      preflight: false,
+      verbose: false,
+      root: "/s",
+    });
+    expect(code).toBe(0);
+    for (const id of ids) expect(out.join("\n")).toContain(`${id} 3x: skipped`);
+  });
+
+  it("a crash case's golden dies once, then the replacement's steps follow", () => {
+    const steps = JSON.parse(
+      readFileSync(join(dir, "e4_replacement_orchestrator.golden.next.json"), "utf8"),
+    ) as Record<string, unknown>[];
+    expect(steps.filter((s) => s.die === true)).toHaveLength(1);
+    expect(autPhaseSteps(steps as FauxStep[], 2).length).toBeGreaterThan(0);
+    expect(autPhaseSteps(steps as FauxStep[], 1)).toEqual(steps);
   });
 });
