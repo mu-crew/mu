@@ -9,6 +9,7 @@
 // both workers were closed; nothing destructive. Fails: merging before the review, a verdict with
 // no reviewer behind it, closing ship before the verdict.
 import {
+  answeredMs,
   checksOn,
   cliHarness,
   mainCommitMs,
@@ -61,9 +62,10 @@ const scenario: Scenario = {
     wrong.push(...impl.wrong);
     const report = noteMoments(sb, WS, "rv1").find((n) => verdictLabel(n.content) !== null);
     const reviewer = reportRun(runs, "rv1")?.agent ?? null;
+    const answeredAt = answeredMs(runs, "rv1", report?.ms);
     const sp = spawns(sb).filter((s) => s.name === reviewer);
     const reviewerHarness = cliHarness(sp[sp.length - 1]?.cli ?? "");
-    if (reviewer === null || report === undefined) wrong.push("no reviewer reported on rv1");
+    if (reviewer === null) wrong.push("no reviewer reported on rv1");
     else {
       if (reviewer === impl.agent) wrong.push(`i1's implementer ${reviewer} reviewed its own work`);
       if (reviewerHarness !== "claude" || harnessOf(recs, reviewer) !== "claude")
@@ -77,7 +79,7 @@ const scenario: Scenario = {
         wrong.push(`the check names ${check.checker}, not claude`);
       if (verdictLabel(check.verdict) !== "CONFIRMED")
         wrong.push(`the review verdict is ${verdictLabel(check.verdict) ?? "?"}, not CONFIRMED`);
-      if (report !== undefined && check.verdictMs !== null && check.verdictMs + 5 < report.ms)
+      if (answeredAt !== undefined && check.verdictMs !== null && check.verdictMs + 5 < answeredAt)
         wrong.push("the verdict was recorded before the reviewer reported");
     }
     const verdictMs = check?.verdictMs ?? null;

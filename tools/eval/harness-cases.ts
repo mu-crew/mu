@@ -322,7 +322,29 @@ export function checksOn(sb: Sandbox, task: string): CheckRec[] {
 
 /** The VERDICT label of a recorded verdict (CONFIRMED, REFUTED, UNVERIFIED), else null. */
 export function verdictLabel(text: string | null): string | null {
-  return /^\s*VERDICT:\s*(CONFIRMED|REFUTED|UNVERIFIED)\b/im.exec(text ?? "")?.[1] ?? null;
+  // the label word on the VERDICT line, however the AUT words the rest ("VERDICT: f1 REFUTED by
+  // codex" is REFUTED): judges assert effects, not spellings
+  return (
+    /^\s*VERDICT:[^\n]*?\b(CONFIRMED|REFUTED|UNVERIFIED)\b/im
+      .exec(text ?? "")?.[1]
+      ?.toUpperCase() ?? null
+  );
+}
+
+/**
+ * When a checker answered: its report note (applied from its CLOSE block) or, earlier, the run of
+ * its task script in runs.log, which printed the verdict. An orchestrator on the hooks channel may
+ * read the answer off the pane and close the task itself later, so the note alone can postdate
+ * the verdict it informed.
+ */
+export function answeredMs(
+  runs: RunRecord[],
+  task: string,
+  noteMs: number | undefined,
+): number | undefined {
+  const runMs = reportRun(runs, task)?.ts;
+  const all = [noteMs, runMs].filter((x): x is number => x !== undefined);
+  return all.length === 0 ? undefined : Math.min(...all);
 }
 
 /** The finishing run of a task in runs.log (its worker's report), or undefined. */

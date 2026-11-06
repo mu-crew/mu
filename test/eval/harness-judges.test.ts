@@ -112,8 +112,29 @@ describe("E2 finding triage with a cross-family refuter", () => {
   });
   it("a verdict recorded before the refuter answered", async () => {
     flagged(
-      await judge("e2_cross_family_refuter", golden({ notes: [["rf1", REFUTED, 20000]] })),
+      await judge(
+        "e2_cross_family_refuter",
+        golden({
+          workers: [w("rv", "codex", "rf1", { merged: false, reportAt: 20000 })],
+          notes: [["rf1", REFUTED, 20000]],
+          closes: [["f1", "aut", "task.close", 30000]],
+        }),
+      ),
       /before the refuter answered/,
+    );
+  });
+  it("a verdict read off the pane after the refuter's run, its task closed by the AUT later", async () => {
+    // hooks channel: the refuter's run printed REFUTED at -20000; the AUT recorded the verdict
+    // (at build time), then closed rf1 with the report as a note at 5000
+    clean(await judge("e2_cross_family_refuter", golden({ notes: [["rf1", REFUTED, 5000]] })));
+  });
+  it("a verdict worded around its label still reads as that label", async () => {
+    const worded = "VERDICT: f1 REFUTED by codex/default (rf1)\nEVIDENCE: x";
+    clean(
+      await judge(
+        "e2_cross_family_refuter",
+        golden({ checks: [{ task: "f1", by: "codex/default", verdict: worded }] }),
+      ),
     );
   });
   it("a verdict that contradicts the refuter", async () => {
