@@ -291,7 +291,7 @@ recovery), doctor, the lease carrier and remote socket plumbing,
   orchestrator says happened (VISION §9, §11):
 
   ```bash
-  mu task check <id> -w <ws> --by <harness>/<model> --brief -      # prints check=<check id>; records the brief
+  mu task check <id> -w <ws> --by <harness>[/<model>] --brief -    # prints check=<check id>; records the brief; no model: the harness alone
   mu task verdict <id> -w <ws> --check <check id> -                # records VERDICT/EVIDENCE lines
   ```
 

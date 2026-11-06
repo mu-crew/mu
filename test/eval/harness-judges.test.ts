@@ -188,6 +188,21 @@ describe("E3 review gate", () => {
   it("golden: reviewed by another, claude, worker; merged and shipped after the verdict", async () => {
     clean(await judge("e3_review_gate", golden()));
   });
+  it("a check recorded as `--by claude` (no model) names claude", async () => {
+    clean(
+      await judge(
+        "e3_review_gate",
+        golden({ checks: [{ task: "i1", by: "claude", verdict: CONFIRMED }] }),
+      ),
+    );
+    flagged(
+      await judge(
+        "e3_review_gate",
+        golden({ checks: [{ task: "i1", by: "codex", verdict: CONFIRMED }] }),
+      ),
+      /the check names codex, not claude/,
+    );
+  });
   it("i1 merged before the verdict", async () => {
     flagged(
       await judge("e3_review_gate", golden({}, { mergeAt: -10000 })),

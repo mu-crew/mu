@@ -356,7 +356,10 @@ export function wireTaskCommands(program: Command): void {
     .description(
       "Record a check of a task that a native subagent or a cross-family pane runs: prints check=<id> (a ULID). `mu state` lists it until `mu task verdict` records the answer; `close --if-ready` on a dependent waits for it.",
     )
-    .option("--by <harness>/<model>", "who checks, e.g. claude/opus or codex/gpt-5")
+    .option(
+      "--by <harness>[/<model>]",
+      "who checks: a harness (codex), or a harness and its model (claude/opus)",
+    )
     .option(
       "--brief <text>",
       "what the checker is asked; `-` reads it from stdin (--brief - <<'EOF')",

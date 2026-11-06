@@ -561,7 +561,7 @@ export const MESSAGES = {
   "check.not_found": (id: string, task: string) =>
     `no check ${id} on task ${task} (\`mu state\` lists the checks still without a verdict)`,
   "check.by_invalid": (by: string, harnesses: readonly string[]) =>
-    `--by needs <harness>/<model> with harness one of ${harnesses.join(", ")}, got ${JSON.stringify(by)}`,
+    `--by needs <harness> or <harness>/<model> (e.g. --by codex, --by claude/opus), harness one of ${harnesses.join(", ")}; got ${JSON.stringify(by)}`,
   "check.brief_empty": () => "the check's brief is empty; pass it with --brief - <<'EOF'",
   "check.verdict_line": () =>
     "a verdict needs a line starting VERDICT: CONFIRMED | REFUTED | UNVERIFIED, then the EVIDENCE: lines",

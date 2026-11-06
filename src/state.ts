@@ -66,7 +66,7 @@ export interface StateCheck {
   id: string;
   /** The checked task's local id, in this workstream. */
   task: string;
-  /** `<harness>/<model>`. */
+  /** `<harness>/<model>`, or `<harness>` when no model was named. */
   by: string;
   brief: string;
   created_at: string;

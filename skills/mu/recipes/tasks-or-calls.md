@@ -27,7 +27,7 @@ EVIDENCE: <file:line or command + result>   (3-6 lines)
 Record a native subagent's check:
 
 ```bash
-mu task check <id> -w <ws> --by <harness>/<model> --brief - <<'EOF'   # check=<c>
+mu task check <id> -w <ws> --by <harness>[/<model>] --brief - <<'EOF'   # check=<c>
 <brief>
 EOF
 mu task verdict <id> -w <ws> --check <c> - <<'EOF'

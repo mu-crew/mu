@@ -1,7 +1,7 @@
 // mu — `mu task check` and `mu task verdict` (spec D5): record a check a
 // native subagent or a cross-family pane runs, and its verdict.
 //
-//   mu task check <id> --by <harness>/<model> --brief -     prints check=<id>
+//   mu task check <id> --by <harness>[/<model>] --brief -   prints check=<id>
 //   mu task verdict <id> --check <check id> -              VERDICT/EVIDENCE lines
 
 import { issueCheck, recordCheckVerdict } from "../../checks.js";
@@ -27,7 +27,8 @@ export async function cmdTaskCheck(
   rawId: string,
   opts: { by?: string; brief?: string; workstream?: string; json?: boolean },
 ): Promise<void> {
-  if (opts.by === undefined) throw new UsageError("check needs --by <harness>/<model>");
+  if (opts.by === undefined)
+    throw new UsageError("check needs --by <harness> or --by <harness>/<model>");
   if (opts.brief === undefined) {
     throw new UsageError("check needs --brief <text> (or `-` and a heredoc on stdin)");
   }
