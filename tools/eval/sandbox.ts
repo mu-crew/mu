@@ -158,7 +158,7 @@ export function sandboxEnv(
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(base)) {
     if (v === undefined) continue;
-    if (opts.live ? !LIVE_DROP.test(k) : KEEP.has(k) || k.startsWith("LLM_ROUTER_")) env[k] = v;
+    if (opts.live ? !LIVE_DROP.test(k) : KEEP.has(k)) env[k] = v;
   }
   const home = join(dir, "home");
   const state = join(dir, "state");
@@ -462,7 +462,7 @@ exec ${JSON.stringify(join(rt, "pi"))} "$@"`,
  * A live sandbox's `pi`: the user's pi with the surface's extension and the provider extension
  * (as the AUT runs), the sandbox's copy of the mu skill, no context files.
  */
-function installLivePi(dir: string, binDir: string, surface: Surface, providerExt: string): void {
+function installLivePi(dir: string, binDir: string, surface: Surface, providerExt?: string): void {
   mkdirSync(join(dir, ".rt"), { recursive: true });
   mkdirSync(dirname(sandboxPi(dir)), { recursive: true });
   symlinkSync(REAL_PI, sandboxPi(dir));
@@ -473,7 +473,7 @@ function installLivePi(dir: string, binDir: string, surface: Surface, providerEx
     -v|--version|--list-models) exec ${JSON.stringify(sandboxPi(dir))} "$@";;
   esac
 done
-exec ${JSON.stringify(sandboxPi(dir))} "$@" --no-extensions -e ${JSON.stringify(providerExt)} -e ${JSON.stringify(surface.extension)} --no-skills --skill ${JSON.stringify(sandboxSkillDir(dir))} --no-context-files`,
+exec ${JSON.stringify(sandboxPi(dir))} "$@" --no-extensions${providerExt ? ` -e ${JSON.stringify(providerExt)}` : ""} -e ${JSON.stringify(surface.extension)} --no-skills --skill ${JSON.stringify(sandboxSkillDir(dir))} --no-context-files`,
   );
 }
 
@@ -485,6 +485,9 @@ export interface SandboxOptions {
    */
   live?: boolean;
   /** The provider extension a live pi worker loads (as the AUT does). */
+  /** Run the user's pi (live); without it the sandbox's pi is the faux one. */
+  livePi?: boolean;
+  /** A pi provider extension for a live pi; none means pi's own built-in providers. */
   providerExt?: string;
   /** Hook harnesses: binaries, tool shims and hook entries (harness.ts). */
   harness?: { tools: HookTools; codexHooks?: CodexHooks; stopTimeoutS?: number; fake?: boolean };
@@ -543,8 +546,7 @@ export async function createSandbox(surface: Surface, opts: SandboxOptions = {})
   // Workers and delegates are scripted: faux model, no mu nudges (they would only rerun the script).
   // The AUT sees a plain `pi` that answers --version / --list-models like the real one; the real pi
   // path, the extension paths and the faux model name sit one level down in <dir>/.rt (never in bin/).
-  if (isLive && opts.providerExt !== undefined)
-    installLivePi(dir, binDir, surface, opts.providerExt);
+  if (isLive && opts.livePi === true) installLivePi(dir, binDir, surface, opts.providerExt);
   else installFauxPi(dir, binDir, surface);
 
   // Bare tmux from the AUT or a worker joins the run's private server (an explicit later -L/-S

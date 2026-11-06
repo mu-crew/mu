@@ -11,7 +11,7 @@ export { REAL_PI };
 
 export interface RunOptions {
   model: string;
-  providerExt: string;
+  providerExt?: string;
   /** Faux AUT script path (selftest); exported to the child as EVAL_FAUX_SCRIPT. */
   auTScript?: string;
   timeoutMs?: number;
@@ -98,8 +98,7 @@ export async function runAut(
     "--mode",
     "rpc",
     "--no-extensions",
-    "-e",
-    opts.providerExt,
+    ...(opts.providerExt ? ["-e", opts.providerExt] : []),
     "-e",
     sb.surface.extension,
     "--no-skills",

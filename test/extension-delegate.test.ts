@@ -219,10 +219,10 @@ describe("mu_delegate", () => {
     const mu = fakeMu();
     const p = fakePi();
     registerDelegate(p.pi, mu.run);
-    await tool(p).execute("t", { task: "x", model: "llm-router/anthropic/claude-sonnet-5-5:low" });
+    await tool(p).execute("t", { task: "x", model: "gateway/anthropic/claude-sonnet-5-5:low" });
     const spawn = mu.calls.find((c) => c[1] === "spawn") ?? [];
     expect(spawn[spawn.indexOf("--command") + 1]).toContain(
-      "--model llm-router/anthropic/claude-sonnet-5-5:low",
+      "--model gateway/anthropic/claude-sonnet-5-5:low",
     );
   });
 
@@ -238,10 +238,7 @@ describe("mu_delegate", () => {
   });
 
   it.each([
-    [
-      "llm-router/openai-proxy/gpt-6.1-sol[1m]:high",
-      "'llm-router/openai-proxy/gpt-6.1-sol[1m]:high'",
-    ],
+    ["gateway/openai-proxy/gpt-6.1-sol[1m]:high", "'gateway/openai-proxy/gpt-6.1-sol[1m]:high'"],
     ["  `anthropic/claude-opus-5-5:high`  ", "anthropic/claude-opus-5-5:high"],
     ["'sonnet'", "sonnet"],
     ["--model sonnet", "sonnet"],

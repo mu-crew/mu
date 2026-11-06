@@ -109,7 +109,7 @@ export interface RunOne {
   surface: Surface;
   scenario: Scenario;
   model: string;
-  providerExt: string;
+  providerExt?: string;
   rep: number;
   log?: string;
   keep?: boolean;
@@ -220,7 +220,9 @@ export async function runOne(o: RunOne): Promise<RunResult> {
   const sb = await createSandbox(o.surface, {
     env: { ...o.scenario.env, EVAL_AUT_HARNESS: harness, EVAL_AUT_MODEL: o.model },
     live: o.live === true,
-    ...(o.live === true && o.fakeWorkers !== true ? { providerExt: o.providerExt } : {}),
+    ...(o.live === true && o.fakeWorkers !== true
+      ? { livePi: true, ...(o.providerExt ? { providerExt: o.providerExt } : {}) }
+      : {}),
     ...(hooks
       ? {
           harness: {
@@ -324,7 +326,7 @@ export interface MatrixOptions {
   reps: number;
   concurrency: number;
   budgetTokens: number;
-  providerExt: string;
+  providerExt?: string;
   out: string;
   root: string;
 }

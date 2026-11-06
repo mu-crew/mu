@@ -183,8 +183,8 @@ dialog gets one Enter, the default answer), and log in each harness you mix.
 
 From the repo root, with the builds and exports above (`EVAL_MUZZLE` included).
 `--model default` keeps each harness's own default; `--model <id>` passes it
-through the harness's model flag. A pi AUT needs a model and the provider
-extension (`--provider-ext`, default `~/.pi/agent/extensions/llm-router.ts`).
+through the harness's model flag. A pi AUT needs a model; it uses pi's own providers unless `--provider-ext <file>`
+names a provider extension.
 Results append to `docs/eval/every-harness.jsonl`;
 `node tools/eval/main.ts report docs/eval/every-harness.jsonl` renders them.
 
