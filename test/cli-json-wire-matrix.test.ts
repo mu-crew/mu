@@ -37,6 +37,7 @@ const ARGS: Record<string, string[]> = {
   "agent show": ["worker-1"],
   "agent close": ["worker-1"],
   "agent collect": ["worker-1"],
+  "agent reattach": ["worker-1"],
   "agent abort": ["worker-1"],
   "agent wait": ["worker-1", "--timeout", "0.05"],
   "me tasks": [],

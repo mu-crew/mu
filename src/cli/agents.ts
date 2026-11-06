@@ -48,6 +48,7 @@ import {
 } from "../cli.js";
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
+import { leftoverLines, listLeftovers } from "../leftovers.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
 import { pc } from "../output.js";
@@ -58,6 +59,7 @@ import { ctlAgentHooks } from "../wait-ctl.js";
 import { wireAnswerCommand } from "./agent-answer.js";
 import { wireCloseCommand } from "./agent-close.js";
 import { wireCollectCommand } from "./agent-collect.js";
+import { wireReattachCommand } from "./agent-reattach.js";
 import { cmdSend } from "./agent-send.js";
 import { setNextOutcome } from "./handle.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
@@ -665,12 +667,14 @@ export async function cmdList(
 ): Promise<void> {
   const workstream = await resolveExistingWorkstream(db, opts.workstream);
   const view = await listLiveAgents(db, { workstream });
+  const leftovers = await listLeftovers(db, workstream);
   if (opts.json) {
     const wsId = workstreamIdOf(db, workstream);
     emitJson({
       workstreamName: workstream,
       agents: view.agents.map((a) => liveAgentToOutput(a, wsId)),
       orphans: view.orphans,
+      leftovers,
     });
     return;
   }
@@ -685,6 +689,7 @@ export async function cmdList(
       console.log(`  ${pc.dim(orphan.paneId)} cli=${orphan.command}`);
     }
   }
+  for (const line of leftoverLines(leftovers)) console.log(line);
 }
 
 export async function cmdAgentShow(
@@ -1259,6 +1264,7 @@ export function wireAgentCommands(program: Command): void {
   wireCloseCommand(agent);
   wireCollectCommand(agent);
   wireAnswerCommand(agent);
+  wireReattachCommand(agent);
 
   // `mu agent abort` — stop a pi agent's turn through its control socket.
   agent

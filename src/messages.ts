@@ -43,6 +43,8 @@ export const MESSAGES = {
     status === "IN_PROGRESS"
       ? `cannot park ${id}: it is IN_PROGRESS (release it first)`
       : `cannot park ${id}: it is CLOSED (open it first)`,
+  "task.not_open": (id: string, status: string, owner: string | null) =>
+    `task ${id} is ${status}${owner === null ? "" : ` (owned by ${owner})`}, not OPEN`,
   "task.in_triage": (id: string) =>
     `task ${id} is in triage (OPEN/triage); accept it or claim with --force`,
   "task.parked": (id: string) =>
@@ -111,12 +113,18 @@ export const MESSAGES = {
     state === true
       ? `agent ${name}: pane ${pane} is still alive after the kill; its row is kept. Close the pane in your multiplexer, then preview: mu agent close ${name} -w ${ws}`
       : `agent ${name}: pane ${pane} could not be checked${reason === undefined ? "" : ` (${reason})`}; its row, tasks and worktree are kept. Retry once the multiplexer answers, or if you know the pane is gone preview with --force: mu agent close ${name} -w ${ws} --force`,
-  "agent.replaced": (name: string, ws: string, during: "closed" | "sent to" | "collected") =>
+  "agent.replaced": (
+    name: string,
+    ws: string,
+    during: "closed" | "sent to" | "collected" | "reattached",
+  ) =>
     during === "closed"
       ? `agent ${name} was replaced while it was being closed; the replacement was left alone. Preview it: mu agent close ${name} -w ${ws}`
-      : during === "collected"
-        ? `agent ${name} was replaced while its commits were being collected; the replacement's record was left alone. Look at it: mu agent list -w ${ws}`
-        : `agent ${name} was replaced before the prompt was written; nothing was sent to the replacement. Look at it: mu agent list -w ${ws}`,
+      : during === "reattached"
+        ? `agent ${name}'s lease reservation kept changing while its reattach was planned; nothing was changed. Preview again: mu agent reattach ${name} -w ${ws}`
+        : during === "collected"
+          ? `agent ${name} was replaced while its commits were being collected; the replacement's record was left alone. Look at it: mu agent list -w ${ws}`
+          : `agent ${name} was replaced before the prompt was written; nothing was sent to the replacement. Look at it: mu agent list -w ${ws}`,
   "agent.lock_busy": (name: string, ws: string) =>
     `agent ${name} is being changed by another mu process (its lock is held); nothing was done. Retry: mu agent close ${name} -w ${ws}`,
   "agent.pane_dead": (name: string, pane: string, msgId?: string) =>
@@ -473,6 +481,16 @@ export const MESSAGES = {
     `agent ${agent}: nothing to collect: ${why}`,
   "remote.collect_failed": (host: string, detail: string) =>
     `host ${host}: collect failed: ${detail}`,
+  "agent.reattach_refused": (name: string, why: string, close: string) =>
+    `agent ${name} cannot be reattached: ${why}; nothing was changed. Preview its close: ${close}`,
+  "agent.reattach_failed": (
+    name: string,
+    rollback: string,
+    why: string,
+    close: string,
+    tail = "",
+  ) =>
+    `agent ${name} was not reattached (rollback: ${rollback}): ${why}. Preview its close: ${close}${tail}`,
   "remote.recovery_refused": (ws: string, agent: string, detail: string) =>
     `agent ${ws}/${agent}: remote recovery refused: ${detail}`,
   "remote.recovery_pending": (
@@ -485,6 +503,38 @@ export const MESSAGES = {
     // collect and close select across every host, so any second record needs --recovery.
     const pick = total <= 1 ? "" : ids.length === 1 ? ` --recovery ${ids[0]}` : " --recovery <id>";
     return `agent ${ws}/${agent}: a removed agent's remote worktree on ${host} is still recorded (recovery ${ids.join(", ")}); a new --worktree spawn of the name there could land beside it. Keep its commits with mu agent collect ${agent} -w ${ws}${pick}, then mu agent close ${agent} -w ${ws}${pick}`;
+  },
+  // A remote spawn into a path another owner holds (src/remote-recovery.ts RemotePathOwnedError).
+  "remote.path_owned_agent": (
+    ws: string,
+    agent: string,
+    host: string,
+    cwd: string,
+    owner: { workstream: string; name: string; repo: string | null },
+    next: readonly string[],
+    gate: string | undefined,
+  ) =>
+    `agent ${ws}/${agent}: ${cwd} on ${host} is the managed remote worktree of ${owner.workstream}/${owner.name}; a second agent there could lose its work or its commits' attribution. Close it first: ${next[0]}${next[1] === undefined ? ` (its repo ${owner.repo} is itself a managed tree)` : `, or ${gate !== undefined ? "run the gate in an unmanaged checkout" : "give this agent its own tree"}: ${next[1]}`}`,
+  "remote.path_owned_recovery": (
+    ws: string,
+    agent: string,
+    host: string,
+    cwd: string,
+    rec: { agentId: number; workstream: string; name: string; cwd: string },
+    next: readonly string[],
+  ) =>
+    `agent ${ws}/${agent}: ${cwd} on ${host} is ${rec.cwd === cwd ? "" : "the parked aside of "}the worktree of recovery ${rec.agentId} (removed agent ${rec.workstream}/${rec.name}); a second agent there could lose its work. Keep its commits with ${next[0]}, then ${next[1]}`,
+  "remote.path_owned_pane": (
+    host: string,
+    pane: { id: string; backend: string; gone: boolean; heldBy?: string; kill: string } | undefined,
+  ) => {
+    if (pane === undefined) return ". The agent was not started";
+    const at = `. Found after its pane opened: ${pane.backend} pane ${pane.id}`;
+    if (pane.heldBy !== undefined)
+      return `${at} now belongs to ${pane.heldBy} and was left alone; this spawn's transport may still run in it. No agent was registered`;
+    return pane.gone
+      ? `${at} was killed; no agent was registered`
+      : `${at} (host ${host}) is not proven gone and may still run its transport; no agent was registered. Kill it: ${pane.kill}`;
   },
   "rebuild.target_exists": (path: string) => `rebuild target already exists: ${path}`,
   "rebuild.target_is_source": (path: string) => `rebuild target is the source DB: ${path}`,

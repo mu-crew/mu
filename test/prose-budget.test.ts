@@ -60,6 +60,15 @@ const MARKERS: readonly Marker[] = [
     needles: ["mu agent collect", "CLOSE: task=<id>", "re-run the evidence before you close"],
   },
   {
+    id: "lease-parked",
+    file: "recipes/remote-workers.md",
+    needles: [
+      "reattach `--task <id>` claims them back",
+      "else close then `task unpark <id>`",
+      "only `--abandon-job` passes unreachable hosts",
+    ],
+  },
+  {
     id: "error-receipt",
     file: "SKILL.md",
     needles: [
