@@ -88,17 +88,31 @@ function hostRepos(dir: string): string[] {
 }
 
 /**
- * The harness shows its input prompt: no trust dialog, no other selector or notice waiting for a
- * key, and either a footer hint (`? for shortcuts`, codex's `context left`) or a prompt line led by
- * `>`, `❯` or `›` that is not a numbered option.
+ * The harness's own TUI shows its input prompt, read strictly per harness: no trust dialog, no
+ * other selector or notice waiting for a key, and the harness's own ready marks. Anything else on
+ * the screen proves nothing: before the TUI draws, the pane holds the login shell's prompt (a zsh
+ * line that ends with or starts with `❯`) and a launcher's banner and its `Installing
+ * <plugin>@<market> ...` lines (live, codex: a generic "a line led by ❯" check quit it there, before
+ * its trust dialogs).
+ *
+ * - codex: its footer (`? for shortcuts`, or `context left` in the same line) and its `›` input
+ *   line (`› Ask Codex to do anything`, any placeholder) that is not a numbered option.
+ * - claude: its footer (`? for shortcuts`), or its input box: a `>`/`❯` line right under the box's
+ *   top rule (`─`, `╭`), not a numbered option.
  */
-export function promptReady(screen: string): boolean {
+export function promptReady(screen: string, harness: PretrustHarness): boolean {
   if (screen.trim() === "" || trustDialogKeys(screen) !== null) return false;
   if (/enter to (confirm|continue|select)|esc to cancel|press enter/i.test(screen)) return false;
-  if (/\? for shortcuts|context left/i.test(screen)) return true;
-  return screen
-    .split("\n")
-    .some((l) => /^\s*[│|]?\s*[>❯›](\s|$)/.test(l) && !/^\s*[│|]?\s*[>❯›]\s*\d+\./.test(l));
+  const lines = screen.split("\n");
+  const option = (l: string) => /^\s*[│|]?\s*[>❯›]\s*\d+\./.test(l);
+  const footer = lines.some((l) => /\? for shortcuts|\d+% context left/i.test(l));
+  if (harness === "codex") {
+    return footer && lines.some((l) => /^\s*›(\s|$)/.test(l) && !option(l));
+  }
+  if (footer) return true;
+  return lines.some(
+    (l, i) => /^\s*[│|]?\s*[>❯](\s|$)/.test(l) && !option(l) && /^\s*[─╭]/.test(lines[i - 1] ?? ""),
+  );
 }
 
 /** One harness in one directory; a note when the step could not confirm, else null. */
@@ -135,7 +149,7 @@ export async function pretrustOne(
       }
       continue;
     }
-    readyTicks = promptReady(screen) ? readyTicks + 1 : 0;
+    readyTicks = promptReady(screen, t.harness) ? readyTicks + 1 : 0;
     if (readyTicks >= 2) {
       outcome = "ready";
       break;
@@ -209,19 +223,47 @@ export function claudeTrusted(claudeJson: string, dir: string): boolean | null {
   return doc.projects?.[real(dir)]?.hasTrustDialogAccepted === true;
 }
 
-/** codex: the codex home's config.toml trusts at least one hook of its own hooks.json. */
+/** codex's key of a hook event in `hooks.state`: `UserPromptSubmit` is `user_prompt_submit`. */
+const snakeEvent = (event: string): string =>
+  event.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase();
+
+/**
+ * codex: the codex home's config.toml trusts EVERY hook of its own hooks.json: each has a
+ * `[hooks.state."<home>/hooks.json:<snake_event>:<group>:<index>"]` table with a `trusted_hash`
+ * (the home spelled as given or by its real path). One trusted hook is not enough: codex asks to
+ * review the rest, and a worker would stop there. null when either file is unreadable.
+ */
 export function codexHooksTrusted(codexHome: string): boolean | null {
   let config: string;
+  let doc: { hooks?: unknown };
   try {
     config = readFileSync(join(codexHome, "config.toml"), "utf8");
+    doc = JSON.parse(readFileSync(join(codexHome, "hooks.json"), "utf8")) as typeof doc;
   } catch {
     return null;
   }
   const files = [...new Set([join(codexHome, "hooks.json"), join(real(codexHome), "hooks.json")])];
-  return files.some((f) => {
-    const at = config.indexOf(`[hooks.state."${f}:`);
-    return at >= 0 && /^\s*trusted_hash\s*=/m.test(config.slice(at).split("\n[")[0] ?? "");
-  });
+  const trusted = (id: string): boolean =>
+    files.some((f) => {
+      const at = config.indexOf(`[hooks.state."${f}:${id}"]`);
+      return at >= 0 && /^\s*trusted_hash\s*=/m.test(config.slice(at).split("\n[")[0] ?? "");
+    });
+  const events =
+    typeof doc.hooks === "object" && doc.hooks !== null
+      ? (doc.hooks as Record<string, unknown>)
+      : {};
+  const ids: string[] = [];
+  for (const [event, groups] of Object.entries(events)) {
+    if (!Array.isArray(groups)) continue;
+    groups.forEach((g: unknown, gi) => {
+      const hooks = (g as { hooks?: unknown } | null)?.hooks;
+      if (!Array.isArray(hooks)) return;
+      hooks.forEach((_h, hi) => {
+        ids.push(`${snakeEvent(event)}:${gi}:${hi}`);
+      });
+    });
+  }
+  return ids.every(trusted);
 }
 
 function tmux(sb: Sandbox, args: string[]): string | null {

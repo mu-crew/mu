@@ -242,10 +242,14 @@ and auth (spec D1). The rig changes exactly this:
   - Nothing for cursor-agent and Muse Code: mu's spawn presets pass `--trust`
     and `--trust-workspace` for a worktree.
 
-  Each start waits at most 45 s for a ready prompt and 5 s to exit, then its
+  Each start waits at most 150 s for a ready prompt and 5 s to exit, then its
   pane is killed; a step that cannot confirm the trust adds a
   `pre-trust <harness> ...` note to the run's notes (and stderr) and the run
-  goes on.
+  goes on. Ready is read per harness from its own TUI: codex's `? for
+  shortcuts` footer with its `›` input line, claude's footer or input box.
+  The shell prompt and a launcher's banner and `Installing ...` lines, shown
+  before the TUI draws, never count. codex's hook trust counts only when
+  every hook of the home's hooks.json has a `trusted_hash`.
 - **The ssh host `dev`.** Its HOME is `<sandbox>/hosts/dev/home`, live or
   fake, so mu's state there (anchors, and the remote worktrees in
   `~/.local/state/mu-next/remote-worktrees/eval/<worker>`) is the sandbox's and
