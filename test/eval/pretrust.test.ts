@@ -281,7 +281,7 @@ describe("pretrustTargets", () => {
 });
 
 describe("trust records (read only)", () => {
-  it("claude: the folder or an ancestor accepted in ~/.claude.json", () => {
+  it("claude: the folder itself accepted in ~/.claude.json, not an ancestor", () => {
     const d = tmp();
     const repo = join(d, "a", "repo");
     mkdirSync(repo, { recursive: true });
@@ -300,7 +300,7 @@ describe("trust records (read only)", () => {
         projects: { [claudeRealpath(join(d, "a"))]: { hasTrustDialogAccepted: true } },
       }),
     );
-    expect(claudeTrusted(f, repo)).toBe(true);
+    expect(claudeTrusted(f, repo)).toBe(false);
   });
 
   it("codex: a trusted_hash for a hook of the home's own hooks.json", () => {
