@@ -591,6 +591,14 @@ describe("murmur's pane report and the observer's records", () => {
     expect(rec.kind).toBe("text");
   });
 
+  it("drops codex's title-generation session (transcript_path null), as mu and murmur do", () => {
+    const meta = { ms: 1, agent: "w1", host: null, cwd: "/r" };
+    const title = { hook_event_name: "UserPromptSubmit", prompt: "title", transcript_path: null };
+    expect(observerRecord("codex", title, meta).kind).toBe("other");
+    const real = { ...title, transcript_path: "/h/.codex/sessions/x.jsonl" };
+    expect(observerRecord("codex", real, meta).kind).toBe("prompt");
+  });
+
   it("reads the log: harness, prompts and reports per agent", () => {
     const meta = (ms: number, agent: string) => ({ ms, agent, host: null, cwd: "/w" });
     const log = [

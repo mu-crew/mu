@@ -68,6 +68,9 @@ export function observerRecord(
     kind = "text";
     text = str(p.text);
   }
+  // codex's hidden title-generation session (transcript_path null) fires its own prompt and stop
+  // beside the worker's turn: mu and murmur drop it (D6), and so does the judge
+  if (harness === "codex" && "transcript_path" in p && p.transcript_path === null) kind = "other";
   const resumed =
     p.stop_hook_active === true || (typeof p.loop_count === "number" && p.loop_count > 0);
   return {
