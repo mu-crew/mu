@@ -221,15 +221,19 @@ export async function runPaneAut(
     // with the trusting choice (trustDialogKeys), at most 3, never twice on the same screen
     let answered = 0;
     let lastScreen = "";
+    let lastAt = -1;
     for (let i = 0; i < 60; i++) {
       const v = io.view(sb, pane);
       if (v?.sessionId) break;
-      const screen = i >= 4 && answered < 3 ? (io.capture(sb, pane) ?? "") : "";
-      const trustKeys = screen !== "" && screen !== lastScreen ? trustDialogKeys(screen) : null;
+      const screen = i >= 4 && answered < 4 ? (io.capture(sb, pane) ?? "") : "";
+      // the same dialog still up 10 ticks after an answer lost its keys: answer it again
+      const fresh = screen !== lastScreen || (lastAt >= 0 && i - lastAt >= 10);
+      const trustKeys = screen !== "" && fresh ? trustDialogKeys(screen) : null;
       if (trustKeys !== null) {
         for (const k of trustKeys) io.keys(sb, pane, k);
         answered++;
         lastScreen = screen;
+        lastAt = i;
         note({ trustDialog: name, keys: trustKeys });
       }
       // codex reports its session only with its first prompt: ready once no dialog is up

@@ -171,6 +171,17 @@ describe("pretrustOne", () => {
     expect(f.closed).toEqual(["%9"]);
   });
 
+  it("claude: answers again when its dialog stays up unchanged (the first keys were lost)", async () => {
+    const sb = sandbox();
+    // the dialog stays for 14 captures (7 s at 500 ms ticks) after the first answer, then the prompt
+    const f = fake(["", ...Array<string>(15).fill(CLAUDE_TRUST), CLAUDE_READY], {
+      recordOn: (keys) => keys.filter((k) => k === "Enter").length >= 2,
+    });
+    const note = await pretrustOne(sb, { harness: "claude", dir: sb.repoDir }, f.io);
+    expect(note).toBeNull();
+    expect(f.keys).toEqual(["Down", "Enter", "Down", "Enter", "C-c", "C-c"]);
+  });
+
   it("codex: answers its folder trust, then its hook review with 'Trust all and continue'", async () => {
     const sb = sandbox();
     const f = fake([CODEX_FOLDER, CODEX_HOOKS, CODEX_READY], {
