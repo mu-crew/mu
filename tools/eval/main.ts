@@ -1,7 +1,7 @@
 // Eval harness CLI. Subcommands: prepare | selftest | run | matrix | report | check (see usage below).
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readRows, runCold, runColdCheck } from "./cold-guess.ts";
@@ -29,7 +29,6 @@ import { parseFamily, prepareSurface, surfaceFromDir, surfaceId } from "./surfac
 import type { Family, Sandbox, Scenario, Surface } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
-const DEFAULT_PROVIDER_EXT = join(homedir(), ".pi", "agent", "extensions", "modelbridge.ts");
 const USAGE = `usage: node tools/eval/main.ts <command>
   prepare <name> <ref>
   selftest [--surface <dir>]
@@ -253,7 +252,7 @@ async function main(argv: string[]): Promise<number> {
         surface,
         scenario,
         model,
-        providerExt: flag(rest, "--provider-ext") ?? DEFAULT_PROVIDER_EXT,
+        providerExt: flag(rest, "--provider-ext"),
         rep: 1,
         keep: rest.includes("--keep"),
         harness,
@@ -293,7 +292,7 @@ async function main(argv: string[]): Promise<number> {
         reps: Number(flag(rest, "--reps") ?? 1),
         concurrency: Number(flag(rest, "--concurrency") ?? 4),
         budgetTokens: Number(flag(rest, "--budget-tokens") ?? 42_000_000),
-        providerExt: flag(rest, "--provider-ext") ?? DEFAULT_PROVIDER_EXT,
+        providerExt: flag(rest, "--provider-ext"),
         out,
         root: REPO_ROOT,
       });
@@ -357,7 +356,7 @@ async function main(argv: string[]): Promise<number> {
           intents,
           concurrency: Number(flag(args, "--concurrency") ?? 4),
           out,
-          providerExt: flag(args, "--provider-ext") ?? DEFAULT_PROVIDER_EXT,
+          providerExt: flag(args, "--provider-ext"),
         });
         return 0;
       }

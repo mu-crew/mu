@@ -161,7 +161,7 @@ export async function askModel(
   model: string,
   system: string,
   user: string,
-  providerExt: string,
+  providerExt: string | undefined,
 ): Promise<ModelReply> {
   const home = mkdtempSync(join(tmpdir(), "mu-cold-pi-"));
   try {
@@ -174,8 +174,6 @@ export async function askModel(
       HOME: home,
       PI_CODING_AGENT_DIR: home,
     };
-    for (const [k, v] of Object.entries(process.env))
-      if (k.startsWith("MODELBRIDGE_") && v !== undefined) env[k] = v;
     const args = [
       "-p",
       "--mode",
@@ -183,8 +181,7 @@ export async function askModel(
       "--no-tools",
       "--no-session",
       "--no-extensions",
-      "-e",
-      providerExt,
+      ...(providerExt ? ["-e", providerExt] : []),
       "--no-skills",
       "--no-context-files",
       "--no-prompt-templates",
@@ -366,7 +363,7 @@ export interface ColdJob {
   model: string;
   rep: number;
   help: string;
-  providerExt: string;
+  providerExt?: string;
 }
 
 export async function runJob(job: ColdJob): Promise<ColdRow> {
@@ -449,7 +446,7 @@ export interface ColdRunOptions {
   intents: string[] | null;
   concurrency: number;
   out: string;
-  providerExt: string;
+  providerExt?: string;
 }
 
 const keyOf = (r: { surface: string; model: string; intent: string; rep: number }): string =>

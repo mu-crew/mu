@@ -20,7 +20,7 @@ const BASE: NodeJS.ProcessEnv = {
   LC_ALL: "C.UTF-8",
   USER: "me",
   SHELL: "/bin/zsh",
-  MODELBRIDGE_BASE_URL: "http://x",
+  PROVIDER_BASE_URL: "http://x",
   MU_DB_PATH: "/real/mu.db",
   MU_NUDGE: "0",
   MU_AGENT_NAME: "boss",
@@ -42,6 +42,7 @@ describe("sandboxEnv", () => {
     expect(env.TMUX_PANE).toBeUndefined();
     expect(env.HERDR_SESSION).toBeUndefined();
     expect(env.SECRET_TOKEN).toBeUndefined();
+    expect(env.PROVIDER_BASE_URL).toBeUndefined();
     expect(env.MU_DB_PATH).toBe(`${dir}/state/mu.db`);
     expect(env.PI_CODING_AGENT_DIR).toBe(`${dir}/pi-agent`);
     expect(env.HOME).toBe(`${dir}/home`);
@@ -54,7 +55,6 @@ describe("sandboxEnv", () => {
       LC_ALL: "C.UTF-8",
       USER: "me",
       SHELL: "/bin/zsh",
-      MODELBRIDGE_BASE_URL: "http://x",
       XDG_STATE_HOME: `${dir}/home/.local/state`,
       XDG_CACHE_HOME: `${dir}/home/.cache`,
       MU_STATE_DIR: `${dir}/state`,
