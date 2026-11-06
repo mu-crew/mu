@@ -12,6 +12,8 @@ export interface ExecFileResult {
   stderr: string;
   /** Numeric exit code; null on spawn failure (ENOENT), signal, or timeout. */
   exitCode: number | null;
+  /** Set when `execFileCapture` killed the child at its `timeoutMs`. */
+  timedOut?: true;
 }
 
 /** execa's default `maxBuffer` (100 MiB); execFile's own default is 1 MiB. */
@@ -106,10 +108,13 @@ export function execFileCapture(
       },
       (err, stdout, stderr) => {
         const code = err && "code" in err && typeof err.code === "number" ? err.code : null;
+        // execFile kills the child itself only at its timeout (or past maxBuffer, 100 MiB).
+        const timedOut = opts.timeoutMs !== undefined && err !== null && err.killed === true;
         resolve({
           stdout: stripFinalNewline(stdout ?? ""),
           stderr: stripFinalNewline(stderr ?? ""),
           exitCode: err ? code : 0,
+          ...(timedOut ? { timedOut: true as const } : {}),
         });
       },
     );

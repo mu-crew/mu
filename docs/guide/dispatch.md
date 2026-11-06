@@ -75,7 +75,7 @@ socket. Pick the mode by what the agent is doing:
 
 After `mu task claim <id> --for <w>`, `next` is the send that hands the task over (`--fresh` for a pi worker).
 `mu agent spawn --send <text>` spawns and sends the first prompt in one
-call; with `--task <id>` it is one journaled attempt (below); `--next-free` takes the next free name when `<name>` is taken
+call (to a codex or muse worker too: mu's first send to it needs no `--force`); with `--task <id>` it is one journaled attempt (below); `--next-free` takes the next free name when `<name>` is taken
 (`worker-1` → `worker-2`; the stem is cut to keep the name within 32
 chars, and it gives up with exit 4 when no free name is near).
 

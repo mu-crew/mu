@@ -505,6 +505,34 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A first send to a new codex or muse worker passes the `hooks` gate**
+  (spec D4, D17). codex and muse report a session only with their first
+  prompt, so murmur has no row for the pane until then and the gate read
+  `unknown`: `mu agent spawn --cli codex|muse --send <text>` (no `--task`)
+  always failed, and a first `mu agent send` needed `--force`. mu's first
+  plain send since the spawn (no `agent.send` op for the agent since its row
+  was created) now passes a pane of a first-prompt harness when murmur
+  answers with no row, no dialog and no crash, the pane still runs, and for
+  a local worker murmur's hooks for that harness are installed. Any later
+  send, a dead or gone pane, an unanswered murmur, missing hooks and claude,
+  cursor-agent or pi with no row are refused as before: no row alone can be
+  a rebuilt murmur store or hooks that never fire. It is confirmed only by
+  `run_count` 1, as a task spawn's pointer is.
+
+- **A slow `murmur status --json` reads as a timeout, not as no row.** mu
+  waited 5 s; murmur's full drain can take longer when it rebuilds its socket
+  cache. mu now waits 10 s, and a timeout reads `unknown` with its own reason
+  (`murmur status timed out after 10s ...`), never "murmur has no row".
+
+- **Remote workers get the auto-approve preset** (spec D17: approvals are per
+  worker). A `--host` claude, codex, cursor-agent or muse worker launched
+  from a resolved command gets its row's auto-approve flags in its remote
+  command, as a local one does; a literal `--command`, an orchestrator and pi
+  still get none.
+
+- **The eval's fake claude reads hooks from `$CLAUDE_CONFIG_DIR`** when set,
+  as the fake codex reads `$CODEX_HOME` (an empty value is unset for both).
+
 - **The course check counts a close in the same millisecond as its anchor.**
   `courseCheckHint` compared each close note's time with a strict `>` against
   the workstream's creation or the newest `COURSE CHECK` note, so a task

@@ -8,6 +8,7 @@ import {
   handlersFor,
   hookEnv,
   hookFiles,
+  hookHomes,
   LineEditor,
   matcherHits,
   NATIVE,
@@ -97,12 +98,17 @@ describe("fake harness payloads", () => {
 });
 
 describe("hook config files and handlers", () => {
-  it("reads project then user files; codex only its home", () => {
+  it("reads project then user files, claude's in its config dir; codex only its home", () => {
     const o = { projectRoot: "/p", home: "/h" };
     expect(hookFiles("claude", o).map((f) => f.path)).toEqual([
       "/p/.claude/settings.json",
       "/p/.claude/settings.local.json",
       "/h/.claude/settings.json",
+    ]);
+    expect(hookFiles("claude", { ...o, claudeHome: "/c" }).map((f) => f.path)).toEqual([
+      "/p/.claude/settings.json",
+      "/p/.claude/settings.local.json",
+      "/c/settings.json",
     ]);
     expect(hookFiles("codex", o).map((f) => f.path)).toEqual(["/h/.codex/hooks.json"]);
     expect(hookFiles("codex", { ...o, codexHome: "/c" }).map((f) => f.path)).toEqual([
@@ -116,6 +122,22 @@ describe("hook config files and handlers", () => {
       "/p/.muse/hooks.json",
       "/h/.config/muse/settings.json",
     ]);
+  });
+
+  it("hookHomes: CLAUDE_CONFIG_DIR and CODEX_HOME when set; an empty one is unset", () => {
+    expect(hookHomes({ CLAUDE_CONFIG_DIR: "/c", CODEX_HOME: "/x" })).toEqual({
+      claudeHome: "/c",
+      codexHome: "/x",
+    });
+    expect(hookHomes({ CLAUDE_CONFIG_DIR: "", CODEX_HOME: "" })).toEqual({});
+    expect(hookHomes({})).toEqual({});
+    const o = { projectRoot: "/p", home: "/h" };
+    expect(
+      hookFiles("claude", { ...o, ...hookHomes({ CLAUDE_CONFIG_DIR: "" }) }).at(-1)?.path,
+    ).toBe("/h/.claude/settings.json");
+    expect(hookFiles("codex", { ...o, ...hookHomes({ CODEX_HOME: "" }) })[0]?.path).toBe(
+      "/h/.codex/hooks.json",
+    );
   });
 
   it("grouped: every group of the event; a matcher filters only tool events", () => {

@@ -155,7 +155,8 @@ murmur status / pane / dash / export ─► drain the inbox into the store under
   argv. The drain tries a pid-to-socket cache in the state directory
   (checked against the server's start time), the event's hints and the
   reader's own server before any scan, and `murmur pane <pane>` drains only
-  that pane's inbox.
+  that pane's inbox. mu waits 10 s for `murmur status --json`, whose full
+  drain may rebuild that cache; a timeout reads `unknown` with its own reason.
 - **The drain publishes pane options** (`@murmur_pane_state` and the others
   murmur's pi extension sets today) for every pane it changes. mu's send
   gate and ack read `murmur pane <key> --json`, which drains first.
@@ -245,7 +246,13 @@ recovery), doctor, the lease carrier and remote socket plumbing,
   `interrupt`, or `--force`). A `running` state with no event for
   `MU_STALE_MS` reads `unknown`, and a send needs `--force`. `idle?` is
   sendable: if the Escape only closed an overlay, the send gets no ack and
-  reports `unknown`.
+  reports `unknown`. A codex or muse pane before its first prompt has no
+  murmur row: mu's first plain send since spawn (and `spawn --send`) passes
+  it without `--force` when murmur answers with no row, dialog or crash, the
+  pane runs and, locally, murmur's hooks for it are installed; only
+  `run_count` 1 confirms it. No row alone is not enough: a rebuilt or moved
+  store and silent hooks read the same, so any send mu recorded since the
+  spawn voids it.
 - mu records each agent's channel on its agents row at spawn (D8): `hooks`
   for a claude, codex, cursor-agent or muse pane on tmux, local or remote,
   and for a pi on the fallback (D15); `ctl` for pi; `mux` on herdr and Rex
@@ -260,8 +267,9 @@ recovery), doctor, the lease carrier and remote socket plumbing,
   `session_start` only where it comes at once; elsewhere a run in a new
   session confirms.
 - Spawn presets set each harness's in-sandbox auto-approve mode, so a worker
-  meets a permission dialog only for actions outside its sandbox (D6). A
-  command that already picks an approval or sandbox mode gets none.
+  meets a permission dialog only for actions outside its sandbox (D6), local
+  or remote (in its remote command). A command that already picks an
+  approval or sandbox mode gets none.
 - `--on-stall steer` and the `mu next` steer executor stay for `ctl` and
   fall back to reporting the stall on `hooks`.
 - This reverses the 4.0 cut of tmux paste for the `hooks` channel. VISION
@@ -763,7 +771,8 @@ pi worker at once.
   path, so a brief over 96 KB fails with a typed error. Linux caps one
   argument at 128 KiB before quoting.
 - **Model and approvals per worker.** `--model` maps through the row's model
-  flag, and spawn presets add the row's auto-approve flag (D6). pi gets
+  flag, and spawn presets add the row's auto-approve flag (D6), on a remote
+  worker too. pi gets
   none: its `--approve` is folder trust. The recipe `models` keeps its
   cross-family rule for checkers.
 - **The auto executor on `hooks`.** `mu task auto --cli <harness>` already
@@ -1123,6 +1132,10 @@ is reflected above.
   hook's tmux server without a scan (D3); museum 1883d79 records a worker's
   role (D12); all four honour `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, and
   `mu doctor` checks mu's hook entries (D13, mu R2). Draft 10 records it.
+- **F1** (2026-11-06, audit follow-up): mu's first send since spawn to a
+  codex or muse pane with no murmur row passes the gate (D4); mu waits 10 s for
+  `murmur status --json` (D3); remote workers get the approval preset (D4,
+  D17).
 
 Findings that only concerned removing pi no longer apply: `next --refute`
 losing its once-key, pi having two state sources during the switch, and the

@@ -136,13 +136,25 @@ export function hookEnv(
 }
 
 /**
+ * The harness homes `hookFiles` takes from an environment: `CLAUDE_CONFIG_DIR` and `CODEX_HOME`,
+ * each only when non-empty (an empty one is unset, as the harnesses read it).
+ */
+export function hookHomes(env: NodeJS.ProcessEnv): { claudeHome?: string; codexHome?: string } {
+  return {
+    ...(env.CLAUDE_CONFIG_DIR ? { claudeHome: env.CLAUDE_CONFIG_DIR } : {}),
+    ...(env.CODEX_HOME ? { codexHome: env.CODEX_HOME } : {}),
+  };
+}
+
+/**
  * The config files a harness reads hooks from, in the order it runs them: the project's (the
- * project root is the git top level of the cwd), then the user's. codex has no project file: its
- * hooks are global, `$CODEX_HOME/hooks.json`, else `~/.codex/hooks.json`.
+ * project root is the git top level of the cwd), then the user's: claude's in
+ * `$CLAUDE_CONFIG_DIR`, else `~/.claude`. codex has no project file: its hooks are global,
+ * `$CODEX_HOME/hooks.json`, else `~/.codex/hooks.json`. The homes come from `hookHomes`.
  */
 export function hookFiles(
   h: FakeHarness,
-  o: { projectRoot: string; home: string; codexHome?: string },
+  o: { projectRoot: string; home: string; claudeHome?: string; codexHome?: string },
 ): { path: string; key: "hooks" }[] {
   const at = (...p: string[]) => ({ path: join(...p), key: "hooks" as const });
   switch (h) {
@@ -150,7 +162,7 @@ export function hookFiles(
       return [
         at(o.projectRoot, ".claude", "settings.json"),
         at(o.projectRoot, ".claude", "settings.local.json"),
-        at(o.home, ".claude", "settings.json"),
+        at(o.claudeHome ?? join(o.home, ".claude"), "settings.json"),
       ];
     case "codex":
       return [at(o.codexHome ?? join(o.home, ".codex"), "hooks.json")];

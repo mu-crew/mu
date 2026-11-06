@@ -1,12 +1,13 @@
 // mu — the launch command of a spawn, with its harness row's spawn presets
-// (spec D6, D17): the row's model flag for `--model` (pi included); locally,
-// for a worker launched from a command mu resolved (its cli key or
-// `MU_<KEY>_COMMAND`, not a literal `--command`), the row's in-sandbox
-// auto-approve flags (pi has none: its `--approve` is folder trust); and for a
-// worktree mu just created, the row's trust flag on its real path (folder
-// trust is per exact path). The argv0 is untouched, so every rule that reads
-// it (speaksMuCtl, the harness) reads the same; the agents row keeps the
-// command as given.
+// (spec D6, D17): the row's model flag for `--model` (pi included); for a
+// worker launched from a command mu resolved (its cli key or
+// `MU_<KEY>_COMMAND`, not a literal `--command`), local or remote (approvals
+// are per worker, D17: a remote worker's flags ride in its remote command),
+// the row's in-sandbox auto-approve flags (pi has none: its `--approve` is
+// folder trust); and locally, for a worktree mu just created, the row's trust
+// flag on its real path (folder trust is per exact path). The argv0 is
+// untouched, so every rule that reads it (speaksMuCtl, the harness) reads the
+// same; the agents row keeps the command as given.
 
 import { realpathSync } from "node:fs";
 import { type Harness, withSpawnPresets } from "../harnesses.js";
@@ -27,10 +28,11 @@ export function launchCommand(
   where: { remote: boolean; worktree?: string },
 ): string {
   const model = opts.model !== undefined ? { model: opts.model } : {};
-  if (where.remote) return withSpawnPresets(command, harness, { ...model, approve: false });
+  const approve = opts.command === undefined && opts.orchestrator !== true;
+  if (where.remote) return withSpawnPresets(command, harness, { ...model, approve });
   return withSpawnPresets(command, harness, {
     ...model,
-    approve: opts.command === undefined && opts.orchestrator !== true,
+    approve,
     ...(where.worktree !== undefined ? { trustPath: realPathOf(where.worktree) } : {}),
   });
 }

@@ -66,7 +66,7 @@ const RECIPE_NEEDLES: Record<string, readonly string[]> = {
     "## Outside pi",
     "mu task check <id>",
     "mu task verdict <id>",
-    "-w scratch --force --wait -",
+    "-w scratch --wait -",
   ],
   "findings.md": ["another family"],
   "adversarial-review.md": ["native subagent under `mu task check"],

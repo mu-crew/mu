@@ -67,6 +67,25 @@ export function recordSend(
   );
 }
 
+/**
+ * True when an `agent.send` op (any mode, as `recordSend` writes it) names
+ * `agent` since its row was created: mu has told this incarnation something.
+ * The `hooks` gate's first-prompt exemption needs the opposite (spec D4).
+ */
+export function sentSinceSpawn(
+  db: Db,
+  agent: Pick<AgentRow, "name" | "workstreamName" | "createdAt">,
+): boolean {
+  const prefix = `agent send ${agent.name} (`;
+  const hit = db
+    .prepare(
+      `SELECT 1 FROM ops WHERE entity = 'agent' AND key = ? AND intent = 'agent.send'
+         AND created_at >= ? AND substr(payload, 1, ?) = ? LIMIT 1`,
+    )
+    .get(agent.workstreamName, agent.createdAt, prefix.length, prefix);
+  return hit !== undefined;
+}
+
 /** Deliver `text` to `agent` through its channel, its control socket at `opts.socket`. */
 export async function sendViaTransport(
   agent: AgentRow,

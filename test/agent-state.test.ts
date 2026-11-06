@@ -186,6 +186,22 @@ describe("readAgentStates", () => {
     });
   });
 
+  it("a murmur status that timed out reads as its own explained unknown, never no row or missing", async () => {
+    tmuxOutput("%1\t\t");
+    installMurmur();
+    linkExtension();
+    setMurmurRunnerForTests(async () => ({ timedOut: true }));
+
+    expect((await reading()).get(agentKey(agent))).toEqual({
+      state: "unknown",
+      source: "none",
+      since: null,
+      alive: true,
+      reason: UNKNOWN_REASON.murmurTimeout,
+    });
+    expect(UNKNOWN_REASON.murmurTimeout).toContain("timed out after 10s");
+  });
+
   it("does not run murmur when every agent has a local state", async () => {
     tmuxOutput("%1\tworking\t1790000000000");
     let calls = 0;

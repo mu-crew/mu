@@ -238,6 +238,12 @@ export type DeliveryOptions = SendOptions & {
    */
   force?: boolean;
   /**
+   * Internal, hooks only: mu has recorded no send to this agent since its
+   * spawn (`sentSinceSpawn`). A plain send may then pass a codex or muse pane
+   * murmur has no row for yet without `force` (spec D4); absent, it is refused.
+   */
+  firstPrompt?: boolean;
+  /**
    * Internal: a msgId the caller reserved (and journaled) BEFORE the send, so
    * a crash leaves a receipt a later `status {msgId}` can ask about. ctl
    * send/fresh only; absent, the send mints its own. Never reuse one that was

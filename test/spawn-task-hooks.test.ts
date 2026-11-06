@@ -31,7 +31,9 @@ import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { rmFixtureDir } from "./_fs.js";
+import { installMurmurHooks } from "./_murmur-hooks.js";
 import { installMux, type MuxHarness } from "./_mux.js";
+import { runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 let dir: string;
@@ -320,5 +322,47 @@ describe("a hooks worker's task brief: a file and a one-line pointer (spec D17)"
     expect(receipt()?.state).toBe("failed");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
     expect(getTask(db, "t1", "auth")?.ownerId).toBeNull();
+  });
+});
+
+describe("spawn --send (no --task) to a first-prompt harness", () => {
+  /** murmur on PATH with codex's and muse's hooks: the exemption needs them for a local worker. */
+  let restoreHooks: () => void;
+  beforeEach(() => {
+    restoreHooks = installMurmurHooks(dir, ["codex", "muse"]);
+  });
+  afterEach(() => restoreHooks());
+  /** codex and muse report their session only with the first prompt (U0): the real order. */
+  const firstPromptStarts = (): void => {
+    fake.onSubmit = () => {
+      fake.emit("session_start", { source: "startup" });
+      fake.emit("prompt_submitted");
+    };
+  };
+
+  it.each(["codex", "muse"])(
+    "%s: no murmur row yet, the pane is live: pasted without --force, confirmed by run 1",
+    async (cli) => {
+      firstPromptStarts();
+      const r = await runCliJson(
+        ["agent", "spawn", "worker-1", "-w", "auth", "--cli", cli, "--send", "hello", "--json"],
+        join(dir, "mu.db"),
+      );
+      expect(r.exitCode).toBeNull();
+      expect(r.data).toMatchObject({
+        send: { ok: true, transport: "hooks", delivered: true },
+      });
+      expect(fake.submitted).toEqual(["hello"]);
+    },
+  );
+
+  it("claude (its session starts at once): no row still reads unknown and is refused", async () => {
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--cli", "claude", "--send", "hello", "--json"],
+      join(dir, "mu.db"),
+    );
+    expect(r.exitCode).toBe(4);
+    expect(JSON.stringify(r.doc)).toContain("no row for the pane");
+    expect(pastes()).toHaveLength(0);
   });
 });

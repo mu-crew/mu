@@ -122,6 +122,8 @@ harness behind the pane and reaches it on the `hooks` channel, as a local
 one on tmux. Its hooks on the host must be installed (`murmur init` there),
 and `murmur` must be on the PATH the profile's `--exec` sees.
 
+- The worker gets its row's auto-approve preset in its remote command, as
+  a local worker does.
 - The spawn gives the worker a remote key (`MU_REMOTE_KEY` and its anchor).
   Its hooks on the host write under that key to murmur's remote area, never
   the host's own `murmur status`.

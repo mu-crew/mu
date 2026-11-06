@@ -5,7 +5,9 @@
 // Its harness's hooks write events into murmur's inbox; `murmur pane <pane>
 // --json` drains them and reports the pane's state, `session_id`, `run_count`
 // and the last turn's text. A send is gated on that report (`blocked` is
-// answered, never pasted into; `running` and `unknown` need `force`), clears
+// answered, never pasted into; `running` and `unknown` need `force`, except
+// mu's first send since spawn to a codex or muse pane murmur has no row for
+// yet, which passes while the pane lives, confirmed by `run_count` 1), clears
 // the input line with the row's clear key (an interrupted claude puts its
 // prompt back in the box, and a paste would merge into it), pastes through
 // the backend, and is confirmed when `run_count` rises within
@@ -40,7 +42,7 @@
 // the same exec unless the read before it brought the harness's own
 // interrupt; `--fresh` is refused (its confirmation needs a poll).
 
-import { readBaseStates } from "../agent-state.js";
+import { murmurAvailable, readBaseStates } from "../agent-state.js";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -116,16 +118,46 @@ async function readRemote(t: ChannelTarget, maxAgeMs = 0): Promise<RemoteReadRes
 const unread = (r: { reason: string }): string => `its host was not read: ${r.reason}`;
 
 /**
+ * True when the pane is a first-prompt harness (codex, muse) waiting for its
+ * first prompt: murmur claims a pane only on the harness's first event, which
+ * for these is that prompt (`startupSessionStart`), so a worker mu just
+ * spawned reads no agent row. No row alone is not that: a rebuilt or moved
+ * murmur store, or hooks that never fire, read the same. So the caller's
+ * evidence comes first: mu has sent this incarnation nothing since its spawn
+ * (`firstPrompt`, from the ops log). Then murmur must have answered (no row,
+ * no dialog, no crash), a local worker's harness must have murmur's hooks
+ * installed, and the pane must still be up: mu runs the harness as the pane's
+ * own command, not under a shell, so a harness that exited leaves its pane
+ * gone (or dead, for a gate spawn's `retainOnExit` pane), never a prompt a
+ * paste could reach. The ack then needs `run_count` 1
+ * (`runStarted` with no baseline row), as a task spawn's does.
+ */
+async function awaitsFirstPrompt(t: DeliveryTarget, pane: HooksPane | undefined): Promise<boolean> {
+  if (pane === undefined || pane.activity !== null) return false;
+  if (pane.blocked !== null || pane.attention.includes("crashed")) return false;
+  const harness = harnessOfCli(t.agent.cli, t.agent.command ?? undefined);
+  if (harness === undefined || HARNESS_TABLE[harness].startupSessionStart !== "first-prompt") {
+    return false;
+  }
+  if (t.remote === undefined && !murmurAvailable(harness)) return false;
+  return (await paneUp(t.agent.paneId)) === true;
+}
+
+/**
  * Gate on the pane's state, then clear and paste `text` through the backend
  * (tmux's `pasteToPane`, else a backend's own `sendToPane`). Returns the pane
  * the gate read: the ack's baseline. A remote worker's node is read first
  * (spec D11); a read that fails reads `unknown`, which `force` overrides.
+ * `firstPrompt` (a plain send, mu's first since spawn) also passes a
+ * first-prompt harness's pane before its first prompt (`awaitsFirstPrompt`)
+ * without `force`.
  */
 async function gateAndPaste(
   t: DeliveryTarget,
   text: string,
   force: boolean,
   remoteMaxAgeMs = 0,
+  firstPrompt = false,
 ): Promise<HooksPane | undefined> {
   const { name, workstreamName, cli, paneId } = t.agent;
   const remote = await readRemote(t, remoteMaxAgeMs);
@@ -136,7 +168,8 @@ async function gateAndPaste(
   const gate = sendGate(before, Date.now(), staleMs());
   // A paste into a dialog would answer it with the text: never, --force or not.
   if (!gate.ok && (gate.state === "blocked" || !force)) {
-    throw new AgentSendGateError(name, workstreamName, gate.state, gate.reason);
+    const passes = gate.state === "unknown" && firstPrompt && (await awaitsFirstPrompt(t, before));
+    if (!passes) throw new AgentSendGateError(name, workstreamName, gate.state, gate.reason);
   }
   const mux = await activeMux();
   if (mux.pasteToPane) await mux.pasteToPane(paneId, text, { clearKey: clearKeyOf(t) });
@@ -172,7 +205,8 @@ async function send(
   refuseFence(t, opts);
   if (opts.mode === "steer") throw new AgentSteerUnsupportedError(name, workstreamName, "hooks");
   if (text === "") throw new AgentEmptySendError(name, workstreamName, "hooks");
-  const before = await gateAndPaste(t, text, opts.force === true, remoteMaxAgeMs);
+  const first = opts.firstPrompt === true;
+  const before = await gateAndPaste(t, text, opts.force === true, remoteMaxAgeMs, first);
   // D11: a remote paste is not polled for (each read is an exec); the next
   // wait or send gate reads the node, which confirms it.
   if (t.remote !== undefined) return { transport: "hooks", ack: "sent", ...counts(before) };
