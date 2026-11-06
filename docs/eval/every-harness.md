@@ -207,13 +207,45 @@ and auth (spec D1). The rig changes exactly this:
   points `CODEX_HOME` at `<sandbox>/codex-home` (the rig's hooks.json, a copy
   of config.toml, links to the other top-level files, auth included, and the
   skills/ above): nothing in the real codex home is written by the rig, but
-  codex asks for hook trust in every run. A codex worker runs with mu's
+  codex asks for hook trust in every run (the pre-trust below answers it once
+  per sandbox). A codex worker runs with mu's
   preset `--dangerously-bypass-approvals-and-sandbox` (its own seatbelt cannot
   start under a launcher that already sandboxes it) and trusts its worktree by
   real path. The launcher observed still lets it write every home dot-dir
   (`~/.local/state` included), so only the pins and the watch stand between
   a codex worker and the user's real mu state. The codex launcher may also
   install plugins into the codex config (`config.toml`) as it starts.
+- **Pre-trust.** A real user trusted their repo and mu's hooks long ago; a
+  fresh sandbox has neither, and a worker of a harness the AUT is not would
+  stop at a dialog nobody answers (its worktree inherits claude's folder trust
+  only from a trusted repo). So after the case's setup and before the AUT
+  starts, a live run with real workers (not `--fake-workers`, never `check`)
+  starts each real harness the case uses (the AUT's, and claude or codex when
+  the worker mix names it) once on the sandbox's tmux server, through the
+  sandbox `bin/` with the AUT pane's env, answers its trust dialogs with the
+  trusting choice and quits it with Ctrl-C before any prompt (no model
+  tokens; its hook calls record nothing in `hooks.log`). It changes:
+  - **claude's trust record for the sandbox repo** (and for each ssh host's
+    clone, `<sandbox>/hosts/<h>/home/repo`): claude itself adds the folder,
+    by real path, with `hasTrustDialogAccepted` to the user's
+    `~/.claude.json`. The rig only reads that file, to skip a folder already
+    trusted (itself or an ancestor) and to confirm the step; it never writes
+    or prunes it, so each live run leaves one entry per sandbox repo there.
+  - **codex's hook trust in the sandbox `CODEX_HOME`** (`codex-home` only):
+    codex adds `hooks.state."<CODEX_HOME>/hooks.json:<event>:<group>:<n>"`
+    entries with a `trusted_hash`, and the folder trust of the repo, to that
+    home's copy of `config.toml`. The key is the hooks file, not the project,
+    so one trust covers every codex pane of the run, workers' worktrees
+    included (mu's codex preset trusts a worker's worktree folder by real
+    path). With `global`, codex's hook trust lives in the user's own home and
+    persists after the first run; nothing is pre-trusted.
+  - Nothing for cursor-agent and Muse Code: mu's spawn presets pass `--trust`
+    and `--trust-workspace` for a worktree.
+
+  Each start waits at most 45 s for a ready prompt and 5 s to exit, then its
+  pane is killed; a step that cannot confirm the trust adds a
+  `pre-trust <harness> ...` note to the run's notes (and stderr) and the run
+  goes on.
 - **The ssh host `dev`.** Its HOME is `<sandbox>/hosts/dev/home`, live or
   fake, so mu's state there (anchors, and the remote worktrees in
   `~/.local/state/mu-next/remote-worktrees/eval/<worker>`) is the sandbox's and
@@ -237,10 +269,12 @@ and auth (spec D1). The rig changes exactly this:
 - **Not supported:** a Muse Code worker on the ssh host (Muse clears its hooks'
   environment, so its entries name this machine's murmur state).
 
-Before the first live run: trust the sandbox parent directory in claude
-(the rig's repos live under `$TMPDIR/mu-eval-*`; an AUT pane that shows a trust
-dialog is answered once with the trusting choice; Claude Code defaults to "No, exit"
-when the folder pre-approves tools, as the rig's does), and log in each harness you mix.
+Before the first live run, log in each harness you mix. The pre-trust above
+answers each sandbox's trust dialogs (Claude Code defaults to "No, exit" when
+the folder pre-approves tools, as the rig's does); an AUT pane that still shows
+one is answered once with the trusting choice. Trusting the sandbox parent
+directory (`$TMPDIR`, where the rig's `mu-eval-*` repos live) in claude
+instead keeps the per-sandbox entries out of `~/.claude.json`.
 
 ## Running each case live
 
