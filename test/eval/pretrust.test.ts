@@ -76,6 +76,39 @@ const CODEX_HOOKS = [
   "  3. Continue without trusting (hooks won't run)",
 ].join("\n");
 const CODEX_READY = "› Explain this codebase\n\n  100% context left · ? for shortcuts";
+// What a codex launcher's pane shows before codex's TUI draws: the login shell's prompt (zsh, one
+// line ending with ❯, or a two-line prompt whose second line is ❯), the launcher's banner, and a
+// plugin install line per plugin, for well over 10 s on a first start.
+const CODEX_LAUNCHING = [
+  "tmp/mu-eval-k3/repo ❯ /tmp/mu-eval-k3/bin/codex",
+  "  codex launcher 2.4 · checking plugins",
+  "Installing review-kit@team-market ...",
+  "Installing docs-search@team-market ...",
+].join("\n");
+const ZSH_TWO_LINE = [
+  "tmp/mu-eval-k3/repo on main",
+  "❯ ",
+  "Installing review-kit@team-market ...",
+].join("\n");
+// codex's own screens after the launcher: folder trust, hook review, then its ready screen.
+const CODEX_FOLDER_LAUNCHER = [
+  "  You are in /tmp/mu-eval-k3/repo",
+  "",
+  "  Do you trust the contents of this directory?",
+  "",
+  "› 1. Trust and continue",
+  "  2. Back to the launcher",
+].join("\n");
+const CODEX_READY_LIVE = [
+  "╭──────────────────────────────────────────╮",
+  "│ >_ Codex (v0.164.0)                      │",
+  "│ directory: /tmp/mu-eval-k3/repo          │",
+  "╰──────────────────────────────────────────╯",
+  "",
+  "› Ask Codex to do anything",
+  "",
+  "  ? for shortcuts",
+].join("\n");
 
 interface Fake {
   io: PretrustIO;
@@ -151,6 +184,25 @@ describe("pretrustOne", () => {
     expect(f.closed).toEqual(["%9"]);
   });
 
+  it("codex behind a launcher: no quit while it installs plugins; both dialogs, then its ready screen", async () => {
+    const sb = sandbox();
+    const f = fake(
+      [
+        ...Array<string>(40).fill(CODEX_LAUNCHING),
+        ...Array<string>(4).fill(ZSH_TWO_LINE),
+        CODEX_FOLDER_LAUNCHER,
+        CODEX_HOOKS,
+        "",
+        CODEX_READY_LIVE,
+      ],
+      { recordOn: (keys) => keys.includes("Down") },
+    );
+    const note = await pretrustOne(sb, { harness: "codex", dir: sb.repoDir }, f.io);
+    expect(note).toBeNull();
+    // "Trust and continue" is under the cursor; "Trust all and continue" is one down.
+    expect(f.keys).toEqual(["Enter", "Down", "Enter", "C-c", "C-c"]);
+  });
+
   it("starts nothing when the trust is already on record", async () => {
     const sb = sandbox();
     const f = fake([CLAUDE_READY], { trustedBefore: true });
@@ -216,16 +268,34 @@ describe("pretrustOne", () => {
 });
 
 describe("promptReady", () => {
-  it("sees claude's and codex's input prompts", () => {
-    expect(promptReady(CLAUDE_READY)).toBe(true);
-    expect(promptReady(CODEX_READY)).toBe(true);
-    expect(promptReady("> ")).toBe(true);
+  it("sees claude's and codex's input prompts, each by its own marks", () => {
+    expect(promptReady(CLAUDE_READY, "claude")).toBe(true);
+    expect(promptReady(CODEX_READY, "codex")).toBe(true);
+    expect(promptReady(CODEX_READY_LIVE, "codex")).toBe(true);
+    // claude's input box before its footer is drawn
+    expect(
+      promptReady('╭────────────╮\n│ > Try "fix lint errors" │\n╰────────────╯', "claude"),
+    ).toBe(true);
+    expect(promptReady("────────────\n❯ \n────────────", "claude")).toBe(true);
+  });
+  it("is not ready at the shell's prompt or a launcher's install lines, before the TUI draws", () => {
+    for (const h of ["claude", "codex"] as const) {
+      expect(promptReady(CODEX_LAUNCHING, h)).toBe(false);
+      expect(promptReady(ZSH_TWO_LINE, h)).toBe(false);
+      expect(promptReady("> ", h)).toBe(false);
+    }
+    // codex: its input line with no footer yet, or another harness's box, is not its ready screen
+    expect(promptReady("› Ask Codex to do anything", "codex")).toBe(false);
+    expect(promptReady("────────────\n❯ \n────────────", "codex")).toBe(false);
   });
   it("is not ready at a dialog, a selector or a blank screen", () => {
-    expect(promptReady(CLAUDE_TRUST)).toBe(false);
-    expect(promptReady(CODEX_HOOKS)).toBe(false);
-    expect(promptReady(" ❯ 1. Dark mode\n   2. Light mode\n Enter to confirm")).toBe(false);
-    expect(promptReady("")).toBe(false);
+    for (const h of ["claude", "codex"] as const) {
+      expect(promptReady(CLAUDE_TRUST, h)).toBe(false);
+      expect(promptReady(CODEX_HOOKS, h)).toBe(false);
+      expect(promptReady(CODEX_FOLDER_LAUNCHER, h)).toBe(false);
+      expect(promptReady(" ❯ 1. Dark mode\n   2. Light mode\n Enter to confirm", h)).toBe(false);
+      expect(promptReady("", h)).toBe(false);
+    }
   });
 });
 
@@ -303,17 +373,55 @@ describe("trust records (read only)", () => {
     expect(claudeTrusted(f, repo)).toBe(false);
   });
 
-  it("codex: a trusted_hash for a hook of the home's own hooks.json", () => {
+  it("codex: a trusted_hash for EVERY hook of the home's own hooks.json", () => {
     const home = tmp();
     expect(codexHooksTrusted(home)).toBeNull();
     writeFileSync(
-      join(home, "config.toml"),
-      '[hooks.state."/elsewhere/.codex/hooks.json:stop:0:0"]\ntrusted_hash = "sha256:aa"\n',
+      join(home, "hooks.json"),
+      JSON.stringify({
+        hooks: {
+          SessionStart: [{ hooks: [{ type: "command", command: "murmur hook codex" }] }],
+          UserPromptSubmit: [{ hooks: [{ type: "command", command: "murmur hook codex" }] }],
+          Stop: [
+            {
+              hooks: [
+                { type: "command", command: "murmur hook codex" },
+                { type: "command", command: "mu hook stop codex --timeout 600 || true" },
+              ],
+            },
+          ],
+        },
+      }),
+    );
+    const key = (id: string, file = join(home, "hooks.json")) =>
+      `[hooks.state."${file}:${id}"]\ntrusted_hash = "sha256:${id.length}"\n`;
+    const write = (body: string) => writeFileSync(join(home, "config.toml"), body);
+    expect(codexHooksTrusted(home)).toBeNull();
+    write(key("stop:0:0", "/elsewhere/.codex/hooks.json"));
+    expect(codexHooksTrusted(home)).toBe(false);
+    // One trusted hook (what the old check passed on) is not enough: codex reviews the other three.
+    write(`model = "m"\n\n[hooks.state]\n\n${key("session_start:0:0")}`);
+    expect(codexHooksTrusted(home)).toBe(false);
+    write([key("session_start:0:0"), key("user_prompt_submit:0:0"), key("stop:0:0")].join("\n"));
+    expect(codexHooksTrusted(home)).toBe(false);
+    // A table for the hook without its hash is no trust either.
+    write(
+      [
+        key("session_start:0:0"),
+        key("user_prompt_submit:0:0"),
+        key("stop:0:0"),
+        `[hooks.state."${join(home, "hooks.json")}:stop:0:1"]\nenabled = true\n`,
+      ].join("\n"),
     );
     expect(codexHooksTrusted(home)).toBe(false);
-    writeFileSync(
-      join(home, "config.toml"),
-      `model = "m"\n\n[hooks.state]\n\n[hooks.state."${join(home, "hooks.json")}:session_start:0:0"]\ntrusted_hash = "sha256:bb"\n`,
+    write(
+      [
+        `[projects."/tmp/r"]\ntrust_level = "trusted"\n`,
+        key("session_start:0:0"),
+        key("user_prompt_submit:0:0"),
+        key("stop:0:0"),
+        key("stop:0:1", join(realpathSync(home), "hooks.json")),
+      ].join("\n"),
     );
     expect(codexHooksTrusted(home)).toBe(true);
   });

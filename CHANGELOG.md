@@ -555,6 +555,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   records the check as `codex`; `--by claude/opus` is unchanged. A refused
   `--by` (orchestrators guessed `native/codex`) now shows both forms. The
   eval's E3 judge accepts a check recorded as `--by claude`.
+- **Eval: pre-trust waits for each harness's own ready screen.** The codex
+  step quit a launcher still printing `Installing ...` lines, before codex's
+  trust dialogs, on a generic "a line led by `❯`" check that the shell's
+  prompt also passes. Ready is now codex's `? for shortcuts` footer with its
+  `›` input line, or claude's footer or input box; codex's hook trust counts
+  only when every hook of the home's hooks.json has a `trusted_hash`.
 - **A first send to a new codex or muse worker passes the `hooks` gate**
   (spec D4, D17). codex and muse report a session only with their first
   prompt, so murmur has no row for the pane until then and the gate read
