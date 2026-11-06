@@ -12,7 +12,8 @@
 // A user's own entries still fire in a live run (the harness reads them too). They spell `murmur
 // hook <harness>`, `mu hook stop` and `muzzle hook`, which the sandbox PATH resolves to the
 // sandbox's shims, and those shims drop exactly these calls: only the rig's entries, which run the
-// worktree builds by absolute path, record anything.
+// worktree builds by absolute path, record anything. Every other call through a shim runs with the
+// sandbox's isolation variables, whatever the caller's env says (isolation.ts).
 import { execFileSync } from "node:child_process";
 import {
   accessSync,
@@ -33,6 +34,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FAKE_HARNESSES, type FakeHarness } from "./fake-payloads.ts";
+import { pinScript } from "./isolation.ts";
 import type { Sandbox, Surface } from "./types.ts";
 
 /** The orchestrator harnesses a case runs under. pi over rpc (runner.ts); claude and codex in a pane (runner-pane.ts). */
@@ -569,23 +571,24 @@ export function installRealHarness(
   return true;
 }
 
-/** bin/murmur: the worktree build, minus harness hook calls (a user's own entries). */
-export function murmurShim(tools: HookTools): string {
+/** bin/murmur: the worktree build, minus harness hook calls (a user's own entries); `pin` is isolation.ts's pinScript. */
+export function murmurShim(tools: HookTools, pin = ""): string {
   return `#!/bin/sh
 case "$1 $2" in "hook claude"|"hook codex"|"hook cursor-agent"|"hook muse") exit 0;; esac
-exec ${q(tools.node)} ${q(tools.murmur)} "$@"
+${pin}exec ${q(tools.node)} ${q(tools.murmur)} "$@"
 `;
 }
 
 /**
  * bin/muzzle: the worktree build, minus hook calls (a user's own entries), its state (queue,
  * slots, run log) in the sandbox even when the caller's XDG_STATE_HOME is set. `muzzle hook` reads
- * no state; the `muzzle run` it rewrites a command to resolves to this shim.
+ * no state; the `muzzle run` it rewrites a command to resolves to this shim. `pin` (isolation.ts)
+ * keeps the commands muzzle runs on the sandbox's mu state too.
  */
-export function muzzleShim(muzzle: string, stateHome: string): string {
+export function muzzleShim(muzzle: string, stateHome: string, pin = ""): string {
   return `#!/bin/sh
 [ "$1" = hook ] && exit 0
-XDG_STATE_HOME=${q(stateHome)} exec ${q(muzzle)} "$@"
+${pin}XDG_STATE_HOME=${q(stateHome)} exec ${q(muzzle)} "$@"
 `;
 }
 
@@ -595,6 +598,18 @@ export interface HarnessSetup {
   codexHooks: CodexHooks;
   /** Undo what the setup changed outside the sandbox (codex's global hooks.json); idempotent. */
   restore: () => void;
+}
+
+/** bin/murmur and bin/muzzle, each with the sandbox's pins (isolation.ts) baked in. */
+export function writeToolShims(
+  sb: Pick<Sandbox, "env" | "binDir">,
+  tools: HookTools,
+  stateHome: string,
+): void {
+  const pin = pinScript(sb.env, sb.binDir);
+  writeExec(join(sb.binDir, "murmur"), murmurShim(tools, pin));
+  if (tools.muzzle !== null)
+    writeExec(join(sb.binDir, "muzzle"), muzzleShim(tools.muzzle, stateHome, pin));
 }
 
 /**
@@ -625,9 +640,7 @@ export async function setupHarnesses(
     if (fake) installFakeHarness(sb.dir, sb.binDir, h, o.tools.node);
     else installRealHarness(sb.binDir, h, sb.env.EVAL_CALLER_PATH ?? process.env.PATH);
   }
-  writeExec(join(sb.binDir, "murmur"), murmurShim(o.tools));
-  if (o.tools.muzzle !== null)
-    writeExec(join(sb.binDir, "muzzle"), muzzleShim(o.tools.muzzle, paths.stateHome));
+  writeToolShims(sb, o.tools, paths.stateHome);
 
   for (const [rel, body] of Object.entries(projectHookFiles(o.tools, paths))) {
     mkdirSync(dirname(join(sb.repoDir, rel)), { recursive: true });

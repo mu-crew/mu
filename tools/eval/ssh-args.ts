@@ -86,6 +86,10 @@ const DROPPED = new Set([
   "XDG_STATE_HOME",
   "XDG_CACHE_HOME",
   "EVAL_SANDBOX_DIR",
+  // a live sandbox's shell startup pins (isolation.ts) name this machine's sandbox state
+  "ZDOTDIR",
+  "EVAL_USER_ZDOTDIR",
+  "CLAUDE_ENV_FILE",
 ]);
 
 /**

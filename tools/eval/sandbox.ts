@@ -19,6 +19,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AUT_NAMES } from "./fake-payloads.ts";
 import { type CodexHooks, type HookTools, setupHarnesses } from "./harness.ts";
+import { pinScript, shellStartupEnv, writeShellStartup } from "./isolation.ts";
 import type { Sandbox, Surface } from "./types.ts";
 
 /** Where the AUT sees the surface's skill: a copy inside the sandbox (a regular tree, so `find /` hits it too), so its own recipes are the first (and shortest) path it meets. */
@@ -146,7 +147,8 @@ export const LIVE_DROP = new RegExp(
  *   are inside the sandbox; nothing of MU_*, TMUX*, HERDR_*, PI_* is inherited.
  * - Live run (`live`, real harness binaries): the caller's environment with LIVE_DROP removed, so
  *   each harness keeps its own HOME, config and auth (D1). The sandbox still owns mu's DB and
- *   state, murmur's state, the tmux server and TMPDIR; PATH is the sandbox bin, then the caller's.
+ *   state, murmur's state, the tmux server and TMPDIR; PATH is the sandbox bin, then the caller's;
+ *   ZDOTDIR and CLAUDE_ENV_FILE re-apply that after the user's shell startup files (isolation.ts).
  */
 export function sandboxEnv(
   dir: string,
@@ -184,9 +186,11 @@ export function sandboxEnv(
   env.EVAL_WORKER_DIR = join(dir, "workers");
   env.EVAL_SURFACE_FAMILY = surface.family ?? "3x";
   if (opts.live) {
-    // the sandbox root as TMPDIR: a harness sandbox that lets its tools write TMPDIR (codex's
-    // workspace-write, cursor-agent's) then reaches the run's logs, DB dir and worktree gitdirs
+    // the sandbox root as TMPDIR: a harness sandbox that lets its tools write TMPDIR (cursor-agent's,
+    // codex's workspace-write when a command picks it) then reaches the run's logs, DB dir and
+    // worktree gitdirs
     env.TMPDIR = dir;
+    Object.assign(env, shellStartupEnv(dir, base));
     env.EVAL_LIVE = "1";
     env.EVAL_CALLER_PATH = base.PATH ?? "";
     env.PATH = [join(dir, "bin"), ...(base.PATH ?? "").split(":").filter((d) => d !== "")].join(
@@ -371,12 +375,17 @@ function writeShim(path: string, body: string): void {
 export const LOCAL_TABLES =
   "agents worktrees vcs_workspaces task_auto task_substates delegate_calls";
 
-/** The sandbox's `mu`: runs the surface's CLI and records the call (see observe.ts). Exit status and output are untouched. */
-export function muShim(cli: string): string {
-  return String.raw`#!/bin/bash
+/**
+ * The sandbox's `mu`: runs the surface's CLI and records the call (see observe.ts). Exit status and
+ * output are untouched. `pin` (isolation.ts pinScript) sets the sandbox's DB, state, sync dir and
+ * tmux server whatever the caller's env says.
+ */
+export function muShim(cli: string, pin = ""): string {
+  const raw = (t: string): string => t.replace(/\\\$\{/g, "${");
+  return `${raw(String.raw`#!/bin/bash
 # a user's own \`mu hook stop\` entry, read by a live harness: the rig's runs the build by path
 [ "$1" = hook ] && [ "$2" = stop ] && exit 0
-D="\${EVAL_WORKER_DIR:-}"
+`)}${pin}${raw(String.raw`D="\${EVAL_WORKER_DIR:-}"
 aut=
 # the AUT: no agent name (pi over rpc), or an orchestrator pane the rig started (aut, aut-2)
 [ -n "$D" ] && [ -z "\${MU_AGENT_NAME:-}" ] && aut=1
@@ -402,7 +411,7 @@ fi
 [ -n "$D" ] && printf '%s %s %s %s %s %s\n' "$s" "$(ms)" "$rc" "$([ -n "$aut" ] && echo - || echo "\${MU_AGENT_NAME:--}")" "$$" "$(printf %s "$*" | tr '\n' ' ')" >> "$D/mu-calls.log" 2>/dev/null
 [ -n "$aut" ] && printf '%s|%s|%s\n' "$$" "$before" "$(fp)" >> "$D/mu-local.log" 2>/dev/null
 exit $rc
-`.replace(/\\\$\{/g, "${");
+`)}`;
 }
 
 const hostPiInfo: { version?: string; models?: string } = {};
@@ -477,6 +486,31 @@ exec ${JSON.stringify(sandboxPi(dir))} "$@" --no-extensions${providerExt ? ` -e 
   );
 }
 
+/**
+ * bin/mu, bin/tmux and (live) the shell startup files. Every shim and every shell startup
+ * re-applies the sandbox's isolation variables, baked in now: a harness's shell tool re-sources the
+ * user's rc, which may point mu elsewhere.
+ */
+export function writeIsolatedShims(o: {
+  dir: string;
+  binDir: string;
+  env: Record<string, string | undefined>;
+  cli: string;
+  live: boolean;
+  tmuxBin: string;
+  tmuxSocket: string;
+}): void {
+  const pin = pinScript(o.env, o.binDir);
+  if (o.live) writeShellStartup(o.dir, pin);
+  writeFileSync(join(o.binDir, "mu"), muShim(o.cli, pin), { mode: 0o755 });
+  // Bare tmux from the AUT or a worker joins the run's private server (an explicit later -L/-S
+  // still wins, but TMUX_TMPDIR keeps even that inside the sandbox).
+  writeShim(
+    join(o.binDir, "tmux"),
+    `export TMUX_TMPDIR=${JSON.stringify(o.env.TMUX_TMPDIR ?? join(o.dir, "tmux-tmp"))}\nexec ${JSON.stringify(o.tmuxBin)} -L ${o.tmuxSocket} "$@"`,
+  );
+}
+
 export interface SandboxOptions {
   env?: Record<string, string>;
   /**
@@ -542,16 +576,12 @@ export async function createSandbox(surface: Surface, opts: SandboxOptions = {})
   // calls (no MU_AGENT_NAME) also tee their stdout to <workers>/mu-out/<pid>. The shim changes
   // neither the exit status nor the output, so a judge can tell what mu itself returned (and when)
   // from what the AUT's shell printed around it.
-  writeFileSync(join(binDir, "mu"), muShim(surface.cli), { mode: 0o755 });
+  writeIsolatedShims({ dir, binDir, env, cli: surface.cli, live: isLive, tmuxBin, tmuxSocket });
   // Workers and delegates are scripted: faux model, no mu nudges (they would only rerun the script).
   // The AUT sees a plain `pi` that answers --version / --list-models like the real one; the real pi
   // path, the extension paths and the faux model name sit one level down in <dir>/.rt (never in bin/).
   if (isLive && opts.livePi === true) installLivePi(dir, binDir, surface, opts.providerExt);
   else installFauxPi(dir, binDir, surface);
-
-  // Bare tmux from the AUT or a worker joins the run's private server (an explicit later -L/-S
-  // still wins, but TMUX_TMPDIR keeps even that inside the sandbox).
-  writeShim(join(binDir, "tmux"), `exec ${JSON.stringify(tmuxBin)} -L ${tmuxSocket} "$@"`);
 
   const sb: Sandbox = {
     dir,
