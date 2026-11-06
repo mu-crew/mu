@@ -216,21 +216,25 @@ export async function runPaneAut(
       lastError = `mu orchestrate ${name} failed (${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}`;
       return null;
     }
-    // a harness that reports its session at launch is ready when it has; a folder-trust dialog in
-    // front of it is answered once, with the trusting choice (trustDialogKeys)
-    let enter = false;
+    // a harness that reports its session at launch is ready when it has; each trust dialog in
+    // front of it (claude's folder trust; codex's folder trust, then its hook review) is answered
+    // with the trusting choice (trustDialogKeys), at most 3, never twice on the same screen
+    let answered = 0;
+    let lastScreen = "";
     for (let i = 0; i < 60; i++) {
       const v = io.view(sb, pane);
       if (v?.sessionId) break;
-      const trustKeys =
-        (i === 6 || i === 30) && !enter ? trustDialogKeys(io.capture(sb, pane) ?? "") : null;
+      const screen = i >= 4 && answered < 3 ? (io.capture(sb, pane) ?? "") : "";
+      const trustKeys = screen !== "" && screen !== lastScreen ? trustDialogKeys(screen) : null;
       if (trustKeys !== null) {
         for (const k of trustKeys) io.keys(sb, pane, k);
-        enter = true;
+        answered++;
+        lastScreen = screen;
         note({ trustDialog: name, keys: trustKeys });
       }
-      // codex reports its session only with its first prompt
-      if (o.harness === "codex" && i >= 8) break;
+      // codex reports its session only with its first prompt: ready once no dialog is up
+      if (o.harness === "codex" && i >= 8 && trustKeys === null && trustDialogKeys(screen) === null)
+        break;
       await io.sleep(TICK_MS);
     }
     await send(name, prompt);
@@ -348,12 +352,20 @@ export async function runPaneAut(
 }
 
 /**
- * The keys that answer a folder-trust dialog with "trust", or null when the pane shows none.
- * Enter takes the highlighted choice, which is the trusting one unless the cursor sits on a
- * "No" option: Claude Code defaults to "No, exit" when the folder's settings pre-approve tools
- * (the rig's do), so it needs Down first.
+ * The keys that answer a trust dialog with "trust", or null when the pane shows none. A dialog is
+ * a selector (a line led by ❯ or ›) with a trusting option: Claude Code's "Yes, I trust this
+ * folder" (its cursor starts on "No, exit" when the folder's settings pre-approve tools, as the
+ * rig's do), codex's folder "Yes, continue" and its hook review's "Trust all and continue" (its
+ * cursor starts on "Review hooks"). The keys move the cursor to that option, then Enter.
  */
 export function trustDialogKeys(screen: string): string[] | null {
   if (!/trust/i.test(screen)) return null;
-  return /❯\s*No\b/.test(screen) && /Yes, I trust/i.test(screen) ? ["Down", "Enter"] : ["Enter"];
+  const lines = screen.split("\n");
+  const cursor = lines.findIndex((l) => /^\s*[❯›]\s/.test(l));
+  const target = lines.findIndex((l) =>
+    /yes, i trust|trust all and continue|^\s*[❯›]?\s*(\d+\.\s*)?yes, (continue|allow)/i.test(l),
+  );
+  if (cursor < 0 || target < 0) return null;
+  const move = target - cursor;
+  return [...Array<string>(Math.abs(move)).fill(move > 0 ? "Down" : "Up"), "Enter"];
 }

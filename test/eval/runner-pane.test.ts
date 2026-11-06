@@ -226,7 +226,24 @@ describe("trustDialogKeys", () => {
   it("takes the default when it already trusts", () => {
     expect(trustDialogKeys(" ❯ 1. Yes, I trust this folder\n   2. No, exit")).toEqual(["Enter"]);
   });
-  it("sends nothing without a trust dialog", () => {
+  it("trusts codex's hooks instead of opening the review", () => {
+    const screen = [
+      "  Hooks need review",
+      "  14 hooks are new or changed.",
+      "  Hooks can run outside the sandbox after you trust them.",
+      "› 1. Review hooks",
+      "  2. Trust all and continue",
+      "  3. Continue without trusting (hooks won't run)",
+      "  enter confirm · esc skip",
+    ].join("\n");
+    expect(trustDialogKeys(screen)).toEqual(["Down", "Enter"]);
+  });
+  it("takes codex's folder 'Yes, continue'", () => {
+    const screen = "  Do you trust the files in this folder?\n› 1. Yes, continue\n  2. No, quit";
+    expect(trustDialogKeys(screen)).toEqual(["Enter"]);
+  });
+  it("sends nothing without a trust dialog, or with trust text but no selector", () => {
     expect(trustDialogKeys("> ready")).toBeNull();
+    expect(trustDialogKeys("I trust you will merge it")).toBeNull();
   });
 });
