@@ -156,9 +156,10 @@ runs or its state is unknown; an unconfirmed send reports `ack: unknown` and
 is never resent. `--steer` is refused. `--interrupt` and `mu agent abort`
 press Escape. `--fresh` sends the harness's fresh command and then the text.
 A wait on the agent settles when the turn's stop hook fires, with that turn's
-final text, and a `CLOSE:` block in it closes the task. The text is known
-only to a wait that was watching before the turn ended (start it with
-`send --wait`).
+final text, and a `CLOSE:` block in it closes the task. Any wait knows the
+text, even one started after the turn ended. With a murmur older than
+`last_text_run`, only a wait that was watching before the turn ended knows it
+(start it with `send --wait`).
 
 `spawn --task` hands it the brief. The worker starts with no prompt; mu
 waits for its `session_start` (claude and cursor-agent report one as they

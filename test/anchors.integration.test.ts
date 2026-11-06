@@ -6,22 +6,17 @@
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  type AnchorRecord,
-  anchorDir,
-  anchorDirs,
-  anchorWrapper,
-  pruneAnchors,
-} from "../src/anchors.js";
+import { type AnchorRecord, anchorDir, anchorWrapper, pruneAnchors } from "../src/anchors.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 
@@ -118,15 +113,17 @@ describe("anchorWrapper", () => {
     expect(runPane(command, noShell)).toBe("ran\n");
   });
 
-  it("anchors live under the home dir; a set XDG_STATE_HOME adds its own dir", async () => {
-    const home = join(homedir(), ".local", "state", "mu-next", "anchors");
-    expect(anchorDir()).toBe(home);
-    await withEnv("XDG_STATE_HOME", undefined, async () => {
-      expect(anchorDirs()).toEqual([home]);
-    });
-    await withEnv("XDG_STATE_HOME", join(dir, "xdg"), async () => {
-      expect(anchorDir()).toBe(home);
-      expect(anchorDirs()).toEqual([home, join(dir, "xdg", "mu-next", "anchors")]);
-    });
+  it("the wrapper writes the home dir only, a set XDG_STATE_HOME or not: murmur reads it first", async () => {
+    const home = join(dir, "home");
+    const xdg = join(dir, "xdg");
+    await withEnv("HOME", home, () =>
+      withEnv("XDG_STATE_HOME", xdg, async () => {
+        const anchors = join(home, ".local", "state", "mu-next", "anchors");
+        expect(anchorDir()).toBe(anchors);
+        const pid = runPane(anchorWrapper('echo "$$"', anchor)).trim();
+        expect(readdirSync(anchors)).toEqual([`${pid}.json`]);
+        expect(existsSync(join(xdg, "mu-next", "anchors"))).toBe(false);
+      }),
+    );
   });
 });

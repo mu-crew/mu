@@ -7,7 +7,7 @@
 // the live check on one is owed (see the CHANGELOG).
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -24,6 +24,7 @@ import {
   relayPayload,
   remotePaneScript,
   type TextTurn,
+  textTied,
   textTurnAfter,
 } from "../src/channels/hooks-remote.js";
 import { channelTarget, hooksChannel } from "../src/channels/index.js";
@@ -144,6 +145,8 @@ describe("the remote read", () => {
       "prompt_submitted",
       "turn_stopped",
     ]);
+    // The harness's own events stay the harness's on the origin pane (`--by harness`).
+    expect(fake.muOrigins).toEqual(["harness", "harness", "harness"]);
     expect(fake.muEvents[2]).toMatchObject({
       event: "turn_stopped",
       harness: "claude",
@@ -294,6 +297,42 @@ describe("a read whose events never reached the pane", () => {
     expect(reconcileEvents(pane(), snap({ claimed: false }))).toEqual([]);
     expect(reconcileEvents(undefined, snap())).toEqual([]);
   });
+
+  it("a node that names an earlier turn as its text's: the corrected turn ends without that text", () => {
+    const fields = { session_id: "s" };
+    // Run 2 ended without text on the node, which kept run 1's; the local pane missed it.
+    const kept = snap({ runCount: 2, lastText: "t1", lastTextRun: 1 });
+    expect(reconcileEvents(pane({ runCount: 1, lastText: null }), kept)).toEqual([
+      { event: "prompt_submitted", ...fields },
+      { event: "turn_stopped", ...fields },
+    ]);
+    // Nor is it pushed into a stopped pane whose text differs.
+    expect(reconcileEvents(pane({ activity: "stopped", runCount: 2 }), kept)).toEqual([]);
+    // The last turn's own text still is.
+    expect(
+      reconcileEvents(pane({ runCount: 1 }), snap({ runCount: 2, lastText: "t2", lastTextRun: 2 })),
+    ).toEqual([
+      { event: "prompt_submitted", ...fields },
+      { event: "turn_stopped", text: "t2", ...fields },
+    ]);
+  });
+
+  it("an old node under a new local murmur: only a text mu's record ties is carried into the corrected turn", () => {
+    const fields = { session_id: "s" };
+    // Run 3 was the harness's own interrupt on a node too old to name its text's
+    // run; the relay was lost and the local pane still runs run 3 holding run 2's text.
+    const local = pane({ runCount: 3, lastText: "t2", lastTextRun: 2 });
+    const kept = snap({ runCount: 3, lastText: "t2", textTied: false });
+    // The local murmur would stamp a carried text with run 3: the turn ends without it.
+    expect(reconcileEvents(local, kept)).toEqual([{ event: "turn_stopped", ...fields }]);
+    // A text the record ties to run 3 is carried.
+    expect(reconcileEvents(local, snap({ runCount: 3, lastText: "t3", textTied: true }))).toEqual([
+      { event: "turn_stopped", text: "t3", ...fields },
+    ]);
+    // An older local murmur names no run: the text goes, and ownText's witness rule judges it.
+    const { lastTextRun: _, ...old } = local;
+    expect(reconcileEvents(old, kept)).toEqual([{ event: "turn_stopped", text: "t2", ...fields }]);
+  });
 });
 
 describe("which turn the node's text belongs to", () => {
@@ -340,6 +379,41 @@ describe("which turn the node's text belongs to", () => {
       at(2),
     );
     expect(late.textRuns).toBe(1);
+  });
+
+  it("a node whose murmur names the text's run is read by it, whatever mu's record says", () => {
+    const none: TextTurn = {
+      session: null,
+      runs: null,
+      generation: null,
+      generationRuns: null,
+      textRuns: null,
+    };
+    const tied: TextTurn = { ...none, session: "s", runs: 2, textRuns: 2 };
+    const base = {
+      state: "idle",
+      harness: "codex",
+      sessionId: "s",
+      runCount: 2,
+      activity: "stopped",
+      lastText: "x",
+      confirmed: true,
+      claimed: true,
+      attention: [],
+      blocked: null,
+      error: null,
+      textTied: false,
+      events: 0,
+      harnessEvents: 0,
+    };
+    // No record (a read mu never received): the node's run still ties it.
+    expect(textTied(none, { ...base, lastTextRun: 2 })).toBe(true);
+    // The record says tied, the node says an earlier turn wrote it: not tied.
+    expect(textTied(tied, { ...base, lastTextRun: 1 })).toBe(false);
+    expect(textTied(tied, { ...base, lastTextRun: null })).toBe(false);
+    // An older murmur names none: the record decides.
+    expect(textTied(tied, base)).toBe(true);
+    expect(textTied(none, base)).toBe(false);
   });
 
   it("a count that does not end at the node's (a read mu never received) ties nothing", () => {
@@ -460,6 +534,56 @@ describe("interrupt and answer on a remote hooks worker", () => {
     // The gate's read, then the write with its read; the send reuses that one.
     expect(reads()).toHaveLength(2);
     expect(fake.submitted).toEqual(["stop that"]);
+  });
+
+  it("--interrupt on codex: its own Interrupt, relayed as the harness's, confirms the stop; mu writes nothing", async () => {
+    insertAgent(db, {
+      name: "cx",
+      workstream: "auth",
+      paneId: "%3",
+      cli: "codex",
+      channel: "hooks",
+      host: "dev",
+      cwd: "/srv/repo",
+      remoteKey: KEY,
+    });
+    node.emit("prompt_submitted");
+    // Escape reaches codex on the node, which reports its own interrupt.
+    const tmux = fake.tmux.bind(fake);
+    fake.tmux = (args) => {
+      if (args[0] === "send-keys" && args.includes("Escape")) node.emit("interrupted");
+      return tmux(args);
+    };
+    const { data, exitCode } = await runCliJson(
+      ["agent", "send", "cx", "stop that", "-w", "auth", "--interrupt", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(data).toMatchObject({ wasBusy: true, stopped: "confirmed", ack: "sent" });
+    expect(node.muWrites()).toEqual([]);
+    expect(fake.muOrigins.at(-1)).toBe("harness");
+    expect(fake.submitted).toEqual(["stop that"]);
+  });
+
+  it("--interrupt on codex whose Interrupt has not reached the node yet: mu's is recorded, unconfirmed", async () => {
+    insertAgent(db, {
+      name: "cx",
+      workstream: "auth",
+      paneId: "%3",
+      cli: "codex",
+      channel: "hooks",
+      host: "dev",
+      cwd: "/srv/repo",
+      remoteKey: KEY,
+    });
+    node.emit("prompt_submitted");
+    const { data, exitCode } = await runCliJson(
+      ["agent", "send", "cx", "stop that", "-w", "auth", "--interrupt", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(data).toMatchObject({ wasBusy: true, stopped: "unconfirmed", ack: "sent" });
+    expect(node.muWrites()).toEqual([{ event: "interrupted", session_id: "sess-1" }]);
   });
 
   it("a node that will not record the interrupt: AgentInterruptUnrecordedError, the text not sent", async () => {
@@ -668,7 +792,7 @@ describe("collect never applies an earlier turn's CLOSE block", () => {
 });
 
 describe("the remote anchor", () => {
-  it("is written under the remote HOME with the worker's key, then the command runs in place", () => {
+  it("is written under the remote HOME alone with the worker's key, then the command runs in place", () => {
     const home = join(dir, "remote-home");
     mkdirSync(home);
     const key = newRemoteKey("auth", "cw");
@@ -686,11 +810,21 @@ describe("the remote anchor", () => {
           remote_key: key,
         }),
       ],
-      { encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: home, SHELL: "/bin/sh" } },
+      {
+        encoding: "utf8",
+        env: {
+          PATH: process.env.PATH ?? "",
+          HOME: home,
+          SHELL: "/bin/sh",
+          // murmur reads the home dir first, so the XDG state home gets nothing.
+          XDG_STATE_HOME: join(dir, "remote-xdg"),
+        },
+      },
     );
     const pid = /^ran:(\d+)$/m.exec(out)?.[1];
     const anchors = join(home, ".local", "state", "mu-next", "anchors");
     expect(readdirSync(anchors)).toEqual([`${pid}.json`]);
+    expect(existsSync(join(dir, "remote-xdg"))).toBe(false);
     expect(JSON.parse(readFileSync(join(anchors, `${pid}.json`), "utf8"))).toMatchObject({
       agent_name: "cw",
       cli: "claude",

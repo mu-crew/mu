@@ -166,9 +166,9 @@ restarted pi is refused rather than read. The result's
 `data.snapshots[].lastText` is the answer (its tail if long; the whole
 text is in `sessionFile`), and `data.firing.kind` says how the run ended:
 `settled`, `input` (it stopped to ask), `dead` (exit 6) or `heartbeat`.
-A `hooks` agent (claude, codex, cursor-agent or muse on tmux) has the
-`lastText` of a turn the wait watched end; on herdr or Rex a non-pi agent has
-none, so read the pane with `mu agent read helper-1 -w scratch -n 80`. Outside
+A `hooks` agent (claude, codex, cursor-agent or muse on tmux) has its
+turn's `lastText` (with a murmur older than `last_text_run`, only for a turn
+the wait watched end); on herdr or Rex a non-pi agent has none, so read the pane with `mu agent read helper-1 -w scratch -n 80`. Outside
 pi, record the check with `mu task check` and `mu task verdict`
 ([tasks-or-calls](../../skills/mu/recipes/tasks-or-calls.md#outside-pi)).
 

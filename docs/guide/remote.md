@@ -107,9 +107,11 @@ and `murmur` must be on the PATH the profile's `--exec` sees.
   worker's pane holds the only slot, so give such a host 2 or more.
 - `mu agent send` pastes into the pane and returns `ack: sent`; the next
   wait confirms the run. A host that cannot be read makes the send `unknown`
-  (`--force` pastes anyway). `--interrupt` and abort press Escape and record
-  the interrupt on the host (`idle?`). `--fresh` is refused: send the
-  harness's fresh command, then the text.
+  (`--force` pastes anyway). `--interrupt` and abort press Escape. codex,
+  muse and cursor-agent report their own interrupt, which reads confirmed
+  (`idle`) once it reaches the host; otherwise mu records the interrupt on
+  the host (`idle?`). `--fresh` is refused: send the harness's fresh command,
+  then the text.
 - `mu wait` applies the worker's `CLOSE:` block when it sees the turn end;
   `collect` applies it too, once its commits are pinned, but only from the
   turn that wrote it: a turn that failed or ended without text applies

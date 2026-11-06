@@ -26,7 +26,9 @@
 // Settle is the pane's `turn_stopped`: the watch polls `murmur pane` until a
 // turn past the baseline has ended, and returns that turn's text (the last
 // text, from the event, never a transcript) when it can tie the text to the
-// turn (ownText); a dialog ends it as `blocked`, the wait's `input`. State reads are the pane option
+// turn (ownText: by murmur's `last_text_run`, or with an older murmur by what
+// the watch saw before the turn ended); a dialog ends it as `blocked`, the
+// wait's `input`. State reads are the pane option
 // murmur's drain publishes (the same read as `mux`). No msgId receipts.
 //
 // A remote worker (`--host`, spec D11) reports on its own node; its target's
@@ -35,7 +37,8 @@
 // abort, answer), at the start of a watch and every few polls after, and on
 // collect; never in an ack poll. So a remote paste is `sent`, confirmed by
 // the next read; a remote interrupt records mu's `interrupted` on the node in
-// the same exec; `--fresh` is refused (its confirmation needs a poll).
+// the same exec unless the read before it brought the harness's own
+// interrupt; `--fresh` is refused (its confirmation needs a poll).
 
 import { readBaseStates } from "../agent-state.js";
 import {
@@ -238,8 +241,9 @@ async function stopTurn(
   const row = rowOf(t.agent);
   await mux.sendKeys(paneId, [row?.interruptKey ?? "Escape"]);
   await onKey?.();
-  if (t.remote !== undefined) return remoteStopped(t, t.remote, before);
-  if (row !== undefined && row.events.interrupted.length > 0) {
+  const reports = row !== undefined && row.events.interrupted.length > 0;
+  if (t.remote !== undefined) return remoteStopped(t, t.remote, before, reports);
+  if (reports) {
     const done = await pollPane(paneId, timeoutMs, (now) => stoppedSince(before, now));
     if (done === undefined) throw new AgentAbortTimeoutError(name, workstreamName, timeoutMs);
     return { wasBusy: true, stopped: "confirmed" };
@@ -257,17 +261,28 @@ async function stopTurn(
 }
 
 /**
- * A remote worker's stop, once its key was pressed (spec D11): mu records
- * `interrupted` on the worker's node and reads it back in one exec, so the
- * local pane reads `idle?` until the harness's next event replaces it. No
- * poll: a harness's own interrupt event arrives with that read or the next.
- * A node that did not record it is AgentInterruptUnrecordedError.
+ * A remote worker's stop, once its key was pressed (spec D11). A harness that
+ * reports its own interrupt (codex, muse, cursor-agent) has usually done so
+ * by the time an exec reaches its node, so the node is read first: its
+ * interrupt, relayed as the harness's (`murmur hook mu --by harness`), is a
+ * confirmed stop, and mu writes nothing. Otherwise (claude, or an interrupt
+ * not yet reported) mu records `interrupted` on the node and reads it back in
+ * one exec, so the local pane reads `idle?` until the harness's next event
+ * replaces it. No poll: a later interrupt event arrives with the next read. A
+ * node that did not record mu's is AgentInterruptUnrecordedError.
  */
 async function remoteStopped(
   t: DeliveryTarget,
   remote: RemoteReader,
   before: HooksPane,
+  reports: boolean,
 ): Promise<Stopped> {
+  if (reports && (await remote.read()).ok) {
+    const now = await readHooksPane(t.agent.paneId);
+    if (stoppedSince(before, now) && now?.confirmed === true) {
+      return { wasBusy: true, stopped: "confirmed" };
+    }
+  }
   const r = await remote.read({
     write: {
       event: "interrupted",
@@ -452,13 +467,16 @@ const witnessOf = (p: HooksPane): Witness => ({
 /**
  * The settled turn's own text, or undefined when it cannot be told apart from
  * an earlier turn's. murmur keeps the previous text when a turn ends without
- * one (an interrupt, a failure) and says nothing about which turn wrote it,
- * so the text counts only when it changed since a read (`witness`) taken
- * before the turn ended, in its session; or, in a session the watch never saw
- * unsettled, when that session's one turn wrote it (a new session starts with
- * no text). A watch that first reads the turn already over, a text equal to
- * the previous turn's, and an `idle?` turn (an interrupt mu wrote) give none:
- * a CLOSE block that cannot be tied to its turn is never applied.
+ * one (an interrupt, a failure). It names the run that wrote it
+ * (`last_text_run`), so the text counts when that run is the settled turn's,
+ * however late the watch first read it and whatever an earlier turn wrote.
+ * An older murmur names none: then the text counts only when it changed since
+ * a read (`witness`) taken before the turn ended, in its session; or, in a
+ * session the watch never saw unsettled, when that session's one turn wrote
+ * it (a new session starts with no text), and a watch that first reads the
+ * turn already over or a text equal to the previous turn's gives none. An
+ * `idle?` turn (an interrupt mu wrote) gives none either way: a CLOSE block
+ * that cannot be tied to its turn is never applied.
  */
 function ownText(
   pane: HooksPane,
@@ -466,6 +484,11 @@ function ownText(
   session: string | null,
 ): string | undefined {
   if (!pane.confirmed || pane.lastText === null) return undefined;
+  if (pane.lastTextRun !== undefined) {
+    return pane.lastTextRun !== null && pane.lastTextRun === pane.runCount
+      ? pane.lastText
+      : undefined;
+  }
   if (witness !== undefined && witness.session === pane.sessionId) {
     return pane.lastText !== witness.text ? pane.lastText : undefined;
   }
@@ -694,7 +717,10 @@ function follow(
  * A settled turn whose text can follow its stop (cursor-agent) and has none
  * yet, where a text would count (ownText): read the pane for up to
  * LATE_TEXT_MS until the text lands, while that turn is still the last.
- * undefined: no text came, or another turn started.
+ * murmur clears the text at a named turn's stop (and names that turn's run as
+ * the text's), so a turn that ended any other way (an interrupt, a failure)
+ * keeps an earlier text and is not waited for. undefined: no text came, or
+ * another turn started.
  */
 async function lateText(
   paneId: string,
@@ -704,8 +730,11 @@ async function lateText(
   remote?: RemoteReader,
 ): Promise<HooksPane | undefined> {
   if (!pane.confirmed || pane.lastText !== null) return undefined;
-  const counts =
-    witness?.session === pane.sessionId || (pane.sessionId !== session && settledRuns(pane) === 1);
+  const named = pane.lastTextRun !== undefined;
+  const counts = named
+    ? pane.lastTextRun === pane.runCount
+    : witness?.session === pane.sessionId ||
+      (pane.sessionId !== session && settledRuns(pane) === 1);
   if (!counts) return undefined;
   // A remote worker's late text is on its node: one more read brings it in.
   await remote?.read();
@@ -715,6 +744,7 @@ async function lateText(
     (p) =>
       p !== undefined &&
       p.lastText !== null &&
+      (!named || p.lastTextRun === pane.runCount) &&
       p.activity === "stopped" &&
       p.sessionId === pane.sessionId &&
       p.runCount === pane.runCount,

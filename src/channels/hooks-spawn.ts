@@ -178,12 +178,14 @@ export async function hooksTurnFailure(t: ChannelTarget): Promise<HooksTurnFailu
 }
 
 /**
- * Acknowledge a failed turn before its in-place retry: `murmur clear --pane`,
- * then a read of the pane. True only when the pane then reads with no `error`
- * and still stopped with no dialog, so a later failure raises a fresh `error`
- * that {@link hooksTurnFailure} sees. false: murmur could not clear it (absent,
- * or routed to another tmux server): the retry must not go ahead, since every
- * later failure in the pane would read as the old one. Never throws.
+ * Acknowledge a failed turn before its in-place retry: `murmur clear --pane`
+ * on mu's tmux server (`-L` for a private `MU_TMUX_SOCKET`, as the pane is
+ * read), then a read of the pane. True only when the pane then reads with no
+ * `error` and still stopped with no dialog, so a later failure raises a fresh
+ * `error` that {@link hooksTurnFailure} sees. false: murmur could not clear it
+ * (absent, or too old to take `-L` and so routed to another tmux server): the
+ * retry must not go ahead, since every later failure in the pane would read
+ * as the old one. Never throws.
  */
 export async function acknowledgeTurnFailure(t: ChannelTarget): Promise<boolean> {
   await clearPaneAttention(t.agent.paneId);

@@ -218,6 +218,39 @@ describe("hook-chain: the D7 guards", () => {
     expect(oneShot("pi", "pi -p x")).toBe(false);
   });
 
+  it("one-shot is murmur's rule: codex e and review nest, a prompt holding the word exec does not", () => {
+    // The pane's codex run as above, its agent anchored at the launcher.
+    const pane: [number, number, string][] = [
+      [100, 1, "tmux new-session -d"],
+      [200, 100, "-zsh"],
+      [300, 200, "codex -m gpt-5 fix the exec path"],
+      [302, 300, "/usr/local/bin/codex_cli/codex.real -m gpt-5 fix the exec path"],
+    ];
+    const anchor = anchors({ 300: { cli: "codex" } });
+    const hook: [number, number, string] = [
+      700,
+      600,
+      "node /usr/local/lib/mu/dist/cli.js hook stop codex",
+    ];
+    // The interactive agent's own Stop: its prompt's `exec` is no subcommand.
+    const own = table([...pane, [600, 302, "node /usr/local/lib/mu/dist/cli.js hook stop codex"]]);
+    expect(hookAgent("codex", { table: own, self: 600, anchor, env: {} }).ok).toBe(true);
+    // `codex e` and `codex review`, exec'd in place under the agent's binary: nested.
+    for (const run of ["codex e Reply NESTED", "codex -c k=v review --uncommitted"]) {
+      const nested = table([...pane, [600, 302, run], hook]);
+      expect(hookAgent("codex", { table: nested, self: 700, anchor, env: {} })).toEqual({
+        ok: false,
+        reason: "nested",
+      });
+    }
+    expect(oneShot("codex", "codex -m exec")).toBe(false);
+    expect(oneShot("codex", "codex -- exec this")).toBe(false);
+    expect(oneShot("codex", "codex --unknown-flag exec")).toBe(true);
+    expect(oneShot("muse", "node /opt/muse/cli.js -p work exec hi")).toBe(true);
+    expect(oneShot("muse", "node /opt/muse/cli.js resume")).toBe(false);
+    expect(oneShot("cursor-agent", "cursor-agent --print=text hi")).toBe(true);
+  });
+
   it("refuses an anchor of another harness and a remote anchor", () => {
     const t = table(CLAUDE_PANE);
     expect(

@@ -134,7 +134,7 @@ interface Contract {
   lastText: boolean;
   /**
    * A run already over when read still gives its text. false: only a watch that saw the run
-   * unsettled can tie the text to it (hooks: murmur does not say which turn wrote it).
+   * unsettled can tie the text to it (hooks, on a murmur that does not say which turn wrote it).
    */
   endedText: boolean;
   /** Run the live agent's next turn to its end, where the channel reads it from the agent's own events. */
@@ -245,6 +245,24 @@ const CONTRACTS: Contract[] = [
     ...HOOKS_PROMISES,
     label: "hooks",
     live: liveHooks,
+    gone: () =>
+      insertAgent(db, {
+        name: "cdg",
+        workstream: WS,
+        paneId: "%9",
+        cli: "codex",
+        channel: "hooks",
+      }),
+  },
+  {
+    ...HOOKS_PROMISES,
+    label: "hooks (murmur with last_text_run)",
+    // murmur names the run whose turn wrote the text, so an ended run's text is its own.
+    endedText: true,
+    live: () => {
+      fake.textRun = true;
+      return liveHooks();
+    },
     gone: () =>
       insertAgent(db, {
         name: "cdg",
