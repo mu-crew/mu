@@ -147,7 +147,8 @@ are re-export hubs.
 | Module | Responsibility |
 | --- | --- |
 | `src/agents.ts` | CRUD (incarnation CAS), send, read, list, liveness, reaper; hub re-exporting close |
-| `src/agents/spawn.ts` | spawn: CLI resolution, `mux.spawnAgent`, row finalize, rollback; re-exports the readiness names so `agents/spawn.js` imports keep working |
+| `src/agents/spawn.ts` | spawn: CLI resolution, `mux.spawnAgent`, row finalize; re-exports the readiness names and `rollbackSpawn` so `agents/spawn.js` imports keep working |
+| `src/agents/spawn-rollback.ts` | `rollbackSpawn`: a failed spawn's undo (pane, host channel, lease job, worktree, row, reservation), best-effort and idempotent; imports only types from `spawn.ts` |
 | `src/agents/spawn-ready.ts` | spawn readiness: the ctl handshake (`awaitCtlHandshake`, its clock seam), the liveness window, the startup-error and Claude trust-dialog scan (`checkSpawnHealth`) |
 | `src/agents/spawn-remote.ts` | the remote half of `spawn --host`: `requireHostSpawn`, channel admission + remote prepare (`admitRemoteSpawn`, `prestageRemote`), remote-worktree rollback; imports only types from `spawn.ts` |
 | `src/agents/staging.ts` | dead `--worktree` stagings (a SIGKILLed spawn's placeholder row + unused worktree): `deadStagings` for doctor, `reclaimDeadStagings` at spawn |
