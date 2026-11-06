@@ -207,14 +207,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   <id>` passes the model through the harness's own flag (`--model`, pi
   included). A worker of claude, codex, cursor-agent or muse launched from
   its cli key or `MU_<KEY>_COMMAND` (not a literal `--command`, not an
-  orchestrator) gets its in-sandbox auto-approve flags
-  (`--permission-mode acceptEdits`, `-s workspace-write -a never`,
-  `--sandbox enabled`, `--approval-mode never`), all skipped when the
+  orchestrator) gets its auto-approve flags
+  (`--permission-mode acceptEdits`, codex
+  `--dangerously-bypass-approvals-and-sandbox`, `--sandbox enabled`,
+  `--approval-mode never`), all skipped when the
   command already picks an approval or sandbox mode (any alias, `=` form or
   conflicting mode, such as codex `--sandbox=read-only` or `--yolo`); pi
   gets none. A `--worktree` spawn adds the trust flag for the
-  worktree mu made (codex `-c 'projects."<realpath>".trust_level="trusted"'`,
-  cursor-agent `--trust`, muse `--trust-workspace`). The agents row keeps
+  worktree mu made (codex `-c 'projects={"<realpath>"={trust_level="trusted"}}'`,
+  cursor-agent `--trust`, muse `--trust-workspace`). A codex worker
+  therefore runs with no codex sandbox and no approvals on every machine,
+  remote ones included: codex's seatbelt cannot start under a launcher that
+  already sandboxes it, and mu cannot detect one; `MU_CODEX_COMMAND='codex -s
+  workspace-write -a never'` keeps codex's sandbox where it works. The agents row keeps
   the command as given. `--model` on a remote command gate, or for a CLI
   outside the five, is refused.
 - **`mu agent list` names each agent's harness and channel**: a `harness`

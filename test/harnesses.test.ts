@@ -145,7 +145,7 @@ describe("withSpawnPresets (spec D6, D17)", () => {
       "claude --permission-mode acceptEdits",
     );
     expect(withSpawnPresets("codex", "codex", { approve: true })).toBe(
-      "codex -s workspace-write -a never",
+      "codex --dangerously-bypass-approvals-and-sandbox",
     );
     expect(withSpawnPresets("cursor-agent", "cursor-agent", { approve: true })).toBe(
       "cursor-agent --sandbox enabled",
@@ -178,7 +178,7 @@ describe("withSpawnPresets (spec D6, D17)", () => {
     keeps("muse --approval-mode=on-request", "muse");
     // Other options do not count: the model flag still gets the preset.
     expect(withSpawnPresets("codex --model gpt-5", "codex", { approve: true })).toBe(
-      "codex --model gpt-5 -s workspace-write -a never",
+      "codex --model gpt-5 --dangerously-bypass-approvals-and-sandbox",
     );
   });
 
@@ -202,7 +202,11 @@ describe("withSpawnPresets (spec D6, D17)", () => {
 
   it("fills the trust flag with the worktree's real path, as one shell word", () => {
     expect(withSpawnPresets("codex", "codex", { approve: false, trustPath: "/w/it's" })).toBe(
-      `codex -c 'projects."/w/it'"'"'s".trust_level="trusted"'`,
+      `codex -c 'projects={"/w/it'"'"'s"={trust_level="trusted"}}'`,
+    );
+    // codex splits a -c key on dots, so the path rides in a TOML string, escaped for one
+    expect(withSpawnPresets("codex", "codex", { approve: false, trustPath: '/w/a.b/"q"\\x' })).toBe(
+      `codex -c 'projects={"/w/a.b/\\"q\\"\\\\x"={trust_level="trusted"}}'`,
     );
     expect(withSpawnPresets("muse", "muse", { approve: false, trustPath: "/w" })).toBe(
       "muse --trust-workspace",

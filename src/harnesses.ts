@@ -109,10 +109,10 @@ export interface HarnessRow {
   sessions: string | null;
   /** Whether museum backs its sessions up. */
   sessionsBackedUp: boolean;
-  /** argv that skips the folder-trust dialog in a new worktree (`<realpath>` is filled in). Empty: none needed. */
+  /** argv that skips the folder-trust dialog in a new worktree (`<realpath>` is filled in, escaped for a TOML or JSON string). Empty: none needed. */
   trustFlag: readonly string[];
   modelFlag: string;
-  /** argv for the in-sandbox auto-approve mode a spawn preset uses. Empty: none. */
+  /** argv for the auto-approve mode a spawn preset uses (in the harness's sandbox, or its launcher's). Empty: none. */
   autoApproveFlags: readonly string[];
   /**
    * Every option by which a command picks its own approval or sandbox mode:
@@ -213,9 +213,21 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     sandboxMarkerEnv: ["CODEX_SESSION_ID", "CODEX_THREAD_ID"],
     sessions: "~/.codex/sessions/YYYY/MM/DD/*.jsonl",
     sessionsBackedUp: true,
-    trustFlag: ["-c", 'projects."<realpath>".trust_level="trusted"'],
+    // An inline table, not `projects."<realpath>".trust_level`: codex 0.164 splits a `-c` key on
+    // every dot and keeps the quotes, so that spelling names no project and the trust dialog
+    // still shows (observed 2026-11-06, a fresh worktree under /private/tmp). The worktree's own
+    // real path is the one checked; `/tmp/...` for `/private/tmp/...` is not.
+    trustFlag: ["-c", 'projects={"<realpath>"={trust_level="trusted"}}'],
     modelFlag: "--model",
-    autoApproveFlags: ["-s", "workspace-write", "-a", "never"],
+    // Not `-s workspace-write -a never`: codex's seatbelt cannot start under a launcher that
+    // already runs codex inside its own sandbox-exec profile (every command failed with
+    // `sandbox-exec: sandbox_apply: Operation not permitted`, observed 2026-11-06 on macOS), and
+    // mu cannot tell such a launcher from a stock codex. So every codex worker, local or remote,
+    // runs with no codex sandbox and no approvals; only a launcher's sandbox (if any) confines it,
+    // and the one observed still allows writes to every home dot-dir. Where codex's own sandbox
+    // works, `MU_CODEX_COMMAND='codex -s workspace-write -a never'` keeps it (that command picks
+    // a mode, so the preset skips).
+    autoApproveFlags: ["--dangerously-bypass-approvals-and-sandbox"],
     approvalOptions: [
       "-s",
       "--sandbox",
@@ -480,7 +492,7 @@ function usesOption(word: string, option: string): boolean {
 export interface SpawnPresets {
   /** `--model`: passed through the row's model flag. */
   model?: string;
-  /** Add the row's in-sandbox auto-approve flags (a worker, from a command mu resolved). */
+  /** Add the row's auto-approve flags (a worker, from a command mu resolved). */
   approve: boolean;
   /** A worktree mu created for this spawn: its real path, for the row's trust flag. */
   trustPath?: string;
@@ -508,7 +520,9 @@ export function withSpawnPresets(
   if (presets.approve && !choosesApproval) extra.push(...row.autoApproveFlags);
   if (presets.trustPath !== undefined) {
     const path = presets.trustPath;
-    extra.push(...row.trustFlag.map((w) => w.replace("<realpath>", path)));
+    // the placeholder sits inside a TOML basic string (codex's `-c` value)
+    const quoted = path.replace(/["\\]/g, (c) => `\\${c}`);
+    extra.push(...row.trustFlag.map((w) => w.replace("<realpath>", () => quoted)));
   }
   if (presets.model !== undefined) extra.push(row.modelFlag, presets.model);
   if (extra.length === 0) return command;

@@ -93,8 +93,8 @@ describe("a hooks worker's brief in a mu worktree", () => {
     expect(gitIn(wt, "diff", "--cached", "--name-only")).toBe("");
     // The trust flag names the worktree's real path; the brief never rides the launch.
     const cmd = state.panes.get("%1")?.command ?? "";
-    expect(cmd).toContain(`projects."${realpathSync(wt)}".trust_level="trusted"`);
-    expect(cmd).toContain("-s workspace-write -a never");
+    expect(cmd).toContain(`projects={"${realpathSync(wt)}"={trust_level="trusted"}}`);
+    expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
     expect(cmd).not.toContain("fix the bug");
     expect(fake.submitted).toHaveLength(1);
   });

@@ -85,8 +85,8 @@ provider, key or proxy for it.
 | keeps driving by | `mu hook stop` | `mu hook stop` | `mu hook stop` | the skill's rule |
 | interrupt confirmed | no: reads `idle?` | yes | yes | yes |
 | fresh command | `/clear` | `/new` | `/new-chat` | `/new` |
-| worker preset | `--permission-mode acceptEdits` | `-s workspace-write -a never` | `--sandbox enabled` | `--approval-mode never` |
-| a worktree mu made | inherits the repo's trust | `-c 'projects."<path>".trust_level="trusted"'` | `--trust` | `--trust-workspace` |
+| worker preset | `--permission-mode acceptEdits` | `--dangerously-bypass-approvals-and-sandbox` (see Codex below) | `--sandbox enabled` | `--approval-mode never` |
+| a worktree mu made | inherits the repo's trust | `-c 'projects={"<path>"={trust_level="trusted"}}'` | `--trust` | `--trust-workspace` |
 | mu's skill | `~/.claude/skills/mu` | `~/.codex/skills/mu` | Claude Code's or Codex's, else `~/.cursor/skills/mu` | `muse skills` |
 | failed turn under `mu task auto` | retried once in place | not reported | retried once in place | parked as a human need |
 
@@ -107,6 +107,14 @@ own. codex gets none: it has no verified way to keep a skill from its model.
 
 ### Codex
 
+- A worker runs with `--dangerously-bypass-approvals-and-sandbox`, on every
+  machine and on a remote host too: no codex sandbox and no approval
+  dialogs. codex's own sandbox cannot start under a launcher that already
+  runs it in a sandbox (`sandbox_apply: Operation not permitted`), and mu
+  cannot tell such a launcher from a stock codex. Where codex's sandbox
+  works, keep it with
+  `MU_CODEX_COMMAND='codex -s workspace-write -a never'`: a command that
+  picks a mode gets no preset.
 - Folder trust is per exact path, so a `--worktree` spawn passes the
   `projects` override for the worktree it made. Hook trust is per hook
   definition: trust mu's and murmur's entries once (`/hooks`), and every
