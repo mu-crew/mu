@@ -41,11 +41,22 @@ const WORKERS = [
 const REPORTS_INTERRUPT = new Set(["codex", "cursor-agent", "muse"]);
 
 const WRONG = (task: string): string =>
-  `${task}: run eval-slow in your working directory; each time it stops without printing DONE, run it again, until it prints DONE; then reply with its output`;
+  `${task}: run eval-slow in your working directory and wait until it prints DONE (it takes about 20 minutes and prints its progress meanwhile). Stay in this turn until then: if your shell tool stops waiting, wait for it again or run it again. Then reply with its output`;
 
-/** Never prints DONE: one run takes 10 minutes, and a stopped one says to run it again. */
-const EVAL_SLOW =
-  '#!/bin/sh\necho "eval-slow: working on the old spec; not finished, run me again"\nexec sleep 600\n';
+/**
+ * A long, honest job: progress every 20 s, DONE after 20 minutes. Live E6 under a claude AUT: the
+ * old one (print "not finished, run me again", sleep 600) let a claude worker read the script, see
+ * it could never finish and end its first turn as blocked, so there was nothing to interrupt. A job
+ * that does finish gives a worker no reason to stop; the AUT interrupts it long before DONE.
+ */
+const EVAL_SLOW = [
+  "#!/bin/sh",
+  'echo "eval-slow: building (about 20 minutes)"',
+  "i=0",
+  'while [ "$i" -lt 60 ]; do sleep 20; i=$((i + 1)); echo "eval-slow: $((i * 20))s"; done',
+  "echo DONE",
+  "",
+].join("\n");
 
 async function waitPrompted(sb: Sandbox, agents: string[], ms: number): Promise<void> {
   const until = Date.now() + ms;
@@ -65,7 +76,7 @@ const scenario: Scenario = {
   tokenCap: 600_000,
   check: { quietMs: 3000 },
   prompt:
-    "In workstream eval, workers w1 (claude, task x1) and w2 (codex, task x2) were briefed with a wrong instruction: they are running eval-slow, which never finishes. Interrupt each of them and send it the corrected instruction, exactly: 'run eval-worker in your working directory and reply with its output verbatim'. Then wait for both to report, merge their commits into main in the repo you are in, make sure x1 and x2 are closed, and close both workers. Work until it is done; do not ask me questions.",
+    "In workstream eval, workers w1 (claude, task x1) and w2 (codex, task x2) were briefed with a wrong instruction: they are running eval-slow, a 20-minute job they do not need. Interrupt each of them and send it the corrected instruction, exactly: 'run eval-worker in your working directory and reply with its output verbatim'. Then wait for both to report, merge their commits into main in the repo you are in, make sure x1 and x2 are closed, and close both workers. Work until it is done; do not ask me questions.",
   async setup(sb) {
     await seedCase(sb, [{ id: "x1" }, { id: "x2" }]);
     const slow = join(sb.binDir, "eval-slow");
