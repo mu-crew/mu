@@ -41,13 +41,13 @@ kills the AUT's harness process once both tasks are claimed and both workers'
 harnesses took their prompt, then starts `aut-2` with the replacement prompt
 (pi: a second rpc pi).
 
-E6's stuck turn relies on the harness's shell-tool timeout ending a call, not
-the turn: claude's Bash stops a command after 2 minutes by default, and codex's
-exec returns a still-running command after a few seconds. The wrong brief says
-to run `eval-slow` again each time it stops without printing DONE, and it never
-prints DONE, so a real worker stays in its first turn until it is interrupted.
-A harness that ended the turn on a tool timeout would fail the case through no
-fault of the AUT ("first turn ended by itself").
+E6's busy turn is an honest 20-minute job: eval-slow prints its progress
+every 20 s and DONE at the end, and the wrong brief says to stay in the turn
+until DONE. The AUT interrupts it long before. (An earlier eval-slow that could
+never finish let a live claude worker read it and end its turn as blocked, so
+there was nothing to interrupt.) A harness that still ended the turn on a tool
+timeout would fail the case through no fault of the AUT ("first turn ended by
+itself").
 
 ## Proving the judges (zero model cost)
 
