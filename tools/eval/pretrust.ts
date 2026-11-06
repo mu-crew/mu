@@ -21,7 +21,7 @@
 // hooks.log (EVAL_WORKER_DIR is blanked in its pane).
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import type { CodexHooks } from "./harness.ts";
 import { realPaneIO, trustDialogKeys } from "./runner-pane.ts";
 import { realTmux } from "./sandbox.ts";
@@ -193,7 +193,12 @@ const real = (p: string): string => {
   }
 };
 
-/** claude: `dir` or an ancestor has `hasTrustDialogAccepted` in the user's ~/.claude.json. */
+/**
+ * claude: `dir` itself has `hasTrustDialogAccepted` in the user's ~/.claude.json. An ancestor's
+ * record is not enough: the sandbox repo's .claude/settings.json pre-approves tools, and Claude
+ * Code asks about such a folder even under a trusted parent (live E1, codex AUT, with /private/tmp
+ * trusted: the claude worker stopped at the dialog).
+ */
 export function claudeTrusted(claudeJson: string, dir: string): boolean | null {
   let doc: { projects?: Record<string, { hasTrustDialogAccepted?: unknown }> };
   try {
@@ -201,11 +206,7 @@ export function claudeTrusted(claudeJson: string, dir: string): boolean | null {
   } catch {
     return null;
   }
-  const projects = doc.projects ?? {};
-  for (let d = real(dir); ; d = dirname(d)) {
-    if (projects[d]?.hasTrustDialogAccepted === true) return true;
-    if (dirname(d) === d) return false;
-  }
+  return doc.projects?.[real(dir)]?.hasTrustDialogAccepted === true;
 }
 
 /** codex: the codex home's config.toml trusts at least one hook of its own hooks.json. */
