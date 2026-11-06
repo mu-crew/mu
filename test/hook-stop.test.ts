@@ -509,6 +509,34 @@ describe("hook-stop: runStopHook", () => {
     expect(waits).toEqual([]);
   });
 
+  it("a worker whose turn ends with a CLOSE block for its task is let go, its report kept", async () => {
+    insertAgent(db, { name: "w1", workstream: "auth", paneId: "%41", cli: "claude" });
+    addTask(db, { localId: "t1", workstream: "auth", title: "t1", impact: 50, effortDays: 1 });
+    await claimTask(db, "t1", { workstream: "auth", agentName: "w1" });
+    const worker = { agent_name: "w1", orchestrator: false };
+    const report = 'CLOSE: task=t1 evidence="gate.sh exit 0"\nREPORT:\nVERDICT: REFUTED';
+    const d = await runStopHook(
+      db,
+      "claude",
+      stop("w-s1", { last_assistant_message: report }),
+      {},
+      deps(worker),
+    );
+    expect(d).toMatchObject({ decision: "allow" });
+    expect(d.decision === "allow" && d.why).toContain("CLOSE block for t1");
+    expect(events).toEqual([]);
+    // A CLOSE block for a task it does not own is no report: the nudge still fires.
+    const other = 'CLOSE: task=t9 evidence="x"\nREPORT:\nVERDICT: REFUTED';
+    const n = await runStopHook(
+      db,
+      "claude",
+      stop("w-s2", { last_assistant_message: other }),
+      {},
+      deps(worker),
+    );
+    expect(n).toMatchObject({ decision: "block", why: "close" });
+  });
+
   it("a worker with no IN_PROGRESS task, or in scratch, is let go", async () => {
     insertAgent(db, { name: "w1", workstream: "auth", paneId: "%41", cli: "claude" });
     expect(

@@ -527,6 +527,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **`mu hook stop` lets a worker go when its turn ends with a CLOSE block**
+  for a task it owns (spec D7). The close nudge started another turn whose
+  text replaced the report as the pane's last text, so the orchestrator
+  never read the worker's verdict.
 - **A first send to a new codex or muse worker passes the `hooks` gate**
   (spec D4, D17). codex and muse report a session only with their first
   prompt, so murmur has no row for the pane until then and the gate read

@@ -32,6 +32,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgent } from "./agents.js";
 import { writeMuEvent } from "./channels/index.js";
+import { parseCloseBlock } from "./close-block.js";
 import type { Db } from "./db.js";
 import { execFileCapture } from "./exec-file.js";
 import { HARNESS_TABLE, type Harness, isHarness } from "./harnesses.js";
@@ -105,6 +106,8 @@ interface StopPayload {
   resumed: boolean | null;
   status: string | null;
   transcriptNull: boolean;
+  /** The turn's final message (claude, codex, Muse Code); null when the payload has none. */
+  lastText: string | null;
 }
 
 function payloadOf(raw: unknown): StopPayload {
@@ -122,6 +125,7 @@ function payloadOf(raw: unknown): StopPayload {
     resumed,
     status: typeof p.status === "string" ? p.status : null,
     transcriptNull: "transcript_path" in p && p.transcript_path === null,
+    lastText: typeof p.last_assistant_message === "string" ? p.last_assistant_message : null,
   };
 }
 
@@ -321,7 +325,7 @@ export async function runStopHook(
         env,
         now,
       )
-    : workerStop(db, agent, key, state, now);
+    : workerStop(db, agent, key, state, now, p.lastText);
   if (decision.decision === "block") {
     // After a block is decided nothing may turn it into an allow: an `events`
     // block carries an event the wait already consumed.
@@ -402,6 +406,7 @@ function workerStop(
   key: string,
   state: KeepDriving,
   now: Date,
+  lastText: string | null = null,
 ): StopDecision {
   if (agent.workstream === "scratch") return { decision: "allow", why: "a scratch pane" };
   if (state.closeNudged)
@@ -411,6 +416,12 @@ function workerStop(
     .filter((t) => t.status === "IN_PROGRESS" && t.kind !== "delegate")
     .map((t) => t.name);
   if (names.length === 0) return { decision: "allow", why: "owns no IN_PROGRESS task" };
+  // A turn that ends with a valid CLOSE block for an owned task is the worker's report: the
+  // orchestrator applies it from the last text (D3). A nudge would start another turn whose
+  // text replaces that report, so the orchestrator would never read it.
+  const close = lastText === null ? undefined : parseCloseBlock(lastText);
+  if (close?.kind === "valid" && names.includes(close.task))
+    return { decision: "allow", why: `the turn ends with a CLOSE block for ${close.task}` };
   writeKeepDriving(db, key, { ...state, closeNudged: true }, now);
   return { decision: "block", why: "close", reason: closeNudgeText(agent.workstream, names) };
 }

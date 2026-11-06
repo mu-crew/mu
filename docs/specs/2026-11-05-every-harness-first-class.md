@@ -385,7 +385,10 @@ pi keeps its settle nudge. For claude, codex and cursor-agent, `mu init`
     running; run `mu wait` in the background".
   - Nothing is owed: allow the stop.
 - **Worker pane** that still owns an `IN_PROGRESS` task: block once per
-  session, with "close your task or park it".
+  session, with "close your task or park it". A turn whose final message
+  (`last_assistant_message`) ends with a valid CLOSE block for an owned task
+  is let go: it is the report the orchestrator applies, and a nudge's next
+  turn would replace it as the pane's last text (live E2, 2026-11-06).
 - Every block writes `continued` through `murmur hook mu`, because a resumed
   turn fires no `prompt_submitted`.
 - The machine-local counter `keep_driving(session_id, empty_blocks)` caps
