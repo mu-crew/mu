@@ -430,6 +430,20 @@ describe("the pane is the transport", () => {
     expect(paneCommand()).toContain("-u MU_AGENT_CLI ");
   });
 
+  it("a remote worker gets its row's auto-approve preset in the remote command (spec D17)", async () => {
+    extensionOn = false;
+    await spawn({ cli: "claude", model: "opus" });
+    expect(filled()).toContain("claude --permission-mode acceptEdits --model opus");
+    expect(getAgent(db, "worker-1", "auth")?.command).toBe("claude");
+  });
+
+  it("a remote worker from a literal --command gets no approval preset", async () => {
+    extensionOn = false;
+    await spawn({ cli: "claude", command: "claude --verbose" });
+    expect(filled()).toContain("claude --verbose");
+    expect(filled()).not.toContain("acceptEdits");
+  });
+
   it("a remote pi worker keeps ctl: no harness, no remote key, no anchor", async () => {
     const a = await spawn();
     const cmd = filled();

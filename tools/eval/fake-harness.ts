@@ -27,6 +27,7 @@ import {
   handlersFor,
   hookEnv,
   hookFiles,
+  hookHomes,
   isFakeHarness,
   LineEditor,
   NATIVE,
@@ -115,7 +116,7 @@ function readDoc(path: string): unknown {
 
 /** Every handler the harness's config files hold for a native event, in run order. */
 function handlers(name: string, tool: string | null) {
-  return hookFiles(h, { projectRoot, home, codexHome: env.CODEX_HOME }).flatMap((f) =>
+  return hookFiles(h, { projectRoot, home, ...hookHomes(env) }).flatMap((f) =>
     handlersFor(SHAPE[h], readDoc(f.path), name, tool),
   );
 }

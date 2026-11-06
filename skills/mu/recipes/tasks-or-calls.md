@@ -35,4 +35,4 @@ mu task verdict <id> -w <ws> --check <c> - <<'EOF'
 EOF
 ```
 
-Reissue owed checks (`mu state`). Another family: record a `scratch` pane's `lastText` alike: `mu agent spawn r1 -w scratch --cli <harness>`; `mu agent send r1 -w scratch --force --wait -` (a new pane reads `unknown`), later `--fresh --wait`. None: `REFUTER <n>: no verdict (<outcome>)`. Close it (`--if <rev>`).
+Reissue owed checks (`mu state`). Another family: record a `scratch` pane's `lastText` alike: `mu agent spawn r1 -w scratch --cli <harness>`; `mu agent send r1 -w scratch --wait -` (claude, cursor-agent: retry an early `unknown`), later `--fresh --wait`. None: `REFUTER <n>: no verdict (<outcome>)`. Close it (`--if <rev>`).

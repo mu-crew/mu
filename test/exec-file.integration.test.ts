@@ -51,9 +51,12 @@ describe("execFileCapture", () => {
     expect(r).toMatchObject({ stdout: "eof", exitCode: 0 });
   });
 
-  it("kills on timeout and reports a null exit code", async () => {
+  it("kills on timeout and reports a null exit code, marked timedOut", async () => {
     const r = await execFileCapture(node, ["-e", "setTimeout(()=>{},60000)"], { timeoutMs: 200 });
     expect(r.exitCode).toBeNull();
+    expect(r.timedOut).toBe(true);
+    const failed = await execFileCapture(node, ["-e", "process.exit(3)"], { timeoutMs: 5000 });
+    expect(failed.timedOut).toBeUndefined();
   });
 });
 

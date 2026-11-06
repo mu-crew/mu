@@ -157,7 +157,9 @@ line, pastes, and is confirmed when the harness's `run_count` rises. It is
 refused while the agent waits on a permission dialog (answer it:
 `mu agent answer worker-1 1 -w auth`) and, without `--force`, while a turn
 runs or its state is unknown; an unconfirmed send reports `ack: unknown` and
-is never resent. `--steer` is refused. `--interrupt` and `mu agent abort`
+is never resent. A live codex or muse pane before its first prompt reports no
+session yet: mu's first send to it since spawn passes without `--force` (also
+`spawn --send`) when its murmur hooks are installed, confirmed by run 1. `--steer` is refused. `--interrupt` and `mu agent abort`
 press Escape. `--fresh` sends the harness's fresh command and then the text.
 A wait on the agent settles when the turn's stop hook fires, with that turn's
 final text, and a `CLOSE:` block in it closes the task. Any wait knows the
@@ -172,8 +174,9 @@ start; codex and muse only with their first prompt), writes the brief to
 worktree clean), and pastes one line telling it to read that file. An
 unconfirmed paste leaves the attempt `unknown`; a replay of the same command
 reads the inbox and reports it `sent` once the worker's run shows. The
-worker gets its row's preset unless its command already picks an approval or
-sandbox mode, and a `--worktree` spawn adds the trust flag. Any CLI outside
+worker, local or remote, gets its row's preset unless its command already
+picks an approval or sandbox mode, and a `--worktree` spawn adds the trust
+flag. Any CLI outside
 the five still exits 4 on tmux, and refuses `--model`.
 
 ```bash
@@ -236,10 +239,11 @@ inside an agent, because every pane would inherit that agent's sandbox.
   lost, and `close --if-ready` waits for them. For one refuter of each high
   or critical finding, use another model family: a pane in `scratch` (the
   first spawn creates the workstream), recorded the same way. Its first
-  check is `mu agent send <name> -w scratch --force --wait -`: a new codex
-  or muse pane reports no session before its first prompt, so it reads
-  `unknown`, which only `--force` passes (a dialog is still refused); a
-  later check on the same pane uses `--fresh --wait`. See
+  check is `mu agent send <name> -w scratch --wait -` (a new codex or muse
+  pane's first send passes the gate with no session yet; a claude or
+  cursor-agent pane refused as `unknown` just after spawn has not reported
+  its session yet, so retry); a later check on the same pane uses
+  `--fresh --wait`. See
   [tasks-or-calls](../../skills/mu/recipes/tasks-or-calls.md).
 - **Workers of any harness.** It dispatches pi workers as usual
   (`spawn --worktree --task --send -`) and `hooks` workers as above, mixed.

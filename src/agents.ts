@@ -156,7 +156,12 @@ import {
   AgentReplacedError,
   CarrierJobUnstoppedError,
 } from "./agents/errors.js";
-import { recordSend, type SendResult, type TransportSendOptions } from "./agents/transport.js";
+import {
+  recordSend,
+  type SendResult,
+  sentSinceSpawn,
+  type TransportSendOptions,
+} from "./agents/transport.js";
 import { getCarrierJobByName } from "./carrier-jobs.js";
 import type { CtlTool } from "./channels/index.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
@@ -689,7 +694,13 @@ export async function sendToAgent(
   ) {
     throw new AgentReplacedError(name, opts.workstream, "sent to");
   }
-  const sent = await deliver(channelTarget(db, agent, opts.socket), text, opts);
+  // A first send since spawn: the hooks gate's evidence that a codex or muse pane murmur
+  // has no row for has had no turn yet (spec D4). Any recorded send, of any mode, voids it.
+  const firstPrompt = opts.force !== true && !sentSinceSpawn(db, agent);
+  const sent = await deliver(channelTarget(db, agent, opts.socket), text, {
+    ...opts,
+    ...(firstPrompt ? { firstPrompt: true } : {}),
+  });
   const source = await resolveActorIdentity();
   recordSend(
     db,

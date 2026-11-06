@@ -178,7 +178,7 @@ Runtime state is read on demand and never persisted.
 | pi (`expectsCtl`) | its control socket, probed in parallel for all pi agents |
 | other CLI on herdr | herdr's native `paneStatus()` |
 | other CLI on Rex | `paneStatus()`: the terminal's OSC 7501 records (`program_status`), only those whose `owner.pid` is the block's own program (a tool the agent runs reports into the same terminal). A blocked record wins (`kind=permission` → `needs_permission`, else `needs_input`), then the root record (`working` → `busy`, at rest → `needs_input`) |
-| other CLI on tmux | murmur: one `list-panes -a` reads `@murmur_pane_state` / `@murmur_pane_since`; agents without a local option fall back to `murmur status --json`, cached 10s |
+| other CLI on tmux | murmur: one `list-panes -a` reads `@murmur_pane_state` / `@murmur_pane_since`; agents without a local option fall back to `murmur status --json` (10 s timeout), cached 10s |
 
 - ctl `idle` maps to `needs_input`. murmur maps `working` → `busy`,
   `blocked` → `needs_permission`, and `idle` / `done` / `crashed` →
@@ -187,7 +187,8 @@ Runtime state is read on demand and never persisted.
   [stable contract](https://github.com/mu-crew/murmur/blob/main/ARCHITECTURE.md#contract).
 - An absent reading is `unknown` with a reason: `ctl missing`,
   `ctl refused`, `murmur not installed`, `murmur pi extension not
-  linked`, `murmur has no row`, `remote snapshot stale`, `herdr reports
+  linked`, `murmur hooks not installed`, `murmur has no row`, `murmur
+  status timed out after 10s …`, `remote snapshot stale`, `herdr reports
   no state`, `rex reports no state`, or `pane gone`.
 - `agents.status` is deprecated. Inserts write `spawning` to satisfy the
   schema; nothing reads it as runtime state.

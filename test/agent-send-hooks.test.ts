@@ -22,6 +22,7 @@ import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { rmFixtureDir } from "./_fs.js";
+import { installMurmurHooks } from "./_murmur-hooks.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
@@ -30,6 +31,8 @@ let dbPath: string;
 let db: Db;
 let mux: MuxHarness;
 let fake: FakeHarness;
+/** What `paneResult` reads of the agent's pane: running, exited (a retained pane), or gone. */
+let paneState: "live" | "dead" | "gone";
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "mash-"));
@@ -45,6 +48,7 @@ beforeEach(() => {
   });
   insertAgent(db, { name: "pia", workstream: "auth", paneId: "%1", cli: "pi", channel: "ctl" });
   fake = fakeHarness(dir, "%3", "sess-1");
+  paneState = "live";
   fake.emit("session_start", { source: "startup" });
   setSleepForTests(async () => {});
   setMurmurPaneRunnerForTests(fake.pane);
@@ -52,13 +56,16 @@ beforeEach(() => {
   mux = installMux(
     "tmux",
     async (args) =>
-      fake.tmux(args) ?? {
+      fake.tmux(args) ??
+      (args[0] === "display-message" && paneState === "gone"
+        ? { stdout: "", stderr: `can't find pane: ${args[args.indexOf("-t") + 1]}`, exitCode: 1 }
+        : undefined) ?? {
         stdout:
           args[0] === "display-message"
             ? // A live pane, for a held watch's liveness check.
               `${(args.at(-1) ?? "")
                 .replace("#{pane_id}", args[args.indexOf("-t") + 1] ?? "")
-                .replace("#{pane_dead}", "0")
+                .replace("#{pane_dead}", paneState === "dead" ? "1" : "0")
                 .replace(/#\{[^}]+\}/g, "")}\n`
             : args[0] !== "list-panes"
               ? ""
@@ -185,6 +192,12 @@ describe("a check sent to a just-spawned codex pane (tasks-or-calls: another fam
       fake.emit("prompt_submitted");
     };
   };
+  /** murmur on PATH with codex's hooks installed: the exemption needs them for a local worker. */
+  let restoreHooks: () => void;
+  beforeEach(() => {
+    restoreHooks = installMurmurHooks(dir, ["codex"]);
+  });
+  afterEach(() => restoreHooks());
 
   it("--fresh --wait is refused (its state reads unknown) and types nothing", async () => {
     beforeFirstPrompt();
@@ -198,7 +211,83 @@ describe("a check sent to a just-spawned codex pane (tasks-or-calls: another fam
     expect(fake.calls).toEqual([]);
   });
 
-  it("--force --wait, as the recipe says: pasted, confirmed by the first run, and its last text answers", async () => {
+  it("a plain send passes the gate (no row, live pane): pasted once, confirmed by run 1", async () => {
+    beforeFirstPrompt();
+    const { data, exitCode } = await runCliJson(
+      ["agent", "send", "cdx", "refute F1", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(data).toMatchObject({ transport: "hooks", ack: "confirmed", runCount: 1 });
+    expect(fake.submitted).toEqual(["refute F1"]);
+  });
+
+  it("no ack: unknown, delivered false, never resent", async () => {
+    beforeFirstPrompt();
+    fake.onSubmit = null;
+    fake.acks = false;
+    let r: Awaited<ReturnType<typeof runCliJson>> | undefined;
+    await withEnv("MU_SEND_ACK_MS", "500", async () => {
+      r = await runCliJson(["agent", "send", "cdx", "hi", "-w", "auth", "--json"], dbPath);
+    });
+    expect(r?.data).toMatchObject({ ack: "unknown", delivered: false });
+    expect(fake.calls.filter((c) => c[0] === "paste-buffer")).toHaveLength(1);
+    // mu has sent to it since its spawn: no row no longer means no turn (it may be running).
+    const again = await runCliJson(["agent", "send", "cdx", "hi", "-w", "auth", "--json"], dbPath);
+    expect(again.exitCode).toBe(4);
+    expect(JSON.stringify(again.doc)).toContain("no row for the pane");
+    expect(fake.calls.filter((c) => c[0] === "paste-buffer")).toHaveLength(1);
+  });
+
+  it("an agent mu has sent to since its spawn (a rebuilt murmur store lost its row) is refused unless --force", async () => {
+    beforeFirstPrompt();
+    const op = db.prepare(
+      `INSERT INTO ops (hlc, machine_id, group_id, intent, entity, key, op, payload, created_at)
+       VALUES (?, 'm', ?, 'agent.send', 'agent', 'auth', 'put', 'agent send cdx (mode=plain, 2 bytes)', ?)`,
+    );
+    db.prepare(
+      "UPDATE agents SET created_at = '2026-01-02T00:00:00.000Z' WHERE name = 'cdx'",
+    ).run();
+    op.run("1", "g1", "2026-01-03T00:00:00.000Z");
+    const refused = await runCliJson(["agent", "send", "cdx", "x", "-w", "auth", "--json"], dbPath);
+    expect(refused.exitCode).toBe(4);
+    expect(JSON.stringify(refused.doc)).toContain("no row for the pane");
+    expect(fake.calls).toEqual([]);
+    // A send to an earlier incarnation of the name does not count.
+    db.prepare("DELETE FROM ops WHERE group_id = 'g1'").run();
+    op.run("0", "g0", "2026-01-01T00:00:00.000Z");
+    const first = await runCliJson(["agent", "send", "cdx", "hi", "-w", "auth", "--json"], dbPath);
+    expect(first.exitCode).toBeNull();
+    expect(first.data).toMatchObject({ ack: "confirmed", runCount: 1 });
+  });
+
+  it("murmur's codex hooks not installed: refused unless --force (no event will ever come)", async () => {
+    beforeFirstPrompt();
+    restoreHooks();
+    restoreHooks = installMurmurHooks(dir, ["claude"]);
+    const r = await runCliJson(["agent", "send", "cdx", "hi", "-w", "auth", "--json"], dbPath);
+    expect(r.exitCode).toBe(4);
+    expect(JSON.stringify(r.doc)).toContain("no row for the pane");
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("a dead or gone pane, or a harness whose session starts at once (claude), is still refused unless --force", async () => {
+    beforeFirstPrompt();
+    for (const state of ["dead", "gone"] as const) {
+      paneState = state;
+      const r = await runCliJson(["agent", "send", "cdx", "hi", "-w", "auth", "--json"], dbPath);
+      expect(r.exitCode, state).toBe(4);
+      expect(JSON.stringify(r.doc), state).toContain("no row for the pane");
+    }
+    paneState = "live";
+    db.prepare("UPDATE agents SET cli = 'claude' WHERE name = 'cdx'").run();
+    const claude = await runCliJson(["agent", "send", "cdx", "hi", "-w", "auth", "--json"], dbPath);
+    expect(claude.exitCode).toBe(4);
+    expect(JSON.stringify(claude.doc)).toContain("no row for the pane");
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("--wait, as the recipe says: pasted, confirmed by the first run, and its last text answers", async () => {
     beforeFirstPrompt();
     const text = "VERDICT: F1 REFUTED the guard runs first\nEVIDENCE: src/x.ts:12";
     let reads = 0;
@@ -207,7 +296,7 @@ describe("a check sent to a just-spawned codex pane (tasks-or-calls: another fam
       return fake.pane(pane);
     });
     const { data, exitCode } = await runCliJson(
-      ["agent", "send", "cdx", "refute F1", "-w", "auth", "--force", "--wait", "--json"],
+      ["agent", "send", "cdx", "refute F1", "-w", "auth", "--wait", "--json"],
       dbPath,
     );
     expect(exitCode).toBeNull();

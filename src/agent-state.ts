@@ -52,8 +52,16 @@ export interface StateAgentRef {
   channel?: ChannelName | null;
 }
 
+/**
+ * How long mu waits for `murmur status --json`. Its full drain can rebuild
+ * murmur's socket cache, which has taken over 5 s; murmur bounds that scan to
+ * about 2 s, and this leaves a safe margin past it.
+ */
+export const MURMUR_STATUS_TIMEOUT_MS = 10_000;
+
 export const UNKNOWN_REASON = {
   murmurMissing: "murmur not installed",
+  murmurTimeout: `murmur status timed out after ${MURMUR_STATUS_TIMEOUT_MS / 1000}s (its drain may be rebuilding its socket cache; retry)`,
   extensionMissing: "murmur pi extension not linked",
   hooksMissing: "murmur hooks not installed",
   noRow: "murmur has no row",
@@ -64,11 +72,13 @@ export const UNKNOWN_REASON = {
   ctlRefused: "ctl refused",
 } as const;
 
-export type MurmurRunner = () => Promise<string | null>;
+/** `murmur status --json`'s stdout; null: it failed or is absent; `timedOut`: it did not answer in time. */
+export type MurmurStatusOutput = string | null | { timedOut: true };
+export type MurmurRunner = () => Promise<MurmurStatusOutput>;
 
 const MURMUR_CACHE_MS = 10_000;
 let murmurRunnerForTests: MurmurRunner | null = null;
-let murmurCache: { at: number; stdout: string | null } | undefined;
+let murmurCache: { at: number; stdout: MurmurStatusOutput } | undefined;
 
 export function agentKey(a: { name: string; workstreamName: string }): string {
   return `${a.workstreamName}/${a.name}`;
@@ -161,7 +171,10 @@ function murmurMissingReason(cli: string | undefined): string {
 
 const defaultMurmurRunner: MurmurRunner = async () => {
   try {
-    const result = await execFileCapture("murmur", ["status", "--json"], { timeoutMs: 5_000 });
+    const result = await execFileCapture("murmur", ["status", "--json"], {
+      timeoutMs: MURMUR_STATUS_TIMEOUT_MS,
+    });
+    if (result.timedOut === true) return { timedOut: true };
     return result.exitCode === 0 ? result.stdout : null;
   } catch {
     return null;
@@ -210,11 +223,11 @@ function parseSince(value: string | undefined): number | null {
   return value !== undefined && /^\d+$/.test(value) ? Number(value) : null;
 }
 
-async function readMurmur(now: number): Promise<string | null> {
+async function readMurmur(now: number): Promise<MurmurStatusOutput> {
   if (murmurCache !== undefined && now - murmurCache.at < MURMUR_CACHE_MS) {
     return murmurCache.stdout;
   }
-  let stdout: string | null;
+  let stdout: MurmurStatusOutput;
   try {
     stdout = await (murmurRunnerForTests ?? defaultMurmurRunner)();
   } catch {
@@ -423,9 +436,12 @@ export async function readBaseStates(
 
   if (remoteCandidates.length === 0) return readings;
   const remoteStdout = await readMurmur(opts.now ?? Date.now());
-  if (remoteStdout === null) {
+  if (remoteStdout === null || typeof remoteStdout !== "string") {
+    // A timeout is murmur on PATH and slow, never "not installed" or "no row".
     for (const agent of remoteCandidates) {
-      readings.set(agentKey(agent), unknownReading(murmurMissingReason(agent.cli)));
+      const reason =
+        remoteStdout === null ? murmurMissingReason(agent.cli) : UNKNOWN_REASON.murmurTimeout;
+      readings.set(agentKey(agent), unknownReading(reason));
     }
     return readings;
   }
