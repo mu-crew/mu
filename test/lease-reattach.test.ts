@@ -298,6 +298,7 @@ describe("happy path", () => {
       collectedHead: "c".repeat(40),
       repo: "/srv/repo",
       host: "dev",
+      channel: "ctl",
     });
     expect(listRemoteRecoveries(db)).toEqual([]);
     expect(reservation()).toMatchObject({
