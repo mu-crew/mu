@@ -418,6 +418,8 @@ async function cmdSpawnTask(
           ...(rec.incarnation !== null ? { incarnation: rec.incarnation } : {}),
           delivery: "delivered",
           ...(out.send?.sessionFile !== undefined ? { sessionFile: out.send.sessionFile } : {}),
+          ...(out.send?.readyScreen !== undefined ? { readyScreen: out.send.readyScreen } : {}),
+          ...(out.send?.submitRetry ? { submitRetry: true as const } : {}),
           delivered: true,
         }
       : {
@@ -557,6 +559,10 @@ type SpawnSend =
       delivery?: "delivered";
       /** pi's session file, where the delegate's transcript is written. */
       sessionFile?: string;
+      /** hooks: how the first paste's wait for the harness's ready screen ended. */
+      readyScreen?: "ready" | "timeout" | "unread";
+      /** hooks: the submit key was pressed once more for a paste left unsubmitted. */
+      submitRetry?: true;
       delivered: boolean;
     }
   | {
@@ -621,6 +627,8 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
       ...(sent.msgId !== undefined ? { msgId: sent.msgId, delivery: "delivered" as const } : {}),
       ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
       ...(sent.sessionFile !== undefined ? { sessionFile: sent.sessionFile } : {}),
+      ...(sent.readyScreen !== undefined ? { readyScreen: sent.readyScreen } : {}),
+      ...(sent.submitRetry ? { submitRetry: true as const } : {}),
       delivered: !undelivered,
     };
   } catch (err) {

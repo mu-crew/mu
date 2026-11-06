@@ -123,6 +123,8 @@ export async function cmdSend(
           ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
           ...(sent.ack !== undefined ? { ack: sent.ack } : {}),
           ...(sent.runCount !== undefined ? { runCount: sent.runCount } : {}),
+          ...(sent.readyScreen !== undefined ? { readyScreen: sent.readyScreen } : {}),
+          ...(sent.submitRetry ? { submitRetry: true } : {}),
         },
         warnings,
       },
@@ -152,6 +154,8 @@ export async function cmdSend(
       ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
       ...(sent.ack !== undefined ? { ack: sent.ack } : {}),
       ...(sent.runCount !== undefined ? { runCount: sent.runCount } : {}),
+      ...(sent.readyScreen !== undefined ? { readyScreen: sent.readyScreen } : {}),
+      ...(sent.submitRetry ? { submitRetry: true } : {}),
       delivered: undelivered === undefined,
       ...(undelivered !== undefined
         ? { undelivered: { reason: undelivered.reason, message: undelivered.message } }

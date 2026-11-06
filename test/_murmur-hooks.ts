@@ -9,10 +9,15 @@ import { type Harness, hookConfigPath } from "../src/harnesses.js";
 
 const VARS = ["PATH", "MURMUR_HOOK_HOME", "CODEX_HOME", "CLAUDE_CONFIG_DIR"] as const;
 
-/** Install it under `dir` (a new hook home each call); returns the restore of every variable it touched. */
+/**
+ * Install it under `dir` (a new hook home each call); returns the restore of
+ * every variable it touched. `command` writes another entry than `murmur
+ * init`'s (murmur run by path, as an eval rig's config does).
+ */
 export function installMurmurHooks(
   dir: string,
   harnesses: readonly Exclude<Harness, "pi">[],
+  command: (h: Exclude<Harness, "pi">) => string = (h) => `murmur hook ${h}`,
 ): () => void {
   const saved = VARS.map((k) => [k, process.env[k]] as const);
   const bin = join(dir, "murmur-bin");
@@ -28,11 +33,8 @@ export function installMurmurHooks(
     const file = hookConfigPath(h, home);
     if (file === undefined) continue;
     mkdirSync(dirname(file), { recursive: true });
-    const command = `murmur hook ${h}`;
-    writeFileSync(
-      file,
-      JSON.stringify({ hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command }] }] } }),
-    );
+    const entry = { type: "command", command: command(h) };
+    writeFileSync(file, JSON.stringify({ hooks: { Stop: [{ matcher: "", hooks: [entry] }] } }));
   }
   return () => {
     for (const [k, v] of saved) {

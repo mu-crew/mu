@@ -527,6 +527,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A codex worker's first prompt no longer lands while a launcher wrapper is
+  still starting it** (spec D4, D6). A wrapper that prints a banner and
+  installs plugins first (10 to 40 s on a fresh `CODEX_HOME`) swallowed the
+  Enter after mu's paste, and the brief pointer sat unsubmitted in codex's
+  input box. mu's first paste to a codex pane with no turn now waits, within
+  `MU_FIRST_SEND_ACK_MS`, for codex's own ready screen (`readyMarks` in the
+  harness table: its header or footer and its `›` input line; a banner,
+  `Installing ...` lines, a dialog or a shell prompt never count), and the
+  ack gets the rest of that window. A codex paste whose ack is 3 s late and
+  whose text still sits in the input line gets the submit key once more, at
+  most once, never a second paste (`submitRetry` in the send's result and
+  `--json`; `readyScreen` says how the wait ended). Muse has no verified
+  ready screen yet and keeps the old path; claude, cursor-agent and pi are
+  unchanged.
+- **The 60 s first-prompt ack window applies when murmur's hooks run it by
+  path** (spec D4, D13). mu counted murmur's hooks as installed only for a
+  command starting `murmur hook <harness>`, so a hook config that runs
+  murmur as `'<node>' '<…>/murmur…/dist/cli.js' hook codex` (the eval rig's,
+  or a hand-written one) read as hookless and the task spawn's pointer got
+  `MU_SEND_ACK_MS` (10 s). Any command that runs murmur's `hook <harness>`
+  (`runsMurmurHook`) now counts.
+
 - **`mu hook stop` lets a worker go when its turn ends with a CLOSE block**
   for a task it owns (spec D7). The close nudge started another turn whose
   text replaced the report as the pane's last text, so the orchestrator

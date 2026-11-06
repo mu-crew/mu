@@ -188,8 +188,8 @@ export const MESSAGES = {
       : state === "running"
         ? `agent ${name} is running a turn (${reason}): nothing was sent; wait for it (mu agent wait ${name} -w ${ws}), or paste anyway with --force`
         : `agent ${name}'s state is unknown (${reason}): nothing was sent; read the pane (mu agent read ${name} -w ${ws}), then paste anyway with --force`,
-  "agent.send_unconfirmed": (name: string, ms: number) =>
-    `pasted to agent ${name}, but its run count did not rise within ${ms}ms: the send is unconfirmed and is not resent; read the pane before sending again`,
+  "agent.send_unconfirmed": (name: string, ms: number, submitRetry = false) =>
+    `pasted to agent ${name}, but its run count did not rise within ${ms}ms${submitRetry ? " (its text sat unsubmitted in the input line, so the submit key was pressed once more)" : ""}: the send is unconfirmed and is not resent; read the pane before sending again`,
   "agent.not_blocked": (name: string, ws: string, state: string) =>
     `agent ${name} has no pending permission dialog (state ${state}): nothing was sent; read the pane (mu agent read ${name} -w ${ws}), or type the keys anyway with --force`,
   "agent.answer_keys": () =>

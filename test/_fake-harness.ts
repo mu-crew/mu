@@ -25,7 +25,9 @@
 // fills the text in (cursor-agent's text after its stop). With `textRun` it
 // reports `last_text_run`, the run whose turn wrote the text, as a murmur that
 // names it does; without, it reports what an older murmur does. tmux argv words are
-// read back as tmux reads them (a final `;` is a separator).
+// read back as tmux reads them (a final `;` is a separator). With `screen` it
+// answers `capture-pane` of its pane (a TUI's screen around its input box), and
+// `swallowEnters` loses Enters, as a TUI still starting does.
 //
 // Install `fake.pane` with setMurmurPaneRunnerForTests (and `fake.hook` with
 // setMurmurHookRunnerForTests, `fake.clear` with setMurmurClearRunnerForTests)
@@ -106,6 +108,16 @@ export interface FakeHarness {
   readonly submitted: string[];
   /** What sits in the input box now. */
   input: string;
+  /**
+   * What `capture-pane` of its pane shows, given the input box; null: not
+   * answered here (the mock tmux's capture). Default null.
+   */
+  screen: ((input: string) => string) | null;
+  /**
+   * Enters lost before the next one submits, as a TUI still starting loses
+   * the Enter after a paste; the text stays in the input box. Default 0.
+   */
+  swallowEnters: number;
   /** Write one event file. `now` defaults to Date.now(). */
   emit(event: string, fields?: Record<string, unknown>): void;
   /** The fake `murmur pane`: drains this pane's inbox and reports it. */
@@ -287,6 +299,8 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     muEvents: [],
     muOrigins: [],
     input: "",
+    screen: null,
+    swallowEnters: 0,
     emit(event, fields = {}) {
       seq += 1;
       const body = { v: 1, event, session_id: current, now: Date.now(), ...fields };
@@ -366,6 +380,10 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
         buffers.delete(args[args.indexOf("-b") + 1] ?? "");
         return OK;
       }
+      if (verb === "capture-pane" && target === paneId && fake.screen !== null) {
+        fake.calls.push([...args]);
+        return { stdout: fake.screen(fake.input), stderr: "", exitCode: 0 };
+      }
       if (target !== paneId || (verb !== "send-keys" && verb !== "paste-buffer")) return undefined;
       fake.calls.push([...args]);
       if (verb === "paste-buffer") {
@@ -388,6 +406,8 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
         } else if (!literal && key === "C-u") fake.input = "";
         else if (!literal && key === "Escape") {
           if (st.activity === "running" && fake.onEscape === "event") fake.emit("interrupted");
+        } else if (!literal && key === "Enter" && fake.swallowEnters > 0) {
+          fake.swallowEnters -= 1;
         } else if (!literal && key === "Enter") {
           const text = fake.input;
           fake.submitted.push(text);

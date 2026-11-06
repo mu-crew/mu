@@ -411,3 +411,120 @@ describe("spawn --send (no --task) to a first-prompt harness", () => {
     expect(pastes()).toHaveLength(0);
   });
 });
+
+describe("a codex task spawn behind a launcher wrapper: ready screen, then one submit retry (spec D4)", () => {
+  /** What the wrapper prints before codex draws, on a fresh CODEX_HOME. */
+  const LAUNCHER = "Codex CLI (wrapper)\nInstalling plugin-a@market for preset x\n";
+  /** codex's own screen around its input box. */
+  const READY = (input: string): string =>
+    `  >_ OpenAI Codex (v0.164.0)\n\n› ${input === "" ? "Ask Codex to do anything" : input}\n\n  ? for shortcuts      100% context left\n`;
+  const captures = () => fake.calls.filter((c) => c[0] === "capture-pane");
+  const enters = () => fake.calls.filter((c) => c[0] === "send-keys" && c.includes("Enter"));
+  /** Calls before the first paste. */
+  const beforePaste = () => {
+    const at = fake.calls.findIndex((c) => c[0] === "paste-buffer");
+    return fake.calls.slice(0, at < 0 ? fake.calls.length : at);
+  };
+  let restoreHooks: () => void;
+  beforeEach(() => {
+    restoreHooks = installMurmurHooks(dir, ["codex"]);
+    fake.onSubmit = () => {
+      fake.emit("session_start", { source: "startup" });
+      fake.emit("prompt_submitted");
+    };
+  });
+  afterEach(() => restoreHooks());
+
+  it("the 10 s window's cause: hooks that run murmur by path still give the first prompt MU_FIRST_SEND_ACK_MS", async () => {
+    // An eval rig's (or any hand-written) hook config: murmur's entry under an interpreter.
+    restoreHooks();
+    restoreHooks = installMurmurHooks(
+      dir,
+      ["codex"],
+      (h) => `'/usr/bin/node' '/opt/src/murmur-next/dist/cli.js' hook ${h}`,
+    );
+    // codex reads the paste 10 ack polls after it: past MU_SEND_ACK_MS, within the first window.
+    let after: number | undefined;
+    fake.onSubmit = () => {
+      after = 0;
+    };
+    setMurmurPaneRunnerForTests(async (pane) => {
+      if (after !== undefined && ++after >= 10) {
+        after = undefined;
+        fake.emit("session_start", { source: "startup" });
+        fake.emit("prompt_submitted");
+      }
+      return fake.pane(pane);
+    });
+    await withEnv("MU_SEND_ACK_MS", "300", async () => {
+      await withEnv("MU_FIRST_SEND_ACK_MS", "5000", async () => {
+        expect(await spawnForTask(db, req("codex"))).toMatchObject({ state: "sent" });
+      });
+    });
+    expect(pastes()).toHaveLength(1);
+  });
+
+  it("waits for codex's own screen before the paste: the wrapper's lines never count", async () => {
+    let shown = 0;
+    fake.screen = (input) => (++shown <= 4 ? LAUNCHER : READY(input));
+    const out = await spawnForTask(db, req("codex"));
+    expect(out).toMatchObject({ state: "sent", send: { readyScreen: "ready" } });
+    // Four wrapper screens, then codex's: the paste came after the fifth capture.
+    expect(beforePaste().filter((c) => c[0] === "capture-pane")).toHaveLength(5);
+    expect(fake.submitted).toHaveLength(1);
+    expect(enters()).toHaveLength(1);
+  });
+
+  it("a screen that never shows: pasted anyway once MU_FIRST_SEND_ACK_MS is spent", async () => {
+    fake.screen = () => LAUNCHER;
+    await withEnv("MU_FIRST_SEND_ACK_MS", "1000", async () => {
+      const out = await spawnForTask(db, req("codex"));
+      expect(out).toMatchObject({ state: "sent", send: { readyScreen: "timeout" } });
+    });
+    // 1000 ms at 250 ms a read, the first at once: five reads, then the paste.
+    expect(beforePaste().filter((c) => c[0] === "capture-pane")).toHaveLength(5);
+    expect(pastes()).toHaveLength(1);
+  });
+
+  it("an Enter lost after the paste: the text still in the box, the submit key pressed once more", async () => {
+    fake.screen = READY;
+    fake.swallowEnters = 1;
+    const out = await spawnForTask(db, req("codex"));
+    expect(out).toMatchObject({ state: "sent", send: { submitRetry: true, readyScreen: "ready" } });
+    expect(pastes()).toHaveLength(1);
+    expect(enters()).toHaveLength(2);
+    expect(fake.submitted).toEqual([expect.stringContaining(briefPath())]);
+  });
+
+  it("the retry happens at most once, and an unconfirmed send says so", async () => {
+    fake.screen = READY;
+    fake.swallowEnters = 5;
+    const out = await spawnForTask(db, req("codex"));
+    expect(out).toMatchObject({ state: "unknown" });
+    expect(out.state === "unknown" ? out.reason : "").toMatch(/submit key was pressed once more/);
+    expect(pastes()).toHaveLength(1);
+    expect(enters()).toHaveLength(2);
+    expect(fake.input).toContain(briefPath());
+  });
+
+  it("no retry when the box does not hold the text (it was taken, or never landed)", async () => {
+    fake.screen = (input) => READY(input === "" ? "" : "something else");
+    fake.swallowEnters = 1;
+    const out = await spawnForTask(db, req("codex"));
+    expect(out).toMatchObject({ state: "unknown" });
+    expect(enters()).toHaveLength(1);
+  });
+
+  it("claude is unchanged: no screen read, no retry", async () => {
+    restoreHooks();
+    restoreHooks = installMurmurHooks(dir, ["claude"]);
+    fake.onSubmit = null;
+    fake.emit("session_start", { source: "startup" });
+    fake.screen = READY;
+    fake.swallowEnters = 1;
+    const out = await spawnForTask(db, req("claude"));
+    expect(out).toMatchObject({ state: "unknown" });
+    expect(captures()).toHaveLength(0);
+    expect(enters()).toHaveLength(1);
+  });
+});
