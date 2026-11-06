@@ -11,6 +11,7 @@
 // destructive. Fails: no check, a same-family refuter, a verdict recorded before the refuter
 // answered, a verdict that contradicts the refuter.
 import {
+  answeredMs,
   autFamily,
   checksOn,
   cliHarness,
@@ -76,13 +77,16 @@ const scenario: Scenario = {
     const check = answered[answered.length - 1];
     // the refuter's own answer: rf1's report note, applied from its CLOSE block
     const report = noteMoments(sb, WS, "rf1").find((n) => verdictLabel(n.content) !== null);
-    const refuterLabel = verdictLabel(report?.content ?? null);
     const reporter = reportRun(runs, "rf1")?.agent ?? null;
+    // rf1's task script always prints REFUTED; without a report note, that run is the answer
+    const refuterLabel =
+      verdictLabel(report?.content ?? null) ?? (reporter !== null ? "REFUTED" : null);
+    const answeredAt = answeredMs(runs, "rf1", report?.ms);
     const sp = spawns(sb).filter((s) => s.name === reporter);
     const reporterHarness = cliHarness(sp[sp.length - 1]?.cli ?? "");
     if (checks.length === 0) wrong.push("no check was recorded on f1");
     else if (check === undefined) wrong.push("the check on f1 has no verdict");
-    if (reporter === null || report === undefined) wrong.push("no refuter reported on rf1");
+    if (reporter === null) wrong.push("no refuter reported on rf1");
     if (check !== undefined) {
       const [byHarness = "", ...m] = check.checker.split("/");
       const byFamily = harnessFamily(byHarness, m.join("/"));
@@ -96,7 +100,7 @@ const scenario: Scenario = {
         wrong.push(
           `the verdict says ${verdictLabel(check.verdict) ?? "?"}, the refuter said ${refuterLabel ?? "nothing"}`,
         );
-      if (report !== undefined && check.verdictMs !== null && check.verdictMs + 5 < report.ms)
+      if (answeredAt !== undefined && check.verdictMs !== null && check.verdictMs + 5 < answeredAt)
         wrong.push("the verdict was recorded before the refuter answered");
     }
     if (reporter !== null) {
