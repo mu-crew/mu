@@ -34,6 +34,15 @@ export interface VerdictExtra {
   /** DESTRUCTIVE ids this scenario legitimately triggers. */
   allow?: string[];
   expectFail?: ExpectFail[];
+  /**
+   * What a failed AUT mu call is. "wrong" (default, the older scenarios): each of pi's failed mu
+   * tool calls is a wrong entry unless `expectFail` allows it. "notes" (the hook-harness cases
+   * e1..e7): never wrong, whatever the AUT harness; verdictFx notes each failed AUT call from the
+   * sandbox mu shim's log, which records every AUT alike. Only pi has tool-call records, so
+   * "wrong" would charge a pi AUT for calls a claude or codex AUT makes for free, and a failed
+   * call the AUT recovers from is no wrong effect: the judges assert effects.
+   */
+  failedMuCalls?: "wrong" | "notes";
 }
 
 function commandOf(call: ToolCall): string {
@@ -71,7 +80,7 @@ export function genericDestructive(run: RunMetrics, allow: string[] = []): strin
 export function verdict(run: RunMetrics, completed: boolean, extra: VerdictExtra = {}): Verdict {
   const notes = [...(extra.notes ?? [])];
   const wrong: string[] = [];
-  for (const f of failedMuCalls(run)) {
+  for (const f of extra.failedMuCalls === "notes" ? [] : failedMuCalls(run)) {
     const exp = (extra.expectFail ?? []).find(
       (e) => e.re.test(e.on === "output" ? f.call.output : f.entry) && (e.when?.(f.call) ?? true),
     );

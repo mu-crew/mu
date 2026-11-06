@@ -23,6 +23,8 @@ DB, `runs.log` (where the work ran and which commit it made), the observer
 hook's `hooks.log` (which harness reported for an agent, its prompts, stops and
 interrupts), git, and the main-commit log. A fake harness's own logs are never
 read, so a judge holds live. The shared rules are in `tools/eval/harness-cases.ts`.
+A failed AUT mu call is a note (`failed mu call ...`), never a wrong entry,
+whichever harness the AUT is: the case's rules judge its effects.
 
 | Case                             | Workers                                 | Pass criterion (written in the scenario file)                                                                                                                                                                                                                                                                                                                                |
 | -------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

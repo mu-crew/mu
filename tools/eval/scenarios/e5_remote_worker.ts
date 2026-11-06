@@ -10,6 +10,7 @@
 import { join } from "node:path";
 import { hostProfile, sshShim } from "../fixtures.ts";
 import {
+  caseVerdict,
   remoteLeftovers,
   runsLog,
   seedCase,
@@ -18,7 +19,6 @@ import {
   workersClosedWrong,
 } from "../harness-cases.ts";
 import { hookRecords } from "../harness-observe.ts";
-import { verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import type { Scenario } from "../types.ts";
 
@@ -47,7 +47,7 @@ const scenario: Scenario = {
       ...(await remoteLeftovers(sb, "dev", runs)),
       ...workersClosedWrong(sb, [p.agent]),
     ];
-    return await verdictFx(sb, run, closed && p.ok && wrong.length === 0, {
+    return await caseVerdict(sb, run, closed && p.ok && wrong.length === 0, {
       wrong,
       notes: [`${p.note} closed=${closed}`],
     });

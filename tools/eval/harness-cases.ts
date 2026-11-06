@@ -13,11 +13,11 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { makeRepo, runsLog, seedViaMu, workerTask, writeWorkerDriver } from "./fixtures.ts";
 import { type HookRec, harnessFamily, harnessOf, modelFamily } from "./harness-observe.ts";
-import { CLOSE_INTENTS, closedAgents } from "./observe.ts";
+import { CLOSE_INTENTS, closedAgents, verdictFx } from "./observe.ts";
 import { opsAfter } from "./ops.ts";
 import { type RunRecord, workerCommitOnMain } from "./provenance.ts";
 import { sh } from "./sandbox.ts";
-import type { Sandbox } from "./types.ts";
+import type { RunMetrics, Sandbox, Verdict } from "./types.ts";
 
 export const WS = "eval";
 
@@ -353,3 +353,17 @@ export function reportRun(runs: RunRecord[], task: string): RunRecord | undefine
 }
 
 export { runsLog };
+
+/**
+ * The verdict of a hook-harness case: verdictFx, with every failed AUT mu call a note, never a
+ * wrong entry, whichever harness the AUT is (score.ts `failedMuCalls`). The case's own rules judge
+ * the effects; a refused call the AUT recovered from changed nothing.
+ */
+export function caseVerdict(
+  sb: Sandbox,
+  run: RunMetrics,
+  completed: boolean,
+  extra: Parameters<typeof verdictFx>[3] = {},
+): Promise<Verdict> {
+  return verdictFx(sb, run, completed, { ...extra, failedMuCalls: "notes" });
+}

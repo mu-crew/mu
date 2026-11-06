@@ -86,6 +86,63 @@ describe("E1 dispatch and merge", () => {
   });
 });
 
+describe("failed AUT mu calls in the hook-harness cases", () => {
+  // pi's refused `mu task close` (its own tool-call record) and the shim's record of it: what every
+  // AUT leaves in mu-calls.log, while only pi has tool calls.
+  const refused = (): RunMetrics => ({
+    ...emptyRun(),
+    toolCalls: [
+      {
+        id: "c1",
+        name: "bash",
+        args: { command: "mu task close nope -w eval" },
+        isError: true,
+        output: "TaskNotFoundError",
+        exitCode: 4,
+        durationMs: 1,
+      },
+    ],
+    muCalls: 1,
+    muErrors: 1,
+  });
+  const world = (harness: string): WorldSpec => ({
+    tasks: ["d1", "d2"],
+    aut: { harness, model: "default" },
+    workers: [w("w1", "claude", "d1"), w("w2", "codex", "d2")],
+    autCalls: [[-30000, "task close nope -w eval", 4]],
+  });
+
+  it("are notes for a pi, claude and codex AUT alike, never wrong: E1's golden stays clean", async () => {
+    for (const harness of ["pi", "claude", "codex"]) {
+      const v = await judge(
+        "e1_dispatch_merge",
+        world(harness),
+        harness === "pi" ? refused() : emptyRun(),
+      );
+      clean(v);
+      expect(v.notes).toContain("failed mu call (a note, not wrong): 4 mu task close nope -w eval");
+    }
+  });
+
+  it.each([
+    "e1_dispatch_merge",
+    "e2_cross_family_refuter",
+    "e3_review_gate",
+    "e4_replacement_orchestrator",
+    "e5_remote_worker",
+    "e6_interrupt_resend",
+    "e7_mixed_crew",
+  ])("%s never counts one as wrong", async (id) => {
+    const v = await judge(
+      id,
+      { tasks: [], workers: [], autCalls: [[-1000, "task close nope -w eval", 4]] },
+      refused(),
+    );
+    expect(v.wrong.join("\n")).not.toMatch(/nope/);
+    expect(v.notes).toContain("failed mu call (a note, not wrong): 4 mu task close nope -w eval");
+  });
+});
+
 describe("E2 finding triage with a cross-family refuter", () => {
   const REFUTED = "VERDICT: REFUTED\nEVIDENCE: notes.txt keeps its last line";
   const golden = (more: Partial<WorldSpec> = {}): WorldSpec => ({

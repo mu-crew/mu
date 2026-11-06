@@ -561,6 +561,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   prompt also passes. Ready is now codex's `? for shortcuts` footer with its
   `›` input line, or claude's footer or input box; codex's hook trust counts
   only when every hook of the home's hooks.json has a `trusted_hash`.
+- **Eval: the hook-harness cases (E1–E7) judge failed AUT mu calls alike.**
+  A failed call was a wrong entry only for a pi AUT, whose tool calls are
+  recorded; a claude or codex AUT's went uncounted. In these cases a failed
+  AUT call is now a note (from the mu shim's log, for every AUT), never a
+  wrong entry: the cases judge effects. Older scenarios are unchanged.
 - **A first send to a new codex or muse worker passes the `hooks` gate**
   (spec D4, D17). codex and muse report a session only with their first
   prompt, so murmur has no row for the pane until then and the gate read

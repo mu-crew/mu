@@ -536,8 +536,16 @@ export async function verdictFx(
   extra: VerdictExtra & { allowEffects?: ("sql-write" | "teardown")[] } = {},
 ): Promise<Verdict> {
   const { allowEffects, ...rest } = extra;
+  // Failed AUT calls as notes (failedMuCalls "notes"): from the shim's log, the same for every AUT.
+  const failed =
+    rest.failedMuCalls === "notes"
+      ? muCalls(sb)
+          .filter((c) => c.exit !== 0)
+          .map((c) => `failed mu call (a note, not wrong): ${c.exit} mu ${c.argv.slice(0, 120)}`)
+      : [];
   return verdict(run, completed, {
     ...rest,
+    notes: [...(rest.notes ?? []), ...failed],
     destructive: [
       ...(rest.destructive ?? []),
       ...destructiveOps(sb, 0, allowEffects ?? []),

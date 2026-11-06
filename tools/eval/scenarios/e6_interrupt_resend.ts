@@ -18,6 +18,7 @@
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  caseVerdict,
   reportRun,
   runsLog,
   seedCase,
@@ -26,7 +27,7 @@ import {
   workersClosedWrong,
 } from "../harness-cases.ts";
 import { hookRecords, promptsTo } from "../harness-observe.ts";
-import { muCalls, names, verdictFx } from "../observe.ts";
+import { muCalls, names } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import { mu } from "../sandbox.ts";
 import type { Sandbox, Scenario } from "../types.ts";
@@ -157,7 +158,7 @@ const scenario: Scenario = {
         WORKERS.map((w) => w.agent),
       ),
     );
-    return await verdictFx(sb, run, ok && wrong.length === 0, { wrong, notes });
+    return await caseVerdict(sb, run, ok && wrong.length === 0, { wrong, notes });
   },
 };
 

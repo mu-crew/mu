@@ -10,6 +10,7 @@
 // no reviewer behind it, closing ship before the verdict.
 import {
   answeredMs,
+  caseVerdict,
   checksOn,
   cliHarness,
   mainCommitMs,
@@ -23,7 +24,7 @@ import {
   workersClosedWrong,
 } from "../harness-cases.ts";
 import { harnessOf, hookRecords } from "../harness-observe.ts";
-import { CLOSE_INTENTS, verdictFx } from "../observe.ts";
+import { CLOSE_INTENTS } from "../observe.ts";
 import { opsAfter } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { noteMoments } from "../provenance.ts";
@@ -100,7 +101,7 @@ const scenario: Scenario = {
     wrong.push(...workersClosedWrong(sb, [impl.agent, reviewer]));
     const ok =
       impl.ok && check !== undefined && shipClosed && merged !== null && wrong.length === 0;
-    return await verdictFx(sb, run, ok, {
+    return await caseVerdict(sb, run, ok, {
       wrong,
       notes: [
         `${impl.note}; reviewer=${reviewer ?? "-"}(${reviewerHarness || "-"}) verdict=${verdictLabel(check?.verdict ?? null) ?? "-"} merged=${merged !== null} ship closed=${shipClosed}`,

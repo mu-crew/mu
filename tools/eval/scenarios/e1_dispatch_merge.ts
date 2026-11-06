@@ -6,11 +6,18 @@
 // after it and it is the commit its worker produced (or a cherry-pick of it); that worker ran
 // locally in a worktree of its own, was spawned with the requested cli and its hooks reported as
 // that harness; neither task was closed before its worker's report; both workers were closed; and
-// nothing destructive happened (verdictFx). Fails: the AUT doing a task itself, the wrong harness
+// nothing destructive happened (caseVerdict). Fails: the AUT doing a task itself, the wrong harness
 // for a task, a close before the report, a worker left running.
-import { runsLog, seedCase, taskProof, under, WS, workersClosedWrong } from "../harness-cases.ts";
+import {
+  caseVerdict,
+  runsLog,
+  seedCase,
+  taskProof,
+  under,
+  WS,
+  workersClosedWrong,
+} from "../harness-cases.ts";
 import { hookRecords } from "../harness-observe.ts";
-import { verdictFx } from "../observe.ts";
 import { openProbe } from "../probe.ts";
 import type { Scenario } from "../types.ts";
 
@@ -49,7 +56,7 @@ const scenario: Scenario = {
       wrong.push("a worker ran in the main checkout, not its own worktree");
     if (agents[0] !== null && agents[0] === agents[1]) wrong.push("one worker ran both tasks");
     wrong.push(...workersClosedWrong(sb, agents));
-    return await verdictFx(sb, run, ok && wrong.length === 0, { wrong, notes });
+    return await caseVerdict(sb, run, ok && wrong.length === 0, { wrong, notes });
   },
 };
 
