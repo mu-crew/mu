@@ -270,7 +270,9 @@ and auth (spec D1). The rig changes exactly this:
   minutes for E7). A claude or codex AUT reports zero usage (it has no token
   stream), and real workers are never counted under any AUT, so a scenario's
   `tokenCap` and `matrix --budget-tokens` do not apply; `matrix` says so on
-  stderr when it queues such runs. The workers cost money too, unless
+  stderr when it queues such runs. A pi AUT reports its usage, but it runs
+  uncapped too, so all three orchestrators stop on the same rule (a live E7
+  under pi hit the 900k cap on cache reads, about $0.49, with one task left). The workers cost money too, unless
   `--fake-workers`.
 - **Not supported:** a Muse Code worker on the ssh host (Muse clears its hooks'
   environment, so its entries name this machine's murmur state).

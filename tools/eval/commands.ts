@@ -186,6 +186,11 @@ export async function runPiAut(
     quietMs: o.quietMs,
     maxProds: o.maxProds,
     log: o.log,
+    // a live hook-harness case is bounded by its timeout alone, as a claude or codex AUT is (their
+    // tokens are not counted): a cap only pi meets would stop it where the others run on
+    ...(o.live === true && o.scenario.hookHarnesses !== undefined
+      ? { tokenCap: Number.POSITIVE_INFINITY }
+      : {}),
   };
   const rep = o.scenario.replacement;
   if (rep === undefined) return run(sb, o.scenario, base);
