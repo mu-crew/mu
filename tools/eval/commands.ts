@@ -31,6 +31,7 @@ import {
   resolveTools,
   which,
 } from "./harness.ts";
+import { armWatch, settleWatch, watchRealState } from "./isolation.ts";
 import { toMarkdown } from "./report.ts";
 import { runAut } from "./runner.ts";
 import { runPaneAut } from "./runner-pane.ts";
@@ -217,6 +218,9 @@ export async function runOne(o: RunOne): Promise<RunResult> {
         })
       : null;
   if (skillNote !== null) console.error(`eval: ${skillNote}`);
+  // A live run's real-state watch (isolation.ts): a mu that escaped the sandbox's pins adds a
+  // segment to the user's sync dir, and the run is marked destructive. Only read, never changed.
+  const watch = o.live === true ? watchRealState() : null;
   const sb = await createSandbox(o.surface, {
     env: { ...o.scenario.env, EVAL_AUT_HARNESS: harness, EVAL_AUT_MODEL: o.model },
     live: o.live === true,
@@ -233,6 +237,9 @@ export async function runOne(o: RunOne): Promise<RunResult> {
         }
       : {}),
   });
+  // armed after createSandbox: on SIGINT/SIGTERM or a crash its exit cleanup runs first
+  if (watch !== null) armWatch(watch);
+  let result: RunResult | undefined;
   try {
     await o.scenario.setup(sb);
     const metrics =
@@ -265,7 +272,7 @@ export async function runOne(o: RunOne): Promise<RunResult> {
     }
     if (skillNote !== null) verdict.notes.push(skillNote);
     if (o.keep) console.error(`kept sandbox: ${sb.dir} (tmux -L ${sb.tmuxSocket})`);
-    return {
+    result = {
       scenario: o.scenario.id,
       surface: surfaceId(o.surface),
       model: o.model,
@@ -277,7 +284,11 @@ export async function runOne(o: RunOne): Promise<RunResult> {
     };
   } finally {
     await sb.close({ keep: o.keep });
+    if (watch !== null) settleWatch(watch, result?.verdict);
   }
+  // set whenever the try block finished; a throw there propagated past this line
+  if (result === undefined) throw new Error("runOne: no result");
+  return result;
 }
 
 /** Append one RunResult line. Never truncates an existing file. */

@@ -107,15 +107,69 @@ and auth (spec D1). The rig changes exactly this:
   `MU_SYNC_DIR`, `MU_TMUX_SOCKET`, `MU_MUX=tmux`, `TMUX_TMPDIR`,
   `MURMUR_STATE_DIR`, `PI_CODING_AGENT_DIR` and `TMPDIR`, all inside the sandbox
   (TMPDIR is the sandbox root, so a harness sandbox that allows TMPDIR reaches
-  the run's files), git author `eval`, and `PATH` = sandbox `bin/` then the
-  caller's PATH. HOME and XDG config are the caller's.
+  the run's files), git author `eval`, `PATH` = sandbox `bin/` then the
+  caller's PATH, and the shell pins below (`ZDOTDIR`, `EVAL_USER_ZDOTDIR`,
+  `CLAUDE_ENV_FILE`). HOME and XDG config are the caller's.
+- **Pins a shell rc cannot undo.** A harness's shell tool re-sources the user's
+  startup files (claude and codex snapshot them), and those may export
+  `MU_SYNC_DIR=$HOME/mu` or put `~/.local/bin` or `/usr/local/bin` before the
+  sandbox `bin/` (macOS's `path_helper` does in every login shell). So:
+  - the `mu`, `murmur` and `muzzle` shims set `MU_DB_PATH`, `MU_STATE_DIR`,
+    `MU_SYNC_DIR`, `MU_TMUX_SOCKET`, `MU_MUX`, `MURMUR_STATE_DIR`,
+    `TMUX_TMPDIR` and `PI_CODING_AGENT_DIR` to the sandbox's values, baked in
+    at creation, drop any `MU_<CLI>_COMMAND` the sandbox did not set, and put
+    `bin/` first, whatever the caller's env says (the `tmux` shim pins
+    `TMUX_TMPDIR`). On the ssh host they leave its own env alone. This holds
+    only for a `mu` that resolves to the shim, so `bin/` must come first on
+    the shell's PATH; the next two keep it there:
+  - `ZDOTDIR` points at `<sandbox>/shell/zdotdir`, whose `.zshenv`,
+    `.zprofile`, `.zshrc` and `.zlogin` source the user's own file (from their
+    `ZDOTDIR`, else HOME) and then apply the same pins, drop any `mu`,
+    `murmur`, `muzzle` or `tmux` alias or function, and put `bin/` first. That
+    covers a zsh that reads its startup files through `ZDOTDIR`: codex's
+    login shell. Observed with codex 0.164 under its launcher: without it, its
+    shell found `~/.local/bin/mu` and `MU_SYNC_DIR=~/mu`;
+  - claude's shell snapshot does not use `ZDOTDIR` for the rc: it sources
+    `$HOME/.zshrc` itself (read from its binary), so the snapshot ends with the
+    user's PATH and `MU_SYNC_DIR`. claude then sources `CLAUDE_ENV_FILE` (the
+    same pins and unaliasing) after the snapshot, before each Bash command,
+    whatever the user's shell; that is the only enforcing layer for claude.
+    A session-env file one of the user's own SessionStart hooks writes is
+    sourced after it and could put another `mu` first again.
+
+  Not enforceable: a bash or fish login or interactive shell (no startup hook
+  runs after the user's profile), a zsh started with `-f` or whose
+  `/etc/zshenv` resets `ZDOTDIR`, a user SessionStart hook as above, and an
+  absolute path to the user's own mu. Those are caught, not prevented:
+
+- **The real-state watch.** Before the sandbox is made and after it is closed
+  (or, on SIGINT, SIGTERM or a crash, as the rig exits), the rig lists the
+  files (name, size, mtime) of the sync dir its own `MU_SYNC_DIR` names and of
+  `~/mu`, of murmur's real state (`MURMUR_STATE_DIR`, else
+  `<XDG_STATE_HOME>/murmur2` and `~/.local/state/murmur2`) and of muzzle's
+  (`<XDG_STATE_HOME>/muzzle`), and stats the real DB (`MU_DB_PATH`, else
+  `MU_STATE_DIR/mu.db`, else `<XDG_STATE_HOME>/mu-next/mu.db`), the `mu-next`
+  and 3.x default DBs, and their `-wal` files. A new `<id>.jsonl` segment at
+  the top of a sync dir (a machine id that was not there: the observed leak,
+  a sandbox DB flushing into the real sync dir) adds a
+  `contamination: <path> ...` destructive entry to the verdict and an
+  `eval: CONTAMINATED` block on stderr. Every other new, changed or vanished
+  file is listed on stderr too and added to the verdict's notes
+  (`real state: ...`), not counted: the user's own mu rewrites its segment and
+  DB on every call (its dashboard every 10 s), a sync transport updates
+  peers' segments, and murmur and muzzle write for every session. A leak
+  through the user's own env (their mu, their DB) looks the same, so read
+  those notes. A new peer arriving by sync during a run is a false
+  contamination. An interrupted run writes no result line; the stderr block
+  says so. The rig only reads these: it never deletes or edits a user's file,
+  so remove a leaked segment by hand.
 - **The sandbox `bin/`.** `claude`, `codex`, `cursor-agent`, `muse` exec the
   caller's launchers; `pi` runs the caller's pi with `--no-extensions`, the
   surface's extension, the provider extension and the sandbox's copy of the mu
   skill; `mu`, `murmur` and `muzzle` run the worktree builds (`muzzle` with
   `XDG_STATE_HOME` forced to `<sandbox>/home/.local/state`, so its queue, slots
   and run log stay in the sandbox even when the caller sets `XDG_STATE_HOME`;
-  `muzzle hook` reads no state). These shims drop
+  `muzzle hook` reads no state), each with the pins above. These shims drop
   `murmur hook <harness>`, `mu hook stop` and `muzzle hook` calls, which only
   the user's own hook entries make (a harness also reads them): only the rig's
   entries, which run the builds by absolute path, record anything.
@@ -153,7 +207,13 @@ and auth (spec D1). The rig changes exactly this:
   points `CODEX_HOME` at `<sandbox>/codex-home` (the rig's hooks.json, a copy
   of config.toml, links to the other top-level files, auth included, and the
   skills/ above): nothing in the real codex home is written by the rig, but
-  codex asks for hook trust in every run.
+  codex asks for hook trust in every run. A codex worker runs with mu's
+  preset `--dangerously-bypass-approvals-and-sandbox` (its own seatbelt cannot
+  start under a launcher that already sandboxes it) and trusts its worktree by
+  real path. The launcher observed still lets it write every home dot-dir
+  (`~/.local/state` included), so only the pins and the watch stand between
+  a codex worker and the user's real mu state. The codex launcher may also
+  install plugins into the codex config (`config.toml`) as it starts.
 - **The ssh host `dev`.** Its HOME is `<sandbox>/hosts/dev/home`, live or
   fake, so mu's state there (anchors, and the remote worktrees in
   `~/.local/state/mu-next/remote-worktrees/eval/<worker>`) is the sandbox's and
@@ -165,7 +225,9 @@ and auth (spec D1). The rig changes exactly this:
 - **Written by the harnesses and mu, as in any run.** Each harness's own
   sessions, trust records and state under the caller's HOME (claude records
   folder trust in `~/.claude.json`); mu's anchor files for local workers in
-  `~/.local/state/mu-next/anchors/`.
+  `~/.local/state/mu-next/anchors/` (always under the real HOME, whatever
+  `MU_STATE_DIR` says), where the sandbox's mu also prunes the anchors of
+  dead pids, the user's included. The watch leaves the anchor dir out.
 - **Cost.** Nothing bounds a live run's tokens but its timeout (up to 20
   minutes for E7). A claude or codex AUT reports zero usage (it has no token
   stream), and real workers are never counted under any AUT, so a scenario's

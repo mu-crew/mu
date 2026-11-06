@@ -398,6 +398,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   tables. The rig also runs on macOS now: the mu shim and the worker driver
   stamp milliseconds without GNU `date`, use `tee -p` only where it exists,
   and the real pi is linked as `pi` (a launcher may dispatch on its name).
+  A live run cannot leak into the user's real mu state through their shell
+  startup files: the sandbox's `mu`, `murmur` and `muzzle` shims pin its DB,
+  state, sync dir, tmux server and murmur state whatever the caller's env
+  says; a ZDOTDIR wrapper (codex's login shell) and claude's
+  `CLAUDE_ENV_FILE` (claude's snapshot sources `~/.zshrc` itself) re-apply
+  them, drop any `mu`, `murmur`, `muzzle` or `tmux` alias or function, and
+  put the sandbox `bin/` first after the user's zsh files run; and a watch
+  on the user's real sync dir, DB, murmur and muzzle state marks a run
+  destructive (`contamination: ...`) when a new segment appears in the sync
+  dir, notes every other change, and reports even when the run is
+  interrupted.
 
 ### Changed
 
