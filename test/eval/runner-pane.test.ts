@@ -6,7 +6,12 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { runPiAut } from "../../tools/eval/commands.ts";
 import type { runAut } from "../../tools/eval/runner.ts";
-import { type PaneIO, type PaneView, runPaneAut } from "../../tools/eval/runner-pane.ts";
+import {
+  type PaneIO,
+  type PaneView,
+  runPaneAut,
+  trustDialogKeys,
+} from "../../tools/eval/runner-pane.ts";
 import type { ExecResult } from "../../tools/eval/sandbox.ts";
 import type { Sandbox, Scenario, Surface } from "../../tools/eval/types.ts";
 import { emptyRun } from "./_judge-sandbox.ts";
@@ -203,5 +208,25 @@ describe("the pi AUT's phases", () => {
       fakeRun,
     );
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("trustDialogKeys", () => {
+  it("moves off Claude Code's default 'No, exit' when the folder pre-approves tools", () => {
+    const screen = [
+      " Accessing workspace:",
+      " Quick safety check: Is this a project you created or one you trust?",
+      " ⚠ This folder pre-approves 10 tool permissions in .claude/settings.json:",
+      " ❯ No, exit",
+      "   Yes, I trust this folder",
+      " Enter to confirm · Esc to cancel",
+    ].join("\n");
+    expect(trustDialogKeys(screen)).toEqual(["Down", "Enter"]);
+  });
+  it("takes the default when it already trusts", () => {
+    expect(trustDialogKeys(" ❯ 1. Yes, I trust this folder\n   2. No, exit")).toEqual(["Enter"]);
+  });
+  it("sends nothing without a trust dialog", () => {
+    expect(trustDialogKeys("> ready")).toBeNull();
   });
 });
