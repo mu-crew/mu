@@ -531,6 +531,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   for a task it owns (spec D7). The close nudge started another turn whose
   text replaced the report as the pane's last text, so the orchestrator
   never read the worker's verdict.
+- **`mu hook stop` applies that CLOSE block itself** (spec D3, D7). Nothing
+  applied it until the orchestrator's next `mu wait`, so an orchestrator
+  polling `mu task show` saw the task IN_PROGRESS long after its worker had
+  reported (live E3: 15 minutes). For a local claude or codex worker the hook
+  now closes the task with the report, keyed as a wait's settle of the same
+  turn is (the payload's `session_id`, murmur's `run_count`), so nothing
+  closes twice. A replayed apply now names the task the first one closed
+  (`replayedClose`), so the orchestrator's wait treats that settle and the
+  task's close as one event, as when the wait applies the block, and a stall
+  on the worker's other task does not call it refused. A remote worker's
+  block is still applied by its orchestrator from the relayed text (D11),
+  cursor-agent's (its text follows its stop) by the wait.
 - **A first send to a new codex or muse worker passes the `hooks` gate**
   (spec D4, D17). codex and muse report a session only with their first
   prompt, so murmur has no row for the pane until then and the gate read

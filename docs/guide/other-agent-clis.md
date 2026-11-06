@@ -170,7 +170,11 @@ session yet: mu's first send to it since spawn passes without `--force` (also
 `spawn --send`) when its murmur hooks are installed, confirmed by run 1. `--steer` is refused. `--interrupt` and `mu agent abort`
 press Escape. `--fresh` sends the harness's fresh command and then the text.
 A wait on the agent settles when the turn's stop hook fires, with that turn's
-final text, and a `CLOSE:` block in it closes the task. Any wait knows the
+final text, and a `CLOSE:` block in it closes the task. On a local claude or
+codex worker with `mu init`'s Stop entry, that entry closes it as the turn
+ends (their Stop payload carries the final text), and the wait reads it as
+already applied: one event, not two. cursor-agent's text arrives after its
+stop, so a wait applies its block. Any wait knows the
 text, even one started after the turn ended. With a murmur older than
 `last_text_run`, only a wait that was watching before the turn ended knows it
 (start it with `send --wait`).

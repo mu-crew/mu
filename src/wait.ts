@@ -140,6 +140,7 @@ import {
 import {
   type AgentReading,
   type CloseOutcome,
+  closedByRun,
   DEFAULT_CTL_STUCK_AFTER_MS,
   DEFAULT_STUCK_AFTER_MS,
   type StallActionResult,
@@ -528,12 +529,34 @@ export async function waitForEvents(
   const notifyRefused = (t: AgentTrack, r: AgentReading, close: CloseOutcome | undefined): void =>
     notices.start(t.ref, { ...r, agentId: r.agentId ?? agentRowId(db, t.ref) }, close);
 
+  /** This caller was already handed task `id`'s current close (its `closed` event's token). */
+  const closeDelivered = (workstream: string, id: string): boolean => {
+    const { n } = db
+      .prepare(
+        `SELECT COALESCE(MAX(n.id), 0) AS n FROM task_notes n JOIN tasks t ON t.id = n.task_id
+           JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND t.local_id = ?`,
+      )
+      .get(workstream, id) as { n: number };
+    return isConsumed(cursorOf(refKey({ kind: "task", workstream, id })), closedToken(n));
+  };
+
   const settle = (t: AgentTrack, r: AgentReading): void => {
-    const consumed =
+    let consumed =
       !t.explicit &&
       r.runs !== undefined &&
       isConsumed(cursorOf(refKey(t.ref)), { incarnation: r.incarnation ?? "", runs: r.runs });
     const close = consumed ? undefined : closeSettledRun(db, t.ref, r, applyClose);
+    // One fact, one event, across waits: the run's CLOSE block was applied before this settle
+    // (its worker's Stop hook) and the task's close it caused was already handed out.
+    if (
+      !consumed &&
+      !t.explicit &&
+      close?.replayedClose === true &&
+      close.task !== null &&
+      closeDelivered(t.ref.workstream, close.task)
+    ) {
+      consumed = true;
+    }
     const textOk =
       matcher === undefined ||
       (r.lastError === undefined &&
@@ -893,7 +916,10 @@ export async function waitForEvents(
           ownerRef,
           ageSecs: Math.round(age / 1000),
           // The owner's settled run was refused its CLOSE (a malformed block): say why on the task.
-          ...(watched?.close?.applied === false ? { close: watched.close } : {}),
+          // A replayed close that closed another task (a Stop hook applied it) is no refusal.
+          ...(watched?.close?.applied === false && watched.close.replayedClose !== true
+            ? { close: watched.close }
+            : {}),
         });
         if (!stallEmitted.has(token)) {
           stallEmitted.add(token);
@@ -1280,8 +1306,7 @@ export async function waitForEvents(
       const same = (a: Item, b: Item): boolean =>
         a.kind === "settled" &&
         a.ref.kind === "agent" &&
-        a.snap.close?.applied === true &&
-        a.snap.close.task === b.ref.id &&
+        closedByRun(a.snap.close) === b.ref.id &&
         a.ref.workstream === b.ref.workstream &&
         b.ref.kind === "task" &&
         b.kind === "closed";

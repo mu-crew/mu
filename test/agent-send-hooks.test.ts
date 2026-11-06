@@ -10,13 +10,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import {
+  parseHooksPane,
   setMurmurHookRunnerForTests,
   setMurmurPaneRunnerForTests,
 } from "../src/channels/hooks-pane.js";
 import { type Db, openDb } from "../src/db.js";
+import { runStopHook, type StopDecision, type StopHookDeps } from "../src/hook-stop.js";
 import { claimTask } from "../src/tasks/claim.js";
 import { addTask } from "../src/tasks/edit.js";
-import { getTask } from "../src/tasks.js";
+import { getTask, listNotes } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
@@ -502,6 +504,82 @@ describe("mu agent send --interrupt, --fresh, --wait and mu agent abort on hooks
       snapshots: [{ settled: true, lastText: text, close: { applied: true, task: "t1" } }],
     });
     expect(getTask(db, "t1", "auth")?.status).toBe("CLOSED");
+  });
+
+  it("send --wait: the worker's Stop hook applied its CLOSE block first; the wait reads it already applied", async () => {
+    addTask(db, { workstream: "auth", localId: "t1", title: "t1" });
+    await claimTask(db, "t1", { workstream: "auth", agentName: "cdx" });
+    const text = 'Done.\n\nCLOSE: task=t1 evidence="npm test: 3 passed"\nREPORT:\nall done';
+    // tmux 100 > zsh 200 > codex launcher 300 (anchored as cdx) > codex.real 301 > sh 400 > hook 500
+    const rows: [number, number, string][] = [
+      [100, 1, "tmux new-session -d -s mu-auth"],
+      [200, 100, "-zsh"],
+      [300, 200, "/usr/local/bin/codex --dangerously-bypass-approvals-and-sandbox"],
+      [301, 300, "/opt/codex/bin/codex.real --dangerously-bypass-approvals-and-sandbox"],
+      [400, 301, "/bin/sh -c mu hook stop codex"],
+      [500, 400, "node /usr/local/lib/mu/dist/cli.js hook stop codex"],
+    ];
+    const deps: StopHookDeps = {
+      table: () => new Map(rows.map(([pid, ppid, args]) => [pid, { pid, ppid, started: 1, args }])),
+      self: 500,
+      anchor: (row) =>
+        row.pid === 300
+          ? {
+              agent_name: "cdx",
+              workstream: "auth",
+              cli: "codex",
+              orchestrator: false,
+              remote_key: null,
+            }
+          : null,
+      env: {},
+      readPane: async (pane) => parseHooksPane((await fake.pane(pane)) ?? ""),
+    };
+    let decision: StopDecision | undefined;
+    let reads = 0;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      if (fake.submitted.length > 0 && ++reads === 3) {
+        // codex runs its Stop hooks (mu's, murmur's) as the turn ends: mu's applies the block.
+        decision = await runStopHook(
+          db,
+          "codex",
+          {
+            hook_event_name: "Stop",
+            session_id: "sess-1",
+            transcript_path: "/tmp/rollout.jsonl",
+            stop_hook_active: false,
+            last_assistant_message: text,
+          },
+          {},
+          deps,
+        );
+        fake.emit("turn_stopped", { text });
+      }
+      return fake.pane(pane);
+    });
+    const { data, exitCode } = await runCliJson(
+      ["agent", "send", "cdx", "do t1", "-w", "auth", "--wait", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(decision).toMatchObject({ decision: "allow" });
+    expect(decision?.decision === "allow" && decision.why).toContain("applied (t1 closed)");
+    expect(data).toMatchObject({
+      firing: { kind: "settled", ref: "agent:auth/cdx", incarnation: "sess-1", runs: 1 },
+      snapshots: [
+        {
+          settled: true,
+          lastText: text,
+          close: { applied: false, task: "t1", reason: "already applied", replayedClose: true },
+        },
+      ],
+    });
+    expect(getTask(db, "t1", "auth")?.status).toBe("CLOSED");
+    const closes = db
+      .prepare("SELECT COUNT(*) AS n FROM ops WHERE entity = 'task' AND intent = 'close.apply'")
+      .get() as { n: number };
+    expect(closes.n).toBe(1);
+    expect(listNotes(db, "t1", "auth").map((n) => n.kind)).toEqual(["report", "close"]);
   });
 
   it("send --wait: a dialog the turn opens ends the wait as input, never as a finished run", async () => {

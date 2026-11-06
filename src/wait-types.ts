@@ -56,7 +56,15 @@ export interface CloseOutcome {
   applied: boolean;
   task: string | null;
   reason: string;
+  /** "already applied", and that earlier apply (a Stop hook, another wait) closed `task`. */
+  replayedClose?: true;
 }
+
+/** The task a settled run's CLOSE block closed, now or on an earlier apply of the same run. */
+export const closedByRun = (c: CloseOutcome | undefined): string | undefined =>
+  c !== undefined && (c.applied || c.replayedClose === true) && c.task !== null
+    ? c.task
+    : undefined;
 
 /** The facts of one ref at the moment the wait returned. */
 export interface WaitSnapshot {
