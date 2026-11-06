@@ -199,6 +199,17 @@ export type SendResult = {
   runCount?: number;
   /** hooks only: the harness session the run count belongs to. */
   sessionId?: string;
+  /**
+   * hooks only, a first paste to a first-prompt harness (codex): how the wait
+   * for its ready screen ended before the paste (`ready`, `timeout`: pasted
+   * anyway, `unread`: the pane could not be captured).
+   */
+  readyScreen?: "ready" | "timeout" | "unread";
+  /**
+   * hooks only: the ack was late and the pasted text still sat in the input
+   * line, so mu pressed the submit key once more (at most once; never a second paste).
+   */
+  submitRetry?: true;
   state?: CtlState;
   /**
    * ctl only: pi's completed-run count. For a plain send it is measured

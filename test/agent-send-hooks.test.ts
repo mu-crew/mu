@@ -133,6 +133,35 @@ describe("mu agent send to a hooks agent", () => {
     expect(fake.calls.filter((c) => c[0] === "paste-buffer")).toHaveLength(1);
   });
 
+  it("codex lost the Enter: the text sat in its input line, the submit key pressed once more (spec D4)", async () => {
+    fake.screen = (input) => `  >_ OpenAI Codex (v0.164.0)\n› ${input}\n  ? for shortcuts\n`;
+    fake.swallowEnters = 1;
+    const { data } = await runCliJson(
+      ["agent", "send", "cdx", "hello there", "-w", "auth", "--json"],
+      dbPath,
+    );
+    expect(data).toMatchObject({ ack: "confirmed", submitRetry: true, delivered: true });
+    expect(fake.submitted).toEqual(["hello there"]);
+    expect(fake.calls.filter((c) => c[0] === "paste-buffer")).toHaveLength(1);
+    // Not the first prompt (the session started): no ready wait.
+    expect(data).not.toHaveProperty("readyScreen");
+  });
+
+  it("a pi on the hooks fallback is unchanged: no screen read, no submit retry", async () => {
+    db.prepare("DELETE FROM agents WHERE name = 'cdx'").run();
+    insertAgent(db, { name: "pih", workstream: "auth", paneId: "%3", cli: "pi", channel: "hooks" });
+    fake.screen = (input) => `  >_ OpenAI Codex\n› ${input}\n`;
+    fake.swallowEnters = 1;
+    let r: Awaited<ReturnType<typeof runCliJson>> | undefined;
+    await withEnv("MU_SEND_ACK_MS", "500", async () => {
+      r = await runCliJson(["agent", "send", "pih", "hi there", "-w", "auth", "--json"], dbPath);
+    });
+    expect(r?.data).toMatchObject({ transport: "hooks", ack: "unknown", delivered: false });
+    expect(r?.data).not.toHaveProperty("submitRetry");
+    expect(fake.calls.filter((c) => c[0] === "capture-pane")).toHaveLength(0);
+    expect(fake.calls.filter((c) => c[0] === "send-keys" && c.includes("Enter"))).toHaveLength(1);
+  });
+
   it("a blocked agent is refused with exit 4 and the answer hint; nothing is typed", async () => {
     fake.emit("prompt_submitted");
     fake.emit("permission_requested", { message: "Bash" });

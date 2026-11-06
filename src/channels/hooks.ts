@@ -14,7 +14,10 @@
 // `MU_SEND_ACK_MS`. Otherwise it is `unknown`, reported through
 // `onUndelivered`, and never resent: there is no write fence, so at-most-once
 // rests on never resending. A steer is refused: a paste lands in the input
-// box, not in the running turn.
+// box, not in the running turn. mu's first paste to a codex pane with no turn
+// waits for codex's own ready screen first, and a late ack whose text still
+// sits in the input line gets the submit key once more, never a second paste
+// (./hooks-ready.ts).
 //
 // Interrupt presses the row's interrupt key (Escape). codex and muse confirm
 // it with their `Interrupt` event, cursor-agent with an aborted `stop`;
@@ -59,7 +62,7 @@ import {
 } from "../agents/errors.js";
 import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
 import { speaksMuCtl } from "../agents/spawn.js";
-import { HARNESS_TABLE, type HarnessRow, harnessOfCli } from "../harnesses.js";
+import { HARNESS_TABLE, type HarnessRow, harnessOfCli, type ReadyMarks } from "../harnesses.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { sleep } from "../tmux.js";
@@ -79,6 +82,13 @@ import {
   staleMs,
   writeMuEvent,
 } from "./hooks-pane.js";
+import {
+  awaitReadyScreen,
+  pasteUnsubmitted,
+  type ReadyWait,
+  SUBMIT_GRACE_MS,
+  SUBMIT_KEY,
+} from "./hooks-ready.js";
 import type {
   AgentChannel,
   ChannelTarget,
@@ -159,6 +169,7 @@ async function gateAndPaste(
   force: boolean,
   remoteMaxAgeMs = 0,
   firstPrompt = false,
+  beforePaste?: (before: HooksPane | undefined) => Promise<void>,
 ): Promise<HooksPane | undefined> {
   const { name, workstreamName, cli, paneId } = t.agent;
   const remote = await readRemote(t, remoteMaxAgeMs);
@@ -172,6 +183,7 @@ async function gateAndPaste(
     const passes = gate.state === "unknown" && firstPrompt && (await awaitsFirstPrompt(t, before));
     if (!passes) throw new AgentSendGateError(name, workstreamName, gate.state, gate.reason);
   }
+  await beforePaste?.(before);
   const mux = await activeMux();
   if (mux.pasteToPane) await mux.pasteToPane(paneId, text, { clearKey: clearKeyOf(t) });
   else if (mux.sendToPane) await mux.sendToPane(paneId, text, {});
@@ -186,7 +198,10 @@ async function gateAndPaste(
  * caller sends this incarnation's first prompt (`firstPrompt`). Then murmur
  * answered for the pane with no agent row, which such a pane has until that
  * prompt (`startupSessionStart`), and the harness has murmur's hooks (a
- * hookless pane never confirms, so it keeps the usual window).
+ * hookless pane never confirms, so it keeps the usual window). Hooks count
+ * however their command names murmur (`runsMurmurHook`): matching only
+ * `murmur hook <harness>` gave a hook config that ran murmur by path the 10 s
+ * window.
  */
 function beforeFirstPrompt(
   t: DeliveryTarget,
@@ -218,34 +233,97 @@ function counts(seen: HooksPane | undefined): Pick<SendResult, "runCount" | "ses
   };
 }
 
+/**
+ * The ready marks to wait for before mu's first paste to this pane: a
+ * first-prompt harness (codex) with known marks, on mu's first prompt since
+ * spawn (`firstPrompt`), to a pane with no turn yet (no murmur row, or no
+ * murmur answer). undefined: paste at once, as before.
+ */
+function readyMarksBeforeFirst(
+  t: DeliveryTarget,
+  before: HooksPane | undefined,
+  firstPrompt: boolean,
+): ReadyMarks | undefined {
+  if (!firstPrompt || (before !== undefined && before.activity !== null)) return undefined;
+  const harness = harnessOfCli(t.agent.cli, t.agent.command ?? undefined);
+  if (harness === undefined) return undefined;
+  const row = HARNESS_TABLE[harness];
+  return row.startupSessionStart === "first-prompt" ? (row.readyMarks ?? undefined) : undefined;
+}
+
 async function send(
   t: DeliveryTarget,
   text: string,
   opts: DeliveryOptions,
   remoteMaxAgeMs = 0,
 ): Promise<SendResult> {
-  const { name, workstreamName } = t.agent;
+  const { name, workstreamName, paneId } = t.agent;
   refuseFence(t, opts);
   if (opts.mode === "steer") throw new AgentSteerUnsupportedError(name, workstreamName, "hooks");
   if (text === "") throw new AgentEmptySendError(name, workstreamName, "hooks");
   const first = opts.firstPrompt === true;
-  const before = await gateAndPaste(t, text, opts.force === true, remoteMaxAgeMs, first);
+  // A launcher wrapper may still be starting a first-prompt harness: a paste
+  // then loses its Enter. So the first one waits for the harness's own ready
+  // screen, within MU_FIRST_SEND_ACK_MS; the ack gets what is left of it.
+  const startedAt = Date.now();
+  let readyScreen: ReadyWait | undefined;
+  const before = await gateAndPaste(
+    t,
+    text,
+    opts.force === true,
+    remoteMaxAgeMs,
+    first,
+    async (gated) => {
+      const marks = readyMarksBeforeFirst(t, gated, first);
+      if (marks !== undefined)
+        readyScreen = await awaitReadyScreen(paneId, marks, firstSendAckMs());
+    },
+  );
+  const waited = readyScreen === undefined ? {} : { readyScreen };
   // D11: a remote paste is not polled for (each read is an exec); the next
   // wait or send gate reads the node, which confirms it.
-  if (t.remote !== undefined) return { transport: "hooks", ack: "sent", ...counts(before) };
-  const ms = beforeFirstPrompt(t, before, first) ? firstSendAckMs() : sendAckMs();
-  const acked = await pollPane(t.agent.paneId, ms, (now) => runStarted(before, now));
+  if (t.remote !== undefined) {
+    return { transport: "hooks", ack: "sent", ...counts(before), ...waited };
+  }
+  const firstWindow = beforeFirstPrompt(t, before, first);
+  const ms = firstWindow
+    ? Math.max(sendAckMs(), firstSendAckMs() - (Date.now() - startedAt))
+    : sendAckMs();
+  const done = (now: HooksPane | undefined): boolean => runStarted(before, now);
+  const marks = rowOf(t.agent)?.readyMarks ?? null;
+  let acked: HooksPane | undefined;
+  let submitRetry = false;
+  if (marks === null) {
+    acked = await pollPane(paneId, ms, done);
+  } else {
+    // A late ack, with the text still in the input line: its Enter was lost.
+    // Press the submit key once more, at most once; never paste again.
+    const grace = Math.min(SUBMIT_GRACE_MS, ms);
+    acked = await pollPane(paneId, grace, done);
+    if (acked === undefined && (await pasteUnsubmitted(paneId, marks, text))) {
+      const mux = await activeMux();
+      try {
+        await mux.sendKeys?.(paneId, [SUBMIT_KEY]);
+        submitRetry = mux.sendKeys !== undefined;
+      } catch {
+        // best effort: the paste stands, and the ack poll below says what came of it
+      }
+    }
+    if (acked === undefined) acked = await pollPane(paneId, ms - grace, done);
+  }
   if (acked === undefined) {
     opts.onUndelivered?.({
-      paneId: t.agent.paneId,
+      paneId,
       reason: "unconfirmed",
-      message: say("agent.send_unconfirmed", t.agent.name, ms),
+      message: say("agent.send_unconfirmed", name, ms, submitRetry),
     });
   }
   return {
     transport: "hooks",
     ack: acked === undefined ? "unknown" : "confirmed",
     ...counts(acked ?? before),
+    ...waited,
+    ...(submitRetry ? { submitRetry: true } : {}),
   };
 }
 

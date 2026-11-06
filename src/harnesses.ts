@@ -44,6 +44,18 @@ export interface HarnessEvents {
   session_end: readonly NativeEvent[];
 }
 
+/**
+ * What a harness's own TUI draws once it can take a paste (spec D4, D6): text
+ * only it shows (its header or footer), and the mark that starts its input
+ * line. A launcher wrapper's banner and "Installing ..." lines carry neither.
+ */
+export interface ReadyMarks {
+  /** Any one of these, on the visible screen. */
+  screen: readonly string[];
+  /** The input line's leading mark (`›`, not a shell prompt's `❯`). */
+  input: string;
+}
+
 export interface HarnessRow {
   id: Harness;
   /** murmur's argv match: executable basenames, after stripping a `.real`, `.js`, `.mjs` or `.cjs` suffix. */
@@ -97,6 +109,13 @@ export interface HarnessRow {
    * pointer, and never for a first-prompt one (spec D17).
    */
   startupSessionStart: "immediate" | "first-prompt";
+  /**
+   * The ready screen mu's first paste to a first-prompt harness waits for,
+   * and whose input line a late ack is checked against before mu presses the
+   * submit key once more (spec D4). null: none known, so neither happens; an
+   * `immediate` harness's `session_start` already says it is up.
+   */
+  readyMarks: ReadyMarks | null;
   /** tmux key names. */
   interruptKey: string;
   /** null: the harness is not driven by keys. pi's is used only on its `hooks` fallback (spec D15). */
@@ -169,6 +188,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     freshCommand: "/clear",
     freshSessionStart: "immediate",
     startupSessionStart: "immediate",
+    readyMarks: null,
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -207,6 +227,10 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     freshCommand: "/new",
     freshSessionStart: "first-prompt",
     startupSessionStart: "first-prompt",
+    // codex 0.164's own TUI: its header box, its footer, and the `›` composer line (the
+    // screens of a fresh start behind a launcher wrapper, 2026-11-06). The wrapper's banner
+    // and plugin installs come first and carry none of them.
+    readyMarks: { screen: [">_ OpenAI Codex", "? for shortcuts", "% context left"], input: "›" },
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -269,6 +293,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     freshCommand: "/new-chat",
     freshSessionStart: null,
     startupSessionStart: "immediate",
+    readyMarks: null,
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: true,
@@ -311,6 +336,9 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     freshCommand: "/new",
     freshSessionStart: "first-prompt",
     startupSessionStart: "first-prompt",
+    // Unverified: no capture of Muse Code's ready screen yet, so its first paste goes
+    // without the wait and a late ack gets no submit retry.
+    readyMarks: null,
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: false,
@@ -349,6 +377,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     freshCommand: "/new",
     freshSessionStart: "immediate",
     startupSessionStart: "immediate",
+    readyMarks: null,
     interruptKey: "Escape",
     // Pressed only on the `hooks` fallback (spec D15); ctl never types keys.
     // pi's editor binds C-u to delete to the line start.

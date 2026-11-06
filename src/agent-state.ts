@@ -115,11 +115,44 @@ function murmurHarness(cli: string | undefined): Harness {
   return (cli === undefined ? undefined : harnessOfCli(cli)) ?? "pi";
 }
 
+/** A hook command's words, roughly as a shell splits them: a quoted word whole, its quotes dropped. */
+function commandWords(command: string): string[] {
+  const words: string[] = [];
+  for (const m of command.matchAll(/'([^']*)'|"([^"]*)"|(\S+)/g)) {
+    words.push(m[1] ?? m[2] ?? m[3] ?? "");
+  }
+  return words;
+}
+
+/** True when `word` runs murmur: an executable named `murmur`, or a script in a `murmur…` package dir. */
+function isMurmurEntry(word: string): boolean {
+  const parts = word.split("/");
+  const base = parts.at(-1) ?? "";
+  if (base === "murmur") return true;
+  return /\.[cm]?js$/.test(base) && parts.slice(0, -1).some((p) => /^murmur(?:[-_.]|$)/.test(p));
+}
+
+/**
+ * True when a hook command runs `murmur hook <harness>`: what `murmur init`
+ * writes, or murmur named by path or run under an interpreter, after any
+ * `VAR=value` words (`'/usr/bin/node' '/opt/murmur/dist/cli.js' hook codex`).
+ * Only the first form is murmur's to manage; every form fires murmur's hook.
+ */
+export function runsMurmurHook(command: string, harness: string): boolean {
+  const words = commandWords(command);
+  for (let i = 0; i + 2 < words.length; i++) {
+    if (words[i + 1] === "hook" && words[i + 2] === harness && isMurmurEntry(words[i] ?? "")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * True when the harness's own hook config (D6 `hookConfig`, under
  * `$MURMUR_HOOK_HOME` else the home dir, as murmur resolves it, or where
  * `CLAUDE_CONFIG_DIR` / `CODEX_HOME` move it) holds a handler running
- * `murmur hook <harness>`: what `murmur init` writes.
+ * `murmur hook <harness>` (`runsMurmurHook`).
  */
 export function murmurHooksInstalled(harness: Exclude<Harness, "pi">): boolean {
   const path = hookConfigPath(harness, process.env.MURMUR_HOOK_HOME ?? homedir());
@@ -132,10 +165,9 @@ export function murmurHooksInstalled(harness: Exclude<Harness, "pi">): boolean {
   }
   const hooks = (root as { hooks?: unknown } | null)?.hooks;
   if (typeof hooks !== "object" || hooks === null) return false;
-  const ours = new RegExp(`^murmur\\s+hook\\s+${harness}(?:\\s|$)`);
   const isOurs = (h: unknown): boolean => {
     const command = (h as { command?: unknown } | null)?.command;
-    return typeof command === "string" && ours.test(command.trimStart());
+    return typeof command === "string" && runsMurmurHook(command, harness);
   };
   for (const entries of Object.values(hooks)) {
     if (!Array.isArray(entries)) continue;
