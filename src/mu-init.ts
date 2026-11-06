@@ -4,7 +4,9 @@
 // Hook entries. claude, codex and cursor-agent get one `mu hook stop
 // <harness>` entry on their stop event, in their own config file (D6
 // `hookConfig`): `~/.claude/settings.json`, `~/.codex/hooks.json`,
-// `~/.cursor/hooks.json`. Muse Code gets none (its Stop block does not deliver
+// `~/.cursor/hooks.json`. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` move claude's
+// and codex's directory, for the hook file and the skills alike, as they do
+// for the harness itself (and murmur, museum and muzzle). Muse Code gets none (its Stop block does not deliver
 // the reason, D7), and pi has its settle nudge in the pi package. Those files
 // are shared with murmur, museum, muzzle and the user, so mu touches only the
 // entries it wrote: a handler whose command is one of the forms below. Every
@@ -39,7 +41,8 @@
 //
 // Without `harnesses`, only a harness set up here (its config directory
 // exists) is written, so a machine with no Cursor CLI grows no `~/.cursor`.
-// A second `init` changes nothing, not even formatting.
+// A second `init` changes nothing, not even formatting. `mu doctor` reads the
+// same files through the same matcher (`checkMuHooks`, D13).
 
 import {
   cpSync,
@@ -48,11 +51,9 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -62,11 +63,20 @@ import {
   HARNESS_TABLE,
   HARNESSES,
   type Harness,
-  homeHookConfig,
+  harnessHomePath,
+  hookConfigPath,
   takesMuStopHook,
 } from "./harnesses.js";
-import { STOP_HOOK_TIMEOUT_S } from "./hook-stop.js";
+import { installHook, isObject, isSetUp, RE_SPECIAL, setupPath } from "./mu-init-hooks.js";
 import { skillDirDigest, skillFilesDigest } from "./pi-migrate.js";
+
+export {
+  checkMuHooks,
+  isMuWrittenHook,
+  muHookCommand,
+  planMuHook,
+  setInitBeforeCommitForTests,
+} from "./mu-init-hooks.js";
 
 /**
  * What `init` did for one harness's hook entry or skill.
@@ -111,6 +121,8 @@ export interface InitOptions {
   harnesses?: readonly Harness[];
   /** This install's root (holds skills/mu). Default: the package root. */
   packageRoot?: string;
+  /** Where `CLAUDE_CONFIG_DIR` and `CODEX_HOME` are read. Default: `process.env`. */
+  env?: NodeJS.ProcessEnv;
 }
 
 /** The file inside a skill copy that says `mu init` wrote it, and what. */
@@ -120,240 +132,6 @@ export const SKILL_MARKER = ".mu-init";
 export function initHome(): string {
   const env = process.env.MU_INIT_HOME?.trim() ?? "";
   return env !== "" ? env : homedir();
-}
-
-/** The command of mu's hook entry for `h`. `|| true`: a Stop hook's exit 2 is
- *  "block, and hand stderr to the model" to claude and codex, and a mu on PATH
- *  older than the verb exits 2 on it. */
-export function muHookCommand(h: Harness): string {
-  return `mu hook stop ${h} --timeout ${STOP_HOOK_TIMEOUT_S} || true`;
-}
-
-const RE_SPECIAL = /[.*+?^${}()|[\]\\]/g;
-
-/** True for a command `init` wrote for `h`, in this or an older form. */
-export function isMuWrittenHook(command: unknown, h: Harness): boolean {
-  if (typeof command !== "string") return false;
-  const name = h.replace(RE_SPECIAL, "\\$&");
-  return new RegExp(`^mu hook stop ${name}( --timeout \\d+)? \\|\\| true$`).test(command.trim());
-}
-
-/** True for any command that runs `mu hook stop`, however it is spelled. */
-function runsMuHookStop(command: unknown): boolean {
-  return typeof command === "string" && /(^|[\s/;&|(])mu\s+hook\s+stop(\s|$)/.test(command);
-}
-
-/** How a config file nests its handlers: Claude Code's `hooks.<Event>[].hooks[]` (codex too), or cursor's flat `hooks.<event>[]`. */
-type Shape = "grouped" | "flat";
-
-function hookShape(h: Harness): Shape {
-  return h === "cursor-agent" ? "flat" : "grouped";
-}
-
-/** The native event mu's entry hangs on: the row's stop event (`Stop`, cursor's `stop`). */
-function stopEvent(h: Harness): string {
-  return HARNESS_TABLE[h].events.turn_stopped[0]?.name ?? "Stop";
-}
-
-/** The handler `init` writes. cursor's own cap on stop follow-ups (`loop_limit`)
- *  is lifted: mu caps its own blocks (`MU_KEEP_DRIVING_MAX`). */
-function muHandler(h: Harness): Record<string, unknown> {
-  const command = muHookCommand(h);
-  return hookShape(h) === "flat"
-    ? { command, timeout: STOP_HOOK_TIMEOUT_S, loop_limit: null }
-    : { type: "command", command, timeout: STOP_HOOK_TIMEOUT_S };
-}
-
-/** The file holds something mu will not guess its way through. */
-class Unworkable extends Error {}
-
-type Json = Record<string, unknown>;
-
-function isObject(value: unknown): value is Json {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** What bringing one file in line takes. */
-interface HookPlan {
-  changes: string[];
-  /** The command of an entry mu did not write that runs `mu hook stop`. */
-  foreign?: string;
-}
-
-/**
- * Bring `root`, one parsed config file, in line with mu's entry for `h`, in
- * place. The first handler mu wrote on the stop event is kept, wherever it
- * sits, and its fields set to what `init` writes; any further one is removed
- * (a group mu emptied goes with it). With none, a new one is appended. A
- * handler mu did not write that runs `mu hook stop` wins: mu removes every
- * handler of its own and adds none, so two consuming waits never run.
- */
-export function planMuHook(h: Harness, root: Json): HookPlan {
-  const plan: HookPlan = { changes: [] };
-  if (root.hooks !== undefined && !isObject(root.hooks)) {
-    throw new Unworkable("its `hooks` is not an object");
-  }
-  const hooks: Json = isObject(root.hooks) ? root.hooks : {};
-  const event = stopEvent(h);
-  const shape = hookShape(h);
-  const entries = hooks[event] ?? [];
-  if (!Array.isArray(entries)) throw new Unworkable(`its \`hooks.${event}\` is not a list`);
-
-  const lists: { group: Json | null; list: unknown[] }[] =
-    shape === "flat"
-      ? [{ group: null, list: entries }]
-      : entries
-          .filter((g): g is Json => isObject(g) && Array.isArray(g.hooks))
-          .map((group) => ({ group, list: group.hooks as unknown[] }));
-  for (const { list } of lists) {
-    for (const handler of list) {
-      if (!isObject(handler) || isMuWrittenHook(handler.command, h)) continue;
-      if (runsMuHookStop(handler.command)) plan.foreign ??= String(handler.command);
-    }
-  }
-  let kept: Json | undefined;
-  for (const { group, list } of lists) {
-    const before = list.length;
-    for (let i = 0; i < list.length; i++) {
-      const handler = list[i];
-      if (!isObject(handler) || !isMuWrittenHook(handler.command, h)) continue;
-      if (kept === undefined && plan.foreign === undefined) {
-        kept = handler;
-        continue;
-      }
-      list.splice(i, 1);
-      i--;
-      plan.changes.push(
-        plan.foreign === undefined
-          ? `removed a duplicate ${event} entry`
-          : `removed its ${event} entry: one mu did not write already runs it (\`${plan.foreign}\`)`,
-      );
-    }
-    if (group !== null && before > 0 && list.length === 0)
-      entries.splice(entries.indexOf(group), 1);
-  }
-
-  if (kept !== undefined) {
-    const want = muHandler(h);
-    if (Object.entries(want).some(([k, v]) => kept[k] !== v)) {
-      Object.assign(kept, want);
-      plan.changes.push(`updated ${event}`);
-    }
-  } else if (plan.foreign === undefined) {
-    const handler = muHandler(h);
-    entries.push(shape === "flat" ? handler : { hooks: [handler] });
-    plan.changes.push(`added ${event}`);
-  }
-  if (plan.changes.length > 0) {
-    hooks[event] = entries;
-    root.hooks = hooks;
-    // The Cursor CLI reads no hook file without its schema version.
-    if (shape === "flat" && root.version === undefined) root.version = 1;
-  }
-  return plan;
-}
-
-function readText(path: string): string | null {
-  try {
-    return readFileSync(path, "utf8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw new Unworkable(`cannot read it: ${(err as Error).message}`);
-  }
-}
-
-/** The parsed file, `{}` when it does not exist or is empty. */
-function readConfig(path: string): { root: Json; text: string | null } {
-  const text = readText(path);
-  if (text === null || text.trim() === "") return { root: {}, text };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch (err) {
-    throw new Unworkable(`it is not valid JSON: ${(err as Error).message}`);
-  }
-  if (!isObject(parsed)) throw new Unworkable("it is not a JSON object");
-  return { root: parsed, text };
-}
-
-/** The end of `path`'s symlink chain, so a dotfiles checkout keeps its link. */
-function writeTarget(path: string): string {
-  let current = path;
-  for (let hops = 0; hops < 40; hops++) {
-    let link: boolean;
-    try {
-      link = lstatSync(current).isSymbolicLink();
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") return current;
-      throw new Unworkable(`cannot read it: ${(err as Error).message}`);
-    }
-    if (!link) return current;
-    current = resolve(dirname(current), readlinkSync(current));
-  }
-  throw new Unworkable("its symlinks loop");
-}
-
-/** The file changed under mu between its read and its write. */
-class Raced extends Error {}
-
-/** Test seam: runs after the new contents are staged, before the re-read that guards the rename. */
-let beforeCommit: ((path: string) => void) | undefined;
-
-export function setInitBeforeCommitForTests(hook: ((path: string) => void) | undefined): void {
-  beforeCommit = hook;
-}
-
-/**
- * Replace the file in one rename, through a symlink to its target, keeping
- * the target's mode. The file's other writers lock nothing either, so it is
- * read again just before the rename: if it is no longer the text the plan was
- * made from, nothing is written (Raced) and the caller plans again.
- */
-function writeConfig(path: string, root: Json, readFrom: string | null): void {
-  const real = writeTarget(path);
-  mkdirSync(dirname(real), { recursive: true });
-  let mode = 0o600; // a new file: settings can carry secrets
-  try {
-    mode = statSync(real).mode & 0o777;
-  } catch {
-    // new file
-  }
-  const tmp = join(dirname(real), `.${basename(real)}.mu-${process.pid}.tmp`);
-  try {
-    writeFileSync(tmp, `${JSON.stringify(root, null, 2)}\n`, { mode });
-    beforeCommit?.(path);
-    if (readText(real) !== readFrom) throw new Raced();
-    renameSync(tmp, real);
-  } catch (err) {
-    rmSync(tmp, { force: true });
-    throw err;
-  }
-}
-
-const WRITE_ATTEMPTS = 3;
-
-function installHook(h: Harness, path: string): Pick<InitItem, "state" | "detail"> {
-  for (let attempt = 1; ; attempt++) {
-    const { root, text } = readConfig(path);
-    const plan = planMuHook(h, root);
-    if (plan.changes.length === 0) {
-      return plan.foreign !== undefined
-        ? {
-            state: "kept",
-            detail: `an entry mu did not write already runs it (\`${plan.foreign}\`): left as found`,
-          }
-        : { state: "unchanged", detail: `\`${muHookCommand(h)}\` on ${stopEvent(h)}` };
-    }
-    try {
-      writeConfig(path, root, text);
-      return { state: "written", detail: [...new Set(plan.changes)].join("; ") };
-    } catch (err) {
-      if (!(err instanceof Raced)) throw err;
-      if (attempt >= WRITE_ATTEMPTS) {
-        throw new Unworkable("another program kept changing it; run `mu init` again");
-      }
-    }
-  }
 }
 
 /** This file's package root: src/ and the bundled dist/ both sit one level below it. */
@@ -392,12 +170,6 @@ function skillDir(h: Harness): string | undefined {
   const loc = HARNESS_TABLE[h].skillLocation;
   if (loc === null || !loc.startsWith("~/")) return undefined;
   return loc.slice(2).replace(/\/+$/, "");
-}
-
-/** The config directory whose presence says the harness is set up here. */
-function setupDir(h: Harness): string | undefined {
-  const cfg = homeHookConfig(h);
-  return cfg === undefined ? undefined : cfg.split("/")[0];
 }
 
 /** The digest a skill copy's marker records, or undefined: no marker, or not mu's. */
@@ -548,6 +320,9 @@ const CURSOR_ALSO_READS: readonly Harness[] = ["claude", "codex"];
  * cursor-agent's item for skill `name` when Claude Code's or Codex's skill
  * directory already holds one (it reads those too): its own copy is removed if
  * mu wrote it, so it sees exactly one. undefined: it needs its own copy.
+ * cursor-agent reads the literal `~/.claude/skills` and `~/.codex/skills`: it
+ * ignores CLAUDE_CONFIG_DIR and CODEX_HOME (its installed build), so this
+ * checks those and not where the variables move claude's and codex's copies.
  */
 function cursorCovered(
   home: string,
@@ -682,29 +457,28 @@ function noPrompts(h: Harness): string {
  */
 export function runInit(opts: InitOptions = {}): InitResult {
   const home = opts.home ?? initHome();
+  const env = opts.env ?? process.env;
   const packageRoot = opts.packageRoot ?? defaultPackageRoot();
   const src = join(packageRoot, "skills", "mu");
   const srcDigest = skillDirDigest(src);
   const wanted = (h: Harness): boolean => {
     if (opts.harnesses !== undefined) return opts.harnesses.includes(h);
-    const dir = setupDir(h);
-    return dir !== undefined && existsSync(join(home, dir));
+    return isSetUp(h, home, env);
   };
   const notSetUp = (h: Harness): string =>
     opts.harnesses !== undefined
       ? "not named in --harness"
-      : `not set up here (no ~/${setupDir(h) ?? ""}); --harness ${h} writes it`;
+      : `not set up here (no ${setupPath(h, home, env) ?? ""}); --harness ${h} writes it`;
   const failed = (err: unknown): Pick<InitItem, "state" | "detail"> => ({
     state: "refused",
     detail: `left untouched: ${err instanceof Error ? err.message : String(err)}`,
   });
 
   const hooks = HARNESSES.map((h): InitItem => {
-    const cfg = homeHookConfig(h);
-    if (!takesMuStopHook(h) || cfg === undefined) {
+    const path = hookConfigPath(h, home, env);
+    if (!takesMuStopHook(h) || path === undefined) {
       return { harness: h, path: null, state: "none", detail: noHook(h) };
     }
-    const path = join(home, cfg);
     if (!wanted(h)) return { harness: h, path, state: "skipped", detail: notSetUp(h) };
     try {
       return { harness: h, path, ...installHook(h, path) };
@@ -720,7 +494,7 @@ export function runInit(opts: InitOptions = {}): InitResult {
       skills.push({ harness: h, path: null, state: "none", detail: noSkill(h) });
       continue;
     }
-    const dest = join(home, rel, "mu");
+    const dest = join(harnessHomePath(h, rel, home, env), "mu");
     if (!wanted(h)) {
       skills.push({ harness: h, path: dest, state: "skipped", detail: notSetUp(h) });
       continue;
@@ -745,7 +519,7 @@ export function runInit(opts: InitOptions = {}): InitResult {
       prompts.push({ harness: h, path: null, state: "none", detail: noPrompts(h) });
       continue;
     }
-    const parent = join(home, rel);
+    const parent = harnessHomePath(h, rel, home, env);
     if (!wanted(h)) {
       prompts.push({ harness: h, path: parent, state: "skipped", detail: notSetUp(h) });
       continue;

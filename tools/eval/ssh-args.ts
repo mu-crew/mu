@@ -110,7 +110,7 @@ export function remoteEnv(
   // sandbox; a live run links the harnesses' config and auth into it (harness.linkHostHome). Its
   // murmur state is the host's own, so the origin node never drains it.
   env.HOME = `${hostRoot}/home`;
-  env.MURMUR_STATE_DIR = `${hostRoot}/murmur`;
+  env.MURMUR_STATE_DIR = `${hostRoot}/murmur2`;
   env.SHELL = `${hostRoot}/bin/eval-shell`;
   env.EVAL_HOST = host;
   env.EVAL_HOST_TMUX_SOCKET = hostTmuxSocket;

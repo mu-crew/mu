@@ -168,7 +168,7 @@ export function sandboxEnv(
     env.XDG_STATE_HOME = join(home, ".local", "state");
     env.XDG_CACHE_HOME = join(home, ".cache");
   }
-  env.MURMUR_STATE_DIR = join(dir, "murmur");
+  env.MURMUR_STATE_DIR = join(dir, "murmur2");
   env.MU_DB_PATH = join(state, "mu.db");
   env.MU_STATE_DIR = state;
   env.MU_SYNC_DIR = join(dir, "sync");

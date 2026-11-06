@@ -11,6 +11,7 @@
 // configures or authenticates a harness; each launcher keeps its own sandbox,
 // auth and model access (D1).
 
+import { join, resolve } from "node:path";
 import { shellWord } from "./shell-quote.js";
 
 /** The agent CLIs mu treats as first-class. */
@@ -365,6 +366,58 @@ export function takesMuStopHook(h: Harness): boolean {
 export function homeHookConfig(h: Harness): string | undefined {
   if (h === "pi") return undefined;
   return HARNESS_TABLE[h].hookConfig.find((p) => p.startsWith("~/"))?.slice(2);
+}
+
+/**
+ * The variable that moves a harness's home config directory, as the harness
+ * itself reads it: `CLAUDE_CONFIG_DIR` for `~/.claude`, `CODEX_HOME` for
+ * `~/.codex`. murmur, museum and muzzle honour the same two. cursor-agent's
+ * and Muse Code's stay under the home directory.
+ */
+export const CONFIG_DIR_ENV: Readonly<Partial<Record<Harness, { name: string; dir: string }>>> =
+  Object.freeze({
+    claude: { name: "CLAUDE_CONFIG_DIR", dir: ".claude" },
+    codex: { name: "CODEX_HOME", dir: ".codex" },
+  });
+
+/**
+ * Where home-relative `rel` (`.claude/settings.json`, `.codex/skills`) is for
+ * harness `h`: under `home`, unless the harness's variable (`CONFIG_DIR_ENV`)
+ * is set and `rel` lies in the directory it moves. An empty value is unset; a
+ * relative one resolves against the cwd, as murmur resolves it.
+ */
+export function harnessHomePath(
+  h: Harness,
+  rel: string,
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const moved = CONFIG_DIR_ENV[h];
+  const value = moved === undefined ? "" : (env[moved.name] ?? "");
+  if (moved === undefined || value === "") return join(home, rel);
+  if (rel !== moved.dir && !rel.startsWith(`${moved.dir}/`)) return join(home, rel);
+  return join(resolve(value), rel.slice(moved.dir.length));
+}
+
+/** The harness's own hook config file as `harnessHomePath` places it; undefined: none (pi). */
+export function hookConfigPath(
+  h: Harness,
+  home: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const rel = homeHookConfig(h);
+  return rel === undefined ? undefined : harnessHomePath(h, rel, home, env);
+}
+
+/**
+ * The hook config file for a message: `~/.claude/settings.json`, or with the
+ * harness's variable, `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`.
+ */
+export function hookConfigLabel(h: Harness): string {
+  const rel = homeHookConfig(h) ?? "";
+  const moved = CONFIG_DIR_ENV[h];
+  if (moved === undefined || !rel.startsWith(`${moved.dir}/`)) return `~/${rel}`;
+  return `\${${moved.name}:-~/${moved.dir}}${rel.slice(moved.dir.length)}`;
 }
 
 /** True when `value` names a blessed harness (murmur's `isHarness`). */

@@ -616,7 +616,7 @@ export async function setupHarnesses(
 ): Promise<HarnessSetup> {
   const fake = o.fake ?? !o.live;
   const paths: HookPaths = {
-    murmurState: sb.env.MURMUR_STATE_DIR ?? join(sb.dir, "murmur"),
+    murmurState: sb.env.MURMUR_STATE_DIR ?? join(sb.dir, "murmur2"),
     workerDir: sb.workerDir,
     stateHome: join(sb.dir, "home", ".local", "state"),
     stopTimeoutS: o.stopTimeoutS ?? (fake ? 30 : 600),

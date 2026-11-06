@@ -125,6 +125,14 @@ first.
   (`schema: …`). The body says what changed and why, cites the VISION
   pillar or ROADMAP item, and states that the green gate passed. Add a
   [CHANGELOG.md](CHANGELOG.md) entry under the upcoming version.
+- **State directories.** A change that breaks on-disk state compatibility
+  with the released version gets a new versioned directory under
+  `~/.local/state` (`<tool><major>`, e.g. `mu5`, `murmur2`), never a
+  `<tool>-next` name; additive changes stay in the current directory (mu's
+  is `mu-next`, from before this rule). Never run a development build
+  against the real state directory: tests and manual runs use the state-dir
+  override (`MU_STATE_DIR`, `MU_DB_PATH`, a blank `MU_SYNC_DIR`; for murmur,
+  `MURMUR_STATE_DIR`) and a private tmux socket.
 
 ## Common tasks
 
@@ -264,7 +272,8 @@ documenting" is not a reason.
 - Don't bundle pi. It is an optional peer dependency.
 - Write files only under `~/.local/state/mu-next/`, `~/.cache/mu/`, or the
   repo. The one exception is `mu init`, which writes its own hook entries and
-  skill copies into each harness's config (spec D13, D17). The cache dir
+  skill copies into each harness's config, where `CLAUDE_CONFIG_DIR` and
+  `CODEX_HOME` put it (spec D13, D17). The cache dir
   holds only files mu can lose at any time.
 
 ## When you're done

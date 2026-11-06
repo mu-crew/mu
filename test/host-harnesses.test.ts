@@ -6,6 +6,7 @@
 // harness the host lacks is refused with a typed error before any effect.
 // Fake templates through /bin/sh; the "host" is a temp HOME and a bin of shims.
 
+import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -135,8 +136,8 @@ describe("the harness probe in host check", () => {
     const r = await checkHost(db, "dev");
     expect(r.ok).toBe(false);
     expect(stepOf(r, "hooks")).toMatchObject({ ok: false });
-    expect(stepOf(r, "hooks")?.detail).toContain(
-      "codex: no `murmur hook codex` entry in ~/.codex/hooks.json",
+    expect(stepOf(r, "hooks")?.detail).toMatch(
+      /codex: no `murmur hook codex` entry in \$\{CODEX_HOME:-~\/\.codex\}\/hooks\.json/,
     );
     expect(stepOf(r, "hooks")?.detail).not.toContain("claude:");
     expect(r.warnings).toEqual([expect.stringContaining("claude: no `mu hook stop claude` entry")]);
@@ -251,6 +252,27 @@ describe("the probe's record", () => {
     expect(hostCapabilities({ capabilities: JSON.stringify(caps) })).toEqual(caps);
     expect(hostCapabilities({ capabilities: "{not json" })).toBeUndefined();
     expect(hostCapabilities({ capabilities: null })).toBeUndefined();
+  });
+
+  it("reads claude's and codex's file where CLAUDE_CONFIG_DIR and CODEX_HOME move it, in the host's shell", () => {
+    const probe = (env: Record<string, string>) =>
+      parseHarnessProbe(
+        execFileSync("/bin/sh", ["-c", harnessProbeScript()], {
+          env: { HOME: home, PATH: "/usr/bin:/bin", ...env },
+          encoding: "utf8",
+        }),
+        "sh",
+      );
+    config(".claude/settings.json", ["murmur hook claude"]);
+    config(".codex/hooks.json", ["murmur hook codex"]);
+    config("moved-codex/hooks.json", ["murmur hook codex", "mu hook stop codex"]);
+    const moved = probe({ CODEX_HOME: join(home, "moved-codex"), CLAUDE_CONFIG_DIR: "" });
+    // an empty CLAUDE_CONFIG_DIR is unset: claude's stays under HOME
+    expect(moved?.harnesses.claude.murmurHooks).toBe(true);
+    expect(moved?.harnesses.codex).toMatchObject({ murmurHooks: true, muHooks: true });
+    const elsewhere = probe({ CLAUDE_CONFIG_DIR: join(home, "nowhere") });
+    expect(elsewhere?.harnesses.claude.murmurHooks).toBe(false);
+    expect(elsewhere?.harnesses.codex).toMatchObject({ murmurHooks: true, muHooks: false });
   });
 
   it("the script never exits 3 (that is a hand-back)", () => {

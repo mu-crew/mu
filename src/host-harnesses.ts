@@ -9,7 +9,8 @@
 // (`command -v`) in the shell a spawn's command gets: a session profile's
 // login shell (`$SHELL -ilc`, as the ssh starter runs it), a lease job's bare
 // `sh -c`. In the same exec it reads each hook harness's own config file (D6
-// `hookConfig`) for murmur's `murmur hook <harness>` entries and mu's
+// `hookConfig`, moved by `CLAUDE_CONFIG_DIR` or `CODEX_HOME` when that shell
+// sets them) for murmur's `murmur hook <harness>` entries and mu's
 // `mu hook stop <harness>` entry (D7, D13). The result and its probe time go
 // in `host_profiles.capabilities` (JSON, machine-local).
 //
@@ -19,7 +20,14 @@
 // not try (`claude-big`, `/opt/x/claude`), is never refused: mu does not guess.
 
 import type { Db } from "./db.js";
-import { HARNESSES, type Harness, homeHookConfig, takesMuStopHook } from "./harnesses.js";
+import {
+  CONFIG_DIR_ENV,
+  HARNESSES,
+  type Harness,
+  homeHookConfig,
+  hookConfigLabel,
+  takesMuStopHook,
+} from "./harnesses.js";
 import type { HostCheckStep, HostProfile } from "./hosts.js";
 import { say } from "./messages.js";
 import { shellQuote } from "./shell-quote.js";
@@ -64,6 +72,18 @@ function commandRe(words: string, h: Harness): string {
 }
 
 /**
+ * `cfg` (home-relative) as a word for the remote shell: under `$HOME`, or
+ * under the harness's variable when that shell sets it non-empty, as the
+ * harness itself resolves it (`"${CODEX_HOME:-$HOME/.codex}"/'hooks.json'`).
+ */
+function shellConfigPath(h: Harness, cfg: string): string {
+  const moved = CONFIG_DIR_ENV[h];
+  if (moved === undefined || !cfg.startsWith(`${moved.dir}/`)) return `"$HOME"/${shellQuote(cfg)}`;
+  const rest = cfg.slice(moved.dir.length + 1);
+  return `"\${${moved.name}:-$HOME/${moved.dir}}"/${shellQuote(rest)}`;
+}
+
+/**
  * The remote script of the probe (the exec template's `{cmd}`, wrapped in the
  * profile's shell mode by the caller). One line per harness:
  * `MU_HARNESS <harness> <murmur 0|1|-> <mu 0|1|-> <path, empty when not found>`.
@@ -78,7 +98,7 @@ export function harnessProbeScript(): string {
       lines.push(`printf '${MARK} %s - - %s\\n' ${shellQuote(h)} "$p"`);
       continue;
     }
-    const file = `"$HOME"/${shellQuote(cfg)}`;
+    const file = shellConfigPath(h, cfg);
     lines.push(
       `m=0; grep -Eq ${shellQuote(commandRe("murmur hook", h))} ${file} 2>/dev/null && m=1`,
     );
@@ -164,7 +184,7 @@ export function hooksStep(caps: HostCapabilities): { step: HostCheckStep; warnin
   const warnings: string[] = [];
   for (const h of hookHarnesses) {
     const p = caps.harnesses[h];
-    const cfg = `~/${homeHookConfig(h) ?? ""}`;
+    const cfg = hookConfigLabel(h);
     if (p.murmurHooks !== true) missing.push(`${h}: no \`murmur hook ${h}\` entry in ${cfg}`);
     if (p.muHooks === false) {
       warnings.push(

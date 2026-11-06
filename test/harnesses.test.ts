@@ -7,7 +7,10 @@ import {
   HARNESSES,
   type Harness,
   harnessFor,
+  harnessHomePath,
   harnessOfCli,
+  hookConfigLabel,
+  hookConfigPath,
   isHarness,
   withSpawnPresets,
 } from "../src/harnesses.js";
@@ -208,5 +211,35 @@ describe("withSpawnPresets (spec D6, D17)", () => {
       "claude",
     );
     expect(withSpawnPresets("pi", "pi", { approve: false, trustPath: "/w" })).toBe("pi");
+  });
+});
+
+describe("CLAUDE_CONFIG_DIR and CODEX_HOME move claude's and codex's config", () => {
+  const env = { CLAUDE_CONFIG_DIR: "/c/claude", CODEX_HOME: "/c/codex" };
+  it("hook files and skill dirs follow the variable; the others stay under home", () => {
+    expect(hookConfigPath("claude", "/h", env)).toBe("/c/claude/settings.json");
+    expect(hookConfigPath("codex", "/h", env)).toBe("/c/codex/hooks.json");
+    expect(hookConfigPath("cursor-agent", "/h", env)).toBe("/h/.cursor/hooks.json");
+    expect(hookConfigPath("muse", "/h", env)).toBe("/h/.config/muse/settings.json");
+    expect(hookConfigPath("pi", "/h", env)).toBeUndefined();
+    expect(harnessHomePath("codex", ".codex/skills", "/h", env)).toBe("/c/codex/skills");
+    expect(harnessHomePath("claude", ".claude", "/h", env)).toBe("/c/claude");
+    // only the directory the variable names moves
+    expect(harnessHomePath("claude", ".claude.json", "/h", env)).toBe("/h/.claude.json");
+    expect(harnessHomePath("claude", ".codex/skills", "/h", env)).toBe("/h/.codex/skills");
+  });
+
+  it("unset or empty is the home directory", () => {
+    expect(hookConfigPath("claude", "/h", {})).toBe("/h/.claude/settings.json");
+    expect(hookConfigPath("codex", "/h", { CODEX_HOME: "" })).toBe("/h/.codex/hooks.json");
+  });
+
+  it("messages name the variable", () => {
+    // `${VAR:-~/dir}/file`, as a shell would spell it
+    expect(hookConfigLabel("claude")).toMatch(
+      /^\$\{CLAUDE_CONFIG_DIR:-~\/\.claude\}\/settings\.json$/,
+    );
+    expect(hookConfigLabel("codex")).toMatch(/^\$\{CODEX_HOME:-~\/\.codex\}\/hooks\.json$/);
+    expect(hookConfigLabel("cursor-agent")).toBe("~/.cursor/hooks.json");
   });
 });

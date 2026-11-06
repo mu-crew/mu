@@ -14,6 +14,7 @@ import {
 import { readAgentStates } from "../src/channels/index.js";
 import { type MuxBackend, setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
+import { withEnv } from "./_env.js";
 
 const agent: StateAgentRef = { name: "worker-1", workstreamName: "demo", paneId: "%1" };
 const originalPath = process.env.PATH;
@@ -330,6 +331,26 @@ describe("murmurAvailable(cli): per harness (spec D13)", () => {
     expect(murmurAvailable("claude-big")).toBe(false);
     installMurmur();
     expect(murmurAvailable("claude-big")).toBe(true);
+  });
+
+  it("claude's and codex's entries count where CLAUDE_CONFIG_DIR and CODEX_HOME move them", async () => {
+    installMurmur();
+    hookFile(".claude/settings.json", grouped("murmur hook claude"));
+    hookFile("moved-codex/hooks.json", grouped("murmur hook codex"));
+    await withEnv("CODEX_HOME", join(tempDir, "home", "moved-codex"), async () => {
+      expect(murmurAvailable("codex")).toBe(true);
+      await withEnv("CLAUDE_CONFIG_DIR", join(tempDir, "home", "moved-claude"), async () => {
+        // murmur writes claude's entries into the moved directory, not ~/.claude
+        expect(murmurAvailable("claude")).toBe(false);
+        hookFile("moved-claude/settings.json", grouped("murmur hook claude"));
+        expect(murmurAvailable("claude")).toBe(true);
+      });
+      // an empty value is unset
+      await withEnv("CLAUDE_CONFIG_DIR", "", async () => {
+        expect(murmurAvailable("claude")).toBe(true);
+      });
+    });
+    expect(murmurAvailable("codex")).toBe(false);
   });
 
   it("an unreported claude agent reads `hooks not installed`, a pi agent `extension not linked`", async () => {

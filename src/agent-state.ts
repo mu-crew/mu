@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
-import { HARNESS_TABLE, type Harness, harnessOfCli } from "./harnesses.js";
+import { type Harness, harnessOfCli, hookConfigPath } from "./harnesses.js";
 import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
 import { tmux } from "./tmux.js";
@@ -107,16 +107,16 @@ function murmurHarness(cli: string | undefined): Harness {
 
 /**
  * True when the harness's own hook config (D6 `hookConfig`, under
- * `$MURMUR_HOOK_HOME` else the home dir, as murmur resolves it) holds a
- * handler running `murmur hook <harness>`: what `murmur init` writes.
+ * `$MURMUR_HOOK_HOME` else the home dir, as murmur resolves it, or where
+ * `CLAUDE_CONFIG_DIR` / `CODEX_HOME` move it) holds a handler running
+ * `murmur hook <harness>`: what `murmur init` writes.
  */
 export function murmurHooksInstalled(harness: Exclude<Harness, "pi">): boolean {
-  const rel = HARNESS_TABLE[harness].hookConfig.find((p) => p.startsWith("~/"));
-  if (rel === undefined) return false;
-  const home = process.env.MURMUR_HOOK_HOME ?? homedir();
+  const path = hookConfigPath(harness, process.env.MURMUR_HOOK_HOME ?? homedir());
+  if (path === undefined) return false;
   let root: unknown;
   try {
-    root = JSON.parse(readFileSync(join(home, rel.slice(2)), "utf8"));
+    root = JSON.parse(readFileSync(path, "utf8"));
   } catch {
     return false;
   }

@@ -1,8 +1,8 @@
 # Every harness first-class (mu-crew 4.x)
 
-Status: draft 9, built. Written 2026-11-05 after four refutation
+Status: draft 10, built. Written 2026-11-05 after four refutation
 rounds and the local U0 spike ([U0 results](#u0-results-local-2026-11-05)), and
-amended to what three build waves landed on 2026-11-05 and 06. The live checks
+amended to what four build waves landed on 2026-11-05 and 06. The live checks
 in [Units](#units) are owed. It replaces the "mu 5: harness-agnostic" drafts 1–3 (see
 [History](#history)). Covers six repos: mu, murmur, museum, muzzle, the
 crew dotfiles and org.
@@ -26,8 +26,8 @@ harnesses, and the four non-pi CLIs ship their own subagents.
 - **Additive.** pi's integration stays as it is: the control socket,
   `mu_delegate`, steer, the settle nudge, murmur's in-process pi extension
   and footer, and museum's pi extension. No schema drops and no snapshot
-  change. The one upgrade cost is a single murmur store reset, and the
-  murmur CLI and pi package must upgrade together (D8).
+  change. The one upgrade cost is murmur's move to a new state directory,
+  `murmur2`, and the murmur CLI and pi package must upgrade together (D8).
 - **One channel seam for pane agents.** mu's verbs on a pane agent go
   through one interface with three implementations: `ctl` (pi), `hooks`
   (the other four on tmux) and `mux` (today's herdr and Rex state). One
@@ -78,9 +78,11 @@ murmur status / pane / dash / export ─► drain the inbox into the store under
 
 - **One event, one file.** `murmur hook <harness>` maps one payload on stdin
   to a canonical event ([vocabulary](#the-event-vocabulary)). It writes the
-  event to `~/.local/state/murmur/inbox/tmp/` and renames it to
-  `inbox/<pane key>/<ns timestamp>-<pid>.json`. A reader never sees a
-  partial event, whatever its size or filesystem. The hook opens no
+  event to `~/.local/state/murmur2/inbox/tmp/` and renames it to
+  `inbox/<pane key>/<ns timestamp>-<pid>.json`. The inbox is under `HOME`
+  whatever `XDG_STATE_HOME` says: Muse's hooks drop that variable, and
+  writers and readers must agree. A reader never sees a partial event,
+  whatever its size or filesystem. The hook opens no
   database, takes no lock, calls no tmux and prints nothing. It exits 0 even
   when the write fails, so a hook never breaks a turn.
 - **The process chain, not the environment, places an event.** Muse Code
@@ -146,6 +148,14 @@ murmur status / pane / dash / export ─► drain the inbox into the store under
   order, applies each event to the store, and deletes the file. Applied
   events are gone: nothing is retained or rotated, and a store rebuild loses
   only current state, which the next event restores.
+- **Finding the server without `$TMUX`.** Muse's hooks have no `$TMUX`, and
+  the first drain found their server by asking every socket in tmux's
+  directory, 3 s per silent one, per process, past mu's 5 s wait for
+  `murmur pane`. The hook records the server's socket from the server's
+  argv. The drain tries a pid-to-socket cache in the state directory
+  (checked against the server's start time), the event's hints and the
+  reader's own server before any scan, and `murmur pane <pane>` drains only
+  that pane's inbox.
 - **The drain publishes pane options** (`@murmur_pane_state` and the others
   murmur's pi extension sets today) for every pane it changes. mu's send
   gate and ack read `murmur pane <key> --json`, which drains first.
@@ -392,8 +402,19 @@ pi keeps its settle nudge. For claude, codex and cursor-agent, `mu init`
 - `last_text_run`: the `run_count` of the turn that wrote `last_text`, so mu
   tells this turn's text from one an earlier turn left.
 
-The released store is schema 9; the upgrade resets it once, straight to 11.
-Schema 10 introduced the compatible-since stamp at 10. Schema 11 adds
+The released store is schema 9, and murmur 1.5.2 refuses any store from 10
+up, so no compatible-since stamp lets it open the new one, and a shared
+directory would silence a 1.x murmur still running beside 2.x (an older pi
+extension). So murmur 2 keeps everything in `murmur2`: the store, identity
+and caches in `$XDG_STATE_HOME/murmur2`, else `~/.local/state/murmur2`; the
+inbox and remote area always in `~/.local/state/murmur2/{inbox,remote}` (D3,
+D11). `MURMUR_STATE_DIR` overrides both. The rule, now in
+each repo's AGENTS.md: a change that breaks on-disk compatibility with the
+released version gets a new `<tool><major>` directory, never `<tool>-next`;
+an additive one stays. The first run copies 1.x's `identity.json` (the same
+`host_id`) and its store's peers, from a private copy, and never writes the
+old directory, so 1.x keeps working there; the two do not see each other's
+agents. Schema 10 introduced the compatible-since stamp at 10. Schema 11 adds
 `last_text_run` and `generation_run` as nullable columns and keeps
 compatible-since 10, so a schema-10 build opens an 11 store instead of
 refusing it. An 11 build still resets a schema-10 store, which exists only
@@ -416,7 +437,8 @@ on hosts that ran the unreleased wave-1 build. `pi_session` stays.
 
 **mu.** mu has no migration ladder: `openDb` accepts only schema 13 and
 completes a v13 file in place through `upgradeSchema`. So everything here is
-an `upgradeSchema` addition at schema 13, not a version bump:
+an `upgradeSchema` addition at schema 13, not a version bump, and mu's state
+stays in `mu-next`:
 
 - the portable `checks` table (D5);
 - the machine-local `keep_driving` table (D7);
@@ -506,9 +528,9 @@ pi's remote workers keep the control socket and the
 - A remote worker under plain ssh has no tmux in its chain, which ends at
   `sshd` (U0). Its anchor's remote key is what routes its events.
 - With a remote key, the remote hook writes to
-  `~/.local/state/murmur/remote/<key>/`, not the inbox. The remote node's
-  own drain never reads it, its store never holds the row, and its snapshot
-  never exports it.
+  `~/.local/state/murmur2/remote/<key>/` (under `HOME`, as the inbox), not
+  the inbox. The remote node's own drain never reads it, its store never
+  holds the row, and its snapshot never exports it.
 - mu reads remote state on demand with `murmur pane --remote <key> --json`
   through the profile's `exec` template (`mule exec --host H -- sh -c
 {cmd}` on lease hosts). That applies the remote area's events under a
@@ -539,8 +561,11 @@ flush, footer and in-transcript `museum` record. For the others:
   exist only in mu's anchor (D3) or the agent's env, so a
   `museum hook <harness>` entry on `SessionStart` reads them from there and
   writes them, with the session id and the cwd's git state,
-  to `~/.local/state/museum/meta/<harness>/<session id>.json`. museum never
-  writes into another harness's transcript.
+  to `~/.local/state/museum/meta/<harness>/<session id>.json`. The role is
+  the anchor's role, else its orchestrator flag; with no anchor,
+  `MU_ORCHESTRATOR=1` gives orchestrator, else `MU_MANAGED_AGENT=1` gives
+  worker. The first build took it from the flag alone and dropped a
+  worker's role. museum never writes into another harness's transcript.
 - **Sources** come from the D6 `sessions` row, walked recursively. claude
   includes `<uuid>/subagents/*.jsonl`. claude deletes old transcripts after
   `cleanupPeriodDays`, so sync never deletes from the store. A codex rollout
@@ -598,7 +623,17 @@ muzzle (`muzzle hook`) write entries into the same config files
   `init` adds or updates those entries and never touches others. A write
   goes through a symlink to its target and re-reads the file before the
   rename, so a concurrent writer is never clobbered.
-- Its `doctor` verifies its own entries and reports drift.
+- Its `doctor` verifies its own entries and reports drift. `mu doctor`'s
+  `hooks` section reports a missing, drifted or foreign `mu hook stop` entry
+  for claude, codex and cursor-agent, through `mu init`'s own matcher.
+- All four read claude's and codex's files where `CLAUDE_CONFIG_DIR` and
+  `CODEX_HOME` put them, as the harnesses do (empty is unset): mu's `init`,
+  `doctor`, murmur availability check and `host check` probe, murmur's
+  `init` and `doctor`, museum's session sources, muzzle's `init` and
+  `doctor`. cursor-agent's and Muse's stay under `HOME`, and so does what
+  cursor-agent reads of claude's and codex's skills (`~/.claude/skills`,
+  `~/.codex/skills`: its build ignores both variables), which is where
+  `mu init` looks before giving it a copy of its own.
 - museum has no `init` or `doctor` yet: the user adds its
   `museum hook <harness>` entries by hand from its README, and nothing
   checks them.
@@ -765,8 +800,8 @@ pi worker at once.
   It never writes into a directory pi also reads (`~/.agents/skills/`,
   which codex and cursor-agent read as well, or `~/.pi/agent/skills/`),
   where a second `mu` skill would collide with the pi package's, and it
-  skips any existing entry it did not write. It writes `~/.codex/...`
-  whatever `CODEX_HOME` is, unlike muzzle's init; honouring it is owed.
+  skips any existing entry it did not write. claude's and codex's
+  directories follow `CLAUDE_CONFIG_DIR` and `CODEX_HOME` (D13).
 - **One view.** `mu agent list` and `mu state` show each worker's harness
   and channel. murmur shows the harness per pane.
 
@@ -935,7 +970,7 @@ acceptance check must be able to fail.
 | U20  | mu          | D17 local: harness from key, launch without prompt, `hooks` write (brief file, `.mu/.gitignore`, pointer paste), `hooks` reconcile, model and approval flags, `mu agent list` harness and channel                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | a claude orchestrator spawns a local codex worker and a local pi worker, and both close their tasks; killing mu between pane and claim and replaying delivers exactly one brief; a worker that never submits ends `unknown` and is promoted to `sent` by `reconcile` once its inbox shows the run; the worktree stays clean                                                                                                                                                                                                 | landed: mu fa26095b; live claude orchestrator check owed (E7)                                                                       |
 | U21  | mu          | D17 remote: host capability probe and column, conditional pi steps, remote brief file and size cap, `isCommandGate` for harness launchers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | a remote claude worker and a remote pi worker run on one test host from one orchestrator; a claude-only host passes `host check`; a spawn for a harness the host lacks fails with the typed error; a 97 KB brief fails with the typed error                                                                                                                                                                                                                                                                                 | landed: mu b06326a6; live check on a test host owed (E5, E7)                                                                        |
 | U22  | mu          | the auto executor's `hooks` path                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `mu task auto --cli claude` dispatches a task; a claude `StopFailure` triggers one retry that rewrites the brief file and pastes the pointer; the run closes; a codex task with unverified `turn_failed` parks as `needs_human`                                                                                                                                                                                                                                                                                             | landed: mu 28c5d10d; live check owed                                                                                                |
-| U23  | mu          | `mu init`: hook entries and per-harness worker skill                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `init` twice installs the skill once per harness and leaves foreign entries intact; nothing is written under `~/.agents/skills/`; pi lists exactly one `mu` skill                                                                                                                                                                                                                                                                                                                                                           | landed: mu 56bbaecc; pi's one-skill check owed (no pi on the build host); `CODEX_HOME` not honoured                                 |
+| U23  | mu          | `mu init`: hook entries and per-harness worker skill                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | `init` twice installs the skill once per harness and leaves foreign entries intact; nothing is written under `~/.agents/skills/`; pi lists exactly one `mu` skill                                                                                                                                                                                                                                                                                                                                                           | landed: mu 56bbaecc; pi's one-skill check owed (no pi on the build host); `CLAUDE_CONFIG_DIR`, `CODEX_HOME` honoured (wave 4)       |
 | U24  | mu          | evals on real harnesses: E1 dispatch and merge, E2 finding triage with a cross-family refuter, E3 review gate, E4 crash and replacement orchestrator, E5 remote worker, E6 interrupt and resend, E7 a mixed crew (one orchestrator, local codex and pi workers, remote claude and pi workers)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | each case meets its written pass criterion with claude, codex and pi orchestrators                                                                                                                                                                                                                                                                                                                                                                                                                                          | rig landed: mu 5ead54d7, proven on fake harnesses; live runs owed                                                                   |
 
 U0 also checks each row's model, auto-approve and trust flags and
@@ -1083,6 +1118,11 @@ is reflected above.
   (waiter markers), D11 (nonce key, read points), D13 and D14 (the cursor
   deny sentence, Muse's `bash`), D17 (`mu init` skills and prompts), and
   U19's `rg`, which excludes `docs/history` and `docs/specs`.
+- **Wave 4** (2026-11-06): murmur de37d6a moved its state to `murmur2`
+  (D8), fixed the inbox and remote area under `HOME` (D3, D11) and found a
+  hook's tmux server without a scan (D3); museum 1883d79 records a worker's
+  role (D12); all four honour `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, and
+  `mu doctor` checks mu's hook entries (D13, mu R2). Draft 10 records it.
 
 Findings that only concerned removing pi no longer apply: `next --refute`
 losing its once-key, pi having two state sources during the switch, and the
