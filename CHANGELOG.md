@@ -543,6 +543,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   on the worker's other task does not call it refused. A remote worker's
   block is still applied by its orchestrator from the relayed text (D11),
   cursor-agent's (its text follows its stop) by the wait.
+- **The first send to a codex or muse worker waits 60 s for its ack**
+  (`MU_FIRST_SEND_ACK_MS`, spec D4). A launcher that installs plugins on
+  first start kept codex from reading the paste for well over 10 s, so
+  `mu agent spawn --cli codex --send`, a task spawn's pointer and the first
+  `mu agent send` reported delivery `unknown` while the turn ran. mu's first
+  prompt to a local codex or muse pane that murmur reports with no agent row
+  (with murmur's hooks installed) now waits `MU_FIRST_SEND_ACK_MS` (default
+  60000); every other send, a forced one included, keeps `MU_SEND_ACK_MS`.
 - **A first send to a new codex or muse worker passes the `hooks` gate**
   (spec D4, D17). codex and muse report a session only with their first
   prompt, so murmur has no row for the pane until then and the gate read

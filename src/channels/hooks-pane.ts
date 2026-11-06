@@ -267,6 +267,16 @@ export function sendAckMs(): number {
   return envMs("MU_SEND_ACK_MS", 10_000);
 }
 
+/**
+ * How long the first paste to a first-prompt harness's pane (codex, muse: no
+ * murmur row before that prompt) waits for its hook event:
+ * `MU_FIRST_SEND_ACK_MS`, default 60 s. A launcher may install plugins before
+ * the harness draws and reads the paste, well past `MU_SEND_ACK_MS`.
+ */
+export function firstSendAckMs(): number {
+  return envMs("MU_FIRST_SEND_ACK_MS", 60_000);
+}
+
 /** A `running` pane with no event for this long reads unknown: `MU_STALE_MS`, default 10 min. */
 export function staleMs(): number {
   return envMs("MU_STALE_MS", 600_000);

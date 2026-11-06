@@ -356,6 +356,51 @@ describe("spawn --send (no --task) to a first-prompt harness", () => {
     },
   );
 
+  it.each(["task", "send"])(
+    "codex behind a launcher slow to start: the spawn's first prompt (--%s) waits MU_FIRST_SEND_ACK_MS",
+    async (how) => {
+      // The launcher installs plugins first: codex reads the paste 10 ack polls (250 ms each)
+      // after it, past MU_SEND_ACK_MS's 2 and within MU_FIRST_SEND_ACK_MS's 20.
+      let after: number | undefined;
+      fake.onSubmit = () => {
+        after = 0;
+      };
+      setMurmurPaneRunnerForTests(async (pane) => {
+        if (after !== undefined && ++after >= 10) {
+          after = undefined;
+          fake.emit("session_start", { source: "startup" });
+          fake.emit("prompt_submitted");
+        }
+        return fake.pane(pane);
+      });
+      await withEnv("MU_SEND_ACK_MS", "300", async () => {
+        await withEnv("MU_FIRST_SEND_ACK_MS", "5000", async () => {
+          if (how === "task") {
+            expect(await spawnForTask(db, req("codex"))).toMatchObject({ state: "sent" });
+            return;
+          }
+          const r = await runCliJson(
+            [
+              "agent",
+              "spawn",
+              "worker-1",
+              "-w",
+              "auth",
+              "--cli",
+              "codex",
+              "--send",
+              "hi",
+              "--json",
+            ],
+            join(dir, "mu.db"),
+          );
+          expect(r.data).toMatchObject({ send: { ok: true, delivered: true } });
+        });
+      });
+      expect(pastes()).toHaveLength(1);
+    },
+  );
+
   it("claude (its session starts at once): no row still reads unknown and is refused", async () => {
     const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", "--cli", "claude", "--send", "hello", "--json"],

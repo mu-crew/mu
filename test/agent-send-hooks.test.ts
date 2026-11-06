@@ -241,6 +241,78 @@ describe("a check sent to a just-spawned codex pane (tasks-or-calls: another fam
     expect(fake.calls.filter((c) => c[0] === "paste-buffer")).toHaveLength(1);
   });
 
+  it("a launcher slow to start codex: the first send waits MU_FIRST_SEND_ACK_MS, later ones MU_SEND_ACK_MS", async () => {
+    beforeFirstPrompt();
+    // The harness reads the paste only after 10 more pane reads (a launcher installing plugins).
+    let pending: (() => void) | null = null;
+    let reads = 0;
+    const late = (fire: () => void): void => {
+      reads = 0;
+      pending = fire;
+    };
+    fake.onSubmit = () =>
+      late(() => {
+        fake.emit("session_start", { source: "startup" });
+        fake.emit("prompt_submitted");
+      });
+    setMurmurPaneRunnerForTests(async (pane) => {
+      if (pending !== null && ++reads >= 10) {
+        const fire = pending;
+        pending = null;
+        fire();
+      }
+      return fake.pane(pane);
+    });
+    let first: Awaited<ReturnType<typeof runCliJson>> | undefined;
+    let later: Awaited<ReturnType<typeof runCliJson>> | undefined;
+    await withEnv("MU_SEND_ACK_MS", "500", async () => {
+      await withEnv("MU_FIRST_SEND_ACK_MS", "5000", async () => {
+        first = await runCliJson(
+          ["agent", "send", "cdx", "refute F1", "-w", "auth", "--json"],
+          dbPath,
+        );
+        fake.emit("turn_stopped", { text: "done" });
+        // codex now has a row: the same slow ack is past MU_SEND_ACK_MS.
+        fake.onSubmit = () => late(() => fake.emit("prompt_submitted"));
+        later = await runCliJson(["agent", "send", "cdx", "again", "-w", "auth", "--json"], dbPath);
+      });
+    });
+    expect(first?.data).toMatchObject({ transport: "hooks", ack: "confirmed", runCount: 1 });
+    expect(later?.data).toMatchObject({ ack: "unknown", delivered: false });
+    expect(JSON.stringify(later?.data)).toContain("within 500ms");
+    expect(fake.submitted).toEqual(["refute F1", "again"]);
+  });
+
+  it("a forced send to a no-row codex pane mu has sent to, or one without murmur's hooks, waits only MU_SEND_ACK_MS", async () => {
+    beforeFirstPrompt();
+    fake.onSubmit = null;
+    fake.acks = false;
+    // mu's first send, but the pane's harness has no murmur hooks: no event will ever come.
+    restoreHooks();
+    restoreHooks = installMurmurHooks(dir, ["claude"]);
+    const forced = async (): Promise<Awaited<ReturnType<typeof runCliJson>> | undefined> => {
+      let r: Awaited<ReturnType<typeof runCliJson>> | undefined;
+      await withEnv("MU_SEND_ACK_MS", "300", async () => {
+        await withEnv("MU_FIRST_SEND_ACK_MS", "60000", async () => {
+          r = await runCliJson(
+            ["agent", "send", "cdx", "hi", "-w", "auth", "--force", "--json"],
+            dbPath,
+          );
+        });
+      });
+      return r;
+    };
+    const hookless = await forced();
+    expect(hookless?.data).toMatchObject({ ack: "unknown", delivered: false });
+    expect(JSON.stringify(hookless?.data)).toContain("within 300ms");
+    // With the hooks, a send after that first one (forced: the gate reads no row) is not a first prompt.
+    restoreHooks();
+    restoreHooks = installMurmurHooks(dir, ["codex"]);
+    const later = await forced();
+    expect(later?.data).toMatchObject({ ack: "unknown", delivered: false });
+    expect(JSON.stringify(later?.data)).toContain("within 300ms");
+  });
+
   it("an agent mu has sent to since its spawn (a rebuilt murmur store lost its row) is refused unless --force", async () => {
     beforeFirstPrompt();
     const op = db.prepare(

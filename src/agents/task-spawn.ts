@@ -617,7 +617,13 @@ async function drive(
         ? // A just-launched worker has no turn to wait for, and a first-prompt harness
           // (codex, muse) no murmur row yet: the gate's unknown is expected, never a
           // dialog (a dialog is refused even so). An in-place retry is gated as usual.
-          await deliver(channelTarget(db, row), hooksText, { force: !keep, onUndelivered })
+          // A fresh spawn's pointer is its first prompt: a first-prompt harness's ack gets
+          // MU_FIRST_SEND_ACK_MS.
+          await deliver(channelTarget(db, row), hooksText, {
+            force: !keep,
+            ...(keep ? {} : { firstPrompt: true }),
+            onUndelivered,
+          })
         : await deliver(channelTarget(db, row), req.text, {
             msgId: rec.msgId,
             ...(rec.incarnation !== null ? { expectIncarnation: rec.incarnation } : {}),
