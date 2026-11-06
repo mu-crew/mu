@@ -250,4 +250,33 @@ describe("eval-worker in block mode", () => {
     });
     expect(parseCloseBlock(out)).toMatchObject({ kind: "valid", task: "r1" });
   });
+
+  it("on a remote host reads the claim from EVAL_DB_PATH, not the host's own MU_DB_PATH", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const dir = join(tmp, "rem");
+    const sb = { dir, binDir: join(dir, "bin"), workerDir: join(dir, "workers"), env: {} };
+    mkdirSync(sb.binDir, { recursive: true });
+    await writeWorkerDriver(sb as unknown as Sandbox, { closeMode: "block" });
+    writeFileSync(join(sb.workerDir, "tasks", "r1.sh"), "true\n");
+    const db = join(dir, "x.db");
+    execFileSync("sqlite3", [
+      db,
+      "create table tasks(local_id,owner_id,workstream_id,status);create table agents(id,name);create table workstreams(id,name);" +
+        "insert into agents values(1,'v1');insert into workstreams values(1,'eval');insert into tasks values('r1',1,1,'IN_PROGRESS');",
+    ]);
+    const out = execFileSync(join(sb.binDir, "eval-worker"), {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        PATH: process.env.PATH ?? "",
+        EVAL_WORKER_DIR: sb.workerDir,
+        EVAL_DB_PATH: db,
+        MU_DB_PATH: join(dir, "host", "mu.db"),
+        MU_AGENT_NAME: "v1",
+        MU_WORKSTREAM: "eval",
+      },
+    });
+    expect(out).toContain("CLOSE: task=r1");
+    expect(out).not.toContain("unable to open");
+  });
 });
