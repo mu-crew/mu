@@ -32,6 +32,7 @@ import {
   which,
 } from "./harness.ts";
 import { armWatch, settleWatch, watchRealState } from "./isolation.ts";
+import { pretrust, pretrustTargets } from "./pretrust.ts";
 import { toMarkdown } from "./report.ts";
 import { runAut } from "./runner.ts";
 import { runPaneAut } from "./runner-pane.ts";
@@ -242,6 +243,13 @@ export async function runOne(o: RunOne): Promise<RunResult> {
   let result: RunResult | undefined;
   try {
     await o.scenario.setup(sb);
+    // a live run with real harnesses: trust the sandbox repo (and its hooks) as a user's own repo
+    // is, before the AUT starts, so no worker stops at a dialog only a fresh sandbox shows
+    const trustNotes =
+      o.live === true && o.fakeWorkers !== true && hooks
+        ? await pretrust(sb, pretrustTargets(sb, o.scenario, { aut: harness, codexHooks }))
+        : [];
+    for (const n of trustNotes) console.error(`eval: ${n}`);
     const metrics =
       harness === "pi"
         ? await runPiAut(sb, o)
@@ -271,6 +279,7 @@ export async function runOne(o: RunOne): Promise<RunResult> {
       };
     }
     if (skillNote !== null) verdict.notes.push(skillNote);
+    verdict.notes.push(...trustNotes);
     if (o.keep) console.error(`kept sandbox: ${sb.dir} (tmux -L ${sb.tmuxSocket})`);
     result = {
       scenario: o.scenario.id,

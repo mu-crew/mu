@@ -398,6 +398,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   tables. The rig also runs on macOS now: the mu shim and the worker driver
   stamp milliseconds without GNU `date`, use `tee -p` only where it exists,
   and the real pi is linked as `pi` (a launcher may dispatch on its name).
+  Before the AUT starts, a live run with real workers pre-trusts the fresh
+  sandbox as a user's own repo is trusted: it starts claude (and codex with
+  `codex-home`) once in a pane, answers the folder-trust and hook-review
+  dialogs and quits before any prompt, so a worker of a harness the AUT is
+  not no longer stalls at a dialog nobody answers; a step it cannot confirm
+  becomes a run note.
   A live run cannot leak into the user's real mu state through their shell
   startup files: the sandbox's `mu`, `murmur` and `muzzle` shims pin its DB,
   state, sync dir, tmux server and murmur state whatever the caller's env
