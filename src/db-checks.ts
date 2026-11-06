@@ -23,7 +23,7 @@ export type CheckState = (typeof CHECK_STATES)[number];
 
 export const CHECKS_DDL = `
 -- checks: one recorded check of a task (portable; src/db-checks.ts). id is a
--- ULID; checker is the --by <harness>/<model>; verdict NULL: unanswered.
+-- ULID; checker is the --by <harness>[/<model>]; verdict NULL: unanswered.
 CREATE TABLE IF NOT EXISTS checks (
   id         TEXT PRIMARY KEY,
   task_id    INTEGER NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,

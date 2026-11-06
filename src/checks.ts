@@ -41,7 +41,7 @@ export interface CheckRow {
   /** The checked task's local id. */
   task: string;
   workstream: string;
-  /** `<harness>/<model>` that ran (or runs) the check. */
+  /** `<harness>/<model>` (or `<harness>` alone) that ran (or runs) the check. */
   by: string;
   brief: string;
   /** The VERDICT/EVIDENCE lines as recorded; null until answered. */
@@ -145,14 +145,15 @@ function checkById(db: Db, id: string): { check: CheckRow; taskId: number } | un
 
 // ─── Writes ───────────────────────────────────────────────────────────
 
-/** `--by <harness>/<model>`, trimmed; a harness from the table and a model
- *  with no whitespace. */
-export function parseCheckBy(by: string): { harness: string; model: string } {
+/** `--by <harness>` or `--by <harness>/<model>`, trimmed: a harness from the
+ *  table, and a model (when given) with no whitespace. null model: the
+ *  orchestrator did not name one, and the check records the harness alone. */
+export function parseCheckBy(by: string): { harness: string; model: string | null } {
   const value = by.trim();
   const slash = value.indexOf("/");
   const harness = slash < 0 ? value : value.slice(0, slash);
-  const model = slash < 0 ? "" : value.slice(slash + 1);
-  if (!isHarness(harness) || model === "" || /\s/.test(model)) {
+  const model = slash < 0 ? null : value.slice(slash + 1);
+  if (!isHarness(harness) || model === "" || (model !== null && /\s/.test(model))) {
     throw new CheckArgError(say("check.by_invalid", by, HARNESSES));
   }
   return { harness, model };
@@ -160,7 +161,7 @@ export function parseCheckBy(by: string): { harness: string; model: string } {
 
 export interface IssueCheckOptions {
   workstream: string;
-  /** `<harness>/<model>`. */
+  /** `<harness>` or `<harness>/<model>`. */
   by: string;
   brief: string;
   /** The actor stamped on the op (`ops.actor`). */
@@ -182,7 +183,7 @@ export function issueCheck(db: Db, localId: string, opts: IssueCheckOptions): Ch
         db.prepare(
           `INSERT INTO checks (id, task_id, checker, brief, verdict, state, created_at, updated_at)
            VALUES (?, ?, ?, ?, NULL, 'open', ?, ?)`,
-        ).run(id, taskId, `${harness}/${model}`, opts.brief, now, now);
+        ).run(id, taskId, model === null ? harness : `${harness}/${model}`, opts.brief, now, now);
         const row = checkById(db, id);
         if (row === undefined) throw new CheckNotFoundError(id, localId);
         return row.check;

@@ -310,7 +310,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   not deliver the reason. `MU_NUDGE=0` turns it off. pi is unchanged.
 - **Recorded checks: `mu task check` and `mu task verdict`** (spec D5, U11).
   An orchestrator that checks a finding with a native subagent or a
-  cross-family pane records it: `mu task check <id> --by <harness>/<model>
+  cross-family pane records it: `mu task check <id> --by <harness>[/<model>]
   --brief -` stores the brief and prints `check=<id>` (a ULID, so two synced
   machines never collide); `mu task verdict <id> --check <id> -` stores the
   `VERDICT: CONFIRMED | REFUTED | UNVERIFIED` line and its `EVIDENCE:` lines
@@ -551,6 +551,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   prompt to a local codex or muse pane that murmur reports with no agent row
   (with murmur's hooks installed) now waits `MU_FIRST_SEND_ACK_MS` (default
   60000); every other send, a forced one included, keeps `MU_SEND_ACK_MS`.
+- **`mu task check --by` takes a harness alone** (spec D5). `--by codex`
+  records the check as `codex`; `--by claude/opus` is unchanged. A refused
+  `--by` (orchestrators guessed `native/codex`) now shows both forms. The
+  eval's E3 judge accepts a check recorded as `--by claude`.
 - **A first send to a new codex or muse worker passes the `hooks` gate**
   (spec D4, D17). codex and muse report a session only with their first
   prompt, so murmur has no row for the pane until then and the gate read

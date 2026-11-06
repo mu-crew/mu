@@ -249,6 +249,25 @@ describe("issueCheck / recordCheckVerdict", () => {
     expect(checkOps(db)).toHaveLength(1);
   });
 
+  it("--by a harness alone records the harness; the refusal shows both forms", () => {
+    const db = seeded();
+    const c = issueCheck(db, "a", { workstream: "d", by: " codex ", brief: "B" });
+    expect(c.by).toBe("codex");
+    expect(issueCheck(db, "a", { workstream: "d", by: "claude/opus", brief: "B" }).by).toBe(
+      "claude/opus",
+    );
+    for (const by of ["native/codex", "native", "codex/"]) {
+      let msg = "";
+      try {
+        issueCheck(db, "a", { workstream: "d", by, brief: "B" });
+      } catch (e) {
+        msg = e instanceof CheckArgError ? e.message : "";
+      }
+      expect(msg, by).toContain("<harness> or <harness>/<model>");
+      expect(msg, by).toContain("--by codex");
+    }
+  });
+
   it("deleting the task tombstones its checks", () => {
     const db = seeded();
     const c = issueCheck(db, "a", { workstream: "d", by: "claude/opus", brief: "B" });
@@ -544,6 +563,12 @@ describe("the CLI verbs and mu state", () => {
       dbPath,
     );
     expect(bad.exitCode).toBe(2);
+    const guessed = await runCliWire(
+      ["task", "check", "a", "-w", "d", "--by", "native/codex", "--brief", "b"],
+      dbPath,
+    );
+    expect(guessed.exitCode).toBe(2);
+    expect(`${guessed.stdout}${guessed.stderr}`).toContain("<harness> or <harness>/<model>");
     const missing = await runCliWire(
       ["task", "verdict", "a", "-w", "d", "--check", ID, "VERDICT: REFUTED"],
       dbPath,

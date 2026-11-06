@@ -75,7 +75,7 @@ const scenario: Scenario = {
     const check = checks[checks.length - 1];
     if (check === undefined) wrong.push("no review verdict was recorded on i1");
     else {
-      if (!check.checker.startsWith("claude/"))
+      if (check.checker.split("/")[0] !== "claude")
         wrong.push(`the check names ${check.checker}, not claude`);
       if (verdictLabel(check.verdict) !== "CONFIRMED")
         wrong.push(`the review verdict is ${verdictLabel(check.verdict) ?? "?"}, not CONFIRMED`);
