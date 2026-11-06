@@ -67,7 +67,8 @@ export async function gateScript(sb: Sandbox): Promise<void> {
 // e_0 design (core columns only, stable across surfaces).
 const DRIVER = String.raw`#!/bin/bash
 W="$EVAL_WORKER_DIR"
-DB="\${MU_DB_PATH:-$EVAL_DB_PATH}"
+# EVAL_DB_PATH first: a remote pane also gets the host's own MU_DB_PATH, which holds no claims
+DB="\${EVAL_DB_PATH:-$MU_DB_PATH}"
 AGENT="\${MU_AGENT_NAME:-}"
 ms() { local t; t=$(date +%s%3N); case "$t" in *[!0-9]*) perl -MTime::HiRes=time -e 'printf("%d\n", time()*1000)' ;; *) echo "$t" ;; esac; }
 SQLITE() { sqlite3 -readonly -cmd ".timeout 5000" "$DB" "$1"; }
