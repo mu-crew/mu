@@ -1,8 +1,8 @@
 # Remote workers
 
-Use when an agent runs on another machine; a host profile holds your templates.
+Use when an agent runs on another machine.
 
-A pi worker's control socket is forwarded: `send`, `wait`, `abort` work as locally. Other harnesses are on `hooks` (`murmur init` there): a send is `ack: sent` until a wait reads the host; `--fresh` is refused. The host has no mu DB: the brief carries everything (no `Read:` line); you close the task from its `CLOSE:` block.
+pi's control socket is forwarded: `send`, `wait`, `abort` work as locally. Other harnesses use `hooks` (`murmur init` there): a send is `ack: sent` until a wait reads the host; `--fresh` is refused. The host has no mu DB: the brief carries everything (no `Read:` line); close the task from its `CLOSE:` block.
 
 ```bash
 mu host init dev --ssh   # a starter for `mu host add`
