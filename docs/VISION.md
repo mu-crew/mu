@@ -121,7 +121,7 @@ scrollback capture, pane-id validation, and identity fallback live behind
 `MuxBackend` in `src/mux/`. There are three implementations: tmux, herdr
 and Rex. A fourth needs its own friction evidence.
 
-### 6. Pi-first, with reported agent state
+### 6. Five first-class harnesses, with reported agent state
 
 mu never infers agent state from pane text. Each state source reports it:
 
@@ -141,11 +141,13 @@ is gated on the reported state (never into a permission dialog, which
 `mu agent answer` takes), and one that no event confirms reports
 `unknown` and is never resent. murmur is optional for pi agents.
 
-`MU_PI_COMMAND="pi-alt --some-flag"` swaps the pi command for every
-spawn. The other blessed harnesses (claude, codex, cursor-agent, muse) are
-being brought up to pi's level as far as their hooks allow (the
-every-harness-first-class spec); spawn accepts any command and `agents.cli`
-is TEXT.
+pi, claude, codex, cursor-agent and muse are first-class: each can
+orchestrate and each can work, mixed in one crew, and one contract suite runs
+every verb against every channel. pi keeps the exact channel; the other four
+come as close as their hooks allow, and the guide names what they still
+lack. `MU_<KEY>_COMMAND` swaps the command for every spawn of that key
+(`MU_PI_COMMAND="pi-alt --some-flag"`); spawn accepts any command and
+`agents.cli` is TEXT.
 
 ### 7. TypeScript on Node
 
@@ -278,7 +280,9 @@ previous surface on the same scenarios ([reports](eval/README.md)).
    the backend. Agent verbs exit 5 when none is reachable; task verbs
    and `mu_delegate` (a child pi process) work without one.
 2. **The agent never acknowledges a send.** For pi, the control socket
-   confirms that pi accepted the message. On the mux path, mu confirms
+   confirms that pi accepted the message. On the `hooks` path, the
+   harness's own turn count confirms a paste, or the send reports
+   `unknown` and is never resent. On the mux path, mu confirms
    only that the text reached the pane and warns when it cannot confirm
    submission. Use `mu wait` or `mu log --tail` to see the effect.
 3. **Recursion is opt-in.** `mu_delegate` is hidden in agents mu spawned

@@ -1,8 +1,8 @@
 # Course-correct a long job
 
-Use when a hint says `course check due: <n> closed since <date>`, or a human asks.
+Use on a `course check due: <n> closed since <date>` hint, or when asked.
 
-1. **A read-only `mu_delegate` measures**:
+1. **A read-only `mu_delegate` (else a native subagent) measures**:
 
    ```bash
    git log --since=<date> --format=%s | cut -d: -f1 | sort | uniq -c
@@ -12,13 +12,13 @@ Use when a hint says `course check due: <n> closed since <date>`, or a human ask
    mu task tree <umbrella> -w <ws>
    ```
 
-2. **Second delegate refutes the numbers** before any proposal.
+2. **A second refutes the numbers** before any proposal.
 3. **Compare with the spec**: stale text, then:
    - Switch line: which open critical-path units can move after the switch?
    - Review cost: rounds per unit, findings by severity. Bar: high = fix + re-review; medium = fix, evidence in the close note; low = one batch.
    - Code budget: `src/` vs baseline; units >30% over budget.
-   - Real use: last dogfood date; what it found that review missed.
+   - Real use: last dogfood; what it found that review missed.
    - Merge latency: gate+CI vs queue.
-4. **Propose at most 7 changes**, each tied to a number.
+4. **Propose ≤7 changes**, each tied to a number.
 5. **Stop**: `mu human-needed -w <ws> "course check: <n> proposed changes, see note"`.
 6. **Approved**: one umbrella note starting `COURSE CHECK <date>` (the hint counts from it) and the DAG diff, then dispatch.

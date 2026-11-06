@@ -12,6 +12,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **The prompts as skills for Claude Code and cursor-agent** (spec U19).
+  `mu init` now also writes each shipped prompt (`prompts/*.md`, pi's
+  `/ultrathink`, `/mu-review`, …) as a skill of the same name beside mu's
+  skill: `~/.claude/skills/mu-review`, and cursor-agent's own copies only
+  while Claude Code's directory holds none. The user starts one by name
+  (`/mu-review <target>`). Every copy carries `disable-model-invocation`,
+  which both honour, so the model never starts a crew on its own. Codex gets
+  none: it has no verified way to keep a skill from its model, and one picked
+  by its description would start a crew unasked. The argument pi substitutes
+  for `$@` is named in words, since only claude substitutes one. The copies
+  follow the skill's rules: a `.mu-init` marker, only an unedited copy of its
+  own replaced, anything else kept, never pi's skill directories; an unedited
+  copy of a prompt this mu no longer ships is removed. A prompt mu cannot
+  read is refused alone (exit 1), and the others are still written. `--json`
+  gains `prompts`; the text output prints one line per harness, state and
+  detail. Muse Code installs skills with its own tooling, and pi keeps the
+  package's commands.
+
 - **`mu init`: mu's hook entries and skill for every hook harness** (spec
   D13, D17, U23). It adds `mu hook stop <harness> --timeout 600 || true`
   (with the entry's own 600 s timeout) on the stop event of
@@ -338,6 +356,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Docs: every harness first-class** (spec D16, U19). The skill gains a
+  capability section per channel (`ctl`, `hooks`, `mux`), and "Checks are
+  calls" now names the native-subagent path (`mu task check`/`verdict`)
+  beside `mu_delegate`; it stays under its 600-word cap by dropping lines
+  the recipe index already said. Recipes: `tasks-or-calls` gains "Outside
+  pi" (a recorded native subagent, or a recorded cross-family `scratch`
+  pane); `findings` puts one refuter of each high or critical finding in
+  another family; `adversarial-review`, `course-correct` and `test-health`
+  accept a native subagent; `orchestrator-loop` starts a non-pi
+  orchestrator with `mu orchestrate` and names the `hooks` interrupt and
+  ack; `worker` gains the brief pointer and the close nudge; `models`
+  passes `--model` through each harness's flag; `remote-workers` gains the
+  `hooks` remote path. Guides: `other-agent-clis.md` is now the per-harness
+  setup guide (`murmur init`, `mu init`, `muzzle init`, a table and a
+  section per harness); `stop-a-worker.md` and `remote.md` gain the `hooks`
+  path; `dispatch.md` and `delegate.md` drop the claim that a non-pi agent
+  on tmux cannot be sent to or has no final text. README, VISION §6 (now
+  "Five first-class harnesses"), the surface contract and the package
+  description say the five blessed harnesses are first-class and pi has the
+  exact channel. `test/docs-harness.test.ts` pins it.
 - **`mu state` and `mu next` read every identity of the caller.** A managed pi
   orchestrator is both `<ws>/<name>` (its spawns, its human stops) and
   `pi:<session>` (its delegate calls): its delegates, waves, human needs and

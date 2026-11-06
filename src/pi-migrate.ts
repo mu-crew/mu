@@ -127,6 +127,19 @@ function defaultPackageRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
 }
 
+/** The digest `skillDirDigest` gives a directory holding exactly `files` (path relative to it, `/`-separated, to contents). */
+export function skillFilesDigest(files: Readonly<Record<string, string | Buffer>>): string {
+  return digestLines(
+    Object.entries(files).map(
+      ([rel, body]) => `${rel}\0${createHash("sha256").update(body).digest("hex")}\n`,
+    ),
+  );
+}
+
+function digestLines(lines: string[]): string {
+  return createHash("sha256").update(lines.sort().join("")).digest("hex");
+}
+
 /** SHA-256 over the sorted `relative path NUL file-sha256` lines of a
  *  directory tree. undefined if it holds anything but regular files and
  *  directories (a symlink is never part of a released skill). `skip` names
@@ -151,7 +164,7 @@ export function skillDirDigest(dir: string, skip?: string): string | undefined {
   } catch {
     return undefined;
   }
-  return createHash("sha256").update(lines.sort().join("")).digest("hex");
+  return digestLines(lines);
 }
 
 function isMuSkill(

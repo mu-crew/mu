@@ -2,6 +2,7 @@
 // them (spec D13, D17). Touches no DB, so it does not run through handle().
 // src/mu-init.ts decides what is written.
 
+import { basename, dirname } from "node:path";
 import type { Command } from "commander";
 import { emitJson, JSON_OPT } from "../cli.js";
 import { HARNESSES, type Harness, isHarness } from "../harnesses.js";
@@ -30,11 +31,44 @@ function line(kind: string, i: InitItem): string {
   return i.state === "written" || i.state === "refused" ? text : pc.dim(text);
 }
 
+/** The prompt skills, one line per harness, state and detail
+ *  (`prompts claude: <dir> written 9 (installed): mu-debug, …`), in the order the
+ *  items come; a refused one alone, with its reason. */
+function promptLines(items: readonly InitItem[]): { line: string; refused: boolean }[] {
+  const groups = new Map<string, InitItem[]>();
+  const order: (InitItem | InitItem[])[] = [];
+  for (const i of items) {
+    if (i.state === "refused" || i.state === "skipped" || i.path === null) {
+      order.push(i);
+      continue;
+    }
+    const key = `${i.harness}\0${i.state}\0${i.detail}`;
+    const group = groups.get(key);
+    if (group !== undefined) group.push(i);
+    else {
+      const fresh = [i];
+      groups.set(key, fresh);
+      order.push(fresh);
+    }
+  }
+  return order.flatMap((entry) => {
+    if (!Array.isArray(entry)) {
+      return [{ line: line("prompts", entry), refused: entry.state === "refused" }];
+    }
+    const [first] = entry;
+    if (first === undefined) return [];
+    const names = entry.map((i) => basename(i.path ?? "")).join(", ");
+    const where = pc.bold(dirname(first.path ?? ""));
+    const text = `prompts ${first.harness}: ${where} ${first.state} ${entry.length} (${first.detail}): ${names}`;
+    return [{ line: first.state === "written" ? text : pc.dim(text), refused: false }];
+  });
+}
+
 export function wireInitCommand(program: Command): void {
   program
     .command("init")
     .description(
-      "Write mu's Stop hook entry and skill where claude, codex and cursor-agent read them, for each harness set up here. Touches only what it wrote; never ~/.agents/skills (pi's). Rerun after upgrading mu",
+      "Write mu's Stop hook entry and skill for claude, codex and cursor-agent, and prompt skills for claude and cursor-agent, where each harness set up here reads them. Touches only what it wrote. Rerun after upgrading mu",
     )
     .option(
       "--harness <names>",
@@ -68,6 +102,10 @@ export function wireInitCommand(program: Command): void {
           const text = line("skill", i);
           if (i.state === "refused") process.stderr.write(`${text}\n`);
           else console.log(text);
+        }
+        for (const text of promptLines(r.prompts)) {
+          if (text.refused) process.stderr.write(`${text.line}\n`);
+          else console.log(text.line);
         }
         // codex runs a new or changed hook only once the user trusts it.
         if (r.hooks.some((i) => i.harness === "codex" && i.state === "written")) {

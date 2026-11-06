@@ -113,17 +113,21 @@ written before each step, so the same command never sends a second prompt.
 
 ### Non-pi agents
 
-Agents other than pi have no control socket. On herdr, mu sends the
-text with herdr's atomic `agent prompt`. On Rex, mu pastes it and then
-presses Enter; a multi-line text needs the agent to have turned on
-bracketed paste (claude and codex do), otherwise the send is refused. To start a new session, send
-`/new` (codex: `/clear`), then the prompt. If mu prints
-`warning: ... was NOT submitted`, the agent has not seen the text.
-Read the pane before you wait. On tmux, a send to a non-pi agent exits
-4 (`AgentSendUnsupportedError`): spawn it on herdr or Rex (`MU_MUX=herdr`,
-`MU_MUX=rex`), start
-it with the prompt as an argument, or use pi
-([other agent CLIs](other-agent-clis.md)).
+On tmux, claude, codex, cursor-agent and muse are on the `hooks` channel:
+mu clears the input line, pastes, and confirms the send when the harness's
+turn count rises; a task spawn pastes a one-line pointer to a brief file.
+`--steer` is refused, and a send into a permission dialog is too (answer it
+with `mu agent answer`). See
+[other agent CLIs](other-agent-clis.md#run-one-as-a-worker). Any other CLI
+on tmux exits 4 (`AgentSendUnsupportedError`).
+
+On herdr, mu sends the text with herdr's atomic `agent prompt`. On Rex, mu
+pastes it and then presses Enter; a multi-line text needs the agent to have
+turned on bracketed paste (claude and codex do), otherwise the send is
+refused. To start a new session there, send the harness's fresh command
+(claude `/clear`, codex `/new`, cursor-agent `/new-chat`), then the prompt.
+If mu prints `warning: ... was NOT submitted`, the agent has not seen the
+text. Read the pane before you wait.
 
 ## Write the brief
 

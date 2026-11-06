@@ -69,8 +69,17 @@ their guarantees:
   steps only on a host with pi, and a spawn for a harness it lacks is refused.
 - **Surfaces.** In-process `mu db query` (alias `mu sql`), five-tab
   read-only dashboard, pi package (3.x's link verb is gone), `mu pi migrate`,
-  `mu init` (mu's Stop hook entry and skill copy per hook harness, touching
-  only what it wrote, never a skill directory pi reads).
+  `mu init` (mu's Stop hook entry and skill copy per hook harness, prompt
+  skills for claude and cursor-agent, touching only what it wrote, never a
+  skill directory pi reads).
+- **Skill and prompts.** One `mu` skill for every harness, with a capability
+  section per channel (`ctl`, `hooks`, `mux`); its recipes give the
+  native-subagent path (`mu task check`/`verdict`) beside `mu_delegate`, and
+  the `hooks` caveats for orchestrators and workers. The prompts ship as pi
+  commands (`/mu-review`) and, through `mu init`, as skills of the same names
+  for claude and cursor-agent, which only the user starts
+  (`disable-model-invocation`); codex gets none (no verified opt-out), and
+  Muse Code installs skills itself.
 
 - **Settle wait.** The pi extension's keep-driving nudge is the settle
   wait (`extension/nudge.ts`): every completed settle of an orchestrator

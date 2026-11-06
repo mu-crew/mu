@@ -18,7 +18,7 @@ How-to guides:
 - [Query and script mu](sql.md)
 - [Upgrade mu](upgrade.md)
 - [Choose a multiplexer backend](backends.md)
-- [Run mu with other agent CLIs](other-agent-clis.md)
+- [Run mu with Claude Code, Codex, cursor-agent or Muse Code](other-agent-clis.md)
 - [Clean up](cleanup.md)
 
 Agent-facing recipes (orchestrator loop, worker, recovery, remote

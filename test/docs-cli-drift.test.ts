@@ -34,6 +34,7 @@ const DOC_FILES = [
   "docs/guide/upgrade.md",
   "docs/guide/backends.md",
   "docs/guide/cleanup.md",
+  "docs/guide/other-agent-clis.md",
   "docs/VOCABULARY.md",
   "docs/reference/env.md",
   "docs/reference/naming.md",

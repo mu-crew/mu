@@ -166,8 +166,11 @@ restarted pi is refused rather than read. The result's
 `data.snapshots[].lastText` is the answer (its tail if long; the whole
 text is in `sessionFile`), and `data.firing.kind` says how the run ended:
 `settled`, `input` (it stopped to ask), `dead` (exit 6) or `heartbeat`.
-Non-pi agents have no `lastText`; read the pane with
-`mu agent read helper-1 -w scratch -n 80`.
+A `hooks` agent (claude, codex, cursor-agent or muse on tmux) has the
+`lastText` of a turn the wait watched end; on herdr or Rex a non-pi agent has
+none, so read the pane with `mu agent read helper-1 -w scratch -n 80`. Outside
+pi, record the check with `mu task check` and `mu task verdict`
+([tasks-or-calls](../../skills/mu/recipes/tasks-or-calls.md#outside-pi)).
 
 Use a fresh agent or `send --fresh`: a plain send to a reused agent
 carries the previous task's context.
@@ -225,6 +228,11 @@ pane.
 
 For many tiny calls, a hidden subagent is lighter. mu bets that seeing
 and steering agent work is worth a pane.
+
+An orchestrator on Claude Code, Codex, cursor-agent or Muse Code has no
+`mu_delegate`: it checks with its own subagents and records each check with
+`mu task check` and `mu task verdict`, so the verdict outlives its context
+and `mu state` shows a check a crash lost.
 
 ## When to stop delegating
 
