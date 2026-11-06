@@ -5,6 +5,6 @@ argument-hint: "<job>"
 Ultrathink this job with mu. Load the mu skill, then read its
 `recipes/orchestrator-loop.md` in full and follow it. Every unit, review, and
 round goes in the task DAG; checks (refuters, judges, skeptics) are
-delegate calls. Keep driving until the stop rule holds.
+calls or recorded checks. Keep driving until the stop rule holds.
 
 Job: $@

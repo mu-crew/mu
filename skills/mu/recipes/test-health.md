@@ -27,7 +27,7 @@ A new test sits at the lowest level that catches the failure.
 At a milestone or budget crossing, without stopping independent work:
 
 1. Profile each gate step and the 20 slowest tests (BEFORE: time, counts, skips).
-2. One delegate call per area: KEEP, SPEED-UP, MOVE-DOWN, MERGE or DELETE.
+2. One [call or native-subagent check](tasks-or-calls.md) per area: KEEP, SPEED-UP, MOVE-DOWN, MERGE or DELETE.
 3. A refuter checks each MERGE/DELETE: which failure goes uncaught? Unresolved means KEEP.
 4. Dispatch survivors as test-only tasks with review.
 5. Re-measure (AFTER); smaller alone proves no coverage.

@@ -1,8 +1,8 @@
 # Remote workers
 
-Use when an agent runs on another machine. A host profile holds your templates; mu never connects.
+Use when an agent runs on another machine; a host profile holds your templates.
 
-The pane forwards the remote pi's control socket: `send`, `wait`, `abort` work as locally. The host has no mu DB: the brief carries everything (no `Read:` line); you close the task from its `CLOSE:` block.
+A pi worker's control socket is forwarded: `send`, `wait`, `abort` work as locally. Other harnesses are on `hooks` (`murmur init` there): a send is `ack: sent` until a wait reads the host; `--fresh` is refused. The host has no mu DB: the brief carries everything (no `Read:` line); you close the task from its `CLOSE:` block.
 
 ```bash
 mu host init dev --ssh   # a starter to edit into `mu host add`
@@ -19,9 +19,7 @@ mu agent close worker-1 -w <ws> --if <rev>
 End the brief with: commit, then `CLOSE: task=<id> evidence="<command + result>"`, `REPORT:`, the report. Cherry-pick the collected commits and re-run the evidence before you close.
 
 - A capped host (`--max-sessions 1`): use a lease (`host init --mule`).
-- Long remote gates are panes (`--command`).
 - `close` refuses a dirty or uncollected tree: collect again.
 - Exit 3 from a host command is a hand-back: stop and ask; never retry or ssh.
-- A `shell` template never rides a shared ssh master.
 - A dead lease pane leaves its job running: `close` stops it; only `--abandon-job` passes an unreachable host.
-- A lease shell is non-login: the brief or `--command` sets PATH (`~/.elan/bin`).
+- A lease shell is non-login: the brief or `--command` sets PATH.

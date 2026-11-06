@@ -8,6 +8,10 @@ You need Node.js, the pi coding agent, tmux 3.0
 or later, and a git repository to work in. Run every command from
 inside a tmux session, in the root of that repository.
 
+The tutorial uses pi. Claude Code, Codex, cursor-agent and Muse Code work
+too: set the machine up as in [other agent CLIs](other-agent-clis.md#set-up-a-machine)
+instead of the pi package, and add `--cli <harness>` to the spawn.
+
 ## Install mu and the pi package
 
 First, install mu and install its pi package:

@@ -40,7 +40,7 @@ copy backend.
 | Attach | `tmux attach -t mu-<ws>` (a spawn prints `attach-session -t mu-<ws>:<agent>`, `-L <socket>` on a private socket, `switch-client` inside tmux) | `herdr workspace focus <id>`, then `herdr` outside a herdr pane | `rex do session.select session_id=… window_id=…`: Rex.app switches to it |
 | pi agent state | control socket | control socket | control socket |
 | Other agents' state | murmur | herdr | the program's own OSC 7501 reports |
-| Send to non-pi agents | refused (exit 4) | one atomic `agent prompt` | a paste event, then Enter |
+| Send to non-pi agents | claude, codex, cursor-agent, muse: a paste confirmed by run count (`hooks`); others refused (exit 4) | one atomic `agent prompt` | a paste event, then Enter |
 | Spawn | one command | bare pane, then `agent start` | one API call |
 | `--host` (remote agents) | yes | refused | yes |
 | Pane borders, layout | set by mu | left to herdr | left to Rex |

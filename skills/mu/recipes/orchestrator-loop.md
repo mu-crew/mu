@@ -1,6 +1,6 @@
 # Orchestrator loop
 
-For dispatch and merge.
+For dispatch and merge. Not pi: start as `mu orchestrate -w <ws> --cli <harness>`, for a `mu wait` identity and a keep-driving Stop hook (not muse).
 
 ## Each turn
 
@@ -15,8 +15,8 @@ For dispatch and merge.
    ```
 
    Idle worker: `mu task claim <id> -w <ws> --for <w> --evidence "..."`; `git -C <cwd> fetch && git -C <cwd> rebase <base>` (conflict: `rebase --abort`, tell the human); `mu agent send <w> -w <ws> --fresh -`.
-4. `mu wait -w <ws>` waits on what you started (workers, tasks, calls). `data.exit` 0: an event in `data.firing`, or `timedOut` (run `data.resume`); 6: worker died before closing, re-dispatch it; 7: `mu agent read <w>`, answer.
-5. Merge. Close a finished worker: `mu agent close <w> -w <ws>` only previews; run its printed `--if <rev>`. Then step 1. If `mu state` says a course check is due, finish merging, then follow [course-correct](course-correct.md) first.
+4. `mu wait -w <ws>` waits on what you started. `data.exit` 0: an event in `data.firing`, or `timedOut` (run `data.resume`); 6: worker died before closing, re-dispatch it; 7: `mu agent read <w>`, answer.
+5. Merge. Close a finished worker: `mu agent close <w> -w <ws>` only previews; run its printed `--if <rev>`. Then step 1.
 
 ## Merging
 
@@ -25,6 +25,8 @@ Follow [merge](merge.md): inline, or past ~4 workers through a merge task.
 ## Sending
 
 `--steer`: after the tool. `--interrupt`: now, kills the tool. `--fresh`: unrelated work.
+
+`hooks`: `--interrupt` is Escape (claude then reads `idle?`); `ack: unknown`: never resend.
 
 ## Delegate waves
 

@@ -19,14 +19,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { harnessProbeScript, parseHarnessProbe } from "../src/host-harnesses.js";
 import {
   initRefused,
   isMuWrittenHook,
   muHookCommand,
+  PROMPT_ARGUMENT,
   piSkillDirs,
+  promptAsSkill,
   runInit,
   SKILL_MARKER,
   setInitBeforeCommitForTests,
@@ -37,6 +39,10 @@ import { runCli, runCliJson } from "./_runCli.js";
 
 const root = join(import.meta.dirname, "..");
 const shippedSkill = readFileSync(join(root, "skills", "mu", "SKILL.md"), "utf8");
+const promptNames = readdirSync(join(root, "prompts"))
+  .filter((f) => f.endsWith(".md"))
+  .map((f) => f.slice(0, -3))
+  .sort();
 
 let tmp: string;
 let home: string;
@@ -405,7 +411,7 @@ describe("mu init: the skill", () => {
       write([".claude", "skills", `.mu.mu-${dead}.${kind}`, "SKILL.md"], "---\nname: mu\n---\n");
     }
     runInit({ home, packageRoot: root });
-    expect(readdirSync(at(".claude", "skills"))).toEqual(["mu"]);
+    expect(readdirSync(at(".claude", "skills")).sort()).toEqual(["mu", ...promptNames].sort());
   });
 
   it("replaces its own unedited copy with the skill a newer mu ships", () => {
@@ -421,6 +427,10 @@ describe("mu init: the skill", () => {
     });
     expect(readdirSync(at(".claude", "skills", "mu")).sort()).toEqual([SKILL_MARKER, "SKILL.md"]);
     expect(read(".claude", "skills", "mu", "SKILL.md")).toBe("the next skill\n");
+    // That mu ships no prompts: the unedited copies this one wrote go, and nothing is staged.
+    expect(r.prompts.filter((i) => i.harness === "claude").map((i) => i.state)).toEqual(
+      promptNames.map(() => "written"),
+    );
     expect(readdirSync(at(".claude", "skills"))).toEqual(["mu"]);
   });
 
@@ -431,6 +441,139 @@ describe("mu init: the skill", () => {
     const r = runInit({ home, packageRoot: root });
     expect(r.skills.find((i) => i.harness === "claude")?.state).toBe("refused");
     expect(readdirSync(at(".agents", "skills"))).toEqual([]);
+  });
+});
+
+describe("mu init: the prompts, as skills", () => {
+  const promptState = (r: ReturnType<typeof runInit>, h: string) => [
+    ...new Set(r.prompts.filter((i) => i.harness === h).map((i) => i.state)),
+  ];
+
+  /** A package with the shipped skill and `prompts` (file name to text). */
+  function pkg(name: string, prompts: Record<string, string>): string {
+    const dir = join(tmp, name);
+    mkdirSync(join(dir, "skills", "mu"), { recursive: true });
+    mkdirSync(join(dir, "prompts"));
+    writeFileSync(join(dir, "skills", "mu", "SKILL.md"), "the skill\n");
+    for (const [file, text] of Object.entries(prompts)) {
+      writeFileSync(join(dir, "prompts", file), text);
+    }
+    return dir;
+  }
+  const prompt = (d: string) => `---\ndescription: ${d}\n---\nDo ${d}: $@\n`;
+
+  it("twice: every shipped prompt once, user-invoked only, never for codex or where pi reads", () => {
+    expect(promptNames.length).toBeGreaterThan(0);
+    for (const d of [".claude", ".codex", ".cursor"]) mkdirSync(at(d));
+    const first = runInit({ home, packageRoot: root });
+    expect(promptState(first, "claude")).toEqual(["written"]);
+    expect(promptState(first, "cursor-agent")).toEqual(["covered"]);
+    // codex has no verified way to keep a skill from its model: a prompt skill would start a crew.
+    expect(first.prompts.find((i) => i.harness === "codex")).toMatchObject({
+      state: "none",
+      detail: expect.stringContaining("keep a skill from its model"),
+    });
+    expect(first.prompts.find((i) => i.harness === "muse")?.state).toBe("none");
+    expect(first.prompts.find((i) => i.harness === "pi")?.state).toBe("none");
+    expect(readdirSync(at(".codex", "skills"))).toEqual(["mu"]);
+    for (const name of promptNames) {
+      const pi = readFileSync(join(root, "prompts", `${name}.md`), "utf8");
+      const description = /^description: (.+)$/m.exec(pi)?.[1];
+      const skill = read(".claude", "skills", name, "SKILL.md");
+      expect(skill, name).toMatch(new RegExp(`^---\nname: ${name}\n`));
+      expect(skill).toContain(`\ndescription: ${description}\n`);
+      expect(skill).toContain("\ndisable-model-invocation: true\n");
+      // The argument is named in words: `$@` means nothing outside pi.
+      expect(skill).not.toMatch(/\$@|\$\{@/);
+      expect(skill).toContain(PROMPT_ARGUMENT);
+      // The recipe it points at is in the mu skill copy beside it.
+      const recipe = /recipes\/[a-z-]+\.md/.exec(skill)?.[0] ?? "";
+      expect(existsSync(at(".claude", "skills", "mu", recipe)), `${name} -> ${recipe}`).toBe(true);
+      expect(existsSync(at(".claude", "skills", name, SKILL_MARKER))).toBe(true);
+      expect(existsSync(at(".cursor", "skills", name))).toBe(false);
+    }
+    const files = tree();
+    const second = runInit({ home, packageRoot: root });
+    expect(promptState(second, "claude")).toEqual(["unchanged"]);
+    expect(tree()).toEqual(files);
+    for (const d of piSkillDirs(home)) expect(existsSync(d)).toBe(false);
+  });
+
+  it("gives cursor-agent its own copies, user-invoked only, while claude's dir holds none", () => {
+    mkdirSync(at(".cursor"));
+    const r = runInit({ home, packageRoot: root });
+    expect(promptState(r, "cursor-agent")).toEqual(["written"]);
+    expect(readdirSync(at(".cursor", "skills")).sort()).toEqual(["mu", ...promptNames].sort());
+    expect(read(".cursor", "skills", "mu-review", "SKILL.md")).toContain(
+      "\ndisable-model-invocation: true\n",
+    );
+  });
+
+  it("leaves a skill of the same name it did not write as found", () => {
+    write([".claude", "skills", "mu-review", "SKILL.md"], "my own review skill\n");
+    const r = runInit({ home, packageRoot: root });
+    expect(r.prompts.find((i) => i.path === at(".claude", "skills", "mu-review"))?.state).toBe(
+      "kept",
+    );
+    expect(read(".claude", "skills", "mu-review", "SKILL.md")).toBe("my own review skill\n");
+    expect(initRefused(r)).toBe(false);
+  });
+
+  it("removes its own unedited copy of a prompt a newer mu no longer ships, and nothing else", () => {
+    mkdirSync(at(".claude"));
+    runInit({
+      home,
+      packageRoot: pkg("old", { "a.md": prompt("a"), "b.md": prompt("b"), "c.md": prompt("c") }),
+    });
+    expect(readdirSync(at(".claude", "skills")).sort()).toEqual(["a", "b", "c", "mu"]);
+    write([".claude", "skills", "c", "SKILL.md"], "edited by hand\n");
+    write([".claude", "skills", "mine", "SKILL.md"], "a skill of my own\n");
+    const r = runInit({ home, packageRoot: pkg("new", { "a.md": prompt("a") }) });
+    expect(r.prompts.filter((i) => i.harness === "claude")).toEqual([
+      expect.objectContaining({ path: at(".claude", "skills", "a"), state: "unchanged" }),
+      expect.objectContaining({
+        path: at(".claude", "skills", "b"),
+        state: "written",
+        detail: expect.stringContaining("no longer shipped"),
+      }),
+    ]);
+    expect(readdirSync(at(".claude", "skills")).sort()).toEqual(["a", "c", "mine", "mu"]);
+    expect(read(".claude", "skills", "c", "SKILL.md")).toBe("edited by hand\n");
+  });
+
+  it("names the argument in words, keeps a default, and refuses a prompt with no description", () => {
+    const pi =
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: pi's prompt syntax is the input
+      '---\ndescription: "Review"\nargument-hint: "[target]"\n---\nTarget: ${@:-the diff}\nAlso $@.\n';
+    expect(promptAsSkill("r", pi)).toBe(
+      `---\nname: r\ndescription: "Review"\ndisable-model-invocation: true\n---\nTarget: ${PROMPT_ARGUMENT}, else the diff\nAlso ${PROMPT_ARGUMENT}.\n`,
+    );
+    expect(promptAsSkill("r", "Target: $@\n")).toBeUndefined();
+    expect(promptAsSkill("r", "---\nargument-hint: x\n---\nbody\n")).toBeUndefined();
+  });
+
+  it("refuses a broken shipped prompt alone, and still writes the others and the skill", () => {
+    const next = pkg("next", {
+      "a.md": prompt("a"),
+      "broken.md": "no frontmatter\n",
+      "c.md": prompt("c"),
+    });
+    mkdirSync(at(".claude"));
+    mkdirSync(at(".cursor"));
+    const r = runInit({ home, packageRoot: next });
+    for (const h of ["claude", "cursor-agent"]) {
+      expect(
+        r.prompts.filter((i) => i.harness === h).map((i) => [basename(i.path ?? ""), i.state]),
+      ).toEqual([
+        ["a", h === "claude" ? "written" : "covered"],
+        ["broken", "refused"],
+        ["c", h === "claude" ? "written" : "covered"],
+      ]);
+    }
+    expect(r.prompts.find((i) => i.state === "refused")?.detail).toContain("broken.md");
+    expect(initRefused(r)).toBe(true);
+    expect(read(".claude", "skills", "mu", "SKILL.md")).toBe("the skill\n");
+    expect(readdirSync(at(".claude", "skills")).sort()).toEqual(["a", "c", "mu"]);
   });
 });
 
@@ -446,6 +589,26 @@ describe("mu init: CLI", () => {
       );
       const human = await runCli(["init"], join(tmp, "mu.db"));
       expect(human.stdout).toMatch(/hook claude: .* unchanged/);
+      expect(human.stdout).toMatch(
+        new RegExp(
+          `prompts claude: .* unchanged ${promptNames.length} \\(the skill this mu ships\\): ${promptNames.join(", ")}`,
+        ),
+      );
+    });
+  });
+
+  it("names what each grouped prompt line did: cursor-agent's own copies removed once claude holds them", async () => {
+    mkdirSync(at(".cursor"));
+    await withEnv("MU_INIT_HOME", home, async () => {
+      await runCli(["init"], join(tmp, "mu.db"));
+      mkdirSync(at(".claude"));
+      const human = await runCli(["init"], join(tmp, "mu.db"));
+      expect(human.stdout).toMatch(
+        new RegExp(
+          `prompts cursor-agent: .* written ${promptNames.length} \\(removed: cursor-agent reads `,
+        ),
+      );
+      expect(existsSync(at(".cursor", "skills", "mu-review"))).toBe(false);
     });
   });
 

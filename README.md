@@ -10,17 +10,23 @@ task DAG in SQLite. Each agent gets its own git worktree.
   owners, notes, and worktrees. An append-only ops log records every
   change, so `mu log --group <group>` shows one action and `mu rebuild`
   replays the whole history.
-- **Exact control of pi agents.** mu's pi extension serves a control
-  socket inside each agent, so send, state, wait, and abort are exact,
-  locally and over ssh. The pane stays pi's normal TUI.
+- **Five first-class agent CLIs, mixed.** pi, Claude Code, Codex,
+  cursor-agent and Muse Code each orchestrate and work, side by side in one
+  crew, locally and on remote hosts. pi has the exact channel: mu's pi
+  extension serves a control socket inside each agent, so send, state, wait,
+  and abort are exact, locally and over ssh. The other four are driven by
+  paste and read from their own hook events, confirmed by the turn count.
+  Each pane stays the agent's normal TUI.
 - **One wait.** `mu wait` blocks until the first event you own (closed,
   settled, needs you, dead, stalled) and prints one JSON result with a
-  `resume` command. In pi, the extension runs it for you, so an
-  orchestrator keeps driving until nothing is owed.
-- **Delegates without a pane.** A `mu_delegate` call is a fresh-context
-  helper recorded as a task with a durable id. With no multiplexer it
-  runs as a child pi.
-- **A capped skill.** One `mu` skill (under 600 words) and twelve short recipes,
+  `resume` command. In pi, the extension runs it for you, and in Claude
+  Code, Codex and cursor-agent mu's Stop hook does, so an orchestrator
+  keeps driving until nothing is owed.
+- **Recorded checks.** A `mu_delegate` call is a fresh-context helper
+  recorded as a task with a durable id; with no multiplexer it runs as a
+  child pi. The other harnesses check with their own subagents, and
+  `mu task check` records each one and its verdict.
+- **A capped skill.** One `mu` skill (under 600 words) and thirteen short recipes,
   checked by an eval matrix (`tools/eval`). `mu --help` holds the rest.
 
 Every read path has `--json`, and every change goes through a typed CLI
@@ -35,14 +41,18 @@ before you install.
 
 ```bash
 npm i -g @mu-crew/mu
-pi install npm:@mu-crew/mu   # extension (control socket, mu_delegate), the mu skill, recipe prompts
+pi install npm:@mu-crew/mu   # pi: extension (control socket, mu_delegate), the mu skill, recipe prompts
+murmur init                  # Claude Code, Codex, cursor-agent, Muse Code: their hook state
+mu init                      # Claude Code, Codex, cursor-agent: mu's Stop hook entry, skill (prompt skills: not Codex)
 mu doctor
 ```
 
-To drive mu from another agent CLI (claude-code, codex, cursor-agent),
-run `mu init` instead of the pi package: it installs mu's skill and Stop hook
-entry where each harness reads them. Read [Run mu with other agent CLIs](docs/guide/other-agent-clis.md)
-first: pin which `mu` the harness runs, and see what works without pi.
+Install only what your harnesses need: the pi package for pi, `murmur init`
+([murmur](https://github.com/mu-crew/murmur)) and `mu init` for the others.
+Each `init` touches only entries it wrote. Read
+[Run mu with other agent CLIs](docs/guide/other-agent-clis.md) before the
+first non-pi crew: it covers each harness's setup, pinning which `mu` it runs,
+and what the `hooks` channel lacks against pi.
 
 You need:
 
@@ -52,12 +62,14 @@ You need:
   ([choosing one](docs/guide/backends.md)). `mu doctor` reports which one
   is active. Without any, task verbs
   and pi's `mu_delegate` still work (a delegate runs as a child pi).
-- pi, or another agent CLI.
+- One or more of pi, Claude Code, Codex, cursor-agent and Muse Code (any
+  other agent CLI works on herdr and Rex, with less).
 - git on `PATH` for `--worktree`.
 
 [murmur](https://github.com/mu-crew/murmur) is optional for pi agents.
-Non-pi agents on tmux need it for state: without it their state is
-`unknown`, so a wait never sees them finish and stall detection never fires.
+Claude Code, Codex, cursor-agent and Muse Code on tmux need its hook entries
+(`murmur init`): without them their state is `unknown`, so a send needs
+`--force`, a wait never sees them finish and stall detection never fires.
 On herdr, herdr reports state. On Rex, the agent's own OSC 7501 report does
 (claude and codex send one).
 
@@ -81,7 +93,8 @@ mu workstream teardown auth                         # preview (rev=<n>); apply w
 
 For one helper, ask pi to delegate (`mu_delegate` ships in the pi
 package), or spawn into the reserved `scratch` workstream:
-`mu agent spawn scout-1 -w scratch`.
+`mu agent spawn scout-1 -w scratch`. Another harness uses its own subagent
+and records the check with `mu task check`.
 
 Run `mu` with no arguments for the read-only dashboard. It has five tabs
 (Overview, Tasks, DAG, Agents, Log), with what needs a human on top: a
@@ -107,9 +120,9 @@ it in the open:
   review until someone accepts it as work or closes it rejected or
   duplicate. The graph holds the whole review.
 - **Checks are calls.** Refuters, claim checkers and judges are
-  [delegate calls](skills/mu/recipes/tasks-or-calls.md): fresh agents,
-  ideally on another model, whose verdicts land on the task they
-  judged. A 50-unit run adds about 50 units, 50 review gates and the
+  [delegate calls](skills/mu/recipes/tasks-or-calls.md) in pi, and native
+  subagents recorded with `mu task check` elsewhere: fresh agents, ideally
+  on another model, whose verdicts land on the task they judged. A 50-unit run adds about 50 units, 50 review gates and the
   findings that survive, not a task per check.
 - **Every agent is attachable.** Attach to any worker, reviewer, or judge
   in its pane mid-run and steer it.
@@ -140,6 +153,9 @@ In pi, the package adds them as commands: `/ultrathink <job>`,
 `/mu-research <question>`, `/mu-review [target]`, `/mu-refute <scope>`,
 `/mu-tournament <task>`, `/mu-rules-audit [target]`,
 `/mu-debug <symptom>`, `/mu-sweep <change>`, and `/mu-until <stop rule>`.
+`mu init` installs the same prompts as skills of the same names for Claude
+Code and cursor-agent (`/mu-review`), which only you can start. Codex gets
+none: it has no verified way to keep a skill from its model.
 
 All recipes, including the orchestrator loop and remote workers, are
 in [skills/mu/recipes/](skills/mu/recipes/).
@@ -156,7 +172,7 @@ in [skills/mu/recipes/](skills/mu/recipes/).
   The plan is the task DAG; recipes are instructions an agent follows,
   and every step is a CLI verb.
 - **Not a model router.** mu does not pick models, thinking levels, or
-  tools. Pass them in the spawn command (`--cli pi_big`).
+  tools. Pass them in the spawn command (`--cli pi_big`, `--model <id>`).
 - **Not a chat bus.** Agents coordinate through task notes, claims, and
   the ops log, not messages to each other.
 - **Not a daemon or a service.** No background process, config file, web

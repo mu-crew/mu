@@ -4,7 +4,7 @@
 // (test/_fake-harness.ts) writes murmur inbox events for pane %3 and answers
 // the keys mu types into it.
 
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -173,6 +173,50 @@ describe("mu agent send to a hooks agent", () => {
     const r = await runCli(["agent", "send", "cdx", "hello", "-w", "auth"], dbPath);
     expect(r.exitCode).toBeNull();
     expect(r.stdout).toContain("via hooks, confirmed: run 1");
+  });
+});
+
+describe("a check sent to a just-spawned codex pane (tasks-or-calls: another family)", () => {
+  /** A codex pane before its first prompt: murmur has no row for it, as codex's session starts with that prompt. */
+  const beforeFirstPrompt = (): void => {
+    for (const f of readdirSync(fake.inbox)) rmSync(join(fake.inbox, f));
+    fake.onSubmit = () => {
+      fake.emit("session_start", { source: "startup" });
+      fake.emit("prompt_submitted");
+    };
+  };
+
+  it("--fresh --wait is refused (its state reads unknown) and types nothing", async () => {
+    beforeFirstPrompt();
+    const { doc, exitCode } = await runCliJson(
+      ["agent", "send", "cdx", "refute F1", "-w", "auth", "--fresh", "--wait", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBe(4);
+    expect(doc).toMatchObject({ error: "AgentSendGateError" });
+    expect(JSON.stringify(doc)).toContain("no row for the pane");
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("--force --wait, as the recipe says: pasted, confirmed by the first run, and its last text answers", async () => {
+    beforeFirstPrompt();
+    const text = "VERDICT: F1 REFUTED the guard runs first\nEVIDENCE: src/x.ts:12";
+    let reads = 0;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      if (fake.submitted.length > 0 && ++reads === 3) fake.emit("turn_stopped", { text });
+      return fake.pane(pane);
+    });
+    const { data, exitCode } = await runCliJson(
+      ["agent", "send", "cdx", "refute F1", "-w", "auth", "--force", "--wait", "--json"],
+      dbPath,
+    );
+    expect(exitCode).toBeNull();
+    expect(fake.submitted).toEqual(["refute F1"]);
+    expect(data).toMatchObject({
+      firing: { kind: "settled", ref: "agent:auth/cdx", incarnation: "sess-1", runs: 1 },
+      sent: { transport: "hooks", ack: "confirmed", delivered: true },
+      snapshots: [{ settled: true, lastText: text }],
+    });
   });
 });
 

@@ -1,6 +1,8 @@
 # How to run a worker on another machine
 
-The pane is local and the pi process is remote. mu never connects and
+The pane is local and the agent is remote: pi on its forwarded control
+socket, claude, codex, cursor-agent or muse on the `hooks` channel
+([below](#a-claude-codex-cursor-agent-or-muse-worker)). mu never connects and
 knows no ssh flags: a host profile holds your own command templates, and
 `mu agent spawn --host` fills them. The full recipe, with collecting and
 the traps, is in
@@ -9,12 +11,14 @@ Read it before your first remote spawn.
 
 ## Prepare the host
 
-1. On the host, install pi and the mu package:
-   `pi install npm:@mu-crew/mu`. The host needs no mu DB: a remote worker
+1. On the host, install the harnesses its workers run. For pi, add the mu
+   package: `pi install npm:@mu-crew/mu`. For claude, codex, cursor-agent or
+   muse, add murmur and its hook entries (`murmur init`). Log each harness in
+   there yourself. The host needs no mu DB: a remote worker
    cannot run `mu task` verbs. It ends with a `CLOSE:` block. `mu wait`
    applies it when it sees the run settle; `mu agent wait` does not. Re-run
    the evidence first, or close the task yourself.
-2. Allow unix-socket forwards in the host's sshd:
+2. For pi workers, allow unix-socket forwards in the host's sshd:
    `AllowStreamLocalForwarding yes`.
 3. Have a git repo there for `--worktree` to branch from. One profile serves
    every repo on the host: `--max-sessions` caps the machine, so never add
@@ -81,8 +85,8 @@ EOF
 
 ## Drive it like a local agent
 
-`mu agent send`, `wait`, `abort` and `check` go through the forwarded
-socket and behave as they do locally. `mu state` shows remote workers
+A pi worker's `mu agent send`, `wait`, `abort` and `check` go through the
+forwarded socket and behave as they do locally. `mu state` shows remote workers
 as agent records with `host`, `cwd`, `base` and `collected_head`.
 
 ## A claude, codex, cursor-agent or muse worker
