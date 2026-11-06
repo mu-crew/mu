@@ -177,7 +177,8 @@ and auth (spec D1). The rig changes exactly this:
 
 Before the first live run: trust the sandbox parent directory in claude
 (the rig's repos live under `$TMPDIR/mu-eval-*`; an AUT pane that shows a trust
-dialog gets one Enter, the default answer), and log in each harness you mix.
+dialog is answered once with the trusting choice; Claude Code defaults to "No, exit"
+when the folder pre-approves tools, as the rig's does), and log in each harness you mix.
 
 ## Running each case live
 

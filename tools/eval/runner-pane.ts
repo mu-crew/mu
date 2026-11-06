@@ -216,16 +216,18 @@ export async function runPaneAut(
       lastError = `mu orchestrate ${name} failed (${r.code}): ${(r.stderr || r.stdout).slice(0, 300)}`;
       return null;
     }
-    // a harness that reports its session at launch is ready when it has; a dialog (folder trust)
-    // in front of it gets one Enter, the default answer
+    // a harness that reports its session at launch is ready when it has; a folder-trust dialog in
+    // front of it is answered once, with the trusting choice (trustDialogKeys)
     let enter = false;
     for (let i = 0; i < 60; i++) {
       const v = io.view(sb, pane);
       if (v?.sessionId) break;
-      if ((i === 6 || i === 30) && !enter && /trust/i.test(io.capture(sb, pane) ?? "")) {
-        io.keys(sb, pane, "Enter");
+      const trustKeys =
+        (i === 6 || i === 30) && !enter ? trustDialogKeys(io.capture(sb, pane) ?? "") : null;
+      if (trustKeys !== null) {
+        for (const k of trustKeys) io.keys(sb, pane, k);
         enter = true;
-        note({ trustDialog: name });
+        note({ trustDialog: name, keys: trustKeys });
       }
       // codex reports its session only with its first prompt
       if (o.harness === "codex" && i >= 8) break;
@@ -343,4 +345,15 @@ export async function runPaneAut(
   note({ end: aborted, turns, prods, aut: current, script: o.auTScript ?? null });
   if (o.log && existsSync(sb.workerDir)) note({ muCalls: muCalls(sb).length });
   return metrics();
+}
+
+/**
+ * The keys that answer a folder-trust dialog with "trust", or null when the pane shows none.
+ * Enter takes the highlighted choice, which is the trusting one unless the cursor sits on a
+ * "No" option: Claude Code defaults to "No, exit" when the folder's settings pre-approve tools
+ * (the rig's do), so it needs Down first.
+ */
+export function trustDialogKeys(screen: string): string[] | null {
+  if (!/trust/i.test(screen)) return null;
+  return /❯\s*No\b/.test(screen) && /Yes, I trust/i.test(screen) ? ["Down", "Enter"] : ["Enter"];
 }
