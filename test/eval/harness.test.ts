@@ -599,6 +599,17 @@ describe("murmur's pane report and the observer's records", () => {
     expect(observerRecord("codex", real, meta).kind).toBe("prompt");
   });
 
+  it("drops claude's <task-notification> turns, which the harness gives itself", () => {
+    const meta = { ms: 1, agent: "w1", host: null, cwd: "/r" };
+    const n = {
+      hook_event_name: "UserPromptSubmit",
+      prompt: "<task-notification> <task-id>b1</task-id>",
+    };
+    expect(observerRecord("claude", n, meta).kind).toBe("other");
+    const real = { hook_event_name: "UserPromptSubmit", prompt: "run eval-worker" };
+    expect(observerRecord("claude", real, meta).kind).toBe("prompt");
+  });
+
   it("reads the log: harness, prompts and reports per agent", () => {
     const meta = (ms: number, agent: string) => ({ ms, agent, host: null, cwd: "/w" });
     const log = [
