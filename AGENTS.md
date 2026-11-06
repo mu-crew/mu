@@ -186,10 +186,19 @@ Call sites use `await activeMux()` and never name a backend.
    `resolveWorkerIdentity` in `src/tasks/claim.ts`.
 
 Run tmux only through `tmux(args)`, herdr only through
-`herdr(args)` and Rex only through `rex(args)`. pi agents are driven through the control socket, not
-the multiplexer. tmux refuses a send to a non-pi agent
-(`AgentSendUnsupportedError`; it has no `sendToPane`), while herdr's
-`agent prompt` is one atomic call.
+`herdr(args)` and Rex only through `rex(args)`. A send goes through the
+channel the agent's row recorded at spawn (`src/channels/`). pi agents are
+driven through the control socket (`ctl`), not the multiplexer. A hook
+harness on tmux (claude, codex, cursor-agent, muse, and pi on its
+`MU_PI_CHANNEL=hooks` fallback) is on `hooks`: mu presses the harness's
+clear-input key, pastes once (`pasteToPane`), and counts a local send
+confirmed when the harness's `run_count` in murmur's pane inbox rises; an
+unconfirmed one reports `unknown` and is never resent. A `--host` worker's
+send reports `ack: sent` without polling; the next wait or send gate reads
+the node, which confirms it. Every other pane is on `mux`:
+herdr's `agent prompt` is one atomic call, Rex pastes through its
+`sendToPane`, and tmux refuses the send (`AgentSendUnsupportedError`; it has
+no `sendToPane`).
 
 ## Known traps
 

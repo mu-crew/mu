@@ -1219,8 +1219,8 @@ function finalizeAgentRow(
   const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host, gateToken } = args;
   const hostTransport = args.hostTransport ?? null;
   // The channel every verb reaches it through, decided once from what the pane runs:
-  // pi's control socket (or, on the D15 fallback, its pane inbox), a local hook
-  // harness's pane inbox on tmux, else the mux.
+  // pi's control socket (or, on the D15 fallback, its pane inbox), a hook harness's
+  // pane inbox on tmux (local or remote), else the mux.
   const channel =
     gateToken !== undefined
       ? "mux"

@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { deleteAgent, insertAgent } from "../src/agents.js";
 import { resumeCommand } from "../src/cli/wait-output.js";
 import { type Db, openDb } from "../src/db.js";
@@ -329,9 +329,9 @@ describe("courseCheckHint / computeNotices: the course-correct trigger", () => {
         }
       ).created_at,
     );
-  const courseNote = (): void => {
-    addTask(db, { workstream: "d", localId: "cc", title: "course" });
-    addNote(db, "cc", "COURSE CHECK: on track", { workstream: "d" });
+  const courseNote = (ws = "d"): void => {
+    addTask(db, { workstream: ws, localId: "cc", title: "course" });
+    addNote(db, "cc", "COURSE CHECK: on track", { workstream: ws });
   };
 
   it("a fresh workstream: nothing due, even a day later", () => {
@@ -370,6 +370,22 @@ describe("courseCheckHint / computeNotices: the course-correct trigger", () => {
     expect(courseCheckHint(db, "d")).toBeUndefined();
     closeN(COURSE_CHECK_CLOSED, "d", COURSE_CHECK_CLOSED);
     expect(courseCheckHint(db, "d")).toMatch(/^course check due: 10 closed/);
+  });
+
+  it("one millisecond for everything: closes count against the creation; the check splits by write order", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      ensureWorkstream(db, "s");
+      closeN(COURSE_CHECK_CLOSED, "s");
+      expect(courseCheckHint(db, "s")).toMatch(/^course check due: 10 closed/);
+      courseNote("s");
+      expect(courseCheckHint(db, "s")).toBeUndefined();
+      closeN(COURSE_CHECK_CLOSED, "s", COURSE_CHECK_CLOSED);
+      expect(courseCheckHint(db, "s")).toMatch(/^course check due: 10 closed/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("counts only CLOSED/done work tasks of THIS workstream", () => {
