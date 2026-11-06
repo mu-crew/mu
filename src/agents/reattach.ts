@@ -220,7 +220,8 @@ function install(db: Db, ws: string, p: Plan, pid: string): number {
         ...{ tab: r.name, cwd: rec?.cwd ?? null, base: rec?.base ?? null },
         ...{ collectedHead: rec?.collectedHead ?? null, repo: rec?.hostRepo ?? null },
         ...{ command: "pi", commandSource: "cli-key", spawner: spawnerFromEnv() },
-        ...{ host: r.host, hostTransport: "lease" },
+        // Reattach is pi only, over the forwarded control socket: recorded, never derived.
+        ...{ host: r.host, hostTransport: "lease", channel: "ctl" },
       });
       if (!rebindCarrierJobAgent(db, r, r, { agentId: incarnation, paneId: pid })) {
         throw new Error("the reservation changed");

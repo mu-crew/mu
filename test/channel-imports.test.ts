@@ -112,6 +112,8 @@ const CTL_IMPORTS: Record<string, readonly string[]> = {
   "src/agents/spawn.ts": ["CTL_SOCK_ENV", "ctlSocketPath"],
   "src/agents/spawn-ready.ts": ["CtlProbe", "ctlProbe"],
   "src/agents/lease-carrier.ts": ["carrierJobFilePath"],
+  // reattach: a new lease carrier forwards the reaped pi's control socket
+  "src/agents/reattach.ts": ["ctlSocketPath", "remoteCtlSocketPath"],
   "src/remote-agent.ts": ["remoteCtlSocketPath"],
 };
 
