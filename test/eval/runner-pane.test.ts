@@ -186,6 +186,16 @@ describe("the pi AUT's phases", () => {
     expect(m.turns).toBe(2);
   });
 
+  it("a live hook-harness case runs pi without a token cap, like a claude or codex AUT", async () => {
+    calls.length = 0;
+    const hooked = { ...scenario(), replacement: undefined, hookHarnesses: { workers: ["codex"] } };
+    await runPiAut(sandbox(), one(hooked as Scenario, true), fakeRun);
+    expect(calls[0]?.opts.tokenCap).toBe(Number.POSITIVE_INFINITY);
+    calls.length = 0;
+    await runPiAut(sandbox(), one(hooked as Scenario, false), fakeRun);
+    expect(calls[0]?.opts.tokenCap).toBeUndefined();
+  });
+
   it("live, phase 1 stops on crashWhen", async () => {
     calls.length = 0;
     let asked = 0;
