@@ -355,7 +355,8 @@ export async function runPaneAut(
  * The keys that answer a trust dialog with "trust", or null when the pane shows none. A dialog is
  * a selector (a line led by ❯ or ›) with a trusting option: Claude Code's "Yes, I trust this
  * folder" (its cursor starts on "No, exit" when the folder's settings pre-approve tools, as the
- * rig's do), codex's folder "Yes, continue" and its hook review's "Trust all and continue" (its
+ * rig's do), codex's folder "Yes, continue" or "Trust and continue" and its hook review's "Trust all
+ * and continue" (its
  * cursor starts on "Review hooks"). The keys move the cursor to that option, then Enter.
  */
 export function trustDialogKeys(screen: string): string[] | null {
@@ -363,7 +364,7 @@ export function trustDialogKeys(screen: string): string[] | null {
   const lines = screen.split("\n");
   const cursor = lines.findIndex((l) => /^\s*[❯›]\s/.test(l));
   const target = lines.findIndex((l) =>
-    /yes, i trust|trust all and continue|^\s*[❯›]?\s*(\d+\.\s*)?yes, (continue|allow)/i.test(l),
+    /yes, i trust|trust (all )?and continue|^\s*[❯›]?\s*(\d+\.\s*)?yes, (continue|allow)/i.test(l),
   );
   if (cursor < 0 || target < 0) return null;
   const move = target - cursor;

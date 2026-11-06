@@ -238,6 +238,11 @@ describe("trustDialogKeys", () => {
     ].join("\n");
     expect(trustDialogKeys(screen)).toEqual(["Down", "Enter"]);
   });
+  it("takes the codex launcher's folder 'Trust and continue'", () => {
+    const screen =
+      "  trust these files. Your trust decision will be saved.\n› 1. Trust and continue\n  2. Back to Agent Launcher\n  enter continue · esc back";
+    expect(trustDialogKeys(screen)).toEqual(["Enter"]);
+  });
   it("takes codex's folder 'Yes, continue'", () => {
     const screen = "  Do you trust the files in this folder?\n› 1. Yes, continue\n  2. No, quit";
     expect(trustDialogKeys(screen)).toEqual(["Enter"]);

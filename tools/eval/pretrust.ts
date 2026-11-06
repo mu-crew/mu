@@ -51,7 +51,7 @@ export interface PretrustIO {
 
 const TICK_MS = 500;
 /** Default deadline for one harness to show a ready prompt. */
-export const PRETRUST_TIMEOUT_MS = 45_000;
+export const PRETRUST_TIMEOUT_MS = 150_000;
 /** How long a quit harness gets to exit before its pane is killed. */
 const QUIT_MS = 5_000;
 const MAX_ANSWERS = 4;
