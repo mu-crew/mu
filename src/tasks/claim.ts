@@ -240,6 +240,8 @@ export interface ClaimTaskOptions extends AttributedEvidence {
    * scheduler", so overriding it must be explicit.
    */
   force?: boolean;
+  /** Refuse a task that is not OPEN, checked in the claim transaction (a plain claim takes an unowned CLOSED one). */
+  onlyOpen?: boolean;
 }
 
 export interface ClaimResult {
@@ -347,6 +349,9 @@ async function claimTaskImpl(
         if (!before) throw new TaskNotFoundError(localId, opts.workstream);
         assertTaskRevision(db, before.workstreamName, localId, opts.ifRevision);
         assertNotParked(before, opts);
+        if (opts.onlyOpen === true && before.status !== "OPEN") {
+          throw new Error(say("task.not_open", localId, before.status, before.ownerName));
+        }
         // The name was resolved before this transaction began: re-read it now
         // and refuse an incarnation the caller did not mean.
         if (opts.expectedAgentId !== undefined) {

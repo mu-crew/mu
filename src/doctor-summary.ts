@@ -7,13 +7,15 @@ import { accessSync, constants, existsSync, readFileSync, realpathSync } from "n
 import { delimiter, dirname, join, parse } from "node:path";
 import { fileURLToPath } from "node:url";
 import { murmurAvailable, UNKNOWN_REASON } from "./agent-state.js";
+import { leaseJobFile, stopFailedPath } from "./agents/lease-carrier.js";
 import type { AgentRow } from "./agents.js";
-import { type CarrierLaunch, listCarrierJobs } from "./carrier-jobs.js";
+import type { CarrierLaunch } from "./carrier-jobs.js";
 import { piOnHooks, servesCtl } from "./channels/index.js";
 import { type CtlProbe, ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import { CTL_OPS } from "./ctl/protocol.js";
 import type { Db } from "./db.js";
+import { goneReservations, readStopFailed } from "./leftovers.js";
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 
@@ -331,23 +333,17 @@ export interface LeaseJobHint {
   /** The incarnation it was bound to; null when finalize never ran. */
   agentId: number | null;
   reason: string | null;
+  /** The path of the job's stop-failure record (its full line), when one is there. */
+  stopFailed: string | null;
   close: string;
 }
 
 /** Every reservation whose agent is gone or never bound (doctor's `lease-job` hint). Read only. */
 export function leaseJobHints(db: Db): LeaseJobHint[] {
-  const agentIds = new Set(
-    (db.prepare("SELECT id FROM agents").all() as { id: number }[]).map((r) => r.id),
-  );
-  const named = db.prepare(
-    `SELECT 1 FROM agents a JOIN workstreams w ON w.id = a.workstream_id
-      WHERE w.name = ? AND a.name = ?`,
-  );
-  return listCarrierJobs(db)
-    .filter((j) =>
-      j.agentId === null ? named.get(j.workstream, j.name) === undefined : !agentIds.has(j.agentId),
-    )
-    .map((j) => ({
+  return goneReservations(db).map((j) => {
+    const jobFile = leaseJobFile(db, j.workstream, j.name);
+    const failed = j.job !== null && readStopFailed(jobFile, j.job) !== null ? j.job : null;
+    return {
       workstream: j.workstream,
       name: j.name,
       host: j.host,
@@ -355,8 +351,10 @@ export function leaseJobHints(db: Db): LeaseJobHint[] {
       launch: j.launch,
       agentId: j.agentId,
       reason: j.reason,
+      stopFailed: failed === null ? null : stopFailedPath(jobFile, failed),
       close: `mu agent close ${j.name} -w ${j.workstream}`,
-    }));
+    };
+  });
 }
 
 /** One line per hint, for the human doctor. */
@@ -365,5 +363,6 @@ export function leaseJobHintLine(h: LeaseJobHint): string {
     h.job !== null
       ? `job ${h.job}`
       : `no job handle (launch ${h.launch}${h.reason === null ? "" : `, ${h.reason}`})`;
-  return `${h.workstream}/${h.name} on ${h.host}: ${what}, agent ${h.agentId === null ? "never bound" : "gone"}: ${h.close}`;
+  const failed = h.stopFailed === null ? "" : `, its stop failed (see ${h.stopFailed})`;
+  return `${h.workstream}/${h.name} on ${h.host}: ${what}, agent ${h.agentId === null ? "never bound" : "gone"}${failed}: ${h.close}`;
 }

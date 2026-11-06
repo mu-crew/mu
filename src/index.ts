@@ -21,6 +21,15 @@ export {
   LeaseJobUnreadableError,
 } from "./agents/lease-carrier.js";
 export {
+  type Blocker,
+  previewReattach,
+  ReattachFailedError,
+  ReattachRefusedError,
+  type ReattachResult,
+  reattachAgent,
+  reattachBlockers,
+} from "./agents/reattach.js";
+export {
   type AbortAgentOptions,
   type AbortResult,
   AgentAbortNeedsCtlError,
@@ -465,6 +474,8 @@ export {
 export {
   getRemoteRecovery,
   listRemoteRecoveries,
+  RemotePathOwnedError,
+  type RemotePathOwner,
   type RemoteRecovery,
   RemoteRecoveryPendingError,
   type RemoteRecoveryReason,

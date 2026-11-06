@@ -461,6 +461,10 @@ export async function paneAlive(paneId: string): Promise<boolean> {
   return (await blockSession(paneId)) !== undefined;
 }
 
+export function killPaneCommand(paneId: string): MuxCommand {
+  return { command: rexBinary(), args: [...rexGlobalFlags(), "block", "close", paneId] };
+}
+
 /** Idempotent: succeeds when the block is already gone. */
 export async function killPane(paneId: string): Promise<void> {
   assertValidPaneId(paneId);
@@ -699,6 +703,7 @@ export const rexBackend: MuxBackend = Object.freeze({
   paneResult,
   panePid,
   killPane,
+  killPaneCommand,
   capture,
 
   attachCommands,

@@ -21,7 +21,9 @@
 // them); nothing here runs a host command.
 
 import type { Db } from "./db.js";
+import { OWNED } from "./db-recovery.js";
 import { say } from "./messages.js";
+import { shellWord } from "./shell-quote.js";
 
 /** Why the row went away: `reap` (any plain delete), a `teardown`, or its workstream's deletion. */
 export type RemoteRecoveryReason = "reap" | "teardown" | "workstream-delete";
@@ -228,6 +230,116 @@ export function refuseRecoveredWorktree(
   if (ids.length > 0) throw new RemoteRecoveryPendingError(workstream, name, host, ids, all.length);
 }
 
+/** What owns a remote path a non-`--worktree` spawn resolved: a managed remote worktree's agent, or a recovery record. */
+export type RemotePathOwner =
+  | {
+      kind: "agent";
+      workstream: string;
+      name: string;
+      repo: string | null;
+      head: string;
+      repoOwned?: boolean;
+    }
+  | { kind: "recovery"; rec: RemoteRecovery };
+
+/**
+ * Who owns path `cwd` on host profile `host`, for a remote spawn's admission. EXACT path and
+ * profile name (no descendants, no host aliases): a registered agent of any workstream whose
+ * managed remote worktree it is (db-recovery's OWNED provenance), else any recovery record
+ * whose canonical or aside path it is (the newest: an older record's close refuses while it
+ * exists). Agents sharing an unmanaged checkout own nothing. A recovery's own admission is
+ * the stricter assertRecoveryUsable. Read only, no liveness probe.
+ */
+export function remotePathOwner(db: Db, host: string, cwd: string): RemotePathOwner | undefined {
+  const agent = db
+    .prepare(
+      `SELECT ws.name AS workstream, a.name AS name, a.repo AS repo, COALESCE(a.collected_head, a.base) AS head
+         FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id
+        WHERE a.host = ? AND a.cwd = ? AND ${OWNED("a")} ORDER BY a.id LIMIT 1`,
+    )
+    .get(host, cwd) as Omit<RemotePathOwner & { kind: "agent" }, "kind"> | undefined;
+  if (agent !== undefined) return { kind: "agent", ...agent };
+  const rec = db
+    .prepare(
+      "SELECT * FROM remote_recovery WHERE host = ? AND (cwd = ? OR aside = ?) ORDER BY agent_id DESC LIMIT 1",
+    )
+    .get(host, cwd, cwd) as RawRow | undefined;
+  return rec === undefined ? undefined : { kind: "recovery", rec: rowToRecovery(rec) };
+}
+
+/** The pane a refusal found already open: proven gone, or held by another agent's row (left alone), or neither. */
+export interface RefusedPane {
+  id: string;
+  backend: string;
+  gone: boolean;
+  /** `<workstream>/<name>` of the agent whose row now holds the pane id. */
+  heldBy?: string;
+  /** The backend's own kill of that pane, one shell line. */
+  kill: string;
+}
+
+/**
+ * A remote spawn whose resolved cwd another agent's managed remote worktree, or a recovery
+ * record, owns on that host: a second user could lose its work or its commits' attribution.
+ * Exit 4. `next` holds the owner's executable way out, of the refused spawn's kind: a command
+ * gate (`gate` is its --command) is offered its repo unless that is owned too, never --worktree. `pane` is
+ * set when the owner appeared while the spawn's pane was opening.
+ */
+export class RemotePathOwnedError extends Error {
+  override readonly name = "RemotePathOwnedError";
+  readonly next: readonly string[];
+  constructor(
+    public readonly workstream: string,
+    public readonly agentName: string,
+    public readonly host: string,
+    public readonly cwd: string,
+    public readonly owner: RemotePathOwner,
+    public readonly gate?: string,
+    public readonly pane?: RefusedPane,
+  ) {
+    const w = shellWord;
+    const root = (flag: string) =>
+      owner.kind === "agent" && owner.repo !== null ? ` ${flag} ${w(owner.repo)}` : "";
+    const again = `mu agent spawn ${w(agentName)} -w ${w(workstream)} --host ${w(host)}`;
+    const next =
+      owner.kind === "agent"
+        ? [
+            `mu agent close ${w(owner.name)} -w ${w(owner.workstream)}`,
+            gate === undefined
+              ? `${again} --worktree${root("--root")} --from ${w(owner.head)}`
+              : `${again}${root("--cwd")} --command ${w(gate)}`,
+          ].slice(0, gate !== undefined && owner.repoOwned === true ? 1 : 2)
+        : ["collect", "close"].map(
+            (verb) =>
+              `mu agent ${verb} ${w(owner.rec.name)} -w ${w(owner.rec.workstream)} --recovery ${owner.rec.agentId}`,
+          );
+    const what =
+      owner.kind === "agent"
+        ? say("remote.path_owned_agent", workstream, agentName, host, cwd, owner, next, gate)
+        : say("remote.path_owned_recovery", workstream, agentName, host, cwd, owner.rec, next);
+    super(what + say("remote.path_owned_pane", host, pane));
+    this.next = next;
+  }
+}
+
+/** Refuse a remote spawn into `cwd` on `host` while something owns it (remotePathOwner). Read only. */
+export function refuseOwnedRemotePath(
+  db: Db,
+  spawn: { workstream: string; name: string },
+  host: string,
+  cwd: string,
+  /** A command gate's --command: its way out stays a gate. */
+  gate?: string,
+): void {
+  const owner = remotePathOwner(db, host, cwd);
+  if (owner !== undefined) {
+    // A --worktree --root <managed tree> spawn records that tree as its repo: not unmanaged.
+    if (owner.kind === "agent" && owner.repo !== null)
+      owner.repoOwned = remotePathOwner(db, host, owner.repo) !== undefined;
+    throw new RemotePathOwnedError(spawn.workstream, spawn.name, host, cwd, owner, gate);
+  }
+}
+
 /** The profile at the time of use must be the one the record pinned. Missing provenance refuses. */
 export function assertRecoveryProfile(
   rec: RemoteRecovery,
@@ -335,6 +447,17 @@ export function deleteRemoteRecovery(db: Db, rec: RemoteRecovery): boolean {
   return (
     db.prepare(`DELETE FROM remote_recovery WHERE ${SAME}`).run(...sameArgs(rec)).changes === 1
   );
+}
+
+/** Put back exactly `r`, every column (a reattach's readiness rollback). Throws when its `agent_id` exists. */
+export function restoreRemoteRecovery(db: Db, r: RemoteRecovery): void {
+  const row = Object.fromEntries(
+    Object.entries(r).map(([k, v]) => [k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`), v]),
+  );
+  const cols = Object.keys(row);
+  db.prepare(
+    `INSERT INTO remote_recovery (${cols.join(", ")}) VALUES (${cols.map((c) => `@${c}`).join(", ")})`,
+  ).run(row);
 }
 
 /** Record a collected HEAD on exactly this record (compare-and-set). False when it moved. */

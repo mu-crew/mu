@@ -268,16 +268,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   so two started together never both run. `mu next --as` refuses only with
   `--hold`.
 
-- **`mu host add --attach <template>`**: a lease profile's optional template
-  that opens a new carrier for a job that still runs (2026-11-04 aiv-blog
-  incident; the reattach verb builds on it). It takes `{job}` and `{job_file}`
-  exactly once, `{local_sock}` and `{remote_sock}`, and `{cwd}` (always `.`);
-  `{cmd}` and `{env}` are refused, as is `--attach` on a session profile.
-  `host init --mule` prints the `mule run --lease --attach` starter line;
-  `host show` and `host list` print it; `host check` expands it with a dummy
-  handle and never runs it. Stored as `host_profiles.attach`, added in place
-  to a v13 file (no version bump).
-
 - **Queued is not stalled** (spec D14). An agent off ctl whose pane holds a
   `muzzle run` waiting for slots fires no hook events while it waits. mu now
   asks `muzzle status --json` (muzzle with waiter `pid`s, cached 5 s; nothing
@@ -522,6 +512,130 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   neither was one closed in the millisecond of the check. Notes are now
   ordered by time and then id: every close counts against the creation, and a
   close in the check's millisecond counts only if it was written after it.
+
+## [4.4.1] — 2026-11-05
+
+### Changed
+
+- **A remote spawn refuses another owner's tree** (follow-up of reattach's
+  install check, 2026-11-05). `mu agent spawn --host <profile>` without
+  `--worktree` refuses (exit 4, `RemotePathOwnedError`) when the cwd its exec
+  resolved is exactly, on that profile, another agent's managed remote
+  worktree (host, cwd and base recorded; any workstream) or the path or aside
+  of any `remote_recovery` record. Before, it succeeded and left two owners:
+  close removes a managed tree and collect credits its commits to its owner,
+  so the second user lost work or attribution. This refuses what used to
+  work: sending a reviewer into a worker's tree. Give it its own tree with
+  `--worktree --from <the worker's commit>`; the error prints that command,
+  or the owner's close, or the record's collect and close with
+  `--recovery <id>`. A refused command gate is offered the owner's close or
+  the gate in an unmanaged checkout (`--cwd <repo root> --command <cmd>`;
+  only the close when that root is itself a managed tree), never `--worktree`. Unmanaged checkouts stay shareable; subdirectories and
+  other profiles naming the same host are not checked. The check runs right
+  after prepare's exec (no pane, the agent never starts) and again in one
+  immediate transaction with the row's insert; an owner that landed while
+  the pane opened refuses there, after a kill, and a pane mu cannot prove
+  gone is named with its backend's kill command (new `MuxBackend.killPaneCommand`);
+  a pane id another agent's row now holds is left alone and said so, with
+  no kill offered.
+  Recovery, reattach, collect and close keep their own stricter checks.
+
+## [4.4.0] — 2026-11-05
+
+### Added
+
+- **`mu host add --attach <template>`**: a lease profile's optional template
+  that opens a new carrier for a job that still runs (2026-11-04 aiv-blog
+  incident; the reattach verb builds on it). It takes `{job}` and `{job_file}`
+  exactly once, `{local_sock}` and `{remote_sock}`, and `{cwd}` (always `.`);
+  `{cmd}` and `{env}` are refused, as is `--attach` on a session profile.
+  `host init --mule` prints the `mule run --lease --attach` starter line;
+  `host show` and `host list` print it; `host check` expands it with a dummy
+  handle and never runs it. Stored as `host_profiles.attach`, added in place
+  to a v13 file (no version bump).
+- **`mu agent reattach <name> -w <ws> [--if <rev>]`**: open a new carrier pane
+  for a reaped lease agent whose job still runs (2026-11-04 aiv-blog incident:
+  a tmux restart killed six lease panes, reconcile reaped the rows, and the
+  jobs on a host with no master kept running with no way back). Bare previews
+  (read only, `rev`); `--if <rev>` applies. The preflight refuses (exit 4,
+  `ReattachRefusedError`, nothing changed, the close preview in `close`) unless
+  the name has no row, one reservation bound to a spawned incarnation with a
+  handle in this workstream generation (`carrier_jobs.workstream_id`, stamped
+  at the bind and added in place to a v13 file; a reservation bound before it
+  refuses as unknown), a previous pane and spawn process proven gone, a lease profile with an
+  `attach` and the admitted `stop`, a usable recovery record (if any) and a job
+  file that is absent or names the handle. The apply runs the profile's attach
+  template in a new pane and, in one transaction, re-checks the record's
+  admission (no other agent, in any workstream, on its host and path, no newer
+  record of it, the pinned profile: another workstream's `--cwd` spawn can take
+  the path during the apply's awaits), inserts the row (pi, the record's tree),
+  rebinds the reservation and drops the record. A path taken by then kills the
+  new pane and refuses (`ReattachRefusedError`; `pane-unknown` as below when the
+  kill is not proven). A carrier that
+  ends (job not running, no master) is rolled back with the record restored
+  (`ReattachFailedError`, exit 4, the pane's scrollback); ctl `missing`/`refused`
+  keeps the row (`ready: false`). An install that fails points the
+  reservation at the new pane, then kills it: a kill not proven by a pane
+  probe reports `rollback: pane-unknown` with the pane, and the next reattach
+  refuses while it may run. A pointer write that fails (the writer lock that
+  failed install) or loses its compare-and-set never skips the kill; an
+  unproven kill retries it once, and if it still fails the error says the
+  reservation does not name the pane. Before the pane is requested the apply
+  publishes a pending-carrier marker (`<db dir>/locks/agent-<ws>.<name>.reattach-pending`;
+  a failed write opens no pane) and removes it only once the pane is installed,
+  named on the reservation or proven gone: after a double fault or a process
+  killed mid-apply, the next reattach refuses while that pane may run (an
+  unreadable or malformed marker, or one naming no pane, refuses too, naming
+  the file to `rm`, shell-quoted so the printed command pastes as is).
+  Preview and apply take the facts and the rev from one snapshot after the
+  pane probe; a reservation that keeps changing refuses
+  (`AgentReplacedError`, exit 4). Pi only: no other cli is stored. Logs
+  `agent.reattach`. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_adopt.
+  `--task <id>` (repeatable) claims each task back for the new incarnation
+  once ctl answers (`force`, since the reaper parked it; only an OPEN task, and
+  only while the name is still this incarnation). A refused claim is a warning
+  in `claims: [{task, ok, error}]`, exit 0; with ctl not ready every claim is
+  `skipped: ctl not ready`.
+- **Leftovers in `mu agent list`** (2026-11-04 aiv-blog incident: the list
+  printed `"orphans": []` while reservations and recovery records were left).
+  `data.leftovers` (bare and `--json`, `[]` when empty; the envelope and its
+  `next` are unchanged) lists each lease reservation whose agent is gone
+  (`kind: lease-job`, its recovery record folded in by agent id) and each
+  other remote recovery record (`kind: recovery`), keys `kind name host job
+  agent_id recovery_id stop_failed next`. `next` is one preview: `mu agent
+  reattach <name> -w <ws>` when reattach's preflight is clear, else `mu agent
+  close <name> -w <ws>` (a record's always with `--recovery <id>`). A lease
+  job's stop-failure record (`<job_file>.<job>.stop-failed`) shows only when it
+  names that handle, as the text after `<job> ` escaped like a task record (C0,
+  C1, bidi, U+2028/9; other Unicode as is), cut at 160 chars and so the whole
+  record (JSON item and table line) stays <= 400: ` cut=<n> full: mu doctor`,
+  or `cut=<n>` alone with no room, or null when even that passes 400. The cap
+  bounds stop_failed; identity and next are never cut, so at mu's limits
+  (32-char name, host and workstream, 128-char handle, `--recovery` id >= 100)
+  the record alone may pass 400. `--table` prints a
+  `Leftovers (n)` section. No host command runs. mu removes the record once a
+  stop (close or spawn rollback) or a ready reattach proves the job; an
+  abandon keeps it. Doctor's `lease-job` hint prints the record's path.
+  Spec: docs/specs/2026-11-04-lease-adopt.md § mu_list.
+
+### Changed
+
+- **The reaper parks a still-reserved lease agent's tasks.** When reconcile
+  (or any deleter but `agent close`) removes a lease row whose reservation
+  holds a job, its `IN_PROGRESS` tasks reopen as `OPEN/parked`, not
+  `OPEN/todo`: pane loss proves the carrier gone, not the job, so `mu next`
+  and a plain claim no longer hand the task to a second worker while the
+  original pi may still write (2026-11-04 aiv-blog incident). The `[reaper]`
+  note names the job, the host and both ways out: `mu agent reattach <name>
+  -w <ws> --task <id>`, or `mu agent close` then `mu task unpark <id>`.
+  A task owned from another workstream (`claim --for <ws>/<name>`) gets two
+  steps instead, since `--task` resolves ids in the agent's workstream:
+  reattach, then `mu task claim <id> -w <task-ws> --for <ws>/<name> --force`
+  (or close, then `mu task unpark <id> -w <task-ws>`).
+  `agent close` stopped (or abandoned) the job, so its tasks reopen as `todo`
+  as before. Spec: docs/specs/2026-11-04-lease-adopt.md § mu_reap.
+
+### Fixed
 
 - **`mu agent close <name>` with no agent row no longer leaves a stopped lease
   job fencing the name.** It stopped the job (`stop` exit 0), then closed the

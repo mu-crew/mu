@@ -3,9 +3,9 @@
 // command. A HINT: never a fail row, never a non-zero exit. Fast tier: in-process
 // runCli, per-test temp DB and state dir, mocked tmux.
 
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { deleteAgent, insertAgent } from "../src/agents.js";
 import {
@@ -14,6 +14,7 @@ import {
   markCarrierLaunch,
   reserveCarrierJob,
 } from "../src/carrier-jobs.js";
+import { carrierJobFilePath } from "../src/ctl/path.js";
 import { openDb } from "../src/db.js";
 import { leaseJobHints } from "../src/doctor-summary.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -99,6 +100,25 @@ describe("doctor lease-job hint", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("a stop-failure record of the job puts its path on the hint; another id's does not", async () => {
+    const jobFile = carrierJobFilePath("auth", "w-gone", dir);
+    mkdirSync(dirname(jobFile), { recursive: true });
+    writeFileSync(`${jobFile}.job-9.stop-failed`, "job-9 on dev not stopped: no control master\n");
+    writeFileSync(`${jobFile}.job-1.stop-failed`, "job-1 other\n");
+    const db = openDb({ path: dbPath });
+    try {
+      const [gone, never] = leaseJobHints(db);
+      expect(gone?.stopFailed).toBe(`${jobFile}.job-9.stop-failed`);
+      expect(never?.stopFailed).toBeNull();
+    } finally {
+      db.close();
+    }
+    const r = await runCli(["doctor"], dbPath);
+    expect(r.stdout).toContain(
+      `auth/w-gone on dev: job job-9, agent gone, its stop failed (see ${jobFile}.job-9.stop-failed): mu agent close w-gone -w auth`,
+    );
   });
 
   it("the human doctor prints a hint row (not FAIL) and exits 0", async () => {

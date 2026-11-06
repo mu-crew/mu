@@ -373,6 +373,7 @@ export class AgentPaneStillAliveError extends Error {
  * `agent close`: whatever it already did to the ORIGINAL (a pane kill)
  * stands. `agent spawn --send` / `--task`: the prompt was NOT written. In
  * both the replacement's row, socket, worktree and tasks are untouched.
+ * `agent reattach`: the name's reservation kept moving while it was planned; nothing was done.
  * Exit 4.
  */
 export class AgentReplacedError extends Error {
@@ -380,12 +381,12 @@ export class AgentReplacedError extends Error {
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
-    during: "closed" | "sent to" | "collected" = "closed",
+    during: "closed" | "sent to" | "collected" | "reattached" = "closed",
   ) {
     super(say("agent.replaced", agentName, workstream, during));
     this.during = during;
   }
-  readonly during: "closed" | "sent to" | "collected";
+  readonly during: "closed" | "sent to" | "collected" | "reattached";
 }
 
 /**

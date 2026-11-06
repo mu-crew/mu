@@ -17,7 +17,9 @@ export const CARRIER_JOBS_DDL = `
 -- the admitted stop template. 'tree_path'/'tree_agent_id': the remote worktree a
 -- --worktree spawn prepared for it (path on 'host', and the placeholder incarnation a
 -- recovery record would carry); a close with no agent row releases the reservation
--- only once THAT tree's close succeeded.
+-- only once THAT tree's close succeeded. 'workstream_id': the id of the workstream the
+-- bound agent row lived in, stamped at finalize's bind (NULL before, or on a reservation
+-- older than the column); a reattach refuses unless it is the live workstream's id.
 CREATE TABLE IF NOT EXISTS carrier_jobs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   token         TEXT NOT NULL UNIQUE,
@@ -36,7 +38,8 @@ CREATE TABLE IF NOT EXISTS carrier_jobs (
   created_at    TEXT NOT NULL,
   recorded_at   TEXT,
   tree_path     TEXT,
-  tree_agent_id INTEGER
+  tree_agent_id INTEGER,
+  workstream_id INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_jobs_name ON carrier_jobs (workstream, name, ordinal);
 `;

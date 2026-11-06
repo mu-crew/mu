@@ -621,6 +621,10 @@ function readPanes(result: Record<string, unknown>): MuxPane[] {
   return out;
 }
 
+export function killPaneCommand(paneId: string): MuxCommand {
+  return { command: "herdr", args: [...herdrGlobalFlags(), "pane", "close", paneId] };
+}
+
 /** Idempotent: succeeds even if the pane is already gone. */
 export async function killPane(paneId: string): Promise<void> {
   assertValidPaneId(paneId);
@@ -1224,6 +1228,7 @@ export const herdrBackend: MuxBackend = Object.freeze({
   listPanes,
   paneAlive,
   killPane,
+  killPaneCommand,
   capture,
 
   attachCommands,

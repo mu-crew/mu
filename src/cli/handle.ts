@@ -27,6 +27,7 @@ import {
   CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
 } from "../agents/lease-carrier.js";
+import { ReattachFailedError, ReattachRefusedError } from "../agents/reattach.js";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -118,7 +119,11 @@ import { encodeEnvelope, type NextPlan, RESULT_BYTES } from "../output-contract.
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-agent.js";
 import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
-import { RemoteRecoveryPendingError, RemoteRecoveryRefusedError } from "../remote-recovery.js";
+import {
+  RemotePathOwnedError,
+  RemoteRecoveryPendingError,
+  RemoteRecoveryRefusedError,
+} from "../remote-recovery.js";
 import { RevisionMismatchError } from "../revision.js";
 import { syncDir } from "../segments.js";
 import {
@@ -497,6 +502,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RemoteRecoveryRefusedError ||
     // A same-host --worktree spawn of a name a recovery record still names.
     err instanceof RemoteRecoveryPendingError ||
+    // A remote spawn into another agent's managed worktree or a recovery's path.
+    err instanceof RemotePathOwnedError ||
     // A recorded job handle whose stop template changed, or whose profile is gone: nothing ran.
     err instanceof CarrierStopRefusedError ||
     // A respawn of a name whose older incarnation's job was never stopped.
@@ -504,6 +511,9 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // A lease close with no handle it can stop, or a reservation it had to keep.
     err instanceof CarrierJobUnresolvedError ||
     err instanceof CarrierJobKeptError ||
+    // A reattach whose preflight refused, or whose new carrier did not take.
+    err instanceof ReattachRefusedError ||
+    err instanceof ReattachFailedError ||
     err instanceof HostInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
@@ -838,6 +848,8 @@ function emitError(err: unknown): number {
       extra.candidate_ids = err.candidateIds;
     }
     if (err instanceof NameAmbiguousError) extra.candidates = err.candidates;
+    // A reattach refusal's way out, a read (so not in `next`): the close preview.
+    if (err instanceof ReattachRefusedError) extra.close = err.closeCommand;
     // A send whose delivery is unknown still names its receipt, structurally.
     if (err instanceof AgentSendIndeterminateError && err.msgId !== undefined) {
       extra.msgId = err.msgId;

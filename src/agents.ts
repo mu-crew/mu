@@ -575,8 +575,10 @@ export function deleteAgent(
    * `preserve: false` skips the remote recovery record: only for a close that
    * has itself just removed (or found gone) the worktree. Every other
    * deleter keeps what the row says about it (src/remote-recovery.ts).
+   * `leaseSettled: true` (a close that stopped or abandoned the lease job)
+   * reopens its tasks as todo, not parked (src/agents/reap.ts).
    */
-  opts: { preserve?: boolean } = {},
+  opts: { preserve?: boolean; leaseSettled?: boolean } = {},
 ): boolean {
   const deleted = deleteAgentRow(db, name, workstream, expected, opts);
   if (deleted) unlinkCtlSocket(db, name, workstream);
@@ -594,7 +596,7 @@ function deleteAgentRow(
   name: string,
   workstream: string,
   expected: string | AgentIdentity | undefined,
-  opts: { preserve?: boolean },
+  opts: { preserve?: boolean; leaseSettled?: boolean },
 ): boolean {
   const want: AgentIdentity =
     typeof expected === "string" ? { paneId: expected } : (expected ?? {});
@@ -635,6 +637,7 @@ function deleteAgentRow(
         }
         return reapAgentRow(db, agentId, name, {
           preserve: opts.preserve !== false,
+          leaseSettled: opts.leaseSettled === true,
         });
       })
       .immediate(),

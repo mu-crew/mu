@@ -662,6 +662,8 @@ const ADDED_COLUMNS: readonly (readonly [table: string, column: string, ddl: str
   // A lease reservation's remote worktree (src/carrier-jobs.ts): which tree it belongs to.
   ["carrier_jobs", "tree_path", "TEXT"],
   ["carrier_jobs", "tree_agent_id", "INTEGER"],
+  // The workstream generation the reservation was bound in (src/carrier-jobs.ts).
+  ["carrier_jobs", "workstream_id", "INTEGER"],
   // The last `host check` harness probe and its time, JSON (spec D17; src/host-harnesses.ts).
   ["host_profiles", "capabilities", "TEXT"],
 ];
