@@ -241,6 +241,8 @@ export type DeliveryOptions = SendOptions & {
    * Internal, hooks only: mu has recorded no send to this agent since its
    * spawn (`sentSinceSpawn`). A plain send may then pass a codex or muse pane
    * murmur has no row for yet without `force` (spec D4); absent, it is refused.
+   * Such a pane's ack also waits `MU_FIRST_SEND_ACK_MS`, not `MU_SEND_ACK_MS`.
+   * A fresh task spawn's pointer passes it with `force`.
    */
   firstPrompt?: boolean;
   /**

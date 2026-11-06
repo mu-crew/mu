@@ -66,6 +66,7 @@ import { sleep } from "../tmux.js";
 import { paneUp } from "./ctl.js";
 import {
   eventArrived,
+  firstSendAckMs,
   freshStarted,
   type HooksPane,
   pollPane,
@@ -178,6 +179,28 @@ async function gateAndPaste(
   return before;
 }
 
+/**
+ * True when the paste is the first prompt of a first-prompt harness (codex,
+ * muse), so its ack gets `firstSendAckMs`: a launcher may still be starting
+ * the harness. mu's own evidence comes first, as for `awaitsFirstPrompt`: the
+ * caller sends this incarnation's first prompt (`firstPrompt`). Then murmur
+ * answered for the pane with no agent row, which such a pane has until that
+ * prompt (`startupSessionStart`), and the harness has murmur's hooks (a
+ * hookless pane never confirms, so it keeps the usual window).
+ */
+function beforeFirstPrompt(
+  t: DeliveryTarget,
+  before: HooksPane | undefined,
+  firstPrompt: boolean,
+): boolean {
+  if (!firstPrompt || before === undefined || before.activity !== null) return false;
+  const harness = harnessOfCli(t.agent.cli, t.agent.command ?? undefined);
+  if (harness === undefined || HARNESS_TABLE[harness].startupSessionStart !== "first-prompt") {
+    return false;
+  }
+  return murmurAvailable(harness);
+}
+
 /** Refuse a write fence: this channel has none, and a send never skips one it was asked for. */
 function refuseFence(t: DeliveryTarget, opts: DeliveryOptions): void {
   if (opts.ctlGuard?.beforeWrite !== undefined) {
@@ -210,7 +233,7 @@ async function send(
   // D11: a remote paste is not polled for (each read is an exec); the next
   // wait or send gate reads the node, which confirms it.
   if (t.remote !== undefined) return { transport: "hooks", ack: "sent", ...counts(before) };
-  const ms = sendAckMs();
+  const ms = beforeFirstPrompt(t, before, first) ? firstSendAckMs() : sendAckMs();
   const acked = await pollPane(t.agent.paneId, ms, (now) => runStarted(before, now));
   if (acked === undefined) {
     opts.onUndelivered?.({
