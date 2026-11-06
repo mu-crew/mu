@@ -121,6 +121,13 @@ describe("verdict", () => {
       notes: ["n"],
     });
   });
+  it('failedMuCalls "notes" (the hook-harness cases) never makes a failed call wrong', () => {
+    const v = verdict(run(wait6), true, { failedMuCalls: "notes", wrong: ["scenario"] });
+    expect(v.wrong).toEqual(["scenario"]);
+    expect(verdict(run(wait6), true, { failedMuCalls: "wrong" }).wrong).toEqual([
+      "6 mu agent wait w1 -w eval",
+    ]);
+  });
   it("na carries missed native guarantees into the verdict, a note and a workaround label", () => {
     const v = verdict(run(), true, { na: ["mid-wait delivery (0/12)"] });
     expect(v.na).toEqual(["mid-wait delivery (0/12)"]);

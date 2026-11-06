@@ -12,6 +12,7 @@
 // the crash it is only a note: the crash point is the rig's, not the orchestrator's choice.
 // Fails: a resend to a running worker, the replacement doing a task itself, a task left behind.
 import {
+  caseVerdict,
   mainCommitMs,
   runsLog,
   seedCase,
@@ -21,7 +22,7 @@ import {
   workersClosedWrong,
 } from "../harness-cases.ts";
 import { hookRecords, promptsTo } from "../harness-observe.ts";
-import { claimCount, verdictFx } from "../observe.ts";
+import { claimCount } from "../observe.ts";
 import { opsAfter } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import type { Sandbox, Scenario } from "../types.ts";
@@ -91,7 +92,7 @@ const scenario: Scenario = {
     const workers = spawns(sb).filter((s) => !AUTS.has(s.name));
     if (workers.length > 2) wrong.push(`${workers.length} workers were spawned for two tasks`);
     wrong.push(...workersClosedWrong(sb, agents));
-    return await verdictFx(sb, run, ok && wrong.length === 0, { wrong, notes });
+    return await caseVerdict(sb, run, ok && wrong.length === 0, { wrong, notes });
   },
 };
 

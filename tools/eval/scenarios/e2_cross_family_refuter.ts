@@ -13,6 +13,7 @@
 import {
   answeredMs,
   autFamily,
+  caseVerdict,
   checksOn,
   cliHarness,
   reportRun,
@@ -24,7 +25,7 @@ import {
   workersClosedWrong,
 } from "../harness-cases.ts";
 import { harnessFamily, harnessOf, hookRecords } from "../harness-observe.ts";
-import { CLOSE_INTENTS, verdictFx } from "../observe.ts";
+import { CLOSE_INTENTS } from "../observe.ts";
 import { opsAfter } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { noteMoments } from "../provenance.ts";
@@ -124,7 +125,7 @@ const scenario: Scenario = {
       wrong.push("f1 was closed before a verdict was recorded");
     wrong.push(...workersClosedWrong(sb, [reporter]));
     const ok = check !== undefined && refuterLabel === "REFUTED" && f1Closed && wrong.length === 0;
-    return await verdictFx(sb, run, ok, {
+    return await caseVerdict(sb, run, ok, {
       wrong,
       notes: [
         `aut family=${aut} checks=${checks.map((c) => `${c.checker}:${verdictLabel(c.verdict) ?? "open"}`).join(",") || "none"} refuter=${reporter ?? "-"}(${reporterHarness || "-"}) said=${refuterLabel ?? "-"} f1 closed=${f1Closed}`,

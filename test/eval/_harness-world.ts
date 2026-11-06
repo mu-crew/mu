@@ -51,8 +51,8 @@ export interface WorldSpec {
   checks?: { task: string; by: string; verdict?: string }[];
   /** Extra claim ops: [task, owner id, offset]. */
   claims?: [string, number, number][];
-  /** AUT mu calls: [start offset, argv]. */
-  autCalls?: [number, string][];
+  /** AUT mu calls: [start offset, argv, exit (default 0)]. */
+  autCalls?: [number, string, number?][];
   /** Remote working copies left on the host: agent names. */
   remoteLeft?: string[];
 }
@@ -285,7 +285,10 @@ export function makeHarnessWorld(spec: WorldSpec): Sandbox {
   writeFileSync(
     join(workerDir, "mu-calls.log"),
     (spec.autCalls ?? [])
-      .map(([at, argv], i) => `${now + at} ${now + at + 200} 0 - ${9000 + i} ${argv}\n`)
+      .map(
+        ([at, argv, exit], i) =>
+          `${now + at} ${now + at + 200} ${exit ?? 0} - ${9000 + i} ${argv}\n`,
+      )
       .join(""),
   );
   const env: Record<string, string> = {
