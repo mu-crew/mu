@@ -13,7 +13,8 @@
 // the waiting events to the key's state, deletes them and prints the state
 // with the events it applied. mu relays each of those events, in order, into
 // the local pane's inbox with `murmur hook mu --pane` (harness and agent
-// named, since no harness runs in the local pane), so the local drain, its
+// named, since no harness runs in the local pane; a harness's own event with
+// `--by harness`, where murmur takes it), so the local drain, its
 // pane options and `murmur pane <pane>` see the worker as they see a local
 // one. Every other `hooks` read stays local. A read whose events never reached
 // the pane (the exec timed out after the node applied them, a relay refused)
@@ -23,6 +24,8 @@
 // Each read also keeps a small record of which run set the node's text, so
 // collect applies a CLOSE block only from the turn that wrote it, never from
 // an earlier turn's text that murmur kept when a later turn ended without one.
+// A node whose murmur names that run itself (`last_text_run`) is read by it;
+// the record serves an older one.
 //
 // A read costs one exec (several serialized ssh round trips on a lease host),
 // so only a wait, a collect, a send gate and a task spawn's readiness (every
@@ -135,6 +138,10 @@ export function remoteSnapshot(out: RemoteOutput, textTied = false): RemoteSnaps
     runCount: num(agent?.run_count),
     activity: agent === null ? null : (str(agent.activity) ?? ""),
     lastText: str(agent?.last_text),
+    // Absent from an older murmur's report on the node: unknown (see textTied).
+    ...(agent !== null && "last_text_run" in agent
+      ? { lastTextRun: num(agent.last_text_run) }
+      : {}),
     confirmed: agent?.confirmed !== false && state !== "idle?",
     claimed: agent !== null && agent.claimed !== false,
     attention: entries.map((a) => str(a.kind)).filter((k): k is string => k !== null),
@@ -239,15 +246,19 @@ export function textTurnAfter(
   return runs === snap.runCount && state.session === snap.sessionId ? { ...state, runs } : unknown;
 }
 
-/** True when the snapshot's text is its last ended turn's own, by the record. */
+/**
+ * True when the snapshot's text is its last ended turn's own: by the run
+ * murmur on the node names as the text's (`last_text_run`), else, from a
+ * murmur too old to name it, by the record.
+ */
 export function textTied(turn: TextTurn, snap: RemoteSnapshot): boolean {
-  return (
-    snap.activity === "stopped" &&
-    snap.lastText !== null &&
-    snap.sessionId !== null &&
-    turn.session === snap.sessionId &&
-    turn.textRuns === snap.runCount
-  );
+  if (snap.activity !== "stopped" || snap.lastText === null || snap.sessionId === null) {
+    return false;
+  }
+  if (snap.lastTextRun !== undefined) {
+    return snap.lastTextRun !== null && snap.lastTextRun === snap.runCount;
+  }
+  return turn.session === snap.sessionId && turn.textRuns === snap.runCount;
 }
 
 function readTextTurn(path: string): TextTurn | undefined {
@@ -287,10 +298,15 @@ function writeTextTurn(path: string, turn: TextTurn): void {
  * (a `session_start`, one `prompt_submitted` per missing run), then the way
  * the turn stands: ended (mu's `interrupted` for an interrupt no harness
  * confirmed, a `turn_failed` for a new error, else a `turn_stopped` with the
- * node's text), running again, or a dialog open. A corrected text is never
- * tied to its turn by more than ownText's rules: a text the local pane already
- * held reads as an earlier turn's. A released key, an unknown activity word,
- * or a pane murmur does not answer for is left alone.
+ * node's text), running again, or a dialog open. Under an older local murmur
+ * a corrected text is never tied to its turn by more than ownText's witness
+ * rule: a text the local pane already held reads as an earlier turn's. A newer
+ * one names the run a relayed text lands in (`last_text_run`), tying it to the
+ * last turn, so the corrected
+ * turn carries the node's text only when it is that turn's: by the run the
+ * node names, or, from a node too old to name one, by mu's record
+ * (`textTied`). A released key, an unknown activity word, or a pane murmur
+ * does not answer for is left alone.
  */
 export function reconcileEvents(local: HooksPane | undefined, snap: RemoteSnapshot): Doc[] {
   if (local === undefined || local.activity === "") return [];
@@ -322,7 +338,16 @@ export function reconcileEvents(local: HooksPane | undefined, snap: RemoteSnapsh
     activity = "running";
     blocked = false;
   }
-  const withText = snap.lastText !== null ? { text: snap.lastText } : {};
+  // The node's text, unless the node says an earlier turn wrote it. A node too
+  // old to say, under a local murmur that stamps the text with the last run:
+  // only a text mu's record ties to that turn (an older local murmur names no
+  // run, and ownText's witness rule judges the text there).
+  const ofLastTurn =
+    snap.lastText !== null &&
+    (snap.lastTextRun !== undefined
+      ? snap.lastTextRun === snap.runCount
+      : local.lastTextRun === undefined || snap.textTied);
+  const withText = ofLastTurn ? { text: snap.lastText } : {};
   if (snap.activity === "stopped" && activity !== "stopped") {
     if (!snap.confirmed) add("interrupted");
     else if (snap.error !== null && local.error === null)
@@ -332,7 +357,7 @@ export function reconcileEvents(local: HooksPane | undefined, snap: RemoteSnapsh
   } else if (snap.activity === "running" && activity !== "running") {
     add("continued");
     blocked = false;
-  } else if (snap.activity === "stopped" && snap.lastText !== null && snap.lastText !== text) {
+  } else if (snap.activity === "stopped" && ofLastTurn && snap.lastText !== text) {
     add("turn_stopped", withText);
     blocked = false;
   }
@@ -439,7 +464,10 @@ export async function readRemoteHooks(
       for (const event of out.events) {
         const payload = relayPayload(event, agent);
         if (payload === undefined) continue;
-        if (!(await writeMuEvent(agent.paneId, payload))) {
+        // The harness's own events stay the harness's on the origin pane: its
+        // interrupt is confirmed there as on the node, never mu's `idle?`.
+        const by = event.by === "mu" ? "mu" : "harness";
+        if (!(await writeMuEvent(agent.paneId, payload, { by }))) {
           return fail(
             `murmur hook mu --pane ${agent.paneId} refused a relayed event: ${relayed} of ${out.events.length} relayed (the next read brings the pane back in line)`,
           );

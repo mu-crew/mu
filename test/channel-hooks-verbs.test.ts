@@ -372,7 +372,7 @@ describe("settle and last text on hooks", () => {
     expect(r?.lastText).toBeUndefined();
   });
 
-  it("a turn that ended before the watch first read it carries no text: murmur cannot say whose it is", async () => {
+  it("a turn that ended before the watch first read it carries no text: a murmur without last_text_run cannot say whose it is", async () => {
     const t = live("codex");
     // Interrupted by the harness: murmur keeps run 3's text.
     fake.emit("prompt_submitted");
@@ -405,7 +405,7 @@ describe("settle and last text on hooks", () => {
     expect(r?.lastText).toBeUndefined();
   });
 
-  it("a text equal to the previous turn's carries none: it cannot be told from a kept one", async () => {
+  it("a text equal to the previous turn's carries none from a murmur without last_text_run: it cannot be told from a kept one", async () => {
     const t = live("codex");
     const w = await hooksChannel.watch(t, signal(), { afterRuns: 3 });
     fake.emit("prompt_submitted");
@@ -526,5 +526,87 @@ describe("settle and last text on hooks", () => {
     await deliver(t, "work", {});
     fake.emit("turn_stopped", { text: "worked" });
     expect(await handle?.settled).toMatchObject({ settled: true, runs: 4, lastText: "worked" });
+  });
+});
+
+describe("last text from a murmur that names the turn that wrote it (last_text_run)", () => {
+  const signal = () => new AbortController().signal;
+
+  beforeEach(() => {
+    fake.textRun = true;
+  });
+
+  it("a turn over before the wait first read it still gives its text", async () => {
+    const t = live("codex");
+    fake.emit("prompt_submitted");
+    fake.emit("turn_stopped", { text: "run 4\nCLOSE: T1" });
+    expect(await hooksChannel.lastRun(t, { afterRuns: 3, ms: 100 })).toMatchObject({
+      settled: true,
+      runs: 4,
+      lastText: "run 4\nCLOSE: T1",
+    });
+    // So does a watch from an earlier baseline that first reads it over.
+    const w = await hooksChannel.watch(t, signal(), { afterRuns: 3 });
+    expect(await w?.settled).toMatchObject({
+      settled: true,
+      runs: 4,
+      lastText: "run 4\nCLOSE: T1",
+    });
+  });
+
+  it("a text equal to the previous turn's is the turn's own", async () => {
+    const t = live("codex");
+    const w = await hooksChannel.watch(t, signal(), { afterRuns: 3 });
+    fake.emit("prompt_submitted");
+    fake.emit("turn_stopped", { text: "run 3" });
+    expect(await w?.settled).toMatchObject({ settled: true, runs: 4, lastText: "run 3" });
+  });
+
+  it("an interrupted or failed turn over before the read still carries no text, never the kept one", async () => {
+    const t = live("codex");
+    fake.emit("prompt_submitted");
+    fake.emit("interrupted");
+    const r = await hooksChannel.lastRun(t, { afterRuns: 3, ms: 100 });
+    expect(r).toMatchObject({ settled: true, runs: 4 });
+    expect(r?.lastText).toBeUndefined();
+    fake.emit("prompt_submitted");
+    fake.emit("turn_failed", { message: "overloaded" });
+    const failed = await hooksChannel.lastRun(t, { afterRuns: 4, ms: 100 });
+    expect(failed).toMatchObject({ settled: true, runs: 5, lastError: "overloaded" });
+    expect(failed?.lastText).toBeUndefined();
+  });
+
+  it("idle? (an interrupt mu wrote) carries no text, though the turn wrote one", async () => {
+    const t = live("claude");
+    fake.emit("prompt_submitted");
+    fake.emit("turn_stopped", { text: "partial" });
+    await fake.hook("%3", { event: "interrupted", session_id: SESSION });
+    const r = await hooksChannel.lastRun(t, { afterRuns: 3, ms: 100 });
+    expect(r).toMatchObject({ settled: true, runs: 4 });
+    expect(r?.lastText).toBeUndefined();
+  });
+
+  it("cursor-agent: its late text is waited for even when the stop was read first; an interrupt is not waited on", async () => {
+    const t = live("cursor-agent");
+    fake.emit("prompt_submitted", { generation_id: "g4" });
+    fake.emit("turn_stopped", { generation_id: "g4" });
+    let reads = 0;
+    setMurmurPaneRunnerForTests(async (pane) => {
+      if (++reads === 3) fake.emit("turn_stopped", { generation_id: "g4", text: "late" });
+      return fake.pane(pane);
+    });
+    expect(await hooksChannel.lastRun(t, { afterRuns: 3, ms: 100 })).toMatchObject({
+      settled: true,
+      runs: 4,
+      lastText: "late",
+    });
+    // An interrupted turn keeps run 4's text: no text is on its way, so no wait for one.
+    fake.emit("prompt_submitted", { generation_id: "g5" });
+    fake.emit("interrupted", { generation_id: "g5" });
+    reads = 0;
+    const r = await hooksChannel.lastRun(t, { afterRuns: 4, ms: 100 });
+    expect(r).toMatchObject({ settled: true, runs: 5 });
+    expect(r?.lastText).toBeUndefined();
+    expect(reads).toBe(1);
   });
 });

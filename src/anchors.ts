@@ -14,18 +14,21 @@
 // anchor left behind by a dead agent never matches a stranger. `exec` keeps
 // the start time as well as the pid.
 //
-// The directory is D3's literal `~/.local/state/mu-next/anchors`, never
-// `MU_STATE_DIR`'s or `XDG_STATE_HOME`'s alone: a hook may have neither (Muse
-// Code's allowlist keeps `HOME` and drops both), so only a HOME-based path is
-// found from every hook. murmur's reader honours `XDG_STATE_HOME` when its hook
-// has it, so the wrapper also writes there when it is set elsewhere.
+// The directory is D3's literal `~/.local/state/mu-next/anchors`, and only
+// that one, never `MU_STATE_DIR`'s or `XDG_STATE_HOME`'s: a hook may have
+// neither (Muse Code's allowlist keeps `HOME` and drops both), so only a
+// HOME-based path is found from every hook. murmur reads that path first
+// whatever its hook's environment (an `$XDG_STATE_HOME` directory only after
+// it), so one write is found by every hook. A murmur from before that order
+// read `$XDG_STATE_HOME`'s alone when its hook had it set elsewhere; such a
+// hook finds no anchor and falls back to its env (spec D7), as an unanchored
+// pane does.
 
 import { randomBytes } from "node:crypto";
 import { readdirSync, rmSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { join } from "node:path";
 import { shellQuote } from "./shell-quote.js";
-import { xdgStateHome } from "./state-dir.js";
 
 /** One anchor file, as murmur's reader parses it. */
 export interface AnchorRecord {
@@ -58,16 +61,6 @@ export function anchorDir(): string {
 }
 
 /**
- * Every directory the wrapper writes and prunes: `anchorDir()`, plus the XDG
- * state home's when `XDG_STATE_HOME` points elsewhere, for a reader whose
- * hook env still has it.
- */
-export function anchorDirs(): string[] {
-  const xdg = join(xdgStateHome(homedir()), "mu-next", "anchors");
-  return xdg === anchorDir() ? [anchorDir()] : [anchorDir(), xdg];
-}
-
-/**
  * The pane command that writes `anchor` (into each of `dirs`) for its own pid
  * and then runs `command`. The anchor is written by `/bin/sh` whatever the
  * user's default shell is; the command then runs as `$SHELL -c <command>`
@@ -84,27 +77,22 @@ export function anchorDirs(): string[] {
 export function anchorWrapper(
   command: string,
   anchor: AnchorRecord,
-  dirs: readonly string[] = anchorDirs(),
+  dirs: readonly string[] = [anchorDir()],
 ): string {
   return wrapperWith(command, anchor, dirs.map(shellQuote));
 }
 
 /**
- * The anchor directories of a REMOTE worker (spec D11), as shell words the
- * remote shell expands: D3's `"$HOME"/.local/state/mu-next/anchors`, and the
- * remote XDG state home's (the same directory when `XDG_STATE_HOME` is unset
- * there), which murmur's reader on that node prefers when its hook has it.
+ * The anchor directory of a REMOTE worker (spec D11), as a shell word the
+ * remote shell expands: D3's `"$HOME"/.local/state/mu-next/anchors`, which
+ * murmur's reader on that node reads first, as the local one does.
  */
-export const REMOTE_ANCHOR_DIR_WORDS: readonly string[] = [
-  '"$HOME"/.local/state/mu-next/anchors',
-  // biome-ignore lint/suspicious/noTemplateCurlyInString: a shell parameter expansion, for the remote shell
-  '"${XDG_STATE_HOME:-$HOME/.local/state}"/mu-next/anchors',
-];
+export const REMOTE_ANCHOR_DIR_WORDS: readonly string[] = ['"$HOME"/.local/state/mu-next/anchors'];
 
 /**
  * `anchorWrapper` for a command that runs on a remote host (spec D11): the
- * same wrapper, writing into the remote user's anchor directories
- * (REMOTE_ANCHOR_DIR_WORDS) rather than local paths. The anchor carries the
+ * same wrapper, writing into the remote user's anchor directory
+ * (REMOTE_ANCHOR_DIR_WORDS) rather than a local path. The anchor carries the
  * worker's remote key, so its hooks write to murmur's remote area on that
  * node even when their chain never reaches a tmux server (plain ssh ends at
  * `sshd`).
@@ -146,7 +134,7 @@ function pidAlive(pid: number): boolean {
  * spawned harness would otherwise pile up. A live pid's file is kept even if
  * the pid was reused, since its start time already makes it inert.
  */
-export function pruneAnchors(dirs: readonly string[] = anchorDirs()): void {
+export function pruneAnchors(dirs: readonly string[] = [anchorDir()]): void {
   for (const dir of dirs) {
     let names: string[];
     try {

@@ -46,6 +46,14 @@ export interface HooksPane {
    * (an interrupt, a failure) leaves the previous turn's text here.
    */
   lastText: string | null;
+  /**
+   * The run (`runCount`) of the turn that wrote `lastText`, murmur's
+   * `last_text_run`: equal to `runCount` when the last turn wrote it, lower
+   * when it ended without text and left an earlier turn's; null when no turn
+   * of this session has. undefined (absent): a murmur too old to report it,
+   * so only a watch's own reads can tie a text to its turn.
+   */
+  lastTextRun?: number | null;
   /** False after an interrupt mu wrote that no harness event has confirmed (`idle?`). */
   confirmed: boolean;
 }
@@ -54,13 +62,17 @@ export type MurmurPaneRunner = (paneId: string) => Promise<string | null>;
 
 let runnerForTests: MurmurPaneRunner | null = null;
 
+/** mu's own tmux server for a murmur call: the private socket when one is set. */
+function serverRoute(): string[] {
+  const socket = process.env.MU_TMUX_SOCKET;
+  return socket !== undefined && socket.length > 0 ? ["-L", socket] : [];
+}
+
 const defaultRunner: MurmurPaneRunner = async (paneId) => {
   // mu's own tmux server: the private test socket when one is set, else the
   // server murmur finds from `$TMUX` or the default one, as mu's tmux calls do.
-  const socket = process.env.MU_TMUX_SOCKET;
-  const route = socket !== undefined && socket.length > 0 ? ["-L", socket] : [];
   try {
-    const r = await execFileCapture("murmur", ["pane", paneId, "--json", ...route], {
+    const r = await execFileCapture("murmur", ["pane", paneId, "--json", ...serverRoute()], {
       timeoutMs: 5_000,
     });
     return r.exitCode === 0 ? r.stdout : null;
@@ -74,24 +86,55 @@ export function setMurmurPaneRunnerForTests(run: MurmurPaneRunner | null): void 
   runnerForTests = run;
 }
 
+/**
+ * Whose event mu writes: `mu`'s own (an interrupt it sent reads `idle?` until
+ * the harness speaks), or `harness`, one a remote worker's harness reported on
+ * its node that mu relays (`murmur hook mu --by harness`), so the origin pane
+ * reads it as the node did.
+ */
+export type MuEventOrigin = "mu" | "harness";
+
 /** Write one of mu's own events into the pane's inbox; true when murmur took it. */
-export type MurmurHookRunner = (paneId: string, event: Record<string, unknown>) => Promise<boolean>;
+export type MurmurHookRunner = (
+  paneId: string,
+  event: Record<string, unknown>,
+  opts?: { by?: MuEventOrigin },
+) => Promise<boolean>;
 
 let hookRunnerForTests: MurmurHookRunner | null = null;
 
-const defaultHookRunner: MurmurHookRunner = async (paneId, event) => {
-  const socket = process.env.MU_TMUX_SOCKET;
-  const route = socket !== undefined && socket.length > 0 ? ["-L", socket] : [];
+/**
+ * Set once a murmur on PATH refused `--by` (older than it): later relays write
+ * without it, as mu's, rather than pay a refused exec each time.
+ */
+let byRefused = false;
+
+/** True when murmur's `hook mu` refused `--by` as an option it does not know. */
+const refusedBy = (r: { exitCode: number | null; stderr: string }): boolean =>
+  r.exitCode === 2 && /unknown option.*--by/.test(r.stderr);
+
+const defaultHookRunner: MurmurHookRunner = async (paneId, event, opts = {}) => {
+  const base = ["hook", "mu", "--pane", paneId, ...serverRoute()];
+  const run = (args: string[]) =>
+    execFileCapture("murmur", args, { timeoutMs: 5_000, input: JSON.stringify(event) });
   try {
-    const r = await execFileCapture("murmur", ["hook", "mu", "--pane", paneId, ...route], {
-      timeoutMs: 5_000,
-      input: JSON.stringify(event),
-    });
-    return r.exitCode === 0;
+    if (opts.by === "harness" && !byRefused) {
+      const r = await run([...base, "--by", "harness"]);
+      // An older murmur refuses the flag before it reads the event: written as
+      // mu's below, as before it existed (a relayed interrupt reads `idle?`).
+      if (!refusedBy(r)) return r.exitCode === 0;
+      byRefused = true;
+    }
+    return (await run(base)).exitCode === 0;
   } catch {
     return false;
   }
 };
+
+/** Forget that murmur refused `--by` (tests swap the murmur on PATH). */
+export function resetMurmurFeaturesForTests(): void {
+  byRefused = false;
+}
 
 /** Replace `murmur hook mu` (tests: a fake harness's inbox). null restores the real one. */
 export function setMurmurHookRunnerForTests(run: MurmurHookRunner | null): void {
@@ -100,14 +143,16 @@ export function setMurmurHookRunnerForTests(run: MurmurHookRunner | null): void 
 
 /**
  * Record mu's own vocabulary event for a pane through `murmur hook mu --pane`
- * (spec D3). Best effort: false when murmur is absent or refused it.
+ * (spec D3); `by: "harness"` relays one a remote worker's harness reported.
+ * Best effort: false when murmur is absent or refused it.
  */
 export async function writeMuEvent(
   paneId: string,
   event: Record<string, unknown>,
+  opts: { by?: MuEventOrigin } = {},
 ): Promise<boolean> {
   try {
-    return await (hookRunnerForTests ?? defaultHookRunner)(paneId, event);
+    return await (hookRunnerForTests ?? defaultHookRunner)(paneId, event, opts);
   } catch {
     return false;
   }
@@ -119,10 +164,19 @@ export type MurmurClearRunner = (paneId: string) => Promise<boolean>;
 let clearRunnerForTests: MurmurClearRunner | null = null;
 
 const defaultClearRunner: MurmurClearRunner = async (paneId) => {
-  // `murmur clear` takes no socket: it finds the server from `$TMUX`, else the default one.
+  // The pane's server named outright (`-L`), as `murmur pane` is read: from
+  // outside a private server, `murmur clear` would otherwise find the server
+  // from `$TMUX`, else the default one. A murmur older than `clear -L` refuses
+  // the option (murmur's clear itself always exits 0), so it is asked again
+  // without it, as before.
+  const base = ["clear", "--pane", paneId];
+  const route = serverRoute();
   try {
-    const r = await execFileCapture("murmur", ["clear", "--pane", paneId], { timeoutMs: 5_000 });
-    return r.exitCode === 0;
+    if (route.length > 0) {
+      const r = await execFileCapture("murmur", [...base, ...route], { timeoutMs: 5_000 });
+      if (r.exitCode === 0) return true;
+    }
+    return (await execFileCapture("murmur", base, { timeoutMs: 5_000 })).exitCode === 0;
   } catch {
     return false;
   }
@@ -134,8 +188,9 @@ export function setMurmurClearRunnerForTests(run: MurmurClearRunner | null): voi
 }
 
 /**
- * Acknowledge the pane's attention through `murmur clear --pane` (the focus
- * hook's own write: attention only, never activity, counts or session).
+ * Acknowledge the pane's attention through `murmur clear --pane` on mu's tmux
+ * server (the focus hook's own write: attention only, never activity, counts
+ * or session).
  * murmur reports nothing back, so a caller that needs it gone reads the pane
  * after. Best effort: false when murmur is absent or failed.
  */
@@ -180,6 +235,10 @@ export function parseHooksPane(stdout: string): HooksPane | undefined {
     error: error === undefined ? null : (str(error.message) ?? ""),
     errorAt: error === undefined ? null : num(error.requested_at),
     lastText: str(agent?.last_text),
+    // Absent from an older murmur's report: unknown, never "no turn wrote it".
+    ...(agent !== null && "last_text_run" in agent
+      ? { lastTextRun: num(agent.last_text_run) }
+      : {}),
     confirmed: agent?.confirmed !== false && d.state !== "idle?",
   };
 }

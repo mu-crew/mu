@@ -77,9 +77,11 @@ harness, orchestrator flag, remote key and the process start time) and then
 `exec`s the command in `$SHELL` (tmux's default-shell, as before), so the pid
 stays the same. A hook whose harness clears its env (Muse Code) finds the
 agent there. The directory ignores `MU_STATE_DIR`, and `XDG_STATE_HOME` too,
-since a hook may have neither; when `XDG_STATE_HOME` points elsewhere the
-anchor is written under it as well, for a hook that still has it. pi panes,
-and herdr and Rex panes, start unwrapped.
+since a hook may have neither: the wrapper writes only
+`~/.local/state/mu-next/anchors`, which murmur reads first. A murmur older
+than that order, run from a hook whose `XDG_STATE_HOME` is set elsewhere,
+finds no anchor and falls back to the env. pi panes, and herdr and Rex panes,
+start unwrapped.
 
 A `--host` agent gets exactly `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,
 `MU_WORKSTREAM`, `MU_CTL_SOCK` (the host-side path) and `MU_REMOTE`, written

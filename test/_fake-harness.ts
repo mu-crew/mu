@@ -22,7 +22,9 @@
 // turn still reads `error`, and a pane whose session ended reads its attention
 // with no agent row. A `turn_stopped` that names its `generation_id` sets the
 // text it carries, or none, and a later one for that ended generation only
-// fills the text in (cursor-agent's text after its stop). tmux argv words are
+// fills the text in (cursor-agent's text after its stop). With `textRun` it
+// reports `last_text_run`, the run whose turn wrote the text, as a murmur that
+// names it does; without, it reports what an older murmur does. tmux argv words are
 // read back as tmux reads them (a final `;` is a separator).
 //
 // Install `fake.pane` with setMurmurPaneRunnerForTests (and `fake.hook` with
@@ -51,8 +53,12 @@ interface PaneState {
   confirmed: boolean;
   failed: boolean;
   lastText: string | null;
+  /** The run whose turn wrote `lastText` (murmur's `last_text_run`); null: none. */
+  lastTextRun: number | null;
   /** The last ended turn's `generation_id` (cursor-agent, muse name their turns); null: none. */
   generation: string | null;
+  /** The run that generation ended in, for its late text's run. */
+  generationRun: number | null;
 }
 
 /** murmur's ATTENTION_PRIORITY: the first kind present is the rendered word, ahead of activity. */
@@ -71,6 +77,11 @@ export interface FakeHarness {
   readonly inbox: string;
   /** A submitted paste fires `prompt_submitted`. Default true. */
   acks: boolean;
+  /**
+   * Report `last_text_run`, as a murmur with it does. Default false: an older
+   * murmur, whose report has no such field.
+   */
+  textRun: boolean;
   /**
    * A remote worker (spec D11): its harness runs on another node, so a
    * submitted paste fires nothing here but this (the test writes that node's
@@ -103,6 +114,8 @@ export interface FakeHarness {
   hook: MurmurHookRunner;
   /** Every event mu wrote through `hook`, in order. */
   readonly muEvents: Record<string, unknown>[];
+  /** Whose each of those was (`--by`): `mu`, or `harness` for one relayed from a node. */
+  readonly muOrigins: string[];
   /**
    * The fake `murmur clear --pane`: drops every attention of this pane, as
    * murmur's `acknowledgePane` does (no drain, no activity or counts touched).
@@ -137,7 +150,9 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     confirmed: true,
     failed: false,
     lastText: null,
+    lastTextRun: null,
     generation: null,
+    generationRun: null,
   };
   let claimed = false;
   let clears = 0;
@@ -160,7 +175,10 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     // As murmur: a named turn that already ended takes only its late text (cursor-agent's
     // `afterAgentResponse` after its `stop`).
     if (event === "turn_stopped" && generation !== null && generation === st.generation) {
-      if (typeof e.text === "string") st.lastText = e.text;
+      if (typeof e.text === "string") {
+        st.lastText = e.text;
+        st.lastTextRun = st.generationRun;
+      }
       st.updatedAt = now;
       return;
     }
@@ -175,8 +193,10 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
           st.sessionId = sid;
           st.runCount = 0;
           st.lastText = null;
+          st.lastTextRun = null;
           st.failed = false;
           st.generation = null;
+          st.generationRun = null;
         }
         st.activity = "stopped";
         break;
@@ -204,8 +224,13 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
         // its generation, whose text may still be on its way.
         if (generation !== null) {
           st.lastText = typeof e.text === "string" ? e.text : null;
+          st.lastTextRun = st.runCount;
           st.generation = generation;
-        } else if (typeof e.text === "string") st.lastText = e.text;
+          st.generationRun = st.runCount;
+        } else if (typeof e.text === "string") {
+          st.lastText = e.text;
+          st.lastTextRun = st.runCount;
+        }
         break;
       case "turn_failed":
         st.activity = "stopped";
@@ -247,6 +272,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     paneId,
     inbox,
     acks: true,
+    textRun: false,
     onSubmit: null,
     answers: true,
     answeredWith: "turn_stopped",
@@ -259,6 +285,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
     calls: [],
     submitted: [],
     muEvents: [],
+    muOrigins: [],
     input: "",
     emit(event, fields = {}) {
       seq += 1;
@@ -286,6 +313,7 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
                 session_id: st.sessionId,
                 run_count: st.runCount,
                 last_text: st.lastText,
+                ...(fake.textRun ? { last_text_run: st.lastTextRun } : {}),
                 confirmed: st.confirmed,
                 updated_at: st.updatedAt,
               },
@@ -298,12 +326,14 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
         })),
       });
     },
-    hook: async (pane, event) => {
+    hook: async (pane, event, opts) => {
       if (pane !== paneId) return false;
       fake.muEvents.push({ ...event });
+      fake.muOrigins.push(opts?.by ?? "mu");
       const { event: name, ...fields } = event;
-      // `murmur hook mu` stamps who wrote it: mu's `interrupted` is unconfirmed.
-      fake.emit(String(name), { ...fields, by: "mu" });
+      // `murmur hook mu` stamps who wrote it: mu's `interrupted` is unconfirmed;
+      // `--by harness` relays the harness's own, confirmed.
+      fake.emit(String(name), { ...fields, by: opts?.by ?? "mu" });
       return true;
     },
     clear: async (pane) => {

@@ -13,10 +13,13 @@
 //   and the binary it starts (`claude < claude`, `codex < codex.real`).
 // - A second, separate harness before the anchor means the hook belongs to a
 //   nested agent, and it is refused. So does a harness process in print or
-//   exec mode (`claude -p`, `codex exec`): U0 recorded claude's `claude -p`
-//   behind its tool shell, but codex's `codex exec` and muse's `muse exec`
-//   directly under the parent's binary, where adjacency alone would merge them
-//   into the parent's run. A mu agent is launched interactive (spec D17).
+//   exec mode (`claude -p`, `codex exec`; see `oneShot`): U0 recorded claude's
+//   `claude -p` behind its tool shell, but codex's `codex exec` and muse's
+//   `muse exec` directly under the parent's binary, where adjacency alone
+//   would merge them into the parent's run. A mu agent is launched interactive
+//   (spec D17). murmur splits a run at the same one-shot member for its own
+//   placement; this guard stays mu's, since `mu hook stop` acts on mu's DB
+//   whatever murmur is installed.
 // - The walk ends at the tmux server (the pid `$TMUX` names, else the first
 //   ancestor whose argv is tmux's) or at init.
 //
@@ -120,23 +123,80 @@ export function harnessFromArgs(args: string): Harness | null {
   return null;
 }
 
-/** argv words that put each harness in its one-shot mode: a nested run, never a mu pane agent. */
-const ONE_SHOT: Readonly<Partial<Record<Harness, readonly string[]>>> = {
-  claude: ["-p", "--print"],
-  "cursor-agent": ["-p", "--print"],
-  codex: ["exec"],
-  muse: ["exec"],
-};
+/**
+ * Options of codex and Muse Code that take a value in the next argument, so
+ * the value is not read as the subcommand (murmur's `VALUE_OPTIONS`). A value
+ * glued on (`-c=x`) is one token and needs no entry.
+ */
+const VALUE_OPTIONS = new Set([
+  "-c",
+  "--config",
+  "-m",
+  "--model",
+  "-p",
+  "--profile",
+  "-s",
+  "--sandbox",
+  "-a",
+  "--ask-for-approval",
+  "-C",
+  "--cd",
+  "-i",
+  "--image",
+  "--enable",
+  "--disable",
+  "--add-dir",
+  "--local-provider",
+  "--remote",
+  "--remote-auth-token-env",
+]);
 
-/** True when a `harness` process's argv runs it one-shot (`claude -p`, `codex exec`). */
+/** The subcommands of codex and Muse Code that answer one prompt and exit. */
+const ONE_SHOT_SUBCOMMANDS = new Set(["exec", "e", "review"]);
+
+/** The arguments after the executable, or after the script under an interpreter. */
+function harnessArguments(tokens: readonly string[]): string[] {
+  const rest = tokens.slice(1);
+  if (!INTERPRETERS.has(executableName(tokens[0] ?? ""))) return rest;
+  const script = rest.findIndex((t) => !t.startsWith("-"));
+  return script < 0 ? [] : rest.slice(script + 1);
+}
+
+/**
+ * True when codex or Muse Code's first argument that is neither an option nor
+ * an option's value is a one-shot subcommand. Past `--` every argument is the
+ * prompt. After an option this table does not know, a bare argument may be
+ * its value, so only a one-shot subcommand word still reads as one.
+ */
+function oneShotSubcommand(args: readonly string[]): boolean {
+  for (let i = 0; i < args.length; i += 1) {
+    const t = args[i] as string;
+    if (t === "--") return false;
+    if (!t.startsWith("-")) return ONE_SHOT_SUBCOMMANDS.has(t);
+    if (VALUE_OPTIONS.has(t)) i += 1;
+  }
+  return false;
+}
+
+/**
+ * True when a `harness` process's argv runs it one-shot: `codex exec` (or
+ * `e`, or `review`), the same for `muse`, `claude -p`/`--print`,
+ * `cursor-agent -p`/`--print`. The rule is murmur's `runMode`, so mu's hook
+ * and murmur's placement split the same chains; a prompt that merely holds
+ * the word `exec` is no subcommand. pi is never one-shot here.
+ */
 export function oneShot(harness: Harness, args: string): boolean {
-  const words = ONE_SHOT[harness];
-  if (words === undefined) return false;
-  return args
-    .trim()
-    .split(/\s+/)
-    .slice(1)
-    .some((t) => words.includes(t));
+  const rest = harnessArguments(args.trim().split(/\s+/));
+  switch (harness) {
+    case "codex":
+    case "muse":
+      return oneShotSubcommand(rest);
+    case "claude":
+    case "cursor-agent":
+      return rest.some((t) => t === "-p" || t === "--print" || t.startsWith("--print="));
+    case "pi":
+      return false;
+  }
 }
 
 function isTmuxServer(args: string): boolean {

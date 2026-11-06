@@ -94,13 +94,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   run in a new session. A wait on a `hooks` agent now watches it: it settles
   on the pane's `turn_stopped` past the baseline (a running agent's baseline
   counts only settled turns) and returns that turn's text, with
-  `lastTextTruncated` at murmur's 64 KB cap. murmur does not say which turn
-  wrote its last text, so the text counts only when it changed since a read
-  taken before the turn ended: a turn ended by an interrupt or a failure, a
-  text equal to the previous turn's, and a wait that first reads the turn
-  already over carry none, and apply no `CLOSE:` block (a failure carries its
-  error). cursor-agent's text, which can follow its `stop`, is awaited for up
-  to 3 s. A dialog ends the wait as its `input` event (blocked on a dialog),
+  `lastTextTruncated` at murmur's 64 KB cap. murmur names the run whose turn
+  wrote its last text (`last_text_run`), so the text counts when that run is
+  the settled turn's, however late the wait first reads it and whatever an
+  earlier turn wrote; a turn ended by an interrupt or a failure (which leaves
+  an earlier turn's text) and an `idle?` turn carry none, and apply no
+  `CLOSE:` block (a failure carries its error). An older murmur names no run:
+  then the text counts only when it changed since a read taken before the
+  turn ended, so a text equal to the previous turn's and a wait that first
+  reads the turn already over carry none as well. cursor-agent's text, which
+  can follow its `stop`, is awaited for up to 3 s. A dialog ends the wait as its `input` event (blocked on a dialog),
   as on pi. A confirmed paste fences the wait it arms
   (`afterRuns` = its `run_count` less one, the session as incarnation), so
   `send --wait` and the next hint wait for exactly that turn, and its `CLOSE:`
@@ -153,8 +156,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   and the `run_count` read before the paste going into `receipt.runs`. murmur
   keeps an `error` through later turns and keeps its first time on a repeat,
   so only an error raised by the pane's newest event counts, and the retry
-  first clears the one it answers (`murmur clear --pane`, confirmed by a
-  read): each later failure is raised afresh. One murmur could not clear is
+  first clears the one it answers (`murmur clear --pane`, with `-L` naming a
+  private `MU_TMUX_SOCKET` as `murmur pane` is read, plain for a murmur too
+  old to take it; confirmed by a read): each later failure is raised afresh. One murmur could not clear is
   an `attention` move, nothing charged. A failure in another session than the
   brief's is an `attention` move. On muse, whose `StopFailure` murmur maps
   but whose `turn_failed` row is unverified (and pi on the fallback), a
@@ -240,8 +244,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **Anchors.** A local `claude`, `codex`, `cursor-agent` or `muse` pane on
   tmux starts through a small `sh` wrapper that writes
   `~/.local/state/mu-next/anchors/<pid>.json` (agent, workstream, role,
-  harness, orchestrator flag, remote key, `ps` start time; also under
-  `$XDG_STATE_HOME` when that is set elsewhere) and then `exec`s the command
+  harness, orchestrator flag, remote key, `ps` start time; there alone,
+  whatever `$XDG_STATE_HOME` says, since murmur reads that path first) and
+  then `exec`s the command
   in `$SHELL`, as tmux ran it before, so a hook whose harness clears its env
   finds the agent (murmur's reader, spec D3). pi panes, and herdr and Rex
   panes, start unwrapped; the agent row keeps the command as given. A dead
@@ -281,8 +286,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   harness's Stop payload on stdin. It acts only for a pane agent mu started:
   it walks its process chain to the first anchor with a matching start time
   whose cli is the hook's harness, refusing a second harness on the way or a
-  one-shot one (`claude -p`, `codex exec`: U0 saw codex's and muse's directly
-  under the parent's binary), a remote anchor, and, with nothing anchored, a
+  one-shot one (`claude -p`, `codex exec`, `e` or `review`, read as murmur
+  reads them, so a prompt holding the word `exec` is no subcommand: U0 saw
+  codex's and muse's directly under the parent's binary), a remote anchor, and, with nothing anchored, a
   managed env whose `MU_AGENT_CLI` names another harness. For an orchestrator
   (`mu orchestrate`), a live process already waiting as its caller lets the
   turn end; otherwise it runs a consuming `mu wait --first --timeout <T> --as
@@ -331,10 +337,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (fenced by the run count the gate read) and the next read confirms it. A
   node that cannot be read (a busy host at `--max-sessions 1`: the worker's
   pane holds the only channel) makes the gate read `unknown`; `--force`
-  pastes anyway. `--interrupt` and abort press Escape, then record
-  `interrupted` on the node and read it back in one exec (`stopped:
-  unconfirmed`, `idle?`); a node that will not record it is
-  `AgentInterruptUnrecordedError` and the text is not sent. `answer` records
+  pastes anyway. `--interrupt` and abort press Escape. A harness that
+  reports its own interrupt (codex, muse, cursor-agent) is read first: that
+  interrupt, relayed as the harness's (`murmur hook mu --by harness`, where
+  the local murmur takes it), is `stopped: confirmed` and mu records nothing.
+  Otherwise mu records `interrupted` on the node and reads it back in one
+  exec (`stopped: unconfirmed`, `idle?`); a node that will not record it is
+  `AgentInterruptUnrecordedError` and the text is not sent. Every event the
+  harness itself reported is relayed `--by harness`, so the origin pane reads
+  it as the node did; a murmur that refuses `--by` gets it as mu's, as
+  before. collect ties the node's text to its turn by the node's
+  `last_text_run` where its murmur reports one, else by mu's own record. `answer` records
   `continued` on the node before typing the keys (`ack: unknown`), and puts
   the dialog back there when the keys never reach the pane. `--fresh`
   is refused (`AgentSendUnsupportedError`): its new session is confirmed only

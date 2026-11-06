@@ -32,8 +32,9 @@ Escape in the pane. The session and its context stay.
   to `idle?` is allowed; if the Escape only closed an overlay, that send
   reports `ack: unknown`.
 - A stopped agent gets no key (exit 0).
-- A remote one records the interrupt on its host through the profile's
-  `--exec`.
+- A remote codex, muse or cursor-agent whose own interrupt has reached its
+  host reads `stopped: confirmed`. Otherwise mu records the interrupt on the
+  host through the profile's `--exec` (`idle?`).
 - A turn ended by an abort carries no final text, so no `CLOSE:` block from
   it is applied.
 

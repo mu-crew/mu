@@ -60,6 +60,12 @@ export interface RemoteSnapshot {
   /** `running` or `stopped`; null: no harness ever claimed the key. */
   activity: string | null;
   lastText: string | null;
+  /**
+   * The run of the turn that wrote `lastText`, as murmur on the node names it
+   * (`last_text_run`); null: no turn of the session has. undefined: a murmur
+   * there too old to name it.
+   */
+  lastTextRun?: number | null;
   /** False after an interrupt mu wrote that no harness event has confirmed. */
   confirmed: boolean;
   /** Whether a live harness holds the key; a released key keeps its last turn. */
@@ -71,10 +77,11 @@ export interface RemoteSnapshot {
   /** The `error` attention's message, when the worker carries one. */
   error: string | null;
   /**
-   * Whether `lastText` is the last ended turn's own: mu saw the
+   * Whether `lastText` is the last ended turn's own: `lastTextRun` is
+   * `runCount`, or, from a murmur that does not name it, mu saw the
    * `turn_stopped` that carried it arrive in run `runCount` of `sessionId`.
    * False when that turn ended without text (an interrupt, a failure) and
-   * murmur kept an earlier turn's, or when mu never saw the text arrive.
+   * murmur kept an earlier turn's, or when neither can tell.
    */
   textTied: boolean;
   /** The events this read applied (and relayed), oldest first. */
