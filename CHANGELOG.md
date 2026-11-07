@@ -63,6 +63,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `mu hud` is gone and the dashboard decides its own colour; for
   `watch --color` or a popup piped to a pager, set `MU_FORCE_COLOR=1`
   (docs/reference/env.md).
+- Docs: docs/guide/sql.md now says a verb's output format never follows
+  the TTY; only colour does. `mu agent list | head` printing JSON looked
+  like a pipe switch, but `agent list` prints JSON on a TTY too (4.0).
 
 - **The move recipe moves a 4.x workstream between machines**: free the
   work on the source, ship its ops by `MU_SYNC_DIR` or `mu db backup` plus

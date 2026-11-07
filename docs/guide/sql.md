@@ -5,7 +5,9 @@ ad-hoc joins and reports that no verb covers; a repair needs `--write`.
 
 ## Script with `--json`
 
-Every verb takes `--json`.
+Every verb takes `--json`. The format is fixed per verb: piping never switches
+a verb to JSON, and a TTY never switches one away from it. Only colour follows
+the TTY (and `NO_COLOR`).
 
 - Every verb prints ONE document on stdout: `{"ok": true, "data": ..., "next": null}`.
 - Collection reads put `{"items": [...], "count": N}` in `data`. The task
