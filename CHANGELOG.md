@@ -22,6 +22,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `watch --color` or a popup piped to a pager, set `MU_FORCE_COLOR=1`
   (docs/reference/env.md).
 
+- **The move recipe moves a 4.x workstream between machines**: free the
+  work on the source, ship its ops by `MU_SYNC_DIR` or `mu db backup` plus
+  `mu sync --from`, verify, and watch the target's dashboard. No sqlite3.
+  The 3.x-to-4.0 move is now a section of `docs/guide/upgrade.md`. The
+  recovery recipe says when a respawn needs `--attempt <task>-2`.
+
 ## [4.5.0] — 2026-11-07
 
 Every agent CLI is first-class: claude, codex, cursor-agent and Muse Code

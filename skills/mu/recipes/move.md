@@ -1,14 +1,11 @@
-# Move a 3.x workstream
+# Move a workstream to another machine
 
-Use when the human asks to move ONE 3.x workstream into 4.0, from the machine holding it. Open tasks move; the rest stays in the 3.x DB. `mu` is 4.0; `<mu3>` is 3.x, e.g. `npx -y @mu-crew/mu@3.13.3`.
+Use when the human asks to move a 4.x workstream from one machine (source) to another (target). Tasks, edges and notes travel as ops; agents, worktrees and task owners never do. (3.x into 4.x: [upgrade guide](../../../docs/guide/upgrade.md#move-a-3x-workstream).)
 
-1. **Read the old DB**: `sqlite3 -readonly -json <old.db> "<query>"`, never `MU_DB_PATH`. 4.0 runs on its own state dir and `MU_SYNC_DIR` (or blank).
-2. **IN_PROGRESS first**: finish, or `<mu3> task release <id> -w <ws>` (park refuses it).
-3. **Select** the open tasks (local_id, title, impact, effort_days, substate), each one's first and last note (brief; park reason or status), and the `task_edges` with both ends open (`from_task_id` blocks `to_task_id`). A last note that is the brief or `CLAIM: dispatch` is no status: write one.
-4. **Write a script** (python argv lists: briefs hold quotes) that runs, per task, dependents first (`--blocks` needs the umbrella):
-
-   `mu task add <id> -t <title> -i <impact> -e <effort> --blocks <its dependents> --note - -w <ws>`
-
-   with the brief on stdin, then `mu task note <id> -w <ws> -` with `moved from 3.x <ws>/<id>; last note: <it, capped 2 KB>`; for a parked task, pass that text to `mu task park <id> -w <ws> --why` instead. Keep the ids.
-5. **Verify**: open-task and edge counts (`mu db query ... --all`) match; `mu task tree <a root> -w <ws>` matches. Mismatch: fix, never mark.
-6. **Mark the old one**: `MU_DB_PATH=<old.db> <mu3> task park <id> -w <ws> --why "moved to 4.0"` per moved task.
+1. **Same version**: `mu --version` on both. Never query the source DB over ssh, nor point `MU_DB_PATH` at it: an older file is refused (`Detected v<n> schema`), and the target keeps its own DB and `machine_id`.
+2. **Free the work on the source**: merge or push each worker's branch, then `mu agent close <name> -w <ws>` and apply its `--if <rev>` (this removes the worktree). `mu task release <id> -w <ws>` each IN_PROGRESS task so it is ready on the target.
+3. **Ship the ops**, one of:
+   - Shared `MU_SYNC_DIR`: run any `mu` verb on the source, let the folder sync, then `mu sync` on the target until the source's `behind` is 0.
+   - No sync: `mu db backup <file>` on the source, copy the file over, `mu sync --from <file>` on the target. This brings every workstream in that DB.
+4. **Verify**: `mu task list -w <ws>` on the target matches the source.
+5. **Tell the human** to watch the dash on the target (`mu -w <ws>` there). The source's dash reads the source DB: frozen at the copy without sync, lagging with it. Never tear the workstream down on the source when synced: the teardown travels too.

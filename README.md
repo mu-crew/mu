@@ -147,7 +147,7 @@ you can also use on their own:
 | [findings](skills/mu/recipes/findings.md) | reviewers record findings, one refuter call per finding, report from the graph |
 | [tasks-or-calls](skills/mu/recipes/tasks-or-calls.md) | refuters, judges and checkers as delegate calls |
 | [course-correct](skills/mu/recipes/course-correct.md) | a periodic look at whether a long job is on course |
-| [move](skills/mu/recipes/move.md) | move a 3.x workstream into 4.0 |
+| [move](skills/mu/recipes/move.md) | move a workstream to another machine |
 
 In pi, the package adds them as commands: `/ultrathink <job>`,
 `/mu-research <question>`, `/mu-review [target]`, `/mu-refute <scope>`,

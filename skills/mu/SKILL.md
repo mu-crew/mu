@@ -84,4 +84,4 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Alwa
 | [recovery](recipes/recovery.md) | teardown, rebuild, sync, `doctor` DRIFT |
 | [worker](recipes/worker.md) | you are the worker |
 | [course-correct](recipes/course-correct.md) | `course check due`, or a human asks |
-| [move](recipes/move.md) | moving a 3.x workstream |
+| [move](recipes/move.md) | a workstream changes machines |
