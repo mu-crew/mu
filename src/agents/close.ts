@@ -38,6 +38,7 @@ import { unlinkCtlSocket } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { getHost, releaseHostChannelsForAgent } from "../hosts.js";
 import { emitEvent } from "../logs.js";
+import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
 import { selectRemoteRecovery } from "../remote-recovery.js";
@@ -45,6 +46,7 @@ import { agentRevision, assertRevision } from "../revision.js";
 import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
 import {
   assertReleasable,
+  awaitExit,
   getWorktreeAt,
   getWorktreeFor,
   processTree,
@@ -382,15 +384,26 @@ async function previewHolders(
   if (holders === undefined || holders.length === 0 || agent === undefined) {
     return { holders, hidden };
   }
-  let own = new Set<number>();
-  try {
-    const pid = await (await activeMux()).panePid?.(agent.paneId);
-    if (pid !== undefined) own = await processTree(pid);
-  } catch {
-    // no pane pid: every holder is shown
-  }
+  // No pane pid: every holder is shown.
+  const own = await activeMux().then(
+    (mux) => paneTree(mux, agent),
+    () => new Set<number>(),
+  );
   return { holders: holders.filter((h) => !own.has(h.pid)), hidden };
 }
+
+/** The pid of `agent`'s pane and its processes in the pane's session; empty when unknown. */
+async function paneTree(mux: MuxBackend, agent: AgentRow): Promise<Set<number>> {
+  try {
+    const pid = await mux.panePid?.(agent.paneId);
+    return pid === undefined ? new Set() : await processTree(pid);
+  } catch {
+    return new Set();
+  }
+}
+
+/** How long a close waits for the killed pane's processes to exit before removing its tree. */
+const PANE_EXIT_MS = 5000;
 
 /**
  * Close an agent: kill its pane, apply the worktree close rule, remove its
@@ -505,6 +518,9 @@ async function closeLocked(
   const row = worktreeOf(db, opts.workstream, name, agent);
   if (row !== undefined) await assertReleasable(row, { discard });
   const mux = await activeMux().catch(() => undefined);
+  // The pane's processes, read before the kill ends them: the tree is removed
+  // only once they are gone (below), or they are named as left in it.
+  const paneProcs = row === undefined || mux === undefined ? [] : await paneTree(mux, agent);
   // The awaits above are where a replacement lands. Nothing below may act
   // on a name that is not the incarnation this close captured.
   const replaced = (): boolean => {
@@ -563,9 +579,12 @@ async function closeLocked(
   // is removed, kept on a branch or gone (anything else throws, row kept), so
   // the row's deletion needs no recovery record.
   let remoteHandled = false;
-  if (row !== undefined)
+  if (row !== undefined) {
+    // The hangup reached them, but pi saves its session and runs its exit hooks first.
+    await awaitExit(paneProcs, PANE_EXIT_MS);
+    if (replaced()) throw new AgentReplacedError(name, opts.workstream);
     worktree = await releaseWorktree(db, row, { discard, force: opts.force === true });
-  else if (remoteOf(agent) !== null) {
+  } else if (remoteOf(agent) !== null) {
     remoteHandled = true;
     // The pane is gone (checked above): free its channel by id + pane.
     releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);

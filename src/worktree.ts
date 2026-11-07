@@ -18,6 +18,7 @@ import { promisify } from "node:util";
 import type { Db } from "./db.js";
 import { defaultStateDir } from "./db.js";
 import { say } from "./messages.js";
+import { sleep } from "./tmux.js";
 import {
   addWorktree,
   createBranch,
@@ -513,11 +514,13 @@ export async function worktreeHolders(
 }
 
 /**
- * `root` and every process under it that stays in `root`'s session
- * (`ps -A -o pid= -o ppid= -o sid=`, Linux and macOS): what a pane kill (its
- * session's hangup) ends. A descendant that left the session (`setsid`,
- * a daemon) survives the kill, so it is not in the set. Just `root` when ps
- * cannot run: a caller then shows more, never less.
+ * `root` and every process under it that stays in `root`'s session: what a
+ * pane kill (its session's hangup) ends. A descendant that left the session
+ * (`setsid`, a daemon) survives the kill, so it is not in the set. Linux reads
+ * the session id (`ps -o sid=`); macOS's ps has none, so there a descendant
+ * counts while it keeps `root`'s controlling terminal (`setsid` drops it), or
+ * `root`'s process group when `root` has no terminal. Just `root` when ps cannot
+ * run: a caller then shows more, never less.
  */
 export async function processTree(root: number): Promise<Set<number>> {
   const tree = new Set([root]);
@@ -525,16 +528,24 @@ export async function processTree(root: number): Promise<Set<number>> {
   try {
     out = (await exec("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "sid="])).stdout;
   } catch {
-    return tree;
+    try {
+      const cols = ["pid=", "ppid=", "tty=", "pgid="].flatMap((c) => ["-o", c]);
+      out = (await exec("ps", ["-A", ...cols])).stdout;
+    } catch {
+      return tree;
+    }
   }
   const kids = new Map<number, number[]>();
-  const sid = new Map<number, number>();
+  const sid = new Map<number, string>();
   for (const l of out.split("\n")) {
-    const [pid, ppid, s] = l.trim().split(/\s+/).map(Number);
-    if (pid === undefined || ppid === undefined || Number.isNaN(pid) || Number.isNaN(ppid))
-      continue;
+    const [p, pp, t, g] = l.trim().split(/\s+/);
+    // macOS: no terminal (`??`) is told by process group instead.
+    const s = g === undefined ? t : t === "??" ? `pgid ${g}` : t;
+    const pid = Number(p);
+    const ppid = Number(pp);
+    if (p === undefined || pp === undefined || Number.isNaN(pid) || Number.isNaN(ppid)) continue;
     kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
-    if (s !== undefined && !Number.isNaN(s)) sid.set(pid, s);
+    if (s !== undefined && s !== "") sid.set(pid, s);
   }
   const session = sid.get(root);
   const seen = new Set([root]);
@@ -551,6 +562,30 @@ export async function processTree(root: number): Promise<Set<number>> {
   }
   return tree;
 }
+
+/**
+ * Wait up to `ms` for every pid in `pids` to exit: a killed pane's processes
+ * take a moment to go (pi saves its session and runs its exit hooks after the
+ * hangup), and a tree removed before they do is removed under them. Returns
+ * the pids still alive at the deadline.
+ */
+export async function awaitExit(pids: Iterable<number>, ms: number): Promise<number[]> {
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (err) {
+      return (err as { code?: unknown }).code === "EPERM";
+    }
+  };
+  let left = [...pids].filter((p) => p !== process.pid && alive(p));
+  for (let waited = 0; left.length > 0 && waited < ms; waited += EXIT_POLL_MS) {
+    await sleep(EXIT_POLL_MS);
+    left = left.filter(alive);
+  }
+  return left;
+}
+const EXIT_POLL_MS = 50;
 
 /**
  * Move a worktree (`git worktree move` while its repo lives, so git keeps

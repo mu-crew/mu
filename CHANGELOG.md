@@ -136,6 +136,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (the bare pid when `ps` cannot say). `--force` is unchanged: it neither
   waits nor refuses.
 
+- **A local close no longer removes a tree under the agent's own pi.**
+  `mu agent close` killed the pane and scanned for holders at once, but pi
+  outlives the hangup while it saves its session and runs its exit hooks,
+  so the close warned `process … (pi) was still inside …; the tree was
+  removed under it`. The close now reads the pane's processes before the
+  kill and waits up to 5 s for them to exit before it scans. On macOS
+  (whose `ps` has no session id) those processes are the pane's
+  descendants still on its terminal (or in its process group); before, only the pane's first
+  process counted, so the preview listed the agent's own pi as a holder
+  too. A process that left the pane's session is not waited on: a
+  `log_shipper` there is a child of the telemetry drain the guardrails plugin
+  detaches (reparented to launchd, holding only its cwd); it stays a warning.
+
 ## [4.5.0] — 2026-11-07
 
 Every agent CLI is first-class: claude, codex, cursor-agent and Muse Code

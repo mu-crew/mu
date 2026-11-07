@@ -287,14 +287,39 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     },
   );
 
-  it("processTree holds a pane's grandchildren (its pi's tools), never the caller, never a setsid one", async () => {
-    // sh (its own session) -> sleep (same session) + setsid sleep (a new session).
-    const sh = spawnChild("sh", ["-c", "sleep 30 & setsid sleep 31 & wait"], {
-      stdio: "ignore",
-      detached: true,
+  it("the close waits for the killed pane's own process to exit, then removes the tree with no warning", async () => {
+    resetSleep(); // a real clock: the holder exits 1.5 s after the kill (past the holder scan)
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    hold(wt.path); // the pane's pi, inside its tree
+    const pid = holder?.pid ?? 0;
+    tmuxState.panes.set("%1", { windowId: "@1", paneId: "%1", command: "pi", pid });
+    const inner = mockTmux(tmuxState).executor;
+    mux.restore();
+    mux = installMux("tmux", async (args) => {
+      // pi saves its session after the hangup: it outlives the pane by a moment.
+      if (args.includes("kill-pane")) setTimeout(() => holder?.kill("SIGKILL"), 1500);
+      return inner(args);
     });
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.worktree?.action).toBe("removed");
+    expect(r.worktree?.warnings ?? []).toEqual([]);
+    expect(existsSync(wt.path)).toBe(false);
+  });
+
+  it("processTree holds a pane's grandchildren (its pi's tools), never the caller, never a setsid one", async () => {
+    // sh (its own session) -> sleep (same session) + a setsid sleep (a new session; perl, as macOS has no setsid(1)).
+    const sh = spawnChild(
+      "sh",
+      ["-c", "sleep 30 & perl -MPOSIX -e 'POSIX::setsid(); exec qw(sleep 31)' & wait"],
+      {
+        stdio: "ignore",
+        detached: true,
+      },
+    );
+    // macOS's ps has no sid; a setsid also leaves its process group (sh's, with no terminal).
+    const col = process.platform === "darwin" ? "pgid" : "sid";
     const rows = (): number[][] =>
-      execFileSync("ps", ["-A", "-o", "pid=,ppid=,sid="], { encoding: "utf8" })
+      execFileSync("ps", ["-A", "-o", `pid=,ppid=,${col}=`], { encoding: "utf8" })
         .split("\n")
         .filter(Boolean)
         .map((l) => l.trim().split(/\s+/).map(Number));
