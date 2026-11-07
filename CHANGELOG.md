@@ -104,7 +104,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **`mu sql` name errors teach the real name.** A guessed column offers the
   column that holds the data first: `name` on tasks -> `local_id, title` (it
   suggested `wave`), `body`/`text` -> `content`, `workstream` ->
-  `workstream_id` plus the join that filters by workstream name. `no such
+  `workstream_id` plus the join that filters by workstream name, written with the query's
+  alias for the table (`FROM tasks t` -> `t.workstream_id`). `no such
   table: x` (was passed through raw) is now a one-line `SqlTableError`
   (exit 2) naming the closest table (`notes` -> `task_notes`, `edges` ->
   `task_edges`) and listing every table and view.

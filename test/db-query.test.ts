@@ -715,6 +715,35 @@ describe("no such column", () => {
       "no such column: workstream (did you mean workstream_id?); by workstream name: JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = '<ws>'. columns: tasks(",
     );
   });
+
+  // The JOIN hint names how the query refers to tasks, and runs when pasted after its FROM.
+  it.each([
+    ["aliased", "SELECT workstream FROM tasks t", "FROM tasks t", "t"],
+    ["AS alias", "SELECT workstream FROM tasks AS t", "FROM tasks AS t", "t"],
+    [
+      "aliased, with a join",
+      "SELECT workstream, n.content FROM tasks t JOIN task_notes n ON n.task_id = t.id",
+      "FROM tasks t JOIN task_notes n ON n.task_id = t.id",
+      "t",
+    ],
+    ["unaliased", "SELECT workstream FROM tasks WHERE status = 'OPEN'", "FROM tasks", "tasks"],
+    ["unaliased, then ORDER", "SELECT workstream FROM tasks ORDER BY id", "FROM tasks", "tasks"],
+  ])(
+    "workstream JOIN hint, %s: names how the query calls tasks, and runs",
+    async (_, sql, from, owner) => {
+      db.prepare(
+        "INSERT INTO task_notes (task_id, author, content, kind, created_at) SELECT id, 'me', 'hi', 'note', 'now' FROM tasks",
+      ).run();
+      const msg = (await fail(sql)).message;
+      const hint = /by workstream name: (JOIN .*?)\. columns:/.exec(msg)?.[1];
+      expect(hint).toBe(
+        `JOIN workstreams w ON w.id = ${owner}.workstream_id WHERE w.name = '<ws>'`,
+      );
+      const printed = `SELECT ${owner}.local_id ${from} ${hint?.replace("<ws>", "w")}`;
+      const rows = db.prepare(printed).all() as { local_id: string }[];
+      expect(rows.map((r) => r.local_id).sort()).toEqual(["a", "b"]);
+    },
+  );
 });
 
 describe("no such table", () => {

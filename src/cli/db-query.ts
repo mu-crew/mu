@@ -571,8 +571,8 @@ function teachColumnError(db: Db, query: string, err: unknown): unknown {
           .slice(0, 3);
   let mean = near.length > 0 ? ` (did you mean ${near.join(", ")}?)` : "";
   if (near.includes("workstream_id") && lower !== "workstream_id") {
-    const owner =
-      qualifier ?? [...tables].find(([, cs]) => cs.includes("workstream_id"))?.[0] ?? "t";
+    const table = [...tables].find(([, cs]) => cs.includes("workstream_id"))?.[0];
+    const owner = qualifier ?? (table === undefined ? "t" : tableAlias(query, table));
     mean += `; by workstream name: JOIN workstreams w ON w.id = ${owner}.workstream_id WHERE w.name = '<ws>'`;
   }
   const cols =
@@ -580,6 +580,45 @@ function teachColumnError(db: Db, query: string, err: unknown): unknown {
       ? "name a table to see its columns"
       : [...tables].map(([t, cs]) => `${t}(${cs.join(", ")})`).join("; ");
   return new SqlColumnError(`no such column: ${wanted}${mean}. columns: ${cols}`);
+}
+
+/** Words that can follow a table name and are not its alias. */
+const NOT_ALIAS = new Set([
+  "where",
+  "join",
+  "on",
+  "group",
+  "order",
+  "limit",
+  "left",
+  "right",
+  "inner",
+  "outer",
+  "cross",
+  "natural",
+  "full",
+  "using",
+  "union",
+  "except",
+  "intersect",
+  "having",
+  "window",
+  "set",
+  "values",
+  "returning",
+  "indexed",
+  "not",
+]);
+
+/** How the query refers to `table`: its alias (`FROM tasks t`, `FROM tasks AS t`),
+ *  else the table name itself. */
+function tableAlias(query: string, table: string): string {
+  const re = new RegExp(
+    `\\b(?:from|join|update)\\s+(?:main\\.)?"?${table}"?(?:\\s+(?:as\\s+)?([a-z_][a-z0-9_]*))?`,
+    "i",
+  );
+  const alias = re.exec(query)?.[1];
+  return alias === undefined || NOT_ALIAS.has(alias.toLowerCase()) ? table : alias;
 }
 
 /** `no such table: x`: the closest real table, then every table and view. */
