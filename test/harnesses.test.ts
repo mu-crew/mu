@@ -61,7 +61,7 @@ describe("HARNESS_TABLE", () => {
     expect(HARNESS_TABLE.muse.hookEnv).toBe("allowlist");
     expect(HARNESS_TABLE.muse.canBlockOnStop).toBe(false);
     expect(HARNESS_TABLE["cursor-agent"].neverStore).toContain("CURSOR_ASKPASS_SECRET");
-    expect(HARNESS_TABLE["cursor-agent"].sessionsBackedUp).toBe(false);
+    expect(HARNESS_TABLE["cursor-agent"].sessionsBackedUp).toBe(true);
     expect(HARNESS_TABLE.codex.trustFlag.join(" ")).toContain("<realpath>");
   });
 

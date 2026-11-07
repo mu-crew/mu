@@ -298,8 +298,8 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     clearInputKey: "C-u",
     canBlockOnStop: true,
     sandboxMarkerEnv: ["CURSOR_AGENT", "CURSOR_CONVERSATION_ID"],
-    sessions: "SQLite chats",
-    sessionsBackedUp: false,
+    sessions: "~/.cursor/projects/*/agent-transcripts/ (not SQLite chats)",
+    sessionsBackedUp: true,
     trustFlag: ["--trust"],
     modelFlag: "--model",
     // `--sandbox` takes a value (`enabled` or `disabled`): bare, cursor-agent refuses to start.
@@ -413,7 +413,8 @@ export function homeHookConfig(h: Harness): string | undefined {
  * The variable that moves a harness's home config directory, as the harness
  * itself reads it: `CLAUDE_CONFIG_DIR` for `~/.claude`, `CODEX_HOME` for
  * `~/.codex`. murmur, museum and muzzle honour the same two. cursor-agent's
- * and Muse Code's stay under the home directory.
+ * and Muse Code's config stay under the home directory (museum also stages
+ * cursor-agent transcripts from `CURSOR_HOME`, default `~/.cursor`).
  */
 export const CONFIG_DIR_ENV: Readonly<Partial<Record<Harness, { name: string; dir: string }>>> =
   Object.freeze({
