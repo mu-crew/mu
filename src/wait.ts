@@ -118,9 +118,7 @@ import {
   refKey,
   registered,
   type StallState,
-  sameDeath,
   snapshotsOf,
-  urgency,
 } from "./wait-item.js";
 import { type AgentTrack, rearmLatch, rewatchOnPoll, supersededBy } from "./wait-latch.js";
 import { agentOwed, hasDoneMark, setAgentDone } from "./wait-owed.js";
@@ -137,10 +135,10 @@ import {
   readWaitRegistration,
   registerOwnedWait,
 } from "./wait-registration.js";
+import { type Chosen, selectEvent } from "./wait-select.js";
 import {
   type AgentReading,
   type CloseOutcome,
-  closedByRun,
   DEFAULT_CTL_STUCK_AFTER_MS,
   DEFAULT_STUCK_AFTER_MS,
   type StallActionResult,
@@ -1287,55 +1285,12 @@ export async function waitForEvents(
     }
   };
 
-  const select = (items: Item[]): { event: Item; fired: Item[] } | undefined => {
-    const rank = (a: Item, b: Item): number =>
-      // Never-returned events first: an event that was already returned once (an
-      // unchanged dialog, a dead pane, a stall) never outranks one that was not.
-      Number(a.seen === true) - Number(b.seen === true) ||
-      urgency(a.kind) - urgency(b.kind) ||
-      // Under --all a failed gate is the firing event, so its code is the exit.
-      Number(failedGate(b)) - Number(failedGate(a)) ||
-      Number(b.target) - Number(a.target) ||
-      a.order - b.order;
-    const ready = items.filter((i) => i.ready).sort(rank);
-    if (!all) {
-      const best = ready[0];
-      if (best === undefined) return undefined;
-      // One fact, one event: a settled run whose CLOSE block closed task T, and T's own close,
-      // are the same news. Delivering either consumes the other, so the second is not owed.
-      const same = (a: Item, b: Item): boolean =>
-        a.kind === "settled" &&
-        a.ref.kind === "agent" &&
-        closedByRun(a.snap.close) === b.ref.id &&
-        a.ref.workstream === b.ref.workstream &&
-        b.ref.kind === "task" &&
-        b.kind === "closed";
-      const companions = ready.filter(
-        (i) => i !== best && (same(i, best) || same(best, i) || sameDeath(i, best)),
-      );
-      return { event: best, fired: [best, ...companions] };
-    }
-    const urgent = ready.find(
-      (i) =>
-        i.kind === "input" ||
-        i.kind === "stall" ||
-        (!i.target && (i.kind === "dead" || i.kind === "delegate")),
-    );
-    if (urgent !== undefined) {
-      const companions = ready.filter((i) => i !== urgent && sameDeath(i, urgent));
-      return { event: urgent, fired: [urgent, ...companions] };
-    }
-    const targets = items.some((i) => i.target) ? items.filter((i) => i.target) : items;
-    if (targets.length === 0 || !targets.every((i) => i.done)) return undefined;
-    const sorted = [...targets].sort(rank);
-    const best = sorted.find((i) => i.ready) ?? sorted[0];
-    return best === undefined ? undefined : { event: best, fired: targets.filter((i) => i.done) };
-  };
+  const select = (items: Item[]): Chosen | undefined => selectEvent(items, all ? "all" : "first");
 
   const build = (
     kind: WaitEventKind,
     items: Item[],
-    chosen?: { event: Item; fired: Item[] },
+    chosen?: Chosen,
     drained = false,
   ): WaitResult => {
     const e = chosen?.event;
