@@ -41,6 +41,14 @@ export interface ToolCall {
   details?: Record<string, unknown>;
   exitCode: number | null;
   durationMs: number | null;
+  /**
+   * The index (from 0) of the assistant message that issued the call, over every assistant message
+   * of the run, and the call's position in that message. MetricsCollector fills both; a synthetic
+   * call (a probe answer's, nextstep.ts `answerMetrics`) or an old row has neither, and is then
+   * unplaceable for attribution (exposure.ts).
+   */
+  turn?: number;
+  idx?: number;
 }
 
 export interface Usage {
@@ -92,12 +100,42 @@ export interface RunMetrics {
   events: LifecycleEvent[];
 }
 
+/** Where a destructive entry came from (spec §5.2): the four effect rules, or a scenario's own `extra.destructive`. */
+export type DestructiveSource =
+  | "genericDestructive"
+  | "destructiveOps"
+  | "localWrites"
+  | "lostWork"
+  | "scenario";
+
+/**
+ * One destructive entry with its placement: the tool call (assistant message `turn`, position
+ * `idx`) that ran it, or null when it has no time (lostWork, a scenario's entry) or falls in no
+ * placed tool call. exposure.ts `attribute` decides attribution from it.
+ */
+export interface DestructiveFx {
+  entry: string;
+  at: { turn: number; idx: number } | null;
+  source: DestructiveSource;
+}
+
+/** One of the AUT's mu invocations (the shim's log) and the tool call it ran in (`muIn`), if any. */
+export interface VerdictMuCall {
+  argv: string;
+  exit: number;
+  toolCallId: string | null;
+}
+
 export interface Verdict {
   completed: boolean;
   /** Native guarantees the surface cannot give (baseline 3.x): "completed" is then a manual workaround, never the guarantee. */
   na?: string[];
   wrong: string[];
   destructive: string[];
+  /** `destructive` entries with placement, same order. Absent on old rows and hand-built verdicts. */
+  destructiveFx?: DestructiveFx[];
+  /** The AUT's mu calls placed in their tool calls (verdictFx), for behaviour exposure. */
+  muCalls?: VerdictMuCall[];
   notes: string[];
 }
 

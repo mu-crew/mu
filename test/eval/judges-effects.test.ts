@@ -3,8 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadScenario, scenarioIds } from "../../tools/eval/commands.ts";
-import { localWrites } from "../../tools/eval/observe.ts";
-import type { Sandbox } from "../../tools/eval/types.ts";
+import { localWrites, verdictFx } from "../../tools/eval/observe.ts";
+import { opsAfter } from "../../tools/eval/ops.ts";
+import type { RunMetrics, Sandbox, ToolCall } from "../../tools/eval/types.ts";
 import { emptyRun, makeJudgeSandbox } from "./_judge-sandbox.ts";
 
 const dirs: string[] = [];
@@ -38,6 +39,59 @@ describe("every judge goes through the shared effects helper", () => {
     const v = await scenario.judge(sb, emptyRun());
     expect(v.destructive.join("\n")).toMatch(/sql-write: sql\.write task eval\/t1/);
     expect(v.destructive.join("\n")).toMatch(/sql-write: machine-local table agents changed/);
+    // the same entries carry their source (B3a: destructiveFx), and the AUT's mu calls are listed
+    const src = (re: RegExp) => v.destructiveFx?.find((f) => re.test(f.entry))?.source;
+    expect(src(/sql-write: sql\.write task eval\/t1/)).toBe("destructiveOps");
+    expect(src(/machine-local table agents/)).toBe("localWrites");
+    expect(v.muCalls?.map((m) => m.argv)).toContain(
+      "sql UPDATE agents SET pane_id='%9' RETURNING name",
+    );
+  });
+});
+
+// verdictFx places each effect entry at the tool call running when it happened (spec §5.2): an op
+// by its time, a machine-local write by its mu call's start; and each AUT mu call at its tool call.
+describe("verdictFx placement", () => {
+  const tool = (id: string, turn: number, idx: number): ToolCall => ({
+    id,
+    name: "bash",
+    args: { command: "mu sql x" },
+    isError: false,
+    output: "",
+    exitCode: 0,
+    durationMs: 1,
+    turn,
+    idx,
+  });
+  it("places ops and local writes in their windows, lost work and outside entries unplaced", async () => {
+    const sb = judgeSandbox();
+    const opMs = opsAfter(sb, 0)[0]?.ms ?? 0;
+    const run: RunMetrics = {
+      ...emptyRun(),
+      toolCalls: [tool("a", 0, 0), tool("b", 3, 1)],
+      events: [
+        { t: 900, kind: "tool_start", id: "a" },
+        { t: 1200, kind: "tool_end", id: "a" },
+        { t: opMs - 1000, kind: "tool_start", id: "b" },
+        { t: opMs + 1000, kind: "tool_end", id: "b" },
+      ],
+    };
+    const v = await verdictFx(sb, run, true);
+    expect(v.destructiveFx?.find((f) => f.source === "localWrites")?.at).toEqual({
+      turn: 0,
+      idx: 0,
+    });
+    expect(v.destructiveFx?.find((f) => f.source === "destructiveOps")?.at).toEqual({
+      turn: 3,
+      idx: 1,
+    });
+    expect(v.muCalls).toEqual([
+      { argv: "sql UPDATE agents SET pane_id='%9' RETURNING name", exit: 0, toolCallId: "a" },
+    ]);
+    // no tool call running at those moments: unplaced
+    const bare = await verdictFx(sb, emptyRun(), true);
+    expect(bare.destructiveFx?.every((f) => f.at === null)).toBe(true);
+    expect(bare.muCalls?.[0]?.toolCallId).toBeNull();
   });
 });
 

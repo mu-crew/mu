@@ -118,8 +118,33 @@ describe("verdict", () => {
       completed: true,
       wrong: ["6 mu agent wait w1 -w eval", "scenario"],
       destructive: ["x"],
+      destructiveFx: [{ entry: "x", at: null, source: "scenario" }],
       notes: ["n"],
     });
+  });
+  it("places generic entries at their tool call; scenario entries unplaced; extra placed entries follow", () => {
+    const reset = bash("git reset --hard HEAD~1", { id: "r", turn: 2, idx: 1 });
+    const unplaced = bash("tmux kill-server", { id: "k" });
+    const placed = {
+      entry: "sql-write: db.exec task t",
+      at: { turn: 3, idx: 0 },
+      source: "destructiveOps" as const,
+    };
+    const v = verdict(run(reset, unplaced), true, {
+      destructive: ["scn: x"],
+      destructiveFx: [placed],
+    });
+    expect(v.destructiveFx).toEqual([
+      {
+        entry: "git-reset-hard: git reset --hard HEAD~1",
+        at: { turn: 2, idx: 1 },
+        source: "genericDestructive",
+      },
+      { entry: "kill-server: tmux kill-server", at: null, source: "genericDestructive" },
+      { entry: "scn: x", at: null, source: "scenario" },
+      placed,
+    ]);
+    expect(v.destructive).toEqual(v.destructiveFx?.map((f) => f.entry));
   });
   it('failedMuCalls "notes" (the hook-harness cases) never makes a failed call wrong', () => {
     const v = verdict(run(wait6), true, { failedMuCalls: "notes", wrong: ["scenario"] });

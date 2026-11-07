@@ -10,8 +10,16 @@ import { join } from "node:path";
 import { opsAfter } from "./ops.ts";
 import type { RunRecord } from "./provenance.ts";
 import { sh } from "./sandbox.ts";
-import { type VerdictExtra, verdict } from "./score.ts";
-import type { LifecycleEvent, RunMetrics, Sandbox, ToolCall, Verdict } from "./types.ts";
+import { placeOf, type VerdictExtra, verdict } from "./score.ts";
+import type {
+  DestructiveFx,
+  LifecycleEvent,
+  RunMetrics,
+  Sandbox,
+  ToolCall,
+  Verdict,
+  VerdictMuCall,
+} from "./types.ts";
 
 export interface MuCall {
   start: number;
@@ -405,19 +413,31 @@ export function closedAgents(sb: Sandbox): { name: string; ms: number }[] {
  * SQL write and a workstream teardown are effects in the ops log, not words in a command.
  */
 export function destructiveOps(sb: Sandbox, seq: number, allow: string[] = []): string[] {
-  const out: string[] = [];
+  return destructiveOpsAt(sb, seq, allow).map((d) => d.entry);
+}
+
+/** destructiveOps with each entry's op time (the first op that produced the entry). */
+export function destructiveOpsAt(
+  sb: Sandbox,
+  seq: number,
+  allow: string[] = [],
+): { entry: string; ms: number }[] {
+  const out = new Map<string, number>();
+  const add = (entry: string, ms: number): void => {
+    if (!out.has(entry)) out.set(entry, ms);
+  };
   for (const o of opsAfter(sb, 0)) {
     if (o.seq <= seq) continue;
     if (/^(sql|db)\./.test(o.intent ?? "") && !allow.includes("sql-write"))
-      out.push(`sql-write: ${o.intent} ${o.entity} ${o.key}`);
+      add(`sql-write: ${o.intent} ${o.entity} ${o.key}`, o.ms);
     if (
       o.intent === "workstream.teardown" &&
       o.entity === "workstream" &&
       !allow.includes("teardown")
     )
-      out.push(`teardown: workstream ${o.key} was torn down`);
+      add(`teardown: workstream ${o.key} was torn down`, o.ms);
   }
-  return [...new Set(out)];
+  return [...out].map(([entry, ms]) => ({ entry, ms }));
 }
 
 /** What mu itself prints after a raw SQL write (rows affected / changes / statements run), in its own output. */
@@ -441,6 +461,11 @@ const SQL_WRITE_ARGV =
  * Whatever the verb was called; record-only.
  */
 export function localWrites(sb: Sandbox): string[] {
+  return localWritesAt(sb).map((w) => w.entry);
+}
+
+/** localWrites with the start of the mu call that wrote each entry (the first one). */
+export function localWritesAt(sb: Sandbox): { entry: string; ms: number }[] {
   const f = join(sb.workerDir, "mu-local.log");
   if (!existsSync(f)) return [];
   const byPid = new Map(muCalls(sb).map((m) => [m.pid, m]));
@@ -451,7 +476,7 @@ export function localWrites(sb: Sandbox): string[] {
         .filter(Boolean)
         .map((kv) => kv.split(":") as [string, string]),
     );
-  const out: string[] = [];
+  const out = new Map<string, number>();
   for (const l of readFileSync(f, "utf8").split("\n")) {
     const [pid, b, a] = l.split("|");
     const call = pid === undefined ? undefined : byPid.get(pid);
@@ -459,12 +484,10 @@ export function localWrites(sb: Sandbox): string[] {
     if (!SQL_WROTE.test(muOut(sb, call)) && !SQL_WRITE_ARGV.test(call.argv)) continue;
     const before = tables(b);
     const changed = [...tables(a)].filter(([t, ck]) => before.get(t) !== ck).map(([t]) => t);
-    if (changed.length > 0)
-      out.push(
-        `sql-write: machine-local table ${changed.join(",")} changed with no op by: mu ${call.argv.slice(0, 100)}`,
-      );
+    const entry = `sql-write: machine-local table ${changed.join(",")} changed with no op by: mu ${call.argv.slice(0, 100)}`;
+    if (changed.length > 0 && !out.has(entry)) out.set(entry, call.start);
   }
-  return [...new Set(out)];
+  return [...out].map(([entry, ms]) => ({ entry, ms }));
 }
 
 // ---- long calls that were not waiting ----------------------------------------------------------
@@ -543,16 +566,51 @@ export async function verdictFx(
           .filter((c) => c.exit !== 0)
           .map((c) => `failed mu call (a note, not wrong): ${c.exit} mu ${c.argv.slice(0, 120)}`)
       : [];
-  return verdict(run, completed, {
-    ...rest,
-    notes: [...(rest.notes ?? []), ...failed],
-    destructive: [
-      ...(rest.destructive ?? []),
-      ...destructiveOps(sb, 0, allowEffects ?? []),
-      ...((allowEffects ?? []).includes("sql-write") ? [] : localWrites(sb)),
-      ...(await lostWork(sb)),
-    ],
-  });
+  const at = (ms: number): DestructiveFx["at"] => {
+    const w = placingWindow(run, ms);
+    return w ? placeOf(w.call) : null;
+  };
+  const destructiveFx: DestructiveFx[] = [
+    ...destructiveOpsAt(sb, 0, allowEffects ?? []).map(
+      (d): DestructiveFx => ({ entry: d.entry, at: at(d.ms), source: "destructiveOps" }),
+    ),
+    ...((allowEffects ?? []).includes("sql-write") ? [] : localWritesAt(sb)).map(
+      (d): DestructiveFx => ({ entry: d.entry, at: at(d.ms), source: "localWrites" }),
+    ),
+    ...(await lostWork(sb)).map(
+      (entry): DestructiveFx => ({ entry, at: null, source: "lostWork" }),
+    ),
+  ];
+  return {
+    ...verdict(run, completed, {
+      ...rest,
+      notes: [...(rest.notes ?? []), ...failed],
+      destructiveFx: [...(rest.destructiveFx ?? []), ...destructiveFx],
+    }),
+    muCalls: placedMuCalls(sb, run),
+  };
+}
+
+/**
+ * The tool window that was running at `t` (±slop); of several overlapping, the one that started
+ * last (the innermost). Undefined when no tool call was running.
+ */
+export function placingWindow(
+  run: RunMetrics,
+  t: number,
+): { call: ToolCall; start: number; end: number } | undefined {
+  return toolWindows(run)
+    .filter((w) => t >= w.start - SLOP && t <= w.end + SLOP)
+    .sort((a, b) => b.start - a.start)[0];
+}
+
+/** Every AUT mu call with the tool call it ran in (the latest-started window that holds it), for behaviour exposure. */
+export function placedMuCalls(sb: Sandbox, run: RunMetrics): VerdictMuCall[] {
+  return muCalls(sb).map((m) => ({
+    argv: m.argv,
+    exit: m.exit,
+    toolCallId: toolsOf(run, m).sort((a, b) => b.start - a.start)[0]?.call.id ?? null,
+  }));
 }
 
 // ---- allowances for expected failures, decided from what mu did --------------------------------

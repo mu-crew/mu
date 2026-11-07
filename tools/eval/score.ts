@@ -1,6 +1,6 @@
 // Generic wrong/destructive classifiers. Scenario-specific checks go in verdict()'s `extra`.
 import { isMuCall } from "./events.ts";
-import type { RunMetrics, ToolCall, Verdict } from "./types.ts";
+import type { DestructiveFx, RunMetrics, ToolCall, Verdict } from "./types.ts";
 
 // Only commands that are not mu's own: git, sqlite3, rm, tmux keep their spelling on every surface.
 // What mu's verbs do (a SQL write, a teardown, a discarded workspace) is judged from the ops log
@@ -27,7 +27,10 @@ export interface ExpectFail {
 
 export interface VerdictExtra {
   wrong?: string[];
+  /** A scenario's own destructive entries: unplaced (`source: "scenario"`, `at: null`). */
   destructive?: string[];
+  /** Placed destructive entries (verdictFx's effect rules); they follow `destructive` in the verdict. */
+  destructiveFx?: DestructiveFx[];
   notes?: string[];
   /** Native guarantees missed on the baseline (see lifecycle.native). Shown as N/A everywhere; a pass is then a manual workaround. */
   na?: string[];
@@ -65,13 +68,27 @@ export function genericWrong(run: RunMetrics): string[] {
 }
 
 export function genericDestructive(run: RunMetrics, allow: string[] = []): string[] {
-  const out: string[] = [];
+  return genericDestructiveFx(run, allow).map((f) => f.entry);
+}
+
+/** The tool call's own place, when MetricsCollector recorded it. */
+export const placeOf = (c: ToolCall): DestructiveFx["at"] =>
+  c.turn !== undefined && c.idx !== undefined ? { turn: c.turn, idx: c.idx } : null;
+
+/** genericDestructive, each entry placed at the tool call that ran it. */
+export function genericDestructiveFx(run: RunMetrics, allow: string[] = []): DestructiveFx[] {
+  const out: DestructiveFx[] = [];
   for (const c of run.toolCalls) {
     if (c.name !== "bash" || typeof c.args.command !== "string") continue;
     const cmd = c.args.command;
     for (const d of DESTRUCTIVE) {
       if (allow.includes(d.id)) continue;
-      if (d.re.test(cmd)) out.push(`${d.id}: ${cmd.slice(0, 120)}`);
+      if (d.re.test(cmd))
+        out.push({
+          entry: `${d.id}: ${cmd.slice(0, 120)}`,
+          at: placeOf(c),
+          source: "genericDestructive",
+        });
     }
   }
   return out;
@@ -87,6 +104,13 @@ export function verdict(run: RunMetrics, completed: boolean, extra: VerdictExtra
     if (exp) notes.push(`expected fail: ${exp.why}: ${f.entry}`);
     else wrong.push(f.entry);
   }
+  const destructiveFx: DestructiveFx[] = [
+    ...genericDestructiveFx(run, extra.allow),
+    ...(extra.destructive ?? []).map(
+      (entry): DestructiveFx => ({ entry, at: null, source: "scenario" }),
+    ),
+    ...(extra.destructiveFx ?? []),
+  ];
   const na = extra.na ?? [];
   if (na.length > 0) {
     notes.push(...na.map((x) => `N/A baseline 3.x: ${x}`));
@@ -98,7 +122,8 @@ export function verdict(run: RunMetrics, completed: boolean, extra: VerdictExtra
     completed,
     ...(na.length > 0 ? { na } : {}),
     wrong: [...wrong, ...(extra.wrong ?? [])],
-    destructive: [...genericDestructive(run, extra.allow), ...(extra.destructive ?? [])],
+    destructive: destructiveFx.map((f) => f.entry),
+    destructiveFx,
     notes,
   };
 }

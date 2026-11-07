@@ -120,6 +120,62 @@ describe("MetricsCollector", () => {
   });
 });
 
+describe("MetricsCollector turn and idx", () => {
+  const tc = (id: string) => ({ type: "toolCall", id, name: "bash", arguments: {} });
+  const start = (id: string) => ({
+    type: "tool_execution_start",
+    toolCallId: id,
+    toolName: "bash",
+    args: { command: "ls" },
+  });
+  const end = (id: string) => ({
+    type: "tool_execution_end",
+    toolCallId: id,
+    toolName: "bash",
+    isError: false,
+    result: { content: [] },
+  });
+  it("places each call at its assistant message (every assistant message counts) and its block position", () => {
+    const c = new MetricsCollector(() => 1);
+    for (const e of [
+      {
+        type: "message_end",
+        message: assistant({ content: [{ type: "text", text: "thinking" }] }),
+      },
+      {
+        type: "message_end",
+        message: assistant({ content: [{ type: "text", text: "go" }, tc("p"), tc("q")] }),
+      },
+      // pi may run them in any order; the place comes from the block, not the start order
+      start("q"),
+      start("p"),
+      end("p"),
+      end("q"),
+      { type: "message_end", message: { role: "user", content: "x" } },
+      { type: "message_end", message: assistant({ content: [tc("r")] }) },
+      start("r"),
+      end("r"),
+    ])
+      c.push(e);
+    const r = c.result({ wallMs: 0, prods: 0, aborted: null });
+    const at = Object.fromEntries(r.toolCalls.map((x) => [x.id, [x.turn, x.idx]]));
+    expect(at).toEqual({ q: [1, 1], p: [1, 0], r: [2, 0] });
+  });
+  it("a call no block names takes the next place in the latest message; none before any message", () => {
+    const c = new MetricsCollector(() => 1);
+    c.push(start("early"));
+    c.push({ type: "message_end", message: assistant({ content: [tc("a")] }) });
+    c.push(start("a"));
+    c.push(start("ghost"));
+    const r = c.result({ wallMs: 0, prods: 0, aborted: null });
+    expect(r.toolCalls[0]).not.toHaveProperty("turn");
+    expect(r.toolCalls.slice(1).map((x) => [x.turn, x.idx])).toEqual([
+      [0, 0],
+      [0, 1],
+    ]);
+  });
+});
+
 describe("isMuCall", () => {
   it("matches mu in command position and mu_delegate only", () => {
     expect(isMuCall("bash", { command: "mu task list" })).toBe(true);

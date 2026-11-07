@@ -50,6 +50,12 @@ export class MetricsCollector {
   private settled = false;
   private activity: number;
   private events: LifecycleEvent[] = [];
+  /** Assistant messages seen so far: the next one's index is this. */
+  private assistants = 0;
+  /** toolCall block id -> its message index and position (from the assistant message's content). */
+  private placed = new Map<string, { turn: number; idx: number }>();
+  /** Tool calls started per message index, for a call whose id no message block named. */
+  private startedIn = new Map<number, number>();
 
   private readonly now: () => number;
 
@@ -109,6 +115,11 @@ export class MetricsCollector {
   private onMessageEnd(message: unknown): void {
     if (!isRec(message) || message.role !== "assistant") return;
     const blocks = Array.isArray(message.content) ? message.content : [];
+    const turn = this.assistants++;
+    let idx = 0;
+    for (const b of blocks)
+      if (isRec(b) && b.type === "toolCall")
+        this.placed.set(String(b.id ?? ""), { turn, idx: idx++ });
     const calls = blocks.some((b) => isRec(b) && b.type === "toolCall");
     if (!calls && textOf(message.content) !== "")
       this.mark("assistant_text", { text: textOf(message.content) });
@@ -128,6 +139,14 @@ export class MetricsCollector {
 
   private onToolStart(event: Rec): void {
     const id = String(event.toolCallId ?? "");
+    // pi ends the assistant message before it runs the message's tool calls: the call's place is
+    // its block's; failing that, the next position in the latest assistant message.
+    let at = this.placed.get(id);
+    if (!at && this.assistants > 0) {
+      const turn = this.assistants - 1;
+      at = { turn, idx: this.startedIn.get(turn) ?? 0 };
+    }
+    if (at) this.startedIn.set(at.turn, Math.max(this.startedIn.get(at.turn) ?? 0, at.idx + 1));
     const call: ToolCall = {
       id,
       name: String(event.toolName ?? ""),
@@ -136,6 +155,7 @@ export class MetricsCollector {
       output: "",
       exitCode: null,
       durationMs: null,
+      ...(at ? { turn: at.turn, idx: at.idx } : {}),
     };
     this.calls.push(call);
     this.byId.set(id, call);

@@ -10,6 +10,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Added
+
+- **Eval: exposure-gated scoring for the hill-r2 tournament** (spec
+  `docs/specs/2026-11-07-hill-r2-tournament.md` §4.1, §5, unit B3a).
+  `tools/eval/exposure.ts` decides whether a probe row or an R4 run saw a
+  variant's changed text or behaviour, and which destructive entries are
+  attributable to it. Win clusters are chosen only by exposure fixed before
+  the answer, never by the answer's own calls, so a null variant cannot win
+  through cluster selection. `tools/eval/stats.ts` holds the tests: Fisher
+  exact and its power, Holm, stratified CMH, ICC, DEFF and Kish scaling, and
+  the n plan. `ToolCall` gains optional `turn` and `idx`; `Verdict` gains
+  `destructiveFx` (each destructive entry placed at its tool call) and
+  `muCalls`.
+
 ### Changed
 
 - **A pipe gets no colour, inside tmux too.** mu forced ANSI colour
