@@ -2,7 +2,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readRows, runCold, runColdCheck } from "./cold-guess.ts";
 import { toColdMarkdown } from "./cold-report.ts";
@@ -25,9 +25,21 @@ import {
 import type { FauxStep } from "./faux.ts";
 import { parseAutHarness } from "./harness.ts";
 import { parseWorkers } from "./mix.ts";
+import {
+  type Arm,
+  defaultMaxLoad,
+  type NextJob,
+  nextLint,
+  nextSelftest,
+  runNext,
+  runNextCheck,
+} from "./nextstep.ts";
+import { NEXT_CASES } from "./nextstep-cases.ts";
+import { nextReport } from "./nextstep-report.ts";
 import { runAut } from "./runner.ts";
 import { createSandbox, FAUX_EXT, mu, sh, tmuxSocketPath } from "./sandbox.ts";
 import { parseFamily, prepareSurface, surfaceFromDir, surfaceId } from "./surface.ts";
+import { tournamentCli } from "./tournament-cli.ts";
 import type { Family, Sandbox, Scenario, Surface } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -41,6 +53,12 @@ const USAGE = `usage: node tools/eval/main.ts <command>
   cold-guess run --surface [label=]<spec>... --model <m>... [--reps 3] [--intents a,b] [--concurrency 4] [--provider-ext p] --out <cold-guess.jsonl>
   cold-guess check [--surface <spec>] [--intents a,b] [--concurrency 4]
   cold-guess report <cold-guess.jsonl> [--out file.md]
+  nextstep run --surface [label=]<spec>... --model <m>... --out <probe.jsonl> [--cases a,b] [--arms none,skill] [--reps 1] [--round b5] [--seed s] [--prompt-dir d] [--concurrency 6] [--model-concurrency 8] [--max-load n] [--provider-ext p]
+  nextstep check [--surface <spec>] [--cases a,b] [--concurrency 4]
+  nextstep lint [--surface [label=]<spec>...] [--cases a,b]
+  nextstep selftest [--surface <spec>] [--cases a,b]
+  nextstep report <probe.jsonl> [--round r] [--surface s] [--model m] [--out file.md]
+  tournament <sub> ...   (the tournament driver, tools/eval/tournament-cli.ts)
 <spec> = <dir|name>[:<3x|next>[:<scenario-root>]]. A name is a surface under ~/.cache/mu/eval/surfaces. Family and scenario root are per
 surface; --family/--scenario-root only fill specs that leave them out (defaults: 3x, tools/eval/scenarios). A scenario root holds
 <id>.<golden|bad|bad-x>.<family>.json and optional <id>.ts overrides, and must be outside ~/.cache/mu/eval/surfaces.
@@ -228,6 +246,134 @@ async function selftest(surface: Surface): Promise<number> {
   return failures === 0 ? 0 : 1;
 }
 
+/** `[label=]<spec>` surfaces of a repeatable --surface (default: the checkout, labelled base). */
+function labelledSurfaces(args: string[]): { label: string; surface: Surface }[] {
+  const specs = flagAll(args, "--surface");
+  if (specs.length === 0)
+    return [{ label: "base", surface: resolveSurface(REPO_ROOT, { family: "next" }) }];
+  return specs.map((s) => {
+    const eq = s.indexOf("=");
+    const surface = resolveSurface(eq > 0 ? s.slice(eq + 1) : s, {
+      family: "next",
+      ...surfaceDefaults(args),
+    });
+    return { label: eq > 0 ? s.slice(0, eq) : surface.name, surface };
+  });
+}
+
+/** A seeded Fisher-Yates shuffle (mulberry32), so a run's interleaving is reproducible. */
+function shuffle<T>(xs: T[], seed: string): T[] {
+  let h = 1779033703;
+  for (const ch of seed) h = Math.imul(h ^ ch.charCodeAt(0), 3432918353);
+  const rnd = (): number => {
+    h = (h + 0x6d2b79f5) | 0;
+    let t = Math.imul(h ^ (h >>> 15), 1 | h);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const out = [...xs];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [out[i], out[j]] = [out[j] as T, out[i] as T];
+  }
+  return out;
+}
+
+async function nextstep(rest: string[]): Promise<number> {
+  const [sub, ...args] = rest;
+  const only = flag(args, "--cases")?.split(",");
+  const cases = only ? NEXT_CASES.filter((c) => only.includes(c.id)) : NEXT_CASES;
+  if (only && cases.length !== only.length)
+    throw new Error(`unknown case in --cases ${only.join(",")}`);
+  const one = (): Surface => labelledSurfaces(args)[0]?.surface ?? resolveSurface(REPO_ROOT, {});
+  switch (sub) {
+    case "check": {
+      const r = await runNextCheck(one(), {
+        cases,
+        concurrency: Number(flag(args, "--concurrency") ?? 4),
+      });
+      return r.failures === 0 ? 0 : 1;
+    }
+    case "selftest":
+      return nextSelftest(one(), { cases });
+    case "lint": {
+      const r = nextLint(labelledSurfaces(args), cases);
+      for (const f of r.failures) console.log(`FAIL ${f}`);
+      for (const c of r.nameCues)
+        console.log(`nameCue ${c.case}/${c.paraphrase} on ${c.variant}: "${c.word}"`);
+      console.log(
+        r.failures.length === 0
+          ? "nextstep lint: ok"
+          : `nextstep lint: ${r.failures.length} FAILED`,
+      );
+      return r.failures.length === 0 ? 0 : 1;
+    }
+    case "report": {
+      const [file] = args;
+      if (!file) throw new Error(USAGE);
+      const r = nextReport(file, {
+        round: flag(args, "--round"),
+        surface: flag(args, "--surface"),
+        model: flag(args, "--model"),
+      });
+      const o = flag(args, "--out");
+      if (r.code !== 0) process.stderr.write(r.text);
+      else if (o) writeFileSync(o, r.text);
+      else process.stdout.write(r.text);
+      return r.code;
+    }
+    case "run": {
+      const surfaces = labelledSurfaces(args);
+      const models = flagAll(args, "--model");
+      const out = flag(args, "--out");
+      if (flagAll(args, "--surface").length === 0 || models.length === 0 || !out)
+        throw new Error(USAGE);
+      const arms = flagAll(args, "--arms");
+      const round = (flag(args, "--round") ?? "b5") as NextJob["round"];
+      const reps = Number(flag(args, "--reps") ?? 1);
+      const jobs: NextJob[] = [];
+      for (const { label, surface } of surfaces)
+        for (const c of cases)
+          for (const arm of c.arms)
+            if (arms.length === 0 || arms.includes(arm))
+              for (const p of c.paraphrases)
+                for (const model of models)
+                  for (let rep = 1; rep <= reps; rep++)
+                    jobs.push({
+                      round,
+                      group: c.group,
+                      surfaceLabel: label,
+                      surface,
+                      model,
+                      caseId: c.id,
+                      arm: arm as Arm,
+                      paraphrase: p.id,
+                      rep,
+                    });
+      const seed = flag(args, "--seed") ?? "nextstep";
+      console.log(`${jobs.length} rows planned (seed ${seed})`);
+      const r = await runNext({
+        jobs: shuffle(jobs, seed),
+        out,
+        promptDir: flag(args, "--prompt-dir") ?? join(dirname(out), "prompts"),
+        concurrency: Number(flag(args, "--concurrency") ?? 6),
+        modelConcurrency: Number(flag(args, "--model-concurrency") ?? 8),
+        maxLoad: Number(flag(args, "--max-load") ?? defaultMaxLoad()),
+        providerExt: flag(args, "--provider-ext"),
+        cases,
+        onRow: (row) =>
+          console.log(
+            `${row.hit ? "HIT " : row.partial ? "part" : "miss"} ${row.surface} ${row.model.split("/").pop()} ${row.case}/${row.paraphrase} ${row.arm} rep${row.rep}: ${row.commands[0]?.split("\n")[0]?.slice(0, 90) ?? row.why.join("; ")}`,
+          ),
+      });
+      console.log(`nextstep run: ${r.written} written, ${r.skipped} already in ${out}`);
+      return 0;
+    }
+    default:
+      throw new Error(USAGE);
+  }
+}
+
 async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
@@ -379,6 +525,10 @@ async function main(argv: string[]): Promise<number> {
       }
       throw new Error(USAGE);
     }
+    case "nextstep":
+      return nextstep(rest);
+    case "tournament":
+      return tournamentCli(rest);
     default:
       console.error(USAGE);
       return 2;

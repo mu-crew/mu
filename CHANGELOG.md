@@ -24,6 +24,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `destructiveFx` (each destructive entry placed at its tool call) and
   `muCalls`.
 
+- **Eval: the next-step probe** (`tools/eval`, hill-r2 B2). `node
+  tools/eval/main.ts nextstep run|check|lint|selftest|report` gives a model a
+  live transcript ending in one mu output, a goal and an optional skill or
+  recipe, runs its next one to three commands in the same sandbox, and judges
+  the state and mu's own output (spec
+  docs/specs/2026-11-07-hill-r2-tournament.md §1). Two pilot cases,
+  `close_preview_apply` (bash) and `notes_multi` (zsh); `check` and `selftest`
+  cost nothing. `cold-guess`'s `execGuess` takes a shell and an env, and
+  `askModel` answers the scripted `evalfaux/*` models without pi. `main.ts`
+  dispatches `tournament` to a stub until the driver lands.
+
 ### Changed
 
 - **A pipe gets no colour, inside tmux too.** mu forced ANSI colour

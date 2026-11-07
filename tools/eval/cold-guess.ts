@@ -156,13 +156,26 @@ export interface ModelReply {
   error?: string;
 }
 
-/** One pi print-mode turn: no tools, no skills, no context files, empty HOME and cwd. */
+/** The scripted models: `evalfaux/<name>` answers with `faux[model]` and spends nothing (no pi starts). */
+export const EVALFAUX = "evalfaux/";
+
+/**
+ * One pi print-mode turn: no tools, no skills, no context files, empty HOME and cwd. An
+ * `evalfaux/*` model short-circuits: its reply is `faux[model]` (selftest), zero tokens.
+ */
 export async function askModel(
   model: string,
   system: string,
   user: string,
   providerExt: string | undefined,
+  faux: Record<string, string> = {},
 ): Promise<ModelReply> {
+  if (model.startsWith(EVALFAUX)) {
+    const text = faux[model];
+    return text === undefined
+      ? { text: "", tokens: 0, error: `${model}: no scripted reply` }
+      : { text, tokens: 0 };
+  }
   const home = mkdtempSync(join(tmpdir(), "mu-cold-pi-"));
   try {
     writeFileSync(
@@ -252,16 +265,21 @@ export function parsePiJson(stdout: string, stderr = "", code = 0): ModelReply {
 
 // ---- running a guess ----------------------------------------------------------------------------
 
-/** `bash -c cmd` in the sandbox, killed with its process group after `timeoutMs`. */
+/**
+ * `<shell> -c cmd` in the sandbox repo (default bash, with the sandbox env), killed with its process
+ * group after `timeoutMs`. The next-step probe passes the case's shell and the orchestrator env.
+ */
 export function execGuess(
   sb: Sandbox,
   cmd: string,
   timeoutMs = GUESS_TIMEOUT_MS,
+  shell: "bash" | "zsh" = "bash",
+  env: Record<string, string> = sb.env,
 ): Promise<GuessRun> {
   return new Promise((resolve) => {
-    const child: ChildProcess = spawn("bash", ["-c", cmd], {
+    const child: ChildProcess = spawn(shell, ["-c", cmd], {
       cwd: sb.repoDir,
-      env: sb.env,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
       detached: true,
     });
