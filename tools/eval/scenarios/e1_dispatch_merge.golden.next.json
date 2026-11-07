@@ -2,10 +2,10 @@
   {
     "calls": [
       {
-        "bash": "mu agent spawn w1 -w eval --cli claude --worktree --task d1 --json"
+        "bash": "mu agent spawn w1 -w eval --cli \"$EVAL_W1\" --worktree --task d1 --json"
       },
       {
-        "bash": "mu agent spawn w2 -w eval --cli codex --worktree --task d2 --json"
+        "bash": "mu agent spawn w2 -w eval --cli \"$EVAL_W2\" --worktree --task d2 --json"
       }
     ]
   },
@@ -38,6 +38,6 @@
     ]
   },
   {
-    "text": "d1 (claude) and d2 (codex) are merged into main and closed; both workers are closed."
+    "text": "d1 and d2 are merged into main and closed; both workers are closed."
   }
 ]

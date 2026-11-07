@@ -55,6 +55,8 @@ export interface WorldSpec {
   autCalls?: [number, string, number?][];
   /** Remote working copies left on the host: agent names. */
   remoteLeft?: string[];
+  /** The AUT's own hook record (agent `aut`): its harness's session start and the model it names. */
+  autHooks?: { harness: string; model?: string; provider?: string };
 }
 
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -258,6 +260,25 @@ export function makeHarnessWorld(spec: WorldSpec): Sandbox {
         verdict: c.verdict,
         author: "aut",
       });
+  }
+  if (spec.autHooks !== undefined) {
+    const { harness, model, provider } = spec.autHooks;
+    const rec: HookRec = {
+      ms: now - 40000,
+      harness,
+      event: "session_start",
+      kind: "session_start",
+      agent: "aut",
+      host: null,
+      cwd: repoDir,
+      session: "s-aut",
+      turn: null,
+      text: null,
+      resumed: false,
+      ...(model !== undefined ? { model } : {}),
+      ...(provider !== undefined ? { provider } : {}),
+    };
+    hooks.push(JSON.stringify(rec));
   }
   db.close();
   for (const a of spec.remoteLeft ?? [])

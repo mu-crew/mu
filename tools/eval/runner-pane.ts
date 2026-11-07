@@ -1,7 +1,12 @@
-// One AUT run in a pane: claude or codex as the orchestrator, started the way a user starts one
-// (`mu orchestrate --cli <harness>` on the sandbox's tmux server), prompted through mu's own hooks
-// send (paste, confirmed by run count), and watched through murmur's view of its pane. The pi AUT
-// keeps its rpc runner (runner.ts).
+// One AUT run in a pane: claude, codex, cursor-agent or Muse Code as the orchestrator, started the
+// way a user starts one (`mu orchestrate --cli <harness>` on the sandbox's tmux server; a
+// cursor-agent or Muse AUT with the trust and approval flags of harness.ts AUT_FLAGS), prompted
+// through mu's own hooks send (paste, confirmed by run count), and watched through murmur's view of
+// its pane. The pi AUT keeps its rpc runner (runner.ts).
+//
+// Ready to prompt: claude and cursor-agent report their session at launch, so the runner waits for
+// it; codex and Muse report one only with their first prompt, so the runner sends once no trust
+// dialog is up.
 //
 // What the run observes is what murmur reports for the pane (its turns, its last text) and the
 // mu-call record of the sandbox shim. A pane AUT has no token stream, so usage stays 0 and
@@ -15,13 +20,14 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { AUT_NAMES } from "./fake-payloads.ts";
+import { AUT_NAMES, STARTUP } from "./fake-payloads.ts";
+import type { PaneHarness } from "./harness.ts";
 import { muCalls } from "./observe.ts";
 import { type ExecResult, mu, realTmux } from "./sandbox.ts";
 import type { Aborted, LifecycleEvent, RunMetrics, Sandbox, Scenario } from "./types.ts";
 
 export interface PaneRunOptions {
-  harness: "claude" | "codex";
+  harness: PaneHarness;
   /** Fake run: the AUT's faux step script (the fake harness reads it through <workers>/aut-script). */
   auTScript?: string;
   /** The orchestrator's pane command (`--command`); default: mu's own preset for the harness. */
@@ -163,6 +169,8 @@ export interface PaneIO {
   /** The pane's process, null when it is gone. */
   pid(sb: Sandbox, pane: string): number | null;
   capture(sb: Sandbox, pane: string): string | null;
+  /** The pane's scrollback too (sandboxRefusal reads it); absent: not read. */
+  scrollback?(sb: Sandbox, pane: string): string | null;
   keys(sb: Sandbox, pane: string, key: string): void;
   /** SIGKILL a pid or (negative) a process group. */
   kill(target: number): void;
@@ -177,6 +185,7 @@ export const realPaneIO: PaneIO = {
   view: murmurPane,
   pid: panePid,
   capture: (sb, pane) => tmuxOut(sb, ["capture-pane", "-p", "-t", pane]),
+  scrollback: (sb, pane) => tmuxOut(sb, ["capture-pane", "-p", "-J", "-S", "-5000", "-t", pane]),
   keys: (sb, pane, key) => {
     tmuxOut(sb, ["send-keys", "-t", pane, key]);
   },
@@ -184,6 +193,33 @@ export const realPaneIO: PaneIO = {
   mtime,
   sleep,
 };
+
+/**
+ * What a harness's own sandbox prints when it refuses a command: a seatbelt that cannot nest in a
+ * launcher's (`sandbox_apply: Operation not permitted`, cursor-agent's `Failed to execute
+ * sandbox-exec`), a write it denies (mu's DB, murmur's state and the tmux socket are outside the
+ * sandbox repo, the harness's workspace).
+ */
+const SANDBOX_REFUSAL = [
+  /sandbox_apply/,
+  /Failed to execute sandbox-exec/,
+  /sandbox-exec: /,
+  /Operation not permitted/,
+  /attempt to write a readonly database/,
+];
+
+/** The first line of a pane's text that shows a sandbox refusal (SANDBOX_REFUSAL), else null. */
+export function sandboxRefusal(text: string): string | null {
+  for (const l of text.split("\n"))
+    if (SANDBOX_REFUSAL.some((re) => re.test(l))) return l.trim().slice(0, 200);
+  return null;
+}
+
+/** How a run's lastError (and, in runOne, its notes) marks a failure of the environment. */
+export const ENV_FAILURE = "environment:";
+
+export const envFailure = (line: string): string =>
+  `${ENV_FAILURE} the AUT's pane shows its own sandbox refusing a command (${JSON.stringify(line)}); a failed run may be the rig's environment, not the AUT (docs/eval/every-harness.md: EVAL_AUT_COMMAND)`;
 
 export async function runPaneAut(
   sb: Sandbox,
@@ -208,6 +244,12 @@ export async function runPaneAut(
   let turns = 0;
   let prods = 0;
   let finalText = "";
+  let refusal: string | null = null;
+  // read once per quiet point, crash and timeout, until one shows
+  const scanRefusal = (p: string): void => {
+    if (refusal !== null || io.scrollback === undefined) return;
+    refusal = sandboxRefusal(io.scrollback(sb, p) ?? "");
+  };
 
   const start = async (name: string, prompt: string): Promise<string | null> => {
     const { pane, r } = await io.orchestrate(sb, ws, name, o);
@@ -236,8 +278,13 @@ export async function runPaneAut(
         lastAt = i;
         note({ trustDialog: name, keys: trustKeys });
       }
-      // codex reports its session only with its first prompt: ready once no dialog is up
-      if (o.harness === "codex" && i >= 8 && trustKeys === null && trustDialogKeys(screen) === null)
+      // codex and Muse report their session only with their first prompt: ready once no dialog is up
+      if (
+        STARTUP[o.harness] === "first-prompt" &&
+        i >= 8 &&
+        trustKeys === null &&
+        trustDialogKeys(screen) === null
+      )
         break;
       await io.sleep(TICK_MS);
     }
@@ -268,6 +315,7 @@ export async function runPaneAut(
     await io.sleep(TICK_MS);
     const now = Date.now();
     if (now - started > timeoutMs) {
+      scanRefusal(pane);
       aborted = "timeout";
       break;
     }
@@ -281,6 +329,7 @@ export async function runPaneAut(
           (await scenario.replacement.crashWhen(sb))));
     if (crashNow && scenario.replacement !== undefined) {
       if (pid !== null) {
+        scanRefusal(pane);
         // the pane's process group: a launcher and the binary it started die together
         for (const target of [-pid, pid]) {
           try {
@@ -322,6 +371,7 @@ export async function runPaneAut(
     }
     wasRunning = running;
     if (running || v?.state === "blocked" || now - lastActivity < quietMs) continue;
+    scanRefusal(pane);
     const soFar = metrics();
     const verdict = await scenario.judge(sb, soFar);
     if (!verdict.completed && prods < maxProds) {
@@ -345,7 +395,7 @@ export async function runPaneAut(
       prods,
       wallMs: Date.now() - started,
       aborted,
-      lastError,
+      lastError: lastError ?? (refusal !== null ? envFailure(refusal) : null),
       finalText,
       events: [...events],
     };

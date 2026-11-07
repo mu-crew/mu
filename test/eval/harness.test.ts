@@ -13,6 +13,8 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { autCommand, checkHarnesses, isLiveRun, mergeMetrics } from "../../tools/eval/commands.ts";
 import {
+  AUT_FLAGS,
+  AUT_PROJECT_SKILL,
   autSkill,
   CLAUDE_ALLOW,
   HOST_HOME_LINKS,
@@ -466,6 +468,33 @@ describe("the mu skill a live pane AUT reads", () => {
     );
     expect(autSkill("pi", surfaceSkill, { home, codexDir, codexHooks: "global" })).toBeNull();
   });
+
+  it("cursor-agent: the project copy, noted when a personal mu skill it also loads differs", () => {
+    const h = tmp("home-cursor-");
+    const o = { home: h, codexDir: join(h, ".codex"), codexHooks: "global" as const };
+    expect(autSkill("cursor-agent", surfaceSkill, o)).toBeNull();
+    for (const d of [".cursor", ".codex"]) {
+      mkdirSync(join(h, d, "skills", "mu"), { recursive: true });
+      writeFileSync(join(h, d, "skills", "mu", "SKILL.md"), d === ".cursor" ? "surface" : "older");
+    }
+    const note = autSkill("cursor-agent", surfaceSkill, o) ?? "";
+    expect(note).toMatch(/^cursor-agent AUT: .*\.codex\/skills\/mu differs/);
+    expect(note).not.toContain(".cursor/skills/mu differs");
+    expect(note).toContain(AUT_PROJECT_SKILL["cursor-agent"]);
+    // ~/.agents and ~/.grok are personal skill dirs of cursor-agent's too
+    for (const d of [".agents", ".grok"]) {
+      mkdirSync(join(h, d, "skills", "mu"), { recursive: true });
+      writeFileSync(join(h, d, "skills", "mu", "SKILL.md"), "older");
+    }
+    const all = autSkill("cursor-agent", surfaceSkill, o) ?? "";
+    expect(all).toContain(join(h, ".agents", "skills", "mu"));
+    expect(all).toContain(join(h, ".grok", "skills", "mu"));
+  });
+
+  it("muse: always noted (its personal skills live behind muse skills)", () => {
+    const o = { home, codexDir, codexHooks: "global" as const };
+    expect(autSkill("muse", surfaceSkill, o)).toMatch(/^muse AUT: .*\.agents\/skills\/mu/);
+  });
 });
 
 describe("tools and options", () => {
@@ -502,11 +531,13 @@ describe("tools and options", () => {
 
   it("AUT harnesses, check harnesses and live runs", () => {
     expect(parseAutHarness("codex")).toBe("codex");
-    expect(() => parseAutHarness("muse")).toThrow();
+    expect(parseAutHarness("muse")).toBe("muse");
+    expect(parseAutHarness("cursor-agent")).toBe("cursor-agent");
+    expect(() => parseAutHarness("cursor")).toThrow();
     const pi = { id: "x" } as Scenario;
     const hooked = { id: "e", hookHarnesses: { workers: ["claude"] } } as Scenario;
     expect(checkHarnesses(pi)).toEqual(["pi"]);
-    expect(checkHarnesses(hooked)).toEqual(["pi", "claude", "codex"]);
+    expect(checkHarnesses(hooked)).toEqual(["pi", "claude", "codex", "cursor-agent", "muse"]);
     expect(checkHarnesses(hooked, ["claude"])).toEqual(["claude"]);
     expect(checkHarnesses(pi, ["claude"])).toEqual([]);
     expect(isLiveRun(pi, "pi")).toBe(false);
@@ -525,6 +556,39 @@ describe("tools and options", () => {
     expect(autCommand({ ...o, model: "m", env: { EVAL_AUT_COMMAND: "codex -p x" } })).toBe(
       "codex -p x",
     );
+  });
+
+  it("a cursor-agent or Muse AUT's command carries the trust and approval flags an orchestrator needs", () => {
+    const a = tmp("aut-");
+    for (const h of ["cursor-agent", "muse"])
+      writeFileSync(join(a, h), "#!/bin/sh\n", { mode: 0o755 });
+    const live = { live: true, fakeWorkers: false, env: { PATH: a } };
+    expect(autCommand({ ...live, harness: "cursor-agent", model: "default" })).toBe(
+      "cursor-agent --trust --sandbox enabled",
+    );
+    expect(autCommand({ ...live, harness: "cursor-agent", model: "gpt-x" })).toBe(
+      "cursor-agent --trust --sandbox enabled --model gpt-x",
+    );
+    expect(autCommand({ ...live, harness: "muse", model: "default" })).toBe(
+      "muse --trust-workspace --approval-mode never",
+    );
+    expect(autCommand({ ...live, harness: "muse", model: "default", fakeWorkers: true })).toBe(
+      `${join(a, "muse")} --trust-workspace --approval-mode never`,
+    );
+    // check (fake harnesses): the same flags, never the faux model
+    expect(
+      autCommand({ ...live, live: false, harness: "cursor-agent", model: "evalfaux/aut" }),
+    ).toBe("cursor-agent --trust --sandbox enabled");
+    expect(
+      autCommand({
+        ...live,
+        harness: "muse",
+        model: "x",
+        env: { EVAL_AUT_COMMAND: "muse --yolo" },
+      }),
+    ).toBe("muse --yolo");
+    expect(AUT_FLAGS.claude).toEqual([]);
+    expect(AUT_FLAGS.codex).toEqual([]);
   });
 
   it("a replacement case's metrics add up", () => {
