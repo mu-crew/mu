@@ -8,7 +8,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
-## [Unreleased]
+## [4.5.0] — 2026-11-07
+
+Every agent CLI is first-class: claude, codex, cursor-agent and Muse Code
+orchestrate and work as well as pi does. Their panes report through
+murmur's hooks, so **hook harnesses need murmur 2.0** (`npm i -g
+@mu-crew/murmur@2`, then `murmur init`); pi alone keeps working with
+murmur 1.x.
 
 ### Added
 
