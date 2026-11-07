@@ -693,6 +693,32 @@ describe("murmur's pane report and the observer's records", () => {
     expect(reportedAt(recs, "w1", /REFUTED/)).toBe(2);
   });
 
+  it("drops the claude echo of a cursor-agent session (it runs claude's hooks too)", () => {
+    const rec = (harness: string, session: string, agent: string, ms: number) =>
+      JSON.stringify({
+        ms,
+        harness,
+        event: "beforeSubmitPrompt",
+        kind: "prompt",
+        agent,
+        host: null,
+        cwd: "/w",
+        session,
+        turn: "t",
+        text: "go",
+      });
+    const recs = parseHookLog(
+      [
+        rec("claude", "s1", "w1", 1),
+        rec("cursor-agent", "s1", "w1", 1),
+        rec("claude", "s2", "w2", 2),
+      ].join("\n"),
+    );
+    expect(harnessOf(recs, "w1")).toBe("cursor-agent");
+    expect(promptsTo(recs, "w1")).toHaveLength(1);
+    expect(harnessOf(recs, "w2")).toBe("claude");
+  });
+
   it("families: claude anthropic, codex openai, pi by its model", () => {
     expect(harnessFamily("claude")).toBe("anthropic");
     expect(harnessFamily("codex")).toBe("openai");
