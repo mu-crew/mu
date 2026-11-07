@@ -245,8 +245,9 @@ inside an agent, because every pane would inherit that agent's sandbox.
 - **Check with native subagents, recorded.** There is no `mu_delegate`, so
   the harness's own subagents refute claims, findings and plans, and mu
   records each check: `mu task check <id> -w <ws> --by claude/opus --brief -`
-  prints `check=<id>`, and `mu task verdict <id> -w <ws> --check <check> -`
-  records its `VERDICT:` and `EVIDENCE:` lines. `mu state` lists every check
+  prints `check=<id>`; you run the native subagent on that brief; then
+  `mu task verdict <id> -w <ws> --check <check> -` records its `VERDICT:` and
+  `EVIDENCE:` lines. `mu state` lists every check
   still without a verdict, so a replacement orchestrator sees what a crash
   lost, and `close --if-ready` waits for them. For one refuter of each high
   or critical finding, use another model family: a pane in `scratch` (the
