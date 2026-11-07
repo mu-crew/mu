@@ -460,9 +460,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     expect(r.worktree?.action).toBe("removed");
     expect(r.worktree?.warnings?.join("\n")).toContain(`process ${helper} (sleep)`);
     // 5 s of waiting from the kill, then the park, the holder scan and the removal.
+    // The ceiling only proves the close gives up rather than outwaiting the
+    // 60 s helper; under load the close took up to 10.7 s. The 5 s bound itself
+    // is pinned tightly by the awaitHelpers test below.
     expect(took).toBeGreaterThanOrEqual(4900);
-    expect(took).toBeLessThan(10_000);
-  }, 20_000);
+    expect(took).toBeLessThan(20_000);
+  }, 30_000);
 
   it("awaitHelpers counts its own holder scan against its bound", async () => {
     resetSleep();
