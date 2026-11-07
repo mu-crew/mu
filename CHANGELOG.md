@@ -29,6 +29,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `N owed: mu wait --ready -w <ws>`, and its `next` is that command. While a
   named target is still owed, `next` stays the resume: a bare `--ready` never
   returns an unowned target.
+- **Eval: the hill-r2 tournament driver** (spec
+  `docs/specs/2026-11-07-hill-r2-tournament.md` §3, §4.1-4.3, unit B3b).
+  `node tools/eval/main.ts tournament freeze|refreeze|plan|pack|design|audit|build|r1|r2|review|status`
+  runs a group's variants by successive halving. A variant is a patch on a
+  copy of the built base (`tournament-build.ts`): the driver derives its
+  markers, context markers and behaviour signature (new flag or verb names,
+  golden diffs over a base noise mask) from the patch and admits it only when
+  it is observable and inside the caps. `tournament-design.ts` packs base for
+  the designers without the eval rig (scrubbing the files that name it),
+  refuses a leaky BRIEF.md, launches each designer with an empty HOME and a
+  PATH without `mu` or `museum`, and audits its session files: the catch-all
+  lets node's install dir, the provider extension and what the pack itself
+  says through, so an ordinary stack trace or a read of mu's docs does not
+  discard a session. `tournament.ts` scores a round with the per-case Holm
+  and stratified CMH losses and the pooled weak-model win test at 0.05/S,
+  ranks by a total order, advances fixed counts, and stops for review (exit
+  7) on a new unattributable destructive entry. `r3|r4|final|report` call
+  stubs that B3c fills.
 
 - **Eval: exposure-gated scoring for the hill-r2 tournament** (spec
   `docs/specs/2026-11-07-hill-r2-tournament.md` §4.1, §5, unit B3a).
