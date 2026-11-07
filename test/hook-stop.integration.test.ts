@@ -272,6 +272,28 @@ describe.skipIf(!built)("mu hook stop under a fake claude", () => {
     }
   });
 
+  // Characterisation (a7_wait_drain_rca_2): CURRENT one event per Stop, like pi's settle. A
+  // fire-all-ready fix flips it to one block carrying both closes; each still delivered once.
+  it("two owned closes ready at one Stop take two blocks, one close each (CURRENT)", async () => {
+    registerOwnedWait(db, "auth/orch", [
+      { kind: "task", workstream: "auth", id: "t1" },
+      { kind: "task", workstream: "auth", id: "t2" },
+    ]);
+    close("t1");
+    close("t2");
+    const refs: (string | undefined)[] = [];
+    for (const active of [false, true]) {
+      const b = blockOf(
+        (await fireStop(ORCH, { session_id: "s1", stop_hook_active: active })).stdout,
+      );
+      expect(b?.decision).toBe("block");
+      refs.push(resultIn(b?.reason ?? "").firing?.ref);
+    }
+    expect(refs).toEqual(["task:auth/t1", "task:auth/t2"]);
+    const third = await fireStop(ORCH, { session_id: "s1", stop_hook_active: true });
+    expect(third.stdout.trim()).toBe("");
+  });
+
   it("allows the stop while a background mu wait holds the caller, and consumes nothing", async () => {
     registerOwnedWait(db, "auth/orch", [{ kind: "task", workstream: "auth", id: "t1" }]);
     const bg = run(
