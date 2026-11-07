@@ -42,11 +42,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   PATH without `mu` or `museum`, and audits its session files: the catch-all
   lets node's install dir, the provider extension and what the pack itself
   says through, so an ordinary stack trace or a read of mu's docs does not
-  discard a session. `tournament.ts` scores a round with the per-case Holm
+  discard a session. The audit resolves relative paths in what the designer
+  did (bash commands, read and write paths) against the session's cwd, so
+  `cat ../../../../../../../.pi/agent/sessions/x` from the pack is a hit.
+  `tournament-score.ts` scores a round with the per-case Holm
   and stratified CMH losses and the pooled weak-model win test at 0.05/S,
   ranks by a total order, advances fixed counts, and stops for review (exit
-  7) on a new unattributable destructive entry. `r3|r4|final|report` call
-  stubs that B3c fills.
+  7) on a new unattributable destructive entry. `freeze` and `plan` print the
+  plan's CMH power per model (at the default ρ 0.2: own headline r = 3, n_eff
+  64 per model, 0.98 for a broad 0.8 → 0.7 drop, 0.53 for 0.8 → 0.75).
+  `r3|r4|final|report` call stubs that B3c fills.
 
 - **Eval: exposure-gated scoring for the hill-r2 tournament** (spec
   `docs/specs/2026-11-07-hill-r2-tournament.md` §4.1, §5, unit B3a).

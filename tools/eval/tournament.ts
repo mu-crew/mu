@@ -7,7 +7,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Arm, Group, NextCase, NextJob } from "./nextstep.ts";
-import { mde, type Plan, solvePlan } from "./stats.ts";
+import { cmhPower, mde, type Plan, solvePlan } from "./stats.ts";
 import type { VariantRow } from "./tournament-build.ts";
 import type { Surface } from "./types.ts";
 
@@ -62,6 +62,8 @@ export interface FreezeRow {
   judgesHash: string;
   files: string[];
   nPlan: CasePlan[];
+  /** CMH power per model at this plan for a broad drop from 0.8 (§4.2), keyed by the drop; absent on a row frozen before it was recorded. */
+  cmhPower?: PlanPower[];
   checks: "green" | "skipped";
 }
 
@@ -225,6 +227,9 @@ function ntfyPing(msg: string): void {
 // ---- n plan and wall ----------------------------------------------------------------------------
 
 export const DEFAULT_RHO = 0.2;
+export const ALPHA = 0.05;
+/** The stratified CMH loss test's level per model (Bonferroni over three models, §4.1). */
+export const CMH_ALPHA = ALPHA / 3;
 export const TARGET = { own: 60, pooled: 90, cross: 40, guard: 40 } as const;
 /** Worst Bonferroni-Holm divisor of the win test's first step (§4.2: S ≤ 6, h ≤ 3). */
 export const WORST_B = 18;
@@ -260,6 +265,33 @@ export function nPlan(
     return { case: c.id, kind, plan, r1: kind === "own" ? 1 : 0, mde: m };
   });
 }
+
+export interface PlanPower {
+  drop: string;
+  power: number;
+}
+
+/** Broad drops whose CMH power the plan reports: every stratum 0.8 → 0.7 and 0.8 → 0.75. */
+export const CMH_DROPS = [0.7, 0.75] as const;
+
+/**
+ * CMH power per model at a plan (§4.2): one stratum per case at its per-model n_eff, every stratum
+ * dropping from 0.8 to each of CMH_DROPS. The cold-guess guard is one more stratum in R2, so the
+ * number is a lower bound.
+ */
+export function planCmhPower(plan: readonly CasePlan[]): PlanPower[] {
+  return CMH_DROPS.map((pv) => ({
+    drop: `0.8→${pv}`,
+    power: cmhPower(
+      plan.map((p) => ({ nEff: p.plan.nEff, pb: 0.8, pv })),
+      CMH_ALPHA,
+    ),
+  }));
+}
+
+/** One line of the plan's CMH power for the freeze and plan output. */
+export const powerLine = (p: readonly PlanPower[]): string =>
+  `CMH power per model (α 0.05/3, cold-guess stratum not counted): ${p.map((x) => `${x.drop} ${x.power.toFixed(2)}`).join(", ")}`;
 
 /** Seconds per model call and calls per provider at once (§4.2 throughput). */
 export const MODEL_CALL_S = 15;

@@ -35,6 +35,8 @@ import {
   type IsolationRow,
   nPlan,
   pendingStops,
+  planCmhPower,
+  powerLine,
   probeFile,
   REP_BASE,
   readControl,
@@ -426,12 +428,14 @@ export async function tournamentCli(args: string[]): Promise<number> {
         judgesHash: h.hash,
         files: h.files,
         nPlan: plan,
+        cmhPower: planCmhPower(plan),
         checks,
       });
       for (const p of plan)
         console.log(
           `${p.case} ${p.kind}: m ${p.plan.m} r ${p.plan.r} n_eff ${p.plan.nEff.toFixed(0)}${p.plan.nEffPooled ? `/${p.plan.nEffPooled.toFixed(0)}` : ""}${p.plan.reached ? "" : ` SHORT (+${p.plan.add} paraphrases, MDE ${p.mde})`}`,
         );
+      console.log(powerLine(planCmhPower(plan)));
       console.log(`frozen: judges ${h.hash}`);
       return 0;
     }
@@ -468,6 +472,9 @@ export async function tournamentCli(args: string[]): Promise<number> {
         console.log(
           `${p.case} ${p.kind}: paraphrases ${p.plan.paraphrases} m ${p.plan.m} r ${p.plan.r} n_eff ${p.plan.nEff.toFixed(0)}${p.plan.nEffPooled ? ` pooled ${p.plan.nEffPooled.toFixed(0)}` : ""} MDE ${p.mde ?? "-"}${p.plan.reached ? "" : ` SHORT: add ${p.plan.add}`}`,
         );
+      console.log(
+        powerLine((freeze?.kind === "freeze" ? freeze.cmhPower : undefined) ?? planCmhPower(plan)),
+      );
       for (const [which, k] of [
         ["r1", n],
         ["r2", s],

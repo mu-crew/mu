@@ -190,6 +190,41 @@ export function cmh(strata: readonly Stratum[], alt: Alt): { z: number; p: numbe
   return { z, p: alt === "less" ? normCdf(z) : 1 - normCdf(z) };
 }
 
+/**
+ * Power of the one-sided CMH drop test at `alpha` by Monte Carlo on scaled counts (spec §4.2's
+ * method): each stratum draws base hits from Bin(n, pb) and the variant's from Bin(n, pv), n its
+ * rounded n_eff. Seeded (mulberry32), so a plan prints the same number every time.
+ */
+export function cmhPower(
+  strata: readonly { nEff: number; pb: number; pv: number }[],
+  alpha: number,
+  draws = 3000,
+  seed = 1,
+): number {
+  let a = seed >>> 0;
+  const u = (): number => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const bin = (n: number, p: number): number => {
+    let x = 0;
+    for (let i = 0; i < n; i++) if (u() < p) x++;
+    return x;
+  };
+  let rej = 0;
+  for (let d = 0; d < draws; d++) {
+    const s = strata.map((t) => {
+      const n = Math.round(t.nEff);
+      return { x1: bin(n, t.pv), n1: n, x2: bin(n, t.pb), n2: n };
+    });
+    if (cmh(s, "less").p <= alpha) rej++;
+  }
+  return rej / draws;
+}
+
 // ---- correlation, design effect, Kish scaling --------------------------------------------------
 
 /** The ICC floor of spec §4.1: ρ̂ and ρ̂_pool are never taken below it. */

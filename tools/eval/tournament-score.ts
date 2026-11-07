@@ -15,7 +15,14 @@ import {
 } from "./exposure.ts";
 import type { Group, NameCue, ProbeRow } from "./nextstep.ts";
 import { cmh, deff, fisher, holm, kish, type Stratum } from "./stats.ts";
-import { DEFAULT_RHO, type ReviewStopRow, type SetupRow, stopId } from "./tournament.ts";
+import {
+  ALPHA,
+  CMH_ALPHA,
+  DEFAULT_RHO,
+  type ReviewStopRow,
+  type SetupRow,
+  stopId,
+} from "./tournament.ts";
 import type { VariantRow } from "./tournament-build.ts";
 
 // ---- scoring ------------------------------------------------------------------------------------
@@ -96,8 +103,6 @@ export interface ScoreInput {
   repFloor?: number;
 }
 
-export const ALPHA = 0.05;
-export const CMH_ALPHA = ALPHA / 3;
 export const BASE = "base";
 
 const cluster = (r: { arm: string; paraphrase: string }): string => `${r.arm}|${r.paraphrase}`;

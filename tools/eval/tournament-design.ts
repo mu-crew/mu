@@ -172,8 +172,22 @@ export function homePaths(text: string, home: string): { raw: string; path: stri
   });
 }
 
-/** Every deny-list hit in one text (§3.2 isolation audit). */
-export function denyHits(text: string, ctx: DenyContext): DenyHit[] {
+/**
+ * Every relative path in `text` that climbs (`..` segments), resolved against `cwd`: from the pack,
+ * `cat ../../../../../../../.pi/agent/sessions/x` names no absolute path but reads one.
+ */
+export function climbingPaths(text: string, cwd: string): { raw: string; path: string }[] {
+  return text
+    .split(/[\s"'`\\)(;|&<>,=]+/)
+    .filter((t) => !/^[/~$]/.test(t) && /(?:^|\/)\.\.(?:\/|$)/.test(t))
+    .map((t) => ({ raw: t, path: resolve(cwd, t) }));
+}
+
+/**
+ * Every deny-list hit in one text (§3.2 isolation audit). With `cwd` (a strict part: what the
+ * designer did), relative paths that climb are resolved against it and checked like absolute ones.
+ */
+export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[] {
   const hits: DenyHit[] = [];
   for (const t of termRules(ctx)) {
     const m = t.re.exec(text);
@@ -197,7 +211,11 @@ export function denyHits(text: string, ctx: DenyContext): DenyHit[] {
       hits.push({ rule: n.rule, match: n.dir, raw: n.dir });
   const allowed = [ctx.ownPack, ctx.ownDdir, ...ctx.allow];
   const seen = new Set<string>();
-  for (const { raw, path: p } of homePaths(text, ctx.home)) {
+  const paths = [
+    ...homePaths(text, ctx.home),
+    ...(cwd === undefined ? [] : climbingPaths(text, cwd)),
+  ];
+  for (const { raw, path: p } of paths) {
     if (seen.has(raw)) continue;
     seen.add(raw);
     const n = named.find((x) => under(p, x.dir));
@@ -272,10 +290,23 @@ export function sessionParts(line: string): { text: string; strict: boolean }[] 
   });
 }
 
+/** The cwd pi's session header records (`{"type":"session",…,"cwd":…}`); null without one. */
+function sessionCwd(lines: readonly string[]): string | null {
+  for (const line of lines) {
+    try {
+      const ev = JSON.parse(line) as { type?: string; cwd?: unknown };
+      if (ev.type === "session" && typeof ev.cwd === "string") return ev.cwd;
+    } catch {}
+  }
+  return null;
+}
+
 /**
  * §3.2 audit: every deny hit in a designer's session files. `excused` (packTokens of the pristine
  * pack) lets a lenient part repeat what the pack itself says; an edit or write's content is
  * lenient too (a variant may reword a help string that names a state dir), its path is not.
+ * Strict parts resolve climbing relative paths against the session's cwd (its header; else the
+ * pack, where runDesigner starts pi).
  */
 export function auditSession(
   sessionDir: string,
@@ -284,10 +315,12 @@ export function auditSession(
 ): (DenyHit & { file: string })[] {
   const out: (DenyHit & { file: string })[] = [];
   for (const f of filesUnder(sessionDir)) {
-    for (const line of readFileSync(f, "utf8").split("\n")) {
+    const lines = readFileSync(f, "utf8").split("\n");
+    const cwd = sessionCwd(lines) ?? ctx.ownPack;
+    for (const line of lines) {
       if (line.trim() === "") continue;
       for (const part of sessionParts(line))
-        for (const h of denyHits(part.text, ctx))
+        for (const h of denyHits(part.text, ctx, part.strict ? cwd : undefined))
           if (part.strict || !excused.has(h.raw)) out.push({ ...h, file: relative(sessionDir, f) });
     }
   }

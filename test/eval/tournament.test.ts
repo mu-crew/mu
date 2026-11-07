@@ -19,10 +19,12 @@ import {
   assertB0,
   assertFrozen,
   assertNoPendingStops,
+  type CasePlan,
   type ControlRow,
   JudgesChangedError,
   nPlan,
   pendingStops,
+  planCmhPower,
   ReviewPendingError,
   readControl,
   roundJobs,
@@ -194,25 +196,105 @@ const variant = (id: string) => ({ id, spec, textDelta: 0 });
 
 // ---- statistics of the round --------------------------------------------------------------------
 
+/**
+ * The R2 plan's reps straight from nPlan at the default ρ (no B5 data): own headline cases (10 × 3
+ * clusters), cross-group headline cases (10 × 3) and the two guards (6 × 2, 6 × 3). Lazy: fakeCase
+ * is defined further down.
+ */
+function planned(): { own: number; cross: number; g12: number; g18: number; ownNEff: number } {
+  const guard = (id: string, arms: NextCase["arms"]) =>
+    fakeCase(id, {
+      group: "guard",
+      role: "guard",
+      arms,
+      paraphrases: fakeCase("x").paraphrases.slice(0, 6),
+    });
+  const p = nPlan(
+    "c1_wait",
+    [
+      fakeCase("own"),
+      fakeCase("cross", { group: "c2_close" }),
+      guard("g12", ["none", "skill"]),
+      guard("g18", ["none", "skill", "recipe:orchestrator-loop"]),
+    ],
+    null,
+  );
+  const r = (i: number): number => p[i]?.plan.r ?? 0;
+  return { own: r(0), cross: r(1), g12: r(2), g18: r(3), ownNEff: p[0]?.plan.nEff ?? 0 };
+}
+
+/**
+ * One surface's R2 rows at the plan: 3 own headline cases, 9 cross-group headline cases, the two
+ * guards; `p` per case kind. One stratum per case and model, as in §4.2's CMH table.
+ */
+function planRows(
+  surface: string,
+  p: { own: number; cross: number; guard: number },
+  models: string[],
+  rand: () => number,
+): ProbeRow[] {
+  const n = planned();
+  const out: ProbeRow[] = [];
+  for (const c of ["h1", "h2", "h3"])
+    out.push(...cellRows({ surface, caseId: c, models, p: p.own, r: n.own, rand }));
+  for (let i = 1; i <= 9; i++)
+    out.push(...cellRows({ surface, caseId: `x${i}`, models, p: p.cross, r: n.cross, rand }));
+  out.push(...cellRows({ surface, caseId: "g12", models, p: p.guard, m: 12, r: n.g12, rand }));
+  out.push(...cellRows({ surface, caseId: "g18", models, p: p.guard, m: 18, r: n.g18, rand }));
+  return out;
+}
+
 describe("scoreRound: losses, wins and their error rates", () => {
+  it("the planned n is nPlan's: own r = 3 (n_eff 64 per model, 90 pooled), cross r = 2, guards 8 and 4", () => {
+    expect(planned()).toMatchObject({ own: 3, cross: 2, g12: 8, g18: 4 });
+    expect(planned().ownNEff).toBeCloseTo(64.3, 1);
+  });
+
   it("a null variant at the R2 plan is lost at most 0.10 of the time (Monte Carlo)", () => {
     const rand = rng(7);
     const sims = 200;
     let lost = 0;
     const all = [HAIKU, GEMINI, SONNET];
     for (let s = 0; s < sims; s++) {
-      const rows: ProbeRow[] = [];
-      for (const surface of [BASE, "v1"]) {
-        for (const c of ["h1", "h2", "h3"])
-          rows.push(...cellRows({ surface, caseId: c, models: all, p: 0.7, r: 4, rand }));
-        for (const c of ["x1", "x2", "x3", "x4"])
-          rows.push(...cellRows({ surface, caseId: c, models: all, p: 0.7, r: 2, rand }));
-        rows.push(...cellRows({ surface, caseId: "g1", models: all, p: 0.8, m: 12, r: 8, rand }));
-      }
+      const rows = [BASE, "v1"].flatMap((surface) =>
+        planRows(surface, { own: 0.7, cross: 0.7, guard: 0.8 }, all, rand),
+      );
       const [v] = scoreRound(input({ rows, variants: [variant("v1")] }));
       if (v?.eliminated.some((e) => e.startsWith("loss"))) lost++;
     }
     expect(lost / sims).toBeLessThanOrEqual(0.1);
+  });
+
+  it("a broad 0.8 → 0.7 drop at the R2 plan is a CMH loss with power ≥ 0.95 per model (Monte Carlo)", () => {
+    const rand = rng(5);
+    const sims = 200;
+    let caught = 0;
+    for (let s = 0; s < sims; s++) {
+      const rows = [
+        ...planRows(BASE, { own: 0.8, cross: 0.8, guard: 0.8 }, [HAIKU], rand),
+        ...planRows("v1", { own: 0.7, cross: 0.7, guard: 0.7 }, [HAIKU], rand),
+      ];
+      const [v] = scoreRound(input({ rows, variants: [variant("v1")] }));
+      if (v?.cmh.find((c) => c.model === HAIKU)?.loss) caught++;
+    }
+    // planCmhPower at this plan: 0.98; the clustered rows measured 0.995 in review
+    expect(caught / sims).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it("planCmhPower reports the plan's CMH power: 0.8 → 0.7 near 0.98, 0.8 → 0.75 near 0.5", () => {
+    const n = planned();
+    const at = (nEff: number) => ({ plan: { nEff } }) as CasePlan;
+    const plan = [
+      ...Array.from({ length: 3 }, () => at(n.ownNEff)),
+      ...Array.from({ length: 9 }, () => at(50)),
+      at(40),
+      at(45),
+    ];
+    const [p70, p75] = planCmhPower(plan);
+    expect(p70?.drop).toBe("0.8→0.7");
+    expect(p70?.power).toBeGreaterThanOrEqual(0.95);
+    expect(p75?.power).toBeGreaterThan(0.4);
+    expect(p75?.power).toBeLessThan(0.7);
   });
 
   it("a null group lands a false win at most 0.05 of the time with S = 6 (Monte Carlo)", () => {
@@ -220,13 +302,12 @@ describe("scoreRound: losses, wins and their error rates", () => {
     const sims = 300;
     let won = 0;
     const ids = ["v1", "v2", "v3", "v4", "v5", "v6"];
+    const r = planned().own;
     for (let s = 0; s < sims; s++) {
       const rows: ProbeRow[] = [];
       for (const surface of [BASE, ...ids])
         for (const c of ["h1", "h2", "h3"])
-          rows.push(
-            ...cellRows({ surface, caseId: c, models: [HAIKU, GEMINI], p: 0.5, r: 4, rand }),
-          );
+          rows.push(...cellRows({ surface, caseId: c, models: [HAIKU, GEMINI], p: 0.5, r, rand }));
       const scores = scoreRound(input({ rows, variants: ids.map(variant), S: 6 }));
       if (scores.some((v) => v.wins > 0)) won++;
     }
@@ -237,22 +318,21 @@ describe("scoreRound: losses, wins and their error rates", () => {
     const rand = rng(3);
     const sims = 80;
     let won = 0;
+    const r = planned().own;
     for (let s = 0; s < sims; s++) {
       const rows: ProbeRow[] = [];
       for (const [surface, p] of [
         [BASE, 0.5],
         ["v1", 0.8],
       ] as const) {
-        rows.push(...cellRows({ surface, caseId: "h1", models: [HAIKU, GEMINI], p, r: 4, rand }));
+        rows.push(...cellRows({ surface, caseId: "h1", models: [HAIKU, GEMINI], p, r, rand }));
         for (const c of ["h2", "h3"])
-          rows.push(
-            ...cellRows({ surface, caseId: c, models: [HAIKU, GEMINI], p: 0.5, r: 4, rand }),
-          );
+          rows.push(...cellRows({ surface, caseId: c, models: [HAIKU, GEMINI], p: 0.5, r, rand }));
       }
       const [v] = scoreRound(input({ rows, variants: [variant("v1")], S: 6 }));
       if (v?.win.find((w) => w.case === "h1")?.win) won++;
     }
-    // planned power 0.92 at B = 18 (spec §4.2); the slack is Monte Carlo error
+    // planned power 0.92 at pooled n_eff 90, B = 18 (spec §4.2); the slack is Monte Carlo error
     expect(won / sims).toBeGreaterThanOrEqual(0.85);
   });
 
@@ -896,6 +976,45 @@ describe("designer isolation", () => {
     expect(audit([call("write", { path: "~/.local/state/mu-next/mu.db", content: "x" })])).toEqual([
       "under the real HOME",
     ]);
+  });
+
+  it("resolves relative paths in what the designer did against the session's cwd", () => {
+    tmp = mkdtempSync(join(tmpdir(), "mu-audit-"));
+    const header = JSON.stringify({ type: "session", version: 3, id: "s", cwd: ctx.ownPack });
+    const call = (name: string, args: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "message",
+        message: { role: "assistant", content: [{ type: "toolCall", name, arguments: args }] },
+      });
+    const result = (text: string) =>
+      JSON.stringify({
+        type: "message",
+        message: { role: "toolResult", content: [{ type: "text", text }] },
+      });
+    const audit = (lines: string[]): string[] => {
+      const sd = join(tmp, `s${Math.random()}`);
+      mkdirSync(sd);
+      writeFileSync(join(sd, "x.jsonl"), lines.join("\n"));
+      return auditSession(sd, ctx).map((h) => h.rule);
+    };
+    const up7 = "../../../../../../..";
+    expect(audit([header, call("bash", { command: `cat ${up7}/.pi/agent/sessions/x` })])).toEqual([
+      "pi sessions",
+    ]);
+    expect(audit([header, call("read", { path: `${up7}/.ssh/config` })])).toEqual([
+      "under the real HOME",
+    ]);
+    expect(
+      audit([header, call("write", { path: `src/../${up7}/notes.md`, content: "x" })]),
+    ).toEqual(["under the real HOME"]);
+    // the cwd comes from the header: from another cwd the same climb lands elsewhere
+    const deep = JSON.stringify({ type: "session", cwd: `${ctx.ownPack}/src/cli` });
+    expect(audit([deep, call("bash", { command: `cat ${up7}/.pi/agent/sessions/x` })])).toEqual([
+      "under the real HOME",
+    ]);
+    // climbing inside its own dirs is clean; a result or prose naming `..` is not resolved
+    expect(audit([header, call("bash", { command: "cd .. && ls pack/../pack/src" })])).toEqual([]);
+    expect(audit([header, result(`see ${up7}/.ssh/config`)])).toEqual([]);
   });
 
   it("node's install dir is the prefix above bin/node", () => {
