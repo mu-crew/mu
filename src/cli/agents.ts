@@ -1156,7 +1156,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--steer",
-      "pi (control socket) only: if busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt. A hook harness refuses it",
+      "pi (control socket) only: if busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt. A hook harness refuses it; another CLI in a herdr or Rex pane gets a plain send",
     )
     .option(
       "--interrupt",

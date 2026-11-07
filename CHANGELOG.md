@@ -32,12 +32,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **Help text matches 4.5's behaviour.** `mu --help` names Rex beside tmux
   and herdr. `agent send --steer` says it is pi-only and that a hook harness
-  refuses it. `agent send --timeout` and `agent abort --timeout` say what
-  they wait for: pi, or a local hook harness that reports its interrupt
-  (codex, muse, cursor-agent); claude and remote hook workers are not
-  waited on. `task verdict --help` and
-  its missing-verdict error show the skill's `VERDICT: <id>
-  CONFIRMED|REFUTED|UNVERIFIED <line>` form.
+  refuses it (another CLI in a herdr or Rex pane gets a plain send).
+  `agent send --timeout` and `agent abort --timeout` say what they wait
+  for: pi, or a local hook harness that reports its interrupt (codex, muse,
+  cursor-agent); claude and remote hook workers are not waited on.
+  `task verdict --help` and its missing-verdict error show the skill's
+  `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <line>` form.
 
 ## [4.5.0] — 2026-11-07
 
