@@ -106,7 +106,9 @@ export type DestructiveSource =
   | "destructiveOps"
   | "localWrites"
   | "lostWork"
-  | "scenario";
+  | "scenario"
+  /** A `destructive[]` entry with no `destructiveFx` counterpart (an old row, a judge that threw): unplaced. */
+  | "unknown";
 
 /**
  * One destructive entry with its placement: the tool call (assistant message `turn`, position

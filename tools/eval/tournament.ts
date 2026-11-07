@@ -109,7 +109,10 @@ export type ControlRow =
   | ReviewDecisionRow
   | { kind: "round_score"; round: "r1" | "r2"; epoch: number; [k: string]: unknown }
   | { kind: "cut"; round: "r1" | "r2"; epoch: number; [k: string]: unknown }
-  | { kind: "decision" | "spend" | "scan" | "r4_score"; [k: string]: unknown };
+  | {
+      kind: "decision" | "spend" | "scan" | "r4_score" | "final" | "final_score";
+      [k: string]: unknown;
+    };
 
 export const controlFile = (dir: string): string => join(dir, "tournament.jsonl");
 

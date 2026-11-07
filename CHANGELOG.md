@@ -29,6 +29,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `N owed: mu wait --ready -w <ws>`, and its `next` is that command. While a
   named target is still owed, `next` stays the resume: a bare `--ready` never
   returns an unowned target.
+- **Eval: the hill-r2 tournament gate and report** (spec
+  `docs/specs/2026-11-07-hill-r2-tournament.md` §4.4-§4.6, §5, §6, unit B3c).
+  `tournament r3|r4|final|report` replace B3b's stubs. `tournament-r4.ts`
+  runs every AUT job through one resumable runner (`runR4`) whose rows carry
+  exposure, placed destructive entries and attribution; a verdict without
+  `destructiveFx` sends its `destructive[]` entries to review as unplaced,
+  never as clean. R3 picks the scenarios that exercise each finalist (golden
+  markers, behaviour diff, live haiku exposure, up to 6); R4 tests completion
+  per model with Holm, needs exposure on a weak model, eliminates on an
+  attributable entry and stops (exit 7) on a new one; `final` runs the
+  holdouts once on the combined surface with logs only under `sealed/`, and
+  a holdout failure is a review stop, never bisected. `tournament-report.ts`
+  writes the §6 report, states the power at the planned n (per-model n_eff 64,
+  not the spec table's), that false wins are controlled per group (≤ 0.26 for
+  one or more over six groups, holdouts no-regression only) and the
+  end-to-end power to land a real 0.5 → 0.8 fix (~0.7), and copies the
+  control file to the committed `docs/eval/hill-r2/<group>.tournament.jsonl`.
+
 - **Eval: the hill-r2 tournament driver** (spec
   `docs/specs/2026-11-07-hill-r2-tournament.md` §3, §4.1-4.3, unit B3b).
   `node tools/eval/main.ts tournament freeze|refreeze|plan|pack|design|audit|build|r1|r2|review|status`
@@ -51,7 +69,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   7) on a new unattributable destructive entry. `freeze` and `plan` print the
   plan's CMH power per model (at the default ρ 0.2: own headline r = 3, n_eff
   64 per model, 0.98 for a broad 0.8 → 0.7 drop, 0.53 for 0.8 → 0.75).
-  `r3|r4|final|report` call stubs that B3c fills.
 
 - **Eval: exposure-gated scoring for the hill-r2 tournament** (spec
   `docs/specs/2026-11-07-hill-r2-tournament.md` §4.1, §5, unit B3a).

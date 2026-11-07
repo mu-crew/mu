@@ -69,7 +69,7 @@ import {
   runDesigner,
 } from "./tournament-design.ts";
 import { parseManifest } from "./tournament-patch.ts";
-import { runFinal, runR4Gate, runScan } from "./tournament-r4.ts";
+import { EXIT_REVIEW, runFinal, runR4Gate, runScan } from "./tournament-r4.ts";
 import { writeReport } from "./tournament-report.ts";
 import { BASE, cut, scoreRound } from "./tournament-score.ts";
 import type { Surface } from "./types.ts";
@@ -83,8 +83,6 @@ const GROUPS: readonly Group[] = [
   "c5_outcome",
   "c6_skill",
 ];
-/** Exit code of a review stop (§5.2). */
-export const EXIT_REVIEW = 7;
 
 const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   freeze <g> --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
@@ -97,7 +95,10 @@ const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   r1 <g> | r2 <g>   [--concurrency 24] [--model-concurrency 8] [--max-load 14]
   review <g> --stop <id> --decision drop|continue --why "<transcript lines>"
   status <g>
-  r3 <g> | r4 <g> | final <g> | report <g> --out <md>
+  r3 <g> [--scenarios a,b] [--concurrency 6]
+  r4 <g> [--concurrency 6]
+  final <g> --surface <combined winners dir> [--concurrency 6]   (holdouts, once; logs under sealed/)
+  report <g> --out docs/eval/hill-r2/<g>.md   (also copies tournament.jsonl to docs/eval/hill-r2/<g>.tournament.jsonl)
 groups: ${GROUPS.join(", ")}`;
 
 function flag(args: string[], name: string): string | undefined {
