@@ -263,7 +263,7 @@ export class RemoteCloseRefusedError extends Error {
 
 const REMOTE_STATE_RE = /^MU_STATE (clean|dirty|gone)(?: ([0-9a-f]{40,64}))?( merged)?$/;
 const REMOTE_RM_RE =
-  /^MU_RM (removed|gone|moved|dirty|unmerged|branch-collision|branch-failed|failed|stuck|unproven|held(?: (\d+))?)$/;
+  /^MU_RM (removed|gone|moved|dirty|unmerged|branch-collision|branch-failed|failed|stuck|unproven|held(?: (\d+)(?: (\S+) (.+))?)?)$/;
 const lastMatch = (out: string, re: RegExp): RegExpExecArray | null => {
   for (const l of out.split("\n").reverse()) {
     const m = re.exec(l.trim());
@@ -277,11 +277,23 @@ export const asideOf = (path: string, incarnation: number): string =>
   `${path}.mu-removing-${incarnation}`;
 
 /**
+ * How long a refusing scan re-checks a holder (seconds, one scan a second)
+ * before naming it: short-lived tools (a guardrail spool drain) step into a
+ * tree for a few seconds. The loop runs inside the same exec (one lease).
+ */
+let settleSeconds = 5;
+export function setRemoteSettleForTests(seconds: number | null): void {
+  settleSeconds = seconds ?? 5;
+}
+
+/**
  * Remote shell lines proving nothing holds `$aside`: no process of this user
- * has its cwd or an open file at or under it (`fail held <pid>`), and the scan
- * demonstrably ran (it must see this very shell, else `fail unproven`). Reads
- * /proc, else `lsof`, else refuses. With `force` (the caller asserts nothing
- * uses the tree) neither refuses: each is printed as `MU_WARN unproven` /
+ * has its cwd or an open file at or under it, and the scan demonstrably ran
+ * (it must see this very shell, else `fail unproven`). Reads /proc, else
+ * `lsof`, else refuses. A holder is re-scanned once a second for up to
+ * `settleSeconds`; one still there fails as `held <pid> [<etime> <args>]`
+ * (from `ps`, when it answers). With `force` (the caller asserts nothing uses
+ * the tree) neither refuses nor waits: each is printed as `MU_WARN unproven` /
  * `MU_WARN held <pid>` and the removal goes on. `proc` and `lsof` are test seams.
  */
 function quiescenceLines(probe: { proc: string; lsof: string }, force = false): string[] {
@@ -290,15 +302,52 @@ function quiescenceLines(probe: { proc: string; lsof: string }, force = false): 
   // Prints "H<pid>" per holder and "S<pid>" per process whose cwd it could read.
   const procAwk = `A="$aside" awk 'BEGIN{a=ENVIRON["A"]} { i=index($0," -> "); if (i==0) next; t=substr($0,i+4); n=split(substr($0,1,i-1),f," "); n=split(f[n],q,"/"); if (q[n]=="cwd") print "S" q[n-1]; h=(t==a || index(t,a "/")==1); if (h && q[n]=="cwd") print "H" q[n-1]; else if (h && q[n-1]=="fd") print "H" q[n-2] }'`;
   const lsofAwk = `A="$aside" awk 'BEGIN{a=ENVIRON["A"]} /^p/{p=substr($0,2)} /^f/{f=substr($0,2)} /^n/{t=substr($0,2); if (f=="cwd") print "S" p; if (t==a || index(t,a "/")==1) print "H" p}'`;
-  return [
+  const scan = [
     `scan=`,
     `if [ -d ${proc}/self ]; then scan=$(find ${proc}/[0-9]*/cwd ${proc}/[0-9]*/fd -maxdepth 1 -type l -exec ls -ld {} + 2>/dev/null | ${procAwk})`,
     `elif command -v ${lsof} >/dev/null 2>&1; then scan=$(${lsof} -w -Fpfn 2>/dev/null | ${lsofAwk}); fi`,
     `printf '%s\\n' "$scan" | grep -qx "S$$" || ${force ? "echo 'MU_WARN unproven'" : "fail unproven"}`,
-    force
-      ? `printf '%s\\n' "$scan" | sed -n 's/^H//p' | sort -u | sed 's/^/MU_WARN held /'`
-      : `held=$(printf '%s\\n' "$scan" | sed -n 's/^H//p' | head -n 1); [ -z "$held" ] || fail held "$held"`,
   ];
+  if (force)
+    return [
+      ...scan,
+      `printf '%s\\n' "$scan" | sed -n 's/^H//p' | sort -u | sed 's/^/MU_WARN held /'`,
+    ];
+  return [
+    `tries=0`,
+    `while :; do`,
+    ...scan.map((l) => `  ${l}`),
+    `  held=$(printf '%s\\n' "$scan" | sed -n 's/^H//p' | head -n 1)`,
+    `  [ -n "$held" ] && [ "$tries" -lt ${settleSeconds} ] || break`,
+    `  tries=$((tries + 1)); sleep 1`,
+    `done`,
+    `if [ -n "$held" ]; then`,
+    `  info=$(ps -o etime= -o args= -p "$held" 2>/dev/null | head -n 1 | sed 's/^ *//')`,
+    `  if [ -n "$info" ]; then fail held "$held" "$info"; else fail held "$held"; fi`,
+    `fi`,
+  ];
+}
+
+/** `ps` etime (`[[dd-]hh:]mm:ss`) in seconds, or null when it is not one. */
+export function etimeSeconds(etime: string): number | null {
+  const m = /^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/.exec(etime);
+  if (m === null) return null;
+  const [d, h, min, s] = [m[1], m[2], m[3], m[4]].map((x) => Number(x ?? 0)) as [
+    number,
+    number,
+    number,
+    number,
+  ];
+  return ((d * 24 + h) * 60 + min) * 60 + s;
+}
+
+/** `process <pid>`, with `(<command, cut>, <age>s old)` when the host's `ps` named them. */
+function holderLabel(pid: string | undefined, etime?: string, args?: string): string {
+  if (pid === undefined) return "a process";
+  if (args === undefined || etime === undefined) return `process ${pid}`;
+  const cmd = args.length > 60 ? `${args.slice(0, 59)}…` : args;
+  const age = etimeSeconds(etime);
+  return `process ${pid} (${cmd}${age === null ? "" : `, ${age}s old`})`;
 }
 
 /**
@@ -482,10 +531,10 @@ export async function closeRemoteWorktree(
         );
       }
       if (r?.startsWith("held")) {
-        const pid = lastMatch(removed.out, REMOTE_RM_RE)?.[2];
+        const held = lastMatch(removed.out, REMOTE_RM_RE);
         return refuse(
           "held",
-          `${pid === undefined ? "a process" : `process ${pid}`} on ${host} is still inside ${path}; nothing was removed. Stop it and${force}`,
+          `${holderLabel(held?.[2], held?.[3], held?.[4])} on ${host} is still inside ${path}; nothing was removed. Stop it and${force}`,
         );
       }
       if (r === "unproven") {

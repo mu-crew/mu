@@ -39,6 +39,7 @@ import {
   closeRemoteWorktree,
   RemoteCloseRefusedError,
   removeRemoteWorktree,
+  setRemoteSettleForTests,
 } from "../src/remote-agent.js";
 import { collectRef, collectRemoteAgent, RemoteCollectError } from "../src/remote-collect.js";
 import { claimTask } from "../src/tasks/claim.js";
@@ -562,29 +563,30 @@ describe.each([
       `PATH=${bin}:$PATH /bin/sh ${join(dir, "exec.sh")} {cmd}`,
     );
   };
-  /** A process whose cwd (or an open fd, with `fd`) is inside the tree. */
-  async function holder(how: "cwd" | "fd"): Promise<number> {
+  const alive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** A process whose cwd (or an open fd, with `fd`) is inside the tree, living `secs`. */
+  async function holder(how: "cwd" | "fd", secs = 60): Promise<number> {
+    const ready = join(dir, `holder-${holders.length}`);
     const script =
       how === "cwd"
-        ? `cd '${wt()}' && exec sleep 60`
-        : `exec 3< '${wt()}/README'; cd /; exec sleep 60`;
+        ? `cd '${wt()}' && : > '${ready}' && exec sleep ${secs}`
+        : `exec 3< '${wt()}/README'; cd /; : > '${ready}'; exec sleep ${secs}`;
     const child = spawn("sh", ["-c", script], { stdio: "ignore" });
     holders.push(child);
     const pid = child.pid ?? 0;
-    await until(() => {
-      try {
-        return (
-          readdirSync(`/proc/${pid}/fd`).length > 0 &&
-          readFileSync(`/proc/${pid}/cmdline`, "utf8").startsWith("sleep")
-        );
-      } catch {
-        return false;
-      }
-    }, "the holder to start");
+    await until(() => existsSync(ready), "the holder to start");
     return pid;
   }
 
   beforeEach(() => {
+    setRemoteSettleForTests(0);
     if (!supported) return;
     for (const d of [remote, local]) rmSync(d, { recursive: true, force: true });
     mkdirSync(remote);
@@ -593,6 +595,7 @@ describe.each([
     gitIn(dir, "clone", "-q", remote, local);
   });
   afterEach(() => {
+    setRemoteSettleForTests(null);
     for (const h of holders.splice(0)) h.kill("SIGKILL");
   });
 
@@ -650,17 +653,39 @@ describe.each([
       expect(getAgent(db, "worker-1", "auth")).toBeDefined();
       // Once the holder is gone the same close finishes.
       holders.pop()?.kill("SIGKILL");
-      await until(() => {
-        try {
-          readdirSync(`/proc/${pid}/fd`);
-          return false;
-        } catch {
-          return true;
-        }
-      }, "the holder to die");
+      await until(() => !alive(pid), "the holder to die");
       expect((await close("worker-1")).worktree).toMatchObject({ action: "removed" });
     },
   );
+
+  it_(
+    "a holder that leaves within the re-check window is waited out in the same exec",
+    async () => {
+      await remoteAgent("worker-1");
+      setRemoteSettleForTests(5);
+      const pid = await holder("cwd", 1);
+      const leases = (): number =>
+        (db.prepare("SELECT COUNT(*) AS n FROM host_channels").get() as { n: number }).n;
+      expect((await close("worker-1")).worktree).toMatchObject({ action: "removed" });
+      expect(alive(pid)).toBe(false);
+      expect(readdirSync(join(dir, "wts"))).toEqual([]);
+      expect(leases()).toBe(0);
+    },
+  );
+
+  it_("a holder that outlasts the window is refused by command and age", async () => {
+    await remoteAgent("worker-1");
+    setRemoteSettleForTests(1);
+    const pid = await holder("cwd");
+    const err = await close("worker-1").catch((e: unknown) => e);
+    expect((err as RemoteCloseRefusedError).reason).toBe("held");
+    expect((err as Error).message).toMatch(
+      new RegExp(
+        `process ${pid} \\(sleep 60, \\d+s old\\) on wide is still inside ${wt()}; nothing was removed`,
+      ),
+    );
+    expect(readdirSync(join(dir, "wts"))).toEqual(["worker-1"]);
+  });
 
   it_(
     "a close killed right after the move is resumed by the retry, never reported gone",

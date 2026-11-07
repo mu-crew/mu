@@ -61,6 +61,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   agent:<ws>/<n>@<runs>` (the spawn's next) instead of the pi-only `mu agent
   wait --after-runs`.
 
+- **A remote worktree close waits out a brief holder and names a lasting
+  one.** A process inside the parked tree is re-scanned once a second for
+  up to 5 s inside the same leased exec (no second exec, no extra rename),
+  so a short-lived tool such as a guardrail spool drain no longer causes a
+  refusal. One still there is refused as `process <pid> (<command, cut>,
+  <age>s old) on <host> is still inside <path>; ...`, from the host's `ps`
+  (the bare pid when `ps` cannot say). `--force` is unchanged: it neither
+  waits nor refuses.
+
 ## [4.5.0] — 2026-11-07
 
 Every agent CLI is first-class: claude, codex, cursor-agent and Muse Code

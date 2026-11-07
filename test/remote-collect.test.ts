@@ -276,7 +276,17 @@ describe("agent close of a remote worktree row", () => {
 
   it("a holder, an unprovable host and a stuck move-back each refuse in one line and keep the row", async () => {
     for (const [out, reason, text] of [
-      ["MU_RM held 4242", "held", /process 4242/],
+      ["MU_RM held 4242", "held", /process 4242 on dev is still inside/],
+      [
+        "MU_RM held 4242 01:07 policy_plugin --drain-spool",
+        "held",
+        /process 4242 \(policy_plugin --drain-spool, 67s old\) on dev is still inside \/home\/u\/[^;]+; nothing was removed/,
+      ],
+      [
+        `MU_RM held 4242 1-02:03:04 ${"x".repeat(80)}`,
+        "held",
+        new RegExp(`process 4242 \\(${"x".repeat(59)}…, 93784s old\\)`),
+      ],
       ["MU_RM unproven", "unreadable", /neither \/proc nor lsof/],
       ["MU_RM stuck", "unreadable", /close again to resume/],
     ] as const) {
@@ -291,6 +301,24 @@ describe("agent close of a remote worktree row", () => {
       db.prepare("DELETE FROM agents").run();
       db.prepare("DELETE FROM host_channels").run();
     }
+  });
+
+  it("a holder is re-scanned inside the same removal exec, never a second one; --force does not wait", async () => {
+    await remoteAgent({ name: "worker-1" });
+    answer(`MU_STATE clean ${BASE}`, "MU_RM held 4242");
+    await expect(close()).rejects.toBeInstanceOf(RemoteCloseRefusedError);
+    const calls = execCalls();
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).toMatch(/while :; do[\s\S]*-lt 5 \] \|\| break[\s\S]*sleep 1[\s\S]*done/);
+    expect(calls[1]).toContain("ps -o etime= -o args=");
+    db.prepare("DELETE FROM agents").run();
+    db.prepare("DELETE FROM host_channels").run();
+    await remoteAgent({ name: "worker-1" });
+    answer(`MU_STATE clean ${BASE}`, "MU_RM removed");
+    await close({ force: true });
+    const forced = execCalls()[3];
+    expect(forced).toContain("MU_WARN held");
+    expect(forced).not.toContain("sleep");
   });
 
   it("with no multiplexer to ask, the pane is never presumed dead: its channel stays and no exec runs", async () => {
