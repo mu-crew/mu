@@ -39,6 +39,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `task verdict --help` and its missing-verdict error show the skill's
   `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <line>` form.
 
+### Fixed
+
+- **`mu task note`'s "will not see this note" hint names a send that works
+  for the owner's channel.** It always said `mu agent send <o> --steer` with
+  no text argument, which a hook harness (claude, codex, cursor-agent, Muse)
+  refuses: it has no mid-turn steer. Now a ctl owner gets `--steer -` (or
+  `--interrupt`), a hooks owner `mu agent wait` then a plain send (or
+  `--interrupt`), a mux owner a plain send; every variant shows the text as
+  `- <<'EOF'`, and `-w` names the owner's own workstream.
+
 ## [4.5.0] — 2026-11-07
 
 Every agent CLI is first-class: claude, codex, cursor-agent and Muse Code

@@ -234,8 +234,16 @@ export const MESSAGES = {
   "task.note_required": () =>
     'note text required: mu task note <id> "..." (or -m/--message/--note/--text "...")',
   "task.note_kind_twice": () => "--report and --kind both set the note kind: pass one",
-  "task.note_unseen": (owner: string, ws: string) =>
-    `${owner} will not see this note: send it (mu agent send ${owner} -w ${ws} --steer, or --interrupt if the note makes the current work wasted)`,
+  // By the owner's channel: only ctl steers mid-turn; hooks interrupts or waits for the turn; mux only sends.
+  "task.note_unseen": (owner: string, ws: string, channel: "ctl" | "hooks" | "mux") => {
+    const send = `mu agent send ${owner} -w ${ws}`;
+    const text = "- <<'EOF' (the note text, then EOF)";
+    if (channel === "ctl")
+      return `${owner} will not see this note: send it into the running turn (${send} --steer ${text}), or pass --interrupt instead of --steer if the note makes the current work wasted`;
+    if (channel === "hooks")
+      return `${owner} will not see this note, and its hooks channel has no mid-turn steer: send it once the turn ends (mu agent wait ${owner} -w ${ws}, then ${send} ${text}), or ${send} --interrupt ${text} if the note makes the current work wasted`;
+    return `${owner} will not see this note: send it (${send} ${text})`;
+  },
   "task.notes_all_from": () =>
     "--all/--from pick a page of the whole history; they do not combine with --tail/--since/--since-claim",
   "task.notes_all_is_from": () => "--all is --from 1; pass one of them",

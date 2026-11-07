@@ -496,6 +496,14 @@ export function getAgent(db: Db, name: string, workstream: string): AgentRow | u
   return row ? rowFromDb(row) : undefined;
 }
 
+/** The agent row with id `id` (`tasks.owner_id`), in whatever workstream it lives. */
+export function getAgentById(db: Db, id: number): AgentRow | undefined {
+  const row = db.prepare(`SELECT ${SELECT_AGENT_COLS} ${AGENT_FROM_JOIN} WHERE a.id = ?`).get(id) as
+    | RawAgentRow
+    | undefined;
+  return row ? rowFromDb(row) : undefined;
+}
+
 /**
  * Like `getAgent`, but also finds an agent whose workstream is torn down
  * (a teardown that kept its row because the pane lived, or a peer's

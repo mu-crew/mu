@@ -14,6 +14,9 @@
 // thin-wrapper was a vestigial re-export from the cluster split, gone
 // in schema_v5_cleanups.
 
+import { dirname } from "node:path";
+import { getAgentById } from "../../agents.js";
+import { channelOf } from "../../channels/index.js";
 import {
   assertTaskInWorkstream,
   emitJson,
@@ -477,9 +480,14 @@ export async function cmdTaskNote(
   // A worker reads notes at dispatch, not while it runs: a note on its
   // IN_PROGRESS task reaches it only through a send.
   const task = getTask(db, localId, ws);
-  const owner = task?.status === "IN_PROGRESS" ? task.ownerName : null;
-  if (owner !== null && owner !== author) {
-    warnings.push(say("task.note_unseen", owner, ws));
+  const owner =
+    task?.status === "IN_PROGRESS" && task.ownerId !== null
+      ? getAgentById(db, task.ownerId)
+      : undefined;
+  if (owner !== undefined && owner.name !== author) {
+    // The hint names the send its channel takes: only ctl steers mid-turn.
+    const channel = channelOf(owner, dirname(db.name));
+    warnings.push(say("task.note_unseen", owner.name, owner.workstreamName, channel));
   }
   emitWarnings(warnings, opts.json);
   if (opts.json) {
