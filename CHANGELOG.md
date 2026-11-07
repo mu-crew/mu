@@ -16,7 +16,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   whenever `$TMUX` was set (67014c7a, for `watch --color mu hud`), so a
   third of agent results read through a pipe carried escape codes and
   agents stripped them with `sed`. Colour now needs stdout to be a TTY;
-  `NO_COLOR`, `MU_FORCE_COLOR` and `FORCE_COLOR` keep their meaning.
+  `NO_COLOR`, `MU_FORCE_COLOR` and `FORCE_COLOR` keep their meaning;
+  `TERM=dumb` on a TTY inside tmux is now plain, like outside it.
   `mu hud` is gone and the dashboard decides its own colour; for
   `watch --color` or a popup piped to a pager, set `MU_FORCE_COLOR=1`
   (docs/reference/env.md).
