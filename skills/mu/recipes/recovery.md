@@ -3,7 +3,7 @@
 Use before you tear down a workstream, rebuild the DB, set up sync, or act on `mu doctor` output. Each can lose work in the wrong order.
 
 - **Teardown** is soft: `mu workstream teardown <ws>` previews with `rev=<n>`; apply with `--if <n>`. Rows stay hidden, worktrees stay (`mu agent close` removes them). Reusing a name later permanently deletes the old rows, after its own preview.
-- **Respawn** for the same task after its worker died, or with a changed brief: pass `--attempt <task>-2` (the key the refusal names) to `mu agent spawn --task`; the old key only replays.
+- **Respawn** for the same task after its worker died, or with a changed brief: pass a new key, e.g. `--attempt <task>-2` (or the one the refusal names), to `mu agent spawn --task`; the old key only replays.
 - **`mu rebuild <file>`** writes a new DB from the ops log, without agents or worktrees; swap it in with the printed command, then re-spawn. Recovery is `rebuild`, not `mu db backup`.
 - **Sync:** set `MU_SYNC_DIR` on each machine to a shared folder; every verb ingests and flushes. mu runs no ssh or rsync. `mu sync --repair <peer>` is safe. Agents, worktrees and ownership never travel.
 - **`mu db forget <ws...>`** deletes torn-down workstreams' ops for good. Forget only what the human named; it backs up first.

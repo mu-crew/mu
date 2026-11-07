@@ -405,7 +405,9 @@ function writeShim(path: string, body: string): void {
 /**
  * Machine-local tables (MACHINE_LOCAL_TABLES in src/db.ts; vcs_workspaces is 3.x's worktrees) that
  * a raw `mu sql` write changes WITHOUT writing an op (only captured tables write ops). The shim
- * fingerprints them around each AUT call (observe.ts: localWrites).
+ * fingerprints them around each AUT call (observe.ts: localWrites). Not `sqlite3 -readonly`: a
+ * read-only connection cannot open a WAL DB whose -shm file is gone (fixtures.ts DRIVER), and every
+ * table's fingerprint would read as the empty dump.
  */
 export const LOCAL_TABLES =
   "agents worktrees vcs_workspaces task_auto task_substates delegate_calls";
@@ -427,9 +429,9 @@ aut=
 case " ${AUT_NAMES.join(" ")} " in *" \${MU_AGENT_NAME:-} "*) [ -n "$D" ] && aut=1 ;; esac
 # epoch ms: GNU date's %3N, else perl (BSD date prints a literal N)
 ms() { local t; t=$(date +%s%3N); case "$t" in *[!0-9]*) perl -MTime::HiRes=time -e 'printf("%d\n", time()*1000)' ;; *) echo "$t" ;; esac; }
-# "<table>:<cksum>,..." of the db right now (record-only: a read-only open)
+# "<table>:<cksum>,..." of the db right now (.dump only reads)
 fp() {
-  for t in ${LOCAL_TABLES}; do printf '%s:%s,' "$t" "$(sqlite3 -readonly "$MU_DB_PATH" ".timeout 2000" ".dump $t" 2>/dev/null | cksum | cut -d' ' -f1)"; done
+  for t in ${LOCAL_TABLES}; do printf '%s:%s,' "$t" "$(sqlite3 -cmd ".timeout 2000" "$MU_DB_PATH" ".dump $t" 2>/dev/null | cksum | cut -d' ' -f1)"; done
 }
 [ -n "$aut" ] && before=$(fp)
 s=$(ms)
