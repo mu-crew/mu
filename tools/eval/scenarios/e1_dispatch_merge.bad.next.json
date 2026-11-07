@@ -9,7 +9,7 @@
   {
     "calls": [
       {
-        "bash": "mu agent spawn w2 -w eval --cli codex --worktree --task d2 --json"
+        "bash": "mu agent spawn w2 -w eval --cli \"$EVAL_W2\" --worktree --task d2 --json"
       }
     ]
   },

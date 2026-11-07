@@ -10,6 +10,7 @@ import {
   type PaneIO,
   type PaneView,
   runPaneAut,
+  sandboxRefusal,
   trustDialogKeys,
 } from "../../tools/eval/runner-pane.ts";
 import type { ExecResult } from "../../tools/eval/sandbox.ts";
@@ -157,6 +158,85 @@ describe("the pane runner's replacement", () => {
     const m = await runPaneAut(sandbox(), sc, { harness: "claude", quietMs: 0 }, w.io);
     expect(w.started).toEqual(["aut"]);
     expect(m.aborted).toBe("exit");
+  });
+});
+
+describe("ready to prompt", () => {
+  /** murmur reports the AUT's session from the `sessionAfter`th view on; the views seen at the send. */
+  function readyWorld(sessionAfter: number) {
+    let views = 0;
+    let atSend = -1;
+    const io: PaneIO = {
+      ...world(() => false).io,
+      async orchestrate() {
+        return { pane: "%1", r: ok };
+      },
+      view() {
+        views++;
+        return { ...idle, sessionId: views > sessionAfter ? "s" : null };
+      },
+      async mu(_sb, args) {
+        if (args[1] === "send" && atSend < 0) atSend = views;
+        return ok;
+      },
+      // the pane is gone after the send: the run ends there
+      pid: () => null,
+    };
+    return { io, atSend: () => atSend };
+  }
+  const noReplacement = (): Scenario => ({ ...scenario(), replacement: undefined }) as Scenario;
+
+  it("cursor-agent and claude: sent once the session they report at launch is seen", async () => {
+    for (const harness of ["cursor-agent", "claude"] as const) {
+      const w = readyWorld(20);
+      await runPaneAut(sandbox(), noReplacement(), { harness, quietMs: 0 }, w.io);
+      expect(w.atSend(), harness).toBe(21);
+    }
+  });
+  it("Muse and codex report a session only with their first prompt: sent once no dialog is up", async () => {
+    for (const harness of ["muse", "codex"] as const) {
+      const w = readyWorld(1000);
+      await runPaneAut(sandbox(), noReplacement(), { harness, quietMs: 0 }, w.io);
+      expect(w.atSend(), harness).toBe(9);
+    }
+  });
+});
+
+describe("a pane AUT's own sandbox refusing a command", () => {
+  const settled = (scrollback: string): PaneIO => ({
+    ...world(() => false).io,
+    view: () => idle,
+    scrollback: () => scrollback,
+  });
+  const noReplacement = (): Scenario => ({ ...scenario(), replacement: undefined }) as Scenario;
+
+  it("is the run's lastError, marked as the environment's", async () => {
+    const io = settled(
+      "$ mu task list -w eval\nsandbox-exec: sandbox_apply: Operation not permitted\n> ",
+    );
+    const m = await runPaneAut(
+      sandbox(),
+      noReplacement(),
+      { harness: "cursor-agent", quietMs: 0 },
+      io,
+    );
+    expect(m.lastError).toMatch(/^environment: .*sandbox_apply: Operation not permitted/);
+  });
+  it("leaves a clean pane's run alone", async () => {
+    const m = await runPaneAut(
+      sandbox(),
+      noReplacement(),
+      { harness: "muse", quietMs: 0 },
+      settled("$ mu task list -w eval\nd1 OPEN\n"),
+    );
+    expect(m.lastError).toBeNull();
+  });
+  it("names cursor-agent's sandbox-exec failure and a denied DB write", () => {
+    expect(sandboxRefusal("x\n  Failed to execute sandbox-exec: 1\n")).toBe(
+      "Failed to execute sandbox-exec: 1",
+    );
+    expect(sandboxRefusal("Error: attempt to write a readonly database")).not.toBeNull();
+    expect(sandboxRefusal("all good")).toBeNull();
   });
 });
 

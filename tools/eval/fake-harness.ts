@@ -21,6 +21,7 @@ import { basename, join } from "node:path";
 import {
   AUT_NAMES,
   cursorResponse,
+  FAKE_MODEL,
   type FakeEvent,
   type FakeHarness,
   FRESH,
@@ -103,7 +104,7 @@ let child: ReturnType<typeof spawn> | null = null;
 const queue: string[] = [];
 
 function ctx(extra: Partial<PayloadCtx> = {}): PayloadCtx {
-  return { sessionId, turnId, cwd, home, model: "fake-model", ...extra };
+  return { sessionId, turnId, cwd, home, model: FAKE_MODEL[h], ...extra };
 }
 
 function readDoc(path: string): unknown {
@@ -310,6 +311,10 @@ async function turn(prompt: string): Promise<void> {
     }
     resumed = true;
     lastResult = block.reason;
+    // cursor-agent submits a stop hook's followup_message as a new generation: murmur reads a stop
+    // of a generation that already ended as that turn's echo, so one that kept the id would never
+    // end the continued turn
+    if (h === "cursor-agent") turnId = newSessionId(h);
   }
   running = false;
 }
