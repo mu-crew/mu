@@ -29,15 +29,9 @@ import { claimTask, releaseTask, resolveActorIdentity } from "../../tasks.js";
 import type { WaitRef } from "../../wait.js";
 import { currentCallers } from "../../wait-callers.js";
 import { setNextOutcome } from "../handle.js";
-import {
-  parseOnStall,
-  parseWaitRef,
-  runWait,
-  type WaitSignals,
-  type WaitSpec,
-  waitMode,
-} from "../wait.js";
+import { parseOnStall, runWait, type WaitSignals, type WaitSpec, waitMode } from "../wait.js";
 import { agentRef, armWait, taskRef } from "../wait-arm.js";
+import { parseWaitRef } from "../wait-ref.js";
 
 export async function cmdTaskRelease(
   db: Db,
