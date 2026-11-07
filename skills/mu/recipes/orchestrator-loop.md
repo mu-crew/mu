@@ -1,6 +1,6 @@
 # Orchestrator loop
 
-For dispatch and merge. Not pi: start as `mu orchestrate -w <ws> --cli <harness>`, for a `mu wait` identity and a keep-driving Stop hook (not muse).
+For dispatch and merge. Not pi: `mu orchestrate -w <ws> --cli <harness>` (wait identity + keep-driving Stop; not muse). `--cli` from installs (`mu doctor`); default `pi` needs PATH.
 
 ## Each turn
 
@@ -15,7 +15,7 @@ For dispatch and merge. Not pi: start as `mu orchestrate -w <ws> --cli <harness>
    ```
 
    Idle worker: `mu task claim <id> -w <ws> --for <w> --evidence "..."`; `git -C <cwd> fetch && git -C <cwd> rebase <base>` (conflict: `rebase --abort`, tell the human); `mu agent send <w> -w <ws> --fresh -`.
-4. `mu wait -w <ws>` waits on what you started. `data.exit` 0: an event in `data.firing`, or `timedOut` (run `data.resume`); 6: worker died before closing, re-dispatch it; 7: `mu agent read <w>`, answer.
+4. Wait: managed/`pi:` bare `mu wait -w <ws>`; else spawn/`send` `next` or `mu wait task:<ws>/<id>` / `--as <ws>/<name>`. Exit 0: `data.firing` or `timedOut` (`data.resume`); 6: died, re-dispatch; 7: `mu agent read <w>`, answer.
 5. Merge. Close a finished worker: `mu agent close <w> -w <ws>` only previews; run its printed `--if <rev>`. Then step 1.
 
 ## Merging
@@ -30,8 +30,8 @@ Follow [merge](merge.md): inline, or past ~4 workers through a merge task.
 
 ## Delegate waves
 
-One `wave` label per fan-out ([tasks-or-calls](tasks-or-calls.md)); `mu wait -w <ws> --wave <label>` returns its tally. An answer read via `task notes` still arrives once from `mu wait`; act once.
+One `wave` per fan-out ([tasks-or-calls](tasks-or-calls.md)); `mu wait -w <ws> --wave <label>` tallies. Act once.
 
 ## Stopping
 
-`mu agent abort <w>`; close as step 5.
+`mu agent abort <w>`; close as step 5. Done (umbrella CLOSED, no agents): `mu workstream teardown <ws>` then `--if <rev>`.

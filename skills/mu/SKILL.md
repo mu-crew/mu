@@ -46,16 +46,16 @@ human is needed. Ending a turn mid-run stalls the crew.
 Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Always:
 
 - **Claim before work is sent.** `agent spawn --task <id> --send ...` does both.
-- **Wait with `mu wait`, never `sleep` loops.**
+- **Wait with `mu wait` (refs if unmanaged), never `sleep` loops.**
 - **A send that timed out is unknown, never resent**: `mu agent check <a> <msgId>`.
 - **New work: `send --fresh`.** A running worker never sees a note: send
   ([modes](recipes/orchestrator-loop.md#sending)).
 - **`unknown` is not dead.** Read the pane and `mu doctor` first.
 - **Only `CLOSED/done` ships.** Verify the merge.
 - **Checks are calls, not tasks** ([tasks-or-calls](recipes/tasks-or-calls.md)):
-  `mu_delegate` in pi, else native subagents under `mu task check`. Have one
-  refute each claim, cause, plan, fix or brief before you act; rewrite on
-  REFUTED.
+  `mu_delegate` in pi, else native subagents under `mu task check` → run →
+  `verdict` (not delegates). Refute claim, cause, plan, fix or brief;
+  rewrite on REFUTED.
 - **Findings are tasks** ([findings](recipes/findings.md)); each shipping unit gets a
   [review gate](recipes/adversarial-review.md).
 - **Stop rule on the umbrella first.**
@@ -73,9 +73,9 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Alwa
 | Recipe | Read when |
 | --- | --- |
 | [orchestrator-loop](recipes/orchestrator-loop.md) | you dispatch and merge |
-| [merge](recipes/merge.md) | units are ready |
-| [brief](recipes/brief.md) | writing what a worker reads |
-| [tasks-or-calls](recipes/tasks-or-calls.md) | a step spawns an agent |
+| [merge](recipes/merge.md) | units ready |
+| [brief](recipes/brief.md) | what a worker reads |
+| [tasks-or-calls](recipes/tasks-or-calls.md) | spawn, refute, check, delegate |
 | [findings](recipes/findings.md) | a check reports problems |
 | [adversarial-review](recipes/adversarial-review.md) | a unit needs a gate |
 | [test-health](recipes/test-health.md) | gates, or verifying a merge |
