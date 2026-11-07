@@ -1,0 +1,26 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --task t1 --send 'do t1 and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:eval/w1@0 --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task open t3 -w eval"
+      }
+    ]
+  },
+  {
+    "text": "Reopened the task the worker named."
+  }
+]

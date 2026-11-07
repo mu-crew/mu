@@ -1,0 +1,33 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --task t1 --send 'do t1 and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:eval/w1@0 --timeout 120 >/dev/null"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "grep -rh 'reopen' \"$PI_CODING_AGENT_DIR\"/sessions/ 2>/dev/null | tail -1; ls \"$PI_CODING_AGENT_DIR\"/sessions/*.jsonl 2>/dev/null"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task open t2 -w eval"
+      }
+    ]
+  },
+  {
+    "text": "t2 is open again."
+  }
+]

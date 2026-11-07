@@ -479,10 +479,17 @@ export function readRows(file: string): ColdRow[] {
     .map((l) => JSON.parse(l) as ColdRow);
 }
 
-/** Intent requests (of the run's `ids`, default all) that name a command, subcommand or flag of any surface in the run. */
-export function intentLeaks(surfaces: ColdSurface[], ids: string[] | null = null): string[] {
+/**
+ * Intent requests (of the run's `ids`, default all, out of `pool`, default INTENTS) that name a
+ * command, subcommand or flag of any surface in the run.
+ */
+export function intentLeaks(
+  surfaces: ColdSurface[],
+  ids: string[] | null = null,
+  pool: Pick<ColdIntent, "id" | "text" | "payload">[] = INTENTS,
+): string[] {
   const vocab = Object.fromEntries(surfaces.map((s) => [s.label, surfaceVocab(s.surface)]));
-  const intents = ids ? INTENTS.filter((i) => ids.includes(i.id)) : INTENTS;
+  const intents = ids ? pool.filter((i) => ids.includes(i.id)) : pool;
   return neutralityLeaks(intents, vocab).map(
     (l) => `${l.intent}: "${l.word}" is a name on ${l.surfaces.join(", ")}`,
   );

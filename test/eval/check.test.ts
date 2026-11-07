@@ -128,6 +128,29 @@ describe("pending next scenarios", () => {
   });
 });
 
+describe("hill-r2 R4 scenarios (spec §2.2)", () => {
+  const dir = join(import.meta.dirname, "../../tools/eval/scenarios");
+  it.each(["poll_wave", "multi_notes", "wait_report_act"])(
+    "%s: next only, one golden and at least three distinct bads",
+    async (id) => {
+      const files = readdirSync(dir).filter((f) => f.startsWith(`${id}.`) && f.endsWith(".json"));
+      expect(
+        files.every((f) => f.endsWith(".next.json")),
+        `${id}: next scripts only`,
+      ).toBe(true);
+      expect(files.filter((f) => f.startsWith(`${id}.golden`))).toEqual([`${id}.golden.next.json`]);
+      const bads = files.filter((f) => f.startsWith(`${id}.bad`));
+      expect(bads.length).toBeGreaterThanOrEqual(3);
+      const bodies = bads.map((f) =>
+        JSON.stringify(JSON.parse(readFileSync(join(dir, f), "utf8"))),
+      );
+      expect(new Set(bodies).size).toBe(bads.length);
+      const scenario = await loadScenario(id);
+      expect(scenario.families).toEqual(["next"]);
+    },
+  );
+});
+
 describe("hook-harness cases (e1_* .. e7_*)", () => {
   const dir = join(import.meta.dirname, "../../tools/eval/scenarios");
   const ids = scenarioIds(false).filter((id) => /^e\d_/.test(id));

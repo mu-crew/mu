@@ -35,6 +35,23 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `askModel` answers the scripted `evalfaux/*` models without pi. `main.ts`
   dispatches `tournament` to a stub until the driver lands.
 
+- **Eval rig: hill-r2 fixtures, intents and R4 scenarios** (spec
+  docs/specs/2026-11-07-hill-r2-tournament.md §2, §7 B4a). `tools/eval`
+  fixtures gain gated task scripts (`gate: { delayMs }`, released by
+  `<workers>/go`), `chromePane`, `seedDelegate` (a finished delegate call
+  through the real writers) and `delegateDefault`. Cold-guess gains eight
+  next-only headline intents for verbs since 4.0 (`check_record`,
+  `verdict_record`, `wave_outcome`, `host_list`, `lease_show`, `notes_two`,
+  `close_apply_clean`, `report_only`); three R4 scenarios judge sleep and
+  poll waits (`poll_wave`), one note summarising four reports
+  (`multi_notes`) and acting on a worker's result read through mu
+  (`wait_report_act`). `cold-guess check --family next` is green again:
+  a sandbox copies the pi launcher's cached model catalog so a worker pi
+  starts inside a pi agent's seatbelt, the remote gate seed spawns as pi,
+  and `task_brief` is reworded. The faux worker reads its claim with a
+  plain `sqlite3` connection: `-readonly` cannot open the WAL DB once no mu
+  process holds its -shm file, so a worker whose orchestrator slept gave up.
+
 ### Changed
 
 - **A pipe gets no colour, inside tmux too.** mu forced ANSI colour

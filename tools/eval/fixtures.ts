@@ -64,14 +64,16 @@ export async function gateScript(sb: Sandbox): Promise<void> {
 // text in 0 s is what a skeptical AUT rightly rejects. Keep comments out of the script body below: the
 // AUT can read it from the sandbox bin.
 // Worker driver: what a faux worker's bash call `eval-worker` does. The SQL is verbatim from the
-// e_0 design (core columns only, stable across surfaces).
+// e_0 design (core columns only, stable across surfaces), SELECTs only. Not `sqlite3 -readonly`: a
+// read-only connection cannot open a WAL DB whose -shm file is gone (no mu process holds it open),
+// so a worker whose orchestrator was not inside a mu call never saw its claim and gave up.
 const DRIVER = String.raw`#!/bin/bash
 W="$EVAL_WORKER_DIR"
 # EVAL_DB_PATH first: a remote pane also gets the host's own MU_DB_PATH, which holds no claims
 DB="\${EVAL_DB_PATH:-$MU_DB_PATH}"
 AGENT="\${MU_AGENT_NAME:-}"
 ms() { local t; t=$(date +%s%3N); case "$t" in *[!0-9]*) perl -MTime::HiRes=time -e 'printf("%d\n", time()*1000)' ;; *) echo "$t" ;; esac; }
-SQLITE() { sqlite3 -readonly -cmd ".timeout 5000" "$DB" "$1"; }
+SQLITE() { sqlite3 -cmd ".timeout 5000" "$DB" "$1"; }
 claimed() { SQLITE "SELECT t.local_id FROM tasks t JOIN agents a ON a.id=t.owner_id JOIN workstreams w ON w.id=t.workstream_id WHERE a.name='$MU_AGENT_NAME' AND w.name='$MU_WORKSTREAM' AND t.status='IN_PROGRESS' LIMIT 1"; }
 # A delegate (spawned by mu_delegate as delegate-<label>) answers a check and owns no task. Which claim
 # it is asked about: the claim-N token in its prompt, else the c<N>/claim-<N> label in its name.
@@ -101,6 +103,7 @@ if [ -z "$T" ]; then
     if grep -qw -- "$k" "$W/last-prompt.$AGENT" 2>/dev/null; then echo "$(ms) $AGENT $k" >> "$W/answers.log"; cat "$f"; exit 0; fi
   done
   [ -f "$W/delegate-delay" ] || sleep 3
+  if [ -f "$W/delegate-default" ]; then echo "$(ms) $AGENT default" >> "$W/answers.log"; cat "$W/delegate-default"; exit 0; fi
   ask=$(tr '\n' ' ' < "$W/last-prompt.$AGENT" 2>/dev/null | cut -c1-90)
   echo "VERDICT: CONFIRMED"
   echo "EVIDENCE: asked: \"$ask\"; read it against the repo at $(pwd): HEAD $(git log --oneline -1 2>/dev/null), tree $([ -z "$(git status --porcelain 2>/dev/null)" ] && echo clean || echo dirty); no contradiction found"
@@ -196,13 +199,28 @@ export async function writeWorkerDriver(
   mkdirSync(join(w, "answers"), { recursive: true });
 }
 
+/**
+ * A worker task. `gate` holds its script until `<workers>/go` exists (openGate), then `delayMs`
+ * more: the task finishes at a known time after the go hook, whatever the worker's start.
+ */
 export async function workerTask(
   sb: Sandbox,
   id: string,
-  opts: { sh?: string; dieOnce?: boolean; errorOnce?: boolean; loseOnce?: boolean },
+  opts: {
+    sh?: string;
+    dieOnce?: boolean;
+    errorOnce?: boolean;
+    loseOnce?: boolean;
+    gate?: { delayMs: number };
+  },
 ): Promise<void> {
   const dir = join(sb.workerDir, "tasks");
-  if (opts.sh !== undefined) write(join(dir, `${id}.sh`), `${opts.sh}\n`);
+  const gate =
+    opts.gate === undefined
+      ? ""
+      : `W="$EVAL_WORKER_DIR"; while [ ! -e "$W/go" ]; do sleep 0.2; done; sleep ${(opts.gate.delayMs / 1000).toFixed(3)}\n`;
+  if (opts.sh !== undefined || gate !== "")
+    write(join(dir, `${id}.sh`), `${gate}${opts.sh ?? ""}\n`);
   if (opts.dieOnce) write(join(dir, `${id}.die-once`), "");
   if (opts.errorOnce) write(join(dir, `${id}.error-once`), "");
   // the prompt is delivered but silently dropped: the worker does nothing, no error (runs.log: lost)
@@ -221,6 +239,105 @@ export async function delegateAnswer(sb: Sandbox, n: number, text: string): Prom
 /** Answer for any delegate whose prompt names `task` (a task id such as rt2), for AUTs that word the delegate's prompt freely. */
 export async function delegateAnswerFor(sb: Sandbox, task: string, text: string): Promise<void> {
   write(join(sb.workerDir, "answers", `${task}.txt`), `${text}\n`);
+}
+
+/** The go hook of gated task scripts (workerTask `gate`): every gated script starts its delay now. */
+export async function openGate(sb: Sandbox): Promise<void> {
+  write(join(sb.workerDir, "go"), "");
+}
+
+/**
+ * What a delegate with no keyed answer says (in place of the generated CONFIRMED). Without this
+ * file the driver keeps its generated answer.
+ */
+export async function delegateDefault(sb: Sandbox, text: string): Promise<void> {
+  write(join(sb.workerDir, "delegate-default"), `${text}\n`);
+}
+
+export interface SeedDelegate {
+  callId: string;
+  /** `pi:<session>`; `mu wait --wave` counts only the calls of its own pi caller. */
+  caller: string;
+  wave?: string;
+  label: string;
+  /** `<ws>/<task>`: the task the answer's verdict note lands on. */
+  record?: string;
+  brief: string;
+  /** The delegate's name (the answer's author). */
+  agent: string;
+  /** Default `done`. */
+  outcome?: string;
+  answer: string;
+}
+
+/**
+ * A finished delegate call in workstream `ws`, written by the real writers in the order the pi
+ * extension calls them: register (the kind=delegate task, its brief note, the call row), mark
+ * running, finish (the verdict note on the record task, the delegate's report, its close). No
+ * pane, no delivery, no checks row. Returns the delegate task's local id.
+ */
+export async function seedDelegate(
+  sb: Sandbox,
+  d: SeedDelegate,
+  ws = "auth",
+): Promise<{ task: string }> {
+  const brief = join(sb.dir, `delegate-${d.callId}.brief`);
+  const answer = join(sb.dir, `delegate-${d.callId}.answer`);
+  write(brief, d.brief);
+  write(answer, d.answer);
+  // the surface's cli itself, not the recording shim: a seed is not a call anyone made
+  const cli = `node ${shq(sb.surface.cli)}`;
+  const reg = await sh(
+    sb,
+    [
+      `${cli} delegates register ${shq(d.callId)} -w ${shq(ws)} --caller ${shq(d.caller)}`,
+      d.wave === undefined ? "" : ` --wave ${shq(d.wave)}`,
+      d.record === undefined ? "" : ` --record ${shq(d.record)}`,
+      ` --label ${shq(d.label)} --state starting --text - < ${shq(brief)}`,
+    ].join(""),
+  );
+  const task = / as [^/\s]+\/(\S+) \(/.exec(reg.stdout)?.[1];
+  if (task === undefined) throw new Error(`seedDelegate: no task in: ${reg.stdout}`);
+  await seedViaMu(sb, [["delegates", "mark", d.callId, "running", "--agent", d.agent]]);
+  await sh(
+    sb,
+    `${cli} delegates finish ${shq(d.callId)} --outcome ${shq(d.outcome ?? "done")} --author ${shq(d.agent)} --text - < ${shq(answer)}`,
+  );
+  return { task };
+}
+
+/**
+ * A `--command` pane that prints pi-like chrome (blank lines, rules, arrow rows, a spinner line),
+ * then `lines`, and stays alive: what `mu agent read` returns for a busy pi pane.
+ */
+export async function chromePane(
+  sb: Sandbox,
+  name: string,
+  lines: string[],
+  ws = "auth",
+): Promise<void> {
+  const dir = join(sb.dir, "panes");
+  const body = join(dir, `${name}.txt`);
+  const rule = "─".repeat(60);
+  write(
+    body,
+    [
+      ...Array.from({ length: 30 }, () => ""),
+      rule,
+      " ↑ 12 earlier lines",
+      "",
+      rule,
+      " ↑ 3 more",
+      " Working…",
+      rule,
+      ...lines,
+      "",
+    ].join("\n"),
+  );
+  write(join(dir, `${name}.sh`), `#!/bin/sh\ncat ${shq(body)}\nexec sleep 3600\n`, 0o755);
+  await seedViaMu(sb, [
+    ["agent", "spawn", name, "-w", ws, "--command", `sh ${join(dir, `${name}.sh`)}`, "--no-ctl"],
+  ]);
 }
 
 export async function runsLog(sb: Sandbox): Promise<RunRecord[]> {

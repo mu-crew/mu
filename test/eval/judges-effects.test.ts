@@ -109,6 +109,8 @@ describe("no judge accepts a close that precedes the worker's CLOSE block", () =
     ...["r1", "r2", "r3", "r4", "r5", "r6", "f1", "f2", "f3"],
     // the hook-harness cases (e1_* .. e7_*)
     ...["d1", "d2", "rf1", "rv1", "ship", "c1", "c2", "x1", "x2", "m1", "m2", "m3", "m4"],
+    // the hill-r2 R4 scenarios
+    ...["p1", "p2", "p3"],
   ];
   const ids = scenarioIds(false);
   const judge = async (id: string, sb: Sandbox) => (await loadScenario(id)).judge(sb, emptyRun());

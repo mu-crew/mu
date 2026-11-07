@@ -1,0 +1,12 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "for t in m1 m2 m3 m4; do mu task notes $t -w eval | grep '^report' | cut -f5- | mu task note u -w eval -; done"
+      }
+    ]
+  },
+  {
+    "text": "u has the four reports."
+  }
+]

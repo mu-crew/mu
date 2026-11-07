@@ -1,0 +1,12 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "{ echo 'Summary of u:'; for t in m1 m2 m3 m4; do printf '%s: ' \"$t\"; mu task notes $t -w eval | grep '^brief' | cut -f5-; done; } | mu task note u -w eval -"
+      }
+    ]
+  },
+  {
+    "text": "u has one note summarising m1-m4."
+  }
+]

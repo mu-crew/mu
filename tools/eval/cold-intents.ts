@@ -2,9 +2,19 @@
 // (what the sandbox holds before the guess), a judge that reads STATE and the guess's own output
 // (never its spelling), and one golden command per surface family plus one plausible-but-wrong bad,
 // so `cold-guess check` proves the judge before any model is paid for.
+import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { hostProfile, seedNotes, seedViaMu, shq, sshShim, writeWorkerDriver } from "./fixtures.ts";
+import Database from "better-sqlite3";
+import {
+  hostProfile,
+  seedDelegate,
+  seedNotes,
+  seedViaMu,
+  shq,
+  sshShim,
+  writeWorkerDriver,
+} from "./fixtures.ts";
 import type { OpRow } from "./ops.ts";
 import { openProbe } from "./probe.ts";
 import { mu, sh } from "./sandbox.ts";
@@ -83,7 +93,10 @@ const add = (id: string, title: string, impact = 50, extra: string[] = []): stri
 ];
 const init = (): string[] => ["workstream", "init", WS];
 
-/** A pane that prints `mark` and sleeps: an agent mu can list, show and read, with no pi in it. */
+/**
+ * A pane that prints `mark` and sleeps: an agent mu can list, show and read, with no pi in it. The
+ * mark is printed in two halves, so a listing that echoes the pane's command line does not show it.
+ */
 async function pane(
   sb: Sandbox,
   name: string,
@@ -97,7 +110,7 @@ async function pane(
     "-w",
     WS,
     "--command",
-    `sh -c 'echo ${mark}; exec sleep 3600'`,
+    `sh -c 'printf "%s%s\\n" ${mark.slice(0, mark.length >> 1)} ${mark.slice(mark.length >> 1)}; exec sleep 3600'`,
     "--no-ctl",
     ...extra,
   ]);
@@ -189,6 +202,34 @@ async function reachable(sb: Sandbox, sha: string): Promise<boolean> {
   return false;
 }
 
+/** The checks rows on `ws/task` (mu-next only: 3.x has no checks table). */
+function checksOn(
+  sb: Sandbox,
+  ws: string,
+  task: string,
+): { checker: string; verdict: string | null }[] {
+  const db = new Database(sb.dbPath, { readonly: true, fileMustExist: true });
+  try {
+    return db
+      .prepare(
+        `SELECT c.checker AS checker, c.verdict AS verdict FROM checks c
+           JOIN tasks t ON t.id = c.task_id JOIN workstreams w ON w.id = t.workstream_id
+          WHERE w.name = ? AND t.local_id = ?`,
+      )
+      .all(ws, task) as { checker: string; verdict: string | null }[];
+  } finally {
+    db.close();
+  }
+}
+
+/** The label of a text's first VERDICT line. */
+const verdictOf = (text: string | null): string | undefined =>
+  /^\s*VERDICT:\s*(CONFIRMED|REFUTED|UNVERIFIED)\b/m.exec(text ?? "")?.[1];
+
+/** `delegate_<label>_<8 hex of sha256(call id)>`: the task a delegate call gets (src/delegates.ts taskIdFor). */
+const delegateTask = (callId: string, label: string): string =>
+  `delegate_${label}_${createHash("sha256").update(callId).digest("hex").slice(0, 8)}`;
+
 // ---- the intents -------------------------------------------------------------------------------
 
 const PROOF = "gate green: npm test exit 0";
@@ -197,6 +238,11 @@ const BRIEF_END = "BRIEF-END-7731";
 const LOGS = 24;
 const log = (i: number): string => `LOGREC-${String(i).padStart(2, "0")}`;
 const ALL: Family[] = ["3x", "next"];
+const NEXT: Family[] = ["next"];
+const CHECK_ANSWER = "VERDICT: CONFIRMED - the four fixes hold";
+const REPORT_CALL = "rv-7";
+const REPORT_TASK = delegateTask(REPORT_CALL, "rev");
+const NOTE = (t: string): string => `NOTE-${t.toUpperCase()}-4417`;
 
 export const INTENTS: ColdIntent[] = [
   {
@@ -224,7 +270,7 @@ export const INTENTS: ColdIntent[] = [
   {
     id: "task_brief",
     group: "tasks",
-    text: "Print the original brief that t3 in the initiative called auth was given.",
+    text: "Print the original instructions that t3 in the initiative called auth was handed.",
     role: "headline",
     families: ALL,
     async seed(sb) {
@@ -361,7 +407,7 @@ export const INTENTS: ColdIntent[] = [
       await devHost(sb, f);
       let dir: string;
       if (f === "next") {
-        dir = await pane(sb, "worker-2", "W2", ["--host", "dev", "--worktree"]);
+        dir = await pane(sb, "worker-2", "W2", ["--host", "dev", "--worktree", "--cli", "pi"]);
       } else {
         await sh(sb, SPAWN_3X("worker-2"));
         dir = join(hostRoot(sb), "home", "ws", "worker-2");
@@ -607,5 +653,188 @@ export const INTENTS: ColdIntent[] = [
     judge: async (c) => reads(c, ["auth", "billing-ui"]),
     golden: { "3x": "mu workstream list", next: "mu workstream list" },
     bad: `mu task list -w ${WS}`,
+  },
+  // ---- 4.x verbs since 4.0 (hill-r2 spec §2.1) ----
+  {
+    id: "check_record",
+    group: "tasks",
+    text: "Ask a claude reviewer for an independent second opinion on t4 in the initiative called auth, and have mu track that request.",
+    role: "headline",
+    families: NEXT,
+    async seed(sb) {
+      await seedViaMu(sb, [init(), add("t4", "four fixes"), add("t5", "bystander")]);
+      return {};
+    },
+    allow: (o) => o.intent === "check.issue",
+    async judge(c) {
+      const rows = checksOn(c.sb, WS, "t4");
+      return done(rows.length > 0 ? [] : ["no check recorded on t4"]);
+    },
+    golden: {
+      "3x": "",
+      next: `mu task check t4 -w ${WS} --by claude --brief "Re-check t4's four fixes and end with a VERDICT: line"`,
+    },
+    bad: `mu task note t4 -w ${WS} "claude: please review t4 independently"`,
+  },
+  {
+    id: "verdict_record",
+    group: "tasks",
+    text: `The claude reviewer asked to re-examine t4 (initiative called auth) came back with: ${CHECK_ANSWER}. Store that result on the pending request.`,
+    payload: CHECK_ANSWER,
+    role: "headline",
+    families: NEXT,
+    async seed(sb) {
+      await seedViaMu(sb, [
+        init(),
+        add("t4", "four fixes"),
+        ["task", "check", "t4", "-w", WS, "--by", "claude", "--brief", "re-check t4's fixes"],
+      ]);
+      return {};
+    },
+    allow: (o) => o.intent === "check.verdict",
+    async judge(c) {
+      const rows = checksOn(c.sb, WS, "t4");
+      const ok = rows.some((r) => verdictOf(r.verdict) === "CONFIRMED");
+      return done(ok ? [] : ["t4's check carries no CONFIRMED verdict"]);
+    },
+    golden: {
+      "3x": "",
+      next: `c=$(mu state -w ${WS} --json | grep -o '"checks":\\[{"id":"[0-9A-Z]*' | grep -o '[0-9A-Z]*$'); mu task verdict t4 -w ${WS} --check "$c" '${CHECK_ANSWER}'`,
+    },
+    bad: `mu task note t4 -w ${WS} '${CHECK_ANSWER}'`,
+  },
+  {
+    id: "wave_outcome",
+    group: "delegates",
+    text: "How did the helper calls of batch w1 in the initiative called auth turn out? Give each one's tag and result.",
+    role: "headline",
+    families: NEXT,
+    async seed(sb) {
+      await seedViaMu(sb, [init(), add("t4", "four fixes"), add("t5", "token cache")]);
+      const call = (callId: string, wave: string, label: string, record: string, answer: string) =>
+        seedDelegate(sb, {
+          callId,
+          caller: "pi:cold-seed",
+          wave,
+          label,
+          record,
+          brief: `check ${record}`,
+          agent: `delegate-${label}`,
+          answer,
+        });
+      await call("wo-1", "w1", "review-t4", `${WS}/t4`, "VERDICT: CONFIRMED\nEVIDENCE: tests pass");
+      await call("wo-2", "w1", "review-t5", `${WS}/t5`, "VERDICT: REFUTED\nEVIDENCE: cache leaks");
+      await call("wo-3", "w2", "audit-t4", `${WS}/t4`, "VERDICT: CONFIRMED\nEVIDENCE: ok");
+      return {};
+    },
+    judge: async (c) => reads(c, ["review-t4", "review-t5", "CONFIRMED", "REFUTED"], ["audit-t4"]),
+    golden: { "3x": "", next: `mu delegates list --wave w1 -w ${WS}` },
+    bad: `mu delegates tally --wave w1 -w ${WS}`,
+  },
+  {
+    id: "host_list",
+    group: "host",
+    text: "Which other machines can mu reach, and how is each one set up?",
+    role: "headline",
+    families: NEXT,
+    async seed(sb, f) {
+      await seedViaMu(sb, [init()]);
+      await devHost(sb, f);
+      await hostProfile(sb, "gpu", { repo: "~/src/gpu-repo" });
+      return {};
+    },
+    judge: async (c) => reads(c, ["dev", "gpu", "~/repo", "~/src/gpu-repo"]),
+    golden: { "3x": "", next: "mu host list" },
+    bad: "mu host show dev",
+  },
+  {
+    id: "lease_show",
+    group: "host",
+    text: "On machine dev, which worker currently occupies a connection slot (initiative called auth)?",
+    role: "headline",
+    families: NEXT,
+    async seed(sb, f) {
+      await seedViaMu(sb, [init()]);
+      await devHost(sb, f);
+      await pane(sb, "worker-2", "W2", ["--host", "dev", "--worktree", "--cli", "pi"]);
+      await pane(sb, "worker-3", "W3");
+      return {};
+    },
+    judge: async (c) => reads(c, ["worker-2"], ["worker-3"]),
+    golden: { "3x": "", next: "mu host show dev" },
+    bad: `mu agent list -w ${WS}`,
+  },
+  {
+    id: "notes_two",
+    group: "tasks",
+    text: "Print the remarks left on t1 and on t2 in the initiative called auth.",
+    role: "headline",
+    families: NEXT,
+    async seed(sb) {
+      await seedViaMu(sb, [init(), add("t1", "one"), add("t2", "two"), add("t3", "three")]);
+      for (const t of ["t1", "t2", "t3"]) await seedNotes(sb, WS, t, [`${NOTE(t)} about ${t}`]);
+      return {};
+    },
+    judge: async (c) => reads(c, [NOTE("t1"), NOTE("t2")], [NOTE("t3")]),
+    golden: { "3x": "", next: `mu task notes t1 -w ${WS}; mu task notes t2 -w ${WS}` },
+    bad: `mu task notes t1 -w ${WS}`,
+  },
+  {
+    id: "close_apply_clean",
+    group: "agents",
+    text: "worker-3 in the initiative called auth has finished and its work is already on main; retire it and tidy up behind it.",
+    role: "headline",
+    families: NEXT,
+    async seed(sb, f) {
+      await seedViaMu(sb, [init()]);
+      const dir = await pane(sb, "worker-3", "W3", [worktreeFlag(f)]);
+      const sha = await commitIn(sb, dir, "w3");
+      await sh(sb, `git merge -q --ff-only ${sha}`);
+      return { sha, dir };
+    },
+    allow: (o) => o.intent === "agent.close",
+    async judge(c) {
+      const gone = !openProbe(c.sb).agents(WS).includes("worker-3");
+      const kept = await reachable(c.sb, c.state.sha ?? "");
+      const tidy = !existsSync(c.state.dir ?? "");
+      const why: string[] = [];
+      if (!kept) why.push("LOST WORK: the commit is unreachable");
+      if (!gone) why.push("worker-3 still registered");
+      if (!tidy) why.push("its worktree is still there");
+      const preview = !gone && c.run.code === 0 && /--if \d+/.test(c.run.stdout);
+      return { hit: gone && kept && tidy, partial: preview, why };
+    },
+    golden: {
+      "3x": "",
+      next: [
+        `mu agent close worker-3 -w ${WS}`,
+        `mu agent close worker-3 -w ${WS} --if "$(mu agent close worker-3 -w ${WS} | sed -n 's/^next: .*--if \\([0-9][0-9]*\\).*/\\1/p')"`,
+      ].join("\n"),
+    },
+    bad: `mu agent close worker-3 -w ${WS}`,
+  },
+  {
+    id: "report_only",
+    group: "delegates",
+    text: `Print only the findings that helper ${REPORT_TASK} (initiative called auth) came back with, not the instructions it was given.`,
+    payload: REPORT_TASK,
+    role: "headline",
+    families: NEXT,
+    async seed(sb) {
+      await seedViaMu(sb, [init(), add("t4", "four fixes")]);
+      const { task } = await seedDelegate(sb, {
+        callId: REPORT_CALL,
+        caller: "pi:cold-seed",
+        label: "rev",
+        brief: "Review t4's four fixes. BRIEF-MARK-2291",
+        agent: "delegate-rev",
+        answer: "Fix 3 drops the expiry check. RPT-MARK-2291\nFixes 1, 2 and 4 hold.",
+      });
+      if (task !== REPORT_TASK) throw new Error(`report_only: seeded ${task}, want ${REPORT_TASK}`);
+      return {};
+    },
+    judge: async (c) => reads(c, ["RPT-MARK-2291"], ["BRIEF-MARK-2291"]),
+    golden: { "3x": "", next: `mu task notes ${REPORT_TASK} -w ${WS} | grep '^report'` },
+    bad: `mu task notes ${REPORT_TASK} -w ${WS}`,
   },
 ];

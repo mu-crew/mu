@@ -6,15 +6,17 @@ import {
   accessSync,
   chmodSync,
   constants,
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AUT_NAMES } from "./fake-payloads.ts";
@@ -88,6 +90,24 @@ export function launcherEnv(base: NodeJS.ProcessEnv): Record<string, string> {
   if (base.LAUNCHER_SANDBOX_RUNTIME === "seatbelt")
     return { LAUNCHER_INHERIT_OUTER_SEATBELT: "1" };
   return {};
+}
+
+/**
+ * Copy the host pi launcher's cached model catalog (`meta-model-catalog*.json` in the caller's pi
+ * agent dir) into a sandbox's agent dir. Without a cache, an interactive pi launcher fetches the
+ * catalog first; where it cannot (inside a pi agent's seatbelt, no network) it waits on "Press any
+ * key to continue" and a worker pane never opens its control socket. A cache only: no auth, no
+ * settings. Returns the files copied.
+ */
+export function seedLauncherCache(hostAgentDir: string, sandboxAgentDir: string): string[] {
+  let names: string[];
+  try {
+    names = readdirSync(hostAgentDir).filter((n) => /^meta-model-catalog.*\.json$/.test(n));
+  } catch {
+    return [];
+  }
+  for (const n of names) copyFileSync(join(hostAgentDir, n), join(sandboxAgentDir, n));
+  return names;
 }
 
 /** System directories only: the host's mise, ~/.local/bin and ~/.pi/agent/bin entries (and the tools and docs they hold) stay out of the AUT's PATH. */
@@ -581,6 +601,10 @@ export async function createSandbox(surface: Surface, opts: SandboxOptions = {})
   writeFileSync(
     join(dir, "pi-agent", "settings.json"),
     `${JSON.stringify({ retry: { enabled: false } })}\n`,
+  );
+  seedLauncherCache(
+    process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent"),
+    join(dir, "pi-agent"),
   );
 
   if (existsSync(surface.skillDir))

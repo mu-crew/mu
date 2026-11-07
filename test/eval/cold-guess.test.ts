@@ -259,3 +259,31 @@ describe("versus", () => {
     expect(versus(rows, "n", "x", "control").map((v) => v.result)).toEqual(["win"]);
   });
 });
+
+describe("hill-r2 intents (spec §2.1)", () => {
+  const ids = [
+    "check_record",
+    "verdict_record",
+    "wave_outcome",
+    "host_list",
+    "lease_show",
+    "notes_two",
+    "close_apply_clean",
+    "report_only",
+  ];
+  it.each(ids)("%s: a next-only headline with a golden and a different bad", (id) => {
+    const i = INTENTS.find((x) => x.id === id);
+    expect(i, id).toBeDefined();
+    if (!i) return;
+    expect(i.role).toBe("headline");
+    expect(i.families).toEqual(["next"]);
+    expect(i.golden.next).not.toBe("");
+    expect(i.bad).not.toBe("");
+    expect(i.bad).not.toBe(i.golden.next);
+  });
+  it("close_apply_clean is a two-step block: preview, then the apply", () => {
+    const g = INTENTS.find((x) => x.id === "close_apply_clean")?.golden.next ?? "";
+    expect(extractCommand(`\`\`\`sh\n${g}\n\`\`\``)).toBe(g);
+    expect(g.split("\n")).toHaveLength(2);
+  });
+});

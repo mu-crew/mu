@@ -22,7 +22,27 @@ function hasTmux(): boolean {
 const ready = existsSync(join(ROOT, "dist", "cli.js")) && hasTmux();
 const surface = () => ({ ...surfaceFromDir("checkout", ROOT), family: "next" as const });
 // a spread of kinds: a read, a write checked by state, a two-step close that must not lose work
-const SUBSET = ["owner_of", "close_with_evidence", "add_three", "stop_worker", "delegates_wave"];
+const SUBSET = [
+  "owner_of",
+  "close_with_evidence",
+  "add_three",
+  "stop_worker",
+  "delegates_wave",
+  // hill-r2 §2.1: 4.x verbs since 4.0
+  "check_record",
+  "verdict_record",
+  "wave_outcome",
+  "host_list",
+  "lease_show",
+  "notes_two",
+  "close_apply_clean",
+  "report_only",
+  // f_coldguess_check_drift: remote spawn, a remote command gate's worktree, a listing that
+  // printed the pane's command line
+  "spawn_remote",
+  "collect_commits",
+  "worker_doing",
+];
 
 describe.skipIf(!ready)("cold-guess judges on the built checkout", () => {
   for (const id of SUBSET) {
@@ -68,11 +88,15 @@ describe.skipIf(!ready)("intent wording is neutral", () => {
 
   it("lints only the intents a run selects", () => {
     const surfaces = [{ label: "next", surface: surface() }];
-    const all = intentLeaks(surfaces);
-    const leaky = [...new Set(all.map((l) => l.split(":")[0] ?? ""))];
-    const clean = ["owner_of", "add_three"].filter((id) => !leaky.includes(id));
-    expect(intentLeaks(surfaces, clean)).toEqual([]);
-    expect(intentLeaks(surfaces, leaky)).toEqual(all);
+    // a fixture request that names verbs, so the selection has a leak to leave out
+    const pool = [...INTENTS, { id: "fixture_leak", text: "Show the brief of t3 in auth." }];
+    const leak = intentLeaks(surfaces, ["fixture_leak"], pool);
+    expect(leak).toEqual([
+      'fixture_leak: "show" is a name on next',
+      'fixture_leak: "brief" is a name on next',
+    ]);
+    expect(intentLeaks(surfaces, ["owner_of", "add_three"], pool)).toEqual([]);
+    expect(intentLeaks(surfaces, null, pool)).toEqual([...intentLeaks(surfaces), ...leak]);
   }, 120_000);
 });
 

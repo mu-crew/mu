@@ -6,6 +6,7 @@ import {
   launcherEnv,
   removeSandboxDir,
   sandboxEnv,
+  seedLauncherCache,
   tmuxSocketPath,
 } from "../../tools/eval/sandbox.ts";
 import type { Surface } from "../../tools/eval/types.ts";
@@ -165,5 +166,30 @@ describe("launcherEnv", () => {
     expect(
       sandboxEnv("/tmp/mu-eval-x", surface, "x", BASE).LAUNCHER_INHERIT_OUTER_SEATBELT,
     ).toBeUndefined();
+  });
+});
+
+describe("seedLauncherCache", () => {
+  it("copies only the launcher's cached model catalog, and tolerates a missing agent dir", () => {
+    const root = mkdtempSync(join(tmpdir(), "mu-launcher-cache-"));
+    try {
+      const host = join(root, "host");
+      const box = join(root, "box");
+      mkdirSync(host);
+      mkdirSync(box);
+      writeFileSync(join(host, "meta-model-catalog.json"), "{}");
+      writeFileSync(join(host, "meta-model-catalog.resolved.json"), "{}");
+      writeFileSync(join(host, "auth.json"), "secret");
+      writeFileSync(join(host, "settings.json"), "{}");
+      expect(seedLauncherCache(host, box).sort()).toEqual([
+        "meta-model-catalog.json",
+        "meta-model-catalog.resolved.json",
+      ]);
+      expect(existsSync(join(box, "meta-model-catalog.resolved.json"))).toBe(true);
+      expect(existsSync(join(box, "auth.json"))).toBe(false);
+      expect(seedLauncherCache(join(root, "absent"), box)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

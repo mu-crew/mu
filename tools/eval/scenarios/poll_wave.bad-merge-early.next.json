@@ -1,0 +1,46 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree --task p1 --send 'do p1 and finish with the CLOSE block'"
+      },
+      {
+        "bash": "mu agent spawn w2 -w eval --worktree --task p2 --send 'do p2 and finish with the CLOSE block'"
+      },
+      {
+        "bash": "mu agent spawn w3 -w eval --worktree --task p3 --send 'do p3 and finish with the CLOSE block'"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "for i in 1 2 3; do until git -C $MU_STATE_DIR/worktrees/eval/w$i log -1 --format=%s | grep -q \"^p$i\"; do sleep 0.5; done; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w$i rev-parse HEAD); done"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:eval/w1@0 --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:eval/w2@0 --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu wait agent:eval/w3@0 --timeout 120"
+      }
+    ]
+  },
+  {
+    "text": "p1, p2 and p3 are on main."
+  }
+]
