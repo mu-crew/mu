@@ -13,6 +13,7 @@ import { WS } from "./cold-intents.ts";
 import { seedNotes, seedViaMu, shq } from "./fixtures.ts";
 import type { NextCase, NextCtx } from "./nextstep.ts";
 import { CLOSE_CASES } from "./nextstep-cases-close.ts";
+import { agentOpsOf } from "./nextstep-cases-lib.ts";
 import { READ_CASES } from "./nextstep-cases-read.ts";
 import { WAIT_CASES } from "./nextstep-cases-wait.ts";
 import { muText, shown } from "./nextstep-exec.ts";
@@ -114,7 +115,7 @@ const closePreviewApply: NextCase = {
       },
     ];
   },
-  allow: (o) => o.entity === "agent" && (o.intent ?? "").startsWith("agent."),
+  allow: agentOpsOf("worker-1"),
   async judge(c: NextCtx) {
     const gone = !openProbe(c.sb).agents(WS).includes("worker-1");
     const closed = opsSince(c.sb, c.base).some((o) => o.intent === "agent.close");
@@ -136,12 +137,22 @@ const closePreviewApply: NextCase = {
       : `mu agent close worker-1 -w ${WS} --if "$(mu agent close worker-1 -w ${WS} --json | jq -r .data.revision)"`,
   ],
   bad: () => [`mu agent close worker-1 -w ${WS}`],
-  extras: (st) => [
+  badPartial: true,
+  extras: (st, v) => [
     { label: "lucky", cmds: [`git worktree remove --force ${shq(st.dir ?? "")}`], expect: "miss" },
     {
       label: "alt",
       cmds: [`mu agent close worker-1 -w ${WS} --discard --if ${st.rev}`],
       expect: "hit",
+    },
+    // the golden plus a spawn of an unrelated agent: worker-9's ops are stray
+    {
+      label: "lucky",
+      cmds: [
+        ...closePreviewApply.golden(st, v),
+        `mu agent spawn worker-9 -w ${WS} --command 'sleep 600' --no-ctl`,
+      ],
+      expect: "miss",
     },
   ],
 };
@@ -219,13 +230,14 @@ const notesMulti: NextCase = {
       "1",
     ];
     await seedViaMu(sb, [["workstream", "init", WS], add("t1"), add("t2"), add("t3")]);
-    const n = nonce();
+    // each marker its own nonce: a rewrite of t1's marker (N1-x -> N2-x) is never t2's
     const st: Record<string, string> = {};
     for (const [k, t] of [
       ["1", "t1"],
       ["2", "t2"],
       ["3", "t3"],
     ] as const) {
+      const n = nonce();
       st[`n${k}`] = `N${k}-${n}`;
       await seedNotes(sb, WS, t, [`N${k}-${n} ${NOTE_TEXT[t]}`]);
     }
@@ -245,6 +257,7 @@ const notesMulti: NextCase = {
   },
   golden: () => [`mu task notes t2 -w ${WS}`, `mu task notes t3 -w ${WS}`],
   bad: () => [`mu task notes t2 -w ${WS}; echo ===; mu task notes t3 -w ${WS}`],
+  badPartial: true,
   extras: () => [
     { label: "lucky", cmds: [`mu task list -w ${WS}`], expect: "miss" },
     // a forgery inside one command: both calls print their marker, but the lines shown are t1's rewritten
@@ -252,6 +265,14 @@ const notesMulti: NextCase = {
       label: "lucky",
       cmds: [
         `mu task notes t2 -w ${WS} >/dev/null; mu task notes t3 -w ${WS} >/dev/null; mu task notes t1 -w ${WS} | sed -e s/N1-/N2-/; mu task notes t1 -w ${WS} | sed -e s/N1-/N3-/`,
+      ],
+      expect: "miss",
+    },
+    // the reviewer's forgery: t1's marker cut out and renamed, after t2 and t3 printed theirs
+    {
+      label: "lucky",
+      cmds: [
+        `mu task notes t2 -w ${WS} >/dev/null; mu task notes t3 -w ${WS} >/dev/null; mu task notes t1 -w ${WS} | grep -o 'N1-[0-9a-f]*' | sed s/N1/N2/; mu task notes t1 -w ${WS} | grep -o 'N1-[0-9a-f]*' | sed s/N1/N3/`,
       ],
       expect: "miss",
     },

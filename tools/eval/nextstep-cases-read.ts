@@ -68,11 +68,13 @@ const notesReportRead: NextCase = {
     `mu task notes ${st.dtask} -w ${WS} --json | jq -r '.data.items[] | select(.kind=="report") | .content'`,
   ],
   bad: (st) => [`mu task notes ${st.dtask} -w ${WS} | sed 's/\\\\n/\\n/g'`],
+  badPartial: true,
   extras: (st) => [
     {
       label: "lucky",
       cmds: [`mu task notes ${st.dtask} -w ${WS} --json | jq -r '.data.items[].content'`],
       expect: "miss",
+      partial: true,
     },
     {
       label: "lucky",
@@ -134,8 +136,14 @@ const agentReadText: NextCase = {
   },
   golden: () => [`mu agent read worker-1 -w ${WS} | grep -vE '^[[:space:]─━│↑↓]*$'`],
   bad: () => [`mu agent read worker-1 -w ${WS}`],
+  badPartial: true,
   extras: (st) => [
-    { label: "lucky", cmds: [`mu agent read worker-1 -w ${WS} | grep -v '^$'`], expect: "miss" },
+    {
+      label: "lucky",
+      cmds: [`mu agent read worker-1 -w ${WS} | grep -v '^$'`],
+      expect: "miss",
+      partial: true,
+    },
     {
       label: "lucky",
       cmds: [`mu agent read worker-1 -w ${WS} >/dev/null; echo '${st.line}'`],

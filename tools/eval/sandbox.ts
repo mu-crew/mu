@@ -433,7 +433,9 @@ ms() { local t; t=$(date +%s%3N); case "$t" in *[!0-9]*) perl -MTime::HiRes=time
 fp() {
   for t in ${LOCAL_TABLES}; do printf '%s:%s,' "$t" "$(sqlite3 -cmd ".timeout 2000" "$MU_DB_PATH" ".dump $t" 2>/dev/null | cksum | cut -d' ' -f1)"; done
 }
-[ -n "$aut" ] && before=$(fp)
+# the shim's own span (its dumps included) for the AUT: mu-shim.log, so the timed rule counts the
+# rig's overhead as time in mu, not as time the answer spent elsewhere
+[ -n "$aut" ] && s0=$(ms) && before=$(fp)
 s=$(ms)
 if [ -n "$aut" ]; then
   mkdir -p "$D/mu-out"
@@ -447,6 +449,7 @@ else
 fi
 [ -n "$D" ] && printf '%s %s %s %s %s %s\n' "$s" "$(ms)" "$rc" "$([ -n "$aut" ] && echo - || echo "\${MU_AGENT_NAME:--}")" "$$" "$(printf %s "$*" | tr '\n' ' ')" >> "$D/mu-calls.log" 2>/dev/null
 [ -n "$aut" ] && printf '%s|%s|%s\n' "$$" "$before" "$(fp)" >> "$D/mu-local.log" 2>/dev/null
+[ -n "$aut" ] && printf '%s %s %s\n' "$$" "$s0" "$(ms)" >> "$D/mu-shim.log" 2>/dev/null
 exit $rc
 `)}`;
 }

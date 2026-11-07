@@ -10,6 +10,8 @@ export interface OpRow {
   entity: string;
   key: string;
   op: string;
+  /** The op's payload: an agent op's names its agent ("agent close worker-1 (…)"; its key is the workstream). */
+  payload?: string;
 }
 
 function withDb<T>(sb: Sandbox, fn: (db: Database.Database) => T): T {
@@ -34,7 +36,7 @@ export function opsSince(sb: Sandbox, seq: number): OpRow[] {
     sb,
     (db) =>
       db
-        .prepare("SELECT seq, intent, entity, key, op FROM ops WHERE seq > ? ORDER BY seq")
+        .prepare("SELECT seq, intent, entity, key, op, payload FROM ops WHERE seq > ? ORDER BY seq")
         .all(seq) as OpRow[],
   );
 }

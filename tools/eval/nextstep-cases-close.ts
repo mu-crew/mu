@@ -6,6 +6,7 @@ import { delegateDefault, seedDelegate, shq, workerTask, writeWorkerDriver } fro
 import type { NextCase } from "./nextstep.ts";
 import {
   addTask,
+  agentOpsOf,
   closeRev,
   commitIn,
   iso,
@@ -72,7 +73,7 @@ const closePreviewConflict: NextCase = {
             : null,
     },
   ],
-  allow: (o) => o.entity === "agent" && (o.intent ?? "").startsWith("agent."),
+  allow: agentOpsOf("worker-1"),
   async judge(c) {
     const merged = await onMain(c.sb, c.state.sha ?? "");
     const gone = !registered(c.sb, "worker-1");
@@ -105,6 +106,25 @@ const closePreviewConflict: NextCase = {
       cmds: [
         `git cherry-pick ${st.sha}`,
         `tmux kill-pane -t "$(mu agent show worker-1 -w ${WS} --json | jq -r .data.agent.pane_id)"; sleep 1; mu agent list -w ${WS}`,
+      ],
+      expect: "miss",
+    },
+    // pins the worktree check alone: merged and closed as the golden, then a checkout put back at
+    // worker-1's path, so the worktree is the only thing wrong
+    {
+      label: "lucky",
+      cmds: [
+        ...closePreviewConflict.golden(st, "a"),
+        `git worktree add -q --detach ${shq(st.dir ?? "")} HEAD`,
+      ],
+      expect: "miss",
+    },
+    // the golden plus a spawn of an unrelated agent: worker-9's ops are stray
+    {
+      label: "lucky",
+      cmds: [
+        ...closePreviewConflict.golden(st, "a"),
+        `mu agent spawn worker-9 -w ${WS} --command 'sleep 600' --no-ctl`,
       ],
       expect: "miss",
     },

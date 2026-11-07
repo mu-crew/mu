@@ -101,7 +101,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   LINE, a worker that closed with the verb, sleep polling, and the sql and
   finding guards. `nextstep check` proves every §2.3 row on base, lint is
   clean against base's names. `dead_once` is dropped: base reports one death
-  once.
+  once. `shown` compares whole lines and each case-7 marker has its own
+  nonce, so a `grep -o | sed` rename of another note's marker misses; cases
+  1 and 2 allow only worker-1's agent ops; the timed rule counts the shim's
+  own span (its table dumps) as time in mu, so a one-call answer on a loaded
+  host is not read as idle; `check` asserts partial where §2.3 says so.
 
 - **Eval rig: hill-r2 fixtures, intents and R4 scenarios** (spec
   docs/specs/2026-11-07-hill-r2-tournament.md §2, §7 B4a). `tools/eval`

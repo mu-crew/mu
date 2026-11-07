@@ -10,10 +10,23 @@ import { WS } from "./cold-intents.ts";
 import { runsLog, shq } from "./fixtures.ts";
 import type { NextCase } from "./nextstep.ts";
 import { muCalls, muOut } from "./observe.ts";
+import type { OpRow } from "./ops.ts";
 import { mu, sh } from "./sandbox.ts";
 import type { Sandbox } from "./types.ts";
 
 export const nonce = (): string => randomBytes(4).toString("hex");
+
+/**
+ * An `allow` for one agent's ops only: an agent op's key is its workstream and its payload names the
+ * agent ("agent close worker-1 (…)"), so a stray spawn of another agent is a stray op.
+ */
+export const agentOpsOf =
+  (name: string) =>
+  (o: OpRow): boolean =>
+    o.entity === "agent" &&
+    o.key === WS &&
+    (o.intent ?? "").startsWith("agent.") &&
+    (o.payload ?? "").split(" ")[2] === name;
 
 const WORDS = [
   "amber",

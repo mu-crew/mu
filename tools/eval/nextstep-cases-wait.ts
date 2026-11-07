@@ -16,7 +16,8 @@ import {
   spawnWorker,
   until,
 } from "./nextstep-cases-lib.ts";
-import { shown, shownLine } from "./nextstep-exec.ts";
+import { answerMetrics, muText, shown, shownLine } from "./nextstep-exec.ts";
+import { pollingCalls } from "./observe.ts";
 import type { OpRow } from "./ops.ts";
 import { openProbe } from "./probe.ts";
 import type { Sandbox } from "./types.ts";
@@ -155,7 +156,7 @@ const waitHeartbeatMerge: NextCase = {
   golden: () => [`mu wait task:${WS}/t1 2>/dev/null; mu task show t1 -w ${WS}`],
   bad: () => [`mu wait task:${WS}/t1 --json 2>&1 | ${PY}`],
   extras: () => [
-    { label: "lucky", cmds: [`mu task show t1 -w ${WS}`], expect: "miss" },
+    { label: "lucky", cmds: [`mu task show t1 -w ${WS}`], expect: "miss", partial: true },
     { label: "sleep", cmds: [`sleep 80; mu task show t1 -w ${WS}`], expect: "miss" },
     // the same sleep, then a wait that applies the CLOSE block at once: CLOSED shown, missed by idleCalls alone
     {
@@ -233,7 +234,12 @@ const waitShellLimit: NextCase = {
   golden: () => [1, 2, 3].map(() => `mu wait agent:${WS}/worker-1@0 --timeout 110`),
   bad: () => [`mu wait agent:${WS}/worker-1@0`],
   extras: () => [
-    { label: "lucky", cmds: [`mu wait agent:${WS}/worker-1@0 --timeout 110`], expect: "miss" },
+    {
+      label: "lucky",
+      cmds: [`mu wait agent:${WS}/worker-1@0 --timeout 110`],
+      expect: "miss",
+      partial: true,
+    },
     {
       label: "sleep",
       cmds: ["sleep 115", "sleep 115", `mu wait agent:${WS}/worker-1@0`],
@@ -285,9 +291,16 @@ const sleepPoll: NextCase = {
   async judge(c) {
     const seen = TRIO.filter((t) => shownLine(c, namesState(t, "CLOSED")));
     const missing = TRIO.filter((t) => !seen.includes(t));
+    // right direction: watching mu for the outcome, if by polling. mu reported each task CLOSED to
+    // the answer (shown or only grepped), or the answer polled a mu read (the §2.3 bad: nothing
+    // applies the CLOSE blocks, so its `until … grep -q CLOSED` loop never ends)
+    const observed = TRIO.every((t) =>
+      c.calls.some((m) => muText(c.sb, m).split("\n").some(namesState(t, "CLOSED"))),
+    );
+    const polled = pollingCalls(c.sb, answerMetrics(c)).length > 0;
     return {
       hit: missing.length === 0,
-      partial: missing.length === 0,
+      partial: missing.length === 0 || observed || polled,
       why: missing.map((t) => `${t} not shown CLOSED`),
     };
   },
@@ -298,6 +311,7 @@ const sleepPoll: NextCase = {
   bad: () => [
     `for t in t1 t2 t3; do until mu task show $t -w ${WS} | grep -q CLOSED; do sleep 5; done; done`,
   ],
+  badPartial: true,
   extras: () => [
     { label: "lucky", cmds: [`mu wait --wave w1 -w ${WS}`], expect: "miss" },
     { label: "sleep", cmds: [`sleep 70; mu task list -w ${WS}`], expect: "miss" },

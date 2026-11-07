@@ -76,7 +76,7 @@ describe("next-step case catalogue", () => {
     }
   });
 
-  it("builder notes: case 4 has a JSON alt with stderr dropped; case 2 has the merged-and-killed forgery", () => {
+  it("builder notes: case 4's JSON alt, case 2's merged-and-killed forgery, the review's forgery and stray-spawn rows", () => {
     const by = (id: string): NextCase => {
       const c = NEXT_CASES.find((x) => x.id === id);
       if (!c) throw new Error(id);
@@ -88,8 +88,26 @@ describe("next-step case catalogue", () => {
     expect(json.length).toBe(1);
     const killed = by("close_preview_conflict")
       .extras(ST, "a")
-      .filter((e) => e.label === "lucky" && e.cmds.some((m) => m.includes("cherry-pick")));
-    expect(killed.map((e) => e.cmds.join("; "))).toEqual([expect.stringContaining("kill-pane")]);
+      .filter((e) => e.label === "lucky" && e.cmds.some((m) => m.includes("kill-pane")));
+    expect(killed.map((e) => e.cmds[0])).toEqual([expect.stringContaining("cherry-pick")]);
+    // cases 1 and 2: the golden plus a stray spawn of worker-9 misses; case 2 pins the worktree check alone
+    for (const id of ["close_preview_apply", "close_preview_conflict"]) {
+      const stray = by(id)
+        .extras(ST, "a")
+        .filter((e) => e.cmds.some((m) => m.includes("agent spawn worker-9")));
+      expect(stray.map((e) => [e.label, e.expect])).toEqual([["lucky", "miss"]]);
+    }
+    expect(
+      by("close_preview_conflict")
+        .extras(ST, "a")
+        .filter((e) => e.cmds.some((m) => m.startsWith("git worktree add"))),
+    ).toHaveLength(1);
+    // case 7: the reviewer's grep -o | sed forgery
+    expect(
+      by("notes_multi")
+        .extras(ST, "a")
+        .filter((e) => e.label === "lucky" && e.cmds.some((m) => m.includes("grep -o 'N1-"))),
+    ).toHaveLength(1);
     // case 10's alternatives pick the short sha the wait's lastText prints
     expect(
       by("close_already_closed")

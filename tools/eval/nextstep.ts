@@ -96,11 +96,19 @@ export interface NextCase {
   allowKilled?: boolean;
   golden(st: St, v: "a" | "b"): string[];
   bad(st: St, v: "a" | "b"): string[];
-  /** The other §2.3 rows `check` must prove: alternatives (hit), lucky spellings and forgeries (miss), the sleep-wait (miss). */
+  /** §2.3 says the bad row is "miss, partial": `check` then asserts the row's partial too. */
+  badPartial?: boolean;
+  /** The other §2.3 rows `check` must prove: alternatives (hit), lucky spellings and forgeries (miss),
+   *  the sleep-wait (miss). `partial: true` where §2.3 says "miss, partial" (`check` asserts it). */
   extras(
     st: St,
     v: "a" | "b",
-  ): { label: "alt" | "lucky" | "sleep"; cmds: string[]; expect: "hit" | "miss" }[];
+  ): {
+    label: "alt" | "lucky" | "sleep";
+    cmds: string[];
+    expect: "hit" | "miss";
+    partial?: boolean;
+  }[];
 }
 
 export interface NextCtx {
@@ -552,12 +560,21 @@ export async function runNextCheck(
     paraphrase: string;
     kind: string;
     expect: "hit" | "miss";
+    partial?: boolean;
     cmds: (st: St) => string[];
   }[] = [];
   for (const c of o.cases ?? NEXT_CASES)
     for (const { v, paraphrase } of variantsOf(c)) {
       jobs.push({ c, v, paraphrase, kind: "golden", expect: "hit", cmds: (st) => c.golden(st, v) });
-      jobs.push({ c, v, paraphrase, kind: "bad", expect: "miss", cmds: (st) => c.bad(st, v) });
+      jobs.push({
+        c,
+        v,
+        paraphrase,
+        kind: "bad",
+        expect: "miss",
+        ...(c.badPartial ? { partial: true } : {}),
+        cmds: (st) => c.bad(st, v),
+      });
       jobs.push({ c, v, paraphrase, kind: "true", expect: "miss", cmds: () => ["true"] });
       // extras are listed from a placeholder state; the commands are rebuilt from the real one
       c.extras(STUB_ST, v).forEach((x, i) => {
@@ -567,6 +584,7 @@ export async function runNextCheck(
           paraphrase,
           kind: `${x.label}${i + 1}`,
           expect: x.expect,
+          ...(x.partial ? { partial: true } : {}),
           cmds: (st) => c.extras(st, v)[i]?.cmds ?? [],
         });
       });
@@ -583,10 +601,12 @@ export async function runNextCheck(
           promptDir,
           reply: async (st) => ({ text: fence(j.cmds(st)), tokens: 0 }),
         });
-        const ok = !row.invalid && (j.expect === "hit" ? row.hit : !row.hit);
+        const partialOk = j.partial !== true || row.partial;
+        const ok = !row.invalid && (j.expect === "hit" ? row.hit : !row.hit) && partialOk;
         results.push({ case: j.c.id, leadIn: j.v, kind: j.kind, expect: j.expect, ok, row });
+        const exp = `${j.expect}${j.partial ? ", partial" : ""}`;
         log(
-          `${ok ? "ok  " : "FAIL"} ${j.c.id}/${j.v} ${j.kind} (expect ${j.expect})${row.why.length > 0 ? `: ${row.why.join("; ").slice(0, 200)}` : ""}`,
+          `${ok ? "ok  " : "FAIL"} ${j.c.id}/${j.v} ${j.kind} (expect ${exp})${partialOk ? "" : " [not partial]"}${row.why.length > 0 ? `: ${row.why.join("; ").slice(0, 200)}` : ""}`,
         );
       }
     };

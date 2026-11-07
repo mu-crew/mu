@@ -3,7 +3,7 @@
 // §1.1-1.3). Record-only: nothing here repairs or changes a call. `shown`/`shownLine` decide
 // "printed" from mu's own output (mu-out) and each answer command's own output; the timed rule
 // flags sleeps standing in for a wait.
-import { writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { execGuess } from "./cold-guess.ts";
 import type { ColdEffect } from "./cold-intents.ts";
@@ -189,11 +189,16 @@ function jsonStrings(v: unknown, out: string[]): void {
     for (const x of Object.values(v as Record<string, unknown>)) jsonStrings(x, out);
 }
 
-/** mu's own stdout for a call, ANSI stripped, plus every string value of its JSON lines decoded (a jq -r rendering). */
+/**
+ * mu's own stdout for a call, ANSI stripped, plus its renderings: every string value of its JSON
+ * lines decoded (a jq -r rendering), and each line holding a literal `\n` escape split on it (a
+ * `sed 's/\\n/\n/g'` rendering of a note's text).
+ */
 export function muText(sb: Sandbox, call: MuCall): string {
   const raw = strip(muOut(sb, call));
   const decoded: string[] = [];
   for (const l of raw.split("\n")) {
+    if (l.includes("\\n")) decoded.push(...l.split("\\n"));
     if (!/^\s*[[{]/.test(l)) continue;
     try {
       jsonStrings(JSON.parse(l), decoded);
@@ -204,23 +209,25 @@ export function muText(sb: Sandbox, call: MuCall): string {
   return decoded.length === 0 ? raw : `${raw}\n${decoded.join("\n")}`;
 }
 
+/** Trimmed lines of `s`. */
+const linesOf = (s: string): string[] => s.split("\n").map((l) => l.trim());
+
 /**
- * §1.3 "printed": one answer command `i` holds a mu call whose own output has `marker`, and a line
- * of command `i`'s own output that holds the marker also occurs in that same call's output (so a
- * `sed` rewrite of another call's line does not count); and the marker is typed in no answer command.
+ * §1.3 "printed": one answer command `i` holds a mu call, and a whole line of command `i`'s own
+ * output that holds `marker` is verbatim a whole line of that same call's output (`muText`: its
+ * stdout lines and the lines of its decoded JSON strings, trimmed). A `grep -o | sed` rewrite of
+ * another call's line is not a line of the call it names, so it does not count. The marker is typed
+ * in no answer command.
  */
 export function shown(ctx: NextCtx, marker: string): boolean {
   if (marker === "" || typedIn(ctx, marker)) return false;
   const m = answerMetrics(ctx);
   return ctx.runs.some((r, i) => {
-    const lines = ownOutput(r)
-      .split("\n")
-      .map((l) => l.trim())
-      .filter((l) => l.includes(marker));
+    const lines = linesOf(ownOutput(r)).filter((l) => l.includes(marker));
     if (lines.length === 0) return false;
     return callsIn(ctx, i, m).some((c) => {
-      const t = muText(ctx.sb, c);
-      return t.includes(marker) && lines.some((l) => t.includes(l));
+      const t = new Set(linesOf(muText(ctx.sb, c)));
+      return lines.some((l) => t.has(l));
     });
   });
 }
@@ -272,18 +279,41 @@ export function unionMs(iv: [number, number][], lo: number, hi: number): number 
 }
 
 /**
+ * The shim's own span of each AUT call (<workers>/mu-shim.log: "<pid> <start-ms> <end-ms>"), its
+ * table dumps before and after mu included. Those are the rig's work, not the answer's: on a loaded
+ * host they cost seconds per call, so the timed rule counts them as time in mu.
+ */
+export function shimSpans(sb: Sandbox): Map<string, [number, number]> {
+  const f = join(sb.workerDir, "mu-shim.log");
+  const out = new Map<string, [number, number]>();
+  if (!existsSync(f)) return out;
+  for (const l of readFileSync(f, "utf8").split("\n")) {
+    const m = /^(\d+) (\d+) (\d+)$/.exec(l);
+    if (m?.[1] && m[2] && m[3]) out.set(m[1], [+m[2], +m[3]]);
+  }
+  return out;
+}
+
+/** A call's interval for the timed rule: its shim span when that holds the call, else mu's own. */
+export function blockedSpan(c: MuCall, spans: Map<string, [number, number]>): [number, number] {
+  const s = spans.get(c.pid);
+  return s && s[0] <= c.start && s[1] >= c.end ? s : [c.start, c.end];
+}
+
+/**
  * Answer commands that idled: at least IDLE_MIN_MS long, and blocked in mu (the union of their mu
- * calls' intervals, so two overlapping background waits count once) for less than half of it, or
+ * calls' shim spans, so two overlapping background waits count once) for less than half of it, or
  * outside mu for IDLE_GAP_MS or more. A superset of observe.ts `idleCalls`, which sums overlapping
  * calls: `mu wait --timeout 40 & mu wait --timeout 40 & sleep 78` passes that and is caught here.
  */
 export function idleAnswers(ctx: NextCtx): number[] {
   const m = answerMetrics(ctx);
+  const spans = shimSpans(ctx.sb);
   return ctx.runs.flatMap((r, i) => {
     const dur = r.end - r.start;
     if (dur < IDLE_MIN_MS) return [];
     const blocked = unionMs(
-      callsIn(ctx, i, m).map((c): [number, number] => [c.start, c.end]),
+      callsIn(ctx, i, m).map((c) => blockedSpan(c, spans)),
       r.start,
       r.end,
     );

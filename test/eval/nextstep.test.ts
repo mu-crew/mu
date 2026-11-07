@@ -2,7 +2,15 @@
 // transcript, "printed" (shown / shownLine), the answer-window adapter and the timed rule, the go
 // gate and the orchestrator env, the lint, execGuess's shell, the evalfaux short-circuit and the
 // report. A fake sandbox: a temp dir with the real mu shim in front of a stub CLI, no tmux, no git.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -27,7 +35,7 @@ import {
   unionMs,
 } from "../../tools/eval/nextstep-exec.ts";
 import { nextReport } from "../../tools/eval/nextstep-report.ts";
-import { idleCalls, muIn, pollingCalls } from "../../tools/eval/observe.ts";
+import { idleCalls, muCalls, muIn, pollingCalls } from "../../tools/eval/observe.ts";
 import { muShim } from "../../tools/eval/sandbox.ts";
 import type { Sandbox } from "../../tools/eval/types.ts";
 
@@ -232,6 +240,27 @@ describe("shown", () => {
       ],
     );
     expect(shown(jq, M)).toBe(true);
+    // a sed that turns mu's literal \n escapes into newlines: each piece is a line of mu's text
+    const sed = synth(
+      [
+        {
+          cmd: "mu task notes d | sed 's/\\\\n/\\n/g'",
+          start: 1000,
+          end: 2000,
+          stdout: `note 1 RL-1 a b\n${M} said ok\n`,
+        },
+      ],
+      [
+        {
+          start: 1100,
+          end: 1900,
+          pid: "11",
+          argv: "task notes d",
+          out: `note 1 RL-1 a b\\n${M} said ok\n`,
+        },
+      ],
+    );
+    expect(shown(sed, M)).toBe(true);
   });
   it("a line rewritten from another call's output does not count, though that call printed the marker", () => {
     // mu task notes t2 >/dev/null; mu task notes t1 | sed s/N1-/N2-/
@@ -262,6 +291,57 @@ describe("shown", () => {
       ],
     );
     expect(shown(ctx, "N2-ff00")).toBe(false);
+  });
+  it("a grep -o cut of another call's marker, renamed, does not count: only whole lines compare", () => {
+    // mu task notes t2 >/dev/null; mu task notes t1 | grep -o 'N1-[0-9a-f]*' | sed s/N1/N2/
+    const ctx = synth(
+      [
+        {
+          cmd: "mu task notes t2 >/dev/null; mu task notes t1 | grep -o 'N1-[0-9a-f]*' | sed s/N1/N2/",
+          start: 1000,
+          end: 3000,
+          stdout: "N2-ff00\n",
+        },
+      ],
+      [
+        {
+          start: 1100,
+          end: 1900,
+          pid: "21",
+          argv: "task notes t2",
+          out: "note 1 at=10:01 N2-ff00 token cache\n",
+        },
+        {
+          start: 2000,
+          end: 2900,
+          pid: "22",
+          argv: "task notes t1",
+          out: "note 1 at=10:00 N1-ff00 login form\n",
+        },
+      ],
+    );
+    expect(shown(ctx, "N2-ff00")).toBe(false);
+    // the same cut of a JSON string's own line is not a whole line either
+    const json = synth(
+      [
+        {
+          cmd: "mu task notes t2 --json | grep -o 'N2-[0-9a-f]*'",
+          start: 1000,
+          end: 2000,
+          stdout: "N2-ff00\n",
+        },
+      ],
+      [
+        {
+          start: 1100,
+          end: 1900,
+          pid: "21",
+          argv: "task notes t2 --json",
+          out: `${JSON.stringify({ data: [{ content: "x\nN2-ff00 token cache" }] })}\n`,
+        },
+      ],
+    );
+    expect(shown(json, "N2-ff00")).toBe(false);
   });
 });
 
@@ -424,6 +504,52 @@ describe("answerMetrics and the timed rule", () => {
       ],
     );
     expect(timedViolations(waited)).toEqual([]);
+  });
+
+  it("the shim's own span (its dumps on a loaded host) counts as time in mu, a sleep beside it does not", () => {
+    // one `mu wait … --json 2>/dev/null | jq` of 75 s: mu's own call 71 s, the shim's dumps 3.4 s more
+    const cmds = [
+      {
+        cmd: "mu wait task:auth/t1 --json 2>/dev/null | jq -r .",
+        start: 1000,
+        end: 76_000,
+        stdout: "x\n",
+      },
+    ];
+    const calls = [
+      { start: 2800, end: 74_000, pid: "7", argv: "wait task:auth/t1 --json", out: "x\n" },
+    ];
+    const bare = synth(cmds, calls);
+    expect(idleAnswers(bare)).toEqual([0]);
+    const spanned = synth(cmds, calls);
+    writeFileSync(join(spanned.sb.workerDir, "mu-shim.log"), "7 1100 75900\n");
+    expect(idleAnswers(spanned)).toEqual([]);
+    // a span that does not hold its call (a reused pid) is ignored
+    const stale = synth(cmds, calls);
+    writeFileSync(join(stale.sb.workerDir, "mu-shim.log"), "7 100 900\n");
+    expect(idleAnswers(stale)).toEqual([0]);
+    // the shim's span never covers a sleep outside the call
+    const sleepy = synth(
+      [{ cmd: "sleep 80; mu task show t1", start: 1000, end: 82_000, stdout: "t1 CLOSED\n" }],
+      [{ start: 81_200, end: 81_600, pid: "8", argv: "task show t1", out: "t1 CLOSED\n" }],
+    );
+    writeFileSync(join(sleepy.sb.workerDir, "mu-shim.log"), "8 81050 81900\n");
+    expect(idleAnswers(sleepy)).toEqual([0]);
+  });
+
+  it("the real shim writes its span around mu's own interval", async () => {
+    const sb = fakeSandbox();
+    await runAnswer(sb, ["mu task list"], { shell: "bash", go: async () => {} });
+    const [call] = muCalls(sb);
+    const span = readFileSync(join(sb.workerDir, "mu-shim.log"), "utf8")
+      .trim()
+      .split(" ")
+      .map(Number);
+    expect(call).toBeDefined();
+    expect(String(span[0])).not.toBe("");
+    expect(span[1] ?? Infinity).toBeLessThanOrEqual(call?.start ?? 0);
+    expect(span[2] ?? 0).toBeGreaterThanOrEqual(call?.end ?? Infinity);
+    expect(String(span[0])).toBe(call?.pid);
   });
 
   it("two overlapping background waits count once: `mu wait --timeout 40 & mu wait --timeout 40 & sleep 78` is idle", () => {
