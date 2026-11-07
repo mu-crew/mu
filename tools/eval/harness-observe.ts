@@ -100,7 +100,7 @@ export function observerRecord(
 }
 
 export function parseHookLog(text: string): HookRec[] {
-  return text.split("\n").flatMap((l) => {
+  const recs = text.split("\n").flatMap((l) => {
     if (l.trim() === "") return [];
     try {
       const r = JSON.parse(l) as HookRec;
@@ -109,6 +109,13 @@ export function parseHookLog(text: string): HookRec[] {
       return [];
     }
   });
+  // cursor-agent also runs the hooks in claude's settings, with its own payload and session (live,
+  // E1 under Muse: a cursor-agent worker's sessionStart and prompt came twice, once as claude). In a
+  // session another harness reported, the claude records are that echo.
+  const other = new Set(
+    recs.filter((r) => r.session !== null && r.harness !== "claude").map((r) => r.session),
+  );
+  return recs.filter((r) => r.harness !== "claude" || r.session === null || !other.has(r.session));
 }
 
 /** Every observed hook event of the run, in time order. */
