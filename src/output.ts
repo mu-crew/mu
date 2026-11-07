@@ -13,20 +13,23 @@ import picocolors from "picocolors";
  *
  * picocolors ships an `isColorSupported` flag, but it bakes its env
  * inspection (NO_COLOR / FORCE_COLOR / isTTY) ONCE at module-load
- * time. That makes the function untestable without dynamic re-imports
- * — and worse, it loses colors whenever stdout is a pipe, most
- * painfully under `watch --color mu state` and `tmux display-popup -E
- * 'mu state' | cat`, where the surrounding pane is a real terminal but
- * our own stdout is a pipe.
+ * time, which makes the function untestable without dynamic re-imports.
  *
- * We therefore re-implement the decision from scratch at call time,
+ * A pipe gets no colour, even inside tmux: an agent reading a result
+ * through a pipe wants plain text. `watch --color` and `tmux
+ * display-popup ... | cat` set `MU_FORCE_COLOR=1` instead. (67014c7a
+ * forced colour whenever `$TMUX` was set, for `watch --color mu hud`;
+ * `mu hud` is gone, the ink dashboard decides its own colour, and a
+ * third of agent results carried ANSI.)
+ *
+ * mu re-implements the decision at call time,
  * reading every signal directly from `process.env` / `process.stdout`
  * so tests can flip env vars and observe the result without the
  * vi.resetModules + vi.doMock dance.
  *
  * Order of precedence (first match wins):
  *   - `NO_COLOR` set (cross-tool opt-out, https://no-color.org/) →
- *     OFF, even when TMUX/MU_FORCE_COLOR/FORCE_COLOR are set. We
+ *     OFF, even when MU_FORCE_COLOR/FORCE_COLOR are set. We
  *     treat any defined value (including "") as set, matching the
  *     no-color.org convention and picocolors' own behavior.
  *   - `MU_FORCE_COLOR` truthy → ON (mu-specific override). Values
@@ -34,14 +37,9 @@ import picocolors from "picocolors";
  *     FORCE_COLOR convention.
  *   - `FORCE_COLOR` truthy → ON (the standard env var picocolors /
  *     chalk consult). Values "", "0", and "false" opt out.
- *   - `TMUX` set → ON (the load-bearing fix for `watch` inside tmux:
- *     the surrounding pane is a real terminal even though our stdout
- *     is a pipe).
  *   - Fall back to the standard TTY heuristic: stdout is a TTY AND
  *     TERM !== "dumb". This mirrors what picocolors itself does in
  *     `isColorSupported` for the happy-path case.
- *
- * See task hud_colors_stripped_under_watch_and for the original repro.
  */
 function envForceTrue(key: string): boolean {
   const v = process.env[key];
@@ -54,7 +52,6 @@ export function colorEnabled(): boolean {
   if (process.env.NO_COLOR !== undefined) return false;
   if (envForceTrue("MU_FORCE_COLOR")) return true;
   if (envForceTrue("FORCE_COLOR")) return true;
-  if (process.env.TMUX !== undefined) return true;
   return Boolean(process.stdout.isTTY) && process.env.TERM !== "dumb";
 }
 

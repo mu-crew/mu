@@ -8,6 +8,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **A pipe gets no colour, inside tmux too.** mu forced ANSI colour
+  whenever `$TMUX` was set (67014c7a, for `watch --color mu hud`), so a
+  third of agent results read through a pipe carried escape codes and
+  agents stripped them with `sed`. Colour now needs stdout to be a TTY;
+  `NO_COLOR`, `MU_FORCE_COLOR` and `FORCE_COLOR` keep their meaning.
+  `mu hud` is gone and the dashboard decides its own colour; for
+  `watch --color` or a popup piped to a pager, set `MU_FORCE_COLOR=1`
+  (docs/reference/env.md).
+
 ## [4.5.0] — 2026-11-07
 
 Every agent CLI is first-class: claude, codex, cursor-agent and Muse Code

@@ -116,6 +116,8 @@ local pane gets none of the vars above.
 | `NO_COLOR` | Any value turns colour off; wins over everything. | unset |
 | `MU_FORCE_COLOR` | Truthy forces colour on. `""`, `0`, and `false` opt out. Checked before `FORCE_COLOR`. | unset |
 
+Colour is on only when stdout is a TTY (and `TERM` is not `dumb`); a pipe gets plain text, inside tmux too. To keep colour through a pipe, force it: `MU_FORCE_COLOR=1 watch --color mu task list -w X`, or `tmux display-popup -E 'MU_FORCE_COLOR=1 mu task list -w X | less -R'`.
+
 ## Tests
 
 `VITEST` or `NODE_ENV=test` makes `openDb()` refuse the real default DB. The dashboard sets `NODE_ENV=production` for itself when it is unset, to get React's production build.

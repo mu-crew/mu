@@ -62,8 +62,22 @@ describe("colorEnabled (env-var matrix + isTTY fallback)", () => {
     withEnv({}, false, () => expect(colorEnabled()).toBe(false));
   });
 
-  it("returns true when TMUX is set (the load-bearing fix for `watch` inside tmux)", () => {
+  it("returns false when TMUX is set and stdout is a pipe (an agent reads plain text)", () => {
+    // 67014c7a forced colour under $TMUX for `watch --color mu hud`; a
+    // third of agent results then carried ANSI. A pipe is plain now.
     withEnv({ TMUX: "/tmp/tmux-1000/default,12345,0" }, false, () =>
+      expect(colorEnabled()).toBe(false),
+    );
+  });
+
+  it("returns true when TMUX is set and stdout is a TTY", () => {
+    withEnv({ TMUX: "/tmp/tmux-1000/default,12345,0" }, true, () =>
+      expect(colorEnabled()).toBe(true),
+    );
+  });
+
+  it("returns true under TMUX on a pipe with MU_FORCE_COLOR=1 (the `watch --color` spelling)", () => {
+    withEnv({ TMUX: "/tmp/tmux-1000/default,12345,0", MU_FORCE_COLOR: "1" }, false, () =>
       expect(colorEnabled()).toBe(true),
     );
   });
