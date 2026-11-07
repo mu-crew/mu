@@ -15,6 +15,7 @@ import {
   reportCommand,
   resolveSurface,
   runCheck,
+  runLabel,
   runMatrix,
   runOne,
   scenarioIds,
@@ -23,6 +24,7 @@ import {
 } from "./commands.ts";
 import type { FauxStep } from "./faux.ts";
 import { parseAutHarness } from "./harness.ts";
+import { parseWorkers } from "./mix.ts";
 import { runAut } from "./runner.ts";
 import { createSandbox, FAUX_EXT, mu, sh, tmuxSocketPath } from "./sandbox.ts";
 import { parseFamily, prepareSurface, surfaceFromDir, surfaceId } from "./surface.ts";
@@ -32,19 +34,21 @@ const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const USAGE = `usage: node tools/eval/main.ts <command>
   prepare <name> <ref>
   selftest [--surface <dir>]
-  run <scenario> --surface <spec> --model <m> [--harness pi|claude|codex] [--fake-workers] [--family 3x|next] [--scenario-root <dir>] [--provider-ext p] [--keep] [--out f]
-  matrix --surface <spec>... --model <m>... [--harness h]... [--fake-workers] [--family 3x|next] [--scenario-root <dir>] [--scenarios a,b] [--reps 1] [--concurrency 4] [--budget-tokens N] --out <results.jsonl>
+  run <scenario> --surface <spec> --model <m> [--harness pi|claude|codex|cursor-agent|muse] [--workers h1,h2] [--fake-workers] [--family 3x|next] [--scenario-root <dir>] [--provider-ext p] [--keep] [--out f]
+  matrix --surface <spec>... --model <m>... [--harness h]... [--workers h1,h2] [--fake-workers] [--family 3x|next] [--scenario-root <dir>] [--scenarios a,b] [--reps 1] [--concurrency 4] [--budget-tokens N] --out <results.jsonl>
   report <results.jsonl> [--out file.md]
-  check [--surface <spec>] [--scenarios a,b] [--harness h]... [--family 3x|next] [--scenario-root <dir>] [--include-underscore] [--no-preflight] [--verbose]
+  check [--surface <spec>] [--scenarios a,b | --plan] [--harness h]... [--workers h1,h2] [--family 3x|next] [--scenario-root <dir>] [--include-underscore] [--no-preflight] [--verbose]
   cold-guess run --surface [label=]<spec>... --model <m>... [--reps 3] [--intents a,b] [--concurrency 4] [--provider-ext p] --out <cold-guess.jsonl>
   cold-guess check [--surface <spec>] [--intents a,b] [--concurrency 4]
   cold-guess report <cold-guess.jsonl> [--out file.md]
 <spec> = <dir|name>[:<3x|next>[:<scenario-root>]]. A name is a surface under ~/.cache/mu/eval/surfaces. Family and scenario root are per
 surface; --family/--scenario-root only fill specs that leave them out (defaults: 3x, tools/eval/scenarios). A scenario root holds
 <id>.<golden|bad|bad-x>.<family>.json and optional <id>.ts overrides, and must be outside ~/.cache/mu/eval/surfaces.
---harness: the AUT's agent CLI (default pi, over rpc; claude and codex run in a pane). A hook-harness scenario (e1_* .. e7_*) needs
-EVAL_MURMUR=<murmur checkout> (EVAL_MUZZLE=<muzzle checkout> adds muzzle's hooks); its run is live: the user's HOME, auth and harness
-binaries (see docs/eval/every-harness.md). --fake-workers keeps fake worker binaries in a live run.`;
+--harness: the AUT's agent CLI (default pi, over rpc; claude, codex, cursor-agent and muse run in a pane). A hook-harness scenario
+(e1_* .. e7_*) needs EVAL_MURMUR=<murmur checkout> (EVAL_MUZZLE=<muzzle checkout> adds muzzle's hooks); its run is live: the user's HOME,
+auth and harness binaries (see docs/eval/every-harness.md). --fake-workers keeps fake worker binaries in a live run. --workers picks the
+worker harnesses of e1, e3 (implementer,reviewer), e4 and e6 (claude, codex, cursor-agent, muse). check --plan proves the sampled live
+plan's rows (tools/eval/mix.ts; --harness narrows it to those AUTs).`;
 
 /** The --family / --scenario-root flags: defaults for every --surface spec that leaves them out. */
 function surfaceDefaults(args: string[]): { family?: Family; scenarioRoot?: string } {
@@ -248,6 +252,8 @@ async function main(argv: string[]): Promise<number> {
       const harness = parseAutHarness(flag(rest, "--harness") ?? "pi");
       if (!checkHarnesses(scenario).includes(harness))
         throw new Error(`${id} does not run under --harness ${harness}`);
+      const w = flag(rest, "--workers");
+      const workers = w === undefined ? undefined : parseWorkers(w);
       const r = await runOne({
         surface,
         scenario,
@@ -256,12 +262,13 @@ async function main(argv: string[]): Promise<number> {
         rep: 1,
         keep: rest.includes("--keep"),
         harness,
+        ...(workers !== undefined ? { workers } : {}),
         live: isLiveRun(scenario, harness),
         fakeWorkers: rest.includes("--fake-workers"),
         log: logPath(REPO_ROOT, timestamp(), {
           scenario: id,
           surface: surfaceId(surface),
-          model: harness === "pi" ? model : `${model}@${harness}`,
+          model: runLabel(model, harness, workers),
           rep: 1,
         }),
       });
@@ -281,10 +288,12 @@ async function main(argv: string[]): Promise<number> {
       if (surfaces.length === 0 || models.length === 0 || !out) throw new Error(USAGE);
       const only = flag(rest, "--scenarios");
       const harnesses = flagAll(rest, "--harness").map(parseAutHarness);
+      const w = flag(rest, "--workers");
       await runMatrix({
         surfaces,
         models,
         ...(harnesses.length > 0 ? { harnesses } : {}),
+        ...(w !== undefined ? { workers: parseWorkers(w) } : {}),
         fakeWorkers: rest.includes("--fake-workers"),
         scenarios: only
           ? only.split(",")
@@ -308,10 +317,18 @@ async function main(argv: string[]): Promise<number> {
       const only = flag(rest, "--scenarios");
       const surface = resolveSurface(flag(rest, "--surface") ?? REPO_ROOT, surfaceDefaults(rest));
       const harnesses = flagAll(rest, "--harness").map(parseAutHarness);
+      const w = flag(rest, "--workers");
+      const plan = rest.includes("--plan");
+      if (plan && (only !== undefined || w !== undefined))
+        throw new Error(
+          "check --plan names its own scenarios and mixes; drop --scenarios and --workers",
+        );
       return runCheck({
         surface,
         scenarios: only ? only.split(",") : null,
         ...(harnesses.length > 0 ? { harnesses } : {}),
+        ...(w !== undefined ? { workers: parseWorkers(w) } : {}),
+        ...(plan ? { plan } : {}),
         includeUnderscore: rest.includes("--include-underscore"),
         family: surface.family ?? "3x",
         preflight: !rest.includes("--no-preflight"),

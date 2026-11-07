@@ -37,9 +37,12 @@ function row(label: string, surface: string, model: string, rs: RunResult[]): st
   ];
 }
 
-/** The model column: `<model>@<harness>` for a claude or codex AUT, so their rows never merge. */
+/**
+ * The model column: `<model>@<harness>` for a pane AUT, plus ` [<w1>,<w2>]` for a case run with a
+ * worker mix, so rows of different AUTs or mixes never merge.
+ */
 export const modelLabel = (r: RunResult): string =>
-  r.harness ? `${r.model}@${r.harness}` : r.model;
+  `${r.harness ? `${r.model}@${r.harness}` : r.model}${r.workers ? ` [${r.workers.join(",")}]` : ""}`;
 
 function groupBy(rs: RunResult[], key: (r: RunResult) => string): Map<string, RunResult[]> {
   const m = new Map<string, RunResult[]>();

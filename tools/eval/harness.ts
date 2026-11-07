@@ -37,9 +37,30 @@ import { FAKE_HARNESSES, type FakeHarness } from "./fake-payloads.ts";
 import { pinScript } from "./isolation.ts";
 import type { Sandbox, Surface } from "./types.ts";
 
-/** The orchestrator harnesses a case runs under. pi over rpc (runner.ts); claude and codex in a pane (runner-pane.ts). */
-export const AUT_HARNESSES = ["pi", "claude", "codex"] as const;
+/** The orchestrator harnesses a case runs under. pi over rpc (runner.ts); the four hook harnesses in a pane (runner-pane.ts). */
+export const AUT_HARNESSES = ["pi", "claude", "codex", "cursor-agent", "muse"] as const;
 export type AutHarness = (typeof AUT_HARNESSES)[number];
+/** An AUT that runs in a pane: every one but pi. */
+export type PaneHarness = Exclude<AutHarness, "pi">;
+
+/**
+ * What a pane AUT's command adds to the harness, because `mu orchestrate` adds none: mu's spawn
+ * presets (the row's trust and auto-approve flags, src/harnesses.ts, spec D6) are a worker's, and
+ * an unattended orchestrator in a fresh sandbox repo needs both. claude and codex need nothing:
+ * the repo's `.claude/settings.json` allows the commands a claude AUT runs, the pre-trust
+ * (pretrust.ts) answers their trust dialogs, and codex's hook trust is answered in the pane. The
+ * values mirror the harness table (the rig imports nothing from src/):
+ *
+ * - cursor-agent: `--trust` (workspace trust; it never saves it) and `--sandbox enabled`, mu's
+ *   auto-approve preset (commands run in its sandbox without asking; `--force` stays opt-in).
+ * - muse: `--trust-workspace` (not saved) and `--approval-mode never`.
+ */
+export const AUT_FLAGS: Record<PaneHarness, readonly string[]> = {
+  claude: [],
+  codex: [],
+  "cursor-agent": ["--trust", "--sandbox", "enabled"],
+  muse: ["--trust-workspace", "--approval-mode", "never"],
+};
 
 export function parseAutHarness(v: string): AutHarness {
   if ((AUT_HARNESSES as readonly string[]).includes(v)) return v as AutHarness;
@@ -446,6 +467,23 @@ export function makeCodexHome(
 /** Where the surface's skill goes in the sandbox repo: claude's project skills. */
 export const PROJECT_SKILL = ".claude/skills/mu";
 
+/**
+ * Where an AUT that reads no claude project skill finds the surface's copy, committed beside
+ * `PROJECT_SKILL` only when it is the AUT (so a claude or codex run's repo is unchanged):
+ *
+ * - cursor-agent: `.cursor/skills/`, its first-party project skills ("Project Skill" in its own
+ *   UI). Read from cursor-agent 2026.10.22's bundle: it loads `<workspace>/<dir>/skills` for
+ *   `.cursor` and `.agents`, and as third-party dirs `.claude`, `.codex` and `.grok`, so it may
+ *   list the claude copy too (same bytes).
+ * - muse: `.agents/skills/`, Muse Code's project scope (its built-in skill-authoring instructions,
+ *   Muse Code 1.4.15). Never written for another AUT: pi, codex and cursor-agent read that
+ *   directory as well; the sandbox's pi runs with `--no-skills`, so no pi sees it.
+ */
+export const AUT_PROJECT_SKILL: Partial<Record<AutHarness, string>> = {
+  "cursor-agent": ".cursor/skills/mu",
+  muse: ".agents/skills/mu",
+};
+
 const skillText = (dir: string): string | null => {
   try {
     return readFileSync(join(dir, "SKILL.md"), "utf8");
@@ -453,6 +491,9 @@ const skillText = (dir: string): string | null => {
     return null;
   }
 };
+
+/** The HOME dot-dirs whose `skills/` cursor-agent loads as personal skills (its 2026.10.22 bundle). */
+export const CURSOR_PERSONAL_SKILL_DIRS = [".cursor", ".claude", ".codex", ".agents", ".grok"];
 
 /**
  * Which mu skill a live pane AUT reads, when it may not be the surface's; null when it is.
@@ -480,6 +521,20 @@ export function autSkill(
     if (got === want) return null;
     return `codex AUT: EVAL_CODEX_HOOKS=global leaves codex the user's skills, and ${mine} ${got === null ? "does not exist" : "differs from the surface's skill"}; set EVAL_CODEX_HOOKS=codex-home to give it the surface's`;
   }
+  if (h === "cursor-agent") {
+    // its personal skill dirs, all under HOME (its build ignores CLAUDE_CONFIG_DIR and CODEX_HOME;
+    // cursor-agent 2026.10.22 loads <dir>/skills for each of these)
+    const differ = CURSOR_PERSONAL_SKILL_DIRS.map((d) => join(o.home, d, "skills", "mu")).filter(
+      (d) => {
+        const got = skillText(d);
+        return got !== null && got !== want;
+      },
+    );
+    if (differ.length === 0) return null;
+    return `cursor-agent AUT: ${differ.join(", ")} ${differ.length === 1 ? "differs" : "differ"} from the surface's skill, and cursor-agent loads personal skills beside the project copy (${AUT_PROJECT_SKILL["cursor-agent"]}), so the AUT may read that one`;
+  }
+  if (h === "muse")
+    return `muse AUT: the surface's skill is the project skill ${AUT_PROJECT_SKILL.muse}; a mu skill installed through \`muse skills\` or a plugin loads too, and the rig cannot see those`;
   return null;
 }
 
@@ -646,12 +701,17 @@ export async function setupHarnesses(
     mkdirSync(dirname(join(sb.repoDir, rel)), { recursive: true });
     writeFileSync(join(sb.repoDir, rel), body);
   }
-  if (o.skillDir !== undefined && existsSync(o.skillDir))
+  const autSkillDir = AUT_PROJECT_SKILL[(sb.env.EVAL_AUT_HARNESS ?? "pi") as AutHarness];
+  if (o.skillDir !== undefined && existsSync(o.skillDir)) {
     cpSync(o.skillDir, join(sb.repoDir, PROJECT_SKILL), { recursive: true });
+    if (autSkillDir !== undefined)
+      cpSync(o.skillDir, join(sb.repoDir, autSkillDir), { recursive: true });
+  }
   const ignore = join(sb.repoDir, ".gitignore");
   const had = existsSync(ignore) ? readFileSync(ignore, "utf8") : "";
   writeFileSync(ignore, `${had}${PROJECT_IGNORES.join("\n")}\n`);
-  execFileSync("git", ["add", "-A", ".claude", ".cursor", ".muse", ".gitignore"], {
+  const extra = existsSync(join(sb.repoDir, ".agents")) ? [".agents"] : [];
+  execFileSync("git", ["add", "-A", ".claude", ".cursor", ".muse", ...extra, ".gitignore"], {
     cwd: sb.repoDir,
     env: sb.env,
   });

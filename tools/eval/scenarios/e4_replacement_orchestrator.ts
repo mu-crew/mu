@@ -11,6 +11,10 @@
 // were spawned; both workers were closed; nothing destructive. When a task reached main before
 // the crash it is only a note: the crash point is the rig's, not the orchestrator's choice.
 // Fails: a resend to a running worker, the replacement doing a task itself, a task left behind.
+//
+// The run may pick the two harnesses (`--workers c1,c2`, mix.ts); the prompt and judge name them.
+// A Muse AUT's prompts end in mix.ts MUSE_DRIVE, so the crash is the prompt that starts with
+// REPLACEMENT.
 import {
   caseVerdict,
   mainCommitMs,
@@ -27,7 +31,7 @@ import { opsAfter } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import type { Sandbox, Scenario } from "../types.ts";
 
-const WANT = { c1: "claude", c2: "codex" } as const;
+const DEFAULT = ["claude", "codex"] as const;
 const AUTS = new Set(["aut", "aut-2"]);
 
 const REPLACEMENT =
@@ -48,52 +52,57 @@ async function dispatched(sb: Sandbox): Promise<boolean> {
   return owned.has(`${WS}/c1`) && owned.has(`${WS}/c2`) && prompted.size >= 2;
 }
 
-const scenario: Scenario = {
-  id: "e4_replacement_orchestrator",
-  title: "the orchestrator crashes after dispatch; a replacement finishes without redoing work",
-  families: ["next"],
-  hookHarnesses: { workers: ["claude", "codex"] },
-  tokenCap: 800_000,
-  check: { quietMs: 3000 },
-  prompt:
-    "In workstream eval, run c1 with a claude worker and c2 with a codex worker (mu agent spawn --cli), each in its own worktree, and merge each commit into main in the repo you are in when its worker reports. Make sure c1 and c2 are closed and close both workers. Work until it is done; do not ask me questions.",
-  replacement: { prompt: REPLACEMENT, crashWhen: dispatched },
-  async setup(sb) {
-    await seedCase(sb, [{ id: "c1" }, { id: "c2" }]);
-  },
-  async judge(sb, run) {
-    const probe = openProbe(sb);
-    const runs = await runsLog(sb);
-    const recs = hookRecords(sb);
-    const wrong: string[] = [];
-    const notes: string[] = [];
-    const crashAt =
-      run.events.find((e) => e.kind === "prompt" && e.text === REPLACEMENT)?.t ?? null;
-    if (crashAt === null) notes.push("no replacement prompt was delivered (no crash yet)");
-    const agents: (string | null)[] = [];
-    let ok = crashAt !== null;
-    for (const [task, harness] of Object.entries(WANT)) {
-      const closed = probe.task(WS, task)?.status === "CLOSED";
-      const p = await taskProof(sb, task, { harness }, runs, recs);
-      wrong.push(...p.wrong);
-      agents.push(p.agent);
-      const claims = claimCount(sb, WS, task);
-      if (claims > 1) wrong.push(`${task} was claimed ${claims} times (re-dispatched)`);
-      if (p.agent !== null) {
-        const n = promptsTo(recs, p.agent).length;
-        if (n > 1) wrong.push(`worker ${p.agent} received ${n} prompts (work resent)`);
+function e4(workers: readonly string[]): Scenario {
+  const [w1 = DEFAULT[0], w2 = DEFAULT[1]] = workers;
+  const WANT: Record<string, string> = { c1: w1, c2: w2 };
+  return {
+    id: "e4_replacement_orchestrator",
+    title: "the orchestrator crashes after dispatch; a replacement finishes without redoing work",
+    families: ["next"],
+    hookHarnesses: { workers: [w1, w2], mix: { roles: ["c1", "c2"], harnesses: [w1, w2] } },
+    bind: (o) => e4(o.workers ?? DEFAULT),
+    tokenCap: 800_000,
+    check: { quietMs: 3000 },
+    prompt: `In workstream eval, run c1 with a ${w1} worker and c2 with a ${w2} worker (mu agent spawn --cli), each in its own worktree, and merge each commit into main in the repo you are in when its worker reports. Make sure c1 and c2 are closed and close both workers. Work until it is done; do not ask me questions.`,
+    replacement: { prompt: REPLACEMENT, crashWhen: dispatched },
+    async setup(sb) {
+      await seedCase(sb, [{ id: "c1" }, { id: "c2" }]);
+    },
+    async judge(sb, run) {
+      const probe = openProbe(sb);
+      const runs = await runsLog(sb);
+      const recs = hookRecords(sb);
+      const wrong: string[] = [];
+      const notes: string[] = [];
+      const crashAt =
+        run.events.find((e) => e.kind === "prompt" && e.text?.startsWith(REPLACEMENT) === true)
+          ?.t ?? null;
+      if (crashAt === null) notes.push("no replacement prompt was delivered (no crash yet)");
+      const agents: (string | null)[] = [];
+      let ok = crashAt !== null;
+      for (const [task, harness] of Object.entries(WANT)) {
+        const closed = probe.task(WS, task)?.status === "CLOSED";
+        const p = await taskProof(sb, task, { harness }, runs, recs);
+        wrong.push(...p.wrong);
+        agents.push(p.agent);
+        const claims = claimCount(sb, WS, task);
+        if (claims > 1) wrong.push(`${task} was claimed ${claims} times (re-dispatched)`);
+        if (p.agent !== null) {
+          const n = promptsTo(recs, p.agent).length;
+          if (n > 1) wrong.push(`worker ${p.agent} received ${n} prompts (work resent)`);
+        }
+        const merged = mainCommitMs(sb, task);
+        if (crashAt !== null && merged !== null && merged < crashAt)
+          notes.push(`${task} reached main before the crash`);
+        notes.push(`${p.note} closed=${closed} claims=${claims}`);
+        ok = ok && closed && p.ok;
       }
-      const merged = mainCommitMs(sb, task);
-      if (crashAt !== null && merged !== null && merged < crashAt)
-        notes.push(`${task} reached main before the crash`);
-      notes.push(`${p.note} closed=${closed} claims=${claims}`);
-      ok = ok && closed && p.ok;
-    }
-    const workers = spawns(sb).filter((s) => !AUTS.has(s.name));
-    if (workers.length > 2) wrong.push(`${workers.length} workers were spawned for two tasks`);
-    wrong.push(...workersClosedWrong(sb, agents));
-    return await caseVerdict(sb, run, ok && wrong.length === 0, { wrong, notes });
-  },
-};
+      const workers = spawns(sb).filter((s) => !AUTS.has(s.name));
+      if (workers.length > 2) wrong.push(`${workers.length} workers were spawned for two tasks`);
+      wrong.push(...workersClosedWrong(sb, agents));
+      return await caseVerdict(sb, run, ok && wrong.length === 0, { wrong, notes });
+    },
+  };
+}
 
-export default scenario;
+export default e4(DEFAULT);
