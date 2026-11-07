@@ -52,7 +52,7 @@ export interface HarnessEvents {
 export interface ReadyMarks {
   /** Any one of these, on the visible screen. */
   screen: readonly string[];
-  /** The input line's leading mark (`›`, not a shell prompt's `❯`). */
+  /** The input line's leading mark (codex `›`, Muse `❯`: a last line ending in `❯` is a shell prompt). */
   input: string;
 }
 
@@ -336,9 +336,9 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     freshCommand: "/new",
     freshSessionStart: "first-prompt",
     startupSessionStart: "first-prompt",
-    // Unverified: no capture of Muse Code's ready screen yet, so its first paste goes
-    // without the wait and a late ack gets no submit retry.
-    readyMarks: null,
+    // Muse Code 1.4.15's own header and voice bar; the launcher's banner reads "Muse Code at
+    // ...", unindented. Its input line, and a submitted prompt above it, start with ❯.
+    readyMarks: { screen: ["  Muse Code 1.", "── Voice input"], input: "❯" },
     interruptKey: "Escape",
     clearInputKey: "C-u",
     canBlockOnStop: false,
