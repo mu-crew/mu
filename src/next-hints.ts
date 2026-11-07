@@ -62,7 +62,9 @@ export type NextOutcome =
   /** A destructive preview: `apply` is the verb's argv (from `mu`), `revision` its fence. */
   | { kind: "preview"; apply: readonly string[]; revision: number }
   /** A wait ended with something still owed: its stored handle. */
-  | { kind: "waited"; resumeId: string | null; scope?: string };
+  | { kind: "waited"; resumeId: string | null; scope?: string }
+  /** A wait left `count` ready events unconsumed: the ready batch returns them. */
+  | { kind: "owed"; count: number; scope?: string };
 
 export interface NextContext {
   /** `currentCallers()`: the managed `<ws>/<agent>` and `pi:<session>`. Empty = no owned work. */
@@ -200,6 +202,8 @@ function outcomeMove(db: Db, o: NextOutcome): HintMove | undefined {
     case "waited":
       if (o.resumeId === null) return undefined;
       return { argv: resumeArgv(o.resumeId, o.scope) };
+    case "owed":
+      return { argv: ["mu", "wait", "--ready", ...(o.scope === undefined ? [] : ["-w", o.scope])] };
   }
 }
 

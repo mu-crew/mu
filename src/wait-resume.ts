@@ -21,7 +21,7 @@ import { type WaitRef, WaitRefError } from "./wait-types.js";
 /** What a wait asked for, whatever spelling it came in; a resume replays exactly this. */
 export interface ResumeSpec {
   refs: WaitRef[];
-  mode: "first" | "all";
+  mode: "first" | "all" | "ready";
   scope?: string;
   status?: string;
   untilText?: string;

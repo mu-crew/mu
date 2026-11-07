@@ -3,9 +3,10 @@
 // command, and the wait-specific bound.
 //
 // Pure: no DB, no I/O. cmdWait (src/cli/wait.ts) builds a WaitResult and hands
-// it here. The shape (docs/VOCABULARY.md, "wait event"): `firing` (alias `event`), `exit`,
-// `timedOut`, `snapshots`, `cursor`, `resume` (the stored handle, see
-// src/wait-resume.ts; null with `resumeWhy` when nothing is left to wait for).
+// it here. The shape (docs/VOCABULARY.md, "wait event"): `firing` (alias `event`), `events` (a
+// ready batch), `exit`, `timedOut`, `owed`, `snapshots` (marked `delivered`/`owed`), `cursor`,
+// `resume` (the stored handle, see src/wait-resume.ts; null with `resumeWhy` when nothing is
+// left to wait for).
 
 import type { VerdictTally } from "../delegates.js";
 import type { HumanNeeded } from "../human-needed.js";
@@ -79,8 +80,16 @@ export function tallySummary(t: VerdictTally): string {
   return bits.join(", ");
 }
 
-/** A snapshot as one flat record: id and status first, so a reader finds them together. */
-export function snapshotRecord(s: WaitSnapshot, textCap: number): Record<string, unknown> {
+/**
+ * A snapshot as one flat record: id and status first, so a reader finds them together.
+ * `delivered`: this result consumed the ref's completion (`WaitResult.delivered`); `owed`: it is
+ * ready news the next wait returns (`WaitSnapshot.owed`). Terminal alone (`fired`) says neither.
+ */
+export function snapshotRecord(
+  s: WaitSnapshot,
+  textCap: number,
+  delivered = false,
+): Record<string, unknown> {
   // A delegate's ref already is its (global) call id: no second copy of it, no workstream.
   const out: Record<string, unknown> =
     s.ref.kind === "delegate"
@@ -100,6 +109,8 @@ export function snapshotRecord(s: WaitSnapshot, textCap: number): Record<string,
   put("ownerWorkstream", s.ownerWorkstream);
   out.fired = s.fired;
   out.dead = s.dead;
+  if (delivered) out.delivered = true;
+  else if (s.owed === true) out.owed = true;
   if (s.stuck === true) {
     out.stuck = true;
     put("stuckWhy", s.stuckWhy);
@@ -205,11 +216,18 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
     const e = result.event.ref;
     return e !== null && refString(e) === refString(s.ref);
   };
-  // Importance: the firing ref, then what is still open, then the rest.
-  const ordered = [...result.refs].sort(
-    (a, b) =>
-      Number(fired(b)) - Number(fired(a)) || Number(a.fired || a.dead) - Number(b.fired || b.dead),
-  );
+  const deliveredRefs = new Set(result.delivered.map(refString));
+  const isDelivered = (s: WaitSnapshot): boolean => deliveredRefs.has(refString(s.ref));
+  // Importance: the firing ref, what this result consumed, what is still open, what is owed, the
+  // rest. What was consumed is paged last, so a cut never hides a delivery behind owed news.
+  const weight = (s: WaitSnapshot): number =>
+    fired(s) ? 0 : isDelivered(s) ? 1 : !s.fired && !s.dead ? 2 : s.owed === true ? 3 : 4;
+  const ordered = [...result.refs].sort((a, b) => weight(a) - weight(b));
+  // A ready batch's members are never paged: each one is consumed here and printed only here.
+  const keep =
+    result.events === undefined
+      ? 1
+      : Math.max(1, ordered.filter((s) => fired(s) || isDelivered(s)).length);
   const open = result.refs.filter((s) => !s.fired && !s.dead).length;
   const tallyFull =
     result.tally === undefined
@@ -237,6 +255,7 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       );
     return {
       firing: event,
+      ...(result.events !== undefined ? { events: result.events.map(eventRecord) } : {}),
       event,
       exit,
       timedOut: result.timedOut,
@@ -244,7 +263,8 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       ...(input.signal !== undefined ? { signal: input.signal } : {}),
       ...(input.reason !== undefined ? { reason: input.reason } : {}),
       open,
-      snapshots: snaps.map((s) => snapshotRecord(s, shape.text)),
+      ...(result.owed !== undefined ? { owed: result.owed } : {}),
+      snapshots: snaps.map((s) => snapshotRecord(s, shape.text, isDelivered(s))),
       ...(cut > 0
         ? {
             snapshotsCut: cut,
@@ -277,6 +297,7 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       ...(input.resumeWhy !== undefined ? { resumeWhy: input.resumeWhy } : {}),
       ...(result.drained === true ? { drained: true } : {}),
       ...(result.superseded === true ? { superseded: true } : {}),
+      ...(result.eventConsumed !== undefined ? { eventConsumed: result.eventConsumed } : {}),
       ...(result.action !== undefined ? { action: result.action } : {}),
       ...(input.warning !== undefined ? { warning: input.warning } : {}),
       ...(input.notices !== undefined && input.notices.length > 0
@@ -300,13 +321,13 @@ export function waitData(input: WaitDataInput): Record<string, unknown> {
       ordered,
       (p) => Buffer.byteLength(encodeEnvelope(okEnvelope(build(shape, p.shown.length)))),
       RESULT_BYTES,
-      1,
+      keep,
     );
     const d = build(shape, page.shown.length);
     if (fits(d)) return d;
   }
   return build(
     { text: 0, humanNeeds: 1, clipNeeds: true, findings: false },
-    Math.min(1, ordered.length),
+    Math.min(keep, ordered.length),
   );
 }

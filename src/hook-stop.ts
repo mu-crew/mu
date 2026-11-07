@@ -12,10 +12,13 @@
 //   reason, so a muse hook (and any harness that cannot block) always allows.
 // - Orchestrator: a live process already waiting as this caller (a background
 //   `mu wait`) lets the turn end; that wait wakes the agent. Otherwise the hook
-//   runs a consuming `mu wait --first --timeout <T> --as <caller>`, T 10 s below
-//   the hook's own timeout. An event blocks the stop with the wait's result,
-//   which the block hands to the model (consumed: no later wait returns it). A
-//   timeout with work still owed blocks with "run `mu wait` in the background",
+//   runs a consuming `mu wait --ready --timeout <T> --as <caller>`, T 10 s below
+//   the hook's own timeout: every ready event (up to the batch cap) in one block,
+//   one line each, with the wait's result (consumed: no later wait returns them)
+//   and the count still owed. A superseded wait consumed nothing of its own: the
+//   turn ends when the newer wait is live (it delivers them), else the hook waits
+//   once more; a partly consumed one blocks over what it delivered. A
+//   timeout with work still owed blocks with "run `mu wait --ready` in the background",
 //   at most MU_KEEP_DRIVING_MAX times in a row (default 20): the counter lives
 //   in the machine-local `keep_driving` table, per harness session, and a block
 //   that delivers events or a turn the user started resets it. Nothing owed:
@@ -75,6 +78,8 @@ export function stopWaitSeconds(timeoutS: number): number {
 /** What the consuming wait reported. */
 export type StopWaitOutcome =
   | { kind: "events"; data: Record<string, unknown> }
+  /** A newer wait of the caller superseded this one: only what is marked `delivered` was consumed. */
+  | { kind: "superseded"; data: Record<string, unknown> }
   | { kind: "timeout" }
   /** Nothing owed: WaitNothingError, or every watched thing already delivered. */
   | { kind: "nothing" }
@@ -206,6 +211,7 @@ export function parseStopWait(stdout: string): StopWaitOutcome {
   const d = data as Record<string, unknown>;
   if (d.drained === true) return { kind: "nothing" };
   if (d.interrupted === true) return { kind: "failed", detail: "the wait was interrupted" };
+  if (d.superseded === true) return { kind: "superseded", data: d };
   if (d.timedOut === true) return { kind: "timeout" };
   return { kind: "events", data: d };
 }
@@ -214,7 +220,7 @@ export function parseStopWait(stdout: string): StopWaitOutcome {
 export function stopWaitArgs(caller: string, timeoutS: number): string[] {
   return [
     "wait",
-    "--first",
+    "--ready",
     "--on-stall",
     "exit",
     "--json",
@@ -249,6 +255,87 @@ function readSkill(): string | undefined {
 const RULE_FALLBACK =
   "While workers run, keep driving: your turn ends only when everything you own is closed, or only a human can decide.";
 
+type Rec = Record<string, unknown>;
+const recs = (v: unknown): Rec[] =>
+  Array.isArray(v) ? v.filter((x): x is Rec => typeof x === "object" && x !== null) : [];
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
+
+/** `task w/t`, `agent w/a`, `delegate <call id>`: a typed ref (`task:w/t`) in words. */
+const refWords = (ref: string): string => ref.replace(/^(task|agent|delegate):/, "$1 ");
+
+/** One event as a line: what happened to which ref, from its snapshot. */
+function eventLine(e: Rec, snaps: readonly Rec[]): string {
+  const ref = str(e.ref) ?? "";
+  const s = snaps.find((x) => x.ref === ref);
+  const who = refWords(ref);
+  switch (e.kind) {
+    case "closed":
+      return `- ${who} ${str(s?.status) ?? "CLOSED"}`;
+    case "settled":
+      return `- ${who} settled${typeof e.runs === "number" ? ` (run ${e.runs})` : ""}`;
+    case "exited":
+      return `- ${who} exited ${typeof s?.exit === "number" ? s.exit : "?"}`;
+    case "delegate":
+      return `- ${who} ${str(s?.status) ?? "done"}${str(s?.verdict) !== undefined ? ` (${str(s?.verdict)})` : ""}`;
+    default:
+      return `- ${who} ${String(e.kind)}`;
+  }
+}
+
+/** Up to this many owed refs are named on the owed line, then `+N more`. */
+const OWED_NAMED = 5;
+
+/** `2 more ready, not yet delivered: task w/b CLOSED, ... (the next Stop delivers them; ...)`, or undefined. */
+export function owedLine(data: Rec, next: string): string | undefined {
+  const n = typeof data.owed === "number" ? data.owed : 0;
+  if (n <= 0) return undefined;
+  const owed = recs(data.snapshots).filter((s) => s.owed === true);
+  const named = owed
+    .slice(0, OWED_NAMED)
+    .map(
+      (s) =>
+        `${refWords(str(s.ref) ?? "")}${str(s.status) !== undefined ? ` ${str(s.status)}` : ""}`,
+    );
+  const more = n - named.length;
+  const list = [...named, ...(more > 0 ? [`+${more} more`] : [])].join(", ");
+  return `${n} more ready, not yet delivered: ${list} (${next} delivers them; or run mu wait --ready)`;
+}
+
+/**
+ * The events a result consumed: `events` (a ready batch), else `firing`; on a superseded result
+ * only the firing event when `eventConsumed` is not false, and the members marked `delivered`.
+ */
+export function consumedEvents(data: Rec): Rec[] {
+  const firing =
+    typeof data.firing === "object" && data.firing !== null ? (data.firing as Rec) : undefined;
+  const events = (
+    data.events !== undefined ? recs(data.events) : firing !== undefined ? [firing] : []
+  ).filter((e) => typeof e.ref === "string");
+  if (data.superseded !== true) return events;
+  const delivered = new Set(
+    recs(data.snapshots)
+      .filter((s) => s.delivered === true)
+      .map((s) => s.ref),
+  );
+  const kept = events.filter((e) =>
+    e.ref === firing?.ref && e.kind === firing?.kind
+      ? data.eventConsumed !== false
+      : delivered.has(e.ref),
+  );
+  // A member consumed beside an unconsumed firing (`--all`, no `events`): named from its snapshot.
+  const named = new Set(kept.map((e) => e.ref));
+  for (const ref of delivered) {
+    if (typeof ref !== "string" || named.has(ref)) continue;
+    const kind = ref.startsWith("task:")
+      ? "closed"
+      : ref.startsWith("agent:")
+        ? "settled"
+        : "delegate";
+    kept.push({ kind, ref });
+  }
+  return kept;
+}
+
 export function eventsReason(
   rule: string,
   caller: string,
@@ -260,16 +347,23 @@ export function eventsReason(
     needs > 0
       ? "[mu] A human stop is open (mu human-needed): collect and merge what you already started; start nothing new."
       : `[mu] ${rule}`;
+  const events = consumedEvents(data);
+  const snaps = recs(data.snapshots);
+  const owed = owedLine(data, "the next Stop");
+  const one = events.length <= 1;
   return [
     lead,
     "",
-    `Work you own is still running, so mu's Stop hook ran \`mu ${stopWaitArgs(caller, waitS).join(" ")}\` for you. Its result (consumed: no later wait returns this event again):`,
+    `Work you own is still running, so mu's Stop hook ran \`mu ${stopWaitArgs(caller, waitS).join(" ")}\` for you. ${one ? "1 event:" : `${events.length} events:`}`,
+    ...events.map((e) => eventLine(e, snaps)),
+    ...(owed !== undefined ? [owed] : []),
+    `Its result (consumed: no later wait returns ${one ? "this event" : "these events"} again${data.superseded === true ? "; superseded: only what is marked delivered was consumed" : ""}):`,
     JSON.stringify(data),
   ].join("\n");
 }
 
 export function owedReason(n: number, max: number): string {
-  return `[mu] Workers are still running; run \`mu wait\` in the background, which returns (and wakes you) when one of them needs you, then keep going. (Empty stop block ${n} of ${max} in a row.)`;
+  return `[mu] Workers are still running; run \`mu wait --ready\` in the background, which returns (and wakes you) when one of them needs you, then keep going. (Empty stop block ${n} of ${max} in a row.)`;
 }
 
 // ─── the hook ──────────────────────────────────────────────────────
@@ -370,7 +464,20 @@ async function orchestratorStop(
     return { decision: "allow", why: `a live wait already holds ${caller}; it wakes the agent` };
   }
   const waitS = stopWaitSeconds(timeoutS);
-  const out = await (deps.wait ?? defaultWait)(caller, waitS);
+  const wait = deps.wait ?? defaultWait;
+  let out = await wait(caller, waitS);
+  // Superseded with nothing of its own consumed: a live newer wait delivers the events (allow); with
+  // none left (it already returned to a background shell), wait once more. A second superseded
+  // result is then handled as it stands, so two hooks never ping-pong.
+  if (out.kind === "superseded" && consumedEvents(out.data).length === 0) {
+    if (holder(caller)) {
+      return {
+        decision: "allow",
+        why: `superseded by a newer wait of ${caller}; it delivers the events`,
+      };
+    }
+    out = await wait(caller, waitS);
+  }
   switch (out.kind) {
     case "nothing":
       return { decision: "allow", why: "nothing owed" };
@@ -378,20 +485,16 @@ async function orchestratorStop(
       return { decision: "allow", why: `a live wait already holds ${caller}; it wakes the agent` };
     case "failed":
       return { decision: "allow", why: `the wait failed: ${out.detail}` };
-    case "events": {
-      // The wait already consumed the event: a failed write must not lose it.
-      bestEffort(() => writeKeepDriving(db, key, { ...state, emptyBlocks: 0 }, now), undefined);
-      const rule =
-        bestEffort(() => {
-          const md = (deps.skillMd ?? readSkill)();
-          return md === undefined ? undefined : keepDrivingRule(md);
-        }, undefined) ?? RULE_FALLBACK;
-      return {
-        decision: "block",
-        why: "events",
-        reason: eventsReason(rule, caller, waitS, out.data),
-      };
-    }
+    case "superseded":
+      if (consumedEvents(out.data).length === 0) {
+        return {
+          decision: "allow",
+          why: `superseded by a newer wait of ${caller}; it delivers the events`,
+        };
+      }
+      return eventsBlock(db, key, state, now, deps, caller, waitS, out.data);
+    case "events":
+      return eventsBlock(db, key, state, now, deps, caller, waitS, out.data);
     case "timeout": {
       const max = keepDrivingMax(env);
       if (state.emptyBlocks >= max) {
@@ -405,6 +508,26 @@ async function orchestratorStop(
       return { decision: "block", why: "owed", reason: owedReason(n, max) };
     }
   }
+}
+
+/** Block with the events a wait consumed (already consumed: a failed write must not lose them). */
+function eventsBlock(
+  db: Db,
+  key: string,
+  state: KeepDriving,
+  now: Date,
+  deps: StopHookDeps,
+  caller: string,
+  waitS: number,
+  data: Record<string, unknown>,
+): StopDecision {
+  bestEffort(() => writeKeepDriving(db, key, { ...state, emptyBlocks: 0 }, now), undefined);
+  const rule =
+    bestEffort(() => {
+      const md = (deps.skillMd ?? readSkill)();
+      return md === undefined ? undefined : keepDrivingRule(md);
+    }, undefined) ?? RULE_FALLBACK;
+  return { decision: "block", why: "events", reason: eventsReason(rule, caller, waitS, data) };
 }
 
 async function workerStop(

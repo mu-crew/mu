@@ -272,26 +272,23 @@ describe.skipIf(!built)("mu hook stop under a fake claude", () => {
     }
   });
 
-  // Characterisation (a7_wait_drain_rca_2): CURRENT one event per Stop, like pi's settle. A
-  // fire-all-ready fix flips it to one block carrying both closes; each still delivered once.
-  it("two owned closes ready at one Stop take two blocks, one close each (CURRENT)", async () => {
+  // a7_ready_engine (flipped from the a7_wait_drain_rca_2 characterisation, which took two blocks):
+  // the hook's wait is `--ready`, so both ready closes come in ONE block, each delivered once.
+  it("two owned closes ready at one Stop take one block naming both", async () => {
     registerOwnedWait(db, "auth/orch", [
       { kind: "task", workstream: "auth", id: "t1" },
       { kind: "task", workstream: "auth", id: "t2" },
     ]);
     close("t1");
     close("t2");
-    const refs: (string | undefined)[] = [];
-    for (const active of [false, true]) {
-      const b = blockOf(
-        (await fireStop(ORCH, { session_id: "s1", stop_hook_active: active })).stdout,
-      );
-      expect(b?.decision).toBe("block");
-      refs.push(resultIn(b?.reason ?? "").firing?.ref);
-    }
-    expect(refs).toEqual(["task:auth/t1", "task:auth/t2"]);
-    const third = await fireStop(ORCH, { session_id: "s1", stop_hook_active: true });
-    expect(third.stdout.trim()).toBe("");
+    const b = blockOf((await fireStop(ORCH, { session_id: "s1", stop_hook_active: false })).stdout);
+    expect(b?.decision).toBe("block");
+    const reason = b?.reason ?? "";
+    expect(reason).toContain("for you. 2 events:\n- task auth/t1 CLOSED\n- task auth/t2 CLOSED\n");
+    const res = resultIn(reason) as { events?: { ref: string }[] };
+    expect(res.events?.map((e) => e.ref)).toEqual(["task:auth/t1", "task:auth/t2"]);
+    const second = await fireStop(ORCH, { session_id: "s1", stop_hook_active: true });
+    expect(second.stdout.trim()).toBe("");
   });
 
   it("allows the stop while a background mu wait holds the caller, and consumes nothing", async () => {

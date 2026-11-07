@@ -191,6 +191,10 @@ mu wait task:auth/build task:auth/docs
   wait, only the first fires; follow `resume` to hear the second. A fresh
   `mu wait` with the same refs starts a new anchor and reports the earlier
   death as history.
+- A snapshot marked `delivered` was consumed by this result; `owed` is
+  ready news the next wait returns (`data.owed` counts them). `mu wait
+  --ready` returns every ready event at once (up to 5, `data.events`); an
+  urgent one (dead, input, stall) still returns alone.
 - `data.cursor` is what this result consumed per ref (`incarnation`, `runs`);
   the next wait starts after it, so the same event is never reported twice.
   `cursorCut` counts entries dropped to fit the 4 KB result.

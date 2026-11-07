@@ -459,6 +459,115 @@ describe("hook-stop: runStopHook", () => {
     expect(readKeepDriving(db, "s1").emptyBlocks).toBe(0);
   });
 
+  it("a ready batch blocks once with one line per event and the owed line; the JSON stays last", async () => {
+    const data = {
+      firing: { kind: "closed", ref: "task:auth/t1" },
+      events: [
+        { kind: "closed", ref: "task:auth/t1" },
+        { kind: "delegate", ref: "delegate:pi:s:c1" },
+      ],
+      owed: 2,
+      snapshots: [
+        { ref: "task:auth/t1", status: "CLOSED", fired: true, delivered: true },
+        { ref: "delegate:pi:s:c1", status: "done", verdict: "CONFIRMED", delivered: true },
+        { ref: "task:auth/t3", status: "CLOSED", fired: true, owed: true },
+        { ref: "task:auth/t4", status: "CLOSED", fired: true, owed: true },
+      ],
+    };
+    outcomes.push({ kind: "events", data });
+    const d = await runStopHook(db, "claude", stop(), { timeoutS: 600 }, deps());
+    expect(d.decision).toBe("block");
+    if (d.decision !== "block") return;
+    const lines = d.reason.split("\n");
+    expect(lines.slice(2, 6)).toEqual([
+      "Work you own is still running, so mu's Stop hook ran `mu wait --ready --on-stall exit --json --timeout 590 --as auth/orch` for you. 2 events:",
+      "- task auth/t1 CLOSED",
+      "- delegate pi:s:c1 done (CONFIRMED)",
+      "2 more ready, not yet delivered: task auth/t3 CLOSED, task auth/t4 CLOSED (the next Stop delivers them; or run mu wait --ready)",
+    ]);
+    expect(JSON.parse(lines.at(-1) ?? "")).toEqual(data);
+  });
+
+  it("an empty-block reason names the ready batch", async () => {
+    outcomes.push({ kind: "timeout" });
+    const d = await runStopHook(db, "claude", stop(), { timeoutS: 600 }, deps());
+    expect(d.decision === "block" && d.reason).toContain("run `mu wait --ready` in the background");
+  });
+
+  describe("a superseded wait (a newer wait of the caller began)", () => {
+    const nothing = {
+      superseded: true,
+      eventConsumed: false,
+      firing: { kind: "closed", ref: "task:auth/t1" },
+      snapshots: [{ ref: "task:auth/t1", status: "CLOSED", fired: true, owed: true }],
+    };
+    it("parses as its own outcome", () => {
+      expect(parseStopWait(JSON.stringify({ ok: true, data: nothing })).kind).toBe("superseded");
+    });
+
+    it("nothing consumed and the newer wait live: the turn ends, it delivers them", async () => {
+      outcomes.push({ kind: "superseded", data: nothing });
+      const d = await runStopHook(
+        db,
+        "claude",
+        stop(),
+        { timeoutS: 600 },
+        {
+          ...deps(),
+          // No holder before the wait; the newer wait holds the caller after it.
+          holder: () => waits.length > 0,
+        },
+      );
+      expect(d).toMatchObject({ decision: "allow" });
+      expect(d.decision === "allow" && d.why).toContain("superseded by a newer wait of auth/orch");
+      expect(waits).toHaveLength(1);
+      expect(events).toEqual([]);
+    });
+
+    it("nothing consumed and no live holder: it waits once more and blocks with what that wait consumed", async () => {
+      outcomes.push(
+        { kind: "superseded", data: nothing },
+        { kind: "events", data: { firing: { kind: "closed", ref: "task:auth/t1" } } },
+      );
+      const d = await runStopHook(db, "claude", stop(), { timeoutS: 600 }, deps());
+      expect(d).toMatchObject({ decision: "block", why: "events" });
+      expect(waits).toHaveLength(2);
+    });
+
+    it("superseded twice with nothing consumed: the second lets the turn end (no ping-pong)", async () => {
+      outcomes.push({ kind: "superseded", data: nothing }, { kind: "superseded", data: nothing });
+      const d = await runStopHook(db, "claude", stop(), { timeoutS: 600 }, deps());
+      expect(d).toMatchObject({ decision: "allow" });
+      expect(waits).toHaveLength(2);
+    });
+
+    it("partly consumed: blocks over the delivered member only", async () => {
+      const data = {
+        superseded: true,
+        eventConsumed: false,
+        firing: { kind: "closed", ref: "task:auth/t1" },
+        events: [
+          { kind: "closed", ref: "task:auth/t1" },
+          { kind: "closed", ref: "task:auth/t2" },
+        ],
+        owed: 1,
+        snapshots: [
+          { ref: "task:auth/t1", status: "CLOSED", fired: true, owed: true },
+          { ref: "task:auth/t2", status: "CLOSED", fired: true, delivered: true },
+        ],
+      };
+      outcomes.push({ kind: "superseded", data });
+      const d = await runStopHook(db, "claude", stop(), { timeoutS: 600 }, deps());
+      expect(d.decision).toBe("block");
+      if (d.decision !== "block") return;
+      const lines = d.reason.split("\n");
+      expect(lines[2]).toMatch(/for you\. 1 event:$/);
+      expect(lines[3]).toBe("- task auth/t2 CLOSED");
+      expect(lines[4]).toContain("1 more ready, not yet delivered: task auth/t1 CLOSED");
+      expect(waits).toHaveLength(1);
+    });
+  });
+
   it("a live wait holding the caller lets the turn end without waiting", async () => {
     holder = true;
     const d = await runStopHook(db, "claude", stop(), {}, deps());

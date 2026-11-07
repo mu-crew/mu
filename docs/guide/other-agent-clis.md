@@ -226,8 +226,9 @@ inside an agent, because every pane would inherit that agent's sandbox.
 - **Keep driving with `mu hook stop`.** pi's settle wait has a twin for
   claude, codex and cursor-agent: a Stop hook entry that keeps an orchestrator
   `mu orchestrate` started from ending its turn while its workers run. It
-  waits as the orchestrator (`mu wait --as <ws>/<name>`) and hands the model
-  the event, or tells it to run `mu wait` in the background, at most
+  waits as the orchestrator (`mu wait --ready --as <ws>/<name>`) and hands the
+  model every ready event in one block, or tells it to run `mu wait --ready`
+  in the background, at most
   `MU_KEEP_DRIVING_MAX` (20) times in a row; a background `mu wait` already
   holding the caller lets the turn end. A worker that stops still owning its
   task is told once per session to close it. `mu init` writes the entry:

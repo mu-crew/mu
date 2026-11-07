@@ -110,6 +110,7 @@ import {
 import {
   agentSnapshot,
   delegateItem,
+  eventOf,
   exitFor,
   failedGate,
   type Item,
@@ -135,7 +136,7 @@ import {
   readWaitRegistration,
   registerOwnedWait,
 } from "./wait-registration.js";
-import { type Chosen, selectEvent } from "./wait-select.js";
+import { type Chosen, dropStale, narrowSuperseded, selectEvent } from "./wait-select.js";
 import {
   type AgentReading,
   type CloseOutcome,
@@ -1285,7 +1286,7 @@ export async function waitForEvents(
     }
   };
 
-  const select = (items: Item[]): Chosen | undefined => selectEvent(items, all ? "all" : "first");
+  const select = (items: Item[]): Chosen | undefined => selectEvent(items, opts.mode ?? "first");
 
   const build = (
     kind: WaitEventKind,
@@ -1294,15 +1295,17 @@ export async function waitForEvents(
     drained = false,
   ): WaitResult => {
     const e = chosen?.event;
-    for (const f of chosen?.fired ?? []) delivered.push(f);
+    const fired = new Set(chosen?.fired ?? []);
+    // Owed: the next wait returns it (ready = unconsumed news) and this one did not fire it. A
+    // target an earlier wait already consumed is not owed: it is history the ref set re-reads.
+    const owed = (i: Item): boolean => i.ready && !fired.has(i) && !(i.target && i.seen === true);
     return {
-      event: {
-        kind,
-        ref: e?.ref ?? null,
-        ...(e?.snap.incarnation !== undefined ? { incarnation: e.snap.incarnation } : {}),
-        ...(e?.snap.runs !== undefined ? { runs: e.snap.runs } : {}),
-      },
-      refs: snapshotsOf(items, chosen?.fired ?? []),
+      event: eventOf(kind, e),
+      ...(opts.mode === "ready" && chosen !== undefined
+        ? { events: chosen.groups.map((g) => eventOf(g[0]?.kind ?? "closed", g[0])) }
+        : {}),
+      refs: snapshotsOf(items, chosen?.fired ?? [], owed),
+      owed: items.filter(owed).length,
       delivered: (chosen?.fired ?? []).filter(isCompletion).map((i) => i.ref),
       timedOut: kind === "heartbeat" && !drained,
       interrupted: kind === "interrupted",
@@ -1329,28 +1332,34 @@ export async function waitForEvents(
 
   let committed = false;
   let applied = true;
+  /** Callers whose wait generation a newer wait superseded at commit: nothing of theirs was consumed. */
+  const supersededCallers = new Set<string>();
+  /** The event the committed pick fired. */
+  let firedEvent: Item | undefined;
   /**
-   * Deliver what `build` handed out, in ONE immediate transaction: re-read the callers' cursors (a
-   * wait in another process may have consumed `event` since this one read them), then end each
-   * caller's wait and record the tokens. A returned event is consumed (its token written); a
-   * completed one also leaves the registration; an urgent one (input, stall, a dead task) stays
-   * owed. false = `event` is already consumed: nothing is written, `delivered` is cleared and the
-   * caller selects again (with the cursors just read). Without a consuming caller: a no-op.
+   * Deliver what `chosen` fires, in ONE immediate transaction: re-read the callers' cursors (another
+   * process may have consumed a member since), then end each caller's wait and record the tokens.
+   * A returned event is consumed; a completed one also leaves the registration; an urgent one
+   * (input, stall, a dead task) stays owed. undefined = `event` is already consumed: nothing is
+   * written, select again. A ready batch's other events are guarded alike (`dropStale`): `kept` is
+   * what survives, so no member is printed by two waits. Without a consuming caller: `chosen`.
    */
-  const commit = (event?: Item): boolean => {
-    if (!consumes) return true;
+  const commit = (chosen?: Chosen): { kept?: Chosen } | undefined => {
+    if (!consumes) return { ...(chosen !== undefined ? { kept: chosen } : {}) };
     const ok = db
-      .transaction((): boolean => {
+      .transaction((): { kept?: Chosen } | undefined => {
         for (const c of callers) cursorsBy.set(c, readCursors(db, c));
-        if (
-          // Only news this wait saw as unconsumed can turn stale; the re-read hides it next time.
-          event?.token !== undefined &&
-          event.ready &&
-          event.suppressible &&
-          isConsumed(cursorOf(event.ckey ?? event.key), event.token)
-        ) {
-          return false;
-        }
+        // Only news this wait saw as unconsumed can turn stale; the re-read hides it next time.
+        const stale = (i: Item | undefined): boolean =>
+          i?.token !== undefined &&
+          i.ready &&
+          i.suppressible &&
+          isConsumed(cursorOf(i.ckey ?? i.key), i.token);
+        if (chosen !== undefined && stale(chosen.event)) return undefined;
+        const kept = chosen === undefined ? undefined : dropStale(chosen, stale);
+        delivered.length = 0;
+        delivered.push(...(kept?.fired ?? []));
+        firedEvent = kept?.event;
         const completed = delivered.filter(isCompletion);
         // Each delivered ref is consumed by the caller that owns it, guarded by that caller's
         // wait generation.
@@ -1381,15 +1390,16 @@ export async function waitForEvents(
             );
             if (!ended.applied) {
               applied = false;
+              supersededCallers.add(c);
               continue;
             }
           }
           recordCursors(db, c, tokens);
         }
-        return true;
+        return kept === undefined ? {} : { kept };
       })
       .immediate();
-    if (ok) committed = true;
+    if (ok !== undefined) committed = true;
     else delivered.length = 0;
     return ok;
   };
@@ -1406,12 +1416,11 @@ export async function waitForEvents(
       if (stopReason === "deadline" || Date.now() >= deadline) {
         const items = evaluate();
         driveStalls(items);
-        const chosen = select(items);
-        const r = chosen
-          ? build(chosen.event.kind ?? "closed", items, chosen)
+        const done = commit(select(items));
+        if (done === undefined) continue;
+        result = done.kept
+          ? build(done.kept.event.kind ?? "closed", items, done.kept)
           : build("heartbeat", items);
-        if (!commit(chosen?.event)) continue;
-        result = r;
         break;
       }
       await refresh();
@@ -1423,10 +1432,10 @@ export async function waitForEvents(
       if (items.length === 0) throw new WaitNothingError();
       const chosen = select(items);
       if (chosen !== undefined) {
-        const r = build(chosen.event.kind ?? "closed", items, chosen);
+        const done = commit(chosen);
         // Consumed by another process since this wait read its cursors: select again.
-        if (!commit(chosen.event)) continue;
-        result = r;
+        if (done?.kept === undefined) continue;
+        result = build(done.kept.event.kind ?? "closed", items, done.kept);
         break;
       }
       if (!all && items.every((i) => i.done)) {
@@ -1471,7 +1480,11 @@ export async function waitForEvents(
       if (!committed) commit();
       if (result !== undefined) {
         result.cursor = Object.fromEntries(callers.flatMap((c) => [...readCursors(db, c)]));
-        if (!applied) result.superseded = true;
+        if (!applied) {
+          result.superseded = true;
+          const lost = (i: Item): boolean => supersededCallers.has(ownerOf(i.ckey ?? i.key) ?? "");
+          narrowSuperseded(result, delivered, lost, firedEvent);
+        }
       }
     } else if (result !== undefined) result.cursor = {};
     if (opts.sync !== false) await ambientFlush(db, { quiet: true });

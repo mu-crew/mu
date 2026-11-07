@@ -114,6 +114,12 @@ export interface WaitSnapshot {
   /** The ref's completion condition is met (task at target, agent settled, delegate terminal). */
   fired: boolean;
   dead: boolean;
+  /**
+   * The next wait returns this ref's news and this one did not consume it (ready, not fired; a
+   * target an earlier wait consumed is not owed). Set by the engine; also on a member a
+   * superseded result did not consume. Never on the firing event.
+   */
+  owed?: true;
   /** What applying the settled run's CLOSE block did (agent refs; absent when none was tried). On a stuck task: the owner's refused CLOSE. */
   close?: CloseOutcome;
 }
@@ -156,8 +162,12 @@ export interface WaitStallContext {
 export interface WaitResult {
   /** The event that ended the wait; `heartbeat` on a timeout, `interrupted` on an abort. */
   event: WaitEvent;
+  /** `--ready`: every event this wait fired, `event` first (one per fact; a batch has several). */
+  events?: WaitEvent[];
   /** Targets in input order, then the delivered refs that are not targets. */
   refs: WaitSnapshot[];
+  /** How many watched refs are owed (`WaitSnapshot.owed`), shown or not. */
+  owed?: number;
   timedOut: boolean;
   interrupted: boolean;
   /** 0 fired or timed out, 6 dead, 7 input or stall, 130 interrupted; an `exited` gate's own status (23 stays 23), the first nonzero of the gates that ended. */
@@ -176,8 +186,14 @@ export interface WaitResult {
   tally?: VerdictTally;
   /** What `handleStall` did for a returned stall. */
   action?: StallActionResult;
-  /** True when a newer wait of the same caller superseded this one: nothing was consumed. */
+  /**
+   * True when a newer wait of a caller superseded this one: that caller consumed nothing, so its
+   * members are dropped from `delivered` and marked owed (the newer wait returns them). With two
+   * callers the other's members may still be consumed.
+   */
   superseded?: boolean;
+  /** On a superseded result that fired: whether the firing event itself was consumed. */
+  eventConsumed?: boolean;
   /** Everything watched is done and was already delivered: nothing is owed. */
   drained?: boolean;
   /** The reaper-flip anchor this wait used: a resume of it keeps it. */
@@ -238,8 +254,12 @@ export interface WaitOptions {
    * See `currentCallers`.
    */
   callers: readonly string[];
-  /** `first` (default): the first event ends the wait. `all`: every target must be done. */
-  mode?: "first" | "all";
+  /**
+   * `first` (default): the first event ends the wait. `all`: every target must be done. `ready`
+   * (the ready batch): first's event, plus every other ready, never-returned completion when that
+   * event is not urgent, up to READY_BATCH_MAX (src/wait-select.ts).
+   */
+  mode?: "first" | "all" | "ready";
   /** `owned` (default): the callers' owned refs also end the wait. `refs`: only the listed refs do. */
   eventScope?: "owned" | "refs";
   /** Delegate calls of this wave (the callers' only, never narrowed by `scope`) are targets; the result carries their tally. A name none of their calls carry throws WaveNotFoundError. */

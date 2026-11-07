@@ -10,6 +10,7 @@ import type {
   AgentReading,
   CloseOutcome,
   StallActionResult,
+  WaitEvent,
   WaitEventKind,
   WaitRef,
   WaitSnapshot,
@@ -181,10 +182,23 @@ export const sameDeath = (a: Item, b: Item): boolean => {
 export const failedGate = (i: Item): boolean =>
   i.kind === "exited" && i.snap.exit !== undefined && i.snap.exit !== 0;
 
-export const snapshotsOf = (items: Item[], extra: Item[] = []): WaitSnapshot[] => {
+/** The snapshots a result prints: the targets (none: every item), then `extra`; `owed` marks each it holds for (a copy). */
+export const snapshotsOf = (
+  items: Item[],
+  extra: Item[] = [],
+  owed: (i: Item) => boolean = () => false,
+): WaitSnapshot[] => {
   const targets = items.filter((i) => i.target);
   const base = targets.length > 0 ? targets : items;
   const shown = [...base];
   for (const e of extra) if (!shown.includes(e)) shown.push(e);
-  return shown.map((i) => i.snap);
+  return shown.map((i) => (owed(i) ? { ...i.snap, owed: true } : i.snap));
 };
+
+/** The wait event `e` (an item, or none for a heartbeat or an interrupt) delivers as `kind`. */
+export const eventOf = (kind: WaitEventKind, e: Item | undefined): WaitEvent => ({
+  kind,
+  ref: e?.ref ?? null,
+  ...(e?.snap.incarnation !== undefined ? { incarnation: e.snap.incarnation } : {}),
+  ...(e?.snap.runs !== undefined ? { runs: e.snap.runs } : {}),
+});

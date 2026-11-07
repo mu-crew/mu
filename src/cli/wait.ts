@@ -1,6 +1,6 @@
 // mu — `mu wait`: the one orchestrator wait, over waitForEvents (src/wait.ts).
 //
-//   mu wait [<ref>...] [--first | --all] [-w ws] [--until-text re] [--status s]
+//   mu wait [<ref>...] [--first | --all | --ready] [-w ws] [--until-text re] [--status s]
 //           [--stuck-after s] [--on-stall exit|warn|steer|release] [--wave w] [--blockers-of t]
 //           [--timeout s]
 //
@@ -39,7 +39,7 @@ import {
 } from "../cli.js";
 import { type Db, tryResolveLiveWorkstreamId } from "../db.js";
 import { DelegateNotFoundError, getDelegateCall } from "../delegates.js";
-import { noticesField } from "../next-hints.js";
+import { noticesField, renderArgv } from "../next-hints.js";
 import { reconcile } from "../reconcile.js";
 import { TaskNotFoundError } from "../tasks/errors.js";
 import { getTask, getTaskOwner } from "../tasks/queries.js";
@@ -57,6 +57,7 @@ import { ctlAgentHooks } from "../wait-ctl.js";
 import { holdCallers } from "../wait-holders.js";
 import { compileTextMatcher } from "../wait-regex.js";
 import { loadResume, type ResumeSpec, saveResume } from "../wait-resume.js";
+import { READY_BATCH_MAX } from "../wait-select.js";
 import { CliExitError, setNextOutcome } from "./handle.js";
 import { owedRefs, resumeCommand, waitData } from "./wait-output.js";
 
@@ -235,8 +236,22 @@ function reconcileHook(
   };
 }
 
-/** Why the wait ended, in words (the event kind says what; this says which and why). */
+/**
+ * Why the wait ended, in words (the event kind says what; this says which and why). A ready
+ * batch says "N events: " and one phrase each; a superseded result says what it did not consume.
+ */
 export function reasonOf(result: WaitResult, signal: string | undefined, open: number): string {
+  const events = result.events ?? [];
+  const what =
+    events.length > 1
+      ? `${events.length} events: ${events.map((event) => eventReason({ ...result, event }, signal, open)).join("; ")}`
+      : eventReason(result, signal, open);
+  return result.superseded === true
+    ? `superseded: a newer wait of this caller began; what is not marked delivered was not consumed, and that wait returns it (${what})`
+    : what;
+}
+
+function eventReason(result: WaitResult, signal: string | undefined, open: number): string {
   const e = result.event;
   const snap = result.refs.find(
     (s) =>
@@ -464,8 +479,23 @@ export async function runWait(
       })
     : null;
   const resume = resumeId === null ? null : resumeCommand(resumeId, spec.scope);
-  // A wait that ended with something still owed: `next` is its stored resume.
-  if (resumeId !== null && openNow > 0) {
+  // Ready news this wait did not consume (past the batch cap, or a first wait's siblings): `next`
+  // is the ready batch. Not for a superseded result: the newer wait returns it.
+  const owedNow = result.event.ref !== null && result.superseded !== true ? (result.owed ?? 0) : 0;
+  const readyArgv = [
+    "mu",
+    "wait",
+    "--ready",
+    ...(spec.scope !== undefined ? ["-w", spec.scope] : []),
+  ];
+  if (owedNow > 0) {
+    setNextOutcome({
+      kind: "owed",
+      count: owedNow,
+      ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
+    });
+  } else if (resumeId !== null && openNow > 0) {
+    // A wait that ended with something still owed: `next` is its stored resume.
     setNextOutcome({
       kind: "waited",
       resumeId,
@@ -491,9 +521,12 @@ export async function runWait(
       reason: reasonOf(result, signal, openNow),
       ...(short !== undefined ? { warning: short } : {}),
       // The call's workstream: its -w, else every workstream its refs name.
-      ...noticesField(
-        db,
-        spec.scope !== undefined ? [spec.scope] : result.refs.map((s) => s.ref.workstream),
+      ...withOwedNotice(
+        noticesField(
+          db,
+          spec.scope !== undefined ? [spec.scope] : result.refs.map((s) => s.ref.workstream),
+        ),
+        owedNow > 0 ? `${owedNow} owed: ${renderArgv(readyArgv)}` : undefined,
       ),
       ...(opts.extraData !== undefined ? { extra: opts.extraData } : {}),
     }),
@@ -502,10 +535,20 @@ export async function runWait(
   if (exit !== 0) throw new CliExitError(exit);
 }
 
+/** `notices` with the owed line first (never cut, unlike `next`). */
+function withOwedNotice(
+  f: { notices?: string[] },
+  line: string | undefined,
+): { notices?: string[] } {
+  if (line === undefined) return f;
+  return { notices: [line, ...(f.notices ?? [])] };
+}
+
 // ─── commander wiring ──────────────────────────────────────────────
 
 interface WaitOpts {
   first?: boolean;
+  ready?: boolean;
   firstOf?: boolean;
   all?: boolean;
   allOf?: boolean;
@@ -524,12 +567,21 @@ interface WaitOpts {
   workstream?: string | string[];
 }
 
-/** `--first`/`--first-of` versus `--all`/`--all-of`: one mode, or a usage error (never a silent pick). */
+/** `--first`/`--first-of` versus `--all`/`--all-of` versus `--ready`: one mode, or a usage error (never a silent pick). */
 export function waitMode(
-  o: Pick<WaitOpts, "first" | "firstOf" | "all" | "allOf"> & { any?: boolean },
-): "first" | "all" {
+  o: Pick<WaitOpts, "first" | "firstOf" | "all" | "allOf" | "ready"> & { any?: boolean },
+): "first" | "all" | "ready" {
   const first = o.first === true || o.firstOf === true || o.any === true;
   const all = o.all === true || o.allOf === true;
+  if (o.ready === true) {
+    if (first || all) {
+      throw new UsageError(
+        `--ready returns every ready event (up to ${READY_BATCH_MAX}); drop ${first ? "--first" : "--all"}: one mode per wait`,
+        { showHelp: false },
+      );
+    }
+    return "ready";
+  }
   if (first && all) {
     throw new UsageError(
       "--first and --all are opposites: drop --first to wait for every ref, or drop --all to return on the first",
@@ -636,8 +688,12 @@ async function cmdWaitResume(
     [
       ["refs", rawRefs.length > 0],
       [
-        "--first/--all",
-        o.first === true || o.firstOf === true || o.all === true || o.allOf === true,
+        "--first/--all/--ready",
+        o.first === true ||
+          o.firstOf === true ||
+          o.all === true ||
+          o.allOf === true ||
+          o.ready === true,
       ],
       ["--until-idle", o.untilIdle === true],
       ["--until-text", o.untilText !== undefined],
@@ -681,6 +737,10 @@ export function wireWaitCommand(program: Command): void {
     .option("--first-of", "alias for --first")
     .option("--all", "end when every named ref is done (an urgent event still ends it early)")
     .option("--all-of", "alias for --all")
+    .option(
+      "--ready",
+      `return every ready event at once (up to ${READY_BATCH_MAX}; \`data.events\`); an urgent one (dead, input, stall) still returns alone`,
+    )
     .option("--until-idle", "a run ending is the event (default for agents)")
     .option(
       "--until-text <regex>",

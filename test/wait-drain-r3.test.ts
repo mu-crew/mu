@@ -6,7 +6,9 @@
 //      returns its events, and the settle and the Stop hook present them as consumed, so the
 //      newer wait prints them a second time. Single and batch (`--all`).
 //   3. a settle that meets delegates of two waves.
-// Every expectation marked CURRENT flips under the round-3 proposal. Real SQLite; no agents.
+// a7_ready_engine (unit A: engine, output, Stop hook) flipped the marks and superseded pins to the
+// new behaviour (marked NOW). What is still marked CURRENT is the pi settle (unit B, nudge.ts).
+// Real SQLite; no agents.
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +16,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MuResult, MuRunOpts } from "../extension/mu-run.js";
 import { type MuNudgeCtx, registerNudge } from "../extension/nudge.js";
+import { reasonOf } from "../src/cli/wait.js";
 import { waitData } from "../src/cli/wait-output.js";
 import { type Db, openDb } from "../src/db.js";
 import { eventsReason, parseStopWait } from "../src/hook-stop.js";
@@ -115,8 +118,8 @@ function settle(waitOut: (args: readonly string[], sid: string) => Promise<MuRes
   return { emit, waits, delivered };
 }
 
-describe("RC3: snapshots do not say what this result consumed (CURRENT, every mode)", () => {
-  it("first mode over 3 owned closes: 1 delivered, 2 still owed, all 3 print the same", async () => {
+describe("RC3: snapshots say what this result consumed (NOW, every mode)", () => {
+  it("first mode over 3 owned closes: 1 delivered, 2 owed, and the result says so", async () => {
     for (const id of ["a", "b", "c"]) mk(id);
     registerOwnedWait(
       db,
@@ -128,23 +131,21 @@ describe("RC3: snapshots do not say what this result consumed (CURRENT, every mo
     const r = await waitForEvents(db, [], base);
     expect(r.delivered.map((x) => x.id)).toEqual(["a"]);
     expect(r.refs.filter((s) => s.fired).map((s) => s.ref.id)).toEqual(["a", "b", "c"]);
-    // ...the CLI result does not print it: no per-snapshot mark, no top-level list.
+    // ...and the CLI result prints it: the consumed b reads delivered, the owed c reads owed.
     const out = await mu("s", ["wait", "--first", "--timeout", "1", "--json"]);
     const d = data(out) as Data & Record<string, unknown>;
     expect(d.firing?.ref).toBe("task:w/b");
     const snaps = d.snapshots ?? [];
     expect(snaps.filter((s) => s.fired).map((s) => s.ref)).toEqual(["task:w/b", "task:w/c"]);
-    // CURRENT: the consumed b and the owed c are indistinguishable (the l.281 -> l.290 misread).
-    for (const s of snaps) {
-      expect(s).not.toHaveProperty("delivered");
-      expect(s).not.toHaveProperty("pending");
-      expect(s).not.toHaveProperty("owed");
-    }
-    expect(d).not.toHaveProperty("delivered");
-    expect(d).not.toHaveProperty("pending");
+    expect(snaps.find((s) => s.ref === "task:w/b")).toMatchObject({ delivered: true });
+    expect(snaps.find((s) => s.ref === "task:w/b")).not.toHaveProperty("owed");
+    expect(snaps.find((s) => s.ref === "task:w/c")).toMatchObject({ owed: true });
+    expect(snaps.find((s) => s.ref === "task:w/c")).not.toHaveProperty("delivered");
+    expect(d.owed).toBe(1);
+    for (const s of snaps) expect(s).not.toHaveProperty("pending");
   });
 
-  it("--all on two explicit targets, one closed: the closed target is owed but reads fired:true", async () => {
+  it("--all on two explicit targets, one closed: the heartbeat marks the closed target owed", async () => {
     mk("t1");
     mk("t2");
     close("t1");
@@ -157,69 +158,87 @@ describe("RC3: snapshots do not say what this result consumed (CURRENT, every mo
       "1",
       "--json",
     ]);
-    const d = data(out);
+    const d = data(out) as Data & Record<string, unknown>;
     expect(d.firing?.kind).toBe("heartbeat");
     const t1 = d.snapshots?.find((s) => s.ref === "task:w/t1");
-    // CURRENT: fired:true and nothing else; the heartbeat consumed nothing, t1 is still owed.
-    expect(t1).toMatchObject({ status: "CLOSED", fired: true });
-    expect(t1).not.toHaveProperty("pending");
-    expect(t1).not.toHaveProperty("owed");
+    // NOW: the heartbeat consumed nothing, so t1 reads owed (never delivered).
+    expect(t1).toMatchObject({ status: "CLOSED", fired: true, owed: true });
+    expect(t1).not.toHaveProperty("delivered");
+    expect(d.owed).toBe(1);
+  });
+
+  it("N2: a target an earlier wait already consumed is not owed again", async () => {
+    mk("t1");
+    mk("t2");
+    registerOwnedWait(db, "pi:s", [taskRef("t1")]);
+    close("t1");
+    // A bare wait consumes t1's close.
+    expect((await waitForEvents(db, [], base)).delivered.map((x) => x.id)).toEqual(["t1"]);
+    const r = await waitForEvents(db, [taskRef("t1"), taskRef("t2")], {
+      ...base,
+      mode: "all",
+      timeoutMs: 5,
+    });
+    expect(r.event.kind).toBe("heartbeat");
+    expect(r.refs.find((s) => s.ref.id === "t1")?.owed).toBeUndefined();
+    expect(r.owed).toBe(0);
   });
 });
 
-describe("superseded generations are shown as consumed (CURRENT)", () => {
+describe("superseded generations deliver nothing of theirs (NOW: engine and Stop hook; settle CURRENT)", () => {
   // A newer wait of the same caller begins.
   const supersede = async (): Promise<void> => {
     beginWait(db, "pi:s");
   };
 
-  it("single: the superseded result, then the newer wait, print the same close twice", async () => {
+  it("single: the superseded result delivers nothing and says so; the newer wait delivers the close", async () => {
     mk("a");
     registerOwnedWait(db, "pi:s", [taskRef("a")]);
     close("a");
     const old = await waitForEvents(db, [], { ...base, beforePoll: supersede });
     expect(old.superseded).toBe(true);
     expect(old.event.ref?.id).toBe("a");
+    expect(old.eventConsumed).toBe(false);
+    expect(old.delivered).toEqual([]);
     expect(readCursors(db, "pi:s").size).toBe(0); // nothing consumed
     const json = printed(old);
-    // The Stop hook takes it as events and blocks with "consumed: no later wait returns this".
-    const hook = parseStopWait(json);
-    expect(hook.kind).toBe("events");
-    if (hook.kind !== "events") return;
-    expect(eventsReason("Keep driving.", "w/orch", 60, hook.data)).toContain(
-      "consumed: no later wait returns this event again",
+    const d = (JSON.parse(json) as { data: Record<string, unknown> }).data;
+    expect(d.eventConsumed).toBe(false);
+    expect(reasonOf(old, undefined, 0)).toMatch(
+      /^superseded: a newer wait of this caller began; what is not marked delivered was not consumed/,
     );
-    // The settle continues the turn with it as news.
+    // The Stop hook reads it as superseded: nothing consumed, so it lets the turn end.
+    const hook = parseStopWait(json);
+    expect(hook.kind).toBe("superseded");
+    // CURRENT (unit B): the settle still continues the turn with it.
     const s = settle(async () => ({ code: 0, stdout: json, stderr: "" }));
     const turn = await s.emit();
     expect(turn?.continue).toBe(true);
     expect(turn?.entries?.[0]?.content).toContain('"superseded":true');
-    // And the newer generation delivers the same close again.
+    // The newer generation delivers the close: its only delivery.
     const again = await waitForEvents(db, [], base);
     expect(again.event.ref?.id).toBe("a");
+    expect(again.delivered.map((x) => x.id)).toEqual(["a"]);
     expect(again.superseded).toBeUndefined();
   });
 
-  it("batch (--all): every member of the superseded result is printed again by the next waits", async () => {
+  it("batch (--all): no member of the superseded result is delivered; the next wait delivers each once", async () => {
     for (const id of ["a", "b"]) mk(id);
     registerOwnedWait(db, "pi:s", [taskRef("a"), taskRef("b")]);
     for (const id of ["a", "b"]) close(id);
     const old = await waitForEvents(db, [], { ...base, mode: "all", beforePoll: supersede });
     expect(old.superseded).toBe(true);
-    expect(old.delivered.map((x) => x.id).sort()).toEqual(["a", "b"]);
+    expect(old.delivered).toEqual([]);
+    expect(old.refs.filter((x) => x.owed === true).map((x) => x.ref.id)).toEqual(["a", "b"]);
     expect(readCursors(db, "pi:s").size).toBe(0);
-    const json = printed(old);
-    expect(parseStopWait(json).kind).toBe("events");
-    const s = settle(async () => ({ code: 0, stdout: json, stderr: "" }));
-    expect((await s.emit())?.continue).toBe(true);
-    // Both members come back: printed twice in all.
+    expect(parseStopWait(printed(old)).kind).toBe("superseded");
     const next = await waitForEvents(db, [], { ...base, mode: "all" });
     expect(next.delivered.map((x) => x.id).sort()).toEqual(["a", "b"]);
   });
 });
 
-describe("a superseded result can be partly consumed (CURRENT, two callers)", () => {
-  it("--all as two callers, only one superseded: one member consumed, the result says superseded", async () => {
+describe("a superseded result can be partly consumed (NOW: narrowed, two callers)", () => {
+  it("--all as two callers, only one superseded: `delivered` names only the consumed member", async () => {
     for (const id of ["a", "b"]) mk(id);
     registerOwnedWait(db, "pi:s", [taskRef("a")]);
     registerOwnedWait(db, "w/orch", [taskRef("b")]);
@@ -233,11 +252,22 @@ describe("a superseded result can be partly consumed (CURRENT, two callers)", ()
       },
     });
     expect(r.superseded).toBe(true);
-    expect(r.delivered.map((x) => x.id).sort()).toEqual(["a", "b"]);
-    // CURRENT: b IS consumed (w/orch's generation applied), a is not; the flag covers both.
+    // b IS consumed (w/orch's generation applied), a is not: delivered says exactly that.
+    expect(r.delivered.map((x) => x.id)).toEqual(["b"]);
+    expect(r.refs.find((x) => x.ref.id === "a")?.owed).toBe(true);
     expect([...readCursors(db, "w/orch").keys()]).toEqual(["task:w/b"]);
     expect(readCursors(db, "pi:s").size).toBe(0);
-    // So "discard every superseded result" would lose b: it is never returned again.
+    // Printed: b delivered, a owed; the hook blocks over b only.
+    const d = (JSON.parse(printed(r)) as { data: { snapshots: Snap[] } }).data;
+    expect(d.snapshots.find((x) => x.ref === "task:w/b")).toMatchObject({ delivered: true });
+    expect(d.snapshots.find((x) => x.ref === "task:w/a")).toMatchObject({ owed: true });
+    const hook = parseStopWait(printed(r));
+    expect(hook.kind).toBe("superseded");
+    if (hook.kind !== "superseded") return;
+    expect(eventsReason("Keep driving.", "w/orch", 60, hook.data)).toContain(
+      "1 event:\n- task w/b CLOSED\n",
+    );
+    // Nothing lost: the next wait returns a, and only a.
     const again = await waitForEvents(db, [], {
       ...base,
       callers: ["pi:s", "w/orch"],

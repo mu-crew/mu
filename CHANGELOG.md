@@ -12,6 +12,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu wait --ready`: the ready batch** (hill-r2 A7, a7_ready_engine;
+  proposal a7_wait_drain_rca_2 P1/P2/P4 + a7_wait_drain_rca_3 D1/D2). One
+  wait returns every ready, never-returned completion, up to 5, as
+  `data.events` right after `firing`; an urgent event (dead, input, stall)
+  still fires alone, so exits 6 and 7 are unchanged. It is opt-in: it excludes
+  `--first` and `--all`, and a resume stores it. The commit guards every
+  member: a member another process consumed meanwhile is dropped, so it is
+  never printed by two waits. The members are never paged out of `snapshots`.
+  `reason` says "N events: …".
+- **Wait results mark what they consumed** (every mode). A snapshot reads
+  `delivered: true` when this result consumed it, and `owed: true` when it is
+  ready news the next wait returns. A top-level `owed: N` is never cut. Paging
+  order is firing, delivered, open, owed, rest. A result with owed news gets
+  the notice `N owed: mu wait --ready -w <ws>`, and its `next` is that
+  command.
+
 - **Eval: exposure-gated scoring for the hill-r2 tournament** (spec
   `docs/specs/2026-11-07-hill-r2-tournament.md` §4.1, §5, unit B3a).
   `tools/eval/exposure.ts` decides whether a probe row or an R4 run saw a
@@ -53,6 +69,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   process holds its -shm file, so a worker whose orchestrator slept gave up.
 
 ### Changed
+
+- **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
+  events arrive in one block, one line per event, plus a line for what is
+  still owed, instead of one block per event. A superseded wait that consumed
+  nothing lets the turn end while the newer wait is live, and otherwise waits
+  once more. A partly consumed one blocks over what it delivered. The empty
+  block says "run `mu wait --ready` in the background".
+- **A superseded wait result is narrowed.** `delivered` keeps only the
+  members whose caller's generation applied; the others read `owed`.
+  `eventConsumed` says whether the firing event was consumed. Before this,
+  `superseded:true` covered a result that, with two callers, had partly been
+  consumed.
+- `select()` moved from src/wait.ts (1527 LOC, over the cap) to
+  src/wait-select.ts.
 
 - **A pipe gets no colour, inside tmux too.** mu forced ANSI colour
   whenever `$TMUX` was set (67014c7a, for `watch --color mu hud`), so a
