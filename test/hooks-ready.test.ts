@@ -72,8 +72,50 @@ describe("screenReady (codex)", () => {
     expect(screenReady(codex, "~/repo main ❯ \n")).toBe(false);
   });
 
-  it("only codex has marks: claude, cursor-agent and pi report their start; Muse is unverified", () => {
-    expect(HARNESSES.filter((h) => HARNESS_TABLE[h].readyMarks !== null)).toEqual(["codex"]);
+  it("only codex and Muse have marks: claude, cursor-agent and pi report their start", () => {
+    expect(HARNESSES.filter((h) => HARNESS_TABLE[h].readyMarks !== null)).toEqual([
+      "codex",
+      "muse",
+    ]);
+  });
+});
+
+const muse = HARNESS_TABLE.muse.readyMarks;
+if (muse === null) throw new Error("muse has ready marks");
+
+/** Muse Code 1.4.15 under its launcher, captured live: the banner, then Muse's own screen. */
+const MUSE_BANNER = [
+  "Muse Code at Example (https://example.invalid/muse)",
+  "Using a model gateway",
+  "muse: gate plugins: on (MUSE_EXPERIMENTAL_PLUGINS)",
+  "",
+].join("\n");
+const MUSE_READY = [
+  "  Muse Code 1.4.15",
+  "  Skills: 57 loaded · 1 warning · 1 detail hidden (ctrl+o to expand)",
+  "── Voice input (alt(option)+v to start) ──────────────────────",
+  "❯",
+  "──────────────────────────────────────────────────────────────",
+  "  model-x · high · /private/tmp/x · Launch overrides",
+  "",
+].join("\n");
+
+describe("screenReady (Muse)", () => {
+  it("the launcher's banner is not ready; Muse's header, voice bar and ❯ line are", () => {
+    expect(screenReady(muse, MUSE_BANNER)).toBe(false);
+    expect(screenReady(muse, `${MUSE_BANNER}${MUSE_READY}`)).toBe(true);
+  });
+
+  it("a shell prompt left after Muse exited is not ready", () => {
+    expect(screenReady(muse, `${MUSE_BANNER}${MUSE_READY}~/repo ❯\n`)).toBe(false);
+  });
+
+  it("the pasted text is held until submitted; after it, the prompt sits above an empty ❯", () => {
+    const typed = MUSE_READY.replace("❯", `❯ ${POINTER}`);
+    expect(inputHolds(muse, typed, POINTER)).toBe(true);
+    const sent = MUSE_READY.replace("── Voice", `❯ ${POINTER}\n◆ OK\n── Voice`);
+    expect(inputHolds(muse, sent, POINTER)).toBe(false);
+    expect(screenReady(muse, sent)).toBe(true);
   });
 });
 
