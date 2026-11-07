@@ -28,6 +28,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   The 3.x-to-4.0 move is now a section of `docs/guide/upgrade.md`. The
   recovery recipe says when a respawn needs `--attempt <task>-2`.
 
+### Fixed
+
+- **Help text matches 4.5's behaviour.** `mu --help` names Rex beside tmux
+  and herdr. `agent send --steer` says it is pi-only and that a hook harness
+  refuses it. `agent send --timeout` and `agent abort --timeout` say what
+  they wait for: pi, or a local hook harness that reports its interrupt
+  (codex, muse, cursor-agent); claude and remote hook workers are not
+  waited on. `task verdict --help` and
+  its missing-verdict error show the skill's `VERDICT: <id>
+  CONFIRMED|REFUTED|UNVERIFIED <line>` form.
+
 ## [4.5.0] — 2026-11-07
 
 Every agent CLI is first-class: claude, codex, cursor-agent and Muse Code

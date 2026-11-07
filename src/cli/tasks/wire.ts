@@ -379,7 +379,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("verdict <id> [text]")
     .description(
-      "Record a check's answer: a `VERDICT: CONFIRMED | REFUTED | UNVERIFIED` line, then EVIDENCE lines. `-` reads it from stdin (mu task verdict <id> --check <check> - <<'EOF'). The last verdict wins.",
+      "Record a check's answer: a `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <line>` line, then EVIDENCE lines. `-` reads it from stdin (mu task verdict <id> --check <check> - <<'EOF'). The last verdict wins.",
     )
     .option("--check <id>", "the check id `mu task check` printed")
     .option(...WORKSTREAM_OPT)

@@ -1156,7 +1156,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--steer",
-      "if pi is busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt. Refused on a hook harness",
+      "pi (control socket) only: if busy, deliver after the current tool calls finish, before the next model call (default: after the run ends); does not stop a running tool: use --interrupt. A hook harness refuses it",
     )
     .option(
       "--interrupt",
@@ -1164,7 +1164,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--timeout <seconds>",
-      "with --interrupt: max seconds to wait for pi to settle (default 30)",
+      "with --interrupt: max seconds to wait for the stop to be confirmed: pi, or a local hook harness that reports its interrupt (codex, muse, cursor-agent); claude and remote hook workers are not waited on (default 30)",
       parsePositiveNumber,
     )
     .option(
@@ -1282,7 +1282,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--timeout <seconds>",
-      "max seconds to wait for pi to settle (default 30)",
+      "max seconds to wait for the stop to be confirmed: pi, or a local hook harness that reports its interrupt (codex, muse, cursor-agent); claude and remote hook workers are not waited on (default 30)",
       parsePositiveNumber,
     )
     .option(...WORKSTREAM_OPT)

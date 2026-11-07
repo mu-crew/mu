@@ -564,7 +564,7 @@ export const MESSAGES = {
     `--by needs <harness> or <harness>/<model> (e.g. --by codex, --by claude/opus), harness one of ${harnesses.join(", ")}; got ${JSON.stringify(by)}`,
   "check.brief_empty": () => "the check's brief is empty; pass it with --brief - <<'EOF'",
   "check.verdict_line": () =>
-    "a verdict needs a line starting VERDICT: CONFIRMED | REFUTED | UNVERIFIED, then the EVIDENCE: lines",
+    "a verdict needs a line `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <line>`, then the EVIDENCE: lines",
 } as const satisfies Record<string, (...facts: never[]) => string>;
 
 export type MessageKey = keyof typeof MESSAGES;
