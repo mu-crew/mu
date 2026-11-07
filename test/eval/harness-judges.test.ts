@@ -469,6 +469,19 @@ describe("E6 interrupt and resend", () => {
     ];
     clean(await judge("e6_interrupt_resend", golden({ workers })));
   });
+  it("a resend sent on stdin is carried", async () => {
+    clean(
+      await judge(
+        "e6_interrupt_resend",
+        golden({
+          autCalls: [
+            [-31000, "agent send w1 -w eval --interrupt -"],
+            [-31000, "agent send w2 -w eval --interrupt -"],
+          ],
+        }),
+      ),
+    );
+  });
   it("a resend no mu call carried", async () => {
     flagged(
       await judge(
