@@ -28,10 +28,8 @@ import {
   assertB0,
   assertFrozen,
   assertNoPendingStops,
-  BASE,
   type ControlRow,
   coldFile,
-  cut,
   epochOf,
   GATE,
   type IsolationRow,
@@ -43,7 +41,6 @@ import {
   roundJobs,
   rowDir,
   type SetupRow,
-  scoreRound,
   setupOf,
   WEAK,
   wallEstimate,
@@ -57,7 +54,6 @@ import {
   HOLDOUTS,
   judgesHash,
   listCandidates,
-  parseManifest,
   type VariantRow,
 } from "./tournament-build.ts";
 import {
@@ -70,8 +66,10 @@ import {
   packTokens,
   runDesigner,
 } from "./tournament-design.ts";
+import { parseManifest } from "./tournament-patch.ts";
 import { runFinal, runR4Gate, runScan } from "./tournament-r4.ts";
 import { writeReport } from "./tournament-report.ts";
+import { BASE, cut, scoreRound } from "./tournament-score.ts";
 import type { Surface } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));

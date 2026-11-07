@@ -19,36 +19,24 @@ import {
   assertB0,
   assertFrozen,
   assertNoPendingStops,
-  BASE,
   type ControlRow,
-  cut,
   JudgesChangedError,
   nPlan,
   pendingStops,
   ReviewPendingError,
-  rank,
   readControl,
   roundJobs,
-  type ScoreInput,
   type SetupRow,
-  scoreRound,
-  type VariantScore,
 } from "../../tools/eval/tournament.ts";
 import {
   admit,
   behaviourDiff,
   type CorpusFile,
-  changedStrings,
   deriveMarkers,
   type GoldenTrace,
   lengthCap,
   lengthViolations,
   newNames,
-  parseManifest,
-  parsePatch,
-  pathsOutside,
-  stringLiterals,
-  wordDiff,
 } from "../../tools/eval/tournament-build.ts";
 import {
   auditSession,
@@ -63,6 +51,22 @@ import {
   packTokens,
   scrubPack,
 } from "../../tools/eval/tournament-design.ts";
+import {
+  changedStrings,
+  parseManifest,
+  parsePatch,
+  pathsOutside,
+  stringLiterals,
+  wordDiff,
+} from "../../tools/eval/tournament-patch.ts";
+import {
+  BASE,
+  cut,
+  rank,
+  type ScoreInput,
+  scoreRound,
+  type VariantScore,
+} from "../../tools/eval/tournament-score.ts";
 
 // ---- synthetic rows -----------------------------------------------------------------------------
 

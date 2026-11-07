@@ -21,7 +21,8 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import type { Group, NextCase, St } from "./nextstep.ts";
 import { variantsOf } from "./nextstep.ts";
 import { launcherEnv, REAL_PI, systemPathDirs } from "./sandbox.ts";
-import { cloneDir, parseManifest } from "./tournament-build.ts";
+import { cloneDir } from "./tournament-build.ts";
+import { parseManifest } from "./tournament-patch.ts";
 import type { Sandbox } from "./types.ts";
 
 const EVAL_CACHE = join(homedir(), ".cache", "mu", "eval");
