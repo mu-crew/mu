@@ -2,7 +2,8 @@
 // 7 orchestrator settle turns; dogfood-switch F2). Pins TODAY's behaviour through the real CLI
 // (`mu wait ... --json`, in-process) and the real pi settle (extension/nudge.ts registerNudge),
 // not the wanted one. A fire-all-ready fix flips the expectations marked CURRENT; every event
-// must still be delivered exactly once. Real SQLite; no agents, no mux.
+// must still be delivered exactly once. a7_ready_settle flipped the settle pin (NOW: the settle
+// runs `mu wait --ready`). Real SQLite; no agents, no mux.
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -110,7 +111,7 @@ describe("N owned task closes through a bare `mu wait` (CURRENT: one per call)",
   });
 });
 
-describe("the pi settle over the real `mu wait` (CURRENT: one event per settle turn)", () => {
+describe("the pi settle over the real `mu wait --ready` (NOW: one batch per settle turn)", () => {
   const SESSION: MuNudgeCtx = { sessionManager: { getSessionId: () => "s1" } };
   const state: MuResult = {
     code: 0,
@@ -149,7 +150,7 @@ describe("the pi settle over the real `mu wait` (CURRENT: one event per settle t
     return { emit, waits };
   };
 
-  it("7 owned closes ready at one settle: 7 continued turns, one close each, then the turn ends", async () => {
+  it("7 owned closes ready at one settle: 2 continued turns (cap 5), each close once, then the turn ends", async () => {
     for (const id of CLOSES) mk(id);
     registerOwnedWait(
       db,
@@ -158,18 +159,26 @@ describe("the pi settle over the real `mu wait` (CURRENT: one event per settle t
     );
     for (const id of CLOSES) close(id);
     const s = settle();
-    const turns: string[] = [];
-    for (let i = 0; i < CLOSES.length; i++) {
+    const turns: string[][] = [];
+    const texts: string[] = [];
+    for (let i = 0; i < 2; i++) {
       const r = await s.emit();
       expect(r?.continue).toBe(true);
       const text = r?.entries?.[0]?.content ?? "";
-      const m = /"firing":\{"kind":"closed","ref":"task:w\/(\w+)"\}/.exec(text);
-      turns.push(m?.[1] ?? "?");
+      texts.push(text);
+      turns.push([...text.matchAll(/^- task w\/(\w+) CLOSED$/gm)].map((m) => m[1] ?? "?"));
     }
-    // CURRENT: N closes -> N settle turns (the live crew-hill2 repro: a2 .. b4a, 17:29-17:30Z).
-    expect(turns).toEqual(CLOSES);
+    // NOW (`mu wait --ready`): READY_BATCH_MAX (5) closes, one line each, then the other 2.
+    expect(turns).toEqual([CLOSES.slice(0, 5), CLOSES.slice(5)]);
+    expect(texts[0]).toContain("`mu wait --ready --on-stall exit --json` for you. 5 events:\n");
+    // The first turn names the 2 it did not deliver; the second owes nothing.
+    expect(texts[0]).toContain(
+      "\n\n2 more ready, not yet delivered: task w/b3a CLOSED, task w/b4a CLOSED (the next settle delivers them; or run mu wait --ready)",
+    );
+    expect(texts[1]).toContain("2 events:\n");
+    expect(texts[1]).not.toContain("not yet delivered");
     expect(await s.emit()).toBeUndefined(); // drained: nothing owed, the turn ends
-    expect(s.waits).toHaveLength(CLOSES.length + 1);
+    expect(s.waits).toHaveLength(3);
   });
 });
 

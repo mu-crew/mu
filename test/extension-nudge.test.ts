@@ -138,7 +138,7 @@ describe("the settle wait", () => {
     expect(state?.opts?.env).toEqual({ MU_MANAGED_AGENT: undefined, PI_SESSION_ID: "s1" });
     const [w] = mu.waits();
     expect(w?.args).toEqual([...SETTLE_WAIT_ARGS]);
-    expect(w?.args).toEqual(["wait", "--first", "--on-stall", "exit", "--json"]);
+    expect(w?.args).toEqual(["wait", "--ready", "--on-stall", "exit", "--json"]);
     expect(w?.opts).toEqual({ env: { PI_SESSION_ID: "s1" }, drainMs: SETTLE_DRAIN_MS });
   });
 

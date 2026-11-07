@@ -96,7 +96,7 @@ describe("parallelSettle", () => {
         .filter((c) => c[0] !== "state")
         .map((c) => c.slice(0, 2).join(" "))
         .sort(),
-    ).toEqual(["task owned-by", "wait --first"]);
+    ).toEqual(["task owned-by", "wait --ready"]);
     for (const release of f.held.splice(0)) release();
     const r = (await settled) as { entries: { customType: string }[]; continue?: boolean };
     // Every nudge's entry survives the merge (pi replaces entries per handler).

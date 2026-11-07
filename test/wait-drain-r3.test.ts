@@ -7,7 +7,7 @@
 //      newer wait prints them a second time. Single and batch (`--all`).
 //   3. a settle that meets delegates of two waves.
 // a7_ready_engine (unit A: engine, output, Stop hook) flipped the marks and superseded pins to the
-// new behaviour (marked NOW). What is still marked CURRENT is the pi settle (unit B, nudge.ts).
+// new behaviour, and a7_ready_settle (unit B: the pi settle, nudge.ts) the settle halves (NOW).
 // Real SQLite; no agents.
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MuResult, MuRunOpts } from "../extension/mu-run.js";
 import { type MuNudgeCtx, registerNudge } from "../extension/nudge.js";
+import { SUPERSEDED_LINE } from "../extension/settle-events.js";
 import { reasonOf } from "../src/cli/wait.js";
 import { waitData } from "../src/cli/wait-output.js";
 import { type Db, openDb } from "../src/db.js";
@@ -55,15 +56,21 @@ const mk = (id: string) =>
 const close = (id: string) => closeTask(db, id, { workstream: "w", evidence: "e" });
 const base = { pollMs: 1, sync: false, callers: ["pi:s"], timeoutMs: 30 } as const;
 
-/** `mu <argv>` in-process as pi session `sid` (caller `pi:<sid>`; no managed identity). */
+/** `mu <argv>` in-process as pi session `sid` (caller `pi:<sid>`; no managed identity). One at a
+ *  time: the in-process CLI captures one stdout (the settle reads answers in parallel). */
+let queue: Promise<unknown> = Promise.resolve();
 async function mu(sid: string, argv: readonly string[]): Promise<MuResult> {
   let r: MuResult = { code: 1, stdout: "", stderr: "no capture" };
-  await withEnv("PI_SESSION_ID", sid, () =>
-    withEnv("MU_MANAGED_AGENT", undefined, async () => {
-      const c = await runCliWire(argv, dbPath);
-      r = { code: c.exitCode ?? 0, stdout: c.stdout, stderr: c.stderr };
-    }),
+  const run = queue.then(() =>
+    withEnv("PI_SESSION_ID", sid, () =>
+      withEnv("MU_MANAGED_AGENT", undefined, async () => {
+        const c = await runCliWire(argv, dbPath);
+        r = { code: c.exitCode ?? 0, stdout: c.stdout, stderr: c.stderr };
+      }),
+    ),
   );
+  queue = run.catch(() => {});
+  await run;
   return r;
 }
 type Snap = { ref: string; status?: string; fired?: boolean } & Record<string, unknown>;
@@ -185,7 +192,7 @@ describe("RC3: snapshots say what this result consumed (NOW, every mode)", () =>
   });
 });
 
-describe("superseded generations deliver nothing of theirs (NOW: engine and Stop hook; settle CURRENT)", () => {
+describe("superseded generations deliver nothing of theirs (NOW: engine, Stop hook and settle)", () => {
   // A newer wait of the same caller begins.
   const supersede = async (): Promise<void> => {
     beginWait(db, "pi:s");
@@ -210,11 +217,13 @@ describe("superseded generations deliver nothing of theirs (NOW: engine and Stop
     // The Stop hook reads it as superseded: nothing consumed, so it lets the turn end.
     const hook = parseStopWait(json);
     expect(hook.kind).toBe("superseded");
-    // CURRENT (unit B): the settle still continues the turn with it.
+    // NOW (unit B): the settle shows one line, does not continue, waits no more, delivers nothing.
     const s = settle(async () => ({ code: 0, stdout: json, stderr: "" }));
     const turn = await s.emit();
-    expect(turn?.continue).toBe(true);
-    expect(turn?.entries?.[0]?.content).toContain('"superseded":true');
+    expect(turn?.continue).toBeUndefined();
+    expect(turn?.entries?.map((e) => e.content)).toEqual([SUPERSEDED_LINE]);
+    expect(s.waits).toHaveLength(1);
+    expect(s.delivered).toEqual([]);
     // The newer generation delivers the close: its only delivery.
     const again = await waitForEvents(db, [], base);
     expect(again.event.ref?.id).toBe("a");
@@ -277,13 +286,14 @@ describe("a superseded result can be partly consumed (NOW: narrowed, two callers
   });
 });
 
-describe("a settle over delegates of two waves (CURRENT)", () => {
-  it("interleaved waves A and B, all answered: one wave summary per turn, the other split off", async () => {
+describe("a settle over delegates of two waves (NOW: one union loop)", () => {
+  it("interleaved waves A and B, all answered: 1 turn, each wave summarised once, 4 bodies", async () => {
     const a1 = mkDelegate(db, "pi:s", { wave: "A" });
     const b1 = mkDelegate(db, "pi:s", { wave: "B" });
     const a2 = mkDelegate(db, "pi:s", { wave: "A" });
     const b2 = mkDelegate(db, "pi:s", { wave: "B" });
-    for (const c of [a1, b1, a2, b2]) answer(db, c, `VERDICT: CONFIRMED\nreport of ${c}`);
+    const all = [a1, b1, a2, b2];
+    for (const c of all) answer(db, c, `VERDICT: CONFIRMED\nreport of ${c}`);
     const s = settle((args, sid) => mu(sid, args));
     const turns: string[] = [];
     for (let i = 0; i < 4; i++) {
@@ -292,26 +302,67 @@ describe("a settle over delegates of two waves (CURRENT)", () => {
       expect(r.continue).toBe(true);
       turns.push(r.entries?.[0]?.content ?? "");
     }
-    // Each wave loop treats the other wave's answer as "another event" and breaks.
-    const heads = turns.map((t) =>
-      t
-        .split("\n")
-        .filter((l) => /^(Work you own|Wave |Another event)/.test(l))
-        .map((l) => l.replace(/ \(call [^)]*\)/g, "").slice(0, 80)),
-    );
-    const ran = "Work you own is still running, so the settle ran `mu wait --first --on-stall exi";
+    expect(turns).toHaveLength(1);
+    const text = turns[0] ?? "";
+    const count = (needle: string) => text.split(needle).length - 1;
+    const ran =
+      "Work you own is still running, so the settle ran `mu wait --ready --on-stall exit --json` for you. 4 events:";
     const sumA = "Wave A: 2/2 CONFIRMED, 0 REFUTED, 0 UNVERIFIED, 0 pending, 0 refused.";
     const sumB = "Wave B: 2/2 CONFIRMED, 0 REFUTED, 0 UNVERIFIED, 0 pending, 0 refused.";
-    // CURRENT: 4 answers in 2 waves take 3 continued turns. Turn 1: A1 fires, A's loop meets B1
-    // ("another event", shown as a lone answer block, no wave B summary) and breaks. Turn 2: A2
-    // fires and wave A's summary is printed a second time. Turn 3: B2 and wave B's summary.
-    expect(heads).toEqual([
-      [ran, sumA, "Another event came before the rest of wave A:"],
-      [ran, sumA],
-      [ran, sumB],
-    ]);
-    expect(s.delivered.slice(0, 3)).toEqual([[a1, b1], [a2], [b2]]);
-    expect(s.delivered[3]).toHaveProperty("before"); // turn 4: drained, the turn ends
-    expect(s.waits).toHaveLength(5);
+    expect(count(sumA)).toBe(1);
+    expect(count(sumB)).toBe(1);
+    // The text order: what ran and one line per event, the wave heads, then wave A, then wave B.
+    const at = (needle: string) => text.indexOf(needle);
+    expect(at(ran)).toBeGreaterThan(0);
+    expect(at(ran)).toBeLessThan(at("\nwave A in\nwave B in\n"));
+    expect(at("\nwave B in\n")).toBeLessThan(at(sumA));
+    expect(at(sumA)).toBeLessThan(at(sumB));
+    for (const [c, w] of [
+      [a1, "A"],
+      [b1, "B"],
+      [a2, "A"],
+      [b2, "B"],
+    ] as const)
+      expect(text).toContain(`(call ${c}) done, CONFIRMED: in wave ${w} below`);
+    // Each consumed answer has exactly one body, under its own wave.
+    for (const c of all) {
+      expect(count(`Delegate answer: call ${c},`)).toBe(1);
+      expect(count(`\nreport of ${c}`)).toBe(1);
+    }
+    expect(at(`report of ${a2}`)).toBeLessThan(at(sumB));
+    expect(at(`report of ${b1}`)).toBeGreaterThan(at(sumB));
+    // Delivered once each, and only what the text shows; the next settle owes nothing.
+    expect(s.delivered).toHaveLength(2);
+    expect([...((s.delivered[0] as string[] | undefined) ?? [])].sort()).toEqual([...all].sort());
+    expect(s.delivered[1]).toHaveProperty("before");
+    expect(s.waits).toHaveLength(2);
+  });
+
+  it("a wave summarised in an earlier settle prints only what is new: `wave A: 1 more in`", async () => {
+    const a1 = mkDelegate(db, "pi:s", { wave: "A" });
+    const a2 = mkDelegate(db, "pi:s", { wave: "A" });
+    mk("t");
+    registerOwnedWait(db, "pi:s", [taskRef("t")]);
+    answer(db, a1, `VERDICT: CONFIRMED\nreport of ${a1}`);
+    // The first settle's wave loop meets the close before a2 is in: summary so far, then the close.
+    let n = 0;
+    const s = settle(async (args, sid) => {
+      if (++n === 2) close("t");
+      if (n === 3) answer(db, a2, `VERDICT: REFUTED\nreport of ${a2}`);
+      return mu(sid, args);
+    });
+    const t1 = (await s.emit())?.entries?.[0]?.content ?? "";
+    expect(t1).toContain("It waited for wave A, which is not all in (below):");
+    expect(t1).toContain("Wave A: 1/2 CONFIRMED, 0 REFUTED, 0 UNVERIFIED, 1 pending, 0 refused.");
+    expect(t1).toContain("Another event came before the rest of wave A:");
+    const t2 = (await s.emit())?.entries?.[0]?.content ?? "";
+    // Not the whole wave again: the new answer, and the tally line.
+    expect(t2).toContain(
+      "It waited until wave A was in:\n\nwave A: 1 more in\nWave A: 1/2 CONFIRMED, 1 REFUTED, 0 UNVERIFIED, 0 pending, 0 refused.\n\nDelegate answer: call",
+    );
+    expect(t2).not.toContain(`(call ${a1})`);
+    expect(t2).toContain(`report of ${a2}`);
+    expect(t2).not.toContain(`report of ${a1}`);
+    expect(s.delivered.slice(0, 2)).toEqual([[a1], [a2]]);
   });
 });

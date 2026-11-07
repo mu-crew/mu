@@ -2,7 +2,7 @@
  * mu pi extension: the keep-driving settle wait, and the close nudge.
  *
  * Keep-driving (registerNudge): every completed settle of an orchestrator runs
- * `mu wait --first --on-stall exit --json` as this session's callers (the
+ * `mu wait --ready --on-stall exit --json` as this session's callers (the
  * inherited managed identity and pi:<session>). Producers (spawn/send/claim)
  * arm that wait from state, so no shell line is parsed. The turn ends only when
  * nothing is owed, the wait fails (shown), or the user cancels it. The rule
@@ -24,14 +24,16 @@
  * Delegate answers reach the model through the settle wait, never through a pi
  * echo: a `delegate` event is shown with that call's report (the durable task
  * note, capped, with a pointer), and an event of a wave waits for the rest of
- * the wave and shows ONE summary. `registerNudge` takes the delegate side's
+ * the wave and shows ONE summary (extension/settle-events.ts). `registerNudge` takes the delegate side's
  * `delivered` hook (mu-pi.ts); the delegate side sends a one-line wake only
  * when no live settle wait will catch a just-recorded answer (delegate.ts).
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { closeNudgeText, keepDrivingRule } from "../src/nudge-text.js";
+import { consumedEvents } from "../src/wait-event-text.js";
 import { defaultRunner, type MuRunner, parseEnvelope } from "./delegate.js";
+import { envelopeOf, type Run1, SUPERSEDED_LINE, settleBody } from "./settle-events.js";
 
 // The words are shared with the Stop hook of the other harnesses (src/hook-stop.ts).
 export { closeNudgeText, keepDrivingRule };
@@ -226,8 +228,8 @@ function outcomeOf(event: unknown): unknown {
 
 /** How long a cancelled wait may take to print its final snapshot before SIGKILL. */
 export const SETTLE_DRAIN_MS = 3000;
-/** The one wait the settle runs: whatever this caller owns, first event. */
-export const SETTLE_WAIT_ARGS = ["wait", "--first", "--on-stall", "exit", "--json"] as const;
+/** The one wait the settle runs: whatever this caller owns, every ready event (the ready batch). */
+export const SETTLE_WAIT_ARGS = ["wait", "--ready", "--on-stall", "exit", "--json"] as const;
 /**
  * The head of a settle entry while a human stop is open: the stop ends new work,
  * not the collection of what is already running (else results sit unmerged until
@@ -238,17 +240,6 @@ export const HUMAN_STOP_DRAIN =
 /** Escape, plain or in the kitty keyboard protocol. */
 // biome-ignore lint/suspicious/noControlCharactersInRegex: matching ESC is the point
 const ESC = /^\u001b(\[27(;\d+)*u)?$/;
-
-type Envelope = { ok?: unknown; error?: unknown; data?: Record<string, unknown> };
-
-function envelopeOf(stdout: string): Envelope | undefined {
-  try {
-    const v = JSON.parse(stdout) as Envelope | null;
-    return typeof v === "object" && v !== null && typeof v.ok === "boolean" ? v : undefined;
-  } catch {
-    return undefined;
-  }
-}
 
 function sessionIdOf(ctx: MuNudgeCtx | undefined): string | undefined {
   try {
@@ -298,110 +289,6 @@ function entry(content: string): unknown {
   return { type: "custom_message", customType: NUDGE_MESSAGE_TYPE, content, display: true };
 }
 
-/** One answer's report in a settle entry is cut to this many characters (tail of the pointer kept). */
-export const REPORT_CAP = 4000;
-/** In a wave summary, each answer shown in full is cut to this. */
-export const WAVE_REPORT_CAP = 1500;
-const PENDING_STATES = new Set(["queued", "starting", "running", "recording"]);
-
-/** A delegate call row as `mu delegates show|list --json` prints it (the fields read here). */
-type CallRow = {
-  callId: string;
-  task: string;
-  workstream: string;
-  state: string;
-  verdict?: string | null;
-  error?: string | null;
-  wave?: string | null;
-  record?: { workstream?: string; task?: string } | null;
-};
-type Run1 = (args: readonly string[]) => Promise<Envelope | undefined>;
-
-const recordOf = (c: CallRow): string | undefined =>
-  c.record?.workstream && c.record.task ? `${c.record.workstream}/${c.record.task}` : undefined;
-
-/** The call's report note (its full answer), or undefined when unreadable. */
-async function reportOf(mu: Run1, c: CallRow): Promise<string | undefined> {
-  const v = await mu(["task", "notes", c.task, "-w", c.workstream, "--json"]);
-  const items = (v?.ok === true ? v.data?.items : undefined) as
-    | { kind?: string; content?: string }[]
-    | undefined;
-  return items?.filter((n) => n.kind === "report").at(-1)?.content;
-}
-
-/**
- * One answer as the model reads it: a header (call, task, state, verdict, record),
- * then the report capped to `cap` with the pointer to the whole of it. A recorded
- * check with a verdict is the header only: the verdict is on its task already.
- */
-async function answerBlock(mu: Run1, c: CallRow, cap: number): Promise<string> {
-  const where = recordOf(c);
-  const notes = `mu task notes ${c.task} -w ${c.workstream}`;
-  const head = [
-    `Delegate answer: call ${c.callId}, task ${c.workstream}/${c.task}, ${c.state}`,
-    c.verdict ? `, ${c.verdict}` : "",
-    where ? `, recorded on ${where}` : "",
-    c.error ? `. Error: ${c.error}` : "",
-    ".",
-  ].join("");
-  if (where && c.verdict) return `${head} Full answer: ${notes}`;
-  const text = await reportOf(mu, c);
-  if (text === undefined) return `${head} Report unreadable here; read it: ${notes}`;
-  const body =
-    text.length > cap
-      ? `${text.slice(0, cap)}\n[... ${text.length - cap} more characters: ${notes}]`
-      : text;
-  return `${head}\n${body}`;
-}
-
-/** The ONE wave line: counts per verdict, then one line per call. */
-function waveSummary(wave: string, rows: CallRow[]): string {
-  const n = (p: (c: CallRow) => boolean) => rows.filter(p).length;
-  const refused = rows.filter((c) => c.state === "refused");
-  const counts = [
-    `${n((c) => c.verdict === "CONFIRMED")}/${rows.length} CONFIRMED`,
-    `${n((c) => c.verdict === "REFUTED")} REFUTED`,
-    `${n((c) => c.state !== "refused" && !PENDING_STATES.has(c.state) && c.verdict !== "CONFIRMED" && c.verdict !== "REFUTED")} UNVERIFIED`,
-    `${n((c) => PENDING_STATES.has(c.state))} pending`,
-    `${refused.length} refused`,
-  ].join(", ");
-  const lines = rows.map(
-    (c) =>
-      `- ${recordOf(c) ?? `${c.workstream}/${c.task}`}: ${c.state === "refused" ? "REFUSED, reissue it: mu_delegate_reissue" : (c.verdict ?? c.state)} (call ${c.callId})`,
-  );
-  return [`Wave ${wave}: ${counts}.`, ...lines].join("\n");
-}
-
-/** A wait result's `notices` (one line each; `waitData` never cuts them). */
-function noticesOf(d: Record<string, unknown>): string[] {
-  return Array.isArray(d.notices)
-    ? d.notices.filter((n): n is string => typeof n === "string")
-    : [];
-}
-
-/** The firing snapshot of a wait result, when its event is a delegate answer. */
-function firingDelegate(d: Record<string, unknown>): string | undefined {
-  const f = d.firing as { kind?: unknown; ref?: unknown } | undefined;
-  if (f?.kind !== "delegate" || typeof f.ref !== "string") return undefined;
-  return f.ref.startsWith("delegate:") ? f.ref.slice("delegate:".length) : undefined;
-}
-
-/**
- * The call ids of the delegate calls a wait result's snapshots still show (its owed picture), or
- * undefined when the result cut its snapshots (the picture is then unknown, not empty).
- */
-function pictureOf(d: Record<string, unknown>): Set<string> | undefined {
-  if (typeof d.snapshotsCut === "number" && d.snapshotsCut > 0) return undefined;
-  const snaps = Array.isArray(d.snapshots) ? (d.snapshots as { ref?: unknown }[]) : [];
-  return new Set(
-    snaps.flatMap((s) =>
-      typeof s.ref === "string" && s.ref.startsWith("delegate:")
-        ? [s.ref.slice("delegate:".length)]
-        : [],
-    ),
-  );
-}
-
 /**
  * Told which delegate answers a settle showed the model: their call ids, or
  * `{ before }` when the wait found nothing owed (every answer recorded before
@@ -415,15 +302,17 @@ const noDelivered: SettleDelivered = () => {};
 /**
  * The keep-driving settle wait. Every completed settle (no once-per-prompt latch,
  * no shell parsing: producers arm the wait from state) runs the ONE wait,
- * `mu wait --first --on-stall exit --json`, as this session's callers. The turn
+ * `mu wait --ready --on-stall exit --json`, as this session's callers. The turn
  * then ends only when the wait says nothing is owed (WaitNothingError, or drained),
  * the wait failed (shown), or the user cancelled it (Esc,
  * typed input, a dialog, shutdown). A heartbeat timeout with work still owed waits
- * again. An event continues the turn with the wait's own result (a wave's summary
- * replaces it: its snapshots predate the siblings' answers), which survives a
- * late hold (it was consumed). A delegate event adds that call's report; one of a
- * wave first waits for the rest of the wave (refused calls are listed, never
- * waited on) and adds ONE summary. An open human stop does not end the loop
+ * again. The events it consumed (the ready batch: one line each) continue the turn
+ * with the wait's own result (a wave's summary replaces it: its snapshots predate
+ * the siblings' answers), which survives a late hold (it was consumed). A delegate
+ * event adds that call's report; the waves of the batch first wait, in one loop,
+ * for the rest of every wave (refused calls are listed, never waited on) and add
+ * ONE summary each (settleBody). A superseded result that consumed nothing is one
+ * shown line and no continue: the newer wait returns its events. An open human stop does not end the loop
  * while work is owed: the entry leads with HUMAN_STOP_DRAIN (collect, start
  * nothing) instead of the keep-driving rule; `mu next`, its hints and stall
  * release refuse on their own.
@@ -440,6 +329,8 @@ export function registerNudge(
   if (process.env.MU_REMOTE === "1") return; // no mu DB on a remote host
   const rule = skillMd === undefined ? undefined : keepDrivingRule(skillMd);
   if (rule === undefined) return; // no markers: nothing true to quote
+  // The delegate calls earlier settles showed: a wave summarised once prints only what is new.
+  const everShown = new Set<string>();
 
   let current: AbortController | undefined;
   const cancel = (): void => current?.abort();
@@ -466,90 +357,6 @@ export function registerNudge(
       envelopeOf(
         (await run(args, undefined, undefined, { env }).catch(() => undefined))?.stdout ?? "",
       );
-    const call = async (id: string): Promise<CallRow | undefined> => {
-      const v = await mu(["delegates", "show", id, "--json"]);
-      return (v?.ok === true ? v.data?.call : undefined) as CallRow | undefined;
-    };
-    /**
-     * The report block(s) of a consumed delegate event. One of a wave keeps
-     * running the same owned wait while siblings are pending (refused ones are
-     * not waited on: they need a reissue), folding each sibling's answer into ONE
-     * summary; any other event ends that and is shown after it. A human stop does
-     * not end it: the wave is work already started.
-     */
-    const answers = async (
-      callId: string,
-      shown: Set<string>,
-      first: Record<string, unknown>,
-    ): Promise<{
-      blocks: string[];
-      /** A wave's: its label, whether every call was handed over, and its waits' notices. */
-      wave?: { label: string; complete: boolean; notices: string[] };
-    }> => {
-      shown.add(callId);
-      const c = await call(callId);
-      if (c === undefined)
-        return {
-          blocks: [
-            `Delegate answer: call ${callId}. Its row is unreadable here: mu delegates show ${callId}`,
-          ],
-        };
-      const wave = c.wave;
-      if (!wave) return { blocks: [await answerBlock(mu, c, REPORT_CAP)] };
-      const listed = async () => {
-        const v = await mu(["delegates", "list", "--wave", wave, "--json"]);
-        const items = (v?.ok === true ? v.data?.items : undefined) as CallRow[] | undefined;
-        return Array.isArray(items) ? items : [c];
-      };
-      const after: string[] = [];
-      const notices = new Set<string>(noticesOf(first));
-      let rows = await listed();
-      // Owed: a pending sibling, or a finished one whose event this wait has not yet handed over
-      // (the cursor still owes it: leaving it would repeat the summary one settle per call). The
-      // latest wait's picture says which: it drops what an earlier wait already consumed, so a
-      // sibling absent from it is not owed (waiting for it would never end).
-      let picture = pictureOf(first);
-      const owedRow = (r: CallRow) =>
-        PENDING_STATES.has(r.state) ||
-        (r.state !== "refused" && !shown.has(r.callId) && picture?.has(r.callId) !== false);
-      while (!ctl.signal.aborted && rows.some(owedRow)) {
-        const r = await wait(SETTLE_WAIT_ARGS);
-        const v = envelopeOf(r.stdout);
-        if (v?.ok === false && v.error === "WaitNothingError") break;
-        const d = v?.ok === true ? v.data : undefined;
-        if (d === undefined) {
-          after.push(
-            `The wave's wait failed (exit ${r.code}): ${(r.stdout.trim() || r.stderr.trim()).slice(0, 500)}`,
-          );
-          break;
-        }
-        if (d.interrupted === true || d.drained === true) break;
-        for (const n of noticesOf(d)) notices.add(n);
-        picture = pictureOf(d);
-        if (d.timedOut === true) continue;
-        const id = firingDelegate(d);
-        const sibling = id !== undefined && rows.some((x) => x.callId === id);
-        if (id !== undefined) shown.add(id);
-        if (sibling) {
-          rows = await listed();
-          continue;
-        }
-        // Another event ended the wave's wait: it is consumed, so it is shown too.
-        after.push(`Another event came before the rest of wave ${wave}:\n${JSON.stringify(d)}`);
-        const oc = id === undefined || sibling ? undefined : await call(id);
-        if (oc) after.push(await answerBlock(mu, oc, REPORT_CAP));
-        break;
-      }
-      rows = await listed();
-      const complete = !ctl.signal.aborted && after.length === 0 && !rows.some(owedRow);
-      const bodies = await Promise.all(
-        rows.filter((x) => shown.has(x.callId)).map((x) => answerBlock(mu, x, WAVE_REPORT_CAP)),
-      );
-      return {
-        blocks: [waveSummary(wave, rows), ...bodies, ...after],
-        wave: { label: wave, complete, notices: [...notices] },
-      };
-    };
     let result: SettleResult;
     try {
       result = await (async (): Promise<SettleResult> => {
@@ -579,27 +386,16 @@ export function registerNudge(
           if (d.drained === true) delivered({ before: started });
           if (d.interrupted === true || d.drained === true) return undefined; // cancelled, or nothing owed
           if (d.timedOut === true) continue; // work still owed: wait again
-          const callId = firingDelegate(d);
-          const shown = new Set<string>();
-          const got = callId === undefined ? undefined : await answers(callId, shown, d);
-          const blocks = got?.blocks ?? [];
-          if (shown.size > 0) delivered([...shown]);
+          // Superseded with nothing of its own consumed: the newer wait returns these events. Shown,
+          // not continued, and never waited again (that would supersede the newer wait in turn).
+          if (d.superseded === true && consumedEvents(d).length === 0)
+            return { entries: [entry(SUPERSEDED_LINE)] };
+          const ran = `Work you own is still running, so the settle ran \`mu ${SETTLE_WAIT_ARGS.join(" ")}\` for you.`;
+          const io = { wait: () => wait(SETTLE_WAIT_ARGS), mu, aborted: () => ctl.signal.aborted };
+          const body = await settleBody(io, d, ran, everShown);
+          if (body.shown.length > 0) delivered(body.shown);
           const stops = Array.isArray(d.humanNeeds) ? (d.humanNeeds as { reason?: unknown }[]) : [];
           const humanStop = needs > 0 || stops.length > 0;
-          const ran = `Work you own is still running, so the settle ran \`mu ${SETTLE_WAIT_ARGS.join(" ")}\` for you.`;
-          // A wave's summary supersedes the first wait's result: its snapshots predate the
-          // siblings' answers (they would still read "running"). Its notices (a course check
-          // due) are never cut by the wait, so they stay.
-          const w = got?.wave;
-          const head =
-            w !== undefined
-              ? [
-                  w.complete
-                    ? `${ran} It waited until wave ${w.label} was in:`
-                    : `${ran} It waited for wave ${w.label}, which is not all in (below):`,
-                  ...w.notices.map((n) => `Notice: ${n}`),
-                ]
-              : [`${ran} Its result:`, JSON.stringify(d)];
           const lead = humanStop
             ? [
                 `[mu] ${HUMAN_STOP_DRAIN}`,
@@ -608,7 +404,9 @@ export function registerNudge(
                 ),
               ]
             : [`[mu] ${rule}`];
-          const text = [...lead, "", ...head, ...blocks.flatMap((b) => ["", b])].join("\n");
+          const text = [...lead, "", ...body.head, ...body.blocks.flatMap((b) => ["", b])].join(
+            "\n",
+          );
           return { entries: [entry(text)], continue: true, receipt: true };
         }
       })();

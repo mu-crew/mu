@@ -15,7 +15,7 @@ For dispatch and merge. Not pi: `mu orchestrate -w <ws> --cli <harness>` (wait i
    ```
 
    Idle worker: `mu task claim <id> -w <ws> --for <w> --evidence "..."`; `git -C <cwd> fetch && git -C <cwd> rebase <base>` (conflict: `rebase --abort`, tell the human); `mu agent send <w> -w <ws> --fresh -`.
-4. Wait: managed/`pi:` bare `mu wait -w <ws>`; else spawn/`send` `next` or `mu wait task:<ws>/<id>` / `--as <ws>/<name>`. Exit 0: `data.firing` or `timedOut` (`data.resume`); 6: died, re-dispatch; 7: `mu agent read <w>`, answer.
+4. Wait: managed/`pi:` bare `mu wait --ready -w <ws>`; else spawn/`send` `next` or `mu wait task:<ws>/<id>` / `--as <ws>/<name>`. Exit 0: `data.firing` or `timedOut` (`data.resume`); 6: died, re-dispatch; 7: `mu agent read <w>`, answer.
 5. Merge. Close a finished worker: `mu agent close <w> -w <ws>` only previews; run its printed `--if <rev>`. Then step 1.
 
 ## Merging

@@ -78,6 +78,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   nothing lets the turn end while the newer wait is live, and otherwise waits
   once more. A partly consumed one blocks over what it delivered. The empty
   block says "run `mu wait --ready` in the background".
+- **pi's settle drains with `--ready`** (hill-r2 A7, a7_ready_settle;
+  proposal a7_wait_drain_rca_2 P3 + a7_wait_drain_rca_3 D1-D3). The settle
+  runs `mu wait --ready --on-stall exit --json`, so N ready closes and answers
+  cost ceil(N/5) turns instead of N (the crew-hill2 repro: 7 closes, 2 turns).
+  A batch entry says "N events:" with one line per event, then the answer
+  blocks as before (each at 1500 characters beside others). Delegates of
+  several waves share ONE wait loop, and each wave is summarised once; a wave
+  an earlier settle already summarised prints `wave A: 1 more in`, the tally
+  line and the new answers only. Owed news gets one line ("2 more ready, not
+  yet delivered: …"). A superseded result that consumed nothing is shown as
+  one line and does not continue the turn; a partly consumed one shows only
+  what it delivered. One event with nothing owed reads as before, byte for
+  byte. The words for events are shared with the Stop hook
+  (`src/wait-event-text.ts`). The orchestrator loop recipe's bare wait is
+  `mu wait --ready -w <ws>`.
 - **A superseded wait result is narrowed.** `delivered` keeps only the
   members whose caller's generation applied; the others read `owed`.
   `eventConsumed` says whether the firing event was consumed. Before this,
