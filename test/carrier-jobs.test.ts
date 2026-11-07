@@ -147,6 +147,7 @@ describe("carrier_jobs reservations", () => {
       }
     })();
     expect(err).toBeInstanceOf(CarrierJobUnstoppedError);
+    expect((err as Error).message).toContain("mu agent close w1 -w ws");
     expect(() =>
       insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1", reservation: "other" }),
     ).toThrow(CarrierJobUnstoppedError);

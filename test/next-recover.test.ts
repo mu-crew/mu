@@ -195,6 +195,7 @@ describe("dead worker: reaped through the id + pane CAS, then retried as a new a
     const r = await run();
     expect(kinds(r)).toEqual(["attention:a"]);
     expect(r.moves[0]?.reason).toMatch(/remote worker a-1 on box/);
+    expect(r.moves[0]?.reason).toContain("mu agent collect a-1 -w d, then mu agent close a-1 -w d");
     expect(getAgent(db, "a-1", "d")).toBeDefined();
     expect(getTask(db, "a", "d")).toMatchObject({ status: "IN_PROGRESS" });
     expect(db.prepare("SELECT COUNT(*) AS n FROM remote_recovery").get()).toEqual({ n: 0 });
@@ -218,7 +219,8 @@ describe("dead worker: reaped through the id + pane CAS, then retried as a new a
     const r = await run();
     expect(kinds(r)).toEqual(["attention:a"]);
     expect(r.moves[0]?.reason).toMatch(/remote worker a-1 on box .*job mule-42/);
-    expect(r.moves[0]?.reason).toContain("mu agent close a-1");
+    expect(r.moves[0]?.reason).toContain("mu agent close a-1 -w d stops it");
+    expect(r.moves[0]?.reason).toContain("mu agent collect a-1 -w d first");
     expect(getAgent(db, "a-1", "d")).toBeDefined();
   });
 });

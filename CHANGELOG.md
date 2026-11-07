@@ -90,6 +90,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `--interrupt`), a hooks owner `mu agent wait` then a plain send (or
   `--interrupt`), a mux owner a plain send; every variant shows the text as
   `- <<'EOF'`, and `-w` names the owner's own workstream.
+- **SQL refusals name the verb you typed.** `mu sql` refusals (BEGIN/COMMIT,
+  PRAGMA, ATTACH, DDL, id changes, bookkeeping writes, the `--write` opt-in)
+  and a capped read's `retrieve` said `mu db query` (or always `mu sql`); each
+  now names `mu sql` or `mu db query` as typed.
+- **Lease-carrier hints carry `-w`.** The `mu agent close <name>` hints of a
+  refused stop, a spawn fenced by an unstopped or reserved job, and a dead
+  remote worker in `mu task next --recover` now name the agent and
+  `-w <ws>` (the refused stop printed a literal `<name>`), so they run
+  outside the agent's own workstream.
 
 - **A malformed CLOSE refusal names the shape it wanted.** Every
   `no close (malformed): <reason>` (the task note, `mu wait`, `mu agent

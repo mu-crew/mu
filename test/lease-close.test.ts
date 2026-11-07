@@ -656,6 +656,7 @@ describe("every deletion path keeps the handle; close-by-name then stops it", ()
     const err = await failure(close());
     expect(err).toBeInstanceOf(CarrierStopRefusedError);
     expect((err as Error).message).toContain("job-1");
+    expect((err as Error).message).toContain("mu agent close worker-1 -w auth --abandon-job");
     expect(order()).toEqual([]);
     expect(reservation()?.job).toBe("job-1");
   });
@@ -765,7 +766,7 @@ describe("a reservation kept for a tree its never-launched rollback could not re
     const err = new CarrierJobUnstoppedError("worker-1", reservation() as CarrierJob);
     expect(err.reason).toContain(WT);
     expect(err.message).toContain(WT);
-    expect(err.message).toContain("--abandon-job");
+    expect(err.message).toContain("mu agent close worker-1 -w auth --abandon-job");
     expect(err.message).not.toMatch(/in progress/);
   });
 

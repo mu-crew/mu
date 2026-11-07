@@ -303,8 +303,8 @@ export async function scanRecovery(
             agent: w.agent.name,
             reason:
               job !== undefined
-                ? say("carrier.dead_worker", w.agent.name, job.host, job.job)
-                : `remote worker ${w.agent.name} on ${w.agent.host} has no pane: its tree is kept, not reaped (mu agent collect, then close it)`,
+                ? say("carrier.dead_worker", w.agent.name, workstream, job.host, job.job)
+                : `remote worker ${w.agent.name} on ${w.agent.host} has no pane: its tree is kept, not reaped (mu agent collect ${w.agent.name} -w ${workstream}, then mu agent close ${w.agent.name} -w ${workstream})`,
           });
         } else {
           out.push({

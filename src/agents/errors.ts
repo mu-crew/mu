@@ -94,17 +94,25 @@ export class CarrierJobUnstoppedError extends Error {
   public readonly reason: string | null;
   constructor(
     public readonly agentName: string,
-    reservation: Pick<CarrierJob, "job" | "host" | "launch" | "paneId"> & {
+    reservation: Pick<CarrierJob, "workstream" | "job" | "host" | "launch" | "paneId"> & {
       reason?: string | null;
     },
   ) {
     const reason = reservation.reason ?? null;
     super(
       reservation.job !== null
-        ? say("carrier.job_unstopped", agentName, reservation.job, reservation.host, reason)
+        ? say(
+            "carrier.job_unstopped",
+            agentName,
+            reservation.workstream,
+            reservation.job,
+            reservation.host,
+            reason,
+          )
         : say(
             "carrier.job_reserved",
             agentName,
+            reservation.workstream,
             reservation.host,
             reservation.launch,
             reservation.paneId,

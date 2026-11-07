@@ -144,4 +144,34 @@ describe("mu sql over the CLI", () => {
       db.prepare("SELECT intent FROM ops WHERE intent = 'sql.write' LIMIT 1").get(),
     ).toBeDefined();
   });
+
+  it.each([
+    [["sql"], "mu sql"],
+    [["db", "query"], "mu db query"],
+  ])("a refusal names the verb as typed (%j)", async (argv, verb) => {
+    db.close();
+    const message = async (sql: string): Promise<string> =>
+      String(
+        ((await runCliJson([...argv, sql], path)).doc as unknown as { message: string }).message,
+      );
+    expect(await message("UPDATE tasks SET title = 'cli'")).toMatch(
+      new RegExp(`^${verb} reads by default`),
+    );
+    expect(await message("BEGIN")).toMatch(new RegExp(`^${verb} runs inside`));
+    expect(await message("PRAGMA foreign_keys = OFF")).toMatch(new RegExp(`^${verb} allows only`));
+    expect(await message("DROP TABLE tasks")).toMatch(
+      new RegExp(`^${verb} cannot change the schema`),
+    );
+    expect(await message("DELETE FROM ops")).toMatch(new RegExp(`^${verb} cannot write ops`));
+    db = openDb({ path });
+  });
+
+  it("a capped read's retrieve names the verb as typed", async () => {
+    db.close();
+    const big =
+      "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400) SELECT i, 'xxxxxxxxxxxxxxxxxxxx' AS pad FROM n";
+    const { data } = await runCliJson<{ retrieve?: string }>(["sql", big], path);
+    expect(data.retrieve).toMatch(/^mu sql /);
+    db = openDb({ path });
+  });
 });

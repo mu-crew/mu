@@ -416,25 +416,37 @@ export const MESSAGES = {
     `host ${host} check failed: ${failed.join(", ")}`,
   "host.handback": (host: string, field: string, detail: string) =>
     `host ${host}: its ${field} template exited 3, a hand-back (a human must act, e.g. a hardware key)${detail === "" ? "" : `: ${detail}`}. Do not retry or ssh yourself: stop and ask`,
-  "carrier.stop_refused": (host: string, handle: string, why: string) =>
-    why === "stop-changed"
-      ? `host ${host}: the stop template changed since job ${handle} was recorded; stop it by hand with the old template, or mu agent close <name> --abandon-job`
+  "carrier.stop_refused": (
+    host: string,
+    handle: string,
+    why: string,
+    agent: { name: string; ws: string } | null = null,
+  ) => {
+    const abandon =
+      agent === null
+        ? "mu agent close <name> -w <ws> --abandon-job"
+        : `mu agent close ${agent.name} -w ${agent.ws} --abandon-job`;
+    return why === "stop-changed"
+      ? `host ${host}: the stop template changed since job ${handle} was recorded; stop it by hand with the old template, or ${abandon}`
       : why === "no-host"
-        ? `host ${host} has no profile; job ${handle} was not stopped: stop it by hand, or mu agent close <name> --abandon-job`
-        : `job handle ${JSON.stringify(handle)} on host ${host} is not a valid handle (A-Z a-z 0-9 . _ : @ -, 1 to 128 bytes); nothing was run`,
+        ? `host ${host} has no profile; job ${handle} was not stopped: stop it by hand, or ${abandon}`
+        : `job handle ${JSON.stringify(handle)} on host ${host} is not a valid handle (A-Z a-z 0-9 . _ : @ -, 1 to 128 bytes); nothing was run`;
+  },
   "carrier.stop_failed": (host: string, handle: string, detail: string) =>
     `host ${host}: stopping job ${handle} failed${detail === "" ? "" : `: ${detail}`}; its handle is kept`,
   "carrier.job_unstopped": (
     name: string,
+    ws: string,
     handle: string,
     host: string,
     reason: string | null = null,
   ) =>
     reason === null
-      ? `${name} has an unstopped job ${handle} on ${host}: mu agent close ${name}`
-      : `${name} has job ${handle} on ${host} kept with its reservation (${reason}): mu agent close ${name}`,
+      ? `${name} has an unstopped job ${handle} on ${host}: mu agent close ${name} -w ${ws}`
+      : `${name} has job ${handle} on ${host} kept with its reservation (${reason}): mu agent close ${name} -w ${ws}`,
   "carrier.job_reserved": (
     name: string,
+    ws: string,
     host: string,
     launch: string,
     pane: string | null,
@@ -442,9 +454,9 @@ export const MESSAGES = {
   ) =>
     launch === "none"
       ? reason !== null
-        ? `${name} is reserved by a lease spawn on ${host} that failed before launching its carrier and kept the reservation as the only pointer to what it left: ${reason}. Remove that on the host if it is still there, then drop the reservation: mu agent close ${name} --abandon-job`
-        : `${name} is reserved by a lease spawn on ${host} that has not launched its carrier (in progress, or its spawn was killed): mu agent close ${name}`
-      : `${name} is reserved by a lease spawn on ${host} whose carrier may have been launched (pane ${pane ?? "unknown"}) and whose job handle is unknown${reason === null ? "" : ` (${reason})`}: mu agent close ${name}, or mu agent close ${name} --abandon-job once that job is dealt with`,
+        ? `${name} is reserved by a lease spawn on ${host} that failed before launching its carrier and kept the reservation as the only pointer to what it left: ${reason}. Remove that on the host if it is still there, then drop the reservation: mu agent close ${name} -w ${ws} --abandon-job`
+        : `${name} is reserved by a lease spawn on ${host} that has not launched its carrier (in progress, or its spawn was killed): mu agent close ${name} -w ${ws}`
+      : `${name} is reserved by a lease spawn on ${host} whose carrier may have been launched (pane ${pane ?? "unknown"}) and whose job handle is unknown${reason === null ? "" : ` (${reason})`}: mu agent close ${name} -w ${ws}, or mu agent close ${name} -w ${ws} --abandon-job once that job is dealt with`,
   "carrier.job_unresolved": (
     name: string,
     ws: string,
@@ -475,10 +487,10 @@ export const MESSAGES = {
     `host ${host}: its transport changed while the spawn was admitted; nothing was launched, try again`,
   "carrier.rollback_kept": (name: string, ws: string, host: string, handle: string, why: string) =>
     `job ${handle} on ${host} was not stopped (${why}): its handle and any remote worktree are kept; once the host answers: mu agent close ${name} -w ${ws}`,
-  "carrier.dead_worker": (name: string, host: string, handle: string | null) =>
+  "carrier.dead_worker": (name: string, ws: string, host: string, handle: string | null) =>
     handle === null
-      ? `remote worker ${name} on ${host} has no pane, and its carrier may have dispatched a job whose handle is unknown: mu agent close ${name} (mu agent collect first keeps its commits)`
-      : `remote worker ${name} on ${host} has no pane, but its job ${handle} may still run there: mu agent close ${name} stops it (mu agent collect first keeps its commits)`,
+      ? `remote worker ${name} on ${host} has no pane, and its carrier may have dispatched a job whose handle is unknown: mu agent close ${name} -w ${ws} (mu agent collect ${name} -w ${ws} first keeps its commits)`
+      : `remote worker ${name} on ${host} has no pane, but its job ${handle} may still run there: mu agent close ${name} -w ${ws} stops it (mu agent collect ${name} -w ${ws} first keeps its commits)`,
   "host.channel_lost": (host: string, holder: string) => `host ${host}: channel ${holder} was lost`,
   "remote.prepare": (host: string, what: string, detail: string) =>
     `host ${host}: ${what}${detail === "" ? "" : `: ${detail}`}`,

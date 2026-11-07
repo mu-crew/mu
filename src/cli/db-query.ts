@@ -84,7 +84,13 @@ export interface DbQueryOptions {
   /** Scope `ready` / `blocked` / `blockers` to this workstream. Default: a
    *  managed worker's own, else the global views. */
   workstream?: string;
+  /** The verb as typed (`mu sql` or `mu db query`): refusals name it. Default `mu db query`. */
+  verb?: QueryVerb;
 }
+
+/** The two spellings of the SQL verb; a refusal names the one the caller typed. */
+export type QueryVerb = "mu sql" | "mu db query";
+const DEFAULT_VERB: QueryVerb = "mu db query";
 
 export async function cmdDbQuery(db: Db, query: string, opts: DbQueryOptions = {}): Promise<void> {
   try {
@@ -107,9 +113,10 @@ async function runQuery(db: Db, query: string, opts: DbQueryOptions): Promise<vo
   // wait behind every writer) to stamp nothing.
   const trimmed = query.trim();
   const write = opts.write === true;
+  const verb = opts.verb ?? DEFAULT_VERB;
   let stmt: Statement | undefined;
   try {
-    stmt = prepare(db, trimmed);
+    stmt = prepare(db, trimmed, verb);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!/more than one statement/i.test(msg)) throw err;
@@ -146,11 +153,11 @@ function isExplain(text: string): boolean {
 }
 
 /** One line: the statement writes and `--write` was not given. The verb is the text's first word (for the message only; a `WITH` or other lead word is left out). */
-function refuseWrite(text: string): UsageError {
+function refuseWrite(text: string, verb: QueryVerb): UsageError {
   const first = tokenAt(skipLeadingTrivia(text), 0)?.text.toUpperCase() ?? "";
-  const verb = /^(INSERT|UPDATE|DELETE|REPLACE)$/.test(first) ? `${first} ` : "";
+  const kind = /^(INSERT|UPDATE|DELETE|REPLACE)$/.test(first) ? `${first} ` : "";
   return new UsageError(
-    `mu sql reads by default: this ${verb}statement writes; add --write to run it`,
+    `${verb} reads by default: this ${kind}statement writes; add --write to run it`,
     { showHelp: false },
   );
 }
@@ -268,7 +275,7 @@ function tokenAt(sql: string, from: number): Token | undefined {
  * tokens: an optional `EXPLAIN [QUERY PLAN]`, `PRAGMA`, `[schema.]name`, and
  * whether `=` or `(` follows. Any other statement is none of its business.
  */
-function guardPragma(sql: string): void {
+function guardPragma(sql: string, verb: QueryVerb): void {
   const word = (i: number): Token | undefined => tokenAt(sql, skipTrivia(sql, i, false));
   let tok = tokenAt(sql, skipTrivia(sql, 0, true));
   if (tok?.text.toLowerCase() === "explain") {
@@ -292,20 +299,19 @@ function guardPragma(sql: string): void {
     return;
   }
   throw new UsageError(
-    `mu db query allows only read-only PRAGMAs (${[...READ_PRAGMAS_WITH_ARG, ...READ_PRAGMAS_BARE].join(", ")}), not PRAGMA ${name?.text ?? ""}; it never changes the connection or the file (use sqlite3 yourself for that)`,
+    `${verb} allows only read-only PRAGMAs (${[...READ_PRAGMAS_WITH_ARG, ...READ_PRAGMAS_BARE].join(", ")}), not PRAGMA ${name?.text ?? ""}; it never changes the connection or the file (use sqlite3 yourself for that)`,
     { showHelp: false },
   );
 }
 
 /** Compile `text`, after the PRAGMA allowlist. */
-function prepare(db: Db, text: string): Statement {
-  guardPragma(text);
+function prepare(db: Db, text: string, verb: QueryVerb): Statement {
+  guardPragma(text, verb);
   return db.prepare(text);
 }
 
 // ─── what a statement does, from SQLite's own listing ─────────────────
 
-const USER_TRANSACTION_MESSAGE = "mu db query runs inside mu's transaction; remove BEGIN/COMMIT";
 const PROTECTED_TABLES = new Set([
   "op_ctx",
   "op_dying",
@@ -355,46 +361,48 @@ const skipLeadingTrivia = (sql: string): string => sql.slice(skipTrivia(sql, 0, 
  * CLOSED: if SQLite cannot list the statement, the error propagates. The one
  * exception is a statement that is itself EXPLAIN, which never runs its body.
  */
-export function checkStatement(db: Db, statement: string): void {
+export function checkStatement(db: Db, statement: string, verb: QueryVerb = DEFAULT_VERB): void {
   const text = skipLeadingTrivia(statement);
   let rows: ExplainRow[];
   try {
-    rows = prepare(db, `EXPLAIN ${text}`).all([]) as ExplainRow[];
+    rows = prepare(db, `EXPLAIN ${text}`, verb).all([]) as ExplainRow[];
   } catch (err) {
     if (/^explain\b/i.test(text)) return;
     throw err;
   }
   if (rows.some((r) => r.opcode === "AutoCommit" || r.opcode === "Savepoint")) {
-    throw new UsageError(USER_TRANSACTION_MESSAGE, { showHelp: false });
+    throw new UsageError(`${verb} runs inside mu's transaction; remove BEGIN/COMMIT`, {
+      showHelp: false,
+    });
   }
   if (rows.some((r) => r.opcode === "Function" && /^sqlite_(attach|detach)\(/.test(r.p4 ?? ""))) {
     throw new UsageError(
-      "mu db query cannot ATTACH or DETACH a database: it works on this one only (open the file with sqlite3 yourself for that)",
+      `${verb} cannot ATTACH or DETACH a database: it works on this one only (open the file with sqlite3 yourself for that)`,
       { showHelp: false },
     );
   }
   const refused = firstProtectedWrite(db, rows);
   if (refused === SCHEMA) {
     throw new UsageError(
-      "mu db query cannot change the schema (no CREATE/DROP/ALTER, TEMP included): `mu db backup` first and edit a copy with sqlite3, or `mu db forget`",
+      `${verb} cannot change the schema (no CREATE/DROP/ALTER, TEMP included): \`mu db backup\` first and edit a copy with sqlite3, or \`mu db forget\``,
       { showHelp: false },
     );
   }
   if (refused?.startsWith(ID_CHANGE) === true) {
     throw new UsageError(
-      `mu db query cannot change the id of ${refused.slice(ID_CHANGE.length)}: ids are set once at INSERT (omit the id there); to renumber, DELETE and INSERT a new row`,
+      `${verb} cannot change the id of ${refused.slice(ID_CHANGE.length)}: ids are set once at INSERT (omit the id there); to renumber, DELETE and INSERT a new row`,
       { showHelp: false },
     );
   }
   if (refused === "sync_peers") {
     throw new UsageError(
-      "mu db query cannot write sync_peers: those are sync watermarks, and a forged one skips peer ops for good (`mu sync --repair <peer>` re-reads a peer from the start)",
+      `${verb} cannot write sync_peers: those are sync watermarks, and a forged one skips peer ops for good (\`mu sync --repair <peer>\` re-reads a peer from the start)`,
       { showHelp: false },
     );
   }
   if (refused !== undefined) {
     throw new UsageError(
-      `mu db query cannot write ${refused}: it is mu's capture bookkeeping (op_ctx, op_dying, ops, schema_version, machine_identity, sqlite_sequence)`,
+      `${verb} cannot write ${refused}: it is mu's capture bookkeeping (op_ctx, op_dying, ops, schema_version, machine_identity, sqlite_sequence)`,
       { showHelp: false },
     );
   }
@@ -538,11 +546,11 @@ function teachColumnError(db: Db, query: string, err: unknown): unknown {
  * built (a trigger on a table the script just created), and a refusal
  * throws, so the scope ROLLs BACK everything that ran before it.
  */
-function runScript(db: Db, sql: string, write: boolean): void {
+function runScript(db: Db, sql: string, write: boolean, verb: QueryVerb): void {
   let start = 0;
   const runOne = (text: string, stmt: Statement): void => {
-    checkStatement(db, text);
-    if (!write && !stmt.readonly && !isExplain(text)) throw refuseWrite(text);
+    checkStatement(db, text, verb);
+    if (!write && !stmt.readonly && !isExplain(text)) throw refuseWrite(text, verb);
     if (stmt.reader) stmt.all([]);
     else stmt.run([]);
   };
@@ -550,7 +558,7 @@ function runScript(db: Db, sql: string, write: boolean): void {
     const text = sql.slice(start, end + 1);
     let stmt: Statement;
     try {
-      stmt = prepare(db, text);
+      stmt = prepare(db, text, verb);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/incomplete input/i.test(msg)) continue; // statement continues past this `;`
@@ -565,7 +573,7 @@ function runScript(db: Db, sql: string, write: boolean): void {
   }
   const rest = sql.slice(start);
   try {
-    runOne(rest, prepare(db, rest));
+    runOne(rest, prepare(db, rest, verb));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (!/no statements/i.test(msg)) throw err;
@@ -618,11 +626,12 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
   // multi-statement migrations / cleanup scripts a one-shot.
   // `cmdDbQuery` prepared the statement once;
   // undefined means "more than one statement".
+  const verb = opts.verb ?? DEFAULT_VERB;
   if (stmt === undefined) {
     if (opts.confirmRows !== undefined) {
       const expected = opts.confirmRows;
       const { actual } = runConfirmed(db, expected, () =>
-        runScript(db, trimmed, opts.write === true),
+        runScript(db, trimmed, opts.write === true, verb),
       );
       const n = countTopLevelStatements(trimmed);
       if (opts.json) {
@@ -641,7 +650,7 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
       );
       return;
     }
-    runScript(db, trimmed, opts.write === true);
+    runScript(db, trimmed, opts.write === true, verb);
     const n = countTopLevelStatements(trimmed);
     if (opts.json) {
       emitJson({ statements: n, multiStatement: true });
@@ -652,8 +661,9 @@ function runSql(db: Db, trimmed: string, stmt: Statement | undefined, opts: DbQu
   }
 
   const single = stmt;
-  checkStatement(db, trimmed);
-  if (opts.write !== true && !single.readonly && !isExplain(trimmed)) throw refuseWrite(trimmed);
+  checkStatement(db, trimmed, verb);
+  if (opts.write !== true && !single.readonly && !isExplain(trimmed))
+    throw refuseWrite(trimmed, verb);
   // better-sqlite3's prepared-statement metadata is the source of truth;
   // prefix guesses miss PRAGMA reads and comment-prefixed SELECTs.
   // `readonly` (not `reader`) decides whether --confirm-rows applies:
@@ -847,11 +857,11 @@ export function countTopLevelStatements(sql: string): number {
   return count;
 }
 
-/** The same read, uncapped: `mu db query '<sql>' [-w <effective ws>] --all`. */
+/** The same read, uncapped: `<verb> '<sql>' [-w <effective ws>] --all`. */
 function retrieveCommand(query: string, opts: DbQueryOptions): string {
   const ws = opts.workstream ?? injectedWorkstream();
   const cmd = [
-    "mu db query",
+    opts.verb ?? DEFAULT_VERB,
     shellQuote(query),
     ...(ws === undefined ? [] : ["-w", shellWord(ws)]),
     "--all",
@@ -959,6 +969,8 @@ function wireQuery(cmd: Command): void {
     .action(function (query: string) {
       const cmd = this as Command;
       const opts = cmd.opts() as DbQueryOptions;
+      // Refusals and hints name the verb as typed: `mu sql` or `mu db query`.
+      opts.verb = cmd.name() === "sql" ? "mu sql" : "mu db query";
       // JSON unless --table; an explicit --json wins (isJsonMode reads argv the same way).
       opts.json = opts.json === true || opts.table !== true;
       // `mu db -w a query ...`: the namespace's own -w is the same flag, in

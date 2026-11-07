@@ -359,7 +359,9 @@ export async function rollbackLeaseJob(
       return kept(job.host, handle, "its pane is not proven gone");
     }
     try {
-      await runStop(db, job.host, handle, job.hostStop);
+      await runStop(db, job.host, handle, job.hostStop, {
+        agent: { name: job.name, ws: job.workstream },
+      });
     } catch (e) {
       return kept(job.host, handle, `stop failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -548,7 +550,7 @@ export async function stopLeaseReservation(
     }
   }
   const handle = r.job;
-  await runStop(db, r.host, handle, r.hostStop);
+  await runStop(db, r.host, handle, r.hostStop, { agent: { name: r.name, ws } });
   // Proven stopped: its record goes now, whether or not a job file is left to clean.
   dropStopFailed(leaseJobFile(db, ws, r.name), handle);
   return { reservation: r, action: "stopped", facts: `job ${handle}` };

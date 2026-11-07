@@ -897,7 +897,7 @@ describe("refusals before any effect", () => {
     const err = await spawn({ cwd: "/srv/repo" }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(CarrierJobUnstoppedError);
     expect((err as Error).message).toBe(
-      "worker-1 has an unstopped job job-9 on dev: mu agent close worker-1",
+      "worker-1 has an unstopped job job-9 on dev: mu agent close worker-1 -w auth",
     );
     expect(order().length).toBe(before);
     expect(mux.calls.filter(isPaneCall).length).toBe(panes);

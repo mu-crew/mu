@@ -277,7 +277,7 @@ describeIfTmux("lease spawn (real tmux, fake carrier script)", () => {
     const err = await spawn({ worktree: true }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(CarrierJobUnstoppedError);
     expect((err as Error).message).toBe(
-      `worker-1 has an unstopped job ${job} on dev: mu agent close worker-1`,
+      `worker-1 has an unstopped job ${job} on dev: mu agent close worker-1 -w ${ws}`,
     );
     expect(lines().filter((l) => l === "exec add")).toHaveLength(1);
   }, 30_000);

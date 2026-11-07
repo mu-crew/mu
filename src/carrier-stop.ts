@@ -31,8 +31,10 @@ export class CarrierStopRefusedError extends Error {
     public readonly host: string,
     public readonly handle: string,
     why: "stop-changed" | "no-host" | "bad-handle",
+    /** The agent whose job this is, so the way out names it with its -w. */
+    agent: { name: string; ws: string } | null = null,
   ) {
-    super(say("carrier.stop_refused", host, handle, why));
+    super(say("carrier.stop_refused", host, handle, why, agent));
   }
 }
 
@@ -66,17 +68,24 @@ export async function runStop(
   host: string,
   handle: string,
   hostStop: string,
-  opts: ChannelOpts & { timeoutMs?: number } = {},
+  opts: ChannelOpts & {
+    timeoutMs?: number;
+    /** The job's agent: a refusal's `--abandon-job` hint names it with its -w. */
+    agent?: { name: string; ws: string };
+  } = {},
 ): Promise<void> {
-  if (!JOB_HANDLE_RE.test(handle)) throw new CarrierStopRefusedError(host, handle, "bad-handle");
+  const agent = opts.agent ?? null;
+  if (!JOB_HANDLE_RE.test(handle))
+    throw new CarrierStopRefusedError(host, handle, "bad-handle", agent);
   let current: string | null;
   try {
     current = getHost(db, host).stop;
   } catch (e) {
-    if (e instanceof HostNotFoundError) throw new CarrierStopRefusedError(host, handle, "no-host");
+    if (e instanceof HostNotFoundError)
+      throw new CarrierStopRefusedError(host, handle, "no-host", agent);
     throw e;
   }
-  if (current !== hostStop) throw new CarrierStopRefusedError(host, handle, "stop-changed");
+  if (current !== hostStop) throw new CarrierStopRefusedError(host, handle, "stop-changed", agent);
   // The admission snapshot is the profile that runs: a change between the check above and
   // the channel is the same refusal, and nothing runs.
   const run = await withHostChannel(
@@ -85,7 +94,7 @@ export async function runStop(
     `stop:${handle}`,
     (profile, lease) => {
       if (profile.stop !== hostStop)
-        throw new CarrierStopRefusedError(host, handle, "stop-changed");
+        throw new CarrierStopRefusedError(host, handle, "stop-changed", agent);
       return runLeasedTemplate(
         db,
         lease,
