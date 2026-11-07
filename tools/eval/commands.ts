@@ -21,6 +21,7 @@ import {
 } from "./check-rules.ts";
 import { scenarioDir, sshShim } from "./fixtures.ts";
 import {
+  AUT_FLAGS,
   AUT_HARNESSES,
   type AutHarness,
   autSkill,
@@ -32,10 +33,11 @@ import {
   which,
 } from "./harness.ts";
 import { armWatch, settleWatch, watchRealState } from "./isolation.ts";
+import { bindScenario, MIX_CASES, mixEnv, type PlanRow, planRows } from "./mix.ts";
 import { pretrust, pretrustTargets } from "./pretrust.ts";
 import { toMarkdown } from "./report.ts";
 import { runAut } from "./runner.ts";
-import { runPaneAut } from "./runner-pane.ts";
+import { ENV_FAILURE, runPaneAut } from "./runner-pane.ts";
 import { createSandbox, FAUX_EXT, sh } from "./sandbox.ts";
 import {
   checkScenarioRoot,
@@ -118,8 +120,10 @@ export interface RunOne {
   auTScript?: string;
   quietMs?: number;
   maxProds?: number;
-  /** The AUT's harness (default pi, over rpc); claude and codex run in a pane (runner-pane.ts). */
+  /** The AUT's harness (default pi, over rpc); the hook harnesses run in a pane (runner-pane.ts). */
   harness?: AutHarness;
+  /** A mix case's worker harnesses (`--workers`, in its roles' order); default: the case's own. */
+  workers?: readonly string[];
   /** Real HOME, env and auth, and the user's harness binaries for the AUT and its workers (default: fakes). */
   live?: boolean;
   /** With `live`: fake worker binaries anyway (only the AUT is real, as in a pi scenario). */
@@ -128,7 +132,12 @@ export interface RunOne {
   tools?: HookTools;
 }
 
-/** A live pane AUT's command: EVAL_AUT_COMMAND, else the user's launcher when workers are fakes, plus --model. */
+/**
+ * A pane AUT's command (`mu orchestrate --command`): EVAL_AUT_COMMAND, else the harness with its
+ * AUT_FLAGS (cursor-agent's and Muse's trust and approval flags, in check too: the fakes ignore
+ * them), the user's launcher by path when a live run's workers are fakes, and a live --model.
+ * undefined: mu's own command for the harness.
+ */
 export function autCommand(o: {
   harness: AutHarness;
   model: string;
@@ -139,13 +148,15 @@ export function autCommand(o: {
   const env = o.env ?? process.env;
   const fixed = env.EVAL_AUT_COMMAND?.trim();
   if (fixed) return fixed;
-  if (!o.live) return undefined;
+  const flags = o.harness === "pi" ? [] : AUT_FLAGS[o.harness];
+  const tail = flags.length > 0 ? ` ${flags.join(" ")}` : "";
+  if (!o.live) return tail === "" ? undefined : `${o.harness}${tail}`;
   const model = o.model === "" || o.model === "default" ? "" : ` --model ${o.model}`;
   if (o.fakeWorkers) {
     const real = which(o.harness, env.PATH);
-    return real === null ? undefined : `${real}${model}`;
+    return real === null ? undefined : `${real}${tail}${model}`;
   }
-  return model === "" ? undefined : `${o.harness}${model}`;
+  return model === "" && tail === "" ? undefined : `${o.harness}${tail}${model}`;
 }
 
 /** Sum two runs of one case: the crashed orchestrator's and its replacement's. */
@@ -210,9 +221,12 @@ export async function runPiAut(
 }
 
 /** One sandbox, one AUT run, one judged result. The sandbox is always closed (unless keep). */
-export async function runOne(o: RunOne): Promise<RunResult> {
+export async function runOne(run: RunOne): Promise<RunResult> {
   const startedAt = new Date().toISOString();
-  const harness = o.harness ?? "pi";
+  const harness = run.harness ?? "pi";
+  // the case as this run reads it: its AUT, and a mix case's worker harnesses (mix.ts)
+  const scenario = bindScenario(run.scenario, harness, run.workers, run.model);
+  const o: RunOne = { ...run, scenario };
   const hooks = o.scenario.hookHarnesses !== undefined || harness !== "pi";
   const codexHooks = parseCodexHooks(process.env.EVAL_CODEX_HOOKS);
   const skillNote =
@@ -228,7 +242,12 @@ export async function runOne(o: RunOne): Promise<RunResult> {
   // segment to the user's sync dir, and the run is marked destructive. Only read, never changed.
   const watch = o.live === true ? watchRealState() : null;
   const sb = await createSandbox(o.surface, {
-    env: { ...o.scenario.env, EVAL_AUT_HARNESS: harness, EVAL_AUT_MODEL: o.model },
+    env: {
+      ...o.scenario.env,
+      ...mixEnv(o.scenario),
+      EVAL_AUT_HARNESS: harness,
+      EVAL_AUT_MODEL: o.model,
+    },
     live: o.live === true,
     ...(o.live === true && o.fakeWorkers !== true
       ? { livePi: true, ...(o.providerExt ? { providerExt: o.providerExt } : {}) }
@@ -289,17 +308,14 @@ export async function runOne(o: RunOne): Promise<RunResult> {
     }
     if (skillNote !== null) verdict.notes.push(skillNote);
     verdict.notes.push(...trustNotes);
+    // a pane AUT whose own sandbox refused a command (runner-pane.ts sandboxRefusal)
+    if (metrics.lastError?.startsWith(ENV_FAILURE)) verdict.notes.push(metrics.lastError);
+    // a replaced AUT command is what ran, not the harness table's flags
+    const fixedCommand = process.env.EVAL_AUT_COMMAND?.trim();
+    if (o.live === true && harness !== "pi" && fixedCommand)
+      verdict.notes.push(`AUT command: EVAL_AUT_COMMAND=${fixedCommand}`);
     if (o.keep) console.error(`kept sandbox: ${sb.dir} (tmux -L ${sb.tmuxSocket})`);
-    result = {
-      scenario: o.scenario.id,
-      surface: surfaceId(o.surface),
-      model: o.model,
-      ...(harness !== "pi" ? { harness } : {}),
-      rep: o.rep,
-      startedAt,
-      metrics,
-      verdict,
-    };
+    result = resultRow({ ...o, harness }, startedAt, metrics, verdict);
   } finally {
     await sb.close({ keep: o.keep });
     if (watch !== null) settleWatch(watch, result?.verdict);
@@ -307,6 +323,31 @@ export async function runOne(o: RunOne): Promise<RunResult> {
   // set whenever the try block finished; a throw there propagated past this line
   if (result === undefined) throw new Error("runOne: no result");
   return result;
+}
+
+/**
+ * The result row of one run of a bound case (`o.scenario`, mix.ts bindScenario): the AUT's
+ * harness when it is not pi, and the worker harnesses of a case with a mix, in its roles' order.
+ */
+export function resultRow(
+  o: Pick<RunOne, "scenario" | "surface" | "model" | "harness" | "rep">,
+  startedAt: string,
+  metrics: RunMetrics,
+  verdict: Verdict,
+): RunResult {
+  const harness = o.harness ?? "pi";
+  const mix = o.scenario.hookHarnesses?.mix?.harnesses;
+  return {
+    scenario: o.scenario.id,
+    surface: surfaceId(o.surface),
+    model: o.model,
+    ...(harness !== "pi" ? { harness } : {}),
+    ...(mix !== undefined ? { workers: [...mix] } : {}),
+    rep: o.rep,
+    startedAt,
+    metrics,
+    verdict,
+  };
 }
 
 /** Append one RunResult line. Never truncates an existing file. */
@@ -324,7 +365,7 @@ export function readResults(file: string): RunResult[] {
 
 export function summary(r: RunResult): string {
   const m = r.metrics;
-  return `${r.scenario} ${r.surface} ${r.model}${r.harness ? `@${r.harness}` : ""} rep${r.rep}: completed=${r.verdict.completed} tokens=${m.usage.total} muCalls=${m.muCalls} muErrors=${m.muErrors} wrong=${r.verdict.wrong.length} na=${r.verdict.na?.length ?? 0} destructive=${r.verdict.destructive.length} prods=${m.prods} aborted=${m.aborted} wall=${Math.round(m.wallMs / 1000)}s`;
+  return `${r.scenario} ${r.surface} ${r.model}${r.harness ? `@${r.harness}` : ""}${r.workers ? ` workers=${r.workers.join(",")}` : ""} rep${r.rep}: completed=${r.verdict.completed} tokens=${m.usage.total} muCalls=${m.muCalls} muErrors=${m.muErrors} wrong=${r.verdict.wrong.length} na=${r.verdict.na?.length ?? 0} destructive=${r.verdict.destructive.length} prods=${m.prods} aborted=${m.aborted} wall=${Math.round(m.wallMs / 1000)}s`;
 }
 
 const safe = (s: string): string => s.replace(/[^A-Za-z0-9._-]+/g, "_");
@@ -344,6 +385,10 @@ export function logPath(
 
 export const timestamp = (): string => new Date().toISOString().replace(/[:.]/g, "-");
 
+/** A run log's model part: the model, `@<harness>` for a pane AUT, `+<w1>+<w2>` for a chosen mix. */
+export const runLabel = (model: string, harness: string, workers?: readonly string[]): string =>
+  `${harness === "pi" ? model : `${model}@${harness}`}${workers ? `+${workers.join("+")}` : ""}`;
+
 export interface MatrixOptions {
   surfaces: Surface[];
   models: string[];
@@ -351,6 +396,8 @@ export interface MatrixOptions {
   harnesses?: AutHarness[];
   /** Hook-harness scenarios: fake worker binaries even in a live run. */
   fakeWorkers?: boolean;
+  /** The worker mix of every scenario (each must take one, mix.ts); default: each case's own. */
+  workers?: string[];
   scenarios: string[];
   reps: number;
   concurrency: number;
@@ -370,6 +417,8 @@ export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
   for (const id of o.scenarios) {
     for (const surface of o.surfaces) {
       const scenario = await loadScenario(id, surface.scenarioRoot);
+      // refuse a mix a case cannot take before any run starts
+      if (o.workers !== undefined) bindScenario(scenario, "pi", o.workers);
       for (const harness of checkHarnesses(scenario, o.harnesses ?? ["pi"]))
         for (const model of o.models) {
           for (let rep = 1; rep <= o.reps; rep++) {
@@ -380,12 +429,13 @@ export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
               providerExt: o.providerExt,
               rep,
               harness,
+              ...(o.workers !== undefined ? { workers: o.workers } : {}),
               live: isLiveRun(scenario, harness),
               fakeWorkers: o.fakeWorkers === true,
               log: logPath(o.root, stamp, {
                 scenario: id,
                 surface: surfaceId(surface),
-                model: harness === "pi" ? model : `${model}@${harness}`,
+                model: runLabel(model, harness, o.workers),
                 rep,
               }),
             });
@@ -477,6 +527,10 @@ export interface CheckOptions {
   scriptDir?: string;
   /** Prove a hook-harness scenario under these AUT harnesses only (default: each the scenario names). */
   harnesses?: AutHarness[];
+  /** The worker mix of every scenario checked (each must take one, mix.ts); default: each case's own. */
+  workers?: string[];
+  /** Prove the live plan's rows (mix.ts EVERY_HARNESS_PLAN; with `harnesses`, those AUTs' rows) instead of `scenarios`. */
+  plan?: boolean;
 }
 
 /** A run with a real model is live (real HOME, auth and harnesses) when a hook harness is in it. */
@@ -507,7 +561,13 @@ export async function runCheck(o: CheckOptions): Promise<number> {
     const fails = await sshPreflight(surface);
     line(fails.length === 0, "preflight ssh shim ok", fails.join("\n"));
   }
-  const ids = o.scenarios ?? scenarioIds(o.includeUnderscore, surface.scenarioRoot);
+  // what to prove: each scenario under its AUTs (default mix, or --workers), or the plan's rows
+  const jobs: PlanRow[] = o.plan
+    ? planRows(o.harnesses)
+    : (o.scenarios ?? scenarioIds(o.includeUnderscore, surface.scenarioRoot)).map((id) => ({
+        scenario: id,
+        aut: "pi",
+      }));
   // hook-harness scenarios need murmur's build: without it each is skipped, the others still run
   let tools: HookTools | null = null;
   let noTools = "";
@@ -519,7 +579,8 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   }
   const scriptDir = mkdtempSync(join(tmpdir(), "mu-eval-check-"));
   try {
-    for (const id of ids) {
+    for (const job of jobs) {
+      const id = job.scenario;
       if (o.family === "next" && PENDING_NEXT.includes(id)) {
         console.log(
           `${id} pending: skipped (its next scripts are written against the planned surface)`,
@@ -537,6 +598,15 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         console.log(`${id} skipped (${noTools})`);
         continue;
       }
+      const workers = o.plan ? job.workers : o.workers;
+      if (workers !== undefined && scenario.hookHarnesses?.mix === undefined) {
+        console.log(
+          `${id} skipped (a fixed worker crew; --workers applies to ${MIX_CASES.join(", ")})`,
+        );
+        continue;
+      }
+      // a mix of the wrong size or harnesses is refused here, before any of its runs
+      if (workers !== undefined) bindScenario(scenario, job.aut, workers);
       const dir = o.scriptDir ?? surface.scenarioRoot ?? scenarioDir();
       const named = (kind: "golden" | "bad") =>
         extraScripts(dir, id, o.family, kind).map((file) => ({
@@ -553,10 +623,12 @@ export async function runCheck(o: CheckOptions): Promise<number> {
         // extra negative controls: <id>.bad-<name>.<family>.json, each must be flagged too
         ...named("bad"),
       ];
-      const harnesses = checkHarnesses(scenario, o.harnesses);
+      const harnesses = o.plan ? [job.aut] : checkHarnesses(scenario, o.harnesses);
       for (const harness of harnesses)
         for (const { kind, label: base, file } of scripts) {
-          const label = scenario.hookHarnesses === undefined ? base : `${base} [${harness}]`;
+          const mixLabel = workers !== undefined ? `; workers ${workers.join(",")}` : "";
+          const label =
+            scenario.hookHarnesses === undefined ? base : `${base} [${harness}${mixLabel}]`;
           const script = join(dir, file);
           if (!existsSync(script)) {
             line(false, `${id} ${label} missing`, script);
@@ -572,8 +644,9 @@ export async function runCheck(o: CheckOptions): Promise<number> {
             quietMs: scenario.check?.quietMs ?? 2000,
             maxProds: scenario.check?.maxProds ?? 0,
             harness,
+            ...(workers !== undefined ? { workers } : {}),
             ...(tools !== null ? { tools } : {}),
-            log: join(scriptDir, `${id}.${base}.${harness}.rpc.jsonl`),
+            log: join(scriptDir, `${id}.${base}.${runLabel("faux", harness, workers)}.rpc.jsonl`),
           });
           const v = r.verdict;
           const detail = [

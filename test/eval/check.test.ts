@@ -142,7 +142,7 @@ describe("hook-harness cases (e1_* .. e7_*)", () => {
       const scenario = await loadScenario(id);
       expect(scenario.families).toEqual(["next"]);
       expect(scenario.hookHarnesses?.workers.length).toBeGreaterThan(0);
-      expect(checkHarnesses(scenario)).toEqual(["pi", "claude", "codex"]);
+      expect(checkHarnesses(scenario)).toEqual(["pi", "claude", "codex", "cursor-agent", "muse"]);
       const files = readdirSync(dir).filter(
         (f) => f.startsWith(`${id}.`) && f.endsWith(".next.json"),
       );

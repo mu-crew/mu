@@ -415,6 +415,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   destructive (`contamination: ...`) when a new segment appears in the sync
   dir, notes every other change, and reports even when the run is
   interrupted.
+- **Every blessed harness orchestrates in the evals; worker mixes per run**
+  (spec U24, D17). `--harness` also takes `cursor-agent` and `muse`: each runs
+  in a pane like claude and codex, started through `mu orchestrate` with the
+  harness table's trust and approval flags (`--trust --sandbox enabled`,
+  `--trust-workspace --approval-mode never`), which mu's worker presets do
+  not give an orchestrator; it reads the surface's skill from a project skill
+  committed in the sandbox repo (`.cursor/skills/mu`, `.agents/skills/mu`). A
+  Muse AUT, which has no mu Stop hook (D7), is told to keep driving in its
+  turn. `--workers <h1>,<h2>` on `run`, `matrix` and `check` picks the worker
+  harnesses of E1, E3, E4 and E6; their prompts, titles and judges name the
+  chosen harnesses, and the result row records them. E2 takes a cursor-agent
+  or Muse AUT's model family from the `--model` the rig gave it (their hooks
+  name no vendor) and tells one of unknown family plainly to use a claude
+  refuter; a refuter of unknown family never counts as cross-family. A pane
+  AUT whose own sandbox refuses a command is noted as an environment
+  failure (`environment: ...`). A sampled live plan (claude, codex and
+  pi run E1–E7; cursor-agent and Muse four cases each, with mixes that put
+  every harness to work at least twice) is listed with its commands in
+  [docs/eval/every-harness.md](docs/eval/every-harness.md) and proven at zero
+  cost by `check --plan`.
 
 ### Changed
 

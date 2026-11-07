@@ -34,6 +34,10 @@ export interface HookRec {
   text: string | null;
   /** stop: the turn was resumed by a Stop block. */
   resumed: boolean;
+  /** The model the payload names (`model`), when it names one: a cursor-agent or Muse AUT's family (E2). */
+  model?: string;
+  /** Muse's `model_provider`, when the payload names one. */
+  provider?: string;
 }
 
 const CAP = 2000;
@@ -76,6 +80,8 @@ export function observerRecord(
   if (kind === "prompt" && /^\s*<task-notification>/.test(text ?? "")) kind = "other";
   const resumed =
     p.stop_hook_active === true || (typeof p.loop_count === "number" && p.loop_count > 0);
+  const model = str(p.model);
+  const provider = str(p.model_provider);
   return {
     ms: meta.ms,
     harness,
@@ -88,6 +94,8 @@ export function observerRecord(
     turn: str(p.turn_id) ?? str(p.generation_id) ?? str(p.prompt_id),
     text: text === null ? null : text.slice(0, CAP),
     resumed,
+    ...(model !== null ? { model: model.slice(0, 200) } : {}),
+    ...(provider !== null ? { provider: provider.slice(0, 200) } : {}),
   };
 }
 
@@ -134,13 +142,36 @@ export function reportedAt(recs: HookRec[], agent: string, re: RegExp): number |
   return last === undefined ? null : last.ms;
 }
 
-/** Model family of a harness, for a cross-family rule: claude is Anthropic's, codex OpenAI's. */
+/**
+ * A model id that says which model runs: not empty, and not a harness's own pick (`default`,
+ * cursor-agent's `auto`, which routes to any vendor's model) or the eval's faux model.
+ */
+export function namesModel(model: string): boolean {
+  const m = model.trim().toLowerCase();
+  return m !== "" && m !== "default" && m !== "auto" && !m.startsWith("evalfaux/");
+}
+
+/**
+ * Model family of a harness, for a cross-family rule: claude is Anthropic's, codex OpenAI's. A
+ * cursor-agent or Muse Code model is any vendor's: its family is its model's vendor, and `unknown`
+ * when the model names no vendor (cursor-agent's `auto`, either's default, or an in-house id such
+ * as the ones Muse reports, U0).
+ */
 export function harnessFamily(harness: string, model = ""): string {
   if (harness === "claude") return "anthropic";
   if (harness === "codex") return "openai";
-  if (harness === "muse") return "muse";
-  if (harness === "cursor-agent") return model === "" ? "cursor" : modelFamily(model);
+  if (harness === "muse" || harness === "cursor-agent") return vendorFamily(model);
   return modelFamily(model);
+}
+
+/** The vendors whose model ids modelFamily recognises. */
+export const VENDOR_FAMILIES = ["anthropic", "openai", "google"] as const;
+
+/** A model id's vendor (modelFamily) when it names one of VENDOR_FAMILIES, else `unknown`. */
+export function vendorFamily(model: string): string {
+  if (!namesModel(model)) return "unknown";
+  const f = modelFamily(model);
+  return (VENDOR_FAMILIES as readonly string[]).includes(f) ? f : "unknown";
 }
 
 /** Model family of a model id: `anthropic/claude-x` and `claude-x` are anthropic, `gpt-*` openai. */

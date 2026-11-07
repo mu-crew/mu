@@ -87,6 +87,23 @@ export const STARTUP: Record<FakeHarness, "immediate" | "first-prompt"> = {
   muse: "first-prompt",
 };
 
+/**
+ * The model a fake reports in its payloads: a name for claude and codex (whose family is their
+ * harness's), and values shaped like a live cursor-agent's and Muse's on their defaults (U0):
+ * cursor-agent reports `default`; Muse names a concrete in-house model id (and an in-house
+ * `model_provider`, MUSE_PROVIDER), which is no vendor's. Neither says which vendor runs, so the
+ * judge never reads them for a family (harness-cases.ts autFamily).
+ */
+export const FAKE_MODEL: Record<FakeHarness, string> = {
+  claude: "fake-model",
+  codex: "fake-model",
+  "cursor-agent": "default",
+  muse: "mm-1005",
+};
+
+/** Muse's `model_provider` in a fake payload: an in-house name, as a live one's is (U0). */
+export const MUSE_PROVIDER = "inhouse";
+
 /** The command that starts a fresh conversation (D6). */
 export const FRESH: Record<FakeHarness, string> = {
   claude: "/clear",
@@ -562,7 +579,7 @@ function musePayload(name: string, event: FakeEvent, c: PayloadCtx): Record<stri
     transcript_path: null,
     model: c.model,
     permission_mode: "default",
-    model_provider: "fake",
+    model_provider: MUSE_PROVIDER,
   };
   switch (event) {
     case "session_start":

@@ -123,9 +123,22 @@ export interface Scenario {
   hookHarnesses?: {
     /** The worker mix the prompt asks for, for the docs and the report: `claude`, `pi@dev`, ... */
     workers: string[];
-    /** The AUT harnesses the case runs under; default claude, codex and pi. */
-    aut?: ("pi" | "claude" | "codex")[];
+    /** The AUT harnesses the case runs under; default all five (harness.ts AUT_HARNESSES). */
+    aut?: ("pi" | "claude" | "codex" | "cursor-agent" | "muse")[];
+    /**
+     * A case whose worker mix a run may choose (`--workers`, mix.ts): its roles in order (E1's
+     * `d1`, `d2`; E3's `implementer`, `reviewer`) and the harness each runs in this binding.
+     * Absent: the mix is fixed.
+     */
+    mix?: { roles: string[]; harnesses: string[] };
   };
+  /**
+   * This case for one run: the AUT's harness and model (`--model`, as the rig passes it; absent:
+   * unknown) and, for a case with a `mix`, the worker harnesses (in `roles` order; absent: the
+   * case's own). The prompt, title and judge name the bound harnesses. mix.ts `bindScenario` calls
+   * it; absent: the case reads the same for every run.
+   */
+  bind?(o: { aut: string; model?: string; workers?: readonly string[] }): Scenario;
   /**
    * A crash and a replacement orchestrator: the AUT dies (its script's `{die}` in `check`, or the
    * rig kills it once `crashWhen` holds in a live run), and a second AUT gets `prompt`.
@@ -141,6 +154,8 @@ export interface RunResult {
   model: string;
   /** The AUT's harness (absent: pi, every result before hook-harness scenarios). */
   harness?: string;
+  /** The worker harnesses of a case with a chosen mix (`--workers`, or the case's own), in its roles' order. */
+  workers?: string[];
   rep: number;
   startedAt: string;
   metrics: RunMetrics;

@@ -2,13 +2,17 @@
 
 Spec: [every harness first-class](../specs/2026-11-05-every-harness-first-class.md), unit U24.
 Each case must meet its written pass criterion with claude, codex and pi
-orchestrators. **Status: template.** The judges are proven at zero model cost
-(below); the live runs have not been made, and every results table is empty.
+orchestrators, and every blessed harness orchestrates: cursor-agent and Muse
+Code run a sample of the cases with chosen worker mixes ([the sampled
+plan](#the-sampled-plan)). **Status: template.** The judges are proven at zero
+model cost (below); the live runs have not been made, and every results table
+is empty.
 
 ## What a case measures
 
 A case is a black-box scenario in `tools/eval/scenarios/e<N>_*.ts`. The
-orchestrator under test (AUT) is a real claude, codex or pi; its workers are
+orchestrator under test (AUT) is a real claude, codex, cursor-agent, Muse Code
+or pi; its workers are
 real claude, codex, cursor-agent, Muse Code or pi panes on the sandbox's
 private tmux server, locally or on the ssh host `dev` (the eval ssh shim: a
 directory on this machine). A worker's job is the same cheap step on every
@@ -26,15 +30,55 @@ read, so a judge holds live. The shared rules are in `tools/eval/harness-cases.t
 A failed AUT mu call is a note (`failed mu call ...`), never a wrong entry,
 whichever harness the AUT is: the case's rules judge its effects.
 
-| Case                             | Workers                                 | Pass criterion (written in the scenario file)                                                                                                                                                                                                                                                                                                                                |
-| -------------------------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| E1 `e1_dispatch_merge`           | claude, codex                           | d1 and d2 CLOSED; each main commit is its own worker's (or a cherry-pick of it); each worker ran locally in its own worktree, was spawned with the requested cli and its hooks reported as that harness; no close before the worker's report; both workers closed; nothing destructive                                                                                       |
-| E2 `e2_cross_family_refuter`     | codex (claude when the AUT is codex)    | a check on f1 carries REFUTED; its checker's model family differs from the AUT's (claude anthropic, codex openai, pi its model's); rf1's report came from a worker of that harness; the verdict was recorded after that report and says what it says; f1 closed only after the verdict; refuter closed                                                                       |
-| E3 `e3_review_gate`              | codex implementer, claude reviewer      | i1's commit is its codex worker's; a check on i1 says CONFIRMED, names claude and was recorded after the reviewer's report; the reviewer is a claude worker and not the implementer; i1 reached main only after the verdict; ship closed after the verdict and the merge; both workers closed                                                                                |
-| E4 `e4_replacement_orchestrator` | claude, codex                           | the orchestrator crashed and the replacement prompt was delivered; c1 and c2 each pass the E1 rule; each task claimed once and each worker prompted once (no re-dispatch, no resend); exactly two workers spawned; both workers closed                                                                                                                                       |
-| E5 `e5_remote_worker`            | claude on dev                           | r1's commit is the remote worker's; its eval-worker ran under the host's home; its hooks fired on dev as claude; r1 closed after the report; no remote working copy left; worker closed                                                                                                                                                                                      |
-| E6 `e6_interrupt_resend`         | claude, codex                           | each worker accepted exactly two prompts (the wrong brief, one resend); no turn ended between them, and codex reported its interrupt; the resend says eval-worker and does not carry the first prompt's text (mu clears the input line before its paste); an AUT mu call carried it; each task then passes the E1 rule with its report after the resend; both workers closed |
-| E7 `e7_mixed_crew`               | codex and pi here, claude and pi on dev | m1–m4 each pass the E1 rule for the requested harness and place (a pi worker reports through ctl, never hooks); no remote working copy left; all four workers closed                                                                                                                                                                                                         |
+| Case                             | Workers (default)                                                 | Pass criterion (written in the scenario file)                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| E1 `e1_dispatch_merge`           | claude, codex                                                     | d1 and d2 CLOSED; each main commit is its own worker's (or a cherry-pick of it); each worker ran locally in its own worktree, was spawned with the requested cli and its hooks reported as that harness; no close before the worker's report; both workers closed; nothing destructive                                                                                                                                                    |
+| E2 `e2_cross_family_refuter`     | codex (claude when the AUT's model family is OpenAI's or unknown) | a check on f1 carries REFUTED; its checker's model family differs from the AUT's (claude anthropic, codex openai, pi its model's, cursor-agent and Muse below), is a vendor's (a refuter of unknown family never counts), and is anthropic when the AUT's is unknown; rf1's report came from a worker of that harness; the verdict was recorded after that report and says what it says; f1 closed only after the verdict; refuter closed |
+| E3 `e3_review_gate`              | codex implementer, claude reviewer                                | i1's commit is its codex worker's; a check on i1 says CONFIRMED, names claude and was recorded after the reviewer's report; the reviewer is a claude worker and not the implementer; i1 reached main only after the verdict; ship closed after the verdict and the merge; both workers closed                                                                                                                                             |
+| E4 `e4_replacement_orchestrator` | claude, codex                                                     | the orchestrator crashed and the replacement prompt was delivered; c1 and c2 each pass the E1 rule; each task claimed once and each worker prompted once (no re-dispatch, no resend); exactly two workers spawned; both workers closed                                                                                                                                                                                                    |
+| E5 `e5_remote_worker`            | claude on dev                                                     | r1's commit is the remote worker's; its eval-worker ran under the host's home; its hooks fired on dev as claude; r1 closed after the report; no remote working copy left; worker closed                                                                                                                                                                                                                                                   |
+| E6 `e6_interrupt_resend`         | claude, codex                                                     | each worker accepted exactly two prompts (the wrong brief, one resend); no turn ended between them, and codex reported its interrupt; the resend says eval-worker and does not carry the first prompt's text (mu clears the input line before its paste); an AUT mu call carried it; each task then passes the E1 rule with its report after the resend; both workers closed                                                              |
+| E7 `e7_mixed_crew`               | codex and pi here, claude and pi on dev                           | m1–m4 each pass the E1 rule for the requested harness and place (a pi worker reports through ctl, never hooks); no remote working copy left; all four workers closed                                                                                                                                                                                                                                                                      |
+
+**Worker mixes.** E1, E3, E4 and E6 take their worker harnesses from the run:
+`--workers <h1>,<h2>` on `run`, `matrix` and `check` (E1: d1, d2; E3:
+implementer, reviewer, which may be the same harness, since the rule is another
+agent; E4: c1, c2; E6: w1, w2), any of claude, codex, cursor-agent and muse.
+The prompt, the title and the judge name the chosen harnesses in place of the
+defaults above (`Scenario.bind`, `tools/eval/mix.ts`); the scripts read them as
+`$EVAL_W1`, `$EVAL_W2`; the result row records them (`workers`), and `report`
+shows them beside the AUT (`default@muse [cursor-agent,claude]`). pi workers
+report through ctl, not hooks, so they stay E7's; remote workers stay E5's and
+E7's, and `--workers muse@dev` is refused (a Muse Code worker on the ssh host is
+not supported, below). E2, E5 and E7 keep their crews under every AUT and refuse
+`--workers`.
+
+**E2 under cursor-agent and Muse Code.** Both run any vendor's model, so the
+AUT's family is the vendor of the model the rig gave it (`--model`: an id that
+names Anthropic, OpenAI or Google), else unknown. Their hooks are not read for
+it: a live cursor-agent on its default reports `model: "default"`, and a live
+Muse names a concrete in-house model id with an in-house `model_provider`
+(the U0 spike), neither of which says which vendor runs. So on `--model default`
+both are of unknown family, and their prompt says, unconditionally, "This run
+cannot verify which model family you are (your harness runs any vendor's model,
+and none was named), so use a claude refuter."; the judge then accepts only a
+claude (anthropic) checker, and notes `cross-family unverified` with the model
+its hooks reported (the rig cannot rule out that the AUT itself runs a Claude
+model). With `--model <id>` naming a vendor, the prompt adds "Your model is
+<id>." and the judge applies the usual rule. A refuter of unknown family (a
+cursor-agent or Muse refuter without a vendor's model, `muse/default` or an
+in-house id) is never cross-family, under any AUT. The refuter is claude in
+the golden script whenever the AUT's family is OpenAI's or unknown. The fake
+cursor-agent reports `default` and the fake Muse an in-house-shaped id and
+provider (`mm-1005`, `inhouse`), as the live ones do, so `check` proves the
+branch a live run takes.
+
+**A Muse Code AUT** gets no mu Stop hook (D7: a Stop block re-checks its answer
+without following the reason), so nothing resumes it between turns. Its prompts,
+the replacement's included, end with one sentence: keep waiting for the work
+with `mu wait` in the same turn, rerunning it when it times out, and end the
+turn only when everything is done (`MUSE_DRIVE` in `tools/eval/mix.ts`). The
+rig's own `carry on` prod applies to every AUT alike.
 
 E4's crash: in `check` the AUT script's `{die}` step is the crash; live, the rig
 kills the AUT's harness process once both tasks are claimed and both workers'
@@ -47,14 +91,17 @@ until DONE. The AUT interrupts it long before. (An earlier eval-slow that could
 never finish let a live claude worker read it and end its turn as blocked, so
 there was nothing to interrupt.) A harness that still ended the turn on a tool
 timeout would fail the case through no fault of the AUT ("first turn ended by
-itself").
+itself"). cursor-agent's and Muse Code's shell tools are assumed to behave
+like claude's and codex's; no live run has checked it yet.
 
 ## Proving the judges (zero model cost)
 
 Every case has a golden and at least three bad scripts
 (`<id>.golden.next.json`, `<id>.bad*.next.json`). `check` runs each under each
-AUT harness: pi over rpc with the faux model, claude and codex as fake harness
-binaries in a pane (`tools/eval/fake-harness.ts`). The workers are fake claude,
+AUT harness: pi over rpc with the faux model, claude, codex, cursor-agent and
+Muse Code as fake harness binaries in a pane (`tools/eval/fake-harness.ts`), the
+last two started with the flags a live one gets. `--workers` proves a mix;
+`--plan` proves exactly the rows of the sampled plan, each with its mix. The workers are fake claude,
 codex, cursor-agent and Muse Code binaries that read their pane like the real
 ones (bracketed paste, `C-u`, Escape) and fire the real ones' hooks from the
 real ones' config files, with the payload keys the U0 spike recorded
@@ -71,6 +118,8 @@ export TMPDIR=/tmp                              # tmux socket paths stay short
 node tools/eval/main.ts check --family next --no-preflight \
   --scenarios e1_dispatch_merge,e2_cross_family_refuter,e3_review_gate,e4_replacement_orchestrator,e5_remote_worker,e6_interrupt_resend,e7_mixed_crew
 node tools/eval/main.ts check --family next --scenarios e6_interrupt_resend --harness claude   # one case, one AUT
+node tools/eval/main.ts check --family next --no-preflight --plan --harness cursor-agent --harness muse   # the plan's new rows
+node tools/eval/main.ts check --family next --no-preflight --scenarios e3_review_gate --harness muse --workers codex,muse
 ```
 
 Without `EVAL_MURMUR`, `check` prints `<id> skipped (...)` for each E case and
@@ -78,16 +127,18 @@ runs the other scenarios.
 
 The fast tier pins the same criteria without tmux:
 `test/eval/harness-judges.test.ts` (synthetic end states for every golden and
-for each bad script's failure), `runner-pane.test.ts` (the pane runner's crash
-and replacement, the pi AUT's two phases), `fake-payloads.test.ts`,
-`harness.test.ts`, and `check.test.ts`. The full tier's
+for each bad script's failure), `mix.test.ts` (worker mixes: the bound prompts
+and judges, E2 under an AUT of unknown family, a Muse AUT's prompts, the result
+row, and the plan's coverage and pre-trust), `runner-pane.test.ts` (the pane
+runner's crash and replacement, the pi AUT's two phases),
+`fake-payloads.test.ts`, `harness.test.ts`, and `check.test.ts`. The full tier's
 `test/eval/harness-check.integration.test.ts` runs `check` on every case under
 a claude orchestrator and E6 under codex too, with the fake binaries; it is
 skipped unless `EVAL_MURMUR` names a built murmur.
 
 ## What a live run changes
 
-A run with a hook-harness case, or with `--harness claude|codex`, is live: the
+A run with a hook-harness case, or with a `--harness` other than pi, is live: the
 AUT and its workers are the user's own harness binaries with the user's HOME
 and auth (spec D1). The rig changes exactly this:
 
@@ -189,11 +240,55 @@ and auth (spec D1). The rig changes exactly this:
   a `~/.claude/skills/mu` that differs from the surface's the AUT reads the
   user's. codex: with `EVAL_CODEX_HOOKS=codex-home`, the surface's copy in
   `<sandbox>/codex-home/skills/mu` (beside links to the user's other skills);
-  with `global`, whatever `<codex home>/skills/mu` the user has. The rig never
-  writes either personal skill. When the AUT may read another version it says
-  so on stderr and in the result's notes (`claude AUT: ...`, `codex AUT: ...`);
-  for a comparison of surfaces, remove or update the personal skill first, and
-  run codex with `codex-home`.
+  with `global`, whatever `<codex home>/skills/mu` the user has. cursor-agent:
+  the surface's copy, committed as the project skill `.cursor/skills/mu` in the
+  sandbox repo when it is the AUT (cursor-agent 2026.10's bundle loads
+  `<workspace>/.cursor/skills` and `.agents/skills`, and `.claude`, `.codex`
+  and `.grok` skills as third-party dirs, so it may list the claude copy too,
+  the same bytes); it also loads its personal `~/.cursor/skills`,
+  `~/.claude/skills`, `~/.codex/skills`, `~/.agents/skills` and
+  `~/.grok/skills`, all under HOME, and the note names each that differs. Muse Code: the surface's copy, committed as
+  the project skill `.agents/skills/mu` when it is the AUT (Muse's project
+  scope, named by its own built-in skill-authoring instructions); never for
+  another AUT, since codex and cursor-agent read that directory too (the
+  sandbox's pi runs with `--no-skills`). A mu skill installed through
+  `muse skills` or a plugin loads beside it, and the rig cannot see those. The
+  rig never writes a personal skill. When the AUT may read another version it
+  says so on stderr and in the result's notes (`claude AUT: ...`,
+  `codex AUT: ...`, `cursor-agent AUT: ...` when a personal copy differs, and
+  `muse AUT: ...` on every Muse run); for a comparison of surfaces, remove or
+  update the personal skill first, and run codex with `codex-home`.
+- **cursor-agent and Muse Code AUTs.** `mu orchestrate` adds no spawn presets
+  (they are a worker's), and an unattended orchestrator in a fresh sandbox repo
+  needs both trust and approvals, so the rig starts them with the harness
+  table's flags (`AUT_FLAGS` in `tools/eval/harness.ts`):
+  `mu orchestrate --cli cursor-agent --command 'cursor-agent --trust --sandbox enabled'`
+  and `mu orchestrate --cli muse --command 'muse --trust-workspace --approval-mode never'`,
+  plus `--model <id>` unless `--model default`. `--trust` and
+  `--trust-workspace` trust the repo for that run only (neither is saved).
+  `--sandbox enabled` is mu's cursor-agent auto-approve preset: commands run in
+  cursor-agent's own sandbox without asking. That sandbox is macOS seatbelt
+  (`sandbox-exec`, write access limited to the workspace), and a seatbelt
+  cannot nest in another: started from a parent that is itself sandboxed (an
+  agent's sandboxed shell), every command of a cursor-agent AUT fails, as
+  codex's own seatbelt does under a launcher. Muse's `--approval-mode never`
+  likewise grants no escalation, and its shell tool needs one to write outside
+  the workspace (U0: a write under HOME asked for `require_escalated`), while
+  the sandbox's mu DB, murmur state and tmux socket all live outside the
+  sandbox repo. If either sandbox refuses the tmux socket or mu state (D10: a
+  harness whose sandbox refuses the socket cannot orchestrate), run with
+  `EVAL_AUT_COMMAND='cursor-agent --trust --force'` or
+  `EVAL_AUT_COMMAND='muse --trust-workspace --yolo'` (`--yolo` is one of
+  Muse's approval options in the harness table); a live run notes the replaced command
+  (`AUT command: EVAL_AUT_COMMAND=...`). The runner reads a pane AUT's
+  scrollback at each quiet point and notes a sandbox refusal it shows
+  (`sandbox_apply`, `Failed to execute sandbox-exec`,
+  `Operation not permitted`, a read-only database) as `environment: ...`, so
+  such a failure reads as the rig's environment, not the AUT's. Their hooks
+  are the committed project files (`.cursor/hooks.json`; `.muse/hooks.json` in
+  Muse's format, `Interrupt` async), the same the workers read. cursor-agent
+  reports its session at launch, so the runner waits for it; Muse reports one
+  only with its first prompt, so the runner answers any trust dialog and sends.
 - **codex.** codex reads hooks only from its home, the caller's `CODEX_HOME`
   or else `~/.codex`. `EVAL_CODEX_HOOKS=global` (default) copies its
   `hooks.json` to `hooks.json.mu-eval-<pid>`, adds the rig's entries after the
@@ -242,13 +337,16 @@ and auth (spec D1). The rig changes exactly this:
     path). With `global`, codex's hook trust lives in the user's own home and
     persists after the first run; nothing is pre-trusted.
   - Nothing for cursor-agent and Muse Code: mu's spawn presets pass `--trust`
-    and `--trust-workspace` for a worktree.
+    and `--trust-workspace` for a worker's worktree, and an AUT gets the same
+    flag (above), so neither asks in a fresh sandbox. A worker mix that names
+    claude or codex is pre-trusted like the default mixes (the bound case's
+    workers decide).
 
   Each start waits at most 150 s for a ready prompt and 5 s to exit, then its
   pane is killed; a step that cannot confirm the trust adds a
   `pre-trust <harness> ...` note to the run's notes (and stderr) and the run
-  goes on. Ready is read per harness from its own TUI: codex's `? for
-  shortcuts` footer with its `›` input line, claude's footer or input box.
+  goes on. Ready is read per harness from its own TUI: codex's
+  `? for shortcuts` footer with its `›` input line, claude's footer or input box.
   The shell prompt and a launcher's banner and `Installing ...` lines, shown
   before the TUI draws, never count. codex's hook trust counts only when
   every hook of the home's hooks.json has a `trusted_hash`.
@@ -267,8 +365,9 @@ and auth (spec D1). The rig changes exactly this:
   `MU_STATE_DIR` says), where the sandbox's mu also prunes the anchors of
   dead pids, the user's included. The watch leaves the anchor dir out.
 - **Cost.** Nothing bounds a live run's tokens but its timeout (up to 20
-  minutes for E7). A claude or codex AUT reports zero usage (it has no token
-  stream), and real workers are never counted under any AUT, so a scenario's
+  minutes for E7). A pane AUT (claude, codex, cursor-agent, Muse Code) reports
+  zero usage (it has no token stream), and real workers are never counted under
+  any AUT, so a scenario's
   `tokenCap` and `matrix --budget-tokens` do not apply; `matrix` says so on
   stderr when it queues such runs. A pi AUT reports its usage, but it runs
   uncapped too, so all three orchestrators stop on the same rule (a live E7
@@ -303,6 +402,56 @@ for id in e1_dispatch_merge e2_cross_family_refuter e3_review_gate e4_replacemen
 done
 ```
 
+### The sampled plan
+
+claude, codex and pi run every case with its default crew (above). cursor-agent
+and Muse Code run four cases each, with worker mixes chosen so that every
+harness orchestrates at least four runs and works in at least two without the
+full cross product: cursor-agent and Muse, which no default mix uses, work under
+each other and under the other's AUT runs. The rows are `EVERY_HARNESS_PLAN` in
+`tools/eval/mix.ts`; `check --plan` proves exactly these at zero cost, and
+`test/eval/mix.test.ts` pins the coverage.
+
+| AUT          | Case | Workers                                 |
+| ------------ | ---- | --------------------------------------- |
+| cursor-agent | E1   | d1 muse, d2 codex                       |
+| cursor-agent | E3   | implementer codex, reviewer claude      |
+| cursor-agent | E5   | claude on dev (fixed)                   |
+| cursor-agent | E6   | w1 cursor-agent, w2 muse                |
+| muse         | E1   | d1 cursor-agent, d2 claude              |
+| muse         | E3   | implementer codex, reviewer muse        |
+| muse         | E4   | c1 claude, c2 codex                     |
+| muse         | E7   | codex and pi here, claude and pi on dev |
+
+Orchestrator runs: claude, codex and pi 7 each, cursor-agent and Muse 4 each.
+Worker runs in the new rows: muse 3 (E1, E6 under cursor-agent; E3's reviewer
+under Muse), cursor-agent 2 (E6 under itself, E1 under Muse), claude 5, codex
+5, pi 1 (E7, which runs pi twice); across the whole plan every harness works in
+at least two runs. Pre-trust covers the claude and codex these mixes name.
+
+```bash
+S="$PWD:next"; OUT=docs/eval/every-harness.jsonl
+node tools/eval/main.ts run e1_dispatch_merge           --surface "$S" --harness cursor-agent --model default --workers muse,codex         --out "$OUT"
+node tools/eval/main.ts run e3_review_gate              --surface "$S" --harness cursor-agent --model default --workers codex,claude       --out "$OUT"
+node tools/eval/main.ts run e5_remote_worker            --surface "$S" --harness cursor-agent --model default                              --out "$OUT"
+node tools/eval/main.ts run e6_interrupt_resend         --surface "$S" --harness cursor-agent --model default --workers cursor-agent,muse  --out "$OUT"
+node tools/eval/main.ts run e1_dispatch_merge           --surface "$S" --harness muse         --model default --workers cursor-agent,claude --out "$OUT"
+node tools/eval/main.ts run e3_review_gate              --surface "$S" --harness muse         --model default --workers codex,muse         --out "$OUT"
+node tools/eval/main.ts run e4_replacement_orchestrator --surface "$S" --harness muse         --model default --workers claude,codex       --out "$OUT"
+node tools/eval/main.ts run e7_mixed_crew               --surface "$S" --harness muse         --model default                              --out "$OUT"
+```
+
+**Not yet confirmed live.** No cursor-agent or Muse Code pane has orchestrated
+in this rig yet, so these are the first things to read in the new rows' notes:
+
+- that `--sandbox enabled` (cursor-agent) and `--approval-mode never` (Muse)
+  let the AUT reach mu's state and the tmux socket outside the sandbox repo;
+  if not, the `EVAL_AUT_COMMAND` fallbacks above, noted in the result;
+- that cursor-agent's and Muse's shell tools end a call, not the turn, on a
+  timeout (E6, above);
+- that a Muse AUT keeps driving within its turn without a Stop hook
+  (`MUSE_DRIVE`).
+
 One case and AUT at a time is the same line without the loop, e.g.
 `node tools/eval/main.ts run e6_interrupt_resend --surface "$PWD:next" --harness codex --model default --keep --out docs/eval/every-harness.jsonl`
 (`--keep` leaves the sandbox for a post-mortem). `--fake-workers` keeps fake
@@ -312,60 +461,69 @@ replaces the AUT pane's command (e.g. `claude --permission-mode auto`).
 ## Results
 
 Empty until the live runs. One row per run: `completed` is the case's pass
-criterion; `wrong` and `destructive` are the judge's entries, verbatim.
+criterion; `wrong` and `destructive` are the judge's entries, verbatim;
+`workers` is the run's crew (the default, or the plan's mix).
 
 ### E1 dispatch and merge
 
-| AUT    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude |      |       |           |                     |      |       |
-| codex  |      |       |           |                     |      |       |
-| pi     |      |       |           |                     |      |       |
+| AUT          | Workers              | Date | Model | Completed | Wrong / destructive | Wall | Notes |
+| ------------ | -------------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
+| claude       | claude, codex        |      |       |           |                     |      |       |
+| codex        | claude, codex        |      |       |           |                     |      |       |
+| pi           | claude, codex        |      |       |           |                     |      |       |
+| cursor-agent | muse, codex          |      |       |           |                     |      |       |
+| muse         | cursor-agent, claude |      |       |           |                     |      |       |
 
 ### E2 finding triage with a cross-family refuter
 
-| AUT    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude |      |       |           |                     |      |       |
-| codex  |      |       |           |                     |      |       |
-| pi     |      |       |           |                     |      |       |
+| AUT    | Workers                                      | Date | Model | Completed | Wrong / destructive | Wall | Notes |
+| ------ | -------------------------------------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
+| claude | codex (claude: OpenAI or unknown AUT family) |      |       |           |                     |      |       |
+| codex  | codex (claude: OpenAI or unknown AUT family) |      |       |           |                     |      |       |
+| pi     | codex (claude: OpenAI or unknown AUT family) |      |       |           |                     |      |       |
 
 ### E3 review gate
 
-| AUT    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude |      |       |           |                     |      |       |
-| codex  |      |       |           |                     |      |       |
-| pi     |      |       |           |                     |      |       |
+| AUT          | Workers       | Date | Model | Completed | Wrong / destructive | Wall | Notes |
+| ------------ | ------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
+| claude       | codex, claude |      |       |           |                     |      |       |
+| codex        | codex, claude |      |       |           |                     |      |       |
+| pi           | codex, claude |      |       |           |                     |      |       |
+| cursor-agent | codex, claude |      |       |           |                     |      |       |
+| muse         | codex, muse   |      |       |           |                     |      |       |
 
 ### E4 crash and replacement orchestrator
 
-| AUT    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude |      |       |           |                     |      |       |
-| codex  |      |       |           |                     |      |       |
-| pi     |      |       |           |                     |      |       |
+| AUT    | Workers       | Date | Model | Completed | Wrong / destructive | Wall | Notes |
+| ------ | ------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
+| claude | claude, codex |      |       |           |                     |      |       |
+| codex  | claude, codex |      |       |           |                     |      |       |
+| pi     | claude, codex |      |       |           |                     |      |       |
+| muse   | claude, codex |      |       |           |                     |      |       |
 
 ### E5 remote worker
 
-| AUT    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude |      |       |           |                     |      |       |
-| codex  |      |       |           |                     |      |       |
-| pi     |      |       |           |                     |      |       |
+| AUT          | Workers    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
+| ------------ | ---------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
+| claude       | claude@dev |      |       |           |                     |      |       |
+| codex        | claude@dev |      |       |           |                     |      |       |
+| pi           | claude@dev |      |       |           |                     |      |       |
+| cursor-agent | claude@dev |      |       |           |                     |      |       |
 
 ### E6 interrupt and resend
 
-| AUT    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude |      |       |           |                     |      |       |
-| codex  |      |       |           |                     |      |       |
-| pi     |      |       |           |                     |      |       |
+| AUT          | Workers            | Date | Model | Completed | Wrong / destructive | Wall | Notes |
+| ------------ | ------------------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
+| claude       | claude, codex      |      |       |           |                     |      |       |
+| codex        | claude, codex      |      |       |           |                     |      |       |
+| pi           | claude, codex      |      |       |           |                     |      |       |
+| cursor-agent | cursor-agent, muse |      |       |           |                     |      |       |
 
 ### E7 a mixed crew
 
-| AUT    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude |      |       |           |                     |      |       |
-| codex  |      |       |           |                     |      |       |
-| pi     |      |       |           |                     |      |       |
+| AUT    | Workers                       | Date | Model | Completed | Wrong / destructive | Wall | Notes |
+| ------ | ----------------------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
+| claude | codex, pi, claude@dev, pi@dev |      |       |           |                     |      |       |
+| codex  | codex, pi, claude@dev, pi@dev |      |       |           |                     |      |       |
+| pi     | codex, pi, claude@dev, pi@dev |      |       |           |                     |      |       |
+| muse   | codex, pi, claude@dev, pi@dev |      |       |           |                     |      |       |

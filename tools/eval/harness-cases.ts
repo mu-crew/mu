@@ -12,7 +12,13 @@ import { chmodSync, existsSync, readFileSync, realpathSync, writeFileSync } from
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { makeRepo, runsLog, seedViaMu, workerTask, writeWorkerDriver } from "./fixtures.ts";
-import { type HookRec, harnessFamily, harnessOf, modelFamily } from "./harness-observe.ts";
+import {
+  type HookRec,
+  harnessFamily,
+  harnessOf,
+  hookRecords,
+  namesModel,
+} from "./harness-observe.ts";
 import { CLOSE_INTENTS, closedAgents, verdictFx } from "./observe.ts";
 import { opsAfter } from "./ops.ts";
 import { type RunRecord, workerCommitOnMain } from "./provenance.ts";
@@ -272,12 +278,25 @@ export async function remoteLeftovers(
   return out;
 }
 
-/** The AUT's model family: its harness's, or for pi its model's. */
+/**
+ * The AUT's model family: claude's and codex's harness's, pi's model's. A cursor-agent or Muse
+ * Code AUT runs any vendor's model: the vendor of the model the rig gave it (`--model`), else
+ * `unknown`. Its hooks' `model` is not read: cursor-agent reports `default` and Muse an in-house
+ * id with an in-house provider (U0), and E2's prompt, bound before the run, can only say what the
+ * rig knows (`--model`), so the judge holds the AUT to that.
+ */
 export function autFamily(sb: Sandbox): string {
-  const h = sb.env.EVAL_AUT_HARNESS ?? "pi";
-  const model = sb.env.EVAL_AUT_MODEL ?? "";
-  return h === "pi" ? modelFamily(model) : harnessFamily(h, model);
+  return harnessFamily(sb.env.EVAL_AUT_HARNESS ?? "pi", sb.env.EVAL_AUT_MODEL ?? "");
 }
+
+/** The model the AUT's own hooks report (`model`), for a note; null when none names one. */
+export function autReportedModel(sb: Sandbox, recs: HookRec[] = hookRecords(sb)): string | null {
+  const h = sb.env.EVAL_AUT_HARNESS ?? "pi";
+  const own = recs.filter((r) => r.harness === h && r.agent !== null && AUT_NAMES.has(r.agent));
+  return own.find((r) => namesModel(r.model ?? ""))?.model ?? null;
+}
+
+const AUT_NAMES = new Set(["aut", "aut-2"]);
 
 export interface CheckRec {
   id: string;

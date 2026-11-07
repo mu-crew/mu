@@ -2,7 +2,7 @@
   {
     "calls": [
       {
-        "bash": "mu agent spawn w1 -w eval --cli codex --worktree --task i1 --json"
+        "bash": "mu agent spawn w1 -w eval --cli \"$EVAL_W1\" --worktree --task i1 --json"
       }
     ]
   },
@@ -23,14 +23,14 @@
   {
     "calls": [
       {
-        "bash": "mu task check i1 -w eval --by claude/default --brief 'Review the i1 commit: is i1.txt one line ending in a newline? Answer VERDICT/EVIDENCE.' | tee \"$TMPDIR/check.out\""
+        "bash": "mu task check i1 -w eval --by \"$EVAL_W2\"/default --brief 'Review the i1 commit: is i1.txt one line ending in a newline? Answer VERDICT/EVIDENCE.' | tee \"$TMPDIR/check.out\""
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu agent spawn rv -w eval --cli claude --worktree --task rv1 --json"
+        "bash": "mu agent spawn rv -w eval --cli \"$EVAL_W2\" --worktree --task rv1 --json"
       }
     ]
   },

@@ -2,7 +2,7 @@
   {
     "calls": [
       {
-        "bash": "R=codex; [ \"$EVAL_AUT_HARNESS\" = codex ] && R=claude; echo \"$R\" > \"$TMPDIR/refuter\"; mu task check f1 -w eval --by \"$(cat \"$TMPDIR/refuter\")/default\" --brief 'Refute or confirm: ./gate.sh drops the last line of notes.txt. Answer VERDICT/EVIDENCE.' | tee \"$TMPDIR/check.out\""
+        "bash": "R=codex; case \"$EVAL_AUT_HARNESS\" in codex|cursor-agent|muse) R=claude;; esac; echo \"$R\" > \"$TMPDIR/refuter\"; mu task check f1 -w eval --by \"$(cat \"$TMPDIR/refuter\")/default\" --brief 'Refute or confirm: ./gate.sh drops the last line of notes.txt. Answer VERDICT/EVIDENCE.' | tee \"$TMPDIR/check.out\""
       }
     ]
   },
