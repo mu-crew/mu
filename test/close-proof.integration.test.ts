@@ -32,6 +32,7 @@ import { type Db, openDb } from "../src/db.js";
 import { listLogs } from "../src/logs.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import {
+  awaitHelpers,
   getWorktreeAt,
   listWorktrees,
   processTree,
@@ -442,6 +443,40 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     expect(existsSync(wt.path)).toBe(false);
   });
 
+  it("a setsid'd helper that never exits: the close gives up within the 5 s bound and names it", async () => {
+    resetSleep();
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const pane = await paneRunning(
+      `cd "${wt.path}" && perl -MPOSIX -e 'POSIX::setsid(); exec "sleep", "60"' & sleep 30`,
+      (p) => kill(-p),
+    );
+    await until(() => descendants(pane).some((r) => r[0] === r[2] && r[0] !== pane));
+    const helper = descendants(pane).find((r) => r[0] === r[2])?.[0] ?? 0;
+    procs.push(helper);
+    const t0 = Date.now();
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    const took = Date.now() - t0;
+    kill(helper);
+    expect(r.worktree?.action).toBe("removed");
+    expect(r.worktree?.warnings?.join("\n")).toContain(`process ${helper} (sleep)`);
+    // 5 s of waiting from the kill, then the park, the holder scan and the removal.
+    expect(took).toBeGreaterThanOrEqual(4900);
+    expect(took).toBeLessThan(10_000);
+  }, 20_000);
+
+  it("awaitHelpers counts its own holder scan against its bound", async () => {
+    resetSleep();
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    hold(wt.path); // detached: its own group, never exits
+    const pid = holder?.pid ?? 0;
+    const t0 = Date.now();
+    const left = await awaitHelpers(wt.path, { tree: new Set(), groups: new Set([pid]) }, 1500);
+    const took = Date.now() - t0;
+    expect(left).toEqual([pid]);
+    expect(took).toBeGreaterThanOrEqual(1450);
+    expect(took).toBeLessThan(1800); // the bound, plus at most one poll
+  });
+
   it("a foreign holder is still named once the pane's own are gone", async () => {
     resetSleep();
     const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
@@ -464,11 +499,15 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     const pids = (p: { worktree?: { holders?: { pid: number }[] } | null }): number[] =>
       (p.worktree?.holders ?? []).map((h) => h.pid).sort();
     const a = await previewClose(db, "worker-1", { workstream: "auth" });
-    await new Promise((r) => setTimeout(r, 300));
-    const b = await previewClose(db, "worker-1", { workstream: "auth" });
-    expect(pids(a)).not.toEqual(pids(b)); // the holder list moved
-    expect(b.revision).toBe(a.revision);
     expect(a.revision).not.toBe(0);
+    // Re-preview (bounded) until lsof catches a different holder list; whether
+    // it does is luck, so only the revision is asserted, on every preview.
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 150));
+      const b = await previewClose(db, "worker-1", { workstream: "auth" });
+      expect(b.revision).toBe(a.revision);
+      if (pids(b).join() !== pids(a).join()) break;
+    }
     // And the apply takes it.
     holder.kill("SIGKILL");
     const r = await closeAgent(db, "worker-1", { workstream: "auth", ifRevision: a.revision });

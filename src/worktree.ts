@@ -617,7 +617,8 @@ async function readPs(): Promise<
  * Wait up to `ms` for the pane's helpers (paneProcesses' groups) that hold
  * `dir` to exit: they outlive the kill by a moment, and a tree removed before
  * they go is removed under them. A foreign process is not
- * waited on; nor is a helper past `ms`: the holder scan names both.
+ * waited on; nor is a helper past `ms` (this scan's time included): the
+ * holder scan names both.
  * Returns the pids still there.
  */
 export async function awaitHelpers(
@@ -626,6 +627,8 @@ export async function awaitHelpers(
   ms: number,
 ): Promise<number[]> {
   if (pane.groups.size === 0 || ms <= 0) return [];
+  // The scan's own time (lsof can take a second on macOS) counts against `ms`.
+  const until = Date.now() + ms;
   const holders = await worktreeHolders(dir);
   if (holders === undefined || holders.length === 0) return [];
   const ps = await readPs();
@@ -633,7 +636,7 @@ export async function awaitHelpers(
   const theirs = holders
     .map((h) => h.pid)
     .filter((pid) => pane.groups.has(ps.get(pid)?.pgid ?? -1));
-  return awaitExit(theirs, ms);
+  return awaitExit(theirs, until - Date.now());
 }
 
 /**
@@ -651,9 +654,11 @@ export async function awaitExit(pids: Iterable<number>, ms: number): Promise<num
       return (err as { code?: unknown }).code === "EPERM";
     }
   };
+  // A wall-clock deadline: a slow poll (a loaded host) never stretches the bound.
+  const until = Date.now() + ms;
   let left = [...pids].filter((p) => p !== process.pid && alive(p));
-  for (let waited = 0; left.length > 0 && waited < ms; waited += EXIT_POLL_MS) {
-    await sleep(EXIT_POLL_MS);
+  for (let rest = ms; left.length > 0 && rest > 0; rest = until - Date.now()) {
+    await sleep(Math.min(EXIT_POLL_MS, rest));
     left = left.filter(alive);
   }
   return left;

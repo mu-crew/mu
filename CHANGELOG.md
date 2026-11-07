@@ -149,9 +149,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   moves to its own process group and is reparented away from pi, its
   `log_shipper` children, a `setsid`'d drain) are waited for in the same 5 s
   when they hold the tree: the close reads, before the kill, the process
-  groups of the pane's session and of each descendant that left it. A
-  helper still there at 5 s, and any foreign holder, is still named (or
-  refuses, as a writer) as before. The preview's `--if` revision never
+  groups of the pane's session and of each descendant that left it. The
+  5 s count from the kill and include the scans; the park, the holder scan
+  and the removal follow (1.5 to 2.5 s on a Mac), so a helper that never
+  exits gives a close of about 7 to 8 s. A helper still there at 5 s, and
+  any foreign holder, is still named (or refuses, as a writer) as before. The preview's `--if` revision never
   depended on the holder list: two previews agree while those processes
   churn (now pinned by a test).
 
