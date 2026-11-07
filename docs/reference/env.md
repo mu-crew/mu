@@ -105,6 +105,7 @@ local pane gets none of the vars above.
 | `MU_INIT_HOME` | Root under which `mu init` writes its hook entries (`.claude/settings.json`, `.codex/hooks.json`, `.cursor/hooks.json`), skill copies (`.claude/skills/mu`, `.codex/skills/mu`, `.cursor/skills/mu`) and prompt skills beside claude's and cursor-agent's (`.claude/skills/mu-review`, …), and `mu doctor` reads the hook entries. | `$HOME` |
 | `CLAUDE_CONFIG_DIR` | Read only. Claude Code's config directory, as Claude Code reads it: `mu init` writes its `settings.json` and `skills/`; `mu doctor`, murmur's availability check and `mu host check` read its `settings.json`. Empty is unset. murmur, museum and muzzle honour it too. | `~/.claude` |
 | `CODEX_HOME` | Read only. Codex's config directory, as codex reads it: `mu init` writes its `hooks.json` and `skills/`; `mu doctor`, murmur's availability check and `mu host check` read its `hooks.json`. Empty is unset. murmur, museum and muzzle honour it too. | `~/.codex` |
+| `CURSOR_HOME` | Read only. Cursor's home directory: museum stages `projects/*/agent-transcripts/` from here. Empty is unset. | `~/.cursor` |
 | `PI_SESSION_ID` | Read only. The pi session's id: the caller identity `pi:<id>` of `mu_delegate` calls, a bare `mu wait`, `mu me` and `mu next --refute` when no managed agent is injected. | |
 | `PI_CODING_AGENT_DIR` | Read only. pi's agent dir, checked for a linked murmur extension. | `~/.pi/agent` |
 

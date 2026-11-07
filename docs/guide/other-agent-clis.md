@@ -139,7 +139,9 @@ own. codex gets none: it has no verified way to keep a skill from its model.
 - Its last text can arrive after its `stop` event; murmur joins them.
 - muzzle cannot rewrite its shell calls. It denies a heavy one with the exact
   `muzzle run` line to run instead.
-- museum does not back up its chats: they are live SQLite databases.
+- museum backs up its agent-transcripts
+  (`~/.cursor/projects/*/agent-transcripts/`), not the live SQLite chats under
+  `~/.cursor/chats/`.
 
 ### Muse Code
 
