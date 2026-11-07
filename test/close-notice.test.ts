@@ -12,7 +12,7 @@ import {
   resetCommandResolverForTests,
   setCommandResolverForTests,
 } from "../src/agents.js";
-import { CLOSE_MALFORMED } from "../src/close-block.js";
+import { CLOSE_MALFORMED, CLOSE_SHAPE, malformedReason } from "../src/close-block.js";
 import {
   closeNotices,
   closeNoticeText,
@@ -180,6 +180,12 @@ describe("the note", () => {
     expect(t).toContain("w/t1 was not applied: the report is empty.");
     expect(t).toContain('CLOSE: task=t1 evidence="<command + result>"\nREPORT:\n<what you did>');
     expect(t).toContain("do not write CLOSE: at all");
+  });
+
+  it("drops the reason's one-line shape: the note prints it as lines once", () => {
+    const t = closeNoticeText("w", "t1", malformedReason("evidence is empty"));
+    expect(t).toContain("w/t1 was not applied: evidence is empty.\n");
+    expect(t).not.toContain(CLOSE_SHAPE);
   });
 
   it("only a malformed block on a known task is noticeable", () => {

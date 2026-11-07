@@ -49,6 +49,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `--interrupt`), a mux owner a plain send; every variant shows the text as
   `- <<'EOF'`, and `-w` names the owner's own workstream.
 
+- **A malformed CLOSE refusal names the shape it wanted.** Every
+  `no close (malformed): <reason>` (the task note, `mu wait`, `mu agent
+  collect`) now ends with the expected three lines, in one line: the
+  `CLOSE: task=<id> evidence="<command + result>"` header, then `REPORT:`
+  alone, then the report. The ctl close notice still prints them as lines.
+  The grammar is unchanged (a close never happens by guess). The
+  `remote-workers` and `worker` recipes show the block fenced, three lines,
+  `REPORT:` alone: 45 of 48 remote refusals since Nov 1 were a blank line
+  before `REPORT:` or text on it. `remote-workers` waits with `mu wait
+  agent:<ws>/<n>@<runs>` (the spawn's next) instead of the pi-only `mu agent
+  wait --after-runs`.
+
 ## [4.5.0] — 2026-11-07
 
 Every agent CLI is first-class: claude, codex, cursor-agent and Muse Code

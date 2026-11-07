@@ -33,7 +33,7 @@ import {
   channelTarget,
   deliver,
 } from "./channels/index.js";
-import { CLOSE_MALFORMED, parseCloseBlock } from "./close-block.js";
+import { CLOSE_MALFORMED, CLOSE_SHAPE, malformedReason, parseCloseBlock } from "./close-block.js";
 import type { Db } from "./db.js";
 import { cursorKey } from "./wait-cursor.js";
 import type { CloseOutcome, WaitRef } from "./wait-types.js";
@@ -72,7 +72,8 @@ export function noticeable(r: { task: string | null; reason: string }): boolean 
 
 /** The note: fixed text, filled only with the task id and the parser's reason. */
 export function closeNoticeText(workstream: string, task: string, reason: string): string {
-  const why = reason.slice(`${CLOSE_MALFORMED}: `.length);
+  // The note prints the shape on its own lines: drop the reason's one-line copy.
+  const why = reason.slice(`${CLOSE_MALFORMED}: `.length).replace(`; ${CLOSE_SHAPE}`, "");
   return [
     `[mu] Your CLOSE block for ${workstream}/${task} was not applied: ${why}.`,
     "If the task is done, end your final message with exactly:",
@@ -237,7 +238,7 @@ function reparse(
     )
     .all(r.agentId, ref.workstream) as { local_id: string }[];
   const task = open.length === 1 ? (open[0]?.local_id ?? null) : null;
-  return { applied: false, task, reason: `${CLOSE_MALFORMED}: ${block.reason}` };
+  return { applied: false, task, reason: malformedReason(block.reason) };
 }
 
 /**

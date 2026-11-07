@@ -146,6 +146,13 @@ function unescapeEvidence(body: string): string | undefined {
 }
 
 export const CLOSE_MALFORMED = "no close (malformed)";
+/** Ends every malformed refusal: the shape the worker must resend (one line, so
+ *  it reads inside a wait's sentence and never starts a column-0 CLOSE: line). */
+export const CLOSE_SHAPE =
+  'expected three lines: `CLOSE: task=<id> evidence="<command + result>"`, then `REPORT:` alone, then the report';
+/** The refusal for a malformed block: the parser's reason, then the shape. */
+export const malformedReason = (why: string): string =>
+  `${CLOSE_MALFORMED}: ${why}; ${CLOSE_SHAPE}`;
 export const CLOSE_TRUNCATED =
   "CLOSE block not applied: the final message was truncated; close with mu task close";
 
@@ -242,7 +249,7 @@ function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
   if (input.lastTextTruncated === true) return diagnose(CLOSE_TRUNCATED);
   const block = parseCloseBlock(input.lastText);
   if (block.kind === "none") return no(`no CLOSE block: ${block.reason}`);
-  if (block.kind === "malformed") return diagnose(`${CLOSE_MALFORMED}: ${block.reason}`);
+  if (block.kind === "malformed") return diagnose(malformedReason(block.reason));
   const task = db
     .prepare(
       `SELECT t.id, t.status, t.owner_id, t.kind FROM tasks t JOIN workstreams w ON w.id = t.workstream_id

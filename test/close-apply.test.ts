@@ -9,6 +9,7 @@ import { deleteAgent, insertAgent } from "../src/agents.js";
 import {
   applySettledClose,
   CLOSE_MALFORMED,
+  CLOSE_SHAPE,
   CLOSE_TRUNCATED,
   type SettledCloseInput,
 } from "../src/close-block.js";
@@ -306,6 +307,22 @@ describe("applySettledClose: no inferred close", () => {
       { kind: "note", content: expect.stringContaining(CLOSE_MALFORMED) },
     ]);
     expect(getTask(db, "t1", "w")?.status).toBe("IN_PROGRESS");
+  });
+
+  it("every malformed refusal, and its note, ends with the expected three-line shape", () => {
+    // The remote and hooks orchestrator sees only this reason (no ctl notice).
+    const r = applySettledClose(
+      db,
+      input({ lastText: `${'CLOSE: task=t1 evidence="x"'}\n\nREPORT:\nr` }),
+    );
+    expect(r.reason).toBe(
+      `${CLOSE_MALFORMED}: the line after CLOSE: is not exactly REPORT:; ${CLOSE_SHAPE}`,
+    );
+    expect(CLOSE_SHAPE).toContain(
+      '`CLOSE: task=<id> evidence="<command + result>"`, then `REPORT:` alone',
+    );
+    expect(CLOSE_SHAPE).not.toContain("\n");
+    expect(kinds("t1")).toEqual([{ kind: "note", content: r.reason }]);
   });
 
   it("a malformed block with no single open owned task records the replay row but no note", async () => {
