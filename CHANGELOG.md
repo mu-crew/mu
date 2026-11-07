@@ -93,6 +93,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `askModel` answers the scripted `evalfaux/*` models without pi. `main.ts`
   dispatches `tournament` to a stub until the driver lands.
 
+- **Eval: the next-step case catalogue** (`tools/eval`, hill-r2 B4b, spec
+  docs/specs/2026-11-07-hill-r2-tournament.md §2, §7). Eleven more cases
+  beside the two pilots: close preview with an unmerged commit, three wait
+  readings (result line, heartbeat merged into JSON, the 120 s shell limit),
+  the delegate report in notes, agent read through pane chrome, NO VERDICT
+  LINE, a worker that closed with the verb, sleep polling, and the sql and
+  finding guards. `nextstep check` proves every §2.3 row on base, lint is
+  clean against base's names. `dead_once` is dropped: base reports one death
+  once.
+
 - **Eval rig: hill-r2 fixtures, intents and R4 scenarios** (spec
   docs/specs/2026-11-07-hill-r2-tournament.md §2, §7 B4a). `tools/eval`
   fixtures gain gated task scripts (`gate: { delayMs }`, released by

@@ -1,11 +1,20 @@
-// Next-step probe cases (spec §2). B2 ships the two pilots, one bash and one zsh; B4b adds the rest.
+// Next-step probe cases (spec §2). This file holds the two pilots (B2: one bash, one zsh) and the
+// catalogue in §2 order; the other cases live by group in nextstep-cases-{wait,close,read}.ts (B4b).
 // Each case: a seed, a live lead-in in base grammar, goals worded with no mu name (`nextstep lint`),
 // a judge on state and mu's own output (nextstep-exec.ts `shown`), and the §2.3 rows `check` proves.
+//
+// Case 11 (`dead_once`) is dropped: §2.3 asks B4b to reproduce the double exit-6 on base first, and
+// base reports one death once. A wait on the dead worker's agent ref, on its task ref, or the
+// caller's owned refs fires one `dead` event and consumes both cursors (dead|agent and dead|task);
+// the next wait, before or after the respawn of t1 with --attempt 2, times out with nothing dead.
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { WS } from "./cold-intents.ts";
 import { seedNotes, seedViaMu, shq } from "./fixtures.ts";
 import type { NextCase, NextCtx } from "./nextstep.ts";
+import { CLOSE_CASES } from "./nextstep-cases-close.ts";
+import { READ_CASES } from "./nextstep-cases-read.ts";
+import { WAIT_CASES } from "./nextstep-cases-wait.ts";
 import { muText, shown } from "./nextstep-exec.ts";
 import { lostWork } from "./observe.ts";
 import { opsSince } from "./ops.ts";
@@ -263,4 +272,25 @@ const notesMulti: NextCase = {
   ],
 };
 
-export const NEXT_CASES: NextCase[] = [closePreviewApply, notesMulti];
+const ORDER = [
+  "close_preview_apply",
+  "close_preview_conflict",
+  "wait_result_read",
+  "wait_heartbeat_merge",
+  "wait_shell_limit",
+  "notes_report_read",
+  "notes_multi",
+  "agent_read_text",
+  "delegate_no_verdict",
+  "close_already_closed",
+  "sleep_poll",
+  "sql_name_guess",
+  "finding_guess",
+];
+const ALL = [closePreviewApply, notesMulti, ...WAIT_CASES, ...CLOSE_CASES, ...READ_CASES];
+
+export const NEXT_CASES: NextCase[] = ORDER.map((id) => {
+  const c = ALL.find((x) => x.id === id);
+  if (!c) throw new Error(`nextstep-cases: no case ${id}`);
+  return c;
+});
