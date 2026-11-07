@@ -100,9 +100,36 @@ describe("t_surface round 1", () => {
     [["tasks"], "unknown command 'tasks' (closest: mu task list); see mu --help"],
     [["show"], "unknown command 'show' (closest: mu task show); see mu --help"],
     [["agents"], "unknown command 'agents' (closest: mu agent list); see mu --help"],
+    // hill-r2 A5: guessed verbs that spelling distance cannot reach.
+    [
+      ["finding", "show", "x"],
+      "unknown command 'finding' (closest: mu task show (a finding is an OPEN/triage task)); see mu --help",
+    ],
+    [["task", "ready"], "unknown command 'ready' (closest: mu task next -n 0); see mu task --help"],
+    [["ready"], "unknown command 'ready' (closest: mu task next -n 0); see mu --help"],
+    // `delegates` runs `list` by default: an unknown first word is an unknown verb, not list's argument.
+    [
+      ["delegates", "check", "x"],
+      "unknown command 'check' (closest: mu task check); see mu delegates --help",
+    ],
+    [
+      ["delegates", "--json", "verdict"],
+      "unknown command 'verdict' (closest: mu task verdict); see mu delegates --help",
+    ],
+    [["delegates", "foo"], "unknown command 'foo'; see mu delegates --help"],
+    [
+      ["delegates", "tall"],
+      "unknown command 'tall' (closest: mu delegates tally); see mu delegates --help",
+    ],
   ])("did-you-mean %j", async (argv, line) => {
     const r = await runCli(argv, path);
-    expect(strip(r.stderr).trim()).toBe(`error: ${line}`);
+    const out = argv.includes("--json") ? JSON.parse(r.stdout).message : strip(r.stderr).trim();
+    expect(out).toBe(argv.includes("--json") ? line : `error: ${line}`);
+  });
+
+  it("an extra argument to a named default verb stays an argument error", async () => {
+    const r = await runCli(["delegates", "list", "foo"], path);
+    expect(strip(r.stderr)).toContain("too many arguments for 'list'");
   });
 
   it("the blockers view names the task by local id", () => {

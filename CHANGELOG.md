@@ -94,6 +94,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   PRAGMA, ATTACH, DDL, id changes, bookkeeping writes, the `--write` opt-in)
   and a capped read's `retrieve` said `mu db query` (or always `mu sql`); each
   now names `mu sql` or `mu db query` as typed.
+- **Guessed verbs name the command that works.** `mu finding` points at
+  `mu task show` (a finding is an `OPEN/triage` task), `mu findings` at
+  `mu task list --substate triage`, `mu ready` / `mu task ready` at
+  `mu task next -n 0`, `mu delegates check|verdict` at `mu task check|verdict`.
+  An unknown first word after `mu delegates` (whose default verb is `list`)
+  is now `unknown command 'x'` with the closest verb, not "too many arguments
+  for 'list'".
+- **`mu sql` name errors teach the real name.** A guessed column offers the
+  column that holds the data first: `name` on tasks -> `local_id, title` (it
+  suggested `wave`), `body`/`text` -> `content`, `workstream` ->
+  `workstream_id` plus the join that filters by workstream name. `no such
+  table: x` (was passed through raw) is now a one-line `SqlTableError`
+  (exit 2) naming the closest table (`notes` -> `task_notes`, `edges` ->
+  `task_edges`) and listing every table and view.
 - **Lease-carrier hints carry `-w`.** The `mu agent close <name>` hints of a
   refused stop, a spawn fenced by an unstopped or reserved job, and a dead
   remote worker in `mu task next --recover` now name the agent and

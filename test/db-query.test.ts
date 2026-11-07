@@ -15,7 +15,7 @@ import {
   installScopedViews,
   cmdDbQuery as runDbQuery,
 } from "../src/cli/db-query.js";
-import { SqlColumnError, UsageError } from "../src/cli/handle.js";
+import { SqlColumnError, SqlTableError, UsageError } from "../src/cli/handle.js";
 import { type Db, openDb, WorkstreamNotFoundError } from "../src/db.js";
 import { RESULT_BYTES } from "../src/output-contract.js";
 import { shellQuote } from "../src/shell-quote.js";
@@ -699,8 +699,54 @@ describe("no such column", () => {
   });
 
   it("other SQL errors pass through unchanged", async () => {
-    await expect(cmdDbQuery(db, "SELECT * FROM no_such_table")).rejects.toThrow(/no such table/);
     await expect(cmdDbQuery(db, "SELEKT 1")).rejects.not.toBeInstanceOf(SqlColumnError);
+    await expect(cmdDbQuery(db, "SELEKT 1")).rejects.not.toBeInstanceOf(SqlTableError);
+  });
+
+  it("the names agents guess most: name, body, workstream (with the join)", async () => {
+    // `name` is near `wave` by spelling; a task's name is its local_id (or title).
+    expect((await fail("SELECT name FROM tasks")).message).toMatch(
+      /^no such column: name \(did you mean local_id, title\?\)\. columns: tasks\(/,
+    );
+    expect((await fail("SELECT body FROM task_notes")).message).toMatch(
+      /^no such column: body \(did you mean content\?\)\. columns: task_notes\(/,
+    );
+    expect((await fail("SELECT * FROM tasks t WHERE t.workstream = 'w'")).message).toContain(
+      "no such column: workstream (did you mean workstream_id?); by workstream name: JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = '<ws>'. columns: tasks(",
+    );
+  });
+});
+
+describe("no such table", () => {
+  const fail = async (sql: string): Promise<SqlTableError> => {
+    try {
+      await cmdDbQuery(db, sql);
+    } catch (err) {
+      expect(err).toBeInstanceOf(SqlTableError);
+      return err as SqlTableError;
+    }
+    throw new Error("expected a SqlTableError");
+  };
+
+  it.each([
+    ["notes", "task_notes"],
+    ["edges", "task_edges"],
+    ["taks", "tasks"],
+  ])("%s names %s and lists the real tables, on one line", async (guess, real) => {
+    const err = await fail(`SELECT * FROM ${guess}`);
+    expect(err.message).toMatch(
+      new RegExp(
+        `^no such table: ${guess} \\(did you mean ${real}\\?\\)\\. tables: .*\\btask_notes\\b`,
+      ),
+    );
+    expect(err.message).toContain(", ready,");
+    expect(err.message).not.toContain("sqlite_sequence");
+    expect(err.message).not.toContain("\n");
+    expect(err.showHelp).toBe(false);
+  });
+
+  it("no near table: just the list", async () => {
+    expect((await fail("SELECT * FROM zzz")).message).toMatch(/^no such table: zzz\. tables: /);
   });
 });
 

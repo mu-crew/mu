@@ -101,7 +101,8 @@ describe("mu sql: a guard's RAISE is a typed error with the next command (a miss
   });
 
   it("an unrelated SQL error is still a plain error (exit 1)", async () => {
-    const r = await sql("UPDATE nope SET x = 1");
+    // (a missing table is a usage error now: SqlTableError names the real ones)
+    const r = await sql("UPDATE tasks SET x = 1 WHERE 1 = 1 = ");
     expect(r.exitCode).toBe(1);
   });
 });

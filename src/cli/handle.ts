@@ -209,6 +209,15 @@ export class SqlColumnError extends UsageError {
   }
 }
 
+/** `mu db query` hit `no such table`: the message names the closest table and
+ *  lists them all, so it is one line (exit 2, no help dump). */
+export class SqlTableError extends UsageError {
+  override readonly name = "SqlTableError";
+  constructor(message: string) {
+    super(message, { showHelp: false });
+  }
+}
+
 /**
  * Internal CLI-control sentinel for handlers that already rendered their
  * success/partial-success payload and only need `handle()` to exit with a
@@ -720,14 +729,39 @@ function quotingHint(err: unknown, cmd: Command | undefined): string | undefined
   return "; a quote in the text probably ended the string early (an apostrophe inside '...'): pass the text on stdin as - with a quoted heredoc (<<'EOF')";
 }
 
+/** Verbs agents guess that mu has under another name, keyed by `<path> <word>`:
+ *  the command that does it. Spelling distance cannot find these. */
+const GUESSED_VERBS: Record<string, string> = {
+  "mu finding": "mu task show (a finding is an OPEN/triage task)",
+  "mu findings": "mu task list --substate triage",
+  "mu ready": "mu task next -n 0",
+  "mu task ready": "mu task next -n 0",
+  "mu delegates check": "mu task check",
+  "mu delegates verdict": "mu task verdict",
+};
+
 /**
  * An unknown verb, as one line: `unknown command 'x'` plus the closest verb
  * of `cmd` (or `mu --help`). The root takes no arguments, so commander calls
  * an unknown top-level verb "too many arguments"; a namespace says
- * "unknown command". undefined for any other error.
+ * "unknown command". A namespace with a default verb (`mu delegates` runs
+ * `list`) hands the unknown word to that verb as an argument, so its "too
+ * many arguments" is an unknown verb too. undefined for any other error.
  */
 function unknownVerb(err: unknown, cmd: Command | undefined): string | undefined {
   if (!(err instanceof CommanderError) || cmd === undefined) return;
+  // The default verb ran without being named: the first word was meant as a verb.
+  // The verb's own operands (options already taken), from commander's message.
+  const first = /but got \d+: (.*?)(?:, |\.$)/.exec(err.message)?.[1];
+  if (
+    err.code === "commander.excessArguments" &&
+    cmd.parent !== null &&
+    first !== undefined &&
+    cmd.commands.length > 0 &&
+    !cmd.commands.some((c) => c.name() === first || c.aliases().includes(first))
+  ) {
+    return unknownVerbIn(cmd, first);
+  }
   const root = cmd.parent === null;
   // An unknown option on the bare root: the 70-line root help is no answer, `mu --help` is.
   if (root && err.code === "commander.unknownOption") {
@@ -738,8 +772,18 @@ function unknownVerb(err: unknown, cmd: Command | undefined): string | undefined
   if (err.code === "commander.unknownCommand") word = /'([^']*)'/.exec(err.message)?.[1];
   else if (err.code === "commander.excessArguments" && root) word = cmd.args[0];
   if (word === undefined) return;
+  return unknownVerbIn(cmd, word);
+}
+
+/** The one-line answer for `word`, not a verb of `cmd` (the root or a namespace). */
+function unknownVerbIn(cmd: Command, word: string): string {
+  const root = cmd.parent === null;
   // The verbs one level down count too (`mu next` → `mu task next`); a direct one wins a tie.
   const path = root ? "mu" : `mu ${cmd.name()}`;
+  const guessed = GUESSED_VERBS[`${path} ${word}`];
+  if (guessed !== undefined) {
+    return `unknown command '${word}' (closest: ${guessed}); see ${path} --help`;
+  }
   const names = cmd.commands.flatMap((c) => [c.name(), ...c.aliases()].map((n) => [n, n]));
   // `task` verbs first: they win a tie (`mu show` → `mu task show`, not `mu agent show`).
   const nested = [...cmd.commands]

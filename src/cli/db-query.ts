@@ -66,7 +66,7 @@ import {
   TaskAlreadyOwnedError,
   TaskHasOpenBlockersError,
 } from "../tasks.js";
-import { CliExitError, SqlColumnError, UsageError } from "./handle.js";
+import { CliExitError, SqlColumnError, SqlTableError, UsageError } from "./handle.js";
 import { jsonDocument, pageRecords, type RecordPage } from "./tasks/records.js";
 
 type Statement = ReturnType<Db["prepare"]>;
@@ -483,27 +483,68 @@ function firstProtectedWrite(db: Db, rows: readonly ExplainRow[]): string | unde
   return counterWrite;
 }
 
-// ─── the wrong-column hint ────────────────────────────────────────────
+// ─── the wrong-name hints ─────────────────────────────────────────────
+
+/** Column names agents guess, and the real columns that hold that data
+ *  (only those in a table the query names are offered). */
+const GUESSED_COLUMNS: Record<string, string[]> = {
+  name: ["local_id", "title"],
+  id_name: ["local_id"],
+  task: ["task_id", "local_id"],
+  body: ["content"],
+  text: ["content"],
+  note: ["content"],
+  message: ["content"],
+  workstream: ["workstream_id"],
+  workstream_name: ["workstream_id"],
+  ws: ["workstream_id"],
+};
+
+/** Table names agents guess, and the real table. */
+const GUESSED_TABLES: Record<string, string> = {
+  notes: "task_notes",
+  note: "task_notes",
+  edges: "task_edges",
+  edge: "task_edges",
+  deps: "task_edges",
+  dependencies: "task_edges",
+  workstream: "workstreams",
+  task: "tasks",
+  agent: "agents",
+  delegates: "delegate_calls",
+};
+
+/** The tables and views a query can name: main's, plus the scoped temp views. */
+function tableNames(db: Db): string[] {
+  const rows = db
+    .prepare(
+      "SELECT name FROM (SELECT name FROM main.sqlite_master WHERE type IN ('table','view') UNION SELECT name FROM temp.sqlite_master WHERE type = 'view') WHERE name NOT LIKE 'sqlite_%' ORDER BY name",
+    )
+    .all() as { name: string }[];
+  return rows.map((r) => r.name);
+}
 
 /**
  * `no such column: x` becomes one line naming the columns of the tables the
- * query mentions, and the closest ones. SQL is never rewritten or retried.
- * Any other error comes back unchanged.
+ * query mentions, and the closest ones (a known guess first: `name` on tasks
+ * is `local_id`); a guessed `workstream` also gets the join that filters by
+ * workstream name. `no such table: x` names the closest table and lists
+ * them all. SQL is never rewritten or retried. Any other error comes back
+ * unchanged.
  */
 function teachColumnError(db: Db, query: string, err: unknown): unknown {
   const msg = err instanceof Error ? err.message : "";
+  const t = /^no such table: (.+)$/.exec(msg);
+  if (t !== null) return teachTableError(db, t[1] as string, err);
   const m = /^no such column: (.+)$/.exec(msg);
   if (m === null) return err;
-  const wanted = (m[1] as string).split(".").pop() as string;
+  const parts = (m[1] as string).split(".");
+  const wanted = parts.pop() as string;
+  const qualifier = parts.pop();
   const tables = new Map<string, string[]>();
   try {
-    const names = db
-      .prepare(
-        "SELECT name FROM (SELECT name FROM main.sqlite_master WHERE type IN ('table','view') UNION SELECT name FROM temp.sqlite_master WHERE type = 'view') ORDER BY name",
-      )
-      .all() as { name: string }[];
     const words = new Set(query.toLowerCase().match(/[a-z_][a-z0-9_]*/g) ?? []);
-    for (const { name } of names) {
+    for (const name of tableNames(db)) {
       if (!words.has(name.toLowerCase())) continue;
       const cols = db.prepare("SELECT name FROM pragma_table_info(?)").all(name) as {
         name: string;
@@ -518,18 +559,56 @@ function teachColumnError(db: Db, query: string, err: unknown): unknown {
   }
   const all = [...new Set([...tables.values()].flat())];
   const lower = wanted.toLowerCase();
-  const near = all
-    .filter((c) => {
-      const cl = c.toLowerCase();
-      return cl.includes(lower) || lower.includes(cl) || editDistance(cl, lower) <= 2;
-    })
-    .slice(0, 3);
-  const mean = near.length > 0 ? ` (did you mean ${near.join(", ")}?)` : "";
+  const guessed = (GUESSED_COLUMNS[lower] ?? []).filter((c) => all.includes(c));
+  const near =
+    guessed.length > 0
+      ? guessed
+      : all
+          .filter((c) => {
+            const cl = c.toLowerCase();
+            return cl.includes(lower) || lower.includes(cl) || editDistance(cl, lower) <= 2;
+          })
+          .slice(0, 3);
+  let mean = near.length > 0 ? ` (did you mean ${near.join(", ")}?)` : "";
+  if (near.includes("workstream_id") && lower !== "workstream_id") {
+    const owner =
+      qualifier ?? [...tables].find(([, cs]) => cs.includes("workstream_id"))?.[0] ?? "t";
+    mean += `; by workstream name: JOIN workstreams w ON w.id = ${owner}.workstream_id WHERE w.name = '<ws>'`;
+  }
   const cols =
     tables.size === 0
       ? "name a table to see its columns"
       : [...tables].map(([t, cs]) => `${t}(${cs.join(", ")})`).join("; ");
   return new SqlColumnError(`no such column: ${wanted}${mean}. columns: ${cols}`);
+}
+
+/** `no such table: x`: the closest real table, then every table and view. */
+function teachTableError(db: Db, missing: string, err: unknown): unknown {
+  const wanted = missing.split(".").pop() as string;
+  let names: string[];
+  try {
+    names = tableNames(db);
+  } catch {
+    return err;
+  }
+  const lower = wanted.toLowerCase();
+  const guess = GUESSED_TABLES[lower];
+  const near =
+    guess !== undefined && names.includes(guess)
+      ? [guess]
+      : names
+          .filter((n) => {
+            const nl = n.toLowerCase();
+            return (
+              nl === `task_${lower}` ||
+              nl.includes(lower) ||
+              lower.includes(nl) ||
+              editDistance(nl, lower) <= 2
+            );
+          })
+          .slice(0, 3);
+  const mean = near.length > 0 ? ` (did you mean ${near.join(", ")}?)` : "";
+  return new SqlTableError(`no such table: ${wanted}${mean}. tables: ${names.join(", ")}`);
 }
 
 /**
