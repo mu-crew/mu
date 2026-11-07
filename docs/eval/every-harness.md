@@ -91,8 +91,8 @@ until DONE. The AUT interrupts it long before. (An earlier eval-slow that could
 never finish let a live claude worker read it and end its turn as blocked, so
 there was nothing to interrupt.) A harness that still ended the turn on a tool
 timeout would fail the case through no fault of the AUT ("first turn ended by
-itself"). cursor-agent's and Muse Code's shell tools are assumed to behave
-like claude's and codex's; no live run has checked it yet.
+itself"). cursor-agent's and Muse Code's shell tools behave like claude's
+and codex's (E6 under cursor-agent, with cursor-agent and Muse workers).
 
 ## Proving the judges (zero model cost)
 
@@ -350,6 +350,7 @@ and auth (spec D1). The rig changes exactly this:
   The shell prompt and a launcher's banner and `Installing ...` lines, shown
   before the TUI draws, never count. codex's hook trust counts only when
   every hook of the home's hooks.json has a `trusted_hash`.
+
 - **The ssh host `dev`.** Its HOME is `<sandbox>/hosts/dev/home`, live or
   fake, so mu's state there (anchors, and the remote worktrees in
   `~/.local/state/mu-next/remote-worktrees/eval/<worker>`) is the sandbox's and
@@ -441,16 +442,23 @@ node tools/eval/main.ts run e4_replacement_orchestrator --surface "$S" --harness
 node tools/eval/main.ts run e7_mixed_crew               --surface "$S" --harness muse         --model default                              --out "$OUT"
 ```
 
-**Not yet confirmed live.** No cursor-agent or Muse Code pane has orchestrated
-in this rig yet, so these are the first things to read in the new rows' notes:
+**Confirmed live (2026-11-07).** The first cursor-agent and Muse Code rows
+settled what the rig could not check with fakes:
 
-- that `--sandbox enabled` (cursor-agent) and `--approval-mode never` (Muse)
-  let the AUT reach mu's state and the tmux socket outside the sandbox repo;
-  if not, the `EVAL_AUT_COMMAND` fallbacks above, noted in the result;
-- that cursor-agent's and Muse's shell tools end a call, not the turn, on a
-  timeout (E6, above);
-- that a Muse AUT keeps driving within its turn without a Stop hook
-  (`MUSE_DRIVE`).
+- `--sandbox enabled` (cursor-agent) and `--approval-mode never` (Muse) let
+  the AUT reach mu's state and the tmux socket; no run needed an
+  `EVAL_AUT_COMMAND` fallback. (The rig ran from a tmux server outside any
+  sandbox. Under a sandboxed parent, cursor-agent's seatbelt cannot nest.)
+- cursor-agent's and Muse's shell tools end a call, not the turn, on a
+  timeout: E6's workers were cursor-agent and Muse, and neither first turn
+  ended by itself.
+- A Muse AUT keeps driving within its turn without a Stop hook
+  (`MUSE_DRIVE`): E1, E3, E4 and E7.
+- cursor-agent also runs the hooks in claude's settings, so its sessions
+  report twice, once as claude. The observer drops the claude echo of a
+  session another harness reported (`parseHookLog`).
+- Muse lost a first prompt pasted while its launcher was still starting. mu
+  now waits for Muse's ready screen (`readyMarks`) before the first paste.
 
 One case and AUT at a time is the same line without the loop, e.g.
 `node tools/eval/main.ts run e6_interrupt_resend --surface "$PWD:next" --harness codex --model default --keep --out docs/eval/every-harness.jsonl`
@@ -460,70 +468,70 @@ replaces the AUT pane's command (e.g. `claude --permission-mode auto`).
 
 ## Results
 
-Empty until the live runs. One row per run: `completed` is the case's pass
+The latest live run of each row (earlier runs stay in `every-harness.jsonl`): `completed` is the case's pass
 criterion; `wrong` and `destructive` are the judge's entries, verbatim;
 `workers` is the run's crew (the default, or the plan's mix).
 
 ### E1 dispatch and merge
 
-| AUT          | Workers              | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------------ | -------------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude       | claude, codex        |      |       |           |                     |      |       |
-| codex        | claude, codex        |      |       |           |                     |      |       |
-| pi           | claude, codex        |      |       |           |                     |      |       |
-| cursor-agent | muse, codex          |      |       |           |                     |      |       |
-| muse         | cursor-agent, claude |      |       |           |                     |      |       |
+| AUT          | Workers              | Date       | Model                     | Completed | Wrong / destructive | Wall  | Notes                                                                                                                        |
+| ------------ | -------------------- | ---------- | ------------------------- | --------- | ------------------- | ----- | ---------------------------------------------------------------------------------------------------------------------------- |
+| claude       | claude, codex        | 2026-11-06 | default                   | yes       | none                | 141 s | 26 mu calls                                                                                                                  |
+| codex        | claude, codex        | 2026-11-06 | default                   | yes       | none                | 232 s | 59 mu calls                                                                                                                  |
+| pi           | claude, codex        | 2026-11-06 | anthropic/claude-opus-5-5 | yes       | none                | 114 s | 11 mu calls                                                                                                                  |
+| cursor-agent | muse, codex          | 2026-11-07 | default                   | yes       | none                | 365 s | 28 mu calls, 4 failed (noted)                                                                                                |
+| muse         | cursor-agent, claude | 2026-11-07 | default                   | yes       | none                | 289 s | 29 mu calls, 1 failed (noted); 2nd run; the 1st was judged wrong because cursor-agent also runs claude's hooks (judge fixed) |
 
 ### E2 finding triage with a cross-family refuter
 
-| AUT    | Workers                                      | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | -------------------------------------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude | codex (claude: OpenAI or unknown AUT family) |      |       |           |                     |      |       |
-| codex  | codex (claude: OpenAI or unknown AUT family) |      |       |           |                     |      |       |
-| pi     | codex (claude: OpenAI or unknown AUT family) |      |       |           |                     |      |       |
+| AUT    | Workers                                      | Date       | Model                     | Completed | Wrong / destructive | Wall  | Notes                                                                  |
+| ------ | -------------------------------------------- | ---------- | ------------------------- | --------- | ------------------- | ----- | ---------------------------------------------------------------------- |
+| claude | codex (claude: OpenAI or unknown AUT family) | 2026-11-06 | default                   | yes       | none                | 196 s | 24 mu calls, 2 failed (noted)                                          |
+| codex  | codex (claude: OpenAI or unknown AUT family) | 2026-11-06 | default                   | yes       | none                | 120 s | 24 mu calls                                                            |
+| pi     | codex (claude: OpenAI or unknown AUT family) | 2026-11-06 | anthropic/claude-opus-5-5 | yes       | none                | 96 s  | 9 mu calls; rerun after the judge counted failed AUT mu calls as wrong |
 
 ### E3 review gate
 
-| AUT          | Workers       | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------------ | ------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude       | codex, claude |      |       |           |                     |      |       |
-| codex        | codex, claude |      |       |           |                     |      |       |
-| pi           | codex, claude |      |       |           |                     |      |       |
-| cursor-agent | codex, claude |      |       |           |                     |      |       |
-| muse         | codex, muse   |      |       |           |                     |      |       |
+| AUT          | Workers       | Date       | Model                     | Completed | Wrong / destructive | Wall  | Notes                                                                                     |
+| ------------ | ------------- | ---------- | ------------------------- | --------- | ------------------- | ----- | ----------------------------------------------------------------------------------------- |
+| claude       | codex, claude | 2026-11-06 | default                   | yes       | none                | 786 s | 34 mu calls, 3 failed (noted); slowest run                                                |
+| codex        | codex, claude | 2026-11-06 | default                   | yes       | none                | 222 s | 40 mu calls                                                                               |
+| pi           | codex, claude | 2026-11-06 | anthropic/claude-opus-5-5 | yes       | none                | 132 s | 12 mu calls, 1 failed (noted); rerun after the judge counted failed AUT mu calls as wrong |
+| cursor-agent | codex, claude | 2026-11-07 | default                   | yes       | none                | 201 s | 40 mu calls, 1 failed (noted)                                                             |
+| muse         | codex, muse   | 2026-11-07 | default                   | yes       | none                | 298 s | 47 mu calls, 6 failed (noted)                                                             |
 
 ### E4 crash and replacement orchestrator
 
-| AUT    | Workers       | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude | claude, codex |      |       |           |                     |      |       |
-| codex  | claude, codex |      |       |           |                     |      |       |
-| pi     | claude, codex |      |       |           |                     |      |       |
-| muse   | claude, codex |      |       |           |                     |      |       |
+| AUT    | Workers       | Date       | Model                     | Completed | Wrong / destructive | Wall  | Notes       |
+| ------ | ------------- | ---------- | ------------------------- | --------- | ------------------- | ----- | ----------- |
+| claude | claude, codex | 2026-11-06 | default                   | yes       | none                | 104 s | 19 mu calls |
+| codex  | claude, codex | 2026-11-06 | default                   | yes       | none                | 200 s | 84 mu calls |
+| pi     | claude, codex | 2026-11-06 | anthropic/claude-opus-5-5 | yes       | none                | 150 s | 12 mu calls |
+| muse   | claude, codex | 2026-11-07 | default                   | yes       | none                | 351 s | 37 mu calls |
 
 ### E5 remote worker
 
-| AUT          | Workers    | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------------ | ---------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude       | claude@dev |      |       |           |                     |      |       |
-| codex        | claude@dev |      |       |           |                     |      |       |
-| pi           | claude@dev |      |       |           |                     |      |       |
-| cursor-agent | claude@dev |      |       |           |                     |      |       |
+| AUT          | Workers    | Date       | Model                     | Completed | Wrong / destructive | Wall  | Notes                         |
+| ------------ | ---------- | ---------- | ------------------------- | --------- | ------------------- | ----- | ----------------------------- |
+| claude       | claude@dev | 2026-11-06 | default                   | yes       | none                | 153 s | 19 mu calls                   |
+| codex        | claude@dev | 2026-11-06 | default                   | yes       | none                | 216 s | 35 mu calls                   |
+| pi           | claude@dev | 2026-11-06 | anthropic/claude-opus-5-5 | yes       | none                | 144 s | 10 mu calls                   |
+| cursor-agent | claude@dev | 2026-11-07 | default                   | yes       | none                | 227 s | 39 mu calls, 5 failed (noted) |
 
 ### E6 interrupt and resend
 
-| AUT          | Workers            | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------------ | ------------------ | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude       | claude, codex      |      |       |           |                     |      |       |
-| codex        | claude, codex      |      |       |           |                     |      |       |
-| pi           | claude, codex      |      |       |           |                     |      |       |
-| cursor-agent | cursor-agent, muse |      |       |           |                     |      |       |
+| AUT          | Workers            | Date       | Model                     | Completed | Wrong / destructive | Wall  | Notes                                                                                                                                     |
+| ------------ | ------------------ | ---------- | ------------------------- | --------- | ------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| claude       | claude, codex      | 2026-11-06 | default                   | yes       | none                | 107 s | 15 mu calls; eval-slow made an honest 20-minute job after a worker ended its turn as blocked                                              |
+| codex        | claude, codex      | 2026-11-06 | default                   | yes       | none                | 146 s | 37 mu calls; 5th run; earlier failures were rig and judge (follow-up counted as a resend)                                                 |
+| pi           | claude, codex      | 2026-11-06 | anthropic/claude-opus-5-5 | yes       | none                | 97 s  | 9 mu calls; 4th run; earlier failures were rig and judge                                                                                  |
+| cursor-agent | cursor-agent, muse | 2026-11-07 | default                   | yes       | none                | 127 s | 30 mu calls, 1 failed (noted); 3rd run; Muse lost its first prompt (mu fix: Muse ready marks), then a stdin resend was missed (judge fix) |
 
 ### E7 a mixed crew
 
-| AUT    | Workers                       | Date | Model | Completed | Wrong / destructive | Wall | Notes |
-| ------ | ----------------------------- | ---- | ----- | --------- | ------------------- | ---- | ----- |
-| claude | codex, pi, claude@dev, pi@dev |      |       |           |                     |      |       |
-| codex  | codex, pi, claude@dev, pi@dev |      |       |           |                     |      |       |
-| pi     | codex, pi, claude@dev, pi@dev |      |       |           |                     |      |       |
-| muse   | codex, pi, claude@dev, pi@dev |      |       |           |                     |      |       |
+| AUT    | Workers                       | Date       | Model                     | Completed | Wrong / destructive | Wall  | Notes                                                                                             |
+| ------ | ----------------------------- | ---------- | ------------------------- | --------- | ------------------- | ----- | ------------------------------------------------------------------------------------------------- |
+| claude | codex, pi, claude@dev, pi@dev | 2026-11-06 | default                   | yes       | none                | 358 s | 58 mu calls                                                                                       |
+| codex  | codex, pi, claude@dev, pi@dev | 2026-11-06 | default                   | yes       | none                | 258 s | 66 mu calls                                                                                       |
+| pi     | codex, pi, claude@dev, pi@dev | 2026-11-06 | anthropic/claude-opus-5-5 | yes       | none                | 210 s | 21 mu calls, 5 failed (noted)                                                                     |
+| muse   | codex, pi, claude@dev, pi@dev | 2026-11-07 | default                   | yes       | none                | 583 s | 59 mu calls, 8 failed (noted); Muse has no Stop hook; it kept driving on the prompt's instruction |
