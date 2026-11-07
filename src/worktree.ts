@@ -523,44 +523,117 @@ export async function worktreeHolders(
  * run: a caller then shows more, never less.
  */
 export async function processTree(root: number): Promise<Set<number>> {
+  return (await paneProcesses(root)).tree;
+}
+
+/** What a close knows of a pane before its kill: paneProcesses. */
+export interface PaneProcesses {
+  /** processTree: what the kill ends. */
+  tree: Set<number>;
+  /**
+   * The process groups of the pane's helpers, which outlive the kill: every
+   * process in the pane's session, and each descendant that left it (setsid).
+   */
+  groups: Set<number>;
+}
+
+/**
+ * `root`'s processes, and what ties its helpers to the pane: pi's guardrails
+ * plugin moves to its own process group (no hangup reaches it) and is
+ * reparented away from pi, so only its session ties it to the pane; a setsid'd
+ * descendant keeps only its group. Read before the kill: once the session's
+ * leader dies, macOS shows its members with no terminal. The group then ties
+ * them, and the children they start later (log_shipper), to the pane.
+ */
+export async function paneProcesses(root: number): Promise<PaneProcesses> {
   const tree = new Set([root]);
-  let out: string;
-  try {
-    out = (await exec("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "sid="])).stdout;
-  } catch {
-    try {
-      const cols = ["pid=", "ppid=", "tty=", "pgid="].flatMap((c) => ["-o", c]);
-      out = (await exec("ps", ["-A", ...cols])).stdout;
-    } catch {
-      return tree;
-    }
-  }
+  const groups = new Set<number>();
+  const ps = await readPs();
+  if (ps === undefined) return { tree, groups };
   const kids = new Map<number, number[]>();
-  const sid = new Map<number, string>();
-  for (const l of out.split("\n")) {
-    const [p, pp, t, g] = l.trim().split(/\s+/);
-    // macOS: no terminal (`??`) is told by process group instead.
-    const s = g === undefined ? t : t === "??" ? `pgid ${g}` : t;
-    const pid = Number(p);
-    const ppid = Number(pp);
-    if (p === undefined || pp === undefined || Number.isNaN(pid) || Number.isNaN(ppid)) continue;
-    kids.set(ppid, [...(kids.get(ppid) ?? []), pid]);
-    if (s !== undefined && s !== "") sid.set(pid, s);
-  }
-  const session = sid.get(root);
+  for (const [pid, r] of ps) kids.set(r.ppid, [...(kids.get(r.ppid) ?? []), pid]);
+  const session = ps.get(root)?.session;
   const seen = new Set([root]);
-  const todo = [root];
-  for (let p = todo.pop(); p !== undefined; p = todo.pop()) {
+  // [pid, under a helper]: a helper's children are the helper's, never the pane's.
+  const todo: [number, boolean][] = [[root, false]];
+  for (let e = todo.pop(); e !== undefined; e = todo.pop()) {
+    const [p, fled] = e;
     for (const k of kids.get(p) ?? []) {
       if (seen.has(k)) continue;
       seen.add(k);
       // Left the pane's session (setsid): it survives the kill, and so do its own children.
-      if (session !== undefined && sid.get(k) !== session) continue;
-      tree.add(k);
-      todo.push(k);
+      const left = fled || (session !== undefined && ps.get(k)?.session !== session);
+      todo.push([k, left]);
+      const g = ps.get(k)?.pgid;
+      if (!left) tree.add(k);
+      else if (g !== undefined) groups.add(g);
     }
   }
-  return tree;
+  for (const r of ps.values()) {
+    if (session !== undefined && r.session === session && r.pgid !== undefined) groups.add(r.pgid);
+  }
+  return { tree, groups };
+}
+
+/**
+ * Every process's parent, session and group (`ps -A`). Linux reads the session
+ * id; macOS's ps has none, so there it is the controlling terminal (a session
+ * owns at most one), or `pgid N` for a process with none. Undefined when ps
+ * cannot run.
+ */
+async function readPs(): Promise<
+  Map<number, { ppid: number; session: string | undefined; pgid: number | undefined }> | undefined
+> {
+  const cols = (c: string[]): string[] => c.flatMap((x) => ["-o", x]);
+  let out: string;
+  let mac = false;
+  try {
+    out = (await exec("ps", ["-A", ...cols(["pid=", "ppid=", "sid=", "pgid="])])).stdout;
+  } catch {
+    try {
+      out = (await exec("ps", ["-A", ...cols(["pid=", "ppid=", "tty=", "pgid="])])).stdout;
+      mac = true;
+    } catch {
+      return undefined;
+    }
+  }
+  const rows = new Map<
+    number,
+    { ppid: number; session: string | undefined; pgid: number | undefined }
+  >();
+  for (const l of out.split("\n")) {
+    const [p, pp, t, g] = l.trim().split(/\s+/);
+    const pid = Number(p);
+    const ppid = Number(pp);
+    if (p === undefined || pp === undefined || Number.isNaN(pid) || Number.isNaN(ppid)) continue;
+    const pgid = g === undefined || Number.isNaN(Number(g)) ? undefined : Number(g);
+    const session = t === undefined || t === "" ? undefined : mac && t === "??" ? `pgid ${g}` : t;
+    rows.set(pid, { ppid, session, pgid });
+  }
+  return rows;
+}
+
+/**
+ * Wait up to `ms` for the pane's helpers (paneProcesses' groups) that hold
+ * `dir` to exit: they outlive the kill by a moment, and a tree removed before
+ * they go is removed under them. A foreign process is not
+ * waited on; nor is a helper past `ms`: the holder scan names both.
+ * Returns the pids still there.
+ */
+export async function awaitHelpers(
+  dir: string,
+  pane: PaneProcesses,
+  ms: number,
+): Promise<number[]> {
+  if (pane.groups.size === 0 || ms <= 0) return [];
+  const holders = await worktreeHolders(dir);
+  if (holders === undefined || holders.length === 0) return [];
+  const ps = await readPs();
+  if (ps === undefined) return [];
+  const theirs = holders
+    .map((h) => h.pid)
+    .filter((pid) => pane.groups.has(ps.get(pid)?.pgid ?? -1));
+  return awaitExit(theirs, ms);
 }
 
 /**

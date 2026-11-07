@@ -10,6 +10,7 @@ import {
   existsSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -184,9 +185,18 @@ describe("rr_fix_r3_close_v2 P1 b: rollback never removes a tree with work in it
 
 describe("rr_r3_local_close_no_quiescence: a local close removes no tree a process still uses", () => {
   let holder: ChildProcess | undefined;
+  // A mock pane's processes (paneRunning below): its group and what it started.
+  const procs: number[] = [];
   afterEach(() => {
     holder?.kill("SIGKILL");
     holder = undefined;
+    for (const pid of procs.splice(0)) {
+      for (const target of [-pid, pid]) {
+        try {
+          process.kill(target, "SIGKILL");
+        } catch {}
+      }
+    }
   });
   const hold = (cwd: string, file?: string): void => {
     // Detached, as a survivor of the pane kill would be (setsid/nohup).
@@ -304,6 +314,165 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     expect(r.worktree?.action).toBe("removed");
     expect(r.worktree?.warnings ?? []).toEqual([]);
     expect(existsSync(wt.path)).toBe(false);
+  });
+
+  /** [pid, ppid, pgid] of every process. */
+  const psRows = (): number[][] =>
+    execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid="], { encoding: "utf8" })
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => l.trim().split(/\s+/).map(Number));
+  const descendants = (root: number): number[][] => {
+    const rows = psRows();
+    const out: number[][] = [];
+    for (let todo = [root], p = todo.pop(); p !== undefined; p = todo.pop()) {
+      for (const r of rows) {
+        if (r[1] !== p || r[0] === undefined) continue;
+        out.push(r);
+        todo.push(r[0]);
+      }
+    }
+    return out;
+  };
+  const until = async (ok: () => boolean): Promise<void> => {
+    for (let i = 0; i < 60 && !ok(); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(ok()).toBe(true);
+  };
+  /**
+   * The mock pane's pid runs `script`; `onKill(pane)` is what the kill-pane
+   * does to it (the hangup). `tty`: the pane has a terminal, as a real pane
+   * does (macOS tells the pane's session only by it; script(1) makes one).
+   */
+  const paneRunning = async (
+    script: string,
+    onKill: (pane: number) => void,
+    tty = false,
+  ): Promise<number> => {
+    const viaScript = tty && process.platform === "darwin";
+    const sh = viaScript
+      ? spawnChild("script", ["-q", "/dev/null", "sh", "-c", script], {
+          cwd: tmp,
+          stdio: "ignore",
+          detached: true,
+        })
+      : spawnChild("sh", ["-c", script], { cwd: tmp, stdio: "ignore", detached: true });
+    procs.push(sh.pid ?? 0);
+    let pid = sh.pid ?? 0;
+    if (viaScript) {
+      await until(() => descendants(sh.pid ?? 0).length > 0);
+      pid = descendants(sh.pid ?? 0)[0]?.[0] ?? 0;
+      procs.push(pid);
+    }
+    tmuxState.panes.set("%1", { windowId: "@1", paneId: "%1", command: "pi", pid });
+    const inner = mockTmux(tmuxState).executor;
+    mux.restore();
+    mux = installMux("tmux", async (args) => {
+      if (args.includes("kill-pane")) onKill(pid);
+      return inner(args);
+    });
+    return pid;
+  };
+  // Only the processes a test started: git's own telemetry helpers (route,
+  // scm_telem_log on some hosts) may sit in a tree mu just ran git in.
+  const ours = (warnings: string[] | undefined): string[] =>
+    (warnings ?? []).filter((w) => /\((sh|sleep|perl)\)/.test(w));
+  const kill = (target: number): void => {
+    try {
+      process.kill(target, "SIGKILL");
+    } catch {}
+  };
+
+  it("the close waits for a grandchild of the pane (a tool of its pi) inside the tree: no warning", async () => {
+    resetSleep(); // a real clock: the processes exit 1.5 s after the kill
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    // pane sh (cwd outside the tree) -> subshell -> sleep with its cwd in the tree.
+    const pane = await paneRunning(`(cd "${wt.path}" && sleep 30; true) & wait`, (p) => {
+      setTimeout(() => kill(-p), 1500);
+    });
+    await until(() => descendants(pane).length >= 2);
+    const p = await previewClose(db, "worker-1", { workstream: "auth" });
+    expect(p.worktree?.holders ?? []).toEqual([]); // the pane's own: the kill ends it
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.worktree?.action).toBe("removed");
+    expect(ours(r.worktree?.warnings)).toEqual([]);
+    expect(existsSync(wt.path)).toBe(false);
+  });
+
+  it("the close waits for a setsid'd helper of the pane (and its child) inside the tree: no warning", async () => {
+    resetSleep();
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    // As a detached drain of pi's: setsid, cwd in the tree, a child of its own.
+    let helper = 0;
+    const pane = await paneRunning(
+      `cd "${wt.path}" && perl -MPOSIX -e 'POSIX::setsid(); exec "sh", "-c", "sleep 30 & wait"' & sleep 30`,
+      (p) => {
+        kill(-p); // the pane goes at once; the helper is reparented and lives on
+        setTimeout(() => kill(-helper), 1500);
+      },
+    );
+    await until(() => descendants(pane).some((r) => r[0] === r[2] && r[0] !== pane));
+    helper = descendants(pane).find((r) => r[0] === r[2])?.[0] ?? 0; // its group's leader
+    procs.push(helper);
+    await until(() => descendants(helper).length > 0);
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.worktree?.action).toBe("removed");
+    expect(ours(r.worktree?.warnings)).toEqual([]);
+    expect(existsSync(wt.path)).toBe(false);
+  });
+
+  it("the close waits for a pane helper in its own group in the pane's session, reparented before the close: no warning", async () => {
+    resetSleep();
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    // As pi's guardrails plugin: a hook forks it into its own group (no hangup
+    // reaches it) and exits, so it is reparented away from pi.
+    const pidFile = join(tmp, "plugin.pid");
+    const pane = await paneRunning(
+      `cd "${wt.path}" && (perl -e 'setpgrp(0,0); open(F, ">", "${pidFile}"); print F $$; close F; exec "sleep", "30"' &); sleep 30`,
+      (p) => kill(-p),
+      true,
+    );
+    await until(() => existsSync(pidFile) && readFileSync(pidFile, "utf8") !== "");
+    const plugin = Number(readFileSync(pidFile, "utf8"));
+    procs.push(plugin);
+    await until(() => descendants(pane).every((r) => r[0] !== plugin)); // not the pane's child
+    setTimeout(() => kill(plugin), 1500);
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.worktree?.action).toBe("removed");
+    expect(ours(r.worktree?.warnings)).toEqual([]);
+    expect(existsSync(wt.path)).toBe(false);
+  });
+
+  it("a foreign holder is still named once the pane's own are gone", async () => {
+    resetSleep();
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    hold(wt.path); // detached: another session, never the pane's
+    await paneRunning(`cd "${wt.path}" && sleep 30`, (p) => kill(-p), true);
+    const r = await closeAgent(db, "worker-1", { workstream: "auth" });
+    expect(r.worktree?.action).toBe("removed");
+    expect(r.worktree?.warnings?.join("\n")).toContain(`process ${holder?.pid} (sleep)`);
+  });
+
+  it("two previews give the same --if revision while the processes in the tree churn", async () => {
+    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    // The pane's tools come and go, and so do a foreign process's.
+    await paneRunning(`cd "${wt.path}" && while :; do sleep 0.05; done`, () => {});
+    holder = spawnChild("sh", ["-c", "while :; do sleep 0.05; done"], {
+      cwd: wt.path,
+      stdio: "ignore",
+      detached: true,
+    });
+    const pids = (p: { worktree?: { holders?: { pid: number }[] } | null }): number[] =>
+      (p.worktree?.holders ?? []).map((h) => h.pid).sort();
+    const a = await previewClose(db, "worker-1", { workstream: "auth" });
+    await new Promise((r) => setTimeout(r, 300));
+    const b = await previewClose(db, "worker-1", { workstream: "auth" });
+    expect(pids(a)).not.toEqual(pids(b)); // the holder list moved
+    expect(b.revision).toBe(a.revision);
+    expect(a.revision).not.toBe(0);
+    // And the apply takes it.
+    holder.kill("SIGKILL");
+    const r = await closeAgent(db, "worker-1", { workstream: "auth", ifRevision: a.revision });
+    expect(r.worktree?.action).toBe("removed");
   });
 
   it("processTree holds a pane's grandchildren (its pi's tools), never the caller, never a setsid one", async () => {

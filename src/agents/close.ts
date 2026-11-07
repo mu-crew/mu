@@ -47,9 +47,11 @@ import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
 import {
   assertReleasable,
   awaitExit,
+  awaitHelpers,
   getWorktreeAt,
   getWorktreeFor,
-  processTree,
+  type PaneProcesses,
+  paneProcesses,
   type ReleasedWorktree,
   releaseWorktree,
   type WorktreeHolder,
@@ -386,23 +388,24 @@ async function previewHolders(
   }
   // No pane pid: every holder is shown.
   const own = await activeMux().then(
-    (mux) => paneTree(mux, agent),
+    async (mux) => (await paneTree(mux, agent)).tree,
     () => new Set<number>(),
   );
   return { holders: holders.filter((h) => !own.has(h.pid)), hidden };
 }
 
-/** The pid of `agent`'s pane and its processes in the pane's session; empty when unknown. */
-async function paneTree(mux: MuxBackend, agent: AgentRow): Promise<Set<number>> {
+/** `agent`'s pane processes (paneProcesses); none when its pid is unknown. */
+async function paneTree(mux: MuxBackend, agent: AgentRow): Promise<PaneProcesses> {
+  const none: PaneProcesses = { tree: new Set(), groups: new Set() };
   try {
     const pid = await mux.panePid?.(agent.paneId);
-    return pid === undefined ? new Set() : await processTree(pid);
+    return pid === undefined ? none : await paneProcesses(pid);
   } catch {
-    return new Set();
+    return none;
   }
 }
 
-/** How long a close waits for the killed pane's processes to exit before removing its tree. */
+/** How long a close waits for the killed pane's processes and helpers to exit before removing its tree. */
 const PANE_EXIT_MS = 5000;
 
 /**
@@ -520,7 +523,7 @@ async function closeLocked(
   const mux = await activeMux().catch(() => undefined);
   // The pane's processes, read before the kill ends them: the tree is removed
   // only once they are gone (below), or they are named as left in it.
-  const paneProcs = row === undefined || mux === undefined ? [] : await paneTree(mux, agent);
+  const pane = row === undefined || mux === undefined ? undefined : await paneTree(mux, agent);
   // The awaits above are where a replacement lands. Nothing below may act
   // on a name that is not the incarnation this close captured.
   const replaced = (): boolean => {
@@ -580,8 +583,13 @@ async function closeLocked(
   // the row's deletion needs no recovery record.
   let remoteHandled = false;
   if (row !== undefined) {
-    // The hangup reached them, but pi saves its session and runs its exit hooks first.
-    await awaitExit(paneProcs, PANE_EXIT_MS);
+    // The hangup reached them, but pi saves its session and runs its exit hooks
+    // first; its helpers (no hangup reaches them) finish their flush. One bound for both.
+    if (pane !== undefined) {
+      const until = Date.now() + PANE_EXIT_MS;
+      await awaitExit(pane.tree, PANE_EXIT_MS);
+      await awaitHelpers(row.path, pane, until - Date.now());
+    }
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
     worktree = await releaseWorktree(db, row, { discard, force: opts.force === true });
   } else if (remoteOf(agent) !== null) {

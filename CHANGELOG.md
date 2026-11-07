@@ -145,9 +145,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (whose `ps` has no session id) those processes are the pane's
   descendants still on its terminal (or in its process group); before, only the pane's first
   process counted, so the preview listed the agent's own pi as a holder
-  too. A process that left the pane's session is not waited on: a
-  `log_shipper` there is a child of the telemetry drain the guardrails plugin
-  detaches (reparented to launchd, holding only its cwd); it stays a warning.
+  too. pi's helpers that outlive the hangup (the guardrails plugin, which
+  moves to its own process group and is reparented away from pi, its
+  `log_shipper` children, a `setsid`'d drain) are waited for in the same 5 s
+  when they hold the tree: the close reads, before the kill, the process
+  groups of the pane's session and of each descendant that left it. A
+  helper still there at 5 s, and any foreign holder, is still named (or
+  refuses, as a writer) as before. The preview's `--if` revision never
+  depended on the holder list: two previews agree while those processes
+  churn (now pinned by a test).
 
 ## [4.5.0] — 2026-11-07
 
