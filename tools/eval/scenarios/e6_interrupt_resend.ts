@@ -171,7 +171,9 @@ function e6(workers: readonly string[]): Scenario {
               (m) =>
                 m.start <= second.ms + 400 &&
                 names(m.argv, w.agent) &&
-                m.argv.includes("eval-worker"),
+                // the text in argv, or on stdin (`agent send w1 --interrupt -`, live under
+                // cursor-agent); the resend's own text is checked above
+                (m.argv.includes("eval-worker") || /\bsend\b.*\s-(\s|$)/.test(m.argv)),
             )
           )
             wrong.push(`no mu call of the orchestrator carried ${w.agent}'s resend`);
