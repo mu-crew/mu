@@ -31,7 +31,7 @@ import {
 } from "./cold-intents.ts";
 import { muCalls } from "./observe.ts";
 import { maxSeq, opsSince } from "./ops.ts";
-import { createSandbox, REAL_PI } from "./sandbox.ts";
+import { createSandbox, launcherEnv, REAL_PI } from "./sandbox.ts";
 import type { Family, Sandbox, Surface } from "./types.ts";
 
 export const COLD_PI_SESSION = "cold-seed";
@@ -173,6 +173,7 @@ export async function askModel(
       PATH: process.env.PATH ?? "",
       HOME: home,
       PI_CODING_AGENT_DIR: home,
+      ...launcherEnv(process.env),
     };
     const args = [
       "-p",
@@ -460,16 +461,17 @@ export function readRows(file: string): ColdRow[] {
     .map((l) => JSON.parse(l) as ColdRow);
 }
 
-/** Intent requests that name a command, subcommand or flag of any surface in the run. */
-export function intentLeaks(surfaces: ColdSurface[]): string[] {
+/** Intent requests (of the run's `ids`, default all) that name a command, subcommand or flag of any surface in the run. */
+export function intentLeaks(surfaces: ColdSurface[], ids: string[] | null = null): string[] {
   const vocab = Object.fromEntries(surfaces.map((s) => [s.label, surfaceVocab(s.surface)]));
-  return neutralityLeaks(INTENTS, vocab).map(
+  const intents = ids ? INTENTS.filter((i) => ids.includes(i.id)) : INTENTS;
+  return neutralityLeaks(intents, vocab).map(
     (l) => `${l.intent}: "${l.word}" is a name on ${l.surfaces.join(", ")}`,
   );
 }
 
 export async function runCold(o: ColdRunOptions): Promise<ColdRow[]> {
-  const leaks = intentLeaks(o.surfaces);
+  const leaks = intentLeaks(o.surfaces, o.intents);
   if (leaks.length > 0)
     throw new Error(`intent wording leaks a surface's names:\n  ${leaks.join("\n  ")}`);
   const done = new Set(readRows(o.out).map(keyOf));

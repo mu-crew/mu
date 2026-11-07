@@ -65,6 +65,15 @@ describe.skipIf(!ready)("intent wording is neutral", () => {
       });
     expect(intentLeaks(surfaces)).toEqual([]);
   }, 120_000);
+
+  it("lints only the intents a run selects", () => {
+    const surfaces = [{ label: "next", surface: surface() }];
+    const all = intentLeaks(surfaces);
+    const leaky = [...new Set(all.map((l) => l.split(":")[0] ?? ""))];
+    const clean = ["owner_of", "add_three"].filter((id) => !leaky.includes(id));
+    expect(intentLeaks(surfaces, clean)).toEqual([]);
+    expect(intentLeaks(surfaces, leaky)).toEqual(all);
+  }, 120_000);
 });
 
 describe.skipIf(!ready)("execGuess", () => {

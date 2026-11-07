@@ -76,6 +76,20 @@ export function realTmux(): string {
 
 const KEEP = new Set(["TERM", "LANG", "LC_ALL", "USER", "SHELL"]);
 
+/**
+ * Pure: what the host pi launcher needs from the caller's env to start at all. Inside the
+ * launcher's own seatbelt (the rig run from a pi agent's bash tool), its nested sandbox-exec is
+ * refused ("sandbox_apply: Operation not permitted") and every model fails before any request;
+ * LAUNCHER_INHERIT_OUTER_SEATBELT=1 has it keep the outer sandbox instead. An explicit value wins.
+ */
+export function launcherEnv(base: NodeJS.ProcessEnv): Record<string, string> {
+  const inherit = base.LAUNCHER_INHERIT_OUTER_SEATBELT;
+  if (inherit !== undefined) return { LAUNCHER_INHERIT_OUTER_SEATBELT: inherit };
+  if (base.LAUNCHER_SANDBOX_RUNTIME === "seatbelt")
+    return { LAUNCHER_INHERIT_OUTER_SEATBELT: "1" };
+  return {};
+}
+
 /** System directories only: the host's mise, ~/.local/bin and ~/.pi/agent/bin entries (and the tools and docs they hold) stay out of the AUT's PATH. */
 export function systemPathDirs(pathEnv: string | undefined): string[] {
   return (pathEnv ?? "").split(":").filter((d) => /^\/(usr|bin|sbin|opt)(\/|$)/.test(d));
@@ -162,6 +176,7 @@ export function sandboxEnv(
     if (v === undefined) continue;
     if (opts.live ? !LIVE_DROP.test(k) : KEEP.has(k)) env[k] = v;
   }
+  Object.assign(env, launcherEnv(base));
   const home = join(dir, "home");
   const state = join(dir, "state");
   env.TERM ??= "xterm-256color";

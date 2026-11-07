@@ -2,7 +2,7 @@
 
 Black-box rig: a surface is a directory with a built mu, mu runs as a subprocess, and workers are scripted faux pis (or, in the hook-harness cases, fake claude, codex, cursor-agent and Muse Code binaries; see below). In a faux or `check` run nothing costs money; in a `run` or `matrix` with a real model only the AUT (agent under test) does, except in a live hook-harness case, where the workers are the user's real (paid) harnesses too and nothing counts their tokens (below). Imports nothing from `src/` or `extension/`.
 
-The AUT's `pi` is a sandbox wrapper: `--version` and `--list-models` print the host pi's own output, and the real pi path, extension paths and the faux model name live under `<sandbox>/.rt/`, off the AUT's PATH. The AUT's PATH holds system dirs plus `<sandbox>/bin`; HOME is empty (a live hook-harness run keeps the caller's, below).
+The AUT's `pi` is a sandbox wrapper: `--version` and `--list-models` print the host pi's own output, and the real pi path, extension paths and the faux model name live under `<sandbox>/.rt/`, off the AUT's PATH. The AUT's PATH holds system dirs plus `<sandbox>/bin`; HOME is empty (a live hook-harness run keeps the caller's, below). Run from inside the host pi launcher's seatbelt (`LAUNCHER_SANDBOX_RUNTIME=seatbelt`, e.g. a pi agent's bash tool), the rig sets `LAUNCHER_INHERIT_OUTER_SEATBELT=1` for every pi it starts (`launcherEnv`): the launcher's nested `sandbox-exec` is refused there and every model fails before its first request.
 
 - Prepare a surface: `node tools/eval/main.ts prepare 3x v3.13.3` (exports the ref into `~/.cache/mu/eval/surfaces/3x`, then `npm ci && npm run build`).
 - Selftest, zero cost (faux model): `npm run build && node tools/eval/main.ts selftest [--surface <dir>]`.

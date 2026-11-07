@@ -2,7 +2,12 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { removeSandboxDir, sandboxEnv, tmuxSocketPath } from "../../tools/eval/sandbox.ts";
+import {
+  launcherEnv,
+  removeSandboxDir,
+  sandboxEnv,
+  tmuxSocketPath,
+} from "../../tools/eval/sandbox.ts";
 import type { Surface } from "../../tools/eval/types.ts";
 
 const surface: Surface = {
@@ -137,4 +142,28 @@ describe("removeSandboxDir", () => {
       }
     },
   );
+});
+
+describe("launcherEnv", () => {
+  it("keeps the outer seatbelt when the caller runs inside the launcher's seatbelt", () => {
+    expect(launcherEnv({ LAUNCHER_SANDBOX_RUNTIME: "seatbelt" })).toEqual({
+      LAUNCHER_INHERIT_OUTER_SEATBELT: "1",
+    });
+    const env = sandboxEnv("/tmp/mu-eval-x", surface, "x", {
+      ...BASE,
+      LAUNCHER_SANDBOX_RUNTIME: "seatbelt",
+    });
+    expect(env.LAUNCHER_INHERIT_OUTER_SEATBELT).toBe("1");
+    expect(env.LAUNCHER_SANDBOX_RUNTIME).toBeUndefined();
+  });
+
+  it("passes an explicit value through and adds nothing outside a seatbelt", () => {
+    expect(
+      launcherEnv({ LAUNCHER_SANDBOX_RUNTIME: "seatbelt", LAUNCHER_INHERIT_OUTER_SEATBELT: "0" }),
+    ).toEqual({ LAUNCHER_INHERIT_OUTER_SEATBELT: "0" });
+    expect(launcherEnv(BASE)).toEqual({});
+    expect(
+      sandboxEnv("/tmp/mu-eval-x", surface, "x", BASE).LAUNCHER_INHERIT_OUTER_SEATBELT,
+    ).toBeUndefined();
+  });
 });
