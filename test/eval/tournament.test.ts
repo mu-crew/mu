@@ -999,6 +999,7 @@ describe("designer isolation", () => {
     };
     const up7 = "../../../../../../..";
     expect(audit([header, call("bash", { command: `cat ${up7}/.pi/agent/sessions/x` })])).toEqual([
+      "strict term",
       "pi sessions",
     ]);
     expect(audit([header, call("read", { path: `${up7}/.ssh/config` })])).toEqual([
@@ -1009,12 +1010,65 @@ describe("designer isolation", () => {
     ).toEqual(["under the real HOME"]);
     // the cwd comes from the header: from another cwd the same climb lands elsewhere
     const deep = JSON.stringify({ type: "session", cwd: `${ctx.ownPack}/src/cli` });
-    expect(audit([deep, call("bash", { command: `cat ${up7}/.pi/agent/sessions/x` })])).toEqual([
+    expect(audit([deep, call("bash", { command: `cat ${up7}/.ssh/config` })])).toEqual([
       "under the real HOME",
     ]);
     // climbing inside its own dirs is clean; a result or prose naming `..` is not resolved
     expect(audit([header, call("bash", { command: "cd .. && ls pack/../pack/src" })])).toEqual([]);
     expect(audit([header, result(`see ${up7}/.ssh/config`)])).toEqual([]);
+  });
+
+  describe("bash commands in strict parts (review probes)", () => {
+    const header = JSON.stringify({ type: "session", version: 3, id: "s", cwd: ctx.ownPack });
+    const audit = (command: string): string[] => {
+      tmp = mkdtempSync(join(tmpdir(), "mu-audit-"));
+      const call = JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [{ type: "toolCall", name: "bash", arguments: { command } }],
+        },
+      });
+      writeFileSync(join(tmp, "x.jsonl"), [header, call].join("\n"));
+      return auditSession(tmp, ctx).map((h) => h.rule);
+    };
+    const up7 = "../../../../../../..";
+
+    it("a cd chain to the real HOME is a term hit and a path hit", () => {
+      const hits = audit(`${"cd ..; ".repeat(7)}cat .pi/agent/sessions/x`);
+      expect(hits).toContain("strict term");
+      expect(hits).toContain("pi sessions");
+      // a cd the audit cannot follow is still caught by the terms
+      expect(audit("cd $OLDPWD && cat .claude/projects/x")).toEqual(["strict term"]);
+      for (const t of [".codex/sessions", "agent-transcripts", "x/museum", "mu-next/worktrees"])
+        expect(audit(`ls ${t}`)).toContain("strict term");
+    });
+
+    it("tracks cd and $PWD within one command", () => {
+      expect(audit(`cat $PWD/${up7}/.pi/agent/sessions/x`)).toContain("pi sessions");
+      expect(audit(`cat \${PWD}/${up7}/.ssh/config`)).toEqual(["under the real HOME"]);
+      expect(audit(`cat $(pwd)/${up7}/.ssh/config`)).toEqual(["under the real HOME"]);
+      expect(audit(`cat \`pwd\`/${up7}/.ssh/config`)).toEqual(["under the real HOME"]);
+      expect(audit(`${"cd ..; ".repeat(7)}cat .ssh/config`)).toContain("under the real HOME");
+      expect(audit("cd .. && cd .. || cd ../../../..\ncd ../.. && cat .ssh/config")).toContain(
+        "under the real HOME",
+      );
+      expect(audit("cd /home/u && cat .netrc")).toContain("under the real HOME");
+    });
+
+    it("a variable assigned a climb makes its token an unresolvable climb", () => {
+      expect(audit(`D=..; cat $D/$D/$D/$D/$D/$D/$D/.ssh/config`)).toEqual(["unresolvable climb"]);
+      expect(audit("cd ~ && cat ../../x")).toEqual(["unresolvable climb"]);
+    });
+
+    it("benign in-pack commands are clean", () => {
+      expect(audit("cd src && cat x.ts")).toEqual([]);
+      expect(audit("cat ./README.md")).toEqual([]);
+      expect(audit("ls ..")).toEqual([]);
+      expect(audit("cd src/cli && cat ../../package.json | head -n 3 2>&1")).toEqual([]);
+      expect(audit("cd /tmp && ls")).toEqual([]);
+      expect(audit("cat $PWD/src/a.ts && ls $(pwd)/..")).toEqual([]);
+    });
   });
 
   it("node's install dir is the prefix above bin/node", () => {

@@ -140,20 +140,40 @@ function termRules(ctx: Pick<DenyContext, "caseIds">): { rule: string; re: RegEx
 }
 
 /**
+ * Terms a strict part (what the designer did) must never carry, however the path around them is
+ * spelled (relative, `$PWD/…`, after a `cd`): the transcript stores and the crew's own dirs.
+ */
+const STRICT_TERMS = [
+  ".pi/agent/sessions",
+  ".claude/projects",
+  ".codex/sessions",
+  "agent-transcripts",
+  "/museum",
+  "mu-next/worktrees",
+  "mu-next/eval-transcripts",
+];
+
+const COMMAND_RE = /"command"\s*:\s*("(?:[^"\\]|\\.)*")/g;
+
+/** The `command` arguments in a text (pi's session file records a bash call's that way). */
+function bashCommands(text: string): string[] {
+  return [...text.matchAll(COMMAND_RE)].flatMap((m) => {
+    try {
+      return [JSON.parse(m[1] ?? '""') as string];
+    } catch {
+      return [];
+    }
+  });
+}
+
+/**
  * A bash call that runs `museum` (at a command position of the call's `command` argument, as pi's
  * session file records it). A file that merely names the museum hook (mu's own init tests do) is
  * not a call.
  */
 export function runsMuseum(text: string): string | null {
-  for (const m of text.matchAll(/"command"\s*:\s*("(?:[^"\\]|\\.)*")/g)) {
-    let cmd = "";
-    try {
-      cmd = JSON.parse(m[1] ?? '""') as string;
-    } catch {
-      continue;
-    }
+  for (const cmd of bashCommands(text))
     if (/(?:^|[;&|(`\n]|\$\()\s*(?:\S*\/)?museum(?=\s|$)/.test(cmd)) return cmd;
-  }
   return null;
 }
 
@@ -183,6 +203,65 @@ export function climbingPaths(text: string, cwd: string): { raw: string; path: s
     .map((t) => ({ raw: t, path: resolve(cwd, t) }));
 }
 
+const climbs = (t: string): boolean => /(?:^|\/)\.\.(?:\/|$)/.test(t);
+
+/**
+ * The paths one bash command names, best effort (bash cannot be fully parsed; tools/eval/README.md
+ * lists the forms this misses). Per segment (split on `;`, `&&`, `||`, `|`, `&`, newlines), `cd` and
+ * `pushd` move a running cwd; `$PWD`, `${PWD}`, `$(pwd)` and `` `pwd` `` stand for it. A token that
+ * climbs is resolved against the running cwd, and after a `cd` every relative token is. `cd` to
+ * where the audit cannot follow (`~`, `-`, `$X`) makes the cwd unknown; a variable assigned a
+ * climbing value (`D=..`) makes a token using it unknown too. `unresolved` holds the tokens that
+ * climb from an unknown place: the audit counts each as a climb out.
+ */
+export function commandPaths(
+  cmd: string,
+  start: string,
+): { paths: { raw: string; path: string }[]; unresolved: string[] } {
+  const paths: { raw: string; path: string }[] = [];
+  const unresolved: string[] = [];
+  const climbVars = new Set<string>();
+  let cwd: string | null = start;
+  for (const seg of cmd.split(/&&|\|\||[;\n|&]/)) {
+    const here: string | null = cwd;
+    const text =
+      here === null
+        ? seg
+        : seg.replace(/\$\(\s*pwd\s*\)|`\s*pwd\s*`|\$\{PWD\}|\$PWD(?![A-Za-z0-9_])/g, here);
+    const toks = text.split(/[\s"'`\\)(<>,]+/).filter((t) => t !== "");
+    const words: string[] = [];
+    for (const t of toks) {
+      const a = /^([A-Za-z_]\w*)=(.*)$/.exec(t);
+      if (a) {
+        if (climbs(a[2] ?? "")) climbVars.add(a[1] ?? "");
+        else climbVars.delete(a[1] ?? "");
+        if (a[2]) words.push(a[2]);
+      } else words.push(...t.split("=").filter((w) => w !== ""));
+    }
+    const head = words[0] === "builtin" || words[0] === "command" ? 1 : 0;
+    const isCd = words[head] === "cd" || words[head] === "pushd";
+    const moved = here !== start;
+    for (const w of words) {
+      const vars = [...w.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? "");
+      if (vars.some((v) => climbVars.has(v))) {
+        unresolved.push(w);
+        continue;
+      }
+      if (/^[~$-]/.test(w)) continue;
+      if (w.startsWith("/")) paths.push({ raw: w, path: resolve(w) });
+      else if (here === null) {
+        if (climbs(w)) unresolved.push(w);
+      } else if (moved || climbs(w)) paths.push({ raw: w, path: resolve(here, w) });
+    }
+    if (!isCd) continue;
+    const dest = words.slice(head + 1).find((w) => w === "-" || !/^-[LPe@]*$/.test(w));
+    if (dest === undefined || /^[~$-]/.test(dest) || unresolved.includes(dest)) cwd = null;
+    else if (dest.startsWith("/")) cwd = resolve(dest);
+    else cwd = here === null ? null : resolve(here, dest);
+  }
+  return { paths, unresolved };
+}
+
 /**
  * Every deny-list hit in one text (§3.2 isolation audit). With `cwd` (a strict part: what the
  * designer did), relative paths that climb are resolved against it and checked like absolute ones.
@@ -193,6 +272,14 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
     const m = t.re.exec(text);
     if (m) hits.push({ rule: t.rule, match: m[0].trim(), raw: m[0].trim() });
   }
+  if (cwd !== undefined)
+    for (const term of STRICT_TERMS)
+      if (text.includes(term)) hits.push({ rule: "strict term", match: term, raw: term });
+  const walked = (cwd === undefined ? [] : bashCommands(text)).map((c) =>
+    commandPaths(c, cwd ?? "/"),
+  );
+  for (const w of walked)
+    for (const raw of w.unresolved) hits.push({ rule: "unresolvable climb", match: raw, raw });
   const museum = runsMuseum(text);
   if (museum !== null) hits.push({ rule: "museum command", match: museum, raw: museum });
   const named: { rule: string; dir: string }[] = [
@@ -211,18 +298,22 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
       hits.push({ rule: n.rule, match: n.dir, raw: n.dir });
   const allowed = [ctx.ownPack, ctx.ownDdir, ...ctx.allow];
   const seen = new Set<string>();
+  // a command's paths come from its walk (running cwd), the rest of a strict part's from the cwd
+  const rest = text.replace(COMMAND_RE, '"command":""');
   const paths = [
     ...homePaths(text, ctx.home),
-    ...(cwd === undefined ? [] : climbingPaths(text, cwd)),
+    ...(cwd === undefined ? [] : climbingPaths(rest, cwd)),
+    ...walked.flatMap((w) => w.paths),
   ];
   for (const { raw, path: p } of paths) {
-    if (seen.has(raw)) continue;
-    seen.add(raw);
+    const key = `${raw}\0${p}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const n = named.find((x) => under(p, x.dir));
     if (n) hits.push({ rule: n.rule, match: p, raw });
     else if (under(p, ctx.packs) && !under(p, ctx.ownPack) && !under(p, ctx.ownDdir))
       hits.push({ rule: "another pack", match: p, raw });
-    else if (!allowed.some((a) => under(p, a)))
+    else if (under(p, ctx.home) && !allowed.some((a) => under(p, a)))
       hits.push({ rule: "under the real HOME", match: p, raw });
   }
   return hits;
