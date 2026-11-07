@@ -892,7 +892,9 @@ describe("designer isolation", () => {
   it("the catch-all denies any other path under the real HOME, but lets node's install dir through", () => {
     expect(rules("cat /home/u/.ssh/config")).toEqual(["under the real HOME"]);
     expect(rules("cat ~/notes.txt")).toEqual(["under the real HOME"]);
-    expect(rules("ls $HOME")).toEqual(["under the real HOME"]);
+    expect(rules("ls /home/u")).toEqual(["under the real HOME"]);
+    // a bare $HOME is the designer's own empty HOME
+    expect(rules('{"command":"echo $HOME"}')).toEqual([]);
     expect(
       rules("at /home/u/.nvm/versions/node/v22.1.0/lib/node_modules/npm/lib/cli.js:12"),
     ).toEqual([]);
@@ -1068,6 +1070,59 @@ describe("designer isolation", () => {
       expect(audit("cd src/cli && cat ../../package.json | head -n 3 2>&1")).toEqual([]);
       expect(audit("cd /tmp && ls")).toEqual([]);
       expect(audit("cat $PWD/src/a.ts && ls $(pwd)/..")).toEqual([]);
+      for (const c of [
+        "ls /tmp",
+        "cat /usr/include/x.h",
+        "which node",
+        "echo $HOME",
+        "ls /opt/homebrew && find /usr/lib -name x",
+        "cd /tmp && grep -r x . | tr / _",
+        "ls /home/u/.nvm/versions/node/v22.1.0/bin",
+      ])
+        expect(audit(c), c).toEqual([]);
+    });
+
+    it("a search from a dir above HOME is a hit (review probes)", () => {
+      for (const c of [
+        "find / -name '*.jsonl' -path '*sessions*'",
+        "grep -r VERDICT /home",
+        "ls /home",
+        "rg -l VERDICT /",
+        "fd jsonl /home/",
+        "ls -R /home/u/..",
+        "cd / && find . -name x",
+        `${"cd ..; ".repeat(8)}rg VERDICT`,
+      ])
+        expect(audit(c), c).toContain("search above HOME");
+      expect(audit("grep -r VERDICT ~/..")).not.toEqual([]);
+      const mac = { ...ctx, home: "/Users/u" };
+      expect(denyHits('{"command":"ls /Users"}', mac, ctx.ownPack).map((h) => h.rule)).toEqual([
+        "search above HOME",
+      ]);
+      // a read or ls tool's path is checked too
+      expect(denyHits('{"path":"/home"}', ctx, ctx.ownPack).map((h) => h.rule)).toEqual([
+        "search above HOME",
+      ]);
+    });
+
+    it("after a cd, only words that look like paths are resolved", () => {
+      tmp = mkdtempSync(join(tmpdir(), "mu-audit-"));
+      const call = JSON.stringify({
+        type: "message",
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "toolCall",
+              name: "bash",
+              arguments: { command: `cd ${up7} && cat .netrc && cd x` },
+            },
+          ],
+        },
+      });
+      writeFileSync(join(tmp, "x.jsonl"), [header, call].join("\n"));
+      const hits = auditSession(tmp, ctx);
+      expect(hits.map((h) => h.match)).toEqual(["/home/u", "/home/u/.netrc"]);
     });
   });
 

@@ -186,9 +186,11 @@ export function homePaths(text: string, home: string): { raw: string; path: stri
     `(?:${esc(home)}|~(?=/)|\\$\\{HOME\\}|\\$HOME(?![A-Za-z0-9_]))(/[^\\s"'\`\\\\)(;|&<>,]*)?`,
     "g",
   );
-  return [...text.matchAll(re)].map((m) => {
+  return [...text.matchAll(re)].flatMap((m) => {
     const rest = (m[1] ?? "").replace(/[.:]+$/, "");
-    return { raw: m[0].replace(/[.:]+$/, ""), path: rest === "" ? home : resolve(home + rest) };
+    // a bare `$HOME` is the designer's own (empty) HOME: `echo $HOME` reads nothing
+    if (rest === "" && m[0].startsWith("$")) return [];
+    return [{ raw: m[0].replace(/[.:]+$/, ""), path: rest === "" ? home : resolve(home + rest) }];
   });
 }
 
@@ -203,13 +205,34 @@ export function climbingPaths(text: string, cwd: string): { raw: string; path: s
     .map((t) => ({ raw: t, path: resolve(cwd, t) }));
 }
 
+/** The absolute tokens in `text` that are proper ancestors of a root (a read or ls tool's `/Users`). */
+function absoluteAncestors(
+  text: string,
+  roots: readonly string[],
+): { raw: string; path: string }[] {
+  return text
+    .split(/[\s"'`\\)(;|&<>,=]+/)
+    .filter((t) => t.startsWith("/") && roots.some((r) => ancestor(resolve(t), r)))
+    .map((t) => ({ raw: t, path: resolve(t) }));
+}
+
 const climbs = (t: string): boolean => /(?:^|\/)\.\.(?:\/|$)/.test(t);
+
+/** Commands that read a tree from a start dir: for them a bare `/` is that dir. */
+const SEARCHES = new Set(["find", "grep", "egrep", "rg", "fd", "ls", "tree", "du", "ag"]);
+
+/** `p` is a proper ancestor of `dir` (`/` is one of every other dir). */
+const ancestor = (p: string, dir: string): boolean =>
+  p !== dir && (p === sep || dir.startsWith(p + sep));
 
 /**
  * The paths one bash command names, best effort (bash cannot be fully parsed; tools/eval/README.md
  * lists the forms this misses). Per segment (split on `;`, `&&`, `||`, `|`, `&`, newlines), `cd` and
  * `pushd` move a running cwd; `$PWD`, `${PWD}`, `$(pwd)` and `` `pwd` `` stand for it. A token that
- * climbs is resolved against the running cwd, and after a `cd` every relative token is. `cd` to
+ * climbs is resolved against the running cwd, and after a `cd` so is every relative token that looks
+ * like a path (has a `/` or starts with `.`). A bare `/` counts only as a search's (`find`, `grep`, `rg`, `fd`,
+ * `ls`, …) or `cd`'s argument (`tr / _` names no dir); a cwd above HOME is reached only by a
+ * `cd` that names it. `cd` to
  * where the audit cannot follow (`~`, `-`, `$X`) makes the cwd unknown; a variable assigned a
  * climbing value (`D=..`) makes a token using it unknown too. `unresolved` holds the tokens that
  * climb from an unknown place: the audit counts each as a climb out.
@@ -240,6 +263,7 @@ export function commandPaths(
     }
     const head = words[0] === "builtin" || words[0] === "command" ? 1 : 0;
     const isCd = words[head] === "cd" || words[head] === "pushd";
+    const isSearch = SEARCHES.has(basename(words[head] ?? ""));
     const moved = here !== start;
     for (const w of words) {
       const vars = [...w.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? "");
@@ -248,10 +272,12 @@ export function commandPaths(
         continue;
       }
       if (/^[~$-]/.test(w)) continue;
+      if (w === "/" && !isSearch && !isCd) continue;
       if (w.startsWith("/")) paths.push({ raw: w, path: resolve(w) });
       else if (here === null) {
         if (climbs(w)) unresolved.push(w);
-      } else if (moved || climbs(w)) paths.push({ raw: w, path: resolve(here, w) });
+      } else if (climbs(w) || (moved && /^\.|\//.test(w)))
+        paths.push({ raw: w, path: resolve(here, w) });
     }
     if (!isCd) continue;
     const dest = words.slice(head + 1).find((w) => w === "-" || !/^-[LPe@]*$/.test(w));
@@ -297,12 +323,15 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
     if (!under(n.dir, ctx.home) && text.includes(n.dir))
       hits.push({ rule: n.rule, match: n.dir, raw: n.dir });
   const allowed = [ctx.ownPack, ctx.ownDdir, ...ctx.allow];
+  // a strict search above HOME (`find /`, `grep -r x /Users`, `ls /home`) reaches it all
+  const roots = [ctx.home, ...named.map((n) => n.dir), ctx.surfaces, ctx.packs];
   const seen = new Set<string>();
   // a command's paths come from its walk (running cwd), the rest of a strict part's from the cwd
   const rest = text.replace(COMMAND_RE, '"command":""');
   const paths = [
     ...homePaths(text, ctx.home),
     ...(cwd === undefined ? [] : climbingPaths(rest, cwd)),
+    ...(cwd === undefined ? [] : absoluteAncestors(rest, roots)),
     ...walked.flatMap((w) => w.paths),
   ];
   for (const { raw, path: p } of paths) {
@@ -315,6 +344,12 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
       hits.push({ rule: "another pack", match: p, raw });
     else if (under(p, ctx.home) && !allowed.some((a) => under(p, a)))
       hits.push({ rule: "under the real HOME", match: p, raw });
+    else if (
+      cwd !== undefined &&
+      roots.some((r) => ancestor(p, r)) &&
+      !allowed.some((a) => under(p, a))
+    )
+      hits.push({ rule: "search above HOME", match: p, raw });
   }
   return hits;
 }
