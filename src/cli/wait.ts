@@ -479,22 +479,26 @@ export async function runWait(
       })
     : null;
   const resume = resumeId === null ? null : resumeCommand(resumeId, spec.scope);
-  // Ready news this wait did not consume (past the batch cap, or a first wait's siblings): `next`
-  // is the ready batch. Not for a superseded result: the newer wait returns it.
-  const owedNow = result.event.ref !== null && result.superseded !== true ? (result.owed ?? 0) : 0;
+  // Owned ready news this wait did not consume (past the batch cap, or a first wait's siblings):
+  // `next` is the ready batch. Owed targets are not owned news (a bare `--ready` never returns an
+  // unowned target): while one remains, `next` stays the resume. Not for a superseded result: the
+  // newer wait returns it.
+  const live = result.event.ref !== null && result.superseded !== true;
+  const owedTargets = live ? (result.owedTargets ?? 0) : 0;
+  const owedNow = live ? (result.owed ?? 0) - owedTargets : 0;
   const readyArgv = [
     "mu",
     "wait",
     "--ready",
     ...(spec.scope !== undefined ? ["-w", spec.scope] : []),
   ];
-  if (owedNow > 0) {
+  if (owedNow > 0 && owedTargets === 0) {
     setNextOutcome({
       kind: "owed",
       count: owedNow,
       ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
     });
-  } else if (resumeId !== null && openNow > 0) {
+  } else if (resumeId !== null && (openNow > 0 || owedTargets > 0)) {
     // A wait that ended with something still owed: `next` is its stored resume.
     setNextOutcome({
       kind: "waited",

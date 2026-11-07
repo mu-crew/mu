@@ -282,6 +282,8 @@ export async function waitForEvents(
   };
   const ownerOf = (key: string): string | undefined =>
     ownerOfKey.get(baseOfCkey.get(key) ?? key) ?? callers[0];
+  /** An item's owner: its ref's (an urgent ckey resolves to the ref it observes). Commit and the superseded narrowing both ask this. */
+  const ownerOfItem = (i: Item): string | undefined => ownerOf(i.ckey ?? i.key);
   const cursorOf = (key: string): CursorToken | undefined => {
     const o = ownerOf(key);
     return o === undefined ? undefined : cursorsBy.get(o)?.get(key);
@@ -1306,6 +1308,7 @@ export async function waitForEvents(
         : {}),
       refs: snapshotsOf(items, chosen?.fired ?? [], owed),
       owed: items.filter(owed).length,
+      owedTargets: items.filter((i) => i.target && owed(i)).length,
       delivered: (chosen?.fired ?? []).filter(isCompletion).map((i) => i.ref),
       timedOut: kind === "heartbeat" && !drained,
       interrupted: kind === "interrupted",
@@ -1364,9 +1367,9 @@ export async function waitForEvents(
         // Each delivered ref is consumed by the caller that owns it, guarded by that caller's
         // wait generation.
         for (const c of callers) {
-          const mine = completed.filter((i) => ownerOf(i.key) === c);
+          const mine = completed.filter((i) => ownerOfItem(i) === c);
           const tokens = delivered
-            .filter((i) => i.token !== undefined && ownerOf(i.ckey ?? i.key) === c)
+            .filter((i) => i.token !== undefined && ownerOfItem(i) === c)
             .flatMap((i) =>
               i.token === undefined ? [] : [{ key: i.ckey ?? i.key, token: i.token }],
             );
@@ -1482,7 +1485,7 @@ export async function waitForEvents(
         result.cursor = Object.fromEntries(callers.flatMap((c) => [...readCursors(db, c)]));
         if (!applied) {
           result.superseded = true;
-          const lost = (i: Item): boolean => supersededCallers.has(ownerOf(i.ckey ?? i.key) ?? "");
+          const lost = (i: Item): boolean => supersededCallers.has(ownerOfItem(i) ?? "");
           narrowSuperseded(result, delivered, lost, firedEvent);
         }
       }

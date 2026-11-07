@@ -95,12 +95,17 @@ export function selectEvent(
 }
 
 /**
- * The per-member commit guard: `chosen` without the batch events another process consumed since
- * this wait read its cursors (`stale`), each with its companions, which turn not ready. The firing
- * event's own group is the caller's to check (stale there means select again).
+ * The per-member commit guard: `chosen` without the members another process consumed since this
+ * wait read its cursors (`stale`), which turn not ready. Every member is checked, companions too:
+ * a companion has its own token, and a wait that saw only it (an explicit wait on the task a
+ * settled run closed) consumed it without the rest of its group. A group left empty is dropped.
+ * The firing event itself is the caller's to check first (stale there means select again), so
+ * it stays first in the first group.
  */
 export function dropStale(chosen: Chosen, stale: (i: Item | undefined) => boolean): Chosen {
-  const groups = chosen.groups.filter((g, n) => n === 0 || !stale(g[0]));
+  const groups = chosen.groups
+    .map((g) => g.filter((i) => i === chosen.event || !stale(i)))
+    .filter((g) => g.length > 0);
   const fired = groups.flat();
   // A dropped member is another wait's delivery: not ready (so never marked owed) here.
   for (const i of chosen.fired) if (!fired.includes(i)) i.ready = false;

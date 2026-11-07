@@ -168,6 +168,8 @@ export interface WaitResult {
   refs: WaitSnapshot[];
   /** How many watched refs are owed (`WaitSnapshot.owed`), shown or not. */
   owed?: number;
+  /** Of `owed`, the targets: news a bare `--ready` never returns (it watches what the callers own); the resume does. */
+  owedTargets?: number;
   timedOut: boolean;
   interrupted: boolean;
   /** 0 fired or timed out, 6 dead, 7 input or stall, 130 interrupted; an `exited` gate's own status (23 stays 23), the first nonzero of the gates that ended. */

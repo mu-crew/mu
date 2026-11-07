@@ -24,9 +24,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **Wait results mark what they consumed** (every mode). A snapshot reads
   `delivered: true` when this result consumed it, and `owed: true` when it is
   ready news the next wait returns. A top-level `owed: N` is never cut. Paging
-  order is firing, delivered, open, owed, rest. A result with owed news gets
-  the notice `N owed: mu wait --ready -w <ws>`, and its `next` is that
-  command.
+  order is firing, delivered, open, owed, rest. A result with owed news the
+  caller owns (not a named target) gets the notice
+  `N owed: mu wait --ready -w <ws>`, and its `next` is that command. While a
+  named target is still owed, `next` stays the resume: a bare `--ready` never
+  returns an unowned target.
 
 - **Eval: exposure-gated scoring for the hill-r2 tournament** (spec
   `docs/specs/2026-11-07-hill-r2-tournament.md` §4.1, §5, unit B3a).

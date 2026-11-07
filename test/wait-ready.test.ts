@@ -24,7 +24,7 @@ import {
 import { cursorKey, DELEGATE_TOKEN, readCursors, recordCursors } from "../src/wait-cursor.js";
 import type { Item } from "../src/wait-item.js";
 import { registerOwnedWait } from "../src/wait-registration.js";
-import { READY_BATCH_MAX, selectEvent } from "../src/wait-select.js";
+import { dropStale, READY_BATCH_MAX, selectEvent } from "../src/wait-select.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { runCliWire } from "./_runCli.js";
@@ -230,6 +230,29 @@ describe("selectEvent: urgent items never batch", () => {
       "ready",
     );
     expect(r?.fired.map((i) => i.ref.id)).toEqual(["a"]);
+  });
+
+  // Review note (delegate_rv-a7rea): a companion has its own token. A wait that saw only it (an
+  // explicit wait on the task a settled run closed) consumes it alone, so the guard re-checks it.
+  it("dropStale re-checks companions: a stale companion is dropped, its group's live member stays", () => {
+    const ev = item("e", "closed", 0);
+    const evComp = item("ec", "closed", 1);
+    const head = item("h", "closed", 2);
+    const comp = item("hc", "closed", 3);
+    const gone = item("g", "closed", 4);
+    const chosen = {
+      event: ev,
+      fired: [ev, evComp, head, comp, gone],
+      groups: [[ev, evComp], [head, comp], [gone]],
+    };
+    const staleSet = new Set([evComp, comp, gone]);
+    const kept = dropStale(chosen, (i) => i !== undefined && staleSet.has(i));
+    expect(kept.event).toBe(ev);
+    expect(kept.groups.map((g) => g.map((i) => i.ref.id))).toEqual([["e"], ["h"]]);
+    expect(kept.fired.map((i) => i.ref.id)).toEqual(["e", "h"]);
+    // Another wait's delivery: not ready here, so never marked owed.
+    expect([evComp, comp, gone].map((i) => i.ready)).toEqual([false, false, false]);
+    expect([ev, head].map((i) => i.ready)).toEqual([true, true]);
   });
 });
 
@@ -446,6 +469,51 @@ describe("CLI: mu wait --ready", () => {
     expect(second.data.events).toHaveLength(2);
     expect(second.data.owed).toBe(0);
     expect(second.data.notices ?? []).toEqual([]);
+  });
+
+  // Review probes P2/P5 (delegate_rv-a7rea): an explicit wait whose owed news is unowned targets.
+  // A bare `--ready` watches only what the caller owns, so it would never return them: `next` is
+  // the resume, which does.
+  it("P2: `mu wait a b`, both closed, unowned: next is the resume, and following it returns b", async () => {
+    mk("a");
+    mk("b");
+    close("a");
+    close("b");
+    const out = await mu(["wait", "task:w/a", "task:w/b", "--timeout", "1", "--json"]);
+    expect(out.code, out.stderr).toBe(0);
+    const d = doc(out);
+    expect(d.data.firing?.ref).toBe("task:w/a");
+    const next = d.next?.commands[0] ?? "";
+    expect(next).toMatch(/^mu wait --resume \S+$/);
+    expect(d.data.notices ?? []).not.toContainEqual(
+      expect.stringContaining("owed: mu wait --ready"),
+    );
+    const again = doc(await mu([...next.split(" ").slice(1), "--json"]));
+    expect(again.data.firing?.ref).toBe("task:w/b");
+  });
+
+  it("P5: `mu wait a b c -w w`, a and b closed, c open: next is the resume, which returns b", async () => {
+    for (const id of ["a", "b", "c"]) mk(id);
+    close("a");
+    close("b");
+    const out = await mu([
+      "wait",
+      "task:w/a",
+      "task:w/b",
+      "task:w/c",
+      "-w",
+      "w",
+      "--timeout",
+      "1",
+      "--json",
+    ]);
+    expect(out.code, out.stderr).toBe(0);
+    const d = doc(out);
+    expect(d.data.firing?.ref).toBe("task:w/a");
+    const next = d.next?.commands[0] ?? "";
+    expect(next).toMatch(/^mu wait --resume \S+ -w w$/);
+    const again = doc(await mu([...next.split(" ").slice(1), "--json"]));
+    expect(again.data.firing?.ref).toBe("task:w/b");
   });
 
   it("--ready with --first or --all is a usage error", async () => {
