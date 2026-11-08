@@ -1,5 +1,4 @@
 [
-  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -24,26 +23,25 @@
   {
     "calls": [
       {
-        "bash": "mu agent close w1 -w eval --json | true; mu agent spawn w2 -w eval --worktree --task k11 --send 'do k11 and finish with the CLOSE block' --json"
+        "tool": "mu_delegate",
+        "args": {
+          "label": "course",
+          "task": "Read-only course check of workstream eval: count CLOSED tasks by status with `mu sql`, list what is left under umbrella u, and report the numbers and any proposals. Do not change anything."
+        }
       }
     ]
+  },
+  {
+    "text": "Waiting for the measurement."
   },
   {
     "calls": [
       {
-        "bash": "mu agent wait w2 -w eval --after-runs 0 --json --timeout 120"
+        "bash": "mu human-needed -w eval 'course check: 2 proposed changes, see note'"
       }
     ]
   },
   {
-    "calls": [
-      {
-        "bash": "mu task close k11 -w eval --evidence 'worker finished k11'"
-      }
-    ]
-  },
-  {
-    "text": "k10 and k11 done; k12 next."
-  },
-  "RIG-CANARY-f8dc74a2239b"
+    "text": "Stopped for the course check."
+  }
 ]

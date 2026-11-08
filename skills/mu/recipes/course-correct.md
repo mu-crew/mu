@@ -1,6 +1,6 @@
 # Course-correct a long job
 
-Use on a `course check due: <n> closed since <date>` hint, or when asked.
+On `course check due` or a request.
 
 1. **A read-only `mu_delegate` (else a native subagent) measures**:
 
@@ -12,13 +12,13 @@ Use on a `course check due: <n> closed since <date>` hint, or when asked.
    mu task tree <umbrella> -w <ws>
    ```
 
-2. **A second refutes the numbers** before any proposal.
-3. **Compare with the spec**: stale text, then:
-   - Switch line: which open critical-path units can move after the switch?
-   - Review cost: rounds per unit, findings by severity. Bar: high = fix + re-review; medium = fix, evidence in the close note; low = one batch.
-   - Code budget: `src/` vs baseline; units >30% over budget.
-   - Real use: last dogfood; what it found that review missed.
+2. **A second refutes the numbers.** Dispatch nothing until both answer.
+3. **Compare with the spec**:
+   - Switch line: critical-path units movable after it.
+   - Review cost: rounds per unit, findings by severity (high: fix + re-review; medium: fix + evidence; low: one batch).
+   - Code budget: `src/` vs baseline; units >30% over.
+   - Real use: what dogfood found that review missed.
    - Merge latency: gate+CI vs queue.
 4. **Propose ≤7 changes**, each tied to a number.
-5. **Stop**: `mu human-needed -w <ws> "course check: <n> proposed changes, see note"`.
-6. **Approved**: one umbrella note starting `COURSE CHECK <date>` (the hint counts from it) and the DAG diff, then dispatch.
+5. **Apply** in-plan ones (DAG edges, order, merge batching, briefs, habits). One umbrella note starting `COURSE CHECK <date>` (the hint counts from it) lists all and the DAG diff.
+6. **Escalate** scope, spend or goal changes, irreversible or external steps, judgment calls: `mu human-needed -w <ws> "course check: see note"` (`--no-stop` if nothing waits). Else dispatch.

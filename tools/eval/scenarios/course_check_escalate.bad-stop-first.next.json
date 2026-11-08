@@ -1,0 +1,12 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu human-needed -w eval 'k11 and k12 may need a scope decision; please review before I start'"
+      }
+    ]
+  },
+  {
+    "text": "Stopped for a human before starting."
+  }
+]

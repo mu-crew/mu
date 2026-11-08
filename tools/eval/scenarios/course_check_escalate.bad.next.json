@@ -1,0 +1,47 @@
+[
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree --task k10 --send 'do k10 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu state -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent close w1 -w eval --json | true; mu agent spawn w2 -w eval --worktree --task k11 --send 'do k11 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w2 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close k11 -w eval --evidence 'worker finished k11'"
+      }
+    ]
+  },
+  {
+    "text": "k10 and k11 done; k12 next."
+  }
+]

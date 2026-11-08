@@ -60,7 +60,7 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Alwa
   [review gate](recipes/adversarial-review.md).
 - **Stop rule on the umbrella first.**
 - **`course check due` stops dispatch**: finish merging, then
-  [course-correct](recipes/course-correct.md) to its `mu human-needed`.
+  [course-correct](recipes/course-correct.md); resume only after it.
 - **Edit or build: `--worktree`.** Never make your own.
 
 ## Gotchas
