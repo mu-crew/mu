@@ -110,7 +110,7 @@ const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   pack <g> [--brief tools/eval/candidates/<g>/brief.src.md]
   design <g> --model <m> [--session <name>]
   audit <g> [--session <name>]
-  build <g> [--scenarios a,b]
+  build <g> [--scenarios a,b] [--passes 4]   (golden passes at once; each row claims)
   r1 <g> | r2 <g>   [--concurrency auto|n] [--model-concurrency 8]   (auto: as many probe rows as muzzle's budget holds)
   decide --fast <g>   (fast mode: the R1 decision; at most one winner)
   final --combined [--groups a,b] [--drop v1,v2] [--concurrency 6]   (C7: every group's winner on one surface; R4, then holdouts once)
@@ -218,10 +218,12 @@ async function baseTraces(
   const f = join(dir, "golden-base.json");
   if (existsSync(f)) return JSON.parse(readFileSync(f, "utf8"));
   const o = { cases: NEXT_CASES, scenarios };
-  const t = {
-    first: await collectGoldenTraces(surface, o),
-    again: await collectGoldenTraces(surface, o),
-  };
+  // two independent passes over fresh sandboxes; each row still takes its own muzzle claim
+  const [first, again] = await Promise.all([
+    collectGoldenTraces(surface, o),
+    collectGoldenTraces(surface, o),
+  ]);
+  const t = { first, again };
   writeFileSync(f, JSON.stringify(t));
   return t;
 }
@@ -791,6 +793,12 @@ export async function tournamentCli(argv: string[]): Promise<number> {
       const vocab = surfaceVocab(base);
       const paths = commandPaths(base);
       const have = new Map(variantRows(now).map((v) => [v.id, v.patchSha]));
+      const todo: {
+        manifest: ReturnType<typeof parseManifest>;
+        session: string;
+        patchText: string;
+        build: ReturnType<typeof buildVariant>;
+      }[] = [];
       for (const c of listCandidates(candDir(group))) {
         const session = c.manifest.slice(candDir(group).length + 1).split("/")[0] ?? "";
         if (!clean.has(session)) {
@@ -805,12 +813,29 @@ export async function tournamentCli(argv: string[]): Promise<number> {
           now.some((r) => r.kind === "variant" && r.id === manifest.id && r.ref === build.ref)
         )
           continue;
-        const vSurface = build.built.ok
-          ? { ...surfaceFromDir(`hill2-${manifest.id}`, build.dir), family: "next" as const }
-          : null;
-        const vTraces = vSurface
-          ? await collectGoldenTraces(vSurface, { cases: NEXT_CASES, scenarios })
-          : [];
+        todo.push({ manifest, session, patchText, build });
+      }
+      // the variants' golden passes run side by side (each row under its own muzzle claim);
+      // rows are appended in candidate order once all are in
+      const width = Math.max(1, Number(flag(rest, "--passes") ?? 4));
+      const allTraces: GoldenTrace[][] = new Array(todo.length);
+      let next = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(width, todo.length) }, async () => {
+          for (let i = next++; i < todo.length; i = next++) {
+            const t = todo[i];
+            if (!t) continue;
+            allTraces[i] = t.build.built.ok
+              ? await collectGoldenTraces(
+                  { ...surfaceFromDir(`hill2-${t.manifest.id}`, t.build.dir), family: "next" },
+                  { cases: NEXT_CASES, scenarios },
+                )
+              : [];
+          }
+        }),
+      );
+      for (const [i, { manifest, session, patchText, build }] of todo.entries()) {
+        const vTraces = allTraces[i] ?? [];
         const row = assessVariant({
           manifest,
           session,

@@ -307,6 +307,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   outright ("pack still carries denied text"). A string in a JSON array
   that names the rig is now removed; any other hit in a JSON file is still
   reported and refuses the pack.
+- **Eval: `tournament build` runs its golden passes side by side**
+  (hill-r2 c2). Base's two passes and up to `--passes` (default 4) variant
+  passes run at once; each row still takes its own muzzle claim and rows are
+  appended in candidate order. Serial, c2's eight variants took about 12 h
+  of zero-cost goldens before R1 could start.
 - **Eval: the designer audit no longer reads `//` as a search of `/`**
   (hill-r2 c2). A `//` comment inside a heredoc (a python script that edits
   TypeScript) was a strict path `//`, so the root, and discarded the
