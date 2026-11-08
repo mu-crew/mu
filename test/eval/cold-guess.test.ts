@@ -3,6 +3,7 @@ import type { ColdRow } from "../../tools/eval/cold-guess.ts";
 import {
   extractCommand,
   firstReach,
+  modelEnv,
   muInText,
   parsePiJson,
   systemPrompt,
@@ -285,5 +286,20 @@ describe("hill-r2 intents (spec §2.1)", () => {
     const g = INTENTS.find((x) => x.id === "close_apply_clean")?.golden.next ?? "";
     expect(extractCommand(`\`\`\`sh\n${g}\n\`\`\``)).toBe(g);
     expect(g.split("\n")).toHaveLength(2);
+  });
+});
+
+describe("modelEnv", () => {
+  it("passes the launcher pairs but never lets them change the model's HOME or PATH", () => {
+    const env = modelEnv("/box/home", {
+      PATH: "/usr/bin",
+      EVAL_LAUNCHER_ENV: "HOME=/x PATH=/evil PI_CODING_AGENT_DIR=/x KEEP_OUTER=1",
+    });
+    expect(env).toEqual({
+      KEEP_OUTER: "1",
+      PATH: "/usr/bin",
+      HOME: "/box/home",
+      PI_CODING_AGENT_DIR: "/box/home",
+    });
   });
 });

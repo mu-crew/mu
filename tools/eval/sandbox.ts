@@ -97,7 +97,7 @@ export function launcherEnv(base: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 /**
- * Copy the host pi launcher's cached model catalog (`*model-catalog*.json` in the caller's pi
+ * Copy the host pi launcher's cached model catalog (`[<name>-]model-catalog*.json` in the caller's pi
  * agent dir) into a sandbox's agent dir. Without a cache, an interactive pi launcher fetches the
  * catalog first; where it cannot (inside a pi agent's sandbox, no network) it waits on "Press any
  * key to continue" and a worker pane never opens its control socket. A cache only: no auth, no
@@ -106,7 +106,7 @@ export function launcherEnv(base: NodeJS.ProcessEnv): Record<string, string> {
 export function seedLauncherCache(hostAgentDir: string, sandboxAgentDir: string): string[] {
   let names: string[];
   try {
-    names = readdirSync(hostAgentDir).filter((n) => /model-catalog[^/]*\.json$/.test(n));
+    names = readdirSync(hostAgentDir).filter((n) => /^(\w+-)?model-catalog[\w.-]*\.json$/.test(n));
   } catch {
     return [];
   }

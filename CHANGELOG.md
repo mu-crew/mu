@@ -129,9 +129,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **Eval rig: launcher variables come from `EVAL_LAUNCHER_ENV`** (public
   audit). The rig no longer names a specific pi launcher's variables: it sets
   each `NAME=VALUE` pair in `EVAL_LAUNCHER_ENV` for every pi it starts (a
-  caller value of `NAME` wins), and seeds any `*model-catalog*.json` cache.
-  Run from inside a launcher's sandbox, set the pair that keeps the outer
-  sandbox. Docs and fixtures drop internal host, user and tool names.
+  caller value of `NAME` wins), and seeds any `[<name>-]model-catalog*.json`
+  cache. The pairs never override the sandbox's own `HOME`, `PATH` or `MU_*`
+  (model, designer and scenario env alike). Run from inside a launcher's
+  sandbox, set the pair that keeps the outer sandbox. Docs, fixtures and the
+  README screenshot drop internal host, user and tool names.
 
 - **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
   events arrive in one block, one line per event, plus a line for what is

@@ -690,6 +690,8 @@ export function designerEnv(o: {
     writeFileSync(settings, `${JSON.stringify({ retry: { enabled: false } })}\n`);
   mkdirSync(join(o.ddir, "state"), { recursive: true });
   return {
+    // the launcher pairs first: they never displace the designer's own HOME, PATH or MU_*
+    ...launcherEnv(o.base ?? process.env),
     PATH: designerPath(join(o.ddir, "bin"), o.pack, o.pathEnv, o.systemDirs),
     HOME: home,
     PI_CODING_AGENT_DIR: home,
@@ -697,7 +699,6 @@ export function designerEnv(o: {
     MU_SYNC_DIR: "",
     MU_STATE_DIR: join(o.ddir, "state"),
     TERM: "dumb",
-    ...launcherEnv(o.base ?? process.env),
   };
 }
 

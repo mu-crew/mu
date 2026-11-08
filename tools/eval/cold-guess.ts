@@ -159,6 +159,16 @@ export interface ModelReply {
 /** The scripted models: `evalfaux/<name>` answers with `faux[model]` and spends nothing (no pi starts). */
 export const EVALFAUX = "evalfaux/";
 
+/** The model's env: the launcher pairs first, so they never displace its own PATH or empty HOME. */
+export function modelEnv(home: string, base: NodeJS.ProcessEnv): Record<string, string> {
+  return {
+    ...launcherEnv(base),
+    PATH: base.PATH ?? "",
+    HOME: home,
+    PI_CODING_AGENT_DIR: home,
+  };
+}
+
 /**
  * One pi print-mode turn: no tools, no skills, no context files, empty HOME and cwd. An
  * `evalfaux/*` model short-circuits: its reply is `faux[model]` (selftest), zero tokens.
@@ -182,12 +192,7 @@ export async function askModel(
       join(home, "settings.json"),
       `${JSON.stringify({ retry: { enabled: false } })}\n`,
     );
-    const env: Record<string, string> = {
-      PATH: process.env.PATH ?? "",
-      HOME: home,
-      PI_CODING_AGENT_DIR: home,
-      ...launcherEnv(process.env),
-    };
+    const env = modelEnv(home, process.env);
     const args = [
       "-p",
       "--mode",

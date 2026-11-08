@@ -174,6 +174,7 @@ describe("seedLauncherCache", () => {
       writeFileSync(join(host, "model-catalog.json"), "{}");
       writeFileSync(join(host, "acme-model-catalog.resolved.json"), "{}");
       writeFileSync(join(host, "auth.json"), "secret");
+      writeFileSync(join(host, "old.model-catalog.json"), "{}");
       writeFileSync(join(host, "settings.json"), "{}");
       expect(seedLauncherCache(host, box).sort()).toEqual([
         "acme-model-catalog.resolved.json",

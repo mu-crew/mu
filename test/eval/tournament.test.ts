@@ -1193,6 +1193,23 @@ describe("designer isolation", () => {
     expect(args[args.indexOf("--session-dir") + 1]).toBe(join(ddir, "sessions"));
   });
 
+  it("designerEnv: EVAL_LAUNCHER_ENV cannot change the designer's HOME, PATH or MU_*", () => {
+    tmp = mkdtempSync(join(tmpdir(), "mu-designer-"));
+    const ddir = join(tmp, "ddir");
+    const env = designerEnv({
+      ddir,
+      pack: join(ddir, "pack"),
+      pathEnv: "/usr/bin",
+      systemDirs: [],
+      base: { EVAL_LAUNCHER_ENV: "HOME=/x PATH=/x MU_DB_PATH=/x MU_SYNC_DIR=/x KEEP_OUTER=1" },
+    });
+    expect(env.HOME).toBe(join(ddir, "home"));
+    expect(env.PATH).not.toBe("/x");
+    expect(env.MU_DB_PATH).toBe(join(ddir, "state", "mu.db"));
+    expect(env.MU_SYNC_DIR).toBe("");
+    expect(env.KEEP_OUTER).toBe("1");
+  });
+
   it("scrubs denied text out of the pack's remaining files", () => {
     tmp = mkdtempSync(join(tmpdir(), "mu-pack-"));
     writeFileSync(
