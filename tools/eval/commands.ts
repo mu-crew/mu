@@ -38,6 +38,7 @@ import { armWatch, settleWatch, watchRealState } from "./isolation.ts";
 import { bindScenario, MIX_CASES, mixEnv, type PlanRow, planRows } from "./mix.ts";
 import { pretrust, pretrustTargets } from "./pretrust.ts";
 import { toMarkdown } from "./report.ts";
+import { fingerprintInTranscripts, fingerprintReads, rigFingerprint } from "./rig-fingerprint.ts";
 import { rigReads, sandboxGuard } from "./rig-guard.ts";
 import { runAut } from "./runner.ts";
 import { ENV_FAILURE, runPaneAut } from "./runner-pane.ts";
@@ -133,6 +134,8 @@ export interface RunOne {
   fakeWorkers?: boolean;
   /** Hook tools already resolved (check resolves them once); default: resolveTools(surface). */
   tools?: HookTools;
+  /** Test seam: no fingerprint scan (rig-fingerprint.ts), the mutation its tests pin. */
+  noFingerprint?: boolean;
   /** Test seam: a pi AUT without aut-guard.ts, so only the judge-side rigReads stands. */
   noAutGuard?: boolean;
 }
@@ -313,12 +316,24 @@ export async function runOne(run: RunOne): Promise<RunResult> {
       };
     }
     // a run that read the rig (its scenario sources, judges, rows) is invalid, never a hit
+    const hooks = hookRecords(sb);
+    // a middle range of a rig file carries no canary: its names do (rig-fingerprint.ts)
+    const fp = o.noFingerprint === true ? null : rigFingerprint({ surfaceRoot: sb.surface.root });
+    const scope = { own: o.scenario.id, env: sb.env };
     const reads = [
       ...rigReads(metrics.toolCalls, sandboxGuard(sb, o.log)),
+      ...(fp ? fingerprintReads(metrics.toolCalls, fp, scope) : []),
       // a pane AUT has no tool stream: its hooks report a payload or transcript with the canary
-      ...hookRecords(sb)
+      ...hooks
         .filter((r) => r.rigCanary === true)
         .map((r) => `hook ${r.harness} ${r.event} (${r.agent ?? "?"}): rig canary`),
+      ...(fp
+        ? fingerprintInTranscripts(
+            hooks.flatMap((r) => (r.transcript ? [r.transcript] : [])),
+            fp,
+            scope,
+          )
+        : []),
     ];
     if (reads.length > 0) {
       verdict = { ...verdict, completed: false, rigReads: reads };

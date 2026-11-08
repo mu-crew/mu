@@ -26,6 +26,7 @@ import { type ExposureSpec, flatText } from "./exposure.ts";
 import { scenarioDir } from "./fixtures.ts";
 import { fence, type NextCase, playCase, variantsOf } from "./nextstep.ts";
 import { muCalls, muOut } from "./observe.ts";
+import { HOLDOUTS } from "./rig-fingerprint.ts";
 import { FAUX_EXT } from "./sandbox.ts";
 import { surfaceDir } from "./surface.ts";
 import {
@@ -233,8 +234,7 @@ export function commandPaths(surface: Surface): string[] {
   return out;
 }
 
-/** Never tuned, never mined, never run mid-round (§0). */
-export const HOLDOUTS = ["worker_dies", "wait_receipt_race", "wrong_id", "single_channel_host"];
+export { HOLDOUTS };
 
 const traceOf = (sb: Sandbox): GoldenTrace["calls"] =>
   muCalls(sb, "all").map((m) => ({ argv: m.argv, exit: m.exit, out: muOut(sb, m) }));

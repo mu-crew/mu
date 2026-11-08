@@ -15,16 +15,21 @@ import { join } from "node:path";
 import { observerRecord } from "./harness-observe.ts";
 import { hasCanary } from "./rig-private.ts";
 
+/** A turn-end payload's transcript path (a turn end, not every event), or null. */
+function transcriptOf(body: unknown, kind: string): string | null {
+  if (!["stop", "failed", "interrupt", "session_end"].includes(kind)) return null;
+  const t = (body as { transcript_path?: unknown } | null)?.transcript_path;
+  return typeof t === "string" && t !== "" ? t : null;
+}
+
 /**
  * The payload, or the transcript it points at, carries a rig file's canary: the agent read the rig
  * (a pane AUT has no tool stream for rig-guard.ts rigReads, so its hooks report it).
  */
 function sawCanary(raw: string, body: unknown, kind: string): boolean {
   if (hasCanary(raw)) return true;
-  // the transcript once a turn ends, not on every event
-  if (!["stop", "failed", "interrupt", "session_end"].includes(kind)) return false;
-  const t = (body as { transcript_path?: unknown } | null)?.transcript_path;
-  if (typeof t !== "string" || t === "") return false;
+  const t = transcriptOf(body, kind);
+  if (t === null) return false;
   try {
     return hasCanary(readFileSync(t, "utf8"));
   } catch {
@@ -87,7 +92,12 @@ function main(): void {
     host: process.env.EVAL_HOST ?? /\/hosts\/([^/]+)\/home$/.exec(home)?.[1] ?? null,
     cwd: process.cwd(),
   });
-  const out = sawCanary(raw, body, rec.kind) ? { ...rec, rigCanary: true } : rec;
+  const transcript = transcriptOf(body, rec.kind);
+  const out = {
+    ...rec,
+    ...(sawCanary(raw, body, rec.kind) ? { rigCanary: true } : {}),
+    ...(transcript === null ? {} : { transcript }),
+  };
   appendFileSync(log, `${JSON.stringify(out)}\n`);
 }
 

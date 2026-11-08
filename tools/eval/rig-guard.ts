@@ -1,23 +1,31 @@
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // What an AUT must never read: the rig (tools/eval with its scenario and holdout sources, goldens
-// and judges; test/eval), the rows and transcripts, and other runs' sandboxes. Three layers:
-// - the sandbox names no rig path (stageRig; prepareSurface strips the rig from a surface);
-// - a pi AUT loads aut-guard.ts, which refuses a tool call that names the rig (BLOCKED) and cuts
-//   every line that names it from a tool result (`ps`, a grep above HOME);
-// - the judge-side backstop, rigReads: a call that names a rig path and was not refused, or whose
-//   output still carries a rig file's grep line or its canary (rig-private.ts), makes the run a
-//   "rig read". A rig read is an invalid row, never a hit (R4: completed false and left out of
-//   every count; probe: invalid).
-//
-// What names the rig: a root (every checkout of the repo, the transcripts, the private stores of
-// rig-private.ts, the surface's rig dirs) in any spelling (realpath, /private/tmp), a rig segment
-// (`tools/eval`, also relative: `HEAD:tools/eval/x`), another run's sandbox, and for a bash
-// command every path its running cwd resolves (`cd a && cd tools && cat eval/x`, shell-paths.ts).
-// What path parsing misses (a glob, a symlink it cannot follow, `$VAR/…`) the canary catches: a
-// whole-file read, a `git show` or the head or tail of a file prints it. A read of a middle range
-// that matches no path rule is the one gap. A live run's HOME is the user's, so `~/` there expands
-// to the user's home. A pane AUT (claude, codex, …) has only the backstop: the hook observer
-// flags a payload or transcript that carries the canary.
+// and judges; test/eval), the rows and transcripts, and other runs' sandboxes. The layers, each
+// with what it leaves (tools/eval/README.md says the same at more length):
+// - the sandbox names no rig path (stageRig; prepareSurface strips the rig from a surface).
+//   Leaves the staged copies (legitimate) and a surface given by path;
+// - path rules: a pi AUT loads aut-guard.ts, which refuses a tool call that names the rig
+//   (BLOCKED) and cuts every line that names it from a tool result (`ps`, a grep above HOME).
+//   What names the rig: a root (every checkout of the repo, the transcripts, the private stores of
+//   rig-private.ts, the surface's rig dirs) in any spelling (realpath, /private/tmp), a rig segment
+//   (`tools/eval`, also relative: `HEAD:tools/eval/x`), another run's sandbox, and for a bash
+//   command every path its running cwd resolves (`cd a && cd tools && cat eval/x`,
+//   shell-paths.ts). A live run's HOME is the user's, so `~/` there expands to the user's home.
+//   Leaves a path computed at run time, a glob, a symlink, and output that names no root;
+// - the canary (rig-private.ts) on every rig file's first and last line: a whole-file read, a
+//   `git show`, a head or tail prints it (aut-guard withholds the result). Leaves every range
+//   that skips both ends (`sed -n 5,15p`, a grep of a middle line);
+// - the fingerprint (rig-fingerprint.ts, judge-side only, never imported here so stageRig never
+//   copies it): one of the rig's own names (ids, declared names) that no legitimate output carries.
+//   Leaves the lines that carry only mu's words (about 30% of 11-line ranges, 84% of single
+//   lines), the golden and bad scripts (mu commands), a listing of plainly named files, and any
+//   encoding (base64, gzip, rev, tr);
+// - rigReads, the judge-side backstop: a call that names a rig path and was not refused, or whose
+//   output carries a rig file's grep line or its canary, makes the run a "rig read" (commands.ts
+//   adds the fingerprint's). A rig read is an invalid row, never a hit (R4: completed false and
+//   left out of every count; probe: invalid). It is found after the run: the row is dropped.
+// A pane AUT (claude, codex, …) has only the backstop: the hook observer flags a payload or
+// transcript that carries the canary and names the transcript the judge scans for the fingerprint.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";

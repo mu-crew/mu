@@ -41,6 +41,8 @@ export interface HookRec {
   provider?: string;
   /** The payload or its transcript carried a rig file's canary (hook-observer.ts): a rig read. */
   rigCanary?: true;
+  /** Turn end: the transcript the payload names (judge-side rig-fingerprint.ts scans it). */
+  transcript?: string;
 }
 
 const CAP = 2000;

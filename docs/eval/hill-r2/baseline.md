@@ -51,7 +51,8 @@ R4 rpc logs under `logs/`, except the logs that carry holdout text, which are in
 |---|---|---|
 | `probe.jsonl` | 4080 | `f124ef5e79af37e68aeabcb2d5f336cd690ca7b63119fc6a09786789dc14d859` |
 | `cold.jsonl` | 300 | `3a66bc1a4cc78f12950caba9d79b4859b8c4dbf486bb742b6000a8bedff6d031` |
-| `r4.jsonl` | 345 | `77309bafd6a702267b0f990e94a1358c36cf1ba9101174ca1f2bb7333a777b4c` |
+| `r4.jsonl` | 345 | `fc1c706c93bc86711100fac4cd7818f4e47d2c51916beb538a71a1ce71bc21d3` |
+| `r4.raw-fingerprint.jsonl` (superseded: the 5 kept gemini rows the fingerprint flagged, `verdict.rigReads` added; logs in `logs-rig-read/*.fingerprint`) | 5 | `f248cdfd699d0de760ff0c16b9e7c9d3819058f6e9a8ac51bd0a7ab93352a88e` |
 | `r4.raw-pre-rigfix.jsonl` (superseded: the first R4 file, 57 gemini rows read the rig) | 345 | `b5c73b371d310de889ca4f8406e3569d25af48ac2489e5f4da52f1c0b0287ad9` |
 | `r4.raw-rig-read.jsonl` (the 57 rig-read rows, `verdict.rigReads` added; logs in `logs-rig-read/`) | 57 | `7a2fc5e7ddab5421db97dd80e2d648441b1a37dc96ae5b5d182a516fbf5a4c02` |
 | `r4.raw-rig-read-rerun1.jsonl` (superseded: re-runs before `aut-guard.ts` that read the rig again; 3 rows name holdout files, none carries their lines) | 9 | `1525580919276bbca54fd61d0c1c489ce4b3964517896ab5b7b2348bd73619a9` |
@@ -69,10 +70,10 @@ own outcome (token cap or timeout), not provider noise:
 | model | R4 runs | token-cap aborts | timeout aborts |
 |---|---|---|---|
 | claude-haiku-5-5 | 115 | 6 | 16 |
-| gemini-3.8-flash | 115 | 64 | 1 |
+| gemini-3.8-flash | 115 | 63 | 1 |
 | claude-sonnet-5-5 | 115 | 0 | 12 |
 
-Gemini burns its scenario token cap (about 1.5M) on 56% of R4 runs. That is most of its 46%
+Gemini burns its scenario token cap (about 1.5M) on 55% of R4 runs. That is most of its 47%
 completion. Much of that budget goes to searching the machine beyond its sandbox: in the first
 pass it read the rig itself (below); since `aut-guard.ts` those calls are refused or cut.
 
@@ -175,6 +176,27 @@ the generated `bin/` scripts. The new path rules flag 1 kept row: `no_mux_delega
 (not completed) ran a `node -e` search of `$HOME` for files containing `mu_delegate` and printed
 312 paths, most under `~/.claude/projects`; no file content reached the model. Under the rule "re-run only on a canary hit" nothing is
 re-run, and no number above changes.
+
+**Fingerprint (f_aut_reads_rig_3).** The review of the canary read rig text past it with reads
+that skip a file's ends: `sed -n 5,15p` of a judge, `find … | xargs grep -h <helper>`, and
+`grep -rn` after a computed `cd`. `tools/eval/rig-fingerprint.ts` builds, judge-side, the rig's
+distinctive names (scenario, case and row ids, the holdout ids, and the names the rig's code and
+tests declare; 1181 tokens) minus every word of the surface, `dist/`, the staged sandbox files,
+`node_modules`, pi's install dir and the run's env; an output with one of them is a rig read.
+False-positive scan for K: no token in any of 7918 kept R4 tool results (`metrics.toolCalls`),
+10033 probe texts (answers and commands; their outputs are not stored), 600 cold-guess texts, or
+3538 files of the 24 seeded non-holdout sandboxes (the e1-e7 cases need murmur and were not
+seeded), so K = 1. The scan flagged 5 kept gemini rows, all real reads: three `ps aux | grep …` (one
+over `ssh dev`) printed the B5 driver's argv with 13 scenario ids, one printed 2, and
+`wait_wave_starvation` rep 4 grepped `hill2-base` while it still held `docs/eval` (4 tokens, a
+holdout id among them: a line of an old matrix report naming a holdout's score, not holdout source;
+`grep -r` without `-n` prints no `<path>:<n>:`, so f_aut_reads_rig_2's grep-line scan missed it). The rpc logs flag 7 more rows, but only in `tool_execution_update`
+streaming or a truncation's `details`: the model got the 50 KB tail without them, and no later
+call read the full output. The 5 rows moved to `r4.raw-fingerprint.jsonl` (logs to
+`logs-rig-read/*.fingerprint`) and the cells were re-run with the same job keys, with `aut-guard.ts`
+and the fingerprint: 0 rig reads. Effect on gemini: completion 53/115 → 54/115
+(`delegate_saturation` rep 2 now completes), mean cost per rep 21953k → 21877k, spread 3043k →
+3307k; haiku and sonnet unchanged. What the layers still leave is listed in `tools/eval/README.md`.
 
 ## Freeze: not run (why)
 
@@ -342,13 +364,13 @@ Per model, one stratum per case at its planned per-model n_eff and that model's 
 
 ### R4 base set: completion and cost spread
 
-345 runs, 23 scenarios × 3 models; holdouts not run. The 57 gemini cells that read the rig are re-run (see [Rig reads](#rig-reads-f_aut_reads_rig)). Cost = tokens + 10·muErrors + 50·wrong (§4.5).
+345 runs, 23 scenarios × 3 models; holdouts not run. The 57 gemini cells that read the rig, and 5 more the fingerprint flagged, are re-run (see [Rig reads](#rig-reads-f_aut_reads_rig)). Cost = tokens + 10·muErrors + 50·wrong (§4.5).
 
 | scenario | haiku completed | gemini completed | sonnet completed | haiku mean tokens | gemini mean tokens | sonnet mean tokens | wrong / destructive (all models) |
 |---|---|---|---|---|---|---|---|
 | api_outage_resume | 5/5 (100%) | 3/5 (60%) | 5/5 (100%) | 375k | 1392k | 150k | 6 / 0 |
 | course_check | 4/5 (80%) | 0/5 (0%) | 1/5 (20%) | 480k | 1535k | 214k | 10 / 3 |
-| delegate_saturation | 5/5 (100%) | 2/5 (40%) | 5/5 (100%) | 371k | 1466k | 164k | 2 / 0 |
+| delegate_saturation | 5/5 (100%) | 3/5 (60%) | 5/5 (100%) | 371k | 1388k | 164k | 3 / 0 |
 | fanout_gates | 5/5 (100%) | 1/5 (20%) | 5/5 (100%) | 1120k | 1519k | 135k | 6 / 0 |
 | guessed_flag | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 52k | 312k | 32k | 3 / 0 |
 | guessed_sql_column | 4/5 (80%) | 5/5 (100%) | 5/5 (100%) | 74k | 117k | 52k | 2 / 0 |
@@ -362,12 +384,12 @@ Per model, one stratum per case at its planned per-model n_eff and that model's 
 | remote_close_block | 4/5 (80%) | 0/5 (0%) | 5/5 (100%) | 284k | 513k | 107k | 9 / 0 |
 | remote_spawn | 4/5 (80%) | 0/5 (0%) | 5/5 (100%) | 254k | 475k | 108k | 7 / 0 |
 | teardown | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 39k | 253k | 42k | 0 / 0 |
-| wait_helper_summary | 4/5 (80%) | 0/5 (0%) | 3/5 (60%) | 151k | 1525k | 92k | 8 / 0 |
+| wait_helper_summary | 4/5 (80%) | 0/5 (0%) | 3/5 (60%) | 151k | 1526k | 92k | 8 / 0 |
 | wait_mixed_refs | 3/5 (60%) | 0/5 (0%) | 3/5 (60%) | 241k | 1483k | 115k | 15 / 0 |
-| wait_remote_gate | 0/5 (0%) | 0/5 (0%) | 0/5 (0%) | 451k | 509k | 235k | 15 / 1 |
+| wait_remote_gate | 0/5 (0%) | 0/5 (0%) | 0/5 (0%) | 451k | 505k | 235k | 15 / 1 |
 | wait_report_act | 1/5 (20%) | 4/5 (80%) | 5/5 (100%) | 161k | 1209k | 69k | 7 / 0 |
 | wait_wave_six | 5/5 (100%) | 0/5 (0%) | 5/5 (100%) | 549k | 1542k | 233k | 14 / 0 |
-| wait_wave_starvation | 2/5 (40%) | 0/5 (0%) | 4/5 (80%) | 951k | 1535k | 414k | 14 / 0 |
+| wait_wave_starvation | 2/5 (40%) | 0/5 (0%) | 4/5 (80%) | 951k | 1539k | 414k | 14 / 0 |
 | worktree_reuse | 5/5 (100%) | 3/5 (60%) | 5/5 (100%) | 125k | 1346k | 74k | 4 / 0 |
 
 Per model, pooled over the scenarios: completion, per-rep total cost (sum over scenarios of one rep index) mean and spread (max − min), and the §4.5 Fisher power at n = 48 a side (α 0.05/3, first Holm step) for a completion drop from the observed rate.
@@ -375,7 +397,7 @@ Per model, pooled over the scenarios: completion, per-rep total cost (sum over s
 | model | completed | mean cost per rep | spread | power: drop −0.3 at n 48 | MDE at 80%, n 48 |
 |---|---|---|---|---|---|
 | claude-haiku-5-5 | 91/115 (79%) | 6947k | 658k | 0.79 | 0.79 → 0.48 |
-| gemini-3.8-flash | 53/115 (46%) | 21953k | 3043k | 0.83 | 0.46 → 0.16 |
+| gemini-3.8-flash | 54/115 (47%) | 21877k | 3307k | 0.82 | 0.47 → 0.17 |
 | claude-sonnet-5-5 | 96/115 (83%) | 2749k | 399k | 0.82 | 0.83 → 0.54 |
 
 <details><summary>Raw <code>tournament plan &lt;g&gt; --b5 probe.jsonl --b5-cold cold.jsonl</code> output, all six groups</summary>

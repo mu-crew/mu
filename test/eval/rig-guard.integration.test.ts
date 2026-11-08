@@ -75,7 +75,10 @@ describe.skipIf(!ready)("rig isolation", () => {
     );
   });
 
-  async function run(calls: string[], over: { noAutGuard?: boolean } = {}) {
+  async function run(
+    calls: string[],
+    over: { noAutGuard?: boolean; noFingerprint?: boolean } = {},
+  ) {
     scriptDir = mkdtempSync(join(tmpdir(), "mu-eval-rg-"));
     const auTScript = join(scriptDir, "aut.json");
     writeFileSync(
@@ -123,7 +126,9 @@ describe.skipIf(!ready)("rig isolation", () => {
     const r = await run(reads, { noAutGuard: true });
     expect(r.metrics.toolCalls).toHaveLength(3);
     expect(r.metrics.toolCalls[0]?.output).toContain("export default scenario");
-    expect(r.verdict.rigReads).toHaveLength(3);
+    // the path rule names each call; the fingerprint adds the outputs that print rig names
+    for (const i of [0, 1, 2])
+      expect(r.verdict.rigReads?.some((l) => l.startsWith(`#${i} bash: ${RIG_REPO}`))).toBe(true);
     expect(r.verdict.completed).toBe(false);
   }, 90_000);
 
@@ -210,6 +215,56 @@ describe.skipIf(!ready)("rig isolation", () => {
     expect(row.invalid).toBe(true);
     expect(row.hit).toBe(false);
   }, 120_000);
+
+  // the escapes of review delegate_rv-iso2: a middle range, no canary, a path no rule sees
+  const b64 = (x: string): string => Buffer.from(x).toString("base64");
+  const evalDir = `"$(echo ${b64(join(RIG_REPO, "tools", "eval"))} | base64 -d)"`;
+  const partial = [
+    `cd ${evalDir} && sed -n 5,15p check-rules.ts`,
+    `find ${evalDir} -name '*.ts' | xargs grep -h goldenOk`,
+    // a non-holdout file only: the test itself never reads a holdout source
+    `cd ${evalDir} && cd scenarios && grep -rn -e import -e wrong . --include='t*.ts' | head -20`,
+  ];
+
+  it("the fingerprint makes each partial read a rig read, past aut-guard", async () => {
+    const r = await run(partial);
+    expect(r.metrics.toolCalls).toHaveLength(3);
+    for (const c of r.metrics.toolCalls) {
+      expect(c.output).not.toContain(RIG_CANARY);
+      expect(c.output.trim()).not.toBe(BLOCKED);
+    }
+    expect(r.verdict.rigReads).toEqual([
+      expect.stringMatching(/^#0 bash: rig fingerprint in output/),
+      expect.stringMatching(/^#1 bash: rig fingerprint in output/),
+      expect.stringMatching(/^#2 bash: rig fingerprint in output/),
+    ]);
+    expect(r.verdict.completed).toBe(false);
+  }, 120_000);
+
+  it("mutation: without the fingerprint scan the same reads keep a completed verdict", async () => {
+    const r = await run(partial, { noFingerprint: true });
+    expect(r.verdict.rigReads).toBeUndefined();
+    expect(r.verdict.completed).toBe(true);
+  }, 120_000);
+
+  it("a probe answer whose output carries the fingerprint is invalid, no hit", async () => {
+    const c = NEXT_CASES.find((x) => x.id === "close_preview_apply");
+    const para = c?.paraphrases[0];
+    if (!c || !para) throw new Error("no close_preview_apply case");
+    scriptDir = mkdtempSync(join(tmpdir(), "mu-eval-rg-"));
+    const row = await playCase(c, {
+      surface: surface(),
+      surfaceLabel: "base",
+      arm: "skill",
+      paraphrase: para.id,
+      reply: async () => ({ text: `\`\`\`sh\n${partial[0]}\n\`\`\``, tokens: 1 }),
+      promptDir: scriptDir,
+      gapMs: 0,
+    });
+    expect(row.rigReads).toEqual([expect.stringMatching(/^command 1: rig fingerprint in output/)]);
+    expect(row.invalid).toBe(true);
+    expect(row.hit).toBe(false);
+  }, 120_000);
 });
 
 describe("hook observer", () => {
@@ -242,6 +297,9 @@ describe("hook observer", () => {
     expect(observe({ ...stop, last_assistant_message: RIG_CANARY }).rigCanary).toBe(true);
     writeFileSync(transcript, "{}\n");
     expect(observe({ ...stop, transcript_path: transcript }).rigCanary).toBeUndefined();
+    // the judge scans the named transcript for the fingerprint (rig-fingerprint.ts)
+    expect(observe({ ...stop, transcript_path: transcript }).transcript).toBe(transcript);
+    expect(observe({ ...stop, last_assistant_message: "x" }).transcript).toBeUndefined();
   });
 });
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

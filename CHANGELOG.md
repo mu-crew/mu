@@ -28,7 +28,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   there (`cd` chains, globs, `git show HEAD:tools/eval/…`, symlinks). The
   guard also matches relative `tools/eval`, follows `cd`, normalises realpaths
   (`/private/tmp`), and covers the transcript stores, museum and mu state dir
-  of the designer deny list (one shared list).
+  of the designer deny list (one shared list). Since `f_aut_reads_rig_3`, a
+  judge-side fingerprint (`tools/eval/rig-fingerprint.ts`) catches the reads
+  that skip a file's ends (`sed -n 5,15p`, `xargs grep -h`, `grep -rn` after a
+  computed `cd`, `tar t` of the scenarios): an output that carries one of the
+  rig's own names (ids, holdout ids, declared names; none of the surface's,
+  the staged files', `node_modules`' or the run's env words) is a rig read,
+  in pi tool results, probe outputs and pane AUT transcripts. K = 1, set by
+  the B5 scan (0 legitimate hits). Encodings and plainly named listings stay
+  open (README). 5 kept B5 gemini rows carried it (`ps` of the driver, a grep
+  of the unstripped surface's `docs/eval`) and were re-run.
 
 - **`mu wait --ready`: the ready batch** (hill-r2 A7, a7_ready_engine;
   proposal a7_wait_drain_rca_2 P1/P2/P4 + a7_wait_drain_rca_3 D1/D2). One

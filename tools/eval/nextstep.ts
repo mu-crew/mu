@@ -43,6 +43,7 @@ import {
 import { nextReport } from "./nextstep-report.ts";
 import { type MuCall, muCalls } from "./observe.ts";
 import { maxSeq, type OpRow, opsSince } from "./ops.ts";
+import { fingerprintInOutputs, rigFingerprint } from "./rig-fingerprint.ts";
 import { canaryInOutputs, rigGuard, rigReadsInCommands } from "./rig-guard.ts";
 import { createSandbox } from "./sandbox.ts";
 import { surfaceId } from "./surface.ts";
@@ -382,7 +383,14 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
     });
     const calls = answerCalls(sb, t0);
     // what the path rules missed: an output that carries a rig file's canary read the rig
-    const leaked = canaryInOutputs(runs.map((r) => `${r.stdout}${r.stderr}`));
+    const outs = runs.map((r) => `${r.stdout}${r.stderr}`);
+    const leaked = [
+      ...canaryInOutputs(outs),
+      // a middle range of a rig file carries no canary: its names do (rig-fingerprint.ts)
+      ...fingerprintInOutputs(outs, rigFingerprint({ surfaceRoot: o.surface.root }), {
+        env: sb.env,
+      }),
+    ];
     if (leaked.length > 0) {
       row.invalid = true;
       row.rigReads = leaked;
