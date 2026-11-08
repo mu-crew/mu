@@ -113,6 +113,11 @@ const agentReadText: NextCase = {
     "Let us see worker-1's current words alone, no blank padding.",
     "Tell us what worker-1 most recently printed, just the sentence.",
     "worker-1's latest words, please: no frame, no gaps.",
+    // p11-p14: added by B6 (spec §4.2: B5's ρ̂ left the case short at ten)
+    "What has worker-1 just said? Only its sentences, none of the screen padding.",
+    "Give us worker-1's newest words, stripped of borders and whitespace.",
+    "Quote what worker-1 wrote most recently and leave out the window decoration.",
+    "I only want the words worker-1 put out just now, without the frame around them.",
   ]),
   leadInVerbs: ["agent read"],
   async seed(sb) {
@@ -182,6 +187,14 @@ const sqlNameGuess: NextCase = {
     ["What is written on t1? Print the whole of it.", "b"],
     ["Give us the comments attached to t1, all of them.", "b"],
     ["I need the remarks recorded on t1, word for word.", "b"],
+    // p7-p13: added by B6 (spec §4.2: B5's ρ̂ plans this guard at 13)
+    ["Tell us each item auth contains and whether it is complete yet.", "a"],
+    ["Print everything written against t1.", "b"],
+    ["Which items belong to auth, and how far along is each?", "a"],
+    ["Let us see the complete wording of the remarks on t1.", "b"],
+    ["Give an overview of auth's items, each with whether it is finished.", "a"],
+    ["What commentary was recorded for t1? All of it, please.", "b"],
+    ["Every auth item, please, marked finished or unfinished.", "a"],
   ]),
   leadInVerbs: ["sql"],
   async seed(sb) {

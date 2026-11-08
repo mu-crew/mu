@@ -71,6 +71,27 @@ const closePreviewApply: NextCase = {
       goal: "worker-1's changes are on main; dispose of worker-1 and the directory it worked in.",
     },
     { id: "p10", leadIn: "b", goal: "main contains worker-1's work. Decommission worker-1." },
+    // p11-p14: added by B6 (spec §4.2: B5's ρ̂ left the case short at ten)
+    {
+      id: "p11",
+      leadIn: "a",
+      goal: "worker-1 is done and its commit is already in main. Retire it and clear away the checkout it used.",
+    },
+    {
+      id: "p12",
+      leadIn: "b",
+      goal: "Nothing of worker-1's is absent from main now; get rid of worker-1.",
+    },
+    {
+      id: "p13",
+      leadIn: "a",
+      goal: "main has picked up worker-1's work, so worker-1 can go. Make it go away.",
+    },
+    {
+      id: "p14",
+      leadIn: "b",
+      goal: "worker-1's output is integrated on main. Throw worker-1 away along with the directory it used.",
+    },
   ],
   leadInVerbs: ["agent close"],
   async seed(sb) {
@@ -213,6 +234,27 @@ const notesMulti: NextCase = {
       id: "p10",
       leadIn: "a",
       goal: "Continue with t2 and t3: their commentary, each preceded by which item it is.",
+    },
+    // p11-p14: added by B6 (spec §4.2: B5's ρ̂ left the case short at ten)
+    {
+      id: "p11",
+      leadIn: "a",
+      goal: "Now t2 and t3: everything recorded on each, with a heading naming which one.",
+    },
+    {
+      id: "p12",
+      leadIn: "a",
+      goal: "Repeat that for t2 and t3, so that each part starts with the item it belongs to.",
+    },
+    {
+      id: "p13",
+      leadIn: "a",
+      goal: "Bring up t2's and t3's written remarks as well, each introduced by its id.",
+    },
+    {
+      id: "p14",
+      leadIn: "a",
+      goal: "And the comments on t2 and t3? Separate them, each labelled on top.",
     },
   ],
   leadInVerbs: ["task notes"],

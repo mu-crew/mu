@@ -54,6 +54,11 @@ const closePreviewConflict: NextCase = {
     "Merge what worker-1 made into main; once that is in, decommission worker-1.",
     "worker-1 has a commit main lacks. Fix that, then dispose of worker-1 and its checkout.",
     "Main must end up with worker-1's change, and worker-1 must be cleaned up.",
+    // p11-p14: added by B6 (spec §4.2: B5's ρ̂ left the case short at ten)
+    "worker-1's commit still has to get onto main. Get it there, and afterwards remove worker-1.",
+    "Integrate worker-1's patch into main and then retire worker-1 along with its checkout.",
+    "main is missing worker-1's commit. Once main has it, dismantle worker-1; do both.",
+    "Have worker-1's change land on main, then wind worker-1 up.",
   ]),
   leadInVerbs: ["agent close"],
   async seed(sb) {

@@ -962,4 +962,205 @@ Each cell: hits/guesses over both models and all reps; then the modal first reac
 | 3 | wave_outcome · delegates tally | `mu --json -w auth delegates tally` | exit 2 | {"ok":false,"error":"CommanderError","message":"required option '--wave <label>' not specified","next":null,"exit":2,"usage":["mu delegates tally [options]","op |
 | 3 | report_only · delegates show | `mu delegates show delegate_rev_d0bf343a` | exit 3 | not found: no such delegate call: delegate_rev_d0bf343a |
 
+
+## B6: paraphrases added before the freeze (task `b6_paraphrases`)
+
+Spec §4.2: when reps cannot reach a case's target, paraphrases are added (up to 14) before the
+freeze. B5's plan ran each short case at 14 paraphrases while the case had 10, so `roundJobs`
+(which slices the case's own list) could not reach the n_eff the plan claimed. B6 adds them.
+Same ρ̂ as above (B5 rows `probe.jsonl` `f124ef5e…`, `cold.jsonl` `3a66bc1a…`); no model was run.
+
+### What was added
+
+| case | group | role | paraphrases before → after | lead-in of the new ones |
+|---|---|---|---|---|
+| close_preview_apply | c2_close | headline | 10 → 14 | p11 a, p12 b, p13 a, p14 b |
+| close_preview_conflict | c2_close | headline | 10 → 14 | a (the only variant) |
+| wait_result_read | c1_wait | headline | 10 → 14 | a |
+| notes_multi | c3_notes | headline | 10 → 14 | a |
+| agent_read_text | c4_read | headline | 10 → 14 | a |
+| sql_name_guess | guard | guard | 6 → 13 | p7, p9, p11, p13 a; p8, p10, p12 b |
+
+Every other case keeps its count: its plan reaches the target at what it has.
+
+- **Neutral by construction.** Written from the cases' own goals only, before any variant exists
+  (none does; no pack, no design). Each states the case's goal with other content words (retire /
+  dismantle / throw away; final sentence / words it ended with; heading / label) and names no
+  command, subcommand or flag. It also avoids words that the group briefs name as variant ideas:
+  no "text", "plain" or "last" in c1/c4, no "report" in c1/c3, no "clean" or "one call" in c2.
+- **Lint:** `nextstep lint --surface ~/.cache/mu/eval/surfaces/hill2-base`: ok. The first draft
+  had 25 leaks (for example "down", "finish", "message", "answer", "full", "line", "label"); each
+  was reworded, not exempted.
+- **Check:** new paraphrases reuse the cases' existing lead-in variants, so `check`'s rows (one per
+  lead-in variant) are the same proofs; they were re-run on the edited tree. `nextstep check
+  --surface hill2-base --concurrency 4`, every case: **92/92 as expected** at load 33-52 (07:38-07:52) and
+  again at load 15-21 (08:13-08:27). The six edited cases alone at `--concurrency 2`: 50/50 at load
+  20-26. The host was never quieter than load 15 during B6 (other crew workers); B5's "idle" run
+  was at 9.
+
+### n plan after B6 (`tournament plan <g> --b5 probe.jsonl --b5-cold cold.jsonl`)
+
+Own headline cases. A case still marked SHORT is at the 14-paraphrase cap: reps cannot reach
+its target, and its achieved n_eff and MDE go into the freeze row (§4.2). `add` is now 0 for every
+case, so the frozen plan and the rows a round runs agree.
+
+| group | own case | paraphrases | m | r | n_eff (per model) | pooled | MDE | reached | CMH 0.8→0.7 / 0.8→0.75 | R1 rows, h | R2 rows, h |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| c2_close | close_preview_apply | 14 | 42 | 5 | 56 | 114 | 0.74 | SHORT (cap) | 0.97 / 0.45 | 3276, 1.1 | 26544, 13.3 |
+|  | close_preview_conflict | 14 | 42 | 8 | 54 | 158 | 0.71 | SHORT (cap) |  |  |  |
+| c1_wait | wait_result_read | 14 | 42 | 1 | 42 | 48 | 0.86 | SHORT (cap) | 0.97 / 0.46 | 3978, 7.4 | 18732, 16.2 |
+|  | wait_heartbeat_merge | 10 | 30 | 4 | 62 | 92 | 0.77 | yes |  |  |  |
+|  | wait_shell_limit | 10 | 30 | 3 | 75 | 120 | 0.74 | yes |  |  |  |
+| c3_notes | notes_report_read | 10 | 30 | 5 | 62 | 158 | 0.71 | yes | 0.97 / 0.47 | 2262, 0.8 | 24024, 12.0 |
+|  | notes_multi | 14 | 28 | 11 | 65 | 144 | 0.72 | SHORT (cap) |  |  |  |
+| c4_read | agent_read_text | 14 | 28 | 12 | 41 | 156 | 0.71 | SHORT (cap) | 0.96 / 0.45 | 1092, 0.4 | 22134, 11.8 |
+| c5_outcome | delegate_no_verdict | 10 | 30 | 3 | 75 | 120 | 0.74 | yes | 0.97 / 0.46 | 2340, 0.8 | 18102, 11.6 |
+|  | close_already_closed | 10 | 30 | 3 | 63 | 120 | 0.74 | yes |  |  |  |
+| c6_skill | sleep_poll | 10 | 30 | 4 | 65 | 99 | 0.76 | yes | 0.97 / 0.45 | 1170, 1.5 | 18102, 12.8 |
+
+What moved against B5's plan:
+
+- The own-case numbers are unchanged: B5's plan already sized these cases at 14. What changed is
+  that the rounds can now run them.
+- Per-model n_eff is short of 60 on four own cases even at the cap, from their high ρ̂:
+  close_preview_apply 56, close_preview_conflict 54, wait_result_read 42 and agent_read_text 41.
+  Pooled n_eff reaches 90 on every own case except wait_result_read (48, MDE 0.5 → 0.86).
+  These four were short in B5 and stay short.
+- Cross-group rows: the five cases now run all 14 paraphrases at a lower r. close_preview_apply
+  and close_preview_conflict as cross cases go from 12-13 paraphrases at r 2 (n_eff 43/45) to 14 at
+  r 1 (42/42). notes_multi goes from 10 at r 6 (42) to 14 at r 2 (41). Fewer rows, the same n_eff.
+  As cross cases, agent_read_text stays under the target of 40 (n_eff 36), and wait_result_read
+  reaches 42 but below the 1.25 margin, so both still print SHORT at the cap.
+- sql_name_guess (guard): 13 paraphrases, m 26, r 4, n_eff 41. Before B6 the plan asked for 13
+  while the case had 6.
+- R1 rows grow with the clusters (c2 2340 → 3276, c1 3510 → 3978, c3 1950 → 2262, c4 780 → 1092).
+  R2 grows on c2 (22680 → 26544) and c3 (21000 → 24024), and shrinks slightly on c1, c5 and c6.
+- **Wall, R1 + R2 over the six groups: about 90 h** by the plan's estimate (B5: about 88 h). At
+  the 1.5× measured on this shared host, about 135 h. R3, R4 (about 7.5 h per group), builds and
+  designers come on top.
+
+### CMH power at each group's plan, at B5's observed base rates (after B6)
+
+The method is the B5 table's: one stratum per case at its planned per-model n_eff and that model's
+B5 hit rate pb, every stratum dropping by 0.1 or 0.2; α 0.05/3, 3000 draws; the cold-guess stratum
+is not counted. The same script on the pre-B6 cases differs from the B5 table by at most 0.01.
+
+| group | haiku −0.1 | gemini −0.1 | sonnet −0.1 | haiku −0.2 | gemini −0.2 | sonnet −0.2 |
+|---|---|---|---|---|---|---|
+| c2_close | 0.91 | 0.93 | 0.99 | 1.00 | 1.00 | 1.00 |
+| c1_wait | 0.90 | 0.90 | 1.00 | 1.00 | 1.00 | 1.00 |
+| c3_notes | 0.93 | 0.94 | 1.00 | 1.00 | 1.00 | 1.00 |
+| c4_read | 0.88 | 0.91 | 0.99 | 1.00 | 1.00 | 1.00 |
+| c5_outcome | 0.88 | 0.89 | 0.99 | 1.00 | 1.00 | 1.00 |
+| c6_skill | 0.90 | 0.91 | 1.00 | 1.00 | 1.00 | 1.00 |
+
+<details><summary>Raw <code>tournament plan &lt;g&gt; --b5 probe.jsonl --b5-cold cold.jsonl</code> output after B6, all six groups</summary>
+
+```
+### c2_close
+close_preview_apply own: paraphrases 14 m 42 r 5 n_eff 56 pooled 114 MDE 0.74 SHORT: add 0
+close_preview_conflict own: paraphrases 14 m 42 r 8 n_eff 54 pooled 158 MDE 0.71 SHORT: add 0
+wait_result_read cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37 SHORT: add 0
+wait_heartbeat_merge cross: paraphrases 10 m 30 r 2 n_eff 46 MDE 0.39
+wait_shell_limit cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+notes_report_read cross: paraphrases 10 m 30 r 2 n_eff 44 MDE 0.38
+notes_multi cross: paraphrases 14 m 28 r 2 n_eff 41 MDE 0.36
+agent_read_text cross: paraphrases 14 m 28 r 3 n_eff 36 MDE 0.33 SHORT: add 0
+delegate_no_verdict cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+close_already_closed cross: paraphrases 10 m 30 r 2 n_eff 49 MDE 0.4
+sleep_poll cross: paraphrases 10 m 30 r 2 n_eff 47 MDE 0.39
+sql_name_guess guard: paraphrases 13 m 26 r 4 n_eff 41 MDE 0.36
+finding_guess guard: paraphrases 6 m 18 r 4 n_eff 43 MDE 0.37
+CMH power per model (α 0.05/3, cold-guess stratum not counted): 0.8→0.7 0.97, 0.8→0.75 0.45
+r1 (12 variants + base): 3276 rows, about 1.1 h
+r2 (6 variants + base): 26544 rows, about 13.3 h
+### c1_wait
+close_preview_apply cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+close_preview_conflict cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+wait_result_read own: paraphrases 14 m 42 r 1 n_eff 42 pooled 48 MDE 0.86 SHORT: add 0
+wait_heartbeat_merge own: paraphrases 10 m 30 r 4 n_eff 62 pooled 92 MDE 0.77
+wait_shell_limit own: paraphrases 10 m 30 r 3 n_eff 75 pooled 120 MDE 0.74
+notes_report_read cross: paraphrases 10 m 30 r 2 n_eff 44 MDE 0.38
+notes_multi cross: paraphrases 14 m 28 r 2 n_eff 41 MDE 0.36
+agent_read_text cross: paraphrases 14 m 28 r 3 n_eff 36 MDE 0.33 SHORT: add 0
+delegate_no_verdict cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+close_already_closed cross: paraphrases 10 m 30 r 2 n_eff 49 MDE 0.4
+sleep_poll cross: paraphrases 10 m 30 r 2 n_eff 47 MDE 0.39
+sql_name_guess guard: paraphrases 13 m 26 r 4 n_eff 41 MDE 0.36
+finding_guess guard: paraphrases 6 m 18 r 4 n_eff 43 MDE 0.37
+CMH power per model (α 0.05/3, cold-guess stratum not counted): 0.8→0.7 0.97, 0.8→0.75 0.46
+r1 (12 variants + base): 3978 rows, about 7.4 h
+r2 (6 variants + base): 18732 rows, about 16.2 h
+### c3_notes
+close_preview_apply cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+close_preview_conflict cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+wait_result_read cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37 SHORT: add 0
+wait_heartbeat_merge cross: paraphrases 10 m 30 r 2 n_eff 46 MDE 0.39
+wait_shell_limit cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+notes_report_read own: paraphrases 10 m 30 r 5 n_eff 62 pooled 158 MDE 0.71
+notes_multi own: paraphrases 14 m 28 r 11 n_eff 65 pooled 144 MDE 0.72 SHORT: add 0
+agent_read_text cross: paraphrases 14 m 28 r 3 n_eff 36 MDE 0.33 SHORT: add 0
+delegate_no_verdict cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+close_already_closed cross: paraphrases 10 m 30 r 2 n_eff 49 MDE 0.4
+sleep_poll cross: paraphrases 10 m 30 r 2 n_eff 47 MDE 0.39
+sql_name_guess guard: paraphrases 13 m 26 r 4 n_eff 41 MDE 0.36
+finding_guess guard: paraphrases 6 m 18 r 4 n_eff 43 MDE 0.37
+CMH power per model (α 0.05/3, cold-guess stratum not counted): 0.8→0.7 0.97, 0.8→0.75 0.47
+r1 (12 variants + base): 2262 rows, about 0.8 h
+r2 (6 variants + base): 24024 rows, about 12.0 h
+### c4_read
+close_preview_apply cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+close_preview_conflict cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+wait_result_read cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37 SHORT: add 0
+wait_heartbeat_merge cross: paraphrases 10 m 30 r 2 n_eff 46 MDE 0.39
+wait_shell_limit cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+notes_report_read cross: paraphrases 10 m 30 r 2 n_eff 44 MDE 0.38
+notes_multi cross: paraphrases 14 m 28 r 2 n_eff 41 MDE 0.36
+agent_read_text own: paraphrases 14 m 28 r 12 n_eff 41 pooled 156 MDE 0.71 SHORT: add 0
+delegate_no_verdict cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+close_already_closed cross: paraphrases 10 m 30 r 2 n_eff 49 MDE 0.4
+sleep_poll cross: paraphrases 10 m 30 r 2 n_eff 47 MDE 0.39
+sql_name_guess guard: paraphrases 13 m 26 r 4 n_eff 41 MDE 0.36
+finding_guess guard: paraphrases 6 m 18 r 4 n_eff 43 MDE 0.37
+CMH power per model (α 0.05/3, cold-guess stratum not counted): 0.8→0.7 0.96, 0.8→0.75 0.45
+r1 (12 variants + base): 1092 rows, about 0.4 h
+r2 (6 variants + base): 22134 rows, about 11.8 h
+### c5_outcome
+close_preview_apply cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+close_preview_conflict cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+wait_result_read cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37 SHORT: add 0
+wait_heartbeat_merge cross: paraphrases 10 m 30 r 2 n_eff 46 MDE 0.39
+wait_shell_limit cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+notes_report_read cross: paraphrases 10 m 30 r 2 n_eff 44 MDE 0.38
+notes_multi cross: paraphrases 14 m 28 r 2 n_eff 41 MDE 0.36
+agent_read_text cross: paraphrases 14 m 28 r 3 n_eff 36 MDE 0.33 SHORT: add 0
+delegate_no_verdict own: paraphrases 10 m 30 r 3 n_eff 75 pooled 120 MDE 0.74
+close_already_closed own: paraphrases 10 m 30 r 3 n_eff 63 pooled 120 MDE 0.74
+sleep_poll cross: paraphrases 10 m 30 r 2 n_eff 47 MDE 0.39
+sql_name_guess guard: paraphrases 13 m 26 r 4 n_eff 41 MDE 0.36
+finding_guess guard: paraphrases 6 m 18 r 4 n_eff 43 MDE 0.37
+CMH power per model (α 0.05/3, cold-guess stratum not counted): 0.8→0.7 0.97, 0.8→0.75 0.46
+r1 (12 variants + base): 2340 rows, about 0.8 h
+r2 (6 variants + base): 18102 rows, about 11.6 h
+### c6_skill
+close_preview_apply cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+close_preview_conflict cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37
+wait_result_read cross: paraphrases 14 m 42 r 1 n_eff 42 MDE 0.37 SHORT: add 0
+wait_heartbeat_merge cross: paraphrases 10 m 30 r 2 n_eff 46 MDE 0.39
+wait_shell_limit cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+notes_report_read cross: paraphrases 10 m 30 r 2 n_eff 44 MDE 0.38
+notes_multi cross: paraphrases 14 m 28 r 2 n_eff 41 MDE 0.36
+agent_read_text cross: paraphrases 14 m 28 r 3 n_eff 36 MDE 0.33 SHORT: add 0
+delegate_no_verdict cross: paraphrases 10 m 30 r 2 n_eff 55 MDE 0.43
+close_already_closed cross: paraphrases 10 m 30 r 2 n_eff 49 MDE 0.4
+sleep_poll own: paraphrases 10 m 30 r 4 n_eff 65 pooled 99 MDE 0.76
+sql_name_guess guard: paraphrases 13 m 26 r 4 n_eff 41 MDE 0.36
+finding_guess guard: paraphrases 6 m 18 r 4 n_eff 43 MDE 0.37
+CMH power per model (α 0.05/3, cold-guess stratum not counted): 0.8→0.7 0.97, 0.8→0.75 0.45
+r1 (12 variants + base): 1170 rows, about 1.5 h
+r2 (6 variants + base): 18102 rows, about 12.8 h
+```
+
+</details>
+
 <!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

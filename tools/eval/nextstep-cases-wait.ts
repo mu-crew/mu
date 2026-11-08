@@ -58,6 +58,11 @@ const waitResultRead: NextCase = {
     "I need worker-1's concluding remark, the exact sentence.",
     "Display the result worker-1 delivered, as it wrote it.",
     "worker-1 has stopped. What was its result sentence? Print it whole.",
+    // p11-p14: added by B6 (spec §4.2: B5's ρ̂ left the case short at ten)
+    "worker-1 finished its work. Tell us the exact words it ended with, unchanged.",
+    "How did worker-1 conclude? Reproduce its final sentence exactly.",
+    "Print the sentence worker-1 ended on, character for character.",
+    "worker-1 is through. What did it say at the end? Quote it entirely.",
   ]),
   allow: applies,
   leadInVerbs: ["wait"],

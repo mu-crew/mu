@@ -133,6 +133,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   1 and 2 allow only worker-1's agent ops; the timed rule counts the shim's
   own span (its table dumps) as time in mu, so a one-call answer on a loaded
   host is not read as idle; `check` asserts partial where §2.3 says so.
+  B6 adds paraphrases where B5's ρ̂ left the plan short (spec §4.2):
+  `close_preview_apply`, `close_preview_conflict`, `wait_result_read`,
+  `notes_multi` and `agent_read_text` go to 14, the `sql_name_guess` guard
+  to 13 (docs/eval/hill-r2/baseline.md, "B6").
 
 - **Eval rig: hill-r2 fixtures, intents and R4 scenarios** (spec
   docs/specs/2026-11-07-hill-r2-tournament.md §2, §7 B4a). `tools/eval`
