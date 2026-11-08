@@ -307,6 +307,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   outright ("pack still carries denied text"). A string in a JSON array
   that names the rig is now removed; any other hit in a JSON file is still
   reported and refuses the pack.
+- **Eval: the designer audit no longer reads `//` as a search of `/`**
+  (hill-r2 c2). A `//` comment inside a heredoc (a python script that edits
+  TypeScript) was a strict path `//`, so the root, and discarded the
+  claude-opus designer session on three false "search above HOME" hits. A
+  slash-only word is now treated like a bare `/`: a hit only as the start
+  dir of a search (`rg x //`) or a `cd`.
 - **Eval: `tournament plan` plans from B5's rows before a freeze, and model
   errors stay out of ρ̂** (hill-r2 B5). `plan <g> --b5 <probe.jsonl>
   [--b5-cold <cold.jsonl>]` computes ρ̂ the way `freeze` does

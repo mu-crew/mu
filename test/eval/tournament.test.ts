@@ -1010,6 +1010,7 @@ describe("designer isolation", () => {
         "echo $HOME",
         "ls /opt/homebrew && find /usr/lib -name x",
         "cd /tmp && grep -r x . | tr / _",
+        "python3 - <<'EOF'\ns = 1  # x\n// a TS comment in a heredoc\nEOF",
         "ls /home/u/.nvm/versions/node/v22.1.0/bin",
       ])
         expect(audit(c), c).toEqual([]);
@@ -1021,6 +1022,7 @@ describe("designer isolation", () => {
         "grep -r VERDICT /home",
         "ls /home",
         "rg -l VERDICT /",
+        "rg -l VERDICT //",
         "fd jsonl /home/",
         "ls -R /home/u/..",
         "cd / && find . -name x",

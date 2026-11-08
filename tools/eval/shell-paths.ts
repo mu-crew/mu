@@ -61,7 +61,8 @@ export function commandPaths(
         continue;
       }
       if (/^[~$-]/.test(w)) continue;
-      if (w === "/" && !isSearch && !isCd) continue;
+      // the root as a plain argument (`tr / _`, a `//` comment in a heredoc) is no search
+      if (/^\/+$/.test(w) && !isSearch && !isCd) continue;
       if (w.startsWith("/")) paths.push({ raw: w, path: resolve(w) });
       else if (here === null) {
         if (climbs(w)) unresolved.push(w);
