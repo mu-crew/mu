@@ -133,7 +133,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   cache. The pairs never override the sandbox's own `HOME`, `PATH` or `MU_*`
   (model, designer and scenario env alike). Run from inside a launcher's
   sandbox, set the pair that keeps the outer sandbox. Docs, fixtures and the
-  README screenshot drop internal host, user and tool names.
+  README screenshot drop internal host, user and tool names. The designer
+  isolation audit takes the museum checkout from `EVAL_MUSEUM_DIR` (no
+  default) and denies any dir named `museum` holding `skills/museum`.
 
 - **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
   events arrive in one block, one line per event, plus a line for what is

@@ -358,7 +358,7 @@ MaxSessions 1` on this machine (no other host), with a ctl-speaking fake pi
 (`scripts/smoke-fake-pi.mjs`) as the remote job. Vitest never runs it:
 
 ```bash
-MU=~/hacking/crew/mu MULE=~/hacking/crew/mule bash scripts/smoke-lease.sh
+MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh
 ```
 
 - It builds both (`cargo build --release`, `npm run build`), then checks spawn

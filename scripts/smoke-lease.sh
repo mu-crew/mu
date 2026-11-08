@@ -2,7 +2,7 @@
 # Operator smoke for the lease transport (docs/specs/2026-10-28-lease-transport.md
 # § Testing, Smoke). Explicitly invoked, never picked up by vitest:
 #
-#   MU=~/hacking/crew/mu MULE=~/hacking/crew/mule bash scripts/smoke-lease.sh
+#   MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh
 #
 # It builds mule (cargo build --release) and mu (npm run build), starts a
 # loopback `sshd MaxSessions 1` (mule SPEC.md § Reproduce the channel cap

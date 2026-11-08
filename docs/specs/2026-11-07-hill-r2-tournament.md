@@ -389,7 +389,7 @@ An empty HOME does not stop a bash tool from reading an absolute path, so the au
 - the main checkout's path and `~/.local/state/mu-next/worktrees/` (every crew worktree);
 - `~/.cache/mu/eval/surfaces/` (built surfaces carry `tools/eval`, `surface.ts:104`) and `~/.cache/mu/eval/packs/` other than its own pack;
 - `~/.local/state/mu-next/eval-transcripts/`;
-- harness archives and the session archive: `~/.pi/agent/sessions`, `~/.claude/projects`, `~/.codex/sessions`, the museum store `~/museum`, the museum skill (`~/hacking/crew/museum`, any `skills/museum` dir) and the `museum` command;
+- harness archives and the session archive: `~/.pi/agent/sessions`, `~/.claude/projects`, `~/.codex/sessions`, the museum store `~/museum`, the museum checkout (`EVAL_MUSEUM_DIR`, or any dir named `museum` holding `skills/museum`), any `skills/museum` dir and the `museum` command;
 - catch-all: any absolute path under the real HOME (`$HOME`, matched in `~/`, `$HOME`-expanded and literal forms) other than the session's own pack and its own `<ddir>`;
 - `task notes` calls on `hill2` or any `b*` or `delegate_friction-*` task.
 

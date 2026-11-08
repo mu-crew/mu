@@ -52,7 +52,10 @@ export interface DenyContext {
   surfaces: string;
   packs: string;
   transcripts: string;
-  /** The museum store and the museum skill checkout. */
+  /**
+   * The museum store and the museum checkout (`EVAL_MUSEUM_DIR`, when set). Any other dir named
+   * `museum` that holds `skills/museum` is denied as a "museum checkout" wherever it lives.
+   */
   museum: string[];
   /** The session's own pack and its own `<ddir>`: the catch-all lets them through. */
   ownPack: string;
@@ -72,8 +75,11 @@ export function defaultDenyContext(o: {
   caseIds: string[];
   providerExt?: string;
   home?: string;
+  /** The museum checkout; defaults to `EVAL_MUSEUM_DIR`. */
+  museumDir?: string;
 }): DenyContext {
   const home = o.home ?? homedir();
+  const museumDir = o.museumDir ?? process.env.EVAL_MUSEUM_DIR;
   const state = join(home, ".local", "state", "mu-next");
   return {
     home,
@@ -82,7 +88,7 @@ export function defaultDenyContext(o: {
     surfaces: join(home, ".cache", "mu", "eval", "surfaces"),
     packs: join(home, ".cache", "mu", "eval", "packs"),
     transcripts: join(state, "eval-transcripts"),
-    museum: [join(home, "museum"), join(home, "hacking", "crew", "museum")],
+    museum: [join(home, "museum"), ...(museumDir ? [resolve(museumDir)] : [])],
     ownPack: resolve(o.ownPack),
     ownDdir: resolve(o.ownDdir),
     allow: [
@@ -164,6 +170,20 @@ function bashCommands(text: string): string[] {
       return [];
     }
   });
+}
+
+const MUSEUM_SEGMENT_RE = /(?:~|\$\{HOME\}|\$HOME)?[^\s"'`:;,()<>|&=]*?\/museum(?=[/\s"'`:;,)]|$)/g;
+
+/**
+ * A museum checkout named anywhere in the text: a path whose segment `museum` is a dir holding
+ * `skills/museum`, found on disk so no checkout location has to be configured.
+ */
+export function museumCheckout(text: string, home: string): string | null {
+  for (const m of text.matchAll(MUSEUM_SEGMENT_RE)) {
+    const dir = m[0].replace(/^(?:~|\$\{HOME\}|\$HOME)(?=\/)/, home);
+    if (isAbsolute(dir) && existsSync(join(dir, "skills", "museum"))) return dir;
+  }
+  return null;
 }
 
 /**
@@ -308,6 +328,8 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
     for (const raw of w.unresolved) hits.push({ rule: "unresolvable climb", match: raw, raw });
   const museum = runsMuseum(text);
   if (museum !== null) hits.push({ rule: "museum command", match: museum, raw: museum });
+  const checkout = museumCheckout(text, ctx.home);
+  if (checkout !== null) hits.push({ rule: "museum checkout", match: checkout, raw: checkout });
   const named: { rule: string; dir: string }[] = [
     { rule: "main checkout", dir: ctx.repo },
     { rule: "crew worktrees", dir: ctx.worktrees },

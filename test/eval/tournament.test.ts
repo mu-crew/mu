@@ -841,12 +841,12 @@ describe("variant patches", () => {
 describe("designer isolation", () => {
   const ctx: DenyContext = {
     home: "/home/u",
-    repo: "/home/u/hacking/crew/mu",
+    repo: "/home/u/src/mu",
     worktrees: "/home/u/.local/state/mu-next/worktrees",
     surfaces: "/home/u/.cache/mu/eval/surfaces",
     packs: "/home/u/.cache/mu/eval/packs",
     transcripts: "/home/u/.local/state/mu-next/eval-transcripts",
-    museum: ["/home/u/museum", "/home/u/hacking/crew/museum"],
+    museum: ["/home/u/museum", "/home/u/src/museum"],
     ownPack: "/home/u/.cache/mu/eval/designers/c1_wait/opus/pack",
     ownDdir: "/home/u/.cache/mu/eval/designers/c1_wait/opus",
     allow: ["/home/u/.nvm/versions/node/v22.1.0"],
@@ -863,7 +863,7 @@ describe("designer isolation", () => {
     expect(rules("ls docs/eval")).toContain("docs/eval");
     expect(rules("read cold-intents")).toContain("cold-intents");
     expect(rules("hill-r2-tournament.md")).toContain("hill-r2-tournament");
-    expect(rules("cat /home/u/hacking/crew/mu/src/a.ts")).toContain("main checkout");
+    expect(rules("cat /home/u/src/mu/src/a.ts")).toContain("main checkout");
     expect(rules("ls ~/.local/state/mu-next/worktrees/crew-hill2/w-b3b")).toContain(
       "crew worktrees",
     );
@@ -907,6 +907,39 @@ describe("designer isolation", () => {
       "/home/u/y",
       "/home/u/z",
     ]);
+  });
+
+  it("denies a museum checkout found on disk, wherever it lives, with no configured path", () => {
+    tmp = mkdtempSync(join(tmpdir(), "mu-museum-"));
+    const checkout = join(tmp, "src", "museum");
+    mkdirSync(join(checkout, "skills", "museum"), { recursive: true });
+    mkdirSync(join(tmp, "other", "museum"), { recursive: true });
+    const c = defaultDenyContext({
+      repo: "/no/repo",
+      ownPack: "/no/pack",
+      ownDdir: "/no/ddir",
+      caseIds: [],
+      home: "/home/u",
+      museumDir: "",
+    });
+    expect(c.museum).toEqual(["/home/u/museum"]);
+    expect(denyHits(`cat ${checkout}/src/db.ts`, c).map((h) => h.rule)).toEqual([
+      "museum checkout",
+    ]);
+    expect(denyHits(`ls ${checkout}`, c).map((h) => h.rule)).toEqual(["museum checkout"]);
+    // a dir named museum without the skill is no checkout
+    expect(denyHits(`ls ${join(tmp, "other", "museum")}`, c)).toEqual([]);
+    // EVAL_MUSEUM_DIR names the checkout explicitly
+    const named = defaultDenyContext({
+      repo: "/no/repo",
+      ownPack: "/no/pack",
+      ownDdir: "/no/ddir",
+      caseIds: [],
+      home: "/home/u",
+      museumDir: "/opt/museum",
+    });
+    expect(named.museum).toEqual(["/home/u/museum", "/opt/museum"]);
+    expect(denyHits("cat /opt/museum/README.md", named).map((h) => h.rule)).toContain("museum");
   });
 
   it("the default context lets node's own install dir through the catch-all", () => {
