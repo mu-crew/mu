@@ -27,6 +27,7 @@ import {
   planCmhPower,
   ReviewPendingError,
   readControl,
+  rhoFromB5,
   roundJobs,
   type SetupRow,
 } from "../../tools/eval/tournament.ts";
@@ -1305,5 +1306,57 @@ describe("BRIEF.md refusals", () => {
     expect(refuse("Show me its result line.").some((r) => r.startsWith("5 words"))).toBe(true);
     expect(refuse("judged in poll_wave.ts")).toContain("judge file poll_wave.ts");
     expect(refuse("as docs/history says")).toContain("deleted path docs/history");
+  });
+});
+
+describe("rhoFromB5: the planning ICC from B5's base rows", () => {
+  const models = { weak: [HAIKU, GEMINI], gate: SONNET };
+  // two clusters per model: one always hits, one never (ICC 1 per model and pooled)
+  const rows = [HAIKU, GEMINI, SONNET].flatMap((model) =>
+    [1, 2, 3, 4].flatMap((rep) =>
+      ["p1", "p2"].map((paraphrase) => ({
+        case: "c",
+        arm: "none" as const,
+        paraphrase,
+        model,
+        hit: paraphrase === "p1",
+        rep,
+      })),
+    ),
+  );
+
+  it("estimates ρ̂ per (case, model) and ρ̂_pool per case, and the cold guard by intent", () => {
+    const cold = [HAIKU, GEMINI, SONNET].flatMap((model) =>
+      ["i1", "i2", "i3"].flatMap((intent) =>
+        [1, 2, 3].map(() => ({ intent, model, hit: intent !== "i3" })),
+      ),
+    );
+    const r = rhoFromB5(rows, cold, models);
+    expect(r.rho.c).toEqual({ [HAIKU]: 1, [GEMINI]: 1, [SONNET]: 1 });
+    expect(r.rhoPool.c).toBe(1);
+    expect(r.rho["cold-guess"]?.[HAIKU]).toBe(1);
+  });
+
+  it("leaves model-error rows out: counted as misses they would fake a cluster effect", () => {
+    // every row hits (ICC 0, floored to 0.1); two model errors on p3 per model would be an
+    // all-miss cluster beside two all-hit ones
+    const flat = rows.map((r) => ({ ...r, hit: true }));
+    const errors = [HAIKU, GEMINI, SONNET].flatMap((model) =>
+      [1, 2].map((rep) => ({
+        case: "c",
+        arm: "none" as const,
+        paraphrase: "p3",
+        model,
+        hit: false,
+        rep,
+        modelError: "429 rate limited",
+      })),
+    );
+    const r = rhoFromB5([...flat, ...errors], [], models);
+    expect(r.rho.c?.[HAIKU]).toBe(0.1);
+    expect(r.rhoPool.c).toBe(0.1);
+    expect(
+      rhoFromB5([], [{ intent: "i1", model: HAIKU, hit: false, modelError: "x" }], models).rho,
+    ).toEqual({});
   });
 });

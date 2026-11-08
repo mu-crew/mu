@@ -6,8 +6,9 @@ import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Arm, Group, NextCase, NextJob } from "./nextstep.ts";
-import { cmhPower, mde, type Plan, solvePlan } from "./stats.ts";
+import type { ColdRow } from "./cold-guess.ts";
+import type { Arm, Group, NextCase, NextJob, ProbeRow } from "./nextstep.ts";
+import { cmhPower, type IccRow, iccModel, iccPooled, mde, type Plan, solvePlan } from "./stats.ts";
 import type { VariantRow } from "./tournament-build.ts";
 import type { Surface } from "./types.ts";
 
@@ -238,6 +239,36 @@ export const TARGET = { own: 60, pooled: 90, cross: 40, guard: 40 } as const;
 export const WORST_B = 18;
 /** First step of the per-case loss family (§4.2: 15 strata × 3 models). */
 export const LOSS_FAMILY = 45;
+
+/**
+ * ρ̂ per (case, model) and ρ̂_pool per case from B5's base rows (§4.1), plus the cold-guess guard's
+ * ρ̂ (clusters = intents) when cold rows are given. Rows with a model error are rig noise, not a
+ * reading outcome, and are left out: counted as misses they would inflate the between-cluster
+ * variance of whichever cluster drew them.
+ */
+export function rhoFromB5(
+  probe: readonly Pick<ProbeRow, "case" | "arm" | "paraphrase" | "model" | "hit" | "modelError">[],
+  cold: readonly Pick<ColdRow, "intent" | "model" | "hit" | "modelError">[],
+  models: { weak: readonly string[]; gate: string },
+): Pick<SetupRow, "rho" | "rhoPool"> {
+  const all = [...models.weak, models.gate];
+  const rho: SetupRow["rho"] = {};
+  const rhoPool: SetupRow["rhoPool"] = {};
+  const ok = probe.filter((r) => r.modelError === undefined);
+  for (const c of [...new Set(ok.map((r) => r.case))]) {
+    const rows: IccRow[] = ok
+      .filter((r) => r.case === c)
+      .map((r) => ({ cluster: `${r.arm}|${r.paraphrase}`, model: r.model, hit: r.hit }));
+    rho[c] = Object.fromEntries(all.map((m) => [m, iccModel(rows, m)]));
+    rhoPool[c] = iccPooled(rows, models.weak);
+  }
+  const coldOk = cold.filter((r) => r.modelError === undefined);
+  if (coldOk.length > 0) {
+    const rows = coldOk.map((r) => ({ cluster: r.intent, model: r.model, hit: r.hit }));
+    rho["cold-guess"] = Object.fromEntries(all.map((m) => [m, iccModel(rows, m)]));
+  }
+  return { rho, rhoPool };
+}
 
 const caseKind = (c: NextCase, group: Group): CasePlan["kind"] =>
   c.role === "guard" ? "guard" : c.group === group ? "own" : "cross";

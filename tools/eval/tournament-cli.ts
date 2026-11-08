@@ -13,13 +13,13 @@ import { callKey } from "./exposure.ts";
 import {
   type Group,
   nextLint,
+  type ProbeRow,
   readProbeRows,
   runNext,
   runNextCheck,
   SYSTEM_SHA,
 } from "./nextstep.ts";
 import { NEXT_CASES } from "./nextstep-cases.ts";
-import { type IccRow, iccModel, iccPooled } from "./stats.ts";
 import { prepareSurface, surfaceFromDir } from "./surface.ts";
 import {
   appendControl,
@@ -40,6 +40,7 @@ import {
   probeFile,
   REP_BASE,
   readControl,
+  rhoFromB5,
   roundJobs,
   rowDir,
   type SetupRow,
@@ -87,7 +88,7 @@ const GROUPS: readonly Group[] = [
 const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   freeze <g> --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
   refreeze <g> --row <row id> --why "<reason>"
-  plan <g> [--variants 12] [--entrants 6]
+  plan <g> [--variants 12] [--entrants 6] [--b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m]]
   pack <g> [--brief tools/eval/candidates/<g>/brief.src.md]
   design <g> --model <m> [--session <name>]
   audit <g> [--session <name>]
@@ -135,10 +136,16 @@ const field = (rows: readonly ControlRow[]): VariantRow[] => {
   return variantRows(rows).filter((v) => v.admission.ok && clean.has(v.session));
 };
 
-const icc = (
-  rows: readonly { arm: string; paraphrase: string; model: string; hit: boolean }[],
-): IccRow[] =>
-  rows.map((r) => ({ cluster: `${r.arm}|${r.paraphrase}`, model: r.model, hit: r.hit }));
+/** B5's base rows: `--b5 <probe.jsonl>[,...]` and `--b5-cold <cold.jsonl>`. */
+const b5Rows = (args: string[]): { probe: ProbeRow[]; cold: ColdRow[] } => {
+  const coldPath = flag(args, "--b5-cold");
+  return {
+    probe: (list(flag(args, "--b5")) ?? [])
+      .flatMap((f) => readProbeRows(f))
+      .filter((r) => r.surface === BASE),
+    cold: coldPath ? readRows(coldPath).filter((r) => r.surface === BASE) : [],
+  };
+};
 
 /** The setup row (§6): base, B0 proof, models, ρ̂ from B5's base rows, the queue seed. */
 async function makeSetup(group: Group, args: string[]): Promise<SetupRow> {
@@ -154,21 +161,9 @@ async function makeSetup(group: Group, args: string[]): Promise<SetupRow> {
     .split("\n")
     .filter((l) => l.trim() !== "")
     .map((l) => JSON.parse(l) as { model?: string; modelError?: string });
-  const probe = b5.flatMap((f) => readProbeRows(f)).filter((r) => r.surface === BASE);
   const models = [...weak, gate];
-  const rho: SetupRow["rho"] = {};
-  const rhoPool: SetupRow["rhoPool"] = {};
-  for (const c of [...new Set(probe.map((r) => r.case))]) {
-    const rows = icc(probe.filter((r) => r.case === c));
-    rho[c] = Object.fromEntries(models.map((m) => [m, iccModel(rows, m)]));
-    rhoPool[c] = iccPooled(rows, weak);
-  }
-  const coldPath = flag(args, "--b5-cold");
-  if (coldPath) {
-    const cold = readRows(coldPath).filter((r) => r.surface === BASE);
-    const rows = cold.map((r) => ({ cluster: r.intent, model: r.model, hit: r.hit }));
-    rho["cold-guess"] = Object.fromEntries(models.map((m) => [m, iccModel(rows, m)]));
-  }
+  const { probe, cold } = b5Rows(args);
+  const { rho, rhoPool } = rhoFromB5(probe, cold, { weak, gate });
   return {
     kind: "setup",
     group,
@@ -457,7 +452,13 @@ export async function tournamentCli(args: string[]): Promise<number> {
       return 0;
     }
     case "plan": {
-      const setup = setupOf(rows) ?? null;
+      // before the freeze, `--b5` plans from B5's base rows without writing a setup row
+      const b5 = flag(rest, "--b5") === undefined ? null : b5Rows(rest);
+      const weak = list(flag(rest, "--weak")) ?? [...WEAK];
+      const gate = flag(rest, "--gate") ?? GATE;
+      const setup =
+        setupOf(rows) ??
+        (b5 ? { models: { weak, gate }, ...rhoFromB5(b5.probe, b5.cold, { weak, gate }) } : null);
       const freeze = [...rows].reverse().find((r) => r.kind === "freeze");
       const plan = freeze?.kind === "freeze" ? freeze.nPlan : nPlan(group, NEXT_CASES, setup);
       const n = Number(flag(rest, "--variants") ?? 12);

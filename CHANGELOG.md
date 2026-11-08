@@ -187,6 +187,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **Eval: `tournament plan` plans from B5's rows before a freeze, and model
+  errors stay out of ρ̂** (hill-r2 B5). `plan <g> --b5 <probe.jsonl>
+  [--b5-cold <cold.jsonl>]` computes ρ̂ the way `freeze` does
+  (`rhoFromB5`, shared by both), without writing a setup row. A row with a
+  model error is rig noise, not a reading outcome; counted as a miss it
+  faked a cluster effect.
 - **Help text matches 4.5's behaviour.** `mu --help` names Rex beside tmux
   and herdr. `agent send --steer` says it is pi-only and that a hook harness
   refuses it (another CLI in a herdr or Rex pane gets a plain send).
