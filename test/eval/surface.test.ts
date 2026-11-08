@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
-import { prepareSurface, SURFACES_DIR, surfaceDir } from "../../tools/eval/surface.ts";
+import { prepareSurface, SURFACES_DIR, stripRig, surfaceDir } from "../../tools/eval/surface.ts";
 
 describe("surface names", () => {
   const bad = [
@@ -51,6 +51,32 @@ describe("surface names", () => {
       expect(existsSync(join(victim, "keep.txt"))).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("stripRig", () => {
+  it("deletes the rig (tools, test, eval docs and specs) from a surface and keeps the product", () => {
+    const dir = mkdtempSync(join(tmpdir(), "surface-strip-"));
+    try {
+      const keep = ["dist/cli.js", "skills/mu/SKILL.md", "docs/guide/README.md", "src/cli.ts"];
+      const gone = [
+        "tools/eval/scenarios/wrong_id.ts",
+        "test/eval/check.test.ts",
+        "docs/eval/hill-r2/baseline.md",
+        "docs/specs/2026-11-07-hill-r2-tournament.md",
+        "docs/history/x.md",
+      ];
+      for (const f of [...keep, ...gone]) {
+        mkdirSync(join(dir, f, ".."), { recursive: true });
+        writeFileSync(join(dir, f), "x");
+      }
+      stripRig(dir);
+      expect(keep.filter((f) => !existsSync(join(dir, f)))).toEqual([]);
+      expect(gone.filter((f) => existsSync(join(dir, f)))).toEqual([]);
+      expect(existsSync(join(dir, "tools"))).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

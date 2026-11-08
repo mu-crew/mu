@@ -1,9 +1,17 @@
 // One AUT run over `pi --mode rpc`: spawn, prompt, collect metrics, enforce hard stops.
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { MetricsCollector, splitLf } from "./events.ts";
+import { sandboxGuard, stageRig } from "./rig-guard.ts";
 import { REAL_PI, sandboxPi, sandboxSkillDir } from "./sandbox.ts";
 import type { Aborted, RunMetrics, Sandbox, Scenario } from "./types.ts";
 
@@ -26,6 +34,8 @@ export interface RunOptions {
   env?: Record<string, string>;
   /** Checked every tick: true stops the AUT as a crash (aborted "crash"), a live replacement case. */
   stopWhen?: () => Promise<boolean>;
+  /** Test seam: no aut-guard.ts (runOne's judge-side rigReads alone). */
+  noAutGuard?: boolean;
 }
 
 const TICK_MS = 500;
@@ -94,6 +104,13 @@ export async function runAut(
     EVAL_RUN_TOKEN: token,
   };
   if (opts.auTScript) env.EVAL_FAUX_SCRIPT = opts.auTScript;
+  // the AUT's tools never reach the rig: aut-guard.ts refuses a call that names it and cuts it
+  // from every result (rig-guard.ts)
+  const guardExt = opts.noAutGuard === true ? null : stageRig(sb.dir, "aut-guard.ts");
+  if (guardExt !== null) {
+    env.EVAL_RIG_GUARD = join(dirname(guardExt), "guard.json");
+    writeFileSync(env.EVAL_RIG_GUARD, JSON.stringify(sandboxGuard(sb, opts.log)));
+  }
   const args = [
     "--mode",
     "rpc",
@@ -101,6 +118,7 @@ export async function runAut(
     ...(opts.providerExt ? ["-e", opts.providerExt] : []),
     "-e",
     sb.surface.extension,
+    ...(guardExt !== null ? ["-e", guardExt] : []),
     "--no-skills",
     "--skill",
     existsSync(sandboxSkillDir(sb.dir)) ? sandboxSkillDir(sb.dir) : sb.surface.skillDir,

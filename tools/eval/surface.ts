@@ -1,9 +1,10 @@
 // A surface is a directory holding a built mu (dist/ + skills/mu). mu is only ever a subprocess.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
+import { RIG_SUBDIRS } from "./rig-guard.ts";
 import type { Family, Surface } from "./types.ts";
 
 export const SURFACES_DIR: string = join(homedir(), ".cache", "mu", "eval", "surfaces");
@@ -100,7 +101,7 @@ function run(cmd: string, args: string[], cwd: string): string {
   return execFileSync(cmd, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] });
 }
 
-/** Export <ref> of <repo> into SURFACES_DIR/<name> and build it. Reuses a built dir at the same sha. */
+/** Export <ref> of <repo> into SURFACES_DIR/<name>, build it and strip the rig. Reuses a built dir at the same sha. */
 export async function prepareSurface(name: string, ref: string, repo: string): Promise<Surface> {
   const dir = surfaceDir(name);
   const sha = run("git", ["-C", repo, "rev-parse", "--verify", `${ref}^{commit}`], repo).trim();
@@ -115,5 +116,16 @@ export async function prepareSurface(name: string, ref: string, repo: string): P
     run("npm", ["run", "build"], dir);
     writeFileSync(stamp, `${sha}\n`);
   }
+  stripRig(dir);
   return surfaceFromDir(name, dir);
+}
+
+/**
+ * Delete the rig from a built surface (tools/eval's scenarios, goldens and judges, test/, the eval
+ * docs and specs): the AUT reads the surface's skill and dist, and a grep of the surface root must
+ * not find a holdout. Variant surfaces are copies of base, so they never have it. A surface dir
+ * given by path (a checkout) is never touched; rig-guard.ts flags reads there.
+ */
+export function stripRig(dir: string): void {
+  for (const d of RIG_SUBDIRS) rmSync(join(dir, d), { recursive: true, force: true });
 }

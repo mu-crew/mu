@@ -43,6 +43,7 @@ import {
   scanZero,
   scoreFinal,
   scoreR4,
+  validRun,
 } from "./tournament-r4-score.ts";
 import type { DestructiveFx, RunResult, Scenario, Surface } from "./types.ts";
 
@@ -361,7 +362,12 @@ export async function runScan(o: GateOpts): Promise<number> {
         run: o.deps?.run,
       });
       live = readR4Rows(out).filter(
-        (r) => r.round === "scan" && r.variant === id && r.rep >= floor && r.rep < floor + 900,
+        (r) =>
+          r.round === "scan" &&
+          r.variant === id &&
+          r.rep >= floor &&
+          r.rep < floor + 900 &&
+          validRun(r),
       );
     }
     const res = scanSelect(id, zero, live);

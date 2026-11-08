@@ -36,6 +36,7 @@ import { armWatch, settleWatch, watchRealState } from "./isolation.ts";
 import { bindScenario, MIX_CASES, mixEnv, type PlanRow, planRows } from "./mix.ts";
 import { pretrust, pretrustTargets } from "./pretrust.ts";
 import { toMarkdown } from "./report.ts";
+import { rigReads, sandboxGuard } from "./rig-guard.ts";
 import { runAut } from "./runner.ts";
 import { ENV_FAILURE, runPaneAut } from "./runner-pane.ts";
 import { createSandbox, FAUX_EXT, sh } from "./sandbox.ts";
@@ -130,6 +131,8 @@ export interface RunOne {
   fakeWorkers?: boolean;
   /** Hook tools already resolved (check resolves them once); default: resolveTools(surface). */
   tools?: HookTools;
+  /** Test seam: a pi AUT without aut-guard.ts, so only the judge-side rigReads stands. */
+  noAutGuard?: boolean;
 }
 
 /**
@@ -197,6 +200,7 @@ export async function runPiAut(
     quietMs: o.quietMs,
     maxProds: o.maxProds,
     log: o.log,
+    ...(o.noAutGuard === true ? { noAutGuard: true } : {}),
     // a live hook-harness case is bounded by its timeout alone, as a claude or codex AUT is (their
     // tokens are not counted): a cap only pi meets would stop it where the others run on
     ...(o.live === true && o.scenario.hookHarnesses !== undefined
@@ -305,6 +309,12 @@ export async function runOne(run: RunOne): Promise<RunResult> {
         destructive: [],
         notes: [`judge threw: ${e instanceof Error ? e.message : String(e)}`],
       };
+    }
+    // a run that read the rig (its scenario sources, judges, rows) is invalid, never a hit
+    const reads = rigReads(metrics.toolCalls, sandboxGuard(sb, o.log));
+    if (reads.length > 0) {
+      verdict = { ...verdict, completed: false, rigReads: reads };
+      verdict.notes.push(`rig read (invalid run): ${reads.slice(0, 3).join("; ")}`);
     }
     if (skillNote !== null) verdict.notes.push(skillNote);
     verdict.notes.push(...trustNotes);

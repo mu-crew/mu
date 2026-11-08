@@ -35,6 +35,7 @@ import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FAKE_HARNESSES, type FakeHarness } from "./fake-payloads.ts";
 import { pinScript } from "./isolation.ts";
+import { stageRig } from "./rig-guard.ts";
 import type { Sandbox, Surface } from "./types.ts";
 
 /** The orchestrator harnesses a case runs under. pi over rpc (runner.ts); the four hook harnesses in a pane (runner-pane.ts). */
@@ -75,7 +76,6 @@ export type HookHarness = FakeHarness;
 export const HOOK_HARNESSES: readonly HookHarness[] = FAKE_HARNESSES;
 
 const EVAL_DIR = dirname(fileURLToPath(import.meta.url));
-export const FAKE_HARNESS_TS: string = join(EVAL_DIR, "fake-harness.ts");
 export const OBSERVER_TS: string = join(EVAL_DIR, "hook-observer.ts");
 
 /** The worktree builds a hook entry runs, by absolute path. */
@@ -610,7 +610,10 @@ export function installFakeHarness(
 ): void {
   const stub = join(dir, ".rt", "fake", `${h}.mjs`);
   mkdirSync(dirname(stub), { recursive: true });
-  writeFileSync(stub, `import ${JSON.stringify(pathToFileURL(FAKE_HARNESS_TS).href)};\n`);
+  writeFileSync(
+    stub,
+    `import ${JSON.stringify(pathToFileURL(stageRig(dir, "fake-harness.ts")).href)};\n`,
+  );
   writeExec(join(binDir, h), `#!/bin/sh\nexec ${q(node)} ${q(stub)} "$@"\n`);
 }
 

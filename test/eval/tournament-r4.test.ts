@@ -26,6 +26,7 @@ import {
   type ScoredRow,
   scanSelect,
   scanZero,
+  scoreFinal,
   scoreR4,
 } from "../../tools/eval/tournament-r4-score.ts";
 import { committedControl, powerFacts, writeReport } from "../../tools/eval/tournament-report.ts";
@@ -375,6 +376,37 @@ describe("scoreR4", () => {
     const g = holmOnly.finalists[0]?.models.find((m) => m.model === GATE);
     expect(g?.p).toBeLessThan(0.05);
     expect(g?.loss).toBe(false);
+  });
+
+  it("leaves rig-read runs out of every count: an invalid row is neither a run nor a hit", () => {
+    // 12 extra base runs on the gate model that read the rig: counted, they would turn a clean
+    // variant into a loss (24/48 vs 38+0/60 is no loss; vs 38/48 it is)
+    const rig = Array.from({ length: 12 }, (_, k) =>
+      row({
+        variant: "base",
+        scenario: "s1",
+        model: GATE,
+        rep: 210 + k,
+        verdict: { completed: true, wrong: [], destructive: [], rigReads: ["#0 bash: /rig"] },
+      }),
+    );
+    const s = scoreR4({
+      rows: [...all("v1", 30, 30), ...rig],
+      finalists: [fin("v1")],
+      models: MODELS,
+      weak: WEAK,
+      repFloor: 201,
+    });
+    expect(s.finalists[0]?.models.find((m) => m.model === GATE)?.base).toEqual({
+      n: 48,
+      completed: 30,
+    });
+    const f = scoreFinal({
+      rows: [...all("combined", 30, 30), ...rig],
+      combined: "combined",
+      models: MODELS,
+    });
+    expect(f.models.find((m) => m.model === GATE)?.base).toEqual({ n: 48, completed: 30 });
   });
 
   it("the exercised precondition: no weak model with half its runs exposed on a scenario, no win", () => {

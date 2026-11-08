@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { linkHostHome } from "./harness.ts";
 import { parseRunsLog, type RunRecord } from "./provenance.ts";
+import { stageRig } from "./rig-guard.ts";
 import { mu, sh } from "./sandbox.ts";
 import type { Family, Sandbox } from "./types.ts";
 
@@ -427,7 +428,7 @@ export async function sshShim(
   // eval-worker still reads the task table (read-only) to know which task is claimed for it.
   write(
     join(sb.binDir, "ssh"),
-    `#!/bin/sh\nEVAL_DB_PATH=${shq(sb.dbPath)} EVAL_SANDBOX_DIR=${shq(sb.dir)} exec node ${shq(join(EVAL_DIR, "ssh-shim.ts"))} "$@"\n`,
+    `#!/bin/sh\nEVAL_DB_PATH=${shq(sb.dbPath)} EVAL_SANDBOX_DIR=${shq(sb.dir)} exec node ${shq(stageRig(sb.dir, "ssh-shim.ts"))} "$@"\n`,
     0o755,
   );
   return { hostRoot, sessionsLog };

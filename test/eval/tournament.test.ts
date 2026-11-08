@@ -1359,4 +1359,20 @@ describe("rhoFromB5: the planning ICC from B5's base rows", () => {
       rhoFromB5([], [{ intent: "i1", model: HAIKU, hit: false, modelError: "x" }], models).rho,
     ).toEqual({});
   });
+
+  it("leaves rig-read rows out too: an invalid row is not a reading outcome", () => {
+    const flat = rows.map((r) => ({ ...r, hit: true }));
+    const rig = [HAIKU, GEMINI, SONNET].flatMap((model) =>
+      [1, 2].map((rep) => ({
+        case: "c",
+        arm: "none" as const,
+        paraphrase: "p3",
+        model,
+        hit: false,
+        rep,
+        rigReads: ["command 1: /rig"],
+      })),
+    );
+    expect(rhoFromB5([...flat, ...rig], [], models).rho.c?.[HAIKU]).toBe(0.1);
+  });
 });

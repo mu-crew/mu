@@ -12,6 +12,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
+  rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
+  goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`
+  in `.rt/pi`, the ssh shim's path, `ps`, and the surface's own `tools/eval`.
+  The sandbox now runs copies under `.rt/lib`, `prepare` strips the rig from a
+  surface, a pi AUT loads `aut-guard.ts` (refuses a tool call that names the
+  rig, cuts rig lines from results), and `rig-guard.ts` marks any run that
+  still reads it as a rig read: `verdict.rigReads`, never completed, out of
+  R3/R4/final counts and ρ̂; a probe answer that names it is refused unrun.
+
 - **`mu wait --ready`: the ready batch** (hill-r2 A7, a7_ready_engine;
   proposal a7_wait_drain_rca_2 P1/P2/P4 + a7_wait_drain_rca_3 D1/D2). One
   wait returns every ready, never-returned completion, up to 5, as

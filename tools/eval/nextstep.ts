@@ -42,6 +42,7 @@ import {
 import { nextReport } from "./nextstep-report.ts";
 import { type MuCall, muCalls } from "./observe.ts";
 import { maxSeq, type OpRow, opsSince } from "./ops.ts";
+import { rigGuard, rigReadsInCommands } from "./rig-guard.ts";
 import { createSandbox } from "./sandbox.ts";
 import { surfaceId } from "./surface.ts";
 import type { Sandbox, Surface } from "./types.ts";
@@ -184,6 +185,8 @@ export interface ProbeRow {
   tokens: number;
   ms: number;
   modelError?: string;
+  /** The answer named the rig (rig-guard.ts): refused unrun, an invalid row, out of ρ̂. */
+  rigReads?: string[];
 }
 
 // ---- prompt -------------------------------------------------------------------------------------
@@ -351,6 +354,17 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
     row.tooMany = ex.tooMany;
     if (ex.why !== null) {
       row.why.push(ex.why);
+      return row;
+    }
+    // an answer that reads the rig (scenario sources, judges, rows) is refused unrun: invalid
+    const reads = rigReadsInCommands(
+      ex.commands,
+      rigGuard({ surfaceRoot: o.surface.root, ownSandbox: sb.dir, home: sb.env.HOME }),
+    );
+    if (reads.length > 0) {
+      row.invalid = true;
+      row.rigReads = reads;
+      row.why.push(`rig read (refused): ${reads.join("; ")}`);
       return row;
     }
     const t0 = Date.now();

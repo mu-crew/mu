@@ -247,14 +247,16 @@ export const LOSS_FAMILY = 45;
  * variance of whichever cluster drew them.
  */
 export function rhoFromB5(
-  probe: readonly Pick<ProbeRow, "case" | "arm" | "paraphrase" | "model" | "hit" | "modelError">[],
+  probe: readonly (Pick<ProbeRow, "case" | "arm" | "paraphrase" | "model" | "hit" | "modelError"> &
+    Partial<Pick<ProbeRow, "rigReads">>)[],
   cold: readonly Pick<ColdRow, "intent" | "model" | "hit" | "modelError">[],
   models: { weak: readonly string[]; gate: string },
 ): Pick<SetupRow, "rho" | "rhoPool"> {
   const all = [...models.weak, models.gate];
   const rho: SetupRow["rho"] = {};
   const rhoPool: SetupRow["rhoPool"] = {};
-  const ok = probe.filter((r) => r.modelError === undefined);
+  // a rig read (rig-guard.ts) is an invalid row, not a reading outcome either
+  const ok = probe.filter((r) => r.modelError === undefined && (r.rigReads?.length ?? 0) === 0);
   for (const c of [...new Set(ok.map((r) => r.case))]) {
     const rows: IccRow[] = ok
       .filter((r) => r.case === c)

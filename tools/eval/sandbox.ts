@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 import { AUT_NAMES } from "./fake-payloads.ts";
 import { type CodexHooks, type HookTools, setupHarnesses } from "./harness.ts";
 import { pinScript, shellStartupEnv, writeShellStartup } from "./isolation.ts";
+import { stageRig } from "./rig-guard.ts";
 import type { Sandbox, Surface } from "./types.ts";
 
 /** Where the AUT sees the surface's skill: a copy inside the sandbox (a regular tree, so `find /` hits it too), so its own recipes are the first (and shortest) path it meets. */
@@ -497,7 +498,7 @@ function installFauxPi(dir: string, binDir: string, surface: Surface): void {
   symlinkSync(REAL_PI, sandboxPi(dir));
   writeShim(
     join(rt, "pi"),
-    `exec env MU_NUDGE=0 ${JSON.stringify(sandboxPi(dir))} "$@" --no-extensions -e ${JSON.stringify(surface.extension)} -e ${JSON.stringify(FAUX_EXT)} --no-skills --no-context-files --no-session --model evalfaux/worker`,
+    `exec env MU_NUDGE=0 ${JSON.stringify(sandboxPi(dir))} "$@" --no-extensions -e ${JSON.stringify(surface.extension)} -e ${JSON.stringify(stageRig(dir, "faux.ts"))} --no-skills --no-context-files --no-session --model evalfaux/worker`,
   );
   writeShim(
     join(binDir, "pi"),

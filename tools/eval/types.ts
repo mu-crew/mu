@@ -138,6 +138,8 @@ export interface Verdict {
   destructiveFx?: DestructiveFx[];
   /** The AUT's mu calls placed in their tool calls (verdictFx), for behaviour exposure. */
   muCalls?: VerdictMuCall[];
+  /** The AUT's rig reads (rig-guard.ts): set means an invalid run, `completed` false, out of every count. */
+  rigReads?: string[];
   notes: string[];
 }
 
