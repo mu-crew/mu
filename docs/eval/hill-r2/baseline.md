@@ -37,7 +37,7 @@ comparator (§4.1).
   re-run. The probe's own `wallEstimate` for these jobs is 3.2 h, so on this shared host the real
   wall ran **about 1.5× the estimate**. Apply that factor to the plan hours below.
 - **Spend:** probe 14.5M tokens in the final rows (haiku 3.63M, sonnet 3.70M, gemini 7.12M; the superseded rows cost about 4M more), cold-guess 2.6M, R4
-  163M.
+  163M in the first pass, plus 85M for the rig-read re-runs (72M kept, 13M superseded).
 
 ### Rows (machine-local, never committed)
 
@@ -48,7 +48,10 @@ R4 rpc logs under `logs/`.
 |---|---|---|
 | `probe.jsonl` | 4080 | `f124ef5e79af37e68aeabcb2d5f336cd690ca7b63119fc6a09786789dc14d859` |
 | `cold.jsonl` | 300 | `3a66bc1a4cc78f12950caba9d79b4859b8c4dbf486bb742b6000a8bedff6d031` |
-| `r4.jsonl` | 345 | `b5c73b371d310de889ca4f8406e3569d25af48ac2489e5f4da52f1c0b0287ad9` |
+| `r4.jsonl` | 345 | `77309bafd6a702267b0f990e94a1358c36cf1ba9101174ca1f2bb7333a777b4c` |
+| `r4.raw-pre-rigfix.jsonl` (superseded: the first R4 file, 57 gemini rows read the rig) | 345 | `b5c73b371d310de889ca4f8406e3569d25af48ac2489e5f4da52f1c0b0287ad9` |
+| `r4.raw-rig-read.jsonl` (the 57 rig-read rows, `verdict.rigReads` added; logs in `logs-rig-read/`) | 57 | `7a2fc5e7ddab5421db97dd80e2d648441b1a37dc96ae5b5d182a516fbf5a4c02` |
+| `r4.raw-rig-read-rerun1.jsonl` (superseded: re-runs before `aut-guard.ts` that read the rig again) | 9 | `1525580919276bbca54fd61d0c1c489ce4b3964517896ab5b7b2348bd73619a9` |
 | `probe.raw-notes-report-v1.jsonl` (superseded: `notes_report_read` before the shown fix) | 360 | `a4dc87c5947185722ee5a56bf8c348062b25c561822476e0ecde138d3d9c330a` |
 | `probe.raw-pre-tabfield.jsonl` (superseded: the four other re-run cases, before the fix) | 960 | `815f9516d9a37d5cb64eb6bd4ec79fe8445f758be0e1ac17f128f9a9474aa20b` |
 | `r4.raw-before-envfix.jsonl` (superseded: fanout_gates hook, `/tmp` remote paths) | 144 | `59a0dbea3f023e80e8c526a0c66a3a6614616de25efc7755e4b2a11ab9e2e62d` |
@@ -63,11 +66,12 @@ own outcome (token cap or timeout), not provider noise:
 | model | R4 runs | token-cap aborts | timeout aborts |
 |---|---|---|---|
 | claude-haiku-5-5 | 115 | 6 | 16 |
-| gemini-3.8-flash | 115 | 65 | 1 |
+| gemini-3.8-flash | 115 | 64 | 1 |
 | claude-sonnet-5-5 | 115 | 0 | 12 |
 
-Gemini burns its scenario token cap (about 1.5M) on 57% of R4 runs. That is most of its 44%
-completion, and it is a reading result, not rig noise.
+Gemini burns its scenario token cap (about 1.5M) on 56% of R4 runs. That is most of its 46%
+completion. Much of that budget goes to searching the machine beyond its sandbox: in the first
+pass it read the rig itself (below); since `aut-guard.ts` those calls are refused or cut.
 
 ## Rig fixes made to run (committed beside this file)
 
@@ -104,6 +108,43 @@ hits and every bad is flagged on the 23 scenarios. The two exceptions:
 `e1`-`e7`. **On the mac, freeze is therefore refused unless `--no-checks` is passed** or that list
 excludes `wait_interrupted`. R3 and R4 should pass `--scenarios` without `wait_interrupted` on the
 mac. Otherwise every one of those runs fails on base and variant alike, and the runs are wasted.
+
+## Rig reads (f_aut_reads_rig)
+
+Found by the B5 review: the AUT could read the rig. In `r4.raw-pre-rigfix.jsonl`, **57 of 115
+gemini runs** (15 of them completed) read files under a `tools/eval` the sandbox did not hide:
+337 tool calls (205 bash, 110 read, 22 grep). No haiku or sonnet run did, and no probe or cold row
+did (a probe answer's output never goes back to the model). The ways in:
+
+- the faux workers' `pi` wrapper (`<sandbox>/.rt/pi`) ran `-e <checkout>/tools/eval/faux.ts`: most
+  runs found the checkout by reading that file;
+- `bin/ssh` named `<checkout>/tools/eval/ssh-shim.ts`; `ps aux` showed the driver's command lines;
+- the built surface `~/.cache/mu/eval/surfaces/hill2-base` (a `git archive`) carried `tools/` and
+  `test/` itself, so a grep of the surface found scenarios, goldens and judges.
+
+**Holdouts.** Holdout source text reached the model in 10 of those rows: grep lines of all four
+holdouts' scenario files (and two `wrong_id` bad scripts), from greps over the checkout or the
+surface for a judge's helper name. No run opened a holdout file whole and none ran a holdout. The
+lines sit only in machine-local, superseded rows and logs (`r4.raw-rig-read.jsonl`,
+`logs-rig-read/`; also 7 rows of the earlier `r4.raw-before-envfix.jsonl`), which no designer pack
+includes (the designer audit denies `mu-next/eval-transcripts`). A model in a later round never sees
+another run's transcript, so no holdout must be replaced: the leak informed no variant and no
+judge. Keep those files out of any designer or reviewer pack, and do not quote them.
+
+**Fix** (commit beside this file): the sandbox runs copies of the rig's runtime files under
+`.rt/lib`; `prepare` strips `tools/`, `test/`, `docs/eval`, `docs/specs` and `docs/history` from a
+surface (done to `hill2-base` in place); a pi AUT loads `aut-guard.ts`, which refuses a tool call
+that names the rig and cuts rig lines from results; and `rig-guard.ts` marks a run that still reads
+it as a rig read (`verdict.rigReads`, never completed, out of every R3/R4/final count and ρ̂).
+
+**Re-run.** Left out, the 57 rows would cut gemini to 58 runs, with five cells at 0 or 1 run, so the
+57 cells were re-run with the same job keys. The first 39 re-runs had the staging and the strip but
+not yet `aut-guard.ts`: 9 read the rig again (they found the driver's script in `/tmp` and the
+other worktrees through `ps`) and were superseded. The last 27 ran with the guard: 0 rig reads;
+the guard refused 1 call and cut lines from 22 results in 12 runs. Effect on gemini: completion
+51/115 → 53/115 (44% → 46%), mean cost per rep 22.9M → 22.0M, spread 3.86M → 3.04M; per cell,
+`api_outage_resume` 1 → 3, `worktree_reuse` 1 → 3, `fanout_gates` 0 → 1, `outside_mux` 2 → 1,
+`poll_wave` 4 → 3, `wait_wave_six` 1 → 0. Haiku and sonnet rows are unchanged.
 
 ## Freeze: not run (why)
 
@@ -159,7 +200,7 @@ list. Suggested rig guard (not built): `freeze` should refuse while any case's p
   Both are base behaviour that a variant cannot change (system prompt fixed, §1.1). They put a
   ceiling on sonnet's rates.
 - **R4 floors:** `wait_remote_gate` is 0/15 on all three models: the AUT never opens the gate from
-  the named pane. On gemini, eight more scenarios are at 0/5, mostly on the token cap. These cells
+  the named pane. On gemini, seven more scenarios are at 0/5, mostly on the token cap. These cells
   carry no loss power.
 - **`sleep_poll`'s partial count includes its hits.** Its judge sets `partial` to "all three
   observed", and `decideHit` (`nextstep-exec.ts`) passes `partial` through on a hit. The report's
@@ -271,40 +312,40 @@ Per model, one stratum per case at its planned per-model n_eff and that model's 
 
 ### R4 base set: completion and cost spread
 
-345 runs, 23 scenarios × 3 models; holdouts not run. Cost = tokens + 10·muErrors + 50·wrong (§4.5).
+345 runs, 23 scenarios × 3 models; holdouts not run. The 57 gemini cells that read the rig are re-run (see [Rig reads](#rig-reads-f_aut_reads_rig)). Cost = tokens + 10·muErrors + 50·wrong (§4.5).
 
 | scenario | haiku completed | gemini completed | sonnet completed | haiku mean tokens | gemini mean tokens | sonnet mean tokens | wrong / destructive (all models) |
 |---|---|---|---|---|---|---|---|
-| api_outage_resume | 5/5 (100%) | 1/5 (20%) | 5/5 (100%) | 375k | 1531k | 150k | 8 / 0 |
-| course_check | 4/5 (80%) | 0/5 (0%) | 1/5 (20%) | 480k | 1518k | 214k | 10 / 3 |
-| delegate_saturation | 5/5 (100%) | 2/5 (40%) | 5/5 (100%) | 371k | 1513k | 164k | 3 / 0 |
-| fanout_gates | 5/5 (100%) | 0/5 (0%) | 5/5 (100%) | 1120k | 1543k | 135k | 7 / 0 |
+| api_outage_resume | 5/5 (100%) | 3/5 (60%) | 5/5 (100%) | 375k | 1392k | 150k | 6 / 0 |
+| course_check | 4/5 (80%) | 0/5 (0%) | 1/5 (20%) | 480k | 1535k | 214k | 10 / 3 |
+| delegate_saturation | 5/5 (100%) | 2/5 (40%) | 5/5 (100%) | 371k | 1466k | 164k | 2 / 0 |
+| fanout_gates | 5/5 (100%) | 1/5 (20%) | 5/5 (100%) | 1120k | 1519k | 135k | 6 / 0 |
 | guessed_flag | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 52k | 312k | 32k | 3 / 0 |
 | guessed_sql_column | 4/5 (80%) | 5/5 (100%) | 5/5 (100%) | 74k | 117k | 52k | 2 / 0 |
 | long_notes | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 103k | 310k | 43k | 4 / 0 |
-| multi_notes | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 67k | 764k | 44k | 5 / 0 |
+| multi_notes | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 67k | 242k | 44k | 5 / 0 |
 | no_mux | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 78k | 170k | 45k | 0 / 0 |
 | no_mux_delegate | 2/5 (40%) | 1/5 (20%) | 0/5 (0%) | 181k | 998k | 94k | 13 / 0 |
-| outside_mux | 3/5 (60%) | 2/5 (40%) | 5/5 (100%) | 556k | 1493k | 117k | 8 / 0 |
-| poll_wave | 5/5 (100%) | 4/5 (80%) | 5/5 (100%) | 162k | 1264k | 102k | 4 / 0 |
-| refute_verdicts | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 121k | 597k | 67k | 2 / 0 |
-| remote_close_block | 4/5 (80%) | 0/5 (0%) | 5/5 (100%) | 284k | 511k | 107k | 9 / 0 |
-| remote_spawn | 4/5 (80%) | 0/5 (0%) | 5/5 (100%) | 254k | 474k | 108k | 7 / 0 |
-| teardown | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 39k | 428k | 42k | 2 / 0 |
-| wait_helper_summary | 4/5 (80%) | 0/5 (0%) | 3/5 (60%) | 151k | 1552k | 92k | 8 / 0 |
-| wait_mixed_refs | 3/5 (60%) | 0/5 (0%) | 3/5 (60%) | 241k | 1519k | 115k | 15 / 0 |
-| wait_remote_gate | 0/5 (0%) | 0/5 (0%) | 0/5 (0%) | 451k | 520k | 235k | 15 / 1 |
-| wait_report_act | 1/5 (20%) | 4/5 (80%) | 5/5 (100%) | 161k | 1299k | 69k | 7 / 0 |
-| wait_wave_six | 5/5 (100%) | 1/5 (20%) | 5/5 (100%) | 549k | 1531k | 233k | 14 / 0 |
-| wait_wave_starvation | 2/5 (40%) | 0/5 (0%) | 4/5 (80%) | 951k | 1534k | 414k | 14 / 0 |
-| worktree_reuse | 5/5 (100%) | 1/5 (20%) | 5/5 (100%) | 125k | 1430k | 74k | 5 / 0 |
+| outside_mux | 3/5 (60%) | 1/5 (20%) | 5/5 (100%) | 556k | 1537k | 117k | 7 / 0 |
+| poll_wave | 5/5 (100%) | 3/5 (60%) | 5/5 (100%) | 162k | 1413k | 102k | 3 / 0 |
+| refute_verdicts | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 121k | 549k | 67k | 2 / 0 |
+| remote_close_block | 4/5 (80%) | 0/5 (0%) | 5/5 (100%) | 284k | 513k | 107k | 9 / 0 |
+| remote_spawn | 4/5 (80%) | 0/5 (0%) | 5/5 (100%) | 254k | 475k | 108k | 7 / 0 |
+| teardown | 5/5 (100%) | 5/5 (100%) | 5/5 (100%) | 39k | 253k | 42k | 0 / 0 |
+| wait_helper_summary | 4/5 (80%) | 0/5 (0%) | 3/5 (60%) | 151k | 1525k | 92k | 8 / 0 |
+| wait_mixed_refs | 3/5 (60%) | 0/5 (0%) | 3/5 (60%) | 241k | 1483k | 115k | 15 / 0 |
+| wait_remote_gate | 0/5 (0%) | 0/5 (0%) | 0/5 (0%) | 451k | 509k | 235k | 15 / 1 |
+| wait_report_act | 1/5 (20%) | 4/5 (80%) | 5/5 (100%) | 161k | 1209k | 69k | 7 / 0 |
+| wait_wave_six | 5/5 (100%) | 0/5 (0%) | 5/5 (100%) | 549k | 1542k | 233k | 14 / 0 |
+| wait_wave_starvation | 2/5 (40%) | 0/5 (0%) | 4/5 (80%) | 951k | 1535k | 414k | 14 / 0 |
+| worktree_reuse | 5/5 (100%) | 3/5 (60%) | 5/5 (100%) | 125k | 1346k | 74k | 4 / 0 |
 
 Per model, pooled over the scenarios: completion, per-rep total cost (sum over scenarios of one rep index) mean and spread (max − min), and the §4.5 Fisher power at n = 48 a side (α 0.05/3, first Holm step) for a completion drop from the observed rate.
 
 | model | completed | mean cost per rep | spread | power: drop −0.3 at n 48 | MDE at 80%, n 48 |
 |---|---|---|---|---|---|
 | claude-haiku-5-5 | 91/115 (79%) | 6947k | 658k | 0.79 | 0.79 → 0.48 |
-| gemini-3.8-flash | 51/115 (44%) | 22930k | 3864k | 0.84 | 0.44 → 0.15 |
+| gemini-3.8-flash | 53/115 (46%) | 21953k | 3043k | 0.83 | 0.46 → 0.16 |
 | claude-sonnet-5-5 | 96/115 (83%) | 2749k | 399k | 0.82 | 0.83 → 0.54 |
 
 <details><summary>Raw <code>tournament plan &lt;g&gt; --b5 probe.jsonl --b5-cold cold.jsonl</code> output, all six groups</summary>
