@@ -1,4 +1,5 @@
 {
+  "rigCanary": "RIG-CANARY-f8dc74a2239b",
   "about": "The keys each harness's hook payload carried in the U0 spike (spec 'Every harness first-class', U0 results), per native event; keys only, no values. The fake harness binaries (tools/eval/fake-payloads.ts) must send exactly these. A `:status` suffix is cursor-agent's stop status.",
   "shapes": {
     "claude SessionStart": [
@@ -230,5 +231,6 @@
       "session_id",
       "transcript_path"
     ]
-  }
+  },
+  "rigCanaryEnd": "RIG-CANARY-f8dc74a2239b"
 }

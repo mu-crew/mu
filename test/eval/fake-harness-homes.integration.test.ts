@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The fake claude and codex read their user hooks where the real ones do: `$CLAUDE_CONFIG_DIR`
 // and `$CODEX_HOME` when set and non-empty, else under `$HOME`. Runs the real fake-harness
 // process with piped stdio and a SessionStart hook that records which config file fired it.
@@ -84,3 +85,4 @@ describe("fake harness user hook homes", () => {
     expect(await firedBy("codex", { CODEX_HOME: "" })).toEqual(["home"]);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

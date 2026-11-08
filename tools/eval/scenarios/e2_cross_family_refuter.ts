@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // E2 finding triage with a cross-family refuter (spec "Every harness first-class", U24, D5): a
 // high-severity finding on f1 is checked by a refuter of another model family than the
 // orchestrator, recorded with `mu task check` and `mu task verdict`, and f1 is triaged by the
@@ -180,3 +181,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

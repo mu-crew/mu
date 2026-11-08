@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -98,3 +99,4 @@ export function makeJudgeSandbox(world: JudgeWorld = {}): Sandbox {
   }
   return { dir, env, workerDir, repoDir, dbPath, tmuxSocket: "x" } as unknown as Sandbox;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

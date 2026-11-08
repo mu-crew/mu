@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -274,3 +275,4 @@ describe("lifecycle observer", () => {
     expect(snapshotStates({ tasks: "i1 i2" }).size).toBe(0);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

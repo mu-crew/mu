@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // results JSONL -> markdown table: one row per scenario x surface x model, then totals per surface x model.
 import type { RunResult } from "./types.ts";
 
@@ -83,3 +84,4 @@ export function toMarkdown(results: RunResult[]): string {
   }
   return `${lines.join("\n")}\n`;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

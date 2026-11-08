@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The next-step probe's own rules (tools/eval/nextstep*.ts, spec §1.2-1.5): extraction, the
 // transcript, "printed" (shown / shownLine), the answer-window adapter and the timed rule, the go
 // gate and the orchestrator env, the lint, execGuess's shell, the evalfaux short-circuit and the
@@ -816,3 +817,4 @@ describe("nextstep report", () => {
     expect(nextReport(join(dir, "empty.jsonl"), {}).code).toBe(2);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

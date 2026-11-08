@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # 3.13.3 baseline v2 (after the harness fixes)
 
 Same surface (`v3.13.3`, fcc4259), models, scenarios, concurrency 4, 1 rep and caps as [v1](baseline-3.13.3.md). What changed is the harness, per the five `f_eb_*` fixes: [37d10fc, d58153d, c1f4aa4]. Raw results: `baseline-3.13.3-v2.jsonl`. v1 is kept as the record of what the unfixed harness reported; **v2 supersedes it**.
@@ -172,3 +174,5 @@ Counted over all 51 AUT runs since the isolation change (every first-pass and re
 ### Conditions
 
 Final runs 12:50 → 15:19 on linux-host, concurrency 4, with reruns of cells where a sibling batch of mine was killed (143) by a concurrent `npm run test:fast` or crashed on the `ENOTEMPTY` above; those partial results are discarded and not in the jsonl. The retained rows ran on harness variants that differ only in the `force-close` regex (which can only remove flags), the AUT-visible comment in `eval-worker`, and the sandbox-removal retry. About 15.5M tokens, $2.1 in all including discarded attempts; the 17 retained runs are 5.9M tokens, $0.94.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

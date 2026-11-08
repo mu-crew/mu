@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   { "calls": [{ "bash": "mu task claim r2 -w eval --self" }] },
   {
     "calls": [
@@ -8,5 +9,6 @@
     ]
   },
   { "calls": [{ "bash": "mu task close r2 -w eval --evidence 'r2 committed'" }] },
-  { "text": "done" }
+  { "text": "done" },
+  "RIG-CANARY-f8dc74a2239b"
 ]

@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Task substates: classification without stranded dependents
 
 Status: shipped in 3.0.0 (schema v11); `CLOSED/rejected` added in 3.1.0; `OPEN/triage` added in 3.4.0 (per D10, one seeded row). Implemented 2026-09-29 (approved 2026-09-29; see [Deviations during implementation](#deviations-during-implementation))
@@ -245,3 +247,5 @@ Tested in SQLite with `PRAGMA foreign_keys=ON` and the deferred composite foreig
 | unknown substate `bogus` | rejected |
 | delete an allowed pair that a task uses | rejected |
 | `ALTER TABLE … ADD CONSTRAINT FOREIGN KEY` on an existing table | syntax error (hence D12) |
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

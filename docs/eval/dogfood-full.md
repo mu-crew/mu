@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Dogfood full: a copy of a real project, moved and driven as the user will
 
 Task `v_dogfood_full`. Checkout `be2cb00` + `npm run build` (`mu --version` 4.0.0-next.0), never installed. Host linux-host, pi 1.4.0, tmux 3.7c, 2026-10-27 09:23 to 09:55. Orchestrator: sonnet-5-5 via a model gateway, pi TUI in a pane, the shipped `skills/mu` and `dist/extension/mu-pi.js` only.
@@ -48,3 +50,5 @@ Task `v_dogfood_full`. Checkout `be2cb00` + `npm run build` (`mu --version` 4.0.
 ## P3 (one line each, on this task)
 
 Listed in the close note of `v_dogfood_full`.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

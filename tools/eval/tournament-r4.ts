@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // R3 scan, R4 gate and the final holdout gate (spec docs/specs/2026-11-07-hill-r2-tournament.md
 // §4.4-4.6, unit B3c). All three run AUT jobs through `runR4`; the scoring is in
 // tournament-r4-score.ts. The final gate's logs go under `sealed/` only.
@@ -594,3 +595,4 @@ export async function runFinal(o: GateOpts): Promise<number> {
   console.log(`final: ${s.why}`);
   return 0;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

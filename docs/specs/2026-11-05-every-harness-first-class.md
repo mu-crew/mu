@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Every harness first-class (mu-crew 4.x)
 
 Status: draft 10, built. Written 2026-11-05 after four refutation
@@ -1166,3 +1168,5 @@ is reflected above.
 Findings that only concerned removing pi no longer apply: `next --refute`
 losing its once-key, pi having two state sources during the switch, and the
 order of deleting the control socket.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Agent state from murmur (mu 2.0.0, murmur 1.0.0)
 
 Status: shipped in 2.0.0; partly superseded in 3.2.0 by the control socket ([architecture/control-socket.md](../architecture/control-socket.md)). Approved 2026-09-28. Task `crew/mu_status_from_murmur`.
@@ -331,3 +333,5 @@ commands. No local path starts a second Node process.
 ## Open questions
 
 None.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

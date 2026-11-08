@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -188,5 +189,6 @@
   },
   {
     "text": "all closed"
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

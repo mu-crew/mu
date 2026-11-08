@@ -1,9 +1,13 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // pi extension a pi AUT loads (runner.ts, staged into <sandbox>/.rt/lib): refuses a tool call
 // that names the rig and cuts every line that names it from a tool result, so the rig's scenario
 // sources, judges and rows never reach the model. The guard (roots, own sandbox, HOME) is the JSON
-// file $EVAL_RIG_GUARD. rig-guard.ts rigReads is the backstop for what this misses.
+// file $EVAL_RIG_GUARD. A result that carries a rig file's canary (rig-private.ts: a read the
+// path rules missed) is withheld whole. rig-guard.ts rigReads is the backstop: it counts a
+// withheld result as a rig read.
 import { readFileSync } from "node:fs";
-import { BLOCKED, type RigGuard, redactRig, rigInInput } from "./rig-guard.ts";
+import { BLOCKED, type RigGuard, redactRig, rigInInput, WITHHELD } from "./rig-guard.ts";
+import { hasCanary } from "./rig-private.ts";
 
 /** Typed structurally so pi stays a peer (as faux.ts does). */
 interface PiLike {
@@ -24,8 +28,11 @@ export default function autGuard(pi: PiLike): void {
   );
   pi.on("tool_result", (e: { content?: unknown }) => {
     if (!Array.isArray(e.content)) return undefined;
+    const parts = e.content as ContentPart[];
+    if (parts.some((p) => typeof p.text === "string" && hasCanary(p.text)))
+      return { content: [{ type: "text", text: WITHHELD }] };
     let cut = 0;
-    const content = (e.content as ContentPart[]).map((p) => {
+    const content = parts.map((p) => {
       if (p.type !== "text" || typeof p.text !== "string") return p;
       const r = redactRig(p.text, g);
       cut += r.cut;
@@ -34,3 +41,4 @@ export default function autGuard(pi: PiLike): void {
     return cut > 0 ? { content } : undefined;
   });
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Sandbox fixtures: git repo + gate, the scripted worker driver, the ssh shim, seeding via mu.
 // Scenario files import these; they never edit this file.
 import { randomBytes } from "node:crypto";
@@ -462,3 +463,4 @@ export async function hostProfile(
     ],
   ]);
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

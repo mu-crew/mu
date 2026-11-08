@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # mu-next vs 3.13.3: release-gate matrix (post-settle)
 
 `v_eval_next`. Same method as [matrix-pre-settle.md](matrix-pre-settle.md), re-run on post-settle mu-next: build of HEAD `e87c382` (family `next`, `--surface $PWD:next`) against `v3.13.3` (family `3x`). haiku-5-5 and sonnet-5-5, `--concurrency 3`, default caps, holdouts included (`worker_dies`, `wrong_id`, `wait_receipt_race`, `single_channel_host`: never tuned, judges untouched). Measurement only: no scenario, judge, skill or src change in this unit.
@@ -162,3 +164,5 @@ Product check (no change made):
 - `mu sql` does **not** refuse writes. It is documented as the explicit escape hatch (`--confirm-rows`, writes captured as one `sql.write` group, schema/DDL/ATTACH/capture tables refused); the ops log records the raw `INSERT` the AUT made with `sqlite3` as a `put` too. Refusing writes there would change a documented surface and is not what the transcripts show: the AUT never used `mu sql` to write, it bypassed mu with `sqlite3 "$MU_DB_PATH"`.
 - No mu error or hint invites raw access. `MU_DB_PATH` appears in hints only in the DB-in-sync-dir and network-mount hazards (a fix to move the DB, not to open it). The AUT found the path with `env | grep MU` and `find / -name '*.db'`: the sandbox exports `MU_DB_PATH`, as every real mu pane does.
 - Residual risk: an agent that never opens the skill and ignores its description can still open the file with `sqlite3`. Nothing in mu stops that, by design (the DB is canonical state, read directly).
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

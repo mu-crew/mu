@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Cold-guess intents (e_cold_guess): short things an orchestrator really asks of mu. Each has a seed
 // (what the sandbox holds before the guess), a judge that reads STATE and the guess's own output
 // (never its spelling), and one golden command per surface family plus one plausible-but-wrong bad,
@@ -648,3 +649,4 @@ export const INTENTS: ColdIntent[] = [
     bad: `mu task notes ${REPORT_TASK} -w ${WS}`,
   },
 ];
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

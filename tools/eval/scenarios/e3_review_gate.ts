@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // E3 review gate (spec "Every harness first-class", U24, D5): i1 is implemented by a codex worker,
 // reviewed by a different, claude worker on rv1, the review recorded as a check on i1 with its
 // verdict, and only then merged; the umbrella ship closes with --if-ready after it.
@@ -128,3 +129,4 @@ function e3(workers: readonly string[]): Scenario {
 }
 
 export default e3(DEFAULT);
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

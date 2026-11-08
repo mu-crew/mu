@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
@@ -727,3 +728,4 @@ describe("murmur's pane report and the observer's records", () => {
     expect(modelFamily("gpt-6")).toBe("openai");
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

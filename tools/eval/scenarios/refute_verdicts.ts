@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Refute with verdicts: the AUT must get an independent check of a claim recorded on plan1 and act
 // on the verdict. The delegate is a scripted faux pi: it has no owned task, so the worker driver
 // prints answers/<n>.txt for the first `claim-<n>` in the prompt it was given (hence "claim-1" in
@@ -111,3 +112,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -49,5 +50,6 @@
   },
   {
     "text": "Took over: c1 and c2 are merged and closed; both workers are closed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

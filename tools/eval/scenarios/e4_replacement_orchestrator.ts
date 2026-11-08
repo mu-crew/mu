@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // E4 crash and replacement orchestrator (spec "Every harness first-class", U24, D5 recovery): the
 // orchestrator dispatches c1 to a claude worker and c2 to a codex worker and dies; a second
 // orchestrator of the same harness takes the workstream over and finishes it. In `check` the AUT
@@ -106,3 +107,4 @@ function e4(workers: readonly string[]): Scenario {
 }
 
 export default e4(DEFAULT);
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

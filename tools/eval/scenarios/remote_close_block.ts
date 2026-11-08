@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Remote close via the CLOSE block: the remote worker cannot reach the orchestrator DB, so it ends
 // with a CLOSE/REPORT block (closeMode "block") and the AUT must read it and close the task with
 // the worker's evidence. On 3.x nothing applies the block automatically (mu-pi.ts agent_settled
@@ -119,3 +120,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

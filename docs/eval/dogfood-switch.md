@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Dogfood at the switch: a real loop, the Move, the switch note
 
 Task `v_dogfood_switch`. Isolated loop like [dogfood-4](dogfood-4.md) on `062210a` (both df4 triage fixes merged) + `npm run build`, never installed (`mu --version` 4.0.0-next.0). Host linux-host, pi 1.4.0, tmux 3.7c, 2026-10-27 01:24 to 01:50. Orchestrator: sonnet-5-5 via a model gateway, TUI in a pane, the shipped `skills/mu` and `dist/extension/mu-pi.js` only.
@@ -47,3 +49,5 @@ All as written: `MU_SYNC_DIR` holding a 3.x segment (one line copied out of `~/m
 3. Move recipe: when the brief is the only note, the "last note" repeats it, and an IN_PROGRESS task's last note is often just `CLAIM: dispatch`. Say what to write instead.
 4. upgrade.md "Old DBs" points to the design README (Move), while "Switch" links the recipe. Use one pointer: the recipe.
 5. After prompt 1 the model did the work in its own pane (no tasks) and left the release decision as prose. The `human-needed` record only came when the prompt named mu tracking.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

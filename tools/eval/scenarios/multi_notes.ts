@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // One note that summarises four tasks: the umbrella u gets a single note quoting each of m1-m4's
 // reports.
 //
@@ -85,3 +86,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

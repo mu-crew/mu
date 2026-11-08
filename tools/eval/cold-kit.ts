@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Seed and judge helpers for the cold-guess intents (cold-intents.ts), and the types they share.
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -217,3 +218,4 @@ export const verdictOf = (text: string | null): string | undefined =>
 /** `delegate_<label>_<8 hex of sha256(call id)>`: the task a delegate call gets (src/delegates.ts taskIdFor). */
 export const delegateTask = (callId: string, label: string): string =>
   `delegate_${label}_${createHash("sha256").update(callId).digest("hex").slice(0, 8)}`;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

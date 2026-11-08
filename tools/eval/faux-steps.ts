@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Scripted faux-agent step selection. Pure logic plus the <workerDir> control files; no pi import,
 // so vitest can exercise it. faux.ts wires it to pi's fauxProvider.
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -36,7 +37,8 @@ export const DEFAULT_SCRIPT: FauxStep[] = [{ text: "(no script)" }];
 function readSteps(path: string): FauxStep[] | null {
   if (!existsSync(path)) return null;
   const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-  return Array.isArray(parsed) ? (parsed as FauxStep[]) : null;
+  // a rig file's canary (rig-private.ts) is a string element, never a step
+  return Array.isArray(parsed) ? (parsed.filter((s) => typeof s !== "string") as FauxStep[]) : null;
 }
 
 /** AUT script: a JSON file at `path`. */
@@ -173,3 +175,4 @@ export class FauxScript {
     return { kind: "text", text: "(bad step)" };
   }
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

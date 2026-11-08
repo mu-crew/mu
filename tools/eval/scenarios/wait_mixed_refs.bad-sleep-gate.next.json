@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -82,5 +83,6 @@
   },
   {
     "text": "The wait report is written."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

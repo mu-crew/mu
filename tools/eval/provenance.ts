@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Shared provenance for judges: who produced a commit, and which event came first. Every judge
 // uses these instead of matching commit subjects and end-state alone (rv7i_*): a subject proves
 // nothing about who wrote the commit, and an end state says nothing about order.
@@ -220,3 +221,4 @@ export async function workerCommitOnMain(
     mainSha: c.sha,
   };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

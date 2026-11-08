@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -124,5 +125,6 @@
   },
   {
     "text": "r1-r6 are done."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

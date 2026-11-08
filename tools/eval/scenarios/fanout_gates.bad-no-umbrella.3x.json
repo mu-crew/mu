@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -107,5 +108,6 @@
   },
   {
     "text": "All three fixes are reviewed and merged; gate passes on main."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

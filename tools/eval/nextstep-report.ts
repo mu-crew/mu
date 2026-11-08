@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // `nextstep report` (spec §7 B2): raw counts of a probe.jsonl, for B5's readout and the check and
 // selftest summaries. No DEFF, exposure or test here: those are `tournament report`'s.
 import { createHash } from "node:crypto";
@@ -124,3 +125,4 @@ export function nextReport(file: string, f: ReportFilter): { code: number; text:
   );
   return { code: 0, text: out.join("\n") };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

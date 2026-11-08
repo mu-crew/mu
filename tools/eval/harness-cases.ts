@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Shared setup and judge rules of the hook-harness cases E1-E7 (scenarios/e*_*.ts; spec "Every
 // harness first-class", U24). A worker's job is deterministic and cheap on every harness: its task
 // says to run `eval-worker` and reply with the output, which commits the task's file as the
@@ -386,3 +387,4 @@ export function caseVerdict(
 ): Promise<Verdict> {
   return verdictFx(sb, run, completed, { ...extra, failedMuCalls: "notes" });
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

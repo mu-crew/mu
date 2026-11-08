@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The next-step case catalogue (tools/eval/nextstep-cases*.ts, spec §2 and §2.3, unit B4b): its
 // shape, without a sandbox. `nextstep check` (nextstep.integration.test.ts, and by hand for the
 // timed cases) proves the judges; this pins what every case must carry so check can prove it.
@@ -141,3 +142,4 @@ describe("case helpers", () => {
     expect(verdictLabel("see VERDICT: CONFIRMED inline")).toBeUndefined();
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -10,5 +11,6 @@
   { "calls": [{ "bash": "mu agent send w1 -w eval 'do r2 and close it'" }] },
   { "calls": [{ "bash": "mu task wait r2 -w eval --timeout 120" }] },
   { "calls": [{ "bash": "echo r2 > r2.txt && git add r2.txt && git commit -qm r2" }] },
-  { "text": "done" }
+  { "text": "done" },
+  "RIG-CANARY-f8dc74a2239b"
 ]

@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // E1 dispatch and merge (spec "Every harness first-class", U24): the orchestrator runs two tasks
 // on workers of two hook harnesses, each in its own worktree, merges both commits and closes the
 // workers. Workers: d1 on claude, d2 on codex, unless the run picks the mix (`--workers d1,d2`,
@@ -66,3 +67,4 @@ function e1(workers: readonly string[]): Scenario {
 }
 
 export default e1(DEFAULT);
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

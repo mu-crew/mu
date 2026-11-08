@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -43,5 +44,6 @@
   },
   {
     "text": "A course check fell due after k10. A delegate measured; I recorded a human-needed stop before dispatching k11."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

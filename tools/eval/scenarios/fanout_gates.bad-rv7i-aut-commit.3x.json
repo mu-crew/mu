@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -62,5 +63,6 @@
       { "bash": "mu task close umbrella -w eval --evidence 'fixes reviewed and merged, gate ok'" }
     ]
   },
-  { "text": "done" }
+  { "text": "done" },
+  "RIG-CANARY-f8dc74a2239b"
 ]

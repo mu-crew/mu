@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Two workers hit an API error (529) mid-task; panes and agents stay alive. The orchestrator must
 // re-prompt them rather than respawn or kill them.
 import {
@@ -112,3 +113,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

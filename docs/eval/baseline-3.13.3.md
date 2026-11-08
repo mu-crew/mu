@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 > Superseded by [v2](baseline-3.13.3-v2.md): this run's scoring had five harness artifacts (delegate token, discard parse, send before claim, fixture origin, host PATH).
 
 | Scenario | Surface | Model | Completed | Mean tokens | Mean mu calls | Mean mu errors | Wrong | Destructive | Prods | Aborted |
@@ -80,3 +82,5 @@ Before and after the run (the real state was in use by other crews during it):
 - Default tmux server: the matrix did not touch it. `tmux ls` differs only by one unrelated session, which disappeared during the run (not an eval session; none of the eval sessions ever lived on the default server).
 - `/tmp/mu-eval-*` dirs: 22 before; every dir of this matrix (pid 1911369) was removed. The two new entries after are another worker's concurrent check run (pid 2076110 and a `mu-eval-check-*` dir created at 10:35). Not run-owned. The 20 older entries pre-date this run and were left alone.
 - Processes and sockets: no `mu-eval-1911369-*` process or socket remains; the `mu-eval` socket set under `/tmp/tmux-1000` is identical before and after (34). The only new eval process (pid 2076232) belongs to the other worker's check run.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

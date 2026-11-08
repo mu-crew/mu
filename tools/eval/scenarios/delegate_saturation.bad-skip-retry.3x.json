@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -155,5 +156,6 @@
   },
   {
     "text": "Checked and closed what the delegates answered."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

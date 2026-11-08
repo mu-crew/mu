@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Lease transport: a remote worker whose pane holds no ssh session
 
 Status: proposed, revised after review (see [Review](#review-2026-10-28))
@@ -435,3 +437,5 @@ folded in:
 - Rollback persists a reread handle before the agent row can go (plan
   review). The smoke is a script, not a suite test.
 - `graceMs` raised so an interrupted carrier can stop its job.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

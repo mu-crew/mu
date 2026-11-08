@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -43,5 +44,6 @@
   },
   {
     "text": "rt1 ran on dev, its commit is merged into main and the remote working copy is removed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

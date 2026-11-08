@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // One AUT run over `pi --mode rpc`: spawn, prompt, collect metrics, enforce hard stops.
 import { execFileSync, spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -300,3 +301,4 @@ export async function runAut(
   if (failure) throw (failure as { error: unknown }).error;
   return collector.result({ wallMs: Date.now() - started, prods, aborted });
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

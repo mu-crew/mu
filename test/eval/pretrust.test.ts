@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Pre-trust with the outside world (tmux, the harness, its trust records) replaced: the dialog
 // sequence of claude and codex, the bounded wait, and which harnesses a case pre-trusts.
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -440,3 +441,4 @@ describe("trust records (read only)", () => {
 
 /** macOS: /var is /private/var; claude keys a project by its real path. */
 const claudeRealpath = (p: string): string => realpathSync(p);
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

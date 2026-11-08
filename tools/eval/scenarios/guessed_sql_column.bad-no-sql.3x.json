@@ -1,5 +1,7 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   { "calls": [{ "bash": "mu task list -w eval" }] },
   { "calls": [{ "bash": "mu task note s4 -w eval 'top owner: w2'" }] },
-  { "text": "w2 owns s4" }
+  { "text": "w2 owns s4" },
+  "RIG-CANARY-f8dc74a2239b"
 ]

@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import {
   chmodSync,
   existsSync,
@@ -13,6 +14,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ColdRow } from "../../tools/eval/cold-guess.ts";
 import type { ExposureSpec } from "../../tools/eval/exposure.ts";
 import type { NextCase, ProbeRow } from "../../tools/eval/nextstep.ts";
+import { privateStores } from "../../tools/eval/rig-private.ts";
 import {
   appendReviewDecision,
   appendReviewStop,
@@ -839,15 +841,16 @@ describe("variant patches", () => {
 
 // ---- isolation ----------------------------------------------------------------------------------
 
+const museums = (c: DenyContext): string[] =>
+  c.stores.filter((s) => s.rule === "museum").map((s) => s.dir);
+
 describe("designer isolation", () => {
   const ctx: DenyContext = {
     home: "/home/u",
     repo: "/home/u/src/mu",
-    worktrees: "/home/u/.local/state/mu-next/worktrees",
     surfaces: "/home/u/.cache/mu/eval/surfaces",
     packs: "/home/u/.cache/mu/eval/packs",
-    transcripts: "/home/u/.local/state/mu-next/eval-transcripts",
-    museum: ["/home/u/museum", "/home/u/src/museum"],
+    stores: privateStores("/home/u", "/home/u/src/museum"),
     ownPack: "/home/u/.cache/mu/eval/designers/c1_wait/opus/pack",
     ownDdir: "/home/u/.cache/mu/eval/designers/c1_wait/opus",
     allow: ["/home/u/.nvm/versions/node/v22.1.0"],
@@ -923,7 +926,7 @@ describe("designer isolation", () => {
       home: "/home/u",
       museumDir: "",
     });
-    expect(c.museum).toEqual(["/home/u/museum"]);
+    expect(museums(c)).toEqual(["/home/u/museum"]);
     expect(denyHits(`cat ${checkout}/src/db.ts`, c).map((h) => h.rule)).toEqual([
       "museum checkout",
     ]);
@@ -939,7 +942,7 @@ describe("designer isolation", () => {
       home: "/home/u",
       museumDir: "/opt/museum",
     });
-    expect(named.museum).toEqual(["/home/u/museum", "/opt/museum"]);
+    expect(museums(named)).toEqual(["/home/u/museum", "/opt/museum"]);
     expect(denyHits("cat /opt/museum/README.md", named).map((h) => h.rule)).toContain("museum");
   });
 
@@ -1001,7 +1004,7 @@ describe("designer isolation", () => {
     // opening that path is not
     expect(
       audit([call("bash", { command: "sqlite3 ~/.local/state/mu-next/mu.db .tables" })]),
-    ).toEqual(["under the real HOME"]);
+    ).toEqual(["mu state"]);
     // a result showing what the pack does not carry is a leak
     expect(audit([result("/home/u/.ssh/id_rsa")])).toEqual(["under the real HOME"]);
     expect(audit([call("write", { path: "/home/u/notes.md", content: "x" })])).toEqual([
@@ -1010,7 +1013,7 @@ describe("designer isolation", () => {
     expect(audit(["not json /home/u/.ssh"])).toEqual(["under the real HOME"]);
     // writing to a path the pack names is still an act outside the pack
     expect(audit([call("write", { path: "~/.local/state/mu-next/mu.db", content: "x" })])).toEqual([
-      "under the real HOME",
+      "mu state",
     ]);
   });
 
@@ -1376,3 +1379,4 @@ describe("rhoFromB5: the planning ICC from B5's base rows", () => {
     expect(rhoFromB5([...flat, ...rig], [], models).rho.c?.[HAIKU]).toBe(0.1);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

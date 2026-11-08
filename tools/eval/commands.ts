@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // run / matrix / report / check: the commands that drive scenarios. main.ts dispatches to these.
 import {
   appendFileSync,
@@ -32,6 +33,7 @@ import {
   resolveTools,
   which,
 } from "./harness.ts";
+import { hookRecords } from "./harness-observe.ts";
 import { armWatch, settleWatch, watchRealState } from "./isolation.ts";
 import { bindScenario, MIX_CASES, mixEnv, type PlanRow, planRows } from "./mix.ts";
 import { pretrust, pretrustTargets } from "./pretrust.ts";
@@ -311,7 +313,13 @@ export async function runOne(run: RunOne): Promise<RunResult> {
       };
     }
     // a run that read the rig (its scenario sources, judges, rows) is invalid, never a hit
-    const reads = rigReads(metrics.toolCalls, sandboxGuard(sb, o.log));
+    const reads = [
+      ...rigReads(metrics.toolCalls, sandboxGuard(sb, o.log)),
+      // a pane AUT has no tool stream: its hooks report a payload or transcript with the canary
+      ...hookRecords(sb)
+        .filter((r) => r.rigCanary === true)
+        .map((r) => `hook ${r.harness} ${r.event} (${r.agent ?? "?"}): rig canary`),
+    ];
     if (reads.length > 0) {
       verdict = { ...verdict, completed: false, rigReads: reads };
       verdict.notes.push(`rig read (invalid run): ${reads.slice(0, 3).join("; ")}`);
@@ -692,3 +700,4 @@ export async function runCheck(o: CheckOptions): Promise<number> {
 }
 
 export type { Scenario };
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

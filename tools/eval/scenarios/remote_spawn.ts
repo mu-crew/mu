@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Remote spawn: run a task with a pi worker on the ssh host "dev", bring the commit back, merge it,
 // clean up the remote working copy. The ssh host is the eval ssh shim (a directory on this machine).
 //
@@ -135,3 +136,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

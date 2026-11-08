@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Long notes thread: task big carries 60 notes. Note 1 is the brief; note 30 is a stale-bot
 // claim marked superseded; note 60 points back at the brief's SCOPE line. The metric is the token
 // cost of reading the thread (usage.total, muCalls in the run record), plus whether the AUT
@@ -102,3 +103,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

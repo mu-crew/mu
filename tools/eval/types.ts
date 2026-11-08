@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Shared types for the eval harness. Black box: nothing here imports src/ or extension/.
 
 /** Command dialect of a surface: the released 3.x verbs, or the mu-next verbs. Exactly these two. */
@@ -203,3 +204,4 @@ export interface RunResult {
   metrics: RunMetrics;
   verdict: Verdict;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

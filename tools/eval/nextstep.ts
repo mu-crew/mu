@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Next-step probe (spec docs/specs/2026-11-07-hill-r2-tournament.md §1, unit B2): a model gets the
 // skill (or not, per arm), a transcript generated live in a seeded sandbox that ends in one mu output,
 // and a goal; it answers with its next one to three commands; they run in the same sandbox, and the
@@ -42,7 +43,7 @@ import {
 import { nextReport } from "./nextstep-report.ts";
 import { type MuCall, muCalls } from "./observe.ts";
 import { maxSeq, type OpRow, opsSince } from "./ops.ts";
-import { rigGuard, rigReadsInCommands } from "./rig-guard.ts";
+import { canaryInOutputs, rigGuard, rigReadsInCommands } from "./rig-guard.ts";
 import { createSandbox } from "./sandbox.ts";
 import { surfaceId } from "./surface.ts";
 import type { Sandbox, Surface } from "./types.ts";
@@ -359,7 +360,12 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
     // an answer that reads the rig (scenario sources, judges, rows) is refused unrun: invalid
     const reads = rigReadsInCommands(
       ex.commands,
-      rigGuard({ surfaceRoot: o.surface.root, ownSandbox: sb.dir, home: sb.env.HOME }),
+      rigGuard({
+        surfaceRoot: o.surface.root,
+        ownSandbox: sb.dir,
+        home: sb.env.HOME,
+        cwd: sb.repoDir,
+      }),
     );
     if (reads.length > 0) {
       row.invalid = true;
@@ -375,6 +381,14 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
       gapMs: o.gapMs,
     });
     const calls = answerCalls(sb, t0);
+    // what the path rules missed: an output that carries a rig file's canary read the rig
+    const leaked = canaryInOutputs(runs.map((r) => `${r.stdout}${r.stderr}`));
+    if (leaked.length > 0) {
+      row.invalid = true;
+      row.rigReads = leaked;
+      row.why.push(`rig read: ${leaked.join("; ")}`);
+      return row;
+    }
     const ctx: NextCtx = {
       sb,
       state: st,
@@ -810,3 +824,4 @@ export async function nextSelftest(
 
 /** Default load gate: no new row while the 1-min loadavg exceeds 1.5 per core. */
 export const defaultMaxLoad = (): number => cpus().length * 1.5;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

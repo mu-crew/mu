@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Cold-guess probe (e_cold_guess): give a model ONLY `mu --help` (no skill, no tools) and a short
 // intent, take the one shell command it answers with, run that command in a seeded sandbox and
 // judge the STATE it left (cold-intents.ts), never its spelling. Not a scored scenario: it feeds
@@ -596,3 +597,4 @@ export async function runColdCheck(
 
 /** A judge needs no more than this to be run directly (tests). */
 export type { ColdCtx };
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

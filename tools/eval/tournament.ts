@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Tournament driver core (spec docs/specs/2026-11-07-hill-r2-tournament.md §4, unit B3b): the
 // control file, the n plan, its CMH power and the wall estimate, the R1/R2 job lists, and the review
 // stops. The scoring of a round, the ranking and the cut live in tournament-score.ts.
@@ -434,3 +435,4 @@ export function roundJobs(
     .sort((a, b) => (ms.get(b.j.caseId) ?? 0) - (ms.get(a.j.caseId) ?? 0) || a.i - b.i)
     .map(({ j }) => j);
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

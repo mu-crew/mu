@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -27,5 +28,6 @@
   },
   {
     "text": "Both checks are running; I will close the tasks when they answer."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

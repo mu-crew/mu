@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Judge-side queries over RunMetrics.events (the harness's timestamped lifecycle record) and the
 // family rule for guarantees only a candidate can give. Pure: no I/O. The observer only records;
 // nothing here repairs or injects anything.
@@ -124,3 +125,4 @@ export function lastJson(output: string): Record<string, unknown> | null {
   }
   return null;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

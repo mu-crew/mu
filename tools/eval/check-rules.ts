@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Pure rules of `main.ts check`: script file names and what a golden / bad run must show.
 import { existsSync, readdirSync } from "node:fs";
 import type { Family, Verdict } from "./types.ts";
@@ -67,3 +68,4 @@ export function goldenOk(v: Verdict): boolean {
 export function badFlagged(v: Verdict): boolean {
   return !v.completed || v.wrong.length > 0 || v.destructive.length > 0;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

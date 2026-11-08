@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Designer isolation (spec docs/specs/2026-11-07-hill-r2-tournament.md §3.2, unit B3b): the pack a
 // designer works in, its BRIEF.md and the refusal rules, the designer launch (empty HOME, provider
 // extension only, own session dir, a PATH without mu or museum), and the isolation audit of its
@@ -20,7 +21,9 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { Group, NextCase, St } from "./nextstep.ts";
 import { variantsOf } from "./nextstep.ts";
+import { type PrivateStore, privateStores } from "./rig-private.ts";
 import { launcherEnv, REAL_PI, systemPathDirs } from "./sandbox.ts";
+import { ancestor, commandPaths } from "./shell-paths.ts";
 import { cloneDir } from "./tournament-build.ts";
 import { parseManifest } from "./tournament-patch.ts";
 import type { Sandbox } from "./types.ts";
@@ -47,16 +50,10 @@ export interface DenyContext {
   home: string;
   /** The main checkout. */
   repo: string;
-  /** Crew worktrees: `~/.local/state/mu-next/worktrees/`. */
-  worktrees: string;
   surfaces: string;
   packs: string;
-  transcripts: string;
-  /**
-   * The museum store and the museum checkout (`EVAL_MUSEUM_DIR`, when set). Any other dir named
-   * `museum` that holds `skills/museum` is denied as a "museum checkout" wherever it lives.
-   */
-  museum: string[];
+  /** The private stores (rig-private.ts, shared with the AUT guard): transcripts, museum, mu state. */
+  stores: PrivateStore[];
   /** The session's own pack and its own `<ddir>`: the catch-all lets them through. */
   ownPack: string;
   ownDdir: string;
@@ -80,15 +77,12 @@ export function defaultDenyContext(o: {
 }): DenyContext {
   const home = o.home ?? homedir();
   const museumDir = o.museumDir ?? process.env.EVAL_MUSEUM_DIR;
-  const state = join(home, ".local", "state", "mu-next");
   return {
     home,
     repo: resolve(o.repo),
-    worktrees: join(state, "worktrees"),
     surfaces: join(home, ".cache", "mu", "eval", "surfaces"),
     packs: join(home, ".cache", "mu", "eval", "packs"),
-    transcripts: join(state, "eval-transcripts"),
-    museum: [join(home, "museum"), ...(museumDir ? [resolve(museumDir)] : [])],
+    stores: privateStores(home, museumDir),
     ownPack: resolve(o.ownPack),
     ownDdir: resolve(o.ownDdir),
     allow: [
@@ -236,78 +230,6 @@ function absoluteAncestors(
     .map((t) => ({ raw: t, path: resolve(t) }));
 }
 
-const climbs = (t: string): boolean => /(?:^|\/)\.\.(?:\/|$)/.test(t);
-
-/** Commands that read a tree from a start dir: for them a bare `/` is that dir. */
-const SEARCHES = new Set(["find", "grep", "egrep", "rg", "fd", "ls", "tree", "du", "ag"]);
-
-/** `p` is a proper ancestor of `dir` (`/` is one of every other dir). */
-const ancestor = (p: string, dir: string): boolean =>
-  p !== dir && (p === sep || dir.startsWith(p + sep));
-
-/**
- * The paths one bash command names, best effort (bash cannot be fully parsed; tools/eval/README.md
- * lists the forms this misses). Per segment (split on `;`, `&&`, `||`, `|`, `&`, newlines), `cd` and
- * `pushd` move a running cwd; `$PWD`, `${PWD}`, `$(pwd)` and `` `pwd` `` stand for it. A token that
- * climbs is resolved against the running cwd, and after a `cd` so is every relative token that looks
- * like a path (has a `/` or starts with `.`). A bare `/` counts only as a search's (`find`, `grep`, `rg`, `fd`,
- * `ls`, …) or `cd`'s argument (`tr / _` names no dir); a cwd above HOME is reached only by a
- * `cd` that names it. `cd` to
- * where the audit cannot follow (`~`, `-`, `$X`) makes the cwd unknown; a variable assigned a
- * climbing value (`D=..`) makes a token using it unknown too. `unresolved` holds the tokens that
- * climb from an unknown place: the audit counts each as a climb out.
- */
-export function commandPaths(
-  cmd: string,
-  start: string,
-): { paths: { raw: string; path: string }[]; unresolved: string[] } {
-  const paths: { raw: string; path: string }[] = [];
-  const unresolved: string[] = [];
-  const climbVars = new Set<string>();
-  let cwd: string | null = start;
-  for (const seg of cmd.split(/&&|\|\||[;\n|&]/)) {
-    const here: string | null = cwd;
-    const text =
-      here === null
-        ? seg
-        : seg.replace(/\$\(\s*pwd\s*\)|`\s*pwd\s*`|\$\{PWD\}|\$PWD(?![A-Za-z0-9_])/g, here);
-    const toks = text.split(/[\s"'`\\)(<>,]+/).filter((t) => t !== "");
-    const words: string[] = [];
-    for (const t of toks) {
-      const a = /^([A-Za-z_]\w*)=(.*)$/.exec(t);
-      if (a) {
-        if (climbs(a[2] ?? "")) climbVars.add(a[1] ?? "");
-        else climbVars.delete(a[1] ?? "");
-        if (a[2]) words.push(a[2]);
-      } else words.push(...t.split("=").filter((w) => w !== ""));
-    }
-    const head = words[0] === "builtin" || words[0] === "command" ? 1 : 0;
-    const isCd = words[head] === "cd" || words[head] === "pushd";
-    const isSearch = SEARCHES.has(basename(words[head] ?? ""));
-    const moved = here !== start;
-    for (const w of words) {
-      const vars = [...w.matchAll(/\$\{?([A-Za-z_]\w*)/g)].map((m) => m[1] ?? "");
-      if (vars.some((v) => climbVars.has(v))) {
-        unresolved.push(w);
-        continue;
-      }
-      if (/^[~$-]/.test(w)) continue;
-      if (w === "/" && !isSearch && !isCd) continue;
-      if (w.startsWith("/")) paths.push({ raw: w, path: resolve(w) });
-      else if (here === null) {
-        if (climbs(w)) unresolved.push(w);
-      } else if (climbs(w) || (moved && /^\.|\//.test(w)))
-        paths.push({ raw: w, path: resolve(here, w) });
-    }
-    if (!isCd) continue;
-    const dest = words.slice(head + 1).find((w) => w === "-" || !/^-[LPe@]*$/.test(w));
-    if (dest === undefined || /^[~$-]/.test(dest) || unresolved.includes(dest)) cwd = null;
-    else if (dest.startsWith("/")) cwd = resolve(dest);
-    else cwd = here === null ? null : resolve(here, dest);
-  }
-  return { paths, unresolved };
-}
-
 /**
  * Every deny-list hit in one text (§3.2 isolation audit). With `cwd` (a strict part: what the
  * designer did), relative paths that climb are resolved against it and checked like absolute ones.
@@ -332,13 +254,8 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
   if (checkout !== null) hits.push({ rule: "museum checkout", match: checkout, raw: checkout });
   const named: { rule: string; dir: string }[] = [
     { rule: "main checkout", dir: ctx.repo },
-    { rule: "crew worktrees", dir: ctx.worktrees },
     { rule: "built surfaces", dir: ctx.surfaces },
-    { rule: "eval transcripts", dir: ctx.transcripts },
-    { rule: "pi sessions", dir: join(ctx.home, ".pi", "agent", "sessions") },
-    { rule: "claude projects", dir: join(ctx.home, ".claude", "projects") },
-    { rule: "codex sessions", dir: join(ctx.home, ".codex", "sessions") },
-    ...ctx.museum.map((dir) => ({ rule: "museum", dir })),
+    ...ctx.stores,
   ];
   // the main checkout and the museum may live outside HOME: their literal form is a path of its own
   for (const n of named)
@@ -830,3 +747,4 @@ export function collectVariants(
   }
   return { ids, refused };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

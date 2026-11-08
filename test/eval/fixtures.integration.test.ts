@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Real mu + tmux: the hill-r2 fixtures (spec §2) on the built checkout. Skips without dist/ or tmux.
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -194,3 +195,4 @@ describe.skipIf(!ready)("hill-r2 fixtures", () => {
     ]);
   }, 60_000);
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

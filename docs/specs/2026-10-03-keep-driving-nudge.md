@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Keep-driving nudge: one prompt when an orchestrator stops early
 
 Status: shipped (unreleased). Implemented 2026-10-03; see [Deviations](#deviations-during-implementation)
@@ -164,3 +166,5 @@ once-per-prompt flag.
   unrefuted `<ws>/<id>`, and `mu log --kind nudge 'refute: ...'`. No
   `continue`: it informs, and the orchestrator decides. `MU_NUDGE=0`
   turns it off.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

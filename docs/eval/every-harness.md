@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Every harness first-class: evals E1–E7 (U24)
 
 Spec: [every harness first-class](../specs/2026-11-05-every-harness-first-class.md), unit U24.
@@ -535,3 +537,5 @@ criterion; `wrong` and `destructive` are the judge's entries, verbatim;
 | codex  | codex, pi, claude@dev, pi@dev | 2026-11-06 | default                   | yes       | none                | 258 s | 66 mu calls                                                                                       |
 | pi     | codex, pi, claude@dev, pi@dev | 2026-11-06 | anthropic/claude-opus-5-5 | yes       | none                | 210 s | 21 mu calls, 5 failed (noted)                                                                     |
 | muse   | codex, pi, claude@dev, pi@dev | 2026-11-07 | default                   | yes       | none                | 583 s | 59 mu calls, 8 failed (noted); Muse has no Stop hook; it kept driving on the prompt's instruction |
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

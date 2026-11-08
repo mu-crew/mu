@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // E6 interrupt and resend (spec "Every harness first-class", U24, D4): two workers, w1 on claude
 // and w2 on codex, were briefed with a wrong instruction and are busy in a long turn (eval-slow, a
 // 20-minute job). The orchestrator interrupts each and sends the corrected instruction once; both
@@ -199,3 +200,4 @@ function e6(workers: readonly string[]): Scenario {
 }
 
 export default e6(DEFAULT);
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

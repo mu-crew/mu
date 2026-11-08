@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -186,5 +187,6 @@
   },
   {
     "text": "All 12 claims were checked independently; confirmed tasks are done, refuted ones rejected."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

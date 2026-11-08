@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Tournament statistics (spec docs/specs/2026-11-07-hill-r2-tournament.md §4.1-4.2). Pure: no I/O.
 //
 // Every test here is one-sided. A 2×2 table is (variant hits x1 of n1, base hits x2 of n2).
@@ -382,3 +383,4 @@ export function solvePlan(o: PlanInput): Plan {
     reached,
   };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

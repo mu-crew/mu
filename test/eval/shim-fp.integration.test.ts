@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The sandbox mu shim's fp(): the machine-local table checksums observe.ts localWrites diffs.
 // Real bash + sqlite3, so integration tier.
 import { execFileSync, spawnSync } from "node:child_process";
@@ -76,3 +77,4 @@ describe("muShim fp()", () => {
     expect(ck(after)).not.toBe(ck(before));
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

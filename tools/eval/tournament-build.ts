@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Tournament variants (spec docs/specs/2026-11-07-hill-r2-tournament.md §3.1, unit B3b): a variant is
 // a patch on a copy of the built base surface. This file builds the copy, derives the variant's
 // markers and behaviour signature from the patch, decides admission, and hashes the frozen judges
@@ -564,3 +565,4 @@ export function judgesHash(repo: string): { hash: string; files: string[] } {
     rmSync(dir, { recursive: true, force: true });
   }
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

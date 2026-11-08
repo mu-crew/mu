@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Dogfood 1: isolated checkout, one Move, one pi orchestrator
 
 Task `v_dogfood`, part A (the loop on merged surfaces; the full run is part B). Checkout at `1f19c8f` + build, run as `mun`, never installed. Host: linux-host, 16 cores, node 24.22.1 (the node on PATH for `mun`), tmux 3.7c, 2026-10-26.
@@ -171,3 +173,5 @@ Delegates and no-client, settle, hints, `mu wait` through the agent, CLOSE block
 ## Reproduce
 
 Files in `/tmp/dogfood1` (throwaway, not committed): `env.sh`, `bin/mun`, `piwrap.sh`, `move.py`, `orch-prompt.md`, `bench.sh`, `bench.txt`, session jsonl under `sessions/`. The session logs and `orch-calls.txt` are the source of the quoted tails.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   { "calls": [{ "bash": "git checkout -q -B main main~1" }] },
   {
     "calls": [
@@ -17,5 +18,6 @@
       }
     ]
   },
-  { "text": "done" }
+  { "text": "done" },
+  "RIG-CANARY-f8dc74a2239b"
 ]

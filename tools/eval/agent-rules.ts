@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Pure helpers for scenario judges over the driver's runs.log. (Judging what mu's verbs did is
 // observe.ts: effects in the ops log, the repo and the sandbox's mu-call record, not their spelling.)
 
@@ -17,3 +18,4 @@ export function tasksRunTwice(runs: RunEntry[]): string[] {
     .filter(([, a]) => a.size > 1)
     .map(([t, a]) => `${t} ran under ${[...a].join(" and ")}`);
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

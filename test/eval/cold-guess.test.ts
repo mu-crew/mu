@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { describe, expect, it } from "vitest";
 import type { ColdRow } from "../../tools/eval/cold-guess.ts";
 import {
@@ -303,3 +304,4 @@ describe("modelEnv", () => {
     });
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

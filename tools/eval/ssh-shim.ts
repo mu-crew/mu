@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The `ssh` of a sandbox (installed by fixtures.sshShim as <dir>/bin/ssh). It "connects" to hosts
 // that live on this machine: per-host config in <sandbox>/hosts/<host>/shim.json.
 // Pipes are never used: with -t inside a tmux pane the remote command gets the pane's TTY.
@@ -141,3 +142,4 @@ main(process.argv.slice(2)).then(
     process.exit(255);
   },
 );
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

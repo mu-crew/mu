@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Real mu + tmux: the cold-guess judges accept their golden and reject the bad guess and a no-op,
 // on the built checkout (the `next` family). Skips without dist/ or tmux. Zero model cost.
 import { execFileSync } from "node:child_process";
@@ -118,3 +119,4 @@ describe.skipIf(!ready)("execGuess", () => {
     }
   }, 30_000);
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

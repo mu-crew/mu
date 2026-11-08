@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A note whose text holds quote and shell metacharacters. The AUT must pass it literally (stdin
 // heredoc); a double-quoted argument expands $HOME and runs `pwd`. Measures quoting mistakes and
 // guessed-flag errors ("unknown option") on the way to the right call.
@@ -69,3 +70,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

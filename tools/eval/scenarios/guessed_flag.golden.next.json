@@ -1,9 +1,11 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       { "bash": "mu task note g1 -w eval - <<'EOF'\nit's fine: $HOME and `pwd` stay literal\nEOF" }
     ]
   },
   { "calls": [{ "bash": "mu task close g1 -w eval --evidence 'note added'" }] },
-  { "text": "Note added and g1 closed." }
+  { "text": "Note added and g1 closed." },
+  "RIG-CANARY-f8dc74a2239b"
 ]

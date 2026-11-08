@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -84,5 +85,6 @@
   },
   {
     "text": "All six workers finished."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

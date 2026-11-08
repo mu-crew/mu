@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -13,5 +14,6 @@
       }
     ]
   },
-  { "text": "w2 owns s4; note added." }
+  { "text": "w2 owns s4; note added." },
+  "RIG-CANARY-f8dc74a2239b"
 ]

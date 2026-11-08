@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -15,5 +16,6 @@
   },
   {
     "text": "plan1 rejected."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

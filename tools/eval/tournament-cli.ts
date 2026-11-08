@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // `node tools/eval/main.ts tournament <sub> ...`: the tournament driver (spec
 // docs/specs/2026-11-07-hill-r2-tournament.md §3-§4, unit B3b). main.ts dispatches here and nowhere
 // else. Order per group: freeze → pack → design → audit → build → r1 → r2 → r3 → r4 (→ final,
@@ -660,3 +661,4 @@ export async function tournamentCli(args: string[]): Promise<number> {
       return 2;
   }
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

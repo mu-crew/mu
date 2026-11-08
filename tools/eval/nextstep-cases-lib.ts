@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Shared seed and judge helpers of the next-step cases (nextstep-cases*.ts, spec
 // docs/specs/2026-11-07-hill-r2-tournament.md §2). Seeds go through `mu(sb, …)` (the surface's cli,
 // not the recording shim), so no seed call is a call anyone made; lead-ins and answers go through
@@ -250,3 +251,4 @@ export const driverNonce = (sb: Sandbox): string => {
   const f = join(sb.workerDir, "nonce");
   return existsSync(f) ? readFileSync(f, "utf8").trim() : "";
 };
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

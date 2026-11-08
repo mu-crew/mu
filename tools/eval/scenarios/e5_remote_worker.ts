@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // E5 remote worker (spec "Every harness first-class", U24, D11): r1 runs on a claude worker on the
 // ssh host dev (the eval ssh shim: a directory on this machine), reporting through the remote
 // path (its hooks write the remote area on dev; mu reads it through the host's exec template);
@@ -55,3 +56,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

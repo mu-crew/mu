@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // What the eval observer hook (hook-observer.ts) recorded: one normalised record per hook event of
 // every hook-harness agent, real or fake, in <workers>/hooks.log. Judges read harness-level facts
 // here (which harness an agent ran, when its turns started and stopped, an interrupt, the text a
@@ -38,6 +39,8 @@ export interface HookRec {
   model?: string;
   /** Muse's `model_provider`, when the payload names one. */
   provider?: string;
+  /** The payload or its transcript carried a rig file's canary (hook-observer.ts): a rig read. */
+  rigCanary?: true;
 }
 
 const CAP = 2000;
@@ -189,3 +192,4 @@ export function modelFamily(model: string): string {
   if (/gemini|google/.test(m)) return "google";
   return m.split("/")[0] || "unknown";
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

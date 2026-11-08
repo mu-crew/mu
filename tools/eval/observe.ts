@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Effect observers for judges. Record-only: nothing here repairs, injects or changes a call.
 //
 // The sandbox's `mu` shim (sandbox.ts) appends one line per invocation to <workers>/mu-calls.log:
@@ -746,3 +747,4 @@ export const endedByEvent = (
   muIn(sb, run, call).some(
     (m) => m.end >= t - 300 && names(m.argv, agent) && !timedOut(muOut(sb, m)),
   );
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

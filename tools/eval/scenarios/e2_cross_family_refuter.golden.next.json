@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -50,5 +51,6 @@
   },
   {
     "text": "A refuter of another model family refuted the f1 finding; the verdict is recorded and f1 is closed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

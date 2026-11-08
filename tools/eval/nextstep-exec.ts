@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Next-step probe, the sandbox side: run a lead-in as the orchestrator and render what it printed,
 // run an answer's commands, and observe them (spec docs/specs/2026-11-07-hill-r2-tournament.md
 // §1.1-1.3). Record-only: nothing here repairs or changes a call. `shown`/`shownLine` decide
@@ -385,3 +386,4 @@ export async function destructiveEntries(ctx: NextCtx): Promise<ProbeRow["destru
     out.push({ entry: `LOST WORK: ${e}`, source: "lostWork", callIdx: null });
   return out;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

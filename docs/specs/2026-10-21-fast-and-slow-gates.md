@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Fast and slow gates, and test upkeep as routine work
 
 Status: implemented in mu `10d758c`. Swaywardlock pilot commits `90c3f1c`
@@ -227,3 +229,5 @@ and test-coverage tooling.
   are candidates for either side.
 - Whether the gate record should carry the commit sha as well as the
   tree hash, for readability. It costs nothing, so probably yes.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

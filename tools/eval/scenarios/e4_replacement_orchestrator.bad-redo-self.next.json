@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -49,5 +50,6 @@
   },
   {
     "text": "c1 and c2 are on main and closed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

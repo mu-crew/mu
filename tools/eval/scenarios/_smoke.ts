@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Template scenario: copy this shape. Underscore-prefixed, so it is listed only with --include-underscore.
 import { gateScript, makeRepo, seedViaMu, workerTask, writeWorkerDriver } from "../fixtures.ts";
 import { verdictFx } from "../observe.ts";
@@ -34,3 +35,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

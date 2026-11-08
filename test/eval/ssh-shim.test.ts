@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { describe, expect, it } from "vitest";
 import {
   parseSshArgs,
@@ -128,3 +129,4 @@ describe("remoteEnv", () => {
     expect(env.PATH).toBe(`${HOST}/bin:/sb/bin:/usr/bin`);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

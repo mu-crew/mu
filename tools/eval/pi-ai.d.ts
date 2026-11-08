@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // pi aliases "@earendil-works/pi-ai" for extensions at runtime only; this repo has no dependency
 // on it. Ambient declaration of the slice faux.ts uses. Do not add pi-ai to package.json.
 declare module "@earendil-works/pi-ai" {
@@ -40,3 +41,4 @@ declare module "@earendil-works/pi-ai" {
     options?: { stopReason?: "stop" | "toolUse" | "error" | "aborted"; errorMessage?: string },
   ): FauxMessage;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

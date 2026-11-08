@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Outside a multiplexer: the caller is a plain shell (t3code, an IDE terminal, CI): TMUX, TMUX_PANE
 // and HERDR_ENV are unset and MU_MUX is blank (setup asserts it; the sandbox env is a whitelist, and
 // the sandbox's own MU_MUX=tmux override is blanked so mu runs the detection a plain shell runs,
@@ -153,3 +154,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

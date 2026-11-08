@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Dogfood: mu with codex and cursor-agent
 
 Task `dogfood_harnesses`. Checkout `14a4f53` + `npm run build`, never installed.
@@ -160,3 +162,5 @@ for it, and the 3.x DB under `/var/tmp/m4/state/mu` (moved to
 mitigations. `command -v mu` / `mu --version` / `MU_SYNC_DIR` were checked
 inside both harnesses after the alert (4.0.0-next.0, blank). Every other
 command ran against the private tmux server `m4` only.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

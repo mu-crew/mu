@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A fake claude, codex, cursor-agent or Muse Code for `check`: a terminal program that reads its
 // pane like the real one and fires the real one's hooks, from the real one's config files, with
 // the real one's payloads (fake-payloads.ts). mu, murmur, muzzle and the eval observer hook run for
@@ -406,3 +407,4 @@ async function main(): Promise<void> {
 }
 
 void main();
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

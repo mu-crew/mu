@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Pure helpers of the ssh shim (fixtures.sshShim): argv parsing like OpenSSH, the socket-path
 // rewrite, and the remote environment. No I/O, so vitest covers them.
 
@@ -121,3 +122,4 @@ export function remoteEnv(
   env.PATH = `${hostRoot}/bin:${shimEnv.PATH ?? ""}`;
   return env;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

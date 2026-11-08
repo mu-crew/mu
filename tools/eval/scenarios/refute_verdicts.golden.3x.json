@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -33,5 +34,6 @@
   },
   {
     "text": "The claim was refuted; plan1 is closed as rejected and nothing was renamed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

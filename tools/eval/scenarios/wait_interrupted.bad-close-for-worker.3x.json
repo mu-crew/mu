@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -59,5 +60,6 @@
   },
   {
     "text": "i1 and i2 were done by their workers; result.txt has their evidence."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

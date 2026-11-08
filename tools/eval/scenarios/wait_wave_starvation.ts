@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A delegate wave while four workers run: the orchestrator must keep working (never end its turn
 // while a worker runs) and still act on every delegate verdict (never starve them).
 //
@@ -258,3 +259,4 @@ export function wave(N: number, id: string): Scenario {
 }
 
 export default wave(12, "wait_wave_starvation");
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

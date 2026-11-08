@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Read a worker's result and act on it: worker-1's final text asks for t2 to be reopened.
 //
 // t1 is a worker task whose report is `REPORT: reopen t2 (<nonce>)`; t2 and t3 are CLOSED. The AUT
@@ -126,3 +127,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

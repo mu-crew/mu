@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -32,5 +33,6 @@
   },
   {
     "text": "d1 and d2 are merged into main and closed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

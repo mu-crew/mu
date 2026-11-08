@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The pane runner's crash-and-replace step and the pi AUT's two phases, with the outside world
 // (mu, murmur, tmux, signals, the rpc runner) replaced: no tmux, no harness, no sleeps.
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -342,3 +343,4 @@ describe("trustDialogKeys", () => {
     expect(trustDialogKeys("I trust you will merge it")).toBeNull();
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

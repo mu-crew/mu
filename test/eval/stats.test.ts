@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { describe, expect, it } from "vitest";
 import {
   cmh,
@@ -249,3 +250,4 @@ describe("n plan solver", () => {
     expect(p.nEff).toBeGreaterThanOrEqual((0.8 * 42) / 0.6 - 1e-9);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

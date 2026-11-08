@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Synthetic end states for the hook-harness case judges (tools/eval/scenarios/e*_*.ts), so every
 // judge's pass criterion is pinned at zero cost and without tmux: a git repo with the workers'
 // commits, a DB with the ops a run leaves, runs.log, the observer's hooks.log, the main-commit log
@@ -319,3 +320,4 @@ export function makeHarnessWorld(spec: WorldSpec): Sandbox {
   };
   return { dir, env, workerDir, repoDir, dbPath, tmuxSocket: "x" } as unknown as Sandbox;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

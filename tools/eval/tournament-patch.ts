@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Tournament patches (spec docs/specs/2026-11-07-hill-r2-tournament.md §3.1, unit B3b): the variant
 // manifest, the unified-diff parser and the changed strings of a patch (literal segments and skill
 // word runs) that markers and the length cap are derived from. Pure text; tournament-build.ts uses it.
@@ -279,3 +280,4 @@ export function changedStrings(files: readonly FilePatch[]): {
   }
   return { changed, removed };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

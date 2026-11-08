@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Read-only end-state queries on the sandbox DB. Core columns only, so one probe reads 3.x and
 // mu-next DBs alike. Every call opens the DB read-only and closes it again: no lock is held
 // between a judge's queries and the AUT's writes.
@@ -148,3 +149,4 @@ export function openProbe(sb: Sandbox): Probe {
     close() {},
   };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

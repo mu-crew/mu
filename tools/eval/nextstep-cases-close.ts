@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Next-step cases of group c2 (close preview) and c5 (outcome wording): spec §2, cases 2, 9, 10.
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -374,3 +375,4 @@ export const CLOSE_CASES: NextCase[] = [
   delegateNoVerdict,
   closeAlreadyClosed,
 ];
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

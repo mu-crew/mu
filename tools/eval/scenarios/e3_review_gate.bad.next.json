@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -78,5 +79,6 @@
   },
   {
     "text": "i1 is merged and reviewed; ship is closed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

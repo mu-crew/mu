@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Real mu + tmux: `nextstep check` (every §2.3 row of every untimed case) and `nextstep selftest`
 // (the whole path with the scripted evalfaux models, on the pilots) on the built checkout. Zero
 // model cost. Skips without dist/, tmux or zsh (the notes_multi pilot runs under zsh). The timed
@@ -103,3 +104,4 @@ describe.skipIf(!ready)("nextstep on the built checkout", () => {
     expect(code).toBe(0);
   }, 240_000);
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

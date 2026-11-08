@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -22,5 +23,6 @@
   },
   {
     "text": "worker-1 asked for t2 to be reopened; t2 is open again."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

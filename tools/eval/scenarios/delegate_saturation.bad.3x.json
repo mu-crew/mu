@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -144,5 +145,6 @@
   },
   {
     "text": "All 12 claims are checked and closed as done."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

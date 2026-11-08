@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -177,8 +178,12 @@ describe("hook-harness cases (e1_* .. e7_*)", () => {
       );
       expect(new Set(bodies).size).toBe(bads.length);
       for (const f of files) {
-        const steps = JSON.parse(readFileSync(join(dir, f), "utf8")) as Record<string, unknown>[];
-        for (const s of steps)
+        const steps = JSON.parse(readFileSync(join(dir, f), "utf8")) as (
+          | Record<string, unknown>
+          | string
+        )[];
+        // a string element is the rig canary (rig-private.ts), never a step
+        for (const s of steps.filter((x) => typeof x !== "string"))
           expect(
             ["calls", "text", "die"].some((k) => k in s),
             f,
@@ -245,3 +250,4 @@ describe("hook-harness cases (e1_* .. e7_*)", () => {
     expect(autPhaseSteps(steps as FauxStep[], 1)).toEqual(steps);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

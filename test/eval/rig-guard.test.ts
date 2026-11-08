@@ -1,11 +1,14 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // rig-guard.ts: an AUT tool call (or a probe answer) that names the rig, its rows or another
 // sandbox is a rig read; its own sandbox, the surface's product files and a sandbox `~` are not.
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BLOCKED,
+  canaryInOutputs,
   RIG_REPO,
   redactRig,
   rigCheckouts,
@@ -15,13 +18,17 @@ import {
   rigReadsInCommands,
   stageRig,
   TRANSCRIPTS_DIR,
+  WITHHELD,
 } from "../../tools/eval/rig-guard.ts";
+import { RIG_CANARY, stripCanary } from "../../tools/eval/rig-private.ts";
 import type { ToolCall } from "../../tools/eval/types.ts";
 
 const own = "/tmp/mu-eval-1-2-abc123";
 const surfaceRoot = join(homedir(), ".cache", "mu", "eval", "surfaces", "hill2-base");
 const sandboxHome = `${own}/home`;
 const guard = rigGuard({ surfaceRoot, ownSandbox: own, home: sandboxHome });
+/** Without the private stores: the checkout's parent is a store here (crew worktrees), not under /tmp. */
+const noStores = { ...guard, stores: [] };
 
 const call = (name: string, args: Record<string, unknown>, output = ""): ToolCall => ({
   id: "x",
@@ -97,9 +104,9 @@ describe("rigReads", () => {
       call("read", { path: `${surfaceRoot}/skills/mu/SKILL.md` }),
       bash(`node ${surfaceRoot}/dist/cli.js --help`),
       bash("ps aux | grep eval", `u 1 node ${RIG_REPO}/tools/eval/main.ts r4 --surface x`),
-      bash(`ls ${RIG_REPO}x`),
     ];
     expect(rigReads(calls, guard)).toEqual([]);
+    expect(rigReads([bash(`ls ${RIG_REPO}x`)], noStores)).toEqual([]);
   });
 
   it("drops a root that holds the run's own sandbox (a log root of /tmp)", () => {
@@ -156,9 +163,144 @@ describe("stageRig", () => {
     dir = mkdtempSync(join(tmpdir(), "rig-stage-"));
     const p = stageRig(dir, "fake-harness.ts");
     expect(p).toBe(join(dir, ".rt", "lib", "fake-harness.ts"));
-    for (const f of ["fake-harness.ts", "fake-payloads.ts", "faux-steps.ts"])
-      expect(readFileSync(join(dir, ".rt", "lib", f), "utf8")).toBe(
-        readFileSync(join(RIG_REPO, "tools", "eval", f), "utf8"),
-      );
+    for (const f of ["fake-harness.ts", "fake-payloads.ts", "faux-steps.ts"]) {
+      const copy = readFileSync(join(dir, ".rt", "lib", f), "utf8");
+      // the sandbox's own copy carries no canary: reading it reads no rig file
+      expect(copy).toBe(stripCanary(readFileSync(join(RIG_REPO, "tools", "eval", f), "utf8")));
+      expect(copy).not.toContain(RIG_CANARY);
+    }
   });
 });
+
+describe("the canary backstop", () => {
+  const parent = dirname(RIG_REPO);
+  const co = basename(RIG_REPO);
+  const faux = readFileSync(join(RIG_REPO, "tools", "eval", "faux.ts"), "utf8");
+
+  it("every rig file carries the canary on its first and last line", () => {
+    const files = execFileSync(
+      "git",
+      ["-C", RIG_REPO, "ls-files", "tools/eval", "test/eval", "docs/eval", "docs/specs"],
+      { encoding: "utf8" },
+    )
+      .split("\n")
+      // a file snapshot is the exact bytes of a synthetic report: no line to spare
+      .filter((f) => f !== "" && f !== "test/eval/__snapshots__/tournament-report.md");
+    expect(files.length).toBeGreaterThan(100);
+    const missing = files.filter((f) => {
+      const lines = readFileSync(join(RIG_REPO, f), "utf8").trimEnd().split("\n");
+      return (
+        !(lines[0]?.includes(RIG_CANARY) || lines[1]?.includes(RIG_CANARY)) ||
+        !(lines.at(-1)?.includes(RIG_CANARY) || lines.at(-2)?.includes(RIG_CANARY))
+      );
+    });
+    expect(missing).toEqual([]);
+  });
+
+  it("an output that carries the canary is a rig read, however the path was spelled", () => {
+    // the reviewer's four evasions of the path rules; each printed faux.ts whole
+    const evasions = [
+      `cd ${parent} && cd ${co} && cd tools && cd eval && cat faux.ts`,
+      `cd ${parent} && git -C ${co} show HEAD:tools/eval/faux.ts`,
+      `cat ${parent}/${co.slice(0, -1)}?/tool?/eva?/faux.ts`,
+      `ln -s ${parent} y && cd y/${co}/tools && cat eval/faux.ts`,
+    ];
+    const r = rigReads(
+      evasions.map((c) => bash(c, faux)),
+      guard,
+    );
+    expect(r).toHaveLength(4);
+    for (const line of r) expect(line).toContain("rig canary in output");
+    // the glob names no rig path: only the canary sees it
+    expect(rigReads([bash(evasions[2] ?? "", "")], noStores)).toEqual([]);
+    expect(rigReads([bash(evasions[2] ?? "", faux)], noStores)).toEqual([
+      "#0 bash: rig canary in output",
+    ]);
+  });
+
+  it("a result aut-guard withheld for its canary still marks the run", () => {
+    expect(rigReads([bash("cat x", WITHHELD)], guard)).toEqual(["#0 bash: rig canary in output"]);
+  });
+
+  it("a probe answer's output with the canary is a read", () => {
+    expect(canaryInOutputs(["ok", `x\n${RIG_CANARY}\n`])).toEqual([
+      "command 2: rig canary in output",
+    ]);
+  });
+});
+
+describe("the path rules", () => {
+  const parent = dirname(RIG_REPO);
+  const co = basename(RIG_REPO);
+
+  it("match a relative tools/eval or test/eval token", () => {
+    expect(rigInInput({ command: `git -C x show HEAD:tools/eval/faux.ts` }, guard)).toEqual([
+      "tools/eval",
+    ]);
+    expect(rigInInput({ command: "cat tools/eval/scenarios/x.ts" }, guard)).toEqual(["tools/eval"]);
+    expect(rigInInput({ command: "ls ./test/eval" }, guard)).toEqual(["test/eval"]);
+    expect(rigInInput({ command: "ls mytools/evaluate" }, guard)).toEqual([]);
+    expect(rigReads([bash("grep -rn x .", "./tools/eval/scenarios/x.ts:3: y")], guard)).toEqual([
+      "#0 bash: rig file in output",
+    ]);
+  });
+
+  it("follow a bash command's cd chain and its relative paths after a cd", () => {
+    expect(
+      rigInInput(
+        { command: `cd ${parent} && cd ${co} && cd tools && cd eval && cat faux.ts` },
+        guard,
+      ),
+    ).toEqual([RIG_REPO]);
+    expect(rigInInput({ command: `cd ${parent}; cat ./${co}/package.json` }, guard)).toEqual([
+      RIG_REPO,
+    ]);
+    expect(rigInInput({ command: `cd ${parent} && cat $PWD/${co}/x` }, guard)).toEqual([RIG_REPO]);
+    expect(
+      rigInInput(
+        { command: `ln -s ${parent} y && cd y/${co}/tools && cat eval/faux.ts` },
+        noStores,
+      ),
+    ).toEqual(["tools/eval"]);
+    expect(rigReadsInCommands([`cd ${parent} && cd ${co} && ls`], guard)).toEqual([
+      `command 1: ${RIG_REPO}`,
+    ]);
+    // inside the sandbox, a cd is fine
+    expect(rigInInput({ command: `cd ${own}/repo && cd src && cat a.ts` }, guard)).toEqual([]);
+  });
+
+  it("cover the private stores shared with the designer deny list", () => {
+    const live = rigGuard({ surfaceRoot, ownSandbox: own, home: homedir() });
+    const stores = [
+      ".pi/agent/sessions/x.jsonl",
+      ".claude/projects/p/s.jsonl",
+      ".codex/sessions/2026/s.jsonl",
+      "museum/db",
+      ".local/state/mu-next/mu.db",
+    ];
+    for (const p of stores) {
+      expect(rigInInput({ command: `cat ${join(homedir(), p)}` }, guard)).toHaveLength(1);
+      expect(rigInInput({ command: `cat ~/${p}` }, live)).toHaveLength(1);
+      // a sandbox HOME's own ~/.pi is not the user's
+      expect(rigInInput({ command: `cat ~/${p}` }, guard)).toEqual([]);
+    }
+    const line = `${join(homedir(), ".pi", "agent", "sessions", "s.jsonl")}:12: holdout text`;
+    expect(rigReads([bash("grep -rn x / 2>/dev/null", line)], guard)).toEqual([
+      "#0 bash: rig file in output",
+    ]);
+    expect(redactRig(line, guard).cut).toBe(1);
+  });
+
+  it("name a root once, by its realpath, however it is spelled (/tmp is /private/tmp)", () => {
+    const d = mkdtempSync(join(tmpdir(), "rig-spell-"));
+    try {
+      const real = realpathSync(d);
+      const g = rigGuard({ ownSandbox: own, home: sandboxHome, extra: [d] });
+      const other = real.startsWith("/private/") ? real.slice("/private".length) : real;
+      expect(rigInInput({ command: `cat ${real}/x ${other}/y ${d}/z` }, g)).toEqual([real]);
+    } finally {
+      rmSync(d, { recursive: true, force: true });
+    }
+  });
+});
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

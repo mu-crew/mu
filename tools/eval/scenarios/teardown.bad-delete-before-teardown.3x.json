@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -22,5 +23,6 @@
   },
   {
     "text": "eval is gone."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

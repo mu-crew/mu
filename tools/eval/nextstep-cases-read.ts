@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Next-step cases of groups c3 (notes) and c4 (agent read), and the guards (spec §2, cases 6, 8,
 // 13, 14). Nothing is pending at t0 in any of them: no worker runs.
 import { WS } from "./cold-intents.ts";
@@ -288,3 +289,4 @@ const findingGuess: NextCase = {
 };
 
 export const READ_CASES: NextCase[] = [notesReportRead, agentReadText, sqlNameGuess, findingGuess];
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,6 +1,8 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   { "calls": [{ "bash": "mu task add auth_refresh -w eval -t 'auth refresh' -i 50 -e 0.5" }] },
   { "calls": [{ "bash": "mu task note auth_refresh -w eval 'checked by eval'" }] },
   { "calls": [{ "bash": "mu task close auth_refresh -w eval --evidence 'checked by eval'" }] },
-  { "text": "done" }
+  { "text": "done" },
+  "RIG-CANARY-f8dc74a2239b"
 ]

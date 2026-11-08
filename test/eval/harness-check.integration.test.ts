@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The hook-harness cases end to end at zero cost: a fake claude orchestrator in a pane of the
 // sandbox's private tmux server, fake claude and codex workers that fire their hooks through the
 // worktree murmur and mu builds, and the real judge: every case under a claude orchestrator, and
@@ -110,3 +111,4 @@ describe.skipIf(!ready)("check: hook-harness cases on fake harnesses", () => {
     },
   );
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

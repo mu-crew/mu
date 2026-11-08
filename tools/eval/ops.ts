@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Ops-log end-state helpers shared by judges. The ops log records every write whoever made it (mu
 // verb, `mu sql`, retitle, close+reopen). A judge snapshots maxSeq at the end of setup and asserts
 // that the ops added since touch only the task keys the scenario allows.
@@ -88,3 +89,4 @@ export function ownerOpMs(ops: OpAt[]): number[] {
     })
     .map((o) => o.ms);
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

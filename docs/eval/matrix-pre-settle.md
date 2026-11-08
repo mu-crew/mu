@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # mu-next vs 3.13.3: full matrix, pre-settle snapshot
 
 The first full matrix on the merged mu-next surface (worktree build at 682672a, family `next`) against `v3.13.3` (family `3x`). Settings: haiku-5-5 and sonnet-5-5, 3 reps, `--concurrency 3`, default caps, holdouts included. This is a measurement, not tuning. `v_eval_next` re-runs it after settle, hints and the skill.
@@ -94,3 +96,5 @@ Evidence is from the stripped jsonl (`metrics.toolCalls[].args.command`, `verdic
 - `wait_receipt_race` (holdout) has only 3x scripts. On next its native guarantees are scored as wrong when missed, but no next golden proves the judge can pass there. Next completes 1/3 (haiku) and 2/3 (sonnet), so it can pass.
 - `no_mux` passes 3/3 everywhere, yet logs 6 wrong per model on next: with no mux present, `mu state -w` refuses with an `{"ok":false,"error":"NoMultiplexerError"}` JSON body on stdout and nothing on stderr. The other verbs print one stderr line naming the install. `check` flags the same on the next golden (`no_mux golden ok FAILED`). This is a real next defect.
 - Per-cell N/A legend (3x missing a native guarantee) and the harness's own table: run `node tools/eval/main.ts report <rows>.jsonl`.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

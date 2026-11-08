@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Worker mixes and the sampled live plan of the hook-harness cases (E1-E7, spec "Every harness
 // first-class", U24). A case with a `mix` (E1, E3, E4, E6) takes its worker harnesses from the run
 // (`--workers h1,h2`); its prompt, title and judge name the bound harnesses (Scenario.bind). The
@@ -181,3 +182,4 @@ export function planCoverage(
   }
   return out;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

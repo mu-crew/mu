@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Pure half of the fake harness binaries (fake-harness.ts): which config files each harness reads
 // its hooks from, which handlers an event runs, the payload each event carries, and what a hook's
 // reply means. No I/O, so vitest pins every rule. Black box: nothing here imports src/.
@@ -337,7 +338,7 @@ export interface PayloadCtx {
   command?: string;
 }
 
-/** A transcript path of the harness's form, under the given home (never read by anything). */
+/** A transcript path of the harness's form, under the given home (nothing writes it). */
 function transcript(h: FakeHarness, c: PayloadCtx): string | null {
   if (h === "claude")
     return join(c.home, ".claude", "projects", c.cwd.replace(/[/.]/g, "-"), `${c.sessionId}.jsonl`);
@@ -702,3 +703,4 @@ export class LineEditor {
     return out;
   }
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

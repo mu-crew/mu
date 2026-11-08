@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Generic wrong/destructive classifiers. Scenario-specific checks go in verdict()'s `extra`.
 import { isMuCall } from "./events.ts";
 import type { DestructiveFx, RunMetrics, ToolCall, Verdict } from "./types.ts";
@@ -127,3 +128,4 @@ export function verdict(run: RunMetrics, completed: boolean, extra: VerdictExtra
     notes,
   };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

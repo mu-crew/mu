@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Reuse of a worker name whose earlier workspace was freed. Setup replays what mu 3.13.3 really
 // leaves behind (git workspaces are detached worktrees; a clean free removes dir and registration):
 //   r1 done by w1 in a workspace -> its commit cherry-picked onto main -> `workspace free --commit`
@@ -203,3 +204,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

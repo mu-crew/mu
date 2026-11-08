@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A surface is a directory holding a built mu (dist/ + skills/mu). mu is only ever a subprocess.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -129,3 +130,4 @@ export async function prepareSurface(name: string, ref: string, repo: string): P
 export function stripRig(dir: string): void {
   for (const d of RIG_SUBDIRS) rmSync(join(dir, d), { recursive: true, force: true });
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

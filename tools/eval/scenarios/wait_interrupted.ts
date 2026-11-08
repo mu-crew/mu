@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A `mu task wait` is killed with SIGTERM mid-run (the harness's own timeout, a user abort). The
 // orchestrator must come out knowing where things stand and carry on WITHOUT redoing work.
 //
@@ -259,3 +260,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

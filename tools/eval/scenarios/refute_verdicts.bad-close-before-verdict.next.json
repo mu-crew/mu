@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -23,5 +24,6 @@
   },
   {
     "text": "plan1 closed as rejected; the check is running."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

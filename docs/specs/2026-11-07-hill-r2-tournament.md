@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # hill-r2 tournament rig: next-step probe, tournament driver, exposure-gated scoring
 
 Status: revision 3, for a fresh refutation (task `b1_rig_spec_3`, workstream `crew-hill2`). Revision 1 was refuted by `scratch/delegate_refute-spec_55f96588` and revision 2 by `scratch/delegate_refute-spec2_34abfd81`; the revision log at the end lists every change. It binds B2 (`nextstep_probe`), B3a (`exposure_scoring`), B3b (`tournament_driver`), B3c (`tournament_gate`), B4a (`intents_scenarios`) and B4b (`nextstep_cases`). Plan of record: `mu task notes hill2 -w crew-hill2` (brief plus REVISION 1). Every REVISION 1 Phase-B requirement maps to a section here; §8 checks each one off.
@@ -828,3 +830,5 @@ Revision 2 answers `scratch/delegate_refute-spec_55f96588` (REFUTED). Line numbe
 **Other**
 - Changed: open questions cut to the three that need the user (wall time, designer, committing the control file); the rest are settled in §9.
 - Changed: R3 adds a zero-cost behaviour diff (exit status or `mu-out` differences on the goldens), so a verb or `--json` change with no marker still finds the scenarios it affects. §4.4.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

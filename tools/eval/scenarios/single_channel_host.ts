@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Single-channel host: dev allows exactly one ssh session at a time (sshd MaxSessions 1 as the
 // shim models it). An attached agent pane holds that session, so a bare `git fetch ssh://dev/...`
 // is REFUSED while it is open. The golden runs the agent in detached remote tmux, attaches a pane
@@ -147,3 +148,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

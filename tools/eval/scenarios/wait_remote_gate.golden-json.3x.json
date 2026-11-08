@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -92,5 +93,6 @@
   },
   {
     "text": "The gate finished, g1 ran on dev and is merged, and the report is written."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

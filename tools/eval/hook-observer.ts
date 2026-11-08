@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The eval observer hook: one more handler the rig installs beside murmur's, mu's and muzzle's in
 // every hook harness's config (harness.ts). It appends one JSON line per hook event to the run's
 // hooks.log, so a judge reads what each worker's harness reported (a prompt submitted, a turn
@@ -12,6 +13,24 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { observerRecord } from "./harness-observe.ts";
+import { hasCanary } from "./rig-private.ts";
+
+/**
+ * The payload, or the transcript it points at, carries a rig file's canary: the agent read the rig
+ * (a pane AUT has no tool stream for rig-guard.ts rigReads, so its hooks report it).
+ */
+function sawCanary(raw: string, body: unknown, kind: string): boolean {
+  if (hasCanary(raw)) return true;
+  // the transcript once a turn ends, not on every event
+  if (!["stop", "failed", "interrupt", "session_end"].includes(kind)) return false;
+  const t = (body as { transcript_path?: unknown } | null)?.transcript_path;
+  if (typeof t !== "string" || t === "") return false;
+  try {
+    return hasCanary(readFileSync(t, "utf8"));
+  } catch {
+    return false;
+  }
+}
 
 function anchorAgent(home: string): string | null {
   let table = "";
@@ -68,7 +87,8 @@ function main(): void {
     host: process.env.EVAL_HOST ?? /\/hosts\/([^/]+)\/home$/.exec(home)?.[1] ?? null,
     cwd: process.cwd(),
   });
-  appendFileSync(log, `${JSON.stringify(rec)}\n`);
+  const out = sawCanary(raw, body, rec.kind) ? { ...rec, rigCanary: true } : rec;
+  appendFileSync(log, `${JSON.stringify(out)}\n`);
 }
 
 try {
@@ -77,3 +97,4 @@ try {
   // the observer never fails a hook
 }
 process.exit(0);
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

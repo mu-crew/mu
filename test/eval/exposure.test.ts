@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { describe, expect, it } from "vitest";
 import {
   attribute,
@@ -319,3 +320,4 @@ describe("outcomes and new-vs-base classes", () => {
     });
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Pre-trust: before a live run's AUT starts, start each real harness the case uses once in the
 // sandbox repo, answer its trust dialogs with the trusting choice, and quit it without a prompt (no
 // model tokens). A user's own repo was trusted long ago; a fresh sandbox repo was not, and without
@@ -328,3 +329,4 @@ export const realPretrustIO: PretrustIO = {
   sleep: (ms) => new Promise<void>((r) => setTimeout(r, ms)),
   now: () => Date.now(),
 };
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

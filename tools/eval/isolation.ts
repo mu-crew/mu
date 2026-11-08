@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A live run's isolation from the user's real mu state: enforced where the rig can, watched where it
 // cannot (docs/eval/every-harness.md, "What a live run changes").
 //
@@ -329,3 +330,4 @@ export function settleWatch(
   verdict?.notes.push(...v.notes);
   return v;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

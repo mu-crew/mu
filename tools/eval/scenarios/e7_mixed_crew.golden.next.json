@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -55,5 +56,6 @@
   },
   {
     "text": "m1 (codex) and m2 (pi) ran here, m3 (claude) and m4 (pi) on dev; all four are merged and closed, every worker is closed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { rmSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
 import { loadScenario, resultRow, runLabel, summary } from "../../tools/eval/commands.ts";
@@ -470,3 +471,4 @@ describe("the sampled live plan", () => {
     expect(await targets(row("e7_mixed_crew", "muse"), "codex-home")).toEqual(["claude", "codex"]);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

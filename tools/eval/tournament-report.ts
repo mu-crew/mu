@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The tournament report (spec docs/specs/2026-11-07-hill-r2-tournament.md §6, unit B3c): the
 // markdown sections of one group from its control rows, and the committed copy of tournament.jsonl
 // (`docs/eval/hill-r2/<group>.tournament.jsonl`). It reads the control file, the variant patches and
@@ -530,3 +531,4 @@ export async function writeReport(o: GateOpts & { out: string }): Promise<number
   console.log(`report: ${out}; control file copied to ${copy}`);
   return 0;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

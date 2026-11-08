@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // SQL against mu's database to find the owner of the highest-impact IN_PROGRESS task. The schema
 // names are easy to guess wrong (tasks.owner, tasks.workstream, agents.agent_name); `tasks.id` is
 // valid but is the integer key, not the task's name. A failed query is counted; a valid query with
@@ -132,3 +133,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

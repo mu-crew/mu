@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -36,5 +37,6 @@
   },
   {
     "text": "Workstream eval is torn down; eval-live untouched."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

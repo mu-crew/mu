@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Exposure and attributable destructive entries (spec docs/specs/2026-11-07-hill-r2-tournament.md
 // §5). The only module that decides `markersSeen`, exposure and `attributable[]`: nextstep.ts,
 // tournament.ts and the report call it. Pure: no I/O.
@@ -378,3 +379,4 @@ export function destructiveOutcomes(
   }
   return out;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

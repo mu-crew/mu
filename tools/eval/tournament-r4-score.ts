@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The pure half of the R3 scan, the R4 gate and the final gate (spec
 // docs/specs/2026-11-07-hill-r2-tournament.md §4.4-§4.6, unit B3c): which scenarios exercise a
 // finalist, the R4 completion test with Holm over the three models, the exercised precondition,
@@ -480,3 +481,4 @@ export function scoreFinal(o: {
     why: why.join("; ") || "holdouts pass",
   };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Delivery receipts, stalls, a lost prompt and a restart while waiting. Six worker tasks, six faults:
 //   r1, r2  API outage mid-run (error-once): pane and agent stay alive, task stays IN_PROGRESS
 //   r3      healthy but slow (9s): a delayed answer is not a stall; steering it is wrong
@@ -262,3 +263,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

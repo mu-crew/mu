@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Waiting on a mix of refs: an already-CLOSED task, a worker's task, a task and an agent that
 // share a name (`gate`), a non-pi pane's output, a worker that closes before the wait is
 // registered, an unknown ref, and a wait whose exit status goes through a pipe.
@@ -264,3 +265,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

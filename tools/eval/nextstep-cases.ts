@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Next-step probe cases (spec §2). This file holds the two pilots (B2: one bash, one zsh) and the
 // catalogue in §2 order; the other cases live by group in nextstep-cases-{wait,close,read}.ts (B4b).
 // Each case: a seed, a live lead-in in base grammar, goals worded with no mu name (`nextstep lint`),
@@ -315,3 +316,4 @@ export const NEXT_CASES: NextCase[] = ORDER.map((id) => {
   if (!c) throw new Error(`nextstep-cases: no case ${id}`);
   return c;
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

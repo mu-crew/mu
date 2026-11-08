@@ -1,16 +1,18 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Real pi (faux model) + real tmux: the AUT's world does not name the rig's checkout; aut-guard
 // refuses a tool call that names it and cuts it from results; an AUT (R4 runOne without the
 // guard, a probe answer) that reads the rig anyway gets an invalid row, never a hit.
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runOne } from "../../tools/eval/commands.ts";
 import { sshShim } from "../../tools/eval/fixtures.ts";
 import { playCase } from "../../tools/eval/nextstep.ts";
 import { NEXT_CASES } from "../../tools/eval/nextstep-cases.ts";
-import { BLOCKED, RIG_REPO } from "../../tools/eval/rig-guard.ts";
+import { BLOCKED, RIG_REPO, WITHHELD } from "../../tools/eval/rig-guard.ts";
+import { RIG_CANARY } from "../../tools/eval/rig-private.ts";
 import { createSandbox, FAUX_EXT, REAL_PI } from "../../tools/eval/sandbox.ts";
 import { surfaceFromDir } from "../../tools/eval/surface.ts";
 import type { Sandbox, Scenario } from "../../tools/eval/types.ts";
@@ -154,4 +156,92 @@ describe.skipIf(!ready)("rig isolation", () => {
     expect(row.hit).toBe(false);
     expect(row.perCommand).toEqual([]);
   }, 120_000);
+  // the reviewer's evasions of the path rules (review_f_aut_reads_rig): each prints faux.ts whole
+  const parent = dirname(RIG_REPO);
+  const co = basename(RIG_REPO);
+  // every segment's last letter a `?`: the command names no root, no store, no rig segment
+  const glob = `cat ${`${RIG_REPO}/tools/eval`
+    .split("/")
+    .map((x) => (x === "" ? x : `${x.slice(0, -1)}?`))
+    .join("/")}/faux.ts`;
+  const evasions = [
+    `cd ${parent} && cd ${co} && cd tools && cd eval && cat faux.ts`,
+    `cd ${parent} && git -C ${co} show HEAD:tools/eval/faux.ts`,
+    glob,
+    `ln -s ${parent} y && cd y/${co}/tools && cat eval/faux.ts`,
+  ];
+
+  it("without aut-guard, the canary makes every evasion a rig read", async () => {
+    const r = await run(evasions, { noAutGuard: true });
+    expect(r.metrics.toolCalls).toHaveLength(4);
+    for (const c of r.metrics.toolCalls) expect(c.output).toContain(RIG_CANARY);
+    expect(r.verdict.rigReads).toHaveLength(4);
+    for (const line of r.verdict.rigReads ?? []) expect(line).toContain("rig canary in output");
+    expect(r.verdict.completed).toBe(false);
+  }, 120_000);
+
+  it("aut-guard refuses the path evasions and withholds the glob's output: still a rig read", async () => {
+    const r = await run(evasions);
+    expect(r.metrics.toolCalls.map((c) => c.output.trim())).toEqual([
+      BLOCKED,
+      BLOCKED,
+      WITHHELD,
+      BLOCKED,
+    ]);
+    expect(r.verdict.rigReads).toEqual(["#2 bash: rig canary in output"]);
+    expect(r.verdict.completed).toBe(false);
+  }, 120_000);
+
+  it("a probe answer whose output carries the canary is invalid, no hit", async () => {
+    const c = NEXT_CASES.find((x) => x.id === "close_preview_apply");
+    const para = c?.paraphrases[0];
+    if (!c || !para) throw new Error("no close_preview_apply case");
+    scriptDir = mkdtempSync(join(tmpdir(), "mu-eval-rg-"));
+    const row = await playCase(c, {
+      surface: surface(),
+      surfaceLabel: "base",
+      arm: "skill",
+      paraphrase: para.id,
+      reply: async () => ({ text: `\`\`\`sh\n${glob}\n\`\`\``, tokens: 1 }),
+      promptDir: scriptDir,
+      gapMs: 0,
+    });
+    expect(row.rigReads).toEqual(["command 1: rig canary in output"]);
+    expect(row.invalid).toBe(true);
+    expect(row.hit).toBe(false);
+  }, 120_000);
 });
+
+describe("hook observer", () => {
+  let dir = "";
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+    dir = "";
+  });
+
+  const observe = (payload: unknown): Record<string, unknown> => {
+    const log = join(dir, "hooks.log");
+    rmSync(log, { force: true });
+    execFileSync(
+      process.execPath,
+      [join(ROOT, "tools", "eval", "hook-observer.ts"), "claude", log],
+      {
+        input: JSON.stringify(payload),
+        env: { ...process.env, MU_AGENT_NAME: "aut" },
+      },
+    );
+    return JSON.parse(readFileSync(log, "utf8").trim()) as Record<string, unknown>;
+  };
+
+  it("flags a pane AUT's payload or transcript that carries the canary", () => {
+    dir = mkdtempSync(join(tmpdir(), "mu-eval-obs-"));
+    const transcript = join(dir, "t.jsonl");
+    writeFileSync(transcript, `{"tool_result":"${RIG_CANARY}"}\n`);
+    const stop = { hook_event_name: "Stop", session_id: "s", last_assistant_message: "done" };
+    expect(observe({ ...stop, transcript_path: transcript }).rigCanary).toBe(true);
+    expect(observe({ ...stop, last_assistant_message: RIG_CANARY }).rigCanary).toBe(true);
+    writeFileSync(transcript, "{}\n");
+    expect(observe({ ...stop, transcript_path: transcript }).rigCanary).toBeUndefined();
+  });
+});
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

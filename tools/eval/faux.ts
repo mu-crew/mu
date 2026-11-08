@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // pi extension: a scripted faux model. Registers provider "evalfaux" with models "aut" and "worker".
 //   evalfaux/aut    script from $EVAL_FAUX_SCRIPT (the AUT selftest); $EVAL_FAUX_PHASE=2 runs only
 //                   the steps after its first {die} (a replacement orchestrator)
@@ -113,3 +114,4 @@ export default function (pi: PiLike): void {
   faux.setResponses([respond]);
   pi.registerProvider(faux.provider);
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

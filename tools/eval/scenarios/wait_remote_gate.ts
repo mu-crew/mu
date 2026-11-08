@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A long non-pi gate runs in a pane on a host that allows ONE ssh session at a time, and the
 // orchestrator must wait for it (not hold an exec, not open a second session) before it runs a
 // worker on that host and merges.
@@ -203,3 +204,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

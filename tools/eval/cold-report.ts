@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // cold-guess.jsonl -> the short markdown of docs/eval/cold-guess.md. Pure.
 import type { ColdRow } from "./cold-guess.ts";
 import { INTENTS } from "./cold-intents.ts";
@@ -327,3 +328,4 @@ export function toColdMarkdown(rows: ColdRow[], opts: { topWrong?: number } = {}
   }
   return `${out.join("\n").trimEnd()}\n`;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

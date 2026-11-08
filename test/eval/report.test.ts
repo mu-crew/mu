@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { describe, expect, it } from "vitest";
 import { HEADERS, toMarkdown } from "../../tools/eval/report.ts";
 import type { RunResult } from "../../tools/eval/types.ts";
@@ -157,3 +158,4 @@ describe("a claude or codex AUT gets its own row", () => {
     expect(md).toContain("| e1 | 3x | default@codex | 0/1 |");
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Cold-guess probe: mu-next vs 3.13.3 (no skill)
 
 `e_cold_guess`, step 2 of `t_surface` pulled forward. Feeds `t_surface` (which verbs, flags and fields a cold reader reaches for) and `v_hints`. Not a scored scenario; no holdout is involved (the intents are one-liners, the holdouts are scenarios). **This is round 2.** Round 1 reported "57% vs 46%, mu-next reads cold better". That headline is withdrawn: one intent's wording (`Collect worker-2's commits`) named mu-next's verb `agent collect` and supplied the whole gap (49/90 vs 44/90 without it), and a post-hoc control sat in the headline. Round 2 changes the wording, the help depth and the reporting, below.
@@ -216,3 +218,5 @@ Each cell: hits/guesses over both models and all reps; then the modal first reac
 | 1 | spawn_remote · agent spawn --claim --host | `mu -w auth agent spawn t5-worker --host dev --claim t5` | no agent registered | error: unknown option '--host' |
 | 1 | spawn_remote · agent spawn --host | `mu agent spawn worker-t5 -w auth --host dev` | no agent registered | error: unknown option '--host' |
 | 1 | spawn_remote · agent spawn --ssh | `mu -w auth agent spawn t5 --ssh dev` | no agent registered | error: unknown option '--ssh' |
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

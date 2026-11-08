@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // One AUT run in a pane: claude, codex, cursor-agent or Muse Code as the orchestrator, started the
 // way a user starts one (`mu orchestrate --cli <harness>` on the sandbox's tmux server; a
 // cursor-agent or Muse AUT with the trust and approval flags of harness.ts AUT_FLAGS), prompted
@@ -424,3 +425,4 @@ export function trustDialogKeys(screen: string): string[] | null {
   const move = target - cursor;
   return [...Array<string>(Math.abs(move)).fill(move > 0 ? "Down" : "Up"), "Enter"];
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A worker's pi dies mid-task (pane gone); the orchestrator must recover without duplicating work.
 import { tasksRunTwice } from "../agent-rules.ts";
 import {
@@ -94,3 +95,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

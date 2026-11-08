@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Tournament scoring (spec docs/specs/2026-11-07-hill-r2-tournament.md §4.1-4.2, unit B3b): the
 // scoring of a round (per-case Holm and stratified CMH losses, the pooled weak-model win test at
 // 0.05/S with Holm across the group's headline cases, eliminations), the ranking and its fixed
@@ -451,3 +452,4 @@ export function cut(
 
 /** The spec a base row is scored with when exposure is asked of base (context markers). */
 export type { ExposureSpec };
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

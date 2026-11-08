@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Next-step cases of group c1 (reading a wait) and c6's sleep_poll (spec §2, cases 3, 4, 5, 12).
 // Workers are faux pis on the CLOSE block (close-mode block): a wait that sees the owner settle
 // applies the block, so the task closes with the worker's report note and the close evidence.
@@ -333,3 +334,4 @@ export const WAIT_CASES: NextCase[] = [
   waitShellLimit,
   sleepPoll,
 ];
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

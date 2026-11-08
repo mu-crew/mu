@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Fan-out with gates: three fixes (f1-f3), each with a review task (r1-r3), all in parallel.
 //
 // Who did what: 3.x claim ops carry no owner names in their payload (status/substate/updated_at
@@ -248,3 +249,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

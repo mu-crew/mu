@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // What a cold reader is given, and what the request may not say (e_cold_guess round 2).
 // `helpBundle` is the SAME depth for every surface: `mu --help` plus `mu <ns> --help` for every
 // command that has subcommands, so a subcommand is visible on both or on neither. `surfaceVocab` is
@@ -124,3 +125,4 @@ export function neutralityLeaks(
   }
   return leaks;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

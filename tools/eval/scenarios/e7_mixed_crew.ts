@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // E7 a mixed crew (spec "Every harness first-class", U24, D17): one orchestrator, a local codex
 // and a local pi worker, a claude and a pi worker on the ssh host dev. Each runs one task in its
 // own worktree; the remote commits are collected; everything is merged and every worker closed.
@@ -69,3 +70,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

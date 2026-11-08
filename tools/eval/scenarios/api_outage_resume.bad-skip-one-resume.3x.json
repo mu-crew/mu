@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -57,5 +58,6 @@
   },
   {
     "text": "a1, a2 and a3 are done and merged."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

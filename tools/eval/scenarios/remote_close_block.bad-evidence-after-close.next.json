@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -50,5 +51,6 @@
   },
   {
     "text": "rt2 ran on dev, merged and closed."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

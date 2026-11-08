@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { describe, expect, it } from "vitest";
 import { tasksRunTwice } from "../../tools/eval/agent-rules.ts";
 import { missingGoldenEvidence } from "../../tools/eval/check-rules.ts";
@@ -43,3 +44,4 @@ describe("delegateFor", () => {
     );
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

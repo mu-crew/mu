@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // pi JSONL event stream (rpc mode) -> RunMetrics. Pure: no I/O.
 import type { Aborted, LifecycleEvent, RunMetrics, ToolCall, Usage } from "./types.ts";
 
@@ -209,3 +210,4 @@ export class MetricsCollector {
     };
   }
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

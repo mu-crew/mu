@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Host profiles name a machine; the repo is chosen at spawn
 
 Status: implemented (unreleased). See [Resolved questions](#resolved-questions).
@@ -183,3 +185,5 @@ the first cut, all fixed with a test that fails on the unfixed code: bare
 repos (`--show-toplevel`), byte-exact repo paths, `{cwd}` defaults for
 spawn, host check and gates, `--root` in respawn hints and the attempt
 identity, `--host --root` without `--worktree`, and six test gaps.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Reattaching a reaped lease agent, leftovers, and visible stop failures
 
 Status: shipped in mu 4.4.0 / mule 0.4.0; reread against that code 2026-11-05
@@ -741,3 +743,5 @@ stated in its section.
 | reap_fix (8b2fb912) | A task owned from another workstream gets a two-step resume hint. | mu_reap |
 | list_fix (7763e25f) | `stop_failed` is escaped like a task record and budgeted against the whole printed record. | mu_list |
 | list_cap (311ec968) | With no room the fallback is `cut=<n>` alone or null: `stop_failed` is the only cut field. | mu_list |
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

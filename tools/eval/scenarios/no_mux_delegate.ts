@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Delegates with no multiplexer installed: neither tmux nor herdr is reachable from the caller's
 // pi, its mu shim, or the delegate's pi (setup removes the sandbox's tmux shim; the sandbox PATH is
 // system dirs plus <sandbox>/bin, and setup asserts neither binary resolves there). TMUX, TMUX_PANE,
@@ -146,3 +147,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The user half-remembers a task id (auth_refresh); the real one is auth_token_refresh. Measures how
 // fast the surface's "not found" error steers the AUT to the right id, and whether it writes to a
 // look-alike (auth_token_revoke) or invents a task instead.
@@ -88,3 +89,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Dogfood 2: `mu wait` after v_wait_cli
 
 Task `dogfood_after_v_wait_cli`. A 10-minute isolated loop like [dogfood-1](dogfood-1.md), on checkout `8a7f672` (one `mu wait` verb, arming, the pre-engine wait code deleted) + `npm run build`, run as `mun` and never installed. Host linux-host, node 24.22.1, tmux 3.7c, pi 1.4.0, 2026-10-26 13:16 to 13:27.
@@ -86,3 +88,5 @@ Not filed: the orchestrator also called the two-step `agent close` (dogfood-1 F6
 ## Isolation
 
 `~/.local/bin/mu`, `~/mu` and `~/.local/state/mu` were not written by `mun`. Their mtimes moved together with this crew's live 3.x traffic, including my own `mu task add/note` calls. `~` has no `mu-next` dir. `~/.local/state/mu-next/locks` moved to 13:18:44, while the crew's slow gates (`vitest`, started 13:15 and 13:21) were running. After that, `mun task list`, `wait` and `state` with the isolated env left it unchanged (stat before/after). Same pattern as dogfood-1 F10. pi wrote its session logs to `~/.pi/agent/sessions/--var-tmp-df2-*` (pi's own dir, outside mu's isolation). Scratch: `/var/tmp/df2`, 1.2 MB, kept for reproduction.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Eval reports
 
 The evidence behind the 4.0 release: how the 4.0 surface compares with
@@ -15,3 +17,5 @@ measured. The raw JSONL rows are not in the tree; see
 | [dogfood-1.md](dogfood-1.md) … [dogfood-4.md](dogfood-4.md), [dogfood-switch.md](dogfood-switch.md), [dogfood-full.md](dogfood-full.md) | isolated orchestrator runs on the checkout |
 | [harnesses.md](harnesses.md) | mu driven from codex and cursor-agent |
 | [every-harness.md](every-harness.md) | E1–E7 on claude, codex and pi orchestrators with mixed worker harnesses (template) |
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

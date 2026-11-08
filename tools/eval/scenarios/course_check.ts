@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A course check falls due mid-loop (t_skill, user note 2026-10-26). Workstream eval already has 9
 // CLOSED/done work tasks; k10 is open, k11 and k12 wait behind it, all under umbrella u. Once k10
 // closes, 10 tasks closed since the workstream began: mu's `course check due` hint fires on
@@ -121,3 +122,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

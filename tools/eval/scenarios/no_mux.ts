@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // No multiplexer at all: neither tmux nor herdr is on mu's PATH (the AUT's own shell keeps its tools).
 // Setup seeds the workstream while tmux still works, then rewrites the sandbox `mu` shim so mu runs
 // with a PATH that holds only node, git and sqlite3 and without MU_MUX/MU_TMUX_SOCKET: from then on
@@ -242,3 +243,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

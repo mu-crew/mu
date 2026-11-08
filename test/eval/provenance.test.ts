@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 import { describe, expect, it } from "vitest";
 import { isBefore, orderWrong, parseRunsLog } from "../../tools/eval/provenance.ts";
 
@@ -27,3 +28,4 @@ describe("order", () => {
     expect(orderWrong({ label: "a", ms: 1 }, { label: "b", ms: 2 }, "x")).toEqual([]);
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

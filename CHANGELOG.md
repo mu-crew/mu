@@ -21,6 +21,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   rig, cuts rig lines from results), and `rig-guard.ts` marks any run that
   still reads it as a rig read: `verdict.rigReads`, never completed, out of
   R3/R4/final counts and ρ̂; a probe answer that names it is refused unrun.
+  Since `f_aut_reads_rig_2`, every file under `tools/eval`, `test/eval`,
+  `docs/eval` and `docs/specs` carries a canary token on its first and last
+  line (`tools/eval/rig-private.ts`): a tool result, probe output or pane
+  AUT's hook transcript that carries it is a rig read, whichever path got
+  there (`cd` chains, globs, `git show HEAD:tools/eval/…`, symlinks). The
+  guard also matches relative `tools/eval`, follows `cd`, normalises realpaths
+  (`/private/tmp`), and covers the transcript stores, museum and mu state dir
+  of the designer deny list (one shared list).
 
 - **`mu wait --ready`: the ready batch** (hill-r2 A7, a7_ready_engine;
   proposal a7_wait_drain_rca_2 P1/P2/P4 + a7_wait_drain_rca_3 D1/D2). One

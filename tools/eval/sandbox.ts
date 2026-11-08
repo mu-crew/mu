@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // One isolated sandbox per run: own HOME, own DB, own sync dir, own private tmux server (tmux shim + TMUX_TMPDIR inside the sandbox).
 // Never touches the default tmux server, herdr, or the user's real mu state.
 import { execFileSync, spawn } from "node:child_process";
@@ -676,3 +677,4 @@ export async function createSandbox(surface: Surface, opts: SandboxOptions = {})
   }
   return sb;
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

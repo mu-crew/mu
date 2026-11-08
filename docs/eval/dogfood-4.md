@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Dogfood 4: the settle wait and delegate delivery, after v_settle
 
 Task `dogfood_after_v_settle`. An isolated loop like [dogfood-3](dogfood-3.md) on `e87c382` (v_settle merged) + `npm run build`, never installed. Host linux-host, pi 1.4.0, tmux 3.7c, 2026-10-26 23:54 to 00:51 (7 runs, 3 to 12 min each). Orchestrator = sonnet-5-5 with the checkout's `dist/extension/mu-pi.js` and `skills/mu`.
@@ -35,3 +37,5 @@ Task `dogfood_after_v_settle`. An isolated loop like [dogfood-3](dogfood-3.md) o
 4. `next: mu wait -w <ws>` follows every command, the umbrella close included.
 5. Esc stops only the current wait; a later delegate answer still wakes an idle pi (run 5, 4 s later). Say so next to the Esc line in the guide.
 6. 2 of 22 delegate answers came back in Chinese (sonnet child); a model matter, not mu's.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

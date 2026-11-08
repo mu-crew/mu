@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // The harness half of a sandbox: which agent CLI the AUT is, which harness binaries its workers
 // get (the user's real ones, or the fake ones of fake-harness.ts), and the hook entries that make
 // every hook harness report through the worktree builds of murmur, mu and muzzle.
@@ -738,3 +739,4 @@ export async function setupHarnesses(
   }
   return { live: o.live, tools: o.tools, codexHooks, restore };
 }
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

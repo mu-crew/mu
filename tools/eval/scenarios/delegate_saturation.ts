@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // 12 claims to check independently with MU_DELEGATE_MAX=2: 2 running + 8 queued, the 11th call is
 // refused. The orchestrator must issue the rest later and close each task by its verdict.
 
@@ -148,3 +149,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

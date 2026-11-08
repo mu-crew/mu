@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -7,5 +8,6 @@
     ]
   },
   { "calls": [{ "bash": "mu task note s4 -w eval 'top owner: w2'" }] },
-  { "text": "w2 owns s4, the highest-impact IN_PROGRESS task; note added." }
+  { "text": "w2 owns s4, the highest-impact IN_PROGRESS task; note added." },
+  "RIG-CANARY-f8dc74a2239b"
 ]
