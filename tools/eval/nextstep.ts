@@ -19,8 +19,9 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { cpus, loadavg, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { type Claim, rowPool } from "./claim.ts";
 import { askModel, buildId, extractCommand, firstReach, muInText } from "./cold-guess.ts";
 import { neutralityLeaks, surfaceVocab } from "./cold-help.ts";
 import type { ColdEffect, GuessRun } from "./cold-intents.ts";
@@ -146,7 +147,6 @@ export interface RunNextOpts {
   promptDir: string;
   concurrency: number;
   modelConcurrency: number;
-  maxLoad: number;
   providerExt?: string;
   cases?: NextCase[];
   onRow?: (row: ProbeRow) => void;
@@ -524,28 +524,29 @@ export async function runNext(o: RunNextOpts): Promise<{ written: number; skippe
     return l;
   };
   let written = 0;
-  const worker = async (): Promise<void> => {
+  const worker = async (claim: Claim): Promise<void> => {
     for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
-      while ((loadavg()[0] ?? 0) > o.maxLoad) await sleep(2000);
       const c = byId.get(job.caseId);
       if (!c) continue;
       const para = c.paraphrases.find((p) => p.id === job.paraphrase);
       try {
-        const row = await playCase(c, {
-          surface: job.surface,
-          surfaceLabel: job.surfaceLabel,
-          arm: job.arm,
-          paraphrase: job.paraphrase,
-          promptDir: o.promptDir,
-          reply: async (st, system, user) => {
-            const faux = fauxReplies(c, st, para?.leadIn ?? "a");
-            const ask = () => askModel(job.model, system, user, o.providerExt, faux);
-            const slot = providerSlot(job.model);
-            let r = await slot(ask);
-            for (let i = 0; i < 2 && r.error !== undefined; i++) r = await slot(ask);
-            return r;
-          },
-        });
+        const row = await claim(() =>
+          playCase(c, {
+            surface: job.surface,
+            surfaceLabel: job.surfaceLabel,
+            arm: job.arm,
+            paraphrase: job.paraphrase,
+            promptDir: o.promptDir,
+            reply: async (st, system, user) => {
+              const faux = fauxReplies(c, st, para?.leadIn ?? "a");
+              const ask = () => askModel(job.model, system, user, o.providerExt, faux);
+              const slot = providerSlot(job.model);
+              let r = await slot(ask);
+              for (let i = 0; i < 2 && r.error !== undefined; i++) r = await slot(ask);
+              return r;
+            },
+          }),
+        );
         row.round = job.round;
         row.group = job.group;
         row.model = job.model;
@@ -561,7 +562,7 @@ export async function runNext(o: RunNextOpts): Promise<{ written: number; skippe
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, o.concurrency) }, worker));
+  await rowPool("probe", o.concurrency, worker);
   return { written, skipped };
 }
 
@@ -627,16 +628,18 @@ export async function runNextCheck(
     }
   const results: CheckResult[] = [];
   try {
-    const worker = async (): Promise<void> => {
+    const worker = async (claim: Claim): Promise<void> => {
       for (let j = jobs.shift(); j !== undefined; j = jobs.shift()) {
-        const row = await playCase(j.c, {
-          surface,
-          surfaceLabel: "check",
-          arm: "none",
-          paraphrase: j.paraphrase,
-          promptDir,
-          reply: async (st) => ({ text: fence(j.cmds(st)), tokens: 0 }),
-        });
+        const row = await claim(() =>
+          playCase(j.c, {
+            surface,
+            surfaceLabel: "check",
+            arm: "none",
+            paraphrase: j.paraphrase,
+            promptDir,
+            reply: async (st) => ({ text: fence(j.cmds(st)), tokens: 0 }),
+          }),
+        );
         const partialOk = j.partial !== true || row.partial;
         const ok = !row.invalid && (j.expect === "hit" ? row.hit : !row.hit) && partialOk;
         results.push({ case: j.c.id, leadIn: j.v, kind: j.kind, expect: j.expect, ok, row });
@@ -646,7 +649,7 @@ export async function runNextCheck(
         );
       }
     };
-    await Promise.all(Array.from({ length: Math.max(1, o.concurrency ?? 4) }, worker));
+    await rowPool("probe", o.concurrency ?? 4, worker);
   } finally {
     rmSync(promptDir, { recursive: true, force: true });
   }
@@ -779,7 +782,6 @@ export async function nextSelftest(
       promptDir,
       concurrency: 4,
       modelConcurrency: 4,
-      maxLoad: Infinity,
       cases,
     };
     const first = await runNext(opts);
@@ -829,7 +831,4 @@ export async function nextSelftest(
   log(failures === 0 ? "nextstep selftest: ok" : `nextstep selftest: ${failures} FAILED`);
   return failures === 0 ? 0 : 1;
 }
-
-/** Default load gate: no new row while the 1-min loadavg exceeds 1.5 per core. */
-export const defaultMaxLoad = (): number => cpus().length * 1.5;
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

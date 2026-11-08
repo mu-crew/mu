@@ -28,7 +28,6 @@ import { parseAutHarness } from "./harness.ts";
 import { parseWorkers } from "./mix.ts";
 import {
   type Arm,
-  defaultMaxLoad,
   type NextJob,
   nextLint,
   nextSelftest,
@@ -54,7 +53,7 @@ const USAGE = `usage: node tools/eval/main.ts <command>
   cold-guess run --surface [label=]<spec>... --model <m>... [--reps 3] [--intents a,b] [--concurrency 4] [--provider-ext p] --out <cold-guess.jsonl>
   cold-guess check [--surface <spec>] [--intents a,b] [--concurrency 4]
   cold-guess report <cold-guess.jsonl> [--out file.md]
-  nextstep run --surface [label=]<spec>... --model <m>... --out <probe.jsonl> [--cases a,b] [--arms none,skill] [--reps 1] [--round b5] [--seed s] [--prompt-dir d] [--concurrency 6] [--model-concurrency 8] [--max-load n] [--provider-ext p]
+  nextstep run --surface [label=]<spec>... --model <m>... --out <probe.jsonl> [--cases a,b] [--arms none,skill] [--reps 1] [--round b5] [--seed s] [--prompt-dir d] [--concurrency 6] [--model-concurrency 8] [--provider-ext p]
   nextstep check [--surface <spec>] [--cases a,b] [--concurrency 4]
   nextstep lint [--surface [label=]<spec>...] [--cases a,b]
   nextstep selftest [--surface <spec>] [--cases a,b]
@@ -359,7 +358,6 @@ async function nextstep(rest: string[]): Promise<number> {
         promptDir: flag(args, "--prompt-dir") ?? join(dirname(out), "prompts"),
         concurrency: Number(flag(args, "--concurrency") ?? 6),
         modelConcurrency: Number(flag(args, "--model-concurrency") ?? 8),
-        maxLoad: Number(flag(args, "--max-load") ?? defaultMaxLoad()),
         providerExt: flag(args, "--provider-ext"),
         cases,
         onRow: (row) =>

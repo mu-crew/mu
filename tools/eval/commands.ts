@@ -20,6 +20,7 @@ import {
   PENDING_NEXT,
   scriptFile,
 } from "./check-rules.ts";
+import { type Claim, rowPool, withRowClaim } from "./claim.ts";
 import { scenarioDir, sshShim } from "./fixtures.ts";
 import {
   AUT_FLAGS,
@@ -484,14 +485,14 @@ export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
   const results: RunResult[] = [];
   let spent = 0;
   let skipped = 0;
-  const worker = async (): Promise<void> => {
+  const worker = async (claim: Claim): Promise<void> => {
     for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
       if (spent > o.budgetTokens) {
         skipped++;
         continue;
       }
       try {
-        const r = await runOne(job);
+        const r = await claim(() => runOne(job));
         spent += r.metrics.usage.total;
         results.push(r);
         appendResult(o.out, r);
@@ -503,7 +504,7 @@ export async function runMatrix(o: MatrixOptions): Promise<RunResult[]> {
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, o.concurrency) }, worker));
+  await rowPool("aut", o.concurrency, worker);
   if (skipped > 0)
     console.error(`budget ${o.budgetTokens} tokens passed: ${skipped} runs not started`);
   console.log(`total tokens: ${spent}`);
@@ -667,20 +668,22 @@ export async function runCheck(o: CheckOptions): Promise<number> {
             line(false, `${id} ${label} missing`, script);
             continue;
           }
-          const r = await runOne({
-            surface,
-            scenario,
-            model: EVAL_MODEL_FAUX,
-            providerExt: FAUX_EXT,
-            rep: 1,
-            auTScript: script,
-            quietMs: scenario.check?.quietMs ?? 2000,
-            maxProds: scenario.check?.maxProds ?? 0,
-            harness,
-            ...(workers !== undefined ? { workers } : {}),
-            ...(tools !== null ? { tools } : {}),
-            log: join(scriptDir, `${id}.${base}.${runLabel("faux", harness, workers)}.rpc.jsonl`),
-          });
+          const r = await withRowClaim("aut", () =>
+            runOne({
+              surface,
+              scenario,
+              model: EVAL_MODEL_FAUX,
+              providerExt: FAUX_EXT,
+              rep: 1,
+              auTScript: script,
+              quietMs: scenario.check?.quietMs ?? 2000,
+              maxProds: scenario.check?.maxProds ?? 0,
+              harness,
+              ...(workers !== undefined ? { workers } : {}),
+              ...(tools !== null ? { tools } : {}),
+              log: join(scriptDir, `${id}.${base}.${runLabel("faux", harness, workers)}.rpc.jsonl`),
+            }),
+          );
           const v = r.verdict;
           const detail = [
             ...v.wrong.map((w) => `wrong: ${w}`),

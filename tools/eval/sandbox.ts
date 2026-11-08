@@ -418,10 +418,47 @@ function writeShim(path: string, body: string): void {
 export const LOCAL_TABLES =
   "agents worktrees vcs_workspaces task_auto task_substates delegate_calls";
 
+/** Epoch ms in SQL: 'now' is fixed within a statement and carries milliseconds. */
+const NOW_SQL = "SELECT strftime('%s','now')*1000+CAST(substr(strftime('%f','now'),4) AS INTEGER);";
+
+/**
+ * One sqlite3 call for the shim, three lines out: the time, "<table>:<hash>,..." over LOCAL_TABLES,
+ * the time again. A table's hash covers what `.dump <table>` printed (its schema rows, indexes and
+ * triggers included, then its rows): sha3_query is the sqlite3 shell's own function. A table the DB
+ * lacks hashes to "" (3.x/4.x have different sets).
+ */
+export function fpSql(tables = LOCAL_TABLES): string {
+  const one = (t: string): string => {
+    const inner = `SELECT type,name,sql FROM sqlite_master WHERE tbl_name=''${t}'' ORDER BY name; SELECT * FROM "${t}"`;
+    return `'${t}:'||coalesce((SELECT substr(lower(hex(sha3_query('${inner}'))),1,16) FROM sqlite_master WHERE type='table' AND name='${t}'),'')||','`;
+  };
+  const fp = tables.split(" ").map(one).join("||");
+  return `${NOW_SQL} SELECT ${fp}; ${NOW_SQL}`;
+}
+
+/** GNU tee's -p (survives a reader that went away); BSD tee has none. Probed once per process. */
+let teeCmd: string | undefined;
+function teeWithP(): string {
+  if (teeCmd === undefined) {
+    try {
+      execFileSync("tee", ["-p", "/dev/null"], { input: "", stdio: ["pipe", "ignore", "ignore"] });
+      teeCmd = "tee -p";
+    } catch {
+      teeCmd = "tee";
+    }
+  }
+  return teeCmd;
+}
+
 /**
  * The sandbox's `mu`: runs the surface's CLI and records the call (see observe.ts). Exit status and
  * output are untouched. `pin` (isolation.ts pinScript) sets the sandbox's DB, state, sync dir and
  * tmux server whatever the caller's env says.
+ *
+ * Cheap on purpose: one run fans out to dozens of sandboxes, each calling mu hundreds of times. An
+ * AUT call costs two sqlite3 processes (time + table hashes + time, before and after) besides mu
+ * and tee; a worker's call costs nothing on bash 5 (EPOCHREALTIME) and two sqlite3 clocks on
+ * macOS's bash 3.2, which has no ms clock (BSD date has no %N).
  */
 export function muShim(cli: string, pin = ""): string {
   const raw = (t: string): string => t.replace(/\\\$\{/g, "${");
@@ -433,29 +470,31 @@ aut=
 # the AUT: no agent name (pi over rpc), or an orchestrator pane the rig started (aut, aut-2)
 [ -n "$D" ] && [ -z "\${MU_AGENT_NAME:-}" ] && aut=1
 case " ${AUT_NAMES.join(" ")} " in *" \${MU_AGENT_NAME:-} "*) [ -n "$D" ] && aut=1 ;; esac
-# epoch ms: GNU date's %3N, else perl (BSD date prints a literal N)
-ms() { local t; t=$(date +%s%3N); case "$t" in *[!0-9]*) perl -MTime::HiRes=time -e 'printf("%d\n", time()*1000)' ;; *) echo "$t" ;; esac; }
-# "<table>:<cksum>,..." of the db right now (.dump only reads)
-fp() {
-  for t in ${LOCAL_TABLES}; do printf '%s:%s,' "$t" "$(sqlite3 -cmd ".timeout 2000" "$MU_DB_PATH" ".dump $t" 2>/dev/null | cksum | cut -d' ' -f1)"; done
-}
-# the shim's own span (its dumps included) for the AUT: mu-shim.log, so the timed rule counts the
-# rig's overhead as time in mu, not as time the answer spent elsewhere
-[ -n "$aut" ] && s0=$(ms) && before=$(fp)
-s=$(ms)
+# NOW=epoch ms: bash 5's EPOCHREALTIME, else sqlite3's clock
+now() { if [ -n "\${EPOCHREALTIME:-}" ]; then NOW=\${EPOCHREALTIME/[.,]/}; NOW=\${NOW%???}; else NOW=$(sqlite3 :memory: "${NOW_SQL}" 2>/dev/null); fi; }
+# FP1=time FP2="<table>:<hash>,..." of the db right now FP3=time (one sqlite3, it only reads)
+fp() { local o; o=$(sqlite3 -cmd ".timeout 2000" "$MU_DB_PATH" "${fpSql().replace(/"/g, '\\"')}" 2>/dev/null); { read -r FP1; read -r FP2; read -r FP3; } <<< "$o"; case "$FP1$FP3" in ''|*[!0-9]*) now; FP1=$NOW; FP3=$NOW ;; esac; }
+# the shim's own span (its fingerprints included) for the AUT: mu-shim.log, so the timed rule counts
+# the rig's overhead as time in mu, not as time the answer spent elsewhere
 if [ -n "$aut" ]; then
-  mkdir -p "$D/mu-out"
-  # GNU tee -p survives a reader that went away; BSD tee has no -p
-  if tee -p /dev/null </dev/null 2>/dev/null; then T="tee -p"; else T=tee; fi
-  node ${JSON.stringify(cli)} "$@" | $T "$D/mu-out/$$"
+  fp; s0=$FP1; before=$FP2; s=$FP3
+  [ -d "$D/mu-out" ] || mkdir -p "$D/mu-out"
+  node ${JSON.stringify(cli)} "$@" | ${teeWithP()} "$D/mu-out/$$"
   rc=\${PIPESTATUS[0]}
+  fp; e=$FP1; after=$FP2; s1=$FP3
 else
+  [ -n "$D" ] && now && s=$NOW
   node ${JSON.stringify(cli)} "$@"
   rc=$?
+  [ -n "$D" ] && now && e=$NOW
 fi
-[ -n "$D" ] && printf '%s %s %s %s %s %s\n' "$s" "$(ms)" "$rc" "$([ -n "$aut" ] && echo - || echo "\${MU_AGENT_NAME:--}")" "$$" "$(printf %s "$*" | tr '\n' ' ')" >> "$D/mu-calls.log" 2>/dev/null
-[ -n "$aut" ] && printf '%s|%s|%s\n' "$$" "$before" "$(fp)" >> "$D/mu-local.log" 2>/dev/null
-[ -n "$aut" ] && printf '%s %s %s\n' "$$" "$s0" "$(ms)" >> "$D/mu-shim.log" 2>/dev/null
+if [ -n "$D" ]; then
+  who=\${MU_AGENT_NAME:--}; [ -n "$aut" ] && who=-
+  args=$*; args=\${args//$'\n'/ }
+  printf '%s %s %s %s %s %s\n' "$s" "$e" "$rc" "$who" "$$" "$args" >> "$D/mu-calls.log" 2>/dev/null
+fi
+[ -n "$aut" ] && printf '%s|%s|%s\n' "$$" "$before" "$after" >> "$D/mu-local.log" 2>/dev/null
+[ -n "$aut" ] && printf '%s %s %s\n' "$$" "$s0" "$s1" >> "$D/mu-shim.log" 2>/dev/null
 exit $rc
 `)}`;
 }

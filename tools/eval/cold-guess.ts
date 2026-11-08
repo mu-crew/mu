@@ -21,6 +21,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { type Claim, rowPool } from "./claim.ts";
 import { helpBundle, neutralityLeaks, surfaceVocab } from "./cold-help.ts";
 import {
   ANSI,
@@ -531,10 +532,10 @@ export async function runCold(o: ColdRunOptions): Promise<ColdRow[]> {
   }
   console.log(`${queue.length} guesses to run (${done.size} already in ${o.out})`);
   const rows: ColdRow[] = [];
-  const worker = async (): Promise<void> => {
+  const worker = async (claim: Claim): Promise<void> => {
     for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
       try {
-        const r = await runJob(job);
+        const r = await claim(() => runJob(job));
         rows.push(r);
         mkdirSync(dirname(o.out), { recursive: true });
         appendFileSync(o.out, `${JSON.stringify(r)}\n`);
@@ -548,7 +549,7 @@ export async function runCold(o: ColdRunOptions): Promise<ColdRow[]> {
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, o.concurrency) }, worker));
+  await rowPool("guess", o.concurrency, worker);
   return rows;
 }
 
@@ -567,9 +568,9 @@ export async function runColdCheck(
     jobs.push({ intent, kind: "noop", cmd: "true" });
   }
   let failures = 0;
-  const worker = async (): Promise<void> => {
+  const worker = async (claim: Claim): Promise<void> => {
     for (let j = jobs.shift(); j !== undefined; j = jobs.shift()) {
-      const r = await guessEffect(j.intent, surface, j.cmd);
+      const r = await claim(() => guessEffect(j.intent, surface, j.cmd));
       const hit = r.effect.hit && r.stray.length === 0 && !r.run.timedOut;
       const ok = j.kind === "golden" ? hit : !hit;
       if (!ok) failures++;
@@ -586,7 +587,7 @@ export async function runColdCheck(
       );
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+  await rowPool("guess", concurrency, worker);
   console.log(
     failures === 0
       ? "cold-guess check: all goldens hit, every bad and no-op missed"

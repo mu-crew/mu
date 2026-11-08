@@ -19,6 +19,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { withRowClaim } from "./claim.ts";
 import type { Group, NextCase, St } from "./nextstep.ts";
 import { variantsOf } from "./nextstep.ts";
 import { type PrivateStore, privateStores } from "./rig-private.ts";
@@ -701,15 +702,19 @@ export async function runDesigner(o: {
     providerExt: o.providerExt,
     prompt: designerPrompt(o.group),
   });
-  const code = await new Promise<number>((res) => {
-    const child = spawn(REAL_PI, args, {
-      cwd: pack,
-      env,
-      stdio: ["ignore", "ignore", "inherit"],
-    });
-    child.on("error", () => res(127));
-    child.on("close", (c) => res(c ?? 1));
-  });
+  const code = await withRowClaim(
+    "design",
+    () =>
+      new Promise<number>((res) => {
+        const child = spawn(REAL_PI, args, {
+          cwd: pack,
+          env,
+          stdio: ["ignore", "ignore", "inherit"],
+        });
+        child.on("error", () => res(127));
+        child.on("close", (c) => res(c ?? 1));
+      }),
+  );
   return { ddir, pack, code };
 }
 

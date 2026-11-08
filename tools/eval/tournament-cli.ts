@@ -94,7 +94,7 @@ const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   design <g> --model <m> [--session <name>]
   audit <g> [--session <name>]
   build <g> [--scenarios a,b]
-  r1 <g> | r2 <g>   [--concurrency 24] [--model-concurrency 8] [--max-load 14]
+  r1 <g> | r2 <g>   [--concurrency 24] [--model-concurrency 8]
   review <g> --stop <id> --decision drop|continue --why "<transcript lines>"
   status <g>
   r3 <g> [--scenarios a,b] [--concurrency 6]
@@ -300,7 +300,6 @@ async function round(
     out,
     promptDir,
     ...conc,
-    maxLoad: Number(flag(args, "--max-load") ?? 14),
     providerExt: setup.providerExt ?? undefined,
   });
   let cold: ColdRow[] = [];

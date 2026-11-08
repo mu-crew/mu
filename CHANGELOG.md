@@ -157,6 +157,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Eval rig: every row runs under its own muzzle claim; the load gate is
+  gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove
+  the mac to load ~250 on 2026-11-08). One run fanned out to 24 sandboxes
+  under a single 3-slot `mu-eval` claim, and the 1-min loadavg gate let all
+  24 start inside one stale minute. Now a probe row, an AUT run, a
+  cold-guess guess and a designer session each hold `muzzle run --rule
+  mu-eval-<kind> --slots <w>` while they run (`tools/eval/claim.ts`;
+  `EVAL_ROW_SLOTS_<KIND>` overrides w), `--concurrency` is capped to
+  `floor(budget / w)`, and a rig that itself runs inside a muzzle claim takes
+  no per-row claims and runs `floor(MUZZLE_SLOTS / w)` rows. `--max-load` is
+  removed (`nextstep run`, `tournament r1|r2`). The sandbox mu shim's AUT
+  call spawned 69 processes on macOS (4 perl clocks, 12 sqlite3 dumps with
+  their cksum and cut); it now spawns 4: one sqlite3 call before mu and one
+  after, each reading the clock and a `sha3_query` hash per machine-local
+  table. A worker's call drops from 11 to 3 (1 on bash 5).
+
 - **Eval rig: launcher variables come from `EVAL_LAUNCHER_ENV`** (public
   audit). The rig no longer names a specific pi launcher's variables: it sets
   each `NAME=VALUE` pair in `EVAL_LAUNCHER_ENV` for every pi it starts (a

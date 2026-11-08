@@ -4,6 +4,7 @@
 // tournament-r4-score.ts. The final gate's logs go under `sealed/` only.
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
+import { type Claim, rowPool } from "./claim.ts";
 import { isLiveRun, loadScenario, logPath, runOne, scenarioIds } from "./commands.ts";
 import {
   attribute,
@@ -157,7 +158,7 @@ export async function runR4(o: RunR4Opts): Promise<{ written: number; skipped: n
   let written = 0;
   mkdirSync(dirname(resolve(o.out)), { recursive: true });
   const queue = [...pending];
-  const worker = async (): Promise<void> => {
+  const worker = async (claim: Claim): Promise<void> => {
     for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
       try {
         const sk = `${job.surface.scenarioRoot ?? ""}|${job.scenario}`;
@@ -168,15 +169,17 @@ export async function runR4(o: RunR4Opts): Promise<{ written: number; skipped: n
           skills.set(job.surface.skillDir, skillDescription(job.surface.skillDir));
         const log = jobLog(o.logRoot, job);
         if (!inside(log, o.logRoot)) throw new Error(`log ${log} outside ${o.logRoot}`);
-        const result = await run({
-          surface: job.surface,
-          scenario,
-          model: job.model,
-          rep: job.rep,
-          providerExt: o.providerExt,
-          live: isLiveRun(scenario, "pi"),
-          log,
-        });
+        const result = await claim(() =>
+          run({
+            surface: job.surface,
+            scenario,
+            model: job.model,
+            rep: job.rep,
+            providerExt: o.providerExt,
+            live: isLiveRun(scenario, "pi"),
+            log,
+          }),
+        );
         const destructiveFx = placedFx(result.verdict);
         const verdict = { ...result.verdict, destructiveFx };
         const exposure = r4Exposure(
@@ -208,7 +211,7 @@ export async function runR4(o: RunR4Opts): Promise<{ written: number; skipped: n
       }
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, o.concurrency) }, worker));
+  await rowPool("aut", o.concurrency, worker);
   return { written, skipped };
 }
 
