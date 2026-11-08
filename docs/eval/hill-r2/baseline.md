@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # hill-r2 B5: the base baseline
 
 Task `b5_baseline` (workstream `crew-hill2`). Spec:
@@ -42,7 +44,8 @@ comparator (§4.1).
 ### Rows (machine-local, never committed)
 
 Directory `~/.local/state/mu-next/eval-transcripts/hill-r2/b5/`. Prompts are under `prompts/` and
-R4 rpc logs under `logs/`.
+R4 rpc logs under `logs/`, except the logs that carry holdout text, which are in `logs-rig-read/`
+(see [Rig reads](#rig-reads-f_aut_reads_rig)).
 
 | file | rows | sha256 |
 |---|---|---|
@@ -51,7 +54,7 @@ R4 rpc logs under `logs/`.
 | `r4.jsonl` | 345 | `77309bafd6a702267b0f990e94a1358c36cf1ba9101174ca1f2bb7333a777b4c` |
 | `r4.raw-pre-rigfix.jsonl` (superseded: the first R4 file, 57 gemini rows read the rig) | 345 | `b5c73b371d310de889ca4f8406e3569d25af48ac2489e5f4da52f1c0b0287ad9` |
 | `r4.raw-rig-read.jsonl` (the 57 rig-read rows, `verdict.rigReads` added; logs in `logs-rig-read/`) | 57 | `7a2fc5e7ddab5421db97dd80e2d648441b1a37dc96ae5b5d182a516fbf5a4c02` |
-| `r4.raw-rig-read-rerun1.jsonl` (superseded: re-runs before `aut-guard.ts` that read the rig again) | 9 | `1525580919276bbca54fd61d0c1c489ce4b3964517896ab5b7b2348bd73619a9` |
+| `r4.raw-rig-read-rerun1.jsonl` (superseded: re-runs before `aut-guard.ts` that read the rig again; 3 rows name holdout files, none carries their lines) | 9 | `1525580919276bbca54fd61d0c1c489ce4b3964517896ab5b7b2348bd73619a9` |
 | `probe.raw-notes-report-v1.jsonl` (superseded: `notes_report_read` before the shown fix) | 360 | `a4dc87c5947185722ee5a56bf8c348062b25c561822476e0ecde138d3d9c330a` |
 | `probe.raw-pre-tabfield.jsonl` (superseded: the four other re-run cases, before the fix) | 960 | `815f9516d9a37d5cb64eb6bd4ec79fe8445f758be0e1ac17f128f9a9474aa20b` |
 | `r4.raw-before-envfix.jsonl` (superseded: fanout_gates hook, `/tmp` remote paths) | 144 | `59a0dbea3f023e80e8c526a0c66a3a6614616de25efc7755e4b2a11ab9e2e62d` |
@@ -124,10 +127,23 @@ did (a probe answer's output never goes back to the model). The ways in:
 
 **Holdouts.** Holdout source text reached the model in 10 of those rows: grep lines of all four
 holdouts' scenario files (and two `wrong_id` bad scripts), from greps over the checkout or the
-surface for a judge's helper name. No run opened a holdout file whole and none ran a holdout. The
-lines sit only in machine-local, superseded rows and logs (`r4.raw-rig-read.jsonl`,
-`logs-rig-read/`; also 7 rows of the earlier `r4.raw-before-envfix.jsonl`), which no designer pack
-includes (the designer audit denies `mu-next/eval-transcripts`). A model in a later round never sees
+surface for a judge's helper name. No run opened a holdout file whole and none ran a holdout. Where
+holdout text sits (machine-local, corrected by f_aut_reads_rig_2):
+
+- grep lines: those 10 rows in `r4.raw-rig-read.jsonl` and the same 10 in `r4.raw-pre-rigfix.jsonl`
+  (the superseded first file); 7 rows of the earlier `r4.raw-before-envfix.jsonl`; 16 logs in
+  `logs-rig-read/`. Four of those logs sat in `logs/` until f_aut_reads_rig_2 moved them: three
+  `wait_interrupted` gemini logs of the `before-envfix` pass (`*.before-envfix`) and the log of the
+  kept row `wait_wave_six` gemini rep 1 (`*.kept-row`), whose lines were only streaming updates of
+  a bash call (the model got the 50 KB tail without them and never read the full-output file);
+- file names only: 3 rows of `r4.raw-rig-read-rerun1.jsonl`;
+- outside these rows: five pi session files of the crew (workers b4a, b5, the iso workers and the
+  orchestrator) and the review's scratch note quote a holdout grep line (listed on task
+  f_aut_reads_rig_2).
+
+`r4.jsonl`, `probe.jsonl`, `cold.jsonl`, `prompts/` and `logs/` now carry no holdout file name. No
+designer pack includes any of it (the designer audit denies `mu-next/eval-transcripts` and, since
+f_aut_reads_rig_2, the whole mu state dir and every transcript store). A model in a later round never sees
 another run's transcript, so no holdout must be replaced: the leak informed no variant and no
 judge. Keep those files out of any designer or reviewer pack, and do not quote them.
 
@@ -145,6 +161,20 @@ the guard refused 1 call and cut lines from 22 results in 12 runs. Effect on gem
 51/115 → 53/115 (44% → 46%), mean cost per rep 22.9M → 22.0M, spread 3.86M → 3.04M; per cell,
 `api_outage_resume` 1 → 3, `worktree_reuse` 1 → 3, `fanout_gates` 0 → 1, `outside_mux` 2 → 1,
 `poll_wave` 4 → 3, `wait_wave_six` 1 → 0. Haiku and sonnet rows are unchanged.
+
+**Canary (f_aut_reads_rig_2).** Path rules cannot be complete: the review read `faux.ts` past them
+with a `cd` chain, a glob, `git -C <co> show HEAD:tools/eval/faux.ts` and a symlink plus `cd`.
+Every rig file (`tools/eval`, `test/eval`, `docs/eval`, `docs/specs`) now carries a fixed canary
+token on its first and last line or element (`tools/eval/rig-private.ts`); an AUT tool result, a
+probe answer's output or a pane AUT's hook payload or transcript that carries it makes the run a rig
+read. The path rules also match a relative `tools/eval`, follow a command's `cd`s, and cover the
+private stores of the designer deny list (pi, claude and codex transcripts, the museum, the mu state
+dir). Scan of the kept rows (`r4.jsonl`, `probe.jsonl`, `cold.jsonl`): no canary (the rows predate
+it), and no row prints a line of a rig file other than the sandbox's own staged runtime files and
+the generated `bin/` scripts. The new path rules flag 1 kept row: `no_mux_delegate` gemini rep 1
+(not completed) ran a `node -e` search of `$HOME` for files containing `mu_delegate` and printed
+312 paths, most under `~/.claude/projects`; no file content reached the model. Under the rule "re-run only on a canary hit" nothing is
+re-run, and no number above changes.
 
 ## Freeze: not run (why)
 
@@ -909,3 +939,5 @@ Each cell: hits/guesses over both models and all reps; then the modal first reac
 | 3 | verdict_record · task verdict | `mu task verdict t4 -w auth "VERDICT: t4 CONFIRMED the four fixes hold"` | t4's check carries no CONFIRMED verdict | error: verdict needs --check <check id> |
 | 3 | wave_outcome · delegates tally | `mu --json -w auth delegates tally` | exit 2 | {"ok":false,"error":"CommanderError","message":"required option '--wave <label>' not specified","next":null,"exit":2,"usage":["mu delegates tally [options]","op |
 | 3 | report_only · delegates show | `mu delegates show delegate_rev_d0bf343a` | exit 3 | not found: no such delegate call: delegate_rev_d0bf343a |
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
