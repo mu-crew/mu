@@ -43,7 +43,7 @@ describe("sandbox without tmux", () => {
         `const m = await import(${JSON.stringify(mod)});
 try { await m.createSandbox(${JSON.stringify(surface)}); console.log("no-throw"); } catch (e) { console.log(String(e.message)); }`,
       ],
-      { env: { PATH: "/nonexistent" }, encoding: "utf8", timeout: 20_000 },
+      { env: { PATH: "/nonexistent", VITEST: "true" }, encoding: "utf8", timeout: 20_000 },
     );
     expect(r.status).toBe(0);
     expect(r.stdout).toContain("tmux not found on PATH");
