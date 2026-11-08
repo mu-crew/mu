@@ -65,7 +65,7 @@ const ZSH_FILES = [".zshenv", ".zprofile", ".zshrc", ".zlogin"] as const;
  * so zsh reads the next startup file from here too.
  */
 export function zshWrapper(file: string, pinFile: string): string {
-  return `# mu eval: the user's own ${file}, then the sandbox's pins (tools/eval/isolation.ts)
+  return `# mu eval: the user's own ${file}, then the sandbox's pins
 __mu_eval_zd=$ZDOTDIR
 ZDOTDIR=\${__mu_eval_user_zd:-\${EVAL_USER_ZDOTDIR:-$HOME}}
 [ -r "$ZDOTDIR/${file}" ] && . "$ZDOTDIR/${file}"

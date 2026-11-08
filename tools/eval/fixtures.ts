@@ -111,7 +111,7 @@ if [ -z "$T" ]; then
   exit 0
 fi
 # runs.log line: <ms> <agent> <task> <action> <sha|-> <patch-id|-> <cwd>. sha and patch-id are the commit
-# this worker's task script produced (see tools/eval/provenance.ts); "-" when it made none.
+# this worker's task script produced; "-" when it made none.
 log() { echo "$(ms) $AGENT $T $1 $(cat "$W/tasks/$T.commit" 2>/dev/null || echo '- -') $(pwd)" >> "$W/runs.log"; }
 if [ -e "$W/tasks/$T.die-once" ]; then
   rm -f "$W/tasks/$T.die-once"; touch "$W/die-next.$AGENT"; log die; echo dying; exit 0
