@@ -23,8 +23,8 @@
 //
 // On the box this was written against the split is the entire value:
 // `mu` / `dash-search` / `dash-shortcuts` / `goto-murmur-dash` are
-// finished (0 unclosed), while `infer-rs` (95 days, 19 unclosed) and
-// `llm-router` (89 days, 8 unclosed) are abandoned. One combined
+// finished (0 unclosed), while two others (95 days, 19 unclosed; 89
+// days, 8 unclosed) are abandoned. One combined
 // "dormant" list would have invited `--empty`-style sweeping of 27 open
 // tasks.
 //

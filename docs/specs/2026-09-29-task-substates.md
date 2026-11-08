@@ -175,7 +175,7 @@ A tombstone written after the v10 migration may hold the already-folded `OPEN`, 
 
 Current live DB (read-only check, 2026-09-29):
 
-- 69 tasks with legacy statuses in history, all in 11 destroyed workstreams: `feedback`, `gchatui`, `gchatui-node` (2 destroy groups), `infer-rs`, `llm-router` (teardown), `mufeedback`, `mufeedback-v03`, `multimachine`, `roadmap-v0-2`, `surface-audit`, `tui-impl`.
+- 69 tasks with legacy statuses in history, all in 11 destroyed workstreams: `feedback`, `gchatui`, `gchatui-node` (2 destroy groups), `<project-a>`, `<project-b>` (teardown), `mufeedback`, `mufeedback-v03`, `multimachine`, `roadmap-v0-2`, `surface-audit`, `tui-impl`.
 - 42 workstreams in total are tombstoned; only 3 are live.
 - Dry runs of `mu undo 6f3d12e7` and `mu undo f34e2141` on v10 both plan full restores.
 

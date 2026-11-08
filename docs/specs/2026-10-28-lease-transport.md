@@ -10,7 +10,7 @@ A remote worker's local pane runs the profile's `shell` template: a held
 `ssh -t … -L {local_sock}:{remote_sock}`. The pane is mu's single source of
 truth, because pane death is agent death, so reconcile, close and the
 dashboard need no remote case. On a session-capped host (`MaxSessions 1`,
-the devserver) that design breaks in three ways, all measured on 2026-10-28:
+a managed dev VM) that design breaks in three ways, all measured on 2026-10-28:
 
 1. **The worker takes the host's only session channel for its whole life.**
    While `devtest` ran, every other `ssh dev` (murmur's collector, `git
@@ -391,13 +391,13 @@ logs every stop call with its handle.
 
 ## Measurements (2026-10-28)
 
-macOS 27 / OpenSSH_10.3p1 / tmux 3.7c; the devserver, and a loopback `sshd
+macOS 27 / OpenSSH_10.3p1 / tmux 3.7c; the dev VM, and a loopback `sshd
 MaxSessions 1` built from mule's SPEC recipe.
 
 | Claim | Result |
 | --- | --- |
 | A held ssh pane blocks the host | During `devtest`, `ssh dev …` gave `Session open refused by peer`, then `Permission denied (keyboard-interactive)` |
-| A forward through mule's master takes no session | devserver: a forward carried `hello-from-dev` while a concurrent `ssh dev` on the default master succeeded. Loopback: with the only session held by `sleep 10`, a second session was refused, while traffic on an existing forward, a new `-O forward`, a `-O cancel` and three concurrent forwarded connections all succeeded |
+| A forward through mule's master takes no session | dev VM: a forward carried `hello-from-dev` while a concurrent `ssh dev` on the default master succeeded. Loopback: with the only session held by `sleep 10`, a second session was refused, while traffic on an existing forward, a new `-O forward`, a `-O cancel` and three concurrent forwarded connections all succeeded |
 | A mux client's `-L` is bound in the master | After `ssh -S m -L L:R host true` exited, `lsof` showed `L` held by the master pid; connect and echo worked |
 | An unlinked forward is never rebound | `rm L`, then `-O forward -L L:R`: exit 0, no file |
 | Cancel, then forward, rebinds | `-O cancel`, then `-O forward` on a master started with `StreamLocalBindUnlink=yes`: the file is back and traffic flows |

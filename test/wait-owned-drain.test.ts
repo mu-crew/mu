@@ -1,4 +1,4 @@
-// Characterisation for a7_wait_drain_rca (dogfood-switch F2; linuxpc crew-mu 2026-11-04).
+// Characterisation for a7_wait_drain_rca (dogfood-switch F2; linux-host crew-mu 2026-11-04).
 // Pins TODAY's behaviour, not the wanted one: every wait delivers exactly ONE ready owned
 // delegate report, also when it names an explicit target that is not ready, so N finished
 // answers take N waits before the wait reaches the thing it was asked about. The `--wave
@@ -44,7 +44,7 @@ describe("owned delegate reports come one per wait (current behaviour, a7_wait_d
     const opts = { ...base, wave: { name: "rv" } } as const;
     const got: WaitResult[] = [];
     for (let i = 0; i < 4; i++) got.push(await waitForEvents(env.db, [], opts));
-    // CURRENT: the linuxpc `for i in 1..5; mu wait --wave refute-adopt` loop.
+    // CURRENT: the linux-host `for i in 1..5; mu wait --wave refute-adopt` loop.
     expect(got.map(label)).toEqual([...calls.map((c) => `delegate:${c}`), "heartbeat"]);
     expect(got[0]?.delivered.map((r) => r.id)).toEqual([calls[0]]);
   });

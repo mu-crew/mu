@@ -5,7 +5,7 @@
 // vitest forks inherit the parent shell's environment. When a
 // developer (or the orchestrator agent) runs `npm test` from a
 // shell that exports SDK-level env overrides — e.g.
-// `MU_PI_COMMAND=pi-meta` (internal pi wrapper),
+// `MU_PI_COMMAND=pi-meta` (a pi wrapper),
 // `MU_IDLE_THRESHOLD_MS=60000`, `MU_SPAWN_LIVENESS_MS=0`, etc. —
 // those values silently change SDK behaviour underneath every test.
 //

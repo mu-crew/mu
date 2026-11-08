@@ -37,7 +37,7 @@ Rows are in completion order. One rep per cell. Tokens are AUT usage only (input
 
 ## Conditions
 
-- Host: linuxpc (16 cores), node v26.12.0, pi 1.4.0, tmux private server per run.
+- Host: linux-host (16 cores), node v26.12.0, pi 1.4.0, tmux private server per run.
 - Surface: `3.13.3` = tag `v3.13.3` (commit fcc4259) built in `~/.cache/mu/eval/surfaces/3.13.3`. Scenario root and goldens: `tools/eval/scenarios` at mu-next 626806c, family `3x`.
 - Models (real gateway): `claude-haiku-5-5`, `claude-sonnet-5-5`.
 - Date: 2026-10-24. Concurrency 4, 1 rep, `--budget-tokens Infinity` (user: tokens are free). Per-run caps kept: 1.5M tokens and 15 min by default (500k for remote_spawn, remote_close_block, single_channel_host; 20 min for delegate_saturation).

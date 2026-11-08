@@ -146,26 +146,20 @@ describe("removeSandboxDir", () => {
 });
 
 describe("launcherEnv", () => {
-  it("keeps the outer seatbelt when the caller runs inside the launcher's seatbelt", () => {
-    expect(launcherEnv({ LAUNCHER_SANDBOX_RUNTIME: "seatbelt" })).toEqual({
-      LAUNCHER_INHERIT_OUTER_SEATBELT: "1",
-    });
-    const env = sandboxEnv("/tmp/mu-eval-x", surface, "x", {
-      ...BASE,
-      LAUNCHER_SANDBOX_RUNTIME: "seatbelt",
-    });
-    expect(env.LAUNCHER_INHERIT_OUTER_SEATBELT).toBe("1");
-    expect(env.LAUNCHER_SANDBOX_RUNTIME).toBeUndefined();
+  it("adds each EVAL_LAUNCHER_ENV pair to every pi the rig starts", () => {
+    const base = { ...BASE, EVAL_LAUNCHER_ENV: " KEEP_OUTER_SANDBOX=1  LAUNCHER_MODE=x " };
+    expect(launcherEnv(base)).toEqual({ KEEP_OUTER_SANDBOX: "1", LAUNCHER_MODE: "x" });
+    const env = sandboxEnv("/tmp/mu-eval-x", surface, "x", base);
+    expect(env.KEEP_OUTER_SANDBOX).toBe("1");
+    expect(env.EVAL_LAUNCHER_ENV).toBeUndefined();
   });
 
-  it("passes an explicit value through and adds nothing outside a seatbelt", () => {
+  it("lets the caller's own value win, skips malformed pairs, and adds nothing by default", () => {
     expect(
-      launcherEnv({ LAUNCHER_SANDBOX_RUNTIME: "seatbelt", LAUNCHER_INHERIT_OUTER_SEATBELT: "0" }),
-    ).toEqual({ LAUNCHER_INHERIT_OUTER_SEATBELT: "0" });
+      launcherEnv({ EVAL_LAUNCHER_ENV: "KEEP_OUTER_SANDBOX=1 =x junk", KEEP_OUTER_SANDBOX: "0" }),
+    ).toEqual({ KEEP_OUTER_SANDBOX: "0" });
     expect(launcherEnv(BASE)).toEqual({});
-    expect(
-      sandboxEnv("/tmp/mu-eval-x", surface, "x", BASE).LAUNCHER_INHERIT_OUTER_SEATBELT,
-    ).toBeUndefined();
+    expect(sandboxEnv("/tmp/mu-eval-x", surface, "x", BASE).KEEP_OUTER_SANDBOX).toBeUndefined();
   });
 });
 
@@ -177,15 +171,15 @@ describe("seedLauncherCache", () => {
       const box = join(root, "box");
       mkdirSync(host);
       mkdirSync(box);
-      writeFileSync(join(host, "meta-model-catalog.json"), "{}");
-      writeFileSync(join(host, "meta-model-catalog.resolved.json"), "{}");
+      writeFileSync(join(host, "model-catalog.json"), "{}");
+      writeFileSync(join(host, "acme-model-catalog.resolved.json"), "{}");
       writeFileSync(join(host, "auth.json"), "secret");
       writeFileSync(join(host, "settings.json"), "{}");
       expect(seedLauncherCache(host, box).sort()).toEqual([
-        "meta-model-catalog.json",
-        "meta-model-catalog.resolved.json",
+        "acme-model-catalog.resolved.json",
+        "model-catalog.json",
       ]);
-      expect(existsSync(join(box, "meta-model-catalog.resolved.json"))).toBe(true);
+      expect(existsSync(join(box, "acme-model-catalog.resolved.json"))).toBe(true);
       expect(existsSync(join(box, "auth.json"))).toBe(false);
       expect(seedLauncherCache(join(root, "absent"), box)).toEqual([]);
     } finally {

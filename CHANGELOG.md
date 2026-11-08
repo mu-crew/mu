@@ -126,6 +126,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Eval rig: launcher variables come from `EVAL_LAUNCHER_ENV`** (public
+  audit). The rig no longer names a specific pi launcher's variables: it sets
+  each `NAME=VALUE` pair in `EVAL_LAUNCHER_ENV` for every pi it starts (a
+  caller value of `NAME` wins), and seeds any `*model-catalog*.json` cache.
+  Run from inside a launcher's sandbox, set the pair that keeps the outer
+  sandbox. Docs and fixtures drop internal host, user and tool names.
+
 - **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
   events arrive in one block, one line per event, plus a line for what is
   still owed, instead of one block per event. A superseded wait that consumed
@@ -251,7 +258,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   process counted, so the preview listed the agent's own pi as a holder
   too. pi's helpers that outlive the hangup (the guardrails plugin, which
   moves to its own process group and is reparented away from pi, its
-  `log_shipper` children, a `setsid`'d drain) are waited for in the same 5 s
+  logger children, a `setsid`'d drain) are waited for in the same 5 s
   when they hold the tree: the close reads, before the kill, the process
   groups of the pane's session and of each descendant that left it. The
   5 s count from the kill and include the scans; the park, the holder scan
@@ -2101,7 +2108,7 @@ pi sessions to pick up the extension. No schema change.
 
 - **`mu_delegate` is forgiving about `model`.** It used to refuse any
   value outside `[A-Za-z0-9._:/@+-]`, so real ids such as
-  `llm-router/openai-proxy/gpt-6.1-sol[1m]:high` were rejected, and
+  `gateway/openai/gpt-6.1-sol[1m]:high` were rejected, and
   that happened in 12 past sessions. It now trims whitespace, drops
   surrounding quotes or backticks and a pasted `--model ` / `--model=`
   prefix, and shell-quotes any other value inside `--command`, so pi

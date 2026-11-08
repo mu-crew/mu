@@ -35,7 +35,7 @@ TS 7.0 lacks. Revisit at TS 7.1.
 
 ## Gates
 
-Measured 2026-10-23 on linuxpc (16 cores, warm cache, shared host);
+Measured 2026-10-23 on linux-host (16 cores, warm cache, shared host);
 see [the record](docs/test-health/2026-10-23-surface.md). Both gates are
 over budget today.
 

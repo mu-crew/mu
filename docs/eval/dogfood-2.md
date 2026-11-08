@@ -1,6 +1,6 @@
 # Dogfood 2: `mu wait` after v_wait_cli
 
-Task `dogfood_after_v_wait_cli`. A 10-minute isolated loop like [dogfood-1](dogfood-1.md), on checkout `8a7f672` (one `mu wait` verb, arming, the pre-engine wait code deleted) + `npm run build`, run as `mun` and never installed. Host linuxpc, node 24.22.1, tmux 3.7c, pi 1.4.0, 2026-10-26 13:16 to 13:27.
+Task `dogfood_after_v_wait_cli`. A 10-minute isolated loop like [dogfood-1](dogfood-1.md), on checkout `8a7f672` (one `mu wait` verb, arming, the pre-engine wait code deleted) + `npm run build`, run as `mun` and never installed. Host linux-host, node 24.22.1, tmux 3.7c, pi 1.4.0, 2026-10-26 13:16 to 13:27.
 
 ## Setup
 

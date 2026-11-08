@@ -269,7 +269,8 @@ mu host show dev              # templates and the holders of its channels
 
 ## Session-capped hosts
 
-Some hosts allow one ssh session per connection (`MaxSessions 1`, the devserver). A `session` worker's pane holds that session for the worker's whole
+Some hosts allow one ssh session per connection (`MaxSessions 1`, e.g. a
+managed dev VM). A `session` worker's pane holds that session for the worker's whole
 life, so every other `ssh` to the host (the murmur collector, `git fetch`, you)
 is refused, and it shows as a misleading `Permission denied`. A `lease` profile
 fixes that: the pane runs a local **carrier** that owns a detached remote job on

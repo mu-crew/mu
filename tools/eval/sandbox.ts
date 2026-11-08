@@ -79,30 +79,34 @@ export function realTmux(): string {
 const KEEP = new Set(["TERM", "LANG", "LC_ALL", "USER", "SHELL"]);
 
 /**
- * Pure: what the host pi launcher needs from the caller's env to start at all. Inside the
- * launcher's own seatbelt (the rig run from a pi agent's bash tool), its nested sandbox-exec is
- * refused ("sandbox_apply: Operation not permitted") and every model fails before any request;
- * LAUNCHER_INHERIT_OUTER_SEATBELT=1 has it keep the outer sandbox instead. An explicit value wins.
+ * Pure: what the host pi launcher needs from the caller's env to start at all, named by the
+ * caller in EVAL_LAUNCHER_ENV (space-separated NAME=VALUE pairs; a caller value of NAME wins).
+ * Inside a launcher's own sandbox (the rig run from a pi agent's bash tool), a launcher that
+ * nests its own sandbox-exec is refused ("sandbox_apply: Operation not permitted") and every
+ * model fails before any request; the pair that has it keep the outer sandbox goes here.
  */
 export function launcherEnv(base: NodeJS.ProcessEnv): Record<string, string> {
-  const inherit = base.LAUNCHER_INHERIT_OUTER_SEATBELT;
-  if (inherit !== undefined) return { LAUNCHER_INHERIT_OUTER_SEATBELT: inherit };
-  if (base.LAUNCHER_SANDBOX_RUNTIME === "seatbelt")
-    return { LAUNCHER_INHERIT_OUTER_SEATBELT: "1" };
-  return {};
+  const out: Record<string, string> = {};
+  for (const pair of (base.EVAL_LAUNCHER_ENV ?? "").split(/\s+/)) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) continue;
+    const name = pair.slice(0, eq);
+    out[name] = base[name] ?? pair.slice(eq + 1);
+  }
+  return out;
 }
 
 /**
- * Copy the host pi launcher's cached model catalog (`meta-model-catalog*.json` in the caller's pi
+ * Copy the host pi launcher's cached model catalog (`*model-catalog*.json` in the caller's pi
  * agent dir) into a sandbox's agent dir. Without a cache, an interactive pi launcher fetches the
- * catalog first; where it cannot (inside a pi agent's seatbelt, no network) it waits on "Press any
+ * catalog first; where it cannot (inside a pi agent's sandbox, no network) it waits on "Press any
  * key to continue" and a worker pane never opens its control socket. A cache only: no auth, no
  * settings. Returns the files copied.
  */
 export function seedLauncherCache(hostAgentDir: string, sandboxAgentDir: string): string[] {
   let names: string[];
   try {
-    names = readdirSync(hostAgentDir).filter((n) => /^meta-model-catalog.*\.json$/.test(n));
+    names = readdirSync(hostAgentDir).filter((n) => /model-catalog[^/]*\.json$/.test(n));
   } catch {
     return [];
   }

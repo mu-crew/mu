@@ -51,7 +51,7 @@ export const WORKSPACE_CREATED = JSON.stringify({
   result: {
     root_pane: {
       agent_status: "unknown",
-      cwd: "/var/home/martintrojer",
+      cwd: "/home/u",
       focused: true,
       pane_id: "w1:p1",
       tab_id: "w1:t1",
@@ -93,7 +93,7 @@ export const TAB_CREATED = JSON.stringify({
   id: "cli:tab:create",
   result: {
     root_pane: {
-      cwd: "/var/home/martintrojer",
+      cwd: "/home/u",
       focused: false,
       pane_id: "w1:p2",
       tab_id: "w1:t2",

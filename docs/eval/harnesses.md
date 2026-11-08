@@ -1,7 +1,7 @@
 # Dogfood: mu with codex and cursor-agent
 
 Task `dogfood_harnesses`. Checkout `14a4f53` + `npm run build`, never installed.
-Host linuxpc, 2026-10-27 09:40 to 10:05. codex-cli 0.164.0 (gpt-5.6-sol low),
+Host linux-host, 2026-10-27 09:40 to 10:05. codex-cli 0.164.0 (gpt-5.6-sol low),
 cursor-agent 2026.10.22 (model `auto`), pi workers on
 claude-haiku-5-5, tmux 3.7c on a private socket (`MU_TMUX_SOCKET=m4`), murmur
 1.3.2. No herdr on this host, so every non-pi row below is tmux.

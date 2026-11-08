@@ -48,7 +48,7 @@ anything else follows the criteria above.
 
 ## Approved: the lease transport (stage b)
 
-A remote worker on a session-capped host (`MaxSessions 1`, the devserver)
+A remote worker on a session-capped host (`MaxSessions 1`, e.g. a managed dev VM)
 holds the host's only session channel for its whole life, so every other
 `ssh dev` (murmur's collector, `git fetch`, an operator) is refused. Promotion
 met: the friction is the 2026-10-28 session plus the murmur collect starving

@@ -1,6 +1,6 @@
 # Dogfood 3: `mu_delegate` with no multiplexer, after v_delegate_nomux
 
-Task `dogfood_after_v_delegate_nomux`. A 10-minute isolated loop like [dogfood-2](dogfood-2.md), on checkout `a7ec8dd` (v_delegate_nomux merged) + `npm run build`, never installed. Host linuxpc, pi 1.4.0, 2026-10-26 19:09 to 19:12.
+Task `dogfood_after_v_delegate_nomux`. A 10-minute isolated loop like [dogfood-2](dogfood-2.md), on checkout `a7ec8dd` (v_delegate_nomux merged) + `npm run build`, never installed. Host linux-host, pi 1.4.0, 2026-10-26 19:09 to 19:12.
 
 ## Setup
 

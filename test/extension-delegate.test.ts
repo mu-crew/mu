@@ -238,7 +238,7 @@ describe("mu_delegate", () => {
   });
 
   it.each([
-    ["gateway/openai-proxy/gpt-6.1-sol[1m]:high", "'gateway/openai-proxy/gpt-6.1-sol[1m]:high'"],
+    ["gateway/openai/gpt-6.1-sol[1m]:high", "'gateway/openai/gpt-6.1-sol[1m]:high'"],
     ["  `anthropic/claude-opus-5-5:high`  ", "anthropic/claude-opus-5-5:high"],
     ["'sonnet'", "sonnet"],
     ["--model sonnet", "sonnet"],

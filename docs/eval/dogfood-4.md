@@ -1,6 +1,6 @@
 # Dogfood 4: the settle wait and delegate delivery, after v_settle
 
-Task `dogfood_after_v_settle`. An isolated loop like [dogfood-3](dogfood-3.md) on `e87c382` (v_settle merged) + `npm run build`, never installed. Host linuxpc, pi 1.4.0, tmux 3.7c, 2026-10-26 23:54 to 00:51 (7 runs, 3 to 12 min each). Orchestrator = sonnet-5-5 with the checkout's `dist/extension/mu-pi.js` and `skills/mu`.
+Task `dogfood_after_v_settle`. An isolated loop like [dogfood-3](dogfood-3.md) on `e87c382` (v_settle merged) + `npm run build`, never installed. Host linux-host, pi 1.4.0, tmux 3.7c, 2026-10-26 23:54 to 00:51 (7 runs, 3 to 12 min each). Orchestrator = sonnet-5-5 with the checkout's `dist/extension/mu-pi.js` and `skills/mu`.
 
 ## Setup
 

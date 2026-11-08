@@ -51,7 +51,7 @@ describe("cliInterpreter", () => {
   // Under a Bun-compiled pi, execPath is pi itself: running the CLI with it
   // started a second pi and hung the first one's turn.
   it("is node from PATH under Bun, never the host app", () => {
-    expect(cliInterpreter("1.3.14", "/usr/local/bin/pi-dist/pi.real")).toBe("node");
+    expect(cliInterpreter("1.3.14", "/opt/pi/libexec/pi.real")).toBe("node");
   });
 });
 

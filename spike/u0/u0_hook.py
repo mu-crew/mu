@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-ENV_PREFIXES = ("TMUX", "MU_", "CLAUDE", "CODEX", "CURSOR", "MUSE", "LAUNCHER", "PI_")
+ENV_PREFIXES = ("TMUX", "MU_", "CLAUDE", "CODEX", "CURSOR", "MUSE", "PI_")
 ENV_EXACT = ("PATH", "HOME", "XDG_STATE_HOME", "SHELL", "PWD")
 STATE_DIRS = ("murmur", "museum", "mu-next", "muzzle")
 BLOCK_REASON = "U0 block test: reply with exactly BLOCKED-OK"

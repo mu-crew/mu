@@ -278,9 +278,9 @@ describe("agent close of a remote worktree row", () => {
     for (const [out, reason, text] of [
       ["MU_RM held 4242", "held", /process 4242 on dev is still inside/],
       [
-        "MU_RM held 4242 01:07 policy_plugin --drain-spool",
+        "MU_RM held 4242 01:07 audit_plugin --drain-spool",
         "held",
-        /process 4242 \(policy_plugin --drain-spool, 67s old\) on dev is still inside \/home\/u\/[^;]+; nothing was removed/,
+        /process 4242 \(audit_plugin --drain-spool, 67s old\) on dev is still inside \/home\/u\/[^;]+; nothing was removed/,
       ],
       [
         `MU_RM held 4242 1-02:03:04 ${"x".repeat(80)}`,

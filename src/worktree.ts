@@ -543,7 +543,7 @@ export interface PaneProcesses {
  * reparented away from pi, so only its session ties it to the pane; a setsid'd
  * descendant keeps only its group. Read before the kill: once the session's
  * leader dies, macOS shows its members with no terminal. The group then ties
- * them, and the children they start later (log_shipper), to the pane.
+ * them, and the children they start later (a logger), to the pane.
  */
 export async function paneProcesses(root: number): Promise<PaneProcesses> {
   const tree = new Set([root]);

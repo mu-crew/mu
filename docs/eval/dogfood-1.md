@@ -1,6 +1,6 @@
 # Dogfood 1: isolated checkout, one Move, one pi orchestrator
 
-Task `v_dogfood`, part A (the loop on merged surfaces; the full run is part B). Checkout at `1f19c8f` + build, run as `mun`, never installed. Host: linuxpc, 16 cores, node 24.22.1 (the node on PATH for `mun`), tmux 3.7c, 2026-10-26.
+Task `v_dogfood`, part A (the loop on merged surfaces; the full run is part B). Checkout at `1f19c8f` + build, run as `mun`, never installed. Host: linux-host, 16 cores, node 24.22.1 (the node on PATH for `mun`), tmux 3.7c, 2026-10-26.
 
 ## Setup
 

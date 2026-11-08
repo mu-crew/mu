@@ -1,6 +1,6 @@
 # Dogfood at the switch: a real loop, the Move, the switch note
 
-Task `v_dogfood_switch`. Isolated loop like [dogfood-4](dogfood-4.md) on `062210a` (both df4 triage fixes merged) + `npm run build`, never installed (`mu --version` 4.0.0-next.0). Host linuxpc, pi 1.4.0, tmux 3.7c, 2026-10-27 01:24 to 01:50. Orchestrator: sonnet-5-5 via a model gateway, TUI in a pane, the shipped `skills/mu` and `dist/extension/mu-pi.js` only.
+Task `v_dogfood_switch`. Isolated loop like [dogfood-4](dogfood-4.md) on `062210a` (both df4 triage fixes merged) + `npm run build`, never installed (`mu --version` 4.0.0-next.0). Host linux-host, pi 1.4.0, tmux 3.7c, 2026-10-27 01:24 to 01:50. Orchestrator: sonnet-5-5 via a model gateway, TUI in a pane, the shipped `skills/mu` and `dist/extension/mu-pi.js` only.
 
 ## Setup
 

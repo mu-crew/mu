@@ -72,7 +72,7 @@ RPC logs: `.eval-results/2026-10-24T11-32-20-047Z/<scenario>.3.13.3_3x_7f1b7b.<h
 
 ## Conditions
 
-- Host linuxpc, node v26.12.0, pi 1.4.0, private tmux server per run. Surface `3.13.3` (`.ref` tag commit), scenario root `tools/eval/scenarios` on this branch, family `3x`.
+- Host linux-host, node v26.12.0, pi 1.4.0, private tmux server per run. Surface `3.13.3` (`.ref` tag commit), scenario root `tools/eval/scenarios` on this branch, family `3x`.
 - Models `claude-haiku-5-5` and `claude-sonnet-5-5` (`--model` takes the gateway's full id; the short `haiku-5-5` bypassed the gateway and was killed after 2 runs, results discarded).
 - Release-surface check first: `check --surface 3.13.3` exit 0, 14/14 goldens ok, 83/83 bad scripts flagged, ssh-shim preflight ok. 12:11:48 → 12:29:13 (17m25s).
 - Matrix: 12:30:33 → 12:55:41 (25m08s elapsed, concurrency 4). `--budget-tokens` default, per-run caps unchanged (1.5M tokens, 15 min; 500k on the remote scenarios).
@@ -171,4 +171,4 @@ Counted over all 51 AUT runs since the isolation change (every first-pass and re
 
 ### Conditions
 
-Final runs 12:50 → 15:19 on linuxpc, concurrency 4, with reruns of cells where a sibling batch of mine was killed (143) by a concurrent `npm run test:fast` or crashed on the `ENOTEMPTY` above; those partial results are discarded and not in the jsonl. The retained rows ran on harness variants that differ only in the `force-close` regex (which can only remove flags), the AUT-visible comment in `eval-worker`, and the sandbox-removal retry. About 15.5M tokens, $2.1 in all including discarded attempts; the 17 retained runs are 5.9M tokens, $0.94.
+Final runs 12:50 → 15:19 on linux-host, concurrency 4, with reruns of cells where a sibling batch of mine was killed (143) by a concurrent `npm run test:fast` or crashed on the `ENOTEMPTY` above; those partial results are discarded and not in the jsonl. The retained rows ran on harness variants that differ only in the `force-close` regex (which can only remove flags), the AUT-visible comment in `eval-worker`, and the sandbox-removal retry. About 15.5M tokens, $2.1 in all including discarded attempts; the 17 retained runs are 5.9M tokens, $0.94.
