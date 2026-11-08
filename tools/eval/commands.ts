@@ -592,7 +592,7 @@ export async function runCheck(o: CheckOptions): Promise<number> {
   };
   const surface: Surface = { ...o.surface, family: o.family };
   if (o.preflight) {
-    const fails = await sshPreflight(surface);
+    const fails = await withRowClaim("probe", () => sshPreflight(surface));
     line(fails.length === 0, "preflight ssh shim ok", fails.join("\n"));
   }
   // what to prove: each scenario under its AUTs (default mix, or --workers), or the plan's rows

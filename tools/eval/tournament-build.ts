@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { scriptFile } from "./check-rules.ts";
+import { withRowClaim } from "./claim.ts";
 import { guessEffect } from "./cold-guess.ts";
 import { runHelp, subcommands } from "./cold-help.ts";
 import { type ColdIntent, INTENTS } from "./cold-intents.ts";
@@ -261,14 +262,16 @@ export async function collectGoldenTraces(
             return c.judge(ctx);
           },
         };
-        const row = await playCase(wrapped, {
-          surface,
-          surfaceLabel: "golden",
-          arm: "none",
-          paraphrase,
-          promptDir,
-          reply: async (st) => ({ text: fence(c.golden(st, v)), tokens: 0 }),
-        });
+        const row = await withRowClaim("probe", () =>
+          playCase(wrapped, {
+            surface,
+            surfaceLabel: "golden",
+            arm: "none",
+            paraphrase,
+            promptDir,
+            reply: async (st) => ({ text: fence(c.golden(st, v)), tokens: 0 }),
+          }),
+        );
         traces.push({ id: `nextstep:${c.id}/${v}`, ok: row.hit && !row.invalid, calls });
       }
     const family = surface.family ?? "next";
@@ -282,7 +285,9 @@ export async function collectGoldenTraces(
           return intent.judge(ctx);
         },
       };
-      const r = await guessEffect(wrapped, { ...surface, family }, intent.golden[family]);
+      const r = await withRowClaim("guess", () =>
+        guessEffect(wrapped, { ...surface, family }, intent.golden[family]),
+      );
       traces.push({
         id: `cold:${intent.id}`,
         ok: r.effect.hit && r.stray.length === 0 && !r.run.timedOut,
@@ -293,22 +298,24 @@ export async function collectGoldenTraces(
       if (HOLDOUTS.includes(id)) throw new Error(`holdout ${id} never runs mid-round`);
       const scenario = await loadScenario(id, surface.scenarioRoot);
       let calls: GoldenTrace["calls"] = [];
-      const r = await runOne({
-        surface: { ...surface, family },
-        scenario: {
-          ...scenario,
-          judge: async (sb, m) => {
-            calls = traceOf(sb);
-            return scenario.judge(sb, m);
+      const r = await withRowClaim("aut", () =>
+        runOne({
+          surface: { ...surface, family },
+          scenario: {
+            ...scenario,
+            judge: async (sb, m) => {
+              calls = traceOf(sb);
+              return scenario.judge(sb, m);
+            },
           },
-        },
-        model: EVAL_MODEL_FAUX,
-        providerExt: FAUX_EXT,
-        rep: 1,
-        auTScript: join(surface.scenarioRoot ?? scenarioDir(), scriptFile(id, "golden", family)),
-        quietMs: scenario.check?.quietMs ?? 2000,
-        maxProds: scenario.check?.maxProds ?? 0,
-      });
+          model: EVAL_MODEL_FAUX,
+          providerExt: FAUX_EXT,
+          rep: 1,
+          auTScript: join(surface.scenarioRoot ?? scenarioDir(), scriptFile(id, "golden", family)),
+          quietMs: scenario.check?.quietMs ?? 2000,
+          maxProds: scenario.check?.maxProds ?? 0,
+        }),
+      );
       traces.push({
         id: `r4:${id}`,
         ok: r.verdict.completed && r.verdict.wrong.length === 0,

@@ -6,6 +6,7 @@
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseConcurrency, rowsAtOnce } from "./claim.ts";
 import { type ColdRow, readRows, runCold, runColdCheck } from "./cold-guess.ts";
 import { surfaceVocab } from "./cold-help.ts";
 import { INTENTS } from "./cold-intents.ts";
@@ -94,7 +95,7 @@ const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   design <g> --model <m> [--session <name>]
   audit <g> [--session <name>]
   build <g> [--scenarios a,b]
-  r1 <g> | r2 <g>   [--concurrency 24] [--model-concurrency 8]
+  r1 <g> | r2 <g>   [--concurrency auto|n] [--model-concurrency 8]   (auto: as many probe rows as muzzle's budget holds)
   review <g> --stop <id> --decision drop|continue --why "<transcript lines>"
   status <g>
   r3 <g> [--scenarios a,b] [--concurrency 6]
@@ -285,10 +286,13 @@ async function round(
     { seed: setup.seed, epoch },
   );
   const conc = {
-    concurrency: Number(flag(args, "--concurrency") ?? 24),
+    concurrency: parseConcurrency(flag(args, "--concurrency"), "auto"),
     modelConcurrency: Number(flag(args, "--model-concurrency") ?? 8),
   };
-  const est = wallEstimate(jobs, NEXT_CASES, conc);
+  const est = wallEstimate(jobs, NEXT_CASES, {
+    ...conc,
+    concurrency: rowsAtOnce("probe", conc.concurrency),
+  });
   console.log(
     `${which}: ${est.rows} rows, about ${est.hours.toFixed(1)} h (slots ${est.slotHours.toFixed(1)} h, models ${est.modelHours.toFixed(1)} h)`,
   );
@@ -469,7 +473,10 @@ export async function tournamentCli(args: string[]): Promise<number> {
           label: i === 0 ? BASE : `v${i}`,
           surface: { name: "plan", root: "", cli: "", extension: "", skillDir: "" },
         }));
-      const conc = { concurrency: 24, modelConcurrency: 8 };
+      const conc = {
+        concurrency: rowsAtOnce("probe", Number.POSITIVE_INFINITY),
+        modelConcurrency: 8,
+      };
       for (const p of plan)
         console.log(
           `${p.case} ${p.kind}: paraphrases ${p.plan.paraphrases} m ${p.plan.m} r ${p.plan.r} n_eff ${p.plan.nEff.toFixed(0)}${p.plan.nEffPooled ? ` pooled ${p.plan.nEffPooled.toFixed(0)}` : ""} MDE ${p.mde ?? "-"}${p.plan.reached ? "" : ` SHORT: add ${p.plan.add}`}`,

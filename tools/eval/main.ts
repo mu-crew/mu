@@ -5,6 +5,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { withRowClaim } from "./claim.ts";
 import { readRows, runCold, runColdCheck } from "./cold-guess.ts";
 import { toColdMarkdown } from "./cold-report.ts";
 import {
@@ -373,7 +374,7 @@ async function nextstep(rest: string[]): Promise<number> {
   }
 }
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   const [cmd, ...rest] = argv;
   switch (cmd) {
     case "prepare": {
@@ -385,7 +386,7 @@ async function main(argv: string[]): Promise<number> {
     }
     case "selftest": {
       const root = flag(rest, "--surface") ?? REPO_ROOT;
-      return selftest(surfaceFromDir("checkout", root));
+      return withRowClaim("aut", () => selftest(surfaceFromDir("checkout", root)));
     }
     case "run": {
       const [id] = rest;
@@ -399,24 +400,26 @@ async function main(argv: string[]): Promise<number> {
         throw new Error(`${id} does not run under --harness ${harness}`);
       const w = flag(rest, "--workers");
       const workers = w === undefined ? undefined : parseWorkers(w);
-      const r = await runOne({
-        surface,
-        scenario,
-        model,
-        providerExt: flag(rest, "--provider-ext"),
-        rep: 1,
-        keep: rest.includes("--keep"),
-        harness,
-        ...(workers !== undefined ? { workers } : {}),
-        live: isLiveRun(scenario, harness),
-        fakeWorkers: rest.includes("--fake-workers"),
-        log: logPath(REPO_ROOT, timestamp(), {
-          scenario: id,
-          surface: surfaceId(surface),
-          model: runLabel(model, harness, workers),
+      const r = await withRowClaim("aut", () =>
+        runOne({
+          surface,
+          scenario,
+          model,
+          providerExt: flag(rest, "--provider-ext"),
           rep: 1,
+          keep: rest.includes("--keep"),
+          harness,
+          ...(workers !== undefined ? { workers } : {}),
+          live: isLiveRun(scenario, harness),
+          fakeWorkers: rest.includes("--fake-workers"),
+          log: logPath(REPO_ROOT, timestamp(), {
+            scenario: id,
+            surface: surfaceId(surface),
+            model: runLabel(model, harness, workers),
+            rep: 1,
+          }),
         }),
-      });
+      );
       console.log(summary(r));
       for (const w of r.verdict.wrong) console.log(`  wrong: ${w}`);
       for (const d of r.verdict.destructive) console.log(`  destructive: ${d}`);
@@ -534,11 +537,13 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
-  (e: unknown) => {
-    console.error(e instanceof Error ? e.message : e);
-    process.exit(1);
-  },
-);
+// run only as the entry point: tests import main to drive a verb
+if (import.meta.main)
+  main(process.argv.slice(2)).then(
+    (code) => process.exit(code),
+    (e: unknown) => {
+      console.error(e instanceof Error ? e.message : e);
+      process.exit(1);
+    },
+  );
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

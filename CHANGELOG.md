@@ -166,7 +166,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   mu-eval-<kind> --slots <w>` while they run (`tools/eval/claim.ts`;
   `EVAL_ROW_SLOTS_<KIND>` overrides w), `--concurrency` is capped to
   `floor(budget / w)`, and a rig that itself runs inside a muzzle claim takes
-  no per-row claims and runs `floor(MUZZLE_SLOTS / w)` rows. `--max-load` is
+  no per-row claims and runs `floor(outer slots / w)` rows. The outer claim
+  is found as muzzle finds it (`MUZZLE_SLOTS`, or a live holder in the rig's
+  ancestry: pi's muzzle extension sets neither `MUZZLE_SLOTS` nor
+  `MUZZLE_HOLD`), and the first row's holder is checked in `muzzle status
+  --json`; one that holds no slots drops the run to a low fixed cap (2 probe
+  rows, 1 AUT run) with a warning. No muzzle on PATH, or a failing `muzzle
+  status`, gives the same low cap, never the budget-derived 22. `run`,
+  `selftest`, `check --preflight` and `tournament build`'s golden traces
+  claim too, and `createSandbox` refuses to run outside a row claim.
+  `tournament r1|r2` default to `--concurrency auto` (the budget cap), not
+  24 (task `f_eval_muzzle_2`). `--max-load` is
   removed (`nextstep run`, `tournament r1|r2`). The sandbox mu shim's AUT
   call spawned 69 processes on macOS (4 perl clocks, 12 sqlite3 dumps with
   their cksum and cut); it now spawns 4: one sqlite3 call before mu and one

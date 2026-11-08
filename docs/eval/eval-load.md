@@ -24,8 +24,10 @@ Every unit of AUT work holds its own claim while it runs: `muzzle run --rule mu-
 | mode | when | per-row claim | rows at once |
 |---|---|---|---|
 | claim | muzzle on PATH, rig unclaimed | yes, w slots each | min(`--concurrency`, floor(budget / w)) |
-| nested | `MUZZLE_SLOTS` set: the rig runs inside a claim (the `mu-eval` rule, pi's muzzle extension) | no: a nested `muzzle run` claims nothing (D17) | min(`--concurrency`, max(1, floor(MUZZLE_SLOTS / w))) |
-| unmanaged | no muzzle | no | min(`--concurrency`, floor((1.5 × cores − 2) / w)) |
+| nested | the rig runs inside a claim (the `mu-eval` rule, pi's muzzle extension): `MUZZLE_SLOTS` set, or a live holder in the rig's ancestry or an ancestor's group, as muzzle's D17 checks | no: a nested `muzzle run` claims nothing (D17) | min(`--concurrency`, max(1, floor(outer slots / w))) |
+| capped | no muzzle on PATH, `muzzle status --json` fails, or the first row's holder holds no slots (nested, outer weight unknown) | no | min(`--concurrency`, max(1, floor(2 / w))): 2 probe rows, 1 AUT run; one warning line |
+
+The nesting check (f_eval_muzzle_2): pi's muzzle extension wraps `node tools/eval/main.ts` but leaves `MUZZLE_SLOTS` and `MUZZLE_HOLD` unset, so a rig that looked only at `MUZZLE_SLOTS` chose claim mode and its holders, nested, held 0 slots. The rig now walks its ancestry (one `ps`) against `muzzle status --json`'s holders, and verifies the first admitted holder's pid there. Every AUT path claims: the pools above plus `run`, `selftest`, `check --preflight` and `tournament build`'s golden traces; `test/eval/claim-sites.test.ts` holds one claim-spy test per site.
 
 Recommended: run the rig unclaimed so each row claims on its own. With today's config, pi's muzzle extension wraps `node tools/eval/main.ts` in the 3-slot `mu-eval` claim, so the rig is nested. That is safe but slow: 3 probe rows or 1 AUT run at a time.
 

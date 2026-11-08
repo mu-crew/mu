@@ -20,6 +20,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { assertInRow } from "./claim.ts";
 import { AUT_NAMES } from "./fake-payloads.ts";
 import { type CodexHooks, type HookTools, setupHarnesses } from "./harness.ts";
 import { pinScript, shellStartupEnv, writeShellStartup } from "./isolation.ts";
@@ -613,6 +614,7 @@ export interface SandboxOptions {
 }
 
 export async function createSandbox(surface: Surface, opts: SandboxOptions = {}): Promise<Sandbox> {
+  assertInRow("createSandbox");
   const tmuxBin = realTmux(); // fail before creating anything on disk
   const id = `mu-eval-${process.pid}-${Date.now()}-${randomBytes(3).toString("hex")}`;
   const dir = join(tmpdir(), id);
