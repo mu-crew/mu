@@ -525,6 +525,27 @@ export function scrubPack(dir: string, ctx: Pick<DenyContext, "caseIds">): strin
       writeFileSync(f, `${JSON.stringify(pkg, null, 2)}\n`);
       continue;
     }
+    if (rel.endsWith(".json")) {
+      // a config list entry that names the rig (tsconfig `include`) goes; any other hit is left
+      let doc: unknown;
+      try {
+        doc = JSON.parse(text);
+      } catch {
+        doc = undefined;
+      }
+      if (doc !== undefined) {
+        const drop = (v: unknown): unknown =>
+          Array.isArray(v)
+            ? v.filter((x) => !(typeof x === "string" && hit(x))).map(drop)
+            : v !== null && typeof v === "object"
+              ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, drop(x)]))
+              : v;
+        const out = `${JSON.stringify(drop(doc), null, 2)}\n`;
+        writeFileSync(f, out);
+        for (const l of out.split("\n")) if (hit(l)) left.push(`${rel}: ${l.trim().slice(0, 100)}`);
+        continue;
+      }
+    }
     const prose = /\.(md|txt)$|(^|\/)\.gitignore$/.test(rel);
     const lines = text.split("\n");
     const kept = lines.filter((l) => {

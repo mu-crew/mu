@@ -301,6 +301,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `test/public-tree.test.ts` scans every tracked text file and fails on a
   real `/Users/<name>/` or `/home/<name>/` path or on a term the public audit
   removed.
+- **Eval: `tournament pack` drops a rig entry from a JSON config list**
+  (hill-r2 c2). `tsconfig.test.json` names `tools/eval/pi-ai.d.ts` in its
+  `include` since f_eval_muzzle_2, and the pack refused base `d9acd750`
+  outright ("pack still carries denied text"). A string in a JSON array
+  that names the rig is now removed; any other hit in a JSON file is still
+  reported and refuses the pack.
 - **Eval: `tournament plan` plans from B5's rows before a freeze, and model
   errors stay out of ρ̂** (hill-r2 B5). `plan <g> --b5 <probe.jsonl>
   [--b5-cold <cold.jsonl>]` computes ρ̂ the way `freeze` does

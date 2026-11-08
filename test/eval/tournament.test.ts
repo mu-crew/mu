@@ -1166,6 +1166,21 @@ describe("designer isolation", () => {
     writeFileSync(join(tmp, "b.ts"), 'const p = "tools/eval";\n');
     expect(scrubPack(tmp, { caseIds: [] })).toEqual(['b.ts: const p = "tools/eval";']);
   });
+
+  it("drops a config list entry that names the rig (tsconfig include) and reports any other", () => {
+    tmp = mkdtempSync(join(tmpdir(), "mu-pack-"));
+    writeFileSync(
+      join(tmp, "tsconfig.test.json"),
+      JSON.stringify({ include: ["src/**/*", "tools/eval/pi-ai.d.ts"], strict: true }),
+    );
+    expect(scrubPack(tmp, { caseIds: [] })).toEqual([]);
+    expect(JSON.parse(readFileSync(join(tmp, "tsconfig.test.json"), "utf8"))).toEqual({
+      include: ["src/**/*"],
+      strict: true,
+    });
+    writeFileSync(join(tmp, "c.json"), JSON.stringify({ path: "tools/eval" }));
+    expect(scrubPack(tmp, { caseIds: [] })).toEqual(['c.json: "path": "tools/eval"']);
+  });
 });
 
 describe("BRIEF.md refusals", () => {
