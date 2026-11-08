@@ -63,6 +63,7 @@ const scenario: Scenario = {
     await delegateDelay(sb, 2);
     const ref = await nonce(sb);
     await seedViaMu(sb, [
+      ["workstream", "init", "eval"],
       ["task", "add", "c1", "-w", "eval", "-t", "check claim-1", "-i", "50", "-e", "0.1"],
       ["task", "add", "c2", "-w", "eval", "-t", "check claim-2", "-i", "50", "-e", "0.1"],
     ]);

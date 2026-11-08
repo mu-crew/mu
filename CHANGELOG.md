@@ -200,6 +200,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `notes_report_read` scored 174 of 360 base rows a miss on finding 1 alone.
   A field is mu's own unit, as a jq -r string is; a `grep -o` cut inside it
   still does not count.
+- **Eval: R4 scenarios run on macOS** (hill-r2 B5). `fanout_gates`'s commit
+  hook stamped `date +%s%3N`, which BSD date prints as `<s>3N`: no merge was
+  ever seen and its golden failed. Four bad scripts used GNU `sed -i '1i …'`
+  (now `perl -pi`). `no_mux_delegate` seeded tasks into a workstream it never
+  created. `refute_verdicts`'s delegate now holds its answer 3 s, so a close
+  issued right after the call precedes the verdict (that bad passed). The
+  README says to run on macOS with `TMPDIR=/private/tmp` (the `/tmp` symlink
+  breaks the remote scenarios' path judges) and that `wait_interrupted` needs
+  Linux.
 - **Help text matches 4.5's behaviour.** `mu --help` names Rex beside tmux
   and herdr. `agent send --steer` says it is pi-only and that a hook harness
   refuses it (another CLI in a herdr or Rex pane gets a plain send).

@@ -2,7 +2,7 @@
   {
     "calls": [
       {
-        "bash": "sed -i '1i sleep 6' $EVAL_WORKER_DIR/tasks/f1.sh"
+        "bash": "perl -pi -e 'print \"sleep 6\\n\" if $. == 1' $EVAL_WORKER_DIR/tasks/f1.sh"
       }
     ]
   },

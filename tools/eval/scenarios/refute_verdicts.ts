@@ -9,6 +9,7 @@
 // whether the record path or the AUT copying it wrote the note.
 import {
   delegateAnswer,
+  delegateDelay,
   gateScript,
   makeRepo,
   nonce,
@@ -33,6 +34,9 @@ const scenario: Scenario = {
     });
     await gateScript(sb);
     await writeWorkerDriver(sb);
+    // the delegate holds its answer, so a close issued right after the call precedes the verdict
+    // (a no-pane delegate otherwise answers before the AUT's next turn, and that bad passes)
+    await delegateDelay(sb, 3);
     await delegateAnswer(
       sb,
       1,

@@ -55,12 +55,15 @@ function ops(
   }
 }
 
-const hookLog = (sb: Sandbox): string => `${sb.dir}/main-commits.log`;
+const hookLog = (sb: Pick<Sandbox, "dir">): string => `${sb.dir}/main-commits.log`;
+
+/** Epoch ms in POSIX sh: GNU date's %3N, else perl (BSD date prints a literal "3N"). */
+export const MS_SH = `ms() { t=$(date +%s%3N); case "$t" in *[!0-9]*) perl -MTime::HiRes=time -e 'printf("%d\\n", time()*1000)' ;; *) echo "$t" ;; esac; }`;
 
 /** Repo hooks: log "<ms> <branch> <subject>" for every commit and merged-in commit. */
-function installHooks(sb: Sandbox): void {
+export function installHooks(sb: Pick<Sandbox, "dir" | "repoDir">): void {
   const body = (cmd: string): string =>
-    `#!/bin/sh\nb=$(git rev-parse --abbrev-ref HEAD)\n${cmd} | while IFS= read -r s; do echo "$(date +%s%3N) $b $s" >> '${hookLog(sb)}'; done\n`;
+    `#!/bin/sh\n${MS_SH}\nb=$(git rev-parse --abbrev-ref HEAD)\n${cmd} | while IFS= read -r s; do echo "$(ms) $b $s" >> '${hookLog(sb)}'; done\n`;
   for (const [name, cmd] of [
     ["post-commit", "git log -n1 --format=%s"],
     ["post-merge", "git log --format=%s ORIG_HEAD..HEAD"],
@@ -72,7 +75,7 @@ function installHooks(sb: Sandbox): void {
 }
 
 /** Ms timestamp at which a commit with this subject first landed on main (hook log), else null. */
-function mergeMs(sb: Sandbox, subject: string): number | null {
+export function mergeMs(sb: Pick<Sandbox, "dir">, subject: string): number | null {
   if (!existsSync(hookLog(sb))) return null;
   for (const l of readFileSync(hookLog(sb), "utf8").split("\n")) {
     const m = /^(\d+) (\S+) (.*)$/.exec(l);
