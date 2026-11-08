@@ -343,6 +343,30 @@ describe("shown", () => {
     );
     expect(shown(json, "N2-ff00")).toBe(false);
   });
+  it("a cut of task notes' text field counts for the note's first line, as jq -r does", () => {
+    // `mu task notes d | awk -F'\t' '$1=="report"{print $5}' | sed 's/\\n/\n/g'`: the first
+    // finding shares its mu line with the note header, so only the field rendering holds it whole
+    const out = `report\t2\tby=rev\tat=10:00\tRL-1 a b\\nRL-2 c d\n`;
+    const ctx = synth(
+      [
+        {
+          cmd: `mu task notes d | awk -F'\\t' '$1=="report"{print $5}' | sed 's/\\\\n/\\n/g'`,
+          start: 1000,
+          end: 2000,
+          stdout: "RL-1 a b\nRL-2 c d\n",
+        },
+      ],
+      [{ start: 1100, end: 1900, pid: "11", argv: "task notes d", out }],
+    );
+    expect(shown(ctx, "RL-1")).toBe(true);
+    expect(shown(ctx, "RL-2")).toBe(true);
+    // a field is whole: a cut inside one still does not count
+    const cut = synth(
+      [{ cmd: "mu task notes d | grep -o 'RL-1 a'", start: 1000, end: 2000, stdout: "RL-1 a\n" }],
+      [{ start: 1100, end: 1900, pid: "11", argv: "task notes d", out }],
+    );
+    expect(shown(cut, "RL-1")).toBe(false);
+  });
 });
 
 describe("shownLine", () => {

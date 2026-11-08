@@ -193,6 +193,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (`rhoFromB5`, shared by both), without writing a setup row. A row with a
   model error is rig noise, not a reading outcome; counted as a miss it
   faked a cluster effect.
+- **Eval: the next-step probe counts a field of mu's tab-separated text as a
+  whole line** (hill-r2 B5). `task notes` prints
+  `<kind>\t<n>\tby=…\tat=…\t<text>`, so a note's first line was never a whole
+  line once an answer cut the header (`awk -F'\t'`, `cut -f5-`), and
+  `notes_report_read` scored 174 of 360 base rows a miss on finding 1 alone.
+  A field is mu's own unit, as a jq -r string is; a `grep -o` cut inside it
+  still does not count.
 - **Help text matches 4.5's behaviour.** `mu --help` names Rex beside tmux
   and herdr. `agent send --steer` says it is pi-only and that a hook harness
   refuses it (another CLI in a herdr or Rex pane gets a plain send).

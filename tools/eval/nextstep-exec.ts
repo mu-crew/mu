@@ -191,14 +191,18 @@ function jsonStrings(v: unknown, out: string[]): void {
 
 /**
  * mu's own stdout for a call, ANSI stripped, plus its renderings: every string value of its JSON
- * lines decoded (a jq -r rendering), and each line holding a literal `\n` escape split on it (a
- * `sed 's/\\n/\n/g'` rendering of a note's text).
+ * lines decoded (a jq -r rendering), each field of a tab-separated line (a `cut -f` rendering, the
+ * text form's jq -r: `task notes` prints `<kind>\t<n>\tby=…\tat=…\t<text>`, so without it a note's
+ * first line is never a whole line once the header is cut), and each line or field holding a literal
+ * `\n` escape split on it (a `sed 's/\\n/\n/g'` rendering of a note's text).
  */
 export function muText(sb: Sandbox, call: MuCall): string {
   const raw = strip(muOut(sb, call));
   const decoded: string[] = [];
   for (const l of raw.split("\n")) {
-    if (l.includes("\\n")) decoded.push(...l.split("\\n"));
+    const fields = l.includes("\t") ? l.split("\t") : [];
+    decoded.push(...fields);
+    for (const p of [l, ...fields]) if (p.includes("\\n")) decoded.push(...p.split("\\n"));
     if (!/^\s*[[{]/.test(l)) continue;
     try {
       jsonStrings(JSON.parse(l), decoded);
