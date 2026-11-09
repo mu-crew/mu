@@ -38,6 +38,25 @@ mu does not add these unless one earns its way back under the criteria:
   system, or a workflow engine.** A prior internal runtime collected all
   of these. Not inheriting them is the point.
 
+  Amended 2026-11-09, with the user's approval, by the
+  [plugins spec](specs/2026-11-09-mu-plugins.md). Remote and elastic agent
+  backends need host, job and channel facts that mu cannot hold in code,
+  so mu may now drive a **plugin**. A plugin is an executable
+  `mu-plugin-<name>` that the user registers by absolute path. It speaks a
+  versioned JSON-RPC protocol on its own stdio, as mu's child for one
+  invocation. It covers only five seams: the host provider, the link, the
+  job kind, the agent channel and host checks. It reports facts; mu owns
+  every state machine and every record. Still refused:
+
+  - discovery of any kind (`PATH` scans, plugin directories, package
+    hooks);
+  - third-party code loaded into mu's process;
+  - a resident plugin host or daemon;
+  - plugins that add verbs, flags, tables, wait events or op kinds;
+  - plugins that write mu's DB or state directory;
+  - any RPC into mu;
+  - a seam with fewer than two real implementations.
+
 ## Shipped in 4.0
 
 The 4.0 rewrite was approved as a whole and was exempt from the

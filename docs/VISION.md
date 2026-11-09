@@ -181,9 +181,20 @@ win32-x64) or a C++ toolchain.
 - **`--json` on every read verb**, so scripts use `jq`, not table parsing.
 - **`mu sql`** underneath, as the explicit escape hatch.
 
-There is no DSL, no plugin system, no workflow engine, and no verb
-registry. The commander wiring in `src/cli.ts` is the verb surface. A new
-verb is one SDK function plus one commander block.
+There is no DSL, no workflow engine, and no verb registry. The commander
+wiring in `src/cli.ts` is the verb surface. A new verb is one SDK function
+plus one commander block.
+
+Until 2026-11-09 this said "no plugin system". The
+[plugins spec](specs/2026-11-09-mu-plugins.md) amends that, with the
+user's approval, for remote and elastic agent backends. A **plugin** is an
+executable that the user registers by path and mu never discovers. mu runs
+it as a child and talks to it over a versioned stdio protocol. A plugin
+implements one of five seams: host provider, link, job kind, agent channel
+or host checks. Each seam is one TypeScript interface, and mu's built-ins
+implement the same interface in process. A plugin adds no verbs, tasks or
+mux backends. It owns no state machine and never writes the DB: it
+reports facts, and mu records the transitions.
 
 ### 9. Observed vs claimed
 
