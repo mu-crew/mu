@@ -116,6 +116,15 @@ import {
   usageLines,
 } from "../output.js";
 import { encodeEnvelope, type NextPlan, RESULT_BYTES } from "../output-contract.js";
+import {
+  EffectOutcomeUnknownError,
+  PluginAnswerUnknownError,
+  PluginCallError,
+  PluginExistsError,
+  PluginInUseError,
+  PluginNotFoundError,
+  PluginRefusedError,
+} from "../plugins/errors.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
 import {
@@ -496,6 +505,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof TaskNotFoundError ||
     err instanceof TaskNoteRangeError ||
     err instanceof HostNotFoundError ||
+    err instanceof PluginNotFoundError ||
     err instanceof WorkstreamNotFoundError
   ) {
     // WorkstreamNotFoundError originates inside resolveWorkstreamId
@@ -530,6 +540,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof ReattachRefusedError ||
     err instanceof ReattachFailedError ||
     err instanceof HostInUseError ||
+    // A plugin's load or trust rules refused it, its name is taken, or something names it.
+    err instanceof PluginRefusedError ||
+    err instanceof PluginExistsError ||
+    err instanceof PluginInUseError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
@@ -622,6 +636,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // all three are "the spawn can't produce a working agent".
     return { label: "spawn cli not found", exitCode: 1 };
   }
+  if (err instanceof EffectOutcomeUnknownError) {
+    // A plugin effect that may have happened: same lane as a delivery unknown (D13).
+    return { label: "outcome unknown", exitCode: 1 };
+  }
   if (err instanceof AgentSendIndeterminateError) {
     // Delivery unknown: same lane as ctl unreachable, distinct label.
     return { label: "send delivery unknown", exitCode: 1 };
@@ -702,6 +720,13 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
   if (err instanceof HostHandbackError) {
     // A host template asked for a human (exit 3): never retried, never auto-recorded.
     return { label: "human needed", exitCode: 5 };
+  }
+  if (err instanceof PluginCallError) {
+    // The plugin answered that nothing happened (`human`: a person must act): substrate.
+    return { label: err.kind === "human" ? "human needed" : "plugin", exitCode: 5 };
+  }
+  if (err instanceof PluginAnswerUnknownError) {
+    return { label: "plugin", exitCode: 5 };
   }
   if (err instanceof HostCheckFailedError) {
     // The host (or its forward) failed a check step: substrate, not usage.

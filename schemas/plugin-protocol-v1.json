@@ -1,0 +1,320 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/mu-crew/mu/schemas/plugin-protocol-v1.json",
+  "title": "mu plugin protocol, version 1",
+  "description": "JSON-RPC 2.0, one message per line on the plugin's stdin and stdout, UTF-8, at most 1 MiB per message. docs/reference/plugin-protocol.md is the normative prose; the handshake's `schema` is the sha256 of this file's exact bytes.",
+  "$defs": {
+    "fromPlugin": {
+      "description": "Every message a plugin may write on stdout.",
+      "oneOf": [
+        { "$ref": "#/$defs/resultMessage" },
+        { "$ref": "#/$defs/errorMessage" },
+        { "$ref": "#/$defs/notification" }
+      ]
+    },
+    "fromMu": {
+      "description": "Every message mu writes on the plugin's stdin.",
+      "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/cancel" }]
+    },
+    "id": { "type": "integer", "minimum": 1 },
+    "request": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "$ref": "#/$defs/id" },
+        "method": { "type": "string", "minLength": 1 },
+        "params": {}
+      }
+    },
+    "cancel": {
+      "description": "$/cancel {id}: a request still awaiting its reply; $/cancel {watchId}: end a watch.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "const": "$/cancel" },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "id": { "$ref": "#/$defs/id" }, "watchId": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "resultMessage": {
+      "description": "A reply always carries `result`; an absent result is null.",
+      "type": "object",
+      "required": ["jsonrpc", "id", "result"],
+      "additionalProperties": false,
+      "properties": { "jsonrpc": { "const": "2.0" }, "id": { "$ref": "#/$defs/id" }, "result": {} }
+    },
+    "errorMessage": {
+      "type": "object",
+      "required": ["jsonrpc", "id", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "id": { "oneOf": [{ "$ref": "#/$defs/id" }, { "type": "null" }] },
+        "error": {
+          "type": "object",
+          "required": ["code", "message", "data"],
+          "additionalProperties": false,
+          "properties": {
+            "code": { "type": "integer" },
+            "message": { "type": "string" },
+            "data": {
+              "type": "object",
+              "required": ["kind"],
+              "additionalProperties": false,
+              "properties": {
+                "kind": { "enum": ["retryable", "permanent", "human", "unknown-outcome"] },
+                "remedy": { "type": "string", "minLength": 1, "maxLength": 4096 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "notification": {
+      "description": "A plugin sends no request to mu. Its only notifications end a watch.",
+      "type": "object",
+      "required": ["jsonrpc", "method", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "jsonrpc": { "const": "2.0" },
+        "method": { "enum": ["watch/settled", "watch/restarted"] },
+        "params": { "type": "object" }
+      }
+    },
+    "initializeParams": {
+      "type": "object",
+      "required": ["protocol", "mu"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol": {
+          "type": "object",
+          "required": ["min", "max"],
+          "additionalProperties": false,
+          "properties": { "min": { "type": "integer", "minimum": 0 }, "max": { "type": "integer", "minimum": 0 } }
+        },
+        "mu": { "type": "string" }
+      }
+    },
+    "initializeResult": {
+      "type": "object",
+      "required": ["protocol", "plugin", "instance", "schema", "seams"],
+      "additionalProperties": false,
+      "properties": {
+        "protocol": { "type": "integer", "minimum": 0 },
+        "plugin": {
+          "type": "object",
+          "required": ["name", "version"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 64 }
+          }
+        },
+        "instance": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "schema": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "seams": { "$ref": "#/$defs/seams" }
+      }
+    },
+    "seams": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "host": {
+          "type": "object",
+          "required": ["acquire"],
+          "additionalProperties": false,
+          "properties": { "acquire": { "$ref": "#/$defs/keyCaps" } }
+        },
+        "link": { "$ref": "#/$defs/linkCaps" },
+        "job": { "$ref": "#/$defs/jobCaps" },
+        "channel": {
+          "type": "object",
+          "required": ["name", "caps"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+            "caps": { "$ref": "#/$defs/channelCaps" }
+          }
+        }
+      }
+    },
+    "checks": { "type": "array", "items": { "enum": ["template", "reach", "agent"] } },
+    "dedupe": {
+      "type": "object",
+      "required": ["exact", "windowMs"],
+      "additionalProperties": false,
+      "properties": { "exact": { "const": true }, "windowMs": { "type": "integer", "minimum": 1 } }
+    },
+    "keyCaps": {
+      "type": "object",
+      "required": ["lookup", "fenceKey"],
+      "additionalProperties": false,
+      "properties": {
+        "lookup": { "type": "boolean" },
+        "dedupe": { "$ref": "#/$defs/dedupe" },
+        "fenceKey": { "type": "boolean" },
+        "inFlightMs": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "linkCaps": {
+      "type": "object",
+      "required": ["fetch", "slots", "remoteOnTimeout", "quiescence", "maxScriptBytes"],
+      "additionalProperties": false,
+      "properties": {
+        "fetch": { "type": "boolean" },
+        "slots": { "enum": ["mu", "self"] },
+        "remoteOnTimeout": { "enum": ["stopped", "unknown"] },
+        "quiescence": { "enum": ["provable", "unprovable"] },
+        "maxScriptBytes": { "type": "integer", "minimum": 1 },
+        "checks": { "$ref": "#/$defs/checks" }
+      }
+    },
+    "jobCaps": {
+      "type": "object",
+      "required": ["kind", "view", "handle", "start"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "view": { "enum": ["bound", "detached"] },
+        "handle": { "enum": ["pane", "file", "reply"] },
+        "start": { "$ref": "#/$defs/keyCaps" },
+        "channel": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "checks": { "$ref": "#/$defs/checks" }
+      }
+    },
+    "channelCaps": {
+      "type": "object",
+      "required": ["fence", "receipt", "steer", "interrupt", "fresh", "answer", "command", "watch", "settleText"],
+      "additionalProperties": false,
+      "properties": {
+        "fence": { "enum": ["sync", "none"] },
+        "receipt": { "enum": ["exact", "acknowledged", "none"] },
+        "dedupe": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "send": { "$ref": "#/$defs/dedupe" },
+            "fresh": { "$ref": "#/$defs/dedupe" },
+            "interrupt": { "$ref": "#/$defs/dedupe" },
+            "answer": { "$ref": "#/$defs/dedupe" },
+            "command": { "$ref": "#/$defs/dedupe" }
+          }
+        },
+        "steer": { "enum": ["mid-turn", "as-send", "none"] },
+        "interrupt": { "enum": ["exact", "unconfirmed", "none"] },
+        "fresh": { "enum": ["in-place", "new-job", "none"] },
+        "answer": { "type": "boolean" },
+        "command": { "type": "boolean" },
+        "watch": { "enum": ["stream", "poll"] },
+        "settleText": { "enum": ["tied", "untied", "none"] }
+      }
+    },
+    "target": {
+      "description": "Who a call is about. HostView stays inside mu.",
+      "type": "object",
+      "required": ["host"],
+      "additionalProperties": false,
+      "properties": {
+        "agent": {
+          "type": "object",
+          "required": ["workstream", "name", "incarnation"],
+          "additionalProperties": false,
+          "properties": {
+            "workstream": { "type": "string" },
+            "name": { "type": "string" },
+            "incarnation": { "type": "integer" }
+          }
+        },
+        "job": {
+          "type": "object",
+          "required": ["kind", "key"],
+          "additionalProperties": false,
+          "properties": { "kind": { "type": "string" }, "key": { "type": "string" }, "handle": { "type": "string" } }
+        },
+        "host": {
+          "type": "object",
+          "required": ["name"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "handle": { "type": "string" },
+            "instance": { "type": "string" }
+          }
+        }
+      }
+    },
+    "deadline": { "description": "Epoch ms; past it mu cancels.", "type": "integer", "minimum": 0 },
+    "linkExecParams": {
+      "type": "object",
+      "required": ["target", "deadline", "script", "cwd", "timeoutMs"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "deadline": { "$ref": "#/$defs/deadline" },
+        "script": { "type": "string", "description": "A POSIX sh script." },
+        "cwd": { "type": "string", "description": "The remote directory; `.` is the login directory." },
+        "timeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "linkFetchParams": {
+      "type": "object",
+      "required": ["target", "deadline", "remoteCwd", "localRepo", "timeoutMs"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "deadline": { "$ref": "#/$defs/deadline" },
+        "remoteCwd": { "type": "string" },
+        "localRepo": { "type": "string" },
+        "timeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "linkRun": {
+      "type": "object",
+      "required": ["exitCode", "stdout", "stderr", "partial"],
+      "additionalProperties": false,
+      "properties": {
+        "exitCode": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "partial": { "type": "boolean" }
+      }
+    },
+    "linkCheckStepsParams": {
+      "type": "object",
+      "required": ["target", "deadline", "phase"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "deadline": { "$ref": "#/$defs/deadline" },
+        "phase": { "enum": ["template", "reach", "agent"] },
+        "root": { "type": "string" },
+        "agent": {
+          "type": "object",
+          "required": ["name", "workstream"],
+          "additionalProperties": false,
+          "properties": { "name": { "type": "string" }, "workstream": { "type": "string" } }
+        }
+      }
+    },
+    "checkSteps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["step", "ok", "detail"],
+        "additionalProperties": false,
+        "properties": {
+          "step": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "ok": { "oneOf": [{ "type": "boolean" }, { "type": "null" }] },
+          "detail": { "type": "string" }
+        }
+      }
+    }
+  }
+}

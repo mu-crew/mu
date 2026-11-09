@@ -45,6 +45,7 @@
     "dist",
     "skills",
     "prompts",
+    "schemas",
     "docs/guide",
     "docs/reference",
     "docs/VOCABULARY.md",

@@ -463,6 +463,16 @@ export {
   migratePi,
   skillDirDigest,
 } from "./pi-migrate.js";
+// The plugin protocol's typed errors (plugins spec D13, D14).
+export {
+  EffectOutcomeUnknownError,
+  PluginAnswerUnknownError,
+  PluginCallError,
+  PluginExistsError,
+  PluginInUseError,
+  PluginNotFoundError,
+  PluginRefusedError,
+} from "./plugins/errors.js";
 export {
   type MachineLocalLoss,
   type RebuildOptions,
