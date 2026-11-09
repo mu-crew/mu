@@ -17,9 +17,14 @@ export interface FakePlugin {
   readonly configPath: string;
   /** Replace keys of the config (re-read by the fake on every request). */
   set(patch: Record<string, unknown>): void;
-  /** Every request the fake got, in order (initialize included). */
+  /** Every request (and `$/cancel`) the fake got, in order (initialize included). */
   calls(): Array<{ method: string; params: Record<string, unknown> }>;
+  /** How many times the fake finished its EOF cleanup and exited on its own. */
+  cleanExits(): number;
 }
+
+/** The log line the fake writes when it exits on EOF after its cleanup. */
+const CLEAN_EXIT = "(clean exit)";
 
 export function fakePlugin(
   dir: string,
@@ -33,6 +38,16 @@ export function fakePlugin(
   writeFileSync(path, `#!/bin/sh\nexec '${process.execPath}' '${FAKE}' "$@"\n`);
   chmodSync(path, 0o755);
   let current: Record<string, unknown> = { name, home: dir, ...config };
+  const log = (): Array<{ method: string; params: Record<string, unknown> }> => {
+    try {
+      return readFileSync(`${configPath}.log`, "utf8")
+        .split("\n")
+        .filter((l) => l !== "")
+        .map((l) => JSON.parse(l) as { method: string; params: Record<string, unknown> });
+    } catch {
+      return [];
+    }
+  };
   writeFileSync(configPath, JSON.stringify(current));
   return {
     name,
@@ -44,14 +59,10 @@ export function fakePlugin(
       writeFileSync(configPath, JSON.stringify(current));
     },
     calls() {
-      try {
-        return readFileSync(`${configPath}.log`, "utf8")
-          .split("\n")
-          .filter((l) => l !== "")
-          .map((l) => JSON.parse(l) as { method: string; params: Record<string, unknown> });
-      } catch {
-        return [];
-      }
+      return log().filter((e) => e.method !== CLEAN_EXIT);
+    },
+    cleanExits() {
+      return log().filter((e) => e.method === CLEAN_EXIT).length;
     },
   };
 }

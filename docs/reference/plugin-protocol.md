@@ -72,8 +72,13 @@ it is refused until the plugin job kind ships.
 - To stop a plugin, at a normal exit or on a SIGINT, SIGTERM or SIGHUP,
   mu sends `$/cancel` for each pending call and `shutdown`, closes stdin,
   waits at most 5 s for the plugin's group to empty, and kills the
-  group. A signal no verb handles is then raised again. Only an exit that
-  cannot wait (a crash) kills the group at once.
+  group. Every stop is this one sequence, whatever begins it (a call's
+  deadline, an abort, a signal, an invalid message, the leader's exit).
+- The first such signal also means mu is terminating: from then on no
+  plugin starts or restarts and no request is sent, and later signals are
+  absorbed. Once every plugin's group is empty, a signal no verb handles
+  is raised again. Only an exit that cannot wait (a crash) kills the group
+  at once.
 - On stdin EOF the plugin must cancel or finish its in-flight calls and
   exit within 5 s. This is what it sees when mu dies, even by SIGKILL.
 - mu tracks the group, not the leader. When the leader exits, anything
@@ -182,9 +187,9 @@ wire calls.
 - Reads (the handshake, `link.checkSteps`) take 10 s.
 - Past the deadline, or when the verb cancels the call (its abort signal),
   mu sends `{"jsonrpc":"2.0","method":"$/cancel","params":{"id":<id>}}`,
-  waits up to 5 s (a reply to the call ends the wait early), and kills the
-  plugin's group: the deadline plus one grace bounds every call. The
-  reply is ignored. The call has no answer: a read is unknown, an effect
+  then stops the plugin as above: the deadline plus one grace bounds every
+  call. A reply that arrives meanwhile is ignored, and does not cut the
+  grace short. The call has no answer: a read is unknown, an effect
   is an unknown outcome. The next call starts the plugin again; a plugin
   that sent an invalid message stays refused for the invocation.
 

@@ -44,6 +44,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   check` skips on; the fake plugin keeps its runs in its group, and the
   contract test reports a plugin whose runs leave it
   (`plugin-containment`, `plugin-signal.integration`).
+  After the second review (task `p6b_fix2`): each plugin process has one
+  lifecycle (`starting`, tracked from spawn's return; `ready`; `stopping`;
+  `gone`) and one stop sequence that owns every request's timer and abort;
+  the first terminating signal sets a latch after which no plugin starts or
+  restarts and no request is sent; a reply during the stop never cuts the
+  grace short (`plugin-lifecycle`: every phase by every plugin behaviour).
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`

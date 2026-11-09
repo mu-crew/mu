@@ -16,7 +16,9 @@
 // running on stdin EOF), detach (leave a setsid'd helper holding stdout; a
 // string: the file its pid is written to), detachExec (hostile: run each
 // exec in its own session, out of the fake's group), checkSteps (the
-// link.checkSteps result to return), leakCanary (write MU_PLUGIN_CANARY to stderr and into a reply), envDump (a
+// link.checkSteps result to return), initDelayMs (answer the handshake late),
+// replyOnCancel (answer a cancelled call at once), eofDelayMs (take this long
+// to exit on EOF, logging "(clean exit)"), leakCanary (write MU_PLUGIN_CANARY to stderr and into a reply), envDump (a
 // path the start-up env is written to), stderr (a line written at start),
 // faults: { "<method>": ["<fault>", ...] }, the nth call taking the nth entry:
 //   retryable | permanent | human | unknown-outcome   an error of that kind
@@ -238,6 +240,11 @@ function onMessage(msg) {
       `${JSON.stringify({ method: msg.method, params: msg.params })}\n`,
     );
     const id = msg.params?.id;
+    // replyOnCancel: answer the cancelled call at once (mu must ignore it, and wait on).
+    if (config().replyOnCancel) {
+      reply(id, { exitCode: null, stdout: "", stderr: "cancelled", partial: false });
+      return;
+    }
     if (deaf.has(id)) return;
     const pid = running.get(id);
     if (pid !== undefined) killTree(pid);
@@ -248,7 +255,9 @@ function onMessage(msg) {
     `${JSON.stringify({ method: msg.method, params: msg.params })}\n`,
   );
   if (msg.method === "initialize") {
-    initialize(msg.id, msg.params);
+    const delay = config().initDelayMs;
+    if (delay) setTimeout(() => initialize(msg.id, msg.params), delay);
+    else initialize(msg.id, msg.params);
     return;
   }
   const fault = nextFault(msg.method);
@@ -321,11 +330,18 @@ process.stdin.on("data", (chunk) => {
 });
 process.stdin.on("end", () => {
   // stdin EOF: end the in-flight calls and exit, well within the grace (D13).
-  if (config().ignoreEof) {
+  const c = config();
+  if (c.ignoreEof) {
     setInterval(() => {}, 1000);
     return;
   }
-  for (const pid of running.values()) killTree(pid);
-  if (!config().detachExec) killGroupButMe();
-  process.exit(0);
+  const finish = () => {
+    for (const pid of running.values()) killTree(pid);
+    if (!c.detachExec) killGroupButMe();
+    appendFileSync(`${configPath}.log`, `${JSON.stringify({ method: "(clean exit)" })}\n`);
+    process.exit(0);
+  };
+  // eofDelayMs: a cleanup that takes a while, still within the grace.
+  if (c.eofDelayMs) setTimeout(finish, c.eofDelayMs);
+  else finish();
 });

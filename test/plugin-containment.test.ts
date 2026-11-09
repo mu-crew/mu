@@ -15,6 +15,7 @@ import { type PluginSession, startPlugin } from "../src/plugins/client.js";
 import { EffectOutcomeUnknownError, PluginRefusedError } from "../src/plugins/errors.js";
 import {
   livePluginProcesses,
+  resetTerminatingForTests,
   setPluginGraceForTests,
   setPluginTapForTests,
   setSignalRaiseForTests,
@@ -44,6 +45,7 @@ afterEach(async () => {
   setPluginTapForTests(undefined);
   setPluginGraceForTests(undefined);
   setSignalRaiseForTests(undefined);
+  resetTerminatingForTests();
   await s?.shutdown();
   s = undefined;
   await closePluginSessions();

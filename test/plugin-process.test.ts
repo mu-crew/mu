@@ -201,7 +201,9 @@ describe("timeouts and cancel", () => {
     expect((err as Error).message).toMatch(
       /no answer within 100 ms; cancelled, and the plugin was killed/,
     );
-    expect(Date.now() - t0).toBeGreaterThanOrEqual(100 + GRACE);
+    // The fake exits on the stop's EOF, which ends the one grace early.
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(100);
+    expect(Date.now() - t0).toBeLessThan(100 + GRACE + 400);
     const cancel = tapped.find((t) => t.stream === "in" && t.text.includes("$/cancel"));
     expect(JSON.parse(cancel?.text ?? "{}")).toEqual({
       jsonrpc: "2.0",
@@ -212,16 +214,17 @@ describe("timeouts and cancel", () => {
     await expect(exec(p)).rejects.toBeInstanceOf(PluginCallError);
   });
 
-  it("a late reply after the cancel ends the grace early, is ignored, and the group is still killed", async () => {
-    f.set({ lateMs: 150, faults: { "link.exec": ["late"] } });
-    s = await startPlugin("fake", f.argv, { graceMs: 2000 });
+  it("a late reply during the stop is ignored, and neither answers the call nor cuts the grace short", async () => {
+    f.set({ ignoreEof: true, lateMs: 150, faults: { "link.exec": ["late"] } });
+    s = await startPlugin("fake", f.argv, { graceMs: 600 });
     const t0 = Date.now();
     const err = await exec(s, "echo hi", { timeoutMs: 50 }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(EffectOutcomeUnknownError);
-    expect(Date.now() - t0).toBeLessThan(1500);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(50 + 600 - 20);
     // The late reply arrived and was ignored: it broke nothing, and answered nothing.
     expect(tapped.some((t) => t.stream === "out" && t.text.includes('"exitCode":0'))).toBe(true);
-    expect(s.process.broken).toMatch(/a call was cancelled/);
+    expect(s.process.broken).toMatch(/no answer within 50 ms/);
+    expect(s.process.poisoned).toBe(false);
     expect(groupGone(s.process.pgid)).toBe(true);
   });
 

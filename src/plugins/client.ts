@@ -21,7 +21,13 @@ import {
   PluginCallError,
   PluginRefusedError,
 } from "./errors.js";
-import { PluginProcess, RpcFailure, RpcUnanswered } from "./process.js";
+import {
+  muTerminating,
+  PluginProcess,
+  RpcFailure,
+  RpcUnanswered,
+  terminatingReason,
+} from "./process.js";
 import {
   type InitializeResult,
   loadRefusals,
@@ -83,6 +89,9 @@ export async function startPlugin(
   try {
     proc = await PluginProcess.start(argv, pluginEnv(), opts.graceMs);
   } catch (e) {
+    // mu is terminating: nothing new starts (process.ts, the latch).
+    if (e instanceof RpcUnanswered)
+      throw new PluginCallError(name, "start", "permanent", e.message);
     throw new PluginRefusedError(name, [`it did not start: ${(e as Error).message}`]);
   }
   let init: InitializeResult;
@@ -97,9 +106,15 @@ export async function startPlugin(
     const refusals = loadRefusals(r.value, { name, ...(opts.needs ? { needs: opts.needs } : {}) });
     if (refusals.length > 0) throw new PluginRefusedError(name, refusals);
     init = r.value;
+    // Stopped during the handshake (a signal, its leader's exit): no session.
+    if (!proc.ready()) throw new RpcUnanswered(proc.broken ?? "the plugin stopped", true);
   } catch (e) {
     await proc.shutdown();
     if (e instanceof PluginRefusedError) throw e;
+    const latched = muTerminating();
+    if (latched !== undefined) {
+      throw new PluginCallError(name, "initialize", "permanent", terminatingReason(latched));
+    }
     const why = e instanceof RpcFailure ? `${e.kind}: ${e.message}` : (e as Error).message;
     const stderr = proc.stderrLine();
     throw new PluginRefusedError(name, [

@@ -21,11 +21,13 @@ import type { Db } from "../db.js";
 import { hostsOfPlugin } from "../hosts.js";
 import { type PluginSession, startPlugin } from "./client.js";
 import {
+  PluginCallError,
   PluginExistsError,
   PluginInUseError,
   PluginNotFoundError,
   PluginRefusedError,
 } from "./errors.js";
+import { muTerminating, terminatingReason } from "./process.js";
 import { declaredSeams, type PluginSeams, type SeamName } from "./protocol.js";
 
 /** A `plugins` row. */
@@ -191,6 +193,13 @@ export function pluginSession(
   needs: readonly SeamName[] = [],
 ): Promise<PluginSession> {
   const key = `${db.name}\0${name}`;
+  // Terminating (the latch): no new session, no restart, no new request.
+  const latched = muTerminating();
+  if (latched !== undefined) {
+    return Promise.reject(
+      new PluginCallError(name, "start", "permanent", terminatingReason(latched)),
+    );
+  }
   const ended = started.get(key)?.process;
   if (ended !== undefined && ended.broken !== undefined && !ended.poisoned) {
     sessions.delete(key);
