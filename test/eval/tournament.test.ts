@@ -708,6 +708,11 @@ describe("variant patches", () => {
     const files = parsePatch(PATCH);
     expect(newNames(files, new Set(["timeout"]))).toEqual(["--text"]);
     expect(newNames(files, new Set(["text"]))).toEqual([]);
+    // the formatter's two-line form: `.option(` on one added line, the flags on the next
+    const split = parsePatch(
+      'diff --git a/src/x.ts b/src/x.ts\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1,2 +1,6 @@\n const a = 1;\n+  .option(\n+    "--if-clean",\n+    "apply in one call when clean",\n+  )\n const b = 2;\n',
+    );
+    expect(newNames(split, new Set(["if"]))).toEqual(["--if-clean"]);
     expect(admitWith({ ...none, newNames: ["--text"] }).ok).toBe(true);
     const calls = behaviourDiff(traces(0), traces(3), key);
     expect(calls).toEqual(["agent close|--if"]);

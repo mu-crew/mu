@@ -307,6 +307,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   outright ("pack still carries denied text"). A string in a JSON array
   that names the rig is now removed; any other hit in a JSON file is still
   reported and refuses the pack.
+- **Eval: a variant's new flag split over two lines is a new name**
+  (hill-r2 c2). `newNames` matched `.option("--x"` on one added line, but
+  the formatter writes `.option(` and the flag on separate lines, so c2's
+  `--if-clean` and `--auto` had no behaviour signature. Runs of added lines
+  are now joined before matching.
 - **Eval: the behaviour diff pairs golden calls by occurrence, not
   position** (hill-r2 c2). Workers interleave their calls differently from
   run to run (`wait_mixed_refs` claims in either order), and one swap shifted

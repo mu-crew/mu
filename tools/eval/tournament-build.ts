@@ -113,21 +113,36 @@ export function deriveMarkers(
 // ---- behaviour signature ------------------------------------------------------------------------
 
 /** §3.1 behaviour step 1: flag and command names on `+` lines of `src/` that base's parser lacks. */
+/** The texts of a hunk's runs of consecutive `+` lines, each run joined with newlines. */
+function addedRuns(h: readonly { op: string; text: string }[]): string[] {
+  const runs: string[] = [];
+  let cur: string[] = [];
+  for (const l of h) {
+    if (l.op === "+") cur.push(l.text);
+    else if (cur.length > 0) {
+      runs.push(cur.join("\n"));
+      cur = [];
+    }
+  }
+  if (cur.length > 0) runs.push(cur.join("\n"));
+  return runs;
+}
+
 export function newNames(files: readonly FilePatch[], baseVocab: ReadonlySet<string>): string[] {
   const out = new Set<string>();
   for (const f of files) {
     if (!f.path.startsWith("src/")) continue;
+    // runs of added lines, joined: the formatter puts `.option(` and its flags on two lines
     for (const h of f.hunks)
-      for (const l of h) {
-        if (l.op !== "+") continue;
-        for (const m of l.text.matchAll(/\.(?:option|requiredOption)\(\s*["'`]([^"'`]+)["'`]/g))
+      for (const text of addedRuns(h)) {
+        for (const m of text.matchAll(/\.(?:option|requiredOption)\(\s*["'`]([^"'`]+)["'`]/g))
           for (const flag of (m[1] ?? "").matchAll(/(--?[A-Za-z][\w-]*)/g)) {
             const f1 = flag[1] ?? "";
             const name = f1.replace(/^--?/, "");
             if (f1.startsWith("--") && !baseVocab.has(name)) out.add(f1);
             if (!f1.startsWith("--") && !baseVocab.has(f1)) out.add(f1);
           }
-        for (const m of l.text.matchAll(/\.command\(\s*["'`]([A-Za-z][\w-]*)/g)) {
+        for (const m of text.matchAll(/\.command\(\s*["'`]([A-Za-z][\w-]*)/g)) {
           const name = m[1] ?? "";
           if (!baseVocab.has(name)) out.add(name);
         }
