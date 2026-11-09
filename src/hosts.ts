@@ -899,6 +899,8 @@ export interface HostRun {
  * fallback. Exit 3 throws `HostHandbackError`. The command is its own process group: on timeout or caller
  * termination the whole group (the template's transport included) is gone
  * before this returns, so the channel is never released under a live one.
+ * The template runner: called by the link (src/host-link.ts), the lease kind's
+ * stop (src/carrier-stop.ts) and `checkHost` only (test/link-imports.test.ts).
  */
 export async function runLeasedTemplate(
   db: Db,

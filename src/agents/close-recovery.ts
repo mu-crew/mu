@@ -17,7 +17,6 @@
 import type { Db } from "../db.js";
 import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
-import { asideOf, closeRemoteWorktree } from "../remote-agent.js";
 import {
   assertRecoveryProfile,
   assertRecoveryUnchanged,
@@ -26,6 +25,7 @@ import {
   type RemoteRecovery,
   RemoteRecoveryRefusedError,
 } from "../remote-recovery.js";
+import { asideOf, closeRemoteWorktree } from "../remote-worktree.js";
 import type { CloseAgentResult, ClosePreview } from "./close.js";
 
 /** Why a close of `rec` would refuse right now, from the registry and the profile alone (no host command); null when it would go on. */

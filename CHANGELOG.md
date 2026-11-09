@@ -207,6 +207,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   new pane probe outside the cluster in any form (a `MuxBackend` pane read, a
   raw tmux, herdr or Rex call, a tmux pane query or `#{pane_*}` format). No
   behaviour change.
+- **Remote templates run through the link** (plugins spec P2, D2 and D7).
+  The new `src/host-link.ts` holds the `HostLink` seam (`exec`, optional
+  `fetch`, `fits`, `fingerprint`, phased `checkSteps` types), a minimal
+  `HostView` (name, profile, link) and the built-in `templateLink`: today's
+  `exec` and `fetch` templates through `runLeasedTemplate`, with `admitted`
+  run on the admitted profile before any command (the recovery profile pin,
+  the brief's size guard). collect, the remote brief file, the gate result
+  read and clean, and the hooks node read call the link; the worktree
+  scripts moved from `src/remote-agent.ts` to `src/remote-worktree.ts` with
+  their exec counts and channels kept (prepare one exec under the spawn's
+  channel, rollback one, close two under one channel, its profile guard
+  first). Only the link, the lease kind's `runStop` and `checkHost` run the
+  template runner (`test/link-imports.test.ts`, import-aware). The SDK type
+  `Transport` is renamed `SendChannel`; `src/remote-agent.ts` still exports
+  the worktree names. No behaviour change.
 
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove

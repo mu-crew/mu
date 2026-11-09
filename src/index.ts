@@ -462,11 +462,6 @@ export {
   reconcile,
 } from "./reconcile.js";
 export {
-  closeRemoteWorktree,
-  RemoteCloseRefusedError,
-  RemotePrepareError,
-} from "./remote-agent.js";
-export {
   type CollectResult,
   collectRef,
   collectRemoteAgent,
@@ -485,6 +480,11 @@ export {
   recoveriesFor,
   selectRemoteRecovery,
 } from "./remote-recovery.js";
+export {
+  closeRemoteWorktree,
+  RemoteCloseRefusedError,
+  RemotePrepareError,
+} from "./remote-worktree.js";
 export {
   agentRevision,
   assertRevision,

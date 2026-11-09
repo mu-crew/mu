@@ -43,7 +43,8 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import type { Db } from "../db.js";
 import { locksDir, withFileLock } from "../file-lock.js";
-import { HOST_COMMAND_TIMEOUT_MS, runHostTemplate } from "../hosts.js";
+import { hostView, type LinkRun } from "../host-link.js";
+import { HOST_COMMAND_TIMEOUT_MS } from "../hosts.js";
 import { viewRunning } from "../jobs/view.js";
 import { shellQuote } from "../shell-quote.js";
 import { type HooksPane, readHooksPane, writeMuEvent } from "./hooks-pane.js";
@@ -430,15 +431,17 @@ export async function readRemoteHooks(
     keyPath(db, agent.key, "lock"),
     `remote read ${agent.key}`,
     async (): Promise<RemoteReadResult> => {
-      let run: Awaited<ReturnType<typeof runHostTemplate>>;
+      let run: LinkRun;
       try {
-        run = await runHostTemplate(
-          db,
-          agent.host,
-          "exec",
-          `read:${agent.workstreamName}/${agent.name}`,
-          { cmd: remotePaneScript(agent.key, write), cwd: "." },
-          { paneAlive: viewRunning, timeoutMs: HOST_COMMAND_TIMEOUT_MS },
+        const h = hostView(db, agent.host);
+        run = await h.link.exec(
+          h,
+          {
+            script: remotePaneScript(agent.key, write),
+            cwd: ".",
+            timeoutMs: HOST_COMMAND_TIMEOUT_MS,
+          },
+          { holder: `read:${agent.workstreamName}/${agent.name}`, paneAlive: viewRunning },
         );
       } catch (e) {
         return fail(`host ${agent.host}: ${e instanceof Error ? e.message : String(e)}`);

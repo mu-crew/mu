@@ -42,8 +42,8 @@ import { viewPid, viewPresent, viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
-import { closeRemoteWorktree } from "../remote-agent.js";
 import { selectRemoteRecovery } from "../remote-recovery.js";
+import { closeRemoteWorktree } from "../remote-worktree.js";
 import { agentRevision, assertRevision } from "../revision.js";
 import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
 import {

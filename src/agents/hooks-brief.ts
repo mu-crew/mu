@@ -20,15 +20,10 @@
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Db } from "../db.js";
-import {
-  expandHostTemplate,
-  HOST_COMMAND_TIMEOUT_MS,
-  type HostTemplateValues,
-  runLeasedTemplate,
-  withHostChannel,
-} from "../hosts.js";
+import { hostView } from "../host-link.js";
+import { HOST_COMMAND_TIMEOUT_MS } from "../hosts.js";
 import { viewRunning } from "../jobs/view.js";
-import { RemotePrepareError } from "../remote-agent.js";
+import { RemotePrepareError } from "../remote-worktree.js";
 import { shellQuote } from "../shell-quote.js";
 import { RemoteBriefTooLargeError } from "./errors.js";
 
@@ -69,8 +64,8 @@ export function briefPointer(path: string): string {
 /** The largest brief a remote brief file takes, in bytes once escaped (spec D17). */
 export const REMOTE_BRIEF_MAX_BYTES = 96 * 1024;
 
-/** Linux's cap on one exec argument (MAX_ARG_STRLEN), its terminating NUL included. */
-export const EXEC_ARG_MAX_BYTES = 128 * 1024;
+/** Linux's cap on one exec argument: the template link's `fits` (src/host-link.ts). */
+export { EXEC_ARG_MAX_BYTES } from "../host-link.js";
 
 /**
  * The brief as printf's `%b` operand: each `\` doubled and each `'` as
@@ -140,30 +135,21 @@ export async function writeRemoteBriefFile(
 ): Promise<string> {
   assertRemoteBriefFits(agent, host, text);
   const what = "writing the task brief file failed";
-  const values: HostTemplateValues = { cmd: remoteBriefScript(cwd, agent, attemptKey, text), cwd };
-  const r = await withHostChannel(
-    db,
-    host,
-    `brief:${workstream}/${agent}`,
-    (profile, lease) => {
-      // The filled template is ONE argument of the local `/bin/sh -c`, and holds every
-      // argument the host's shells get: measured as exec'd, before anything runs.
-      const command = Buffer.byteLength(expandHostTemplate(profile.exec, values, "exec"));
-      if (command >= EXEC_ARG_MAX_BYTES) {
+  const script = remoteBriefScript(cwd, agent, attemptKey, text);
+  const h = hostView(db, host);
+  const r = await h.link.exec(
+    h,
+    { script, cwd, timeoutMs: HOST_COMMAND_TIMEOUT_MS },
+    { holder: `brief:${workstream}/${agent}`, paneAlive: viewRunning },
+    // Measured on the admitted profile, before anything runs.
+    (admitted) => {
+      const fit = admitted.link.fits(admitted, script, cwd);
+      if (!fit.ok) {
         const bytes = Buffer.byteLength(text);
         const escaped = Buffer.byteLength(briefPrintfOperand(text));
-        throw new RemoteBriefTooLargeError(
-          agent,
-          host,
-          bytes,
-          EXEC_ARG_MAX_BYTES,
-          escaped,
-          command,
-        );
+        throw new RemoteBriefTooLargeError(agent, host, bytes, fit.limit, escaped, fit.bytes);
       }
-      return runLeasedTemplate(db, lease, profile, "exec", values, HOST_COMMAND_TIMEOUT_MS);
     },
-    { paneAlive: viewRunning },
   );
   if (r.exitCode === null) {
     throw new RemotePrepareError(host, what, `timed out after ${HOST_COMMAND_TIMEOUT_MS}ms`);

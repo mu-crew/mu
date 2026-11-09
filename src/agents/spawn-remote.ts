@@ -22,8 +22,8 @@ import {
 import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
-import { prepareRemote, type RemoteSite, removeRemoteWorktree } from "../remote-agent.js";
 import { refuseRecoveredWorktree } from "../remote-recovery.js";
+import { prepareRemote, type RemoteSite, removeRemoteWorktree } from "../remote-worktree.js";
 import { withAgentLock } from "./lock.js";
 import type { SpawnAgentOptions, StagedWorktree } from "./spawn.js";
 

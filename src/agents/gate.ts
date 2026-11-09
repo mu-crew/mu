@@ -19,7 +19,8 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRow } from "../agents.js";
 import type { Db } from "../db.js";
-import { HostHandbackError, runHostTemplate } from "../hosts.js";
+import { hostView, type LinkRun } from "../host-link.js";
+import { HOST_COMMAND_TIMEOUT_MS, HostHandbackError } from "../hosts.js";
 import { viewRunning, viewState } from "../jobs/view.js";
 import { shellQuote } from "../shell-quote.js";
 
@@ -132,15 +133,13 @@ export async function readGate(db: Db, agent: GateAgent): Promise<GateReading> {
   if (pane.state === "absent") return { kind: "dead", reason: "pane gone" };
   // The transport exited: `viewRunning` reads it as not running, so the exec reclaims its channel.
   if (!sameRow(db, agent)) return { kind: "dead", reason: "the agent was replaced" };
-  let run: Awaited<ReturnType<typeof runHostTemplate>>;
+  let run: LinkRun;
   try {
-    run = await runHostTemplate(
-      db,
-      host,
-      "exec",
-      `gate:${agent.workstreamName}/${agent.name}`,
-      { cmd: readCommand(token), cwd: "." },
-      { paneAlive: viewRunning },
+    const h = hostView(db, host);
+    run = await h.link.exec(
+      h,
+      { script: readCommand(token), cwd: ".", timeoutMs: HOST_COMMAND_TIMEOUT_MS },
+      { holder: `gate:${agent.workstreamName}/${agent.name}`, paneAlive: viewRunning },
     );
   } catch (e) {
     // A template's exit 3 asks for a human: never retried, so never an unknown the next poll reruns.
@@ -170,13 +169,11 @@ export async function cleanGateResult(db: Db, agent: GateAgent): Promise<boolean
   const host = agent.host;
   if (token === null || host === null) return false;
   try {
-    const r = await runHostTemplate(
-      db,
-      host,
-      "exec",
-      `gate-clean:${agent.workstreamName}/${agent.name}`,
-      { cmd: cleanCommand(token), cwd: "." },
-      { paneAlive: viewRunning },
+    const h = hostView(db, host);
+    const r = await h.link.exec(
+      h,
+      { script: cleanCommand(token), cwd: ".", timeoutMs: HOST_COMMAND_TIMEOUT_MS },
+      { holder: `gate-clean:${agent.workstreamName}/${agent.name}`, paneAlive: viewRunning },
     );
     return r.exitCode === 0;
   } catch {

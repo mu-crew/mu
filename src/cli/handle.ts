@@ -117,13 +117,13 @@ import {
 } from "../output.js";
 import { encodeEnvelope, type NextPlan, RESULT_BYTES } from "../output-contract.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
-import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-agent.js";
 import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
 import {
   RemotePathOwnedError,
   RemoteRecoveryPendingError,
   RemoteRecoveryRefusedError,
 } from "../remote-recovery.js";
+import { RemoteCloseRefusedError, RemotePrepareError } from "../remote-worktree.js";
 import { RevisionMismatchError } from "../revision.js";
 import { syncDir } from "../segments.js";
 import { StateImportPendingError } from "../state-dir.js";

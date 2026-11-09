@@ -24,8 +24,7 @@
 // whichever comes first applies it, the other reads "already applied".
 
 import { createHash } from "node:crypto";
-import { rm } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { AgentLockBusyError, AgentNotFoundError, AgentReplacedError } from "./agents/errors.js";
 import { withAgentLock } from "./agents/lock.js";
 import { type AgentRow, getAgent } from "./agents.js";
@@ -33,7 +32,7 @@ import { channelTarget } from "./channels/index.js";
 import { applySettledClose } from "./close-block.js";
 import type { Db } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
-import { runLeasedTemplate, withHostChannel } from "./hosts.js";
+import { hostView } from "./host-link.js";
 import { viewRunning } from "./jobs/view.js";
 import { say } from "./messages.js";
 import {
@@ -187,27 +186,20 @@ export async function collectRemoteAgent(
           throw new AgentNotFoundError(name, workstream);
         }
         const { host, cwd, base } = target;
-        const r = await withHostChannel(
-          db,
-          host,
-          `collect:${workstream}/${name}`,
-          async (profile, lease) => {
-            if (rec !== undefined) assertRecoveryProfile(rec, profile);
-            // Under the lease, so a refused collect touches nothing. A stale
-            // FETCH_HEAD must not pass for this fetch's answer.
-            const fetchHead = await git(["rev-parse", "--git-path", "FETCH_HEAD"], repo);
-            await rm(resolve(repo, fetchHead), { force: true });
-            return runLeasedTemplate(
-              db,
-              lease,
-              profile,
-              "fetch",
-              { cwd },
-              REMOTE_COLLECT_TIMEOUT_MS,
-              repo,
-            );
+        const h = hostView(db, host);
+        if (h.link.fetch === undefined) {
+          // No built-in link lacks fetch; a plugin's may (mule's, spec D7).
+          throw new RemoteCollectUnsupportedError(name, `host ${host}'s link cannot fetch`);
+        }
+        // The link deletes FETCH_HEAD only once the recovery's profile pin held, so a
+        // refused collect touches nothing.
+        const r = await h.link.fetch(
+          h,
+          { remoteCwd: cwd, localRepo: repo, timeoutMs: REMOTE_COLLECT_TIMEOUT_MS },
+          { holder: `collect:${workstream}/${name}`, paneAlive: viewRunning },
+          (admitted) => {
+            if (rec !== undefined) assertRecoveryProfile(rec, admitted.profile);
           },
-          { paneAlive: viewRunning },
         );
         if (r.exitCode === null) {
           throw new RemoteCollectError(
