@@ -177,3 +177,4 @@ describe("a variant whose golden pass threw", () => {
     expect(threw.admission.failures).toContain("golden pass not run: sandbox died");
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
