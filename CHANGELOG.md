@@ -307,6 +307,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   outright ("pack still carries denied text"). A string in a JSON array
   that names the rig is now removed; any other hit in a JSON file is still
   reported and refuses the pack.
+- **Eval: the behaviour diff masks timing noise and data keys** (hill-r2
+  c2). A call family the two base runs disagree on (in how often it ran or
+  in any output: a poll while workers finish) compares on exit and JSON
+  shape only; JSON object keys are normalised (a cursor keyed by a ref with a
+  nonce); `normalise` also covers UUIDs, 6-character hex, a hex id glued to
+  a name (`delegate_rev_3b9f1ea2`) and upper-case check ids. On c2's cached
+  goldens the changed calls of every variant fell from five or six keys to
+  the close calls each one really changes.
 - **Eval: a variant's new flag split over two lines is a new name**
   (hill-r2 c2). `newNames` matched `.option("--x"` on one added line, but
   the formatter writes `.option(` and the flag on separate lines, so c2's

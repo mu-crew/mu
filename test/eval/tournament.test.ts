@@ -39,9 +39,11 @@ import {
   type CorpusFile,
   deriveMarkers,
   type GoldenTrace,
+  jsonShape,
   lengthCap,
   lengthViolations,
   newNames,
+  normalise,
 } from "../../tools/eval/tournament-build.ts";
 import {
   auditSession,
@@ -737,6 +739,45 @@ describe("variant patches", () => {
     expect(
       behaviourDiff(traces(0, '{"a":1}'), traces(0, '{"a":1,"b":2}'), key, traces(0, '{"a":7}')),
     ).toEqual(["agent close|--if"]);
+  });
+
+  it("normalises ids glued to a name, check ids and JSON keys that are data", () => {
+    expect(normalise("task notes delegate_rev_3b9f1ea2 -w auth")).toBe(
+      "task notes delegate_rev_<hex> -w auth",
+    );
+    expect(normalise("--check 1MNYRCNEVWKNJSNCNFNXRAP")).toBe("--check <id>");
+    expect(normalise("delegate:scratch/pi:01a1bd95-394c-7735-a0d7-e50e085700a9:9fce1a-1")).toBe(
+      normalise("delegate:scratch/pi:01a1be5a-0c36-7233-8e0e-95744efe4880:17f8c0-2"),
+    );
+    expect(jsonShape('{"cursor":{"delegate:auth/rv-95e575d7":{"runs":1}}}')).toBe(
+      jsonShape('{"cursor":{"delegate:auth/rv-09bad6f3":{"runs":2}}}'),
+    );
+    expect(jsonShape('{"a":1}')).not.toBe(jsonShape('{"b":1}'));
+  });
+
+  it("masks a call family the two base runs disagree on, in count or output", () => {
+    const run = (calls: [string, string][]): GoldenTrace[] => [
+      { id: "r4:p", ok: true, calls: calls.map(([argv, out]) => ({ argv, exit: 0, out })) },
+    ];
+    const k = (argv: string): string => argv;
+    const b1 = run([
+      ["task notes c5", ""],
+      ["task notes c5", "verdict x"],
+      ["wait", "w"],
+    ]);
+    const b2 = run([
+      ["task notes c5", "verdict x"],
+      ["wait", "w"],
+    ]);
+    const v = run([
+      ["task notes c5", ""],
+      ["task notes c5", ""],
+      ["task notes c5", "verdict x"],
+      ["wait", "w"],
+    ]);
+    expect(behaviourDiff(b1, v, k, b2)).toEqual([]);
+    // without the second base run the extra poll reads as behaviour
+    expect(behaviourDiff(b1, v, k)).toEqual(["task notes c5"]);
   });
 
   it("pairs calls by occurrence: workers interleaving in another order is no behaviour", () => {

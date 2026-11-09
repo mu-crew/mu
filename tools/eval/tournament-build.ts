@@ -162,12 +162,17 @@ export interface GoldenTrace {
 
 /** Nonces, shas, ids, times and counts: what differs between two runs of one golden by chance. */
 export function normalise(s: string): string {
-  return s
-    .replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "<ts>")
-    .replace(/\b[0-9a-f]{7,64}\b/g, "<hex>")
-    .replace(/\b(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{8}\b/g, "<nonce>")
-    .replace(/\/[^\s"']*\/(mu-eval|mu-nextstep|mu-cold)[^\s"']*/g, "<path>")
-    .replace(/\d+(\.\d+)?/g, "<n>");
+  return (
+    s
+      .replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "<ts>")
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<uuid>")
+      .replace(/(?<![0-9A-Za-z])[0-9a-f]{6,64}(?![0-9A-Za-z])/g, "<hex>")
+      // a check id (`--check 1MNYRC…`): a long upper-case base-32 token
+      .replace(/\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{16,}\b/g, "<id>")
+      .replace(/\b(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{8}\b/g, "<nonce>")
+      .replace(/\/[^\s"']*\/(mu-eval|mu-nextstep|mu-cold)[^\s"']*/g, "<path>")
+      .replace(/\d+(\.\d+)?/g, "<n>")
+  );
 }
 
 /** The key-and-type tree of a JSON text (null when it is not JSON). */
@@ -176,10 +181,11 @@ export function jsonShape(text: string): string | null {
     Array.isArray(v)
       ? [v.length > 0 ? shape(v[0]) : "empty"]
       : v !== null && typeof v === "object"
-        ? Object.fromEntries(
+        ? // a key can be data (a cursor keyed by a ref with a nonce): its normalised form
+          Object.fromEntries(
             Object.keys(v)
-              .sort()
-              .map((k) => [k, shape((v as Record<string, unknown>)[k])]),
+              .map((k) => [normalise(k), shape((v as Record<string, unknown>)[k])] as const)
+              .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
           )
         : v === null
           ? "null"
@@ -228,18 +234,27 @@ export function behaviourDiff(
     const B = byOccurrence(b);
     const V = byOccurrence(v);
     const B2 = b2t === undefined ? null : byOccurrence(b2t);
+    // a call family (normalised argv) the two base runs disagree on anywhere, in how often it ran
+    // or in any output, is timing-driven (a poll while workers finish): chance, not behaviour, so
+    // its calls compare on exit and JSON shape only and its extra or missing occurrences are noise
+    const fam = (k: string): string => k.slice(0, k.lastIndexOf("\0"));
+    const noisyFam = new Set<string>();
+    if (B2 !== null)
+      for (const k of new Set([...B.keys(), ...B2.keys()])) {
+        const x = B.get(k);
+        const x2 = B2.get(k);
+        if (!x || !x2 || normalise(x.out) !== normalise(x2.out)) noisyFam.add(fam(k));
+      }
     for (const k of new Set([...B.keys(), ...V.keys()])) {
       const x = B.get(k);
       const y = V.get(k);
+      const noisy = noisyFam.has(fam(k));
       if (!x || !y) {
-        // an occurrence the two base runs disagree on is chance, not behaviour
-        if (B2 !== null && B2.has(k) !== B.has(k)) continue;
+        if (noisy) continue;
         if (x) out.add(key(x.argv));
         if (y) out.add(key(y.argv));
         continue;
       }
-      const x2 = B2?.get(k);
-      const noisy = x2 !== undefined && normalise(x2.out) !== normalise(x.out);
       const differs =
         x.exit !== y.exit ||
         jsonShape(x.out) !== jsonShape(y.out) ||
