@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # mu plugins: hosts, jobs, links, channels
 
 Status: draft 6, refuted five rounds, pending final check. Written
@@ -1719,3 +1721,5 @@ sequence. Risks now states the loss mu reports but cannot prevent.
   - one identity form per host kind.
 
   Every file:line was reopened at `42881032` (mu) and `1192781` (mule).
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
