@@ -11,6 +11,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
@@ -94,6 +95,7 @@ export function defaultDenyContext(o: {
     ownDdir: resolve(o.ownDdir),
     allow: [
       nodeInstallDir(),
+      ...binLinkDirs(join(resolve(o.ownDdir), "bin")),
       ...(o.providerExt ? [resolve(o.providerExt)] : []),
       dirname(realpathOr(REAL_PI)),
     ],
@@ -109,9 +111,29 @@ const realpathOr = (p: string): string => {
   }
 };
 
+/**
+ * The install dirs the session's own bin links point into (`designerPath` links node, npm and
+ * npx from the caller's PATH), in the link's literal spelling and resolved: an `ls -l` of its own
+ * bin prints them, and npm may come from another install than the node running the rig.
+ */
+export function binLinkDirs(binDir: string): string[] {
+  const out = new Set<string>();
+  for (const tool of ["node", "npm", "npx"]) {
+    let target: string;
+    try {
+      target = readlinkSync(join(binDir, tool));
+    } catch {
+      continue;
+    }
+    out.add(nodeInstallDir(resolve(binDir, target), false));
+    out.add(nodeInstallDir(resolve(binDir, target)));
+  }
+  return [...out];
+}
+
 /** node's install dir: the prefix above `bin/node` (`~/.nvm/versions/node/v22`, a mise install), else its dir. */
-export function nodeInstallDir(execPath: string = process.execPath): string {
-  const real = realpathOr(execPath);
+export function nodeInstallDir(execPath: string = process.execPath, resolveLinks = true): string {
+  const real = resolveLinks ? realpathOr(execPath) : execPath;
   const dir = dirname(real);
   return basename(dir) === "bin" ? dirname(dir) : dir;
 }

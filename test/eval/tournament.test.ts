@@ -5,7 +5,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -972,6 +974,32 @@ describe("designer isolation", () => {
     });
     expect(denyHits(`    at Module._compile (${node}/lib/node_modules/x.js:1:1)`, c)).toEqual([]);
     expect(denyHits(`cat ${dirname(node)}/elsewhere`, c).map((h) => h.rule)).toEqual([
+      "under the real HOME",
+    ]);
+  });
+
+  it("lets the install dir its own bin links name through, literal and resolved", () => {
+    // c5: npm linked from another node install than the rig's node; `ls -l bin` printed it
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-binlink-")));
+    const home = join(tmp, "home");
+    const real = join(home, "mise", "node", "26.13.0");
+    mkdirSync(join(real, "bin"), { recursive: true });
+    writeFileSync(join(real, "bin", "npm"), "");
+    symlinkSync("./26.13.0", join(home, "mise", "node", "26"));
+    const ddir = join(home, ".cache", "d");
+    mkdirSync(join(ddir, "bin"), { recursive: true });
+    symlinkSync(join(home, "mise", "node", "26", "bin", "npm"), join(ddir, "bin", "npm"));
+    const c = defaultDenyContext({
+      repo: "/no/such/repo",
+      ownPack: "/no/such/pack",
+      ownDdir: ddir,
+      caseIds: [],
+      home,
+    });
+    const ls = `${join(ddir, "bin", "npm")} -> ${join(home, "mise", "node", "26", "bin", "npm")}`;
+    expect(denyHits(ls, c)).toEqual([]);
+    expect(denyHits(`cat ${join(real, "bin", "npm")}`, c)).toEqual([]);
+    expect(denyHits(`cat ${join(home, "mise", "other")}`, c).map((h) => h.rule)).toEqual([
       "under the real HOME",
     ]);
   });
