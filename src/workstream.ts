@@ -24,7 +24,7 @@ import { reapAgentRow } from "./agents/reap.js";
 import { WORKSTREAM_OPS_WHERE } from "./compact.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
-import { viewPresent } from "./jobs/view.js";
+import { sessionViews, viewPresent } from "./jobs/view.js";
 import { say } from "./messages.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
@@ -72,7 +72,7 @@ export const RESERVED_WORKSTREAM_NAMES = new Set(["scratch"]);
  *  pane). Best-effort: an unreachable mux reads as "not alive". */
 async function sessionAlive(session: string): Promise<boolean> {
   try {
-    return (await (await activeMux()).listPanes(session)).length > 0;
+    return (await sessionViews(session)).length > 0;
   } catch {
     return false;
   }
@@ -557,7 +557,7 @@ export async function teardownWorkstream(
   const mux = await activeMux();
   // The probe PROPAGATES: "could not ask" is not "dead". Swallowing it
   // here would change DB state while panes may still run.
-  const sessionPanes = new Set((await mux.listPanes(muxSession)).map((p) => p.paneId));
+  const sessionPanes = new Set((await sessionViews(muxSession, mux)).map((p) => p.paneId));
   // The session kill covers the panes in it. A registered pane that is NOT
   // in it (moved to another session by hand) survives the kill, so it is
   // asked about by its own id; failing to ask propagates too.
@@ -703,7 +703,7 @@ export async function reinitWorkstream(
   // The mux is asked FIRST and the probe propagates: "could not ask" is not
   // "dead", and nothing is deleted while panes may run (the teardown rule).
   if (tornDownAtOf(db, name) !== null) {
-    if ((await (await activeMux()).listPanes(muxSession)).length > 0) {
+    if ((await sessionViews(muxSession)).length > 0) {
       throw new WorkstreamSessionLiveError(name, muxSession);
     }
   }

@@ -4,10 +4,9 @@ import { delimiter, join } from "node:path";
 import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
 import { type Harness, harnessOfCli, hookConfigPath } from "./harnesses.js";
-import { viewPresent, viewState } from "./jobs/view.js";
+import { readTmuxViews, type TmuxView, viewPresent, viewState } from "./jobs/view.js";
 import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
-import { tmux } from "./tmux.js";
 
 export type RuntimeState = "busy" | "needs_input" | "needs_permission" | "unknown";
 export type StateSource = "murmur" | MuxBackendName | "ctl" | "none";
@@ -426,36 +425,24 @@ export async function readBaseStates(
   }
   if (mux.paneStatus !== undefined) return await readMuxStates(agents, mux);
 
-  let stdout: string;
+  let view: (paneId: string) => TmuxView;
   try {
-    stdout = await tmux([
-      "list-panes",
-      "-a",
-      "-F",
-      "#{pane_id}\t#{@murmur_pane_state}\t#{@murmur_pane_since}",
-    ]);
+    view = await readTmuxViews();
   } catch (error) {
     const reason = `tmux: ${error instanceof Error ? error.message : String(error)}`;
     for (const agent of agents) readings.set(agentKey(agent), unknownReading(reason));
     return readings;
   }
 
-  const local = new Map<string, { token: string; since: number | null }>();
-  for (const line of stdout.split("\n")) {
-    if (line.length === 0) continue;
-    const [paneId, token = "", since] = line.split("\t");
-    if (paneId !== undefined) local.set(paneId, { token, since: parseSince(since) });
-  }
-
   const remoteCandidates: StateAgentRef[] = [];
   for (const agent of agents) {
-    const pane = local.get(agent.paneId);
-    if (pane === undefined) {
+    const pane = view(agent.paneId);
+    if (pane.state === "absent") {
       readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.paneGone, false));
     } else if (livenessOnly.has(agentKey(agent))) {
       readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.noRow));
-    } else if (pane.token.length > 0) {
-      readings.set(agentKey(agent), mapMurmurState(pane.token, pane.since));
+    } else if (pane.murmurState.length > 0) {
+      readings.set(agentKey(agent), mapMurmurState(pane.murmurState, parseSince(pane.murmurSince)));
     } else {
       remoteCandidates.push(agent);
     }

@@ -9,9 +9,16 @@ import { gateLiveness } from "../src/jobs/gate.js";
 import { gateJobRef, jobKind, jobLiveness, jobRunning } from "../src/jobs/kinds.js";
 import { leaseKind } from "../src/jobs/lease.js";
 import { paneUp } from "../src/jobs/pane.js";
-import { viewPresent, viewRunning, viewState } from "../src/jobs/view.js";
+import {
+  readTmuxViews,
+  sessionViews,
+  viewPresent,
+  viewRunning,
+  viewState,
+} from "../src/jobs/view.js";
 import { type MuxBackend, type PaneResult, setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { attachCommand } from "../src/remote-agent.js";
+import { installMux } from "./_mux.js";
 
 const db = {} as unknown as Db;
 let calls: string[] = [];
@@ -86,6 +93,33 @@ describe("view reads", () => {
     expect(calls).toEqual(["paneOccupied"]);
     install({ alive: new Error("boom") });
     await expect(viewRunning("%1")).rejects.toThrow("boom");
+  });
+
+  it("readTmuxViews: one list-panes -a; a pane it did not list is absent", async () => {
+    const mux = installMux("tmux", [["list-panes -a", "%1\tworking\t1700000000\n%2\t\t\n"]]);
+    try {
+      const view = await readTmuxViews();
+      expect(view("%1")).toEqual({
+        state: "present",
+        murmurState: "working",
+        murmurSince: "1700000000",
+      });
+      expect(view("%2")).toEqual({ state: "present", murmurState: "", murmurSince: "" });
+      expect(view("%3")).toEqual({ state: "absent" });
+      expect(mux.calls.filter((c) => c.includes("list-panes"))).toHaveLength(1);
+    } finally {
+      mux.restore();
+    }
+  });
+
+  it("sessionViews is the backend's listPanes for that session", async () => {
+    install({});
+    const given: MuxBackend = {
+      ...tmuxBackend,
+      listPanes: async (s) => (s === "mu-a" ? [{ paneId: "%1" } as never] : []),
+    };
+    expect((await sessionViews("mu-a", given)).map((p) => p.paneId)).toEqual(["%1"]);
+    expect(await sessionViews("mu-b", given)).toEqual([]);
   });
 
   it("paneUp is viewRunning with occupancy, undefined when the mux cannot say", async () => {

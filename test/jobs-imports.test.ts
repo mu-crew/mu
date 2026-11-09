@@ -1,7 +1,8 @@
 // The job seam holds (spec 2026-11-09-mu-plugins.md, D8, unit P1): every
-// "does this pane exist / run / exit" probe outside src/mux goes through
-// src/jobs, and the lease job's effects (stop, handshake, attach) are reached
-// only through the lease kind. A new direct probe or call fails here.
+// "does this pane exist / run / exit" probe outside src/mux, of one pane or a
+// listed batch, goes through src/jobs, and the lease job's effects (stop,
+// handshake, attach) are reached only through the lease kind. A new direct
+// probe, list or call fails here.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
@@ -41,6 +42,16 @@ describe("the job seam", () => {
     const probe = /\.pane(Alive|Occupied)\s*\(|\.paneResult\b/;
     const inSeam = (f: string): boolean => f.startsWith("src/mux/") || f.startsWith("src/jobs/");
     expect(hits(probe, inSeam)).toEqual([]);
+  });
+
+  it("pane lists run only in src/mux and src/jobs, and reconcile's by the spec", () => {
+    // A listed pane set is view presence too: a batched "is it alive". Only
+    // reconcile keeps its own `listPanes` (plugins spec D8: "reconcile's
+    // listPanes stays as it is"), which also feeds its orphan scan.
+    const list = /["']list-panes["']|\.listPanes\s*\(/;
+    const allowed = (f: string): boolean =>
+      f.startsWith("src/mux/") || f.startsWith("src/jobs/") || f === "src/reconcile.ts";
+    expect(hits(list, allowed)).toEqual([]);
   });
 
   it("the lease stop, handshake and attach are called only by the lease kind", () => {
