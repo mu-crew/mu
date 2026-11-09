@@ -1,11 +1,13 @@
 # mu plugins: hosts, jobs, links, channels
 
-Status: draft 3, written 2026-11-09. Not built. Two refutation rounds
+Status: draft 4, written 2026-11-09. Not built. Three refutation rounds
 shaped it:
 
 - **Round 1:** 49 findings, settled in draft 2.
 - **Round 2:** 38 findings, plus the orchestrator's rulings R1–R7, settled
-  here ([Refutation round 2](#refutation-round-2)).
+  in draft 3 ([Refutation round 2](#refutation-round-2)).
+- **Round 3:** 27 findings (9 high), settled here with the smallest rule
+  or column that closes each ([Refutation round 3](#refutation-round-3)).
 
 The rulings changed the acceptance criteria. The spec is judged on design
 soundness: its model, transitions, crash safety, schema, protocol and
@@ -116,10 +118,10 @@ Provider host transitions:
 | `acquiring` → deleted | a `permanent` or `retryable` error (nothing happened), or a `lookup` answer of `none` under the D4 gate | an event in the log |
 | `acquiring` stays | the effect is unresolved | nothing. Running `mu host acquire <name>` again reconciles the same effect. It never acquires a second host. |
 | `ready` → `draining` | `mu host drain`, or the deadline margin (D10) | `state` |
-| `ready`/`draining` → `lost` | any host read whose `status` answers `gone` while mu has not released the host | `state`, `reason` |
+| `ready`/`draining` → `lost` | any host read whose `status` answers `gone` while mu has not released the host | `state`, `reason`. `gone` is the provider's proof that the machine and everything on it no longer exist (D6), so on a `lost` host `agent close` records the remote tree as gone and the job as stopped without calling the host, and the rows close normally. |
 | `draining`/`lost`/`releasing` → `releasing` | `mu host release`. Its immediate transaction proves that no agent row, job record or `remote_recovery` row names the host. It then records the `host.release` effect. Re-running it on a `releasing` host reissues the release. | `state`, the effect |
 | `releasing` → deleted | `release` returns. `release` is idempotent, so a reconciler reissues it (D4). | an event in the log |
-| any → deleted | `mu host release <name> --abandon`, a human decision, logged in one op group. It refuses while any agent row names the host. It deletes the job records and recovery records naming the host in the same transaction: a host one abandons is gone, and so is its work. | the event names every dropped record |
+| any → deleted | `mu host release <name> --abandon`, a human decision, logged in one op group. It refuses while any agent row names the host, and while any effect on the host or its jobs is held by a live creator or resolver (D4). Otherwise it deletes the job records, recovery records and effect rows naming the host in the same transaction: a host one abandons is gone, and so is its work. | the event names every dropped record and every unresolved effect key, so a human can look a late result up by key |
 
 A spawn reserves inside an immediate transaction that re-checks
 `state = 'ready'` and counts against `max_jobs` (D6). A spawn and a
@@ -147,10 +149,10 @@ a `carrier_jobs` row (`src/db-carrier.ts:23-43`).
 | `reserved` → deleted | rollback while `launch` is still `none` (`src/agents/lease-carrier.ts:317`) | — |
 | `launching`, no handle | the pane died first, the deadline passed, or the job file is unreadable (`src/agents/lease-carrier.ts:265-297`) | nothing. For `handle: "file"` kinds today's rule stands: the reservation is released only as provably unlaunched (`src/agents/lease-carrier.ts:431-432`). For `handle: "reply"` kinds, D4 applies. |
 | `started`, start effect resolved, pane spawn failed | `mux.spawnAgent` threw after the handle arrived | the rollback stops the job by its handle (`job.stop`) before releasing. Today's lease rollback needs a pane id (`src/agents/lease-carrier.ts:356-358`); that rule stays for `handle: "file"` only. |
-| `started`, no agent row | mu died after the handle and before the agent row, or the row was reaped | a **leftover**, as today. `agent close` stops it through its kind. `agent reattach` opens a view and inserts a new incarnation, taking the channel from the job kind (D3). |
+| `started`, no agent row | mu died after the handle and before the agent row, or the row was reaped | a **leftover**, as today. `agent close` stops it through its kind and closes the remote tree the job record names (`tree_path`, `tree_base`). A no-row plugin leftover is closed, never reattached (D3). |
 | `started` → `stopping` | `agent close`: after the view proof for a bound view, before touching the view for a detached one (D3) | the `job.stop` effect |
 | `stopping` → deleted | `stop` proves the job gone, then the job file and tree are cleaned up (`src/agents/lease-carrier.ts:590`) | the settle mode the reaper reads (`src/agents/reap.ts:55-78`) |
-| any → deleted | `agent close --abandon-job` (`src/agents/lease-carrier.ts:466`) | an event naming the handle |
+| any → deleted | `agent close --abandon-job` (`src/agents/lease-carrier.ts:466`), under the same live-owner refusal as host abandon | an event naming the handle and any unresolved effect key; the job's effect rows go with it |
 
 **Two reads**, never stored and never confused:
 
@@ -255,15 +257,14 @@ today.
   - reconcile asks liveness before it treats the row as a ghost.
   - `agent close` stops the job first and kills the view after, the
     reverse of the bound order (`src/agents/close.ts:540-573`).
-  - `agent reattach` reopens a view in two cases:
-    - on a row whose view is gone, it calls `job.attach` and
-      compares-and-sets `agents.pane_id`, keeping the incarnation;
-    - on a no-row leftover of a plugin kind, it inserts a new incarnation
-      with the kind's channel.
-
-    Today's lease reattach, which needs a lease profile and pi on ctl
-    (`src/agents/reattach-check.ts:88-108`, `src/agents/reattach.ts:218-224`),
-    is unchanged for lease jobs.
+  - `agent reattach` on a row whose view is gone calls `job.attach` and
+    compares-and-sets `agents.pane_id`, keeping the incarnation. The row
+    keeps everything a view needs (cli, role, command, channel).
+  - A no-row leftover of a plugin kind is not reattached: nothing on the
+    job record says how its agent was launched. `agent close` stops it and
+    closes its tree (D1).
+  - Today's lease reattach (`src/agents/reattach-check.ts:88-108`,
+    `src/agents/reattach.ts:218-224`) is unchanged for lease jobs.
 
 ### D4. Crash safety: effects, payloads, one rule table
 
@@ -271,7 +272,7 @@ An **effect** is a plugin call that changes something outside mu's DB:
 
 - `host.acquire` and `host.release`;
 - `job.start` and `job.stop`;
-- `channel.send`, `fresh`, `interrupt`, `abort` and `answer`.
+- `channel.send`, `fresh`, `interrupt`, `abort`, `answer` and `command`.
 
 Built-in effects keep their journals: `spawn_receipts`,
 `wait_action_receipts`, the reservation's `launch`, and the delivery-unknown
@@ -284,7 +285,10 @@ D5. It persists:
 
 - `key`, mu-generated;
 - `subject`: the host record, job record, or agent plus msgId;
-- `method`, `params_json` (the exact request) and `params_sha`;
+- `method`, `params_json` and `params_sha`: the method's `params` object
+  exactly as first sent. The JSON-RPC envelope (`id`) and the call's
+  `deadline` are not part of it: every send, the first and any resend,
+  gets a fresh id and a fresh deadline;
 - `instance`: the plugin's handshake instance at intent time;
 - the creator's pid and start time;
 - the plugin process's group id and start time;
@@ -296,10 +300,15 @@ the same transaction. Only unresolved effects stay.
 **Reconcile.** After a crash, a timeout or an `unknown-outcome` error, the
 next verb that touches the subject resolves the effect:
 
-1. **Claim.** The verb compares-and-sets the row from `pending` or
-   `unknown` to `resolving`, with its own pid and start time. A loser
-   refuses and names the holder. A claim whose resolver is proven gone is
-   taken over.
+1. **Claim.** The verb compares-and-sets the row to `resolving`, with
+   its own pid and start time. It may claim an `unknown` row, a
+   `resolving` row whose resolver is proven gone, or a `pending` row only
+   once the row's creator is proven gone. While the creator lives, the row
+   is its own, and a second verb refuses, naming the creator's pid (a
+   re-run `mu host acquire` during the first one's call says "in flight").
+   The creator records its result with `WHERE state = 'pending'`; a
+   resolver with `WHERE resolver_pid = me`. A loser's write changes
+   nothing, so only one result is ever recorded.
 2. **Fence on the instance.** If the plugin's current instance differs
    from the row's, the verb refuses (`stop-changed`). It never asks or
    resends to another backend configuration.
@@ -310,10 +319,16 @@ next verb that touches the subject resolves the effect:
 | `host.acquire` | no | `lookup(key)` if declared; else a byte-identical resend if `dedupe: exact` and within its window | unknown until `--abandon` |
 | `host.release` | **yes** (mandatory) | reissue the persisted request | — |
 | `job.start` (`handle: "reply"`) | no | `lookup(key)`; else a deduped resend | unknown until `--abandon-job` |
+| `job.start` (`handle: "file"`) | no | the job file, as today; `lookup(key)` if declared, whose `found` fills the handle (`none` never acts) | today's unlaunched rule |
 | `job.stop` | **yes** (mandatory) | reissue | — |
-| `channel.send`, `fresh`, `interrupt` | no | `receipt(msgId)` if `receipt: exact`; else a deduped resend | delivery unknown, reported; until a human checks or closes |
+| `channel.send`, `fresh`, `interrupt` | no | `receipt(msgId)` if `receipt: exact` (only `accepted` resolves; `not-accepted` stays unknown, as today, `src/agents/task-spawn.ts:721-727`); else a deduped resend if declared for that method | delivery unknown, reported; until a human checks or closes |
 | `channel.abort` | no | `readStates`: an idle agent means done | unknown, reported |
-| `channel.answer` | no | a deduped resend | unknown, reported |
+| `channel.answer`, `command` | no | a deduped resend if declared for that method | unknown, reported |
+
+**A delivery is resent only if nothing newer was written.** A deduped
+resend of a channel effect runs only while no later delivery effect to the
+same agent exists. Once one does, the older delivery stays unknown: a
+stale instruction never arrives after a newer one.
 
 **When a lookup's `none` counts.** A `lookup(key)` may answer `found`,
 `pending`, `none` or `unknown`. `found` is recorded, and `pending` and
@@ -345,7 +360,10 @@ pane, not the plugin, so today's unlaunched rule decides
 
 **Who triggers.**
 
-- the next verb on the subject;
+- the next verb on the subject. `agent close` on an unresolved
+  dedupe-only `job.start` resends it and then stops the job: the resend is
+  the only way to learn whether a job exists, and one start followed by a
+  stop leaves nothing behind;
 - `mu host acquire` or `release` re-run;
 - `mu agent check <agent> <msgId>` for a delivery;
 - spawn replay, for a task-spawn delivery, whose spawn receipt names the
@@ -371,27 +389,53 @@ never retried.
 **The import.** On first open, when `mu5/mu.db` does not exist and
 `mu-next/mu.db` does, mu imports once:
 
-1. It refuses if `mu5/mu.db` exists.
-2. It refuses if the source has any `agents` or `carrier_jobs` row. Those
-   rows own files under `mu-next` (control sockets, job files, locks), so
-   they are closed with mu 4 first.
-3. It copies `mu-next/mu.db` with SQLite's backup API to
+1. **Lock.** It takes the strict lock `mu5/locks/import`, made with
+   atomic `mkdir` like the agent lock (`src/file-lock.ts`) and reclaimed
+   only from a proven-dead pid. Parallel first opens are normal
+   (`src/db.ts:136-147`): a second process waits for the lock, then finds
+   `mu5/mu.db` and opens it. Only the lock holder may delete a leftover
    `mu5/mu.db.importing`.
-4. It opens the copy and, in **one transaction**, runs:
-   - today's v13 `upgradeSchema`, completing an older v13 file;
-   - the 13 → 14 step;
-   - a new `machine_id`, so mu 4 on `mu-next` and mu 5 on `mu5` are two
-     sync peers and never share a segment.
-5. It closes and renames the copy to `mu5/mu.db`.
+2. It refuses if `mu5/mu.db` exists.
+3. When `MU_SYNC_DIR` is set, it refuses while the source has unpublished
+   ops (`mu doctor`'s `unpublished-ops`, `src/sync.ts:364-373`). Those ops
+   carry the old `machine_id`, and segments publish only their own
+   machine's ops (`src/segments.ts:248,477`), so mu 5 would never publish
+   them. The fix is to run `mu sync` with mu 4 first. With no sync
+   configured, the history stays in the DB and is published only to
+   peers that read mu 4's segment. Sync is therefore configured before
+   the import if peers need this machine's history.
+4. It copies `mu-next/mu.db` with SQLite's backup API to
+   `mu5/mu.db.importing`.
+5. On the copy, three steps run in order:
+   1. It sets a new `machine_id` (an `UPDATE`, since `seedMachineIdentity`
+      does nothing on an existing row, `src/db.ts:426-431`). That way any
+      op minted during the upgrade is mu 5's. mu 4 on `mu-next` and mu 5
+      on `mu5` are then two sync peers, never sharing a segment.
+   2. It runs today's v13 `upgradeSchema`, in its own transaction
+      (`src/db.ts:477`).
+   3. In one immediate transaction, it checks the snapshot for live rows
+      and runs the 13 → 14 step. The check refuses, and deletes the copy,
+      if the copy has any `agents` or `carrier_jobs` row, or any
+      `delegate_calls` row not in a final state. Those rows own files
+      under `mu-next`: control sockets, job files, locks and delegate
+      process files (`src/delegate-process.ts:124-136`). They are closed
+      with mu 4 first.
+6. It renames the copy to `mu5/mu.db` with a no-replace link (`link(2)`,
+   then unlink the temporary name), and releases the lock.
 
-`mu-next` is never written. A crash before the rename leaves only the
-`.importing` file, which the next open deletes and redoes.
+`mu-next` is never written. The steps are not one transaction; the
+copy is invisible until step 6, so the rename is the commit point. A
+crash before it leaves only the `.importing` file, which the next lock
+holder deletes and redoes.
 
 **The 13 → 14 step.** Tables can now be rebuilt freely, with explicit
 column lists:
 
 - **`carrier_jobs`** gains `kind` (NULL: lease), `plugin`, `instance`,
-  `host_id`, `collect_repo`, `collected_runs` and `collected_inc`.
+  `host_id`, `tree_base` (with today's `tree_path`: the remote worktree
+  the spawn prepared, written before `job.start`), `collect_repo`, and
+  the collect sequence `seen_inc`, `seen_runs`, `collected_inc` and
+  `collected_runs` (D10).
   `host_stop` becomes nullable (it is a template's bytes, and a plugin job
   uses `instance`).
 - **`spawn_receipts`** is rebuilt without its `transport` CHECK
@@ -498,6 +542,10 @@ provider plugin must implement the `link` and `job` seams for the hosts it
 provides; the handshake says so, or the plugin is refused for `--provider`.
 `resolveHost` builds the view from `hosts.provider`.
 
+**`gone` is a proof.** A provider answers `gone` only when the machine
+and everything on it (jobs, worktrees) no longer exist. The contract suite
+checks it against the fake backend. D1's `lost` close relies on it.
+
 **Atomic admission.** A spawn on a provider host reserves inside one
 immediate transaction, the agent lock held. That transaction re-reads the
 record, refuses unless `ready`, and counts the host's job records against
@@ -540,7 +588,7 @@ export interface LinkCaps {
 export interface HostLink {
   readonly name: string; // "template" or the plugin
   readonly caps: LinkCaps;
-  /** The identity recovery pins: exec bytes for a profile; provider:<id>:<instance> for a provider host (D5). */
+  /** Computed by mu, never a wire call: a profile's exec bytes (template or `--plugin` profile alike); provider:<id>:<instance> for a provider host (D5). */
   fingerprint(host: HostView): string;
   /** Template: the expanded exec under EXEC_ARG_MAX_BYTES (src/agents/hooks-brief.ts:148-151). Plugin: maxScriptBytes. */
   fits(host: HostView, script: string, cwd: string): boolean;
@@ -550,6 +598,11 @@ export interface HostLink {
    * (today's assertRecoveryProfile placement, src/remote-agent.ts:409, src/remote-collect.ts:195).
    */
   exec(host: HostView, req: { script: string; cwd: string; timeoutMs: number }, call: Call, admitted?: (h: HostView) => void): Promise<LinkRun>;
+  /**
+   * Bring `remoteCwd`'s HEAD home: on success, `localRepo`'s FETCH_HEAD names that commit. mu deletes
+   * FETCH_HEAD first and accepts only `FETCH_HEAD^{commit}` afterwards (src/remote-collect.ts:196-231);
+   * a fetch that imports objects but leaves no FETCH_HEAD is a failed collect.
+   */
   fetch?(host: HostView, req: { remoteCwd: string; localRepo: string; timeoutMs: number }, call: Call, admitted?: (h: HostView) => void): Promise<LinkRun>;
   checkSteps?(ctx: CheckContext, call: Call): Promise<HostCheckStep[]>;
 }
@@ -649,13 +702,14 @@ export interface JobCaps {
   view: "bound" | "detached";
   handle: "pane" | "file" | "reply";
   start: KeyCaps; // D6; required when handle is "reply"
-  /** The channel this kind's agents use: a plugin channel of the same plugin; absent: the harness's own. */
+  /** The channel this kind's agents use: the `name` of the same plugin's channel seam (D13); absent: the harness's own. */
   channel?: string;
 }
 
 export interface JobKind {
   readonly name: string; // "pane" | "lease" | "gate" | plugin kind
   readonly caps: JobCaps;
+  /** Computed by mu, never a wire call: the stop fence (host_stop bytes for lease; the handshake instance for a plugin). */
   identity(host: HostView | null): string;
   start(host: HostView | null, spec: JobSpec, key: EffectKey, call: Call): Promise<JobStart>;
   lookup(host: HostView | null, key: EffectKey, opts: { fence: boolean }, call: Call): Promise<KeyLookup<string>>;
@@ -715,13 +769,14 @@ export interface ChannelCaps {
   /** "sync": ctl's in-process veto before the one write. Plugins: "none" (D11). */
   fence: "sync" | "none";
   receipt: "exact" | "acknowledged" | "none";
-  /** Per delivery method (send, fresh, interrupt, answer); D4. */
-  dedupe?: { exact: true; windowMs: number };
+  /** Per delivery method: only the methods listed dedupe; D4. */
+  dedupe?: Partial<Record<"send" | "fresh" | "interrupt" | "answer" | "command", { exact: true; windowMs: number }>>;
   steer: "mid-turn" | "as-send" | "none";
   interrupt: "exact" | "unconfirmed" | "none";
   fresh: "in-place" | "new-job" | "none";
   answer: boolean;
   command: boolean;
+  /** A plugin channel must declare "stream" (D13); "poll" is the mux built-in's. */
   watch: "stream" | "poll";
   settleText: "tied" | "untied" | "none";
 }
@@ -808,30 +863,40 @@ start with provider hosts (P6d).
 
 **`collectAtSettle`** applies to a host with `idleReclaimMs`.
 
-- **The due sequence (R5).** A remote worker's settled-turn count (`runs`
-  in its channel incarnation) is monotonic. The job record keeps
-  `collected_runs` and `collected_inc`: the count read before the last
-  successful fetch.
-- **What due means.** A worker is **collect due** when its current settled
-  count, in the same incarnation, exceeds `collected_runs`, or when its
-  incarnation changed.
-- **Compare-and-clear.** A collect reads the count `n` **before** it
-  fetches. After the fetch it sets `collected_runs = n` only if `n` is
-  greater than the stored value. An older collect can never clear a newer
-  turn.
-- **Where it lives.** On the job record, which survives the agent row's
-  reap until the job is stopped and released. Release refuses while the
-  job is due unless abandoned.
+- **The due sequence (R5).** A remote `--worktree` worker's settled turn
+  is the pair (incarnation, runs). Within one incarnation `runs` only
+  grows. The job record keeps two such pairs:
+  - **seen:** the newest settled pair any mu read observed. It is written
+    by every read that sees a settle (wait, state, next), and by
+    `agent close` just before it stops the job.
+  - **collected:** the pair read **before** the last successful fetch.
+- **What due means.** A worker is **collect due** when seen differs from
+  collected: another incarnation, or more runs in the same one. It is a
+  comparison, not a flag someone has to set.
+- **Compare-and-clear.** A collect reads the pair `(i, n)` before it
+  fetches. After the fetch it stores `(i, n)` as collected under one rule:
+  if `i` equals the stored incarnation, only when `n` is greater; if `i`
+  differs, always. Collects of one worker are serialized by the agent lock
+  and the repo lock (`src/remote-collect.ts:164-166`), so a later collect
+  always fetches a head at least as new. A new worker records
+  `(incarnation, 0)` as both seen and collected when its baseline first
+  answers, so it is not due before its first turn.
+- **After the agent row is gone.** Due is computed from the two stored
+  pairs, so it survives the reap and the stop. `mu agent collect` on the
+  recovery record (`src/remote-collect.ts:171-183`) stores seen as
+  collected on success. If `agent close` cannot read the channel before
+  stopping, it marks seen as unknown, which counts as due.
+- **Only `--worktree` workers are ever due.** A `--cwd` worker has no tree
+  of its own for mu to collect (`src/remote-collect.ts:331-336`), so it is
+  never due, and nothing suggests `mu agent collect` for it.
+- **Release** refuses while any job on the host is due, unless abandoned.
 - **Who acts.** Any `mu wait`, `mu state` or `mu next` that reads a due
-  worker on such a host either collects it (a `--worktree` worker with a
-  recorded `collect_repo`), or shows **work at risk** with `next: mu agent
-  collect …` (`collect_repo` absent, or a `--cwd` worker, which cannot be
-  collected, `src/remote-collect.ts:331-336`).
+  worker on such a host collects it, when the job record has a
+  `collect_repo`. Otherwise it shows **work at risk**, with `next: mu agent
+  collect …`.
   - Collect runs after the wait's result is decided, outside its
     synchronous settle and commit.
   - A failure is a warning, and the worker stays due.
-  - A settle that no mu read saw is still due at the next read: due is a
-    comparison, not a flag someone had to set.
 - **`collect_repo`** is the local repository root of the spawning
   invocation, recorded at spawn.
 
@@ -937,9 +1002,18 @@ enforcement point:
 {"jsonrpc":"2.0","id":1,"result":{"protocol":1,"plugin":{"name":"mule","version":"0.5.0"},"instance":"9f2c…","schema":"sha256:…","seams":{"link":{"fetch":false,"slots":"self","remoteOnTimeout":"unknown","quiescence":"provable","maxScriptBytes":131072,"checks":["reach"]},"job":{"kind":"lease","view":"bound","handle":"file","start":{"lookup":true,"fenceKey":false},"checks":["template","agent"]}}}}
 ```
 
+A channel seam, for a plugin that has one, adds
+`"channel":{"name":"cloud","caps":{"fence":"none","receipt":"exact","dedupe":{"send":{"exact":true,"windowMs":86400000}},"steer":"none","interrupt":"exact","fresh":"none","answer":false,"command":false,"watch":"stream","settleText":"tied"}}`.
+
 The plugin declares every seam it implements: `host`, `link`, `job` and
-`channel`, each with its capabilities. A provider plugin's `host` object
-holds `{acquire: KeyCaps}` and must come with `link` and `job` (D6).
+`channel`, each with its capabilities:
+
+- **`host`** is `{acquire: KeyCaps}`, and must come with `link` and `job`
+  (D6).
+- **`channel`** is `{name, caps}`. `name` is the channel's registered
+  name, and the job seam's `channel` must equal it.
+- **A plugin channel** must declare `watch: "stream"` and a `settleText`
+  other than `none`: mu's polled path is the mux built-in's alone (D9).
 
 These refuse at load with `PluginRefusedError` (exit 4):
 
@@ -964,8 +1038,19 @@ Every host, link, job and channel call carries a serialisable `target`:
 }
 ```
 
-`HostView` stays inside mu. `fingerprint` and `fits` are computed by mu
-from the instance and `maxScriptBytes`; they are not wire calls.
+`HostView` stays inside mu. `fingerprint`, `fits` and `identity` are
+computed by mu (D7, D8); they are not wire calls.
+
+**Wire encoding.** Every result is plain JSON:
+
+- **Maps:** a TypeScript `Map` (`readStates`' result) is a JSON object
+  keyed `<workstream>/<name>`.
+- **Absent results:** an optional `undefined` result (`baseline`,
+  `lastRun`, `watch`) is `null`. A reply always carries `result`.
+- **Observations:** the plugin returns an observation without its
+  identity fields. mu adds `workstream`, `name`, `agentId` and `paneId`
+  from its own row (`src/agents/observe.ts:36-41`), since only mu knows
+  the view's pane.
 
 **Methods.** These mirror D6–D9:
 
@@ -973,9 +1058,9 @@ from the instance and `maxScriptBytes`; they are not wire calls.
 | --- | --- | --- |
 | `host.acquire`, `host.lookup`, `host.status`, `host.release` | `params`; `fence`; `handle` | as D6 |
 | `link.exec`, `link.fetch`, `link.checkSteps` | as D7, plus `phase` | `LinkRun`, steps |
-| `job.identity`, `job.start` (the whole `JobSpec`), `job.lookup`, `job.status`, `job.stop`, `job.attach`, `job.checkSteps` | as D8, plus `phase` | as D8 |
+| `job.start` (the whole `JobSpec`), `job.lookup`, `job.status`, `job.stop`, `job.attach`, `job.checkSteps` | as D8, plus `phase` | as D8 |
 | `channel.readStates`, `channel.baseline`, `channel.receipt`, `channel.lastRun` | as D9 | readings, observations |
-| `channel.watch` | `afterRuns?`, `inc?` | `{watchId, initial, afterRuns?}`, then one notification |
+| `channel.watch` | `afterRuns?`, `inc?` | `{watchId, initial, afterRuns?}`, then one notification. A turn past `afterRuns` that already settled is reported at once, as ctl's `wait` does. |
 | `channel.send` | `text`, `msgId`, `mode: "followUp" \| "steer"`, `force`, `firstPrompt`, `expectIncarnation?` | `SendResult` |
 | `channel.fresh` | `text`, `msgId`, `force`, `expectIncarnation?` | `SendResult` |
 | `channel.command` | `name`, `instructions?`, `force`, `expectIncarnation?` | `SendResult` |
@@ -1094,8 +1179,9 @@ The view stays interactive, and there is no detached lease (D18).
 
 **Profile migration.**
 
-- `mu host add <h> --plugin mule` keeps the templates for the seams mule
-  does not implement: `fetch`, and the starter's `shell` for the view.
+- `mu host add <h> --plugin mule` keeps only the `fetch` template, the
+  one seam mule does not implement. The view command comes from the
+  plugin's `job.start`, with `--key <token>` in it.
 - A reservation made before the plugin was used is stopped by the
   plugin's `rm` on the same handle.
 
@@ -1135,7 +1221,8 @@ point: replay yields exactly one effect, and reconcile converges.
 | F8 | two mu processes resolve one effect | one claim wins; the other refuses, naming it |
 | F9 | `none` while the creator lives, or inside `inFlightMs` | treated as `unknown` |
 | F10 | the plugin's instance changed between intent and resolve | the ask, resend, stop or release refuses `stop-changed` |
-| F11 | a host `gone` during close, or a crash after the release intent | the job reads `lost`; the release is reissued and converges |
+| F11 | a host `gone` during close, or a crash after the release intent | `agent close` on the `lost` host records the tree gone and the job stopped, and deletes the row; release then passes; a crashed release is reissued and converges |
+| F12 | a creator still in its call when a second verb tries to resolve | the second refuses, naming the creator; one result is recorded |
 
 Crash points between mu's steps are seeded the way
 `test/spawn-receipts.test.ts:582` seeds "a receipt left in each stage".
@@ -1215,10 +1302,13 @@ uses:
    - An `unknown-outcome` is reported as delivery unknown and resolved by
      `receipt` or a deduped resend (D4).
 5. **Wait for the settle.** `mu wait agent:w1@<runs>`, through
-   `channel.watch` or polled `readStates`. The turn started on delivery
-   (D1). The D10 timer bounds the wait for the deadline.
+   `channel.watch`, which a plugin channel must stream. An already settled
+   turn past `<runs>` is reported at once, with its text (D13). The turn
+   started on delivery (D1). The D10 timer bounds the wait for the
+   deadline.
 6. **Collect.**
-   - The worker is due while its settled count exceeds `collected_runs`.
+   - The worker is due while its seen pair differs from its collected
+     pair.
    - `mu wait` or `mu state` collects it over `link.fetch` (or the
      profile-less fallback refuses with work at risk).
    - The compare-and-clear records the count it fetched (D10).
@@ -1255,11 +1345,11 @@ The order follows blast radius:
 | P3 | `HostProvider`, `static`, `resolveHost`; `HostView` complete. | Every host lookup outside the profile verbs goes through `resolveHost`. | `host-profiles`, `host-lease-profile`, `lease-spawn`, `lease-reattach`, `remote-spawn`, `remote-recovery`, `host-harnesses` |
 | P4 | `ChannelCaps`, the registry, `ack`/`baseline` results, `ChannelTarget.job`, the run-baseline rename. | Channel behaviour comes from the registry and capabilities, and the D9 matrix holds. Name comparisons outside `src/channels/` are capability checks or on the pinned feature list. | `channel-contract`, `channel-imports`, `agent-state-ctl`, `wait-action-*`, `close-notice`, `spawn-receipts*`, `channel-hooks-verbs`, `hooks-remote`, `next-recover` |
 | P5 | Phased `checkSteps` on the link and the kinds; `checkHost` composes them. | `host check` output is byte-identical, skips included. | `host-check-lease`, `host-check.integration`, `lease-job-doctor`, `host-harnesses` |
-| P6a | Schema 14, the `mu5` import, mu 5. | Released builds refuse v14. The import runs once, in one transaction. It leaves `mu-next` untouched, refuses when `mu5` exists or the source has live rows, and mints a new `machine_id`. | `db`, `entities`, `loop-storage` (`test/fixtures/v13-populated.db.gz`), `rebuild`, a new `state-import` test |
+| P6a | Schema 14, the `mu5` import, mu 5. | Released builds refuse v14. The import runs once, under its lock, and commits by a no-replace rename. It leaves `mu-next` untouched. It refuses when `mu5` exists, when unpublished ops remain, or when the snapshot has live rows, and it mints a new `machine_id` before the upgrade. | `db`, `entities`, `loop-storage` (`test/fixtures/v13-populated.db.gz`), `rebuild`, a new `state-import` test |
 | P6b | Protocol core: framing, process manager, handshake, `plugins`, `mu plugin add`/`list`/`rm`, the schema doc, the fake plugin; the link adapter and `host_profiles.plugin`. | A plugin can only report facts. The load rules refuse bad declarations. EOF and no-detach hold. With no plugin registered, the full suite is unchanged. | `link-contract`, `plugin-schema`, `plugin-skew`, `host-profiles` |
-| P6c | `effects`, the reconciler and the D4 rule table; the job adapter (bound); the `carrier_jobs` columns; the VISION:359 amendment. | Every plugin effect is written ahead with its payload. Resolution follows the rule table, fenced on the instance. | `job-contract`, `plugin-faults` F1–F10, `carrier-jobs`, `leftovers`, `lease-*` |
-| P6d | `hosts`, `mu host acquire`/`drain`/`release`/`--abandon`, atomic admission, the provider adapter, `remote_recovery.host_identity`, both host policies. | A host's release waits for every reference; F11 converges. An older collect never clears a newer due turn. | `host-provider-contract`, `plugin-faults` F11, `host-policy`, `remote-recovery*`, `remote-collect*` |
-| P6e | The channel adapter, the plugin spawn path, detached views and both reattach cases, the unknown-channel typed error, `docs/reference/plugin-protocol.md` complete. | Deliveries to plugin channels go only through effects. A detached job survives its view. The end-to-end walkthrough passes against the fake plugin. | `channel-contract`, `spawn-receipts*`, `wait-*`, `reconcile*`, `lease-reattach*`, `acceptance.integration`, a new `plugin-e2e` test |
+| P6c | `effects`, the reconciler and the D4 rule table; the job adapter (bound); the `carrier_jobs` columns; the VISION:359 amendment. | Every plugin effect is written ahead with its params. A live creator owns its row. Resolution follows the rule table, fenced on the instance, and never resends a delivery older than another. | `job-contract`, `plugin-faults` F1–F10 and F12, `carrier-jobs`, `leftovers`, `lease-*` |
+| P6d | `hosts`, `mu host acquire`/`drain`/`release`/`--abandon`, atomic admission, the provider adapter, `remote_recovery.host_identity`, both host policies. | A host's release waits for every reference; a `lost` host's rows close without the host, and F11 converges. Collected only moves forward under the pair rule; an older collect never clears a newer turn. | `host-provider-contract`, `plugin-faults` F11, `host-policy`, `remote-recovery*`, `remote-collect*` |
+| P6e | The channel adapter, the plugin spawn path, detached views and the view reattach, the unknown-channel typed error, `docs/reference/plugin-protocol.md` complete. | Deliveries to plugin channels go only through effects, encoded as D13 says. A detached job survives its view. The end-to-end walkthrough passes against the fake plugin. | `channel-contract`, `spawn-receipts*`, `wait-*`, `reconcile*`, `lease-reattach*`, `acceptance.integration`, a new `plugin-e2e` test |
 | P7 | mule: `--key`, the five-state `poll`, `--key-prefix`, the non-detaching cancel, the `mu-plugin-mule` bin. In mu: `hostMuleStarter` adds `--plugin mule`. | mu's exported link and job suites pass against `mu-plugin-mule`. A killed spawn recovers its job by `lookup(token)` with one dispatch. | `cargo test`; `scripts/smoke-lease.sh` with the plugin |
 
 ## Risks
@@ -1435,6 +1525,55 @@ No finding was rebutted:
   unit's check wording (D2, D11 and B6), plus B5 and B7 in part.
 - **Fixed:** the rest.
 
+## Refutation round 3
+
+Three reviewers refuted draft 3 (`074fc931`) under R1–R7, from three
+lenses:
+
+- **author** (A): can a plugin author implement the contract;
+- **crash** (K): crash and concurrency windows;
+- **dispositions** (S): were round 2's fixes real.
+
+Each finding was reproduced at its cited lines. Draft 4 closes each one
+with the smallest rule or column that does it; it adds no new mechanism.
+
+| ID | Sev | Lens | Finding (short) | Disposition | Where |
+| --- | --- | --- | --- | --- | --- |
+| A1 | high | author | a byte-identical replay keeps an expired deadline | fixed | D4: the persisted request is the method's `params`; the envelope id and `deadline` are fresh on every send |
+| A2 | high | author | `Map` and `undefined` results have no wire encoding | fixed | D13 "Wire encoding": a JSON object keyed `<ws>/<name>`; `null` for absent |
+| A3 | high | author | the watch target lacks `paneId`, which observations require | fixed | D13: mu adds the identity fields (`src/agents/observe.ts:36-41`) |
+| A4 | high | author | compare-and-clear cannot move to a new incarnation | fixed | D10: (incarnation, runs) pair rule; another incarnation always stores |
+| A5 | medium | author | dedupe is one channel-wide capability | fixed | D9 `dedupe` per method; D13 example |
+| A6 | medium | author | `not-accepted` receipts have no disposition | fixed | D4 table: only `accepted` resolves, `not-accepted` stays unknown (`src/agents/task-spawn.ts:721-727`) |
+| A7 | medium | author | `channel.command` is missing from the effects | fixed | D4 inventory and table |
+| A8 | medium | author | the fetch result obligation is unstated | fixed | D7 `fetch` doc: `FETCH_HEAD` must name the commit (`src/remote-collect.ts:196-231`) |
+| A9 | medium | author | the channel handshake has no name field | fixed | D13 `channel: {name, caps}`; D8 `channel` must equal it |
+| K1 | high | crash | the `mu5` import takes no lock, and its rename can replace | fixed | D5 step 1 (strict `mkdir` lock, `src/file-lock.ts`) and step 6 (no-replace link) |
+| K2 | medium | crash | the live-row check runs before the copy and omits delegates | fixed | D5 step 5.3: checked on the snapshot, running `delegate_calls` included (`src/delegate-process.ts:124-136`) |
+| K3 | medium | crash | unflushed ops under the old `machine_id` are never published | fixed | D5 step 3: refuse while unpublished ops remain (`src/segments.ts:248,477`, `src/sync.ts:364-373`) |
+| K4 | low | crash | `upgradeSchema` cannot nest; the id seed does nothing on an existing row | fixed | D5 step 5: an `UPDATE` first, then `upgradeSchema` in its own transaction, then the 13 → 14 step; the rename is the commit point |
+| K5 | medium | crash | the claim accepts a live creator's row; result writes are unfenced | fixed | D4 claim: a live creator owns `pending`; result writes are compare-and-set on owner; F12 |
+| K6 | medium | crash | abandon ignores live effect owners and leaves effect rows | fixed | D1 abandon rows: refuse while a live owner holds an effect; delete the effect rows and log their keys |
+| K7 | medium | crash | the clear compares `runs` across opaque incarnations | fixed | as A4 |
+| K8 | medium | crash | a deduped resend can land after a newer send | fixed | D4: a delivery is resent only while no newer delivery to the agent exists |
+| K9 | medium | crash | F11 does not converge on a `lost` host | fixed | D1 `lost` row and D6 "`gone` is a proof": close records the tree gone and the job stopped; F11 |
+| K10 | medium | crash | the fetch contract is unstated | fixed | as A8 |
+| K11 | low | crash | close on an unresolved dedupe-only start launches it to stop it | rebutted | D4 "Who triggers": the resend is the only way to learn whether a job exists; start then stop leaves nothing, while refusing could leave an orphan |
+| S1 | high | dispositions | the collect sequence fails on a new incarnation, after the reap, and for `--cwd` workers | fixed | D10: the pair rule; seen and collected pairs on the job record (they survive the reap); a `--cwd` worker is never due (`src/remote-collect.ts:331-336`) |
+| S2 | high | dispositions | a `lost` host deadlocks close and release | fixed | as K9 (`src/agents/close.ts:579-584`, `src/remote-agent.ts:404-426`) |
+| S3 | high | dispositions | polled `readStates` never settles a plugin wait; `rewatchOnPoll` hardcodes ctl | fixed | D13: a plugin channel must stream and tie its settle text; an already settled turn is reported at once. `src/wait-latch.ts:86` is a P4 capability site (D9 invariant) |
+| S4 | high | dispositions | a no-row plugin reattach has no fields to launch from; trees go unrecorded | fixed | D3: no-row plugin leftovers are closed, never reattached; `carrier_jobs.tree_base` with `tree_path`, written before `job.start` (D5) |
+| S5 | medium | dispositions | per-method dedupe; the channel name in the handshake | fixed | as A5, A9 |
+| S6 | medium | dispositions | D15 keeps the starter's shell; the file-handle `lookup` is missing from D4 | fixed | D15: only `fetch` stays a template, and the view comes from `job.start` with `--key`; D4 row for `handle: "file"` |
+| S7 | low | dispositions | `identity` and `fingerprint` are listed as wire calls and as computed | fixed | D7, D8: computed by mu; `job.identity` removed from D13 |
+
+One finding is rebutted (K11) and the other 26 are fixed. Two round-2
+dispositions changed:
+
+- **B10 / D5:** a no-row plugin reattach is now cut rather than specified
+  (S4).
+- **X7:** the compare-and-clear is now on pairs (A4).
+
 ## History
 
 - **Draft 1** (`f1e092e0`) started from a decision sketch, tested by five
@@ -1448,5 +1587,15 @@ No finding was rebutted:
   - it moves to schema 14, `mu5` and mu 5;
   - it adds the `effects` journal with payloads and one rule table;
   - it splits P6 into P6a–P6e.
+
+- **Draft 4** (2026-11-09) settles round 3's 27 findings with rules and
+  columns only:
+  - params-only replay;
+  - the JSON wire encoding;
+  - the creator-owned claim and newer-delivery rule;
+  - the pair-based collect sequence;
+  - `lost` hosts closing without the host;
+  - the import lock and snapshot check;
+  - per-method dedupe and the channel name.
 
   Every file:line was reopened at `42881032` (mu) and `1192781` (mule).
