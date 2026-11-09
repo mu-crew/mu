@@ -18,6 +18,7 @@
 import { mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
+import { MU_STATE_DIR_NAMES } from "./rig-private.ts";
 
 /** The variables that keep mu, murmur, pi and tmux inside the sandbox. */
 export const ISOLATION_VARS = [
@@ -126,7 +127,7 @@ export function writeShellStartup(dir: string, pin: string): void {
 export interface RealState {
   /** Sync dirs: the rig's own MU_SYNC_DIR and ~/mu (a shell rc's usual export). */
   syncDirs: string[];
-  /** DB files (and their WAL): this build's, and the 4.x and 3.x defaults. */
+  /** DB files (and their WAL): this build's, and the 5.x, 4.x and 3.x defaults. */
   dbFiles: string[];
   /** murmur's and muzzle's real state dirs, listed like the sync dirs. */
   stateDirs: string[];
@@ -148,9 +149,12 @@ export function realStatePaths(
 ): RealState {
   const homeState = join(home, ".local", "state");
   const xdg = absVal(env.XDG_STATE_HOME) ?? homeState;
-  const db =
-    absVal(env.MU_DB_PATH) ?? join(absVal(env.MU_STATE_DIR) ?? join(xdg, "mu-next"), "mu.db");
-  const dbs = unique([db, join(xdg, "mu-next", "mu.db"), join(xdg, "mu", "mu.db")]);
+  const db = absVal(env.MU_DB_PATH) ?? join(absVal(env.MU_STATE_DIR) ?? join(xdg, "mu5"), "mu.db");
+  const dbs = unique([
+    db,
+    ...MU_STATE_DIR_NAMES.map((n) => join(xdg, n, "mu.db")),
+    join(xdg, "mu", "mu.db"),
+  ]);
   return {
     syncDirs: unique([absVal(env.MU_SYNC_DIR), join(home, "mu")]),
     dbFiles: dbs.flatMap((d) => [d, `${d}-wal`]),

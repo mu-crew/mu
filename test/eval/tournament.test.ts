@@ -876,6 +876,9 @@ describe("designer isolation", () => {
     expect(rules(`cat ${"$"}{HOME}/.local/state/mu-next/eval-transcripts/x`)).toContain(
       "eval transcripts",
     );
+    expect(rules("ls ~/.local/state/mu5/worktrees/crew-x/w1")).toContain("crew worktrees");
+    expect(rules("cat /home/u/.local/state/mu5/eval-transcripts/x")).toContain("eval transcripts");
+    expect(rules("sqlite3 ~/.local/state/mu5/mu.db .tables")).toContain("mu state");
     expect(rules("ls ~/.pi/agent/sessions")).toContain("pi sessions");
     expect(rules("ls /home/u/.claude/projects/x")).toContain("claude projects");
     expect(rules("ls ~/.codex/sessions")).toContain("codex sessions");
@@ -1005,6 +1008,9 @@ describe("designer isolation", () => {
     expect(
       audit([call("bash", { command: "sqlite3 ~/.local/state/mu-next/mu.db .tables" })]),
     ).toEqual(["mu state"]);
+    expect(audit([call("bash", { command: "sqlite3 ~/.local/state/mu5/mu.db .tables" })])).toEqual([
+      "mu state",
+    ]);
     // a result showing what the pack does not carry is a leak
     expect(audit([result("/home/u/.ssh/id_rsa")])).toEqual(["under the real HOME"]);
     expect(audit([call("write", { path: "/home/u/notes.md", content: "x" })])).toEqual([
@@ -1079,7 +1085,13 @@ describe("designer isolation", () => {
       expect(hits).toContain("pi sessions");
       // a cd the audit cannot follow is still caught by the terms
       expect(audit("cd $OLDPWD && cat .claude/projects/x")).toEqual(["strict term"]);
-      for (const t of [".codex/sessions", "agent-transcripts", "x/museum", "mu-next/worktrees"])
+      for (const t of [
+        ".codex/sessions",
+        "agent-transcripts",
+        "x/museum",
+        "mu-next/worktrees",
+        "mu5/worktrees",
+      ])
         expect(audit(`ls ${t}`)).toContain("strict term");
     });
 

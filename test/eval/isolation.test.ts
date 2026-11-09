@@ -317,6 +317,8 @@ describe("the real-state watch of a live run", () => {
     expect(p.dbFiles).toEqual([
       "/s/db/mu.db",
       "/s/db/mu.db-wal",
+      "/home/u/.local/state/mu5/mu.db",
+      "/home/u/.local/state/mu5/mu.db-wal",
       "/home/u/.local/state/mu-next/mu.db",
       "/home/u/.local/state/mu-next/mu.db-wal",
       "/home/u/.local/state/mu/mu.db",
@@ -324,6 +326,15 @@ describe("the real-state watch of a live run", () => {
     ]);
     expect(p.stateDirs).toEqual(["/home/u/.local/state/murmur2", "/home/u/.local/state/muzzle"]);
     expect(realStatePaths({ MU_SYNC_DIR: "" }, "/home/u").syncDirs).toEqual(["/home/u/mu"]);
+    // no MU_DB_PATH or MU_STATE_DIR: this build's DB is mu 5's default, listed once
+    expect(realStatePaths({ XDG_STATE_HOME: "/x" }, "/home/u").dbFiles).toEqual([
+      "/x/mu5/mu.db",
+      "/x/mu5/mu.db-wal",
+      "/x/mu-next/mu.db",
+      "/x/mu-next/mu.db-wal",
+      "/x/mu/mu.db",
+      "/x/mu/mu.db-wal",
+    ]);
     expect(
       realStatePaths({ MURMUR_STATE_DIR: "/m", XDG_STATE_HOME: "/x" }, "/home/u").stateDirs,
     ).toEqual(["/m", "/x/murmur2", "/home/u/.local/state/murmur2", "/x/muzzle"]);

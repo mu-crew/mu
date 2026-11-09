@@ -277,6 +277,9 @@ describe("the path rules", () => {
       ".codex/sessions/2026/s.jsonl",
       "museum/db",
       ".local/state/mu-next/mu.db",
+      ".local/state/mu5/mu.db",
+      ".local/state/mu5/mu.db-wal",
+      ".local/state/mu5/worktrees/crew/w1/src/a.ts",
     ];
     for (const p of stores) {
       expect(rigInInput({ command: `cat ${join(homedir(), p)}` }, guard)).toHaveLength(1);

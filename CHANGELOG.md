@@ -367,6 +367,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **Eval: the rig's deny lists cover mu 5's state dir** (task `eval_rig_mu5`).
+  The private stores shared by the AUT path rules and the designer deny list
+  (`tools/eval/rig-private.ts`), the designer audit's strict terms and a live
+  run's real-state watch (`tools/eval/isolation.ts`) named only
+  `~/.local/state/mu-next`, so an AUT or designer could read mu 5's real DB,
+  worktrees and eval rows under `~/.local/state/mu5` unflagged. Both names are
+  listed now (`MU_STATE_DIR_NAMES`, mirroring `src/state-dir.ts`: the rig
+  imports nothing from `src/`), and a live run's default DB is mu 5's.
+  The judges' hash changes: a frozen tournament group refuses until
+  `tournament refreeze`.
+
 - **Eval: `tournament plan` plans from B5's rows before a freeze, and model
   errors stay out of ρ̂** (hill-r2 B5). `plan <g> --b5 <probe.jsonl>
   [--b5-cold <cold.jsonl>]` computes ρ̂ the way `freeze` does

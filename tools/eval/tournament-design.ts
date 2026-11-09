@@ -150,6 +150,8 @@ const STRICT_TERMS = [
   ".codex/sessions",
   "agent-transcripts",
   "/museum",
+  "mu5/worktrees",
+  "mu5/eval-transcripts",
   "mu-next/worktrees",
   "mu-next/eval-transcripts",
 ];

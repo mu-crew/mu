@@ -22,6 +22,13 @@ export const stripCanary = (src: string): string =>
     .filter((l) => !hasCanary(l))
     .join("\n");
 
+/**
+ * The real mu state dir names under `~/.local/state`: mu 5's `mu5` and mu 4's `mu-next` (the state
+ * import's source, still on disk). Mirrors src/state-dir.ts STATE_DIR_NAME and MU4_STATE_DIR_NAME:
+ * the rig imports nothing from src/.
+ */
+export const MU_STATE_DIR_NAMES: readonly string[] = ["mu5", "mu-next"];
+
 export interface PrivateStore {
   rule: string;
   dir: string;
@@ -31,19 +38,21 @@ export interface PrivateStore {
  * The private stores under `home`, the inner ones first (a path's rule is its first match): the
  * crew's worktrees and eval rows, every harness's transcripts, the museum store and the museum
  * checkout `museumDir` (`EVAL_MUSEUM_DIR`; no default: tournament-design.ts museumCheckout finds an
- * unnamed one on disk), and the whole mu state dir (the real DB).
+ * unnamed one on disk), and the whole mu state dir of mu 5 and of mu 4 (the real DBs).
  */
 export function privateStores(home: string, museumDir?: string): PrivateStore[] {
-  const state = join(home, ".local", "state", "mu-next");
+  const states = MU_STATE_DIR_NAMES.map((n) => join(home, ".local", "state", n));
   return [
-    { rule: "crew worktrees", dir: join(state, "worktrees") },
-    { rule: "eval transcripts", dir: join(state, "eval-transcripts") },
+    ...states.flatMap((state) => [
+      { rule: "crew worktrees", dir: join(state, "worktrees") },
+      { rule: "eval transcripts", dir: join(state, "eval-transcripts") },
+    ]),
     { rule: "pi sessions", dir: join(home, ".pi", "agent", "sessions") },
     { rule: "claude projects", dir: join(home, ".claude", "projects") },
     { rule: "codex sessions", dir: join(home, ".codex", "sessions") },
     { rule: "museum", dir: join(home, "museum") },
     ...(museumDir ? [{ rule: "museum", dir: resolve(museumDir) }] : []),
-    { rule: "mu state", dir: state },
+    ...states.map((state) => ({ rule: "mu state", dir: state })),
   ];
 }
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
