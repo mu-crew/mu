@@ -1,15 +1,20 @@
 # mu plugins: hosts, jobs, links, channels
 
-Status: draft 2, written 2026-11-09. Not built. Draft 1 was refuted by
-three reviewers (facts, correctness, plan), who raised 49 findings.
-[Refutation round 1](#refutation-round-1) records how each was settled;
-the sections below are written to those settlements. The spec covers mu
-and, for one unit (P7), mule.
+Status: draft 3, written 2026-11-09. Not built. Two refutation rounds
+shaped it:
 
-Draft 1 started from a short decision sketch: three state machines and six
-seams. Five code surveys of mu at `42881032` and of mule 0.4.0 tested that
-sketch. Where a survey contradicted it, the survey won
-([Where the surveys overrode the sketch](#where-the-surveys-overrode-the-sketch)).
+- **Round 1:** 49 findings, settled in draft 2.
+- **Round 2:** 38 findings, plus the orchestrator's rulings R1–R7, settled
+  here ([Refutation round 2](#refutation-round-2)).
+
+The rulings changed the acceptance criteria. The spec is judged on design
+soundness: its model, transitions, crash safety, schema, protocol and
+capabilities. It must also be enough to write an out-of-process plugin
+end to end without inventing contract
+([End to end](#end-to-end-a-provisioning-backend)). Each unit's exact checks
+belong in that unit's brief (R6).
+
+The spec covers mu 5 and, for one unit (P7), mule.
 
 ## Goal
 
@@ -24,16 +29,19 @@ any one backend's code in mu. Two kinds of backend motivate this:
   that mu can ask. No local process holds it, so a pane dying proves
   nothing about the agent.
 
-Today's mu cannot express either. An agent's liveness is its pane's
-liveness. A host is a fixed template that never goes away. A crash between
-an intent and its effect is handled case by case. A backend that cannot
-say what state a job is in has no way to say so.
+Today's mu cannot express either:
+
+- An agent's liveness is its pane's liveness.
+- A host is a fixed template that never goes away.
+- A crash between an intent and its effect is handled case by case.
+- A backend that cannot say what state a job is in has no way to say so.
 
 mu gets mu-owned state machines for hosts, jobs and turns, and one
 TypeScript interface per seam. Today's code is re-expressed behind those
 interfaces with its behaviour unchanged. External implementations
 (**plugins**) speak a versioned JSON-RPC protocol over stdio, and mu drives
-them through one built-in adapter. mule becomes the first plugin.
+them through one built-in adapter. mule becomes the first plugin. The
+plugin units ship as mu 5, in a new state directory (D5).
 
 ## Principles
 
@@ -44,22 +52,20 @@ them through one built-in adapter. mule becomes the first plugin.
 2. **mu owns the state machines; implementations report facts.** A plugin
    never writes mu's DB, its state directory or its log. Every effect
    returns facts, and mu records the transitions.
-3. **Every effect mu may replay is written ahead and keyed.** mu records
-   the intent on the subject's row and generates an idempotency key,
-   persisting both before the call. After a crash, mu reconciles by
-   asking, never by guessing. It resends only through a declared key
-   dedupe (D4).
+3. **Every plugin effect is written ahead, with its payload.** Before the
+   call, mu records the intent, the exact request and a mu-generated key.
+   After a crash, mu reconciles by one rule table (D4): ask, else resend
+   the identical request under the same key where the plugin declares
+   exact dedupe, else unknown until a human decides.
 4. **Status is mandatory and truthful.** Every implementation answers
    "what is this host, job or turn now?". `unknown` is an honest answer.
-   An outcome that is unknown is terminal until something asks and gets a
-   definite answer.
 5. **Capabilities have defined meanings and are enforced.** mu's verbs gate
    on declared capabilities. The contract suite checks that each
    implementation behaves as it declares.
 6. **Behaviour is unchanged until the plugin units.** P1–P5 move code
-   behind interfaces, and their tests keep their assertions. Only P6a–P6d
-   add reachable behaviour. Even then, built-in hosts, jobs and channels
-   keep behaving as they do today.
+   behind interfaces, and their tests keep their assertions. P6a moves the
+   state directory. P6b–P6e add the plugin paths. Built-in hosts, jobs and
+   channels behave as they do today throughout.
 7. **A seam opens only where two real implementations need it.** A
    built-in plus a plugin that a real user runs counts as two. The
    contract suite's fake plugin does not count. Nothing gets an interface
@@ -67,20 +73,23 @@ them through one built-in adapter. mule becomes the first plugin.
 
 ## Where the surveys overrode the sketch
 
+Draft 1 started from a short decision sketch. Five code surveys of mu at
+`42881032` and of mule 0.4.0 tested it. Where a survey contradicted it,
+the survey won:
+
 | Sketch said | Code says | Chosen |
 | --- | --- | --- |
-| A Transport seam: `exec`, `fetch`, `push`, and a worktree contract | "transport" already names a profile's `session`/`lease` (`docs/VOCABULARY.md:251`, `src/hosts.ts:199`) and a channel alias (`src/agents/transport.ts:30`). `push` has no call site. mule forbids bulk transfer on its connection (`mule/SPEC.md:541`). | The seam is the **link**: `exec`, plus an optional `fetch`. There is no `push`. The worktree contract is mu's own scripts over `exec` (D7). |
-| `start` returns a handle mu records | A lease carrier publishes its handle from inside mu's pane, through a file mu polls (`src/agents/lease-carrier.ts:248`) | The job kind declares where its handle comes from: the pane, a file, or the reply (D8). |
-| Job states reserved, launching, running, stopped, lost, all persisted | ROADMAP rejects runtime agent state in `mu.db` (`docs/ROADMAP.md:146`) | mu persists only the transitions it makes. Liveness is asked at read time (D1). |
-| Liveness belongs to the job, so the pane is only a view | mule ties a lease job to its pane by design: a signal stops the job (`mule/SPEC.md:102`). Every agent row needs a pane (`src/db.ts:1098`). | Every agent keeps a view pane in this version. A view is `bound` (built-ins and mule) or `detached` (plugin kinds only, P6d) (D3). |
-| Two job built-ins, pane and lease | The command gate is a third job kind, with its own exit status and a retained pane (`src/agents/gate.ts:120-135`) | Three built-in job kinds: `pane`, `lease`, `gate`. The gate has no job record (D1, D8). |
-| The idempotency key is passed to every effect | `carrier_jobs.token` is generated (`src/carrier-jobs.ts:125`) but never sent. The job file is named by (workstream, name) (`src/agents/lease-carrier.ts:118`). mule rejects caller-chosen ids (`mule/SPEC.md:517`). | Keys are sent from P6a on. `lookup(key)` or declared key dedupe is a seam requirement. mule gains `--key` in P7 (D4, D15). |
-| `fence` is a remote callback | ctl's fence runs synchronously immediately before the one write (`src/ctl/client.ts:166-180`) | Plugin channels have no write fence in this version (D11). |
-| `receipt` alone reconciles a delivery | The hooks journal reconciles by counting turns past a baseline (`src/agents/task-spawn.ts:717-720,744-760`) | A new `reconcile(intent)` on `AgentChannel`, with a turn-cause rule for backends whose turns start on their own (D4, D9). |
-| `carrier_jobs` and `remote_recovery` merge into new job and host tables | Released binaries read `carrier_jobs` as the name fence (`src/agents.ts:416-424`). `remote_recovery` is filled by triggers on every delete path (`src/db-recovery.ts:76-100`). | `carrier_jobs` stays the job record and gains columns. `remote_recovery` and its triggers are unchanged, and recovery on a provider host is proven another way (D5). |
-| Lifecycle hooks and doctor steps are plugin seams | Collect and close are mu's own effects. Host checks have one entry point (`src/hosts.ts:1018`). | Two mu-owned host policies, which are functions, not an interface (D10). Check steps are an optional method on the link and the job kind (D11). |
-| Host provider `capacity()` | `max_sessions` counts connection slots, not jobs. A lease pane holds none (`src/agents/spawn-remote.ts:178,194`). | The link declares who counts connection slots. The provider reports job slots as a host fact, checked atomically at spawn (D6). |
-| Run states idle, running, blocked, settled | Readings also carry `unknown` (`src/agent-state.ts:11`), unconfirmed idle, `queued` (`src/channels/dispatch.ts:94-110`) and pending messages. "run" already names the executor's charge (`docs/VOCABULARY.md:242`). | The machine is the **turn**, with all of those states (D1). |
+| A Transport seam: `exec`, `fetch`, `push`, and a worktree contract | "transport" already names a profile's `session`/`lease` (`docs/VOCABULARY.md:251`, `src/hosts.ts:199`) and a channel alias (`src/agents/transport.ts:29`). `push` has no call site. mule forbids bulk transfer on its connection (`mule/SPEC.md:541`). | The seam is the **link**: `exec`, plus an optional `fetch`. The worktree contract is mu's own scripts over `exec` (D7). |
+| `start` returns a handle mu records | A lease carrier publishes its handle from inside mu's pane, through a file mu polls (`src/agents/lease-carrier.ts:248`) | Each job kind declares where its handle comes from: the pane, a file, or the reply (D8). |
+| Persisted job states | ROADMAP rejects runtime agent state in `mu.db` (`docs/ROADMAP.md:146`) | mu persists only the transitions it makes. Liveness is asked at read time (D1). |
+| The pane becomes only a view | mule ties a lease job to its pane by design (`mule/SPEC.md:102`). Every agent row needs a pane (`src/db.ts:1098`). | Every agent keeps a view pane. A view is `bound` (built-ins and mule) or `detached` (plugin kinds only) (D3). |
+| Two job built-ins | The command gate is a third job kind, with its own exit status (`src/agents/gate.ts:120-135`) | `pane`, `lease` and `gate`. The gate has no job record (D1). |
+| A key per effect | `carrier_jobs.token` is generated (`src/carrier-jobs.ts:125`) but never sent. mule rejects caller-chosen ids (`mule/SPEC.md:517`). | Keys and payloads are persisted in `effects` and sent from P6c on. mule gains `--key` in P7 (D4, D15). |
+| `fence` is a remote callback | ctl's fence runs synchronously immediately before the one write (`src/ctl/client.ts:166-180`) | Plugin channels have no write fence (D11). |
+| `carrier_jobs` and `remote_recovery` merge into new tables | Both are read on every close and delete path (`src/agents.ts:416-424`, `src/db-recovery.ts:76-100`) | Both stay, with new columns. A new `hosts` table holds provider hosts (D5). |
+| Lifecycle hooks and doctor steps are seams | Collect and close are mu's own effects. Host checks have one entry point (`src/hosts.ts:1018`). | Two mu-owned host policies (D10). Check steps are phased methods on the link and the job kind (D11). |
+| `capacity()` | `max_sessions` counts connection slots, not jobs (`src/agents/spawn-remote.ts:178,194`) | The link declares who counts connection slots. The provider reports job slots, which spawn checks atomically (D6). |
+| Run states | Readings also carry `unknown` (`src/agent-state.ts:11`), `idle?`, `queued` (`src/channels/dispatch.ts:94-110`). "run" already names the executor's charge (`docs/VOCABULARY.md:242`). | The machine is the **turn** (D1). |
 
 ## Decisions
 
@@ -100,411 +109,344 @@ A machine that jobs run on.
 
 Provider host transitions:
 
-| Transition | Triggered by | Persisted before the effect | Persisted after |
-| --- | --- | --- | --- |
-| → `acquiring` | `mu host acquire <name> --provider <p>` (P6c). It refuses a name that a profile or another record holds. | the record: name, provider, plugin instance, spec digest, a mu-generated key, the creator's pid and start time, `pending_op = acquire`. One immediate transaction. | — |
-| `acquiring` → `ready` | the `acquire` reply; or, after a crash, the reconciler's `lookup` or deduped resend (D4) | — | handle, `deadline_at`, `idle_reclaim_ms`, `max_jobs`; pending cleared |
-| `acquiring` → deleted | a `permanent` or `retryable` error (nothing happened); or `lookup` answers `none` under the D4 gate | — | an event in the log |
-| `acquiring` stays | crash, timeout, `unknown-outcome`, `pending`, or `unknown` | — | nothing. Running `mu host acquire <name>` again resumes it: it asks under the same key and never acquires a second host. |
-| `ready` → `draining` | `mu host drain`, or the deadline margin (D10) | `state` | — |
-| `ready`/`draining` → `lost` | any host read whose `status` answers `gone` while mu has not released the host | — | `state`, `reason` |
-| `draining`/`lost` → `releasing` | `mu host release`. Its immediate transaction proves that no agent row, job record or `remote_recovery` row names the host, then sets the state. A spawn's reservation re-checks `ready` in its own immediate transaction (D6), so neither can pass the other. | `pending_op = release`, key `<key>:release` | — |
-| `releasing` → deleted | `release` returns, or `status` answers `gone` | — | an event in the log |
-| any → deleted | `mu host release <name> --abandon`, a human decision, logged in one op group. It refuses while any agent row names the host. It deletes the job records and recovery records naming the host in the same transaction, because a host one abandons is gone, and so is its work. | — | the event names every dropped record |
+| Transition | Triggered by | Persisted |
+| --- | --- | --- |
+| → `acquiring` | `mu host acquire <name> --provider <p> [--param k=v]… [--repo <path>]`. It refuses a name that a profile or another record holds. | The record (name, provider, params, repo, creator pid and start time) and its `host.acquire` effect (D4), in one immediate transaction. |
+| `acquiring` → `ready` | the `acquire` result, recorded by the caller or by a later reconciler (D4) | handle, instance, `deadline_at`, `idle_reclaim_ms`, `max_jobs` |
+| `acquiring` → deleted | a `permanent` or `retryable` error (nothing happened), or a `lookup` answer of `none` under the D4 gate | an event in the log |
+| `acquiring` stays | the effect is unresolved | nothing. Running `mu host acquire <name>` again reconciles the same effect. It never acquires a second host. |
+| `ready` → `draining` | `mu host drain`, or the deadline margin (D10) | `state` |
+| `ready`/`draining` → `lost` | any host read whose `status` answers `gone` while mu has not released the host | `state`, `reason` |
+| `draining`/`lost`/`releasing` → `releasing` | `mu host release`. Its immediate transaction proves that no agent row, job record or `remote_recovery` row names the host. It then records the `host.release` effect. Re-running it on a `releasing` host reissues the release. | `state`, the effect |
+| `releasing` → deleted | `release` returns. `release` is idempotent, so a reconciler reissues it (D4). | an event in the log |
+| any → deleted | `mu host release <name> --abandon`, a human decision, logged in one op group. It refuses while any agent row names the host. It deletes the job records and recovery records naming the host in the same transaction: a host one abandons is gone, and so is its work. | the event names every dropped record |
 
-**Name rule.** A provider host's name is referenced by rows only while its
-record exists. Release requires no references, and abandon deletes them.
-So a name that is released and acquired again never inherits stale rows.
+A spawn reserves inside an immediate transaction that re-checks
+`state = 'ready'` and counts against `max_jobs` (D6). A spawn and a
+release therefore cannot both pass.
 
 #### Job
 
 One agent's process. Each job has a **job kind** (D8):
 
-- `pane`: today's local panes and remote `session` panes;
+- `pane`: today's local and `session` panes;
 - `lease`: today's carrier;
-- `gate`: a command gate, a foreground pane on a session profile.
-  Lease profiles refuse gates (`src/agents/lease-carrier.ts:180-182`).
+- `gate`: a command gate on a session profile;
 - one kind per job plugin.
 
-A pane job or a gate job has no job record of its own. The agents row is
-the record: its pane id is the handle, and a gate also has its
-`gate_token`. Only a job that reserves today has a **job record**: a lease
-(`src/agents/spawn.ts:501-504`), and from P6b a plugin job. The record is
-a `carrier_jobs` row, today's **reservation** (`src/db-carrier.ts:23-43`).
+A pane job or a gate job on a static host has no job record. Its agents
+row is the record: its pane id is the handle, plus the `gate_token` for a
+gate. A lease job and every job on a provider host have a **job record**,
+a `carrier_jobs` row (`src/db-carrier.ts:23-43`).
 
-| Transition | Triggered by | Persisted (today's code) |
+| Transition | Triggered by | Persisted (today's code where it exists) |
 | --- | --- | --- |
-| → `reserved` | spawn, under the agent lock, before any effect (`src/agents/spawn.ts:503`, `src/agents/lease-carrier.ts:191`) | the row, an immutable token (`src/carrier-jobs.ts:114-125`), the host, and the stop identity. The row is the name fence (`src/agents/lease-carrier.ts:174`, `src/agents.ts:416-424`). |
-| `reserved` → `launching` | spawn, just before the start effect (`src/agents/spawn.ts:842`) | `launch = 'intent'` (`src/carrier-jobs.ts:203`). From P6b, also the plugin's process-group id and start time. |
-| `launching` → `started` | the job handshake (`src/agents/lease-carrier.ts:248`); a plugin's `start` reply; or, after a crash, the reconciler's `lookup` or deduped resend (D4) | the handle (`src/carrier-jobs.ts:265`), the view pane (`:210`), the agent (`:225`) |
+| → `reserved` | spawn, under the agent lock, before any effect (`src/agents/spawn.ts:503`) | the row, an immutable token (`src/carrier-jobs.ts:114-125`), the host and the stop identity. The row is the name fence (`src/agents/lease-carrier.ts:174`, `src/agents.ts:416-424`). |
+| `reserved` → `launching` | spawn, just before the start effect (`src/agents/spawn.ts:842`) | `launch = 'intent'`. For a plugin kind, also the `job.start` effect with its full `JobSpec` (D4). |
+| `launching` → `started` | the job handshake (`src/agents/lease-carrier.ts:248`), the `start` result, or a reconciler (D4) | the handle (`src/carrier-jobs.ts:265`), the view pane, the agent |
 | `reserved` → deleted | rollback while `launch` is still `none` (`src/agents/lease-carrier.ts:317`) | — |
-| `launching` with no handle | the pane died first, the deadline passed, or the job file is invalid or unreadable (`src/agents/lease-carrier.ts:265-297`) | nothing: the row stays unknown (`describeEmptyReservation`, `:412-434`). From P6b, the D4 reconcile resolves it for a kind that declares `lookup` or dedupe. |
-| `started`, no agent row | mu died after recording the handle but before the agent row; or a released build reaped the row (D5) | nothing new. This is today's lease-job **leftover**. `agent close` stops the job through its kind, and `agent reattach` opens a view (P6d for plugin kinds). |
-| `started` → `stopping` | `agent close`. For a bound view, after the view proof (`src/agents/close.ts:546-568`). For a detached view, before the view is touched (D3). | new: `pending_op = stop`, key `<token>:stop` |
-| `stopping` → deleted | `stop` proves the job gone, then the job file and tree are cleaned up (`src/agents/lease-carrier.ts:590`) | the settle mode the reaper reads. Stopped by mu or abandoned: the tasks reopen as todo. Ended on its own: they are parked (`src/agents/reap.ts:55-78`). |
+| `launching`, no handle | the pane died first, the deadline passed, or the job file is unreadable (`src/agents/lease-carrier.ts:265-297`) | nothing. For `handle: "file"` kinds today's rule stands: the reservation is released only as provably unlaunched (`src/agents/lease-carrier.ts:431-432`). For `handle: "reply"` kinds, D4 applies. |
+| `started`, start effect resolved, pane spawn failed | `mux.spawnAgent` threw after the handle arrived | the rollback stops the job by its handle (`job.stop`) before releasing. Today's lease rollback needs a pane id (`src/agents/lease-carrier.ts:356-358`); that rule stays for `handle: "file"` only. |
+| `started`, no agent row | mu died after the handle and before the agent row, or the row was reaped | a **leftover**, as today. `agent close` stops it through its kind. `agent reattach` opens a view and inserts a new incarnation, taking the channel from the job kind (D3). |
+| `started` → `stopping` | `agent close`: after the view proof for a bound view, before touching the view for a detached one (D3) | the `job.stop` effect |
+| `stopping` → deleted | `stop` proves the job gone, then the job file and tree are cleaned up (`src/agents/lease-carrier.ts:590`) | the settle mode the reaper reads (`src/agents/reap.ts:55-78`) |
 | any → deleted | `agent close --abandon-job` (`src/agents/lease-carrier.ts:466`) | an event naming the handle |
 
 **Two reads**, never stored and never confused:
 
 - **View presence** asks whether the pane exists: reconcile's `listPanes`
-  (`src/reconcile.ts:113-142`). A retained gate pane whose command ended
-  is present. For a bound kind, presence alone decides a ghost, as it does
-  today.
+  (`src/reconcile.ts:113-142`), and the row rule in close and teardown. A
+  retained gate pane whose command ended is present. For a bound kind,
+  presence alone decides a ghost and a deletable row, as it does today.
 - **Liveness** asks whether the job runs: `running`, `ended(exit)`,
   `lost(reason)` or `unknown(reason)`. It is answered per kind:
-  - `pane`: the pane, as `paneAlive` answers (`src/mux/types.ts:330`).
-  - `lease`: the carrier pane as `localPaneAlive` reads it,
-    `paneResult(...).state === "running"` (`src/remote-agent.ts:667-671`).
-  - `gate`: running while the pane runs. Once it exits, the host's
-    completion record gives the exit (`src/agents/gate.ts:120-135`).
+  - `pane`: `paneAlive` (`src/mux/types.ts:330`);
+  - `lease`: `paneResult(...).state === "running"` (`src/remote-agent.ts:667-671`);
+  - `gate`: the pane, then the host's completion record
+    (`src/agents/gate.ts:120-135`);
   - plugin kinds: the job kind's `status`.
 
-For a **detached** kind (D3), reconcile asks liveness before it treats a
-row as a ghost. mu never moves a job record on a reading alone: a job that
-reads `ended` is still stopped (stop is idempotent) before its record is
-released.
+For a **detached** kind, reconcile asks liveness before it treats a row as
+a ghost. mu never moves a job record on a reading alone.
 
 #### Turn
 
 One prompt-to-settle of an agent: what the channels count as `runs`. Its
 states are the channel readings:
 
-- `idle` and `idle?` (unconfirmed, `src/channels/types.ts:310-316`);
+- `idle` and `idle?` (unconfirmed after an interrupt, `docs/VOCABULARY.md`
+  **idle?**);
 - `running`, `queued` (in muzzle) and `blocked`;
 - `settled(text, outcome)`;
 - `unknown`.
 
-A channel must report `running` while its backend has any work in flight
-for the agent, children it started included. `settled` means the backend
-says the agent is idle. mu models only agents it spawned; a backend's
-internal children are not mu agents.
-
-A turn is never persisted. mu persists only what it consumed: the wait
-cursor's completion token and the applied settle, keyed by the agent's
-registry id plus the channel incarnation (`src/db.ts:1243`, `:1272`). A
-turn may start on its own, for example when a child's settle wakes its
-parent; D4 and D9 say what that does to receipts and waits.
+**A turn starts only on delivery.** That holds for every built-in and is
+required of every plugin channel (R1). A channel's reading is `running`
+from a delivery until the turn it started settles. A turn is never
+persisted. mu persists only what it consumed: the wait cursor's completion
+token and the applied settle, keyed by registry id plus channel
+incarnation (`src/db.ts:1243`, `:1272`).
 
 #### Today's records under the model
 
-| Record | Role in the model |
+| Record | Role |
 | --- | --- |
-| `agents` row | The agent. Its incarnation is the row id. `pane_id` (NOT NULL, `src/db.ts:1098`) is the view, and for a pane or gate job also the handle. `host`, `host_transport` and `channel` name the host, the job kind and the channel. P6 adds `plugin_channel` and `collect_due` (D5). |
-| `carrier_jobs` | The job record of every lease job and plugin job. `token` is the job key. It gains columns in P6b (D5). |
-| `remote_recovery` | A remote worktree's record after its agent row is gone, written by triggers (`src/db-recovery.ts:76-100`). Not host state. It blocks a provider host's release. Unchanged, triggers included. |
-| `host_profiles` | The static provider's hosts. The template link's `exec` and `fetch`. The job kind, through `transport`: `session` means `pane` (or `gate`), `lease` means `lease`. It gains a `plugin` column (D5). |
-| `host_channels` | The link's connection slots. mu keeps admission (`src/hosts.ts:781-816`) for every link that declares `slots: "mu"`. Not host state. |
-| `spawn_receipts`, `wait_action_receipts`, delegate call states | Delivery intents, unchanged. D4 extends them to plugin channels. |
-| `hosts` (new, P6c) | Provider hosts. |
-| `plugins` (new, P6a) | Plugin registrations (D14). |
+| `agents` row | The agent. `pane_id` (NOT NULL, `src/db.ts:1098`) is the view, and for a pane or gate job also the handle. `channel` holds a registered channel name. |
+| `carrier_jobs` | The job record of every lease job and every job on a provider host. `token` is the job key. It gains columns (D5). |
+| `remote_recovery` | A remote worktree's record after its agent row is gone (`src/db-recovery.ts:76-100`). It blocks a provider host's release. From v14 it records the host's identity (D5). |
+| `host_profiles` | The static provider's hosts, the template link and the job kind (`session` means `pane` or `gate`, `lease` means `lease`). It gains `plugin`. |
+| `host_channels` | The link's connection slots, admitted by mu for links with `slots: "mu"` (`src/hosts.ts:781-816`) |
+| `spawn_receipts`, `wait_action_receipts`, delegate states | Built-in delivery journals, unchanged |
+| `effects` (new) | Every plugin effect's intent, request, key and resolver (D4) |
+| `hosts`, `plugins` (new) | Provider hosts; plugin registrations (D14) |
 
 ### D2. Names
 
-The words below enter `docs/VOCABULARY.md` with this spec. Existing words
-keep their meaning.
+These enter `docs/VOCABULARY.md`:
 
-- **link**, not "transport". "transport" stays the profile field
-  (`session` or `lease`), which in this model selects the job kind. P2
-  renames the `Transport = ChannelName` alias
-  (`src/agents/transport.ts:30`) to `SendChannel`.
+- **link**, not "transport". "transport" stays the profile field. P2
+  renames the `Transport` alias (`src/agents/transport.ts:29`) to
+  `SendChannel`.
 - **turn**, not "run". **run** stays the executor's charge.
 - **job kind**, not "driver" or "backend".
-- **effect intent**, not "intent", which stays the op label.
-- **plugin** means only a `mu-plugin-<name>` executable. pi's are
-  **extensions**, as before.
-- **capability** means a declared, enforced property of an
-  implementation. It is not **host capabilities** (the probed harness
-  record, `src/host-harnesses.ts:218-228`) and not a **role**.
-- **write fence** and **run baseline**: the code calls both "fence"
-  (`AgentChannel.fence`, `src/channels/types.ts:150`; `hooksFence` and
-  `sentFence` at `src/cli/wait-arm.ts:97-106`). P4 renames the second to
-  run baseline.
-- **view presence** and **liveness**: the two reads D1 keeps apart.
+- **effect** and **effect intent**, not "intent", which stays the op label.
+- **plugin**, for a `mu-plugin-<name>` executable only. pi's are
+  **extensions**.
+- **capability**, not **host capabilities** and not a **role**.
+- **write fence** and **run baseline**: two things the code calls "fence".
+- **view presence** and **liveness**: the two reads.
 
 ### D3. Views
 
 A job's **view** is the pane mu opens for it through
-`MuxBackend.spawnAgent` (`src/mux/types.ts:323`). In this version every
-agent has one:
+`MuxBackend.spawnAgent` (`src/mux/types.ts:323`). Every agent has one:
 
 - **pane job:** the view is the job.
 - **lease job:** the view is the carrier.
 - **gate job:** the view is the foreground command.
 - **plugin job:** the view runs the job kind's view command.
 
-Why every agent keeps a pane:
+Every agent keeps a pane for two reasons. VISION's visible crews: each
+agent sits in a pane you can attach to. And `agents.pane_id` is NOT NULL
+and keys the pane-guarded writes of the agent and delivery tables
+(`src/db.ts:1312`, `src/agents.ts:699-704`).
 
-- **VISION's visible crews.** Each agent sits in a pane you can attach to.
-- **`agents.pane_id` is NOT NULL** and appears in 13 `pane_id = ?`
-  predicates outside `src/mux/`, among them `deleteAgent`
-  (`src/agents.ts:576`) and the action receipts (`src/db.ts:1312`).
-  Keeping a real pane keeps every one of them correct without a rebuild.
-- **Released builds** see a live pane and treat the row as alive (D5).
+**Where a view can run.** A view command needs a backend whose
+`spawnAgent` runs a command line (`runsShellCommand`,
+`src/mux/types.ts:286-290`). herdr starts its own agent kinds instead
+(`src/mux/herdr.ts:741-751`). A spawn whose job kind has a view command on
+such a backend refuses before any effect, as `spawn --host` does on herdr
+today.
 
-**Where a view can run.** A view runs a command line, so a job kind with a
-view command needs a backend whose `spawnAgent` runs one
-(`runsShellCommand`, `src/mux/types.ts:286-290`). herdr starts its own
-agent kinds instead (`src/mux/herdr.ts:741-751,811-820`). A spawn whose job
-kind needs a command on such a backend refuses with a typed error before
-any effect. That is already true of `spawn --host` on herdr.
+**View input** follows the channel:
 
-**View input** follows the agent's channel:
+- **Interactive** for every built-in channel. `hooks` pastes, `mux` types,
+  and a pi on `ctl` is a TUI a human may attach to. mule's carrier view is
+  such a TUI (`mule/src/lease.rs:355`).
+- **Read-only** for an agent on a plugin channel: stdin is `/dev/null`.
+  Every delivery goes through the channel and its effects, never through
+  keystrokes.
 
-- **Interactive.** Every built-in channel needs an interactive view:
-  - `hooks` pastes into the pane;
-  - `mux` uses `sendToPane`;
-  - a pi on `ctl` is a TUI a human may attach to and type into.
-
-  mule's lease view is such a pane, the carrier's TUI attach
-  (`mule/src/lease.rs:355`), and stays interactive.
-- **Read-only.** An agent on a plugin channel (P6d) gets a view whose
-  stdin is `/dev/null`. Every delivery to it goes through its channel's
-  receipts, never through keystrokes. Plugin-channel agents require tmux
-  in this version: a released build's derived `mux` send then refuses
-  (`src/channels/mux.ts:35-42`, tmux has no `sendToPane`), rather than
-  pasting into a pane that reads nothing.
-
-**Bound or detached.** This is the job kind's `view` capability (D12):
+**Bound or detached** is the job kind's `view` capability:
 
 - **Bound:** the view's death ends the job, or starts its stop. This holds
-  for `pane`, `lease` and `gate`, and for mule's carrier, which stops its
-  job on SIGHUP, SIGINT or SIGTERM by design (`mule/SPEC.md:102`).
-- **Detached:** the job outlives its view. Only plugin kinds may declare
-  it, from P6d.
+  for `pane`, `lease`, `gate` and mule (`mule/SPEC.md:102`).
+- **Detached** (plugin kinds only): the job outlives its view.
   - reconcile asks liveness before it treats the row as a ghost.
   - `agent close` stops the job first and kills the view after, the
     reverse of the bound order (`src/agents/close.ts:540-573`).
-  - `agent reattach` on a row whose detached view is gone opens a new view
-    with `job.attach` and compares-and-sets `agents.pane_id`, keeping the
-    incarnation.
-  - Today's reattach (no row, `src/agents/reattach-check.ts:75,140-144`)
-    is unchanged.
+  - `agent reattach` reopens a view in two cases:
+    - on a row whose view is gone, it calls `job.attach` and
+      compares-and-sets `agents.pane_id`, keeping the incarnation;
+    - on a no-row leftover of a plugin kind, it inserts a new incarnation
+      with the kind's channel.
 
-### D4. Crash safety: effect intents, keys, reconcile by asking
+    Today's lease reattach, which needs a lease profile and pi on ctl
+    (`src/agents/reattach-check.ts:88-108`, `src/agents/reattach.ts:218-224`),
+    is unchanged for lease jobs.
 
-An **effect** is a call that changes something outside mu's DB. D4's rules
-apply to every effect mu may **replay**:
+### D4. Crash safety: effects, payloads, one rule table
 
-- host acquire and release;
-- job start and stop;
-- task-spawn delivery (`spawn_receipts`);
-- the stall steer (`wait_action_receipts`);
-- remote worktree changes;
-- collect.
+An **effect** is a plugin call that changes something outside mu's DB:
 
-The interactive delivery verbs (`agent send`, `--fresh`, `--interrupt`,
-abort, `answer`, session commands) are not replayed. The caller holds the
-outcome, and today's rule stands for them: one attempt, an indeterminate
-result is reported as **delivery unknown** and never resent, and
-`mu agent check` asks by msgId (`src/agents.ts:708-726`;
-`src/agents/abort.ts:60-78` journals nothing). A plugin channel follows the
-same rule.
+- `host.acquire` and `host.release`;
+- `job.start` and `job.stop`;
+- `channel.send`, `fresh`, `interrupt`, `abort` and `answer`.
 
-**The rules:**
+Built-in effects keep their journals: `spawn_receipts`,
+`wait_action_receipts`, the reservation's `launch`, and the delivery-unknown
+rule for interactive sends. The plugin adapter adds one journal for plugin
+effects. Built-ins do not use it.
 
-1. **Write ahead.** Before the call, mu writes the **effect intent** on
-   the subject's row, with a mu-generated **idempotency key**, in one
-   immediate transaction that also fences the subject. Examples today:
-   - `launch = 'intent'` (`src/agents/spawn.ts:842`);
-   - the `sending` state of a spawn receipt (`src/agents/task-spawn.ts:564`);
-   - the `sending` state of an action receipt (`src/db.ts:1304-1320`).
+**The `effects` row.** It is written in an immediate transaction, before
+the call, together with the subject's own state change. Its columns are in
+D5. It persists:
 
-   For a plugin call, the intent also records the plugin process's group
-   id and start time.
-2. **Keyed.** The key goes with the call.
-3. **One reconciler.** After a crash, a timeout or an `unknown-outcome`
-   error, the next verb that touches the subject first claims it. It
-   compares-and-sets the intent row to `resolving` with its own pid and
-   start time, in an immediate transaction. Only the winner asks and acts.
-   A loser refuses and names the winner's pid. A claim whose pid is proven
-   gone is taken over, as the agent lock is today (`src/agents/lock.ts`).
-4. **Reconcile by asking.** The winner asks: `lookup`, `status`,
-   `receipt` or `reconcile`. Asking is read-only and may be repeated.
-5. **Unknown is terminal until asked.** A subject whose intent has no
-   definite outcome refuses every new effect on it: a spawn of the name, a
-   stop, a release. It leaves that state only through a later definite
-   answer, or through a human's explicit abandon verb, which logs what it
-   dropped. `--force` never stands in for an answer.
+- `key`, mu-generated;
+- `subject`: the host record, job record, or agent plus msgId;
+- `method`, `params_json` (the exact request) and `params_sha`;
+- `instance`: the plugin's handshake instance at intent time;
+- the creator's pid and start time;
+- the plugin process's group id and start time;
+- `state`: `pending`, `resolving`, `unknown`.
 
-**What `lookup(key)` may answer**, and when each answer is acted on:
+A definite result is recorded on the subject, and the row is deleted in
+the same transaction. Only unresolved effects stay.
 
-```ts
-export type KeyLookup<T> =
-  | { found: T }       // the effect happened under this key
-  | { pending: true }  // the backend holds the key; the effect is in flight
-  | { none: true }     // the backend holds no record of the key
-  | { unknown: string };
-```
+**Reconcile.** After a crash, a timeout or an `unknown-outcome` error, the
+next verb that touches the subject resolves the effect:
 
-- **`found`** is recorded as the effect's result.
-- **`pending`** and **`unknown`** leave the intent as it is.
-- **`none`** proves that nothing happened only when all three hold.
-  Otherwise mu treats it as `unknown`.
-  1. **The creator is gone.** The mu process that wrote the intent is
-     proven gone by pid and start time. This is the rule today's empty
-     reservation uses (`src/agents/lease-carrier.ts:418-433`).
-  2. **The carrier is gone.** The plugin process that carried the call is
-     proven gone by its recorded group. A plugin exits on stdin EOF (D13),
-     so a SIGKILLed mu leaves no plugin running, though D13 cannot force
-     that.
-  3. **No late success is possible.** Either the plugin declares
-     `fenceKey` and was asked with `fence: true` (from then on the backend
-     refuses that key), or the plugin's declared `inFlightMs` has passed
-     since `pending_at`. That covers a request already on the wire that
-     the backend has not seen yet.
+1. **Claim.** The verb compares-and-sets the row from `pending` or
+   `unknown` to `resolving`, with its own pid and start time. A loser
+   refuses and names the holder. A claim whose resolver is proven gone is
+   taken over.
+2. **Fence on the instance.** If the plugin's current instance differs
+   from the row's, the verb refuses (`stop-changed`). It never asks or
+   resends to another backend configuration.
+3. **Resolve by the rule table:**
 
-**The resend rule, for a backend with key dedupe but no read-only
-lookup.** A method that declares `dedupe: {windowMs}` promises that a
-repeat with the same key, within the window, returns the first call's
-result and makes no second effect. For such a method, a resend is an ask.
-After `unknown-outcome`, the reconciler may repeat the call with the same
-key while `now < pending_at + windowMs`, and record the reply as the
-effect's result. Past the window it may not; the subject is terminal until
-a lookup or a human resolves it.
-
-An effect that can start something must declare `lookup`, dedupe, or both:
-`host.acquire`, `job.start` with `handle.from = reply`, and
-`channel.send`/`fresh` for task-spawn replay. A plugin that declares
-neither is refused at load for that method. The contract suite checks the
-promise: a fake backend counts effects across repeats.
-
-**The receipt rule, for backends whose turns start on their own.** A
-channel declares `turns: "on-delivery"` (a turn starts only when something
-is delivered) or `"self-starting"` (a turn may start without a delivery,
-for example when a child's settle wakes its parent).
-
-- **`acknowledged` receipts** (a turn past the journaled baseline means
-  accepted, as hooks does, `src/agents/task-spawn.ts:744-760`) are allowed
-  only on `on-delivery`. A self-starting channel declaring them is refused
-  at load.
-- **Reconciling a self-starting channel** goes by msgId (`receipt: exact`),
-  or answers `unknown`.
-- **A wait pinned by a send** (`afterRuns` from a delivery on a
-  self-starting channel) fires only for a settled turn whose `cause` is
-  that msgId. The channel reports the cause on every observation. A turn
-  with another cause is news for other waits, not for this one.
-
-**Where each effect's intent lives.** There is no separate effects table:
-each intent sits on its subject, and the existing journals keep their
-roles. Folding them together would be a wrapper around a wrapper
-(`docs/ROADMAP.md:28`).
-
-| Effect | Subject record | Key | After a crash, the reconciler asks |
+| Method | Idempotent by contract | Resolve by, in order | If nothing answers |
 | --- | --- | --- | --- |
-| host acquire | `hosts` row, `acquiring` | `hosts.key` (UUID) | `provider.lookup(key)`, or a deduped resend |
-| host release | `hosts` row, `releasing` | `<key>:release` | `provider.status`; `gone` means done. `release` is idempotent. |
-| lease job start | `carrier_jobs`, `launch = 'intent'` | `token` | the job file, as today. From P7, `lookup(token)`. |
-| plugin job start | `carrier_jobs`, `launch = 'intent'` | `token` | `job.lookup(token)`, or a deduped resend |
-| job stop | `carrier_jobs`, `pending_op = stop` | `<token>:stop` | stop again (idempotent: exit 0 for an ended job, `mule/SPEC.md:366`) |
-| pane spawn | the placeholder row `%pending-<name>` (`src/agents.ts:550-559`) | the name | the dead-staging rules, unchanged |
-| task-spawn delivery | `spawn_receipts`, `sending` | `msg_id` | `channel.reconcile` (D9) |
-| stall steer | `wait_action_receipts`, `sending` | (task, owner, incarnation, action) | `channel.reconcile`; ctl only, since it needs a write fence (D11) |
-| remote worktree make | fixed path plus a `mu-prepared` mark | the path | reclaim of an unused leftover (`src/remote-agent.ts:83-95`) |
-| remote worktree remove | `remote_recovery.aside` | `asideOf(path, incarnation)` (`src/remote-agent.ts:276`) | observe, which resumes the aside |
-| collect | `agents.collect_due`, the pin ref, `collected_head` | the agent identity | rerun: `FETCH_HEAD` is deleted first (`src/remote-collect.ts:10-17`) |
+| `host.acquire` | no | `lookup(key)` if declared; else a byte-identical resend if `dedupe: exact` and within its window | unknown until `--abandon` |
+| `host.release` | **yes** (mandatory) | reissue the persisted request | — |
+| `job.start` (`handle: "reply"`) | no | `lookup(key)`; else a deduped resend | unknown until `--abandon-job` |
+| `job.stop` | **yes** (mandatory) | reissue | — |
+| `channel.send`, `fresh`, `interrupt` | no | `receipt(msgId)` if `receipt: exact`; else a deduped resend | delivery unknown, reported; until a human checks or closes |
+| `channel.abort` | no | `readStates`: an idle agent means done | unknown, reported |
+| `channel.answer` | no | a deduped resend | unknown, reported |
 
-**Retries.** Only an error of kind `retryable` may be retried, because the
-implementation says nothing happened. mu tries at most three times, with
-the same key. `human` is never retried (as `HostHandbackError` is not
-today, `src/hosts.ts:924`).
+**When a lookup's `none` counts.** A `lookup(key)` may answer `found`,
+`pending`, `none` or `unknown`. `found` is recorded, and `pending` and
+`unknown` leave the row. `none` proves that nothing happened only when all
+three of these hold; otherwise it is `unknown`:
 
-### D5. Schema: additive at 13, state dir unchanged
+1. The creator is proven gone, by pid and start time (as
+   `src/agents/lease-carrier.ts:418-433` does today).
+2. The plugin process group recorded on the row is proven gone, by group
+   id and start time (as `groupAlive` does, `src/hosts.ts:688-695`). A
+   plugin exits on stdin EOF (D13).
+3. The plugin declares `fenceKey` and the lookup was asked with
+   `fence: true`, or the declared `inFlightMs` has passed since the row
+   was written.
 
-**Decision.** Everything stays at schema 13, through `upgradeSchema`
-(`src/db.ts:476-505`), in `mu-next` (`src/state-dir.ts:15-18`). P1–P5 add
-nothing to the schema. P6a–P6d add two machine-local tables and a few
-nullable columns.
+`handle: "file"` kinds never act on `none`. Their dispatcher is the view
+pane, not the plugin, so today's unlaunched rule decides
+(`src/agents/lease-carrier.ts:431-432`).
 
-**Why not a version bump and a new state directory.** AGENTS.md "State
-directories" requires a new directory only for a change that breaks
-on-disk compatibility with the released version. A v14 file makes every
-released build refuse the DB (`SchemaTooNewError`, `src/db.ts:440-455`),
-so the bump would itself be the break, and nothing here needs a migration
-ladder. What must hold instead: a released build that opens a DB holding
-plugin rows never takes an effect it does not understand, never drops a
-fence, and never loses work it could have kept.
+**Load-time rules.**
 
-| Addition | What a released build does with it |
+- `host.acquire` and `job.start` with `handle: "reply"` must declare
+  `lookup`, `dedupe: exact`, or both.
+- `host.release` and `job.stop` must be idempotent.
+- A plugin that breaks these is refused at load.
+- A deduped resend sends the persisted bytes. The contract suite checks
+  that a repeat within the window returns the first result and makes no
+  second effect, counted by a fake backend.
+
+**Who triggers.**
+
+- the next verb on the subject;
+- `mu host acquire` or `release` re-run;
+- `mu agent check <agent> <msgId>` for a delivery;
+- spawn replay, for a task-spawn delivery, whose spawn receipt names the
+  effect's key as its `msg_id`.
+
+An unresolved delivery does not block later deliveries to the same agent,
+as today's delivery unknown does not.
+
+**Retries.** Only an error of kind `retryable` (nothing happened) is
+retried, at most three times, with the same key and payload. `human` is
+never retried.
+
+### D5. Schema 14, state directory `mu5`, mu 5
+
+**Decision (R2, a recorded default the user may overrule, D18).**
+
+- The plugin units bump the schema to **14**. Every released build then
+  refuses the DB (`SchemaTooNewError`, exit 4, `src/db.ts:440-455`), so
+  nothing reasons about old builds reading new rows.
+- By AGENTS.md "State directories" that is a break, so the state directory
+  becomes **`mu5`** and the release is **mu 5**.
+
+**The import.** On first open, when `mu5/mu.db` does not exist and
+`mu-next/mu.db` does, mu imports once:
+
+1. It refuses if `mu5/mu.db` exists.
+2. It refuses if the source has any `agents` or `carrier_jobs` row. Those
+   rows own files under `mu-next` (control sockets, job files, locks), so
+   they are closed with mu 4 first.
+3. It copies `mu-next/mu.db` with SQLite's backup API to
+   `mu5/mu.db.importing`.
+4. It opens the copy and, in **one transaction**, runs:
+   - today's v13 `upgradeSchema`, completing an older v13 file;
+   - the 13 → 14 step;
+   - a new `machine_id`, so mu 4 on `mu-next` and mu 5 on `mu5` are two
+     sync peers and never share a segment.
+5. It closes and renames the copy to `mu5/mu.db`.
+
+`mu-next` is never written. A crash before the rename leaves only the
+`.importing` file, which the next open deletes and redoes.
+
+**The 13 → 14 step.** Tables can now be rebuilt freely, with explicit
+column lists:
+
+- **`carrier_jobs`** gains `kind` (NULL: lease), `plugin`, `instance`,
+  `host_id`, `collect_repo`, `collected_runs` and `collected_inc`.
+  `host_stop` becomes nullable (it is a template's bytes, and a plugin job
+  uses `instance`).
+- **`spawn_receipts`** is rebuilt without its `transport` CHECK
+  (`src/db-receipts.ts:42`), validated in code like `HOST_TRANSPORTS`.
+  The rebuild lists its columns, never `SELECT *`.
+- **`agents.channel`** holds any registered name. An unregistered stored
+  name is a typed error from P6e on.
+- **`remote_recovery`** gains `host_identity`, written by `_v3` triggers
+  that replace the `_v2` ones (`src/db-recovery.ts:76-100`). For a profile
+  host it is the exec bytes, as today; for a provider host it is
+  `provider:<hosts.id>:<hosts.instance>`. `assertRecoveryProfile`
+  (`src/remote-recovery.ts:344-363`) compares it with the host's current
+  identity. A host acquired again under the same name has a new id, so its
+  identity differs and recovery refuses.
+- **`host_profiles`** gains `plugin`.
+- **New tables:** `hosts`, `plugins` and `effects`.
+
+**Columns per table (R4).**
+
+| Table | Columns |
 | --- | --- |
-| `plugins`, `hosts` (new tables) | Ignores them: `schemaIsCurrent` checks only the objects it expects (`src/db.ts:682-707`), and tables have been added before with no bump (`src/db.ts:736-740`). A released `mu rebuild` drops them without reporting it, because it reports only its own list (`src/rebuild.ts:127-152,267-271`). That is a known limitation, stated in the release notes; this build adds both tables to `UNREBUILDABLE_TABLES`. |
-| `carrier_jobs.kind`, `plugin`, `instance`, `pending_op`, `pending_key`, `pending_at`, `pending_pgid`, `host_id`; NULL `kind` means `lease`; `host_stop = ''` for a job on a provider host (the column is NOT NULL, `src/db-carrier.ts:29`) | Plugin jobs sit in the table released builds read as the name fence (`src/agents.ts:416-424`), so the fence holds. A released `agent close` kills the view (`src/agents/close.ts:540-544`), proves it gone (`:567`), then asks the lease stop (`:573`). On a provider host that refuses `no-host` (`src/carrier-stop.ts:81-85`), keeping the row and the reservation. The next released reconcile reaps the row, and the reaper parks the tasks because the reservation holds a job (`src/agents/reap.ts:55-78`). The job is never stopped wrongly, the fence never drops, and this build later shows it as a leftover to close or reattach. On a profile host (mule), `host_stop` is the profile's `stop`, so a released close stops the job through the template exactly as today. |
-| `host_profiles.plugin` | A plugin-backed profile keeps its templates. A released build uses the templates; this build uses the plugin for the seams it implements. |
-| `agents.plugin_channel`; such a row stores `channel = 'mux'`, `host_transport = 'lease'` and the harness key as `cli` | A released build reads `mux`. A stored channel beats derivation (`src/channels/select.ts:46`), so it never derives `ctl` and never sees a broken ctl to release a task over (`src/wait-actions.ts:25-26`). Its sends refuse on tmux (`src/channels/mux.ts:35-42`). Its close takes the lease path above: `host_transport = 'lease'` with no reservation refuses (`src/agents/close.ts:724-736`). |
-| `spawn_receipts.channel` for a plugin channel; `transport` stays NULL | The `transport` CHECK (`src/db-receipts.ts:42`) must not be dropped. A released build detects a table whose SQL lacks `'hooks'` as the old shape and rebuilds it with its own CHECK (`src/db-receipts.ts:58-63`, `src/db.ts:527-528`), and a plugin value would then fail every later `openDb`. With `transport` NULL, a released replay says "no receipt to ask" and never resends (`src/agents/task-spawn.ts:718`). |
-| `agents.collect_due` | Ignored. A released build runs no lifecycle policy (D10), and the release notes say so. |
+| `hosts` | id, name UNIQUE, provider, `params_json`, `repo`, handle, `instance`, state CHECK (`acquiring`, `ready`, `draining`, `releasing`, `lost`), `deadline_at`, `idle_reclaim_ms`, `max_jobs`, `creator_pid`, `creator_start`, `reason`, `created_at`, `updated_at` |
+| `effects` | `key` PK, `subject_kind` CHECK (`host`, `job`, `delivery`), `subject_id`, `msg_id`, `plugin`, `method`, `params_json`, `params_sha`, `instance`, state CHECK (`pending`, `resolving`, `unknown`), `creator_pid`, `creator_start`, `plugin_pgid`, `plugin_pgid_start`, `resolver_pid`, `resolver_start`, `created_at`, `updated_at` |
+| `plugins` | name PK, `argv_json`, protocol, version, instance, `seams_json`, `caps_json`, `schema_digest`, `added_at`, `checked_at` |
+| `carrier_jobs` | the additions above |
 
-**Provider-host worktree recovery, with the triggers unchanged.** The
-recovery triggers pin `host_profiles.exec` (`src/db-recovery.ts:82,94`),
-which is NULL for a provider host. Recovery then refuses
-(`src/remote-recovery.ts:344-363`, read at `:414-419`). Changing the
-triggers is not safe while released builds recreate their own `_v2`
-triggers. So the triggers stay, and P6c gives `assertRecoveryProfile` a
-provider branch.
+All new tables are machine-local (`MACHINE_LOCAL_TABLES`,
+`src/db.ts:893-918`) and unrebuildable (`src/rebuild.ts:127-152`). None is
+captured, so `CAPTURE_VERSION` is unchanged.
 
-- The record's host must have a host record that is not deleted.
-- The record must have been written after that host was acquired
-  (`remote_recovery.preserved_at >= hosts.created_at`).
-- The host's link fingerprint is taken from its record.
-
-This is sound because of the name rule in D1: a provider host's name is
-referenced only while its record exists, and abandon deletes the
-references. So a recovery row can only name the machine it was written
-on. A `--plugin` profile's fingerprint is its `exec` bytes, exactly what
-the triggers already pin (D7).
-
-**Cross-namespace fence.** `mu host add` refuses a name held by a host
-record, and `host acquire` refuses a profile's name. A released build
-cannot see host records, so it can add a colliding profile. `resolveHost`
-then refuses the ambiguous name with a typed error naming both, and
-nothing acts on it.
-
-**Tables.**
-
-- `hosts`: id, name UNIQUE, provider, `instance`, `spec_digest`, key
-  UNIQUE, handle, state CHECK (`acquiring`, `ready`, `draining`,
-  `releasing`, `lost`), `deadline_at`, `idle_reclaim_ms`, `max_jobs`,
-  `pending_op`, `pending_at`, `pending_pgid`, `resolver_pid`,
-  `resolver_start`, `creator_pid`, `creator_start`, `reason`,
-  `created_at`, `updated_at`. `instance` and `spec_digest` are per-host
-  and immutable: a plugin's current registration is not the fence.
-- `plugins`: name PK, path, protocol, version, instance, `seams_json`,
-  `caps_json`, `schema_digest`, `added_at`, `checked_at`.
-
-Both are listed in `MACHINE_LOCAL_TABLES` (`src/db.ts:893-918`) and
-`UNREBUILDABLE_TABLES` (`src/rebuild.ts:127`). They are not captured, so
-`CAPTURE_VERSION` is unchanged. `EXPECTED_TABLES` goes from 29 to 31.
-
-**The next major** renames `carrier_jobs` to `jobs`, replaces
-`spawn_receipts.transport` and `agents.channel = 'mux'` with the real
-names, and moves to a versioned state directory with an importer. It is
-not part of this spec.
+`ROADMAP.md`'s "Next breaking release" items may ride along in mu 5. They
+are not part of this spec.
 
 ### D6. Seam: host provider
 
 ```ts
 // src/host-provider.ts
-/** A mu-generated idempotency key, persisted before the call that carries it. */
 export type EffectKey = string;
 
-/** Every seam call gets mu's deadline; past it mu cancels, and an effect's outcome is unknown. */
 export interface Call {
-  deadline: number; // epoch ms
+  deadline: number; // epoch ms; past it mu cancels
   signal: AbortSignal;
 }
 
-/** Provider-defined parameters; opaque to mu, recorded by digest. */
-export interface HostSpec {
-  params: Readonly<Record<string, string>>;
-}
+export type KeyLookup<T> =
+  | { found: T }
+  | { pending: true }
+  | { none: true }
+  | { unknown: string };
 
 export interface HostFacts {
-  /** Opaque, `JOB_HANDLE_RE`-shaped (src/hosts.ts:206). */
+  /** Opaque, JOB_HANDLE_RE-shaped (src/hosts.ts:206). */
   handle: string;
-  /** Epoch ms after which the host is gone whatever mu does. Absent: none. */
   deadlineAt?: number;
-  /** The backend reclaims the host after this long idle. Absent: never. */
   idleReclaimMs?: number;
-  /** Jobs the host runs at once. Absent: no provider limit. */
   maxJobs?: number;
 }
 
@@ -514,76 +456,62 @@ export type HostStatus =
   | { state: "needs-human"; remedy: string }
   | { state: "unknown"; reason: string };
 
+/** Shared by every keyed seam: declared at the handshake (D13). */
+export interface KeyCaps {
+  lookup: boolean;
+  dedupe?: { exact: true; windowMs: number };
+  fenceKey: boolean;
+  inFlightMs?: number;
+}
+
 export interface HostProvider {
   /** "static", or the plugin's name. */
   readonly name: string;
-  acquire(spec: HostSpec, key: EffectKey, call: Call): Promise<HostFacts>;
-  /** Which host, if any, `key` acquired (D4 KeyLookup). `fence: true` asks the backend to refuse the key from now on. */
+  readonly caps: { acquire: KeyCaps };
+  acquire(params: Readonly<Record<string, string>>, key: EffectKey, call: Call): Promise<HostFacts>;
   lookup(key: EffectKey, opts: { fence: boolean }, call: Call): Promise<KeyLookup<HostFacts>>;
-  /** "Cannot tell" is `unknown`, never a throw. */
   status(handle: string, call: Call): Promise<HostStatus>;
   /** Idempotent: a host already released resolves. */
   release(handle: string, key: EffectKey, call: Call): Promise<void>;
 }
 
-/** What the rest of mu holds for `--host <name>`. P2 introduces it with `name`, `profile` and `link`; P3 adds the rest. */
+/** What the rest of mu holds for `--host <name>`. P2 introduces it with name, profile and link; P3 adds the rest. */
 export interface HostView {
   name: string;
   link: HostLink;
   provider: HostProvider;
   jobKind: JobKind;
-  /** Static hosts only. */
-  profile?: HostProfile;
-  /** Provider hosts only, in any state but deleted. */
-  record?: HostRecord;
+  profile?: HostProfile; // static
+  record?: HostRecord; // provider, any state
 }
 
 /**
- * `--host <name>`: a profile, or a host record in any state. Refuses a name that is both.
- * Each verb checks the state it needs: spawn needs `ready`; close, stop and collect accept
- * `ready`, `draining` and `lost`; release needs `draining` or `lost`.
+ * A profile, or a host record in any state. Each verb checks the state it needs:
+ * spawn needs `ready`; close, stop and collect accept `ready`, `draining`, `lost`;
+ * release accepts `draining`, `lost`, `releasing`.
  */
 export function resolveHost(db: Db, name: string): HostView;
 ```
 
+**A provider host's link and job kind are its provider plugin's.** A
+provider plugin must implement the `link` and `job` seams for the hosts it
+provides; the handshake says so, or the plugin is refused for `--provider`.
+`resolveHost` builds the view from `hosts.provider`.
+
 **Atomic admission.** A spawn on a provider host reserves inside one
-immediate transaction, the agent lock already held. That transaction
-re-reads the host record, refuses unless `state = 'ready'`, and counts the
-host's job records and pane agents against `max_jobs`. The precedent is
-today's channel admission, which reads its cap inside the immediate
-transaction that inserts (`src/hosts.ts:781-816`). Release sets
-`releasing` inside its own immediate transaction after its counts, so a
-spawn and a release cannot both pass.
+immediate transaction, the agent lock held. That transaction re-reads the
+record, refuses unless `ready`, and counts the host's job records against
+`max_jobs`. The precedent is channel admission (`src/hosts.ts:781-816`).
 
 **Built-in `static`.**
 
-- `status` answers `up` with the profile name as the handle, without a
-  round trip. Reachability stays a per-call fact, as today.
-- `acquire`, `lookup` and `release` refuse: a static host is added and
-  removed with `mu host add`/`rm`. `removeHost` keeps its current rule
-  (`src/hosts.ts:290-300`), and so does a static `host rm` under a running
-  lease job (D18).
+- `status` answers `up` with no round trip.
+- `acquire`, `lookup` and `release` refuse: static hosts are added and
+  removed with `mu host add`/`rm`.
+- `removeHost` keeps its rule (`src/hosts.ts:290-300`), as D18 decided.
 
-**Moves behind it in P3:**
-
-- every `getHost(db, name)` outside `hosts.ts` and the profile verbs:
-  `src/agents/close.ts`, `src/agents/spawn-remote.ts`,
-  `src/carrier-stop.ts`;
-- the raw `host_profiles` reads in `src/agents/reattach-check.ts:102` and
-  `src/remote-recovery.ts:414-419`.
-
-**Missing from the sketch:**
-
-- `lookup` and its `fence`;
-- `needs-human`;
-- facts carried on `status` rather than methods;
-- job slots split from connection slots;
-- atomic admission;
-- `resolveHost` covering every state.
-
-**Second implementation:** a provider plugin for machines provisioned on
-demand. mule is not a provider: it never opens or provisions machines
-(`mule/SPEC.md:505`).
+**Second implementation:** a provider plugin a real user runs (D18). mule
+is not one: it never provisions machines (`mule/SPEC.md:505`).
 
 ### D7. Seam: link, and the worktree contract
 
@@ -598,137 +526,107 @@ export interface LinkRun {
 }
 
 export interface LinkCaps {
-  /** Can bring a commit home; false: the profile's fetch template does. */
   fetch: boolean;
-  /** "mu": every call holds a host channel (src/hosts.ts:781). "self": the link arbitrates its own connection. */
+  /** "mu": every call holds a host channel (src/hosts.ts:781). "self": the link arbitrates its connection. */
   slots: "mu" | "self";
-  /** After a timeout, whether the remote script is proven stopped or may still run. */
+  /** After a timeout: the remote script proven stopped, or possibly still running. */
   remoteOnTimeout: "stopped" | "unknown";
-  /** Whether a quiescence scan over `exec` sees the processes the host's jobs run as (same user, same PID namespace). */
+  /** Whether a scan over exec sees the processes the host's jobs run as (same user, same PID namespace). */
   quiescence: "provable" | "unprovable";
+  /** Plugins: the largest script, in bytes. The template link measures the expanded argument instead. */
+  maxScriptBytes?: number;
 }
 
 export interface HostLink {
-  /** "template", or the plugin's name. */
-  readonly name: string;
+  readonly name: string; // "template" or the plugin
   readonly caps: LinkCaps;
-  /** The identity recovery records and the probe record pin. Template, and a `--plugin` profile: the exec bytes. A provider host: plugin name plus the host's instance. */
+  /** The identity recovery pins: exec bytes for a profile; provider:<id>:<instance> for a provider host (D5). */
   fingerprint(host: HostView): string;
-  /** Whether `script` in `cwd` fits the link's limit. Template: the expanded exec argument under EXEC_ARG_MAX_BYTES (src/agents/hooks-brief.ts:148-151). Plugin: the script's bytes under its declared limit. */
+  /** Template: the expanded exec under EXEC_ARG_MAX_BYTES (src/agents/hooks-brief.ts:148-151). Plugin: maxScriptBytes. */
   fits(host: HostView, script: string, cwd: string): boolean;
   /**
-   * Run a POSIX sh script in `cwd` ("." = the login directory). Returns once nothing it
-   * started LOCALLY still runs (src/hosts.ts:896-901). A hand-back throws HostHandbackError.
-   * Never retried. A timeout is an unknown outcome: the remote side may have run, per
-   * `caps.remoteOnTimeout`.
+   * Run a POSIX sh script. Returns once nothing it started locally still runs (src/hosts.ts:896-901).
+   * `admitted` runs inside admission, before the command, on the admitted snapshot: a throw runs nothing
+   * (today's assertRecoveryProfile placement, src/remote-agent.ts:409, src/remote-collect.ts:195).
    */
-  exec(host: HostView, req: { script: string; cwd: string; timeoutMs: number }, call: Call): Promise<LinkRun>;
-  /** Leave `remoteCwd`'s HEAD in `localRepo`'s FETCH_HEAD. mu verifies the commit itself. */
-  fetch?(host: HostView, req: { remoteCwd: string; localRepo: string; timeoutMs: number }, call: Call): Promise<LinkRun>;
-  /** This link's host-check steps (D11). */
-  checkSteps?(host: HostView, call: Call): Promise<HostCheckStep[]>;
+  exec(host: HostView, req: { script: string; cwd: string; timeoutMs: number }, call: Call, admitted?: (h: HostView) => void): Promise<LinkRun>;
+  fetch?(host: HostView, req: { remoteCwd: string; localRepo: string; timeoutMs: number }, call: Call, admitted?: (h: HostView) => void): Promise<LinkRun>;
+  checkSteps?(ctx: CheckContext, call: Call): Promise<HostCheckStep[]>;
 }
 ```
 
-**Built-in `template`.** Today's `exec` and `fetch` templates, run by
-`runLeasedTemplate` (`src/hosts.ts:903-933`). Admission, the pgid record
-taken before the command starts (`:857`), the timeout plus `HOST_GRACE_MS`
-(`:888`), and exit 3 as a hand-back (`:924`) are unchanged. Its
-capabilities:
+**Built-in `template`.** Today's `exec` and `fetch` templates, through
+`runLeasedTemplate` (`src/hosts.ts:903-933`), unchanged:
+
+- admission and the pgid record before the command starts (`:857`);
+- the timeout plus `HOST_GRACE_MS` (`:888`);
+- exit 3 as a hand-back (`:924`).
+
+Its capabilities:
 
 - `slots: "mu"`;
-- `remoteOnTimeout: "unknown"`: killing a local ssh does not stop the
-  remote command (`mule/src/transport.rs:432-438` measured exactly this);
-- `quiescence: "provable"`, which is today's assumption that the exec user
-  is the job's user.
+- `remoteOnTimeout: "unknown"`, because a killed local ssh does not stop
+  the remote command (`mule/src/transport.rs:432-438`);
+- `quiescence: "provable"`.
 
-**What a timeout means.** mu's worktree scripts are already written to be
-re-run safely: reclaim, marks, the aside. A timed-out exec is therefore
-reported as an unknown outcome, and the next run re-observes.
-`quiescence: "unprovable"` makes every removal refuse without `--force`,
-as a host with neither `/proc` nor `lsof` does today
-(`src/remote-agent.ts:543`). The scan proves only that it ran
-(`src/remote-agent.ts:288-294`); whether it sees the job's processes is
-the link's declared fact.
+The lease kind's `stop` and `attach` templates are **not** link calls.
+They belong to the lease job kind (D8), which runs them through the same
+template runner. So the template runner has three callers: the link, the
+lease kind, and `checkHost`.
 
-**Moves behind it in P2:**
-
-- every call to `runLeasedTemplate`, `runHostTemplate` and
-  `withHostChannel` outside `hosts.ts`. The callers today are
-  `remote-agent.ts`, `remote-collect.ts`, `agents/gate.ts`,
-  `agents/hooks-brief.ts`, `channels/hooks-remote.ts` and
-  `carrier-stop.ts`.
-- the `RemoteReader` (`src/channels/types.ts:104`), which then reads
-  through `link.exec`;
-- the brief's size check (`src/agents/hooks-brief.ts:148-151`), which
-  becomes `link.fits`.
-
-**The worktree contract is mu's, over `exec`.** Make, observe, quiesce and
-remove are mu's shell scripts, split in P2 from `remote-agent.ts` (671
-lines) into `src/remote-worktree.ts`. A link has no worktree methods. The
-contract a link must meet:
-
-- POSIX sh and git on the far side;
-- `/proc` or `lsof`, a scanner that sees its own `$$`, and
-  `quiescence: "provable"`;
-- stdout arrives whole (`partial` false);
-- scripts may be re-run after a timeout.
+**The worktree contract is mu's, over `exec`.** Make, observe-and-remove
+and rollback are mu's shell scripts, split in P2 from `remote-agent.ts`
+into `src/remote-worktree.ts`, with today's exec boundaries kept:
 
 ```ts
-// src/remote-worktree.ts (mu-owned; every method is one or two link.exec calls)
+// src/remote-worktree.ts (one implementation: a module, not a seam)
 export interface RemoteWorktree {
   make(h: HostView, r: { root: string; from: string; path: string; reclaim: boolean }): Promise<{ repoAbs: string; base: string; path: string }>;
-  observe(h: HostView, r: { path: string; root: string; aside: string }): Promise<{ state: "clean" | "dirty" | "gone"; head: string | null; merged: boolean }>;
-  quiesce(h: HostView, r: { aside: string; force: boolean }): Promise<{ proven: true } | { held: { pid: number; etime: string; args: string }[] } | { unproven: string }>;
-  /** The 11 outcomes of REMOTE_RM_RE (src/remote-agent.ts:265-266). */
-  remove(h: HostView, r: { aside: string; wantHead: string; keepBranch?: string; viaRef: boolean }): Promise<RemoteRemoval>;
+  /** Today's two execs (src/remote-agent.ts:374-560): observe, then aside + quiescence + checks + removal in one. */
+  close(h: HostView, r: { path: string; root: string; aside: string; wantHead: string; keepBranch?: string; force: boolean; admitted: (h: HostView) => void }): Promise<RemoteRemoval>;
   rollbackRemove(h: HostView, r: { path: string; base: string }): Promise<"removed" | "kept" | "gone">;
 }
 ```
 
-This is one implementation, so it is a module, not a seam. It is git-only,
-as remote worktrees are today.
+`RemoteRemoval` holds the 11 outcomes of `REMOTE_RM_RE`
+(`src/remote-agent.ts:265-266`).
 
-**Missing from the sketch:** `fingerprint`, `fits`, `partial`, `slots`,
-`remoteOnTimeout` and `quiescence`. **Dropped from the sketch:** `push`,
-and a key on `exec`.
+A link with `quiescence: "unprovable"` may still host jobs, but every
+removal on it refuses without `--force`, as a host with neither `/proc`
+nor `lsof` does today (`src/remote-agent.ts:543`). `remoteOnTimeout:
+"unknown"` makes a timed-out script an unknown outcome; mu's scripts are
+written to be re-run (reclaim, marks, the aside).
 
-**Second implementation:** mule (P7), with `fetch: false` (bulk transfer
-may not ride its connection, `mule/SPEC.md:47,541`) and `slots: "self"`.
+**Second implementation:** mule (P7), with `fetch: false`
+(`mule/SPEC.md:47,541`) and `slots: "self"`.
 
 ### D8. Seam: job kind
 
 ```ts
 // src/jobs/types.ts (new cluster: types, view, pane, lease, gate; an ARCHITECTURE row)
-/** Exactly the fields MuxBackend.spawnAgent takes for the pane's process (src/mux/types.ts:62-90). */
 export interface PaneCommand {
   command: string;
   env: Record<string, string>;
   cwd?: string;
-}
+} // the fields MuxBackend.spawnAgent takes (src/mux/types.ts:62-90)
 
 export interface JobSpec {
   workstream: string;
   name: string;
-  /** The `--cli` key: which harness the job runs. */
-  harness: string;
+  harness: string; // the --cli key
   role: "full-access" | "read-only";
   model?: string;
-  /** The agent's command on the host. */
   cmd: string;
   cwd: string;
-  /** Only HOST_ENV_KEYS (src/hosts.ts:392-400); mu refuses any other key before the call. */
+  /** Only HOST_ENV_KEYS (src/hosts.ts:392-400). */
   env: Partial<Record<HostEnvKey, string>>;
-  /** The control socket pair, when the agent's channel is ctl. */
   sockets?: { local: string; remote: string };
 }
 
-export type JobStart = {
-  /** mu opens this pane through MuxBackend; every job has one in this version (D3). */
+export interface JobStart {
   view: PaneCommand;
-  /** Present when caps.handle is "reply". */
-  handle?: string;
-};
+  handle?: string; // present when caps.handle is "reply"
+}
 
 export type JobLiveness =
   | { state: "running" }
@@ -736,370 +634,279 @@ export type JobLiveness =
   | { state: "lost"; reason: string }
   | { state: "unknown"; reason: string };
 
-/** Everything a liveness read needs; built from an agents row, or from a pane id alone for a pane job. */
 export interface JobRef {
   kind: string;
   viewPaneId: string;
+  agentId?: number;
   key?: EffectKey;
   handle?: string;
-  host?: { name: string; handle?: string };
+  host?: { name: string; handle?: string; instance?: string };
   gateToken?: string;
-  /** The recorded stop fence: today host_stop; a plugin's instance. */
-  identity?: string;
+  identity?: string; // the recorded stop fence: host_stop bytes, or the plugin instance
 }
 
 export interface JobCaps {
   view: "bound" | "detached";
-  /** Where the handle comes from, fixed for the kind and declared at the handshake. */
   handle: "pane" | "file" | "reply";
-  lookup: boolean;
-  fenceKey: boolean;
-  dedupe?: { windowMs: number };
-  inFlightMs?: number;
-  /** The channel this kind's agents use: a plugin channel of the same plugin; absent, the harness's own. */
+  start: KeyCaps; // D6; required when handle is "reply"
+  /** The channel this kind's agents use: a plugin channel of the same plugin; absent: the harness's own. */
   channel?: string;
 }
 
 export interface JobKind {
-  /** "pane" | "lease" | "gate" | a plugin's kind. */
-  readonly name: string;
+  readonly name: string; // "pane" | "lease" | "gate" | plugin kind
   readonly caps: JobCaps;
   identity(host: HostView | null): string;
   start(host: HostView | null, spec: JobSpec, key: EffectKey, call: Call): Promise<JobStart>;
   lookup(host: HostView | null, key: EffectKey, opts: { fence: boolean }, call: Call): Promise<KeyLookup<string>>;
-  status(job: JobRef, call: Call): Promise<JobLiveness>;
-  /** Idempotent. Resolves only on proof the job is gone; a hand-back throws HostHandbackError. Never deletes a record. */
-  stop(job: JobRef, key: EffectKey, call: Call): Promise<void>;
-  /** A new view for a job that still runs. */
-  attach(job: JobRef, call: Call): Promise<PaneCommand>;
-  /** This kind's host-check steps (D11). */
-  checkSteps?(host: HostView, call: Call): Promise<HostCheckStep[]>;
+  status(db: Db, job: JobRef, call: Call): Promise<JobLiveness>;
+  /** Idempotent; resolves only on proof the job is gone; a hand-back throws HostHandbackError. */
+  stop(db: Db, job: JobRef, key: EffectKey, call: Call): Promise<void>;
+  attach(db: Db, job: JobRef, call: Call): Promise<PaneCommand>;
+  checkSteps?(ctx: CheckContext, call: Call): Promise<HostCheckStep[]>;
 }
 
-// src/jobs/view.ts: the two reads (D1)
-/** A pane's state, for the sites that hold only a pane id. Wraps paneAlive, paneResult and paneUp. */
+// src/jobs/view.ts: D1's two reads
 export function viewState(paneId: string): Promise<"running" | "exited" | "absent" | "unknown">;
-/** A job's liveness, by its kind. */
-export function jobLiveness(job: JobRef, call: Call): Promise<JobLiveness>;
+export function jobLiveness(db: Db, job: JobRef, call: Call): Promise<JobLiveness>;
 ```
 
 **Built-ins:**
 
 | Kind | `start` | `status` | `stop` | `attach` |
 | --- | --- | --- | --- | --- |
-| `pane` | the local command, or the `session` profile's `shell` template; `handle: "pane"` | `paneAlive` (`src/mux/types.ts:330`). A throw is `unknown`. | `killPane` plus a `paneAlive` proof (`src/agents/close.ts:540-568`). `force` stands in only where no multiplexer can answer, as today. | refused |
-| `lease` | the lease `shell` template; `handle: "file"` (`src/agents/lease-carrier.ts:118`) | `paneResult(...).state === "running"` (`src/remote-agent.ts:667-671`) | `runStop` behind the `host_stop` byte fence (`src/carrier-stop.ts:88,97`) | the `attach` template, behind the pending-carrier marker |
-| `gate` | the gate command; `handle: "pane"` | the retained pane plus the host's completion record (`src/agents/gate.ts:120-135`) | `killPane` plus a proof | refused |
+| `pane` | the local command, or the `session` profile's `shell`; `handle: "pane"` | `paneAlive` | `killPane` plus a proof (`src/agents/close.ts:540-568`) | refused |
+| `lease` | the lease `shell` template; `handle: "file"` | `paneResult` (`src/remote-agent.ts:667-671`) | `runStop` and its `host_stop` byte fence (`src/carrier-stop.ts:88,97`) | the `attach` template |
+| `gate` | the gate command; `handle: "pane"` | `readGate`, which needs `db` (`src/agents/gate.ts:120-135`) | `killPane` plus a proof | refused |
 
-**Moves behind `viewState` and `jobLiveness` in P1.** These are the sites
-that assume a dead pane means a dead agent:
+**What P1 moves.**
 
-- `src/agents/close.ts:540-568`, the row rule;
-- `src/agents/spawn-rollback.ts`;
-- `src/agents/spawn-ready.ts:244` (`checkSpawnHealth`, which takes a pane
-  id);
-- `src/agents/lease-carrier.ts:265-297`;
-- `src/workstream.ts:566,590`, teardown;
-- `src/hosts.ts:706-716` (`probeAttached`);
-- `src/agents/gate.ts:120-135`;
-- `src/remote-agent.ts:667-671` (`localPaneAlive`);
-- `src/channels/ctl.ts:85,222-224` (`paneUp` and the dropped-watch
-  fallback).
+- Every site that decides "is the agent alive" goes through `viewState` or
+  `jobLiveness`. The row rule (`src/agents/close.ts:540-568`) and
+  teardown (`src/workstream.ts:566,590`) use view presence and
+  `viewState`, never liveness: an exited retained pane still holds its
+  row.
+- reconcile's `listPanes` stays as it is: it is view presence.
 
-Sites holding only a pane id call `viewState`; sites holding a row call
-`jobLiveness`. Two things are not moved:
+The exact site list is written in P1's brief after its code survey (R6).
 
-- reconcile's `listPanes` (`src/reconcile.ts:113`) is view presence, which
-  D1 keeps separate;
-- the liveness merge in `src/channels/dispatch.ts:115-139` moves in P4.
+**How a plugin kind spawns (P6d/P6e).** A `handle: "reply"` kind starts
+its job (the `job.start` effect) before the view pane, under the agent
+lock. It does not hold the spawn lock across the network call. If the pane
+then fails, the rollback stops the job by its handle. With `caps.channel`,
+spawn records that channel and skips the ctl handshake
+(`src/agents/spawn.ts:969`) and the remote anchor wrapper (`:680`).
+Readiness is the channel's `baseline` answering within `MU_SPAWN_JOB_MS`.
 
-**Missing from the sketch:**
-
-- `lookup`, `fenceKey`, `dedupe` and `inFlightMs`;
-- the handle source, declared per kind;
-- `identity`, the stop fence;
-- the view capability;
-- the gate kind;
-- stop's contract;
-- the settle mode the reaper needs;
-- `JobSpec.harness`, `role` and `model`;
-- `caps.channel`;
-- `JobRef`, so liveness needs no `Db`.
-
-**How a plugin job picks its channel (P6d).** If `caps.channel` names a
-plugin channel, spawn records `plugin_channel` on the row. It skips the
-ctl handshake (`src/agents/spawn.ts:969`) and the remote anchor wrapper
-(`:680`), and takes readiness from the channel's `baseline` answering
-within `MU_SPAWN_JOB_MS`. `finalizeAgentRow` stores `channel = 'mux'` and
-`host_transport = 'lease'` (D5). Without `caps.channel`, the harness's own
-channel applies, as today.
-
-**Second implementation:** mule (P7), the `lease` kind with `lookup`.
-After it, a plugin kind with a detached view and `handle: "reply"`, for
+**Second implementation:** mule (P7), the `lease` kind. After it, a
+plugin kind with a detached view and `handle: "reply"`, for
 session-hosted agents.
 
 ### D9. Seam: agent channel, an open registry
 
 `AgentChannel` (`src/channels/types.ts:143-185`) and `ChannelDelivery`
-(`:356`) stay the seam. They change as follows:
+(`:356`) stay the seam, with these changes:
 
 ```ts
 // src/channels/types.ts
-/** Registered channel names. An unregistered stored name is a typed error, never a derived fallback. */
 export type ChannelName = string & { readonly __channel: unique symbol };
 
 export interface ChannelCaps {
-  /** "sync": ctl's in-process veto immediately before the one write. Plugins: "none" in this version (D11). */
+  /** "sync": ctl's in-process veto before the one write. Plugins: "none" (D11). */
   fence: "sync" | "none";
   receipt: "exact" | "acknowledged" | "none";
-  /** Whether turns start only on delivery (D4). */
-  turns: "on-delivery" | "self-starting";
-  dedupe?: { windowMs: number };
-  steer: boolean;
+  /** Per delivery method (send, fresh, interrupt, answer); D4. */
+  dedupe?: { exact: true; windowMs: number };
+  steer: "mid-turn" | "as-send" | "none";
   interrupt: "exact" | "unconfirmed" | "none";
   fresh: "in-place" | "new-job" | "none";
   answer: boolean;
   command: boolean;
   watch: "stream" | "poll";
-  /** Whether lastRun's text is the settled turn's own (a CLOSE block needs "tied"). */
   settleText: "tied" | "untied" | "none";
 }
 
-/** Who the channel is asked about: the row's identity plus the job and host handles a stateless plugin needs. */
 export interface ChannelTarget {
   agent: ObservedAgent;
   stateDir?: string;
   socket?: string;
   remote?: RemoteReader;
-  /** From P4, filled from carrier_jobs and hosts when the row is listed (no Db at the channel). */
+  /** Filled when the row is listed, so a stateless plugin knows which session and host (D13). */
   job?: JobRef;
 }
 
 export interface AgentChannel extends ChannelDelivery {
   readonly name: ChannelName;
-  /** Replaces `readonly fence: boolean`. */
-  readonly caps: ChannelCaps;
+  readonly caps: ChannelCaps; // replaces `fence: boolean`
   // readStates, watch, baseline, receipt and lastRun keep their signatures;
-  // StateAgentRef gains the same `job?: JobRef`.
-  /** Did the delivery journaled under `msgId` land? Never resends; never throws. */
-  reconcile(target: ChannelTarget, intent: { msgId: string; baseline?: RunBaseline }): Promise<"accepted" | "not-accepted" | "unknown">;
+  // StateAgentRef gains `job?: JobRef`.
 }
 
-/** Every delivery result names its channel, its acknowledgement and the turn a wait counts from. */
 export type SendResult = {
   channel: ChannelName;
   ack: "exact" | "confirmed" | "sent" | "unknown";
   baseline?: RunBaseline;
   msgId?: string;
-  // The per-channel detail fields stay, optional.
+  // per-channel detail fields stay, optional
 };
-
-/** A settled turn says what started it (D4); self-starting channels must set it. */
-export interface TurnCause {
-  cause?: { msgId: string } | { self: true };
-}
-
-/** Renamed from CtlGuard. A channel whose caps.fence is "none" refuses a guard. */
-export interface WriteGuard {
-  signal?: AbortSignal;
-  timeoutMs?: number;
-  beforeWrite?: () => boolean;
-}
 
 export function registerChannel(channel: AgentChannel): void;
 ```
 
+A delivery's recovery is not a channel method: D4's rule table drives it,
+using `receipt` and a deduped resend.
+
 **Built-ins and their capabilities.** This is the matrix the contract
-suite asserts, extending `test/channel-contract.test.ts:118-142`.
+suite asserts (`test/channel-contract.test.ts:118-142`).
 
 | Capability | `ctl` | `hooks` | `mux` |
 | --- | --- | --- | --- |
 | fence | `sync` (`src/ctl/client.ts:166-180`) | `none` (`src/channels/hooks.ts:221`) | `none` (`src/channels/mux.ts:29`) |
-| receipt | `exact`: `status {msgId}`; the last 64 are kept (`src/ctl/protocol.ts:116`) | `acknowledged`: `run_count` past a baseline | `none` |
-| turns | `on-delivery` | `on-delivery` | `on-delivery` |
-| dedupe | none: the extension does not dedupe (`src/wait-actions.ts:32`) | none | none |
-| steer | true | false (`src/channels/hooks.ts:262`) | false |
-| interrupt | `exact` | `unconfirmed` (claude reads `idle?`) | `none` |
+| receipt | `exact` (last 64, `src/ctl/protocol.ts:116`) | `acknowledged` (`run_count` past a baseline) | `none` |
+| dedupe | none (`src/wait-actions.ts:32`) | none | none |
+| steer | `mid-turn` | `none` (`src/channels/hooks.ts:262`) | `as-send`: sent as plain text (`test/channel-contract.test.ts:487`) |
+| interrupt | `exact` | `unconfirmed` | `none` |
 | fresh | `in-place` | `in-place` (refused remote) | `none` (`src/channels/mux.ts:60-63`) |
 | answer, command | false, true | true, true (`src/channels/hooks.ts:935,959`) | true, true (`src/channels/mux.ts:65,77`) |
-| watch | `stream` | `stream`, a poll loop inside the channel (`src/channels/hooks.ts:693`) | `poll` (`watch` returns undefined) |
-| settleText | `tied` | `tied` or `untied` per murmur | `none` |
+| watch | `stream` | `stream`, polling inside the channel (`src/channels/hooks.ts:693`) | `poll` |
+| settleText | `tied` | `tied`/`untied` per murmur | `none` |
 
-**What moves in P4:**
+**What P4 does.** Each change preserves today's behaviour:
 
-- `agentChannel` becomes a registry lookup. Today it is an exhaustive
-  ternary (`src/channels/dispatch.ts:63-66`).
-- `readChannelStates` groups agents by channel and calls each one's
-  `readStates`. Today it hardwires ctl first and mux for the rest
-  (`:115-139`). An agent whose channel cannot answer takes its liveness
-  from `jobLiveness` (P1).
-- `markQueued` reads a capability, not `!== "ctl"` (`:100`).
-- Delivery results carry `ack` and `baseline`, so these sites stop
-  recomputing a wait's baseline by name: `src/cli/wait-arm.ts:97-106`,
-  `src/cli/agent-send.ts:217` and `src/agents/task-spawn.ts:666`.
-- Replay calls `reconcile` (`src/agents/task-spawn.ts:717-720`,
-  `src/next.ts:584`).
-- Name branches that a capability covers become capability checks:
-  - the steer hint (`src/messages.ts:241-244`);
-  - the answer hint (`:199-202`);
-  - the CLOSE trust rule (`src/close-block.ts:219`);
-  - the stall grace (`src/wait.ts:781`);
-  - the rewatch (`src/wait-latch.ts:86`).
-- **The hooks-only features stay named.** These branches belong to
-  features of the `hooks` channel that no capability describes:
-  - the brief file and session wait (`src/agents/task-spawn.ts:547,589`);
-  - the turn-failure acknowledgement (`src/next.ts:836`,
-    `src/next-recover.ts:96,135,324`);
-  - the first-prompt and send gate (`src/cli/agent-send.ts:81,325`);
-  - the Stop hook (`src/hook-stop.ts:506`);
-  - the pi fallback (`src/agents/spawn.ts:418`).
+- `agentChannel` becomes a registry lookup (`src/channels/dispatch.ts:63-66`).
+- `readChannelStates` groups agents by channel (`:115-139`). For a ctl
+  agent whose socket fails, liveness still comes from the batched mux
+  read, as today. `jobLiveness` is used only for detached kinds (P6e).
+- Delivery results carry `ack` and `baseline`, so callers stop
+  recomputing them by name (`src/cli/wait-arm.ts:97-106`,
+  `src/cli/agent-send.ts:217`, `src/agents/task-spawn.ts:666`).
+- An unknown stored name still reads as null, as today
+  (`test/channel-contract.test.ts:1085-1087`). The typed error arrives in
+  P6e, with plugin names.
 
-  They stay as they are. P4's test pins exactly that list, so any new name
-  branch fails. A plugin channel gets none of these features.
-- `StateSource` (`src/agent-state.ts:12`) gains an `exact` flag in place
-  of its `source === "ctl"` tests.
+**P4's invariant.** Every channel-name comparison outside `src/channels/`
+is either a capability check or on a pinned list of features that belong
+to one built-in channel:
 
-**Missing from the sketch:**
+- the hooks brief file and session wait;
+- turn-failure acknowledgement;
+- the Stop hook and the pi fallback;
+- ctl-only `agent wait --after-runs` and `--inc`.
 
-- `reconcile`;
-- `ack` and `baseline`;
-- `dedupe`, because a persisted key alone is not idempotence;
-- `turns` and the turn cause;
-- `settleText`, `answer` and `command`;
-- the job and host handles on the target. A stateless plugin cannot
-  otherwise tell which remote session a call is about: neither
-  `StateAgentRef` (`src/agent-state.ts:48-53`) nor `ObservedAgent`
-  (`src/agents/observe.ts:31-34`) carries one.
-- the turn states `unknown`, `idle?`, `queued` and pending.
+The pinned list is written in P4's brief after its survey (R6).
 
-**D4 of the every-harness spec is amended.** It kept "the lease carrier and
-the remote socket plumbing" on ctl directly. The dropped-watch fallback
-that reads "control socket lost; the pane is alive"
-(`src/channels/ctl.ts:222-224`) now asks `viewState`.
+A plugin channel gets none of those features. Its agents are waited on
+through `mu wait`'s typed refs.
 
 **Second implementation:** a plugin channel for session-hosted agents.
-`ctl`, `hooks` and `mux` stay in process, as peers of plugin channels.
 
 ### D10. Host policies: mu-owned, two functions
 
-The sketch had plugin lifecycle hooks: `onSettle`, `beforeDeadline` and
-`onRelease`. What they would trigger are mu's own effects: collect, which
-is networked but idempotent, and close, which is destructive. The host
-facts are enough to decide when to run them. A plugin trigger would let a
-plugin cause a mu effect, against Principle 2. There are exactly two
-policies, each with one implementation, so by Principle 7 they are two
-functions in `src/host-policy.ts`, not an interface. Both start in P6c,
-with provider hosts.
+There are two policies, each with one implementation, so they are
+functions in `src/host-policy.ts`, not an interface (Principle 7). Both
+start with provider hosts (P6d).
 
-**`collectAtSettle(db, agent, host)`** applies to a host with
-`idleReclaimMs`. When `mu wait` observes a remote worker's turn settle on
-such a host:
+**`collectAtSettle`** applies to a host with `idleReclaimMs`.
 
-1. In the immediate transaction that records the settle (before the wait
-   cursor commits), mu sets `agents.collect_due` to the settled turn.
-2. It runs the worker's collect, through `mu agent collect`'s own
-   compare-and-set. A success clears `collect_due`.
-3. It commits the cursor and returns the settle.
+- **The due sequence (R5).** A remote worker's settled-turn count (`runs`
+  in its channel incarnation) is monotonic. The job record keeps
+  `collected_runs` and `collected_inc`: the count read before the last
+  successful fetch.
+- **What due means.** A worker is **collect due** when its current settled
+  count, in the same incarnation, exceeds `collected_runs`, or when its
+  incarnation changed.
+- **Compare-and-clear.** A collect reads the count `n` **before** it
+  fetches. After the fetch it sets `collected_runs = n` only if `n` is
+  greater than the stored value. An older collect can never clear a newer
+  turn.
+- **Where it lives.** On the job record, which survives the agent row's
+  reap until the job is stopped and released. Release refuses while the
+  job is due unless abandoned.
+- **Who acts.** Any `mu wait`, `mu state` or `mu next` that reads a due
+  worker on such a host either collects it (a `--worktree` worker with a
+  recorded `collect_repo`), or shows **work at risk** with `next: mu agent
+  collect …` (`collect_repo` absent, or a `--cwd` worker, which cannot be
+  collected, `src/remote-collect.ts:331-336`).
+  - Collect runs after the wait's result is decided, outside its
+    synchronous settle and commit.
+  - A failure is a warning, and the worker stays due.
+  - A settle that no mu read saw is still due at the next read: due is a
+    comparison, not a flag someone had to set.
+- **`collect_repo`** is the local repository root of the spawning
+  invocation, recorded at spawn.
 
-If the collect fails, the settle is still returned, with a warning and
-`next: mu agent collect …`. `collect_due` stays set, and every later
-`mu wait`, `mu state` and `mu next` that touches the host announces it as
-a notice. Each such invocation whose turn settles on that host tries again.
-A crash between the steps leaves `collect_due`, so the work is never
-silently dropped. Notices name an idle-reclaim host with any `collect_due`
-agent as **work at risk**.
+**`deadlineNotice`** applies to a host with `deadlineAt`. Inside
+`MU_HOST_DEADLINE_MARGIN_MS` of the deadline:
 
-**`deadlineNotice(db, host)`** applies to a host with `deadlineAt`. Inside
-`MU_HOST_DEADLINE_MARGIN_MS` of the deadline (P6c picks the default):
-
-- spawns on the host are refused (`HostDeadlineError`), and the host moves
-  to `draining`;
-- `mu wait` fires an urgent `deadline` event naming the host and its
-  agents;
-- `mu state` shows a notice whose `next` lists each agent's collect and
-  close.
+- spawns refuse (`HostDeadlineError`), and the host moves to `draining`;
+- `mu wait` fires an urgent `deadline` event;
+- `mu state` lists each agent's collect and close as `next`.
 
 mu never closes an agent on its own.
 
-**The wake-up.** A wait whose agents are all watched sleeps until a
-settle, the deadline or an abort, and does no polling
-(`src/wait.ts:1450-1470`). So D10 caps that sleep: `mu wait` sets its own
-timer to the earliest `deadline_at − margin` among the hosts of the agents
-it waits on, and fires `deadline` when the timer runs out. This is a
-timer inside one invocation, like `--timeout`, not a background process
-(VISION constraint 4).
-
-The policies run in `mu wait`, `mu next`, `mu state` and spawn. Static
-hosts carry no facts, so neither policy applies to them, and today's
-behaviour stands.
+**The wake-up.** A fully watched wait does no polling
+(`src/wait.ts:1450-1470`), so `mu wait` caps its sleep at the earliest
+`deadline_at − margin` of the hosts it waits on. This is a timer inside
+one invocation, like `--timeout`.
 
 ### D11. What Principle 7 cut
 
-The ponytail review asked, for each piece of draft 1, whether two real
-implementations need it.
+- **The two-phase write fence: cut.** Only the stall steer
+  (`src/wait-actions.ts:446-474`, a ctl-only steer) and the pi-only close
+  notice (`src/close-notice.ts:101`) use a write fence. A plugin channel
+  is `fence: "none"`: the steer falls back to reporting the stall, and the
+  close notice does not apply.
+- **The HostChecks seam: folded** into a phased `checkSteps` method on the
+  link and the job kind:
 
-- **The two-phase write fence: cut.** Today's only write fence is ctl's
-  synchronous `beforeWrite` (`src/ctl/client.ts:166-180`). Only two
-  callers use it:
-  - the stall steer (`src/wait-actions.ts:446-474`), whose steer only ctl
-    can do anyway;
-  - the close notice, which is pi-only (`src/close-notice.ts:101`).
+  ```ts
+  export interface CheckContext {
+    db: Db;
+    host: HostView;
+    phase: "template" | "reach" | "agent";
+    root?: string;
+    agent?: { name: string; workstream: string };
+  }
+  ```
 
-  No second implementation needs a remote fence. A plugin channel declares
-  `fence: "none"`. With that, the steer falls back to reporting the stall,
-  as hooks does, and the close notice does not apply. A plugin's at-most-
-  once comes from never resending outside a declared dedupe (D4). If a
-  real plugin later needs steer with exclusion, a fence goes through the
-  roadmap with that plugin as its evidence.
-- **The HostChecks seam: folded.** Check steps are an optional
-  `checkSteps` method on `HostLink` and `JobKind`. Each built-in and mule
-  supply one; `checkHost` composes them. There is no fifth interface and
-  no fifth contract suite. The composition keeps today's order exactly
-  (`src/hosts.ts:1018-1180`):
-  1. the lease kind's template steps: `shell`, `stop`, `attach`
-     (`:1045`);
-  2. the link's `reachable` and `repo` (`:1094-1099`);
-  3. mu's `harnesses` and `hooks` (`:1103-1123`);
-  4. `pi` and `extension`, which run only when the harness probe found pi
-     (`:1124-1140`);
-  5. the lease kind's `job` (`:1157`);
-  6. `ctl` (`:1159-1168`).
+  `checkHost` calls each phase in today's order (`src/hosts.ts:1018-1180`):
+  1. `template`: the lease kind's `shell`, `stop` and `attach`;
+  2. `reach`: the link's `reachable` and `repo`;
+  3. mu's own `harnesses`, `hooks`, `pi` and `extension`;
+  4. `agent`: the lease kind's `job`;
+  5. mu's own `ctl`.
 
-  A `handback` step still skips the rest. `HostCheckStep.step` widens from
-  its closed union (`src/hosts.ts:956-969`) to `string`, and plugin steps
-  are named `<plugin>:<step>`.
-- **The LifecyclePolicy interface: cut.** It had two policies with one
-  implementation each, so they became two functions (D10).
-- **P6 was one unit: split** into P6a–P6d, each about a week
-  ([Units](#units)).
+  A `handback` still skips the rest. `HostCheckStep.step` becomes a
+  string, and plugin steps are `<plugin>:<step>`.
+- **The LifecyclePolicy interface: cut** into two functions (D10).
+- **Self-starting turns: cut** (R1). A plugin channel whose turns start
+  without a delivery is out of scope.
+- **Released-build safety: cut** (R2, R7). The version bump replaces it.
 
 ### D12. Capabilities
 
-A capability is declared once, at the handshake for a plugin or in code
-for a built-in. The contract suite checks that the implementation behaves
-as declared. Each capability has an enforcement point in mu's verbs:
+Each is declared once: at the handshake for a plugin, in code for a
+built-in. The contract suite checks it. The table gives each one's
+enforcement point:
 
 | Capability | Meaning | Enforced where |
 | --- | --- | --- |
-| channel `fence` | `sync`: an in-process veto immediately before the one write. `none`: no veto. | Every caller that passes a write guard, the steer (`src/wait-actions.ts:446-474`): with `none` it refuses before any write, as `src/channels/mux.ts:29` and `src/channels/hooks.ts:221` do today. |
-| channel `receipt` | `exact`: answers by msgId. `acknowledged`: answers by a turn past the journaled baseline (only with `turns: on-delivery`). `none`: cannot answer. | spawn replay and `mu next` recovery through `reconcile`. `mu agent check` refuses `none`. Checked at load. |
-| channel `turns` | whether a turn starts only on delivery | at load (the `acknowledged` rule); `mu wait` pins a send's wait by `cause` on `self-starting` (D4) |
-| channel and job `dedupe` | a repeat with the same key, within the window, returns the first result and makes no second effect | the D4 resend rule; nothing is ever resent without it |
-| job `lookup`, `fenceKey`, `inFlightMs` | lookup by key; whether a lookup can make the key unusable; how long a request may stay in flight | the D4 gate on `none`. At load, a starting method with neither lookup nor dedupe is refused. |
-| channel `steer` | input can join a running turn | `send --steer`, `--on-stall steer`, the `mu next` steer executor. The typed refusal names the channel (`src/channels/hooks.ts:262`). |
-| channel `interrupt` | `exact`: the abort is confirmed. `unconfirmed`: the agent reads `idle?` until its next event. | `send --interrupt` and abort. `none` refuses. |
-| channel `fresh` | `in-place`: a new session in the same job, a new channel incarnation. `new-job`: the backend's fresh starts a job. | `send --fresh` refuses `new-job` and `none` with a typed error naming close then spawn. That keeps the wait cursor key (D1). |
-| channel `answer`, `command` | keys reach a pending dialog; session commands run | `agent answer`, the session commands |
-| channel `watch` | `stream`: `watch` returns one watch that settles when the turn ends. `poll`: `watch` returns undefined and mu polls `readStates`. | `mu wait`'s watch path (`src/wait-ctl.ts`) |
+| channel `fence` | `sync`: an in-process veto before the one write | callers passing a write guard refuse `none` before any write (`src/channels/mux.ts:29`, `src/channels/hooks.ts:221`) |
+| channel `receipt` | `exact`: answers by msgId. `acknowledged`: a turn past the journaled baseline. `none`. | D4 rule table, spawn replay, `mu agent check` |
+| `dedupe` (channel, `job.start`, `host.acquire`) | a byte-identical repeat with the same key, within the window, returns the first result and makes no second effect | D4 rule table; nothing is resent without it |
+| `lookup`, `fenceKey`, `inFlightMs` | lookup by key; whether a lookup can make the key unusable; how long a request may be in flight | D4 rule table and the `none` gate; at load |
+| channel `steer` | `mid-turn`, `as-send` or `none` | `send --steer`, `--on-stall steer`, the steer executor |
+| channel `interrupt` | `exact` or `unconfirmed` (reads `idle?`) | `send --interrupt`, abort; `none` refuses |
+| channel `fresh` | `in-place` (a new channel incarnation) or `new-job` | `send --fresh` refuses `new-job` and `none`, naming close then spawn |
+| channel `answer`, `command` | keys reach a dialog; session commands run | `agent answer`, session commands |
+| channel `watch` | `stream`: one watch per turn. `poll`: mu polls. | `mu wait` (`src/wait-ctl.ts`) |
 | channel `settleText` | the last text is the settled turn's own | CLOSE blocks apply only with `tied` (`src/close-block.ts:219`) |
-| job `view` | `bound`: the view's death ends the job. `detached`: the job outlives it. | reconcile, the reaper, close order, reattach and `mu wait`, through D1's two reads |
-| job `handle` | where the handle comes from | at load; a `start` reply that disagrees is `unknown-outcome` |
-| job `channel` | the channel the kind's agents use | spawn (D8) |
-| link `fetch` | brings a commit home | `agent collect`: false falls back to the profile's fetch template, and refuses when the host has none |
-| link `fits` | the size limit on a script | the remote brief file and every worktree script, before the call |
-| link `slots` | who counts connection slots | `admit` runs only for `"mu"` |
-| link `remoteOnTimeout`, `quiescence` | what a timeout leaves behind; whether a scan can see the job's processes | worktree close: `unprovable` refuses removal without `--force` |
-| host `deadlineAt`, `idleReclaimMs`, `maxJobs` | provider facts | spawn's atomic admission (`maxJobs`, the deadline margin) and the host policies (D10) |
+| job `view` | `bound` or `detached` | reconcile, close order, reattach (D1, D3) |
+| job `handle` | `pane`, `file` or `reply` | at load; spawn's order (D8); the `none` gate (D4) |
+| job `channel` | the channel of the kind's agents | spawn (D8) |
+| link `fetch`, `slots`, `fits` | brings commits home; who counts slots; the script size limit | collect, admission, every script before the call |
+| link `remoteOnTimeout`, `quiescence` | what a timeout leaves behind; whether a scan sees the job's processes | timeouts are unknown outcomes; `unprovable` refuses removal without `--force` |
+| host `deadlineAt`, `idleReclaimMs`, `maxJobs` | provider facts | atomic admission, D10 |
 
 ### D13. The plugin protocol
 
@@ -1107,290 +914,231 @@ as declared. Each capability has an enforcement point in mu's verbs:
 
 - JSON-RPC 2.0, one JSON object per line on the plugin's stdin and stdout,
   UTF-8, at most 1 MiB per message.
-- stderr is drained into a bounded buffer and never parsed. Its first line
-  may appear in an error message, and it is never stored.
+- stderr is drained, never parsed and never stored. Its first line may
+  appear in an error.
 - The framing and validation are hand-rolled, like `src/ctl/protocol.ts`.
   No dependency is added.
 
 **Process.**
 
-- mu starts the plugin the first time an invocation needs it. The plugin
-  is mu's child, in its own process group, and lives no longer than that
-  invocation.
-- **On stdin EOF** (mu exited, or was SIGKILLed), the plugin cancels or
-  finishes its in-flight calls within `HOST_GRACE_MS` (5 s,
-  `src/hosts.ts:888`) and exits. The contract suite kills mu's side
-  mid-call and checks that the plugin's group is empty after the grace.
-- At a normal exit mu sends `shutdown`. After `HOST_GRACE_MS` it kills the
+- mu starts the plugin's registered argv on first need, as its child in
+  its own process group, for one invocation.
+- On stdin EOF, the plugin cancels or finishes its in-flight calls within
+  `HOST_GRACE_MS` (5 s, `src/hosts.ts:888`) and exits.
+- It never detaches a helper (`setsid`, a double fork).
+- At a normal exit mu sends `shutdown`. After the grace it kills the
   group.
-- A plugin never detaches a helper (`setsid`, a double fork) and leaves no
-  local process behind. The same contract test checks this.
-- The plugin's group id and start time are recorded with each effect
-  intent (D4).
-- When the link declares `slots: "mu"`, the plugin's group is the one
-  recorded on the host channel row (`src/hosts.ts:857`).
+- The group's id and start time go on every effect row (D4).
 
 **Handshake.**
 
 ```json
-{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":{"min":1,"max":1},"mu":"4.6.0","seams":["link","job"]}}
-{"jsonrpc":"2.0","id":1,"result":{"protocol":1,"plugin":{"name":"mule","version":"0.5.0"},"instance":"9f2c…","schema":"sha256:…","seams":{"link":{"fetch":false,"maxScriptBytes":131072,"slots":"self","remoteOnTimeout":"stopped","quiescence":"provable","checks":true},"job":{"kind":"lease","view":"bound","handle":"file","lookup":true,"fenceKey":false,"inFlightMs":30000,"checks":true}}}}
+{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocol":{"min":1,"max":1},"mu":"5.0.0"}}
+{"jsonrpc":"2.0","id":1,"result":{"protocol":1,"plugin":{"name":"mule","version":"0.5.0"},"instance":"9f2c…","schema":"sha256:…","seams":{"link":{"fetch":false,"slots":"self","remoteOnTimeout":"unknown","quiescence":"provable","maxScriptBytes":131072,"checks":["reach"]},"job":{"kind":"lease","view":"bound","handle":"file","start":{"lookup":true,"fenceKey":false},"checks":["template","agent"]}}}}
 ```
 
-These mismatches refuse at load with `PluginRefusedError` (exit 4), and
-nothing runs:
+The plugin declares every seam it implements: `host`, `link`, `job` and
+`channel`, each with its capabilities. A provider plugin's `host` object
+holds `{acquire: KeyCaps}` and must come with `link` and `job` (D6).
+
+These refuse at load with `PluginRefusedError` (exit 4):
 
 - a protocol range with no overlap;
-- a seam the registration needs but the plugin does not implement;
-- a missing mandatory method: `status`, and `lookup` or dedupe where D4
-  requires one;
-- an inconsistent capability set (`acknowledged` with `self-starting`);
-- a schema digest that does not match the protocol version.
+- a seam the registration or a host needs but the plugin does not
+  implement;
+- a missing mandatory method or capability (D4);
+- a schema digest that does not match.
 
-`instance` names the backend configuration the plugin addresses. mu
-records it on every job record and host record as the stop and release
-fence, as `host_stop` is today. A stop or release under another instance
-refuses with `stop-changed`. A plugin upgrade inside one protocol version
-keeps live jobs stoppable.
+`instance` names the backend configuration the plugin addresses. It is
+recorded on every host record, job record and effect row. Every stop,
+release, ask and resend is fenced on it (D4).
 
-**Methods.** These mirror D6–D9 one to one; checks are `link.checkSteps`
-and `job.checkSteps`. Every effect method carries `key`, and every call
-carries `deadline`. Every channel and job method carries `target`: the
-agent's workstream, name and registry incarnation, plus `job: {kind, key,
-handle}` and `host: {name, handle}`.
+**Every call** carries `deadline`, and every effect also carries `key`.
+Every host, link, job and channel call carries a serialisable `target`:
 
-| Method | Params beyond `target`, `key` and `deadline` | Result |
+```ts
+{
+  agent?: { workstream: string; name: string; incarnation: number },
+  job?: { kind: string; key: string; handle?: string },
+  host: { name: string; handle?: string; instance?: string },
+}
+```
+
+`HostView` stays inside mu. `fingerprint` and `fits` are computed by mu
+from the instance and `maxScriptBytes`; they are not wire calls.
+
+**Methods.** These mirror D6–D9:
+
+| Method | Params beyond `target`, `key`, `deadline` | Result |
 | --- | --- | --- |
-| `host.acquire`, `host.lookup`, `host.status`, `host.release` | as D6 (`spec`, `fence`, `handle`) | as D6 |
-| `link.fingerprint`, `link.fits`, `link.exec`, `link.fetch`, `link.checkSteps` | as D7 | as D7 |
-| `job.identity`, `job.start`, `job.lookup`, `job.status`, `job.stop`, `job.attach`, `job.checkSteps` | as D8; `start` takes the whole `JobSpec` | as D8 |
-| `channel.readStates`, `channel.baseline`, `channel.receipt`, `channel.reconcile`, `channel.lastRun` | as D9 | readings and observations; observations carry `cause` |
-| `channel.watch` | `afterRuns?`, `inc?` | `{watchId, initial, afterRuns?}`, then one notification (below) |
-| `channel.send` | `text`, `msgId` (always minted by mu), `mode: "followUp" \| "steer"`, `force`, `firstPrompt`, `expectIncarnation?` | `SendResult` |
+| `host.acquire`, `host.lookup`, `host.status`, `host.release` | `params`; `fence`; `handle` | as D6 |
+| `link.exec`, `link.fetch`, `link.checkSteps` | as D7, plus `phase` | `LinkRun`, steps |
+| `job.identity`, `job.start` (the whole `JobSpec`), `job.lookup`, `job.status`, `job.stop`, `job.attach`, `job.checkSteps` | as D8, plus `phase` | as D8 |
+| `channel.readStates`, `channel.baseline`, `channel.receipt`, `channel.lastRun` | as D9 | readings, observations |
+| `channel.watch` | `afterRuns?`, `inc?` | `{watchId, initial, afterRuns?}`, then one notification |
+| `channel.send` | `text`, `msgId`, `mode: "followUp" \| "steer"`, `force`, `firstPrompt`, `expectIncarnation?` | `SendResult` |
 | `channel.fresh` | `text`, `msgId`, `force`, `expectIncarnation?` | `SendResult` |
 | `channel.command` | `name`, `instructions?`, `force`, `expectIncarnation?` | `SendResult` |
 | `channel.interrupt` | `text`, `msgId`, `timeoutMs`, `expectIncarnation?` | `InterruptResult` |
-| `channel.abort` | `timeoutMs` | `AbortOutcome` (`onAbort` becomes the `aborted` flag; mu logs it) |
+| `channel.abort` | `timeoutMs` | `AbortOutcome`, with an `aborted` flag |
 | `channel.answer` | `keys`, `force` | `AnswerResult` |
 
-A capability that is false or `none` means mu never calls that method,
-and refuses at the verb with the typed error the built-ins use today.
+A capability that is false or `none` means mu never calls that method, and
+the verb refuses with the typed error the built-ins use.
 
-**Timeouts and cancellation.**
+**Timeouts.**
 
-- mu enforces each call's deadline locally. Defaults: `link.exec` takes
-  the caller's `timeoutMs`, else `HOST_COMMAND_TIMEOUT_MS` (20 s,
-  `src/hosts.ts:885`). Reads take 10 s. `host.acquire` takes 10 min.
-  `channel.watch` has no deadline of its own; `mu wait --timeout` and the
-  D10 timer bound it.
-- On expiry or SIGINT, mu sends the `$/cancel {id}` notification, waits
-  `HOST_GRACE_MS`, then kills the group.
-- A cancelled read is `unknown`. A cancelled effect is `unknown-outcome`
-  (D4).
+- `link.exec` takes the caller's `timeoutMs`, else 20 s
+  (`HOST_COMMAND_TIMEOUT_MS`, `src/hosts.ts:885`).
+- Reads take 10 s. `host.acquire` takes 10 min.
+- `channel.watch` is bounded by `mu wait --timeout` and the D10 timer.
+- On expiry or SIGINT, mu sends `$/cancel {id}`, waits `HOST_GRACE_MS`,
+  and kills the group.
+- A cancelled read is `unknown`. A cancelled effect is `unknown-outcome`.
 
-**Typed errors.** Every JSON-RPC error carries `data.kind`:
+**Typed errors.** Each error carries `data.kind`:
 
 | `kind` | Means | mu does |
 | --- | --- | --- |
-| `retryable` | nothing happened; trying again may work | retries with the same key, at most three times; otherwise surfaces it (exit 5) |
-| `permanent` | nothing happened; trying again will not work | surfaces it, exit 5 (the "remote host" lane, `src/cli/handle.ts:690-691`) |
-| `human` | a person must act (`data.remedy`) | `HostHandbackError`, exit 5 (`src/cli/handle.ts:693-695`); never retried, never recorded as `human-needed` |
-| `unknown-outcome` | the effect may have happened | leaves the intent; `EffectOutcomeUnknownError`, exit 1 (the delivery-unknown lane, `src/cli/handle.ts:616-618`); the next touch reconciles (D4) |
+| `retryable` | nothing happened | retries with the same key and payload, at most three times; else exit 5 |
+| `permanent` | nothing happened, and retrying will not help | exit 5 (`src/cli/handle.ts:690-691`) |
+| `human` | a person must act (`data.remedy`) | `HostHandbackError`, exit 5 (`src/cli/handle.ts:693-695`); never retried |
+| `unknown-outcome` | the effect may have happened | leaves the effect row; `EffectOutcomeUnknownError`, exit 1 (`src/cli/handle.ts:616-618`) |
 
-A malformed message, an unknown method or a reply that fails validation
-counts as `unknown-outcome` for an effect and `unknown` for a read. The
-plugin is then marked broken for the rest of the invocation.
+A malformed or invalid message counts as `unknown-outcome` for an effect
+and `unknown` for a read. The plugin is marked broken for the rest of the
+invocation.
 
-**Streaming watch.**
-
-1. `channel.watch` returns `{watchId, initial, afterRuns?}`.
-2. The plugin later sends one notification: `watch/settled {watchId,
-   observation}` (the observation carries `cause`), or `watch/restarted
-   {watchId, incarnation}`. The latter is today's fatal rejection of
-   `settled`.
-3. mu ends a watch with `$/cancel`. The answer is then `unknown`, never
-   dead.
-
-A watch lives only inside the one mu invocation that asked, like ctl's
-blocking `wait` (VISION constraint 4).
+**Streaming watch.** `channel.watch` returns an id. The plugin later sends
+one notification: `watch/settled {watchId, observation}`, or
+`watch/restarted {watchId, incarnation}`. mu ends a watch with `$/cancel`,
+and the answer is then `unknown`. A watch lives only inside the one
+invocation that asked (VISION constraint 4).
 
 **Schema publication.**
 
-- The protocol is published as `docs/reference/plugin-protocol.md` (the
-  normative prose) plus `schemas/plugin-protocol-v1.json`, which ships in
-  the package's `files`.
-- mu's hand-written narrowers and the JSON Schema are checked against the
-  same fixture messages (`test/plugin-schema.test.ts`), so neither can
-  drift alone.
-- The protocol version rises only on an incompatible change. An additive
-  field rises nothing.
-- Skew tests run the fake plugin speaking protocol 0, 1 and 2 against mu
-  (`test/plugin-skew.test.ts`). A plugin built against an older mu runs
-  the newer contract suite in CI.
+- The protocol is published as `docs/reference/plugin-protocol.md`, the
+  normative prose, plus `schemas/plugin-protocol-v1.json`, which ships in
+  the package.
+- mu's narrowers and the schema are checked against the same fixture
+  messages (`test/plugin-schema.test.ts`).
+- Protocol-version skew tests run the fake plugin speaking 0, 1 and 2
+  (`test/plugin-skew.test.ts`).
 
 ### D14. Registration, trust, env and secrets
 
-**User-configured, never discovered.**
+- **User-configured, never discovered.**
+  `mu plugin add <name> -- <absolute path> [args…]` records the argv,
+  runs the handshake once, and stores the `plugins` row. The executable's
+  basename must be `mu-plugin-<name>`.
+  - `mu plugin list` shows the rows.
+  - `mu plugin rm` refuses while any host record, profile, job record,
+    effect or agent names the plugin.
+  - A profile names its plugin with `mu host add … --plugin <name>`, and a
+    provider host with `mu host acquire … --provider <name>`.
+  - mu never scans `PATH`, a directory or a package.
+- **Trust.** A plugin runs with the user's privileges. mu refuses:
+  - a path that is not absolute;
+  - a file that is group- or world-writable, or not owned by the user;
+  - a symlink to either.
 
-- `mu plugin add <name> <absolute path>` records a plugin. Its basename
-  must be `mu-plugin-<name>`.
-- `add` runs the handshake once and stores the `plugins` row.
-- `mu plugin list` and `mu plugin rm` complete the set. `rm` refuses while
-  any host record, profile, job record or agent names the plugin.
-- A profile or host names its plugin explicitly: `mu host add … --plugin
-  <name>` or `mu host acquire … --provider <name>`.
-
-mu never scans `PATH`, a directory or a package for plugins. This matches
-`mu host add` (D18): registrations are machine-local rows made by a verb,
-not a config file.
-
-**Trust.** A plugin runs with the user's privileges, as a host template
-does today. mu refuses:
-
-- a path that is not absolute;
-- a file that is group- or world-writable, or not owned by the user;
-- a symlink to either.
-
-mu does not hash the binary: upgrades are expected, and `instance` is the
-fence that matters (D13).
-
-**Env.**
-
-- The plugin process gets mu's environment minus `LOCAL_ONLY_ENV`
-  (`src/remote-agent.ts:573`) and every `MU_DB_PATH`, `MU_STATE_DIR` and
-  `MU_SYNC_DIR`. It has no path to mu's DB or state, and needs none: the
-  target carries the identity it needs (D13).
-- An agent's env crosses the protocol as a structured map, restricted to
-  `HOST_ENV_KEYS` (`src/hosts.ts:392-400`), which has seven keys; the
-  header comment that says "five" (`:40`) is fixed in P2. mu refuses any
-  other key before the call, as `hostEnvWords` does (`:408`).
-- Those keys are identity, not secrets: the agent's name and workstream
-  rightly come back in observations (`src/agents/observe.ts:36-40`).
-
-**Secrets.**
-
-- mu stores only typed reply fields: handles, `JOB_HANDLE_RE`-shaped
-  (`src/hosts.ts:206`); keys; states; facts; the instance.
-- Free text (`message`, `detail`, `remedy`) is shown in error lines, first
-  line only, capped at 400 characters, and stored only where today's code
-  already stores a reason (`carrier_jobs.reason`).
-- Request bodies are never logged.
-- The contract suite starts the plugin with a canary variable in its own
-  environment (`MU_PLUGIN_CANARY=<random>`) and fails it if the canary's
-  value appears in any reply, message or stderr line. That is the
-  stand-in for a credential the plugin holds.
+  mu does not hash the binary. `instance` is the fence.
+- **Env.**
+  - The plugin process gets mu's environment minus `LOCAL_ONLY_ENV`
+    (`src/remote-agent.ts:573`), `MU_DB_PATH`, `MU_STATE_DIR` and
+    `MU_SYNC_DIR`. The target carries all the identity it needs.
+  - An agent's env crosses as a structured map, restricted to
+    `HOST_ENV_KEYS` (`src/hosts.ts:392-400`: seven keys; P2 fixes the
+    "five" at `:40`). These are identity, not secrets, and may come back
+    in observations.
+- **Secrets.**
+  - mu stores only typed reply fields, the exact request in an effect row,
+    and first-line error text capped at 400 characters.
+  - The contract suite starts the plugin with
+    `MU_PLUGIN_CANARY=<random>` in its own environment. It fails the
+    plugin if the canary appears in any reply, message or stderr line.
 
 ### D15. mule, the first out-of-process plugin
 
-mule is already an external executable that mu drives through templates
-(`src/hosts.ts:324-337`). mu reads the exit codes of its templates: 3 is a
-hand-back (`src/hosts.ts:924-929`), and only 0 proves a stop
-(`src/carrier-stop.ts:109-115`). Of the lease pane, mu reads no exit code,
-only liveness (`mule/SPEC.md:102`). The mule plugin implements the link
-and the `lease` job kind, with check steps on both. It is not a host
-provider: it never opens or provisions machines (`mule/SPEC.md:505`).
+mu drives mule through templates today (`src/hosts.ts:324-337`). mu reads
+the exit codes of those templates: 3 is a hand-back
+(`src/hosts.ts:924-929`), and 0 proves a stop (`src/carrier-stop.ts:109-115`).
+Of the lease pane, mu reads only liveness (`mule/SPEC.md:102`).
+
+The mule plugin implements the link and the `lease` job kind. It is not a
+provider (`mule/SPEC.md:505`).
 
 What mule already guarantees:
 
-- **An idempotent, proving stop.** `rm <id>` exits 0 only on proof that
-  the sessions and the state directory are gone, and a missing job also
-  exits 0 (`mule/SPEC.md:366`).
-- **A write-ahead handle.** The id is written to the job file before
-  dispatch (`mule/src/lease.rs:329-345`).
-- **An attach that never replaces the job file.**
+- an idempotent stop: `rm` exits 0 only on proof (`mule/SPEC.md:366`);
+- a handle written before dispatch (`mule/src/lease.rs:329-345`);
+- an attach that never replaces the job file.
 
-**The gaps.** No shim can close these; mule must change.
+The gaps, which no shim can close:
 
 | Gap | Today | mule adds (P7) |
 | --- | --- | --- |
-| A status mu can trust | `poll --json` has four states: running, done, orphan, missing (`mule/src/cli.rs:799-805`). But `missing` exits 1 as an error (`:758-760`). The probe uses `has-session` and `[ -d ]` (`mule/src/probe.rs:89-90`), which mule's own spec says confuse a protocol mismatch with absence (`mule/SPEC.md:366`). | five states, with exit 0: running, done, orphan, `missing` (proven by `rm`'s absence checks) and `unknown` (anything those checks cannot verify) |
-| A caller key | ids are generated (`mule/src/wrapper.rs:294`) and caller names are rejected (`mule/SPEC.md:517`). A re-dispatch is not idempotent. | `run --lease --key K`: K is stored as `$d/key`, and a dispatch whose key exists returns that job. The key is not a name: the id stays generated, so mule's reason for rejecting names still holds. The job file stays the far side's write-ahead. |
-| Listing mu's own jobs | no local index (`mule/SPEC.md:521`); `--human` strips `MU_AGENT_NAME` (`mule/src/wrapper.rs:108-109`) | `ls --json --key-prefix P` and a `key` field in the JSON |
-| Cancellation that leaves nothing behind | on a signal, `mule exec` detaches its cleanup with `setsid` and exits without waiting (`mule/src/exec.rs:326-336`, `mule/src/cleanup.rs:213-230`) | under `mule plugin`, a cancelled exec runs its `rm` in the plugin's own group within mu's grace, then reports `remoteOnTimeout: "stopped"` or an unknown outcome. It never detaches. |
-| Host lifecycle | mule never opens a master or provisions a host | nothing: mule reports facts. `host info --json` with `master: false` becomes a `needs-human` check step with its `remedy`. Static profiles stay the provider. |
-
-**What a shim can do**, so the plugin can be a thin `mule plugin`
-subcommand that reuses mule's `Transport`, probe and remove code:
-
-- `job.stop` maps to `rm`;
-- `job.attach` maps to `run --lease --attach`;
-- `link.exec` maps to the exec path, with exit 7 mapped to `partial`;
-- exit 3 maps to `human`;
-- the master check maps to `host info --json`.
-
-mule is not a daemon (`mule/SPEC.md:547`). The plugin process is mu's
-child for one invocation, and it never supervises, retries a dispatch or
-watches.
+| Truthful status | `poll --json` has running, done, orphan and missing (`mule/src/cli.rs:799-805`), but `missing` exits 1 (`:758-760`). The probe can confuse a protocol mismatch with absence (`mule/src/probe.rs:89-90`, `mule/SPEC.md:366`). | five states, exit 0: running, done, orphan, `missing` (proven by `rm`'s checks) and `unknown` |
+| A caller key | ids are generated (`mule/src/wrapper.rs:294`), and names are refused (`mule/SPEC.md:517`) | `run --lease --key K`, stored as `$d/key`. A dispatch whose key exists returns that job. The id stays generated. |
+| Listing mu's jobs | no local index (`mule/SPEC.md:521`) | `ls --json --key-prefix P` and a `key` field |
+| Cancellation | a signalled `mule exec` detaches its cleanup with `setsid` (`mule/src/exec.rs:326-336`, `mule/src/cleanup.rs:213-230`) | under the plugin, a cancelled exec runs `rm` inside its group within the grace, and never detaches. The plugin declares `remoteOnTimeout: "unknown"`, since `rm` can outlast the grace. |
+| An entry point | `mule` is one binary | a `mu-plugin-mule` bin target (D14's basename rule) serving the protocol |
+| Host lifecycle | mule never provisions | nothing. `host info --json` with `master: false` becomes a `needs-human` step. |
 
 **Capabilities mule declares:**
 
-- link `fetch: false` (`mule/SPEC.md:541`), `slots: "self"` and
-  `quiescence: "provable"`;
-- job `view: "bound"`, `handle: "file"`, `lookup: true` and `inFlightMs`
-  equal to its dispatch timeout.
+- link: `fetch: false`, `slots: "self"`, `quiescence: "provable"`;
+- job: `view: "bound"`, `handle: "file"`, `start.lookup: true`.
 
-Its view stays interactive (D3). There is no detached lease (D18).
+The view stays interactive, and there is no detached lease (D18).
 
 **Profile migration.**
 
-- `mu host add <h> --plugin mule` keeps the templates `hostMuleStarter`
-  prints, so a released build still works with the profile (D5).
-- A reservation recorded before the plugin was used has a `host_stop`
-  equal to the profile's `stop`. The plugin stops it with `mule rm` on the
-  same handle: the same effect.
-- A generator that rewrites profiles with `mu host rm`/`add` keeps working
-  as long as it writes the same templates. The byte fence is unchanged
-  (`src/carrier-stop.ts:88,97`).
+- `mu host add <h> --plugin mule` keeps the templates for the seams mule
+  does not implement: `fetch`, and the starter's `shell` for the view.
+- A reservation made before the plugin was used is stopped by the
+  plugin's `rm` on the same handle.
 
 ### D16. Proof: contract suites and fault injection
 
-**One contract suite per seam**, run against every implementation:
-
 | Suite | Built-ins | Plugins |
 | --- | --- | --- |
-| `test/host-provider-contract.test.ts` | `static` | the fake plugin; any provider plugin, in its own CI |
-| `test/link-contract.test.ts` | `template` over `test/_fake-remote-node.ts`, `checkSteps` included | the fake plugin; mule (P7, in mule's CI against a test host) |
-| `test/job-contract.test.ts` | `pane`, `lease` (over `test/_carrier.ts`), `gate` | the fake plugin (bound and detached); mule |
-| `test/channel-contract.test.ts` (extended) | `ctl`, `hooks`, `mux`, pi on `hooks` | the fake plugin (`on-delivery` and `self-starting`) |
+| `test/host-provider-contract.test.ts` | `static` | the fake plugin; any provider plugin in its own CI |
+| `test/link-contract.test.ts` | `template` over `test/_fake-remote-node.ts` | the fake plugin; mule |
+| `test/job-contract.test.ts` | `pane`, `lease` (`test/_carrier.ts`), `gate` | the fake plugin (bound, detached); mule |
+| `test/channel-contract.test.ts` | `ctl`, `hooks`, `mux`, pi on `hooks` | the fake plugin |
 
 Each suite asserts:
 
 - the declared capabilities;
-- that a refusal is typed;
+- typed refusals;
 - that `status` and `lookup` never throw for "cannot tell";
-- that dedupe makes one effect, counted by the fake backend;
-- the EOF and no-detach process rules (D13);
-- the secret canary (D14).
+- byte-identical deduped resends making one effect;
+- the EOF and no-detach rules;
+- the canary.
 
-The fake plugin (`test/_fake-plugin.mjs`) is a real executable that speaks
-the protocol over stdio, backed by a JSON file. It can be told to fail at
-any fault point. The suites are exported (`@mu-crew/mu/contract`), so any
-plugin runs exactly the same assertions.
+The fake plugin (`test/_fake-plugin.mjs`) is a real executable backed by a
+JSON file. The suites are exported (`@mu-crew/mu/contract`).
 
-**Fault injection.** `test/plugin-faults.test.ts` drives the fake plugin
-and the built-ins through each point. The pass criterion is the same at
-every point: replay yields exactly one effect, and reconcile converges.
+**Fault injection.** `test/plugin-faults.test.ts`. The criterion at every
+point: replay yields exactly one effect, and reconcile converges.
 
 | Point | Injected | Must hold |
 | --- | --- | --- |
-| F1 | mu killed after the intent commits, before the call | the next touch reconciles; `none` is accepted only under the D4 gate; one start |
-| F2 | the plugin killed mid-call | `unknown-outcome`; nothing resent outside dedupe; the reconciler decides |
-| F3 | mu killed after the plugin applied the effect, before the reply is recorded | `lookup` finds it, or a deduped resend returns it; it is recorded; no second effect |
-| F4 | the reply is lost (stdout closed) | as F3 |
-| F5 | timeout, then a late reply | `$/cancel`; the group is killed; `unknown-outcome`; the late reply is ignored |
-| F6 | `retryable` twice, then success | one effect under one key |
-| F7 | mu SIGKILLed mid-call; the plugin sees EOF | the plugin exits within the grace; its group is empty; the late effect is found by the next reconcile |
-| F8 | two mu processes reconcile one intent | one wins the `resolving` claim; the other refuses naming it; one effect |
-| F9 | `lookup` answers `none` while the creator lives, or inside `inFlightMs` | treated as `unknown`; nothing deleted, nothing started |
-| F10 | the plugin replaced between start and stop with a different `instance` | the stop refuses `stop-changed` |
-| F11 | the host is `gone` during close | the job reads `lost`; the release waits for close or abandon |
-| F12 | a self-starting channel wakes a turn after a send's intent | the receipt stays unknown unless the msgId is reported; the wait pinned by the send does not fire on the woken turn |
+| F1 | mu killed after the effect row commits, before the call | the next touch claims and resolves it; `none` only under the gate |
+| F2 | the plugin killed mid-call | unknown outcome; resolved by the rule table |
+| F3 | mu killed after the effect, before the result is recorded | lookup, or a deduped resend, returns it; one effect |
+| F4 | the reply lost (stdout closed) | as F3 |
+| F5 | a timeout, then a late reply | `$/cancel`; the group is killed; the late reply is ignored |
+| F6 | `retryable` twice, then success | one effect, one key |
+| F7 | mu SIGKILLed; the plugin sees EOF | the plugin exits within the grace; the next reconcile finds the effect |
+| F8 | two mu processes resolve one effect | one claim wins; the other refuses, naming it |
+| F9 | `none` while the creator lives, or inside `inFlightMs` | treated as `unknown` |
+| F10 | the plugin's instance changed between intent and resolve | the ask, resend, stop or release refuses `stop-changed` |
+| F11 | a host `gone` during close, or a crash after the release intent | the job reads `lost`; the release is reissued and converges |
 
-The crash points between mu's steps are seeded the way
-`test/spawn-receipts.test.ts:582` ("a receipt left in each stage") seeds
-them today: the journal is written in the intermediate state and the next
-verb is run. A crash inside the plugin is a SIGKILL of the fake plugin's
-group.
+Crash points between mu's steps are seeded the way
+`test/spawn-receipts.test.ts:582` seeds "a receipt left in each stage".
 
 ### D17. The pledge amendment
 
@@ -1398,122 +1146,161 @@ The user approved amending ROADMAP's plugin-runtime pledge
 (`docs/ROADMAP.md:37`) and VISION's "no plugin system"
 (`docs/VISION.md:184`) on 2026-11-07. Both are amended.
 
-**What changed.** mu may drive an external executable over a versioned
-stdio protocol, for exactly four seams: host provider, link, job kind and
-agent channel.
+mu may drive an external executable over a versioned stdio protocol for
+four seams: host provider, link, job kind and agent channel.
 
-**Still refused:**
+Still refused:
 
-- discovery of any kind;
-- loading third-party code into mu's process;
+- discovery;
+- in-process third-party code;
 - a resident plugin host or daemon;
-- plugins that add verbs, flags, tables, wait events or op kinds;
-- plugins that write mu's DB or state;
+- plugin verbs, flags, tables, wait events or op kinds;
+- plugins writing mu's DB or state;
 - RPC into mu;
 - a verb registry;
-- a seam with fewer than two real implementations.
+- a seam without two real implementations.
 
-VISION's idempotency gap (`docs/VISION.md:359`) is amended in P6b, once
-plugin effects carry keys. A plugin's watch fits VISION constraint 4 as
-written: it is a child's stdout inside one invocation.
+VISION's idempotency gap (`docs/VISION.md:359`) is amended when plugin
+effects carry keys (P6c).
 
 ### D18. Decided by the user
 
-Draft 1 left seven questions open. The user decided them on 2026-11-09:
+The user decided these on 2026-11-09. R2 is the orchestrator's default,
+recorded as needing the user, who may overrule it.
 
-1. **Release.** A plugin that a real user runs counts as the second
-   implementation of a seam; the contract suite's fake plugin does not.
-   P1–P6d ship together as one minor release.
-2. **Registration** is the `mu plugin add` verb writing a machine-local
-   row, like `mu host add` (D14).
-3. **One view pane per agent**, read-only on a plugin channel, is
-   accepted for this version (D3).
-4. **Collect at settle** runs inside `mu wait` (D10). It runs the
-   operator's own template or plugin, as `mu agent collect` does, so mu's
-   own process stays ssh-free (`docs/ROADMAP.md:139-141`).
-5. **Static `host rm`** keeps today's behaviour under a running lease job
-   (D6).
-6. **mule's SPEC** takes the `--key`, five-state `poll` and `--key-prefix`
-   amendments (D15). The user maintains mule.
-7. **No detached mule leases** in this version (D15).
+1. **Release.** A plugin a real user runs counts as a seam's second
+   implementation; the fake plugin does not. The plugin units ship
+   together.
+2. **Registration** is the `mu plugin add` verb (D14).
+3. **One view pane per agent**, read-only on a plugin channel (D3).
+4. **Collect at settle** runs in mu's own reads (D10). It runs the
+   operator's own template or plugin, as `mu agent collect` does
+   (`docs/ROADMAP.md:139-141`).
+5. **Static `host rm`** keeps today's behaviour (D6).
+6. **mule's SPEC** takes `--key`, the five-state `poll` and `--key-prefix`
+   (D15).
+7. **No detached mule leases.**
+8. **(R2, default)** Schema 14, state directory `mu5` with a one-shot
+   import, major version mu 5 (D5). If the user overrules it, D5 falls
+   back to draft 2's additive v13 design, with its released-build
+   analysis.
+
+## End to end: a provisioning backend
+
+A plugin for machines provisioned on demand, running session-hosted
+agents, needs only the contract above. Each step names the contract it
+uses:
+
+1. **Register.** `mu plugin add cloud -- /abs/mu-plugin-cloud`. The
+   handshake declares the `host`, `link`, `job` and `channel` seams, with
+   `host.acquire` and `job.start` keyed by `lookup` or `dedupe: exact`
+   (D13, D4).
+2. **Acquire.** `mu host acquire box1 --provider cloud --param size=large
+   --repo /work/repo`.
+   - The `hosts` row and the `host.acquire` effect are written first.
+   - The result records the handle, instance, deadline and idle reclaim.
+   - On a crash, running `host acquire box1` again resolves the same
+     effect (D1, D4).
+3. **Spawn a session job.** `mu agent spawn w1 --host box1 --worktree
+   --cli claude`.
+   - `resolveHost` gives the plugin's link and job kind (D6).
+   - Atomic admission checks `ready` and `max_jobs`.
+   - `RemoteWorktree.make` runs over `link.exec`.
+   - The `job.start` effect carries the whole `JobSpec`, and the reply's
+     handle is recorded.
+   - The read-only view opens, and the agent row takes the kind's channel.
+   - Readiness is the channel's `baseline` (D8).
+4. **Send.** `mu agent send w1 …`.
+   - A `channel.send` effect is written with the msgId and text.
+   - An `unknown-outcome` is reported as delivery unknown and resolved by
+     `receipt` or a deduped resend (D4).
+5. **Wait for the settle.** `mu wait agent:w1@<runs>`, through
+   `channel.watch` or polled `readStates`. The turn started on delivery
+   (D1). The D10 timer bounds the wait for the deadline.
+6. **Collect.**
+   - The worker is due while its settled count exceeds `collected_runs`.
+   - `mu wait` or `mu state` collects it over `link.fetch` (or the
+     profile-less fallback refuses with work at risk).
+   - The compare-and-clear records the count it fetched (D10).
+7. **Release at the deadline.**
+   - Inside the margin, spawns refuse and `deadline` fires.
+   - The orchestrator collects and closes. `agent close` calls `job.stop`,
+     an idempotent effect, and closes the worktree under the close rules.
+   - `mu host release box1` checks no agent, job or recovery row remains,
+     records the `host.release` effect, and reissues it after any crash
+     (D1, D4).
 
 ## Units
 
-Each mu unit is under about a week. It ends green on the fast gate and on
-the targeted slow gate for its area, and its "Accepted when" can fail.
-P1–P5 change no behaviour: the tests that pin today's behaviour keep their
-assertions, though their import paths may change. Each unit adds its
-ARCHITECTURE row, VOCABULARY changes and CHANGELOG entry.
+Each mu unit is about a week. It ends green on the fast gate and the
+targeted slow gate. Each unit's brief carries its exact grep and import
+checks, written after a pre-unit code survey (R6). The table states each
+unit's **invariant** and the test files that pin it. P1–P5 change no
+behaviour.
 
-The order follows the surveys' blast-radius analysis:
+The order follows blast radius:
 
-- **P1, job liveness,** comes first. It is the largest change, and
-  channels and hosts depend on it.
-- **P2, the link,** wraps the single choke point, `runLeasedTemplate`. It
-  introduces `HostView` with only the static fields.
-- **P3** puts the provider behind that view.
-- **P4, the channel registry,** needs P1's liveness for its fallback.
-- **P5** composes host checks from the P2 and P1 methods.
-- **P6a–P6d** add the plugin paths one seam at a time, ending with
-  channels, the most delicate.
+1. Liveness first: channels and hosts depend on it.
+2. The link wraps the template runner before the provider wraps host
+   lookup.
+3. The channel registry needs liveness.
+4. The checks need the link and the kinds.
+5. The plugin units start with the state-directory move, then add one
+   seam at a time.
 
-| Unit | Content | Accepted when | Pinned by |
+| Unit | Content | Invariant | Pinned by |
 | --- | --- | --- | --- |
-| P1 | Job liveness. The `src/jobs/` cluster: `JobKind`, `JobRef`, `viewState`, `jobLiveness`, and the `pane`, `lease` and `gate` kinds. Every D8 site goes through `viewState` or `jobLiveness`. `runStop`, the job handshake and the lease reattach go behind the `lease` kind. No schema change, bound kinds only, close order unchanged. | `test/job-imports.test.ts` lists the D8 sites and fails if any calls `paneAlive`, `paneResult`, `paneUp` or `localPaneAlive` directly; reconcile's `listPanes` is allowed as view presence. `test/job-contract.test.ts` passes against `pane`, `lease` and `gate`, including a retained exited gate (present, `ended`). Every pinning test passes with its assertions unchanged. | `reconcile.integration`, `reconcile-race`, `close-proof.integration`, `close-unknown-probe`, `wait-dead-after-reap`, `agent-reaper-transactional`, `workstream-teardown-*` (6), `host-channels`, `lease-spawn`(+`.integration`), `lease-close`, `lease-reattach`(+`.integration`), `reap-lease-park`, `remote-gates`(+`.integration`) |
-| P2 | Link and the worktree contract. Rename `Transport` to `SendChannel`. `HostLink` with the `template` built-in, `fits` and `checkSteps`. A minimal `HostView {name, profile, link}`. Every `runLeasedTemplate`, `runHostTemplate` and `withHostChannel` caller outside `hosts.ts` goes through the link. `RemoteReader` goes over the link. `remote-worktree.ts` is split out. Fix the stale comments at `src/hosts.ts:40,1274`. | An import test proves only `hosts.ts` and `host-link.ts` call those three functions. `test/link-contract.test.ts` passes against `template`. The remote tests are unchanged. `remote-agent.ts` is under 400 lines. | `host-channels`, `host-handback`, `host-profiles`, `hooks-remote`, `remote-gates`, `remote-task-brief`, `remote-spawn`(+`.integration`), `remote-prepare-lost.integration`, `remote-recovery`, `remote-recovery-close`(+`.integration`), `remote-collect`(+`.integration`) |
-| P3 | Host provider. `HostProvider`, `resolveHost` over every state, the `static` built-in; `HostView` gains `provider`, `jobKind` and `record`. The `getHost` callers and the raw `host_profiles` reads in `reattach-check.ts` and `remote-recovery.ts` go through it. | `test/host-provider-contract.test.ts` passes against `static`. An import test fails on any `getHost(` or `host_profiles` outside the allowlist: `hosts.ts`, `host-provider.ts`, `cli/host.ts`, `db.ts` (DDL), `db-recovery.ts` (trigger SQL) and `host-harnesses.ts` (the probe compare-and-set). The pinning tests are unchanged. | `host-profiles`, `host-lease-profile`, `lease-spawn`, `lease-reattach`, `remote-spawn`, `remote-recovery`, `host-harnesses` |
-| P4 | Open channel registry. `ChannelCaps` (`fence: sync \| none`, `turns`, `dedupe`) replaces `fence`; `reconcile`; `ack` and `baseline`; the registry lookup; `ChannelTarget.job`; `readChannelStates` per channel with `jobLiveness` as the fallback; capability checks at the D9 sites; the run-baseline rename. `spawn_receipts` is untouched. | `test/channel-contract.test.ts` asserts the D9 matrix for every built-in, pi on `hooks` included. `test/channel-imports.test.ts` fails on any channel-name comparison outside `src/channels/` except the D9 hooks-feature allowlist, pinned by file and line. Replay goes through `reconcile` with unchanged results. | `channel-contract`, `channel-imports`, `wait-action-steer`, `wait-action-receipts`, `wait-action-transport`, `close-notice`, `spawn-receipts`(+`-mux`, `.integration`), `channel-hooks-verbs`, `hooks-remote`, `next-recover` |
-| P5 | Host checks composed from `link.checkSteps` and `jobKind.checkSteps` in D11's order. `HostCheckStep.step` becomes a string. The doctor's `lease-job` hint reads the job kind. | `host check` output is byte-identical on the fixtures, skips included (`handback`, no pi). | `host-check-lease`, `host-check.integration`, `lease-job-doctor`, `host-harnesses` |
-| P6a | Protocol core and the link adapter. Framing, the process manager (EOF, group, cancel), the handshake; `plugins`; `mu plugin add`/`list`/`rm`; `host_profiles.plugin`; the schema doc and JSON; the fake plugin's link. | `test/link-contract.test.ts` passes against the fake plugin, the process rules and the canary included. `test/plugin-schema.test.ts` and `test/plugin-skew.test.ts` pass. With no plugin registered, the full suite is unchanged. | `db`, `entities`, `loop-storage` (`test/fixtures/v13-populated.db.gz`), `host-profiles` |
-| P6b | Job adapter. The `carrier_jobs` columns; plugin job kinds (bound); the D4 reconciler (`resolving` claim, the `none` gate, deduped resend); the VISION:359 amendment. | `test/job-contract.test.ts` passes against the fake plugin's bound kind. `test/plugin-faults.test.ts` passes F1–F10 for jobs. | `carrier-jobs`, `leftovers`, `lease-*`, `reap-lease-park`, `rebuild` |
-| P6c | Provider adapter and host policies. `hosts`; `mu host acquire`/`drain`/`release`/`--abandon`; atomic admission; the recovery provider branch and the name rule; `collectAtSettle` (`agents.collect_due`) and `deadlineNotice` with the wait timer. | `test/host-provider-contract.test.ts` passes against the fake provider. F1–F11 pass for hosts. `test/host-policy.test.ts`: one collect per settle; a crash between the steps leaves `collect_due` and a notice; a spawn inside the margin is refused; a fully watched `mu wait` fires `deadline` on its timer; never a close. `scripts/skew-released.sh` (slow gate) installs the latest released mu in a temp prefix, opens a fixture DB with provider hosts and plugin jobs, and asserts the D5 table row by row: `openDb` succeeds, the fence holds, a released close keeps the reservation and parks the tasks, no stop runs on a provider host, and the file stays v13. | `remote-recovery*`, `remote-collect*`, `acceptance.integration` |
-| P6d | Channel adapter and detached jobs. The channel methods (D13 table); `agents.plugin_channel`, `spawn_receipts.channel`; the spawn path for plugin channels (D8), tmux-only; detached views (reconcile asks liveness, close order, view reattach); turn cause. | `test/channel-contract.test.ts` passes against the fake plugin, `on-delivery` and `self-starting`. F12 passes. `test/job-contract.test.ts` passes for the fake detached kind. The skew script gains the D5 rows for plugin channels: a released send refuses on tmux, and a released replay stays unknown. `docs/reference/plugin-protocol.md` is complete. | `channel-*`, `spawn-receipts*`, `wait-*`, `reconcile*`, `lease-reattach*`, `acceptance.integration` |
-| P7 | mule as a plugin, in the mule repo. `run --lease --key`; the five-state `poll --json` with exit 0; `ls --json --key-prefix` and the `key` field; a cancel that never detaches; `mule plugin` serving the link and the `lease` kind with check steps. In mu: `hostMuleStarter` output gains `--plugin mule`. | `cargo test` passes. mu's exported link and job suites pass against `mule plugin` on a test host. Kill the mu spawn between intent and handle, and `lookup(token)` recovers the job with one dispatch. A reservation made under the template is stopped by the plugin. | mule's own tests; mu's `scripts/smoke-lease.sh` against a test host, with the plugin registered |
-
-P1–P6d release together (D18). If a unit runs past a week, it splits along
-its seams, never by deferring its tests.
+| P1 | `src/jobs/`: `JobKind`, `JobRef`, `viewState`, `jobLiveness(db, …)`, and the `pane`, `lease` and `gate` kinds. `runStop`, the job handshake and the lease reattach behind `lease`. | Every "is it alive" decision goes through `src/jobs/`. The row rule and teardown use view presence. Built-in answers are identical. | `reconcile.integration`, `reconcile-race`, `close-proof.integration`, `close-unknown-probe`, `wait-dead-after-reap`, `agent-reaper-transactional`, `workstream-teardown-*`, `host-channels`, `lease-spawn`(+`.integration`), `lease-close`, `lease-reattach`(+`.integration`), `reap-lease-park`, `remote-gates`(+`.integration`) |
+| P2 | `HostLink` (`template`) with `admitted`, `fits` and phased checks; a minimal `HostView`; `remote-worktree.ts` with today's exec boundaries; `Transport` renamed `SendChannel`. | Every remote template runs through the link, the lease kind or `checkHost`. The exec count per worktree operation and the admitted-profile guard are unchanged. | `remote-collect`(+`.integration`), `remote-recovery`, `remote-recovery-close`(+`.integration`), `remote-spawn`(+`.integration`), `remote-prepare-lost.integration`, `hooks-remote`, `host-handback`, `remote-task-brief` |
+| P3 | `HostProvider`, `static`, `resolveHost`; `HostView` complete. | Every host lookup outside the profile verbs goes through `resolveHost`. | `host-profiles`, `host-lease-profile`, `lease-spawn`, `lease-reattach`, `remote-spawn`, `remote-recovery`, `host-harnesses` |
+| P4 | `ChannelCaps`, the registry, `ack`/`baseline` results, `ChannelTarget.job`, the run-baseline rename. | Channel behaviour comes from the registry and capabilities, and the D9 matrix holds. Name comparisons outside `src/channels/` are capability checks or on the pinned feature list. | `channel-contract`, `channel-imports`, `agent-state-ctl`, `wait-action-*`, `close-notice`, `spawn-receipts*`, `channel-hooks-verbs`, `hooks-remote`, `next-recover` |
+| P5 | Phased `checkSteps` on the link and the kinds; `checkHost` composes them. | `host check` output is byte-identical, skips included. | `host-check-lease`, `host-check.integration`, `lease-job-doctor`, `host-harnesses` |
+| P6a | Schema 14, the `mu5` import, mu 5. | Released builds refuse v14. The import runs once, in one transaction. It leaves `mu-next` untouched, refuses when `mu5` exists or the source has live rows, and mints a new `machine_id`. | `db`, `entities`, `loop-storage` (`test/fixtures/v13-populated.db.gz`), `rebuild`, a new `state-import` test |
+| P6b | Protocol core: framing, process manager, handshake, `plugins`, `mu plugin add`/`list`/`rm`, the schema doc, the fake plugin; the link adapter and `host_profiles.plugin`. | A plugin can only report facts. The load rules refuse bad declarations. EOF and no-detach hold. With no plugin registered, the full suite is unchanged. | `link-contract`, `plugin-schema`, `plugin-skew`, `host-profiles` |
+| P6c | `effects`, the reconciler and the D4 rule table; the job adapter (bound); the `carrier_jobs` columns; the VISION:359 amendment. | Every plugin effect is written ahead with its payload. Resolution follows the rule table, fenced on the instance. | `job-contract`, `plugin-faults` F1–F10, `carrier-jobs`, `leftovers`, `lease-*` |
+| P6d | `hosts`, `mu host acquire`/`drain`/`release`/`--abandon`, atomic admission, the provider adapter, `remote_recovery.host_identity`, both host policies. | A host's release waits for every reference; F11 converges. An older collect never clears a newer due turn. | `host-provider-contract`, `plugin-faults` F11, `host-policy`, `remote-recovery*`, `remote-collect*` |
+| P6e | The channel adapter, the plugin spawn path, detached views and both reattach cases, the unknown-channel typed error, `docs/reference/plugin-protocol.md` complete. | Deliveries to plugin channels go only through effects. A detached job survives its view. The end-to-end walkthrough passes against the fake plugin. | `channel-contract`, `spawn-receipts*`, `wait-*`, `reconcile*`, `lease-reattach*`, `acceptance.integration`, a new `plugin-e2e` test |
+| P7 | mule: `--key`, the five-state `poll`, `--key-prefix`, the non-detaching cancel, the `mu-plugin-mule` bin. In mu: `hostMuleStarter` adds `--plugin mule`. | mu's exported link and job suites pass against `mu-plugin-mule`. A killed spawn recovers its job by `lookup(token)` with one dispatch. | `cargo test`; `scripts/smoke-lease.sh` with the plugin |
 
 ## Risks
 
-- **Polling cost.** `mu wait` reconciles on every poll
-  (`src/cli/wait.ts:146`). For a detached job, liveness is a backend round
-  trip per tick per job. Mitigations:
-  - a status younger than the poll interval is reused, as the remote
-    reader does (`maxAgeMs`, `src/channels/types.ts:104-115`);
-  - `watch: stream` channels avoid the poll.
+- **Polling cost.** `mu wait` reconciles every poll (`src/cli/wait.ts:146`).
+  A detached job's liveness is a backend round trip. Mitigations: reuse a
+  status younger than the poll interval (`maxAgeMs`,
+  `src/channels/types.ts:104-115`), and prefer `watch: stream`.
 - **Declared facts are trusted.** `dedupe`, `fenceKey`, `inFlightMs` and
-  `quiescence` are a plugin's promises. The contract suite tests them only
-  against the fake backend. A plugin that lies about them can cause a
-  second effect or an unsafe removal.
-- **Released builds and plugin rows.** D5's table rests on how released
-  code behaves today. `scripts/skew-released.sh` is the check; it runs in
-  the slow gate, against each new release.
+  `quiescence` are a plugin's promises. The suite tests them only against
+  the fake backend.
+- **The state-directory move.** mu 4 and mu 5 may both run on one machine
+  for a while. The import's new `machine_id` keeps them separate sync
+  peers. Agents started by one are invisible to the other.
 - **Pane-id reuse.** Teardown relies on tmux never reusing a pane id
-  (`src/workstream.ts:583`). Plugin handles carry no such guarantee, so
-  every job-record write stays keyed by its token.
-- **`carrier_jobs` holds non-carrier jobs,** and plugin-channel rows store
-  `channel = 'mux'`, until the next major. VOCABULARY's **job record** row
-  says so.
-- **SDK exports.** `src/index.ts` exports host functions that P2 and P3
-  move: `admitHostChannel` (`:313`), `runHostTemplate` (`:351`),
-  `withHostChannel` (`:353`) and `closeRemoteWorktree` (`:463`). Each unit
-  keeps or renames them in one commit, and its CHANGELOG entry says which;
+  (`src/workstream.ts:583`). Plugin handles do not, so job-record writes
+  stay keyed by token.
+- **SDK exports.** `src/index.ts` exports things P2 and P3 move:
+  - `Transport` (`:120`);
+  - `admitHostChannel` (`:313`);
+  - `runHostTemplate` (`:351`);
+  - `withHostChannel` (`:353`);
+  - `closeRemoteWorktree` (`:463`).
+
+  Each unit keeps or renames them in one commit, with a CHANGELOG line;
   there are no forwarding wrappers.
 - **The deadline margin is a guess.** A collect slower than the margin
-  loses the last commits on a reclaimed host. The `deadline` event is
-  urgent so that an orchestrator acts early.
+  loses work. The `deadline` event is urgent so that an orchestrator acts
+  early.
 
 ## Out of scope
 
 - An open `MuxBackend`, or any multiplexer plugin.
 - Plugin verbs, plugin wait events, plugin tables.
-- A remote write fence for plugin channels (D11).
-- A provider or channel for any named vendor in this repo.
-- The next-major rename of `carrier_jobs` to `jobs` and the state-dir
-  move.
-- Detached views for built-in job kinds, and detached mule leases.
-- Plugin channels on herdr and Rex.
-- Placement across hosts (muzzle's host integration is its own spec).
+- A remote write fence for plugin channels.
+- A plugin channel whose turns can start without a delivery.
+- Vendor-specific plugins in this repo.
+- Renaming `carrier_jobs`.
+- Detached views for built-in kinds, and detached mule leases.
+- Plugin views on herdr.
+- Placement across hosts.
 
 ## Refutation round 1
 
@@ -1586,15 +1373,80 @@ proposed:
 - **C17:** a released build's behaviour cannot be fixed, only documented.
 - **P13:** the fence was cut rather than simplified.
 
+Round 1 is kept as written. Where the rulings superseded a disposition
+(R1: self-starting turns; R2: released-build safety), round 2 says so.
+
+## Refutation round 2
+
+Three fresh reviewers refuted draft 2 (`7ad9d62a`), from three lenses:
+
+- **dispositions** (D): were round 1's fixes real;
+- **races** (X): concurrency and crash windows;
+- **buildability** (B): units, contracts, and the end-to-end walk.
+
+The orchestrator then ruled R1–R7. Every finding was reproduced at its
+cited lines before it was settled.
+
+| ID | Sev | Lens | Finding (short) | Disposition | Where |
+| --- | --- | --- | --- | --- | --- |
+| D1 | high | dispositions | the self-starting wait rule hangs | cut-by-R1 | D1 Turn; D11; Out of scope |
+| D2 | high | dispositions | P4 check: nine unlisted name comparisons (`src/cli/agents.ts:919` and others) | deferred to unit brief | D9 P4 invariant (ctl-only `--after-runs`/`--inc` on the pinned list) |
+| D3 | high | dispositions | the `none` gate drops today's no-pane rule for file-handle kinds | fixed | D4: `handle: "file"` never acts on `none` (`src/agents/lease-carrier.ts:431-432`) |
+| D4 | medium | dispositions | resolver and pgid-start columns missing; receipt CHECKs | fixed (R4) | D5 `effects` columns; plugin effects never touch receipt states |
+| D5 | medium | dispositions | no-row reattach for plugin kinds unspecified | fixed | D3 reattach, both cases; D1 leftover row |
+| D6 | medium | dispositions | `checkSteps(host, call)` cannot make `job`/`ctl` steps or split phases | fixed | D11 `CheckContext` with phases, `db`, `agent`, `root` |
+| D7 | medium | dispositions | the host seam has no caps or handshake object | fixed | D6 `KeyCaps`, `caps.acquire`; D13 `host` seam object |
+| D8 | medium | dispositions | mule's `remoteOnTimeout: "stopped"` contradicts the 5 s grace | fixed | D13 example and D15: `"unknown"` |
+| D9 | medium | dispositions | `collect_due` set only by `mu wait` | fixed (R5) | D10: due is a comparison on the settled count, read by any mu read |
+| D10 | medium | dispositions | the text implied an out-of-repo provider is in use | fixed | Principle 7, D6, D18.1: stated as a condition, not a fact |
+| D11 | low | dispositions | P3 allowlist omits `src/rebuild.ts:137` | deferred to unit brief | P3 invariant |
+| D12 | low | dispositions | a released `agent answer` types into a read-only view | cut-by-R2 | D5 |
+| D13 | low | dispositions | Risks omit the `Transport` SDK export | fixed | Risks (`src/index.ts:120`) |
+| D14 | low | dispositions | citation drift (`host_stop`, alias, `pane_id` predicates, `idle?` cite) | fixed | `src/db-carrier.ts:30`, `src/agents/transport.ts:29`, D3, D1 |
+| X1 | high | races | a send-pinned wait cannot see a child-woken final turn | cut-by-R1 | D1 Turn |
+| X2 | high | races | a dedupe-only channel has no recovery path (`reconcile` never resends) | fixed (R3) | D4 rule table; `reconcile` dropped from D9 |
+| X3 | high | races | a deduped replay lacks the original payload | fixed (R3) | D4 `effects.params_json`, `params_sha` |
+| X4 | high | races | no resolver ownership columns | fixed (R4) | D5 `effects` |
+| X5 | high | races | recovery reads and resends not fenced on the instance | fixed (R4) | D4 step 2; F10 |
+| X6 | high | races | a crash after the release intent leaves a host releasing forever | fixed (R4) | D1 release rows; D4 table: reissue; F11 |
+| X7 | high | races | an older collect clears a newer due turn | fixed (R5) | D10 compare-and-clear on the count read before the fetch (`src/remote-collect.ts:337-338` fences no turn today) |
+| X8 | high | races | a reap drops the collect obligation | fixed (R5) / cut-by-R2 | D10: it lives on the job record; released builds cannot open v14 |
+| X9 | high | races | a released `host add` collides with a provider host's name | cut-by-R2 | D5; `host_identity` also refuses a re-acquired name |
+| B1 | critical | buildability | deduped replay unbuildable for channels, job start and hosts | fixed (R3) | D4 rule table, `effects`, D6 `KeyCaps` |
+| B2 | critical | buildability | waits carry no msgId; child-woken final turn | cut-by-R1 | D1 Turn |
+| B3 | high | buildability | `runStop` (the stop template) cannot go through `HostLink` | fixed | D7: stop and attach belong to the lease kind's template runner |
+| B4 | high | buildability | `RemoteWorktree` split breaks exec counts; the admitted-profile guard is lost | fixed | D7 `close` keeps two execs (`src/remote-agent.ts:374-560`); `admitted` callback |
+| B5 | high | buildability | `jobLiveness` without `db` breaks gate; the row rule via liveness deletes live rows; site list incomplete | fixed / deferred | D8 `jobLiveness(db, …)`; the row rule uses view presence; site list deferred to unit brief |
+| B6 | high | buildability | P3 allowlist omits `src/rebuild.ts` | deferred to unit brief | P3 invariant |
+| B7 | high | buildability | P4: unlisted comparisons; mux steer; unknown-name test; fallback breaks a mock test | fixed / deferred | D9 matrix `as-send` (`test/channel-contract.test.ts:487`); null kept in P4 (`:1085-1087`); fallback stays the batched read; list deferred |
+| B8 | high | buildability | P5 `checkSteps` signature cannot split phases or reach `db`/agent/root | fixed | D11 `CheckContext` |
+| B9 | high | buildability | `pgid_start`, `resolver_*`, `pending_key` missing | fixed (R4) | D5 `effects` |
+| B10 | high | buildability | reattach contradiction; rollback cannot stop a started job with no pane | fixed | D3; D1 "pane spawn failed" row (`src/agents/lease-carrier.ts:356-358`) |
+| B11 | high | buildability | walkthrough gaps: acquire params, link wire target, collect inside a synchronous commit, release re-run | fixed | D1 acquire flags; D6 link and kind from the provider; D13 serialisable `target`; D10 collect after the result; release from `releasing` |
+| B12 | medium | buildability | `spawn_receipts.channel` breaks the `SELECT *` rebuild | fixed (R2) | D5: v14 rebuild with column lists; no new column |
+| B13 | medium | buildability | the basename rule vs. a `mule plugin` subcommand | fixed | D14 argv; D15 `mu-plugin-mule` bin target |
+| B14 | medium | buildability | `quiescence: "unprovable"` contradicts the link contract | fixed | D7: allowed; removal then needs `--force` |
+| B15 | medium | buildability | the provider recovery branch checks no instance | fixed | D5 `remote_recovery.host_identity` with the instance; D4 fence |
+
+No finding was rebutted:
+
+- **Cut by the rulings:** five (D1, D12, X1, X9 and B2), plus X8 in part.
+- **Deferred to the unit brief, with the invariant kept:** three about a
+  unit's check wording (D2, D11 and B6), plus B5 and B7 in part.
+- **Fixed:** the rest.
+
 ## History
 
-- **Draft 1** (`f1e092e0`, 2026-11-09) started from a short decision
-  sketch: three state machines, six seams, the plugin protocol and its
-  proof. Five read-only surveys (job liveness, link and hosts, channels,
-  mule, persistence) tested it against mu `42881032` and mule 0.4.0, and
-  overruled it where the table at the top says.
-- **Draft 2** (2026-11-09) settles the 49 findings of refutation round 1
-  and the seven open questions (D18). It cuts the remote write fence, the
-  host-checks seam and the policy interface, and splits P6 into four units.
-  Every file:line in it was reopened at `42881032` (mu) and `1192781`
-  (mule) while writing.
+- **Draft 1** (`f1e092e0`) started from a decision sketch, tested by five
+  code surveys.
+- **Draft 2** (`7ad9d62a`) settled round 1's 49 findings and the seven
+  open questions. It cut the remote fence, the checks seam and the policy
+  interface, and split P6.
+- **Draft 3** (2026-11-09) applies rulings R1–R7 and settles round 2's 38
+  findings:
+  - it drops self-starting turns and released-build safety;
+  - it moves to schema 14, `mu5` and mu 5;
+  - it adds the `effects` journal with payloads and one rule table;
+  - it splits P6 into P6a–P6e.
+
+  Every file:line was reopened at `42881032` (mu) and `1192781` (mule).
