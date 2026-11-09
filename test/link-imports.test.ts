@@ -4,55 +4,10 @@
 // and re-export statements (multi-line, `type`, `as` aliases), so a renamed
 // import of the template runner fails here as surely as a direct call.
 
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SRC = join(ROOT, "src");
-
-function sources(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
-    const path = join(dir, e.name);
-    if (e.isDirectory()) return sources(path);
-    return e.name.endsWith(".ts") ? [path] : [];
-  });
-}
-
-const rel = (path: string): string => relative(ROOT, path).split(sep).join("/");
-
-interface Binding {
-  /** The module's own name for it (before any `as`). */
-  name: string;
-  /** "import" or "export" (a re-export). */
-  kind: "import" | "export";
-}
-
-/** What `file` (repo-relative) takes from the module at repo-relative `target`, by statement. */
-function bindingsFrom(file: string, text: string, target: string): Binding[] | "namespace" {
-  const out: Binding[] = [];
-  const re =
-    /\b(import|export)\s+(?:type\s+)?(?:(\*)\s+as\s+\w+|(\*)|\{([^}]*)\})\s*from\s*["']([^"']+)["']/g;
-  const dyn = /\bimport\(\s*["']([^"']+)["']\s*\)/g;
-  const hits = (spec: string): boolean =>
-    spec.startsWith(".") &&
-    rel(resolve(join(ROOT, dirname(file)), spec)).replace(/\.js$/, ".ts") === target;
-  for (const m of text.matchAll(dyn)) if (hits(m[1] ?? "")) return "namespace";
-  for (const m of text.matchAll(re)) {
-    if (!hits(m[5] ?? "")) continue;
-    if (m[2] !== undefined || m[3] !== undefined) return "namespace";
-    for (const part of (m[4] ?? "").split(",")) {
-      const name = part
-        .trim()
-        .replace(/^type\s+/, "")
-        .split(/\s+as\s+/)[0]
-        ?.trim();
-      if (name) out.push({ name, kind: m[1] === "export" ? "export" : "import" });
-    }
-  }
-  return out;
-}
+import { all, args, bindingsFrom, calls, localReExports, SRC } from "./_imports.js";
 
 /** The template runner's entry points: running one is running a template. */
 const RUNNER = new Set(["runLeasedTemplate", "runHostTemplate"]);
@@ -83,57 +38,11 @@ function runnerTakers(files: ReadonlyArray<readonly [string, string]>): string[]
     }
     // Nor a local re-export of the imported binding (`export { runLeasedTemplate };`).
     if (!barrel) {
-      for (const m of text.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}(?!\s*from)/g)) {
-        for (const part of (m[1] ?? "").split(",")) {
-          const name =
-            part
-              .trim()
-              .split(/\s+as\s+/)[0]
-              ?.trim() ?? "";
-          if (RUNNER.has(name)) out.push(`${file}: re-export ${name}`);
-        }
+      for (const name of localReExports(text)) {
+        if (RUNNER.has(name)) out.push(`${file}: re-export ${name}`);
       }
     }
   }
-  return out;
-}
-
-/** The text of every call of `fn(` in `text`, up to its closing paren. */
-function calls(text: string, fn: string): string[] {
-  const out: string[] = [];
-  const re = new RegExp(`\\b${fn}\\(`, "g");
-  for (const m of text.matchAll(re)) {
-    let depth = 0;
-    let i = m.index + fn.length;
-    for (; i < text.length; i++) {
-      if (text[i] === "(") depth++;
-      else if (text[i] === ")" && --depth === 0) break;
-    }
-    out.push(text.slice(m.index, i + 1));
-  }
-  return out;
-}
-
-/** The top-level arguments of one call's text (`fn(a, {b, c}, "d")` → three). */
-function args(call: string): string[] {
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | null = null;
-  let cur = "";
-  for (const c of call.slice(call.indexOf("(") + 1, -1)) {
-    if (quote !== null) {
-      if (c === quote) quote = null;
-    } else if (c === '"' || c === "'" || c === "`") quote = c;
-    else if ("([{".includes(c)) depth++;
-    else if (")]}".includes(c)) depth--;
-    else if (c === "," && depth === 0) {
-      out.push(cur.trim());
-      cur = "";
-      continue;
-    }
-    cur += c;
-  }
-  if (cur.trim() !== "") out.push(cur.trim());
   return out;
 }
 
@@ -151,9 +60,6 @@ function expandsExecOrFetch(call: string): boolean {
   const lit = /^["']([\w-]+)["']$/.exec(scope)?.[1];
   return lit === undefined || lit === "exec" || lit === "fetch";
 }
-
-const all = (): Array<readonly [string, string]> =>
-  sources(SRC).map((p) => [rel(p), readFileSync(p, "utf8")] as const);
 
 describe("the link seam", () => {
   it("only the link, the lease kind's stop and the SDK barrel take the template runner", () => {

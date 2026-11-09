@@ -10,9 +10,9 @@ import { deleteAgent, getAgent, insertAgent, pendingPaneIdFor } from "../agents.
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
 import { refuseMissingHarness } from "../host-harnesses.js";
+import { requireProfile, resolveHost } from "../host-provider.js";
 import {
   admitHostChannel,
-  getHost,
   type HostLease,
   type HostProfile,
   HostProfileError,
@@ -60,7 +60,7 @@ export function isCommandGate(opts: { host?: string; cli?: string; command?: str
  */
 export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise<HostProfile> {
   const host = opts.host ?? "";
-  const profile = getHost(db, host);
+  const profile = requireProfile(resolveHost(db, host));
   if (!isCommandGate(opts)) {
     // The literal command a remote spawn runs: never the local MU_<KEY>_COMMAND.
     const cli = opts.cli ?? "pi";

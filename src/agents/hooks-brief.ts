@@ -20,7 +20,7 @@
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Db } from "../db.js";
-import { hostView } from "../host-link.js";
+import { resolveHost } from "../host-provider.js";
 import { HOST_COMMAND_TIMEOUT_MS } from "../hosts.js";
 import { viewRunning } from "../jobs/view.js";
 import { RemotePrepareError } from "../remote-worktree.js";
@@ -136,7 +136,7 @@ export async function writeRemoteBriefFile(
   assertRemoteBriefFits(agent, host, text);
   const what = "writing the task brief file failed";
   const script = remoteBriefScript(cwd, agent, attemptKey, text);
-  const h = hostView(db, host);
+  const h = resolveHost(db, host);
   const r = await h.link.exec(
     h,
     { script, cwd, timeoutMs: HOST_COMMAND_TIMEOUT_MS },

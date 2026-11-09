@@ -222,6 +222,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   template runner (`test/link-imports.test.ts`, import-aware). The SDK type
   `Transport` is renamed `SendChannel`; `src/remote-agent.ts` still exports
   the worktree names. No behaviour change.
+- **Host lookups go through `resolveHost`** (plugins spec P3, D6). The new
+  `src/host-provider.ts` holds the `HostProvider` seam (`acquire`, `lookup`,
+  `status`, `release`, each keyed, with `Call`, `KeyCaps`, `HostFacts` and
+  `HostStatus`), the complete `HostView` (name, link, provider, job kind,
+  profile or host record; it moved from `src/host-link.ts`, whose `hostView`
+  is gone) and the built-in `staticProvider`: `status` answers `up` with no
+  round trip, and `acquire`, `lookup` and `release` refuse
+  (`StaticHostError`, exit 2), since static hosts are added and removed with
+  `mu host add`/`rm`. `resolveHost` views a profile: the template link,
+  `static`, and the lease job kind for a lease profile, else the pane kind.
+  Spawn's host check, close's lease test, the stop fence, the lease reattach
+  check, collect, the gate reads, the remote brief and the hooks node read
+  resolve through it; `findHost` answers undefined for an unknown name, and
+  `hostIdentity` reads the identity a recovery pins (the exec bytes, the
+  link's fingerprint) with today's one-column query. Outside the profile verbs, a `getHost` or `listHosts`
+  import or a `host_profiles` read fails `test/host-imports.test.ts`
+  (import-aware; the recovery capture triggers keep their SQL read). The SDK
+  exports the new names. No behaviour change.
 
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove

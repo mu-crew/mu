@@ -11,20 +11,20 @@
 // callers: this link, the lease kind (`stop`, src/carrier-stop.ts) and
 // `checkHost`. A plugin link joins in P6b, mule's in P7.
 //
-// P2 holds the call shape. The spec's `Call` (deadline, abort signal) joins
-// with the host provider (P3) and the plugin adapter (P6); until then a call
-// names the channel it runs under (`LinkCall`), as every caller does today.
+// A link call names the channel it runs under (`LinkCall`), as every caller
+// does today. The spec's `Call` (deadline, abort signal, src/host-provider.ts)
+// replaces it at the plugin adapter (P6b). The `HostView` a link is handed
+// comes from `resolveHost` or an admitted snapshot (src/host-provider.ts).
 
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Db } from "./db.js";
+import { type HostView, requireProfile } from "./host-provider.js";
 import {
   type ChannelOpts,
   expandHostTemplate,
-  getHost,
   type HostCheckStep,
   type HostLease,
-  type HostProfile,
   type HostRun,
   runLeasedTemplate,
   withHostChannel,
@@ -76,17 +76,6 @@ export interface ScriptFit {
   ok: boolean;
   bytes: number;
   limit: number;
-}
-
-/**
- * What mu holds for `--host <name>`. P2's minimal view: the name, the profile
- * (for a held call, the ADMITTED snapshot), and the link. P3 adds the provider,
- * the job kind and the host record.
- */
-export interface HostView {
-  name: string;
-  profile: HostProfile;
-  link: HostLink;
 }
 
 export interface HostLink {
@@ -157,12 +146,12 @@ export function templateLink(db: Db): HostLink {
       remoteOnTimeout: "unknown",
       quiescence: "provable",
     },
-    fingerprint: (host) => host.profile.exec,
+    fingerprint: (host) => requireProfile(host).exec,
     fits: (host, script, cwd) => {
       // The filled template is ONE argument of the local `/bin/sh -c`, and holds every
       // argument the host's shells get: measured as exec'd, before anything runs.
       const bytes = Buffer.byteLength(
-        expandHostTemplate(host.profile.exec, { cmd: script, cwd }, "exec"),
+        expandHostTemplate(requireProfile(host).exec, { cmd: script, cwd }, "exec"),
       );
       return { ok: bytes < EXEC_ARG_MAX_BYTES, bytes, limit: EXEC_ARG_MAX_BYTES };
     },
@@ -171,7 +160,7 @@ export function templateLink(db: Db): HostLink {
         runLeasedTemplate(
           db,
           lease,
-          h.profile,
+          requireProfile(h),
           "exec",
           { cmd: req.script, cwd: req.cwd },
           req.timeoutMs,
@@ -186,7 +175,7 @@ export function templateLink(db: Db): HostLink {
         return runLeasedTemplate(
           db,
           lease,
-          h.profile,
+          requireProfile(h),
           "fetch",
           { cwd: req.remoteCwd },
           req.timeoutMs,
@@ -194,10 +183,4 @@ export function templateLink(db: Db): HostLink {
         );
       }),
   };
-}
-
-/** The view of host `name` (throws HostNotFoundError), or of a profile already read (an admitted snapshot). */
-export function hostView(db: Db, host: string | HostProfile): HostView {
-  const profile = typeof host === "string" ? getHost(db, host) : host;
-  return { name: profile.name, profile, link: templateLink(db) };
 }

@@ -306,6 +306,22 @@ export {
   hostCapabilities,
 } from "./host-harnesses.js";
 export {
+  type Call,
+  type EffectKey,
+  findHost,
+  type HostFacts,
+  type HostProvider,
+  type HostRecord,
+  type HostState,
+  type HostStatus,
+  type HostView,
+  type KeyCaps,
+  type KeyLookup,
+  resolveHost,
+  StaticHostError,
+  staticProvider,
+} from "./host-provider.js";
+export {
   addHost,
   admitHostChannel,
   bindHostChannel,

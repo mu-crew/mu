@@ -13,9 +13,9 @@
 //            operator can stop the job by hand.
 
 import type { Db } from "./db.js";
+import { requireProfile, resolveHost } from "./host-provider.js";
 import {
   type ChannelOpts,
-  getHost,
   HOST_COMMAND_TIMEOUT_MS,
   HostNotFoundError,
   JOB_HANDLE_RE,
@@ -79,7 +79,7 @@ export async function runStop(
     throw new CarrierStopRefusedError(host, handle, "bad-handle", agent);
   let current: string | null;
   try {
-    current = getHost(db, host).stop;
+    current = requireProfile(resolveHost(db, host)).stop;
   } catch (e) {
     if (e instanceof HostNotFoundError)
       throw new CarrierStopRefusedError(host, handle, "no-host", agent);

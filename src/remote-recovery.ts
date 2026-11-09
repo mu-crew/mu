@@ -22,6 +22,7 @@
 
 import type { Db } from "./db.js";
 import { OWNED } from "./db-recovery.js";
+import { hostIdentity } from "./host-provider.js";
 import { say } from "./messages.js";
 import { shellWord } from "./shell-quote.js";
 
@@ -411,12 +412,8 @@ export function assertRecoveryUsable(db: Db, rec: RemoteRecovery): void {
       [rec.agentId, newer.agent_id],
     );
   }
-  assertRecoveryProfile(
-    rec,
-    db.prepare("SELECT exec FROM host_profiles WHERE name = ?").get(rec.host) as
-      | { exec: string }
-      | undefined,
-  );
+  const exec = hostIdentity(db, rec.host);
+  assertRecoveryProfile(rec, exec === undefined ? undefined : { exec });
 }
 
 /** Refuse (`changed`) unless the record is exactly `rec`: the CAS after every slow step. */

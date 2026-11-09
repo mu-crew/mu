@@ -32,7 +32,7 @@ import { channelTarget } from "./channels/index.js";
 import { applySettledClose } from "./close-block.js";
 import type { Db } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
-import { hostView } from "./host-link.js";
+import { resolveHost } from "./host-provider.js";
 import { viewRunning } from "./jobs/view.js";
 import { say } from "./messages.js";
 import {
@@ -186,7 +186,7 @@ export async function collectRemoteAgent(
           throw new AgentNotFoundError(name, workstream);
         }
         const { host, cwd, base } = target;
-        const h = hostView(db, host);
+        const h = resolveHost(db, host);
         if (h.link.fetch === undefined) {
           // No built-in link lacks fetch; a plugin's may (mule's, spec D7).
           throw new RemoteCollectUnsupportedError(name, `host ${host}'s link cannot fetch`);

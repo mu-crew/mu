@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
-import { EXEC_ARG_MAX_BYTES, hostView } from "../src/host-link.js";
+import { EXEC_ARG_MAX_BYTES } from "../src/host-link.js";
+import { resolveHost } from "../src/host-provider.js";
 import {
   addHost,
   getHost,
@@ -86,7 +87,7 @@ afterEach(() => {
 
 describe("the template link", () => {
   it("declares today's capabilities and pins the exec bytes", () => {
-    const h = hostView(db, "dev");
+    const h = resolveHost(db, "dev");
     expect(h.link.name).toBe("template");
     expect(h.link.caps).toEqual({
       fetch: true,
@@ -98,7 +99,7 @@ describe("the template link", () => {
   });
 
   it("runs a script as the exec template's {cmd} under one transient channel", async () => {
-    const h = hostView(db, "dev");
+    const h = resolveHost(db, "dev");
     const r = await h.link.exec(
       h,
       { script: "echo hi", cwd: ".", timeoutMs: 5000 },
@@ -111,7 +112,7 @@ describe("the template link", () => {
   });
 
   it("a throwing `admitted` runs nothing and frees the channel; it sees the admitted profile", async () => {
-    const h = hostView(db, "dev");
+    const h = resolveHost(db, "dev");
     // The profile changes after the view was read: admission re-reads it.
     db.prepare("UPDATE host_profiles SET repo = '/elsewhere' WHERE name = 'dev'").run();
     let seen: string | null = null;
@@ -120,7 +121,7 @@ describe("the template link", () => {
       { script: "x", cwd: ".", timeoutMs: 5000 },
       { holder: "t" },
       (a) => {
-        seen = a.profile.repo;
+        seen = a.profile?.repo ?? null;
         throw new Error("pinned profile changed");
       },
     );
@@ -134,7 +135,7 @@ describe("the template link", () => {
     const repo = join(dir, "local");
     mkdirSync(join(repo, ".git"), { recursive: true });
     writeFileSync(join(repo, ".git", "FETCH_HEAD"), `${BASE}\n`);
-    const h = hostView(db, "dev");
+    const h = resolveHost(db, "dev");
     const fetch = h.link.fetch;
     expect(fetch).toBeDefined();
     await expect(
@@ -148,14 +149,14 @@ describe("the template link", () => {
 
   it("exit 3 is a hand-back", async () => {
     writeFileSync(join(dir, "handback"), "");
-    const h = hostView(db, "dev");
+    const h = resolveHost(db, "dev");
     await expect(
       h.link.exec(h, { script: "x", cwd: ".", timeoutMs: 5000 }, { holder: "t" }),
     ).rejects.toBeInstanceOf(HostHandbackError);
   });
 
   it("fits measures the expanded exec template against the one-argument cap", () => {
-    const h = hostView(db, "dev");
+    const h = resolveHost(db, "dev");
     const small = h.link.fits(h, "true", "/srv/repo");
     expect(small.ok).toBe(true);
     expect(small.limit).toBe(EXEC_ARG_MAX_BYTES);

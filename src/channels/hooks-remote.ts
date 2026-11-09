@@ -43,7 +43,8 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node
 import { dirname, join } from "node:path";
 import type { Db } from "../db.js";
 import { locksDir, withFileLock } from "../file-lock.js";
-import { hostView, type LinkRun } from "../host-link.js";
+import type { LinkRun } from "../host-link.js";
+import { resolveHost } from "../host-provider.js";
 import { HOST_COMMAND_TIMEOUT_MS } from "../hosts.js";
 import { viewRunning } from "../jobs/view.js";
 import { shellQuote } from "../shell-quote.js";
@@ -433,7 +434,7 @@ export async function readRemoteHooks(
     async (): Promise<RemoteReadResult> => {
       let run: LinkRun;
       try {
-        const h = hostView(db, agent.host);
+        const h = resolveHost(db, agent.host);
         run = await h.link.exec(
           h,
           {

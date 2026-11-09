@@ -36,7 +36,8 @@ import { type AgentRow, deleteAgent, getAgentForCleanup, isPendingPaneId } from 
 import { type CarrierJob, getCarrierJobByName, listCarrierJobsByName } from "../carrier-jobs.js";
 import { unlinkCtlSocket } from "../ctl/path.js";
 import type { Db } from "../db.js";
-import { getHost, releaseHostChannelsForAgent } from "../hosts.js";
+import { resolveHost } from "../host-provider.js";
+import { releaseHostChannelsForAgent } from "../hosts.js";
 import { readJobFile } from "../jobs/lease.js";
 import { viewPid, viewPresent, viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
@@ -748,7 +749,7 @@ function hostTransportOf(db: Db, incarnation: number): string | null {
 /** Is `host` a lease profile now (only for a row that recorded no transport)? A gone profile says nothing, so no. */
 function isLeaseHost(db: Db, host: string): boolean {
   try {
-    return getHost(db, host).transport === "lease";
+    return resolveHost(db, host).jobKind.name === "lease";
   } catch {
     return false;
   }

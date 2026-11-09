@@ -10,14 +10,20 @@ import { leaseKind } from "./lease.js";
 import { paneKind } from "./pane.js";
 import type { JobKind, JobKindName, JobLiveness, JobRef } from "./types.js";
 
-const KINDS: Readonly<Record<JobKindName, JobKind>> = {
-  pane: paneKind,
-  lease: leaseKind,
-  gate: gateKind,
-};
-
+/**
+ * The kind named `name`. A switch, not a module-level map: resolveHost (src/host-provider.ts)
+ * imports this module from inside the lease kind's import cycle (./lease.ts → carrier-stop),
+ * where a map built at load would read `leaseKind` before it is defined.
+ */
 export function jobKind(name: JobKindName): JobKind {
-  return KINDS[name];
+  switch (name) {
+    case "pane":
+      return paneKind;
+    case "lease":
+      return leaseKind;
+    case "gate":
+      return gateKind;
+  }
 }
 
 /** Liveness: whether the job runs, answered by its kind. */

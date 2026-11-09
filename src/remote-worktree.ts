@@ -16,7 +16,7 @@
 
 import type { AgentRow } from "./agents.js";
 import type { Db } from "./db.js";
-import { hostView } from "./host-link.js";
+import { admittedView, resolveHost } from "./host-provider.js";
 import {
   HOST_COMMAND_TIMEOUT_MS,
   type HostLease,
@@ -147,7 +147,7 @@ export async function prepareRemote(
         answer,
       ].join("\n")
     : `cd ${remotePathWord(opts.cwd ?? opts.root ?? "~")} && printf 'MU_CWD %s\\n' "$(pwd -P)"`;
-  const h = hostView(db, profile);
+  const h = admittedView(db, profile);
   const r = await h.link.exec(
     h,
     // `.`, not `~`, without a repo: a template's `cd {cwd:sh}` stays where the login shell
@@ -234,7 +234,7 @@ export async function removeRemoteWorktree(
     // No --force: git re-checks cleanliness itself, so a write that raced the check refuses.
     `git -C ${remotePathWord(wt.root)} worktree remove "$wt" && echo "MU_RM removed"`,
   ].join("\n");
-  const h = hostView(db, host);
+  const h = resolveHost(db, host);
   const r = await h.link.exec(
     h,
     { script: script(body), cwd: wt.root, timeoutMs: HOST_COMMAND_TIMEOUT_MS },
@@ -422,7 +422,7 @@ export async function closeRemoteWorktree(
       const wt = shellQuote(path);
       const aside = shellQuote(asidePath);
       // Both execs run under this one channel, from the admitted snapshot.
-      const h = hostView(db, profile);
+      const h = admittedView(db, profile);
       const run = async (body: string): Promise<{ out: string; why: string }> => {
         const r = await h.link.exec(
           h,

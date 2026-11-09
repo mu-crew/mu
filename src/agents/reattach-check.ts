@@ -6,6 +6,7 @@
 import { getAgentForCleanup } from "../agents.js";
 import { type CarrierJob, listCarrierJobsByName } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
+import { findHost } from "../host-provider.js";
 import { type HostProfile, pidProvenGone } from "../hosts.js";
 import { jobRunning } from "../jobs/kinds.js";
 import { describeRead, leaseJobRef, readJobFile } from "../jobs/lease.js";
@@ -100,9 +101,7 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   if (r.creatorPid === null || !pidProvenGone(r.creatorPid, r.creatorStart)) {
     return no("carrier", `its spawn's process ${r.creatorPid ?? "?"} is not proven gone`);
   }
-  const profile = db.prepare("SELECT * FROM host_profiles WHERE name = ?").get(r.host) as
-    | HostProfile
-    | undefined;
+  const profile = findHost(db, r.host)?.profile;
   if (profile?.transport !== "lease" || profile.attach === null) {
     return no("profile", `host ${r.host} has no lease profile with an attach template`);
   }

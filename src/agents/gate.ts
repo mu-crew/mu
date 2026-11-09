@@ -19,7 +19,8 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRow } from "../agents.js";
 import type { Db } from "../db.js";
-import { hostView, type LinkRun } from "../host-link.js";
+import type { LinkRun } from "../host-link.js";
+import { resolveHost } from "../host-provider.js";
 import { HOST_COMMAND_TIMEOUT_MS, HostHandbackError } from "../hosts.js";
 import { viewRunning, viewState } from "../jobs/view.js";
 import { shellQuote } from "../shell-quote.js";
@@ -135,7 +136,7 @@ export async function readGate(db: Db, agent: GateAgent): Promise<GateReading> {
   if (!sameRow(db, agent)) return { kind: "dead", reason: "the agent was replaced" };
   let run: LinkRun;
   try {
-    const h = hostView(db, host);
+    const h = resolveHost(db, host);
     run = await h.link.exec(
       h,
       { script: readCommand(token), cwd: ".", timeoutMs: HOST_COMMAND_TIMEOUT_MS },
@@ -169,7 +170,7 @@ export async function cleanGateResult(db: Db, agent: GateAgent): Promise<boolean
   const host = agent.host;
   if (token === null || host === null) return false;
   try {
-    const h = hostView(db, host);
+    const h = resolveHost(db, host);
     const r = await h.link.exec(
       h,
       { script: cleanCommand(token), cwd: ".", timeoutMs: HOST_COMMAND_TIMEOUT_MS },
