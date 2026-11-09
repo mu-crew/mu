@@ -733,6 +733,23 @@ describe("variant patches", () => {
       behaviourDiff(traces(0, '{"a":1}'), traces(0, '{"a":1,"b":2}'), key, traces(0, '{"a":7}')),
     ).toEqual(["agent close|--if"]);
   });
+
+  it("pairs calls by occurrence: workers interleaving in another order is no behaviour", () => {
+    const run = (argvs: string[], out = "ok", id = "r4:x"): GoldenTrace[] => [
+      { id, ok: true, calls: argvs.map((argv) => ({ argv, exit: 0, out })) },
+    ];
+    const k = (argv: string): string => argv.split(" -")[0] ?? argv;
+    const order1 = ["task claim a", "task claim b", "task close a", "wait x"];
+    const order2 = ["task claim b", "task claim a", "task close a", "wait x"];
+    expect(behaviourDiff(run(order1), run(order2), k, run(order2))).toEqual([]);
+    expect(behaviourDiff(run(order1), run(order2), k)).toEqual([]);
+    // a call the variant drops, that both base runs make, is behaviour
+    expect(behaviourDiff(run(order1), run(order1.slice(0, 3)), k, run(order2))).toEqual(["wait x"]);
+    // one the base runs disagree on (made once of two) is chance
+    expect(behaviourDiff(run(order1), run(order1.slice(0, 3)), k, run(order1.slice(0, 3)))).toEqual(
+      [],
+    );
+  });
 });
 
 // ---- isolation ----------------------------------------------------------------------------------

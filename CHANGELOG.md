@@ -307,6 +307,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   outright ("pack still carries denied text"). A string in a JSON array
   that names the rig is now removed; any other hit in a JSON file is still
   reported and refuses the pack.
+- **Eval: the behaviour diff pairs golden calls by occurrence, not
+  position** (hill-r2 c2). Workers interleave their calls differently from
+  run to run (`wait_mixed_refs` claims in either order), and one swap shifted
+  every later pair, so all c2 variants carried a dozen unrelated changed
+  calls (`task claim|--for`, `wait|--json,--timeout`, ...). Calls now pair
+  by their k-th occurrence of the same normalised argv; an occurrence the
+  two base runs disagree on is chance. `build` caches each variant's golden
+  traces per build ref, and `--force` re-assesses from them.
 - **Eval: a probe seed that fails on a surface gives an invalid row**
   (hill-r2 c2). Seeds are spelled in base grammar; a c2 variant that made a
   bare `agent close --json` apply the close broke the seed's revision read,

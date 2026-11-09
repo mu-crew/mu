@@ -110,7 +110,7 @@ const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   pack <g> [--brief tools/eval/candidates/<g>/brief.src.md]
   design <g> --model <m> [--session <name>]
   audit <g> [--session <name>]
-  build <g> [--scenarios a,b] [--passes 4]   (golden passes at once; each row claims)
+  build <g> [--scenarios a,b] [--passes 4] [--force]   (golden passes at once, each row claims; --force re-assesses built variants from cached traces)
   r1 <g> | r2 <g>   [--concurrency auto|n] [--model-concurrency 8]   (auto: as many probe rows as muzzle's budget holds)
   decide --fast <g>   (fast mode: the R1 decision; at most one winner)
   final --combined [--groups a,b] [--drop v1,v2] [--concurrency 6]   (C7: every group's winner on one surface; R4, then holdouts once)
@@ -809,6 +809,7 @@ export async function tournamentCli(argv: string[]): Promise<number> {
         const patchText = readFileSync(c.patch, "utf8");
         const build = buildVariant(setup.baseDir, setup.baseSha, manifest.id, c.patch);
         if (
+          !rest.includes("--force") &&
           have.get(manifest.id) !== undefined &&
           now.some((r) => r.kind === "variant" && r.id === manifest.id && r.ref === build.ref)
         )
@@ -825,13 +826,20 @@ export async function tournamentCli(argv: string[]): Promise<number> {
           for (let i = next++; i < todo.length; i = next++) {
             const t = todo[i];
             if (!t) continue;
+            // cached per build ref, like base's: a re-assessment (`--force`) reruns no golden
+            const cache = join(
+              dir,
+              `golden-${t.manifest.id}-${t.build.ref.replace(/\W+/g, "_")}.json`,
+            );
             try {
-              allTraces[i] = t.build.built.ok
-                ? await collectGoldenTraces(
-                    { ...surfaceFromDir(`hill2-${t.manifest.id}`, t.build.dir), family: "next" },
-                    { cases: NEXT_CASES, scenarios },
-                  )
-                : [];
+              if (existsSync(cache)) allTraces[i] = JSON.parse(readFileSync(cache, "utf8"));
+              else if (t.build.built.ok) {
+                allTraces[i] = await collectGoldenTraces(
+                  { ...surfaceFromDir(`hill2-${t.manifest.id}`, t.build.dir), family: "next" },
+                  { cases: NEXT_CASES, scenarios },
+                );
+                writeFileSync(cache, JSON.stringify(allTraces[i]));
+              } else allTraces[i] = [];
             } catch (e) {
               // one variant's broken golden pass must not discard the others'
               console.log(

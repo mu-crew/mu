@@ -190,27 +190,41 @@ export function behaviourDiff(
   key: (argv: string) => string,
   baseAgain: readonly GoldenTrace[] = [],
 ): string[] {
+  // calls pair by their k-th occurrence of the same normalised argv, not by position: workers
+  // interleave differently from run to run, and one swap would shift every later pair
+  const byOccurrence = (t: GoldenTrace | undefined): Map<string, GoldenTrace["calls"][number]> => {
+    const seen = new Map<string, number>();
+    const m = new Map<string, GoldenTrace["calls"][number]>();
+    for (const c of t?.calls ?? []) {
+      const n = normalise(c.argv);
+      const k = seen.get(n) ?? 0;
+      seen.set(n, k + 1);
+      m.set(`${n}\0${k}`, c);
+    }
+    return m;
+  };
   const out = new Set<string>();
   const vById = new Map(variant.map((t) => [t.id, t]));
   const again = new Map(baseAgain.map((t) => [t.id, t]));
   for (const b of base) {
-    const b2 = again.get(b.id);
     const v = vById.get(b.id);
     if (!v) continue;
-    const n = Math.max(b.calls.length, v.calls.length);
-    for (let i = 0; i < n; i++) {
-      const x = b.calls[i];
-      const y = v.calls[i];
-      if (!x || !y || normalise(x.argv) !== normalise(y.argv)) {
+    const b2t = again.get(b.id);
+    const B = byOccurrence(b);
+    const V = byOccurrence(v);
+    const B2 = b2t === undefined ? null : byOccurrence(b2t);
+    for (const k of new Set([...B.keys(), ...V.keys()])) {
+      const x = B.get(k);
+      const y = V.get(k);
+      if (!x || !y) {
+        // an occurrence the two base runs disagree on is chance, not behaviour
+        if (B2 !== null && B2.has(k) !== B.has(k)) continue;
         if (x) out.add(key(x.argv));
         if (y) out.add(key(y.argv));
         continue;
       }
-      const x2 = b2?.calls[i];
-      const noisy =
-        x2 !== undefined &&
-        normalise(x2.argv) === normalise(x.argv) &&
-        normalise(x2.out) !== normalise(x.out);
+      const x2 = B2?.get(k);
+      const noisy = x2 !== undefined && normalise(x2.out) !== normalise(x.out);
       const differs =
         x.exit !== y.exit ||
         jsonShape(x.out) !== jsonShape(y.out) ||
