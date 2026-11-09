@@ -3,8 +3,9 @@
 # mu plugins: hosts, jobs, links, channels
 
 Status: draft 7, refuted six rounds, pending final check. Written
-2026-11-09. P1–P6b are built; draft 7's amendments name the landed code
-each one changes ([Refutation round 6](#refutation-round-6-backend-mapping)).
+2026-11-09. P1–P6a are built on `spec/mu-plugins`, and P6b (in review)
+on its own branch. Draft 7's amendments name the built code each one
+changes ([Refutation round 6](#refutation-round-6-backend-mapping)).
 Six refutation rounds shaped it:
 
 - **Round 1:** 49 findings, settled in draft 2.
@@ -335,7 +336,7 @@ next verb that touches the subject resolves the effect:
 | --- | --- | --- | --- |
 | `host.acquire` | no | `lookup(key)` if declared; else a byte-identical resend if `dedupe: exact` and within its window | unknown until `--abandon` |
 | `host.release` | **yes** (mandatory) | reissue the persisted request | — |
-| `job.start` (`handle: "reply"`) | no | `lookup(key)`; else a deduped resend. With `firstPrompt` (D8), this also resolves the first delivery: a found job proves its prompt accepted. | unknown until `--abandon-job` |
+| `job.start` (`handle: "reply"`) | no | `lookup(key)`, whose `found` is the `JobStart` (D8); else a deduped resend. With `firstPrompt` (D8), this also resolves the first delivery: a found job proves its prompt accepted. | unknown until `--abandon-job` |
 | `job.start` (`handle: "file"`) | no | the job file, as today; `lookup(key)` if declared, whose `found` fills the handle (`none` never acts) | today's unlaunched rule |
 | `job.stop` | **yes** (mandatory) | reissue | — |
 | `channel.send`, `fresh`, `interrupt` | no | `receipt(msgId)` if `receipt: exact` (only `accepted` resolves; `not-accepted` stays unknown, as today, `src/agents/task-spawn.ts:721-727`); else a deduped resend if declared for that method | delivery unknown, reported; until a human checks or closes |
@@ -395,7 +396,8 @@ pane, not the plugin, so today's unlaunched rule decides
   stop leaves nothing behind. For an `at-start` kind the resend may begin
   the first turn, and the stop ends it;
 - `mu host acquire` or `release` re-run;
-- `mu agent check <agent> <msgId>` for a delivery;
+- `mu agent check <agent> <msgId>` for a delivery, and for an `at-start`
+  kind's first prompt (D8);
 - spawn replay, for a task-spawn delivery, whose spawn receipt names the
   effect's key as its `msg_id`. For an `at-start` kind the effect is
   `job.start`, found by the prompt's `msg_id`.
@@ -470,7 +472,10 @@ column lists:
   `host_id`, `tree_base` (with today's `tree_path`: the remote worktree
   the spawn prepared, written before `job.start`), `collect_repo`, and
   the final-collect columns `final_owed`, `stop_gen` and `collect_next_at`
-  (D10).
+  (D10), and, for an `at-start` kind, the first delivery's receipt
+  `first_msg_id` and `first_inc` (D8). Those two are plain nullable
+  columns. P6a built v14 without the `carrier_jobs` additions, so they
+  join through `ADDED_COLUMNS` with no version bump (AGENTS.md).
   `host_stop` becomes nullable (it is a template's bytes, and a plugin job
   uses `instance`).
 - **`spawn_receipts`** is rebuilt without its `transport` CHECK
@@ -810,7 +815,8 @@ export interface JobKind {
   /** Computed by mu, never a wire call: the stop fence (host_stop bytes for lease; the handshake instance for a plugin). */
   identity(host: HostView | null): string;
   start(host: HostView | null, spec: JobSpec, key: EffectKey, call: Call): Promise<JobStart>;
-  lookup(host: HostView | null, key: EffectKey, opts: { fence: boolean }, call: Call): Promise<KeyLookup<string>>;
+  /** `found`: a `handle: "reply"` kind returns the whole `JobStart` the start returned, as a deduped resend would; a `handle: "file"` kind need fill only `handle`. */
+  lookup(host: HostView | null, key: EffectKey, opts: { fence: boolean }, call: Call): Promise<KeyLookup<{ handle: string } & Partial<JobStart>>>;
   status(db: Db, job: JobRef, call: Call): Promise<JobLiveness>;
   /** Idempotent; resolves only on proof the job is gone; a hand-back throws HostHandbackError. */
   stop(db: Db, job: JobRef, key: EffectKey, call: Call): Promise<void>;
@@ -882,16 +888,36 @@ delivery into `job.start`:
   `job.start`. Today's order stays reserve, identity, claim, `sending`,
   write (`src/agents/task-spawn.ts:4-7`), with `job.start` as the write.
   The view pane opens after the start, as for every reply kind.
-- **The key and the receipt.** The effect's key is the job token, and
-  `firstPrompt.msgId` is the spawn receipt's `msg_id`. The effect row
-  carries that `msg_id` and `seq` 1 (D4). A definite start result moves the
-  receipt to `sent`. An unresolved one leaves it `unknown`, and replay
-  resolves it by `job.start`'s rule-table row. The channel's
-  `receipt(msgId)` answers for the prompt like any send.
+- **The key.** The effect's key is the job token. `firstPrompt.msgId` is
+  the spawn receipt's `msg_id` for `--task`, and a fresh msgId for
+  `--send`. The effect row carries that `msg_id` and `seq` 1 (D4).
+- **The receipt (G1b).** The job record is the first delivery's receipt,
+  with or without a task. It holds `first_msg_id`, written with the
+  `job.start` effect, and `first_inc`, the opening incarnation, written
+  with the start's result. A task spawn's receipt also records the
+  `msg_id`, `runs: 0` and the incarnation, as today. A definite start
+  result moves that receipt to `sent`. An unresolved one leaves it
+  `unknown`, and replay resolves it by `job.start`'s rule-table row.
+- **`mu agent check <agent> <msgId>`.** When the msgId is the agent's
+  job record's `first_msg_id`, the check first resolves any unresolved
+  `job.start` effect by the rule table (D4). Then it answers from the
+  record:
+  - a started job is `accepted runs=0` (exit 0);
+  - a start that is still unresolved is `unreachable` (exit 1), naming
+    the effect key;
+  - a start proven never to have happened leaves no record, so the check
+    answers as for any other msgId: by the channel's `receipt(msgId)`, as
+    today.
 - **The baseline.** The reply's `baseline` (`runs: 0` and the
-  incarnation) is recorded on the receipt and is readiness: no separate
-  `baseline` call is made. `mu wait agent:<name>@0` waits for the first
+  incarnation) is readiness: no separate `baseline` call is made. A
+  `--send` spawn arms its wait from it, as `armSend` does today
+  (`src/cli/agents.ts:253`). `mu wait agent:<name>@0` waits for the first
   turn.
+- **Recovery (G1a).** `job.lookup`'s `found` is the `JobStart` the start
+  returned: handle, view and baseline. So a replay that resolves the
+  start by `lookup` has what a deduped resend would return. It records
+  the handle and `first_inc`, opens the view from `view`, moves the
+  receipt to `sent` with the baseline, and finishes readiness.
 
 **Second implementation:** mule (P7), the `lease` kind. After it, a
 plugin kind with a detached view and `handle: "reply"`, for
@@ -938,16 +964,34 @@ export interface AgentChannel extends ChannelDelivery {
   // StateAgentRef gains `job?: JobRef`.
 }
 
-export type SendResult = {
+/** A delivery's reply, normalized (landed in P4, src/channels/types.ts:235-239). A plugin channel answers in it. */
+export interface ChannelSendReply {
   channel: ChannelName;
-  ack: "exact" | "confirmed" | "sent" | "unknown";
+  ack: "exact" | "acknowledged" | "none";
   baseline?: RunBaseline;
   msgId?: string;
-  // per-channel detail fields stay, optional
-};
+}
 
 export function registerChannel(channel: AgentChannel): void;
 ```
+
+**The send result's conversion (G7).** A plugin's `channel.send`,
+`fresh` and `command` answer a `ChannelSendReply`, which mu narrows and
+uses as is. A built-in's own result converts to it through `sendRun`:
+
+- `ctl` gives `exact` (`src/channels/ctl.ts:288`).
+- `hooks` gives `acknowledged` when its ack is `confirmed` or `sent`, else
+  `none` (`src/channels/hooks.ts:939`).
+- `mux` gives `none` (`src/channels/mux.ts:74`).
+
+The CLI's `--json` keeps today's `SendResult` through `toSendResult`
+(`src/channels/registry.ts:80`):
+
+- `channel` becomes `transport`;
+- `baseline` becomes `runs` and `incarnation`;
+- `msgId` is kept;
+- the normalized `ack` is not printed, and hooks' own `ack` stays its
+  detail field.
 
 A delivery's recovery is not a channel method: D4's rule table drives it,
 using `receipt` and a deduped resend.
@@ -1219,12 +1263,12 @@ computed by mu (D7, D8); they are not wire calls.
 | --- | --- | --- |
 | `host.acquire`, `host.lookup`, `host.status`, `host.release` | `params`; `fence`; `handle` | as D6 |
 | `link.exec`, `link.fetch`, `link.push`, `link.checkSteps` | as D7; `checkSteps` takes `CheckContext` without `db` and `host`: `{phase, root?, agent?}` | `LinkRun`, steps |
-| `job.start` (the whole `JobSpec`, with `commandSource`, and `firstPrompt` for an `at-start` kind), `job.lookup`, `job.status`, `job.stop`, `job.attach`, `job.checkSteps` | as D8, plus `phase` | as D8. An `at-start` kind's `JobStart` carries `baseline`. |
+| `job.start` (the whole `JobSpec`, with `commandSource`, and `firstPrompt` for an `at-start` kind), `job.lookup`, `job.status`, `job.stop`, `job.attach`, `job.checkSteps` | as D8, plus `phase` | as D8. An `at-start` kind's `JobStart` carries `baseline`, and `job.lookup`'s `found` is that `JobStart`. |
 | `channel.readStates`, `channel.baseline`, `channel.receipt`, `channel.lastRun` | as D9 | readings and observations. A plugin reading's `source` is `plugin:<name>`, and `StateSource` (`src/agent-state.ts:12`) widens to admit it. A plugin reading must carry `runs` and `incarnation`, its turn count and channel incarnation, which today only ctl fills. `runs` is dense (D1): 0 before any settle, then one more per settled turn, never a backend's sequence id. |
 | `channel.watch` | `afterRuns?`, `inc?` | `{watchId, initial, afterRuns?}`, then one notification. A turn past `afterRuns` that already settled is reported at once, as ctl's `wait` does. |
-| `channel.send` | `text`, `msgId`, `mode: "followUp" \| "steer"`, `force`, `firstPrompt` (a flag, never true for an `at-start` kind, whose first prompt went with `job.start`), `expectIncarnation?` | `SendResult` |
-| `channel.fresh` | `text`, `msgId`, `force`, `expectIncarnation?` | `SendResult` |
-| `channel.command` | `name`, `instructions?`, `force`, `expectIncarnation?` | `SendResult` |
+| `channel.send` | `text`, `msgId`, `mode: "followUp" \| "steer"`, `force`, `firstPrompt` (a flag, never true for an `at-start` kind, whose first prompt went with `job.start`), `expectIncarnation?` | `ChannelSendReply` (D9) |
+| `channel.fresh` | `text`, `msgId`, `force`, `expectIncarnation?` | `ChannelSendReply` |
+| `channel.command` | `name`, `instructions?`, `force`, `expectIncarnation?` | `ChannelSendReply` |
 | `channel.interrupt` | `text`, `msgId`, `timeoutMs`, `expectIncarnation?` | `InterruptResult` |
 | `channel.abort` | `timeoutMs` | `AbortOutcome`, with an `aborted` flag |
 | `channel.answer` | `keys`, `force` | `AnswerResult` |
@@ -1367,8 +1411,9 @@ Each suite asserts:
 - byte-identical deduped resends making one effect;
 - the EOF and no-detach rules;
 - the canary;
-- for an `at-start` kind, that a found job had its first prompt accepted
-  and its turn settles at `runs: 1`; for every channel, that `runs` rises
+- for an `at-start` kind, that a found job had its first prompt accepted,
+  that `lookup`'s `found` equals the start's reply, and that its turn
+  settles at `runs: 1`; for every channel, that `runs` rises
   by one per settle;
 - that a kind refuses nothing it declares in `honours`, and that a spawn
   requesting an undeclared field refuses before any effect;
@@ -1533,7 +1578,7 @@ The order follows blast radius:
 | P6b | Protocol core: framing, process manager, handshake, `plugins`, `mu plugin add`/`list`/`rm`, the schema doc, the fake plugin; the link adapter and `host_profiles.plugin`. | A plugin can only report facts. The load rules refuse bad declarations. EOF and no-detach hold. With no plugin registered, the full suite is unchanged. | `link-contract`, `plugin-schema`, `plugin-skew`, `host-profiles` |
 | P6c | `effects`, the reconciler and the D4 rule table; the job adapter (bound); the `carrier_jobs` columns; the VISION:359 amendment. Round 6: the job caps `firstTurn`, `outlivesHost` and `honours` and the link cap `push` on the wire, in P6b's narrowers and schema (one digest change); `JobSpec.commandSource`; honour or refuse at spawn (G4). | Every plugin effect is written ahead with its params. A live creator owns its row. Resolution follows the rule table, fenced on the instance, and never resends a delivery older than another. A spawn requesting a field its kind does not honour refuses before any effect, and `read-only` never runs wider. | `job-contract`, `plugin-faults` F1–F10 and F12, `carrier-jobs`, `leftovers`, `lease-*`, `plugin-schema`, `remote-spawn` |
 | P6d | `hosts`, `mu host acquire`/`drain`/`release`/`--abandon`, atomic admission, the provider adapter, `remote_recovery.host_identity`, both host policies. Round 6: `link.push` in the link adapter and the provider-host base rule with `RemoteBaseMissingError` (G3); `outlivesHost` on a `lost` host (G2); `idleReclaimMs` read only as the in-life-collect switch (G5). | A host's release waits for every reference; a `lost` host's rows close without the host, except that an `outlivesHost` job is stopped with proof first, and F11 converges. A provider-host worktree starts from the caller's commit or refuses, naming it. The final collect clears `final_owed` only when it started after the stop (`stop_gen` compare-and-clear); release and tree removal wait on it. | `host-provider-contract`, `link-contract`, `plugin-faults` F11, `host-policy`, `remote-recovery*`, `remote-collect*`, `remote-spawn` |
-| P6e | The channel adapter, the plugin spawn path, detached views and the view reattach, the unknown-channel typed error, `docs/reference/plugin-protocol.md` complete. Round 6: the `at-start` first turn, folded into `job.start` for `--task` and `--send`, with its receipt and baseline (G1); dense `runs` in the channel suite (G5). | Deliveries to plugin channels go only through effects, encoded as D13 says. An `at-start` kind's first prompt goes only with `job.start`, after the claim, and is never sent again. A detached job survives its view. The end-to-end walkthrough passes against the fake plugin. | `channel-contract`, `spawn-receipts*`, `wait-*`, `reconcile*`, `lease-reattach*`, `acceptance.integration`, a new `plugin-e2e` test |
+| P6e | The channel adapter, the plugin spawn path, detached views and the view reattach, the unknown-channel typed error, `docs/reference/plugin-protocol.md` complete. Round 6: the `at-start` first turn, folded into `job.start` for `--task` and `--send`, with its receipt and baseline (G1); `first_msg_id`/`first_inc` and `mu agent check` on them, and lookup recovery from the `JobStart` (G1a, G1b); dense `runs` in the channel suite (G5). | Deliveries to plugin channels go only through effects, encoded as D13 says. An `at-start` kind's first prompt goes only with `job.start`, after the claim, and is never sent again. A spawn replay resolved by `lookup` finishes readiness and the receipt; `mu agent check` answers a taskless first prompt. A detached job survives its view. The end-to-end walkthrough passes against the fake plugin. | `channel-contract`, `spawn-receipts*`, `wait-*`, `reconcile*`, `lease-reattach*`, `acceptance.integration`, a new `plugin-e2e` test |
 | P7 | mule: `--key`, the five-state `poll`, `--key-prefix`, the non-detaching cancel, the `mu-plugin-mule` bin. In mu: `hostMuleStarter` adds `--plugin mule`. | mu's exported link and job suites pass against `mu-plugin-mule`. A killed spawn recovers its job by `lookup(token)` with one dispatch. | `cargo test`; `scripts/smoke-lease.sh` with the plugin |
 
 ## Risks
@@ -1820,10 +1865,12 @@ A survey mapped draft 6 onto a backend that provisions machines on
 demand and runs session-hosted agents on them. It listed what the
 protocol cannot express, under gap ids (C1–C3, H1–H3, M1–M4). Two fresh
 reviewers refuted the list. Five items were accepted, and each is settled
-with the smallest change. P1–P6b were built by then, so each row names
-the landed code it changes and the unit that carries it.
+with the smallest change. By then P1–P6a were built on `spec/mu-plugins`
+and P6b (in review) on its own branch. So each row names the built code
+it changes and the unit that carries it. Code under `src/plugins/` and
+`schemas/` is P6b's, read on its branch.
 
-| ID | Sev | Gap | Finding (short) | Disposition | Where | Unit | Landed code it changes |
+| ID | Sev | Gap | Finding (short) | Disposition | Where | Unit | Built code it changes |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | G1 | critical | C1 | a backend that creates a job only with its first prompt, which starts turn 1, cannot be expressed: `JobSpec` has no prompt, and a turn starts only on a send | fixed | D1 Turn; D4 (`job.start` row, `seq`, triggers); D8 `firstTurn: "at-start"`, `JobSpec.firstPrompt`, `JobStart.baseline`, the folded spawn order; D11; D12; D13 (load rule, `job.start`, `channel.send`); walkthrough 3 and 5 | P6e (the caps on the wire in P6c) | `src/jobs/types.ts` `JobCaps`; P6b's job narrower in `src/plugins/protocol.ts` and `schemas/plugin-protocol-v1.json`; `src/agents/task-spawn.ts` and `src/agents/spawn.ts` (the placeholder row first for an `at-start` kind) |
 | G2 | high | C2 | session-hosted jobs outlive their machine, but `gone` made the `lost` close record them stopped without a stop | fixed | D1 `lost` and abandon rows; D6 "`gone` is a proof"; D8 `outlivesHost`; D10; D12; F11; walkthrough 7 | P6d (the cap on the wire in P6c) | the `HostStatus` comment in `src/host-provider.ts`; P6b's job narrower. The `lost` close itself is P6d's, not yet built. |
@@ -1834,9 +1881,22 @@ the landed code it changes and the unit that carries it.
 Both reviewers refuted H1 (an asynchronous release), H3 (a lookup that
 cannot prove absence), M3 (a provider-wide quota) and M4 (a constant
 incarnation): each is expressible today, and nothing changes. The
-narrowers in P6b accept only the keys they name, so G1–G4's new fields
+narrowers in P6b (in review) accept only the keys they name, so G1–G4's new fields
 are a schema change, made once in P6c with one digest change. Each new
 field is optional, so P6b's fixtures stay valid.
+
+### Round 6b: the amendment refuted
+
+Two reviewers checked draft 7 (`e93903a8`). One refuted it with two
+highs and two mediums. The other confirmed it, with one low that matches
+the first high. All four are fixed.
+
+| ID | Sev | Finding (short) | Disposition | Where | Unit | Built code it changes |
+| --- | --- | --- | --- | --- | --- | --- |
+| G1a | high | a spawn replay that resolves an `at-start` start by `lookup` gets only a handle: no view and no opening incarnation for readiness and the receipt | fixed | D8 `lookup`'s `found` is the whole `JobStart` for a reply kind, and the recovery bullet; D4 `job.start` row; D13 `job.lookup`; D16 (`found` equals the reply) | P6e (the job adapter's lookup type in P6c) | none yet: `src/jobs/types.ts` gains `lookup`, with this type, in P6c |
+| G1b | high | the first delivery's receipt lived on the spawn receipt, which needs a task (`src/db-receipts.ts:34,50`), so taskless `spawn --send` had none | fixed | D8: the job record is the receipt (`first_msg_id`, `first_inc`); `mu agent check` resolves the start effect, then answers `accepted runs=0` or `unreachable`; `--send` arms its wait from the start's baseline; D5 columns via `ADDED_COLUMNS`; D4 triggers | P6e | `carrier_jobs` (`src/db-carrier.ts:23-43`) and `ADDED_COLUMNS` (`src/db-schema.ts:59`); `cmdAgentCheck` (`src/cli/agents.ts:782`); the taskless `--send` path (`src/cli/agents.ts:196-253`) |
+| G6 | medium | the "P6b landed" claim was false at the base: `spec/mu-plugins` has no `src/plugins/` or `schemas/` | fixed | status line, round 6 intro and table header, History: P6b is "(in review)" on its own branch | — | none |
+| G7 | medium | D9/D13's `SendResult` (`channel`, ack `exact`/`confirmed`/`sent`/`unknown`) contradicted P4's `ChannelSendReply` | fixed | D9 now states `ChannelSendReply` exactly as landed (`src/channels/types.ts:235-239`, ack `exact`/`acknowledged`/`none`), and the conversion: built-ins through `sendRun`, the CLI through `toSendResult`; D13's send, fresh and command results | P6e | none: P4 already built it |
 
 ## History
 
@@ -1885,11 +1945,15 @@ field is optional, so P6b's fixtures stay valid.
   Every file:line was reopened at `42881032` (mu) and `1192781` (mule).
 
 - **Draft 7** (2026-11-09) settles round 6's five accepted items, checked
-  against the built P1–P6b:
+  against the built P1–P6a and P6b (in review):
   - a first turn at `job.start` (`firstTurn: "at-start"`, `firstPrompt`);
   - jobs that outlive their host (`outlivesHost`);
   - seeding a provider host's repo (`link.push`, or a typed refusal);
   - honour or refuse for `JobSpec` fields (`honours`);
   - dense `runs` and the meaning of `idleReclaimMs`.
+
+  Round 6b then fixes four findings on draft 7: lookup recovery returns
+  the `JobStart`, the job record is a taskless first prompt's receipt,
+  the send result is P4's `ChannelSendReply`, and P6b is marked in review.
 
 <!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
