@@ -68,7 +68,7 @@ it, and `behind`: lines you hold but have not applied. A non-zero
 
 ```bash
 mu sync --repair c8ec                              # re-read a peer's file from the start
-mu sync --from /mnt/devserver/.local/state/mu-next/mu.db # read a peer's DB directly
+mu sync --from /mnt/devserver/.local/state/mu5/mu.db # read a peer's DB directly
 MU_SYNC_DIR=/media/usb-stick mu state              # one-off folder
 ```
 

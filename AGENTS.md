@@ -129,7 +129,8 @@ first.
   with the released version gets a new versioned directory under
   `~/.local/state` (`<tool><major>`, e.g. `mu5`, `murmur2`), never a
   `<tool>-next` name; additive changes stay in the current directory (mu's
-  is `mu-next`, from before this rule). Never run a development build
+  is `mu5` since schema 14; mu 4's `mu-next` is the state import's source,
+  never written). Never run a development build
   against the real state directory: tests and manual runs use the state-dir
   override (`MU_STATE_DIR`, `MU_DB_PATH`, a blank `MU_SYNC_DIR`; for murmur,
   `MURMUR_STATE_DIR`) and a private tmux socket.
@@ -161,12 +162,15 @@ first.
 
 ### Update the schema
 
-The schema is v13 (`CURRENT_SCHEMA_VERSION` in `src/db.ts`). `openDb`
+The schema is v14 (`CURRENT_SCHEMA_VERSION` in `src/db.ts`). `openDb`
 runs `upgradeSchema(db)`: the idempotent CREATE-IF-NOT-EXISTS DDL, any
 missing `ADDED_COLUMNS`, the schema stamp, and the capture triggers with
-their stamp, in ONE transaction. It accepts only v13 (no ladder; a v13
+their stamp, in ONE transaction. It accepts only v14 (no ladder; a v14
 file missing a later addition is completed) and refuses older DBs
 (`SchemaTooOldError`) and newer ones (`SchemaTooNewError`), both exit 4.
+A mu 4 (v13) DB reaches v14 only through the state import
+(`src/state-import.ts`): `upgradeSchema(db, { v13: true })` completes its
+copy, then `step13To14` converts it; a rebuild a v13 file needs goes there.
 
 1. Bump `CURRENT_SCHEMA_VERSION` and mirror the shape in
    `CURRENT_SCHEMA`. A column an existing DB lacks also goes in
@@ -174,7 +178,8 @@ file missing a later addition is completed) and refuses older DBs
    in place); such a column alone needs no bump. Changing `CAPTURED_COLUMNS` or a trigger generator means
    bumping `CAPTURE_VERSION` and the pinned checksum in
    `test/capture-persistent.test.ts`. Test the upgrade on a populated
-   file (`test/fixtures/v13-populated.db.gz`, `test/loop-storage.test.ts`).
+   file (`test/fixtures/v13-populated.db.gz`, converted by `test/_v13.ts`;
+   `test/loop-storage.test.ts`).
 2. Classify every new table in `PORTABLE_TABLES` or
    `MACHINE_LOCAL_TABLES`. `test/entities.test.ts` fails otherwise.
 3. Update `test/db.test.ts` and CHANGELOG `### Changed`.
@@ -270,7 +275,7 @@ documenting" is not a reason.
 - No render layer beyond `cli-table3` + `picocolors`, except `ink`
   inside `src/cli/tui/`. Never a second TUI stack.
 - Don't bundle pi. It is an optional peer dependency.
-- Write files only under `~/.local/state/mu-next/`, `~/.cache/mu/`, or the
+- Write files only under `~/.local/state/mu5/`, `~/.cache/mu/`, or the
   repo. The one exception is `mu init`, which writes its own hook entries and
   skill copies into each harness's config, where `CLAUDE_CONFIG_DIR` and
   `CODEX_HOME` put it (spec D13, D17). The cache dir

@@ -57,6 +57,28 @@ such as `send --fresh`, fail with exit 4.
 An agent started before the pi package was installed has no control
 socket, so a send to it fails with `ctl missing`. Restart it.
 
+## Upgrade from 4.x to 5
+
+mu 5 uses schema 14 and its own state dir, `~/.local/state/mu5`
+(`$XDG_STATE_HOME/mu5`). Every mu 4 build refuses a v14 DB, and mu 5
+never opens mu 4's DB in place. Instead, the first mu 5 verb imports
+`~/.local/state/mu-next/mu.db` once, and says so on stderr. mu 4's
+directory is never written, so mu 4 keeps working on its own copy. From
+then on the two are separate sync peers and cannot see each other's
+agents.
+
+The import refuses, leaving everything as it was, until two things hold:
+
+1. Every mu 4 agent, lease reservation and unfinished delegate call is
+   closed with mu 4: their sockets, job files and locks live under
+   `mu-next`.
+2. With `MU_SYNC_DIR` set, mu 4 has published all its ops: run `mu sync`
+   with mu 4 first. mu 5 gets a new machine id and never publishes mu 4's.
+
+Then run mu 5 again. With `MU_STATE_DIR` or `MU_DB_PATH` set, nothing is
+imported. To start fresh instead, create mu 5's DB once with any verb run
+as `MU_DB_PATH=~/.local/state/mu5/mu.db mu state`.
+
 ## Upgrade from 3.x to 4.0
 
 4.0 is a breaking release with its own DB. It does not import a 3.x DB,
@@ -144,12 +166,12 @@ To move a 4.x workstream between machines, see the
 
 ## Old DBs
 
-A v13 DB missing a later addition is completed on its first open, in one
+A v14 DB missing a later addition is completed on its first open, in one
 transaction: it either completes or leaves the file as it was. mu
-refuses a DB older than v13 with `SchemaTooOldError`, and a newer one
+refuses a DB older than v14 with `SchemaTooOldError`, and a newer one
 with `SchemaTooNewError`. Both exit 4 and leave the file alone, so
-pointing 4.0 at a 3.x DB (`MU_DB_PATH`) is safe. Back up an old DB and
-move it aside.
+pointing mu 5 at a mu 4 or 3.x DB (`MU_DB_PATH`) is safe. Back up an old
+DB and move it aside.
 
 ## Run mu from a checkout
 
