@@ -317,7 +317,16 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
   };
   const sb = await createSandbox(o.surface, { env: { PI_SESSION_ID: ORCH_SESSION } });
   try {
-    const st = await c.seed(sb);
+    let st: St;
+    try {
+      st = await c.seed(sb);
+    } catch (e) {
+      // the seed is spelled in base grammar: a surface it fails on broke a base spelling (§1.4
+      // lint 3), so the row is invalid like a failed lead-in, never a crash of the round
+      row.invalid = true;
+      row.why.push(`seed invalid: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
+      return row;
+    }
     const leadStart = Date.now();
     const steps = c.leadIn(sb, st, para.leadIn);
     const lead = await runLeadIn(sb, steps, c.shell, limitMs);

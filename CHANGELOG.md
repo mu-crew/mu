@@ -307,6 +307,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   outright ("pack still carries denied text"). A string in a JSON array
   that names the rig is now removed; any other hit in a JSON file is still
   reported and refuses the pack.
+- **Eval: a probe seed that fails on a surface gives an invalid row**
+  (hill-r2 c2). Seeds are spelled in base grammar; a c2 variant that made a
+  bare `agent close --json` apply the close broke the seed's revision read,
+  and the throw crashed `tournament build` (and would have dropped the rows
+  in R1 instead of scoring them). `playCase` now marks the row invalid
+  (`seed invalid: …`), scored like a failed lead-in (spec §1.4 lint 3: an
+  invalid headline row eliminates), and a variant's failed golden pass no
+  longer stops `build` for the others.
 - **Eval: `tournament build` runs its golden passes side by side**
   (hill-r2 c2). Base's two passes and up to `--passes` (default 4) variant
   passes run at once; each row still takes its own muzzle claim and rows are

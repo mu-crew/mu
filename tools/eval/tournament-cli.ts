@@ -825,12 +825,20 @@ export async function tournamentCli(argv: string[]): Promise<number> {
           for (let i = next++; i < todo.length; i = next++) {
             const t = todo[i];
             if (!t) continue;
-            allTraces[i] = t.build.built.ok
-              ? await collectGoldenTraces(
-                  { ...surfaceFromDir(`hill2-${t.manifest.id}`, t.build.dir), family: "next" },
-                  { cases: NEXT_CASES, scenarios },
-                )
-              : [];
+            try {
+              allTraces[i] = t.build.built.ok
+                ? await collectGoldenTraces(
+                    { ...surfaceFromDir(`hill2-${t.manifest.id}`, t.build.dir), family: "next" },
+                    { cases: NEXT_CASES, scenarios },
+                  )
+                : [];
+            } catch (e) {
+              // one variant's broken golden pass must not discard the others'
+              console.log(
+                `${t.manifest.id}: golden pass failed (${e instanceof Error ? e.message : String(e)}); no traces`,
+              );
+              allTraces[i] = [];
+            }
           }
         }),
       );
