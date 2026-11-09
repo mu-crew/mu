@@ -37,8 +37,9 @@
 // A placeholder after a backslash, or inside $(...) / backticks within double
 // quotes, is refused (the lexer does not nest shells).
 // {env} is a run of KEY=VALUE assignment words, so it can precede a command.
-// Keys are the five remote identity variables only (never the local DB,
-// state or sync dir); each VALUE is shell-quoted (`hostEnvWords`). The words
+// Keys are the seven of `HOST_ENV_KEYS` only: the five remote identity
+// variables plus a hook harness worker's two (never the local DB, state or
+// sync dir); each VALUE is shell-quoted (`hostEnvWords`). The words
 // are shell text, so in '...' or "..." they are escaped for that quote like
 // any text, and `{env:sh}` is refused (it is already text for the inner shell).
 //

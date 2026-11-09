@@ -73,10 +73,26 @@ function runnerTakers(files: ReadonlyArray<readonly [string, string]>): string[]
       out.push(`${file}: * from hosts`);
       continue;
     }
+    // The barrel only re-exports; the link and the stop only import (a re-export there
+    // would hand the runner on to anyone importing them).
+    const barrel = file === "src/index.ts";
     for (const { name, kind } of b) {
       if (!RUNNER.has(name)) continue;
-      if (RUNNER_OK.has(file) && (file !== "src/index.ts" || kind === "export")) continue;
-      out.push(`${file}: ${name}`);
+      if (RUNNER_OK.has(file) && barrel === (kind === "export")) continue;
+      out.push(`${file}: ${kind === "export" ? "re-export " : ""}${name}`);
+    }
+    // Nor a local re-export of the imported binding (`export { runLeasedTemplate };`).
+    if (!barrel) {
+      for (const m of text.matchAll(/\bexport\s+(?:type\s+)?\{([^}]*)\}(?!\s*from)/g)) {
+        for (const part of (m[1] ?? "").split(",")) {
+          const name =
+            part
+              .trim()
+              .split(/\s+as\s+/)[0]
+              ?.trim() ?? "";
+          if (RUNNER.has(name)) out.push(`${file}: re-export ${name}`);
+        }
+      }
     }
   }
   return out;
@@ -98,9 +114,43 @@ function calls(text: string, fn: string): string[] {
   return out;
 }
 
-/** An expansion of the exec or fetch template: running it by hand is running a template. */
-const expandsExecOrFetch = (call: string): boolean =>
-  /\.(exec|fetch)\b|["'](exec|fetch)["']/.test(call);
+/** The top-level arguments of one call's text (`fn(a, {b, c}, "d")` → three). */
+function args(call: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | null = null;
+  let cur = "";
+  for (const c of call.slice(call.indexOf("(") + 1, -1)) {
+    if (quote !== null) {
+      if (c === quote) quote = null;
+    } else if (c === '"' || c === "'" || c === "`") quote = c;
+    else if ("([{".includes(c)) depth++;
+    else if (")]}".includes(c)) depth--;
+    else if (c === "," && depth === 0) {
+      out.push(cur.trim());
+      cur = "";
+      continue;
+    }
+    cur += c;
+  }
+  if (cur.trim() !== "") out.push(cur.trim());
+  return out;
+}
+
+/**
+ * Outside the runner and the link, an expansion may only fill a pane command: the
+ * template is a `.shell` or `.attach` field, and a scope, when given, is a literal
+ * other than exec or fetch. Anything else (an identifier holding the exec bytes, no
+ * scope, a computed scope) may be the exec or fetch template run by hand.
+ */
+function expandsExecOrFetch(call: string): boolean {
+  const [template, , scope, ...rest] = args(call);
+  if (rest.length > 0 || template === undefined) return true;
+  if (!/^[\w.?]+\.(shell|attach)$/.test(template)) return true;
+  if (scope === undefined) return false;
+  const lit = /^["']([\w-]+)["']$/.exec(scope)?.[1];
+  return lit === undefined || lit === "exec" || lit === "fetch";
+}
 
 const all = (): Array<readonly [string, string]> =>
   sources(SRC).map((p) => [rel(p), readFileSync(p, "utf8")] as const);
@@ -168,10 +218,23 @@ describe("the link seam", () => {
       ["src/e.ts", 'const h = await import("./hosts.js");'],
       ["src/index.ts", 'import { runHostTemplate } from "./hosts.js";'],
     ];
+    // The link or the stop handing the runner on: by `from`, or by a local re-export.
+    expect(
+      runnerTakers([
+        ["src/host-link.ts", 'export { runLeasedTemplate } from "./hosts.js";'],
+        [
+          "src/carrier-stop.ts",
+          'import { runLeasedTemplate } from "./hosts.js";\nexport { runLeasedTemplate as run };',
+        ],
+      ]),
+    ).toEqual([
+      "src/host-link.ts: re-export runLeasedTemplate",
+      "src/carrier-stop.ts: re-export runLeasedTemplate",
+    ]);
     expect(runnerTakers(planted)).toEqual([
       "src/agents/a.ts: runHostTemplate",
       "src/b.ts: runLeasedTemplate",
-      "src/c.ts: runHostTemplate",
+      "src/c.ts: re-export runHostTemplate",
       "src/d.ts: * from hosts",
       "src/e.ts: * from hosts",
       "src/index.ts: runHostTemplate",
@@ -192,6 +255,13 @@ describe("the link seam", () => {
       ).map(expandsExecOrFetch),
     ).toEqual([true]);
     expect(expandsExecOrFetch('expandHostTemplate(profile.shell, { cwd: "." })')).toBe(false);
+    expect(
+      expandsExecOrFetch('expandHostTemplate(profile.attach, { job: a.job, cwd: "." }, "attach")'),
+    ).toBe(false);
     expect(expandsExecOrFetch('expandHostTemplate(t, v, "fetch")')).toBe(true);
+    // The exec bytes through an identifier, with no scope or a computed one.
+    expect(expandsExecOrFetch("expandHostTemplate(tpl, { cmd })")).toBe(true);
+    expect(expandsExecOrFetch("expandHostTemplate(profile.shell, v, scope)")).toBe(true);
+    expect(expandsExecOrFetch('expandHostTemplate(profile.shell, v, "exec")')).toBe(true);
   });
 });
