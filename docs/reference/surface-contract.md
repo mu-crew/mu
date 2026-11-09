@@ -14,7 +14,7 @@ that has not shipped.
 
 ## What ships
 
-Schema 13, `CAPTURE_VERSION` 6, 29 classified tables and 4 views
+Schema 14, `CAPTURE_VERSION` 6, 29 classified tables and 4 views
 (`PORTABLE_TABLES`: `workstreams`, `tasks`, `task_edges`, `task_notes`,
 `checks`;
 every other table is machine-local, see `src/db.ts`). The verbs and

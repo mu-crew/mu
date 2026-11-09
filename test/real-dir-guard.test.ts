@@ -26,6 +26,7 @@ describe("test XDG isolation", () => {
 
   it.each([
     [".cache", "mu"],
+    [".local", "state", "mu5"],
     [".local", "state", "mu-next"],
     [".local", "state", "mu"],
   ])("refuses sync and async writes under the real ~/%s", async (...parts) => {

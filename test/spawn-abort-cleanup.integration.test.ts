@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { stateDirIn } from "../src/state-dir.js";
 import { initGitRepo } from "./_git.js";
 
 const execFileP = promisify(execFile);
@@ -67,7 +68,7 @@ describeIfBuilt("spawn --worktree killed mid-create", () => {
       XDG_STATE_HOME: join(dir, "state"),
       MU_SPAWN_LIVENESS_MS: "0",
     };
-    wt = join(dir, "state", "mu-next", "worktrees", "ab", "a1");
+    wt = join(stateDirIn(join(dir, "state")), "worktrees", "ab", "a1");
   });
 
   afterEach(() => {

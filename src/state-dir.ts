@@ -22,7 +22,12 @@ const MU4_STATE_DIR_NAME = "mu-next";
  */
 export function defaultStateDir(): string {
   if (process.env.MU_STATE_DIR) return process.env.MU_STATE_DIR;
-  return join(xdgStateHome(homedir()), STATE_DIR_NAME);
+  return stateDirIn(xdgStateHome(homedir()));
+}
+
+/** mu's state dir under a state home (`$XDG_STATE_HOME` or `~/.local/state`). */
+export function stateDirIn(stateHome: string): string {
+  return join(stateHome, STATE_DIR_NAME);
 }
 
 /**
@@ -35,7 +40,7 @@ export function stateImportPaths(): { source: string; target: string } | null {
   const home = xdgStateHome(homedir());
   return {
     source: join(home, MU4_STATE_DIR_NAME, "mu.db"),
-    target: join(home, STATE_DIR_NAME, "mu.db"),
+    target: join(stateDirIn(home), "mu.db"),
   };
 }
 

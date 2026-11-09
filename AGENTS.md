@@ -162,8 +162,8 @@ first.
 
 ### Update the schema
 
-The schema is v14 (`CURRENT_SCHEMA_VERSION` in `src/db.ts`). `openDb`
-runs `upgradeSchema(db)`: the idempotent CREATE-IF-NOT-EXISTS DDL, any
+The schema is v14 (`CURRENT_SCHEMA_VERSION` and `CURRENT_SCHEMA` in
+`src/db-schema.ts`, the upgrade in `src/db.ts`). `openDb` runs `upgradeSchema(db)`: the idempotent CREATE-IF-NOT-EXISTS DDL, any
 missing `ADDED_COLUMNS`, the schema stamp, and the capture triggers with
 their stamp, in ONE transaction. It accepts only v14 (no ladder; a v14
 file missing a later addition is completed) and refuses older DBs

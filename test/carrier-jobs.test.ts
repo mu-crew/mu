@@ -189,7 +189,7 @@ describe("job file path and the socket invariant", () => {
   });
 
   it("is hashed past the same bound as a ctl socket, and stays a function of (ws, agent)", () => {
-    const long = "/Users/someone/.local/state/mu-next/some/deep/state/dir";
+    const long = "/Users/someone/.local/state/mu5/some/deep/state/dir";
     const p = carrierJobFilePath("w".repeat(30), "a".repeat(30), long);
     expect(p).toMatch(/\/carrier\/_h\/[0-9a-f]{16}\.job$/);
     expect(p).toBe(carrierJobFilePath("w".repeat(30), "a".repeat(30), long));
@@ -208,7 +208,7 @@ describe("job file path and the socket invariant", () => {
     // A mule forward table wedges if one LOCAL maps to two REMOTEs (mule spec). Both paths derive
     // from (workstream, agent), so the map local -> remote must be a function over all of these.
     const names = ["a", "b", "w1", "worker-1", "x".repeat(32), "y".repeat(31), "a-b", "b-c", "c"];
-    const states = ["/s", "/Users/someone/.local/state/mu-next/some/deep/state/dir"];
+    const states = ["/s", "/Users/someone/.local/state/mu5/some/deep/state/dir"];
     const remoteOf = new Map<string, string>();
     let hashed = 0;
     let readable = 0;
@@ -236,7 +236,7 @@ describe("job file path and the socket invariant", () => {
   it("a hashed path never aliases a valid (workstream, agent): `h` + a hash-looking agent", () => {
     // The reviewer's case: ws "w"x32 / agent "worker-3"+"a"x24 hashes to fc1a869c81c2949e, which
     // is itself a valid agent name under the valid workstream "h".
-    const stateDir = "/Users/someone/.local/state/mu-next";
+    const stateDir = "/Users/someone/.local/state/mu5";
     const longWs = "w".repeat(32);
     const longAgent = `worker-3${"a".repeat(24)}`;
     const hashed = ctlSocketPath(longWs, longAgent, stateDir);
@@ -264,7 +264,7 @@ describe("job file path and the socket invariant", () => {
   it("a hashed local socket can still pair with a readable remote: still one remote per (ws, agent)", () => {
     const ws = "w".repeat(20);
     const agent = "a".repeat(20);
-    const deep = "/Users/someone/.local/state/mu-next/some/deep/state/dir/more";
+    const deep = "/Users/someone/.local/state/mu5/some/deep/state/dir/more";
     expect(ctlSocketPath(ws, agent, deep)).toContain("/sock/_h/");
     expect(remoteCtlSocketPath(ws, agent, 501)).toBe(`/tmp/mu-501/${ws}/${agent}.sock`);
     // Another state dir (short): a readable local, the SAME remote for the same pair.
