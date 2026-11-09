@@ -45,7 +45,7 @@
 // the same exec unless the read before it brought the harness's own
 // interrupt; `--fresh` is refused (its confirmation needs a poll).
 
-import { murmurAvailable, readBaseStates } from "../agent-state.js";
+import { murmurAvailable } from "../agent-state.js";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -67,6 +67,7 @@ import { paneUp } from "../jobs/pane.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { sleep } from "../tmux.js";
+import { baseReadStates } from "./base-read.js";
 import {
   eventArrived,
   firstSendAckMs,
@@ -91,6 +92,7 @@ import {
 } from "./hooks-ready.js";
 import type {
   AgentChannel,
+  ChannelCaps,
   ChannelTarget,
   DeliveryOptions,
   DeliveryTarget,
@@ -98,6 +100,8 @@ import type {
   RemoteReader,
   RemoteReadResult,
   SendResult,
+  SentFacts,
+  SentRun,
 } from "./types.js";
 
 /**
@@ -433,12 +437,12 @@ async function remoteStopped(
 }
 
 /**
- * The fence a confirmed paste gives a wait: the turns settled before its run
+ * The run baseline a confirmed paste gives a wait: the turns settled before its run
  * (`run_count` less one) in its session. A remote paste (`sent`) gives the
  * prompts the gate counted before it, so the next read confirms its run. An
  * unconfirmed paste gives none.
  */
-export function hooksFence(
+export function hooksRunBaseline(
   sent: Pick<SendResult, "ack" | "runCount" | "sessionId">,
 ): Pick<InterruptResult, "runs" | "incarnation"> {
   if (sent.ack === "unknown" || sent.ack === undefined || sent.runCount === undefined) return {};
@@ -463,7 +467,7 @@ async function interrupt(
     wasBusy: stop.wasBusy,
     pending: false,
     ...(stop.stopped !== undefined ? { stopped: stop.stopped } : {}),
-    ...hooksFence(sent),
+    ...hooksRunBaseline(sent),
     ack: sent.ack ?? "unknown",
     ...(sent.runCount !== undefined ? { runCount: sent.runCount } : {}),
     ...(sent.sessionId !== undefined ? { sessionId: sent.sessionId } : {}),
@@ -907,10 +911,68 @@ async function hooksLastRun(
   }
 }
 
+/** The hooks channel's row of the D9 matrix. */
+const HOOKS_CAPS: ChannelCaps = {
+  fence: "none",
+  receipt: "acknowledged",
+  steer: "none",
+  interrupt: "unconfirmed",
+  fresh: "in-place",
+  answer: true,
+  command: true,
+  watch: "stream",
+  settleText: "tied",
+};
+
+/**
+ * The run a hooks delivery started: an interrupt carries it as `runs`; a
+ * paste gives its confirmed run count's baseline (`hooksRunBaseline`).
+ */
+function hooksSendRun(sent: SentFacts): SentRun {
+  if (sent.runs !== undefined) {
+    return {
+      baseline: {
+        runs: sent.runs,
+        ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
+      },
+    };
+  }
+  const b = hooksRunBaseline(sent);
+  return b.runs === undefined
+    ? {}
+    : {
+        baseline: {
+          runs: b.runs,
+          ...(b.incarnation !== undefined ? { incarnation: b.incarnation } : {}),
+        },
+      };
+}
+
+function describeHooksSend(sent: SendResult, o: { fresh?: boolean }): string {
+  if (sent.ack === "sent") return "via hooks to its host, sent: the next wait confirms it";
+  const run = sent.runCount !== undefined ? `: run ${sent.runCount}` : "";
+  return `via hooks${o.fresh ? ", fresh session" : ""}, confirmed${run}`;
+}
+
+function describeHooksInterrupt(r: InterruptResult): string {
+  const what = !r.wasBusy
+    ? "it was idle"
+    : r.stopped === "unconfirmed"
+      ? "interrupted a busy run, unconfirmed: idle?"
+      : "interrupted a busy run";
+  const run = r.runCount !== undefined ? `: run ${r.runCount}` : "";
+  const how = r.ack === "sent" ? "sent: the next wait confirms it" : `confirmed${run}`;
+  return `via hooks, ${what}, ${how}`;
+}
+
 export const hooksChannel: AgentChannel = {
   name: "hooks",
-  fence: false,
-  readStates: (agents, opts) => readBaseStates(agents, opts, opts.livenessOnly),
+  caps: HOOKS_CAPS,
+  fence: HOOKS_CAPS.fence === "sync",
+  sendRun: hooksSendRun,
+  describeSend: describeHooksSend,
+  describeInterrupt: describeHooksInterrupt,
+  readStates: baseReadStates,
   watch: watchHooks,
   // D4: settled turns and `session_id` stand in for pi's runs and incarnation.
   // A remote worker's baseline is the local count, not a fresh read of its node:

@@ -14,9 +14,8 @@
 // thin-wrapper was a vestigial re-export from the cluster split, gone
 // in schema_v5_cleanups.
 
-import { dirname } from "node:path";
 import { getAgentById } from "../../agents.js";
-import { channelOf } from "../../channels/index.js";
+import { agentChannel, channelTarget } from "../../channels/index.js";
 import {
   assertTaskInWorkstream,
   emitJson,
@@ -485,9 +484,11 @@ export async function cmdTaskNote(
       ? getAgentById(db, task.ownerId)
       : undefined;
   if (owner !== undefined && owner.name !== author) {
-    // The hint names the send its channel takes: only ctl steers mid-turn.
-    const channel = channelOf(owner, dirname(db.name));
-    warnings.push(say("task.note_unseen", owner.name, owner.workstreamName, channel));
+    // The hint names the send its channel takes, by the channel's steer.
+    const channel = agentChannel(channelTarget(db, owner));
+    warnings.push(
+      say("task.note_unseen", owner.name, owner.workstreamName, channel.name, channel.caps.steer),
+    );
   }
   emitWarnings(warnings, opts.json);
   if (opts.json) {

@@ -303,6 +303,7 @@ export interface LeaseJobKind extends JobKind {
 export const leaseKind: LeaseJobKind = {
   name: "lease",
   caps: { view: "bound", handle: "file", checks: ["template", "agent"] },
+  answer: "running",
   /** The carrier pane still runs (a retained pane whose command ended does not). */
   async status(_db, job): Promise<JobLiveness> {
     try {

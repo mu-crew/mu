@@ -39,15 +39,16 @@ import { type AgentRow, getAgentForCleanup } from "../agents.js";
 import {
   agentChannel,
   awaitHooksSession,
+  channelNamed,
   channelTarget,
   deliver,
   type HooksReadiness,
-  hooksFence,
   hooksRunSince,
   isSlashCommand,
   newMsgId,
   parseSessionCommand,
   type SendResult,
+  sentRun,
 } from "../channels/index.js";
 import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
@@ -662,14 +663,15 @@ async function drive(
   }
 
   // ── delivered: nothing below may fail the attempt ──
-  // hooks: the confirmed paste's fence (turns settled before its run, its session).
-  const fence = hooksText !== undefined ? hooksFence(sent) : sent;
+  // The run baseline the channel reports: ctl's runs and incarnation; on hooks the
+  // confirmed paste's (turns settled before its run, its session).
+  const baseline = sentRun(sent)?.baseline;
   try {
     rec = updateReceipt(db, taskId, key, {
       state: "sent",
       detail: null,
-      ...(fence.incarnation !== undefined ? { incarnation: fence.incarnation } : {}),
-      ...(fence.runs !== undefined ? { runs: fence.runs } : {}),
+      ...(baseline?.incarnation !== undefined ? { incarnation: baseline.incarnation } : {}),
+      ...(baseline !== undefined ? { runs: baseline.runs } : {}),
     });
   } catch {
     // stays 'sending': a replay asks the extension and records it
@@ -714,8 +716,10 @@ async function reconcile(
     };
   };
   if (id.agent === undefined) return stay(`the sending agent is ${id.stale ?? "gone"}`);
-  if (saved.transport === "hooks") return reconcileHooks(db, req, saved, id.agent, stay);
-  if (saved.transport !== "ctl") return stay("the send went through the pane: no receipt to ask");
+  // The channel's receipt decides how a replay asks (plugins spec D4, D12).
+  const receipt = channelNamed(saved.transport)?.caps.receipt ?? "none";
+  if (receipt === "acknowledged") return reconcileHooks(db, req, saved, id.agent, stay);
+  if (receipt === "none") return stay("the send went through the pane: no receipt to ask");
   const target = channelTarget(db, id.agent);
   const check = await agentChannel(target).receipt(target, saved.msgId);
   if (check.state !== "accepted") {
@@ -736,7 +740,7 @@ async function reconcile(
 }
 
 /**
- * The `hooks` branch of a replay (spec D17): no msgId to ask, so read the
+ * The replay of an `acknowledged` receipt, hooks's (spec D17): no msgId to ask, so read the
  * agent's inbox for a run past the receipt's baseline (its `session_id` and
  * `run_count` before the pointer). One promotes the receipt to `sent` and pins
  * the brief; none (or an unreadable pane) stays `unknown`. Never re-pastes.

@@ -29,6 +29,7 @@
 // 'I never had a working CLI' from 'CLI started but parked at an error'.
 
 import type { CarrierJob } from "../carrier-jobs.js";
+import type { ChannelName } from "../channels/types.js";
 import { say } from "../messages.js";
 import { defaultSpawnLivenessMs } from "./spawn.js";
 
@@ -594,10 +595,14 @@ export class AgentEmptySendError extends Error {
   constructor(
     public readonly agentName: string,
     public readonly workstream: string,
-    /** The channel that refused; absent: ctl. */
-    public readonly channel?: "hooks",
+    /** The channel that refused, when it is not pi's control socket (absent: ctl). */
+    public readonly channel?: ChannelName,
   ) {
-    super(say(channel === "hooks" ? "agent.empty_send_hooks" : "agent.empty_send", agentName));
+    super(
+      channel === undefined
+        ? say("agent.empty_send", agentName)
+        : say("agent.empty_send_on", agentName, channel),
+    );
   }
 }
 
@@ -707,8 +712,10 @@ export class AgentAnswerUnsupportedError extends Error {
     public readonly agentName: string,
     public readonly workstream: string,
     public readonly channel: string,
+    /** The channel has no answer path at all (`caps.answer` false), rather than a backend that cannot type keys. */
+    noAnswerPath = false,
   ) {
-    super(say("agent.answer_unsupported", agentName, channel));
+    super(say("agent.answer_unsupported", agentName, channel, noAnswerPath));
   }
 }
 

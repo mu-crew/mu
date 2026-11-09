@@ -62,7 +62,7 @@ import {
   reserveAttempt,
   reserveRetry,
 } from "./auto-attempt.js";
-import { acknowledgeTurnFailure, channelTarget } from "./channels/index.js";
+import { acknowledgeTurnFailure, channelNamed, channelTarget } from "./channels/index.js";
 import type { Db } from "./db.js";
 import { type HumanNeeded, openHumanNeeds, recordHumanNeeded } from "./human-needed.js";
 import { NoMultiplexerError } from "./mux/types.js";
@@ -579,8 +579,9 @@ function unreconcilable(
   if (id.stale !== undefined) {
     return lost(`the agent of this attempt is ${id.stale}`);
   }
-  // A hooks receipt is asked through the inbox (a run past its baseline, spec D17).
-  if (sent && receipt.transport !== "ctl" && receipt.transport !== "hooks") {
+  // A receipt is asked by msgId (ctl) or through the inbox (a run past its baseline, hooks,
+  // spec D17); a channel with no receipt leaves nothing to ask.
+  if (sent && (channelNamed(receipt.transport)?.caps.receipt ?? "none") === "none") {
     return lost("the send went through the pane: there is no receipt to ask");
   }
   return undefined;

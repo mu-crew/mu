@@ -37,6 +37,7 @@
 //   - Whatever is not a valid block applies nothing and carries a one-line
 //     reason; a start line whose tail does not fit is "malformed".
 
+import { channelNamed } from "./channels/index.js";
 import type { Db } from "./db.js";
 import { withOpContext } from "./op-context.js";
 import { addNote } from "./tasks/edit.js";
@@ -214,9 +215,13 @@ function applyInTxn(db: Db, input: SettledCloseInput): SettledCloseResult {
     | { cli: string; channel: string | null }
     | undefined;
   if (!agent) return no("unknown agent");
-  // A `hooks` agent's turn text comes from its `turn_stopped` event, applied with
-  // the same trust as pi's ctl last text (spec D3); its session id is the incarnation.
-  if (agent.cli !== "pi" && agent.channel !== "hooks") return no("not a pi agent");
+  // Only a channel whose settle text is the settled turn's own (`tied`) applies a
+  // CLOSE block (plugins spec D12): ctl's last text, and a `hooks` agent's
+  // `turn_stopped` text, applied with the same trust (spec D3; its session id is
+  // the incarnation). A pi row the derived rule reads is ctl's.
+  if (agent.cli !== "pi" && channelNamed(agent.channel)?.caps.settleText !== "tied") {
+    return no("not a pi agent");
+  }
   const seen = db
     .prepare(
       "SELECT task_id FROM agent_settles WHERE agent_id = ? AND incarnation = ? AND runs = ?",

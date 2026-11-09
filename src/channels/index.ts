@@ -22,7 +22,7 @@ export {
 } from "./ctl-deliver.js";
 export { deliver } from "./deliver.js";
 export { agentChannel, channelTarget, readAgentStates } from "./dispatch.js";
-export { ANSWER_KEY_NAMES, hooksChannel, hooksFence } from "./hooks.js";
+export { ANSWER_KEY_NAMES, hooksChannel, hooksRunBaseline } from "./hooks.js";
 export { sendAckMs, writeMuEvent } from "./hooks-pane.js";
 export {
   acknowledgeTurnFailure,
@@ -35,12 +35,15 @@ export {
   spawnAckMs,
 } from "./hooks-spawn.js";
 export { muxChannel } from "./mux.js";
+export { channelNamed, registerChannel, registeredChannels, sentRun } from "./registry.js";
 export { agentCtlSocket, channelOf, expectsCtl, piOnHooks, servesCtl } from "./select.js";
 export {
   type AbortOutcome,
   type AgentChannel,
   type AnswerResult,
+  type BuiltinChannelName,
   CHANNEL_NAMES,
+  type ChannelCaps,
   type ChannelDelivery,
   type ChannelName,
   type ChannelReadOptions,
@@ -56,5 +59,7 @@ export {
   type MessageCheck,
   type RunBaseline,
   type SendResult,
+  type SentFacts,
+  type SentRun,
   type SessionCommand,
 } from "./types.js";

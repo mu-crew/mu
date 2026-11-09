@@ -4,6 +4,7 @@ import { delimiter, join } from "node:path";
 import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
 import { type Harness, harnessOfCli, hookConfigPath } from "./harnesses.js";
+import type { JobRef } from "./jobs/types.js";
 import {
   readTmuxViews,
   type TmuxView,
@@ -56,6 +57,8 @@ export interface StateAgentRef {
   gateToken?: string | null;
   /** The channel the row recorded at spawn; null or absent: derived (see `expectsCtl`). */
   channel?: ChannelName | null;
+  /** The agent's job, when the caller listed it with its row (plugins spec D9); absent: its pane's. */
+  job?: JobRef;
 }
 
 /**

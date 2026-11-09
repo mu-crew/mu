@@ -19,16 +19,54 @@ import type { StateAgentRef, StateReading } from "../agent-state.js";
 import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
 import type { AgentRow } from "../agents.js";
 import type { CtlCommandName, CtlState } from "../ctl/protocol.js";
+import type { JobRef } from "../jobs/types.js";
 import type { SendOptions } from "../mux.js";
 
 /** The ctl protocol's state facts, as the rest of mu names them. */
 export type { CtlBlocked, CtlCommandName, CtlState, CtlTool } from "../ctl/protocol.js";
 
-/** How mu reaches a pane agent; also the values of `agents.channel`. */
-export type ChannelName = "ctl" | "hooks" | "mux";
+/** The built-in channels; also the values `agents.channel` may hold today. */
+export type BuiltinChannelName = "ctl" | "hooks" | "mux";
+
+/**
+ * How mu reaches an agent: a name in the channel registry (./registry.ts).
+ * Open, so a registered channel's name is one; a stored name the registry
+ * does not know still reads null from the row (plugins spec D9).
+ */
+export type ChannelName = BuiltinChannelName | (string & {});
 
 /** The values `agents.channel` may hold, in the order a row is checked. */
-export const CHANNEL_NAMES: readonly ChannelName[] = ["ctl", "hooks", "mux"];
+export const CHANNEL_NAMES: readonly BuiltinChannelName[] = ["ctl", "hooks", "mux"];
+
+/**
+ * What a channel can do (plugins spec D9, D12), declared once in code for a
+ * built-in. Callers branch on these, never on the channel's name; the
+ * contract suite holds each built-in to its row of the D9 matrix.
+ */
+export interface ChannelCaps {
+  /** `sync`: an in-process veto runs immediately before the one write (ctl's `beforeWrite`). */
+  fence: "sync" | "none";
+  /** `exact`: answers by msgId. `acknowledged`: a turn past the journaled run baseline. */
+  receipt: "exact" | "acknowledged" | "none";
+  /** Per delivery method: only the methods listed dedupe a repeat with the same key (D4). */
+  dedupe?: Partial<
+    Record<"send" | "fresh" | "interrupt" | "answer" | "command", { exact: true; windowMs: number }>
+  >;
+  /** `mid-turn`: a steer joins the running turn; `as-send`: sent as plain text; `none`: refused. */
+  steer: "mid-turn" | "as-send" | "none";
+  /** `exact`: the stop is confirmed; `unconfirmed`: it may read `idle?`; `none`: refused. */
+  interrupt: "exact" | "unconfirmed" | "none";
+  /** `in-place`: a new session in the same job; `new-job`: close then spawn; `none`: refused. */
+  fresh: "in-place" | "new-job" | "none";
+  /** Keys reach a pending dialog (`mu agent answer`). */
+  answer: boolean;
+  /** Session commands run (`/new`, `/reload`, `/compact`). */
+  command: boolean;
+  /** `stream`: one watch per turn; `poll`: mu polls `readStates`. */
+  watch: "stream" | "poll";
+  /** `tied`: the last text is the settled turn's own; CLOSE blocks apply only then. */
+  settleText: "tied" | "untied" | "none";
+}
 
 /**
  * One agent on a channel: who it is, and the state dir that roots its control
@@ -45,6 +83,12 @@ export interface ChannelTarget {
    * `channelTarget` for a `hooks` row with a remote key.
    */
   remote?: RemoteReader;
+  /**
+   * The agent's job as its row records it (plugins spec D9, D13), filled by
+   * `channelTarget`: its kind and view pane, and its host. A lease job's
+   * handle lives in its carrier's job file, not the row, so it is absent here.
+   */
+  job?: JobRef;
 }
 
 /**
@@ -140,14 +184,44 @@ export interface ChannelReadOptions {
   livenessOnly?: ReadonlySet<string>;
 }
 
+/**
+ * What a delivery reported, as a wait counts the run it started: a SendResult,
+ * an InterruptResult, or a saved receipt's fields.
+ */
+export interface SentFacts {
+  transport?: ChannelName;
+  runs?: number;
+  incarnation?: string;
+  ack?: "confirmed" | "unknown" | "sent";
+  runCount?: number;
+  sessionId?: string;
+}
+
+/**
+ * The run a delivery started, as the wait it owes counts it. `baseline`: the
+ * turns settled before it (absent: the wait is owed with none, a busy-to-idle).
+ * null from `sendRun`: the delivery started no run (a ctl session command).
+ */
+export interface SentRun {
+  baseline?: RunBaseline;
+}
+
 export interface AgentChannel extends ChannelDelivery {
   readonly name: ChannelName;
+  /** What this channel can do (plugins spec D9). */
+  readonly caps: ChannelCaps;
   /**
-   * True when a write can carry a synchronous fence (ctl's `beforeWrite`:
-   * a veto writes nothing). A channel without one gets at-most-once only by
-   * never resending.
+   * `caps.fence === "sync"`: a write can carry a synchronous fence (ctl's
+   * `beforeWrite`: a veto writes nothing). A channel without one gets
+   * at-most-once only by never resending.
    */
   readonly fence: boolean;
+  /** The run a delivery on this channel started (see SentRun), from what it reported. */
+  sendRun(sent: SentFacts): SentRun | null;
+  /** How a delivered send went, for the `sent N bytes to <agent> (...)` line. */
+  describeSend(sent: SendResult, o: { fresh?: boolean }): string;
+  /** How a delivered interrupt went, for the same line. */
+  describeInterrupt(r: InterruptResult): string;
   /**
    * One batched, non-blocking state read of agents on this channel, keyed
    * `<workstream>/<name>`. A ctl agent whose socket does not answer reads

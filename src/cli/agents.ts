@@ -29,6 +29,7 @@ import {
 import {
   agentChannel,
   blockedReason,
+  channelNamed,
   channelTarget,
   readAgentStates,
   requireFeature,
@@ -464,7 +465,11 @@ async function cmdSpawnTask(
       runs: rec.runs,
       ...(rec.incarnation !== null ? { incarnation: rec.incarnation } : {}),
     });
-  } else if (out.state === "unknown" && rec.transport === "ctl" && out.stale === undefined) {
+  } else if (
+    out.state === "unknown" &&
+    channelNamed(rec.transport)?.caps.receipt === "exact" &&
+    out.stale === undefined
+  ) {
     const row = getAgent(db, agentName, workstream);
     if (row !== undefined) {
       setNextOutcome({

@@ -21,7 +21,7 @@
 // the verbs do, because only they know whether the effect landed.
 
 import { getAgent } from "../agents.js";
-import { type ChannelName, hooksFence } from "../channels/index.js";
+import { type SentFacts, sentRun } from "../channels/index.js";
 import type { Db } from "../db.js";
 import { currentCallers } from "../wait-callers.js";
 import { type RefBaseline, type RegisterRef, registerOwnedWait } from "../wait-registration.js";
@@ -78,37 +78,21 @@ export function armWait(db: Db, refs: readonly RegisterRef[]): ArmResult {
   }
 }
 
-/** What a send measured before its effect (the SendResult / InterruptResult / saved receipt fields). */
-export interface SentFence {
-  transport?: ChannelName;
-  runs?: number;
-  incarnation?: string;
-  /** hooks: the paste's ack and the run count and session it was confirmed by (`sent`: read before it). */
-  ack?: "confirmed" | "unknown" | "sent";
-  runCount?: number;
-  sessionId?: string;
-}
-
 /**
- * The wait fence a delivered send gives: ctl's runs measured before it, or on hooks the
- * turns settled before the run a confirmed paste started, in its session (an interrupt
- * already carries them as `runs`). An unconfirmed paste and a mux send give none.
+ * The run baseline a delivered send gives its wait, asked of the channel that
+ * carried it (`sentRun`): ctl's runs measured before it, or on hooks the turns
+ * settled before the run a confirmed paste started, in its session (an
+ * interrupt already carries them as `runs`). An unconfirmed paste and a mux
+ * send give none.
  */
-export function sentFence(sent: SentFence): { runs?: number; incarnation?: string } {
-  if (sent.transport === "mux") return {};
-  if (sent.runs !== undefined) {
-    return {
-      runs: sent.runs,
-      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
-    };
-  }
-  return sent.transport === "hooks" ? hooksFence(sent) : {};
+export function sentRunBaseline(sent: SentFacts): { runs?: number; incarnation?: string } {
+  return sentRun(sent)?.baseline ?? {};
 }
 
 /**
  * Arm the wait a DELIVERED prompt owes. A ctl send with a run count is fenced exactly
  * (runs + incarnation + registry id), and so is a confirmed hooks paste (the turns settled
- * before its run, in its session: `sentFence`). A delivered mux send, or an unconfirmed
+ * before its run, in its session: `sentRunBaseline`). A delivered mux send, or an unconfirmed
  * hooks one (a non-pi pane: its busy-to-idle is all there is), is owed with no fence. A
  * ctl send with no run count (a slash command, an extension that predates runs) started no
  * run: no agent ref. `extraRefs` ride in the same registration (the task a spawn bound), so
@@ -117,11 +101,13 @@ export function sentFence(sent: SentFence): { runs?: number; incarnation?: strin
 export function armSend(
   db: Db,
   agent: { name: string; workstreamName: string },
-  sent: SentFence,
+  sent: SentFacts,
   extraRefs: readonly RegisterRef[] = [],
 ): ArmResult {
   const row = getAgent(db, agent.name, agent.workstreamName);
   if (row === undefined) return { armed: false };
-  if (sent.transport === "ctl" && sent.runs === undefined) return armWait(db, extraRefs);
-  return armWait(db, [...extraRefs, agentRef(row, sentFence(sent))]);
+  // The channel says whether the send started a run (a ctl session command starts none).
+  const run = sentRun(sent);
+  if (run === null) return armWait(db, extraRefs);
+  return armWait(db, [...extraRefs, agentRef(row, run.baseline ?? {})]);
 }

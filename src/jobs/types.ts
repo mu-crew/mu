@@ -55,6 +55,13 @@ export interface JobCaps {
 export interface JobKind {
   readonly name: JobKindName;
   readonly caps: JobCaps;
+  /**
+   * `running`: an answer from the job's own process (its channel's control
+   * socket, which the process serves or forwards) proves the job runs, so a
+   * channel that got one needs no liveness probe (plugins spec D9, the P1
+   * ruling). Absent: only the kind's `status` or the view read decides.
+   */
+  readonly answer?: "running";
   /** Liveness. Never throws for "cannot tell" (that is `unknown`); a host's hand-back throws. */
   status(db: Db, job: JobRef): Promise<JobLiveness>;
   /** Its `host check` steps for `ctx.phase` (one of `caps.checks`); reads only, runs no template. */

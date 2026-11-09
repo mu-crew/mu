@@ -156,8 +156,8 @@ export const MESSAGES = {
   "agent.send_unsupported": (name: string, cli: string) =>
     `agent ${name} runs ${cli}, not pi: tmux has no reliable send for it; spawn it on herdr (MU_MUX=herdr), start it with the prompt as an argument (--command "${cli} '<prompt>'"), or use pi`,
   "agent.send_refused": (reason: string) => `control socket refused the send: ${reason}`,
-  "agent.empty_send_hooks": (name: string) =>
-    `agent ${name} is on the hooks channel: an empty message submits nothing; press Enter in the pane yourself`,
+  "agent.empty_send_on": (name: string, channel: string) =>
+    `agent ${name} is on the ${channel} channel: an empty message submits nothing; press Enter in the pane yourself`,
   "agent.task_brief_hooks": (name: string) =>
     `agent ${name} is on the hooks channel and has no cwd to write its task brief file in: nothing was sent`,
   "agent.remote_brief_too_large": (
@@ -196,9 +196,9 @@ export const MESSAGES = {
     "give the answer as one or more keys, each one line (e.g. mu agent answer worker-1 1)",
   "agent.answer_unconfirmed": (name: string, ws: string) =>
     `no event confirmed the answer: read the pane (mu agent read ${name} -w ${ws}) before answering again`,
-  "agent.answer_unsupported": (name: string, channel: string) =>
-    channel === "ctl"
-      ? `agent ${name} runs pi on the ctl channel: answer its dialog in the pane`
+  "agent.answer_unsupported": (name: string, channel: string, noAnswerPath: boolean) =>
+    noAnswerPath
+      ? `agent ${name} runs pi on the ${channel} channel: answer its dialog in the pane`
       : `agent ${name} is on the ${channel} channel, and this multiplexer cannot type keys into its pane: answer the dialog in the pane`,
   "agent.attempt_busy": (task: string, key: string) =>
     `spawn attempt ${key} of task ${task} is running in another mu process; nothing was done. Retry when it finishes (the replay returns its outcome)`,
@@ -234,14 +234,20 @@ export const MESSAGES = {
   "task.note_required": () =>
     'note text required: mu task note <id> "..." (or -m/--message/--note/--text "...")',
   "task.note_kind_twice": () => "--report and --kind both set the note kind: pass one",
-  // By the owner's channel: only ctl steers mid-turn; hooks interrupts or waits for the turn; mux only sends.
-  "task.note_unseen": (owner: string, ws: string, channel: "ctl" | "hooks" | "mux") => {
+  // By the owner's channel's steer: `mid-turn` steers; `none` interrupts or waits for the turn;
+  // `as-send` only sends.
+  "task.note_unseen": (
+    owner: string,
+    ws: string,
+    channel: string,
+    steer: "mid-turn" | "as-send" | "none",
+  ) => {
     const send = `mu agent send ${owner} -w ${ws}`;
     const text = "- <<'EOF' (the note text, then EOF)";
-    if (channel === "ctl")
+    if (steer === "mid-turn")
       return `${owner} will not see this note: send it into the running turn (${send} --steer ${text}), or pass --interrupt instead of --steer if the note makes the current work wasted`;
-    if (channel === "hooks")
-      return `${owner} will not see this note, and its hooks channel has no mid-turn steer: send it once the turn ends (mu agent wait ${owner} -w ${ws}, then ${send} ${text}), or ${send} --interrupt ${text} if the note makes the current work wasted`;
+    if (steer === "none")
+      return `${owner} will not see this note, and its ${channel} channel has no mid-turn steer: send it once the turn ends (mu agent wait ${owner} -w ${ws}, then ${send} ${text}), or ${send} --interrupt ${text} if the note makes the current work wasted`;
     return `${owner} will not see this note: send it (${send} ${text})`;
   },
   "task.notes_all_from": () =>

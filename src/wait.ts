@@ -72,6 +72,7 @@
 
 import { agentKey } from "./agent-state.js";
 import { AgentNotFoundError, AgentRestartedError } from "./agents/errors.js";
+import { channelNamed } from "./channels/index.js";
 import { closeNotices } from "./close-notice.js";
 import { type Db, tryResolveWorkstreamId } from "./db.js";
 import {
@@ -778,7 +779,8 @@ export async function waitForEvents(
     }
     ctlBrokenSince.delete(ownerKey);
     if (r.status !== "needs_input" || r.since === undefined || r.since === null) return null;
-    const viaCtl = r.source === "ctl" && r.ctl === "ok";
+    // A streaming channel's own answer is exact: no stale-age grace.
+    const viaCtl = channelNamed(r.source)?.caps.watch === "stream" && r.ctl === "ok";
     if (viaCtl && r.pending === true) return null;
     const age = Date.now() - r.since;
     return age >= stuckAfter(viaCtl) ? age : null;

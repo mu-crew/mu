@@ -21,8 +21,15 @@ import {
   AgentSendUnsupportedError,
 } from "../agents/errors.js";
 import { activeMux, type SendOptions } from "../mux.js";
+import { baseReadStates } from "./base-read.js";
 import { typeKeys } from "./hooks.js";
-import type { AgentChannel, DeliveryOptions, DeliveryTarget, SendResult } from "./types.js";
+import type {
+  AgentChannel,
+  ChannelCaps,
+  DeliveryOptions,
+  DeliveryTarget,
+  SendResult,
+} from "./types.js";
 
 /** Refuse a write fence this channel cannot honour. */
 function refuseFence(t: DeliveryTarget, opts: DeliveryOptions): void {
@@ -41,10 +48,33 @@ async function sendToPane(t: DeliveryTarget, text: string, opts: SendOptions): P
   return { transport: "mux" };
 }
 
+/**
+ * The mux channel's row of the D9 matrix. A steer is sent as plain text
+ * (`as-send`); `answer` and `command` hold where the backend can type keys
+ * or send (each refuses with its typed error where it cannot).
+ */
+const MUX_CAPS: ChannelCaps = {
+  fence: "none",
+  receipt: "none",
+  steer: "as-send",
+  interrupt: "none",
+  fresh: "none",
+  answer: true,
+  command: true,
+  watch: "poll",
+  settleText: "none",
+};
+
 export const muxChannel: AgentChannel = {
   name: "mux",
-  fence: false,
-  readStates: (agents, opts) => readBaseStates(agents, opts, opts.livenessOnly),
+  caps: MUX_CAPS,
+  fence: MUX_CAPS.fence === "sync",
+  // A mux send is owed a wait with no baseline: its busy-to-idle is all there is.
+  sendRun: () => ({}),
+  describeSend: () => "via mux",
+  // Never reached: the mux channel refuses an interrupt.
+  describeInterrupt: () => "via mux",
+  readStates: baseReadStates,
   watch: async () => undefined,
   baseline: async () => undefined,
   receipt: async (_target, msgId) => ({

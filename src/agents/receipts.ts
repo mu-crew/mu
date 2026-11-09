@@ -18,6 +18,7 @@
 // unsent and rolled back. Pure SQL: no mux, no ctl.
 
 import { createHash } from "node:crypto";
+import type { ChannelName } from "../channels/types.js";
 import type { Db, SpawnReceiptState } from "../db.js";
 
 export interface SpawnReceipt {
@@ -36,7 +37,7 @@ export interface SpawnReceipt {
    * How the prompt went: `ctl` (a receipt id was carried), `hooks` (a brief file
    * and a pasted pointer, confirmed by `run_count`: spec D17) or `mux` (no receipt).
    */
-  transport: "ctl" | "hooks" | "mux" | null;
+  transport: ChannelName | null;
   /** pi's incarnation, once a reply (or a receipt check) named it. On `hooks`: the harness `session_id`. */
   incarnation: string | null;
   /** ctl: pi's runs before the prompt. hooks: the session's `run_count` before the pointer (its baseline). */
@@ -56,7 +57,7 @@ interface RawReceipt {
   msg_id: string;
   agent_id: number | null;
   pane_id: string | null;
-  transport: "ctl" | "hooks" | "mux" | null;
+  transport: ChannelName | null;
   incarnation: string | null;
   runs: number | null;
   state: SpawnReceiptState;

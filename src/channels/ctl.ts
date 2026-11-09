@@ -15,10 +15,22 @@ import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/o
 import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import { type CtlBlocked, type CtlState, INCARNATION_MISMATCH } from "../ctl/protocol.js";
+import { answerProvesRunning } from "../jobs/kinds.js";
 import { paneUp } from "../jobs/pane.js";
+import type { JobRef } from "../jobs/types.js";
 import { checkMessage, ctlDelivery } from "./ctl-deliver.js";
 import { expectsCtl, targetSocket } from "./select.js";
-import type { AgentChannel, ChannelReadOptions, ChannelTarget, RunBaseline } from "./types.js";
+import type {
+  AgentChannel,
+  ChannelCaps,
+  ChannelReadOptions,
+  ChannelTarget,
+  InterruptResult,
+  RunBaseline,
+  SendResult,
+  SentFacts,
+  SentRun,
+} from "./types.js";
 
 export { CTL_DEFAULT_TIMEOUT_MS, CtlWriteVetoedError, newMsgId } from "../ctl/client.js";
 export { checkMessage } from "./ctl-deliver.js";
@@ -51,7 +63,7 @@ async function readCtlStates(
     ),
   );
   const readings = new Map<string, StateReading>();
-  agents.forEach((agent, i) => {
+  for (const [i, agent] of agents.entries()) {
     const probe = probes[i];
     if (probe?.kind === "ok") {
       const { blocked } = probe.status;
@@ -59,7 +71,7 @@ async function readCtlStates(
         state: ctlRuntimeState(probe.status.state, blocked),
         source: "ctl",
         since: blocked?.since ?? probe.status.since,
-        alive: true,
+        alive: await answeredAlive(agent),
         ...(blocked !== undefined ? { reason: blockedReason(blocked), blocked } : {}),
         ctl: "ok",
         pending: probe.status.pending,
@@ -72,8 +84,24 @@ async function readCtlStates(
       const reason = ctl === "missing" ? UNKNOWN_REASON.ctlMissing : UNKNOWN_REASON.ctlRefused;
       readings.set(agentKey(agent), { ...unknownReading(reason), ctl });
     }
-  });
+  }
   return readings;
+}
+
+/** The job a state ref names: the one its caller listed, else its pane's. */
+const jobOf = (a: StateAgentRef): Pick<JobRef, "kind" | "viewPaneId"> =>
+  a.job ?? { kind: a.gateToken != null ? "gate" : "pane", viewPaneId: a.paneId };
+
+/**
+ * Liveness for an agent whose socket answered. The job's kind decides
+ * whether that answer stands in for it (`answerProvesRunning`: every
+ * built-in kind a ctl agent runs as); else its view does, where an unknown
+ * is never a death.
+ */
+async function answeredAlive(a: StateAgentRef): Promise<boolean> {
+  const job = jobOf(a);
+  if (answerProvesRunning(job)) return true;
+  return (await paneUp(job.viewPaneId)) !== false;
 }
 
 /**
@@ -243,9 +271,50 @@ async function ctlLastRun(
   }
 }
 
+/** The ctl channel's row of the D9 matrix. Its receipts keep the last 64 msgIds (protocol.ts). */
+const CTL_CAPS: ChannelCaps = {
+  fence: "sync",
+  receipt: "exact",
+  steer: "mid-turn",
+  interrupt: "exact",
+  fresh: "in-place",
+  answer: false,
+  command: true,
+  watch: "stream",
+  settleText: "tied",
+};
+
+/** pi's run count measured before the send (with its incarnation); none: the send started no run (a session command). */
+function ctlSendRun(sent: SentFacts): SentRun | null {
+  if (sent.runs === undefined) return null;
+  return {
+    baseline: {
+      runs: sent.runs,
+      ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
+    },
+  };
+}
+
+function describeCtlSend(sent: SendResult, o: { fresh?: boolean }): string {
+  if (o.fresh) return "via ctl, fresh session";
+  if (sent.command !== undefined) return `via ctl, pi ran /${sent.command}`;
+  if (sent.runs !== undefined) return `via ctl, pi was ${sent.state ?? "?"}, runs ${sent.runs}`;
+  return `via ctl, pi ${sent.state ?? "?"}`;
+}
+
+function describeCtlInterrupt(r: InterruptResult): string {
+  const what = r.wasBusy ? "interrupted a busy run" : "pi was idle";
+  const runs = r.runs !== undefined ? `, runs ${r.runs}` : "";
+  return `via ctl, ${what}${runs}`;
+}
+
 export const ctlChannel: AgentChannel = {
   name: "ctl",
-  fence: true,
+  caps: CTL_CAPS,
+  fence: CTL_CAPS.fence === "sync",
+  sendRun: ctlSendRun,
+  describeSend: describeCtlSend,
+  describeInterrupt: describeCtlInterrupt,
   readStates: readCtlStates,
   watch: (t, signal, opts) => watchAgentRun(t.agent, targetSocket(t), signal, opts),
   baseline: ctlBaseline,

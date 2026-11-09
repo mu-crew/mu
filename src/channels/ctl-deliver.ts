@@ -618,6 +618,6 @@ export const ctlDelivery: ChannelDelivery = {
   abort: ctlAbort,
   // pi's dialogs are its own UI, with no ctl op to answer them: the human answers in the pane.
   answer: async (t) => {
-    throw new AgentAnswerUnsupportedError(t.agent.name, t.agent.workstreamName, "ctl");
+    throw new AgentAnswerUnsupportedError(t.agent.name, t.agent.workstreamName, "ctl", true);
   },
 };

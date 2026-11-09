@@ -5,6 +5,7 @@
 // (agentId, incarnation, runs) it captured. `supersededBy` is that predicate, and `rearmLatch` is
 // the one way to drop a latch (src/wait.ts calls both, from refresh and from a steer).
 
+import { channelNamed } from "./channels/index.js";
 import type { AgentReading, AgentWatchHandle, CloseOutcome, WaitRef } from "./wait-types.js";
 
 export interface AgentTrack {
@@ -83,7 +84,7 @@ export function rewatchOnPoll(t: AgentTrack, r: AgentReading): boolean {
   if (
     r.status !== "unknown" &&
     r.status !== "busy" &&
-    r.source === "ctl" &&
+    channelNamed(r.source)?.caps.watch === "stream" &&
     r.runs !== undefined &&
     t.baseline !== undefined &&
     r.runs > t.baseline &&

@@ -9,7 +9,7 @@ import {
   parseSessionCommand,
   sendToAgent,
 } from "../agents.js";
-import { agentChannel, type ChannelName, channelTarget, sendAckMs } from "../channels/index.js";
+import { agentChannel, channelNamed, channelTarget, sendAckMs } from "../channels/index.js";
 import {
   assertAgentInWorkstream,
   CliExitError,
@@ -26,7 +26,7 @@ import type { WaitRef } from "../wait.js";
 import { setNextOutcome } from "./handle.js";
 import { readStdinText, STDIN_ARG } from "./stdin.js";
 import { runWait, type WaitSignals } from "./wait.js";
-import { armSend, sentFence } from "./wait-arm.js";
+import { armSend, sentRunBaseline } from "./wait-arm.js";
 
 export async function cmdSend(
   db: Db,
@@ -103,41 +103,36 @@ export async function cmdSend(
   const warnings = armed.warning === undefined ? [] : [armed.warning];
   if (!opts.json && !opts.wait) for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
   // The run this send started, as a wait counts it: ctl's runs, or a confirmed paste's.
-  const fence = sentFence(sent);
+  const baseline = sentRunBaseline(sent);
   if (opts.wait && sig !== undefined) {
-    return enterSendWait(
-      db,
-      { name, workstreamName: ws },
-      { transport: sent.transport, ...fence },
-      {
-        sig,
-        verb: "mu agent send --wait",
-        undelivered: undelivered === undefined ? undefined : undelivered.message,
-        receipt: {
-          agentName: name,
-          sentBytes: Buffer.byteLength(text),
-          transport: sent.transport,
-          ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
-          ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
-          ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
-          ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
-          ...(sent.ack !== undefined ? { ack: sent.ack } : {}),
-          ...(sent.runCount !== undefined ? { runCount: sent.runCount } : {}),
-          ...(sent.readyScreen !== undefined ? { readyScreen: sent.readyScreen } : {}),
-          ...(sent.submitRetry ? { submitRetry: true } : {}),
-        },
-        warnings,
+    return enterSendWait(db, { name, workstreamName: ws }, baseline, {
+      sig,
+      verb: "mu agent send --wait",
+      undelivered: undelivered === undefined ? undefined : undelivered.message,
+      receipt: {
+        agentName: name,
+        sentBytes: Buffer.byteLength(text),
+        transport: sent.transport,
+        ...(sent.runs !== undefined ? { runs: sent.runs } : {}),
+        ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
+        ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
+        ...(sent.receipt !== undefined ? { receipt: sent.receipt } : {}),
+        ...(sent.ack !== undefined ? { ack: sent.ack } : {}),
+        ...(sent.runCount !== undefined ? { runCount: sent.runCount } : {}),
+        ...(sent.readyScreen !== undefined ? { readyScreen: sent.readyScreen } : {}),
+        ...(sent.submitRetry ? { submitRetry: true } : {}),
       },
-    );
+      warnings,
+    });
   }
   // ONE next: a delivered ctl reply with runs, or a confirmed hooks paste, gives the exact
   // wait baseline (the wait returns the run's final text). An undelivered or mux send owes no wait.
-  if (fence.runs !== undefined && undelivered === undefined) {
+  if (baseline.runs !== undefined && undelivered === undefined) {
     setNextOutcome({
       kind: "sent",
       agent: { name, workstream: ws },
-      runs: fence.runs,
-      ...(fence.incarnation !== undefined ? { incarnation: fence.incarnation } : {}),
+      runs: baseline.runs,
+      ...(baseline.incarnation !== undefined ? { incarnation: baseline.incarnation } : {}),
     });
   }
   if (opts.json) {
@@ -168,19 +163,8 @@ export async function cmdSend(
     console.error(pc.yellow(`warning: ${undelivered.message}`));
   } else {
     const how =
-      sent.transport === "mux"
-        ? "via mux"
-        : sent.transport === "hooks"
-          ? sent.ack === "sent"
-            ? "via hooks to its host, sent: the next wait confirms it"
-            : `via hooks${opts.fresh ? ", fresh session" : ""}, confirmed${sent.runCount !== undefined ? `: run ${sent.runCount}` : ""}`
-          : opts.fresh
-            ? "via ctl, fresh session"
-            : sent.command !== undefined
-              ? `via ctl, pi ran /${sent.command}`
-              : sent.runs !== undefined
-                ? `via ctl, pi was ${sent.state ?? "?"}, runs ${sent.runs}`
-                : `via ctl, pi ${sent.state ?? "?"}`;
+      channelNamed(sent.transport)?.describeSend(sent, { fresh: opts.fresh === true }) ??
+      `via ${sent.transport}`;
     const receipt =
       sent.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
     console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how}${receipt})`));
@@ -197,7 +181,7 @@ export async function cmdSend(
 async function enterSendWait(
   db: Db,
   agent: { name: string; workstreamName: string },
-  sent: { transport?: ChannelName; runs?: number; incarnation?: string },
+  baseline: { runs?: number; incarnation?: string },
   o: {
     sig: WaitSignals;
     verb: string;
@@ -213,14 +197,15 @@ async function enterSendWait(
       data: { sent: { ...o.receipt, delivered: false } },
     });
   }
-  // A fence (ctl's runs, a confirmed hooks paste's) pins the wait to exactly that run.
-  const fenced = sent.transport !== "mux" && sent.runs !== undefined;
+  // A run baseline (ctl's runs, a confirmed hooks paste's) pins the wait to exactly that run.
   const ref: WaitRef = {
     kind: "agent",
     workstream: agent.workstreamName,
     id: agent.name,
-    ...(fenced ? { afterRuns: sent.runs } : {}),
-    ...(fenced && sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
+    ...(baseline.runs !== undefined ? { afterRuns: baseline.runs } : {}),
+    ...(baseline.runs !== undefined && baseline.incarnation !== undefined
+      ? { incarnation: baseline.incarnation }
+      : {}),
   };
   await runWait(
     db,
@@ -271,32 +256,27 @@ async function cmdSendInterrupt(
   const warnings = armed.warning === undefined ? [] : [armed.warning];
   if (!opts.json && !opts.wait) for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
   if (opts.wait && sig !== undefined) {
-    return enterSendWait(
-      db,
-      { name, workstreamName: ws },
-      { ...r, transport },
-      {
-        sig,
-        verb: "mu agent send --interrupt --wait",
-        undelivered,
-        receipt: {
-          agentName: name,
-          sentBytes: Buffer.byteLength(text),
-          transport,
-          interrupt: true,
-          wasBusy: r.wasBusy,
-          ...(r.pending ? { pending: true } : {}),
-          ...(r.runs !== undefined ? { runs: r.runs } : {}),
-          ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
-          ...(r.msgId !== undefined ? { msgId: r.msgId } : {}),
-          ...(r.receipt !== undefined ? { receipt: r.receipt } : {}),
-          ...(r.stopped !== undefined ? { stopped: r.stopped } : {}),
-          ...(r.ack !== undefined ? { ack: r.ack } : {}),
-          ...(r.runCount !== undefined ? { runCount: r.runCount } : {}),
-        },
-        warnings,
+    return enterSendWait(db, { name, workstreamName: ws }, sentRunBaseline({ ...r, transport }), {
+      sig,
+      verb: "mu agent send --interrupt --wait",
+      undelivered,
+      receipt: {
+        agentName: name,
+        sentBytes: Buffer.byteLength(text),
+        transport,
+        interrupt: true,
+        wasBusy: r.wasBusy,
+        ...(r.pending ? { pending: true } : {}),
+        ...(r.runs !== undefined ? { runs: r.runs } : {}),
+        ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
+        ...(r.msgId !== undefined ? { msgId: r.msgId } : {}),
+        ...(r.receipt !== undefined ? { receipt: r.receipt } : {}),
+        ...(r.stopped !== undefined ? { stopped: r.stopped } : {}),
+        ...(r.ack !== undefined ? { ack: r.ack } : {}),
+        ...(r.runCount !== undefined ? { runCount: r.runCount } : {}),
       },
-    );
+      warnings,
+    });
   }
   if (r.runs !== undefined) {
     setNextOutcome({
@@ -322,29 +302,15 @@ async function cmdSendInterrupt(
     });
     return;
   }
-  if (transport === "hooks") {
-    const what = !r.wasBusy
-      ? "it was idle"
-      : r.stopped === "unconfirmed"
-        ? "interrupted a busy run, unconfirmed: idle?"
-        : "interrupted a busy run";
-    if (r.stopped === "unconfirmed")
-      console.error(pc.yellow(say("agent.interrupt_unconfirmed", name)));
-    if (undelivered !== undefined) console.error(pc.yellow(`warning: ${undelivered}`));
-    else {
-      const run = r.runCount !== undefined ? `: run ${r.runCount}` : "";
-      const how = r.ack === "sent" ? "sent: the next wait confirms it" : `confirmed${run}`;
-      console.log(
-        pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (via hooks, ${what}, ${how})`),
-      );
-    }
+  // An unconfirmed stop or paste is reported by the channels whose interrupt can leave one.
+  if (r.stopped === "unconfirmed")
+    console.error(pc.yellow(say("agent.interrupt_unconfirmed", name)));
+  if (undelivered !== undefined) {
+    console.error(pc.yellow(`warning: ${undelivered}`));
     return;
   }
-  const what = r.wasBusy ? "interrupted a busy run" : "pi was idle";
-  const runs = r.runs !== undefined ? `, runs ${r.runs}` : "";
+  const how = channelNamed(transport)?.describeInterrupt(r) ?? `via ${transport}`;
   const receipt = r.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
-  console.log(
-    pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (via ctl, ${what}${runs}${receipt})`),
-  );
+  console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how}${receipt})`));
   if (r.pending) console.log(pc.yellow("queued messages went back to the pane's editor unsent"));
 }

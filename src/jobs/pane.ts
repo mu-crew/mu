@@ -22,6 +22,7 @@ export async function paneUp(paneId: string): Promise<boolean | undefined> {
 export const paneKind: JobKind = {
   name: "pane",
   caps: { view: "bound", handle: "pane" },
+  answer: "running",
   async status(_db, job: JobRef): Promise<JobLiveness> {
     const up = await paneUp(job.viewPaneId);
     if (up === undefined) return { state: "unknown", reason: "the multiplexer cannot say" };
