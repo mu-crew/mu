@@ -135,6 +135,8 @@ const UNREBUILDABLE_TABLES = [
   "wait_resumes",
   "agent_settles",
   "host_profiles",
+  // The user's plugin registrations (argv, declared seams): no op carries them.
+  "plugins",
   "host_channels",
   "spawn_receipts",
   // The stall actions a wait took (steer exclusion, release record): no op carries them.

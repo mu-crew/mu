@@ -43,6 +43,7 @@ import { wireLogCommand } from "./cli/log.js";
 import { wireNextCommand } from "./cli/next.js";
 import { wireOrchestrateCommand } from "./cli/orchestrate.js";
 import { wirePiCommand } from "./cli/pi.js";
+import { wirePluginCommands } from "./cli/plugin.js";
 import { wireRebuildCommand } from "./cli/rebuild.js";
 import { wireStateCommands } from "./cli/state.js";
 import { wireSyncCommand } from "./cli/sync.js";
@@ -897,6 +898,7 @@ export function buildProgram(): Command {
   wireStateCommands(program);
   wireSyncCommand(program);
   wireHostCommands(program);
+  wirePluginCommands(program);
   wireHookCommand(program);
   wireInitCommand(program);
   wireHumanNeededCommand(program);

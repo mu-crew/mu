@@ -46,6 +46,12 @@ export const LEGACY_RECOVERY_TRIGGERS = [
   "remote_recovery_workstream_del",
 ];
 
+/** The triggers REMOTE_RECOVERY_DDL creates: their bodies read host_profiles. */
+export const RECOVERY_TRIGGERS = [
+  "remote_recovery_agent_del_v2",
+  "remote_recovery_workstream_del_v2",
+];
+
 export const REMOTE_RECOVERY_DDL = `
 -- remote_recovery: what a finalized remote worker row said about its
 -- worktree, written by triggers when the row is deleted (machine-local; see

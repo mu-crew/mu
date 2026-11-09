@@ -56,7 +56,7 @@ import {
 import { CARRIER_JOBS_REBUILD, carrierJobsPreReservation } from "./db-carrier.js";
 import { checksTableMissing, refoldStoredChecks } from "./db-checks.js";
 import { SPAWN_RECEIPTS_REBUILD, spawnReceiptsPreHooks } from "./db-receipts.js";
-import { LEGACY_RECOVERY_TRIGGERS } from "./db-recovery.js";
+import { LEGACY_RECOVERY_TRIGGERS, RECOVERY_TRIGGERS } from "./db-recovery.js";
 import {
   ADDED_COLUMNS,
   BLOCKED_VIEW_SQL,
@@ -558,6 +558,14 @@ function hostProfilesRepoRequired(db: Db): boolean {
   return row?.nn === 1;
 }
 
+/** host_profiles before `plugin` (shell and exec NOT NULL): rebuilt, rows kept (plugins spec D5). */
+function hostProfilesPrePlugin(db: Db): boolean {
+  const cols = db.prepare("SELECT name FROM pragma_table_info('host_profiles')").all() as {
+    name: string;
+  }[];
+  return cols.length > 0 && !cols.some((c) => c.name === "plugin");
+}
+
 /** The DDL half of upgradeSchema; the caller owns the transaction. */
 function applySchemaDdl(db: Db): void {
   // No migration (the profile names a machine now): an older file's profiles
@@ -585,6 +593,23 @@ function applySchemaDdl(db: Db): void {
   // Columns a v13 DB written before they existed still lacks.
   for (const [table, column, ddl] of ADDED_COLUMNS) {
     if (!hasColumn(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
+  // host_profiles before `plugin`, completed above: set aside and copied whole into the shape
+  // with `plugin` and a nullable shell and exec. The recovery triggers read it, so they go
+  // first (a rename would repoint them at the copy); CURRENT_SCHEMA puts them back.
+  if (hostProfilesPrePlugin(db)) {
+    for (const t of RECOVERY_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
+    db.exec("ALTER TABLE host_profiles RENAME TO host_profiles_pre_plugin");
+    db.exec(CURRENT_SCHEMA);
+    const cols = (
+      db.prepare("SELECT name FROM pragma_table_info('host_profiles_pre_plugin')").all() as {
+        name: string;
+      }[]
+    )
+      .map((c) => `"${c.name}"`)
+      .join(", ");
+    db.exec(`INSERT INTO host_profiles (${cols}) SELECT ${cols} FROM host_profiles_pre_plugin`);
+    db.exec("DROP TABLE host_profiles_pre_plugin");
   }
   // Seed the legal (status, substate) pairs from code. INSERT OR
   // IGNORE keeps it idempotent; the table is machine-local and never
@@ -650,6 +675,7 @@ function schemaIsCurrent(db: Db): boolean {
   if (ADDED_COLUMNS.some(([t, c]) => !hasColumn(db, t, c))) return false;
   if (LEGACY_RECOVERY_TRIGGERS.some((t) => have.has(`trigger:${t}`))) return false;
   if (hostProfilesRepoRequired(db)) return false;
+  if (hostProfilesPrePlugin(db)) return false;
   if (carrierJobsPreReservation(db)) return false;
   if (spawnReceiptsPreHooks(db)) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;

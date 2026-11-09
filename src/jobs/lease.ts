@@ -213,7 +213,8 @@ const DUMMY_JOB = "check-job";
 function leaseTemplateSteps(profile: HostProfile): HostCheckStep[] {
   const problems = (() => {
     try {
-      return leaseShellProblems(profile.shell);
+      // A lease profile always has its shell (addHost): a `--plugin` profile is a session one.
+      return leaseShellProblems(profile.shell ?? "");
     } catch (e) {
       if (e instanceof HostTemplateError) return [e.message];
       throw e;

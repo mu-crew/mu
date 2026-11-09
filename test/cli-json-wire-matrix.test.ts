@@ -93,6 +93,10 @@ const ARGS: Record<string, string[]> = {
   "host rm": ["dev"],
   "host init": ["dev", "--ssh"],
   "host check": ["dev"],
+  // No `--`: the matrix appends --json, which after `--` would be an argv word.
+  "plugin add": ["fake", "/nonexistent/mu-plugin-fake"],
+  "plugin list": [],
+  "plugin rm": ["fake"],
   "hook stop": ["claude"],
   init: [],
   "human-needed": ["needs a decision"],

@@ -214,16 +214,23 @@ export function hooksStep(caps: HostCapabilities): { step: HostCheckStep; warnin
  */
 export function recordHostCapabilities(
   db: Db,
-  profile: Pick<HostProfile, "name" | "shell" | "exec" | "transport">,
+  profile: Pick<HostProfile, "name" | "shell" | "exec" | "transport" | "plugin">,
   caps: HostCapabilities,
 ): boolean {
+  // IS, not =: a `--plugin` profile's shell and exec are NULL.
   return (
     db
       .prepare(
-        "UPDATE host_profiles SET capabilities = ? WHERE name = ? AND shell = ? AND exec = ? AND transport = ?",
+        "UPDATE host_profiles SET capabilities = ? WHERE name = ? AND shell IS ? AND exec IS ? AND transport = ? AND plugin IS ?",
       )
-      .run(JSON.stringify(caps), profile.name, profile.shell, profile.exec, profile.transport)
-      .changes === 1
+      .run(
+        JSON.stringify(caps),
+        profile.name,
+        profile.shell,
+        profile.exec,
+        profile.transport,
+        profile.plugin ?? null,
+      ).changes === 1
   );
 }
 

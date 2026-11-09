@@ -28,6 +28,7 @@ import {
   HANDED_BACK,
   type HostCheckStep,
   type HostLease,
+  HostProfileError,
   type HostRun,
   remotePathWord,
   runLeasedTemplate,
@@ -148,6 +149,14 @@ async function underChannel(
   );
 }
 
+/** The view's exec template. A `--plugin` profile has none: its link is the plugin's. */
+function execTemplate(host: HostView): string {
+  const exec = requireProfile(host).exec;
+  if (exec === null)
+    throw new HostProfileError(`host ${host.name} has no exec template: its link is a plugin`);
+  return exec;
+}
+
 /** The built-in link over `db`'s profiles: today's `exec` and `fetch` templates. */
 export function templateLink(db: Db): HostLink {
   const link: HostLink = {
@@ -160,12 +169,12 @@ export function templateLink(db: Db): HostLink {
       quiescence: "provable",
       checks: ["reach"],
     },
-    fingerprint: (host) => requireProfile(host).exec,
+    fingerprint: (host) => execTemplate(host),
     fits: (host, script, cwd) => {
       // The filled template is ONE argument of the local `/bin/sh -c`, and holds every
       // argument the host's shells get: measured as exec'd, before anything runs.
       const bytes = Buffer.byteLength(
-        expandHostTemplate(requireProfile(host).exec, { cmd: script, cwd }, "exec"),
+        expandHostTemplate(execTemplate(host), { cmd: script, cwd }, "exec"),
       );
       return { ok: bytes < EXEC_ARG_MAX_BYTES, bytes, limit: EXEC_ARG_MAX_BYTES };
     },

@@ -60,6 +60,7 @@ describe("openDb", () => {
       "op_ctx",
       "op_dying",
       "ops",
+      "plugins",
       "remote_recovery",
       "schema_version",
       "spawn_receipts",
@@ -77,7 +78,7 @@ describe("openDb", () => {
       "workstreams",
       "worktrees",
     ]);
-    expect(tables).toHaveLength(29);
+    expect(tables).toHaveLength(30);
     expect([...tables].sort()).toEqual(tables);
     // schema_version stamped to current (v14).
     const v = (
@@ -453,6 +454,7 @@ describe("openDb", () => {
       "op_ctx",
       "op_dying",
       "ops",
+      "plugins",
       "remote_recovery",
       "schema_version",
       "spawn_receipts",

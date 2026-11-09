@@ -130,7 +130,7 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it; nor did keep_driving or checks). Sorted; exactly 29 entries. */
+ *  additive, and an older mu ignores it; nor did keep_driving or checks). Sorted; exactly 30 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
@@ -145,6 +145,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "op_ctx",
   "op_dying",
   "ops",
+  "plugins",
   "remote_recovery",
   "schema_version",
   "spawn_receipts",
@@ -250,6 +251,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *                     blocks and whether its close nudge fired (src/hook-stop.ts).
  *    agent_settles    settled runs already applied (settle replay).
  *    host_profiles    ssh-free command templates per remote host.
+ *    plugins          the user's registered plugins: argv and declared seams (spec D14).
+ *                     Rebuild cannot restore it (UNREBUILDABLE_TABLES).
  *    host_channels    the connection slots a host's `max_sessions` counts:
  *                     one row per live holder (invocation pid or agent pane).
  *    wait_resumes     one row per `mu wait` result that left something owed:
@@ -297,6 +300,7 @@ export const MACHINE_LOCAL_TABLES = [
   "op_ctx",
   "op_dying",
   "ops",
+  "plugins",
   "remote_recovery",
   "schema_version",
   "spawn_receipts",
@@ -731,15 +735,32 @@ CREATE TABLE IF NOT EXISTS keep_driving (
 -- (machine-local; mu never connects, it expands these).
 CREATE TABLE IF NOT EXISTS host_profiles (
   name         TEXT PRIMARY KEY,
-  shell        TEXT NOT NULL,
-  exec         TEXT NOT NULL,
+  shell        TEXT,                           -- NULL only with plugin (addHost requires it otherwise)
+  exec         TEXT,                           -- NULL only with plugin: the plugin is the link
   fetch        TEXT NOT NULL,
   repo         TEXT,                           -- default remote repo for spawns without --root; NULL: none
   max_sessions INTEGER CHECK (max_sessions > 0),
   transport    TEXT NOT NULL DEFAULT 'session', -- 'session' | 'lease' (validated in addHost, no CHECK: ADDED_COLUMNS cannot add one)
   stop         TEXT,                           -- lease only: the template that ends a job given its handle ({job}); NULL for session
   attach       TEXT,                           -- lease only, optional: a new carrier for a running job ({job}, {job_file}); NULL: none
-  capabilities TEXT                            -- the last host check's harness probe and its time (JSON); NULL: never probed
+  capabilities TEXT,                           -- the last host check's harness probe and its time (JSON); NULL: never probed
+  plugin       TEXT                            -- the registered plugin that is this host's link (plugins.name); NULL: the templates
+);
+
+-- plugins: the user's registered plugins (machine-local; spec D14). One row per
+-- 'mu plugin add': the argv, and what its handshake declared. No FK from
+-- host_profiles.plugin: 'mu plugin rm' refuses while a profile names it.
+CREATE TABLE IF NOT EXISTS plugins (
+  name          TEXT PRIMARY KEY,
+  argv_json     TEXT NOT NULL,                 -- JSON array; the first word an absolute path
+  protocol      INTEGER NOT NULL,
+  version       TEXT NOT NULL,
+  instance      TEXT NOT NULL,                 -- the backend configuration it addresses (the fence)
+  seams_json    TEXT NOT NULL,                 -- JSON array of the declared seam names
+  caps_json     TEXT NOT NULL,                 -- JSON: the handshake's seams, each with its capabilities
+  schema_digest TEXT NOT NULL,
+  added_at      TEXT NOT NULL,
+  checked_at    TEXT NOT NULL
 );
 
 ${CARRIER_JOBS_DDL}

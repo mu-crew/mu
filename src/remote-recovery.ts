@@ -344,7 +344,7 @@ export function refuseOwnedRemotePath(
 /** The profile at the time of use must be the one the record pinned. Missing provenance refuses. */
 export function assertRecoveryProfile(
   rec: RemoteRecovery,
-  profile: { exec: string } | undefined,
+  profile: { exec: string | null } | undefined,
 ): void {
   const refuse = (detail: string): never => {
     throw new RemoteRecoveryRefusedError(rec.workstream, rec.name, "profile", detail, [

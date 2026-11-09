@@ -77,6 +77,9 @@ export function remoteShellCommand(
     MU_REMOTE: "1",
     ...(a.hooks !== undefined ? { MU_AGENT_CLI: a.hooks.cli, MU_REMOTE_KEY: a.hooks.key } : {}),
   });
+  if (profile.shell === null) {
+    throw new HostTemplateError(`host ${profile.name} has no shell template: its link is a plugin`);
+  }
   const filled = expandHostTemplate(profile.shell, {
     env,
     cmd: a.command,

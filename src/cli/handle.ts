@@ -125,6 +125,7 @@ import {
   PluginNotFoundError,
   PluginRefusedError,
 } from "../plugins/errors.js";
+import { closePluginSessions } from "../plugins/registry.js";
 import { RebuildTargetExistsError, RebuildTargetIsSourceError } from "../rebuild.js";
 import { RemoteCollectError, RemoteCollectUnsupportedError } from "../remote-collect.js";
 import {
@@ -1052,6 +1053,8 @@ export function handle(
           // ambientFlush is already total; belt and braces.
         }
       }
+      // The plugins this invocation started: `shutdown`, the grace, the group killed (D13).
+      await closePluginSessions();
       try {
         db?.close();
       } catch {

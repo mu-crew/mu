@@ -82,6 +82,7 @@ import {
 } from "./host-harnesses.js";
 import type { CheckContext, CheckPhase } from "./host-link.js";
 import { say } from "./messages.js";
+import { PluginNotFoundError, PluginRefusedError } from "./plugins/errors.js";
 import { shellQuote } from "./shell-quote.js";
 
 // ─── Errors ─────────────────────────────────────────────────────────────
@@ -177,8 +178,10 @@ export class HostCheckFailedError extends Error {
 
 export interface HostProfile {
   name: string;
-  shell: string;
-  exec: string;
+  /** The pane's template; null only on a `--plugin` profile. */
+  shell: string | null;
+  /** The exec template; null only on a `--plugin` profile, whose link is the plugin. */
+  exec: string | null;
   fetch: string;
   /** Default remote repo for a spawn without `--root`; null: none. */
   repo: string | null;
@@ -194,14 +197,26 @@ export interface HostProfile {
    * when it was probed); null: never probed. Read it with `hostCapabilities`.
    */
   capabilities?: string | null;
+  /**
+   * The registered plugin that is this host's link (`mu host add --plugin`); null: the
+   * templates. A `--plugin` profile has no `shell` or `exec`, keeps its `fetch` template
+   * (run where the plugin's link does not fetch) and is a session profile.
+   */
+  plugin?: string | null;
 }
 
 export const HOST_TRANSPORTS = ["session", "lease"] as const;
 export type HostTransport = (typeof HOST_TRANSPORTS)[number];
 
-/** What `addHost` takes: a session profile needs neither `transport`, `stop` nor `attach`; a probe is never given. */
-export type NewHostProfile = Omit<HostProfile, "transport" | "stop" | "attach" | "capabilities"> &
-  Partial<Pick<HostProfile, "transport" | "stop" | "attach">>;
+/**
+ * What `addHost` takes: a session profile needs neither `transport`, `stop` nor `attach`; a
+ * probe is never given. `shell` and `exec` are given exactly when `plugin` is not.
+ */
+export type NewHostProfile = Omit<
+  HostProfile,
+  "shell" | "exec" | "transport" | "stop" | "attach" | "capabilities" | "plugin"
+> &
+  Partial<Pick<HostProfile, "shell" | "exec" | "transport" | "stop" | "attach" | "plugin">>;
 
 /** A job handle is opaque to mu: one line of these bytes, never parsed further. */
 export const JOB_HANDLE_RE = /^[A-Za-z0-9._:@-]{1,128}$/;
@@ -212,30 +227,49 @@ export function isValidHostName(name: string): boolean {
   return HOST_NAME_RE.test(name);
 }
 
+/** A row as mu holds it: `plugin` only on a `--plugin` profile, so a template profile is as it was. */
+function profileOf(row: HostProfile): HostProfile {
+  if (row.plugin != null) return row;
+  const { plugin: _none, ...rest } = row;
+  return rest;
+}
+
 export function getHost(db: Db, name: string): HostProfile {
   const row = db.prepare("SELECT * FROM host_profiles WHERE name = ?").get(name) as
     | HostProfile
     | undefined;
   if (row === undefined) throw new HostNotFoundError(name);
-  return row;
+  return profileOf(row);
 }
 
 export function listHosts(db: Db): HostProfile[] {
-  return db.prepare("SELECT * FROM host_profiles ORDER BY name").all() as HostProfile[];
+  return (db.prepare("SELECT * FROM host_profiles ORDER BY name").all() as HostProfile[]).map(
+    profileOf,
+  );
+}
+
+/** The profiles whose link is plugin `plugin`: `mu plugin rm` refuses while one names it. */
+export function hostsOfPlugin(db: Db, plugin: string): string[] {
+  return (
+    db.prepare("SELECT name FROM host_profiles WHERE plugin = ? ORDER BY name").all(plugin) as {
+      name: string;
+    }[]
+  ).map((h) => h.name);
 }
 
 /** Store a profile. Validates the name, cap, default repo, transport and every template first; stores nothing on refusal. */
 export function addHost(db: Db, input: NewHostProfile): HostProfile {
   const p: HostProfile = {
     name: input.name,
-    shell: input.shell,
-    exec: input.exec,
+    shell: input.shell ?? null,
+    exec: input.exec ?? null,
     fetch: input.fetch,
     repo: input.repo,
     max_sessions: input.max_sessions,
     transport: input.transport ?? "session",
     stop: input.stop ?? null,
     attach: input.attach ?? null,
+    plugin: input.plugin ?? null,
   };
   if (!isValidHostName(p.name)) {
     throw new HostProfileError(
@@ -247,6 +281,15 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
   }
   if (p.repo !== null && p.repo.trim() === "") {
     throw new HostProfileError("--repo must not be empty");
+  }
+  if (p.plugin !== null) {
+    refusePluginProfile(db, p);
+  } else {
+    for (const f of ["shell", "exec"] as const) {
+      if (p[f] === null) {
+        throw new HostProfileError(`--${f} is required (or --plugin <name>: a plugin as the link)`);
+      }
+    }
   }
   if (!(HOST_TRANSPORTS as readonly string[]).includes(p.transport)) {
     throw new HostProfileError(
@@ -271,8 +314,11 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
   const problem = profileTemplateProblem(p);
   if (problem !== undefined) throw new HostTemplateError(problem);
   try {
+    // A template profile's row is the one it always was: `plugin` is written only when given.
     db.prepare(
-      "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach)",
+      p.plugin === null
+        ? "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach)"
+        : "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach, plugin) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach, @plugin)",
     ).run(p);
   } catch (e) {
     if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
@@ -281,6 +327,31 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
     throw e;
   }
   return getHost(db, p.name);
+}
+
+/**
+ * A `--plugin` profile names a registered plugin whose handshake declared a link, and carries
+ * none of a template profile's pane or job fields: its link is the plugin, and it is a session
+ * profile (the plugin's job kind joins later).
+ */
+function refusePluginProfile(db: Db, p: HostProfile): void {
+  const given = (["shell", "exec", "stop", "attach"] as const).filter((f) => p[f] !== null);
+  if (given.length > 0) {
+    throw new HostProfileError(
+      `--plugin takes no ${given.map((f) => `--${f}`).join(", ")}: the plugin is the host's link`,
+    );
+  }
+  if (p.transport !== "session") {
+    throw new HostProfileError("--plugin takes no --transport: a plugin host is a session profile");
+  }
+  const name = p.plugin ?? "";
+  const row = db.prepare("SELECT caps_json FROM plugins WHERE name = ?").get(name) as
+    | { caps_json: string }
+    | undefined;
+  if (row === undefined) throw new PluginNotFoundError(name);
+  if ((JSON.parse(row.caps_json) as { link?: unknown }).link === undefined) {
+    throw new PluginRefusedError(name, ["it implements no link seam, which a --plugin host needs"]);
+  }
 }
 
 /**
@@ -555,8 +626,16 @@ function profileTemplateProblem(
   p: Pick<HostProfile, "shell" | "exec" | "fetch" | "transport" | "stop" | "attach">,
 ): string | undefined {
   const fields: [string, string, HostTemplateScope][] = [
-    ["shell", p.shell, p.transport === "lease" ? "lease-shell" : "shell"],
-    ["exec", p.exec, "exec"],
+    ...(p.shell === null
+      ? []
+      : [
+          ["shell", p.shell, p.transport === "lease" ? "lease-shell" : "shell"] as [
+            string,
+            string,
+            HostTemplateScope,
+          ],
+        ]),
+    ...(p.exec === null ? [] : [["exec", p.exec, "exec"] as [string, string, HostTemplateScope]]),
     ["fetch", p.fetch, "fetch"],
     ...(p.stop === null ? [] : [["stop", p.stop, "stop"] as [string, string, HostTemplateScope]]),
     ...(p.attach === null
@@ -1243,7 +1322,7 @@ export async function checkHost(
  * Every profile is a session profile today.
  */
 function sessionShellWarnings(profile: HostProfile): string[] {
-  if (profile.transport !== "session") return [];
+  if (profile.transport !== "session" || profile.shell === null) return [];
   const noMaster = /ControlMaster[= ]+no\b/i.test(profile.shell);
   const noPath = /ControlPath[= ]+none\b/i.test(profile.shell);
   if (noMaster && noPath) return [];

@@ -1027,7 +1027,7 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(29);
+    expect(EXPECTED_TABLES).toHaveLength(30);
     expect(PORTABLE_TABLES).toEqual(["checks", "task_edges", "task_notes", "tasks", "workstreams"]);
   });
 
