@@ -10,9 +10,9 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import {
-  type AgentChannel,
   agentChannel,
   type ChannelCaps,
+  type ChannelImpl,
   channelNamed,
   channelTarget,
   ctlChannel,
@@ -70,7 +70,14 @@ const MATRIX: Readonly<Record<"ctl" | "hooks" | "mux", ChannelCaps>> = {
   },
 };
 
-const fakeChannel = (name: string): AgentChannel => ({ ...muxChannel, name });
+/** A channel implementation: the mux channel's delivery and caps under another name. */
+const fakeChannel = (name: string): ChannelImpl => ({
+  ...muxChannel,
+  name,
+  readTurns: "base",
+  watch: async () => undefined,
+  lastRun: async () => undefined,
+});
 
 describe("the channel registry", () => {
   afterEach(() => {
@@ -90,9 +97,9 @@ describe("the channel registry", () => {
   });
 
   it("registers a channel under its name, and refuses a taken name", () => {
-    const fake = fakeChannel("fake");
-    registerChannel(fake);
+    const fake = registerChannel(fakeChannel("fake"));
     expect(channelNamed("fake")).toBe(fake);
+    expect(fake.name).toBe("fake");
     expect(() => registerChannel(fakeChannel("fake"))).toThrow(/already registered/);
     expect(() => registerChannel(fakeChannel("ctl"))).toThrow(/already registered/);
     expect(() => unregisterChannelForTests("ctl")).toThrow(/built in/);

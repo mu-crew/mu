@@ -15,10 +15,11 @@
 // spawn handshake, doctor and the remote socket plumbing stay on src/ctl
 // directly.
 
-import type { StateAgentRef, StateReading } from "../agent-state.js";
+import type { RuntimeState, StateAgentRef, StateReading } from "../agent-state.js";
 import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
 import type { AgentRow } from "../agents.js";
 import type { CtlCommandName, CtlState } from "../ctl/protocol.js";
+import type { JobGone } from "../jobs/kinds.js";
 import type { JobRef } from "../jobs/types.js";
 import type { SendOptions } from "../mux.js";
 
@@ -178,10 +179,27 @@ export type MessageCheck =
 
 /**
  * What a channel's own read reports: turn state and its link to the agent's
- * process (`ctl`), never `alive`. Liveness is the job's word
- * (`withJobLiveness`, src/jobs/kinds.ts).
+ * process (`ctl`), never `alive` (a reading that carries one does not
+ * typecheck). Liveness is the job's word (`withJobLiveness`, src/jobs/kinds.ts),
+ * applied by the channel layer (./compose.ts), never by a channel.
  */
-export type ChannelReading = Omit<StateReading, "alive">;
+export type ChannelReading = Omit<StateReading, "alive"> & { readonly alive?: never };
+
+/**
+ * An observation as a channel's watch reports it: a dead agent is only the
+ * job's verdict (`JobGone`, minted by `jobUp`), never a `null` the channel
+ * writes. `jobObservation` makes it the wait's AgentObservation.
+ */
+export type ChannelObservation = Omit<AgentObservation, "status"> & {
+  status: RuntimeState | JobGone;
+};
+
+/** A channel's watch (see ObservedWatch), its observations the channel's. */
+export interface ChannelWatch {
+  initial: ChannelObservation;
+  afterRuns?: number;
+  settled: Promise<ChannelObservation>;
+}
 
 export interface ChannelReadOptions {
   now?: number;
@@ -226,7 +244,13 @@ export interface SentRun {
   baseline?: RunBaseline;
 }
 
-export interface AgentChannel extends ChannelDelivery {
+/**
+ * What a channel implements (the seam, plugins spec D9). Its reads report turn
+ * state and links only: `readTurns` returns ChannelReadings (no `alive`), and
+ * its watch reports a dead agent only on the job's verdict. The registry
+ * serves it as an AgentChannel (`composeChannel`, ./compose.ts).
+ */
+export interface ChannelImpl extends ChannelDelivery {
   readonly name: ChannelName;
   /** What this channel can do (plugins spec D9). */
   readonly caps: ChannelCaps;
@@ -246,25 +270,28 @@ export interface AgentChannel extends ChannelDelivery {
   /** How a delivered interrupt went, for the same line. */
   describeInterrupt(r: InterruptResult): string;
   /**
-   * One batched, non-blocking state read of agents on this channel, keyed
-   * `<workstream>/<name>`. A ctl agent whose socket does not answer reads
-   * `unknown` with its `ctl` link (`missing`, `refused`).
+   * The channel's own batched, non-blocking read of its agents, keyed
+   * `<workstream>/<name>`: turn state and its link (a ctl agent whose socket
+   * does not answer reads `unknown` with `ctl` `missing` or `refused`).
+   * `base`: the channel's state is the shared pane read (murmur's pane
+   * options, the multiplexer's status), read with the view in one batch.
    */
-  readStates(
-    agents: readonly StateAgentRef[],
-    opts: ChannelReadOptions,
-  ): Promise<Map<string, StateReading>>;
+  readonly readTurns:
+    | ((
+        agents: readonly StateAgentRef[],
+        opts: ChannelReadOptions,
+      ) => Promise<Map<string, ChannelReading>>)
+    | "base";
   /**
    * Watch the agent's current or next run end past `afterRuns` (pinned to
    * pi's process by `inc`). undefined: the channel cannot watch, so the
-   * caller polls `readStates`. A rejection of `settled` is fatal (the agent
-   * restarted).
+   * caller polls. A rejection of `settled` is fatal (the agent restarted).
    */
   watch(
     target: ChannelTarget,
     signal: AbortSignal,
     opts: { afterRuns?: number; inc?: string },
-  ): Promise<ObservedWatch | undefined>;
+  ): Promise<ChannelWatch | undefined>;
   /** The run count a wait counts from now; undefined when the channel has none or does not answer. */
   baseline(target: ChannelTarget): Promise<RunBaseline | undefined>;
   /** Ask whether the message that carried `msgId` was accepted. Never throws. */
@@ -278,7 +305,36 @@ export interface AgentChannel extends ChannelDelivery {
   lastRun(
     target: ChannelTarget,
     opts: { afterRuns: number; inc?: string; signal?: AbortSignal; ms: number },
-  ): Promise<AgentObservation | undefined>;
+  ): Promise<ChannelObservation | undefined>;
+}
+
+/**
+ * A channel as mu reaches it: the implementation, with its reads composed by
+ * the channel layer (`composeChannel`), where the job decides liveness. The
+ * composed members are read-only: no caller replaces them.
+ */
+export interface AgentChannel extends Omit<ChannelImpl, "watch" | "lastRun"> {
+  /**
+   * One batched, non-blocking state read of agents on this channel, keyed
+   * `<workstream>/<name>`: the channel's turn read, its liveness the job's
+   * (`withJobLiveness`). A ctl agent whose socket does not answer reads
+   * `unknown` with its `ctl` link (`missing`, `refused`).
+   */
+  readonly readStates: (
+    agents: readonly StateAgentRef[],
+    opts: ChannelReadOptions,
+  ) => Promise<Map<string, StateReading>>;
+  /** The channel's watch, a dead agent the job's verdict (`jobObservation`). */
+  readonly watch: (
+    target: ChannelTarget,
+    signal: AbortSignal,
+    opts: { afterRuns?: number; inc?: string },
+  ) => Promise<ObservedWatch | undefined>;
+  /** The channel's last run, as `watch` reports it. */
+  readonly lastRun: (
+    target: ChannelTarget,
+    opts: { afterRuns: number; inc?: string; signal?: AbortSignal; ms: number },
+  ) => Promise<AgentObservation | undefined>;
 }
 
 /** What a delivery did. The ctl-only fields are absent on `hooks` and `mux`. */

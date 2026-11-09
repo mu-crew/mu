@@ -276,14 +276,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   unchanged. The run-baseline rename: `hooksFence` is
   `hooksRunBaseline`, `sentFence` is `sentRunBaseline`. `ChannelTarget.job`
   carries the row's job (`agentJobRef`: pane, lease or gate). Liveness is the
-  job's by construction: a channel's own read reports turn state and its link
-  (`ChannelReading`, no `alive`), and one function in `src/jobs/`,
-  `withJobLiveness`, sets `alive`. An answer stands in for it only where the
-  job's kind says an answer from its process proves it runs
-  (`answerProvesRunning`: pane and lease), else the job's view decides; a
-  socket that does not answer still takes the batched view read's. `readAgentStates`
-  groups agents by their channel's read (hooks and mux share one batch, as
-  before). `test/channel-names.test.ts` parses `src/` and fails on a channel
+  job's by construction, at the seam: a channel implements `ChannelImpl`,
+  whose own read (`readTurns`) returns `ChannelReading`s, turn state and link
+  with `alive` typed `never`, and whose watch reports a dead agent only as the
+  job's verdict (`JobGone`, minted by `jobUp`). The registry serves it
+  composed (`composeChannel`, `src/channels/compose.ts`, frozen), and
+  `composedStates`, behind both `readAgentStates` and each channel's
+  `readStates`, sets `alive` only through `withJobLiveness`. An answer stands
+  in for it only where the job's kind says an answer from its process proves
+  it runs (`answerProvesRunning`: pane and lease), else the job's view
+  decides; a socket that does not answer still takes the batched view read's.
+  Agents are grouped by their channel's own read (hooks and mux share the one
+  base read, as before). `test/channel-names.test.ts` parses `src/` and fails on a channel
   name comparison outside `src/channels/` that is neither a capability check
   nor on its pinned list of single-channel features (also through an alias or
   a constant holding a name), and on any `alive` set in a channel or ctl

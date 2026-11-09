@@ -8,24 +8,27 @@
 // (`beforeWrite`, CtlWriteVetoedError) and msgIds are ctl's, re-exported here
 // for the callers that reserve and fence a send.
 
-import type { RuntimeState, StateAgentRef, StateReading } from "../agent-state.js";
+import type { RuntimeState, StateAgentRef } from "../agent-state.js";
 import { agentKey, UNKNOWN_REASON } from "../agent-state.js";
 import { AgentRestartedError } from "../agents/errors.js";
-import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
+import type { ObservedAgent, ObservedWatch } from "../agents/observe.js";
 import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import { type CtlBlocked, type CtlState, INCARNATION_MISMATCH } from "../ctl/protocol.js";
-import { stateRefJob, withJobLiveness } from "../jobs/kinds.js";
-import { paneUp } from "../jobs/pane.js";
+import { isJobGone, jobUp } from "../jobs/kinds.js";
+import { composeChannel, composedWatch } from "./compose.js";
 import { checkMessage, ctlDelivery } from "./ctl-deliver.js";
 import { expectsCtl, targetSocket } from "./select.js";
 import type {
   AgentChannel,
   ChannelCaps,
+  ChannelImpl,
+  ChannelObservation,
   ChannelReading,
   ChannelReadOptions,
   ChannelSendReply,
   ChannelTarget,
+  ChannelWatch,
   InterruptResult,
   RunBaseline,
   SendResult,
@@ -87,20 +90,6 @@ async function readCtlTurns(
   return readings;
 }
 
-/** The turn read, each reading's liveness the job's (`withJobLiveness`). */
-async function readCtlStates(
-  agents: readonly StateAgentRef[],
-  opts: ChannelReadOptions,
-): Promise<Map<string, StateReading>> {
-  const turns = await readCtlTurns(agents, opts);
-  const readings = new Map<string, StateReading>();
-  for (const a of agents) {
-    const turn = turns.get(agentKey(a));
-    if (turn !== undefined) readings.set(agentKey(a), await withJobLiveness(turn, stateRefJob(a)));
-  }
-  return readings;
-}
-
 /**
  * Watch a pi agent's current or next run end over its control socket: one
  * ctl `wait` that the extension answers on `agent_settled`. `afterRuns`
@@ -111,12 +100,22 @@ async function readCtlStates(
  * (the caller polls it instead). `signal` aborts the wait (`settled` then
  * resolves unknown, never dead and never settled).
  */
-export async function watchAgentRun(
+export function watchAgentRun(
   agent: ObservedAgent,
   sock: string,
   signal: AbortSignal,
   opts: { afterRuns?: number; inc?: string },
 ): Promise<ObservedWatch | undefined> {
+  return composedWatch(watchCtlRun(agent, sock, signal, opts));
+}
+
+/** `watchAgentRun` as the channel reports it: a dead pi only on the job's verdict (`jobUp`). */
+async function watchCtlRun(
+  agent: ObservedAgent,
+  sock: string,
+  signal: AbortSignal,
+  opts: { afterRuns?: number; inc?: string },
+): Promise<ChannelWatch | undefined> {
   if (!expectsCtl(agent, sock)) return undefined;
   const base = {
     workstream: agent.workstreamName,
@@ -126,7 +125,7 @@ export async function watchAgentRun(
   };
   // With --after-runs the run past the baseline is the pending work: read
   // as busy until the wait settles; no status probe needed.
-  let initial: AgentObservation = {
+  let initial: ChannelObservation = {
     ...base,
     status: "busy",
     source: "ctl",
@@ -161,7 +160,7 @@ export async function watchAgentRun(
   } as const;
   const restarted = (actual?: string): AgentRestartedError =>
     new AgentRestartedError(agent.name, agent.workstreamName, opts.inc ?? "", actual);
-  const lost = (status: null | "unknown", reason?: string): AgentObservation => ({
+  const lost = (status: ChannelObservation["status"], reason?: string): ChannelObservation => ({
     ...base,
     status,
     source: "ctl",
@@ -170,7 +169,7 @@ export async function watchAgentRun(
     settled: false,
   });
   const settled = ctlRequest(sock, req, { signal }).then(
-    (reply): AgentObservation => {
+    (reply): ChannelObservation => {
       // A refused incarnation is fatal, never "unknown": the run is gone.
       if (!reply.ok && reply.error === INCARNATION_MISMATCH) throw restarted(reply.incarnation);
       if (!reply.ok) return lost("unknown", reply.error);
@@ -211,7 +210,7 @@ export async function watchAgentRun(
     // the pi that served it is gone. With `inc` an answering process must
     // also BE that incarnation: another one means the agent restarted and
     // the run is gone (fatal, never polled).
-    async (): Promise<AgentObservation> => {
+    async (): Promise<ChannelObservation> => {
       if (signal.aborted) return lost("unknown");
       const again = await ctlProbe(sock);
       if (
@@ -227,9 +226,9 @@ export async function watchAgentRun(
       // is a forward that a dropped connection (a lease's mule master) takes
       // down while the pane and the job on the host live on. Only a pane that
       // is gone (or unreadable as alive) is a dead pi.
-      const up = await paneUp(agent.paneId);
-      if (up === undefined) return lost("unknown", "control socket lost; the mux cannot say");
-      return up ? lost("unknown", "control socket lost; the pane is alive") : lost(null);
+      const up = await jobUp({ kind: "pane", viewPaneId: agent.paneId });
+      if (up === "unknown") return lost("unknown", "control socket lost; the mux cannot say");
+      return isJobGone(up) ? lost(up) : lost("unknown", "control socket lost; the pane is alive");
     },
   );
   return { initial, afterRuns, settled };
@@ -251,13 +250,13 @@ async function ctlBaseline(t: ChannelTarget): Promise<RunBaseline | undefined> {
 async function ctlLastRun(
   t: ChannelTarget,
   o: { afterRuns: number; inc?: string; signal?: AbortSignal; ms: number },
-): Promise<AgentObservation | undefined> {
+): Promise<ChannelObservation | undefined> {
   const stop = new AbortController();
   const timer = setTimeout(() => stop.abort(), o.ms);
   const onAbort = (): void => stop.abort();
   o.signal?.addEventListener("abort", onAbort, { once: true });
   try {
-    const watch = await watchAgentRun(t.agent, targetSocket(t), stop.signal, {
+    const watch = await watchCtlRun(t.agent, targetSocket(t), stop.signal, {
       afterRuns: o.afterRuns,
       ...(o.inc !== undefined ? { inc: o.inc } : {}),
     });
@@ -308,17 +307,19 @@ function describeCtlInterrupt(r: InterruptResult): string {
   return `via ctl, ${what}${runs}`;
 }
 
-export const ctlChannel: AgentChannel = {
+const ctlImpl: ChannelImpl = {
   name: "ctl",
   caps: CTL_CAPS,
   fence: CTL_CAPS.fence === "sync",
   sendRun: ctlSendRun,
   describeSend: describeCtlSend,
   describeInterrupt: describeCtlInterrupt,
-  readStates: readCtlStates,
-  watch: (t, signal, opts) => watchAgentRun(t.agent, targetSocket(t), signal, opts),
+  readTurns: readCtlTurns,
+  watch: (t, signal, opts) => watchCtlRun(t.agent, targetSocket(t), signal, opts),
   baseline: ctlBaseline,
   receipt: (t, msgId, timeoutMs) => checkMessage(targetSocket(t), msgId, timeoutMs),
   lastRun: ctlLastRun,
   ...ctlDelivery,
 };
+
+export const ctlChannel: AgentChannel = composeChannel(ctlImpl);

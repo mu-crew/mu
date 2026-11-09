@@ -6,11 +6,13 @@
 // asks `channelNamed` for the channel and branches on its `caps`, never on the
 // name itself (test/channel-names.test.ts).
 
+import { composeChannel } from "./compose.js";
 import { ctlChannel } from "./ctl.js";
 import { hooksChannel } from "./hooks.js";
 import { muxChannel } from "./mux.js";
 import type {
   AgentChannel,
+  ChannelImpl,
   ChannelName,
   ChannelSendReply,
   SendResult,
@@ -35,11 +37,17 @@ function channels(): Map<string, AgentChannel> {
   return registry;
 }
 
-/** Add a channel under its name. A name already taken throws: a channel never replaces another. */
-export function registerChannel(channel: AgentChannel): void {
+/**
+ * Add a channel implementation under its name, served composed
+ * (`composeChannel`: its readings' liveness is the job's). A name already
+ * taken throws: a channel never replaces another.
+ */
+export function registerChannel(impl: ChannelImpl): AgentChannel {
   const all = channels();
-  if (all.has(channel.name)) throw new Error(`channel ${channel.name} is already registered`);
-  all.set(channel.name, channel);
+  if (all.has(impl.name)) throw new Error(`channel ${impl.name} is already registered`);
+  const channel = composeChannel(impl);
+  all.set(impl.name, channel);
+  return channel;
 }
 
 /** The channel registered as `name`; undefined for a null, absent or unknown name. */

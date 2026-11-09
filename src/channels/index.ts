@@ -6,6 +6,7 @@
 // hubs import them from ./ctl.js, and test/channel-imports.test.ts holds that
 // list.
 
+export { composeChannel } from "./compose.js";
 export {
   blockedReason,
   CTL_DEFAULT_TIMEOUT_MS,
@@ -52,11 +53,14 @@ export {
   CHANNEL_NAMES,
   type ChannelCaps,
   type ChannelDelivery,
+  type ChannelImpl,
   type ChannelName,
+  type ChannelObservation,
   type ChannelReading,
   type ChannelReadOptions,
   type ChannelSendReply,
   type ChannelTarget,
+  type ChannelWatch,
   type CtlBlocked,
   type CtlCommandName,
   type CtlGuard,

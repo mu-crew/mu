@@ -163,8 +163,8 @@ export function channelNameHits(fileName: string, text: string): NameHit[] {
 
 /**
  * Liveness set in place: an `alive` property in an object literal (whatever
- * its value), an assignment to `.alive`, or a call of `unknownReading` (which
- * sets one). A channel or ctl module reports turn state only; liveness is
+ * its value), an assignment to `.alive`, a call of `unknownReading` (which
+ * sets one), or an observation's `status: null` (dead). A channel or ctl module reports turn state only; liveness is
  * the job's (`withJobLiveness`, src/jobs/kinds.ts).
  */
 export function livenessSetHits(fileName: string, text: string): NameHit[] {
@@ -181,6 +181,13 @@ export function livenessSetHits(fileName: string, text: string): NameHit[] {
       node.name.text === "alive"
     ) {
       hit(node, "alive:");
+    } else if (
+      ts.isPropertyAssignment(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "status" &&
+      node.initializer.kind === ts.SyntaxKind.NullKeyword
+    ) {
+      hit(node, "status: null");
     } else if (
       ts.isBinaryExpression(node) &&
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&

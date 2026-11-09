@@ -4,7 +4,9 @@
 // row rule and teardown use only that.
 
 import type { StateAgentRef, StateReading } from "../agent-state.js";
+import type { AgentObservation } from "../agents/observe.js";
 import type { AgentRow } from "../agents.js";
+import type { ChannelObservation, ChannelReading } from "../channels/types.js";
 import type { Db } from "../db.js";
 import { gateKind } from "./gate.js";
 import { leaseKind } from "./lease.js";
@@ -48,21 +50,59 @@ export function stateRefJob(a: StateAgentRef): Pick<JobRef, "kind" | "viewPaneId
 }
 
 /**
- * A channel's reading made a state reading: its liveness is decided here, and
- * only here (plugins spec D9, the P1 ruling). A channel reports turn state and
- * its link to the agent's process (`ctl`: `ok` when the process answered);
- * it never sets `alive`. An answer stands in for liveness when the job's kind
- * says so (`answerProvesRunning`); else the job's view decides, where an
- * unknown is never a death. No answer is not a death either: the reading
- * stays alive here, and `readAgentStates` takes its liveness from the batched
- * view read.
+ * A channel's reading made a state reading: `alive` is decided here, and only
+ * here (plugins spec D9, the P1 ruling). A channel reports turn state and its
+ * link to the agent's process (`ctl`: `ok` when the process answered); its
+ * reading has no `alive` (`ChannelReading`). An answer stands in for
+ * liveness only where the job's kind says so (`answerProvesRunning`); else
+ * the job's view decides, where an unknown is never a death. No answer is no
+ * death either: with `view`, the batched view read of the pane, its verdict
+ * stands (gone: the view's reading, with the channel's link); without one,
+ * the reading stays alive.
  */
 export async function withJobLiveness(
-  reading: Omit<StateReading, "alive">,
+  reading: ChannelReading,
   job: Pick<JobRef, "kind" | "viewPaneId">,
+  view?: StateReading,
 ): Promise<StateReading> {
-  if (reading.ctl !== "ok" || answerProvesRunning(job)) return { ...reading, alive: true };
-  return { ...reading, alive: (await paneUp(job.viewPaneId)) !== false };
+  if (reading.ctl === "ok") {
+    if (answerProvesRunning(job)) return { ...reading, alive: true };
+    return { ...reading, alive: (await paneUp(job.viewPaneId)) !== false };
+  }
+  if (view === undefined || view.alive) return { ...reading, alive: true };
+  return { ...view, ...(reading.ctl !== undefined ? { ctl: reading.ctl } : {}) };
+}
+
+declare const JOB_GONE: unique symbol;
+/**
+ * The job's word that it is gone. Only `jobUp` mints one, so a channel's
+ * watch can report a dead agent (`ChannelObservation.status`) only on it.
+ */
+export interface JobGone {
+  readonly [JOB_GONE]: true;
+}
+const GONE = Object.freeze({}) as JobGone;
+
+export function isJobGone(x: unknown): x is JobGone {
+  return x === GONE;
+}
+
+/**
+ * Whether the job still runs, as a watch asks mid-turn: `up`, `unknown` (the
+ * multiplexer cannot say: never a death), or gone. Every built-in kind is
+ * bound, so its view's command decides (`paneUp`).
+ */
+export async function jobUp(
+  job: Pick<JobRef, "kind" | "viewPaneId">,
+): Promise<"up" | "unknown" | JobGone> {
+  const up = await paneUp(job.viewPaneId);
+  return up === undefined ? "unknown" : up ? "up" : GONE;
+}
+
+/** A channel's observation as the wait reads it: the job's gone verdict is a dead agent (`status` null). */
+export function jobObservation(o: ChannelObservation): AgentObservation {
+  const { status } = o;
+  return isJobGone(status) ? { ...o, status: null } : { ...o, status };
 }
 
 /**

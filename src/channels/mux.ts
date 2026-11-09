@@ -21,11 +21,12 @@ import {
   AgentSendUnsupportedError,
 } from "../agents/errors.js";
 import { activeMux, type SendOptions } from "../mux.js";
-import { baseReadStates } from "./base-read.js";
+import { composeChannel } from "./compose.js";
 import { typeKeys } from "./hooks.js";
 import type {
   AgentChannel,
   ChannelCaps,
+  ChannelImpl,
   DeliveryOptions,
   DeliveryTarget,
   SendResult,
@@ -65,7 +66,7 @@ const MUX_CAPS: ChannelCaps = {
   settleText: "none",
 };
 
-export const muxChannel: AgentChannel = {
+const muxImpl: ChannelImpl = {
   name: "mux",
   caps: MUX_CAPS,
   fence: MUX_CAPS.fence === "sync",
@@ -74,7 +75,7 @@ export const muxChannel: AgentChannel = {
   describeSend: () => "via mux",
   // Never reached: the mux channel refuses an interrupt.
   describeInterrupt: () => "via mux",
-  readStates: baseReadStates,
+  readTurns: "base",
   watch: async () => undefined,
   baseline: async () => undefined,
   receipt: async (_target, msgId) => ({
@@ -118,3 +119,5 @@ export const muxChannel: AgentChannel = {
     return { transport: "mux", keys, ack: "unknown" };
   },
 };
+
+export const muxChannel: AgentChannel = composeChannel(muxImpl);

@@ -123,7 +123,7 @@ describe("channel names outside src/channels/", () => {
 });
 
 describe("liveness is the job's word, not a channel's", () => {
-  it("no channel or ctl module sets `alive` (or calls unknownReading, which does)", () => {
+  it("no channel or ctl module sets `alive`, calls unknownReading, or writes a dead `status: null`", () => {
     const out: string[] = [];
     for (const path of sources(SRC)) {
       const file = rel(path);
@@ -142,6 +142,7 @@ describe("liveness is the job's word, not a channel's", () => {
       "const r = { state, alive };",
       "r.alive = true;",
       'const r = { ...unknownReading("x"), ctl };',
+      "return { ...base, status: null, settled: false };",
     ]) {
       expect(livenessSetHits("x.ts", line), line).toHaveLength(1);
     }

@@ -2,10 +2,11 @@
 //
 // `agentChannel` picks one agent's channel from the registry (./registry.ts),
 // by the name its row recorded; `readAgentStates` is the one batched state
-// read over a mixed set: agents are grouped by their channel's read, and the
-// channels that share the base pane read (hooks, mux: ./base-read.ts) read in
-// one batch, last, with the liveness of every agent whose own channel did not
-// answer (a ctl socket that is missing or refused). A remote command gate is
+// read over a mixed set (`composedStates`, ./compose.ts): agents are grouped
+// by their channel's own read, and the channels on the shared base pane read
+// (hooks, mux) read in one batch, last, with the liveness of every agent
+// whose own channel did not answer (a ctl socket that is missing or refused).
+// Every reading's `alive` is the job's (`withJobLiveness`). A remote command gate is
 // read from its pane. Delivery is routed the same way, by `deliver`
 // (./deliver.ts).
 
@@ -16,7 +17,7 @@ import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
 import { agentJobRef } from "../jobs/kinds.js";
 import { queuedPanes } from "../muzzle-queue.js";
-import { baseReadStates } from "./base-read.js";
+import { composedStates } from "./compose.js";
 import { remoteReader } from "./hooks-remote.js";
 import { channelNamed } from "./registry.js";
 import { channelOf } from "./select.js";
@@ -142,36 +143,10 @@ async function markQueued(
   }
 }
 
-async function readChannelStates(
+/** Each agent's state, read by its channel and composed with its job's liveness (./compose.ts). */
+function readChannelStates(
   agents: readonly StateAgentRef[],
   opts: { now?: number; stateDir?: string },
 ): Promise<Map<string, StateReading>> {
-  // Grouped by the channel's read: hooks and mux share the base read.
-  const groups = new Map<AgentChannel["readStates"], StateAgentRef[]>();
-  for (const a of agents) {
-    const read = channelFor(a, opts.stateDir).readStates;
-    if (read === baseReadStates) continue;
-    groups.set(read, [...(groups.get(read) ?? []), a]);
-  }
-  const readings = new Map<string, StateReading>();
-  // A socket that did not answer: its `unknown` reading stands only while the pane lives.
-  const failed = new Map<string, StateReading>();
-  for (const [read, group] of groups) {
-    for (const [key, r] of await read(group, opts)) {
-      if (r.ctl === "missing" || r.ctl === "refused") failed.set(key, r);
-      else readings.set(key, r);
-    }
-  }
-  const rest = agents.filter((a) => !readings.has(agentKey(a)));
-  if (rest.length === 0) return readings;
-  // A ctl-failed agent keeps only the base read's liveness, so it never
-  // needs the murmur remote read (whose rows are always alive).
-  const read = await baseReadStates(rest, { ...opts, livenessOnly: new Set(failed.keys()) });
-  for (const [key, reading] of read) {
-    const lost = failed.get(key);
-    if (lost === undefined) readings.set(key, reading);
-    else if (!reading.alive) readings.set(key, { ...reading, ctl: lost.ctl });
-    else readings.set(key, lost);
-  }
-  return readings;
+  return composedStates(agents, (a) => channelFor(a, opts.stateDir), opts, true);
 }

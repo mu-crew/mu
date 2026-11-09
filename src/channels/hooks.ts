@@ -60,14 +60,15 @@ import {
   AgentSendUnsupportedError,
   AgentSteerUnsupportedError,
 } from "../agents/errors.js";
-import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
+import type { ObservedAgent } from "../agents/observe.js";
 import { speaksMuCtl } from "../agents/spawn.js";
 import { HARNESS_TABLE, type HarnessRow, harnessOfCli, type ReadyMarks } from "../harnesses.js";
+import { isJobGone, type JobGone, jobUp } from "../jobs/kinds.js";
 import { paneUp } from "../jobs/pane.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { sleep } from "../tmux.js";
-import { baseReadStates } from "./base-read.js";
+import { composeChannel } from "./compose.js";
 import {
   eventArrived,
   firstSendAckMs,
@@ -93,8 +94,11 @@ import {
 import type {
   AgentChannel,
   ChannelCaps,
+  ChannelImpl,
+  ChannelObservation,
   ChannelSendReply,
   ChannelTarget,
+  ChannelWatch,
   DeliveryOptions,
   DeliveryTarget,
   InterruptResult,
@@ -559,7 +563,7 @@ const LATE_TEXT_MS = 3000;
 const yieldTurn = (): Promise<void> => new Promise((r) => setImmediate(r));
 
 /** One pane report as an observation, never settled. */
-function paneObservation(agent: ObservedAgent, pane: HooksPane): AgentObservation {
+function paneObservation(agent: ObservedAgent, pane: HooksPane): ChannelObservation {
   const runs = settledRuns(pane);
   const status =
     pane.blocked !== null && pane.activity === "running"
@@ -643,7 +647,7 @@ function settledObservation(
   pane: HooksPane,
   witness: Witness | undefined,
   session: string | null,
-): AgentObservation {
+): ChannelObservation {
   const text = ownText(pane, witness, session);
   const error =
     pane.error !== null &&
@@ -665,8 +669,8 @@ function settledObservation(
 function lostObservation(
   agent: ObservedAgent,
   reason?: string,
-  status: "unknown" | "busy" | null = "unknown",
-): AgentObservation {
+  status: "unknown" | "busy" | JobGone = "unknown",
+): ChannelObservation {
   return {
     workstream: agent.workstreamName,
     name: agent.name,
@@ -698,7 +702,7 @@ async function watchHooks(
   t: ChannelTarget,
   signal: AbortSignal,
   opts: { afterRuns?: number; inc?: string },
-): Promise<ObservedWatch | undefined> {
+): Promise<ChannelWatch | undefined> {
   const { agent, remote } = t;
   // A remote worker's events reach the local inbox only by a read of its node;
   // a failed read is retried on the next round, never a reason to give the
@@ -730,9 +734,9 @@ function awaitRow(
   remote: RemoteReader,
   signal: AbortSignal,
   opts: { afterRuns?: number; inc?: string },
-): ObservedWatch {
+): ChannelWatch {
   const { agent } = t;
-  const settled = (async (): Promise<AgentObservation> => {
+  const settled = (async (): Promise<ChannelObservation> => {
     let misses = 0;
     let polls = 0;
     let checkedAt = Date.now();
@@ -742,9 +746,8 @@ function awaitRow(
       if (signal.aborted) return lostObservation(agent);
       if (Date.now() - checkedAt >= WATCH_PANE_CHECK_MS) {
         checkedAt = Date.now();
-        if ((await paneUp(agent.paneId)) === false) {
-          return lostObservation(agent, "the pane is gone", null);
-        }
+        const up = await jobUp({ kind: "pane", viewPaneId: agent.paneId });
+        if (isJobGone(up)) return lostObservation(agent, "the pane is gone", up);
       }
       polls += 1;
       if (polls % REMOTE_WATCH_POLLS === 0) {
@@ -781,7 +784,7 @@ function follow(
   first: HooksPane,
   before: HooksPane | undefined,
   textSession: string | null,
-): ObservedWatch & { afterRuns: number } {
+): ChannelWatch & { afterRuns: number } {
   const { agent, remote } = t;
   const afterRuns = opts.afterRuns ?? settledRuns(first) ?? 0;
   const session = first.sessionId;
@@ -796,16 +799,16 @@ function follow(
       ? witnessOf(before)
       : undefined;
   const row = rowOf(agent);
-  const lost = (reason?: string, status: "unknown" | null = "unknown"): AgentObservation =>
+  const lost = (reason?: string, status: "unknown" | JobGone = "unknown"): ChannelObservation =>
     lostObservation(agent, reason, status);
   const restarted = (actual: string): AgentRestartedError =>
     new AgentRestartedError(agent.name, agent.workstreamName, opts.inc ?? "", actual);
   // With a baseline the turn past it is the pending work: busy until it ends.
-  const initial: AgentObservation =
+  const initial: ChannelObservation =
     opts.afterRuns !== undefined && !past(first) && first.blocked === null
       ? { ...paneObservation(agent, first), status: "busy" }
       : paneObservation(agent, first);
-  const settled = (async (): Promise<AgentObservation> => {
+  const settled = (async (): Promise<ChannelObservation> => {
     let pane: HooksPane | undefined = first;
     let misses = 0;
     let checkedAt = Date.now();
@@ -839,7 +842,8 @@ function follow(
       if (Date.now() - checkedAt >= WATCH_PANE_CHECK_MS) {
         checkedAt = Date.now();
         // Gone is dead; a mux that cannot say is not a death.
-        if ((await paneUp(agent.paneId)) === false) return lost("the pane is gone", null);
+        const up = await jobUp({ kind: "pane", viewPaneId: agent.paneId });
+        if (isJobGone(up)) return lost("the pane is gone", up);
       }
       polls += 1;
       if (remote !== undefined && polls % REMOTE_WATCH_POLLS === 0) {
@@ -894,7 +898,7 @@ async function lateText(
 async function hooksLastRun(
   t: ChannelTarget,
   o: { afterRuns: number; inc?: string; signal?: AbortSignal; ms: number },
-): Promise<AgentObservation | undefined> {
+): Promise<ChannelObservation | undefined> {
   const stop = new AbortController();
   const timer = setTimeout(() => stop.abort(), o.ms);
   const onAbort = (): void => stop.abort();
@@ -972,14 +976,14 @@ function describeHooksInterrupt(r: InterruptResult): string {
   return `via hooks, ${what}, ${how}`;
 }
 
-export const hooksChannel: AgentChannel = {
+const hooksImpl: ChannelImpl = {
   name: "hooks",
   caps: HOOKS_CAPS,
   fence: HOOKS_CAPS.fence === "sync",
   sendRun: hooksSendRun,
   describeSend: describeHooksSend,
   describeInterrupt: describeHooksInterrupt,
-  readStates: baseReadStates,
+  readTurns: "base",
   watch: watchHooks,
   // D4: settled turns and `session_id` stand in for pi's runs and incarnation.
   // A remote worker's baseline is the local count, not a fresh read of its node:
@@ -1079,6 +1083,8 @@ export const hooksChannel: AgentChannel = {
     return { transport: "hooks", keys, ack: next === undefined ? "unknown" : "confirmed" };
   },
 };
+
+export const hooksChannel: AgentChannel = composeChannel(hooksImpl);
 
 /** The tmux key names an answer may use; any other key is typed as text. */
 export const ANSWER_KEY_NAMES: readonly string[] = [
