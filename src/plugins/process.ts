@@ -92,6 +92,31 @@ export function setPluginTapForTests(fn: Tap | undefined): void {
   tap = fn;
 }
 
+/**
+ * One stop sequence, timed (ms epoch): `began` (stop() called), the grace's wait from
+ * `graceFrom` to `graceTo`, ended `by` the leader's exit or the grace running out, and
+ * `gone` (the group killed, the pipes closed, every call settled). Outside the wait, the
+ * time is mu's own.
+ */
+export interface StopTrace {
+  pgid: number;
+  why: string;
+  began: number;
+  graceFrom: number;
+  graceTo: number;
+  by: "leader" | "grace";
+  /** When the leader's exit reached mu; null if it never did. */
+  leaderAt: number | null;
+  gone: number;
+}
+
+let stopTrace: ((t: StopTrace) => void) | undefined;
+
+/** Tests: see each stop sequence's timings as it completes. */
+export function setStopTraceForTests(fn: ((t: StopTrace) => void) | undefined): void {
+  stopTrace = fn;
+}
+
 let defaultGraceMs = HOST_GRACE_MS;
 
 /** Tests: the grace a plugin started without an explicit one gets (default HOST_GRACE_MS). */
@@ -217,6 +242,7 @@ export class PluginProcess {
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private leaderExit: string | undefined;
+  private leaderExitAt: number | null = null;
   private readonly leaderGone: Promise<void>;
   private readonly stdoutClosed: Promise<void>;
   private stopping: Promise<void> | undefined;
@@ -229,6 +255,7 @@ export class PluginProcess {
     this.pgidStart = pidStart(child.pid);
     this.leaderGone = new Promise((resolve) => {
       child.once("exit", (code, signal) => {
+        this.leaderExitAt = Date.now();
         this.leaderExit = String(code ?? signal);
         resolve();
         // What the leader left in its group answers for no one: the stop takes it.
@@ -374,6 +401,7 @@ export class PluginProcess {
    */
   stop(why: string): Promise<void> {
     if (this.stopping !== undefined) return this.stopping;
+    const began = Date.now();
     this.state = "stopping";
     this.broken = why;
     for (const p of this.pending.values()) p.disarm();
@@ -384,7 +412,12 @@ export class PluginProcess {
     this.stopping = new Promise<void>((r) => {
       begin = r;
     }).then(async () => {
-      await Promise.race([this.leaderGone, sleep(this.graceMs)]);
+      const graceFrom = Date.now();
+      const by = await Promise.race([
+        this.leaderGone.then(() => "leader" as const),
+        sleep(this.graceMs).then(() => "grace" as const),
+      ]);
+      const graceTo = Date.now();
       for (let i = 0; i < 500 && signalGroup(this.pgid, "SIGKILL"); i++) await sleep(10);
       await this.leaderGone;
       // With the group gone the pipe drains and closes; a helper that left the group may
@@ -399,6 +432,16 @@ export class PluginProcess {
       this.refStreams(false);
       live.delete(this);
       if (live.size === 0 && terminating === undefined) removeSignals();
+      stopTrace?.({
+        pgid: this.pgid,
+        why,
+        began,
+        graceFrom,
+        graceTo,
+        by,
+        leaderAt: this.leaderExitAt,
+        gone: Date.now(),
+      });
     });
     if (this.leaderExit === undefined) {
       for (const id of this.pending.keys()) {

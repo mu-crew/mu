@@ -25,26 +25,34 @@ import { PluginCallError } from "../src/plugins/errors.js";
 import {
   livePluginProcesses,
   resetTerminatingForTests,
+  type StopTrace,
   setPluginGraceForTests,
   setPluginTapForTests,
   setSignalRaiseForTests,
+  setStopTraceForTests,
 } from "../src/plugins/process.js";
 import { narrowLinkRun } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions, pluginSession } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
-// The bound, measured (LIFECYCLE_TIMES=<file> appends each cell's signal-to-re-raise time).
-// At GRACE 300 on an idle host, three runs: a plugin that holds the grace stops in
-// GRACE + 10-17 ms (the group kill and the pipe's close); every other one in 3-146 ms
-// (the fake's own EOF cleanup, which runs `ps`). So at GRACE 600 a held stop must end
-// before GRACE * 1.5 and any other before GRACE: one grace too many fails every cell,
-// and the 300 ms margins leave room for a loaded host.
-const GRACE = 600;
-/** A stop that waits out the grace ends within it plus this. */
-const HELD_MAX = GRACE * 1.5;
-/** A stop the plugin ends by exiting never waits a grace. */
-const UNHELD_MAX = GRACE;
+// The bound, from the process manager's own trace of each stop (StopTrace), not from
+// wall time around the test: a loaded host slows the plugin and the runner, never the
+// structure. Each stop's time splits into the wait for the plugin (the grace's wait while
+// the plugin had not exited) and mu's own (everything else from the signal, or the stop
+// it joined, to the re-raise: the writes, the group kill, the pipes, the settling). One
+// stop per plugin; the wait at most one grace (a plugin that ignores its stop holds it
+// whole); mu's own a small fraction of a grace. An extra grace anywhere between the
+// signal and the re-raise lands in one of the two and fails the cells it delays.
+//
+// Measured (LIFECYCLE_TIMES=<file> appends each cell's wait and own time) at GRACE 1000:
+// idle, the wait 2-94 ms or 999-1002 ms when held, mu's own 0-13 ms; at load 30-90 (a
+// concurrent fast gate, six runs), the wait at most 1002 ms and mu's own at most 60 ms.
+const GRACE = 1000;
+/** How late a grace timer may fire on a loaded host. */
+const TIMER_LATE = GRACE / 2;
+/** mu's own time in one stop. */
+const MU_OWN_MAX = GRACE / 2;
 const CALL_TIMEOUT = 150;
 
 const PHASES = ["starting", "handshake", "idle", "in-flight", "its cancel", "shutdown"] as const;
@@ -97,6 +105,7 @@ let onTap: ((stream: string, text: string) => void) | undefined;
 let raised: string[];
 /** When mu raised the signal again: the end of the stop, to the millisecond. */
 let raisedAt: number;
+let traces: StopTrace[];
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "mplc-"));
@@ -112,10 +121,13 @@ beforeEach(async () => {
     raised.push(sig);
   });
   setPluginTapForTests((stream, text) => onTap?.(stream, text));
+  traces = [];
+  setStopTraceForTests((t) => traces.push(t));
 });
 
 afterEach(async () => {
   setPluginTapForTests(undefined);
+  setStopTraceForTests(undefined);
   setSignalRaiseForTests(undefined);
   setPluginGraceForTests(undefined);
   resetTerminatingForTests();
@@ -198,10 +210,17 @@ describe("a terminating signal, in every phase, against every plugin", () => {
     const again = await pluginSession(db, "fake")
       .then((s) => exec(s, "echo after-the-signal"))
       .catch((e: unknown) => e);
-    await until(() => raised.length > 0, GRACE * 2 + 3000);
-    const took = raisedAt - signalAt;
-    const timesFile = process.env.LIFECYCLE_TIMES; // measuring: append each cell's stop time
-    if (timesFile) appendFileSync(timesFile, `${phase} | ${behaviour} | ${took}\n`);
+    await until(() => raised.length > 0, GRACE * 2 + 5000);
+    const mine = traces.filter((t) => pgids.includes(t.pgid));
+    const [stop] = mine;
+    if (stop === undefined) throw new Error("no stop traced");
+    // The wait for the plugin: until its leader exited, or the grace ran out.
+    const until_ = stop.by === "leader" && stop.leaderAt !== null ? stop.leaderAt : stop.graceTo;
+    const pluginWait = Math.max(0, until_ - stop.graceFrom);
+    // mu's own: from the signal (or the stop it joined) to the raise, less that wait.
+    const own = raisedAt - Math.min(signalAt, stop.began) - pluginWait;
+    const timesFile = process.env.LIFECYCLE_TIMES; // measuring: append each cell's times
+    if (timesFile) appendFileSync(timesFile, `${phase} | ${behaviour} | ${pluginWait} | ${own}\n`);
 
     // No restart: one plugin, and after the signal only its stop reached it.
     expect(again).toBeInstanceOf(PluginCallError);
@@ -212,19 +231,26 @@ describe("a terminating signal, in every phase, against every plugin", () => {
       phase === "starting" ? 0 : 1,
     );
     for (const m of calls.slice(logAt)) expect(["$/cancel", "shutdown"]).toContain(m);
-    // The bound: one grace from the signal, held whole only by a plugin that ignores its stop;
-    // the call's deadline plus that one grace.
+    // The bound: one stop sequence per plugin; it waits for the plugin at most one grace
+    // (held whole only by a plugin that ignores its stop), and adds little of its own.
+    expect(mine).toHaveLength(1);
+    expect(pluginWait).toBeLessThanOrEqual(GRACE + TIMER_LATE);
     if (holdsTheGrace(behaviour)) {
-      expect(took).toBeGreaterThanOrEqual(GRACE - 20);
-      expect(took).toBeLessThan(HELD_MAX);
-    } else {
-      expect(took).toBeLessThan(UNHELD_MAX);
+      expect(stop.by).toBe("grace");
+      expect(pluginWait).toBeGreaterThanOrEqual(GRACE - 20);
     }
+    expect(own).toBeLessThan(MU_OWN_MAX);
+    // Its cancel: the call's deadline began that one stop.
     if (phase === "its cancel") {
-      expect(raisedAt - callStart).toBeLessThan(
-        CALL_TIMEOUT + (holdsTheGrace(behaviour) ? HELD_MAX : UNHELD_MAX),
-      );
+      expect(stop.why).toMatch(/no answer within 150 ms/);
+      expect(stop.began - callStart).toBeGreaterThanOrEqual(CALL_TIMEOUT - 20);
     }
+    // mu raises the signal only once the group is empty, and the signal began or joined
+    // the stop.
+    expect(raisedAt).toBeGreaterThanOrEqual(stop.gone);
+    if (phase === "its cancel" || phase === "shutdown") {
+      expect(stop.began).toBeLessThanOrEqual(signalAt);
+    } else expect(stop.began).toBeGreaterThanOrEqual(signalAt);
     // The group is empty, and nothing of mu's still runs.
     for (const g of pgids) expect(alive(-g), `group ${g}`).toBe(false);
     expect(livePluginProcesses()).toEqual([]);
@@ -247,7 +273,8 @@ describe("a verb that handles the signal and aborts its call (the reviewer's rac
     // It answers the cancel at once, then takes 150 ms to exit on EOF.
     f.set({ replyOnCancel: true, eofDelayMs: 150 });
     const exitsBefore = f.cleanExits(); // the add's own handshake
-    setPluginGraceForTests(1000);
+    // A grace long enough for the slow exit on a loaded host; the trace says which ended it.
+    setPluginGraceForTests(5000);
     const ac = new AbortController();
     const onVerb = (): void => ac.abort();
     process.on("SIGINT", onVerb);
@@ -262,13 +289,16 @@ describe("a verb that handles the signal and aborts its call (the reviewer's rac
         )
         .catch((e: unknown) => e);
       await until(() => f.calls().some((c) => c.method === "link.exec"));
-      const t0 = Date.now();
       process.emit("SIGINT");
       await call;
       await closePluginSessions();
+      // One stop, ended by the plugin's own exit (not the kill), after its slow cleanup.
+      const mine = traces.filter((t) => t.pgid === s.process.pgid);
+      expect(mine).toHaveLength(1);
+      const [stop] = mine;
+      expect(stop?.by).toBe("leader");
+      expect((stop?.leaderAt ?? 0) - (stop?.began ?? 0)).toBeGreaterThanOrEqual(140);
       expect(f.cleanExits()).toBe(exitsBefore + 1);
-      expect(Date.now() - t0).toBeGreaterThanOrEqual(140);
-      expect(Date.now() - t0).toBeLessThan(1000);
       expect(raised).toEqual([]); // the verb handles it
     } finally {
       process.off("SIGINT", onVerb);
