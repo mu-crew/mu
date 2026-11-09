@@ -29,7 +29,6 @@ import {
   withHostChannel,
 } from "./hosts.js";
 import { say } from "./messages.js";
-import { activeMux } from "./mux.js";
 import { shellQuote, shellWord } from "./shell-quote.js";
 import type { ReleasedWorktree } from "./worktree.js";
 
@@ -657,15 +656,4 @@ export function attachCommand(
     "attach",
   );
   return wrapLocal(filled);
-}
-
-/**
- * The local pane's liveness probe for channel admission: unknown (a throw) keeps
- * the channel. A retained pane whose command ended (a gate's transport) is not
- * alive here: it holds no channel on the host, though its handle still exists.
- */
-export async function localPaneAlive(paneId: string): Promise<boolean> {
-  const mux = await activeMux();
-  if (mux.paneResult === undefined) return mux.paneAlive(paneId);
-  return (await mux.paneResult(paneId)).state === "running";
 }

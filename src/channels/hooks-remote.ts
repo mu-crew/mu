@@ -44,7 +44,7 @@ import { dirname, join } from "node:path";
 import type { Db } from "../db.js";
 import { locksDir, withFileLock } from "../file-lock.js";
 import { HOST_COMMAND_TIMEOUT_MS, runHostTemplate } from "../hosts.js";
-import { localPaneAlive } from "../remote-agent.js";
+import { viewRunning } from "../jobs/view.js";
 import { shellQuote } from "../shell-quote.js";
 import { type HooksPane, readHooksPane, writeMuEvent } from "./hooks-pane.js";
 import type { RemoteReader, RemoteReadResult, RemoteSnapshot } from "./types.js";
@@ -438,7 +438,7 @@ export async function readRemoteHooks(
           "exec",
           `read:${agent.workstreamName}/${agent.name}`,
           { cmd: remotePaneScript(agent.key, write), cwd: "." },
-          { paneAlive: localPaneAlive, timeoutMs: HOST_COMMAND_TIMEOUT_MS },
+          { paneAlive: viewRunning, timeoutMs: HOST_COMMAND_TIMEOUT_MS },
         );
       } catch (e) {
         return fail(`host ${agent.host}: ${e instanceof Error ? e.message : String(e)}`);

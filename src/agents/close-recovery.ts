@@ -15,8 +15,9 @@
 // Runs under the agent lock `closeAgent` took.
 
 import type { Db } from "../db.js";
+import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
-import { asideOf, closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
+import { asideOf, closeRemoteWorktree } from "../remote-agent.js";
 import {
   assertRecoveryProfile,
   assertRecoveryUnchanged,
@@ -87,7 +88,7 @@ export async function closeRecovery(
     {
       keepBranch: opts.keepBranch,
       force: opts.force === true,
-      paneAlive: localPaneAlive,
+      paneAlive: viewRunning,
       recoveryId: rec.agentId,
       checkProfile: (profile) => assertRecoveryProfile(rec, profile),
       beforeRemove: () => {

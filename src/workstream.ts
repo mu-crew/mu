@@ -24,6 +24,7 @@ import { reapAgentRow } from "./agents/reap.js";
 import { WORKSTREAM_OPS_WHERE } from "./compact.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
+import { viewPresent } from "./jobs/view.js";
 import { say } from "./messages.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
@@ -563,7 +564,7 @@ export async function teardownWorkstream(
   const strays: string[] = [];
   for (const a of agentsBefore) {
     if (sessionPanes.has(a.paneId)) continue;
-    if (await mux.paneAlive(a.paneId)) strays.push(a.name);
+    if (await viewPresent(a.paneId, mux)) strays.push(a.name);
   }
   if (strays.length > 0) throw new WorkstreamPanesLiveError(opts.workstream, strays);
   const muxAliveBefore = sessionPanes.size > 0;
@@ -587,7 +588,7 @@ export async function teardownWorkstream(
   for (const a of agentsBefore) {
     let reason: "alive" | "unknown" | undefined;
     try {
-      if (await mux.paneAlive(a.paneId)) reason = "alive";
+      if (await viewPresent(a.paneId, mux)) reason = "alive";
     } catch {
       reason = "unknown";
     }

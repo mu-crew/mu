@@ -9,10 +9,12 @@ import { deleteAgent, insertAgent } from "../agents.js";
 import { rebindCarrierJobAgent } from "../carrier-jobs.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
+import { jobRunning } from "../jobs/kinds.js";
+import { leaseJobRef, leaseKind } from "../jobs/lease.js";
+import type { JobRef } from "../jobs/types.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
-import { attachCommand, localPaneAlive } from "../remote-agent.js";
 import { deleteRemoteRecovery, restoreRemoteRecovery } from "../remote-recovery.js";
 import { assertRevision } from "../revision.js";
 import { shellWord } from "../shell-quote.js";
@@ -54,6 +56,9 @@ export class ReattachFailedError extends Error {
 }
 
 class PaneGone extends Error {}
+
+/** The new carrier's job: the reservation's handle, viewed in the new pane. */
+const carrierRef = (p: Plan, pid: string): JobRef => leaseJobRef({ ...p.r, paneId: pid });
 
 /** Install found the recovery's path owned or claimed: the preflight's blocker, found late. */
 class InstallBlocked extends Error {
@@ -114,7 +119,7 @@ export async function reattachAgent(
       });
       const done = mux.spawnAgent({
         ...{ session, window: name, name, cli: "pi", env, onPaneCreated },
-        ...{ command: attachCommand(p.profile, a), commandSource: "cli-key" },
+        ...{ command: leaseKind.attach(p.profile, a), commandSource: "cli-key" },
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
@@ -137,7 +142,7 @@ export async function reattachAgent(
         };
         let fenced = fence();
         await mux.killPane(pid).catch(() => {});
-        const gone = (await localPaneAlive(pid).catch(() => undefined)) === false;
+        const gone = (await jobRunning(db, carrierRef(p, pid)).catch(() => undefined)) === false;
         if (!gone && !fenced) fenced = fence();
         // Named on the reservation or proven gone: the next preflight sees it without the marker.
         if (gone || fenced) clearMarker(db, ws, name);
@@ -161,7 +166,7 @@ export async function reattachAgent(
   let scrollback: string | undefined;
   const assertAlive = async (): Promise<void> => {
     scrollback = (await mux.capture(pid, { lines: 50 }).catch(() => undefined)) ?? scrollback;
-    if (!(await localPaneAlive(pid))) throw new PaneGone();
+    if (!(await jobRunning(db, carrierRef(p, pid)))) throw new PaneGone();
   };
   let ctl: "ok" | "missing" | "refused" | "unknown";
   try {

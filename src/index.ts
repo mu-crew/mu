@@ -16,9 +16,6 @@ export {
   CarrierJobKeptError,
   CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
-  LeaseJobInvalidError,
-  LeaseJobTimeoutError,
-  LeaseJobUnreadableError,
 } from "./agents/lease-carrier.js";
 export {
   type Blocker,
@@ -359,6 +356,11 @@ export {
   openHumanNeeds,
   recordHumanNeeded,
 } from "./human-needed.js";
+export {
+  LeaseJobInvalidError,
+  LeaseJobTimeoutError,
+  LeaseJobUnreadableError,
+} from "./jobs/lease.js";
 export {
   type CaptureIntent,
   KNOWN_INTENTS,

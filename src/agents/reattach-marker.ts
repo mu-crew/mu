@@ -7,8 +7,8 @@
 
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { Db } from "../db.js";
+import { jobRunning } from "../jobs/kinds.js";
 import { activeMux } from "../mux.js";
-import { localPaneAlive } from "../remote-agent.js";
 import { shellQuote } from "../shell-quote.js";
 import { agentLockPath } from "./lock.js";
 
@@ -36,7 +36,7 @@ export async function readMarker(
   if (typeof pane !== "string" || !(await activeMux()).isValidPaneId(pane)) {
     return `${left}: its pane request for job ${m.job} may have opened a pane it never named; ${rm}`;
   }
-  const alive = await localPaneAlive(pane).catch(() => undefined);
+  const alive = await jobRunning(db, { kind: "lease", viewPaneId: pane }).catch(() => undefined);
   if (alive === false) return "stale";
   const state = alive ? "alive" : "unknown";
   return `${left}: its pane ${pane} (${state}) may run job ${m.job}; close that pane, or ${rm}`;

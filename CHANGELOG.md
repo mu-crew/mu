@@ -187,6 +187,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `countUnpublishedOps` takes an optional machine id. Green gate: fast, plus
   `db`, `entities`, `loop-storage`, `rebuild`, `state-import` and the
   released integration test.
+- **Job liveness behind `src/jobs/`** (plugins spec P1, D1 and D8). Every
+  "is this agent alive" probe outside `src/mux/` now goes through the new
+  `src/jobs/` cluster: `viewPresent` (does the pane exist: the close row
+  rule, teardown, the spawn and rollback proofs), `viewState` (did its
+  command run, exit or go: gates), `viewRunning` (does it still run:
+  host-channel admission, ctl's and hooks' `paneUp`, the lease carrier), and
+  `jobLiveness(db, job)`, answered by the job kind (`pane`, `lease`, `gate`).
+  The lease job kind owns the job handshake (`awaitLeaseJob`, moved from
+  `src/agents/lease-carrier.ts`, which still exports it), the stop (`runStop`
+  on the recorded `host_stop`) and the reattach's attach command.
+  `localPaneAlive` is gone (`viewRunning`). Each site keeps the exact probe it
+  made before, so no answer changes; `test/jobs-imports.test.ts` fails on a
+  new pane probe outside the cluster. No behaviour change.
 
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove

@@ -7,14 +7,15 @@ import { getAgentForCleanup } from "../agents.js";
 import { type CarrierJob, listCarrierJobsByName } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { type HostProfile, pidProvenGone } from "../hosts.js";
+import { jobRunning } from "../jobs/kinds.js";
+import { describeRead, leaseJobRef, readJobFile } from "../jobs/lease.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
-import { localPaneAlive } from "../remote-agent.js";
 import * as recovery from "../remote-recovery.js";
 import { agentRevision } from "../revision.js";
 import { shellWord } from "../shell-quote.js";
 import { AgentExistsError, AgentReplacedError } from "./errors.js";
-import { describeRead, leaseJobFile, readJobFile } from "./lease-carrier.js";
+import { leaseJobFile } from "./lease-carrier.js";
 import { readMarker } from "./reattach-marker.js";
 
 /** One reason the name cannot be reattached now; `code` names the preflight step. */
@@ -93,7 +94,7 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   // A carrier an earlier apply could neither install, fence nor prove gone (or died with).
   const marker = await readMarker(db, ws, name);
   if (marker !== "none" && marker !== "stale") return no("carrier", marker);
-  const alive = await localPaneAlive(paneId).catch(() => undefined);
+  const alive = await jobRunning(db, leaseJobRef({ ...r, job, paneId })).catch(() => undefined);
   if (alive !== false)
     return no("carrier", `its previous pane ${paneId} is ${alive ? "alive" : "unknown"}`);
   if (r.creatorPid === null || !pidProvenGone(r.creatorPid, r.creatorStart)) {

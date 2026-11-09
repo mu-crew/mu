@@ -27,7 +27,8 @@ import {
   runLeasedTemplate,
   withHostChannel,
 } from "../hosts.js";
-import { localPaneAlive, RemotePrepareError } from "../remote-agent.js";
+import { viewRunning } from "../jobs/view.js";
+import { RemotePrepareError } from "../remote-agent.js";
 import { shellQuote } from "../shell-quote.js";
 import { RemoteBriefTooLargeError } from "./errors.js";
 
@@ -162,7 +163,7 @@ export async function writeRemoteBriefFile(
       }
       return runLeasedTemplate(db, lease, profile, "exec", values, HOST_COMMAND_TIMEOUT_MS);
     },
-    { paneAlive: localPaneAlive },
+    { paneAlive: viewRunning },
   );
   if (r.exitCode === null) {
     throw new RemotePrepareError(host, what, `timed out after ${HOST_COMMAND_TIMEOUT_MS}ms`);

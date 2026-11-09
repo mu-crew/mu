@@ -4,6 +4,7 @@ import { delimiter, join } from "node:path";
 import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
 import { type Harness, harnessOfCli, hookConfigPath } from "./harnesses.js";
+import { viewPresent, viewState } from "./jobs/view.js";
 import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
 import { tmux } from "./tmux.js";
@@ -356,7 +357,7 @@ async function readMuxStates(
         });
         continue;
       }
-      const alive = await mux.paneAlive(agent.paneId);
+      const alive = await viewPresent(agent.paneId, mux);
       readings.set(
         agentKey(agent),
         alive ? unknownReading(none, true, source) : unknownReading(UNKNOWN_REASON.paneGone, false),
@@ -380,31 +381,25 @@ export async function readGatePanes(
   gates: readonly StateAgentRef[],
 ): Promise<Map<string, StateReading>> {
   const readings = new Map<string, StateReading>();
-  let mux: Awaited<ReturnType<typeof activeMux>> | undefined;
-  let failure = "the multiplexer cannot report a pane's exit";
+  let mux: Awaited<ReturnType<typeof activeMux>>;
   try {
     mux = await activeMux();
   } catch (error) {
-    failure = `mux: ${error instanceof Error ? error.message : String(error)}`;
+    const reason = `mux: ${error instanceof Error ? error.message : String(error)}`;
+    for (const gate of gates) readings.set(agentKey(gate), unknownReading(reason));
+    return readings;
   }
   for (const gate of gates) {
     const key = agentKey(gate);
-    try {
-      const pane = await mux?.paneResult?.(gate.paneId);
-      if (pane === undefined) readings.set(key, unknownReading(failure));
-      else if (pane.state === "running") {
-        readings.set(key, { state: "busy", source: "none", since: null, alive: true });
-      } else if (pane.state === "absent")
-        readings.set(key, unknownReading(UNKNOWN_REASON.paneGone, false));
-      else {
-        const how = pane.code !== null ? `exited ${pane.code}` : `killed by signal ${pane.signal}`;
-        readings.set(key, unknownReading(how, false));
-      }
-    } catch (error) {
-      readings.set(
-        key,
-        unknownReading(`mux: ${error instanceof Error ? error.message : String(error)}`),
-      );
+    const pane = await viewState(gate.paneId, mux);
+    if (pane.state === "unknown") readings.set(key, unknownReading(pane.reason));
+    else if (pane.state === "running") {
+      readings.set(key, { state: "busy", source: "none", since: null, alive: true });
+    } else if (pane.state === "absent")
+      readings.set(key, unknownReading(UNKNOWN_REASON.paneGone, false));
+    else {
+      const how = pane.code !== null ? `exited ${pane.code}` : `killed by signal ${pane.signal}`;
+      readings.set(key, unknownReading(how, false));
     }
   }
   return readings;

@@ -9,7 +9,7 @@
 // completion record keyed by the spawn-unique token (`agents.gate_token`):
 // `MU_GATE <token> <rc>`, atomically, on the host. The record is read with the
 // profile's `exec` template only AFTER the mux proves the transport pane
-// exited (`paneResult`), and that proof frees the pane's channel first, so at
+// exited (`viewState`, src/jobs/view.ts), and that proof frees the pane's channel first, so at
 // --max-sessions 1 the read admits like any other exec. Absent, malformed or
 // foreign records, a signal or a lost transport are never success.
 //
@@ -20,8 +20,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentRow } from "../agents.js";
 import type { Db } from "../db.js";
 import { HostHandbackError, runHostTemplate } from "../hosts.js";
-import { activeMux } from "../mux.js";
-import { localPaneAlive } from "../remote-agent.js";
+import { viewRunning, viewState } from "../jobs/view.js";
 import { shellQuote } from "../shell-quote.js";
 
 /** What a gate's wait sees. `unknown` is retried (the result could not be read yet); `dead` is final. */
@@ -89,8 +88,14 @@ function parseRecord(stdout: string, token: string): Parsed {
   return { kind: "code", code };
 }
 
+/** What a gate read needs of its agent row. */
+export type GateAgent = Pick<
+  AgentRow,
+  "workstreamName" | "name" | "incarnation" | "paneId" | "gateToken" | "host"
+>;
+
 /** The row `agent` names right now: same registry id, pane and token, else it was replaced. */
-function sameRow(db: Db, agent: AgentRow): boolean {
+function sameRow(db: Db, agent: GateAgent): boolean {
   const row = db
     .prepare(
       `SELECT a.id, a.pane_id, a.gate_token FROM agents a JOIN workstreams w ON w.id = a.workstream_id
@@ -113,25 +118,19 @@ const unknown = (reason: string): GateReading => ({ kind: "unknown", reason });
  * Read one gate: running, exited with the remote command's numeric status,
  * dead (final failure: no usable record, or the pane is gone) or unknown
  * (retry: the mux or the host could not answer). A proven exit frees the pane's
- * channel through the result read's own admission (see `localPaneAlive`); an
+ * channel through the result read's own admission (see `viewRunning`); an
  * unknown probe frees nothing. A hand-back (the exec template's exit 3) throws
  * `HostHandbackError` to the caller.
  */
-export async function readGate(db: Db, agent: AgentRow): Promise<GateReading> {
+export async function readGate(db: Db, agent: GateAgent): Promise<GateReading> {
   const token = agent.gateToken;
   const host = agent.host;
   if (token === null || host === null) return unknown("not a remote command gate");
-  let pane: Awaited<ReturnType<NonNullable<Awaited<ReturnType<typeof activeMux>>["paneResult"]>>>;
-  try {
-    const mux = await activeMux();
-    if (mux.paneResult === undefined) return unknown("the multiplexer cannot report a pane's exit");
-    pane = await mux.paneResult(agent.paneId);
-  } catch (e) {
-    return unknown(`mux: ${e instanceof Error ? e.message : String(e)}`);
-  }
+  const pane = await viewState(agent.paneId);
+  if (pane.state === "unknown") return unknown(pane.reason);
   if (pane.state === "running") return { kind: "running" };
   if (pane.state === "absent") return { kind: "dead", reason: "pane gone" };
-  // The transport exited: `localPaneAlive` reads it as dead, so the exec reclaims its channel.
+  // The transport exited: `viewRunning` reads it as not running, so the exec reclaims its channel.
   if (!sameRow(db, agent)) return { kind: "dead", reason: "the agent was replaced" };
   let run: Awaited<ReturnType<typeof runHostTemplate>>;
   try {
@@ -141,7 +140,7 @@ export async function readGate(db: Db, agent: AgentRow): Promise<GateReading> {
       "exec",
       `gate:${agent.workstreamName}/${agent.name}`,
       { cmd: readCommand(token), cwd: "." },
-      { paneAlive: localPaneAlive },
+      { paneAlive: viewRunning },
     );
   } catch (e) {
     // A template's exit 3 asks for a human: never retried, so never an unknown the next poll reruns.
@@ -166,7 +165,7 @@ export async function readGate(db: Db, agent: AgentRow): Promise<GateReading> {
  * has another token). Best effort, one exec under its own channel; the caller
  * has already proven the pane dead and freed its channel.
  */
-export async function cleanGateResult(db: Db, agent: AgentRow): Promise<boolean> {
+export async function cleanGateResult(db: Db, agent: GateAgent): Promise<boolean> {
   const token = agent.gateToken;
   const host = agent.host;
   if (token === null || host === null) return false;
@@ -177,7 +176,7 @@ export async function cleanGateResult(db: Db, agent: AgentRow): Promise<boolean>
       "exec",
       `gate-clean:${agent.workstreamName}/${agent.name}`,
       { cmd: cleanCommand(token), cwd: "." },
-      { paneAlive: localPaneAlive },
+      { paneAlive: viewRunning },
     );
     return r.exitCode === 0;
   } catch {

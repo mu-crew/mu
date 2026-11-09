@@ -7,6 +7,7 @@
 import { existsSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { type CtlProbe, ctlProbe } from "../ctl/client.js";
+import { viewPresent } from "../jobs/view.js";
 import { activeMux } from "../mux.js";
 // `sleep` is the shared poll-sleep TEST SEAM (setSleepForTests), not a
 // multiplexer operation, so it stays on the tmux module rather than
@@ -257,7 +258,7 @@ export async function checkSpawnHealth(
   // longer than the pane's existence in some tmux builds).
   const mux = await activeMux();
   const scrollback = await mux.capture(paneId, { lines: 50 }).catch(() => undefined);
-  if (!(await mux.paneAlive(paneId))) {
+  if (!(await viewPresent(paneId, mux))) {
     throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command, when, host);
   }
   // Pane is alive — but "alive" doesn't mean "working". Scan the tail of

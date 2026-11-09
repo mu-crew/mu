@@ -25,7 +25,8 @@ import type { AgentRow } from "../agents.js";
 import { type CtlBlocked, readAgentStates } from "../channels/index.js";
 import type { SettledCloseInput } from "../close-block.js";
 import type { Db } from "../db.js";
-import { type GateReading, readGate } from "./gate.js";
+import { gateJobRef, jobLiveness } from "../jobs/kinds.js";
+import type { JobLiveness } from "../jobs/types.js";
 
 /** Who an observation is about. */
 export type ObservedAgent = Pick<
@@ -98,7 +99,7 @@ export function observationFromReading(
 }
 
 /** A remote command gate's reading as an observation: running reads busy, an ended one carries its numeric exit. */
-export function observationFromGate(agent: ObservedAgent, gate: GateReading): AgentObservation {
+export function observationFromGate(agent: ObservedAgent, gate: JobLiveness): AgentObservation {
   const base = {
     workstream: agent.workstreamName,
     name: agent.name,
@@ -108,12 +109,14 @@ export function observationFromGate(agent: ObservedAgent, gate: GateReading): Ag
     since: null,
     settled: false,
   };
-  switch (gate.kind) {
+  switch (gate.state) {
     case "running":
       return { ...base, status: "busy" };
-    case "exited":
-      return { ...base, status: null, exit: gate.code };
-    case "dead":
+    case "ended":
+      return gate.exit === null
+        ? { ...base, status: null, reason: "ended with no exit status" }
+        : { ...base, status: null, exit: gate.exit };
+    case "lost":
       return { ...base, status: null, reason: gate.reason };
     case "unknown":
       return { ...base, status: "unknown", reason: gate.reason };
@@ -131,7 +134,7 @@ export async function observeAgentStates(
   const out = new Map<string, AgentObservation>(
     rest.map((a) => [agentKey(a), observationFromReading(a, readings.get(agentKey(a)))]),
   );
-  const read = await Promise.all(gates.map((g) => readGate(db, g)));
+  const read = await Promise.all(gates.map((g) => jobLiveness(db, gateJobRef(g))));
   gates.forEach((g, i) => {
     const r = read[i];
     if (r !== undefined) out.set(agentKey(g), observationFromGate(g, r));

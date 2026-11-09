@@ -6,6 +6,7 @@ import { deleteAgent, getAgent } from "../agents.js";
 import { getCarrierJobByAgent, keepCarrierJobForTree, noteCarrierJob } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { type HostLease, releaseHostChannel, releaseHostChannelsForAgent } from "../hosts.js";
+import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { getWorktreeAt, releaseWorktree } from "../worktree.js";
@@ -75,7 +76,7 @@ export async function rollbackSpawn(
     heldBy = foreign?.who;
     if (foreign === undefined) {
       await mux?.killPane(paneId).catch(() => {});
-      paneGone = mux !== undefined && (await mux.paneAlive(paneId).catch(() => true)) === false;
+      paneGone = mux !== undefined && (await viewPresent(paneId, mux).catch(() => true)) === false;
     } else {
       paneGone = true; // another agent holds the id: ours is not that pane
 

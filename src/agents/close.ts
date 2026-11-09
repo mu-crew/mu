@@ -37,10 +37,12 @@ import { type CarrierJob, getCarrierJobByName, listCarrierJobsByName } from "../
 import { unlinkCtlSocket } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { getHost, releaseHostChannelsForAgent } from "../hosts.js";
+import { readJobFile } from "../jobs/lease.js";
+import { viewPresent, viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
-import { closeRemoteWorktree, localPaneAlive } from "../remote-agent.js";
+import { closeRemoteWorktree } from "../remote-agent.js";
 import { selectRemoteRecovery } from "../remote-recovery.js";
 import { agentRevision, assertRevision } from "../revision.js";
 import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
@@ -71,7 +73,6 @@ import {
   cleanLeaseJobFile,
   type LeaseClose,
   leaseJobFile,
-  readJobFile,
   releaseLeaseClose,
   stopLeaseReservation,
 } from "./lease-carrier.js";
@@ -557,7 +558,7 @@ async function closeLocked(
       why = "no multiplexer answers";
     } else {
       try {
-        alive = await mux.paneAlive(agent.paneId);
+        alive = await viewPresent(agent.paneId, mux);
       } catch (err) {
         alive = "unknown";
         why = err instanceof Error ? err.message.split("\n")[0] : String(err);
@@ -599,7 +600,7 @@ async function closeLocked(
     worktree = await closeRemoteWorktree(db, agent, {
       keepBranch: opts.keepBranch === true,
       force: opts.force === true,
-      paneAlive: localPaneAlive,
+      paneAlive: viewRunning,
       beforeRemove: () => {
         if (replaced()) throw new AgentReplacedError(name, opts.workstream);
       },

@@ -63,10 +63,10 @@ import {
 import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
 import { speaksMuCtl } from "../agents/spawn.js";
 import { HARNESS_TABLE, type HarnessRow, harnessOfCli, type ReadyMarks } from "../harnesses.js";
+import { paneUp } from "../jobs/pane.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { sleep } from "../tmux.js";
-import { paneUp } from "./ctl.js";
 import {
   eventArrived,
   firstSendAckMs,

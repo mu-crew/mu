@@ -34,8 +34,8 @@ import { applySettledClose } from "./close-block.js";
 import type { Db } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
 import { runLeasedTemplate, withHostChannel } from "./hosts.js";
+import { viewRunning } from "./jobs/view.js";
 import { say } from "./messages.js";
-import { localPaneAlive } from "./remote-agent.js";
 import {
   assertRecoveryProfile,
   assertRecoveryUnchanged,
@@ -207,7 +207,7 @@ export async function collectRemoteAgent(
               repo,
             );
           },
-          { paneAlive: localPaneAlive },
+          { paneAlive: viewRunning },
         );
         if (r.exitCode === null) {
           throw new RemoteCollectError(

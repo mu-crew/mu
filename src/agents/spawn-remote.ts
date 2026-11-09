@@ -19,14 +19,10 @@ import {
   HostSpawnUnsupportedError,
   releaseHostChannel,
 } from "../hosts.js";
+import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
-import {
-  localPaneAlive,
-  prepareRemote,
-  type RemoteSite,
-  removeRemoteWorktree,
-} from "../remote-agent.js";
+import { prepareRemote, type RemoteSite, removeRemoteWorktree } from "../remote-agent.js";
 import { refuseRecoveredWorktree } from "../remote-recovery.js";
 import { withAgentLock } from "./lock.js";
 import type { SpawnAgentOptions, StagedWorktree } from "./spawn.js";
@@ -171,7 +167,7 @@ export async function admitRemoteSpawn(
     db,
     profile.name,
     `spawn:${opts.workstream}/${opts.name}`,
-    { paneAlive: localPaneAlive },
+    { paneAlive: viewRunning },
   );
   const { lease } = admitted;
   const admittedProfile = admitted.profile;

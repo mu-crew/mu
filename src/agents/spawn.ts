@@ -47,6 +47,8 @@ import {
   HostProfileError,
   releaseHostChannel,
 } from "../hosts.js";
+import { awaitLeaseJob } from "../jobs/lease.js";
+import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
 import { attachShellLine, type CommandSource } from "../mux/types.js";
@@ -74,7 +76,6 @@ import {
 import { gateWrapper, newGateToken } from "./gate.js";
 import {
   assertLeaseSpawnable,
-  awaitLeaseJob,
   claimLeaseJobFile,
   refuseReserved,
   releaseLeaseReservation,
@@ -956,7 +957,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         const mux = await activeMux();
         const sb = await mux.capture(pid, { lines: 50 }).catch(() => undefined);
         lastScrollback = sb ?? lastScrollback;
-        if (await mux.paneAlive(pid)) return;
+        if (await viewPresent(pid, mux)) return;
         throw new AgentDiedOnSpawnError(
           opts.name,
           pid,

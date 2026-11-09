@@ -15,7 +15,7 @@ import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/o
 import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import { type CtlBlocked, type CtlState, INCARNATION_MISMATCH } from "../ctl/protocol.js";
-import { activeMux } from "../mux.js";
+import { paneUp } from "../jobs/pane.js";
 import { checkMessage, ctlDelivery } from "./ctl-deliver.js";
 import { expectsCtl, targetSocket } from "./select.js";
 import type { AgentChannel, ChannelReadOptions, ChannelTarget, RunBaseline } from "./types.js";
@@ -74,23 +74,6 @@ async function readCtlStates(
     }
   });
   return readings;
-}
-
-/**
- * Whether the pane still holds a running agent: tmux, the pane runs (an
- * exited retained pane does not); herdr, an agent still occupies the pane
- * (it outlives its occupant as a shell). `undefined` when the mux cannot
- * say: unknown, never a death.
- */
-export async function paneUp(paneId: string): Promise<boolean | undefined> {
-  try {
-    const mux = await activeMux();
-    if (mux.paneResult !== undefined) return (await mux.paneResult(paneId)).state === "running";
-    if (mux.paneOccupied !== undefined) return await mux.paneOccupied(paneId);
-    return await mux.paneAlive(paneId);
-  } catch {
-    return undefined;
-  }
 }
 
 /**

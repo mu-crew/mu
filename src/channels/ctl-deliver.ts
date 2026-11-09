@@ -45,6 +45,7 @@ import {
   type CtlRequest,
   INCARNATION_MISMATCH,
 } from "../ctl/protocol.js";
+import { viewPresent } from "../jobs/view.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
 import { shellWord } from "../shell-quote.js";
@@ -358,7 +359,7 @@ async function ctlSendWithReceipt(
 /** True only when the mux positively reports the pane gone (a mux error is "unknown"). */
 async function paneGone(paneId: string): Promise<boolean> {
   try {
-    return !(await (await activeMux()).paneAlive(paneId));
+    return !(await viewPresent(paneId));
   } catch {
     return false;
   }
