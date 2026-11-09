@@ -133,9 +133,10 @@ function termRules(ctx: Pick<DenyContext, "caseIds">): { rule: string; re: RegEx
     { rule: "tools/eval", re: /tools\/eval/ },
     { rule: "test/eval", re: /test\/eval/ },
     { rule: "museum skill", re: /skills\/museum/ },
+    // the phase B units are b<digit>…; a designer's own scratch task `b` (or `blog`) is not one
     {
       rule: "task notes",
-      re: /task\s+notes\s+(?:hill2|b[\w-]*|delegate_friction-[\w-]*)(?![\w-])/,
+      re: /task\s+notes\s+(?:hill2|b\d[\w-]*|delegate_friction-[\w-]*)(?![\w-])/,
     },
   ];
 }

@@ -847,6 +847,10 @@ describe("designer isolation", () => {
     expect(rules('{"command":"grep museum test/mu-init.test.ts"}')).toEqual([]);
     expect(rules("mu task notes hill2 -w crew-hill2")).toContain("task notes");
     expect(rules("mu task notes b3b_tournament_driver")).toContain("task notes");
+    expect(rules("mu task notes b5_baseline -w crew-hill2")).toContain("task notes");
+    // a designer's own scratch task named b in its empty DB is not a phase B unit
+    expect(rules("$M task notes b -w t1 --report")).not.toContain("task notes");
+    expect(rules("mu task notes blog-draft -w t1")).not.toContain("task notes");
     expect(rules("mu task notes delegate_friction-orch_b97e7056 -w scratch")).toContain(
       "task notes",
     );
