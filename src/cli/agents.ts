@@ -20,11 +20,11 @@ import {
   readAgent,
   resolveCliCommand,
   resolveCliCommandWithSource,
+  type SendChannel,
   type SpawnedAgent,
   sendToAgent,
   spawnAgent,
   spawnForTask,
-  type Transport,
 } from "../agents.js";
 import {
   agentChannel,
@@ -550,7 +550,7 @@ type SpawnSend =
   | {
       ok: true;
       sentBytes: number;
-      transport: Transport;
+      transport: SendChannel;
       state?: string;
       runs?: number;
       /** The send's receipt id (`mu agent check`) and pi's incarnation (`wait --inc`). */

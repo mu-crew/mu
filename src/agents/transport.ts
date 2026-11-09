@@ -25,8 +25,8 @@ import { emitEvent } from "../logs.js";
 
 export type { CtlGuard, SendResult } from "../channels/index.js";
 
-/** How a send reached the agent: its channel. */
-export type Transport = ChannelName;
+/** How a send reached the agent: its channel (`--json`'s `transport` field). */
+export type SendChannel = ChannelName;
 
 export type TransportSendOptions = DeliveryOptions & {
   /** Control socket path. Default: agentCtlSocket(db, agent). */

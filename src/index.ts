@@ -95,6 +95,7 @@ export {
   resetCommandResolverForTests,
   resolveCliCommand,
   resolveCliCommandWithSource,
+  type SendChannel,
   type SendResult,
   type SpawnAgentOptions,
   SpawnAttemptBusyError,
@@ -114,7 +115,6 @@ export {
   spawnForTask,
   type TaskSpawnOutcome,
   type TaskSpawnRequest,
-  type Transport,
   watchAgentRun,
   withAgentLock,
 } from "./agents.js";

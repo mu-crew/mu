@@ -131,9 +131,9 @@ export {
   type TaskSpawnRequest,
 } from "./agents/task-spawn.js";
 export {
+  type SendChannel,
   type SendResult,
   sendViaTransport,
-  type Transport,
   type TransportSendOptions,
 } from "./agents/transport.js";
 export { checkMessage, watchAgentRun } from "./channels/ctl.js";
