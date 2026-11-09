@@ -44,8 +44,8 @@ mu does not add these unless one earns its way back under the criteria:
   so mu may now drive a **plugin**. A plugin is an executable
   `mu-plugin-<name>` that the user registers by absolute path. It speaks a
   versioned JSON-RPC protocol on its own stdio, as mu's child for one
-  invocation. It covers only five seams: the host provider, the link, the
-  job kind, the agent channel and host checks. It reports facts; mu owns
+  invocation. It covers only four seams: the host provider, the link, the
+  job kind and the agent channel. It reports facts; mu owns
   every state machine and every record. Still refused:
 
   - discovery of any kind (`PATH` scans, plugin directories, package

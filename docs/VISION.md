@@ -190,8 +190,8 @@ Until 2026-11-09 this said "no plugin system". The
 user's approval, for remote and elastic agent backends. A **plugin** is an
 executable that the user registers by path and mu never discovers. mu runs
 it as a child and talks to it over a versioned stdio protocol. A plugin
-implements one of five seams: host provider, link, job kind, agent channel
-or host checks. Each seam is one TypeScript interface, and mu's built-ins
+implements one of four seams: host provider, link, job kind or agent
+channel. Each seam is one TypeScript interface, and mu's built-ins
 implement the same interface in process. A plugin adds no verbs, tasks or
 mux backends. It owns no state machine and never writes the DB: it
 reports facts, and mu records the transitions.
