@@ -151,9 +151,10 @@ describe("global-teardown allowlist source (user DB)", () => {
   it("resolves MU_DB_PATH, MU_STATE_DIR and the XDG path, like src/db.ts", () => {
     expect(
       userDbPaths({ HOME: "/h", MU_DB_PATH: "/d/x.db", MU_STATE_DIR: "/s", XDG_STATE_HOME: "/x" }),
-    ).toEqual(["/d/x.db", "/s/mu.db", "/x/mu-next/mu.db", "/x/mu/mu.db"]);
-    // Both the 4.x default (mu-next) and the 3.x one: more paths only mean fewer kills.
+    ).toEqual(["/d/x.db", "/s/mu.db", "/x/mu5/mu.db", "/x/mu-next/mu.db", "/x/mu/mu.db"]);
+    // The 5.x default (mu5), the 4.x one (mu-next) and 3.x's: more paths only mean fewer kills.
     expect(userDbPaths({ HOME: "/h" })).toEqual([
+      "/h/.local/state/mu5/mu.db",
       "/h/.local/state/mu-next/mu.db",
       "/h/.local/state/mu/mu.db",
     ]);

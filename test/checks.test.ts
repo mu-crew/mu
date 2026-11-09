@@ -7,8 +7,9 @@
 //      before its brief included) equals the whole-log projection; a task's
 //      horizon kills its checks; a check before its task lands with the task.
 //   3. The upgrade: a v13 file from before `checks` (the populated fixture)
-//      that recorded a peer's check ops gains the rows at open, verdicts that
-//      arrived out of hlc order included; schema 13, segment format unchanged.
+//      that recorded a peer's check ops gains the rows at the state import's
+//      v13 upgrade, verdicts that arrived out of hlc order included; segment
+//      format unchanged.
 //   4. `--if-ready` waits for a missing verdict; `mu state` lists the
 //      unanswered check for an orchestrator with no identity of the issuer.
 
@@ -50,6 +51,7 @@ import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson, runCliWire } from "./_runCli.js";
+import { convertV13 } from "./_v13.js";
 
 const PEER = "9f1c8a2e-0000-4000-8000-0000000000aa";
 const PEER2 = "9f1c8a2e-0000-4000-8000-0000000000bb";
@@ -409,13 +411,12 @@ describe("upgradeSchema re-folds the check ops an older v13 file recorded", () =
     return p;
   }
 
-  it("the rows appear at open, out-of-order verdicts included; schema 13, no new ops", () => {
-    const p = olderFileWithPeerChecks();
+  it("the rows appear at the import's v13 upgrade, out-of-order verdicts included; no new ops", () => {
+    const p = convertV13(olderFileWithPeerChecks());
     const db = track(openDb({ path: p }));
     expect(
       db.prepare("SELECT version, capture_version AS capture FROM schema_version").get(),
     ).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
-    expect(CURRENT_SCHEMA_VERSION).toBe(13);
     expect(listChecks(db, "alpha").map((c) => [c.task, c.by, c.brief, c.label, c.state])).toEqual([
       ["t1", "claude/opus", "is it right?", "REFUTED", "answered"],
       ["t2", "codex/gpt-5", "unanswered", null, "open"],
@@ -447,7 +448,7 @@ describe("upgradeSchema re-folds the check ops an older v13 file recorded", () =
           return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
         },
       }) as unknown as Db;
-      expect(() => upgradeSchema(failing)).toThrow("disk full");
+      expect(() => upgradeSchema(failing, { v13: true })).toThrow("disk full");
       expect(
         raw.prepare("SELECT 1 FROM sqlite_master WHERE name = 'checks'").get(),
       ).toBeUndefined();

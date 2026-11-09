@@ -126,6 +126,12 @@ import {
 } from "../remote-recovery.js";
 import { RevisionMismatchError } from "../revision.js";
 import { syncDir } from "../segments.js";
+import { StateImportPendingError } from "../state-dir.js";
+import {
+  importStateIfDue,
+  StateImportBusyError,
+  StateImportRefusedError,
+} from "../state-import.js";
 import {
   ambientFlush,
   ambientIngest,
@@ -555,6 +561,9 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SchemaTooOldError ||
     err instanceof SchemaTooNewError ||
     err instanceof SqliteTooOldError ||
+    err instanceof StateImportPendingError ||
+    err instanceof StateImportRefusedError ||
+    err instanceof StateImportBusyError ||
     err instanceof SyncSourceTooNewError ||
     err instanceof DbInsideSyncDirError ||
     err instanceof SyncDirForeignError ||
@@ -985,6 +994,7 @@ export function handle(
     const ambient = opts?.ambientSync !== false && syncEnabled();
     try {
       refuseDbInsideSyncDir();
+      await importStateIfDue(); // mu 5's first run: mu 4's DB, once (spec D5)
       db = openDb();
       if (ambient) await ambientIngest(db);
       nextDb = db;

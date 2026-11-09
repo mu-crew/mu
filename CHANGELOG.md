@@ -157,6 +157,37 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **mu 5: schema 14 and a new state directory, `mu5`, with a one-shot
+  import of mu 4's DB** (spec `docs/specs/2026-11-09-mu-plugins.md` D5, unit
+  P6a; AGENTS.md "State directories"). Breaking: the version is 5.0.0,
+  `CURRENT_SCHEMA_VERSION` is 14, and every released mu 4 build refuses a v14
+  DB (`SchemaTooNewError`, exit 4; pinned against the real v4.5.0 source by
+  `test/state-import-released.integration.test.ts`). mu 5 never opens a v13
+  file in place (`SchemaTooOldError`, exit 4, the file untouched). The state
+  dir default is `$XDG_STATE_HOME/mu5` (`~/.local/state/mu5`); `MU_STATE_DIR`
+  still wins. The first mu verb (or Stop hook) with neither `MU_STATE_DIR`
+  nor `MU_DB_PATH` set, when `mu5/mu.db` is missing and
+  `~/.local/state/mu-next/mu.db` exists, runs the **state import**
+  (`src/state-import.ts`): under the strict lock `mu5/locks/import` it
+  copies mu 4's DB with SQLite's backup API to `mu5/mu.db.importing`, gives
+  the copy a new `machine_id` (mu 4 and mu 5 are then two sync peers), runs
+  the v13 completion, then in one transaction checks the snapshot and takes
+  the 13 → 14 step, and commits by a no-replace `link(2)`. It refuses, and
+  deletes the copy, while ops of mu 4's machine are not yet in its segment
+  in `MU_SYNC_DIR` (run `mu sync` with mu 4 first) or while the snapshot
+  holds an agent row, a lease reservation or an unfinished delegate call
+  (close them with mu 4 first). `mu-next` is never written: the source is
+  opened read-only. A crash leaves only `mu5/mu.db.importing`, which the
+  next run deletes and redoes. While the import is due, `openDb` refuses
+  mu 5's default DB (`StateImportPendingError`, exit 4) so the SDK never
+  creates an empty one. The 13 → 14 step is the stamp today; the later
+  plugin units add their table rebuilds to it. Not moved: the anchor dir
+  murmur reads (`~/.local/state/mu-next/anchors`) and the remote hosts'
+  `$HOME/.local/state/mu-next/remote-worktrees` and `remote-gates`.
+  `countUnpublishedOps` takes an optional machine id. Green gate: fast, plus
+  `db`, `entities`, `loop-storage`, `rebuild`, `state-import` and the
+  released integration test.
+
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove
   the mac to load ~250 on 2026-11-08). One run fanned out to 24 sandboxes

@@ -100,9 +100,9 @@ const taskRow = (ws: string, id: string) =>
     .get(ws, id) as Record<string, unknown> | undefined;
 
 describe("v12 shape", () => {
-  it("stamps v13 and refuses a v11 DB untouched (v12 too: see loop-storage.test.ts)", () => {
-    expect(CURRENT_SCHEMA_VERSION).toBe(13);
-    expect(db.prepare("SELECT version FROM schema_version").get()).toEqual({ version: 13 });
+  it("stamps v14 and refuses a v11 DB untouched (v12 too: see loop-storage.test.ts)", () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(14);
+    expect(db.prepare("SELECT version FROM schema_version").get()).toEqual({ version: 14 });
     const p = join(tempDir, "v11.db");
     const raw = new Database(p);
     raw.exec(

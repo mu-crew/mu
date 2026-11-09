@@ -1,9 +1,10 @@
 // Schema 13 (v_loop_storage): the loop's storage.
 //
-//   1. A real populated v13 DB (test/fixtures/v13-populated.db.gz) that lacks
-//      later additions is completed in ONE transaction: columns, tables, capture
-//      triggers and both stamps together; a failure or a newer stamp leaves the
-//      file as it was. Older (v12) files are refused.
+//   1. A real populated v13 DB (test/fixtures/v13-populated.db.gz), converted
+//      as the state import converts its copy (test/_v13.ts), then stripped of
+//      later additions, is completed in ONE transaction: columns, tables,
+//      capture triggers and both stamps together; a failure or a newer stamp
+//      leaves the file as it was. Older (v12) files are refused.
 //   2. tasks.kind / tasks.wave are portable: captured, folded per field,
 //      applied in any arrival order, rebuilt, drift-checked; v1 lines cannot
 //      carry them; an unknown kind never wedges ingest.
@@ -64,6 +65,7 @@ import {
 } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
+import { convertV13 } from "./_v13.js";
 
 const NEW_TABLES = [
   "agent_settles",
@@ -88,12 +90,15 @@ let open: Db[] = [];
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "mu-loop-storage-"));
   writeFileSync(
-    join(dir, "v13.db"),
+    join(dir, "base.db"),
     gunzipSync(readFileSync(join(__dirname, "fixtures", "v13-populated.db.gz"))),
   );
+  // A mu 4 file reaches this build only through the state import, which
+  // converts its copy (src/state-import.ts); the tests below start there.
+  convertV13(join(dir, "base.db"));
   // A current file that lacks later additions, as an earlier schema-13 build left it:
   // tasks.wave, agents.collected_head, delegate_calls, and an older capture stamp.
-  copyFileSync(join(dir, "v13.db"), join(dir, "stale.db"));
+  copyFileSync(join(dir, "base.db"), join(dir, "stale.db"));
   raw(join(dir, "stale.db"), (r) => {
     r.pragma("legacy_alter_table = ON"); // DROP COLUMN otherwise re-parses every trigger (~2s)
     // A column a trigger names cannot be dropped; the older capture stamp makes open reinstall them.
@@ -127,9 +132,9 @@ afterEach(() => {
 });
 
 /** A private copy of the populated v13 DB. */
-function v13Copy(): string {
+function baseCopy(): string {
   const p = join(dir, `copy-${++n}.db`);
-  copyFileSync(join(dir, "v13.db"), p);
+  copyFileSync(join(dir, "base.db"), p);
   return p;
 }
 /** The final carrier_jobs shape: a reservation per (workstream, name). */
@@ -157,7 +162,7 @@ const CARRIER_JOBS_COLUMNS = [
 
 /** A current v13 copy whose carrier_jobs has the pre-reservation shape, with three handles. */
 function oldCarrierJobsCopy(): string {
-  const p = v13Copy();
+  const p = baseCopy();
   track(openDb({ path: p })).close();
   open.pop();
   raw(p, (r) => {
@@ -247,9 +252,9 @@ function failingOn(db: Database.Database, when: (sql: string) => boolean, err = 
 
 // ─── 1. The upgrade ───────────────────────────────────────────────────
 
-describe("a populated v13 DB is completed in place", () => {
+describe("a populated DB is completed in place", () => {
   it("the fixture captures kind and wave under the new triggers", () => {
-    const p = v13Copy();
+    const p = baseCopy();
     const db = track(openDb({ path: p }));
     const before = (db.prepare("SELECT MAX(seq) AS s FROM ops").get() as { s: number }).s;
     db.prepare("UPDATE tasks SET kind = 'delegate', wave = 'r1' WHERE local_id = 't1'").run();
@@ -259,7 +264,7 @@ describe("a populated v13 DB is completed in place", () => {
   });
 
   it("a second open does no DDL and takes no write lock", () => {
-    const p = v13Copy();
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     const cookie = raw(p, (r) => r.pragma("schema_version", { simple: true }));
     const holder = new Database(p);
@@ -275,7 +280,7 @@ describe("a populated v13 DB is completed in place", () => {
     expect(raw(p, (r) => r.pragma("schema_version", { simple: true }))).toBe(cookie);
   });
 
-  it("a stale v13 file gets its missing columns, table and capture stamp, rows intact", () => {
+  it("a stale file gets its missing columns, table and capture stamp, rows intact", () => {
     const p = staleCopy();
     expect(columns(p, "tasks")).not.toContain("wave");
     expect(tables(p)).not.toContain("delegate_calls");
@@ -288,15 +293,15 @@ describe("a populated v13 DB is completed in place", () => {
     );
     expect(columns(p, "carrier_jobs")).toEqual(CARRIER_JOBS_COLUMNS);
     expect(tables(p)).toEqual([...EXPECTED_TABLES].sort());
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
     expect(captureTriggersCurrent(db)).toBe(true);
     expect(getTask(db, "t1", "alpha")).toMatchObject({ kind: "work", wave: null });
     expect(listTasks(db)).toHaveLength(4);
     expect(checkDrift(db).clean).toBe(true);
   });
 
-  it("an otherwise-current v13 file missing only task_auto.enabled is repaired, ledger intact", () => {
-    const p = v13Copy();
+  it("an otherwise-current file missing only task_auto.enabled is repaired, ledger intact", () => {
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     const snap = () =>
       raw(p, (r) => ({
@@ -325,28 +330,29 @@ describe("a populated v13 DB is completed in place", () => {
     expect(snap().auto).toEqual(after.auto);
   });
 
-  it("an already-v13 file without spawn_receipts gets the table, rows intact (no version bump)", () => {
-    const p = v13Copy();
+  it("an already-current file without spawn_receipts gets the table, rows intact (no version bump)", () => {
+    const p = baseCopy();
     const first = track(openDb({ path: p }));
     first.close();
     raw(p, (r) => r.exec("DROP TABLE spawn_receipts"));
     const db = track(openDb({ path: p }));
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
     expect(db.prepare("SELECT COUNT(*) AS c FROM spawn_receipts").get()).toEqual({ c: 0 });
     expect(getAgent(db, "w1", "alpha")).toBeDefined();
     expect(getTask(db, "t1", "alpha")).toBeDefined();
   });
 
-  it("the populated fixture, which predates keep_driving, gains it at open: no version bump, rows intact", () => {
-    const p = v13Copy();
+  it("the populated fixture, which predates keep_driving, gains it at the import's v13 upgrade, rows intact", () => {
+    const p = join(dir, `fixture-${++n}.db`);
+    writeFileSync(p, gunzipSync(readFileSync(join(__dirname, "fixtures", "v13-populated.db.gz"))));
     const before = raw(p, (r) =>
       r
         .prepare("SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'keep_driving'")
         .get(),
     );
     expect(before).toBeUndefined();
-    const db = track(openDb({ path: p }));
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    const db = track(openDb({ path: convertV13(p) }));
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
     expect(columns(p, "keep_driving")).toEqual([
       "session_id",
       "empty_blocks",
@@ -358,24 +364,24 @@ describe("a populated v13 DB is completed in place", () => {
     expect(getTask(db, "t1", "alpha")).toBeDefined();
   });
 
-  it("an already-v13 file without remote_recovery gets the table, no version bump, no foreign key", () => {
-    const p = v13Copy();
+  it("an already-current file without remote_recovery gets the table, no version bump, no foreign key", () => {
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     raw(p, (r) => r.exec("DROP TABLE remote_recovery"));
     const db = track(openDb({ path: p }));
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
     expect(columns(p, "remote_recovery")).toContain("aside");
     expect(db.prepare("PRAGMA foreign_key_list(remote_recovery)").all()).toEqual([]);
     expect(db.prepare("SELECT COUNT(*) AS c FROM remote_recovery").get()).toEqual({ c: 0 });
     expect(getAgent(db, "w1", "alpha")).toBeDefined();
   });
 
-  it("an already-v13 file without human_needs gets the table, no version bump, rows cascade", () => {
-    const p = v13Copy();
+  it("an already-current file without human_needs gets the table, no version bump, rows cascade", () => {
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     raw(p, (r) => r.exec("DROP TABLE human_needs"));
     const db = track(openDb({ path: p }));
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
     expect(columns(p, "human_needs")).toEqual(["task_id", "caller"]);
     const tid = (db.prepare("SELECT id FROM tasks LIMIT 1").get() as { id: number }).id;
     db.prepare("INSERT INTO human_needs (task_id, caller) VALUES (?, 'a/o')").run(tid);
@@ -386,8 +392,8 @@ describe("a populated v13 DB is completed in place", () => {
     expect(db.prepare("SELECT COUNT(*) AS c FROM human_needs").get()).toEqual({ c: 0 });
   });
 
-  it("a v13 file whose wait_registrations predates baselines_json gains the column, rows intact, no version bump", () => {
-    const p = v13Copy();
+  it("a current file whose wait_registrations predates baselines_json gains the column, rows intact, no version bump", () => {
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     raw(p, (r) => {
       r.exec("DROP TABLE wait_registrations");
@@ -399,7 +405,7 @@ describe("a populated v13 DB is completed in place", () => {
       );
     });
     const db = track(openDb({ path: p }));
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
     expect(columns(p, "wait_registrations")).toContain("baselines_json");
     expect(
       db.prepare("SELECT caller, generation, baselines_json FROM wait_registrations").all(),
@@ -418,15 +424,15 @@ describe("a populated v13 DB is completed in place", () => {
     });
   });
 
-  it("an already-v13 file without wait_registrations gets the table, wait_cursors rows intact (no version bump)", () => {
-    const p = v13Copy();
+  it("an already-current file without wait_registrations gets the table, wait_cursors rows intact (no version bump)", () => {
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     raw(p, (r) => {
       r.exec("INSERT INTO wait_cursors (caller, ref, incarnation, runs) VALUES ('c','r','i',2)");
       r.exec("DROP TABLE wait_registrations");
     });
     const db = track(openDb({ path: p }));
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
     expect(columns(p, "wait_registrations")).toEqual([
       "caller",
       "refs_json",
@@ -452,8 +458,8 @@ describe("a populated v13 DB is completed in place", () => {
     });
   });
 
-  it("an already-v13 file without host_channels gets the table, host_profiles rows intact (no version bump)", () => {
-    const p = v13Copy();
+  it("an already-current file without host_channels gets the table, host_profiles rows intact (no version bump)", () => {
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     raw(p, (r) => {
       r.exec(
@@ -462,7 +468,7 @@ describe("a populated v13 DB is completed in place", () => {
       r.exec("DROP TABLE host_channels");
     });
     const db = track(openDb({ path: p }));
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
     expect(db.prepare("SELECT COUNT(*) AS c FROM host_channels").get()).toEqual({ c: 0 });
     expect(db.prepare("SELECT name FROM host_profiles").all()).toEqual([{ name: "h" }]);
     expect(getAgent(db, "w1", "alpha")).toBeDefined();
@@ -483,7 +489,7 @@ describe("a populated v13 DB is completed in place", () => {
       ["version", CURRENT_SCHEMA_VERSION + 1],
       ["capture_version", CAPTURE_VERSION + 1],
     ] as const) {
-      const p = v13Copy();
+      const p = baseCopy();
       raw(p, (r) => r.prepare(`UPDATE schema_version SET ${col} = ?`).run(value));
       const bytes = readFileSync(p);
       expect(() => openDb({ path: p })).toThrow(SchemaTooNewError);
@@ -532,7 +538,7 @@ describe("a populated v13 DB is completed in place", () => {
     expect(mine.inTransaction).toBe(false);
     mine.close();
 
-    expect(stamps(p)).toEqual({ version: 13, capture: 3 }); // old stamps...
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: 3 }); // old stamps...
     expect(columns(p, "tasks")).not.toContain("wave"); // ...old columns...
     expect(columns(p, "agents")).not.toContain("collected_head");
     expect(tables(p)).not.toContain("delegate_calls");
@@ -543,7 +549,7 @@ describe("a populated v13 DB is completed in place", () => {
       r.exec("UPDATE tasks SET title = 'still writable' WHERE local_id = 't1'");
     });
     track(openDb({ path: p }));
-    expect(stamps(p)).toEqual({ version: 13, capture: CAPTURE_VERSION });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: CAPTURE_VERSION });
   });
 
   it("a failure while adding a column also leaves no trace of the earlier DDL", () => {
@@ -554,7 +560,7 @@ describe("a populated v13 DB is completed in place", () => {
     );
     expect(() => upgradeSchema(db)).toThrow("disk full");
     mine.close();
-    expect(stamps(p)).toEqual({ version: 13, capture: 3 });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: 3 });
     expect(columns(p, "tasks")).not.toContain("wave");
     expect(columns(p, "agents")).not.toContain("collected_head");
     expect(tables(p)).not.toContain("delegate_calls");
@@ -568,13 +574,13 @@ describe("a populated v13 DB is completed in place", () => {
     );
     expect(() => upgradeSchema(db)).toThrow("disk full");
     mine.close();
-    expect(stamps(p)).toEqual({ version: 13, capture: 3 });
+    expect(stamps(p)).toEqual({ version: CURRENT_SCHEMA_VERSION, capture: 3 });
     expect(columns(p, "host_profiles")).not.toContain("transport");
     expect(tables(p)).not.toContain("carrier_jobs");
   });
 
   it("a reservation-shaped carrier_jobs without tree_path/tree_agent_id/workstream_id, and agents without host_transport, gain them with rows intact", () => {
-    const p = v13Copy();
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     open.pop();
     raw(p, (r) => {
@@ -606,8 +612,8 @@ describe("a populated v13 DB is completed in place", () => {
     expect(checkDrift(db).clean).toBe(true);
   });
 
-  it("a v13 file without host_profiles.attach gains it with no version bump, rows intact; a second open runs no DDL", () => {
-    const p = v13Copy();
+  it("a current file without host_profiles.attach gains it with no version bump, rows intact; a second open runs no DDL", () => {
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     open.pop();
     raw(p, (r) => {
@@ -629,8 +635,8 @@ describe("a populated v13 DB is completed in place", () => {
     expect(raw(p, (r) => r.pragma("schema_version", { simple: true }))).toBe(cookie);
   });
 
-  it("a v13 file without host_profiles.capabilities gains it with no version bump, rows intact (never probed)", () => {
-    const p = v13Copy();
+  it("a current file without host_profiles.capabilities gains it with no version bump, rows intact (never probed)", () => {
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     open.pop();
     raw(p, (r) => {
@@ -653,7 +659,7 @@ describe("a populated v13 DB is completed in place", () => {
   });
 
   it("agents without channel gain it with rows intact, and a NULL channel stays derived", () => {
-    const p = v13Copy();
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     open.pop();
     raw(p, (r) => {
@@ -671,7 +677,7 @@ describe("a populated v13 DB is completed in place", () => {
   });
 
   it("agents without remote_key gain it with rows intact (spec D11, no version bump)", () => {
-    const p = v13Copy();
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     open.pop();
     raw(p, (r) => {
@@ -686,7 +692,7 @@ describe("a populated v13 DB is completed in place", () => {
   });
 
   it("a spawn_receipts whose CHECK predates the hooks transport is rebuilt losslessly, and takes hooks (spec D17)", () => {
-    const p = v13Copy();
+    const p = baseCopy();
     track(openDb({ path: p })).close();
     open.pop();
     raw(p, (r) => {
@@ -805,7 +811,7 @@ describe("a populated v13 DB is completed in place", () => {
   });
 
   it("refuses a v12 file untouched", () => {
-    const p = v13Copy();
+    const p = baseCopy();
     raw(p, (r) => r.exec("UPDATE schema_version SET version = 12"));
     const bytes = readFileSync(p);
     expect(() => openDb({ path: p })).toThrow(SchemaTooOldError);

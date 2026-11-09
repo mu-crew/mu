@@ -22,13 +22,13 @@ describe("defaultCacheDir", () => {
 });
 
 describe("defaultStateDir", () => {
-  it("is <state home>/mu-next, never 3.x's <state home>/mu", async () => {
+  it("is <state home>/mu5, never mu 4's mu-next or 3.x's mu", async () => {
     await withEnv("MU_STATE_DIR", undefined, async () => {
       await withEnv("XDG_STATE_HOME", "/x/state", async () => {
-        expect(defaultStateDir()).toBe("/x/state/mu-next");
+        expect(defaultStateDir()).toBe("/x/state/mu5");
       });
       await withEnv("XDG_STATE_HOME", undefined, async () => {
-        expect(defaultStateDir()).toBe(join(homedir(), ".local", "state", "mu-next"));
+        expect(defaultStateDir()).toBe(join(homedir(), ".local", "state", "mu5"));
       });
     });
   });

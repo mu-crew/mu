@@ -48,6 +48,11 @@ describe("openDb test-guard (bug_test_flake_round_2 Layer db)", () => {
     expect(() => openDb({ path: realDbInFakeHome })).toThrow(/openDb refused/);
   });
 
+  it("refuses the 5.x default DB (<HOME>/.local/state/mu5/mu.db)", () => {
+    const fiveX = join(fakeHome, ".local", "state", "mu5", "mu.db");
+    expect(() => openDb({ path: fiveX })).toThrow(/openDb refused/);
+  });
+
   it("still refuses the 3.x default DB (<HOME>/.local/state/mu/mu.db)", () => {
     const threeX = join(fakeHome, ".local", "state", "mu", "mu.db");
     expect(() => openDb({ path: threeX })).toThrow(/openDb refused/);
@@ -70,7 +75,7 @@ describe("openDb test-guard (bug_test_flake_round_2 Layer db)", () => {
     const fakeXdg = mkdtempSync(join(tmpdir(), "mu-db-guard-fake-xdg-"));
     process.env[xdgKey] = fakeXdg;
     try {
-      for (const dir of ["mu-next", "mu"]) {
+      for (const dir of ["mu5", "mu-next", "mu"]) {
         expect(() => openDb({ path: join(fakeXdg, dir, "mu.db") })).toThrow(/openDb refused/);
       }
     } finally {

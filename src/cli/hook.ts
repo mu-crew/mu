@@ -23,6 +23,7 @@ import {
   type StopDecision,
   stopHookOutput,
 } from "../hook-stop.js";
+import { importStateIfDue } from "../state-import.js";
 import { readStdinRaw } from "./stdin.js";
 
 /** A hook payload larger than this is not a Stop payload: read no further. */
@@ -74,6 +75,7 @@ export async function hookStop(
     } catch {
       return { decision: "allow", why: "the hook payload is not JSON" };
     }
+    await importStateIfDue();
     const db = openDb();
     try {
       return await runStopHook(db, harness, payload, { timeoutS });

@@ -311,7 +311,9 @@ export const MESSAGES = {
   "db.test_real_db": (realDb: string) =>
     `openDb refused: tests must NEVER write to the user DB (${realDb}). Set MU_DB_PATH to a per-test temp path (test/_runCli.ts does this automatically) or pass an explicit { path } argument. The leak source is the call site of openDb in this stack frame.`,
   "db.schema_old": (detected: number, required: number) =>
-    `Detected v${detected} schema; v${required} is required. mu ships NO in-place migration — your v${detected} DB is untouched. Back it up or move it aside, then start a fresh v${required} DB.`,
+    detected === 13
+      ? `Detected v13 schema: a mu 4 DB, which mu 5 never opens in place (it is untouched). mu 5 imports ~/.local/state/mu-next/mu.db once, on its first run without MU_STATE_DIR or MU_DB_PATH; keep using mu 4 for this file, or start a fresh v${required} DB.`
+      : `Detected v${detected} schema; v${required} is required. mu ships NO in-place migration — your v${detected} DB is untouched. Back it up or move it aside, then start a fresh v${required} DB.`,
   "db.schema_new": (detected: number, supported: number, stamp: "schema" | "capture") =>
     stamp === "schema"
       ? `DB is v${detected}; this mu understands up to v${supported}. Upgrade mu.`

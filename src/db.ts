@@ -4,7 +4,7 @@
 // enables WAL + foreign keys, applies the schema idempotently, and
 // exposes the live Database handle.
 //
-// Schema (v13; EXPECTED_TABLES below is the exact list, 29 tables), by group:
+// Schema (v14; EXPECTED_TABLES below is the exact list, 29 tables), by group:
 //   - entity (portable: they sync): workstreams, tasks, task_edges, task_notes,
 //     checks (src/db-checks.ts).
 //     tasks carries substate (status qualifier; a composite FK
@@ -34,11 +34,11 @@
 // key (`ws/local_id`), never a surrogate id, so keys don't collide across machines.
 //
 // IMPORTANT: there is no migration ladder. openDb accepts only
-// CURRENT_SCHEMA_VERSION (13) and completes a v13 file that lacks later
+// CURRENT_SCHEMA_VERSION (14) and completes a v14 file that lacks later
 // additions in ONE transaction (upgradeSchema: columns, tables, triggers
 // and both stamps together). Every older DB is rejected with
 // SchemaTooOldError (exit 4), and a DB newer than this build with
-// SchemaTooNewError (exit 4).
+// SchemaTooNewError (exit 4); a mu 4 (v13) file only via src/state-import.ts.
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
@@ -61,7 +61,7 @@ import {
 } from "./db-receipts.js";
 import { LEGACY_RECOVERY_TRIGGERS, REMOTE_RECOVERY_DDL } from "./db-recovery.js";
 import { say } from "./messages.js";
-import { defaultStateDir, xdgStateHome } from "./state-dir.js";
+import { defaultStateDir, refusePendingStateImport, xdgStateHome } from "./state-dir.js";
 import { TASK_SUBSTATE_ROWS } from "./tasks/status.js";
 
 export { defaultStateDir };
@@ -128,6 +128,7 @@ export function defaultDbPath(): string {
 export function openDb(options: OpenDbOptions = {}): Db {
   const path = options.path ?? defaultDbPath();
   refuseUserDbDuringTests(path);
+  refusePendingStateImport(path);
   mkdirSync(dirname(path), { recursive: true });
 
   const db = new Database(path, { readonly: options.readonly ?? false });
@@ -227,8 +228,10 @@ function refuseUserDbDuringTests(path: string): void {
   const inTest = process.env.VITEST !== undefined || process.env.NODE_ENV === "test";
   if (!inTest) return;
   const home = process.env.HOME ?? homedir();
-  // The 4.x default (<state home>/mu-next) and 3.x's: a test must reach neither.
-  const realDbs = ["mu-next", "mu"].map((dir) => resolve(join(xdgStateHome(home), dir, "mu.db")));
+  // The 5.x default (<state home>/mu5), 4.x's and 3.x's: a test must reach none.
+  const realDbs = ["mu5", "mu-next", "mu"].map((dir) =>
+    resolve(join(xdgStateHome(home), dir, "mu.db")),
+  );
   const realDb = realDbs.find((p) => p === resolve(path));
   if (realDb !== undefined) {
     throw new Error(say("db.test_real_db", realDb));
@@ -437,7 +440,11 @@ function seedMachineIdentity(db: Db): void {
 /** Refuse a file this build must not touch, from the stamps read before
  *  any write: a newer schema or capture revision (a later mu wrote it) or
  *  a schema older than MIN_ACCEPTED_SCHEMA_VERSION. */
-function refuseUnusableStamps(version: number | null, capture: number | null): void {
+function refuseUnusableStamps(
+  version: number | null,
+  capture: number | null,
+  minVersion = MIN_ACCEPTED_SCHEMA_VERSION,
+): void {
   if (version !== null && version > CURRENT_SCHEMA_VERSION) {
     // A newer mu wrote this DB. Its writes would fail here in confusing
     // ways (unknown columns, constraints this build does not know).
@@ -448,7 +455,7 @@ function refuseUnusableStamps(version: number | null, capture: number | null): v
     // ours to replace or run. (An OLDER stamp is upgraded in place.)
     throw new SchemaTooNewError(capture, CAPTURE_VERSION, "capture");
   }
-  if (version !== null && version < MIN_ACCEPTED_SCHEMA_VERSION) {
+  if (version !== null && version < minVersion) {
     // Loud-fail: leave the old file untouched; the message says how to preserve it.
     throw new SchemaTooOldError(version, MIN_ACCEPTED_SCHEMA_VERSION);
   }
@@ -471,13 +478,17 @@ function refuseUnusableStamps(version: number | null, capture: number | null): v
  * that already upgraded makes this a no-op, and a newer mu that stamped
  * the file meanwhile is refused with the file untouched.
  *
+ * `v13`: the state import's step 5.2 (spec D5), on its copy of a mu 4 DB:
+ * completes a v13 file and leaves it stamped 13 for the 13 -> 14 step.
+ *
  * Exported for the upgrade tests, which wrap `db` to inject a failure.
  */
-export function upgradeSchema(db: Db): void {
+export function upgradeSchema(db: Db, opts: { v13?: boolean } = {}): void {
   db.exec("BEGIN IMMEDIATE");
   try {
     const version = detectExistingSchemaVersion(db);
-    refuseUnusableStamps(version, storedCaptureVersion(db));
+    const v13 = opts.v13 === true && version === V13;
+    refuseUnusableStamps(version, storedCaptureVersion(db), v13 ? V13 : undefined);
     // An older v13 file holds `check` ops it recorded but never projected (spec D8).
     const refoldChecks = version !== null && checksTableMissing(db);
     if (version !== CURRENT_SCHEMA_VERSION || !schemaIsCurrent(db)) applySchemaDdl(db);
@@ -486,7 +497,7 @@ export function upgradeSchema(db: Db): void {
     db.prepare(
       `INSERT INTO schema_version (id, version) VALUES (1, ?)
          ON CONFLICT (id) DO UPDATE SET version = excluded.version`,
-    ).run(CURRENT_SCHEMA_VERSION);
+    ).run(v13 ? V13 : CURRENT_SCHEMA_VERSION);
     // The triggers mint HLCs from this row.
     seedMachineIdentity(db);
     installCaptureLocked(db);
@@ -713,13 +724,16 @@ function schemaIsCurrent(db: Db): boolean {
  *  (torn_down_at, cwd, base, scored, dispatch_host, kind), task_auto and
  *  the blockers view on top of v11's task substates; v13 adds the loop's
  *  storage (tasks.kind/wave, agents.spawner/host/collected_head and four
- *  machine-local tables). See CHANGELOG.md. */
-export const CURRENT_SCHEMA_VERSION = 13;
+ *  machine-local tables); v14 is mu 5's (spec D5). See CHANGELOG.md. */
+export const CURRENT_SCHEMA_VERSION = 14;
+
+/** mu 4's schema: the state import's source (src/state-import.ts). */
+export const V13 = 13;
 
 /** The lowest schema version `openDb` will accept. There is no ladder:
  *  anything older throws `SchemaTooOldError` (exit 4) and is left
  *  untouched on disk. */
-const MIN_ACCEPTED_SCHEMA_VERSION = 13;
+const MIN_ACCEPTED_SCHEMA_VERSION = 14;
 
 /** The note kinds (`task_notes.kind`). Set once at INSERT, never changed:
  *  a local UPDATE of it raises, and a peer's update cannot match a row. */
@@ -999,7 +1013,7 @@ CREATE VIEW goals AS
      );
 `;
 
-// ─── SCHEMA (v13) ───────────────────────────────────────────────────────
+// ─── SCHEMA (v14) ───────────────────────────────────────────────────────
 //
 // Per docs/architecture/sdk.md § Surrogate-PK and SDK-boundary discipline.
 // Every entity table has:

@@ -613,9 +613,14 @@ export function ownSegmentForeignLine(
 
 /** Own synced ops newer than the last op in this machine's segment: what
  *  a flush would append now. Read-only, so `mu doctor` can report a
- *  backlog (a flush that lost the lock race leaves one). */
-export function countUnpublishedOps(db: Db, dir: string): number {
-  const machineId = localMachineId(db);
+ *  backlog (a flush that lost the lock race leaves one). `machineId`: whose
+ *  ops and segment, default this DB's (the state import passes the id its
+ *  copy had before it minted a new one). */
+export function countUnpublishedOps(
+  db: Db,
+  dir: string,
+  machineId: string = localMachineId(db),
+): number {
   const { lastHlc } = readSegmentTail(segmentPath(dir, machineId));
   const row = prepareCached(
     db,

@@ -30,10 +30,12 @@ export function realMuDirs(env: NodeJS.ProcessEnv = process.env): string[] {
     ...new Set([
       join(cache, "mu"),
       join(state, "mu"),
+      join(state, "mu5"),
       join(state, "mu-next"),
       join(config, "mu"),
       join(home, ".cache", "mu"),
       join(home, ".local", "state", "mu"),
+      join(home, ".local", "state", "mu5"),
       join(home, ".local", "state", "mu-next"),
     ]),
   ].map((p) => resolve(p));

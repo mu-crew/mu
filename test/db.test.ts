@@ -1,9 +1,10 @@
 // Tests for src/db.ts — verifies the schema, idempotency, pragmas,
 // view semantics, and FK cascade behaviour.
 
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { classifyError } from "../src/cli/handle.js";
@@ -78,20 +79,20 @@ describe("openDb", () => {
     ]);
     expect(tables).toHaveLength(29);
     expect([...tables].sort()).toEqual(tables);
-    // schema_version stamped to current (v13).
+    // schema_version stamped to current (v14).
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;
-    expect(v).toBe(13);
+    expect(v).toBe(14);
     db.close();
   });
 
-  it("a fresh DB stamps version 13 and seeds machine_identity", () => {
+  it("a fresh DB stamps version 14 and seeds machine_identity", () => {
     const db = openDb({ path: dbPath });
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;
-    expect(v).toBe(13);
+    expect(v).toBe(14);
     const ids = db.prepare("SELECT machine_id FROM machine_identity").all() as {
       machine_id: string;
     }[];
@@ -229,7 +230,7 @@ describe("openDb", () => {
 
   it("refuses a v10 DB with SchemaTooOldError (openDb runs no migration)", () => {
     // The version gate runs before schema application, so a minimal
-    // version-stamped fixture proves the breaking v10 → v13 boundary.
+    // version-stamped fixture proves the breaking v10 → v14 boundary.
     {
       const raw = new Database(dbPath);
       raw.exec(
@@ -248,7 +249,7 @@ describe("openDb", () => {
     expect(thrown).toBeInstanceOf(SchemaTooOldError);
     if (!(thrown instanceof SchemaTooOldError)) throw new Error("expected SchemaTooOldError");
     expect(thrown.detectedVersion).toBe(10);
-    expect(thrown.requiredVersion).toBe(13);
+    expect(thrown.requiredVersion).toBe(14);
     // Typed-error → exit-code map: 4 (conflict).
     expect(classifyError(thrown)).toEqual({ label: "conflict", exitCode: 4 });
     // The v10 DB is left untouched — no v12 tables were created under it.
@@ -274,6 +275,24 @@ describe("openDb", () => {
     expect(readFileSync(dbPath).equals(before)).toBe(true);
     expect(existsSync(`${dbPath}-wal`)).toBe(false);
     expect(existsSync(`${dbPath}-shm`)).toBe(false);
+  });
+
+  it("refuses a mu 4 (v13) DB untouched: only the state import reads one (spec D5)", () => {
+    const fixture = join(__dirname, "fixtures", "v13-populated.db.gz");
+    writeFileSync(dbPath, gunzipSync(readFileSync(fixture)));
+    const before = readFileSync(dbPath);
+    let thrown: unknown;
+    try {
+      openDb({ path: dbPath });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(SchemaTooOldError);
+    expect(thrown).toMatchObject({ detectedVersion: 13, requiredVersion: 14 });
+    expect((thrown as Error).message).toContain("mu 5 imports");
+    expect(classifyError(thrown)).toEqual({ label: "conflict", exitCode: 4 });
+    expect(readFileSync(dbPath).equals(before)).toBe(true);
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
   });
 
   it("still rejects ancient (pre-v5) DBs with SchemaTooOldError", () => {
@@ -696,12 +715,12 @@ describe("defaultDbPath", () => {
     });
   });
 
-  it("falls back to XDG state path (~/.local/state/mu-next/mu.db) when no env var is set", () => {
+  it("falls back to XDG state path (~/.local/state/mu5/mu.db) when no env var is set", () => {
     withEnv("MU_DB_PATH", undefined, () => {
       withEnv("MU_STATE_DIR", undefined, () => {
         withEnv("XDG_STATE_HOME", undefined, () => {
           const path = defaultDbPath();
-          expect(path).toMatch(/\.local\/state\/mu-next\/mu\.db$/);
+          expect(path).toMatch(/\.local\/state\/mu5\/mu\.db$/);
         });
       });
     });
@@ -711,7 +730,7 @@ describe("defaultDbPath", () => {
     withEnv("MU_DB_PATH", undefined, () => {
       withEnv("MU_STATE_DIR", undefined, () => {
         withEnv("XDG_STATE_HOME", "/custom/xdg", () => {
-          expect(defaultDbPath()).toBe("/custom/xdg/mu-next/mu.db");
+          expect(defaultDbPath()).toBe("/custom/xdg/mu5/mu.db");
         });
       });
     });
@@ -722,7 +741,7 @@ describe("defaultDbPath", () => {
       withEnv("MU_STATE_DIR", undefined, () => {
         for (const value of ["", "rel/state"]) {
           withEnv("XDG_STATE_HOME", value, () => {
-            expect(defaultDbPath()).toBe(join(homedir(), ".local", "state", "mu-next", "mu.db"));
+            expect(defaultDbPath()).toBe(join(homedir(), ".local", "state", "mu5", "mu.db"));
           });
         }
       });

@@ -529,6 +529,14 @@ export {
   stateSnapshot,
   type WorkstreamState,
 } from "./state.js";
+export { StateImportPendingError } from "./state-dir.js";
+export {
+  type ImportResult,
+  importState,
+  importStateIfDue,
+  StateImportBusyError,
+  StateImportRefusedError,
+} from "./state-import.js";
 export {
   type AmbientOptions,
   type AmbientResult,
