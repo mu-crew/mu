@@ -19,6 +19,7 @@ import { openDb } from "../src/db.js";
 import { addTask, closeTask } from "../src/tasks.js";
 import { loadResume } from "../src/wait-resume.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { convertV13 } from "./_v13.js";
 
 const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
 const built = existsSync(CLI);
@@ -243,7 +244,10 @@ describe.skipIf(!built)("mu wait: a signal while setup is blocked is still an en
       // never blocked), and a raw connection holds the write lock, so the child sits inside openDb()
       // with node long since loaded. A listener installed after the open (or in the engine) leaves
       // the default SIGTERM/SIGINT action: the process dies by the signal with an empty stdout.
+      // openDb refuses a v13 file (schema 14, spec D5), so the stale file is a converted v13 with
+      // an older capture stamp: still accepted, and its open must rewrite the triggers.
       writeFileSync(dbPath, gunzipSync(readFileSync(V13)));
+      convertV13(dbPath);
       const stale = new Database(dbPath);
       stale.exec("UPDATE schema_version SET capture_version = 3"); // an older capture stamp: open must rewrite
       stale.close();
