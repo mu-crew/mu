@@ -12,6 +12,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Eval: fast mode's win threshold is data, and a full group can go fast**
+  (task `f_fast_mode_2`, spec §4.7). `freeze --fast` and the new
+  `migrate-fast` take `--win-alpha <a> --correct none|variants|bonferroni`
+  (default: Bonferroni over variants × headline cases at family α 0.20, so z
+  ≥ 2.13 at 6 × 2); the row records the rule, `decide --fast` computes z from
+  the R1 field and writes it into the decision row. `migrate-fast <g> --why`
+  switches a full-mode group whose R1 is scored (and R2 is not) to fast,
+  keeping its epoch, so `decide --fast` reads that epoch's R1 rows with no
+  re-run; a judges hash that moved since the freeze is listed file by file and
+  needs `--accept-judges <hash>`. The fast report prints the rule and, by Monte
+  Carlo at the group's R1 design and variants × headline cases, its per-group
+  false-win rate (about 0.15) and power for 0.5 → 0.8.
+
 - **Eval: tournament fast mode** (task `f_fast_mode`, user decision
   2026-11-09, spec §4.7). `tournament plan|freeze --fast` plans R1 at
   `n_eff` 30 per model and 45 pooled; `decide --fast <g>` decides on R1 rows

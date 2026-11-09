@@ -15,28 +15,34 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Group } from "./nextstep.ts";
-import { fisherPower } from "./stats.ts";
+import { fisherPower, nEffPooled } from "./stats.ts";
 import {
   ALPHA,
   type CasePlan,
   type ControlRow,
   controlFile,
+  DEFAULT_RHO,
   epochOf,
-  FAST_ALPHA,
-  FAST_TARGET,
-  FAST_Z,
   type FreezeRow,
   type IsolationRow,
+  type MigrateFastRow,
+  migratedOf,
+  modeOf,
   planCmhPower,
   readControl,
+  ruleLine,
+  ruleTests,
   type SetupRow,
   setupOf,
+  type WinRule,
   WORST_B,
+  winRuleOf,
+  winZ,
 } from "./tournament.ts";
 import { listCandidates, type VariantRow } from "./tournament-build.ts";
 import type { GateOpts } from "./tournament-r4.ts";
 import { R4_RUNS, type R4Score, r4Reps, type ScanResult } from "./tournament-r4-score.ts";
-import type { VariantScore } from "./tournament-score.ts";
+import { fastErrorRates, type McCase, type VariantScore } from "./tournament-score.ts";
 
 /** The committed copy of a group's control file (§6, Q3). */
 export const committedControl = (repo: string, group: Group): string =>
@@ -125,48 +131,83 @@ export function powerFacts(
   };
 }
 
-/** Fast mode's accepted error rates (user decision 2026-11-09, §4.7). */
-export const FAST_FALSE_WIN = 0.1;
-
 export interface FastFacts {
   ownPerModel: number[];
   ownPooled: number[];
-  /** Fisher power for 0.5 → 0.8 at one-sided FAST_ALPHA on the weakest own case: a lower bound for the z rule. */
-  winPower: number;
-  /** The accepted per-group false-win rate and P(≥ 1 false winner over the six groups). */
-  falseWin: number;
-  falseWinAny: number;
-  /** (variant, case) win tests in this group, and the bound 1 − (1 − FAST_ALPHA)^k they give. */
+  rule: WinRule;
+  /** The R1 field and the own headline cases the rule's threshold is set at. */
+  variants: number;
+  cases: number;
   tests: number;
-  falseWinBound: number;
+  z: number;
+  /** The R1 design per own case: clusters, reps per weak model, ρ̂_pool. */
+  design: McCase[];
+  /** Monte Carlo at this design and field (fastErrorRates): P(≥ 1 false win in the group), power for 0.5 → 0.8. */
+  falseWin: number;
+  power: number;
+  /** P(≥ 1 false winner over the six groups) if each lands one at `falseWin`. */
+  falseWinAny: number;
+  /** The group was frozen in full mode and switched with `migrate-fast`. */
+  migrated: MigrateFastRow | null;
 }
 
-/** The numbers a fast-mode report states (§4.7), at the frozen plan and the R1 field. */
-export function fastFacts(plan: readonly CasePlan[], variants: number): FastFacts {
+/**
+ * The numbers a fast-mode report states (§4.7): the win rule and its threshold at the R1 field, and
+ * its per-group false-win rate and power by Monte Carlo at the R1 design (own headline clusters ×
+ * R1 reps, ρ̂_pool from the setup) and the group's actual variants × headline cases.
+ */
+export function fastFacts(
+  plan: readonly CasePlan[],
+  variants: number,
+  o: {
+    rule: WinRule;
+    rhoPool?: Record<string, number>;
+    migrated?: MigrateFastRow | null;
+    iters?: number;
+  },
+): FastFacts {
   const own = plan.filter((p) => p.kind === "own");
-  const pooled = own.map((p) => Math.round(p.plan.nEffPooled ?? p.plan.nEff));
-  const tests = variants * own.length;
+  const design = own.map((p) => ({
+    clusters: p.plan.m,
+    reps: p.r1,
+    rho: o.rhoPool?.[p.case] ?? DEFAULT_RHO,
+  }));
+  const z = winZ(o.rule, variants, own.length);
+  const mc = fastErrorRates({
+    variants: Math.max(1, variants),
+    cases: design,
+    z,
+    ...(o.iters !== undefined ? { iters: o.iters } : {}),
+  });
   return {
     ownPerModel: own.map((p) => Math.round(p.plan.nEff)),
-    ownPooled: pooled,
-    winPower:
-      pooled.length === 0
-        ? 0
-        : Math.min(...pooled.map((n) => fisherPower(0.8, 0.5, n, n, FAST_ALPHA, "greater"))),
-    falseWin: FAST_FALSE_WIN,
-    falseWinAny: 1 - (1 - FAST_FALSE_WIN) ** GROUPS_N,
-    tests,
-    falseWinBound: 1 - (1 - FAST_ALPHA) ** tests,
+    ownPooled: own.map((p) => Math.round(p.plan.nEffPooled ?? p.plan.nEff)),
+    rule: o.rule,
+    variants,
+    cases: own.length,
+    tests: ruleTests(o.rule, variants, own.length),
+    z,
+    design,
+    falseWin: mc.falseWin,
+    power: mc.power,
+    falseWinAny: 1 - (1 - mc.falseWin) ** GROUPS_N,
+    migrated: o.migrated ?? null,
   };
 }
 
 function fastSection(f: FastFacts): string[] {
+  const m = f.migrated;
   return [
     "### Fast mode (user decision 2026-11-09)",
     "",
-    `- R1 decides. A variant wins a headline case when, on its exposed clusters, it is ahead of base on both weak models and the pooled weak-model z is at least ${FAST_Z}. Losses (per-case Holm and CMH over the R1 family, sonnet included) eliminate. At most one winner per group: the highest pooled z, then the shorter text.`,
-    `- Own headline cases: per-model n_eff ${f.ownPerModel.join(", ") || "-"}, pooled ${f.ownPooled.join(", ") || "-"} (targets ${FAST_TARGET.own} and ${FAST_TARGET.pooled}). Win power for 0.5 → 0.8 (Fisher, one-sided ${FAST_ALPHA}, a lower bound for the z rule): ${f2(f.winPower)} on the weakest own case.`,
-    `- **False wins.** The accepted per-group false-win rate is about ${f.falseWin}, so the chance of at least one false winner over the ${GROUPS_N} groups is about 1 − 0.9^${GROUPS_N} = ${f2(f.falseWinAny)}. The rule is about ${FAST_ALPHA} per (variant, case) test with no correction across them: this group's ${f.tests} tests allow up to 1 − 0.95^${f.tests} = ${f2(f.falseWinBound)}.`,
+    ...(m
+      ? [
+          `- **Migrated from full mode** (epoch ${m.epoch} kept, its R1 rows decide; nothing re-ran): ${m.why}. Judges ${m.previousJudgesHash === m.judgesHash ? `unchanged (\`${m.judgesHash}\`)` : `\`${m.previousJudgesHash}\` → \`${m.judgesHash}\`, accepted (${m.judgesChanged.length} files changed)`}.`,
+        ]
+      : []),
+    `- **Win rule**: ${ruleLine(f.rule, f.variants, f.cases)} (${f.variants} variants × ${f.cases} headline cases). R1 decides. A variant wins a headline case when, on its exposed clusters, it is ahead of base on both weak models and the pooled weak-model z is at least ${f.z.toFixed(2)}. Losses (per-case Holm and CMH over the R1 family, sonnet included) eliminate. At most one winner per group: the largest sum of pooled z over its win cases, then the shorter text.`,
+    `- R1 design per own headline case: ${f.design.map((d) => `${d.clusters} clusters × ${d.reps} rep${d.reps === 1 ? "" : "s"} per weak model, ρ̂_pool ${f2(d.rho)}, pooled n_eff ${nEffPooled(d.clusters, d.reps, d.rho).toFixed(0)}`).join("; ") || "-"} (the frozen plan's n_eff: per model ${f.ownPerModel.join(", ") || "-"}, pooled ${f.ownPooled.join(", ") || "-"}).`,
+    `- **False wins and power** (Monte Carlo at this design and ${f.variants} × ${f.cases}, null 0.5, every cluster exposed): per-group false-win rate ${f2(f.falseWin)}; power for a real 0.5 → 0.8 fix ${f2(f.power)} on the weakest own case. Over the ${GROUPS_N} groups, P(≥ 1 false winner) ≈ 1 − (1 − ${f2(f.falseWin)})^${GROUPS_N} = ${f2(f.falseWinAny)}.`,
     "- **No R2 and no per-group R4.** C7 (`tournament final --combined`) is the regression gate: every group's winner on one surface, R4 on sonnet and both weak models, the holdouts once; code review is the other backstop.",
     "",
   ];
@@ -547,8 +588,12 @@ export function renderReport(o: { group: Group; dir: string; candDir: string }):
   ];
   const r1 = lastOf(rows, "round_score", (r) => r.round === "r1" && r.epoch === epoch);
   const fast =
-    freeze?.mode === "fast"
-      ? fastFacts(freeze.nPlan, Array.isArray(r1?.scores) ? r1.scores.length : vs.length)
+    freeze && modeOf(rows) === "fast"
+      ? fastFacts(freeze.nPlan, Array.isArray(r1?.scores) ? r1.scores.length : vs.length, {
+          rule: winRuleOf(rows),
+          ...(setup ? { rhoPool: setup.rhoPool } : {}),
+          migrated: migratedOf(rows) ?? null,
+        })
       : null;
   return [
     `# hill-r2 tournament: ${o.group}`,

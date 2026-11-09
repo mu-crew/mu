@@ -3,6 +3,7 @@
 // docs/specs/2026-11-07-hill-r2-tournament.md §3-§4, unit B3b). main.ts dispatches here and nowhere
 // else. Order per group: freeze → pack → design → audit → build → r1 → r2 → r3 → r4 (→ final,
 // report). Every command after the freeze refuses on changed judges and on a pending review stop.
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,10 +36,13 @@ import {
   coldFile,
   epochOf,
   FAST_TARGET,
+  freshRows,
+  frozenHash,
   GATE,
   type IsolationRow,
   modeOf,
   nPlan,
+  parseWinRule,
   pendingStops,
   planCmhPower,
   powerLine,
@@ -48,10 +52,15 @@ import {
   rhoFromB5,
   roundJobs,
   rowDir,
+  ruleLine,
+  ruleTests,
   type SetupRow,
   setupOf,
   WEAK,
+  type WinRule,
   wallEstimate,
+  winRuleOf,
+  winZ,
 } from "./tournament.ts";
 import {
   assessVariant,
@@ -93,8 +102,10 @@ const GROUPS: readonly Group[] = [
 
 const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   --fast on plan/freeze (then r1, decide, report follow the frozen mode): R1 decides, no R2/R3/R4 per group, C7 gates
-  freeze <g> [--fast] --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
+  --win-alpha <a> --correct none|variants|bonferroni on freeze --fast / migrate-fast: the fast win threshold (default 0.2, bonferroni over variants x headline cases)
+  freeze <g> [--fast [--win-alpha a] [--correct c]] --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
   refreeze <g> --row <row id> --why "<reason>"
+  migrate-fast <g> --why "<reason>" [--win-alpha a] [--correct c] [--accept-judges <hash>]   (a full group with R1 scored switches to fast, keeping its epoch's R1 rows)
   plan <g> [--fast] [--variants 12] [--entrants 6] [--b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m]]
   pack <g> [--brief tools/eval/candidates/<g>/brief.src.md]
   design <g> --model <m> [--session <name>]
@@ -269,14 +280,14 @@ function scoreFrom(o: {
   entrants: readonly VariantRow[];
   cold: readonly ColdRow[];
   fast: boolean;
+  rule: WinRule;
 }): { scores: ReturnType<typeof scoreRound>; probe: ProbeRow[] } {
   const epoch = epochOf(o.rows);
   const floor = epoch * 1000 + REP_BASE[o.which];
   const promptDir = join(o.dir, "prompts");
-  const probe = readProbeRows(probeFile(o.dir, epoch)).filter(
-    (r) => r.round === o.which && r.rep >= floor && r.rep < floor + 900,
-  );
+  const probe = freshRows(readProbeRows(probeFile(o.dir, epoch)), o.which, epoch);
   const lint = nextLint(surfacesOf(o.setup, o.entrants), NEXT_CASES);
+  const headline = ownHeadline(o.group);
   const scores = scoreRound({
     round: o.which,
     group: o.group,
@@ -284,9 +295,7 @@ function scoreFrom(o: {
     cold: o.cold,
     variants: o.entrants,
     setup: o.setup,
-    headline: NEXT_CASES.filter((c) => c.group === o.group && c.role === "headline").map(
-      (c) => c.id,
-    ),
+    headline,
     headlineAny: NEXT_CASES.filter((c) => c.role === "headline").map((c) => c.id),
     nameCues: lint.nameCues,
     prompt: (sha) => {
@@ -297,8 +306,25 @@ function scoreFrom(o: {
     decisions: o.rows.flatMap((r) => (r.kind === "review_decision" ? [r] : [])),
     repFloor: floor,
     fast: o.fast,
+    ...(o.fast ? { fastZ: winZ(o.rule, o.entrants.length, headline.length) } : {}),
   });
   return { scores, probe };
+}
+
+const ownHeadline = (group: Group): string[] =>
+  NEXT_CASES.filter((c) => c.group === group && c.role === "headline").map((c) => c.id);
+
+/** The judge files that differ between two judges trees (best effort: a tree may be gone). */
+function judgesDiff(from: string, to: string): string[] {
+  try {
+    return execFileSync("git", ["-C", REPO_ROOT, "diff-tree", "-r", "--name-only", from, to], {
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+  } catch {
+    return [`(tree ${from} not in this repo: the changed files are unknown)`];
+  }
 }
 
 /** Append and print every pending review stop of a score; true when there was one (exit 7). */
@@ -324,6 +350,7 @@ export function decide(group: Group, dir: string): number {
   if (!rows.some((r) => r.kind === "round_score" && r.round === "r1" && r.epoch === epoch))
     throw new Error("no R1 in this epoch: run `tournament r1` first");
   const entrants = field(rows);
+  const rule = winRuleOf(rows);
   const { scores } = scoreFrom({
     which: "r1",
     group,
@@ -333,13 +360,21 @@ export function decide(group: Group, dir: string): number {
     entrants,
     cold: [],
     fast: true,
+    rule,
   });
   if (stopFor(dir, scores)) return EXIT_REVIEW;
   const d = decideFast(scores);
+  const h = ownHeadline(group).length;
+  console.log(`fast win rule: ${ruleLine(rule, entrants.length, h)}`);
   appendControl(dir, {
     kind: "decision",
     mode: "fast",
     epoch,
+    rule: {
+      ...rule,
+      tests: ruleTests(rule, entrants.length, h),
+      z: winZ(rule, entrants.length, h),
+    },
     winner: d.winner,
     ranking: d.ranking,
     why: d.why,
@@ -423,7 +458,17 @@ async function round(
     });
     cold = readRows(coldFile(dir, epoch));
   }
-  const { scores, probe } = scoreFrom({ which, group, dir, rows, setup, entrants, cold, fast });
+  const { scores, probe } = scoreFrom({
+    which,
+    group,
+    dir,
+    rows,
+    setup,
+    entrants,
+    cold,
+    fast,
+    rule: winRuleOf(rows),
+  });
   appendControl(dir, {
     kind: "round_score",
     round: which,
@@ -458,6 +503,62 @@ async function round(
       winner: null,
       why: "no R2 survivor with a win: base stays",
     });
+  return 0;
+}
+
+/**
+ * §4.7 `migrate-fast <group>`: a full-mode group with R1 scored in this epoch (and no R2 score, so
+ * the switch never follows an R2 result) goes fast, keeping the epoch: `decide --fast` then reads
+ * this epoch's R1 rows, nothing re-runs. The judges are re-checked against the latest freeze or
+ * refreeze; a moved hash lists the changed files and needs `--accept-judges <the new hash>`.
+ */
+export function migrateFast(
+  group: Group,
+  dir: string,
+  rows: readonly ControlRow[],
+  args: string[],
+  deps: { hash?: () => string; diff?: (from: string, to: string) => string[] } = {},
+): number {
+  const why = flag(args, "--why");
+  if (!why) throw new Error(USAGE);
+  if (!rows.some((r) => r.kind === "freeze")) throw new Error("not frozen yet");
+  const epoch = epochOf(rows);
+  const scored = (round: string): boolean =>
+    rows.some((r) => r.kind === "round_score" && r.round === round && r.epoch === epoch);
+  if (!scored("r1"))
+    throw new Error(
+      `no R1 score in epoch ${epoch}: migrate-fast reuses a scored R1, run \`tournament r1\` first`,
+    );
+  if (scored("r2") || rows.some((r) => r.kind === "decision"))
+    throw new Error(
+      `epoch ${epoch} already has an R2 score or a decision: switching to fast now would follow its result`,
+    );
+  const win = parseWinRule(flag(args, "--win-alpha"), flag(args, "--correct"));
+  const previous = frozenHash(rows) ?? "";
+  const current = (deps.hash ?? (() => judgesHash(REPO_ROOT).hash))();
+  const changed = previous === current ? [] : (deps.diff ?? judgesDiff)(previous, current);
+  if (changed.length > 0 && flag(args, "--accept-judges") !== current) {
+    console.error(
+      `judges changed since the freeze (${previous} -> ${current}): ${changed.length} files\n${changed.map((f) => `  ${f}`).join("\n")}\nmigrate-fast reuses rows judged before the change: check none of these decides an R1 row, then pass --accept-judges ${current}`,
+    );
+    return 1;
+  }
+  appendControl(dir, {
+    kind: "migrate_fast",
+    from: "full",
+    epoch,
+    why,
+    win,
+    judgesHash: current,
+    previousJudgesHash: previous,
+    judgesChanged: changed,
+  });
+  const h = ownHeadline(group).length;
+  const n = field(rows).length;
+  console.log(
+    `migrated to fast mode (epoch ${epoch} kept; its R1 rows decide): win rule ${ruleLine(win, n, h)}${changed.length > 0 ? `; judges ${previous} -> ${current} accepted (${changed.length} files)` : ""}`,
+  );
+  console.log(`next: \`tournament decide --fast ${group}\``);
   return 0;
 }
 
@@ -515,12 +616,15 @@ export async function tournamentCli(argv: string[]): Promise<number> {
       const h = judgesHash(REPO_ROOT);
       const mode = fastFlag ? "fast" : "full";
       const plan = nPlan(group, NEXT_CASES, setup, mode);
+      const win = fastFlag
+        ? parseWinRule(flag(rest, "--win-alpha"), flag(rest, "--correct"))
+        : null;
       appendControl(dir, {
         kind: "freeze",
         judgesHash: h.hash,
         files: h.files,
         mode,
-        ...(fastFlag ? { targets: { ...FAST_TARGET } } : {}),
+        ...(win ? { targets: { ...FAST_TARGET }, win } : {}),
         nPlan: plan,
         cmhPower: planCmhPower(plan),
         checks,
@@ -530,9 +634,12 @@ export async function tournamentCli(argv: string[]): Promise<number> {
           `${p.case} ${p.kind}: m ${p.plan.m} r ${p.plan.r} n_eff ${p.plan.nEff.toFixed(0)}${p.plan.nEffPooled ? `/${p.plan.nEffPooled.toFixed(0)}` : ""}${p.plan.reached ? "" : ` SHORT (+${p.plan.add} paraphrases, MDE ${p.mde})`}`,
         );
       console.log(powerLine(planCmhPower(plan)));
+      if (win) console.log(`fast win rule: ${ruleLine(win)}`);
       console.log(`frozen (${mode} mode): judges ${h.hash}`);
       return 0;
     }
+    case "migrate-fast":
+      return migrateFast(group, dir, rows, rest);
     case "refreeze": {
       const row = flag(rest, "--row");
       const why = flag(rest, "--why");
@@ -563,11 +670,18 @@ export async function tournamentCli(argv: string[]): Promise<number> {
         freeze?.kind === "freeze"
           ? freeze.nPlan
           : nPlan(group, NEXT_CASES, setup, fast ? "fast" : "full");
-      if (fast)
+      const n = Number(flag(rest, "--variants") ?? 12);
+      if (fast) {
+        const rule = freeze
+          ? winRuleOf(rows)
+          : parseWinRule(flag(rest, "--win-alpha"), flag(rest, "--correct"));
         console.log(
           `fast mode: R1 decides (own headline n_eff ${FAST_TARGET.own} per model, ${FAST_TARGET.pooled} pooled); no R2, no per-group R4; C7 is the gate`,
         );
-      const n = Number(flag(rest, "--variants") ?? 12);
+        console.log(
+          `fast win rule at ${n} variants: ${ruleLine(rule, n, plan.filter((p) => p.kind === "own").length)}`,
+        );
+      }
       const s = Number(flag(rest, "--entrants") ?? Math.ceil(n / 2));
       const models = setup ? [...setup.models.weak, setup.models.gate] : [...WEAK, GATE];
       const stub = (k: number): { label: string; surface: Surface }[] =>

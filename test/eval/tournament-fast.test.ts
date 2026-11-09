@@ -6,19 +6,32 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { NextCase, ProbeRow } from "../../tools/eval/nextstep.ts";
+import { normQuantile } from "../../tools/eval/stats.ts";
 import {
+  assertFrozen,
   assertMode,
+  type ControlRow,
   controlFile,
+  DEFAULT_WIN_RULE,
   FAST_TARGET,
   FastModeError,
+  freshRows,
+  LEGACY_WIN_RULE,
+  modeOf,
   nPlan,
+  parseWinRule,
+  readControl,
   roundJobs,
+  ruleTests,
+  winRuleOf,
+  winZ,
 } from "../../tools/eval/tournament.ts";
-import { tournamentCli } from "../../tools/eval/tournament-cli.ts";
+import { migrateFast, tournamentCli } from "../../tools/eval/tournament-cli.ts";
 import { fastFacts, renderReport } from "../../tools/eval/tournament-report.ts";
 import {
   BASE,
   decideFast,
+  fastErrorRates,
   type ScoreInput,
   scoreRound,
   type VariantScore,
@@ -31,7 +44,12 @@ const setup: ScoreInput["setup"] = {
   rho: {},
   rhoPool: {},
 };
-const fastInput = (rows: ProbeRow[], ids: string[], headline = ["h1"]): ScoreInput => ({
+const fastInput = (
+  rows: ProbeRow[],
+  ids: string[],
+  headline = ["h1"],
+  fastZ = 1.65,
+): ScoreInput => ({
   round: "r1",
   group: "c1_wait",
   rows,
@@ -42,6 +60,7 @@ const fastInput = (rows: ProbeRow[], ids: string[], headline = ["h1"]): ScoreInp
   nameCues: [],
   prompt,
   fast: true,
+  fastZ,
 });
 /** R1 rows at the fast plan (10 × 3 clusters, r = 1) on one case. */
 const r1 = (surface: string, p: number | Record<string, number>, rand: () => number) =>
@@ -174,16 +193,24 @@ describe("fast win rule (decide --fast)", () => {
     expect(both[0]?.win[0]?.win).toBe(true);
   });
 
-  it("the threshold is z ≥ 1.65: just below is a tie, at it a win", () => {
+  it("the threshold is pinned from both sides: z at it wins, z just below it ties", () => {
     const base = det(BASE, at(15, 15));
-    const z = (h: number, g: number) =>
-      scoreRound(fastInput([...base, ...det("v1", at(h, g))], ["v1"]))[0]?.win[0];
-    const below = z(20, 20);
-    const above = z(21, 21);
-    expect(below?.z).toBeLessThan(1.65);
-    expect(below?.win).toBe(false);
-    expect(above?.z).toBeGreaterThanOrEqual(1.65);
-    expect(above?.win).toBe(true);
+    const cell = (h: number, g: number, fastZ: number) =>
+      scoreRound(fastInput([...base, ...det("v1", at(h, g))], ["v1"], ["h1"], fastZ))[0]?.win[0];
+    const z = cell(21, 21, 99)?.z ?? 0;
+    expect(z).toBeGreaterThan(1.65);
+    expect(cell(21, 21, z)?.win).toBe(true);
+    expect(cell(21, 21, z + 1e-9)?.win).toBe(false);
+    // the default rule's thresholds bracket this cell's z: it wins at 6 tests, ties at 12
+    const z6 = winZ(DEFAULT_WIN_RULE, 6, 1);
+    const z12 = winZ(DEFAULT_WIN_RULE, 6, 2);
+    expect(z6).toBeLessThan(z);
+    expect(z12).toBeGreaterThan(z);
+    expect(cell(21, 21, z6)?.win).toBe(true);
+    expect(cell(21, 21, z12)?.win).toBe(false);
+    expect(() => scoreRound({ ...fastInput(base, ["v1"]), fastZ: undefined })).toThrow(
+      /win threshold/,
+    );
   });
 
   it("exposure gates wins: an unexposed variant does not win", () => {
@@ -223,15 +250,148 @@ describe("fast win rule (decide --fast)", () => {
   });
 });
 
+describe("fast win threshold (data on the freeze row)", () => {
+  it("is z at one-sided alpha over the corrected tests", () => {
+    expect(ruleTests({ alpha: 0.2, correct: "none" }, 6, 3)).toBe(1);
+    expect(ruleTests({ alpha: 0.2, correct: "variants" }, 6, 3)).toBe(6);
+    expect(ruleTests({ alpha: 0.2, correct: "bonferroni" }, 6, 3)).toBe(18);
+    expect(ruleTests({ alpha: 0.2, correct: "bonferroni" }, 0, 3)).toBe(1);
+    // option A: none at 0.05 is the old 1.65; option B at 0.10 over 12 tests is 2.39
+    expect(winZ(LEGACY_WIN_RULE, 6, 3)).toBeCloseTo(1.645, 3);
+    expect(winZ({ alpha: 0.1, correct: "bonferroni" }, 6, 2)).toBeCloseTo(2.394, 3);
+    // the chosen default: bonferroni at family 0.20
+    expect(DEFAULT_WIN_RULE).toEqual({ alpha: 0.2, correct: "bonferroni" });
+    expect(winZ(DEFAULT_WIN_RULE, 6, 1)).toBeCloseTo(1.834, 3);
+    expect(winZ(DEFAULT_WIN_RULE, 6, 2)).toBeCloseTo(2.128, 3);
+    expect(winZ(DEFAULT_WIN_RULE, 6, 3)).toBeCloseTo(2.287, 3);
+    expect(normQuantile(0.975)).toBeCloseTo(1.959964, 5);
+  });
+
+  it("parses --win-alpha and --correct, defaulting to bonferroni at 0.20, and refuses nonsense", () => {
+    expect(parseWinRule(undefined, undefined)).toEqual(DEFAULT_WIN_RULE);
+    expect(parseWinRule("0.1", "variants")).toEqual({ alpha: 0.1, correct: "variants" });
+    expect(() => parseWinRule("2", undefined)).toThrow(/--win-alpha/);
+    expect(() => parseWinRule(undefined, "holm")).toThrow(/--correct/);
+  });
+
+  it("is read from the latest freeze or migration; a fast freeze without one is the legacy rule", () => {
+    const fz = (over: object) =>
+      ({
+        kind: "freeze",
+        judgesHash: "h",
+        files: [],
+        nPlan: [],
+        checks: "skipped",
+        ...over,
+      }) as ControlRow;
+    expect(winRuleOf([fz({ mode: "fast" })])).toEqual(LEGACY_WIN_RULE);
+    expect(winRuleOf([fz({ mode: "fast", win: { alpha: 0.1, correct: "none" } })])).toEqual({
+      alpha: 0.1,
+      correct: "none",
+    });
+  });
+});
+
+describe("fast error rates (Monte Carlo)", () => {
+  // oracle: the reviewer's independent Monte Carlo (delegate_rv-fast_907974bb): 30 clusters, ρ 0.2,
+  // one row per weak model per cluster, base shared across the group
+  const c30 = { clusters: 30, reps: 1, rho: 0.2 };
+  const at = (variants: number, h: number, z: number) =>
+    fastErrorRates({ variants, cases: Array(h).fill(c30), z, iters: 3000 });
+
+  it("reproduces the uncorrected z ≥ 1.65 false-win table and its power", () => {
+    expect(Math.abs(at(6, 1, 1.65).falseWin - 0.195)).toBeLessThan(0.04);
+    expect(Math.abs(at(6, 3, 1.65).falseWin - 0.49)).toBeLessThan(0.08);
+    expect(Math.abs(at(6, 1, 1.65).power - 0.94)).toBeLessThan(0.03);
+  });
+
+  it("reproduces Bonferroni at 0.10: per-group rate and power at 6 × 1, 6 × 3 and 12 × 3", () => {
+    const b = (n: number, h: number) => at(n, h, winZ({ alpha: 0.1, correct: "bonferroni" }, n, h));
+    const r61 = b(6, 1);
+    const r63 = b(6, 3);
+    const r123 = b(12, 3);
+    expect(Math.abs(r61.falseWin - 0.079)).toBeLessThan(0.03);
+    expect(Math.abs(r63.falseWin - 0.071)).toBeLessThan(0.03);
+    expect(Math.abs(r123.falseWin - 0.075)).toBeLessThan(0.03);
+    expect(Math.abs(r61.power - 0.86)).toBeLessThan(0.03);
+    expect(Math.abs(r63.power - 0.75)).toBeLessThan(0.03);
+    expect(Math.abs(r123.power - 0.66)).toBeLessThan(0.03);
+  });
+
+  it("the chosen default holds about 0.15 per group at power about 0.8", () => {
+    for (const [n, h] of [
+      [6, 1],
+      [6, 2],
+      [6, 3],
+    ] as const) {
+      const r = at(n, h, winZ(DEFAULT_WIN_RULE, n, h));
+      expect(r.falseWin).toBeGreaterThan(0.09);
+      expect(r.falseWin).toBeLessThan(0.19);
+      expect(r.power).toBeGreaterThan(0.78);
+    }
+  });
+
+  it("matches scoreRound's rule on synthetic rows (6 null variants, one case, z 1.65)", () => {
+    const rand = rng(31);
+    const sims = 300;
+    let any = 0;
+    for (let s = 0; s < sims; s++) {
+      const ids = ["v1", "v2", "v3", "v4", "v5", "v6"];
+      const rows = [BASE, ...ids].flatMap((sf) =>
+        cellRows({
+          surface: sf,
+          caseId: "h1",
+          models: [HAIKU, GEMINI],
+          p: 0.5,
+          r: 1,
+          rand,
+          round: "r1",
+        }),
+      );
+      if (scoreRound(fastInput(rows, ids)).some((v) => v.wins > 0)) any++;
+    }
+    expect(Math.abs(any / sims - at(6, 1, 1.65).falseWin)).toBeLessThan(0.06);
+  });
+
+  it("needs both weak models ahead, as scoreRound does: at z* 0 a null variant wins far less than half", () => {
+    // pooled ahead alone is about 0.5; both models ahead as well is about 0.35
+    const mc = at(1, 1, 0).falseWin;
+    const rand = rng(32);
+    const sims = 400;
+    let won = 0;
+    for (let s = 0; s < sims; s++) {
+      const rows = [BASE, "v1"].flatMap((sf) =>
+        cellRows({
+          surface: sf,
+          caseId: "h1",
+          models: [HAIKU, GEMINI],
+          p: 0.5,
+          r: 1,
+          rand,
+          round: "r1",
+        }),
+      );
+      if ((scoreRound(fastInput(rows, ["v1"], ["h1"], 0))[0]?.wins ?? 0) > 0) won++;
+    }
+    expect(mc).toBeLessThan(0.42);
+    expect(Math.abs(mc - won / sims)).toBeLessThan(0.07);
+  });
+});
+
 describe("fast report facts", () => {
-  it("states the accepted 0.10 per group and 0.47 over six groups, and this group's test-count bound", () => {
+  it("states the rule, its threshold and the Monte Carlo rates at the group's design and field", () => {
     const plan = nPlan("c1_wait", [fakeCase("a"), fakeCase("b")], null, "fast");
-    const f = fastFacts(plan, 6);
-    expect(f.falseWin).toBe(0.1);
-    expect(f.falseWinAny).toBeCloseTo(0.469, 3);
+    const f = fastFacts(plan, 6, { rule: DEFAULT_WIN_RULE, iters: 2000 });
     expect(f.tests).toBe(12);
-    expect(f.falseWinBound).toBeCloseTo(1 - 0.95 ** 12, 10);
-    expect(f.winPower).toBeGreaterThan(0.7);
+    expect(f.z).toBeCloseTo(2.128, 3);
+    expect(f.design).toEqual([
+      { clusters: 30, reps: 1, rho: 0.2 },
+      { clusters: 30, reps: 1, rho: 0.2 },
+    ]);
+    expect(f.falseWin).toBeGreaterThan(0.09);
+    expect(f.falseWin).toBeLessThan(0.19);
+    expect(f.power).toBeGreaterThan(0.78);
+    expect(f.falseWinAny).toBeCloseTo(1 - (1 - f.falseWin) ** 6, 10);
   });
 });
 
@@ -262,8 +422,11 @@ describe("fast report", () => {
       writeFileSync(controlFile(dir), rows.map((r) => `${JSON.stringify(r)}\n`).join(""));
       const md = renderReport({ group: "c1_wait", dir, candDir: join(dir, "none") });
       expect(md).toContain("### Fast mode (user decision 2026-11-09)");
-      expect(md).toMatch(/per-group false-win rate is about 0\.1\b/);
-      expect(md).toContain("1 − 0.9^6 = 0.47");
+      // a fast freeze row without `win` is the legacy rule; with no R1 field yet, 0 variants
+      expect(md).toContain("family α 0.05 one-sided, uncorrected: 1 tests, z ≥ 1.64");
+      expect(md).toMatch(
+        /per-group false-win rate 0\.0\d; power for a real 0\.5 → 0\.8 fix 0\.9\d/,
+      );
       expect(md).toContain("C7 (`tournament final --combined`) is the regression gate");
       expect(md).toContain("R2, R3 and R4: not run in fast mode");
       expect(md).not.toContain("## 4. R3 scan");
@@ -313,6 +476,104 @@ describe("fast mode refusals", () => {
     expect(() => assertMode([], "decide", false)).toThrow(/fast mode only/);
     expect(() => assertMode([], "decide", true)).toThrow(/fast mode only/);
     expect(() => assertMode([], "r2", false)).not.toThrow();
+  });
+});
+
+describe("fresh R1 rows (the CLI's rep filter)", () => {
+  it("keeps this epoch's R1 reps only: no R2 rows, no earlier epoch's", () => {
+    const rows = [
+      { round: "r1", rep: 6001, id: "keep" },
+      { round: "r1", rep: 6002, id: "keep2" },
+      { round: "r2", rep: 6101, id: "r2" },
+      { round: "r1", rep: 5001, id: "epoch5" },
+      { round: "r1", rep: 1, id: "epoch0" },
+      { round: "r1", rep: 7001, id: "epoch7" },
+    ] as const;
+    expect(freshRows(rows, "r1", 6).map((r) => r.id)).toEqual(["keep", "keep2"]);
+    expect(freshRows(rows, "r2", 6).map((r) => r.id)).toEqual(["r2"]);
+    expect(freshRows(rows, "r1", 0).map((r) => r.id)).toEqual(["epoch0"]);
+  });
+});
+
+describe("migrate-fast (C2: a full-mode group with R1 done switches to fast)", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mu-fast-migrate-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const full = (extra: object[] = []) => {
+    const rows = [
+      { kind: "freeze", judgesHash: "h0", files: [], mode: "full", nPlan: [], checks: "skipped" },
+      { kind: "refreeze", row: "x", why: "rig fix", judgesHash: "h6", epoch: 6 },
+      { kind: "round_score", round: "r1", epoch: 6, S: null, scores: [] },
+      { kind: "cut", round: "r1", epoch: 6, advanced: [] },
+      ...extra,
+    ];
+    writeFileSync(controlFile(dir), rows.map((r) => `${JSON.stringify(r)}\n`).join(""));
+    return readControl(dir);
+  };
+  const why = ["--why", "fast mode for phase C"];
+
+  it("keeps the epoch, records the rule and the judges, and then decide --fast is allowed and R2 refused", () => {
+    const rows = full();
+    expect(modeOf(rows)).toBe("full");
+    expect(migrateFast("c2_close", dir, rows, why, { hash: () => "h6" })).toBe(0);
+    const after = readControl(dir);
+    expect(after.at(-1)).toMatchObject({
+      kind: "migrate_fast",
+      from: "full",
+      epoch: 6,
+      win: DEFAULT_WIN_RULE,
+      judgesHash: "h6",
+      previousJudgesHash: "h6",
+      judgesChanged: [],
+    });
+    expect(modeOf(after)).toBe("fast");
+    expect(winRuleOf(after)).toEqual(DEFAULT_WIN_RULE);
+    expect(() => assertFrozen(after, "h6")).not.toThrow();
+    expect(() => assertMode(after, "decide", true)).not.toThrow();
+    expect(() => assertMode(after, "r2", false)).toThrow(/C7/);
+    expect(() => assertMode(after, "migrate-fast", false)).toThrow(/fast mode already/);
+  });
+
+  it("re-checks the judges: a moved hash names the changed files and needs --accept-judges <new hash>", () => {
+    const rows = full();
+    const deps = { hash: () => "h7", diff: () => ["tools/eval/nextstep.ts"] };
+    expect(migrateFast("c2_close", dir, rows, why, deps)).toBe(1);
+    expect(readControl(dir).some((r) => r.kind === "migrate_fast")).toBe(false);
+    expect(migrateFast("c2_close", dir, rows, [...why, "--accept-judges", "h6"], deps)).toBe(1);
+    expect(
+      migrateFast(
+        "c2_close",
+        dir,
+        rows,
+        [...why, "--accept-judges", "h7", "--win-alpha", "0.1", "--correct", "variants"],
+        deps,
+      ),
+    ).toBe(0);
+    const after = readControl(dir);
+    expect(after.at(-1)).toMatchObject({
+      judgesHash: "h7",
+      previousJudgesHash: "h6",
+      judgesChanged: ["tools/eval/nextstep.ts"],
+      win: { alpha: 0.1, correct: "variants" },
+    });
+    // later commands check the accepted hash
+    expect(() => assertFrozen(after, "h7")).not.toThrow();
+    expect(() => assertFrozen(after, "h6")).toThrow(/judges changed/);
+  });
+
+  it("refuses without a scored R1 in the epoch, after an R2 score or a decision, and without --why", () => {
+    const hash = { hash: () => "h6" };
+    const noR1 = full().filter((r) => r.kind !== "round_score");
+    expect(() => migrateFast("c2_close", dir, noR1, why, hash)).toThrow(/no R1 score in epoch 6/);
+    const r2 = full([{ kind: "round_score", round: "r2", epoch: 6, S: 3, scores: [] }]);
+    expect(() => migrateFast("c2_close", dir, r2, why, hash)).toThrow(/would follow its result/);
+    const decided = full([{ kind: "decision", winner: null, why: "x" }]);
+    expect(() => migrateFast("c2_close", dir, decided, why, hash)).toThrow(/would follow/);
+    expect(() => migrateFast("c2_close", dir, full(), [], hash)).toThrow(/usage/);
   });
 });
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

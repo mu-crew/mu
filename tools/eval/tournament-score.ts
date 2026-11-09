@@ -20,7 +20,6 @@ import {
   ALPHA,
   CMH_ALPHA,
   DEFAULT_RHO,
-  FAST_Z,
   type ReviewStopRow,
   type SetupRow,
   stopId,
@@ -107,6 +106,8 @@ export interface ScoreInput {
   repFloor?: number;
   /** Fast mode (§4.7): R1 is the deciding round, with the fast win rule. */
   fast?: boolean;
+  /** Fast mode: the pooled weak-model z a win needs (`winZ` of the frozen rule at this field). */
+  fastZ?: number;
 }
 
 export const BASE = "base";
@@ -305,12 +306,14 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
     });
     if (o.fast) {
       if (o.round !== "r1") throw new Error("fast mode scores R1 rows only (§4.7)");
-      // §4.7: ahead of base on both weak models and pooled z ≥ 1.65, exposure-gated, per case
+      const fastZ = o.fastZ;
+      if (fastZ === undefined) throw new Error("fast mode needs the win threshold (fastZ)");
+      // §4.7: ahead of base on both weak models and pooled z ≥ the rule's z, exposure-gated, per case
       for (const w of win) {
         const lostHere = lossCells.some((l) => l.case === w.case && l.loss);
         w.win =
           !w.unexposed &&
-          w.z >= FAST_Z &&
+          w.z >= fastZ &&
           Object.values(w.ahead ?? {}).every(Boolean) &&
           Object.keys(w.ahead ?? {}).length === weak.length &&
           !lostHere;
@@ -465,6 +468,85 @@ export function cut(
     advance,
     advanced: eligible.slice(0, advance),
   };
+}
+
+// ---- fast mode's error rates (Monte Carlo) -------------------------------------------------------
+
+/** One own headline case of an R1 design: clusters, reps per weak model per cluster, ρ̂_pool. */
+export interface McCase {
+  clusters: number;
+  reps: number;
+  rho: number;
+}
+
+/**
+ * §4.7 error rates of the fast rule by Monte Carlo, on `variants` variants against one shared base
+ * per case, the R1 design `cases`, every cluster exposed. A cluster's rows (both weak models, every
+ * rep) take one shared draw with probability √ρ, so two rows of a cluster correlate at ρ; the z is
+ * scoreRound's (Kish-scaled at the pooled design effect). `falseWin`: P(≥ 1 win in the group) with
+ * every arm at `p0`. `power`: P(one variant at `p1` wins a case), the lowest over the cases. Losses
+ * are left out: under the null they only remove wins. Seeded, so a report reprints its numbers.
+ */
+export function fastErrorRates(o: {
+  variants: number;
+  cases: readonly McCase[];
+  z: number;
+  p0?: number;
+  p1?: number;
+  iters?: number;
+  seed?: number;
+}): { falseWin: number; power: number } {
+  const p0 = o.p0 ?? 0.5;
+  const p1 = o.p1 ?? 0.8;
+  const iters = o.iters ?? 4000;
+  let a = (o.seed ?? 20261109) >>> 0;
+  const rnd = (): number => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  /** Hits per weak model on one surface of a case. */
+  const draw = (c: McCase, p: number): [number, number] => {
+    const mix = Math.sqrt(c.rho);
+    const h: [number, number] = [0, 0];
+    for (let k = 0; k < c.clusters; k++) {
+      const u = rnd();
+      for (let m = 0; m < 2; m++)
+        for (let r = 0; r < c.reps; r++)
+          if (rnd() < mix ? u < p : rnd() < p) h[m as 0 | 1] = (h[m as 0 | 1] ?? 0) + 1;
+    }
+    return h;
+  };
+  const wins = (c: McCase, v: [number, number], b: [number, number]): boolean => {
+    const n = 2 * c.clusters * c.reps;
+    const d = deff(2 * c.reps, c.rho);
+    const vs = kish(n, v[0] + v[1], d);
+    const bs = kish(n, b[0] + b[1], d);
+    return (
+      v[0] > b[0] &&
+      v[1] > b[1] &&
+      zScore({ nStar: vs.n, hitsStar: vs.hits }, { nStar: bs.n, hitsStar: bs.hits }) >= o.z
+    );
+  };
+  let falseWins = 0;
+  for (let i = 0; i < iters; i++) {
+    let any = false;
+    for (const c of o.cases) {
+      const b = draw(c, p0);
+      for (let k = 0; k < o.variants && !any; k++) any = wins(c, draw(c, p0), b);
+      if (any) break;
+    }
+    if (any) falseWins++;
+  }
+  const power = Math.min(
+    ...o.cases.map((c) => {
+      let w = 0;
+      for (let i = 0; i < iters; i++) if (wins(c, draw(c, p1), draw(c, p0))) w++;
+      return w / iters;
+    }),
+  );
+  return { falseWin: falseWins / iters, power: o.cases.length === 0 ? 0 : power };
 }
 
 /**
