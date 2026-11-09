@@ -252,6 +252,39 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `<plugin>:<step>`). The output is byte-identical, skips included: 29
   golden fixtures captured before the change
   (`test/host-check-golden.integration.test.ts`). No behaviour change.
+- **The channel registry and channel capabilities** (plugins spec P4, D9 and
+  D12). Each built-in channel (`ctl`, `hooks`, `mux`) declares `caps`
+  (`ChannelCaps`: fence, receipt, dedupe, steer, interrupt, fresh, answer,
+  command, watch, settleText), held to the D9 matrix; `fence` stays as its
+  alias. `agentChannel` resolves the row's channel in the new registry
+  (`src/channels/registry.ts`: `registerChannel`, `channelNamed`), and
+  `ChannelName` is open (a registry name; the stored values and
+  `spawn_receipts`' CHECK stay the three built-ins, and an unknown stored name
+  still reads null). Callers that held only a name now branch on the
+  channel's capabilities: a spawn replay and `mu next`'s unreconcilable check
+  on `receipt` (`exact` asks by msgId, `acknowledged` reads a turn past the
+  baseline, `none` stays unknown), `mu agent spawn --task`'s `agent check`
+  hint on `exact`, the note hint on `steer`, CLOSE blocks on `settleText`
+  (`tied`), and the wait's stall timing and rewatch on the reading's channel
+  streaming. The run a delivery started is the channel's word (`sendRun`):
+  `armSend`, `send --wait`, `mu next`'s sent outcome and the task spawn's
+  receipt read it instead of recomputing it by name, and each channel writes
+  its own `sent … (via …)` line. The run-baseline rename: `hooksFence` is
+  `hooksRunBaseline`, `sentFence` is `sentRunBaseline`. `ChannelTarget.job`
+  carries the row's job (`agentJobRef`: pane, lease or gate). Liveness stays
+  the job's: ctl's answered reading is alive because the job's kind says an
+  answer from its process proves it runs (`answerProvesRunning`), and a socket
+  that does not answer still takes the batched view read's. `readAgentStates`
+  groups agents by their channel's read (hooks and mux share one batch, as
+  before). `test/channel-names.test.ts` parses `src/` and fails on a channel
+  name comparison outside `src/channels/` that is neither a capability check
+  nor on its pinned list of single-channel features, and on a literal
+  `alive` in a channel or ctl module; `test/jobs-imports.test.ts` is now
+  import-aware too (a destructured probe method, or a probe imported named,
+  aliased or as a namespace from a backend module). One CLOSE-block edge
+  widens: a row recorded on `ctl` whose cli key is not `pi` (a wrapper that
+  runs pi) now applies its settle text, as ctl's text is tied. Otherwise no
+  behaviour change; `--json` result shapes are unchanged.
 
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove
