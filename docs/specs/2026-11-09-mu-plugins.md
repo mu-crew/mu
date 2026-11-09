@@ -1,15 +1,18 @@
 # mu plugins: hosts, jobs, links, channels
 
-Status: draft 5, refuted four rounds, pending final check. Written
-2026-11-09. Not built. Four refutation rounds shaped it:
+Status: draft 6, refuted five rounds, pending final check. Written
+2026-11-09. Not built. Five refutation rounds shaped it:
 
 - **Round 1:** 49 findings, settled in draft 2.
 - **Round 2:** 38 findings, plus the orchestrator's rulings R1–R7, settled
   in draft 3 ([Refutation round 2](#refutation-round-2)).
 - **Round 3:** 27 findings (9 high), settled here with the smallest rule
   or column that closes each ([Refutation round 3](#refutation-round-3)).
-- **Round 4:** one high and 13 mediums and lows, settled here in the same
-  way ([Refutation round 4](#refutation-round-4)).
+- **Round 4:** one high and 13 mediums and lows, settled in draft 5
+  ([Refutation round 4](#refutation-round-4)).
+- **Round 5:** one high and three mediums. Ruling R8 replaced the collect
+  sequence with a final-collect flag, settled here
+  ([Refutation round 5](#refutation-round-5)).
 
 The rulings changed the acceptance criteria. The spec is judged on design
 soundness: its model, transitions, crash safety, schema, protocol and
@@ -120,7 +123,7 @@ Provider host transitions:
 | `acquiring` → deleted | a `permanent` or `retryable` error (nothing happened), or a `lookup` answer of `none` under the D4 gate | an event in the log |
 | `acquiring` stays | the effect is unresolved | nothing. Running `mu host acquire <name>` again reconciles the same effect. It never acquires a second host. |
 | `ready` → `draining` | `mu host drain`, or the deadline margin (D10) | `state` |
-| `ready`/`draining` → `lost` | a `host.status` answer of `gone` while mu has not released the host. mu asks `status` in three places: the host verbs (`list`, `drain`, `release`); once, before reporting it, after any failed or timed-out link or job call on a provider host, so that a close on a reclaimed host takes the `lost` path; and the D10 reads, at most once per poll interval per host. | `state`, `reason`. `gone` is the provider's proof that the machine and everything on it no longer exist (D6), so on a `lost` host `agent close` records the remote tree as gone and the job as stopped without calling the host, and the rows close normally. |
+| `ready`/`draining` → `lost` | a `host.status` answer of `gone` while mu has not released the host. mu asks `status` in three places: the host verbs (`list`, `drain`, `release`); once, before reporting it, after any failed or timed-out link or job call on a provider host, so that a close on a reclaimed host takes the `lost` path; and the D10 reads, at most once per poll interval per host. | `state`, `reason`. `gone` is the provider's proof that the machine and everything on it no longer exist (D6), so on a `lost` host `agent close` records the remote tree as gone and the job as stopped without calling the host. A job whose final collect (D10) is still owed is marked lost with reason "uncollected work". Its record goes only by `--abandon-job` or `host release --abandon`, which log the loss. |
 | `draining`/`lost`/`releasing` → `releasing` | `mu host release`. Its immediate transaction proves that no agent row, job record or `remote_recovery` row names the host. It then records the `host.release` effect. Re-running it on a `releasing` host reissues the release. | `state`, the effect |
 | `releasing` → deleted | `release` returns. `release` is idempotent, so a reconciler reissues it (D4). | an event in the log |
 | any → deleted | `mu host release <name> --abandon`, a human decision, logged in one op group. It refuses while any agent row names the host, and while any effect on the host or its jobs is held by a live creator or resolver (D4). Otherwise it deletes the job records, recovery records and effect rows naming the host in the same transaction: a host one abandons is gone, and so is its work. | the event names every dropped record and every unresolved effect key, so a human can look a late result up by key |
@@ -153,8 +156,8 @@ a `carrier_jobs` row (`src/db-carrier.ts:23-43`).
 | `started`, start effect resolved, pane spawn failed | `mux.spawnAgent` threw after the handle arrived | the rollback stops the job by its handle (`job.stop`) before releasing. Today's lease rollback needs a pane id (`src/agents/lease-carrier.ts:356-358`); that rule stays for `handle: "file"` only. |
 | `started`, no agent row | mu died after the handle and before the agent row, or the row was reaped | a **leftover**, as today. `agent close` stops it through its kind and closes the remote tree the job record names (`tree_path`, `tree_base`). A no-row plugin leftover is closed, never reattached (D3). |
 | `started` → `stopping` | `agent close`: after the view proof for a bound view, before touching the view for a detached one (D3) | the `job.stop` effect |
-| `stopping` → deleted | `stop` proves the job gone, then the job file and tree are cleaned up (`src/agents/lease-carrier.ts:590`) | the settle mode the reaper reads (`src/agents/reap.ts:55-78`) |
-| any → deleted | `agent close --abandon-job` (`src/agents/lease-carrier.ts:466`), under the same live-owner refusal as host abandon | an event naming the handle and any unresolved effect key; the job's effect rows go with it |
+| `stopping` → deleted | `stop` proves the job gone; the final collect runs (D10); then the job file and tree are cleaned up (`src/agents/lease-carrier.ts:590`) | the settle mode the reaper reads (`src/agents/reap.ts:55-78`) |
+| any → deleted | `agent close --abandon-job` (`src/agents/lease-carrier.ts:466`), under the same live-owner refusal as host abandon | an event naming the handle and any unresolved effect key; the job's effect rows go with it. If the final collect was owed, the event records the loss. Abandoning the job does not abandon its tree: the tree's recovery record and the close rule (HEAD at its base or its collected head) still protect it. |
 
 **Two reads**, never stored and never confused:
 
@@ -451,8 +454,8 @@ column lists:
 - **`carrier_jobs`** gains `kind` (NULL: lease), `plugin`, `instance`,
   `host_id`, `tree_base` (with today's `tree_path`: the remote worktree
   the spawn prepared, written before `job.start`), `collect_repo`, and
-  the collect sequence `seen_inc`, `seen_runs`, `seen_at`, `collected_inc`
-  and `collected_runs` (D10).
+  the final-collect columns `final_owed`, `stop_gen` and `collect_next_at`
+  (D10).
   `host_stop` becomes nullable (it is a template's bytes, and a plugin job
   uses `instance`).
 - **`spawn_receipts`** is rebuilt without its `transport` CHECK
@@ -461,9 +464,11 @@ column lists:
 - **`agents.channel`** holds any registered name. An unregistered stored
   name is a typed error from P6e on.
 - **`remote_recovery`** gains `host_identity`, written by `_v3` triggers
-  that replace the `_v2` ones (`src/db-recovery.ts:76-100`). For a profile
-  host it is the exec bytes, as today; for a provider host it is
-  `provider:<hosts.id>:<hosts.instance>`. `assertRecoveryProfile`
+  that replace the `_v2` ones (`src/db-recovery.ts:76-100`). It holds the host
+  identity, in one of three forms:
+  - a template profile: its exec bytes, as today;
+  - a `--plugin` profile: `plugin:<name>:<instance>`;
+  - a provider host: `provider:<hosts.id>:<hosts.instance>`. `assertRecoveryProfile`
   (`src/remote-recovery.ts:344-363`) compares it with the host's current
   identity. A host acquired again under the same name has a new id, so its
   identity differs and recovery refuses. Imported rows are backfilled with
@@ -614,7 +619,7 @@ export interface LinkCaps {
 export interface HostLink {
   readonly name: string; // "template" or the plugin
   readonly caps: LinkCaps;
-  /** Computed by mu, never a wire call: a profile's exec bytes (template or `--plugin` profile alike); provider:<id>:<instance> for a provider host (D5). */
+  /** Computed by mu, never a wire call: the D5 host identity (template profile: exec bytes; `--plugin` profile: plugin:<name>:<instance>; provider host: provider:<id>:<instance>). */
   fingerprint(host: HostView): string;
   /** Template: the expanded exec under EXEC_ARG_MAX_BYTES (src/agents/hooks-brief.ts:148-151). Plugin: maxScriptBytes. */
   fits(host: HostView, script: string, cwd: string): boolean;
@@ -885,56 +890,48 @@ through `mu wait`'s typed refs.
 
 ### D10. Host policies: mu-owned, two functions
 
-There are two policies, each with one implementation, so they are
-functions in `src/host-policy.ts`, not an interface (Principle 7). Both
+The policies are functions in `src/host-policy.ts`, not an interface
+(Principle 7). Both
 start with provider hosts (P6d).
 
-**`collectAtSettle`** applies to a host with `idleReclaimMs`.
+**Collects on provider hosts (R8).** Two kinds, with different jobs.
 
-- **The due sequence (R5).** A remote `--worktree` worker's settled turn
-  is the pair (incarnation, runs). Within one incarnation `runs` only
-  grows. The job record keeps two such pairs:
-  - **seen:** the newest settled pair any mu read observed, with its time
-    (`seen_at`). It is written by every read that sees a settle (wait,
-    state, next), and by `agent close` just before it stops the job.
-  - **collected:** the pair read **before** the last successful fetch.
-- **What due means.** A worker is **collect due** when seen differs from
-  collected: another incarnation, or more runs in the same one. It is a
-  comparison, not a flag someone has to set.
-- **Compare-and-clear.** A collect reads the pair `(i, n)` before it
-  fetches. After the fetch it stores `(i, n)` as collected under one rule:
-  if `i` equals the stored incarnation, only when `n` is greater; if `i`
-  differs, always. Collects of one worker are serialized by the agent lock
-  and the repo lock (`src/remote-collect.ts:164-166`), so a later collect
-  always fetches a head at least as new. A new worker records
-  `(incarnation, 0)` as both seen and collected when its baseline first
-  answers, so it is not due before its first turn.
-- **An unobserved final settle survives the reap.** A reap reads no
-  channel (`src/reconcile.ts:137-142`, `src/agents/reap.ts:63`). So when
-  it deletes the row of a `--worktree` worker on a host with idle reclaim,
-  the same transaction marks the job record's seen as `unknown`, which
-  counts as due. `agent close` does the same when it cannot read the
-  channel before stopping.
-- **The pairs outlive the agent.** The job record lives until its tree's
-  close succeeds (the reservation rule), and that close needs the tree at
-  its base or at its collected head. So the pairs exist exactly as long as
-  there is uncollected work to protect.
-  - `mu agent collect` on the recovery record
-    (`src/remote-collect.ts:171-183`) writes the collected pair of the job
-    record whose `tree_path` names the tree. An unknown seen becomes
-    collected after any successful fetch.
-- **Only `--worktree` workers are ever due.** A `--cwd` worker has no tree
-  of its own for mu to collect (`src/remote-collect.ts:331-336`), so it is
-  never due, and nothing suggests `mu agent collect` for it.
-- **Who acts.** Any `mu wait`, `mu state` or `mu next` that reads a due
-  worker on such a host collects it, when the job record has a
-  `collect_repo`. Otherwise it shows **work at risk**, with `next: mu agent
-  collect …`.
-  - Collect runs after the wait's result is decided, outside its
-    synchronous settle and commit.
-  - A failure is a warning, and the worker stays due.
-- **`collect_repo`** is the local repository root of the spawning
-  invocation, recorded at spawn.
+- **The final collect** is the obligation. It is a flag, `final_owed`,
+  set when the job record of a `--worktree` job on a provider host is
+  created. A `--cwd` job has no tree (`src/remote-collect.ts:331-336`), and
+  jobs on static hosts keep today's close rule, so neither gets the flag.
+  - **Clearing it.** Only a collect that **starts** after the job is
+    stopped or lost clears it, when no turn can follow. The stop or lost
+    transition sets `stop_gen`. That collect reads `stop_gen` before it
+    fetches, and on success clears the flag with
+    `WHERE stop_gen = <read value>`. Reads, reaps, settles and in-life
+    collects never clear it.
+  - **Where it runs.** `agent close` runs it between the stop and the tree
+    close. `mu agent collect` on a leftover or recovery record runs it too,
+    on the job record whose `tree_path` names the tree
+    (`src/remote-collect.ts:171-183`).
+  - **What waits on it.** Worktree removal and host release wait while it
+    is owed. Only `--abandon-job` or `host release --abandon` skip it, and
+    both log the loss.
+  - **Who sees it.** The flag lives on the job record, not the agent row,
+    so the discovery reads job records, never only live agents:
+    - `mu agent list`'s leftovers (a job record whose agent is gone);
+    - `mu state`'s notices ("final collect owed" with `next: mu agent
+      collect …`);
+    - `mu host release`'s refusal, which lists every owing job.
+- **In-life collects** are best-effort protection on hosts with idle
+  reclaim or a deadline.
+  - **When.** They are attempted at each observed settle (by a `mu wait`,
+    `mu state` or `mu next` that sees one) and before the deadline margin.
+  - **Retries.** On failure, the job record's `collect_next_at` backs off:
+    one poll interval, doubling to 5 minutes. The next mu verb or wait that
+    touches the host retries once it has passed. Each failure is a warning.
+  - **What they record.** `collected_head`, as `mu agent collect` does.
+    They never touch `final_owed`.
+  - **Timing.** They run after a wait's result is decided, outside its
+    synchronous settle and commit, from the job record's `collect_repo`
+    (the spawning invocation's local repository root). Without one, a
+    notice suggests `mu agent collect`.
 
 **`deadlineNotice`** applies to a host with `deadlineAt`. Inside
 `MU_HOST_DEADLINE_MARGIN_MS` of the deadline:
@@ -946,17 +943,9 @@ start with provider hosts (P6d).
 mu never closes an agent on its own.
 
 **The wake-up.** A fully watched wait does no polling
-(`src/wait.ts:1450-1470`). So `mu wait` caps its sleep at the earliest of
-two times, for the hosts of the agents it owns (its owned scope, not only
-the refs it lists):
-
-- `deadline_at − margin`;
-- `seen_at + idle_reclaim_ms − margin`, for each due worker on a host
-  with idle reclaim.
-
-At the second, it collects the worker or fires work at risk. This is a
-timer inside one invocation, like `--timeout`. An orchestrator that runs
-no mu read at all gets no wake-up: mu has no daemon (Risks).
+(`src/wait.ts:1450-1470`). So `mu wait` caps its sleep at the earliest
+`deadline_at − margin` of the hosts of the agents it owns. This is a timer
+inside one invocation, like `--timeout`.
 
 ### D11. What Principle 7 cut
 
@@ -1275,7 +1264,8 @@ point: replay yields exactly one effect, and reconcile converges.
 | F8 | two mu processes resolve one effect | one claim wins; the other refuses, naming it |
 | F9 | `none` while the creator lives, or inside `inFlightMs` | treated as `unknown` |
 | F10 | the plugin's instance changed between intent and resolve | the ask, resend, stop or release refuses `stop-changed` |
-| F11 | a host `gone` during close, or a crash after the release intent | `agent close` on the `lost` host records the tree gone and the job stopped, and deletes the row; release then passes; a crashed release is reissued and converges |
+| F11 | a host `gone` during close, or a crash after the release intent | `agent close` on the `lost` host records the tree gone; a job owing its final collect is marked lost with "uncollected work" until abandoned; a crashed release is reissued and converges |
+| F13 | a settle, then a crash before the final collect | `final_owed` stays set; the next close or collect of the record runs the final collect; release waits |
 | F12 | a creator still in its call when a second verb tries to resolve | the second refuses, naming the creator; one result is recorded |
 
 Crash points between mu's steps are seeded the way
@@ -1361,15 +1351,15 @@ uses:
    started on delivery (D1). The D10 timer bounds the wait for the
    deadline.
 6. **Collect.**
-   - The worker is due while its seen pair differs from its collected
-     pair.
-   - `mu wait` or `mu state` collects it over `link.fetch` (or the
-     profile-less fallback refuses with work at risk).
-   - The compare-and-clear records the count it fetched (D10).
+   - An observed settle triggers an in-life collect over `link.fetch`,
+     retried with backoff if it fails (D10).
+   - The final collect runs at close, after `job.stop`, and clears
+     `final_owed`.
 7. **Release at the deadline.**
    - Inside the margin, spawns refuse and `deadline` fires.
-   - The orchestrator collects and closes. `agent close` calls `job.stop`,
-     an idempotent effect, and closes the worktree under the close rules.
+   - The orchestrator closes. `agent close` calls `job.stop`, an
+     idempotent effect, runs the final collect, and closes the worktree
+     under the close rules.
    - `mu host release box1` checks no agent, job or recovery row remains,
      records the `host.release` effect, and reissues it after any crash
      (D1, D4).
@@ -1402,7 +1392,7 @@ The order follows blast radius:
 | P6a | Schema 14, the `mu5` import, mu 5. | Released builds refuse v14. The import runs once, under its lock, and commits by a no-replace rename. It leaves `mu-next` untouched. It refuses when `mu5` exists, when unpublished ops remain, or when the snapshot has live rows, and it mints a new `machine_id` before the upgrade. | `db`, `entities`, `loop-storage` (`test/fixtures/v13-populated.db.gz`), `rebuild`, a new `state-import` test |
 | P6b | Protocol core: framing, process manager, handshake, `plugins`, `mu plugin add`/`list`/`rm`, the schema doc, the fake plugin; the link adapter and `host_profiles.plugin`. | A plugin can only report facts. The load rules refuse bad declarations. EOF and no-detach hold. With no plugin registered, the full suite is unchanged. | `link-contract`, `plugin-schema`, `plugin-skew`, `host-profiles` |
 | P6c | `effects`, the reconciler and the D4 rule table; the job adapter (bound); the `carrier_jobs` columns; the VISION:359 amendment. | Every plugin effect is written ahead with its params. A live creator owns its row. Resolution follows the rule table, fenced on the instance, and never resends a delivery older than another. | `job-contract`, `plugin-faults` F1–F10 and F12, `carrier-jobs`, `leftovers`, `lease-*` |
-| P6d | `hosts`, `mu host acquire`/`drain`/`release`/`--abandon`, atomic admission, the provider adapter, `remote_recovery.host_identity`, both host policies. | A host's release waits for every reference; a `lost` host's rows close without the host, and F11 converges. Collected only moves forward under the pair rule; an older collect never clears a newer turn. | `host-provider-contract`, `plugin-faults` F11, `host-policy`, `remote-recovery*`, `remote-collect*` |
+| P6d | `hosts`, `mu host acquire`/`drain`/`release`/`--abandon`, atomic admission, the provider adapter, `remote_recovery.host_identity`, both host policies. | A host's release waits for every reference; a `lost` host's rows close without the host, and F11 converges. The final collect clears `final_owed` only when it started after the stop (`stop_gen` compare-and-clear); release and tree removal wait on it. | `host-provider-contract`, `plugin-faults` F11, `host-policy`, `remote-recovery*`, `remote-collect*` |
 | P6e | The channel adapter, the plugin spawn path, detached views and the view reattach, the unknown-channel typed error, `docs/reference/plugin-protocol.md` complete. | Deliveries to plugin channels go only through effects, encoded as D13 says. A detached job survives its view. The end-to-end walkthrough passes against the fake plugin. | `channel-contract`, `spawn-receipts*`, `wait-*`, `reconcile*`, `lease-reattach*`, `acceptance.integration`, a new `plugin-e2e` test |
 | P7 | mule: `--key`, the five-state `poll`, `--key-prefix`, the non-detaching cancel, the `mu-plugin-mule` bin. In mu: `hostMuleStarter` adds `--plugin mule`. | mu's exported link and job suites pass against `mu-plugin-mule`. A killed spawn recovers its job by `lookup(token)` with one dispatch. | `cargo test`; `scripts/smoke-lease.sh` with the plugin |
 
@@ -1430,10 +1420,12 @@ The order follows blast radius:
 
   Each unit keeps or renames them in one commit, with a CHANGELOG line;
   there are no forwarding wrappers.
-- **No daemon, so no wake-up without a read.** Collect at settle and the
-  idle-reclaim timer run only inside mu invocations. Work on a host the
-  backend reclaims while no mu process runs is lost. The work-at-risk
-  notice is the mitigation.
+- **A reclaimed host can take a turn's commits.** A backend that
+  reclaims a machine between a settle and a successful in-life collect
+  loses that turn's commits. mu reports it, but cannot prevent it: the
+  final collect finds the host gone, and the job goes lost with
+  "uncollected work". mu has no daemon, so in-life collects run only when
+  some mu invocation runs.
 - **The deadline margin is a guess.** A collect slower than the margin
   loses work. The `deadline` event is urgent so that an orchestrator acts
   early.
@@ -1600,7 +1592,7 @@ with the smallest rule or column that does it; it adds no new mechanism.
 | A1 | high | author | a byte-identical replay keeps an expired deadline | fixed | D4: the persisted request is the method's `params`; the envelope id and `deadline` are fresh on every send |
 | A2 | high | author | `Map` and `undefined` results have no wire encoding | fixed | D13 "Wire encoding": a JSON object keyed `<ws>/<name>`; `null` for absent |
 | A3 | high | author | the watch target lacks `paneId`, which observations require | fixed | D13: mu adds the identity fields (`src/agents/observe.ts:36-41`) |
-| A4 | high | author | compare-and-clear cannot move to a new incarnation | fixed | D10: (incarnation, runs) pair rule; another incarnation always stores |
+| A4 | high | author | compare-and-clear cannot move to a new incarnation | fixed | D10: a compare-and-clear on turn counts (superseded in draft 6 by R8: the final-collect flag, D10) |
 | A5 | medium | author | dedupe is one channel-wide capability | fixed | D9 `dedupe` per method; D13 example |
 | A6 | medium | author | `not-accepted` receipts have no disposition | fixed | D4 table: only `accepted` resolves, `not-accepted` stays unknown (`src/agents/task-spawn.ts:721-727`) |
 | A7 | medium | author | `channel.command` is missing from the effects | fixed | D4 inventory and table |
@@ -1617,7 +1609,7 @@ with the smallest rule or column that does it; it adds no new mechanism.
 | K9 | medium | crash | F11 does not converge on a `lost` host | fixed | D1 `lost` row and D6 "`gone` is a proof": close records the tree gone and the job stopped; F11 |
 | K10 | medium | crash | the fetch contract is unstated | fixed | as A8 |
 | K11 | low | crash | close on an unresolved dedupe-only start launches it to stop it | rebutted | D4 "Who triggers": the resend is the only way to learn whether a job exists; start then stop leaves nothing, while refusing could leave an orphan |
-| S1 | high | dispositions | the collect sequence fails on a new incarnation, after the reap, and for `--cwd` workers | fixed | D10: the pair rule; seen and collected pairs on the job record (they survive the reap); a `--cwd` worker is never due (`src/remote-collect.ts:331-336`) |
+| S1 | high | dispositions | the collect sequence fails on a new incarnation, after the reap, and for `--cwd` workers | fixed | D10: collect state on the job record, which survives the reap; a `--cwd` worker owes nothing (`src/remote-collect.ts:331-336`) (superseded in draft 6 by R8: the final-collect flag, D10) |
 | S2 | high | dispositions | a `lost` host deadlocks close and release | fixed | as K9 (`src/agents/close.ts:579-584`, `src/remote-agent.ts:404-426`) |
 | S3 | high | dispositions | polled `readStates` never settles a plugin wait; `rewatchOnPoll` hardcodes ctl | fixed | D13: a plugin channel must stream and tie its settle text; an already settled turn is reported at once. `src/wait-latch.ts:86` is a P4 capability site (D9 invariant) |
 | S4 | high | dispositions | a no-row plugin reattach has no fields to launch from; trees go unrecorded | fixed | D3: no-row plugin leftovers are closed, never reattached; `carrier_jobs.tree_base` with `tree_path`, written before `job.start` (D5) |
@@ -1646,15 +1638,15 @@ Each finding was reproduced and closed with the smallest change.
 
 | ID | Sev | Lens | Finding (short) | Disposition | Where |
 | --- | --- | --- | --- | --- | --- |
-| C1 | high | fix-check | an unobserved final settle disappears across a reap | fixed | D10: the reap marks seen `unknown` (due) in its own transaction; the pairs live on the job record until its tree's close succeeds (`src/reconcile.ts:137-142`, `src/agents/reap.ts:63`) |
+| C1 | high | fix-check | an unobserved final settle disappears across a reap | fixed | D10: the reap made the job owe a collect (`src/reconcile.ts:137-142`, `src/agents/reap.ts:63`) (superseded in draft 6 by R8: the final-collect flag, D10) |
 | C2 | medium | fix-check | the newer-delivery guard has no durable ordering and no serialization | fixed | D4: `agents.delivery_seq` and `effects.seq`; a resend claims only at the high-water mark; no new delivery while one is `resolving` |
 | C3 | medium | fix-check | the unpublished-op check races the backup | fixed | D5 step 5.3: checked on the snapshot against the segment file (`src/sync.ts:364-373`, `src/segments.ts:475-479`) |
 | C4 | medium | fix-check | a `--plugin` profile has no `exec`, but recovery pins exec bytes | fixed | D5: `host_profiles` rebuilt with nullable `shell`/`exec`; a `--plugin` profile's identity is `plugin:<name>:<instance>` (`src/db.ts:1338-1342`, `src/remote-recovery.ts:344-363`) |
 | N1 | medium | fresh | the newer-delivery rule cannot be evaluated | fixed | as C2 |
 | N2 | medium | fresh | the profile/host-record name fence was dropped | fixed | D1 acquire row: `host add` refuses a host record's name; D6 `resolveHost` refuses a name in both |
 | N3 | medium | fresh | nothing calls `host.status`, so `lost` has no trigger | fixed | D1 `lost` row: host verbs; once after a failed link or job call on a provider host; the D10 reads |
-| N4 | medium | fresh | no idle-reclaim wake-up | fixed | D10 wake-up: `seen_at + idle_reclaim_ms − margin` over the owned scope; Risks: no read, no wake-up |
-| N5 | low | fresh | the pairs are said to survive the stop, but the record is deleted; release-while-due is vacuous | fixed | D10 "The pairs outlive the agent"; the vacuous release rule removed |
+| N4 | medium | fresh | no idle-reclaim wake-up | fixed | D10 wake-up for idle reclaim; Risks: no read, no wake-up (superseded in draft 6 by R8: the final-collect flag, D10); only the deadline timer remains |
+| N5 | low | fresh | the pairs are said to survive the stop, but the record is deleted; release-while-due is vacuous | fixed | D10: the collect state lives on the job record until its tree's close; the vacuous release rule removed (superseded in draft 6 by R8: the final-collect flag, D10) |
 | N6 | low | fresh | which id `$/cancel` cancels for a watch | fixed | D13: `$/cancel {watchId}` ends a watch; `{id}` is for a pending request |
 | N7 | low | fresh | what `schema` digests; `checks` has no type | fixed | D13: the sha256 of the published schema file; `LinkCaps.checks`, `JobCaps.checks` |
 | N8 | low | fresh | `StateSource` is closed; ctl-only `runs`/`incarnation`; `checkSteps` wire params | fixed | D13 methods table: `plugin:<name>` source, mandatory `runs`/`incarnation`, `{phase, root?, agent?}` (`src/agent-state.ts:12`) |
@@ -1662,6 +1654,24 @@ Each finding was reproduced and closed with the smallest change.
 | N10 | low | fresh | D6 read as claiming an out-of-repo provider exists | fixed | D6 "Second implementation" is a requirement; the out-of-scope line is generic |
 
 All 14 are fixed, and none is rebutted.
+
+## Refutation round 5
+
+One reviewer checked draft 5 (`c4020464`) and refuted it on one high. The
+orchestrator then ruled R8: a final-collect flag replaces the collect
+sequence, which had drawn a new race every round. Draft 6 applies R8, and
+D10 is shorter for it.
+
+| ID | Sev | Lens | Finding (short) | Disposition | Where |
+| --- | --- | --- | --- | --- | --- |
+| V1 | high | fix-check | a delayed pre-reap read can erase the reap's due marking | cut-by-R8 | D10: nothing a read writes can clear `final_owed`; only a collect that started after the stop can (`stop_gen` compare-and-clear); F13 |
+| V2 | medium | fix-check | reaped obligations have storage but no discovery path | fixed | D10 "Who sees it": leftovers, `mu state` notices and `mu host release`'s refusal read job records, not only live agents (`src/cli/state.ts:238-246`) |
+| V3 | medium | fix-check | `--abandon-job` deletes the only record before the tree's close | fixed | D1 abandon row: it records the loss of an owed final collect; it does not abandon the tree, which its recovery record and the close rule still protect (`src/agents/close.ts:573-609`) |
+| V4 | medium | fix-check | `--plugin` profile identity is contradictory across D5 and D7 | fixed | D5 `host_identity` and D7 `fingerprint` use the same three forms (`src/remote-recovery.ts:344-363`) |
+
+All four are settled: one by the ruling, three fixed. R8 also removes the
+idle-reclaim wake-up and every rule that depended on the collect
+sequence. Risks now states the loss mu reports but cannot prevent.
 
 ## History
 
@@ -1689,7 +1699,7 @@ All 14 are fixed, and none is rebutted.
 
 - **Draft 5** (2026-11-09) settles round 4's 14 findings with rules and
   columns only:
-  - the reap marks seen unknown;
+  - a reap that made the job owe a collect (replaced in draft 6);
   - a per-agent delivery high-water mark;
   - the snapshot-side unpublished-op check;
   - `--plugin` profile identity;
@@ -1697,5 +1707,14 @@ All 14 are fixed, and none is rebutted.
   - the `status` call sites;
   - the idle-reclaim wake-up;
   - the wire details.
+
+- **Draft 6** (2026-11-09) applies R8 and settles round 5's four
+  findings:
+  - the final-collect flag, cleared only by a collect that started after
+    the stop;
+  - best-effort in-life collects with backoff;
+  - discovery through job records;
+  - abandon records the loss;
+  - one identity form per host kind.
 
   Every file:line was reopened at `42881032` (mu) and `1192781` (mule).
