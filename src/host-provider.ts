@@ -21,6 +21,7 @@ import { type HostLink, templateLink } from "./host-link.js";
 import { getHost, HostNotFoundError, type HostProfile, HostProfileError } from "./hosts.js";
 import { jobKind } from "./jobs/kinds.js";
 import type { JobKind } from "./jobs/types.js";
+import { pluginLink } from "./plugins/link.js";
 
 /** An idempotency key: mu-generated, persisted with its effect before the call (spec D4). */
 export type EffectKey = string;
@@ -131,11 +132,16 @@ export const staticProvider: HostProvider = {
   release: () => Promise.reject(new StaticHostError("release")),
 };
 
-/** The view of a profile already read: an admitted snapshot (inside `withHostChannel`). */
+/**
+ * The view of a profile already read: an admitted snapshot (inside `withHostChannel`). A
+ * `--plugin` profile's link is the plugin's (src/plugins/link.ts), its job kind the pane's
+ * until the plugin job kind joins (spawn refuses such a host meanwhile).
+ */
 export function admittedView(db: Db, profile: HostProfile): HostView {
+  const plugin = profile.plugin ?? null;
   return {
     name: profile.name,
-    link: templateLink(db),
+    link: plugin === null ? templateLink(db) : pluginLink(db, plugin),
     provider: staticProvider,
     jobKind: jobKind(profile.transport === "lease" ? "lease" : "pane"),
     profile,
@@ -158,16 +164,21 @@ export function findHost(db: Db, name: string): HostView | undefined {
 }
 
 /**
- * The identity a remote recovery pins for host `name` (spec D5), read alone: a template
- * profile's exec bytes, as `link.fingerprint` computes them; undefined when no host holds
- * the name. One column, not the view: recovery's last read before a remote command
- * (src/remote-recovery.ts), as it was.
+ * The identity a remote recovery pins for host `name` (spec D5), as `link.fingerprint`
+ * computes it: a template profile's exec bytes, read alone (one column, not the view:
+ * recovery's last read before a remote command, src/remote-recovery.ts, as it was); a
+ * `--plugin` profile's `plugin:<name>:<instance>`, from its view. Undefined when no host
+ * holds the name.
  */
 export function hostIdentity(db: Db, name: string): string | undefined {
   const row = db.prepare("SELECT exec FROM host_profiles WHERE name = ?").get(name) as
-    | { exec: string }
+    | { exec: string | null }
     | undefined;
-  return row?.exec;
+  if (row === undefined) return undefined;
+  if (row.exec !== null) return row.exec;
+  // No exec: a `--plugin` profile, whose link computes its identity.
+  const view = findHost(db, name);
+  return view?.link.fingerprint(view);
 }
 
 /** The view's profile, for what only a static host has (its templates, its transport). */

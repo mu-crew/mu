@@ -36,9 +36,17 @@ import { isJsonMode, muTable, pc } from "../output.js";
 import { shellQuote } from "../shell-quote.js";
 import { failureWithData } from "./handle.js";
 
-/** A profile as `--json` prints it: the recorded harness probe parsed (null: never probed). */
+/**
+ * A profile as `--json` prints it: the recorded harness probe parsed (null: never probed).
+ * `plugin` only on a `--plugin` profile, so a template profile prints as it always did.
+ */
 function hostJson(h: HostProfile): Omit<HostProfile, "capabilities"> & { capabilities: unknown } {
-  return { ...h, capabilities: hostCapabilities(h) ?? null };
+  const { plugin, ...rest } = h;
+  return {
+    ...rest,
+    ...(plugin != null ? { plugin } : {}),
+    capabilities: hostCapabilities(h) ?? null,
+  };
 }
 
 /** The harnesses the last `host check` found, or `-` when it never ran. */
@@ -57,8 +65,9 @@ function channelLine(c: HostChannel): string {
 export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
   const host = addHost(db, {
     name,
-    shell: opts.shell,
-    exec: opts.exec,
+    ...(opts.shell !== undefined ? { shell: opts.shell } : {}),
+    ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
+    ...(opts.plugin !== undefined ? { plugin: opts.plugin } : {}),
     fetch: opts.fetch,
     repo: opts.repo ?? null,
     max_sessions: opts.maxSessions ?? null,
@@ -112,7 +121,10 @@ export function cmdHostShow(db: Db, name: string): void {
   console.log(
     `${pc.bold(host.name)}  transport ${host.transport}  default repo ${host.repo ?? "-"}  max-sessions ${host.max_sessions ?? "none"}`,
   );
-  for (const f of ["shell", "exec", "fetch"] as const) console.log(`  ${f.padEnd(6)} ${host[f]}`);
+  if (host.plugin != null) console.log(`  ${"plugin".padEnd(6)} ${host.plugin}`);
+  for (const f of ["shell", "exec", "fetch"] as const) {
+    if (host[f] !== null) console.log(`  ${f.padEnd(6)} ${host[f]}`);
+  }
   if (host.stop !== null) console.log(`  ${"stop".padEnd(6)} ${host.stop}`);
   if (host.attach !== null) console.log(`  ${"attach".padEnd(6)} ${host.attach}`);
   const caps = hostCapabilities(host);
@@ -212,8 +224,9 @@ function failedError(report: { host: string; steps: { step: string; ok: boolean 
 }
 
 export interface HostAddOptions {
-  shell: string;
-  exec: string;
+  shell?: string;
+  exec?: string;
+  plugin?: string;
   fetch: string;
   repo?: string;
   maxSessions?: number;
@@ -233,8 +246,18 @@ export function wireHostCommands(program: Command): void {
     .description(
       "Store a machine-local host profile: --shell opens the pane, --exec runs one remote command, --fetch brings commits home. --transport lease adds --stop and {job_file}/{job}; grammar in docs/guide/remote.md.",
     )
-    .requiredOption("--shell <template>", "pane command template (opens the remote shell)")
-    .requiredOption("--exec <template>", "template that runs one remote command ({cmd})")
+    .option(
+      "--shell <template>",
+      "pane command template (opens the remote shell; required without --plugin)",
+    )
+    .option(
+      "--exec <template>",
+      "template that runs one remote command ({cmd}; required without --plugin)",
+    )
+    .option(
+      "--plugin <name>",
+      "a registered plugin (mu plugin add) runs this host's commands instead of --shell and --exec; --fetch runs where the plugin does not fetch",
+    )
     .requiredOption("--fetch <template>", "local template that fetches commits home ({cwd})")
     .option(
       "--repo <path>",

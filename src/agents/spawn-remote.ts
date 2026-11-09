@@ -61,6 +61,12 @@ export function isCommandGate(opts: { host?: string; cli?: string; command?: str
 export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise<HostProfile> {
   const host = opts.host ?? "";
   const profile = requireProfile(resolveHost(db, host));
+  if (profile.plugin != null) {
+    // The plugin's job kind (its view command, its handle) is not driven by this build yet.
+    throw new HostProfileError(
+      `host ${host}'s link is plugin ${profile.plugin}: spawning on it needs the plugin's job seam, which this build does not drive yet`,
+    );
+  }
   if (!isCommandGate(opts)) {
     // The literal command a remote spawn runs: never the local MU_<KEY>_COMMAND.
     const cli = opts.cli ?? "pi";

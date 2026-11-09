@@ -256,6 +256,7 @@ export function checkDocCommand(root: Command, cmd: DocCommand): string | null {
   }
 
   for (const tok of rest) {
+    if (tok === "--") break; // the end of options: what follows is operands (`mu plugin add n -- argv`)
     if (!tok.startsWith("-") || tok === "-") continue;
     if (/^-\d/.test(tok)) continue; // negative number argument
     if (!knownFlag(resolved, tok)) {

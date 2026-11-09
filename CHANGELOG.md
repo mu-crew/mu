@@ -12,6 +12,28 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Plugins: the protocol core and the link adapter** (plugins spec P6b,
+  D13, D14). `mu plugin add <name> -- <absolute path> [args…]` registers an
+  executable named `mu-plugin-<name>` (owned by you, writable by no one
+  else; never discovered), runs its handshake once and stores a `plugins`
+  row (machine-local); `mu plugin list` and `mu plugin rm` (refused while a
+  host profile names it). mu speaks versioned JSON-RPC 2.0 over the
+  plugin's stdio: one line per message up to 1 MiB, a handshake with the
+  protocol range, `instance`, schema digest and seams, the load rules
+  (exit 4, `PluginRefusedError`), typed errors (`retryable` retried three
+  times with the same params, `permanent` and `human` exit 5,
+  `unknown-outcome` exit 1 as `EffectOutcomeUnknownError`), deadlines and
+  `$/cancel` (then the grace, then the group killed), and one plugin
+  process per invocation, in its own group, shut down at exit. The plugin
+  gets mu's environment without its local-only variables. `mu host add
+  <h> --plugin <name> --fetch <t>` makes a plugin the host's link (no
+  `--shell` or `--exec`; identity `plugin:<name>:<instance>`); spawning
+  there waits for the plugin job kind. The schema ships as
+  `schemas/plugin-protocol-v1.json`, the prose as
+  `docs/reference/plugin-protocol.md`. With no plugin registered nothing
+  changes. Tests: `link-contract` (the template link and the fake plugin's,
+  one suite), `plugin-schema`, `plugin-skew`, `plugin-load`,
+  `plugin-process`, `plugin-cli`; the fake plugin is `test/_fake-plugin.mjs`.
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`
@@ -157,6 +179,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Schema: `plugins` and `host_profiles.plugin`** (plugins spec D5, P6b).
+  A new machine-local, unrebuildable `plugins` table. `host_profiles` gains
+  `plugin`, and its `shell` and `exec` become nullable (still required
+  without `plugin`, checked in `addHost`); an existing file's table is
+  rebuilt in place with its rows and recovery triggers. A template profile
+  reads and prints as before (no `plugin` key).
 - **mu 5: schema 14 and a new state directory, `mu5`, with a one-shot
   import of mu 4's DB** (spec `docs/specs/2026-11-09-mu-plugins.md` D5, unit
   P6a; AGENTS.md "State directories"). Breaking: the version is 5.0.0,
