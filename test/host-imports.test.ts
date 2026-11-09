@@ -107,11 +107,13 @@ describe("the host provider seam", () => {
       for (const c of calls(t, "admittedView")) out.push(`${file}: ${c}`);
       if (/\bhostView\b/.test(t)) out.push(`${file}: hostView`);
     }
-    // prepare's admitted profile, and close's `withHostChannel` callback.
+    // check's, prepare's admitted profile, and close's `withHostChannel` callback.
     expect(out).toEqual([
+      "src/hosts.ts: admittedView(db, profile)",
       "src/remote-worktree.ts: admittedView(db, profile)",
       "src/remote-worktree.ts: admittedView(db, profile)",
     ]);
+    expect(callersOf(text("hosts.ts"), /\badmittedView\(/, /^$/)).toEqual(["checkHost"]);
     expect(callersOf(text("remote-worktree.ts"), /\badmittedView\(/, /^$/)).toEqual([
       "prepareRemote",
       "closeRemoteWorktree",

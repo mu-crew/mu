@@ -146,7 +146,11 @@ describe("job kinds", () => {
   it("every built-in kind is bound; pane and gate handles are the pane, lease's a file", () => {
     expect(jobKind("pane").caps).toEqual({ view: "bound", handle: "pane" });
     expect(jobKind("gate").caps).toEqual({ view: "bound", handle: "pane" });
-    expect(jobKind("lease").caps).toEqual({ view: "bound", handle: "file" });
+    expect(jobKind("lease").caps).toEqual({
+      view: "bound",
+      handle: "file",
+      checks: ["template", "agent"],
+    });
   });
 
   it("pane: paneUp as liveness", async () => {

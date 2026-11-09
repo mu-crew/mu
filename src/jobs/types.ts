@@ -12,6 +12,8 @@
 // lease kind's effects are its own methods (src/jobs/lease.ts).
 
 import type { Db } from "../db.js";
+import type { CheckContext, CheckPhase } from "../host-link.js";
+import type { HostCheckStep } from "../hosts.js";
 
 /** The built-in job kinds. A plugin kind joins in P6. */
 export type JobKindName = "pane" | "lease" | "gate";
@@ -46,6 +48,8 @@ export interface JobCaps {
   view: "bound" | "detached";
   /** Where the handle comes from: the view's pane id, a file the carrier writes, or the start reply. */
   handle: "pane" | "file" | "reply";
+  /** The `checkHost` phases this kind contributes steps for (spec D11). */
+  checks?: CheckPhase[];
 }
 
 export interface JobKind {
@@ -53,4 +57,6 @@ export interface JobKind {
   readonly caps: JobCaps;
   /** Liveness. Never throws for "cannot tell" (that is `unknown`); a host's hand-back throws. */
   status(db: Db, job: JobRef): Promise<JobLiveness>;
+  /** Its `host check` steps for `ctx.phase` (one of `caps.checks`); reads only, runs no template. */
+  checkSteps?(ctx: CheckContext): Promise<HostCheckStep[]>;
 }

@@ -6,17 +6,30 @@
 // The kind owns the job's effects and reads: the job handshake that fills the
 // handle (`awaitLeaseJob`; reads fail closed), the stop (`runStop`, fenced on
 // the recorded `host_stop` bytes), the attach command a reattach's new carrier
-// runs, and liveness (the carrier pane still runs). The reservation around it
+// runs, liveness (the carrier pane still runs), and its `host check` steps: the
+// `template` phase (shell, stop and attach, expanded, never run) and the `agent`
+// phase (the recorded job handle). The reservation around it
 // (the name fence, the rollback, the close steps) is mu's own, in
 // src/agents/lease-carrier.ts.
 
 import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgentDiedOnSpawnError } from "../agents/errors.js";
-import { fillCarrierJob } from "../carrier-jobs.js";
+import { fillCarrierJob, getCarrierJobByName } from "../carrier-jobs.js";
 import { runStop } from "../carrier-stop.js";
 import type { Db } from "../db.js";
-import { type ChannelOpts, type HostProfile, JOB_HANDLE_RE } from "../hosts.js";
+import type { CheckContext } from "../host-link.js";
+import { requireProfile } from "../host-provider.js";
+import {
+  type ChannelOpts,
+  expandHostTemplate,
+  type HostCheckStep,
+  type HostProfile,
+  HostTemplateError,
+  JOB_HANDLE_RE,
+  leaseShellProblems,
+  placeholderUses,
+} from "../hosts.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { attachCommand } from "../remote-agent.js";
@@ -190,6 +203,84 @@ export const leaseJobRef = (r: {
   identity: r.hostStop,
 });
 
+/** The dummy handle `host check` expands a lease profile's `stop` with. Never run. */
+const DUMMY_JOB = "check-job";
+
+/**
+ * A lease profile's template structure (the `template` phase): the shell's three placeholders,
+ * and `stop` (and `attach`, when set) expanded with a dummy handle (never run).
+ */
+function leaseTemplateSteps(profile: HostProfile): HostCheckStep[] {
+  const problems = (() => {
+    try {
+      return leaseShellProblems(profile.shell);
+    } catch (e) {
+      if (e instanceof HostTemplateError) return [e.message];
+      throw e;
+    }
+  })();
+  const shell: HostCheckStep =
+    problems.length === 0
+      ? {
+          step: "shell",
+          ok: true,
+          detail: "lease shell has {job_file}, {local_sock} and {remote_sock}",
+        }
+      : { step: "shell", ok: false, detail: problems.join("; ") };
+  let stop: HostCheckStep;
+  try {
+    if (profile.stop === null) throw new HostTemplateError("a lease profile has no stop template");
+    if (placeholderUses(profile.stop, "stop").job === 0) {
+      throw new HostTemplateError("a stop template must contain {job}");
+    }
+    const line = expandHostTemplate(profile.stop, { job: DUMMY_JOB, cwd: "." }, "stop");
+    stop = { step: "stop", ok: true, detail: `expands (not run) to: ${line}` };
+  } catch (e) {
+    if (!(e instanceof HostTemplateError)) throw e;
+    stop = { step: "stop", ok: false, detail: e.message };
+  }
+  if (profile.attach === null) return [shell, stop];
+  let attach: HostCheckStep;
+  try {
+    const problems = leaseShellProblems(profile.attach, "attach");
+    if (problems.length > 0) throw new HostTemplateError(problems.join("; "));
+    const line = expandHostTemplate(
+      profile.attach,
+      {
+        job: DUMMY_JOB,
+        job_file: "/tmp/check.job",
+        local_sock: "/tmp/check.sock",
+        remote_sock: "/tmp/check-remote.sock",
+        cwd: ".",
+      },
+      "attach",
+    );
+    attach = { step: "attach", ok: true, detail: `expands (not run) to: ${line}` };
+  } catch (e) {
+    if (!(e instanceof HostTemplateError)) throw e;
+    attach = { step: "attach", ok: false, detail: e.message };
+  }
+  return [shell, stop, attach];
+}
+
+/** `check --agent` on a lease agent (the `agent` phase): the job handle recorded for it. */
+function leaseJobStep(
+  db: Db,
+  profile: HostProfile,
+  agent: { name: string; workstream: string },
+): HostCheckStep {
+  const who = `${agent.workstream}/${agent.name}`;
+  const job = getCarrierJobByName(db, agent.workstream, agent.name);
+  if (job === undefined || job.host !== profile.name || job.job === null) {
+    return { step: "job", ok: false, detail: `${who}: no job handle recorded on ${profile.name}` };
+  }
+  const drift =
+    job.hostStop === profile.stop
+      ? ""
+      : "; the stop template changed since it was recorded: a close will refuse and name the handle";
+  return { step: "job", ok: true, detail: `${who}: job ${job.job}${drift}` };
+}
+
 export interface LeaseJobKind extends JobKind {
   /**
    * Stop the job by its handle (`runStop`): only while the profile's `stop` still
@@ -211,7 +302,7 @@ export interface LeaseJobKind extends JobKind {
 
 export const leaseKind: LeaseJobKind = {
   name: "lease",
-  caps: { view: "bound", handle: "file" },
+  caps: { view: "bound", handle: "file", checks: ["template", "agent"] },
   /** The carrier pane still runs (a retained pane whose command ended does not). */
   async status(_db, job): Promise<JobLiveness> {
     try {
@@ -226,4 +317,12 @@ export const leaseKind: LeaseJobKind = {
     await runStop(db, job.host?.name ?? "", job.handle ?? "", job.identity ?? "", opts);
   },
   attach: attachCommand,
+  async checkSteps(ctx: CheckContext): Promise<HostCheckStep[]> {
+    const profile = requireProfile(ctx.host);
+    if (ctx.phase === "template") return leaseTemplateSteps(profile);
+    if (ctx.phase === "agent" && ctx.agent !== undefined) {
+      return [leaseJobStep(ctx.db, profile, ctx.agent)];
+    }
+    return [];
+  },
 };

@@ -67,7 +67,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { getCarrierJobByName } from "./carrier-jobs.js";
 import { ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import type { Db } from "./db.js";
@@ -81,6 +80,7 @@ import {
   parseHarnessProbe,
   recordHostCapabilities,
 } from "./host-harnesses.js";
+import type { CheckContext, CheckPhase } from "./host-link.js";
 import { say } from "./messages.js";
 import { shellQuote } from "./shell-quote.js";
 
@@ -529,7 +529,7 @@ export function placeholderUses(
  * What a lease `shell` must contain: `{job_file}` exactly once, `{local_sock}` and `{remote_sock}`
  * at least once. An `attach` must also contain `{job}` exactly once.
  */
-function leaseShellProblems(
+export function leaseShellProblems(
   shell: string,
   scope: "lease-shell" | "attach" = "lease-shell",
 ): string[] {
@@ -957,19 +957,12 @@ export async function runHostTemplate(
 // ─── Check ──────────────────────────────────────────────────────────────
 
 export interface HostCheckStep {
-  step:
-    | "shell"
-    | "stop"
-    | "attach"
-    | "reachable"
-    | "repo"
-    | "harnesses"
-    | "hooks"
-    | "pi"
-    | "extension"
-    | "ctl"
-    | "job"
-    | "handback";
+  /**
+   * mu's own and the built-in seams' steps: `shell`, `stop`, `attach` (the lease kind's
+   * templates), `reachable`, `repo` (the template link), `harnesses`, `hooks`, `pi`,
+   * `extension`, `job` (the lease kind), `ctl`, `handback`. A plugin's: `<plugin>:<step>`.
+   */
+  step: string;
   /** null: skipped because the host was not reachable. */
   ok: boolean | null;
   detail: string;
@@ -993,6 +986,9 @@ export interface HostCheckOptions extends ChannelOpts {
   root?: string;
 }
 
+/** A remote step's detail once a template handed back: every later remote step says it. */
+export const HANDED_BACK = "skipped: the host handed back";
+
 const firstLine = (s: string): string =>
   s
     .split("\n")
@@ -1007,16 +1003,88 @@ const lastLine = (s: string): string =>
     .filter((l) => l !== "")
     .pop() ?? "";
 
+/** Runs a check's remote steps, one command each, and remembers a hand-back. */
+export interface CheckRunner {
+  /** A template exited 3: every later step is skipped, as for an unreachable host. */
+  readonly handedBack: boolean;
+  /**
+   * Run `cmd` and push its step onto `out`: `good` turns a clean exit into a detail (or
+   * undefined: `unmet`). A hand-back pushes the step skipped and a `handback` step. Each
+   * failure is reported, none retried. True when the step passed.
+   */
+  step(
+    out: HostCheckStep[],
+    name: string,
+    cmd: string,
+    good: (r: HostRun) => string | undefined,
+    unmet: string | (() => string),
+  ): Promise<boolean>;
+}
+
+/** A runner over `run` (one command through the host's link); `handedBack` carries an earlier one. */
+export function checkRunner(
+  run: (cmd: string) => Promise<HostRun>,
+  timeoutMs: number,
+  handedBack = false,
+): CheckRunner {
+  const r = {
+    handedBack,
+    async step(
+      out: HostCheckStep[],
+      name: string,
+      cmd: string,
+      good: (r: HostRun) => string | undefined,
+      unmet: string | (() => string),
+    ): Promise<boolean> {
+      if (r.handedBack) {
+        out.push({ step: name, ok: null, detail: HANDED_BACK });
+        return false;
+      }
+      let detail: string;
+      let ok = false;
+      try {
+        const res = await run(cmd);
+        const why = firstLine(res.stderr) || firstLine(res.stdout);
+        const good1 = res.exitCode === 0 ? good(res) : undefined;
+        ok = good1 !== undefined;
+        detail =
+          good1 ??
+          (res.exitCode === null
+            ? `timed out after ${timeoutMs}ms`
+            : res.exitCode === 0
+              ? typeof unmet === "string"
+                ? unmet
+                : unmet()
+              : `exit ${res.exitCode}${why === "" ? "" : `: ${why}`}`);
+      } catch (e) {
+        if (e instanceof HostHandbackError) {
+          r.handedBack = true;
+          out.push({ step: name, ok: null, detail: HANDED_BACK });
+          out.push({ step: "handback", ok: false, detail: `${name}: ${e.message}` });
+          return false;
+        }
+        if (!(e instanceof HostTemplateError)) throw e;
+        detail = e.message;
+      }
+      out.push({ step: name, ok, detail });
+      return ok;
+    },
+  };
+  return r;
+}
+
 /**
- * Check a host through its own stored templates, under ONE channel: the
- * host answers `exec`, the repo (`root`, else the profile's default; skipped
- * with neither) is a git repo, which harnesses resolve in the profile's shell
- * mode (recorded on the profile, src/host-harnesses.ts) with murmur's hook
- * entries for each hook harness found, and, when the host has pi (or the probe
- * got no answer), pi runs and `pi list` names mu; with `agent` the forwarded
- * socket answers hello. A host with no pi skips the pi steps, so a claude-only
- * host passes. Each failure is reported; none is retried; an unreachable host
- * skips the rest. The ctl probe only reads an existing forward.
+ * Check a host under ONE channel, in phases (spec 2026-11-09-mu-plugins.md, D11): the
+ * `template` phase (the job kind's; a lease profile's shell, stop and attach, never run),
+ * the `reach` phase (the link's: it answers, and the repo, `root` else the profile's,
+ * is a git repo), then mu's own steps through the link: which harnesses resolve in the
+ * profile's shell mode (recorded on the profile, src/host-harnesses.ts) with murmur's
+ * hook entries for each hook harness found, and, when the host has pi (or the probe got
+ * no answer), pi runs and `pi list` names mu. With `agent`: the `agent` phase (a lease
+ * kind's recorded job), then mu's ctl probe of the forwarded socket. A host with no pi
+ * skips the pi steps, so a claude-only host passes. The host is reachable when the reach
+ * phase's first step passed; an unreachable host, or one that handed back, skips the rest.
+ * The ctl probe only reads an existing forward.
  */
 export async function checkHost(
   db: Db,
@@ -1024,11 +1092,12 @@ export async function checkHost(
   opts: HostCheckOptions = {},
 ): Promise<HostCheckReport> {
   getHost(db, host);
+  // Imported at the call, not the top: host-provider.ts (and the link and kinds it views a
+  // profile with) imports this module and subclasses its errors at load.
+  const { admittedView } = await import("./host-provider.js");
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   const steps: HostCheckStep[] = [];
   let warnings: string[] = [];
-  // A template exited 3: the rest is skipped, as for an unreachable host.
-  let handedBack = false;
   let capabilities: HostCapabilities | undefined;
 
   await withHostChannel(
@@ -1036,74 +1105,49 @@ export async function checkHost(
     host,
     `check:${process.pid}`,
     async (profile, lease) => {
-      const root = opts.root ?? profile.repo ?? undefined;
       // Everything below follows the ADMITTED profile (admission re-reads it after the pane
       // probes), never a read taken before: a profile that changed transport mid-probe would
-      // otherwise get the other transport's shell mode.
+      // otherwise get the other transport's shell mode and job kind.
+      const view = admittedView(db, profile);
+      const root = opts.root ?? profile.repo ?? undefined;
+      const call = { lease };
+      const ctx = (phase: CheckPhase): CheckContext => ({
+        db,
+        host: view,
+        phase,
+        timeoutMs,
+        ...(root !== undefined ? { root } : {}),
+        ...(opts.agent !== undefined ? { agent: opts.agent } : {}),
+      });
+      const phase = async (p: CheckPhase): Promise<HostCheckStep[]> => [
+        ...(view.link.caps.checks?.includes(p) && view.link.checkSteps
+          ? await view.link.checkSteps(ctx(p), call)
+          : []),
+        ...(view.jobKind.caps.checks?.includes(p) && view.jobKind.checkSteps
+          ? await view.jobKind.checkSteps(ctx(p))
+          : []),
+      ];
       warnings = sessionShellWarnings(profile);
+      steps.push(...(await phase("template")));
+      const reach = await phase("reach");
+      steps.push(...reach);
+      const reachable = reach[0]?.ok === true;
+      const runner = checkRunner(
+        // `.` without a repo: a template's `cd {cwd:sh}` stays in the login directory.
+        (cmd) => view.link.exec(view, { script: cmd, cwd: root ?? ".", timeoutMs }, call),
+        timeoutMs,
+        reach.some((s) => s.step === "handback"),
+      );
       // A lease job runs in a non-login shell (the starter's `sh -c`): a login-shell success says
       // nothing about it, so the pi and extension steps run bare for a lease profile.
       const login = (cmd: string): string =>
         profile.transport === "lease" ? cmd : `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`;
-      if (profile.transport === "lease") steps.push(...leaseTemplateSteps(profile));
-      // One remote command through `exec`; `good` turns a clean exit into a detail, or undefined.
-      const step = async (
-        name: HostCheckStep["step"],
-        cmd: string,
-        good: (r: HostRun) => string | undefined,
-        unmet: string | (() => string),
-      ): Promise<boolean> => {
-        if (handedBack) {
-          steps.push({ step: name, ok: null, detail: "skipped: the host handed back" });
-          return false;
-        }
-        let detail: string;
-        let ok = false;
-        try {
-          const r = await runLeasedTemplate(
-            db,
-            lease,
-            profile,
-            "exec",
-            // `.` without a repo: a template's `cd {cwd:sh}` stays in the login directory.
-            { cmd, cwd: root ?? "." },
-            timeoutMs,
-          );
-          const why = firstLine(r.stderr) || firstLine(r.stdout);
-          const good1 = r.exitCode === 0 ? good(r) : undefined;
-          ok = good1 !== undefined;
-          detail =
-            good1 ??
-            (r.exitCode === null
-              ? `timed out after ${timeoutMs}ms`
-              : r.exitCode === 0
-                ? typeof unmet === "string"
-                  ? unmet
-                  : unmet()
-                : `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);
-        } catch (e) {
-          if (e instanceof HostHandbackError) {
-            handedBack = true;
-            steps.push({ step: name, ok: null, detail: "skipped: the host handed back" });
-            steps.push({ step: "handback", ok: false, detail: `${name}: ${e.message}` });
-            return false;
-          }
-          if (!(e instanceof HostTemplateError)) throw e;
-          detail = e.message;
-        }
-        steps.push({ step: name, ok, detail });
-        return ok;
-      };
-      if (await step("reachable", "true", () => "exec answered", "")) {
-        if (root === undefined) {
-          steps.push({ step: "repo", ok: null, detail: "skipped: no repo given (--root)" });
-        } else {
-          await step("repo", `git -C ${remotePathWord(root)} rev-parse --git-dir`, () => root, "");
-        }
+      if (reachable) {
         // The literal launchers, in the shell a spawn's command gets (spec D17): recorded even
         // when none is found, so a spawn for a missing harness is refused by name.
         const shell = profile.transport === "lease" ? "sh" : "login";
-        await step(
+        await runner.step(
+          steps,
           "harnesses",
           login(harnessProbeScript()),
           (r) => {
@@ -1121,7 +1165,7 @@ export async function checkHost(
           steps.push({
             step: "hooks",
             ok: null,
-            detail: handedBack ? "skipped: the host handed back" : "skipped: no harness report",
+            detail: runner.handedBack ? HANDED_BACK : "skipped: no harness report",
           });
         }
         if (capabilities !== undefined && capabilities.harnesses.pi.command === null) {
@@ -1129,13 +1173,15 @@ export async function checkHost(
             steps.push({ step: s, ok: null, detail: "skipped: the host has no pi" });
           }
         } else {
-          await step(
+          await runner.step(
+            steps,
             "pi",
             login("pi --version"),
             (r) => lastLine(r.stdout) || undefined,
             "pi printed no version",
           );
-          await step(
+          await runner.step(
+            steps,
             "extension",
             login("pi list"),
             (r) =>
@@ -1147,19 +1193,17 @@ export async function checkHost(
           );
         }
       } else {
-        for (const s of ["repo", "harnesses", "hooks", "pi", "extension"] as const) {
+        for (const s of ["harnesses", "hooks", "pi", "extension"] as const) {
           steps.push({
             step: s,
             ok: null,
-            detail: handedBack ? "skipped: the host handed back" : "skipped: host not reachable",
+            detail: runner.handedBack ? HANDED_BACK : "skipped: host not reachable",
           });
         }
       }
-      if (opts.agent !== undefined && profile.transport === "lease") {
-        steps.push(leaseJobStep(db, profile, opts.agent));
-      }
-      if (opts.agent !== undefined && handedBack) {
-        steps.push({ step: "ctl", ok: null, detail: "skipped: the host handed back" });
+      if (opts.agent !== undefined) steps.push(...(await phase("agent")));
+      if (opts.agent !== undefined && runner.handedBack) {
+        steps.push({ step: "ctl", ok: null, detail: HANDED_BACK });
       } else if (opts.agent !== undefined) {
         const { name, workstream } = opts.agent;
         const p = await ctlProbe(
@@ -1191,84 +1235,6 @@ export async function checkHost(
     warnings,
     ...(capabilities !== undefined ? { capabilities } : {}),
   };
-}
-
-/** The dummy handle `host check` expands a lease profile's `stop` with. Never run. */
-const DUMMY_JOB = "check-job";
-
-/**
- * A lease profile's template structure: the shell's three placeholders, and `stop` (and `attach`,
- * when set) expanded with a dummy handle (never run).
- */
-function leaseTemplateSteps(profile: HostProfile): HostCheckStep[] {
-  const problems = (() => {
-    try {
-      return leaseShellProblems(profile.shell);
-    } catch (e) {
-      if (e instanceof HostTemplateError) return [e.message];
-      throw e;
-    }
-  })();
-  const shell: HostCheckStep =
-    problems.length === 0
-      ? {
-          step: "shell",
-          ok: true,
-          detail: "lease shell has {job_file}, {local_sock} and {remote_sock}",
-        }
-      : { step: "shell", ok: false, detail: problems.join("; ") };
-  let stop: HostCheckStep;
-  try {
-    if (profile.stop === null) throw new HostTemplateError("a lease profile has no stop template");
-    if (placeholderUses(profile.stop, "stop").job === 0) {
-      throw new HostTemplateError("a stop template must contain {job}");
-    }
-    const line = expandHostTemplate(profile.stop, { job: DUMMY_JOB, cwd: "." }, "stop");
-    stop = { step: "stop", ok: true, detail: `expands (not run) to: ${line}` };
-  } catch (e) {
-    if (!(e instanceof HostTemplateError)) throw e;
-    stop = { step: "stop", ok: false, detail: e.message };
-  }
-  if (profile.attach === null) return [shell, stop];
-  let attach: HostCheckStep;
-  try {
-    const problems = leaseShellProblems(profile.attach, "attach");
-    if (problems.length > 0) throw new HostTemplateError(problems.join("; "));
-    const line = expandHostTemplate(
-      profile.attach,
-      {
-        job: DUMMY_JOB,
-        job_file: "/tmp/check.job",
-        local_sock: "/tmp/check.sock",
-        remote_sock: "/tmp/check-remote.sock",
-        cwd: ".",
-      },
-      "attach",
-    );
-    attach = { step: "attach", ok: true, detail: `expands (not run) to: ${line}` };
-  } catch (e) {
-    if (!(e instanceof HostTemplateError)) throw e;
-    attach = { step: "attach", ok: false, detail: e.message };
-  }
-  return [shell, stop, attach];
-}
-
-/** `check --agent` on a lease agent: the job handle recorded for it. */
-function leaseJobStep(
-  db: Db,
-  profile: HostProfile,
-  agent: { name: string; workstream: string },
-): HostCheckStep {
-  const who = `${agent.workstream}/${agent.name}`;
-  const job = getCarrierJobByName(db, agent.workstream, agent.name);
-  if (job === undefined || job.host !== profile.name || job.job === null) {
-    return { step: "job", ok: false, detail: `${who}: no job handle recorded on ${profile.name}` };
-  }
-  const drift =
-    job.hostStop === profile.stop
-      ? ""
-      : "; the stop template changed since it was recorded: a close will refuse and name the handle";
-  return { step: "job", ok: true, detail: `${who}: job ${job.job}${drift}` };
 }
 
 /**

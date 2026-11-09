@@ -7,9 +7,10 @@
 // src/remote-collect.ts). The built-in `template` link is today's profile
 // `exec` and `fetch` templates, run by the template runner in src/hosts.ts
 // (`runLeasedTemplate`): admission and the pgid record before the command, the
-// timeout plus `HOST_GRACE_MS`, exit 3 as a hand-back. The runner has three
-// callers: this link, the lease kind (`stop`, src/carrier-stop.ts) and
-// `checkHost`. A plugin link joins in P6b, mule's in P7.
+// timeout plus `HOST_GRACE_MS`, exit 3 as a hand-back. The runner has two
+// callers: this link and the lease kind (`stop`, src/carrier-stop.ts);
+// `checkHost` runs through the link. Its `reach` check steps (`reachable`,
+// `repo`) run through its own `exec`. A plugin link joins in P6b, mule's in P7.
 //
 // A link call names the channel it runs under (`LinkCall`), as every caller
 // does today. The spec's `Call` (deadline, abort signal, src/host-provider.ts)
@@ -22,10 +23,13 @@ import type { Db } from "./db.js";
 import { type HostView, requireProfile } from "./host-provider.js";
 import {
   type ChannelOpts,
+  checkRunner,
   expandHostTemplate,
+  HANDED_BACK,
   type HostCheckStep,
   type HostLease,
   type HostRun,
+  remotePathWord,
   runLeasedTemplate,
   withHostChannel,
 } from "./hosts.js";
@@ -39,13 +43,21 @@ export interface LinkRun extends HostRun {
   partial: boolean;
 }
 
-/** The `checkHost` phases a link or a job kind contributes steps to (spec D11). */
+/**
+ * The `checkHost` phases a link or a job kind contributes steps to (spec D11), in order:
+ * `template` (templates read, never run), `reach` (the host answers: its first step is
+ * reachability, and a failure there skips mu's own steps), `agent` (`--agent`'s job).
+ */
 export type CheckPhase = "template" | "reach" | "agent";
 
 export interface CheckContext {
   db: Db;
+  /** The admitted view: the check holds the host's channel. */
   host: HostView;
   phase: CheckPhase;
+  /** Each remote command's budget. The spec's `Call` deadline replaces it at the plugin adapter (P6b). */
+  timeoutMs: number;
+  /** The repo to check: `--root`, else the profile's. */
   root?: string;
   agent?: { name: string; workstream: string };
 }
@@ -109,7 +121,8 @@ export interface HostLink {
     call: LinkCall,
     admitted?: (h: HostView) => void,
   ): Promise<LinkRun>;
-  checkSteps?(ctx: CheckContext): Promise<HostCheckStep[]>;
+  /** Its `host check` steps for `ctx.phase` (one of `caps.checks`), under `call`. */
+  checkSteps?(ctx: CheckContext, call: LinkCall): Promise<HostCheckStep[]>;
 }
 
 /** Run `body` under the call's channel, given the profile it runs from and the lease. */
@@ -137,7 +150,7 @@ async function underChannel(
 
 /** The built-in link over `db`'s profiles: today's `exec` and `fetch` templates. */
 export function templateLink(db: Db): HostLink {
-  return {
+  const link: HostLink = {
     name: "template",
     caps: {
       fetch: true,
@@ -145,6 +158,7 @@ export function templateLink(db: Db): HostLink {
       // A killed local ssh does not stop the remote command.
       remoteOnTimeout: "unknown",
       quiescence: "provable",
+      checks: ["reach"],
     },
     fingerprint: (host) => requireProfile(host).exec,
     fits: (host, script, cwd) => {
@@ -182,5 +196,32 @@ export function templateLink(db: Db): HostLink {
           req.localRepo,
         );
       }),
+    // The `reach` phase: `exec` answers, and the repo (`ctx.root`; skipped without one) is a git repo.
+    async checkSteps(ctx, call) {
+      const steps: HostCheckStep[] = [];
+      if (ctx.phase !== "reach") return steps;
+      const { root, timeoutMs } = ctx;
+      const runner = checkRunner(
+        // `.` without a repo: a template's `cd {cwd:sh}` stays in the login directory.
+        (cmd) => link.exec(ctx.host, { script: cmd, cwd: root ?? ".", timeoutMs }, call),
+        timeoutMs,
+      );
+      if (!(await runner.step(steps, "reachable", "true", () => "exec answered", ""))) {
+        const detail = runner.handedBack ? HANDED_BACK : "skipped: host not reachable";
+        steps.push({ step: "repo", ok: null, detail });
+      } else if (root === undefined) {
+        steps.push({ step: "repo", ok: null, detail: "skipped: no repo given (--root)" });
+      } else {
+        await runner.step(
+          steps,
+          "repo",
+          `git -C ${remotePathWord(root)} rev-parse --git-dir`,
+          () => root,
+          "",
+        );
+      }
+      return steps;
+    },
   };
+  return link;
 }

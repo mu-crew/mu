@@ -47,15 +47,16 @@ function runnerTakers(files: ReadonlyArray<readonly [string, string]>): string[]
 }
 
 /**
- * Outside the runner and the link, an expansion may only fill a pane command: the
- * template is a `.shell` or `.attach` field, and a scope, when given, is a literal
+ * Outside the runner and the link, an expansion may only fill a pane command or show one
+ * (the lease kind's check expands `stop`, never running it): the template is a `.shell`,
+ * `.stop` or `.attach` field, and a scope, when given, is a literal
  * other than exec or fetch. Anything else (an identifier holding the exec bytes, no
  * scope, a computed scope) may be the exec or fetch template run by hand.
  */
 function expandsExecOrFetch(call: string): boolean {
   const [template, , scope, ...rest] = args(call);
   if (rest.length > 0 || template === undefined) return true;
-  if (!/^[\w.?]+\.(shell|attach)$/.test(template)) return true;
+  if (!/^[\w.?]+\.(shell|stop|attach)$/.test(template)) return true;
   if (scope === undefined) return false;
   const lit = /^["']([\w-]+)["']$/.exec(scope)?.[1];
   return lit === undefined || lit === "exec" || lit === "fetch";
@@ -76,7 +77,7 @@ describe("the link seam", () => {
     expect(out).toEqual([]);
   });
 
-  it("inside hosts.ts the runner is called only by runHostTemplate and checkHost", () => {
+  it("inside hosts.ts the runner is called only by runHostTemplate (checkHost runs through the link)", () => {
     const lines = readFileSync(join(SRC, "hosts.ts"), "utf8").split("\n");
     const callers: string[] = [];
     let fn = "";
@@ -87,7 +88,7 @@ describe("the link seam", () => {
         callers.push(fn);
       }
     }
-    expect(callers).toEqual(["runHostTemplate", "checkHost"]);
+    expect(callers).toEqual(["runHostTemplate"]);
   });
 
   it("an exec or fetch template is expanded only in hosts.ts and the link", () => {

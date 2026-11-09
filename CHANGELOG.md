@@ -240,6 +240,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   import or a `host_profiles` read fails `test/host-imports.test.ts`
   (import-aware; the recovery capture triggers keep their SQL read). The SDK
   exports the new names. No behaviour change.
+- **`host check` is composed from phased check steps** (plugins spec P5,
+  D11). `checkHost` calls each phase on the admitted view: `template` (the
+  lease kind: `shell`, `stop`, `attach`), `reach` (the template link:
+  `reachable`, `repo`; its first step is reachability), mu's own
+  `harnesses`, `hooks`, `pi` and `extension` through the link's `exec`,
+  `agent` (the lease kind: `job`), then mu's `ctl`. A seam contributes to a
+  phase it names in `caps.checks` (`LinkCaps`, `JobCaps`) through
+  `checkSteps`; `checkRunner` (src/hosts.ts) is the shared one-command step
+  with the hand-back skip. `HostCheckStep.step` is a string (a plugin's are
+  `<plugin>:<step>`). The output is byte-identical, skips included: 29
+  golden fixtures captured before the change
+  (`test/host-check-golden.integration.test.ts`). No behaviour change.
 
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove

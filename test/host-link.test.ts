@@ -94,6 +94,7 @@ describe("the template link", () => {
       slots: "mu",
       remoteOnTimeout: "unknown",
       quiescence: "provable",
+      checks: ["reach"],
     });
     expect(h.link.fingerprint(h)).toBe(getHost(db, "dev").exec);
   });
