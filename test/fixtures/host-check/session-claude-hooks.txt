@@ -1,0 +1,19 @@
+$ mu host check dev
+exit: 0
+--- stdout
+ok   reachable exec answered
+ok   repo      <DIR>
+ok   harnesses claude (<DIR>/bin-pi-claude/claude), pi (<DIR>/bin-pi-claude/pi); not found: codex, cursor-agent, muse
+ok   hooks     claude: murmur hook claude
+ok   pi        0.99.1
+ok   extension npm:@mu-crew/mu
+warn claude: no `mu hook stop claude` entry in ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json: an orchestrator started on this host gets no keep-driving (a remote worker never uses it; run mu init on the host)
+--- stderr
+
+
+$ mu host check dev --json
+exit: 0
+--- stdout
+{"ok":true,"data":{"host":"dev","ok":true,"steps":[{"step":"reachable","ok":true,"detail":"exec answered"},{"step":"repo","ok":true,"detail":"<DIR>"},{"step":"harnesses","ok":true,"detail":"claude (<DIR>/bin-pi-claude/claude), pi (<DIR>/bin-pi-claude/pi); not found: codex, cursor-agent, muse"},{"step":"hooks","ok":true,"detail":"claude: murmur hook claude"},{"step":"pi","ok":true,"detail":"0.99.1"},{"step":"extension","ok":true,"detail":"npm:@mu-crew/mu"}],"warnings":["claude: no `mu hook stop claude` entry in ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json: an orchestrator started on this host gets no keep-driving (a remote worker never uses it; run mu init on the host)"],"capabilities":{"probedAt":"<TIME>","shell":"login","harnesses":{"claude":{"command":"<DIR>/bin-pi-claude/claude","murmurHooks":true,"muHooks":false},"codex":{"command":null,"murmurHooks":false,"muHooks":false},"cursor-agent":{"command":null,"murmurHooks":false,"muHooks":false},"muse":{"command":null,"murmurHooks":false,"muHooks":null},"pi":{"command":"<DIR>/bin-pi-claude/pi","murmurHooks":null,"muHooks":null}}}},"next":null}
+--- stderr
+

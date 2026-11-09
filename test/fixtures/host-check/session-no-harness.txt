@@ -1,0 +1,18 @@
+$ mu host check dev
+exit: 5
+--- stdout
+ok   reachable exec answered
+ok   repo      <DIR>
+FAIL harnesses none of claude, codex, cursor-agent, muse, pi resolves in the login shell ($SHELL -ilc), where a spawn's command runs
+skip hooks     skipped: no hook harness on the host
+skip pi        skipped: the host has no pi
+skip extension skipped: the host has no pi
+--- stderr
+host check: host dev check failed: harnesses
+
+$ mu host check dev --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host dev check failed: harnesses","next":null,"exit":5,"data":{"host":"dev","ok":false,"steps":[{"step":"reachable","ok":true,"detail":"exec answered"},{"step":"repo","ok":true,"detail":"<DIR>"},{"step":"harnesses","ok":false,"detail":"none of claude, codex, cursor-agent, muse, pi resolves in the login shell ($SHELL -ilc), where a spawn's command runs"},{"step":"hooks","ok":null,"detail":"skipped: no hook harness on the host"},{"step":"pi","ok":null,"detail":"skipped: the host has no pi"},{"step":"extension","ok":null,"detail":"skipped: the host has no pi"}],"warnings":[],"capabilities":{"probedAt":"<TIME>","shell":"login","harnesses":{"claude":{"command":null,"murmurHooks":false,"muHooks":false},"codex":{"command":null,"murmurHooks":false,"muHooks":false},"cursor-agent":{"command":null,"murmurHooks":false,"muHooks":false},"muse":{"command":null,"murmurHooks":false,"muHooks":null},"pi":{"command":null,"murmurHooks":null,"muHooks":null}}}}}
+--- stderr
+

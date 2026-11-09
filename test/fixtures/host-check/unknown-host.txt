@@ -1,0 +1,13 @@
+$ mu host check nope
+exit: 3
+--- stdout
+
+--- stderr
+not found: no host profile named nope
+
+$ mu host check nope --json
+exit: 3
+--- stdout
+{"ok":false,"error":"HostNotFoundError","message":"no host profile named nope","next":null,"exit":3}
+--- stderr
+

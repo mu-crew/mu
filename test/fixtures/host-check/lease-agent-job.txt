@@ -1,0 +1,22 @@
+$ mu host check box --agent worker-1 -w auth
+exit: 5
+--- stdout
+ok   shell     lease shell has {job_file}, {local_sock} and {remote_sock}
+ok   stop      expands (not run) to: echo 'check-job'
+ok   reachable exec answered
+ok   repo      <DIR>
+ok   harnesses pi (<DIR>/bin-pi/pi); not found: claude, codex, cursor-agent, muse
+skip hooks     skipped: no hook harness on the host
+ok   pi        0.99.1
+ok   extension npm:@mu-crew/mu
+ok   job       auth/worker-1: job mule-42
+FAIL ctl       auth/worker-1: no forwarded socket
+--- stderr
+host check: host box check failed: ctl
+
+$ mu host check box --agent worker-1 -w auth --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host box check failed: ctl","next":null,"exit":5,"data":{"host":"box","ok":false,"steps":[{"step":"shell","ok":true,"detail":"lease shell has {job_file}, {local_sock} and {remote_sock}"},{"step":"stop","ok":true,"detail":"expands (not run) to: echo 'check-job'"},{"step":"reachable","ok":true,"detail":"exec answered"},{"step":"repo","ok":true,"detail":"<DIR>"},{"step":"harnesses","ok":true,"detail":"pi (<DIR>/bin-pi/pi); not found: claude, codex, cursor-agent, muse"},{"step":"hooks","ok":null,"detail":"skipped: no hook harness on the host"},{"step":"pi","ok":true,"detail":"0.99.1"},{"step":"extension","ok":true,"detail":"npm:@mu-crew/mu"},{"step":"job","ok":true,"detail":"auth/worker-1: job mule-42"},{"step":"ctl","ok":false,"detail":"auth/worker-1: no forwarded socket"}],"warnings":[],"capabilities":{"probedAt":"<TIME>","shell":"sh","harnesses":{"claude":{"command":null,"murmurHooks":false,"muHooks":false},"codex":{"command":null,"murmurHooks":false,"muHooks":false},"cursor-agent":{"command":null,"murmurHooks":false,"muHooks":false},"muse":{"command":null,"murmurHooks":false,"muHooks":null},"pi":{"command":"<DIR>/bin-pi/pi","murmurHooks":null,"muHooks":null}}}}}
+--- stderr
+

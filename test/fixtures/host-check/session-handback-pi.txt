@@ -1,0 +1,20 @@
+$ mu host check dev --agent worker-1 -w auth
+exit: 5
+--- stdout
+ok   reachable exec answered
+ok   repo      <DIR>
+ok   harnesses pi (<DIR>/bin-pi/pi); not found: claude, codex, cursor-agent, muse
+skip hooks     skipped: no hook harness on the host
+skip pi        skipped: the host handed back
+FAIL handback  pi: host dev: its exec template exited 3, a hand-back (a human must act, e.g. a hardware key). Do not retry or ssh yourself: stop and ask
+skip extension skipped: the host handed back
+skip ctl       skipped: the host handed back
+--- stderr
+host check: host dev check failed: handback
+
+$ mu host check dev --agent worker-1 -w auth --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host dev check failed: handback","next":null,"exit":5,"data":{"host":"dev","ok":false,"steps":[{"step":"reachable","ok":true,"detail":"exec answered"},{"step":"repo","ok":true,"detail":"<DIR>"},{"step":"harnesses","ok":true,"detail":"pi (<DIR>/bin-pi/pi); not found: claude, codex, cursor-agent, muse"},{"step":"hooks","ok":null,"detail":"skipped: no hook harness on the host"},{"step":"pi","ok":null,"detail":"skipped: the host handed back"},{"step":"handback","ok":false,"detail":"pi: host dev: its exec template exited 3, a hand-back (a human must act, e.g. a hardware key). Do not retry or ssh yourself: stop and ask"},{"step":"extension","ok":null,"detail":"skipped: the host handed back"},{"step":"ctl","ok":null,"detail":"skipped: the host handed back"}],"warnings":[],"capabilities":{"probedAt":"<TIME>","shell":"login","harnesses":{"claude":{"command":null,"murmurHooks":false,"muHooks":false},"codex":{"command":null,"murmurHooks":false,"muHooks":false},"cursor-agent":{"command":null,"murmurHooks":false,"muHooks":false},"muse":{"command":null,"murmurHooks":false,"muHooks":null},"pi":{"command":"<DIR>/bin-pi/pi","murmurHooks":null,"muHooks":null}}}}}
+--- stderr
+

@@ -1,0 +1,22 @@
+$ mu host check box --agent worker-1 -w auth
+exit: 5
+--- stdout
+ok   shell     lease shell has {job_file}, {local_sock} and {remote_sock}
+ok   stop      expands (not run) to: echo 'check-job'
+FAIL reachable exit 255: mule: no route
+skip repo      skipped: host not reachable
+skip harnesses skipped: host not reachable
+skip hooks     skipped: host not reachable
+skip pi        skipped: host not reachable
+skip extension skipped: host not reachable
+FAIL job       auth/worker-1: no job handle recorded on box
+FAIL ctl       auth/worker-1: no forwarded socket
+--- stderr
+host check: host box check failed: reachable, job, ctl
+
+$ mu host check box --agent worker-1 -w auth --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host box check failed: reachable, job, ctl","next":null,"exit":5,"data":{"host":"box","ok":false,"steps":[{"step":"shell","ok":true,"detail":"lease shell has {job_file}, {local_sock} and {remote_sock}"},{"step":"stop","ok":true,"detail":"expands (not run) to: echo 'check-job'"},{"step":"reachable","ok":false,"detail":"exit 255: mule: no route"},{"step":"repo","ok":null,"detail":"skipped: host not reachable"},{"step":"harnesses","ok":null,"detail":"skipped: host not reachable"},{"step":"hooks","ok":null,"detail":"skipped: host not reachable"},{"step":"pi","ok":null,"detail":"skipped: host not reachable"},{"step":"extension","ok":null,"detail":"skipped: host not reachable"},{"step":"job","ok":false,"detail":"auth/worker-1: no job handle recorded on box"},{"step":"ctl","ok":false,"detail":"auth/worker-1: no forwarded socket"}],"warnings":[]}}
+--- stderr
+

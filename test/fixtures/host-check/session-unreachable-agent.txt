@@ -1,0 +1,19 @@
+$ mu host check dev --agent worker-1 -w auth
+exit: 5
+--- stdout
+FAIL reachable exit 255: ssh: connect to host h: refused
+skip repo      skipped: host not reachable
+skip harnesses skipped: host not reachable
+skip hooks     skipped: host not reachable
+skip pi        skipped: host not reachable
+skip extension skipped: host not reachable
+FAIL ctl       auth/worker-1: no forwarded socket
+--- stderr
+host check: host dev check failed: reachable, ctl
+
+$ mu host check dev --agent worker-1 -w auth --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host dev check failed: reachable, ctl","next":null,"exit":5,"data":{"host":"dev","ok":false,"steps":[{"step":"reachable","ok":false,"detail":"exit 255: ssh: connect to host h: refused"},{"step":"repo","ok":null,"detail":"skipped: host not reachable"},{"step":"harnesses","ok":null,"detail":"skipped: host not reachable"},{"step":"hooks","ok":null,"detail":"skipped: host not reachable"},{"step":"pi","ok":null,"detail":"skipped: host not reachable"},{"step":"extension","ok":null,"detail":"skipped: host not reachable"},{"step":"ctl","ok":false,"detail":"auth/worker-1: no forwarded socket"}],"warnings":[]}}
+--- stderr
+

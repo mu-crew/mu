@@ -1,0 +1,20 @@
+$ mu host check dev --agent worker-1 -w auth
+exit: 5
+--- stdout
+ok   reachable exec answered
+skip repo      skipped: the host handed back
+FAIL handback  repo: host dev: its exec template exited 3, a hand-back (a human must act, e.g. a hardware key). Do not retry or ssh yourself: stop and ask
+skip harnesses skipped: the host handed back
+skip hooks     skipped: the host handed back
+skip pi        skipped: the host handed back
+skip extension skipped: the host handed back
+skip ctl       skipped: the host handed back
+--- stderr
+host check: host dev check failed: handback
+
+$ mu host check dev --agent worker-1 -w auth --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host dev check failed: handback","next":null,"exit":5,"data":{"host":"dev","ok":false,"steps":[{"step":"reachable","ok":true,"detail":"exec answered"},{"step":"repo","ok":null,"detail":"skipped: the host handed back"},{"step":"handback","ok":false,"detail":"repo: host dev: its exec template exited 3, a hand-back (a human must act, e.g. a hardware key). Do not retry or ssh yourself: stop and ask"},{"step":"harnesses","ok":null,"detail":"skipped: the host handed back"},{"step":"hooks","ok":null,"detail":"skipped: the host handed back"},{"step":"pi","ok":null,"detail":"skipped: the host handed back"},{"step":"extension","ok":null,"detail":"skipped: the host handed back"},{"step":"ctl","ok":null,"detail":"skipped: the host handed back"}],"warnings":[]}}
+--- stderr
+

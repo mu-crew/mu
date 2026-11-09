@@ -1,0 +1,23 @@
+$ mu host check box --agent worker-1 -w auth
+exit: 5
+--- stdout
+ok   shell     lease shell has {job_file}, {local_sock} and {remote_sock}
+ok   stop      expands (not run) to: echo 'check-job'
+skip reachable skipped: the host handed back
+FAIL handback  reachable: host box: its exec template exited 3, a hand-back (a human must act, e.g. a hardware key): mule: handed back. Do not retry or ssh yourself: stop and ask
+skip repo      skipped: the host handed back
+skip harnesses skipped: the host handed back
+skip hooks     skipped: the host handed back
+skip pi        skipped: the host handed back
+skip extension skipped: the host handed back
+FAIL job       auth/worker-1: no job handle recorded on box
+skip ctl       skipped: the host handed back
+--- stderr
+host check: host box check failed: handback, job
+
+$ mu host check box --agent worker-1 -w auth --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host box check failed: handback, job","next":null,"exit":5,"data":{"host":"box","ok":false,"steps":[{"step":"shell","ok":true,"detail":"lease shell has {job_file}, {local_sock} and {remote_sock}"},{"step":"stop","ok":true,"detail":"expands (not run) to: echo 'check-job'"},{"step":"reachable","ok":null,"detail":"skipped: the host handed back"},{"step":"handback","ok":false,"detail":"reachable: host box: its exec template exited 3, a hand-back (a human must act, e.g. a hardware key): mule: handed back. Do not retry or ssh yourself: stop and ask"},{"step":"repo","ok":null,"detail":"skipped: the host handed back"},{"step":"harnesses","ok":null,"detail":"skipped: the host handed back"},{"step":"hooks","ok":null,"detail":"skipped: the host handed back"},{"step":"pi","ok":null,"detail":"skipped: the host handed back"},{"step":"extension","ok":null,"detail":"skipped: the host handed back"},{"step":"job","ok":false,"detail":"auth/worker-1: no job handle recorded on box"},{"step":"ctl","ok":null,"detail":"skipped: the host handed back"}],"warnings":[]}}
+--- stderr
+

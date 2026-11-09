@@ -1,0 +1,18 @@
+$ mu host check dev
+exit: 5
+--- stdout
+FAIL reachable exit 255: ssh: connect to host h: refused
+skip repo      skipped: host not reachable
+skip harnesses skipped: host not reachable
+skip hooks     skipped: host not reachable
+skip pi        skipped: host not reachable
+skip extension skipped: host not reachable
+--- stderr
+host check: host dev check failed: reachable
+
+$ mu host check dev --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host dev check failed: reachable","next":null,"exit":5,"data":{"host":"dev","ok":false,"steps":[{"step":"reachable","ok":false,"detail":"exit 255: ssh: connect to host h: refused"},{"step":"repo","ok":null,"detail":"skipped: host not reachable"},{"step":"harnesses","ok":null,"detail":"skipped: host not reachable"},{"step":"hooks","ok":null,"detail":"skipped: host not reachable"},{"step":"pi","ok":null,"detail":"skipped: host not reachable"},{"step":"extension","ok":null,"detail":"skipped: host not reachable"}],"warnings":[]}}
+--- stderr
+

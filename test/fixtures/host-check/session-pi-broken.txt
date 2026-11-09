@@ -1,0 +1,18 @@
+$ mu host check dev
+exit: 5
+--- stdout
+ok   reachable exec answered
+ok   repo      <DIR>
+ok   harnesses pi (<DIR>/bin-pi/pi); not found: claude, codex, cursor-agent, muse
+skip hooks     skipped: no hook harness on the host
+FAIL pi        exit 127: pi: boom
+FAIL extension pi list does not name mu
+--- stderr
+host check: host dev check failed: pi, extension
+
+$ mu host check dev --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host dev check failed: pi, extension","next":null,"exit":5,"data":{"host":"dev","ok":false,"steps":[{"step":"reachable","ok":true,"detail":"exec answered"},{"step":"repo","ok":true,"detail":"<DIR>"},{"step":"harnesses","ok":true,"detail":"pi (<DIR>/bin-pi/pi); not found: claude, codex, cursor-agent, muse"},{"step":"hooks","ok":null,"detail":"skipped: no hook harness on the host"},{"step":"pi","ok":false,"detail":"exit 127: pi: boom"},{"step":"extension","ok":false,"detail":"pi list does not name mu"}],"warnings":[],"capabilities":{"probedAt":"<TIME>","shell":"login","harnesses":{"claude":{"command":null,"murmurHooks":false,"muHooks":false},"codex":{"command":null,"murmurHooks":false,"muHooks":false},"cursor-agent":{"command":null,"murmurHooks":false,"muHooks":false},"muse":{"command":null,"murmurHooks":false,"muHooks":null},"pi":{"command":"<DIR>/bin-pi/pi","murmurHooks":null,"muHooks":null}}}}}
+--- stderr
+

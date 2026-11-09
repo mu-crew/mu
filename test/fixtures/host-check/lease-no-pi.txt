@@ -1,0 +1,21 @@
+$ mu host check box
+exit: 5
+--- stdout
+ok   shell     lease shell has {job_file}, {local_sock} and {remote_sock}
+ok   stop      expands (not run) to: echo 'check-job'
+ok   reachable exec answered
+ok   repo      <DIR>
+ok   harnesses claude (<DIR>/bin-claude/claude); not found: codex, cursor-agent, muse, pi
+FAIL hooks     claude: no `murmur hook claude` entry in ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json (its workers would report no state: run murmur init on the host)
+skip pi        skipped: the host has no pi
+skip extension skipped: the host has no pi
+warn claude: no `mu hook stop claude` entry in ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json: an orchestrator started on this host gets no keep-driving (a remote worker never uses it; run mu init on the host)
+--- stderr
+host check: host box check failed: hooks
+
+$ mu host check box --json
+exit: 5
+--- stdout
+{"ok":false,"error":"HostCheckFailedError","message":"host box check failed: hooks","next":null,"exit":5,"data":{"host":"box","ok":false,"steps":[{"step":"shell","ok":true,"detail":"lease shell has {job_file}, {local_sock} and {remote_sock}"},{"step":"stop","ok":true,"detail":"expands (not run) to: echo 'check-job'"},{"step":"reachable","ok":true,"detail":"exec answered"},{"step":"repo","ok":true,"detail":"<DIR>"},{"step":"harnesses","ok":true,"detail":"claude (<DIR>/bin-claude/claude); not found: codex, cursor-agent, muse, pi"},{"step":"hooks","ok":false,"detail":"claude: no `murmur hook claude` entry in ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json (its workers would report no state: run murmur init on the host)"},{"step":"pi","ok":null,"detail":"skipped: the host has no pi"},{"step":"extension","ok":null,"detail":"skipped: the host has no pi"}],"warnings":["claude: no `mu hook stop claude` entry in ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json: an orchestrator started on this host gets no keep-driving (a remote worker never uses it; run mu init on the host)"],"capabilities":{"probedAt":"<TIME>","shell":"sh","harnesses":{"claude":{"command":"<DIR>/bin-claude/claude","murmurHooks":false,"muHooks":false},"codex":{"command":null,"murmurHooks":false,"muHooks":false},"cursor-agent":{"command":null,"murmurHooks":false,"muHooks":false},"muse":{"command":null,"murmurHooks":false,"muHooks":null},"pi":{"command":null,"murmurHooks":null,"muHooks":null}}}}}
+--- stderr
+
