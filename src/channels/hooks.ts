@@ -93,6 +93,7 @@ import {
 import type {
   AgentChannel,
   ChannelCaps,
+  ChannelSendReply,
   ChannelTarget,
   DeliveryOptions,
   DeliveryTarget,
@@ -101,7 +102,6 @@ import type {
   RemoteReadResult,
   SendResult,
   SentFacts,
-  SentRun,
 } from "./types.js";
 
 /**
@@ -928,9 +928,15 @@ const HOOKS_CAPS: ChannelCaps = {
  * The run a hooks delivery started: an interrupt carries it as `runs`; a
  * paste gives its confirmed run count's baseline (`hooksRunBaseline`).
  */
-function hooksSendRun(sent: SentFacts): SentRun {
+function hooksSendRun(sent: SentFacts): ChannelSendReply {
+  // A paste confirmed by its run count (`sent`: the next read confirms it) is acknowledged.
+  const reply = {
+    channel: "hooks",
+    ack: sent.ack === "confirmed" || sent.ack === "sent" ? "acknowledged" : "none",
+  } as const;
   if (sent.runs !== undefined) {
     return {
+      ...reply,
       baseline: {
         runs: sent.runs,
         ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),
@@ -939,8 +945,9 @@ function hooksSendRun(sent: SentFacts): SentRun {
   }
   const b = hooksRunBaseline(sent);
   return b.runs === undefined
-    ? {}
+    ? reply
     : {
+        ...reply,
         baseline: {
           runs: b.runs,
           ...(b.incarnation !== undefined ? { incarnation: b.incarnation } : {}),

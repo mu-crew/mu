@@ -3,14 +3,16 @@
 // capability check (`channelNamed(x)?.caps...`, which this scan does not
 // match) or one of the features pinned below, each of which belongs to one
 // built-in channel. A new name comparison, or one more in a pinned function,
-// fails here. Also: no channel or ctl module decides an agent's liveness from
-// its own answer alone; that is the job kind's word (src/jobs/, the P1 ruling).
+// fails here. Also: no channel or ctl module sets an agent's liveness; a
+// channel reports turn state and its link, and `withJobLiveness` (src/jobs/)
+// decides (the P1 ruling). That guarantee is held by behaviour in
+// test/channel-registry.test.ts; the scan here is the net.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { channelNameHits, literalLivenessHits } from "./_channel-names.js";
+import { channelNameHits, livenessSetHits } from "./_channel-names.js";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = join(ROOT, "src");
@@ -37,7 +39,8 @@ const PINNED: Readonly<Record<string, number>> = {
   'src/next-recover.ts#observeWorkers === "hooks"': 1,
   'src/next-recover.ts#scanRecovery === "hooks"': 1,
   'src/next.ts#recover === "hooks"': 1,
-  // 3. The Stop hook.
+  // 3. The Stop hook, and CLOSE blocks from a hooks agent's `turn_stopped` text whatever its cli.
+  'src/close-block.ts#applyInTxn !== "hooks"': 1,
   'src/hook-stop.ts#applyStopClose !== "hooks"': 1,
   // 4. The pi fallback (`MU_PI_CHANNEL=hooks`), and pi's harness read from its channel.
   'src/agents/spawn.ts#piHooksRequested === "hooks"': 1,
@@ -82,6 +85,20 @@ describe("channel names outside src/channels/", () => {
       ["singleton", "function f(c) { return c === ctlChannel; }"],
       ["helper", "function f(a) { return expectsCtl(a); }"],
       ["template", "function f(r) { return r.channel === `hooks`; }"],
+      // Aliases and held names (review of P4).
+      [
+        "aliased singleton",
+        'import { ctlChannel as ctl } from "./channels/index.js";\nfunction f(c) { return c === ctl; }',
+      ],
+      [
+        "aliased helper",
+        'import { expectsCtl as isCtl } from "./channels/index.js";\nfunction f(a) { return isCtl(a); }',
+      ],
+      ["const-bound helper", "const isCtl = expectsCtl;\nfunction f(a) { return isCtl(a); }"],
+      ["const-bound singleton", "const c = hooksChannel;\nfunction f(x) { return x !== c; }"],
+      ["held name", 'const CTL = "ctl";\nfunction f(r) { return r.channel === CTL; }'],
+      ["held name as const", 'const M = "mux" as const;\nfunction f(r) { switch (r) { case M: } }'],
+      ["held name in includes", 'const H = "hooks";\nfunction f(r) { return [H].includes(r); }'],
     ];
     for (const [form, line] of planted) {
       const hits = channelNameHits("src/planted.ts", line);
@@ -106,27 +123,29 @@ describe("channel names outside src/channels/", () => {
 });
 
 describe("liveness is the job's word, not a channel's", () => {
-  it("no channel or ctl module sets `alive` to a literal", () => {
+  it("no channel or ctl module sets `alive` (or calls unknownReading, which does)", () => {
     const out: string[] = [];
     for (const path of sources(SRC)) {
       const file = rel(path);
       if (!file.startsWith("src/channels/") && !file.startsWith("src/ctl/")) continue;
-      for (const h of literalLivenessHits(file, readFileSync(path, "utf8"))) {
+      for (const h of livenessSetHits(file, readFileSync(path, "utf8"))) {
         out.push(`${file}:${h.line} ${h.form} (in ${h.where})`);
       }
     }
     expect(out).toEqual([]);
   });
 
-  it("ctl's answered reading takes its liveness from the job kind", () => {
-    const ctl = readFileSync(join(SRC, "channels/ctl.ts"), "utf8");
-    expect(ctl).toMatch(/import \{ answerProvesRunning \} from "\.\.\/jobs\/kinds\.js";/);
-    expect(ctl).toMatch(/alive: await answeredAlive\(agent\)/);
-  });
-
-  it("the literal form is caught; a computed one is not", () => {
-    expect(literalLivenessHits("x.ts", "const r = { state, alive: true };")).toHaveLength(1);
-    expect(literalLivenessHits("x.ts", "const r = { state, alive: false };")).toHaveLength(1);
-    expect(literalLivenessHits("x.ts", "const r = { state, alive: up !== false };")).toEqual([]);
+  it("each form is caught, whatever the value; reading it is not", () => {
+    for (const line of [
+      "const r = { state, alive: true };",
+      "const r = { state, alive: up !== false };",
+      "const r = { state, alive };",
+      "r.alive = true;",
+      'const r = { ...unknownReading("x"), ctl };',
+    ]) {
+      expect(livenessSetHits("x.ts", line), line).toHaveLength(1);
+    }
+    expect(livenessSetHits("x.ts", "if (r.alive === true) return;")).toEqual([]);
+    expect(livenessSetHits("x.ts", "if (!reading.alive) return;")).toEqual([]);
   });
 });

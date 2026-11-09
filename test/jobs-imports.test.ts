@@ -105,6 +105,16 @@ function resolveSpecifier(file: string, spec: string): string | undefined {
   return posix.normalize(posix.join(posix.dirname(file), spec)).replace(/\.js$/, ".ts");
 }
 
+/** A destructured key's name: `paneAlive`, `"paneAlive"`, or a computed `["paneAlive"]`. */
+function bindingKey(key: ts.PropertyName | ts.BindingName): string | undefined {
+  if (ts.isIdentifier(key) || ts.isStringLiteral(key)) return key.text;
+  if (ts.isComputedPropertyName(key)) {
+    const e = key.expression;
+    if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+  }
+  return undefined;
+}
+
 /** The probes `text` reaches by import or destructuring, as `line form` strings. */
 function importedProbes(file: string, text: string): string[] {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
@@ -130,9 +140,9 @@ function importedProbes(file: string, text: string): string[] {
     }
     if (ts.isObjectBindingPattern(node)) {
       for (const el of node.elements) {
-        const key = el.propertyName ?? el.name;
-        if (ts.isIdentifier(key) && PROBE_METHODS.has(key.text)) {
-          out.push(`${at(el)} destructured ${key.text}`);
+        const key = bindingKey(el.propertyName ?? el.name);
+        if (key !== undefined && PROBE_METHODS.has(key)) {
+          out.push(`${at(el)} destructured ${key}`);
         }
       }
     }
@@ -160,6 +170,12 @@ describe("the job seam", () => {
       ["destructured off activeMux", "src/a.ts", "const { paneAlive } = await activeMux();"],
       ["destructured, renamed", "src/a.ts", "const { paneResult: r } = mux;"],
       ["destructured in a parameter", "src/a.ts", "function f({ listPanes }) {}"],
+      [
+        "computed-key destructuring",
+        "src/a.ts",
+        'const { ["paneAlive"]: up } = await activeMux(); return up("%1");',
+      ],
+      ["string-key destructuring", "src/a.ts", 'const { "paneStatus": s } = mux;'],
       ["named import", "src/a.ts", 'import { tmux } from "./tmux.js";'],
       ["aliased import", "src/agents/a.ts", 'import { paneAlive as up } from "../mux/tmux.js";'],
       ["herdr executor", "src/a.ts", 'import { herdr } from "./mux/herdr.js";'],

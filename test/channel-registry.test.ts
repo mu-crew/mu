@@ -3,9 +3,10 @@
 // row of the D9 matrix, and the run a delivery started is the channel's word
 // (`sendRun`), equal to the rule the call sites computed by name before P4.
 
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { insertAgent } from "../src/agents.js";
 import {
@@ -20,10 +21,16 @@ import {
   registerChannel,
   registeredChannels,
   sentRun,
+  toSendResult,
 } from "../src/channels/index.js";
 import { unregisterChannelForTests } from "../src/channels/registry.js";
+import { sentRunBaseline } from "../src/cli/wait-arm.js";
+import { ctlSocketPath } from "../src/ctl/path.js";
+import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
-import { answerProvesRunning } from "../src/jobs/kinds.js";
+import { answerProvesRunning, withJobLiveness } from "../src/jobs/kinds.js";
+import type { JobKindName } from "../src/jobs/types.js";
+import { setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { rmFixtureDir } from "./_fs.js";
 
 /** The D9 matrix, as the spec states it. */
@@ -252,5 +259,124 @@ describe("a channel target carries the row's job (ChannelTarget.job)", () => {
       channel: "hooks",
     });
     expect(agentChannel(channelTarget(db, hooks))).toBe(channelNamed("hooks"));
+  });
+});
+
+describe("the normalized send reply (ChannelSendReply, D9/D13)", () => {
+  const cloud = {
+    channel: "cloud",
+    ack: "exact",
+    baseline: { runs: 7, incarnation: "s" },
+  } as const;
+
+  it("a plugin channel's reply gives its wait the reply's baseline", () => {
+    expect(sentRun(cloud)).toEqual({ baseline: { runs: 7, incarnation: "s" } });
+    expect(sentRunBaseline(cloud)).toEqual({ runs: 7, incarnation: "s" });
+    expect(sentRun({ channel: "cloud", ack: "none" })).toEqual({});
+  });
+
+  it("converts to today's SendResult, whose wait baseline is the same", () => {
+    const result = toSendResult({ ...cloud, msgId: "m1" });
+    expect(result).toEqual({ transport: "cloud", runs: 7, incarnation: "s", msgId: "m1" });
+    expect(sentRunBaseline(result)).toEqual({ runs: 7, incarnation: "s" });
+    expect(toSendResult({ channel: "cloud", ack: "none" })).toEqual({ transport: "cloud" });
+  });
+
+  it("each built-in's result reads as the normalized reply", () => {
+    expect(ctlChannel.sendRun({ transport: "ctl", runs: 3, incarnation: "i", msgId: "m" })).toEqual(
+      { channel: "ctl", ack: "exact", msgId: "m", baseline: { runs: 3, incarnation: "i" } },
+    );
+    expect(ctlChannel.sendRun({ transport: "ctl", msgId: "m" })).toBeNull();
+    expect(
+      hooksChannel.sendRun({ transport: "hooks", ack: "confirmed", runCount: 4, sessionId: "s" }),
+    ).toEqual({ channel: "hooks", ack: "acknowledged", baseline: { runs: 3, incarnation: "s" } });
+    expect(hooksChannel.sendRun({ transport: "hooks", ack: "unknown", runCount: 4 })).toEqual({
+      channel: "hooks",
+      ack: "none",
+    });
+    expect(muxChannel.sendRun({ transport: "mux" })).toEqual({ channel: "mux", ack: "none" });
+  });
+});
+
+describe("liveness by construction: the job kind decides, never the channel", () => {
+  let dir: string;
+  let servers: Server[];
+  /** What the pane's view reports: its command runs, or ended. */
+  let paneRuns: boolean;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mcl-"));
+    servers = [];
+    paneRuns = true;
+    setMuxForTests({
+      ...tmuxBackend,
+      paneResult: async () =>
+        paneRuns ? { state: "running" } : { state: "exited", code: 0, signal: null },
+    });
+  });
+  afterEach(() => {
+    for (const s of servers) s.close();
+    setMuxForTests(undefined);
+    rmFixtureDir(dir);
+  });
+
+  /** A pi extension whose status always answers: the channel reports `ctl: ok`. */
+  async function answering(name: string): Promise<void> {
+    const path = ctlSocketPath("w", name, dir);
+    mkdirSync(dirname(path), { recursive: true });
+    const server = createServer((sock) => {
+      sock.on("error", () => {});
+      const dec = new LineDecoder();
+      sock.setEncoding("utf8");
+      sock.on("data", (chunk: string) => {
+        for (const _line of dec.push(chunk)) {
+          sock.end(encode({ v: 1, ok: true, state: "idle", since: 1, runs: 2, pending: false }));
+        }
+      });
+    });
+    servers.push(server);
+    await new Promise<void>((r) => server.listen(path, () => r()));
+  }
+
+  const read = async (name: string, kind: JobKindName) =>
+    (
+      await ctlChannel.readStates(
+        [{ name, workstreamName: "w", paneId: "%1", cli: "pi", job: { kind, viewPaneId: "%1" } }],
+        { stateDir: dir },
+      )
+    ).get(`w/${name}`);
+
+  it("a channel that answers while the job's kind says ended reads dead", async () => {
+    await answering("g");
+    paneRuns = false;
+    // gate: an answer is not its liveness, so its ended view decides.
+    expect(await read("g", "gate")).toMatchObject({
+      ctl: "ok",
+      alive: false,
+      state: "needs_input",
+    });
+    paneRuns = true;
+    expect(await read("g", "gate")).toMatchObject({ ctl: "ok", alive: true });
+  });
+
+  it("where the kind says an answer proves it runs, the answer stands", async () => {
+    await answering("p");
+    paneRuns = false;
+    expect(await read("p", "pane")).toMatchObject({ ctl: "ok", alive: true });
+    expect(await read("p", "lease")).toMatchObject({ ctl: "ok", alive: true });
+  });
+
+  it("withJobLiveness: no answer is never a death; an answer is the kind's to weigh", async () => {
+    const turn = { state: "unknown", source: "none", since: null } as const;
+    paneRuns = false;
+    for (const ctl of ["missing", "refused", undefined] as const) {
+      const r = await withJobLiveness(
+        { ...turn, ...(ctl !== undefined ? { ctl } : {}) },
+        { kind: "gate", viewPaneId: "%1" },
+      );
+      expect(r.alive, String(ctl)).toBe(true);
+    }
+    const answered = { ...turn, state: "busy", source: "ctl", ctl: "ok" } as const;
+    expect((await withJobLiveness(answered, { kind: "gate", viewPaneId: "%1" })).alive).toBe(false);
+    expect((await withJobLiveness(answered, { kind: "pane", viewPaneId: "%1" })).alive).toBe(true);
   });
 });

@@ -1,0 +1,2168 @@
+[
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "running",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "running",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "tmux",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["list-panes", "list-panes", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "running",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "running",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "herdr",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "running",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "ok",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "missing",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "pane gone"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "pane",
+    "ctl": "refused",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "the multiplexer cannot say"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "running",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "ok",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "withJob": {
+      "state": "busy",
+      "source": "ctl",
+      "since": 1,
+      "alive": true,
+      "ctl": "ok",
+      "pending": false,
+      "runs": 3,
+      "incarnation": "inc"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "missing",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl missing",
+      "ctl": "missing"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "running",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "running"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "ended",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "absent",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": false,
+      "reason": "pane gone",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "lost",
+      "reason": "carrier pane not running"
+    },
+    "calls": ["status", "present", "status", "present", "result"]
+  },
+  {
+    "backend": "rex",
+    "kind": "lease",
+    "ctl": "refused",
+    "pane": "unknown",
+    "withoutJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "withJob": {
+      "state": "unknown",
+      "source": "none",
+      "since": null,
+      "alive": true,
+      "reason": "ctl refused",
+      "ctl": "refused"
+    },
+    "liveness": {
+      "state": "unknown",
+      "reason": "mux: cannot tell"
+    },
+    "calls": ["status", "status", "result"]
+  },
+  {
+    "close": {
+      "cli": "pi",
+      "channel": "ctl",
+      "result": {
+        "applied": true,
+        "task": "t-pi-ctl",
+        "reason": "closed"
+      },
+      "status": "CLOSED"
+    }
+  },
+  {
+    "close": {
+      "cli": "pi",
+      "channel": "hooks",
+      "result": {
+        "applied": true,
+        "task": "t-pi-hooks",
+        "reason": "closed"
+      },
+      "status": "CLOSED"
+    }
+  },
+  {
+    "close": {
+      "cli": "pi",
+      "channel": "mux",
+      "result": {
+        "applied": true,
+        "task": "t-pi-mux",
+        "reason": "closed"
+      },
+      "status": "CLOSED"
+    }
+  },
+  {
+    "close": {
+      "cli": "pi",
+      "channel": null,
+      "result": {
+        "applied": true,
+        "task": "t-pi-null",
+        "reason": "closed"
+      },
+      "status": "CLOSED"
+    }
+  },
+  {
+    "close": {
+      "cli": "other",
+      "channel": "ctl",
+      "result": {
+        "applied": false,
+        "task": null,
+        "reason": "not a pi agent"
+      },
+      "status": "IN_PROGRESS"
+    }
+  },
+  {
+    "close": {
+      "cli": "other",
+      "channel": "hooks",
+      "result": {
+        "applied": true,
+        "task": "t-other-hooks",
+        "reason": "closed"
+      },
+      "status": "CLOSED"
+    }
+  },
+  {
+    "close": {
+      "cli": "other",
+      "channel": "mux",
+      "result": {
+        "applied": false,
+        "task": null,
+        "reason": "not a pi agent"
+      },
+      "status": "IN_PROGRESS"
+    }
+  },
+  {
+    "close": {
+      "cli": "other",
+      "channel": null,
+      "result": {
+        "applied": false,
+        "task": null,
+        "reason": "not a pi agent"
+      },
+      "status": "IN_PROGRESS"
+    }
+  },
+  {
+    "close": {
+      "cli": "claude",
+      "channel": "ctl",
+      "result": {
+        "applied": false,
+        "task": null,
+        "reason": "not a pi agent"
+      },
+      "status": "IN_PROGRESS"
+    }
+  },
+  {
+    "close": {
+      "cli": "claude",
+      "channel": "hooks",
+      "result": {
+        "applied": true,
+        "task": "t-claude-hooks",
+        "reason": "closed"
+      },
+      "status": "CLOSED"
+    }
+  },
+  {
+    "close": {
+      "cli": "claude",
+      "channel": "mux",
+      "result": {
+        "applied": false,
+        "task": null,
+        "reason": "not a pi agent"
+      },
+      "status": "IN_PROGRESS"
+    }
+  },
+  {
+    "close": {
+      "cli": "claude",
+      "channel": null,
+      "result": {
+        "applied": false,
+        "task": null,
+        "reason": "not a pi agent"
+      },
+      "status": "IN_PROGRESS"
+    }
+  }
+]

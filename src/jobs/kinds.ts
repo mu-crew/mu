@@ -3,11 +3,12 @@
 // view presence (does the pane exist) is `viewPresent` in ./view.ts, and the
 // row rule and teardown use only that.
 
+import type { StateAgentRef, StateReading } from "../agent-state.js";
 import type { AgentRow } from "../agents.js";
 import type { Db } from "../db.js";
 import { gateKind } from "./gate.js";
 import { leaseKind } from "./lease.js";
-import { paneKind } from "./pane.js";
+import { paneKind, paneUp } from "./pane.js";
 import type { JobKind, JobKindName, JobLiveness, JobRef } from "./types.js";
 
 /**
@@ -39,6 +40,29 @@ export function jobLiveness(db: Db, job: JobRef): Promise<JobLiveness> {
  */
 export function answerProvesRunning(job: Pick<JobRef, "kind">): boolean {
   return jobKind(job.kind).answer === "running";
+}
+
+/** The job a state ref names: the one its caller listed, else its pane's (a gate's, by its token). */
+export function stateRefJob(a: StateAgentRef): Pick<JobRef, "kind" | "viewPaneId"> {
+  return a.job ?? { kind: a.gateToken != null ? "gate" : "pane", viewPaneId: a.paneId };
+}
+
+/**
+ * A channel's reading made a state reading: its liveness is decided here, and
+ * only here (plugins spec D9, the P1 ruling). A channel reports turn state and
+ * its link to the agent's process (`ctl`: `ok` when the process answered);
+ * it never sets `alive`. An answer stands in for liveness when the job's kind
+ * says so (`answerProvesRunning`); else the job's view decides, where an
+ * unknown is never a death. No answer is not a death either: the reading
+ * stays alive here, and `readAgentStates` takes its liveness from the batched
+ * view read.
+ */
+export async function withJobLiveness(
+  reading: Omit<StateReading, "alive">,
+  job: Pick<JobRef, "kind" | "viewPaneId">,
+): Promise<StateReading> {
+  if (reading.ctl !== "ok" || answerProvesRunning(job)) return { ...reading, alive: true };
+  return { ...reading, alive: (await paneUp(job.viewPaneId)) !== false };
 }
 
 /**

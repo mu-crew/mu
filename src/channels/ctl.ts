@@ -9,27 +9,27 @@
 // for the callers that reserve and fence a send.
 
 import type { RuntimeState, StateAgentRef, StateReading } from "../agent-state.js";
-import { agentKey, UNKNOWN_REASON, unknownReading } from "../agent-state.js";
+import { agentKey, UNKNOWN_REASON } from "../agent-state.js";
 import { AgentRestartedError } from "../agents/errors.js";
 import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/observe.js";
 import { ctlProbe, ctlRequest } from "../ctl/client.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import { type CtlBlocked, type CtlState, INCARNATION_MISMATCH } from "../ctl/protocol.js";
-import { answerProvesRunning } from "../jobs/kinds.js";
+import { stateRefJob, withJobLiveness } from "../jobs/kinds.js";
 import { paneUp } from "../jobs/pane.js";
-import type { JobRef } from "../jobs/types.js";
 import { checkMessage, ctlDelivery } from "./ctl-deliver.js";
 import { expectsCtl, targetSocket } from "./select.js";
 import type {
   AgentChannel,
   ChannelCaps,
+  ChannelReading,
   ChannelReadOptions,
+  ChannelSendReply,
   ChannelTarget,
   InterruptResult,
   RunBaseline,
   SendResult,
   SentFacts,
-  SentRun,
 } from "./types.js";
 
 export { CTL_DEFAULT_TIMEOUT_MS, CtlWriteVetoedError, newMsgId } from "../ctl/client.js";
@@ -51,10 +51,10 @@ export function blockedReason(blocked: CtlBlocked): string {
 }
 
 /** One status probe per agent; a socket that does not answer reads `unknown` with its link. */
-async function readCtlStates(
+async function readCtlTurns(
   agents: readonly StateAgentRef[],
   opts: ChannelReadOptions,
-): Promise<Map<string, StateReading>> {
+): Promise<Map<string, ChannelReading>> {
   const probes = await Promise.all(
     agents.map((a) =>
       ctlProbe(ctlSocketPath(a.workstreamName, a.name, opts.stateDir), CTL_STATE_PROBE_MS, {
@@ -62,7 +62,7 @@ async function readCtlStates(
       }),
     ),
   );
-  const readings = new Map<string, StateReading>();
+  const readings = new Map<string, ChannelReading>();
   for (const [i, agent] of agents.entries()) {
     const probe = probes[i];
     if (probe?.kind === "ok") {
@@ -71,7 +71,6 @@ async function readCtlStates(
         state: ctlRuntimeState(probe.status.state, blocked),
         source: "ctl",
         since: blocked?.since ?? probe.status.since,
-        alive: await answeredAlive(agent),
         ...(blocked !== undefined ? { reason: blockedReason(blocked), blocked } : {}),
         ctl: "ok",
         pending: probe.status.pending,
@@ -82,26 +81,24 @@ async function readCtlStates(
     } else {
       const ctl = probe?.kind === "missing" ? "missing" : "refused";
       const reason = ctl === "missing" ? UNKNOWN_REASON.ctlMissing : UNKNOWN_REASON.ctlRefused;
-      readings.set(agentKey(agent), { ...unknownReading(reason), ctl });
+      readings.set(agentKey(agent), { state: "unknown", source: "none", since: null, reason, ctl });
     }
   }
   return readings;
 }
 
-/** The job a state ref names: the one its caller listed, else its pane's. */
-const jobOf = (a: StateAgentRef): Pick<JobRef, "kind" | "viewPaneId"> =>
-  a.job ?? { kind: a.gateToken != null ? "gate" : "pane", viewPaneId: a.paneId };
-
-/**
- * Liveness for an agent whose socket answered. The job's kind decides
- * whether that answer stands in for it (`answerProvesRunning`: every
- * built-in kind a ctl agent runs as); else its view does, where an unknown
- * is never a death.
- */
-async function answeredAlive(a: StateAgentRef): Promise<boolean> {
-  const job = jobOf(a);
-  if (answerProvesRunning(job)) return true;
-  return (await paneUp(job.viewPaneId)) !== false;
+/** The turn read, each reading's liveness the job's (`withJobLiveness`). */
+async function readCtlStates(
+  agents: readonly StateAgentRef[],
+  opts: ChannelReadOptions,
+): Promise<Map<string, StateReading>> {
+  const turns = await readCtlTurns(agents, opts);
+  const readings = new Map<string, StateReading>();
+  for (const a of agents) {
+    const turn = turns.get(agentKey(a));
+    if (turn !== undefined) readings.set(agentKey(a), await withJobLiveness(turn, stateRefJob(a)));
+  }
+  return readings;
 }
 
 /**
@@ -285,9 +282,12 @@ const CTL_CAPS: ChannelCaps = {
 };
 
 /** pi's run count measured before the send (with its incarnation); none: the send started no run (a session command). */
-function ctlSendRun(sent: SentFacts): SentRun | null {
+function ctlSendRun(sent: SentFacts): ChannelSendReply | null {
   if (sent.runs === undefined) return null;
   return {
+    channel: "ctl",
+    ack: "exact",
+    ...(sent.msgId !== undefined ? { msgId: sent.msgId } : {}),
     baseline: {
       runs: sent.runs,
       ...(sent.incarnation !== undefined ? { incarnation: sent.incarnation } : {}),

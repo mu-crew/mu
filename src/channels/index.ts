@@ -35,7 +35,14 @@ export {
   spawnAckMs,
 } from "./hooks-spawn.js";
 export { muxChannel } from "./mux.js";
-export { channelNamed, registerChannel, registeredChannels, sentRun } from "./registry.js";
+export {
+  channelNamed,
+  isSendReply,
+  registerChannel,
+  registeredChannels,
+  sentRun,
+  toSendResult,
+} from "./registry.js";
 export { agentCtlSocket, channelOf, expectsCtl, piOnHooks, servesCtl } from "./select.js";
 export {
   type AbortOutcome,
@@ -46,7 +53,9 @@ export {
   type ChannelCaps,
   type ChannelDelivery,
   type ChannelName,
+  type ChannelReading,
   type ChannelReadOptions,
+  type ChannelSendReply,
   type ChannelTarget,
   type CtlBlocked,
   type CtlCommandName,

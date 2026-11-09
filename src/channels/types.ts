@@ -176,6 +176,13 @@ export type MessageCheck =
   | { state: "not-accepted"; id: string }
   | { state: "unreachable"; id: string; reason: string };
 
+/**
+ * What a channel's own read reports: turn state and its link to the agent's
+ * process (`ctl`), never `alive`. Liveness is the job's word
+ * (`withJobLiveness`, src/jobs/kinds.ts).
+ */
+export type ChannelReading = Omit<StateReading, "alive">;
+
 export interface ChannelReadOptions {
   now?: number;
   /** Roots the derived control socket path (spawn uses the DB's directory). */
@@ -195,13 +202,26 @@ export interface SentFacts {
   ack?: "confirmed" | "unknown" | "sent";
   runCount?: number;
   sessionId?: string;
+  msgId?: string;
 }
 
 /**
- * The run a delivery started, as the wait it owes counts it. `baseline`: the
- * turns settled before it (absent: the wait is owed with none, a busy-to-idle).
- * null from `sendRun`: the delivery started no run (a ctl session command).
+ * A delivery's reply in the normalized form (plugins spec D9, D13): the
+ * internal channel contract a plugin channel answers in, and the form each
+ * built-in's result converts to (`AgentChannel.sendRun`). `ack`: `exact` (a
+ * receipt by msgId), `acknowledged` (the agent's own turn count confirmed it,
+ * or will), `none`. `baseline`: the turns settled before the run it started
+ * (absent: its wait is owed with none, a busy-to-idle). The CLI's `--json`
+ * still prints today's SendResult (`toSendResult`).
  */
+export interface ChannelSendReply {
+  channel: ChannelName;
+  ack: "exact" | "acknowledged" | "none";
+  baseline?: RunBaseline;
+  msgId?: string;
+}
+
+/** The run a delivery started, as the wait it owes counts it (a reply's `baseline`). */
 export interface SentRun {
   baseline?: RunBaseline;
 }
@@ -216,8 +236,11 @@ export interface AgentChannel extends ChannelDelivery {
    * at-most-once only by never resending.
    */
   readonly fence: boolean;
-  /** The run a delivery on this channel started (see SentRun), from what it reported. */
-  sendRun(sent: SentFacts): SentRun | null;
+  /**
+   * What a delivery on this channel reported, as the normalized reply
+   * (ChannelSendReply). null: the delivery started no run (a ctl session command).
+   */
+  sendRun(sent: SentFacts): ChannelSendReply | null;
   /** How a delivered send went, for the `sent N bytes to <agent> (...)` line. */
   describeSend(sent: SendResult, o: { fresh?: boolean }): string;
   /** How a delivered interrupt went, for the same line. */

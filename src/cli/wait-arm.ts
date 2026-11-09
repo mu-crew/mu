@@ -21,7 +21,7 @@
 // the verbs do, because only they know whether the effect landed.
 
 import { getAgent } from "../agents.js";
-import { type SentFacts, sentRun } from "../channels/index.js";
+import { type ChannelSendReply, type SentFacts, sentRun } from "../channels/index.js";
 import type { Db } from "../db.js";
 import { currentCallers } from "../wait-callers.js";
 import { type RefBaseline, type RegisterRef, registerOwnedWait } from "../wait-registration.js";
@@ -85,7 +85,10 @@ export function armWait(db: Db, refs: readonly RegisterRef[]): ArmResult {
  * interrupt already carries them as `runs`). An unconfirmed paste and a mux
  * send give none.
  */
-export function sentRunBaseline(sent: SentFacts): { runs?: number; incarnation?: string } {
+export function sentRunBaseline(sent: SentFacts | ChannelSendReply): {
+  runs?: number;
+  incarnation?: string;
+} {
   return sentRun(sent)?.baseline ?? {};
 }
 

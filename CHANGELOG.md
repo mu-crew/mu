@@ -264,27 +264,35 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   channel's capabilities: a spawn replay and `mu next`'s unreconcilable check
   on `receipt` (`exact` asks by msgId, `acknowledged` reads a turn past the
   baseline, `none` stays unknown), `mu agent spawn --task`'s `agent check`
-  hint on `exact`, the note hint on `steer`, CLOSE blocks on `settleText`
-  (`tied`), and the wait's stall timing and rewatch on the reading's channel
-  streaming. The run a delivery started is the channel's word (`sendRun`):
+  hint on `exact`, the note hint on `steer`, and the wait's stall timing and
+  rewatch on the reading's channel streaming. The run a delivery started is the channel's word (`sendRun`):
   `armSend`, `send --wait`, `mu next`'s sent outcome and the task spawn's
   receipt read it instead of recomputing it by name, and each channel writes
-  its own `sent … (via …)` line. The run-baseline rename: `hooksFence` is
+  its own `sent … (via …)` line. A delivery's reply has a normalized form,
+  `ChannelSendReply` (`channel`, `ack`: `exact`, `acknowledged` or `none`,
+  `baseline`), the contract a plugin channel answers in: each built-in's
+  `sendRun` reads its result as one, `sentRun` takes either form, and
+  `toSendResult` turns a reply into today's `SendResult`, so `--json` is
+  unchanged. The run-baseline rename: `hooksFence` is
   `hooksRunBaseline`, `sentFence` is `sentRunBaseline`. `ChannelTarget.job`
-  carries the row's job (`agentJobRef`: pane, lease or gate). Liveness stays
-  the job's: ctl's answered reading is alive because the job's kind says an
-  answer from its process proves it runs (`answerProvesRunning`), and a socket
-  that does not answer still takes the batched view read's. `readAgentStates`
+  carries the row's job (`agentJobRef`: pane, lease or gate). Liveness is the
+  job's by construction: a channel's own read reports turn state and its link
+  (`ChannelReading`, no `alive`), and one function in `src/jobs/`,
+  `withJobLiveness`, sets `alive`. An answer stands in for it only where the
+  job's kind says an answer from its process proves it runs
+  (`answerProvesRunning`: pane and lease), else the job's view decides; a
+  socket that does not answer still takes the batched view read's. `readAgentStates`
   groups agents by their channel's read (hooks and mux share one batch, as
   before). `test/channel-names.test.ts` parses `src/` and fails on a channel
   name comparison outside `src/channels/` that is neither a capability check
-  nor on its pinned list of single-channel features, and on a literal
-  `alive` in a channel or ctl module; `test/jobs-imports.test.ts` is now
-  import-aware too (a destructured probe method, or a probe imported named,
-  aliased or as a namespace from a backend module). One CLOSE-block edge
-  widens: a row recorded on `ctl` whose cli key is not `pi` (a wrapper that
-  runs pi) now applies its settle text, as ctl's text is tied. Otherwise no
-  behaviour change; `--json` result shapes are unchanged.
+  nor on its pinned list of single-channel features (also through an alias or
+  a constant holding a name), and on any `alive` set in a channel or ctl
+  module; `test/jobs-imports.test.ts` is now import-aware too (a destructured
+  probe method, by computed key too, or a probe imported named, aliased or as
+  a namespace from a backend module). `test/channel-ctl-differential.test.ts`
+  pins 72 ctl readings with their probes, and CLOSE eligibility, to their
+  output before P4. No behaviour change; `--json` result shapes are
+  unchanged.
 
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove

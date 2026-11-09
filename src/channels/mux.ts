@@ -70,7 +70,7 @@ export const muxChannel: AgentChannel = {
   caps: MUX_CAPS,
   fence: MUX_CAPS.fence === "sync",
   // A mux send is owed a wait with no baseline: its busy-to-idle is all there is.
-  sendRun: () => ({}),
+  sendRun: () => ({ channel: "mux", ack: "none" }),
   describeSend: () => "via mux",
   // Never reached: the mux channel refuses an interrupt.
   describeInterrupt: () => "via mux",

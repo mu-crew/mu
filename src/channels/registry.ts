@@ -9,7 +9,14 @@
 import { ctlChannel } from "./ctl.js";
 import { hooksChannel } from "./hooks.js";
 import { muxChannel } from "./mux.js";
-import type { AgentChannel, ChannelName, SentFacts, SentRun } from "./types.js";
+import type {
+  AgentChannel,
+  ChannelName,
+  ChannelSendReply,
+  SendResult,
+  SentFacts,
+  SentRun,
+} from "./types.js";
 
 let registry: Map<string, AgentChannel> | undefined;
 
@@ -53,15 +60,40 @@ export function unregisterChannelForTests(name: ChannelName): void {
   channels().delete(name);
 }
 
+/** True for a reply in the normalized form (it names its `channel`; today's results name a `transport`). */
+export function isSendReply(x: SentFacts | ChannelSendReply): x is ChannelSendReply {
+  return "channel" in x && typeof x.channel === "string";
+}
+
 /**
- * The run a delivery started (see `AgentChannel.sendRun`), asked of the channel
- * that carried it. A result with no `transport` is ctl's (an interrupt reply
- * that predates the field) only where the caller says so; with none here, or
- * an unregistered name, its own `runs` (when present) is the baseline.
+ * A normalized reply as today's SendResult, the shape `--json` prints and the
+ * wait arming reads: its baseline as `runs` and `incarnation`, its msgId kept.
  */
-export function sentRun(sent: SentFacts): SentRun | null {
+export function toSendResult(reply: ChannelSendReply): SendResult {
+  return {
+    transport: reply.channel,
+    ...(reply.baseline !== undefined ? { runs: reply.baseline.runs } : {}),
+    ...(reply.baseline?.incarnation !== undefined
+      ? { incarnation: reply.baseline.incarnation }
+      : {}),
+    ...(reply.msgId !== undefined ? { msgId: reply.msgId } : {}),
+  };
+}
+
+/**
+ * The run a delivery started, as its wait counts it. A normalized reply
+ * carries its baseline. Today's result is asked of the channel that carried
+ * it (`AgentChannel.sendRun`); with no `transport`, or an unregistered one,
+ * its own `runs` (when present) is the baseline. null: no run started.
+ */
+export function sentRun(sent: SentFacts | ChannelSendReply): SentRun | null {
+  if (isSendReply(sent)) return sent.baseline !== undefined ? { baseline: sent.baseline } : {};
   const channel = channelNamed(sent.transport);
-  if (channel !== undefined) return channel.sendRun(sent);
+  if (channel !== undefined) {
+    const reply = channel.sendRun(sent);
+    if (reply === null) return null;
+    return reply.baseline !== undefined ? { baseline: reply.baseline } : {};
+  }
   if (sent.runs === undefined) return {};
   return {
     baseline: {
