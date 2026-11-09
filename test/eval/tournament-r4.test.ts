@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { RunOne } from "../../tools/eval/commands.ts";
 import type { ExposureSpec } from "../../tools/eval/exposure.ts";
 import { controlFile, readControl, type SetupRow } from "../../tools/eval/tournament.ts";
 import type { GoldenTrace, VariantRow } from "../../tools/eval/tournament-build.ts";
@@ -31,14 +30,7 @@ import {
   scoreR4,
 } from "../../tools/eval/tournament-r4-score.ts";
 import { committedControl, powerFacts, writeReport } from "../../tools/eval/tournament-report.ts";
-import type {
-  DestructiveFx,
-  RunMetrics,
-  RunResult,
-  Surface,
-  ToolCall,
-  Verdict,
-} from "../../tools/eval/types.ts";
+import type { DestructiveFx, Surface } from "../../tools/eval/types.ts";
 
 const MARK = "the worker's result follows below";
 const SKILL_MARK = "read the result block first";
@@ -85,67 +77,7 @@ const surface = (root: string): Surface => ({
   skillDir: join(root, "skills", "mu"),
 });
 
-const tool = (id: string, over: Partial<ToolCall> = {}): ToolCall => ({
-  id,
-  name: "bash",
-  args: { command: "x" },
-  isError: false,
-  output: "",
-  exitCode: 0,
-  durationMs: 1,
-  ...over,
-});
-
-function metrics(toolCalls: ToolCall[] = [], tokens = 1000): RunMetrics {
-  return {
-    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: tokens, cost: 0 },
-    turns: 2,
-    toolCalls,
-    muCalls: 1,
-    muErrors: 0,
-    prods: 0,
-    wallMs: 10,
-    aborted: null,
-    lastError: null,
-    finalText: "",
-    events: [],
-  };
-}
-
-interface Outcome {
-  completed?: boolean;
-  toolCalls?: ToolCall[];
-  verdict?: Partial<Verdict>;
-}
-type Plan = (o: RunOne) => Outcome;
-
-/** An injected runOne: records every call and answers from `plan`. */
-function fakeRun(plan: Plan = () => ({})) {
-  const calls: RunOne[] = [];
-  const run = async (o: RunOne): Promise<RunResult> => {
-    calls.push(o);
-    const p = plan(o);
-    const verdict: Verdict = {
-      completed: p.completed ?? true,
-      wrong: [],
-      destructive: [],
-      destructiveFx: [],
-      muCalls: [],
-      notes: [],
-      ...p.verdict,
-    };
-    return {
-      scenario: o.scenario.id,
-      surface: o.surface.name,
-      model: o.model,
-      rep: o.rep,
-      startedAt: "2026-11-07T00:00:00.000Z",
-      metrics: metrics(p.toolCalls ?? []),
-      verdict,
-    };
-  };
-  return { run, calls };
-}
+import { fakeRun, metrics, type Outcome, tool } from "./_r4-fakes.ts";
 
 const job = (over: Partial<R4Job> & { surface: Surface }): R4Job => ({
   group: "c1_wait",

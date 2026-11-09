@@ -12,6 +12,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Eval: tournament fast mode** (task `f_fast_mode`, user decision
+  2026-11-09, spec §4.7). `tournament plan|freeze --fast` plans R1 at
+  `n_eff` 30 per model and 45 pooled; `decide --fast <g>` decides on R1 rows
+  (ahead of base on both weak models and pooled z ≥ 1.65; losses as in §4.1;
+  at most one winner per group). R2 and the per-group R3, R4 and final refuse
+  on a fast group. `final --combined` (C7) puts every group's winner on one
+  surface, runs R4 with sonnet and both weak models, then the holdouts once,
+  and on a regression bisects the winners on the R4 scenarios only and names
+  the one to drop. The report states the accepted false-win rates (about 0.10
+  per group, 0.47 over six) and the group's bound 1 − 0.95^(N·h), which
+  Monte Carlo puts at 0.17-0.58 for 6-12 variants.
+
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`

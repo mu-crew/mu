@@ -29,12 +29,15 @@ import {
   appendReviewStop,
   assertB0,
   assertFrozen,
+  assertMode,
   assertNoPendingStops,
   type ControlRow,
   coldFile,
   epochOf,
+  FAST_TARGET,
   GATE,
   type IsolationRow,
+  modeOf,
   nPlan,
   pendingStops,
   planCmhPower,
@@ -61,6 +64,7 @@ import {
   listCandidates,
   type VariantRow,
 } from "./tournament-build.ts";
+import { runCombined } from "./tournament-c7.ts";
 import {
   auditSession,
   collectVariants,
@@ -74,7 +78,7 @@ import {
 import { parseManifest } from "./tournament-patch.ts";
 import { EXIT_REVIEW, runFinal, runR4Gate, runScan } from "./tournament-r4.ts";
 import { writeReport } from "./tournament-report.ts";
-import { BASE, cut, scoreRound } from "./tournament-score.ts";
+import { BASE, cut, decideFast, scoreRound } from "./tournament-score.ts";
 import type { Surface } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -88,14 +92,17 @@ const GROUPS: readonly Group[] = [
 ];
 
 const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
-  freeze <g> --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
+  --fast on plan/freeze (then r1, decide, report follow the frozen mode): R1 decides, no R2/R3/R4 per group, C7 gates
+  freeze <g> [--fast] --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
   refreeze <g> --row <row id> --why "<reason>"
-  plan <g> [--variants 12] [--entrants 6] [--b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m]]
+  plan <g> [--fast] [--variants 12] [--entrants 6] [--b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m]]
   pack <g> [--brief tools/eval/candidates/<g>/brief.src.md]
   design <g> --model <m> [--session <name>]
   audit <g> [--session <name>]
   build <g> [--scenarios a,b]
   r1 <g> | r2 <g>   [--concurrency auto|n] [--model-concurrency 8]   (auto: as many probe rows as muzzle's budget holds)
+  decide --fast <g>   (fast mode: the R1 decision; at most one winner)
+  final --combined [--groups a,b] [--drop v1,v2] [--concurrency 6]   (C7: every group's winner on one surface; R4, then holdouts once)
   review <g> --stop <id> --decision drop|continue --why "<transcript lines>"
   status <g>
   r3 <g> [--scenarios a,b] [--concurrency 6]
@@ -241,6 +248,107 @@ function audit(group: Group, rows: readonly ControlRow[], dir: string, only?: st
   return n;
 }
 
+const surfacesOf = (
+  setup: SetupRow,
+  entrants: readonly VariantRow[],
+): { label: string; surface: Surface }[] => [
+  { label: BASE, surface: baseSurface(setup) },
+  ...entrants.map((v) => ({
+    label: v.id,
+    surface: { ...surfaceFromDir(`hill2-${v.id}`, v.dir), family: "next" as const },
+  })),
+];
+
+/** Score a round from its probe rows of this epoch (fresh rows only: the round's rep range). */
+function scoreFrom(o: {
+  which: "r1" | "r2";
+  group: Group;
+  dir: string;
+  rows: readonly ControlRow[];
+  setup: SetupRow;
+  entrants: readonly VariantRow[];
+  cold: readonly ColdRow[];
+  fast: boolean;
+}): { scores: ReturnType<typeof scoreRound>; probe: ProbeRow[] } {
+  const epoch = epochOf(o.rows);
+  const floor = epoch * 1000 + REP_BASE[o.which];
+  const promptDir = join(o.dir, "prompts");
+  const probe = readProbeRows(probeFile(o.dir, epoch)).filter(
+    (r) => r.round === o.which && r.rep >= floor && r.rep < floor + 900,
+  );
+  const lint = nextLint(surfacesOf(o.setup, o.entrants), NEXT_CASES);
+  const scores = scoreRound({
+    round: o.which,
+    group: o.group,
+    rows: probe,
+    cold: o.cold,
+    variants: o.entrants,
+    setup: o.setup,
+    headline: NEXT_CASES.filter((c) => c.group === o.group && c.role === "headline").map(
+      (c) => c.id,
+    ),
+    headlineAny: NEXT_CASES.filter((c) => c.role === "headline").map((c) => c.id),
+    nameCues: lint.nameCues,
+    prompt: (sha) => {
+      const f = join(promptDir, `${sha}.txt`);
+      return existsSync(f) ? readFileSync(f, "utf8") : "";
+    },
+    S: o.which === "r2" ? o.entrants.length : undefined,
+    decisions: o.rows.flatMap((r) => (r.kind === "review_decision" ? [r] : [])),
+    repFloor: floor,
+    fast: o.fast,
+  });
+  return { scores, probe };
+}
+
+/** Append and print every pending review stop of a score; true when there was one (exit 7). */
+function stopFor(dir: string, scores: ReturnType<typeof scoreRound>): boolean {
+  const stops = scores.flatMap((s) => s.reviews);
+  for (const s of stops)
+    console.log(
+      `review stop ${appendReviewStop(dir, s)}: ${s.variant} ${s.cell}: ${s.entries.join("; ")}`,
+    );
+  return stops.length > 0;
+}
+
+/**
+ * §4.7 `decide --fast <group>`: re-score the group's R1 rows of this epoch (base interleaved, fresh
+ * rows only) with the fast win rule, and write the decision row: at most one winner. Exit code.
+ */
+export function decide(group: Group, dir: string): number {
+  const rows = readControl(dir);
+  const setup = setupOf(rows);
+  assertB0(setup);
+  if (!setup) return 2;
+  const epoch = epochOf(rows);
+  if (!rows.some((r) => r.kind === "round_score" && r.round === "r1" && r.epoch === epoch))
+    throw new Error("no R1 in this epoch: run `tournament r1` first");
+  const entrants = field(rows);
+  const { scores } = scoreFrom({
+    which: "r1",
+    group,
+    dir,
+    rows,
+    setup,
+    entrants,
+    cold: [],
+    fast: true,
+  });
+  if (stopFor(dir, scores)) return EXIT_REVIEW;
+  const d = decideFast(scores);
+  appendControl(dir, {
+    kind: "decision",
+    mode: "fast",
+    epoch,
+    winner: d.winner,
+    ranking: d.ranking,
+    why: d.why,
+    scores,
+  });
+  console.log(`decision: ${d.winner ?? "base stays"} (${d.why})`);
+  return 0;
+}
+
 async function round(
   group: Group,
   which: "r1" | "r2",
@@ -253,6 +361,7 @@ async function round(
   if (!setup) return 2;
   const freeze = [...rows].reverse().find((r) => r.kind === "freeze");
   if (freeze?.kind !== "freeze") throw new Error("no freeze row");
+  const fast = modeOf(rows) === "fast";
   const epoch = epochOf(rows);
   const all = field(rows);
   let entrants = all;
@@ -269,13 +378,7 @@ async function round(
       return 0;
     }
   }
-  const surfaces = [
-    { label: BASE, surface: baseSurface(setup) },
-    ...entrants.map((v) => ({
-      label: v.id,
-      surface: { ...surfaceFromDir(`hill2-${v.id}`, v.dir), family: "next" as const },
-    })),
-  ];
+  const surfaces = surfacesOf(setup, entrants);
   const models = [...setup.models.weak, setup.models.gate];
   const jobs = roundJobs(
     which,
@@ -296,13 +399,11 @@ async function round(
   console.log(
     `${which}: ${est.rows} rows, about ${est.hours.toFixed(1)} h (slots ${est.slotHours.toFixed(1)} h, models ${est.modelHours.toFixed(1)} h)`,
   );
-  const out = probeFile(dir, epoch);
-  const promptDir = join(dir, "prompts");
   const started = Date.now();
   await runNext({
     jobs,
-    out,
-    promptDir,
+    out: probeFile(dir, epoch),
+    promptDir: join(dir, "prompts"),
     ...conc,
     providerExt: setup.providerExt ?? undefined,
   });
@@ -322,47 +423,27 @@ async function round(
     });
     cold = readRows(coldFile(dir, epoch));
   }
-  const floor = epoch * 1000 + REP_BASE[which];
-  const probe = readProbeRows(out).filter(
-    (r) => r.round === which && r.rep >= floor && r.rep < floor + 900,
-  );
-  const lint = nextLint(surfaces, NEXT_CASES);
-  const scores = scoreRound({
-    round: which,
-    group,
-    rows: probe,
-    cold,
-    variants: entrants,
-    setup,
-    headline: NEXT_CASES.filter((c) => c.group === group && c.role === "headline").map((c) => c.id),
-    headlineAny: NEXT_CASES.filter((c) => c.role === "headline").map((c) => c.id),
-    nameCues: lint.nameCues,
-    prompt: (sha) => {
-      const f = join(promptDir, `${sha}.txt`);
-      return existsSync(f) ? readFileSync(f, "utf8") : "";
-    },
-    S: which === "r2" ? entrants.length : undefined,
-    decisions: rows.flatMap((r) => (r.kind === "review_decision" ? [r] : [])),
-    repFloor: floor,
-  });
+  const { scores, probe } = scoreFrom({ which, group, dir, rows, setup, entrants, cold, fast });
   appendControl(dir, {
     kind: "round_score",
     round: which,
     epoch,
     S: which === "r2" ? entrants.length : null,
+    ...(fast ? { mode: "fast" } : {}),
     scores,
   });
   const tokens: Record<string, number> = {};
   for (const r of probe) tokens[r.model] = (tokens[r.model] ?? 0) + r.tokens;
   for (const r of cold) tokens[r.model] = (tokens[r.model] ?? 0) + r.tokens;
   appendControl(dir, { kind: "spend", round: which, epoch, tokens, wallMs: Date.now() - started });
-  const stops = scores.flatMap((s) => s.reviews);
-  if (stops.length > 0) {
-    for (const s of stops)
+  if (stopFor(dir, scores)) return EXIT_REVIEW;
+  if (fast) {
+    for (const s of scores)
       console.log(
-        `review stop ${appendReviewStop(dir, s)}: ${s.variant} ${s.cell}: ${s.entries.join("; ")}`,
+        `${s.id}: fast wins ${s.wins} (z ${s.winZ.toFixed(2)})${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
       );
-    return EXIT_REVIEW;
+    console.log(`fast mode: no cut; next \`tournament decide --fast ${group}\``);
+    return 0;
   }
   const c = cut(which, scores);
   appendControl(dir, { kind: "cut", round: which, epoch, ...c });
@@ -380,12 +461,21 @@ async function round(
   return 0;
 }
 
-export async function tournamentCli(args: string[]): Promise<number> {
+export async function tournamentCli(argv: string[]): Promise<number> {
+  // `--fast` and `--combined` may stand anywhere (`decide --fast <group>`, `final --combined`)
+  const fastFlag = argv.includes("--fast");
+  const args = argv.filter((a) => a !== "--fast");
   const [sub, g, ...rest] = args;
   if (!sub || sub === "--help" || sub === "help") {
     console.log(USAGE);
     return sub ? 0 : 2;
   }
+  if (sub === "final" && args.includes("--combined"))
+    return runCombined({
+      repo: REPO_ROOT,
+      groups: GROUPS,
+      args: args.slice(1).filter((a) => a !== "--combined"),
+    });
   const group = g as Group;
   if (!GROUPS.includes(group)) {
     console.error(USAGE);
@@ -394,6 +484,7 @@ export async function tournamentCli(args: string[]): Promise<number> {
   const dir = rowDir(group);
   const rows = readControl(dir);
   const frozen = (): void => assertFrozen(rows, judgesHash(REPO_ROOT).hash);
+  assertMode(rows, sub, fastFlag);
   switch (sub) {
     case "freeze": {
       if (rows.some((r) => r.kind === "freeze"))
@@ -422,11 +513,14 @@ export async function tournamentCli(args: string[]): Promise<number> {
       }
       if (!setupOf(rows)) appendControl(dir, setup);
       const h = judgesHash(REPO_ROOT);
-      const plan = nPlan(group, NEXT_CASES, setup);
+      const mode = fastFlag ? "fast" : "full";
+      const plan = nPlan(group, NEXT_CASES, setup, mode);
       appendControl(dir, {
         kind: "freeze",
         judgesHash: h.hash,
         files: h.files,
+        mode,
+        ...(fastFlag ? { targets: { ...FAST_TARGET } } : {}),
         nPlan: plan,
         cmhPower: planCmhPower(plan),
         checks,
@@ -436,7 +530,7 @@ export async function tournamentCli(args: string[]): Promise<number> {
           `${p.case} ${p.kind}: m ${p.plan.m} r ${p.plan.r} n_eff ${p.plan.nEff.toFixed(0)}${p.plan.nEffPooled ? `/${p.plan.nEffPooled.toFixed(0)}` : ""}${p.plan.reached ? "" : ` SHORT (+${p.plan.add} paraphrases, MDE ${p.mde})`}`,
         );
       console.log(powerLine(planCmhPower(plan)));
-      console.log(`frozen: judges ${h.hash}`);
+      console.log(`frozen (${mode} mode): judges ${h.hash}`);
       return 0;
     }
     case "refreeze": {
@@ -464,7 +558,15 @@ export async function tournamentCli(args: string[]): Promise<number> {
         setupOf(rows) ??
         (b5 ? { models: { weak, gate }, ...rhoFromB5(b5.probe, b5.cold, { weak, gate }) } : null);
       const freeze = [...rows].reverse().find((r) => r.kind === "freeze");
-      const plan = freeze?.kind === "freeze" ? freeze.nPlan : nPlan(group, NEXT_CASES, setup);
+      const fast = freeze?.kind === "freeze" ? freeze.mode === "fast" : fastFlag;
+      const plan =
+        freeze?.kind === "freeze"
+          ? freeze.nPlan
+          : nPlan(group, NEXT_CASES, setup, fast ? "fast" : "full");
+      if (fast)
+        console.log(
+          `fast mode: R1 decides (own headline n_eff ${FAST_TARGET.own} per model, ${FAST_TARGET.pooled} pooled); no R2, no per-group R4; C7 is the gate`,
+        );
       const n = Number(flag(rest, "--variants") ?? 12);
       const s = Number(flag(rest, "--entrants") ?? Math.ceil(n / 2));
       const models = setup ? [...setup.models.weak, setup.models.gate] : [...WEAK, GATE];
@@ -484,10 +586,13 @@ export async function tournamentCli(args: string[]): Promise<number> {
       console.log(
         powerLine((freeze?.kind === "freeze" ? freeze.cmhPower : undefined) ?? planCmhPower(plan)),
       );
-      for (const [which, k] of [
-        ["r1", n],
-        ["r2", s],
-      ] as const) {
+      const rounds: (readonly ["r1" | "r2", number])[] = fast
+        ? [["r1", n]]
+        : [
+            ["r1", n],
+            ["r2", s],
+          ];
+      for (const [which, k] of rounds) {
         const e = wallEstimate(
           roundJobs(
             which,
@@ -616,6 +721,10 @@ export async function tournamentCli(args: string[]): Promise<number> {
       frozen();
       assertNoPendingStops(rows);
       return round(group, sub, rest, dir);
+    case "decide":
+      frozen();
+      assertNoPendingStops(rows);
+      return decide(group, dir);
     case "review": {
       const stop = flag(rest, "--stop");
       const decision = flag(rest, "--decision");

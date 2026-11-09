@@ -22,6 +22,9 @@ import {
   type ControlRow,
   controlFile,
   epochOf,
+  FAST_ALPHA,
+  FAST_TARGET,
+  FAST_Z,
   type FreezeRow,
   type IsolationRow,
   planCmhPower,
@@ -122,6 +125,53 @@ export function powerFacts(
   };
 }
 
+/** Fast mode's accepted error rates (user decision 2026-11-09, §4.7). */
+export const FAST_FALSE_WIN = 0.1;
+
+export interface FastFacts {
+  ownPerModel: number[];
+  ownPooled: number[];
+  /** Fisher power for 0.5 → 0.8 at one-sided FAST_ALPHA on the weakest own case: a lower bound for the z rule. */
+  winPower: number;
+  /** The accepted per-group false-win rate and P(≥ 1 false winner over the six groups). */
+  falseWin: number;
+  falseWinAny: number;
+  /** (variant, case) win tests in this group, and the bound 1 − (1 − FAST_ALPHA)^k they give. */
+  tests: number;
+  falseWinBound: number;
+}
+
+/** The numbers a fast-mode report states (§4.7), at the frozen plan and the R1 field. */
+export function fastFacts(plan: readonly CasePlan[], variants: number): FastFacts {
+  const own = plan.filter((p) => p.kind === "own");
+  const pooled = own.map((p) => Math.round(p.plan.nEffPooled ?? p.plan.nEff));
+  const tests = variants * own.length;
+  return {
+    ownPerModel: own.map((p) => Math.round(p.plan.nEff)),
+    ownPooled: pooled,
+    winPower:
+      pooled.length === 0
+        ? 0
+        : Math.min(...pooled.map((n) => fisherPower(0.8, 0.5, n, n, FAST_ALPHA, "greater"))),
+    falseWin: FAST_FALSE_WIN,
+    falseWinAny: 1 - (1 - FAST_FALSE_WIN) ** GROUPS_N,
+    tests,
+    falseWinBound: 1 - (1 - FAST_ALPHA) ** tests,
+  };
+}
+
+function fastSection(f: FastFacts): string[] {
+  return [
+    "### Fast mode (user decision 2026-11-09)",
+    "",
+    `- R1 decides. A variant wins a headline case when, on its exposed clusters, it is ahead of base on both weak models and the pooled weak-model z is at least ${FAST_Z}. Losses (per-case Holm and CMH over the R1 family, sonnet included) eliminate. At most one winner per group: the highest pooled z, then the shorter text.`,
+    `- Own headline cases: per-model n_eff ${f.ownPerModel.join(", ") || "-"}, pooled ${f.ownPooled.join(", ") || "-"} (targets ${FAST_TARGET.own} and ${FAST_TARGET.pooled}). Win power for 0.5 → 0.8 (Fisher, one-sided ${FAST_ALPHA}, a lower bound for the z rule): ${f2(f.winPower)} on the weakest own case.`,
+    `- **False wins.** The accepted per-group false-win rate is about ${f.falseWin}, so the chance of at least one false winner over the ${GROUPS_N} groups is about 1 − 0.9^${GROUPS_N} = ${f2(f.falseWinAny)}. The rule is about ${FAST_ALPHA} per (variant, case) test with no correction across them: this group's ${f.tests} tests allow up to 1 − 0.95^${f.tests} = ${f2(f.falseWinBound)}.`,
+    "- **No R2 and no per-group R4.** C7 (`tournament final --combined`) is the regression gate: every group's winner on one surface, R4 on sonnet and both weak models, the holdouts once; code review is the other backstop.",
+    "",
+  ];
+}
+
 function powerSection(p: PowerFacts): string[] {
   return [
     "### Error rates and power (at the frozen plan)",
@@ -144,6 +194,7 @@ function setupSection(
   setup: SetupRow | undefined,
   freeze: FreezeRow | undefined,
   power: PowerFacts | null,
+  fast: FastFacts | null = null,
 ): string[] {
   const out = ["## 1. Setup", ""];
   if (setup) {
@@ -207,7 +258,8 @@ function setupSection(
       "",
     );
   }
-  if (power) out.push(...powerSection(power));
+  if (fast) out.push(...fastSection(fast));
+  else if (power) out.push(...powerSection(power));
   const iso = rows.filter((r): r is IsolationRow => r.kind === "isolation");
   out.push("Designer sessions:", "");
   if (iso.length === 0) out.push("- none");
@@ -493,17 +545,29 @@ export function renderReport(o: { group: Group; dir: string; candDir: string }):
       rows.filter((r): r is VariantRow => r.kind === "variant").map((r) => [r.id, r]),
     ).values(),
   ];
+  const r1 = lastOf(rows, "round_score", (r) => r.round === "r1" && r.epoch === epoch);
+  const fast =
+    freeze?.mode === "fast"
+      ? fastFacts(freeze.nPlan, Array.isArray(r1?.scores) ? r1.scores.length : vs.length)
+      : null;
   return [
     `# hill-r2 tournament: ${o.group}`,
     "",
-    ...setupSection(o.dir, rows, setup, freeze, power),
+    ...setupSection(o.dir, rows, setup, freeze, power, fast),
     ...variantsSection(vs, o.candDir),
     "## 3. R1 / R2",
     "",
     ...roundSection(rows, "r1", epoch),
-    ...roundSection(rows, "r2", epoch),
-    ...scanSection(rows, epoch),
-    ...r4Section(rows, epoch),
+    ...(fast
+      ? [
+          "R2, R3 and R4: not run in fast mode; C7 (`tournament final --combined`) is the regression gate.",
+          "",
+        ]
+      : [
+          ...roundSection(rows, "r2", epoch),
+          ...scanSection(rows, epoch),
+          ...r4Section(rows, epoch),
+        ]),
     ...reviewSection(rows),
     ...decisionSection(rows),
     ...spendSection(rows),
@@ -511,7 +575,9 @@ export function renderReport(o: { group: Group; dir: string; candDir: string }):
 }
 
 /** `tournament report <group> --out <md>`: the §6 sections, and the copy of tournament.jsonl. Exit code. */
-export async function writeReport(o: GateOpts & { out: string }): Promise<number> {
+export async function writeReport(
+  o: Omit<GateOpts, "group"> & { group: Group; out: string },
+): Promise<number> {
   const ctl = controlFile(o.dir);
   if (!existsSync(ctl)) {
     console.error(`no control file ${ctl}`);

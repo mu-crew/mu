@@ -20,6 +20,7 @@ import {
   ALPHA,
   CMH_ALPHA,
   DEFAULT_RHO,
+  FAST_Z,
   type ReviewStopRow,
   type SetupRow,
   stopId,
@@ -58,6 +59,8 @@ export interface WinCell {
   z: number;
   /** Raw hit rate on the exposed clusters is at least base's, per weak model. */
   direction: Record<string, boolean>;
+  /** Raw hit rate on the exposed clusters is above base's, per weak model (fast mode's rule). */
+  ahead?: Record<string, boolean>;
   /** Holm threshold this case's p had to clear (null in R1: no win test). */
   threshold: number | null;
   win: boolean;
@@ -102,6 +105,8 @@ export interface ScoreInput {
   decisions?: readonly { stop: string; decision: "drop" | "continue" }[];
   /** Rep floor of the round (fresh rows): a row below it is an earlier round's. */
   repFloor?: number;
+  /** Fast mode (§4.7): R1 is the deciding round, with the fast win rule. */
+  fast?: boolean;
 }
 
 export const BASE = "base";
@@ -271,17 +276,15 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
         bs.map((x) => ({ hit: x.hit, c: cluster(x) })),
         rho,
       );
-      const direction = Object.fromEntries(
-        weak.map((m) => {
-          const a = vs.filter((x) => x.row.model === m);
-          const b = bs.filter((x) => x.model === m);
-          const ok =
-            a.length > 0 &&
-            b.length > 0 &&
-            a.filter((x) => x.hit).length / a.length >= b.filter((x) => x.hit).length / b.length;
-          return [m, ok];
-        }),
-      );
+      const rates = weak.map((m) => {
+        const a = vs.filter((x) => x.row.model === m);
+        const b = bs.filter((x) => x.model === m);
+        const rate = (xs: readonly { hit: boolean }[]): number =>
+          xs.filter((x) => x.hit).length / xs.length;
+        return { m, some: a.length > 0 && b.length > 0, va: rate(a), ba: rate(b) };
+      });
+      const direction = Object.fromEntries(rates.map((r) => [r.m, r.some && r.va >= r.ba]));
+      const ahead = Object.fromEntries(rates.map((r) => [r.m, r.some && r.va > r.ba]));
       const p = sel.unexposed
         ? 1
         : fisher(vSide.hitsStar, vSide.nStar, bSide.hitsStar, bSide.nStar, "greater");
@@ -295,10 +298,24 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
         p,
         z: sel.unexposed ? 0 : zScore(vSide, bSide),
         direction,
+        ...(o.fast ? { ahead } : {}),
         threshold: null,
         win: false,
       };
     });
+    if (o.fast) {
+      if (o.round !== "r1") throw new Error("fast mode scores R1 rows only (§4.7)");
+      // §4.7: ahead of base on both weak models and pooled z ≥ 1.65, exposure-gated, per case
+      for (const w of win) {
+        const lostHere = lossCells.some((l) => l.case === w.case && l.loss);
+        w.win =
+          !w.unexposed &&
+          w.z >= FAST_Z &&
+          Object.values(w.ahead ?? {}).every(Boolean) &&
+          Object.keys(w.ahead ?? {}).length === weak.length &&
+          !lostHere;
+      }
+    }
     if (o.round === "r2") {
       const S = o.S ?? 1;
       const alphaV = ALPHA / S;
@@ -447,6 +464,43 @@ export function cut(
     eligible,
     advance,
     advanced: eligible.slice(0, advance),
+  };
+}
+
+/**
+ * §4.7 fast decision over R1 scores: at most one winner, among the survivors (no elimination, no
+ * pending review) with at least one fast win, by the larger sum of win-case pooled z, then the
+ * shorter text delta, then the id. Base stays on no winner: a tie is never a win.
+ */
+export function decideFast(scores: readonly VariantScore[]): {
+  winner: string | null;
+  ranking: string[];
+  why: string;
+} {
+  const ranked = scores
+    .filter((s) => s.eliminated.length === 0 && s.reviews.length === 0 && s.wins > 0)
+    .sort((a, b) => b.winZ - a.winZ || a.textDelta - b.textDelta || a.id.localeCompare(b.id));
+  const w = ranked[0];
+  if (!w) {
+    const out = scores.filter((s) => s.eliminated.length > 0).map((s) => s.id);
+    return {
+      winner: null,
+      ranking: [],
+      why: `fast: no surviving variant with a win${out.length > 0 ? ` (eliminated: ${out.join(", ")})` : ""}: base stays`,
+    };
+  }
+  const cases = w.win.filter((x) => x.win).map((x) => `${x.case} z ${x.z.toFixed(2)}`);
+  return {
+    winner: w.id,
+    ranking: ranked.map((s) => s.id),
+    why: `fast: ${w.id} wins on ${cases.join(", ")}${
+      ranked.length > 1
+        ? `, ahead of ${ranked
+            .slice(1)
+            .map((s) => s.id)
+            .join(", ")}`
+        : ""
+    }`,
   };
 }
 

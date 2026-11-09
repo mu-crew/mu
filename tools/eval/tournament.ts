@@ -59,10 +59,17 @@ export interface CasePlan {
   mde: number | null;
 }
 
+/** Full mode runs R1 → R2 → R3 → R4 per group; fast mode decides on R1 and gates in C7 (§4.7). */
+export type Mode = "full" | "fast";
+
 export interface FreezeRow {
   kind: "freeze";
   judgesHash: string;
   files: string[];
+  /** Absent on a row frozen before fast mode existed: full. */
+  mode?: Mode;
+  /** Fast mode: the n_eff targets the plan was solved for. */
+  targets?: { own: number; pooled: number };
   nPlan: CasePlan[];
   /** CMH power per model at this plan for a broad drop from 0.8 (§4.2), keyed by the drop; absent on a row frozen before it was recorded. */
   cmhPower?: PlanPower[];
@@ -112,7 +119,7 @@ export type ControlRow =
   | { kind: "round_score"; round: "r1" | "r2"; epoch: number; [k: string]: unknown }
   | { kind: "cut"; round: "r1" | "r2"; epoch: number; [k: string]: unknown }
   | {
-      kind: "decision" | "spend" | "scan" | "r4_score" | "final" | "final_score";
+      kind: "decision" | "spend" | "scan" | "r4_score" | "final" | "final_score" | "c7_r4";
       [k: string]: unknown;
     };
 
@@ -148,6 +155,30 @@ export const probeFile = (dir: string, epoch: number): string =>
   join(dir, epoch === 0 ? "probe.jsonl" : `probe.e${epoch}.jsonl`);
 export const coldFile = (dir: string, epoch: number): string =>
   join(dir, epoch === 0 ? "cold-r2.jsonl" : `cold-r2.e${epoch}.jsonl`);
+
+/** The mode of the latest freeze (full before any freeze). */
+export const modeOf = (rows: readonly ControlRow[]): Mode => last(rows, "freeze")?.mode ?? "full";
+
+export class FastModeError extends Error {}
+
+/**
+ * §4.7: a fast-mode group has no R2 and no per-group R3, R4 or final gate; C7 is the regression
+ * gate. `--fast` on a full-mode freeze, and `decide` on one, are refused too.
+ */
+export function assertMode(rows: readonly ControlRow[], sub: string, fastFlag: boolean): void {
+  const mode = modeOf(rows);
+  const frozen = rows.some((r) => r.kind === "freeze");
+  if (fastFlag && frozen && mode !== "fast")
+    throw new FastModeError("this group is frozen in full mode: --fast needs a `freeze --fast`");
+  if (sub === "decide" && (!fastFlag || mode !== "fast"))
+    throw new FastModeError(
+      "`decide --fast` is fast mode only (a `freeze --fast` group); full mode decides in R4",
+    );
+  if (mode === "fast" && ["r2", "r3", "r4", "final"].includes(sub))
+    throw new FastModeError(
+      `fast mode: no ${sub.toUpperCase()} per group; decide on R1 (\`tournament decide --fast <group>\`), and C7 (\`tournament final --combined\`) is the regression gate`,
+    );
+}
 
 export class JudgesChangedError extends Error {}
 export class ReviewPendingError extends Error {}
@@ -223,7 +254,7 @@ export function assertNoPendingStops(rows: readonly ControlRow[]): void {
     );
 }
 
-function ntfyPing(msg: string): void {
+export function ntfyPing(msg: string): void {
   try {
     spawnSync("ntfy-ping", [msg, "mu tournament"], { stdio: "ignore", timeout: 10_000 });
   } catch {}
@@ -236,6 +267,12 @@ export const ALPHA = 0.05;
 /** The stratified CMH loss test's level per model (Bonferroni over three models, §4.1). */
 export const CMH_ALPHA = ALPHA / 3;
 export const TARGET = { own: 60, pooled: 90, cross: 40, guard: 40 } as const;
+/** Fast mode's R1 targets for own headline cases (user decision 2026-11-09, §4.7). */
+export const FAST_TARGET = { own: 30, pooled: 45 } as const;
+/** Fast mode's win threshold on the pooled weak-model z: nominal one-sided 0.05 per test. */
+export const FAST_Z = 1.65;
+/** The Fisher level fast mode's MDE and power use for the z ≥ 1.65 rule (a lower bound on its power). */
+export const FAST_ALPHA = 0.05;
 /** Worst Bonferroni-Holm divisor of the win test's first step (§4.2: S ≤ 6, h ≤ 3). */
 export const WORST_B = 18;
 /** First step of the per-case loss family (§4.2: 15 strata × 3 models). */
@@ -276,15 +313,21 @@ export function rhoFromB5(
 const caseKind = (c: NextCase, group: Group): CasePlan["kind"] =>
   c.role === "guard" ? "guard" : c.group === group ? "own" : "cross";
 
-/** §4.2 n plan of one group: per case its kind, clusters, reps and n_eff; short cases say so. */
+/**
+ * §4.2 n plan of one group: per case its kind, clusters, reps and n_eff; short cases say so. Fast
+ * mode (§4.7) plans only the own headline cases, for R1, at FAST_TARGET: R1 runs `r` reps.
+ */
 export function nPlan(
   group: Group,
   cases: readonly NextCase[],
   setup: Pick<SetupRow, "rho" | "rhoPool" | "models"> | null,
+  mode: Mode = "full",
 ): CasePlan[] {
   const models = setup ? [...setup.models.weak, setup.models.gate] : [];
-  return cases.map((c) => {
+  const fast = mode === "fast";
+  return cases.flatMap((c) => {
     const kind = caseKind(c, group);
+    if (fast && kind !== "own") return [];
     const rhos = models.map((m) => setup?.rho[c.id]?.[m] ?? DEFAULT_RHO);
     const rho = rhos.length > 0 ? Math.max(...rhos) : DEFAULT_RHO;
     const rhoPool = setup?.rhoPool[c.id] ?? DEFAULT_RHO;
@@ -292,14 +335,27 @@ export function nPlan(
       paraphrases: c.paraphrases.length,
       arms: c.arms.length,
       rho,
-      target: kind === "own" ? TARGET.own : kind === "cross" ? TARGET.cross : TARGET.guard,
-      ...(kind === "own" ? { pooled: { target: TARGET.pooled, rho: rhoPool } } : {}),
+      target: fast
+        ? FAST_TARGET.own
+        : kind === "own"
+          ? TARGET.own
+          : kind === "cross"
+            ? TARGET.cross
+            : TARGET.guard,
+      ...(kind === "own"
+        ? { pooled: { target: fast ? FAST_TARGET.pooled : TARGET.pooled, rho: rhoPool } }
+        : {}),
     });
     const m =
       kind === "own"
-        ? mde(0.5, Math.round(plan.nEffPooled ?? plan.nEff), 0.05 / WORST_B, "greater")
+        ? mde(
+            0.5,
+            Math.round(plan.nEffPooled ?? plan.nEff),
+            fast ? FAST_ALPHA : 0.05 / WORST_B,
+            "greater",
+          )
         : mde(0.8, Math.round(plan.nEff), 0.05 / LOSS_FAMILY, "less");
-    return { case: c.id, kind, plan, r1: kind === "own" ? 1 : 0, mde: m };
+    return [{ case: c.id, kind, plan, r1: kind !== "own" ? 0 : fast ? plan.r : 1, mde: m }];
   });
 }
 
@@ -408,8 +464,9 @@ export function roundJobs(
   const jobs: NextJob[] = [];
   for (const c of cases) {
     const p = byCase.get(c.id);
+    // a fast plan (§4.7) has rows for the own headline cases only
+    if (round === "r1" && p?.kind !== "own") continue;
     if (!p) throw new Error(`case ${c.id} has no plan row`);
-    if (round === "r1" && p.kind !== "own") continue;
     const reps = round === "r1" ? p.r1 : p.plan.r;
     const paraphrases = c.paraphrases.slice(0, p.plan.paraphrases);
     for (const { label, surface } of s.surfaces)

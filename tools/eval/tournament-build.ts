@@ -429,15 +429,17 @@ export function cloneDir(from: string, to: string): void {
  * §3.1 build: copy the base surface dir (with `node_modules`) to `hill2-<v>`, `git apply --check`
  * then `git apply`, `npm run build`, stamp `.ref = <base sha>+<sha256(patch)[:12]>`. Reuses a
  * built copy with the same stamp. Never throws on a bad patch or build: admission reports it.
+ * Several patches (C7's combined surface, §4.7) apply in order; the stamp hashes them concatenated.
  */
 export function buildVariant(
   baseRoot: string,
   baseSha: string,
   variantId: string,
-  patchFile: string,
+  patchFile: string | readonly string[],
   dir: string = surfaceDir(`hill2-${variantId}`),
 ): { dir: string; ref: string; built: { ok: boolean; why?: string }; helpExit: number } {
-  const patch = readFileSync(patchFile);
+  const patchFiles = typeof patchFile === "string" ? [patchFile] : [...patchFile];
+  const patch = Buffer.concat(patchFiles.map((f) => readFileSync(f)));
   const ref = `${baseSha}+${sha256(patch).slice(0, 12)}`;
   const stamp = join(dir, ".ref");
   const help = (): number => {
@@ -465,9 +467,10 @@ export function buildVariant(
     }
   };
   const why =
-    step("git", ["apply", "--check", patchFile]) ??
-    step("git", ["apply", patchFile]) ??
-    step("npm", ["run", "build"]);
+    patchFiles.reduce<string | null>(
+      (w, f) => w ?? step("git", ["apply", "--check", f]) ?? step("git", ["apply", f]),
+      null,
+    ) ?? step("npm", ["run", "build"]);
   if (why !== null) return { dir, ref, built: { ok: false, why }, helpExit: -1 };
   writeFileSync(stamp, `${ref}\n`);
   return { dir, ref, built: { ok: true }, helpExit: help() };
