@@ -203,7 +203,8 @@ export function jsonShape(text: string): string | null {
  * `--json` key-and-type tree or normalised output differs. A call with no partner (the runs
  * diverged) is changed too. `baseAgain` is a second base run of the same goldens: a call whose
  * output already differs between the two base runs (a per-row random phrase, a wall-clock count)
- * is compared on exit and JSON shape only, so chance never reads as behaviour.
+ * is compared on exit, JSON shape and the lines both base runs agree on (when they printed as many
+ * lines), so chance never reads as behaviour.
  */
 export function behaviourDiff(
   base: readonly GoldenTrace[],
@@ -249,6 +250,23 @@ export function behaviourDiff(
         const x2 = B2.get(k);
         if (!x || !x2 || normalise(x.out) !== normalise(x2.out)) noisyFam.add(fam(k));
       }
+    // within a noisy family, a call both base passes ran with the same line count keeps the lines
+    // they agree on (a pane read whose one random-phrase line differs keeps its 30 blank and rule
+    // rows): the variant differs when its line count or one of those lines does
+    const lines = (out: string): string[] => normalise(out).split("\n");
+    const stableLines = (k: string): (string | null)[] | null => {
+      const x = B.get(k);
+      const x2 = B2?.get(k);
+      if (!x || !x2) return null;
+      const [l, l2] = [lines(x.out), lines(x2.out)];
+      return l.length === l2.length ? l.map((v, i) => (v === l2[i] ? v : null)) : null;
+    };
+    const stableDiffers = (k: string, out: string): boolean => {
+      const st = stableLines(k);
+      if (st === null) return false;
+      const l = lines(out);
+      return l.length !== st.length || st.some((v, i) => v !== null && v !== l[i]);
+    };
     for (const k of new Set([...B.keys(), ...V.keys()])) {
       const x = B.get(k);
       const y = V.get(k);
@@ -262,7 +280,7 @@ export function behaviourDiff(
       const differs =
         x.exit !== y.exit ||
         jsonShape(x.out) !== jsonShape(y.out) ||
-        (!noisy && normalise(x.out) !== normalise(y.out));
+        (noisy ? stableDiffers(k, y.out) : normalise(x.out) !== normalise(y.out));
       if (differs) out.add(key(x.argv));
     }
   }

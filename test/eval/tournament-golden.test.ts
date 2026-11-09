@@ -77,6 +77,33 @@ describe("golden passes side by side", () => {
   });
 });
 
+describe("a noisy call keeps the lines both base passes agree on", () => {
+  const k = (argv: string): string => argv.split(" ").slice(0, 2).join(" ");
+  const pane = (phrase: string, chrome = true): GoldenTrace[] => [
+    {
+      id: "nextstep:read/a",
+      ok: true,
+      calls: [
+        {
+          argv: "agent read worker-1 -w auth",
+          exit: 0,
+          out: `${chrome ? "\n\n────\n ↑ 3 more\n" : ""}PANE-x: tests passed, ${phrase}\n`,
+        },
+      ],
+    },
+  ];
+  const [a, a2] = [pane("indigo yarrow summit"), pane("pebble falcon cedar")];
+
+  it("detects dropped chrome rows in a family whose random phrase differs between base passes", () => {
+    expect(behaviourDiff(a, pane("amber cedar meadow", false), k, a2)).toEqual(["agent read"]);
+    // the same rows with another phrase: chance, not behaviour
+    expect(behaviourDiff(a, pane("amber cedar meadow"), k, a2)).toEqual([]);
+    // base passes of different line counts mask the family's text whole, as before
+    const short = pane("x y z", false);
+    expect(behaviourDiff(a, pane("amber cedar meadow", false), k, short)).toEqual([]);
+  });
+});
+
 describe("cut-short base passes are no noise", () => {
   const k = (argv: string): string => argv.split(" ").slice(0, 2).join(" ");
   const close = (applied: boolean) => ({
