@@ -315,6 +315,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   a name (`delegate_rev_3b9f1ea2`) and upper-case check ids. On c2's cached
   goldens the changed calls of every variant fell from five or six keys to
   the close calls each one really changes.
+- **Eval: the tournament build trusts only complete golden passes**
+  (hill-r2 c2 review). A base golden pass that was cut short (not ok) is no
+  evidence of noise: such a case masks nothing, is compared against the
+  complete pass if there is one, and the build lists it. The trace caches
+  (`golden-base-<key>.json`, `golden-<id>-<key>.json`) are keyed by build
+  ref, judges hash and the scenario and golden files, so a refreeze never
+  reuses stale traces. A variant whose golden pass threw reports
+  `goldenCompat not run` and is refused ("golden pass not run"). The
+  parallel passes now run through `passPool`, tested to keep per-row claims
+  and the serial traces.
 - **Eval: a variant's new flag split over two lines is a new name**
   (hill-r2 c2). `newNames` matched `.option("--x"` on one added line, but
   the formatter writes `.option(` and the flag on separate lines, so c2's

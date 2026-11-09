@@ -65,12 +65,16 @@ import {
 import {
   assessVariant,
   buildVariant,
+  cachedTraces,
   collectGoldenTraces,
   commandPaths,
   type GoldenTrace,
   HOLDOUTS,
   judgesHash,
   listCandidates,
+  passPool,
+  traceCacheKey,
+  unmaskedCases,
   type VariantRow,
 } from "./tournament-build.ts";
 import { runCombined } from "./tournament-c7.ts";
@@ -209,22 +213,35 @@ async function makeSetup(group: Group, args: string[]): Promise<SetupRow> {
 const r4Scenarios = (only?: string[]): string[] =>
   (only ?? scenarioIds(false)).filter((id) => !HOLDOUTS.includes(id));
 
-/** Base's golden traces, run twice (noise mask), cached in the row dir. */
+/**
+ * Base's golden traces, run twice (noise mask) side by side, cached in the row dir under the
+ * base ref, the judges' hash and the scenario files (traceCacheKey).
+ */
 async function baseTraces(
   dir: string,
   surface: Surface,
+  ref: string,
   scenarios: string[],
 ): Promise<{ first: GoldenTrace[]; again: GoldenTrace[] }> {
-  const f = join(dir, "golden-base.json");
-  if (existsSync(f)) return JSON.parse(readFileSync(f, "utf8"));
+  const key = traceCacheKey({
+    ref,
+    judgesHash: judgesHash(REPO_ROOT).hash,
+    scenarios,
+    scenarioRoot: surface.scenarioRoot,
+  });
   const o = { cases: NEXT_CASES, scenarios };
-  // two independent passes over fresh sandboxes; each row still takes its own muzzle claim
-  const [first, again] = await Promise.all([
-    collectGoldenTraces(surface, o),
-    collectGoldenTraces(surface, o),
-  ]);
-  const t = { first, again };
-  writeFileSync(f, JSON.stringify(t));
+  const t = await cachedTraces(join(dir, `golden-base-${key}.json`), async () => {
+    // two independent passes over fresh sandboxes; each row still takes its own muzzle claim
+    const [first = [], again = []] = await passPool([0, 1], 2, () =>
+      collectGoldenTraces(surface, o),
+    );
+    return { first, again };
+  });
+  const unmasked = unmaskedCases(t.first, t.again);
+  if (unmasked.length > 0)
+    console.log(
+      `base goldens not complete on both passes (no noise mask, every difference counts): ${unmasked.join(" ")}`,
+    );
   return t;
 }
 
@@ -789,7 +806,7 @@ export async function tournamentCli(argv: string[]): Promise<number> {
       const base = baseSurface(setup);
       const clean = cleanSessions(now);
       const scenarios = r4Scenarios(list(flag(rest, "--scenarios")));
-      const traces = await baseTraces(dir, base, scenarios);
+      const traces = await baseTraces(dir, base, setup.baseSha, scenarios);
       const vocab = surfaceVocab(base);
       const paths = commandPaths(base);
       const have = new Map(variantRows(now).map((v) => [v.id, v.patchSha]));
@@ -819,39 +836,39 @@ export async function tournamentCli(argv: string[]): Promise<number> {
       // the variants' golden passes run side by side (each row under its own muzzle claim);
       // rows are appended in candidate order once all are in
       const width = Math.max(1, Number(flag(rest, "--passes") ?? 4));
-      const allTraces: GoldenTrace[][] = new Array(todo.length);
-      let next = 0;
-      await Promise.all(
-        Array.from({ length: Math.min(width, todo.length) }, async () => {
-          for (let i = next++; i < todo.length; i = next++) {
-            const t = todo[i];
-            if (!t) continue;
-            // cached per build ref, like base's: a re-assessment (`--force`) reruns no golden
-            const cache = join(
-              dir,
-              `golden-${t.manifest.id}-${t.build.ref.replace(/\W+/g, "_")}.json`,
+      const judges = judgesHash(REPO_ROOT).hash;
+      const passes = await passPool(
+        todo,
+        width,
+        async (t): Promise<{ traces: GoldenTrace[]; error?: string }> => {
+          if (!t.build.built.ok) return { traces: [] };
+          const surface = {
+            ...surfaceFromDir(`hill2-${t.manifest.id}`, t.build.dir),
+            family: "next" as const,
+          };
+          // cached like base's: a re-assessment (`--force`) reruns no golden, a refreeze does
+          const key = traceCacheKey({
+            ref: t.build.ref,
+            judgesHash: judges,
+            scenarios,
+            scenarioRoot: surface.scenarioRoot,
+          });
+          try {
+            const traces = await cachedTraces(
+              join(dir, `golden-${t.manifest.id}-${key}.json`),
+              () => collectGoldenTraces(surface, { cases: NEXT_CASES, scenarios }),
             );
-            try {
-              if (existsSync(cache)) allTraces[i] = JSON.parse(readFileSync(cache, "utf8"));
-              else if (t.build.built.ok) {
-                allTraces[i] = await collectGoldenTraces(
-                  { ...surfaceFromDir(`hill2-${t.manifest.id}`, t.build.dir), family: "next" },
-                  { cases: NEXT_CASES, scenarios },
-                );
-                writeFileSync(cache, JSON.stringify(allTraces[i]));
-              } else allTraces[i] = [];
-            } catch (e) {
-              // one variant's broken golden pass must not discard the others'
-              console.log(
-                `${t.manifest.id}: golden pass failed (${e instanceof Error ? e.message : String(e)}); no traces`,
-              );
-              allTraces[i] = [];
-            }
+            return { traces };
+          } catch (e) {
+            // one variant's broken golden pass must not discard the others'
+            const error = e instanceof Error ? e.message : String(e);
+            console.log(`${t.manifest.id}: golden pass failed (${error}); goldens not run`);
+            return { traces: [], error };
           }
-        }),
+        },
       );
       for (const [i, { manifest, session, patchText, build }] of todo.entries()) {
-        const vTraces = allTraces[i] ?? [];
+        const pass = passes[i] ?? { traces: [], error: "no pass" };
         const row = assessVariant({
           manifest,
           session,
@@ -861,7 +878,8 @@ export async function tournamentCli(argv: string[]): Promise<number> {
           baseVocab: vocab,
           baseTraces: traces.first,
           baseAgain: traces.again,
-          variantTraces: vTraces,
+          variantTraces: pass.traces,
+          goldenError: pass.error,
           key: (argv) => callKey(argv, paths),
         });
         appendControl(dir, row);

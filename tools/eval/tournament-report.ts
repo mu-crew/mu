@@ -345,7 +345,7 @@ function variantsSection(vs: readonly VariantRow[], candDir: string): string[] {
       `- ${v.manifest.summary} (kind ${v.manifest.kind.join(", ")}; session ${v.session})`,
       `- markers: ${v.spec.markers.map((m) => `\`${m}\``).join(", ") || "-"}; context: ${v.spec.contextMarkers.map((m) => `\`${m}\``).join(", ") || "-"}`,
       `- behaviour: names ${v.spec.newNames.join(" ") || "-"}; calls ${v.spec.changedCalls.join(" ") || "-"}`,
-      `- text delta ${v.textDelta}; admission ${v.admission.ok ? "ok" : `REFUSED: ${v.admission.failures.join("; ")}`}; goldenCompat ${v.goldenCompat.broken.join(", ") || "clean"}`,
+      `- text delta ${v.textDelta}; admission ${v.admission.ok ? "ok" : `REFUSED: ${v.admission.failures.join("; ")}`}; goldenCompat ${v.goldenCompat.notRun !== undefined ? `not run (${v.goldenCompat.notRun})` : v.goldenCompat.broken.join(", ") || "clean"}`,
       "",
       "<details><summary>patch</summary>",
       "",

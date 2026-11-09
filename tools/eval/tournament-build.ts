@@ -230,10 +230,14 @@ export function behaviourDiff(
   for (const b of base) {
     const v = vById.get(b.id);
     if (!v) continue;
-    const b2t = again.get(b.id);
-    const B = byOccurrence(b);
+    // noise is what two COMPLETE base passes disagree on: a pass cut short (not ok) is no evidence
+    // of chance, so a case with one masks nothing (its calls compare in full; see unmaskedCases).
+    // When only the second pass is complete, it is the one the variant is compared against.
+    const b2 = again.get(b.id);
+    const [p, q] = !b.ok && b2?.ok === true ? [b2, b] : [b, b2];
+    const B = byOccurrence(p);
     const V = byOccurrence(v);
-    const B2 = b2t === undefined ? null : byOccurrence(b2t);
+    const B2 = q === undefined || !p.ok || !q.ok ? null : byOccurrence(q);
     // a call family (normalised argv) the two base runs disagree on anywhere, in how often it ran
     // or in any output, is timing-driven (a poll while workers finish): chance, not behaviour, so
     // its calls compare on exit and JSON shape only and its extra or missing occurrences are noise
@@ -263,6 +267,15 @@ export function behaviourDiff(
     }
   }
   return [...out].sort();
+}
+
+/** Goldens whose two base passes are not both complete (ok): behaviourDiff masks no noise there. */
+export function unmaskedCases(
+  base: readonly GoldenTrace[],
+  baseAgain: readonly GoldenTrace[],
+): string[] {
+  const again = new Map(baseAgain.map((t) => [t.id, t]));
+  return base.filter((b) => !b.ok || again.get(b.id)?.ok !== true).map((b) => b.id);
 }
 
 /** The surface's command paths (`agent close`, `wait`, …), for call keys. */
@@ -370,6 +383,58 @@ export async function collectGoldenTraces(
     rmSync(promptDir, { recursive: true, force: true });
   }
   return traces;
+}
+
+/**
+ * Run `pass` over `items`, `width` at a time; results in item order, as a serial loop gives them.
+ * Each golden row inside a pass takes its own muzzle claim (withRowClaim in collectGoldenTraces),
+ * so `width` bounds passes in flight, never host load.
+ */
+export async function passPool<T, R>(
+  items: readonly T[],
+  width: number,
+  pass: (item: T, i: number) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, width), items.length) }, async () => {
+      for (let i = next++; i < items.length; i = next++) out[i] = await pass(items[i] as T, i);
+    }),
+  );
+  return out;
+}
+
+/**
+ * The key of a cached golden pass: the surface's build ref, the frozen judges' hash and the bytes
+ * of every scenario and golden script the pass runs, so a refreeze with changed goldens (or a
+ * scenario root that changed under the same judges) never reuses stale traces.
+ */
+export function traceCacheKey(o: {
+  ref: string;
+  judgesHash: string;
+  scenarios: readonly string[];
+  scenarioRoot?: string;
+}): string {
+  const h = createHash("sha256").update(`${o.ref}\0${o.judgesHash}\0`);
+  const roots = [...new Set([o.scenarioRoot ?? scenarioDir(), scenarioDir()])];
+  for (const id of o.scenarios)
+    for (const root of roots)
+      for (const f of [`${id}.ts`, scriptFile(id, "golden", "next")]) {
+        const p = join(root, f);
+        h.update(`${id}\0${p}\0`);
+        if (existsSync(p)) h.update(readFileSync(p));
+        h.update("\0");
+      }
+  return h.digest("hex").slice(0, 16);
+}
+
+/** `run`'s traces, cached in `file` (JSON): read back when it exists, written when `run` returns. */
+export async function cachedTraces<T>(file: string, run: () => Promise<T>): Promise<T> {
+  if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8")) as T;
+  const t = await run();
+  writeFileSync(file, JSON.stringify(t));
+  return t;
 }
 
 // ---- admission ----------------------------------------------------------------------------------
@@ -541,8 +606,11 @@ export interface VariantRow {
   rejectedContext: DerivedMarkers["rejected"];
   textDelta: number;
   admission: Admission;
-  /** Goldens that hit on base and stop hitting on the variant: recorded, never blocking. */
-  goldenCompat: { broken: string[] };
+  /**
+   * Goldens that hit on base and stop hitting on the variant: recorded, never blocking. `notRun`:
+   * the variant's golden pass threw, so nothing was compared (and the variant is refused).
+   */
+  goldenCompat: { broken: string[]; notRun?: string };
 }
 
 /** Everything about one candidate except the golden runs, which the caller supplies. */
@@ -557,6 +625,8 @@ export function assessVariant(o: {
   /** A second base run of the goldens: its noise is not behaviour. */
   baseAgain?: readonly GoldenTrace[];
   variantTraces: readonly GoldenTrace[];
+  /** The variant's golden pass threw (why): its traces are no evidence of anything. */
+  goldenError?: string;
   key: (argv: string) => string;
 }): VariantRow {
   const files = parsePatch(o.patchText);
@@ -573,6 +643,19 @@ export function assessVariant(o: {
   const baseWords = skillWords(o.baseRoot);
   const vWords = built ? skillWords(o.build.dir) : baseWords;
   const vOk = new Map(o.variantTraces.map((t) => [t.id, t.ok]));
+  const admission = admit({
+    files,
+    built: o.build.built,
+    helpExit: o.build.helpExit,
+    words: vWords,
+    changed: diff.changed,
+    spec,
+  });
+  // no golden ran: no changed call and no broken golden is known, so neither may read as clean
+  if (built && o.goldenError !== undefined) {
+    admission.failures.push(`golden pass not run: ${o.goldenError}`);
+    admission.ok = false;
+  }
   return {
     kind: "variant",
     id: o.manifest.id,
@@ -584,17 +667,13 @@ export function assessVariant(o: {
     spec,
     rejectedContext: d.rejected,
     textDelta: textDelta(diff.changed, baseWords, vWords),
-    admission: admit({
-      files,
-      built: o.build.built,
-      helpExit: o.build.helpExit,
-      words: vWords,
-      changed: diff.changed,
-      spec,
-    }),
-    goldenCompat: {
-      broken: o.baseTraces.filter((t) => t.ok && vOk.get(t.id) === false).map((t) => t.id),
-    },
+    admission,
+    goldenCompat:
+      built && o.goldenError !== undefined
+        ? { broken: [], notRun: o.goldenError }
+        : {
+            broken: o.baseTraces.filter((t) => t.ok && vOk.get(t.id) === false).map((t) => t.id),
+          },
   };
 }
 
