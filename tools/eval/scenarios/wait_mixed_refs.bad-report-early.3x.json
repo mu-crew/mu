@@ -42,7 +42,7 @@
   {
     "calls": [
       {
-        "bash": "n=$(cat \"$EVAL_WORKER_DIR/nonce\"); printf \"fast: preclosed run=$n\\nready: GATE-READY-$n\\nslow: eval: mx-slow.sh exit 0 run=$n\\ngate: eval: gate.sh exit 0 run=$n\\nrace: eval: mx-race.sh exit 0 run=$n\\ntimeout-exit: 5\\n\" > wait-report.txt"
+        "bash": "n=$(cat \"$EVAL_WORKER_DIR/nonce\"); printf \"fast: preclosed run=$n\\nready: GATE-READY-$n\\nslow: mx-slow: done, nothing to commit run=$n\\ngate: gate: done, nothing to commit run=$n\\nrace: mx-race: done, nothing to commit run=$n\\ntimeout-exit: 5\\n\" > wait-report.txt"
       }
     ]
   },

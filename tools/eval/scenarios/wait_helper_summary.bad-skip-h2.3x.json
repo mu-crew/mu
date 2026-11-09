@@ -27,7 +27,7 @@
   {
     "calls": [
       {
-        "bash": "ev=$(mu task notes h1 -w eval | grep -o \"eval: .* run=[0-9a-f]*\" | tail -1); echo \"h1: $ev\" > summary.md"
+        "bash": "ev=$(mu task notes h1 -w eval | grep -o \"h1: [a-z0-9 ,]* run=[0-9a-f]*\" | tail -1); echo \"h1: $ev\" > summary.md"
       }
     ]
   },

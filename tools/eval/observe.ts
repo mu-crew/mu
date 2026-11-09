@@ -281,15 +281,17 @@ export function prompts(sb: Sandbox): PromptRec[] {
     });
 }
 
-/** Delegate answers served: claim number and time (written by the faux driver). */
-export function answersServed(sb: Sandbox): { ts: number; agent: string; key: string }[] {
+/** answers.log (the faux driver): when each delegate answer was served, to whom, its key, and its id (a default answer's ANSWER_ID; "" otherwise). */
+export function answersServed(
+  sb: Sandbox,
+): { ts: number; agent: string; key: string; id: string }[] {
   const f = join(sb.workerDir, "answers.log");
   if (!existsSync(f)) return [];
   return readFileSync(f, "utf8")
     .split("\n")
     .flatMap((l) => {
-      const m = /^(\d+) (\S+) (\S+)/.exec(l);
-      return m ? [{ ts: +(m[1] ?? 0), agent: m[2] ?? "", key: m[3] ?? "" }] : [];
+      const m = /^(\d+) (\S+) (\S+)(?: (\S+))?/.exec(l);
+      return m ? [{ ts: +(m[1] ?? 0), agent: m[2] ?? "", key: m[3] ?? "", id: m[4] ?? "" }] : [];
     });
 }
 

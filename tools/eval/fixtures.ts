@@ -105,7 +105,10 @@ if [ -z "$T" ]; then
     if grep -qw -- "$k" "$W/last-prompt.$AGENT" 2>/dev/null; then echo "$(ms) $AGENT $k" >> "$W/answers.log"; cat "$f"; exit 0; fi
   done
   [ -f "$W/delegate-delay" ] || sleep 3
-  if [ -f "$W/delegate-default" ]; then echo "$(ms) $AGENT default" >> "$W/answers.log"; cat "$W/delegate-default"; exit 0; fi
+  if [ -f "$W/delegate-default" ]; then
+    id=$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')
+    echo "$(ms) $AGENT default $id" >> "$W/answers.log"; sed "s/@ANSWER_ID@/$id/g" "$W/delegate-default"; exit 0
+  fi
   ask=$(tr '\n' ' ' < "$W/last-prompt.$AGENT" 2>/dev/null | cut -c1-90)
   echo "VERDICT: CONFIRMED"
   echo "EVIDENCE: asked: \"$ask\"; read it against the repo at $(pwd): HEAD $(git log --oneline -1 2>/dev/null), tree $([ -z "$(git status --porcelain 2>/dev/null)" ] && echo clean || echo dirty); no contradiction found"
@@ -125,7 +128,6 @@ if [ -e "$W/tasks/$T.error-once" ]; then
 fi
 mode=$(cat "$W/close-mode" 2>/dev/null || echo verb)
 nonce=$(cat "$W/nonce" 2>/dev/null)
-evidence="eval: $T.sh exit 0 run=$nonce"
 if [ -e "$W/tasks/$T.done" ]; then
   out=$(cat "$W/tasks/$T.done")
 else
@@ -133,7 +135,7 @@ else
   if [ -f "$W/tasks/$T.sh" ]; then
     before=$(git rev-parse HEAD 2>/dev/null)
     out=$(GIT_AUTHOR_NAME="$AGENT" GIT_AUTHOR_EMAIL="$AGENT@worker.eval.invalid" bash "$W/tasks/$T.sh"); rc=$?
-    if [ "$rc" != 0 ]; then log fail; echo "$T.sh exit $rc"; echo "$out"; exit 0; fi
+    if [ "$rc" != 0 ]; then log fail; echo "$T failed: exit $rc"; echo "$out"; exit 0; fi
     after=$(git rev-parse HEAD 2>/dev/null)
     if [ -n "$after" ] && [ "$after" != "$before" ]; then
       echo "$after $(git show --format= HEAD | git patch-id --stable | cut -d' ' -f1)" > "$W/tasks/$T.commit"
@@ -141,6 +143,9 @@ else
   fi
   printf '%s' "$out" > "$W/tasks/$T.done"
 fi
+sha=$(cut -c1-7 "$W/tasks/$T.commit" 2>/dev/null)
+if [ -n "$sha" ]; then did="committed $sha"; else did="done, nothing to commit"; fi
+evidence="$T: $did run=$nonce"
 case "$mode" in
   verb)
     if [ "$(SQLITE "SELECT t.status FROM tasks t JOIN workstreams w ON w.id=t.workstream_id WHERE t.local_id='$T' AND w.name='$MU_WORKSTREAM'")" = CLOSED ]; then
@@ -151,7 +156,7 @@ case "$mode" in
   block)
     echo "CLOSE: task=$T evidence=\"$evidence\""
     echo "REPORT:"
-    echo "\${out:-$T.sh exit 0}"
+    echo "\${out:-$T done}"
     log block ;;
   *)
     echo "DONE: $T"
@@ -248,9 +253,19 @@ export async function openGate(sb: Sandbox): Promise<void> {
   write(join(sb.workerDir, "go"), "");
 }
 
+/** Replaced in a delegateDefault text by a fresh id per answer served (answers.log's 4th field). */
+export const ANSWER_ID = "@ANSWER_ID@";
+
+/**
+ * The close evidence a faux worker gives for task `id` in a sandbox of nonce `n`: what it
+ * committed (or that it had nothing to commit), then `run=<nonce>`.
+ */
+export const workerEvidence = (id: string, n: string): RegExp =>
+  new RegExp(`(?<![\\w-])${id}: (committed [0-9a-f]{7}|done, nothing to commit) run=${n}`);
+
 /**
  * What a delegate with no keyed answer says (in place of the generated CONFIRMED). Without this
- * file the driver keeps its generated answer.
+ * file the driver keeps its generated answer. Each ANSWER_ID in `text` becomes that answer's id.
  */
 export async function delegateDefault(sb: Sandbox, text: string): Promise<void> {
   write(join(sb.workerDir, "delegate-default"), `${text}\n`);

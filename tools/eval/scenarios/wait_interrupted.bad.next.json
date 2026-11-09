@@ -37,7 +37,7 @@
   {
     "calls": [
       {
-        "bash": "for t in i1 i2; do ev=$(mu task notes $t -w eval | grep -o \"eval: .* run=[0-9a-f]*\" | tail -1); echo \"$t: $ev\"; done > result.txt; cat result.txt"
+        "bash": "for t in i1 i2; do ev=$(mu task notes $t -w eval | grep -o \"$t: [a-z0-9 ,]* run=[0-9a-f]*\" | tail -1); echo \"$t: $ev\"; done > result.txt; cat result.txt"
       }
     ]
   },

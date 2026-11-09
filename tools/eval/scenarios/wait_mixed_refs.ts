@@ -34,6 +34,7 @@ import {
   runsLog,
   sandboxFamily,
   seedViaMu,
+  workerEvidence,
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
@@ -110,9 +111,9 @@ const scenario: Scenario = {
     const want: Record<string, RegExp> = {
       fast: new RegExp(`preclosed run=${n}`),
       ready: new RegExp(`^GATE-READY-${n}$`),
-      slow: new RegExp(`mx-slow\\.sh exit 0 run=${n}`),
-      gate: new RegExp(`gate\\.sh exit 0 run=${n}`),
-      race: new RegExp(`mx-race\\.sh exit 0 run=${n}`),
+      slow: workerEvidence("mx-slow", n),
+      gate: workerEvidence("gate", n),
+      race: workerEvidence("mx-race", n),
     };
     let completed = true;
     for (const [k, re] of Object.entries(want)) {

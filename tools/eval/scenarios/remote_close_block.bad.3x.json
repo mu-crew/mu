@@ -31,7 +31,7 @@
   {
     "calls": [
       {
-        "bash": "mu task close rt2 -w eval --evidence 'eval: rt2.sh exit 0 run=00000000'"
+        "bash": "mu task close rt2 -w eval --evidence 'rt2: committed 0000000 run=00000000'"
       }
     ]
   },

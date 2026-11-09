@@ -4,7 +4,7 @@
 // the worker's evidence. On 3.x nothing applies the block automatically (mu-pi.ts agent_settled
 // only publishes lastText); a surface that does would ship its own golden.<family>.json.
 //
-// Evidence provenance: the block's evidence is "eval: rt2.sh exit 0 run=<nonce>"; the nonce appears
+// Evidence provenance: the block's evidence is "rt2: committed <sha> run=<nonce>" (or "done, nothing to commit"); the nonce appears
 // only in the worker's output, so a note or close evidence carrying it was read, not invented.
 // Wrong: rt2 closed before the worker's block was printed (task.close op created_at is earlier
 // than the block's runs.log timestamp), or evidence without the nonce.

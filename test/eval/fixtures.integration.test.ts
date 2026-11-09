@@ -6,15 +6,20 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  ANSWER_ID,
   chromePane,
   delegateDefault,
   delegateDelay,
+  makeRepo,
+  nonce,
   openGate,
   seedDelegate,
   seedViaMu,
+  workerEvidence,
   workerTask,
   writeWorkerDriver,
 } from "../../tools/eval/fixtures.ts";
+import { answersServed } from "../../tools/eval/observe.ts";
 import { createSandbox, sh } from "../../tools/eval/sandbox.ts";
 import { surfaceFromDir } from "../../tools/eval/surface.ts";
 import type { Sandbox } from "../../tools/eval/types.ts";
@@ -151,6 +156,24 @@ describe.skipIf(!ready)("hill-r2 fixtures", () => {
     expect(after.stdout).toBe("VERDICT: CONFIRMED\nEVIDENCE: RV-n1 re-read the four fixes\n");
   }, 60_000);
 
+  it("each default answer carries its own id, logged in answers.log", async () => {
+    const box = await createSandbox(surface());
+    sb = box;
+    await writeWorkerDriver(box);
+    await delegateDelay(box, 0);
+    await seedViaMu(box, [["workstream", "init", "auth"]]);
+    await delegateDefault(box, `VERDICT: CONFIRMED\nEVIDENCE: counted (check ${ANSWER_ID})`);
+    const ask = (n: string) => sh(box, `MU_AGENT_NAME=${n} MU_WORKSTREAM=auth eval-worker`);
+    const a = (await ask("delegate-a")).stdout;
+    const b = (await ask("delegate-b")).stdout;
+    const ids = answersServed(box).map((x) => x.id);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toMatch(/^[0-9a-f]{8}$/);
+    expect(ids[0]).not.toBe(ids[1]);
+    expect(a).toBe(`VERDICT: CONFIRMED\nEVIDENCE: counted (check ${ids[0]})\n`);
+    expect(b).toContain(`(check ${ids[1]})`);
+  }, 60_000);
+
   it("a worker sees its claim while no mu process holds the DB open", async () => {
     sb = await createSandbox(surface());
     await writeWorkerDriver(sb);
@@ -170,6 +193,34 @@ describe.skipIf(!ready)("hill-r2 fixtures", () => {
       log = existsSync(f) ? readFileSync(f, "utf8") : "";
     }
     expect(log).toMatch(/ worker-1 t1 block /);
+  }, 60_000);
+
+  it("a worker's close evidence names its commit, never a script outside the repo", async () => {
+    sb = await createSandbox(surface());
+    await makeRepo(sb, { "a.txt": "a\n" });
+    await writeWorkerDriver(sb, { closeMode: "verb" });
+    await seedViaMu(sb, [
+      ["workstream", "init", "auth"],
+      ["task", "add", "t1", "-w", "auth", "-t", "one"],
+    ]);
+    await workerTask(sb, "t1", { sh: "echo t1 > t1.txt && git add t1.txt && git commit -qm t1" });
+    await seedViaMu(sb, [
+      ["agent", "spawn", "worker-1", "-w", "auth", "--task", "t1", "--send", "do t1"],
+    ]);
+    let log = "";
+    for (let i = 0; i < 60 && !/ worker-1 t1 close /.test(log); i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      const f = join(sb.workerDir, "runs.log");
+      log = existsSync(f) ? readFileSync(f, "utf8") : "";
+    }
+    const db = new Database(sb.dbPath, { readonly: true });
+    const notes = (db.prepare("SELECT content FROM task_notes").all() as { content: string }[])
+      .map((r) => r.content)
+      .join("\n");
+    db.close();
+    expect(notes).toMatch(workerEvidence("t1", await nonce(sb)));
+    expect(notes).toMatch(/t1: committed [0-9a-f]{7} run=/);
+    expect(notes).not.toMatch(/\.sh\b/);
   }, 60_000);
 
   it("chromePane prints pi-like chrome, then the lines, and stays alive", async () => {

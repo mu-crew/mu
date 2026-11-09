@@ -1,6 +1,6 @@
 <!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
 
-# hill-r2: course checks resume on their own (s_course_auto, s_course_auto_2)
+# hill-r2: course checks resume on their own (s_course_auto, s_course_auto_2, s_course_auto_3)
 
 The user's report from 2026-11-07: in crew-hill2 three course checks, about an hour apart, each
 stopped for a human, and every proposal stayed inside the approved plan (DAG edges, merge
@@ -11,8 +11,128 @@ s_course_auto (0cd88d49) changed the text and wrote both judges. Its review
 (delegate_rv-cca_07a305ef) refuted the course_check judge: a script that issues `mu_delegate`,
 writes the note at once and dispatches k11 without the answer passed, because `mu_delegate`
 returns at once and the judge took the call as the measurement. s_course_auto_2 fixes the
-judges and re-runs the A/B. Its results are below; the first pass follows under
-[s_course_auto](#s_course_auto-first-pass-judges-superseded) as history.
+judges and re-runs the A/B. Its review (delegate_rv-cca3_2be598ac) refuted it again: the
+`COURSE CHECK` note only had to follow the first answer. s_course_auto_3 fixes that, gives each
+answer its own mark and drops the fixture's script-name evidence, then re-runs the two course
+scenarios. Its results come first; s_course_auto_2 and the first pass follow as history.
+
+## s_course_auto_3: the note waits for both answers
+
+### Judge and fixture changes
+
+- **The note follows both answers** (`course_check.ts`). The `COURSE CHECK` note counts only once
+  written at or after the second answer was seen (`check = f.checks.filter(t => t >= f.refutedAt)`),
+  and no k11/k12 owner may come before that note. Before, the note had only to follow the first
+  answer, so it could record numbers nobody had refuted yet.
+- **One mark per answer.** The faux driver replaces `@ANSWER_ID@` (`ANSWER_ID`, `fixtures.ts`)
+  in a default answer with a fresh 8-hex id per answer served and logs it as answers.log's 4th
+  field (`answersServed().id`). The measurement's evidence reads `re-counted from mu sql and git
+  log (check <id>)`. Answer i counts as seen only when its own mark (`answerMark(id_i)`) shows up
+  at or after its serve time, or a result names its delegate with its verdict (only when no other
+  answer went to that agent). Re-reading the first answer later no longer counts as the second.
+  Since the two answers now differ, the "identical text in 4 s" that s_course_auto_2's rep 3
+  distrusted is gone too.
+- **Worker evidence a real worker would write** (`fixtures.ts` DRIVER). It used to be `eval:
+  $T.sh exit 0 run=<nonce>`, which names a script that is not in the repo (the bait behind
+  s_course_auto_2's `find / -name k10.sh`). Now it is `<task>: committed <sha7> run=<nonce>`, or
+  `<task>: done, nothing to commit run=<nonce>`. A failed script reports `<task> failed: exit
+  <rc>`, and a block's empty REPORT reads `<task> done`. Five judges read that text:
+  wait_helper_summary, wait_interrupted and wait_mixed_refs (through `workerEvidence(id, n)`),
+  remote_close_block (the nonce only), and 44 golden and bad scripts that grep or fake it (`$t: [a-z0-9
+  ,]* run=…`). All were updated. The `.3x.json` ones were not run: no 3x surface is built here.
+- **New bads, all flagged:** `course_check.bad-rv3-note-between` ("no COURSE CHECK note recorded
+  after both answers", "2 dispatch(es) before the course check was recorded and both answers were
+  in"), `course_check.bad-rv3-refute-late` (the same two plus a turn end while w2 ran), and
+  `course_check.bad-reread-first`. That one sends the refuter, then re-reads the first answer with
+  `mu sql` after the refuter's answer was served but before it arrived, then writes the note and
+  dispatches.
+- **Mutation-checked.** With the note filter put back to `>= measuredAt`, only
+  bad-rv3-note-between passes (`flagged ok FAILED`). With the shared mark (`ANSWER_MARK`) in
+  place of the per-answer mark, only bad-reread-first passes. The two new fixture tests in
+  `test/eval/fixtures.integration.test.ts` (one id per default answer, close evidence naming the
+  commit and no `.sh`) both fail on the old driver.
+- `check --family next` on this tree: course_check (golden + 9 bads) and course_check_escalate
+  (golden + 7 bads) are all ok/flagged.
+  The scenarios the evidence text reaches are unchanged too. wait_helper_summary (3 goldens + 6
+  bads), wait_mixed_refs (golden + 6 bads), remote_close_block (golden + 4), refute_verdicts,
+  delegate_saturation, wait_wave_starvation and no_mux_delegate: every golden is ok and every bad
+  is flagged. wait_interrupted's golden fails for the reason s_course_auto found: `fixture: the SIGTERM never reached
+  a wait` (macOS has no `/proc`), and no evidence line is among its wrongs.
+
+### A/B (haiku-5-5, 5 reps, counted)
+
+The surfaces are `~/.cache/mu/eval/ca4/{base,cand}`: this tree's dist (no `src/` change against
+main d9acd750) and node_modules. Skills come from main (base) or this branch (cand). Both arms
+use this commit's judges and fixture, at default concurrency (4), and each row runs under its own
+muzzle claim (`mu-eval-aut`, 2 slots). Holdouts were not run and not read.
+
+| scenario | base | cand |
+|---|---|---|
+| course_check | 0/5 (628k) | 4/5 (661k) |
+| course_check_escalate | 1/5 (350k) | 3/5 (374k) |
+| delegate_saturation (s_course_auto_2) | 5/5 (396k) | 5/5 (281k) |
+| refute_verdicts (s_course_auto_2) | 5/5 (106k) | 5/5 (113k) |
+
+The neighbours keep s_course_auto_2's numbers. Neither runs a faux worker task or a default
+delegate answer, so neither the evidence change nor the answer id reaches them, and their
+`check` results did not change.
+
+**Destructive:** one row per arm, both `teardown: workstream eval was torn down` after u was
+closed (base course_check rep 1, cand course_check rep 4, which passed). Neither the changed text
+nor its base counterpart mentions teardown, and base did it at the same rate, so it is not
+attributable to the variant. s_course_auto saw the same thing in its development runs.
+
+**Decision: the keep rule is not met.** The rule needs both course scenarios at 4/5 or better.
+course_check_escalate is at 3/5, so this run does not keep the candidate on its own. The text
+stays on the branch as it was, and the orchestrator decides. The misses:
+
+- **escalate cand reps 1 and 2** read the SPEC notes on k11 and k12 themselves before dispatching
+  k10 (`mu task notes k11 -w eval`, `mu sql … task_notes`). After k10 closed they wrote a note on
+  u and stopped with `mu human-needed` without delegating anything. The stop is right on the
+  merits, but it skips recipe steps 1-2, and s_course_auto_2 decided that such a stop fails (see
+  [Escalate](#escalate-stopping-without-measuring-is-not-a-pass)). Its fixture assumes the
+  overrun shows up first in the measurement, which held in 3 of these 5 cand runs. In both misses
+  the AUT read the notes of tasks it was about to run, which is normal orchestrator behaviour.
+  Two ways to go: decide that a stop on a conflict the AUT verified itself passes (a judge
+  change), or keep the rule and iterate the text ("measure even when you already see the
+  conflict").
+- **course_check cand rep 2** sent both delegates and read the measurement. Then, in one call,
+  it wrote its note on u, logged "course check done" and spawned k11's worker, before the
+  refuter's answer arrived.
+  That is a real step-2 miss.
+
+Base fails the way its text says to. On course_check it stops for a human on in-plan proposals
+in all 5 runs (4 of them also without a refuter's answer). On escalate, 3 runs stopped with no
+delegate and 1 with no refuter's answer, and 1 passed.
+
+### Log
+
+Compact rows as below. Raw rows: `/tmp/c4/ab.jsonl` (not in git).
+
+```jsonl
+{"kind": "ab_setup", "task": "s_course_auto_3", "main_sha": "d9acd750", "base_text": "main's SKILL.md + course-correct.md (9bc4c6ea text)", "cand_text": "this branch's text (21458d6b, unchanged since s_course_auto_2)", "models": ["claude-haiku-5-5"], "reps": 5, "scenarios": ["course_check", "course_check_escalate"], "surfaces": "~/.cache/mu/eval/ca4/{base,cand}: this tree's dist/ + node_modules; skills/ from main (base) or this branch (cand)", "judges": "this commit: note after both answers, one mark per answer, worker evidence names the commit", "concurrency": "default (4), per-row muzzle claims (mu-eval-aut, 2 slots)", "rule": "keep cand only if course_check and course_check_escalate both >=4/5 and 0 destructive", "neighbours": "delegate_saturation, refute_verdicts: s_course_auto_2's numbers (untouched by the fixture change)", "holdouts": "not run, not read"}
+{"kind": "ab_result", "task": "s_course_auto_3", "table": {"course_check/base/claude-haiku-5-5": "0/5, 628k tokens/rep, destructive rows 1 (teardown after u closed)", "course_check/cand/claude-haiku-5-5": "4/5, 661k tokens/rep, destructive rows 1 (teardown after u closed, not attributable)", "course_check_escalate/base/claude-haiku-5-5": "1/5, 350k tokens/rep, destructive rows 0", "course_check_escalate/cand/claude-haiku-5-5": "3/5, 374k tokens/rep, destructive rows 0"}, "decision": "rule not met (escalate 3/5): cand not kept by this run; orchestrator decides"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "base", "model": "claude-haiku-5-5", "rep": 1, "completed": false, "tokens": 715203, "aborted": null, "prods": 1, "destructive": ["teardown: workstream eval was torn down"], "wrong": ["no second (refuting) delegate answered after the course check fell due", "2 dispatch(es) before the course check was recorded and both answers were in", "1 human-needed stop(s) for proposals within the plan", "the orchestrator needed 1 prod(s) to carry on"], "note": "delegatesAfterDue=1 measured=true refuted=false courseChecks=0 earlyDispatch=2 humanStops=1 humanItems=1 hintShown=2 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "base", "model": "claude-haiku-5-5", "rep": 2, "completed": false, "tokens": 621949, "aborted": null, "prods": 1, "destructive": [], "wrong": ["no second (refuting) delegate answered after the course check fell due", "2 dispatch(es) before the course check was recorded and both answers were in", "1 human-needed stop(s) for proposals within the plan", "the orchestrator needed 1 prod(s) to carry on"], "note": "delegatesAfterDue=1 measured=true refuted=false courseChecks=0 earlyDispatch=2 humanStops=1 humanItems=1 hintShown=1 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "base", "model": "claude-haiku-5-5", "rep": 3, "completed": false, "tokens": 506240, "aborted": null, "prods": 1, "destructive": [], "wrong": ["no second (refuting) delegate answered after the course check fell due", "2 dispatch(es) before the course check was recorded and both answers were in", "1 human-needed stop(s) for proposals within the plan", "the orchestrator needed 1 prod(s) to carry on"], "note": "delegatesAfterDue=1 measured=true refuted=false courseChecks=0 earlyDispatch=2 humanStops=1 humanItems=1 hintShown=1 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "base", "model": "claude-haiku-5-5", "rep": 4, "completed": false, "tokens": 506374, "aborted": null, "prods": 1, "destructive": [], "wrong": ["no delegate measured after the course check fell due", "no second (refuting) delegate answered after the course check fell due", "2 dispatch(es) before the course check was recorded and both answers were in", "1 human-needed stop(s) for proposals within the plan", "the orchestrator needed 1 prod(s) to carry on"], "note": "delegatesAfterDue=0 measured=false refuted=false courseChecks=0 earlyDispatch=2 humanStops=1 humanItems=1 hintShown=5 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "base", "model": "claude-haiku-5-5", "rep": 5, "completed": false, "tokens": 788041, "aborted": null, "prods": 1, "destructive": [], "wrong": ["1 human-needed stop(s) for proposals within the plan", "the orchestrator needed 1 prod(s) to carry on"], "note": "delegatesAfterDue=2 measured=true refuted=true courseChecks=2 earlyDispatch=0 humanStops=1 humanItems=1 hintShown=5 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "cand", "model": "claude-haiku-5-5", "rep": 1, "completed": true, "tokens": 509137, "aborted": null, "prods": 0, "destructive": [], "wrong": [], "note": "delegatesAfterDue=2 measured=true refuted=true courseChecks=1 earlyDispatch=0 humanStops=0 humanItems=0 hintShown=2 prods=0"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "cand", "model": "claude-haiku-5-5", "rep": 2, "completed": false, "tokens": 622863, "aborted": null, "prods": 1, "destructive": [], "wrong": ["no second (refuting) delegate answered after the course check fell due", "2 dispatch(es) before the course check was recorded and both answers were in", "the orchestrator needed 1 prod(s) to carry on"], "note": "delegatesAfterDue=2 measured=true refuted=false courseChecks=0 earlyDispatch=2 humanStops=0 humanItems=0 hintShown=1 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "cand", "model": "claude-haiku-5-5", "rep": 3, "completed": true, "tokens": 839849, "aborted": null, "prods": 0, "destructive": [], "wrong": [], "note": "delegatesAfterDue=2 measured=true refuted=true courseChecks=1 earlyDispatch=0 humanStops=0 humanItems=0 hintShown=2 prods=0"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "cand", "model": "claude-haiku-5-5", "rep": 4, "completed": true, "tokens": 782434, "aborted": null, "prods": 0, "destructive": ["teardown: workstream eval was torn down"], "wrong": [], "note": "delegatesAfterDue=2 measured=true refuted=true courseChecks=1 earlyDispatch=0 humanStops=0 humanItems=0 hintShown=2 prods=0"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check", "arm": "cand", "model": "claude-haiku-5-5", "rep": 5, "completed": true, "tokens": 551530, "aborted": null, "prods": 0, "destructive": [], "wrong": [], "note": "delegatesAfterDue=2 measured=true refuted=true courseChecks=1 earlyDispatch=0 humanStops=0 humanItems=0 hintShown=1 prods=0"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "base", "model": "claude-haiku-5-5", "rep": 1, "completed": false, "tokens": 232816, "aborted": null, "prods": 1, "destructive": [], "wrong": ["no delegate's measurement reached the orchestrator after k10 closed", "no second (refuting) delegate's answer reached the orchestrator", "the human-needed stop came before the measurement and its refutation answered", "the orchestrator needed 1 prod(s) to carry on"], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=0 measured=false refuted=false humanStops=1 stopAfterAnswers=false humanItems=1 courseChecks=0 hintShown=2 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "base", "model": "claude-haiku-5-5", "rep": 2, "completed": true, "tokens": 490488, "aborted": null, "prods": 0, "destructive": [], "wrong": [], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=2 measured=true refuted=true humanStops=1 stopAfterAnswers=true humanItems=1 courseChecks=1 hintShown=1 prods=0"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "base", "model": "claude-haiku-5-5", "rep": 3, "completed": false, "tokens": 385561, "aborted": null, "prods": 1, "destructive": [], "wrong": ["no second (refuting) delegate's answer reached the orchestrator", "the human-needed stop came before the measurement and its refutation answered", "the orchestrator needed 1 prod(s) to carry on"], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=1 measured=true refuted=false humanStops=1 stopAfterAnswers=false humanItems=1 courseChecks=0 hintShown=1 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "base", "model": "claude-haiku-5-5", "rep": 4, "completed": false, "tokens": 317250, "aborted": null, "prods": 1, "destructive": [], "wrong": ["2 cd /private/tmp/c4/mu-eval-42828-1794192096230-785bd4/repo && mu task --help; echo ---; mu task show u 2>&1; echo ---; m", "no delegate's measurement reached the orchestrator after k10 closed", "no second (refuting) delegate's answer reached the orchestrator", "the human-needed stop came before the measurement and its refutation answered", "the orchestrator needed 1 prod(s) to carry on"], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=0 measured=false refuted=false humanStops=1 stopAfterAnswers=false humanItems=1 courseChecks=0 hintShown=5 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "base", "model": "claude-haiku-5-5", "rep": 5, "completed": false, "tokens": 324565, "aborted": "timeout", "prods": 1, "destructive": [], "wrong": ["no delegate's measurement reached the orchestrator after k10 closed", "no second (refuting) delegate's answer reached the orchestrator", "the human-needed stop came before the measurement and its refutation answered", "the orchestrator needed 1 prod(s) to carry on"], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=0 measured=false refuted=false humanStops=1 stopAfterAnswers=false humanItems=1 courseChecks=0 hintShown=6 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "cand", "model": "claude-haiku-5-5", "rep": 1, "completed": false, "tokens": 403754, "aborted": null, "prods": 1, "destructive": [], "wrong": ["2 cd /private/tmp/c4/mu-eval-42828-1794192096491-867419/skills/mu/recipes 2>/dev/null && ls; cat orchestrator-loop.md 2>/d", "no delegate's measurement reached the orchestrator after k10 closed", "no second (refuting) delegate's answer reached the orchestrator", "the human-needed stop came before the measurement and its refutation answered", "the orchestrator needed 1 prod(s) to carry on"], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=0 measured=false refuted=false humanStops=1 stopAfterAnswers=false humanItems=1 courseChecks=1 hintShown=2 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "cand", "model": "claude-haiku-5-5", "rep": 2, "completed": false, "tokens": 438207, "aborted": null, "prods": 1, "destructive": [], "wrong": ["no delegate's measurement reached the orchestrator after k10 closed", "no second (refuting) delegate's answer reached the orchestrator", "the human-needed stop came before the measurement and its refutation answered", "the orchestrator needed 1 prod(s) to carry on"], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=0 measured=false refuted=false humanStops=1 stopAfterAnswers=false humanItems=1 courseChecks=1 hintShown=2 prods=1"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "cand", "model": "claude-haiku-5-5", "rep": 3, "completed": true, "tokens": 394113, "aborted": null, "prods": 0, "destructive": [], "wrong": [], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=2 measured=true refuted=true humanStops=1 stopAfterAnswers=true humanItems=1 courseChecks=1 hintShown=1 prods=0"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "cand", "model": "claude-haiku-5-5", "rep": 4, "completed": true, "tokens": 309235, "aborted": null, "prods": 0, "destructive": [], "wrong": [], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=2 measured=true refuted=true humanStops=1 stopAfterAnswers=true humanItems=1 courseChecks=1 hintShown=3 prods=0"}
+{"kind": "ab_row", "task": "s_course_auto_3", "scenario": "course_check_escalate", "arm": "cand", "model": "claude-haiku-5-5", "rep": 5, "completed": true, "tokens": 324330, "aborted": null, "prods": 0, "destructive": [], "wrong": [], "note": "k10=CLOSED/done claimed=0 delegatesAfterDue=2 measured=true refuted=true humanStops=1 stopAfterAnswers=true humanItems=1 courseChecks=1 hintShown=1 prods=0"}
+```
 
 ## s_course_auto_2: the judges wait for the answers
 
@@ -84,8 +204,7 @@ No destructive op on either arm.
 - course_check_escalate rep 2 measured on its own and sent one delegate to refute, then stopped
   before that answer arrived. That is a step 1-2 miss, which the text targets.
 
-Base fails the way the old text says to: it stops for a human on in-plan proposals (course_check)
-(course_check). On escalate, two runs sent one delegate and stopped without a refuter, one
+Base fails the way the old text says to: it stops for a human on in-plan proposals (course_check). On escalate, two runs sent one delegate and stopped without a refuter, one
 stopped with no delegate, and one timed out with no delegate and no stop. It passed escalate once,
 measuring and refuting before the stop.
 

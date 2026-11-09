@@ -23,7 +23,7 @@
   {
     "calls": [
       {
-        "bash": "out=$(mu agent wait w1 w2 -w eval --after-runs 0 --json --timeout 120); for t in h1 h2; do ev=$(printf '%s' \"$out\" | grep -o \"eval: $t.sh exit 0 run=[0-9a-f]*\" | head -1); mu task close $t -w eval --evidence \"$ev\"; echo \"$t: $ev\"; done > summary.md; cat summary.md"
+        "bash": "out=$(mu agent wait w1 w2 -w eval --after-runs 0 --json --timeout 120); for t in h1 h2; do ev=$(printf '%s' \"$out\" | grep -o \"$t: [a-z0-9 ,]* run=[0-9a-f]*\" | head -1); mu task close $t -w eval --evidence \"$ev\"; echo \"$t: $ev\"; done > summary.md; cat summary.md"
       }
     ]
   },

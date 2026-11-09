@@ -20,7 +20,7 @@
   {
     "calls": [
       {
-        "bash": "out=$(mu agent wait w1 w2 -w eval --after-runs 0 --json --timeout 120); ev=$(printf '%s' \"$out\" | grep -o \"eval: h1.sh exit 0 run=[0-9a-f]*\" | head -1); mu task close h1 -w eval --evidence \"$ev\"; mu task close h2 -w eval --evidence \"$ev\"; printf \"h1: $ev\\nh2: $ev\\n\" > summary.md"
+        "bash": "out=$(mu agent wait w1 w2 -w eval --after-runs 0 --json --timeout 120); ev=$(printf '%s' \"$out\" | grep -o \"h1: [a-z0-9 ,]* run=[0-9a-f]*\" | head -1); mu task close h1 -w eval --evidence \"$ev\"; mu task close h2 -w eval --evidence \"$ev\"; printf \"h1: $ev\\nh2: $ev\\n\" > summary.md"
       }
     ]
   },

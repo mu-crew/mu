@@ -20,6 +20,7 @@ import {
   nonce,
   runsLog,
   seedViaMu,
+  workerEvidence,
   workerTask,
   writeWorkerDriver,
 } from "../fixtures.ts";
@@ -81,7 +82,7 @@ const scenario: Scenario = {
       if (r) lastRun = Math.max(lastRun, r.ts);
       lastClose = Math.max(lastClose, closeMoment(sb, "eval", id)?.ms ?? 0);
       const done = t?.status === "CLOSED" && t.substate === "done";
-      const quoted = new RegExp(`${id}\\.sh exit 0 run=${n}`).test(summary.stdout);
+      const quoted = workerEvidence(id, n).test(summary.stdout);
       if (!quoted) wrong.push(`summary.md lacks ${id}'s worker evidence (run=${n})`);
       if (!(done && r && quoted)) completed = false;
     }

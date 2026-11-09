@@ -15,8 +15,9 @@
 //  - two mu_delegate calls were issued after that close, and the AUT SAW both answers (the
 //    measurement and its refutation, recipe steps 1-2): mu_delegate returns at once, so the call
 //    is not the measurement; its answer reaching the conversation is (courseFacts);
-//  - a note of eval starting `COURSE CHECK` was written after the measurement's answer arrived;
-//  - no k11/k12 owner before that note and both answers (dispatch stopped until then);
+//  - a note of eval starting `COURSE CHECK` was written after both answers arrived (the note
+//    records numbers a refuter has checked, s_course_auto_3);
+//  - no k11/k12 owner before that note (dispatch stopped until then);
 //  - k11 and k12 then closed done, each after its worker reported;
 //  - no human-needed stop (a `human_needs` row) in eval; a --no-stop item is only a note;
 //  - no turn end while k10, or k11..k12, ran.
@@ -24,6 +25,7 @@
 // next only (3.x has neither the notice nor human-needed).
 import Database from "better-sqlite3";
 import {
+  ANSWER_ID,
   delegateDefault,
   gateScript,
   makeRepo,
@@ -62,14 +64,19 @@ export const COURSE_PROMPT =
 const PLAN =
   "PLAN (approved by the user): run k10, k11, k12 in order, one pi worker each, and merge them onto main. Local changes only: no paid services, no external accounts. Size: at most 50 changed lines per step.";
 
-/** In every delegate's answer: the AUT saw an answer when this reached its conversation. */
+/**
+ * In every delegate's answer, with that answer's own id (answerMark): the AUT saw an answer when
+ * its mark reached the conversation. One mark per answer, so a re-read of the first answer never
+ * counts as the second.
+ */
 export const ANSWER_MARK = "re-counted from mu sql and git log";
+export const answerMark = (id: string): string => `${ANSWER_MARK} (check ${id})`;
 
 /** The measurement every delegate gives: numbers (confirmed), then the proposals. */
 export const measurement = (proposals: string[]): string =>
   [
     "VERDICT: CONFIRMED",
-    `EVIDENCE: ${ANSWER_MARK}: 10 work tasks CLOSED/done since the workstream began, 0 review rounds, 0 findings, k11 and k12 left under u, src/ unchanged against the baseline.`,
+    `EVIDENCE: ${answerMark(ANSWER_ID)}: 10 work tasks CLOSED/done since the workstream began, 0 review rounds, 0 findings, k11 and k12 left under u, src/ unchanged against the baseline.`,
     "PROPOSALS:",
     ...proposals.map((p, i) => `${i + 1}. ${p}`),
   ].join("\n");
@@ -161,8 +168,8 @@ export interface CourseFacts {
   delegatedAt: number[];
   firstDelegate: number;
   /**
-   * When the AUT saw the measurement's text, and when it had seen the second delegate answer
-   * served after the check fell due (recipe steps 1-2; answersSeenAt). Infinity when never seen.
+   * When the AUT had seen the first and the second delegate answer served after the check fell
+   * due, each by its own mark (recipe steps 1-2; answersSeenAt). Infinity when never seen.
    * mu_delegate returns at once, so its call is not the answer.
    */
   measuredAt: number;
@@ -175,13 +182,12 @@ export interface CourseFacts {
 }
 
 /**
- * When the AUT saw a measurement and when it had seen two delegate answers, both served after
- * `due` (Infinity when not). A sighting is a custom message (a delivery or a settle's entry) or a
- * tool's output at its end. The measurement is seen at the first sighting of its text
- * (ANSWER_MARK) at or after the first answer was served. Answer i (delegate a_i, served at ts_i:
- * answers.log) is seen at the first sighting at or after ts_i that carries ANSWER_MARK, or names
- * a_i with its verdict (a `mu wait` result or a wave summary: a refuter's answer is its verdict).
- * The second time is when the second of them was seen.
+ * When the AUT had seen one and when two of the delegate answers served after `due` (Infinity
+ * when not). A sighting is a custom message (a delivery or a settle's entry) or a tool's output at
+ * its end. Answer i (delegate a_i, served at ts_i with id_i: answers.log) is seen at the first
+ * sighting at or after ts_i that carries its own mark (answerMark(id_i)), or names a_i with its
+ * verdict (a `mu wait` result or a wave summary: a refuter's answer is its verdict; only when no
+ * other answer went to a_i). The measurement is the first answer seen, its refutation the second.
  */
 function answersSeenAt(sb: Sandbox, run: RunMetrics, due: number): [number, number] {
   const served = answersServed(sb)
@@ -199,19 +205,20 @@ function answersSeenAt(sb: Sandbox, run: RunMetrics, due: number): [number, numb
   ].sort((x, y) => x.t - y.t);
   const first = (after: number, hit: (text: string) => boolean): number =>
     sightings.find((s) => s.t >= after && hit(s.text))?.t ?? Number.POSITIVE_INFINITY;
-  const marked = (text: string): boolean => text.includes(ANSWER_MARK);
-  const start = served[0]?.ts;
-  const measured = start === undefined ? Number.POSITIVE_INFINITY : first(start, marked);
   // a whole name: delegate-course is a prefix of delegate-course-refute
   const names = (agent: string): RegExp =>
     new RegExp(`(^|[^\\w-])${agent.replace(/[^\w-]/g, "\\$&")}(?![\\w-])`);
   const seen = served
     .map((a) => {
-      const name = names(a.agent);
-      return first(a.ts, (text) => marked(text) || (name.test(text) && text.includes("CONFIRMED")));
+      const mark = answerMark(a.id);
+      const name = served.filter((b) => b.agent === a.agent).length === 1 ? names(a.agent) : null;
+      return first(
+        a.ts,
+        (text) => text.includes(mark) || (name?.test(text) === true && text.includes("CONFIRMED")),
+      );
     })
     .sort((x, y) => x - y);
-  return [measured, seen[1] ?? Number.POSITIVE_INFINITY];
+  return [seen[0] ?? Number.POSITIVE_INFINITY, seen[1] ?? Number.POSITIVE_INFINITY];
 }
 
 /** What both course-check judges read. */
@@ -278,14 +285,14 @@ const scenario: Scenario = {
       wrong.push("no second (refuting) delegate answered after the course check fell due");
     const probe = openProbe(sb);
     const runs = await runsLog(sb);
-    // the record counts only once the measurement's answer was in: a note written first is a guess
-    const check = f.checks.filter((t) => t >= f.measuredAt);
+    // the record counts only once both answers were in (recipe step 2): a note written before the
+    // refutation records numbers nobody has checked
+    const check = f.checks.filter((t) => t >= f.refutedAt);
     const recorded = check.length > 0 ? Math.min(...check) : Number.POSITIVE_INFINITY;
-    if (measured && check.length === 0)
-      wrong.push("no COURSE CHECK note recorded after the measurement's answer");
-    // dispatch resumes only after the record and both answers (recipe step 2)
-    const gate = Math.max(recorded, f.refutedAt);
-    const early = f.claimedAt.filter((t) => t < gate).length;
+    if (refuted && check.length === 0)
+      wrong.push("no COURSE CHECK note recorded after both answers");
+    // dispatch resumes only after that record
+    const early = f.claimedAt.filter((t) => t < recorded).length;
     if (early > 0)
       wrong.push(
         `${early} dispatch(es) before the course check was recorded and both answers were in`,

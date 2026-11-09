@@ -212,6 +212,14 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   messages; before, no judge saw an answer a settle delivered. On haiku ×5,
   base → candidate: course_check 0/5 → 4/5, course_check_escalate 1/5 → 4/5,
   delegate_saturation 5/5 → 5/5, refute_verdicts 5/5 → 5/5, no destructive op.
+  s_course_auto_3 tightens the judge: the `COURSE CHECK` note must come after
+  both answers, and each faux delegate answer carries its own id, so a re-read
+  of the first answer is not taken for the second. Faux workers' close
+  evidence now names their commit (`<task>: committed <sha> run=<nonce>`), no
+  longer a `<task>.sh` that is not in the repo. Re-run on haiku ×5: course_check
+  0/5 → 4/5, course_check_escalate 1/5 → 3/5 (two candidate runs read the
+  overrun in k11's notes and stopped without measuring). That misses the keep
+  rule (both ≥ 4/5).
   Log: docs/eval/hill-r2/course-auto.md.
 - **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
   events arrive in one block, one line per event, plus a line for what is
