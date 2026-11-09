@@ -3,11 +3,16 @@
 // herdr or Rex query, of one pane or a listed batch) goes through src/jobs,
 // and the lease job's effects (stop, handshake, attach) are reached only
 // through the lease kind. A new direct probe or call fails here. A channel's
-// own reading (ctl's socket status, murmur's inbox) is not a mux probe: P4.
+// own reading (ctl's socket status, murmur's inbox) is not a mux probe; that it
+// never decides liveness alone is test/channel-names.test.ts (P4). The line
+// scan is backed by an import-aware one (the TypeScript AST): a probe method
+// destructured off a backend, and a probe imported (named, aliased or as a
+// namespace) from a backend module.
 
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join, posix, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,7 +78,109 @@ const allowed = (file: string, line: string): boolean =>
   file.startsWith("src/jobs/") ||
   (file === "src/reconcile.ts" && /\bmux\.listPanes\(sessionName\)/.test(line));
 
+/** The MuxBackend pane reads, as method names. */
+const PROBE_METHODS = new Set([
+  "paneAlive",
+  "paneResult",
+  "paneOccupied",
+  "paneStatus",
+  "panePid",
+  "listPanes",
+]);
+/** The probes a backend module exports: the pane reads and the raw executors. */
+const PROBE_EXPORTS = new Set([...PROBE_METHODS, "tmux", "herdr", "rex"]);
+/** The backend modules (and the barrels that re-export them), as `src/`-relative paths. */
+const BACKEND_MODULES = new Set([
+  "src/tmux.ts",
+  "src/mux.ts",
+  "src/mux/index.ts",
+  "src/mux/tmux.ts",
+  "src/mux/herdr.ts",
+  "src/mux/rex.ts",
+]);
+
+/** The repo-relative `.ts` path an import specifier in `file` names; undefined for a package. */
+function resolveSpecifier(file: string, spec: string): string | undefined {
+  if (!spec.startsWith(".")) return undefined;
+  return posix.normalize(posix.join(posix.dirname(file), spec)).replace(/\.js$/, ".ts");
+}
+
+/** The probes `text` reaches by import or destructuring, as `line form` strings. */
+function importedProbes(file: string, text: string): string[] {
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const out: string[] = [];
+  const at = (n: ts.Node): number => sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1;
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+      const from = resolveSpecifier(file, node.moduleSpecifier.text);
+      const clause = node.importClause;
+      if (from !== undefined && BACKEND_MODULES.has(from) && clause && !clause.isTypeOnly) {
+        const bindings = clause.namedBindings;
+        if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+          out.push(`${at(node)} namespace import of ${from}`);
+        } else if (bindings !== undefined) {
+          for (const el of bindings.elements) {
+            const name = (el.propertyName ?? el.name).text;
+            if (!el.isTypeOnly && PROBE_EXPORTS.has(name)) {
+              out.push(`${at(el)} import ${name} from ${from}`);
+            }
+          }
+        }
+      }
+    }
+    if (ts.isObjectBindingPattern(node)) {
+      for (const el of node.elements) {
+        const key = el.propertyName ?? el.name;
+        if (ts.isIdentifier(key) && PROBE_METHODS.has(key.text)) {
+          out.push(`${at(el)} destructured ${key.text}`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return out;
+}
+
 describe("the job seam", () => {
+  it("no probe is imported or destructured outside src/mux and src/jobs (import-aware)", () => {
+    const out: string[] = [];
+    for (const path of sources(SRC)) {
+      const file = rel(path);
+      if (file.startsWith("src/mux/") || file.startsWith("src/jobs/")) continue;
+      for (const hit of importedProbes(file, readFileSync(path, "utf8"))) {
+        out.push(`${file}:${hit}`);
+      }
+    }
+    expect(out).toEqual([]);
+  });
+
+  it("each import-aware form is caught, one planted source per form", () => {
+    const planted: ReadonlyArray<readonly [string, string, string]> = [
+      ["destructured off activeMux", "src/a.ts", "const { paneAlive } = await activeMux();"],
+      ["destructured, renamed", "src/a.ts", "const { paneResult: r } = mux;"],
+      ["destructured in a parameter", "src/a.ts", "function f({ listPanes }) {}"],
+      ["named import", "src/a.ts", 'import { tmux } from "./tmux.js";'],
+      ["aliased import", "src/agents/a.ts", 'import { paneAlive as up } from "../mux/tmux.js";'],
+      ["herdr executor", "src/a.ts", 'import { herdr } from "./mux/herdr.js";'],
+      ["rex probe", "src/cli/a.ts", 'import { panePid } from "../mux/rex.js";'],
+      ["namespace import", "src/a.ts", 'import * as t from "./tmux.js";'],
+    ];
+    for (const [form, file, text] of planted) {
+      expect(importedProbes(file, text), form).not.toEqual([]);
+    }
+    // Not probes: sleep from the tmux module, a type, another module's same-named export.
+    for (const [file, text] of [
+      ["src/a.ts", 'import { sleep } from "./tmux.js";'],
+      ["src/a.ts", 'import type { MuxPane } from "./mux.js";'],
+      ["src/a.ts", 'import { type PaneResult, activeMux } from "./mux.js";'],
+      ["src/a.ts", 'import { paneUp } from "./jobs/pane.js";'],
+      ["src/a.ts", "const { name, paneId } = agent;"],
+    ] as const) {
+      expect(importedProbes(file, text), text).toEqual([]);
+    }
+  });
+
   it("every multiplexer pane probe runs in src/mux or src/jobs", () => {
     const out: string[] = [];
     for (const path of sources(SRC)) {
