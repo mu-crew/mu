@@ -262,6 +262,8 @@ function audit(group: Group, rows: readonly ControlRow[], dir: string, only?: st
       providerExt: setupOf(rows)?.providerExt ?? undefined,
     });
     ctx.allow.push(join(PACKS_DIR, group));
+    // a path below HOME in a top dir this host lacks names nothing the designer could read
+    ctx.exists = existsSync;
     // what the pristine pack itself says is no leak (mu's docs name its own state dirs)
     excused ??= packTokens(join(PACKS_DIR, group), ctx);
     const hits = auditSession(join(ddir, "sessions"), ctx, excused);

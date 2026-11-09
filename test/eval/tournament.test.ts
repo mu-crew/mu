@@ -856,6 +856,22 @@ describe("designer isolation", () => {
     );
   });
 
+  it("with `exists`, a catch-all path in a top dir below HOME this host lacks is no hit", () => {
+    const only = new Set(["/home/u/.ssh", "/home/u/src"]);
+    const c: DenyContext = { ...ctx, exists: (p) => only.has(p) };
+    const r = (t: string): string[] => denyHits(t, c, "/home/u/x").map((h) => h.rule);
+    // a pane footer typed into a test string: ~/repo does not exist
+    expect(r("cat > t.ts <<E\nconst s = `~/repo/wt/worker-1 (mu/worker-1)`;\nE")).toEqual([]);
+    expect(r("ls /home/u/code/mu")).toEqual([]);
+    // a top dir that exists still hits, at any depth, and HOME itself always does
+    expect(r("cat ~/.ssh/nothing-here")).toEqual(["under the real HOME"]);
+    expect(r("ls /home/u")).toEqual(["under the real HOME"]);
+    // named stores are not the catch-all: an absent museum store still hits
+    expect(r("ls /home/u/museum/db")).toContain("museum");
+    // without `exists` (the default context) nothing is excused
+    expect(rules("ls /home/u/code/mu")).toEqual(["under the real HOME"]);
+  });
+
   it("the catch-all denies any other path under the real HOME, but lets node's install dir through", () => {
     expect(rules("cat /home/u/.ssh/config")).toEqual(["under the real HOME"]);
     expect(rules("cat ~/notes.txt")).toEqual(["under the real HOME"]);

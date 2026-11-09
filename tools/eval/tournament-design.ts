@@ -64,6 +64,12 @@ export interface DenyContext {
    */
   allow: string[];
   caseIds: string[];
+  /**
+   * Set by the CLI audit (`existsSync`): a catch-all path whose first dir below HOME does not
+   * exist on this host names nothing a designer could read (a pane footer it typed into a test
+   * string, `~/repo/wt/worker-1`), so it is no hit. Unset (tests, fake homes): every such path hits.
+   */
+  exists?: (p: string) => boolean;
 }
 
 export function defaultDenyContext(o: {
@@ -283,9 +289,9 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
     if (n) hits.push({ rule: n.rule, match: p, raw });
     else if (under(p, ctx.packs) && !under(p, ctx.ownPack) && !under(p, ctx.ownDdir))
       hits.push({ rule: "another pack", match: p, raw });
-    else if (under(p, ctx.home) && !allowed.some((a) => under(p, a)))
-      hits.push({ rule: "under the real HOME", match: p, raw });
-    else if (
+    else if (under(p, ctx.home) && !allowed.some((a) => under(p, a))) {
+      if (!absentBelowHome(p, ctx)) hits.push({ rule: "under the real HOME", match: p, raw });
+    } else if (
       cwd !== undefined &&
       roots.some((r) => ancestor(p, r)) &&
       !allowed.some((a) => under(p, a))
@@ -293,6 +299,13 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
       hits.push({ rule: "search above HOME", match: p, raw });
   }
   return hits;
+}
+
+/** `p` lies in a top dir below HOME that does not exist (needs `ctx.exists`). */
+function absentBelowHome(p: string, ctx: DenyContext): boolean {
+  if (ctx.exists === undefined) return false;
+  const top = relative(ctx.home, p).split(sep)[0];
+  return top !== undefined && top !== "" && !ctx.exists(join(ctx.home, top));
 }
 
 function textFile(p: string): boolean {
