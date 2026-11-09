@@ -4,7 +4,13 @@ import { delimiter, join } from "node:path";
 import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
 import { type Harness, harnessOfCli, hookConfigPath } from "./harnesses.js";
-import { readTmuxViews, type TmuxView, viewPresent, viewState } from "./jobs/view.js";
+import {
+  readTmuxViews,
+  type TmuxView,
+  viewState,
+  viewStatus,
+  viewsReportStatus,
+} from "./jobs/view.js";
 import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
 
@@ -346,20 +352,14 @@ async function readMuxStates(
   const none = `${mux.name} reports no state`;
   for (const agent of agents) {
     try {
-      const status = await mux.paneStatus?.(agent.paneId);
-      if (status !== undefined) {
-        readings.set(agentKey(agent), {
-          state: status,
-          source,
-          since: null,
-          alive: true,
-        });
-        continue;
-      }
-      const alive = await viewPresent(agent.paneId, mux);
+      const view = await viewStatus(agent.paneId, mux);
       readings.set(
         agentKey(agent),
-        alive ? unknownReading(none, true, source) : unknownReading(UNKNOWN_REASON.paneGone, false),
+        view.state === "reported"
+          ? { state: view.status, source, since: null, alive: true }
+          : view.state === "present"
+            ? unknownReading(none, true, source)
+            : unknownReading(UNKNOWN_REASON.paneGone, false),
       );
     } catch (error) {
       readings.set(
@@ -423,7 +423,7 @@ export async function readBaseStates(
     for (const agent of agents) readings.set(agentKey(agent), unknownReading(reason));
     return readings;
   }
-  if (mux.paneStatus !== undefined) return await readMuxStates(agents, mux);
+  if (viewsReportStatus(mux)) return await readMuxStates(agents, mux);
 
   let view: (paneId: string) => TmuxView;
   try {

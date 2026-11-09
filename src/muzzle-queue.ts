@@ -13,6 +13,7 @@
 // PATH, or no waiter, nothing is queued and no process table is read.
 
 import { execFileCapture } from "./exec-file.js";
+import { viewPid } from "./jobs/view.js";
 import { activeMux } from "./mux/detect.js";
 
 /** One waiting muzzle, from `muzzle status --json`'s `waiting` list. */
@@ -143,7 +144,7 @@ export async function queuedPanes(
     const mux = await activeMux();
     for (const id of new Set(paneIds)) {
       try {
-        const pid = await mux.panePid?.(id);
+        const pid = await viewPid(id, mux);
         if (pid !== undefined) panes.set(id, pid);
       } catch {
         // A pane the mux cannot place is not queued.

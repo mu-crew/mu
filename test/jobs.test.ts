@@ -12,6 +12,7 @@ import { paneUp } from "../src/jobs/pane.js";
 import {
   readTmuxViews,
   sessionViews,
+  viewPid,
   viewPresent,
   viewRunning,
   viewState,
@@ -110,6 +111,17 @@ describe("view reads", () => {
     } finally {
       mux.restore();
     }
+  });
+
+  it("viewPid is the backend's panePid; undefined on a backend without one", async () => {
+    install({});
+    const given: MuxBackend = {
+      ...tmuxBackend,
+      panePid: async (id) => (id === "%1" ? 42 : undefined),
+    };
+    expect(await viewPid("%1", given)).toBe(42);
+    const { panePid: _, ...noPid } = tmuxBackend;
+    expect(await viewPid("%1", noPid as MuxBackend)).toBeUndefined();
   });
 
   it("sessionViews is the backend's listPanes for that session", async () => {

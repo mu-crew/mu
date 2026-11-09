@@ -1,7 +1,8 @@
 // mu — a job's view and the pane reads (spec 2026-11-09-mu-plugins.md, D1 "Two
 // reads", D3). The view is the pane mu opened for a job. These are the only
-// places outside src/mux that ask the multiplexer whether a pane exists, runs
-// or exited (`test/jobs-imports.test.ts`).
+// places outside src/mux that probe the multiplexer about a pane: whether it
+// exists, runs or exited, what its classifier reports, its first pid
+// (`test/jobs-imports.test.ts`; reconcile keeps its own `listPanes`, spec D8).
 //
 // Three questions, each kept exactly as its call sites asked it:
 //
@@ -16,7 +17,7 @@
 //                job's liveness. Throws when the probe fails.
 
 import { activeMux } from "../mux/detect.js";
-import type { MuxBackend, MuxPane, PaneResult } from "../mux/types.js";
+import type { MuxBackend, MuxPane, MuxPaneStatus, PaneResult } from "../mux/types.js";
 import { tmux } from "../tmux.js";
 
 /** A view's state as the multiplexer reports it, or `unknown` with why. */
@@ -40,6 +41,37 @@ export async function viewPresent(paneId: string, mux?: MuxBackend): Promise<boo
  */
 export async function sessionViews(session: string, mux?: MuxBackend): Promise<MuxPane[]> {
   return (mux ?? (await activeMux())).listPanes(session);
+}
+
+/** Whether the backend classifies its panes itself (herdr's classifier, Rex's OSC 7501 report). */
+export function viewsReportStatus(mux: MuxBackend): boolean {
+  return mux.paneStatus !== undefined;
+}
+
+/** A view as a classifying backend sees it: its reported agent state, or present with none, or absent. */
+export type ViewStatus =
+  | { state: "reported"; status: MuxPaneStatus }
+  | { state: "present" }
+  | { state: "absent" };
+
+/**
+ * The backend's own state for the pane (`paneStatus`). A reported state means
+ * the pane is there; with none, view presence (`paneAlive`) decides. Throws
+ * when either probe fails.
+ */
+export async function viewStatus(paneId: string, mux: MuxBackend): Promise<ViewStatus> {
+  const status = await mux.paneStatus?.(paneId);
+  if (status !== undefined) return { state: "reported", status };
+  return (await viewPresent(paneId, mux)) ? { state: "present" } : { state: "absent" };
+}
+
+/**
+ * The pid of the view's first process, so a caller can tell the job's own
+ * processes from others; undefined when the pane is gone or the backend cannot
+ * say. Throws when the probe fails.
+ */
+export async function viewPid(paneId: string, mux?: MuxBackend): Promise<number | undefined> {
+  return (mux ?? (await activeMux())).panePid?.(paneId);
 }
 
 /** One tmux pane in the batched read: absent, or present with murmur's pane options. */

@@ -38,7 +38,7 @@ import { unlinkCtlSocket } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { getHost, releaseHostChannelsForAgent } from "../hosts.js";
 import { readJobFile } from "../jobs/lease.js";
-import { viewPresent, viewRunning } from "../jobs/view.js";
+import { viewPid, viewPresent, viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -399,7 +399,7 @@ async function previewHolders(
 async function paneTree(mux: MuxBackend, agent: AgentRow): Promise<PaneProcesses> {
   const none: PaneProcesses = { tree: new Set(), groups: new Set() };
   try {
-    const pid = await mux.panePid?.(agent.paneId);
+    const pid = await viewPid(agent.paneId, mux);
     return pid === undefined ? none : await paneProcesses(pid);
   } catch {
     return none;
