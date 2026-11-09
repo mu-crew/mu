@@ -87,7 +87,7 @@ const fakeCase = (id: string, group: NextCase["group"] = "c1_wait"): NextCase =>
 describe("fast plan", () => {
   it("plans the own headline cases only, at n_eff 30 per model and 45 pooled, and R1 runs the plan's reps", () => {
     const cases = [fakeCase("own"), fakeCase("cross", "c2_close")];
-    const plan = nPlan("c1_wait", cases, null, "fast");
+    const plan = nPlan("c1_wait", cases, null, "fast", { helpArms: false });
     expect(plan.map((p) => p.case)).toEqual(["own"]);
     const [own] = plan;
     expect(FAST_TARGET).toEqual({ own: 30, pooled: 45 });
@@ -107,6 +107,7 @@ describe("fast plan", () => {
         rhoPool: { own: 0.4 },
       },
       "fast",
+      { helpArms: false },
     );
     expect(hi[0]?.r1).toBeGreaterThan(1);
     const jobs = roundJobs(
@@ -123,6 +124,40 @@ describe("fast plan", () => {
     expect(jobs).toHaveLength(30 * (hi[0]?.r1 ?? 0));
     // full mode keeps R1 at one rep
     expect(nPlan("c1_wait", cases, null)[0]?.r1).toBe(1);
+  });
+
+  it("adds the help arms by default, and R1 runs every frozen arm", () => {
+    const cases = [fakeCase("own")];
+    const [own] = nPlan("c1_wait", cases, null, "fast");
+    expect(own?.arms).toEqual(["none", "skill", "recipe:orchestrator-loop", "help", "skill+help"]);
+    // 10 paraphrases × 5 arms: 50 clusters at r = 1
+    expect(own?.plan).toMatchObject({ m: 50, r: 1, reached: true });
+    const jobs = roundJobs(
+      "r1",
+      "c1_wait",
+      cases,
+      own ? [own] : [],
+      { surfaces: [{ label: BASE, surface: {} as never }], models: [HAIKU] },
+      { seed: "s", epoch: 0 },
+    );
+    expect(new Set(jobs.map((j) => j.arm))).toEqual(new Set(own?.arms));
+    expect(jobs).toHaveLength(50);
+    // full mode and --no-help-arms keep the case's own arms
+    expect(nPlan("c1_wait", cases, null)[0]?.arms).toEqual(cases[0]?.arms);
+    expect(nPlan("c1_wait", cases, null, "fast", { helpArms: false })[0]?.arms).toEqual(
+      cases[0]?.arms,
+    );
+    // a plan frozen before the help arms (no `arms`) runs the case's own
+    const { arms: _, ...old } = own ?? ({} as never);
+    const oldJobs = roundJobs(
+      "r1",
+      "c1_wait",
+      cases,
+      [old],
+      { surfaces: [{ label: BASE, surface: {} as never }], models: [HAIKU] },
+      { seed: "s", epoch: 0 },
+    );
+    expect(new Set(oldJobs.map((j) => j.arm))).toEqual(new Set(cases[0]?.arms));
   });
 });
 
@@ -380,7 +415,9 @@ describe("fast error rates (Monte Carlo)", () => {
 
 describe("fast report facts", () => {
   it("states the rule, its threshold and the Monte Carlo rates at the group's design and field", () => {
-    const plan = nPlan("c1_wait", [fakeCase("a"), fakeCase("b")], null, "fast");
+    const plan = nPlan("c1_wait", [fakeCase("a"), fakeCase("b")], null, "fast", {
+      helpArms: false,
+    });
     const f = fastFacts(plan, 6, { rule: DEFAULT_WIN_RULE, iters: 2000 });
     expect(f.tests).toBe(12);
     expect(f.z).toBeCloseTo(2.128, 3);

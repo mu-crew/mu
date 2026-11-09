@@ -184,8 +184,7 @@ describe("the canary backstop", () => {
       { encoding: "utf8" },
     )
       .split("\n")
-      // a file snapshot is the exact bytes of a synthetic report: no line to spare
-      .filter((f) => f !== "" && f !== "test/eval/__snapshots__/tournament-report.md");
+      .filter((f) => f !== "");
     expect(files.length).toBeGreaterThan(100);
     const missing = files.filter((f) => {
       const lines = readFileSync(join(RIG_REPO, f), "utf8").trimEnd().split("\n");

@@ -12,6 +12,26 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Eval: help arms, a skill-text length cap, a publishable report, one C7
+  base** (task `f_help_arm`, hill2 notes 32-33, spec revision 4). The probe
+  gains the arms `help` and `skill+help`: the prompt also carries
+  `mu <group> --help` and `mu <verb> --help` of every verb the lead-in spells,
+  rendered live from the surface under test (16 000 chars at most; group
+  entries drop first, and lint fails a case base would cut). A variant that
+  changes only help text or adds a flag can now be exposed. Fast
+  `plan|freeze` add both arms to every case (`--no-help-arms` keeps the
+  case's own), and R1 runs the arms the freeze row's plan records.
+  `nextstep check` also runs each golden under both arms. A changed string in
+  skill or recipe text (`skills/**`, docs the skill links to) is capped at
+  max(2x base, base + 200); src strings keep their cap, and the admission row
+  counts the strings under each cap. `tournament report` writes the canary
+  first and last (report and control copy), spells home `~`, defangs prose
+  links and fences each patch past its own backtick runs, so the
+  rig-guard, public-tree and doc-links tests pass on a generated report.
+  `final --combined` takes one base: it lists every group's base and refuses
+  a mixed set (or one off `--base <sha>`), and a base surface rebuilt at
+  another sha. Every group must be (re)frozen on that one base.
+
 - **Eval: fast mode's win threshold is data, and a full group can go fast**
   (task `f_fast_mode_2`, spec §4.7). `freeze --fast` and the new
   `migrate-fast` take `--win-alpha <a> --correct none|variants|bonferroni`

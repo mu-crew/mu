@@ -5,7 +5,7 @@
 // bisects the winners on the R4 scenarios only, never the holdouts, and reports which winner to
 // drop. Rows live in `<root>/c7/`.
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { scenarioIds } from "./commands.ts";
 import { baseSpec, type ExposureSpec } from "./exposure.ts";
@@ -84,10 +84,33 @@ function patchFor(repo: string, group: Group, v: VariantRow): string {
   throw new Error(`${group}: no patch for winner ${v.id} (sha ${v.patchSha}) under ${cand}`);
 }
 
+/** Two spellings of one base commit: equal, or one a prefix (7+ hex digits) of the other. */
+export const sameBase = (a: string, b: string): boolean =>
+  a === b || (Math.min(a.length, b.length) >= 7 && (a.startsWith(b) || b.startsWith(a)));
+
+/**
+ * C7 takes one base (hill2 note 33): every group must be frozen (or refrozen) on the same base sha,
+ * since one combined surface applies every winner's patch to one tree. The problems with the
+ * groups' setup rows: each base that is not `want` (default: the first group's). Empty when one.
+ */
+export function baseProblems(
+  setups: readonly { group: Group; baseSha: string }[],
+  want?: string,
+): string[] {
+  const base = want ?? setups[0]?.baseSha;
+  if (base === undefined) return [];
+  const off = setups.filter((s) => !sameBase(s.baseSha, base));
+  if (off.length === 0) return [];
+  const all = setups.map((s) => `${s.group} ${s.baseSha}`).join(", ");
+  return [
+    `mixed bases (${all}): C7 takes one base${want === undefined ? "" : ` (--base ${want})`}; re-freeze ${off.map((s) => s.group).join(", ")} on it`,
+  ];
+}
+
 /**
  * Each group's winner: the latest `decision` row of its current epoch with a winner (fast or full
  * mode), its variant row and patch. Refuses on changed judges, a pending review stop, or groups
- * on different base shas (one combined surface has one base).
+ * on different base shas, or on another base than `base` when given (`baseProblems`).
  */
 export function groupWinners(o: {
   root: string;
@@ -95,10 +118,18 @@ export function groupWinners(o: {
   groups: readonly Group[];
   hash: string;
   drop?: readonly string[];
+  base?: string;
 }): { winners: Winner[]; setup: SetupRow | undefined; none: string[] } {
   const winners: Winner[] = [];
   const none: string[] = [];
   let setup: SetupRow | undefined;
+  // every group's base before any winner: a mixed set is refused whole, naming each group's base
+  const setups = o.groups.flatMap((group) => {
+    const s = setupOf(readControl(rowDir(group, o.root)));
+    return s ? [{ group, baseSha: s.baseSha }] : [];
+  });
+  const bad = baseProblems(setups, o.base);
+  if (bad.length > 0) throw new Error(bad.join("; "));
   for (const group of o.groups) {
     const rows = readControl(rowDir(group, o.root));
     if (rows.length === 0) {
@@ -107,12 +138,7 @@ export function groupWinners(o: {
     }
     assertFrozen(rows, o.hash);
     assertNoPendingStops(rows);
-    const s = setupOf(rows);
-    if (s && setup && s.baseSha !== setup.baseSha)
-      throw new Error(
-        `${group} is on base ${s.baseSha}, not ${setup.baseSha}: one combined surface has one base`,
-      );
-    setup ??= s;
+    setup ??= setupOf(rows);
     const epoch = epochOf(rows);
     const d = [...(rows as unknown as Record<string, unknown>[])]
       .reverse()
@@ -256,6 +282,7 @@ export async function runCombined(o: CombinedOpts): Promise<number> {
     groups,
     hash: (o.deps?.hash ?? (() => judgesHash(o.repo).hash))(),
     drop,
+    ...(flag(o.args, "--base") ? { base: flag(o.args, "--base") } : {}),
   });
   for (const n of none) console.log(n);
   if (winners.length === 0 || !setup) {
@@ -263,8 +290,15 @@ export async function runCombined(o: CombinedOpts): Promise<number> {
     console.log("C7: no group winner: base stays");
     return 0;
   }
+  // the shared base surface must still be built at that base (a later setup may have rebuilt it)
+  const ref = join(setup.baseDir, ".ref");
+  const built = existsSync(ref) ? readFileSync(ref, "utf8").trim() : null;
+  if (built !== null && !sameBase(built.split("+")[0] ?? built, setup.baseSha))
+    throw new Error(
+      `the base surface ${setup.baseDir} is built at ${built}, the groups at ${setup.baseSha}: rebuild it at one base`,
+    );
   const own = setupOf(readControl(dir));
-  if (own && own.baseSha !== setup.baseSha)
+  if (own && !sameBase(own.baseSha, setup.baseSha))
     throw new Error(`c7 rows are on base ${own.baseSha}, the winners on ${setup.baseSha}`);
   if (!own) appendControl(dir, setup);
   const ids = winners.map((w) => w.id);

@@ -8,7 +8,14 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ColdRow } from "./cold-guess.ts";
-import type { Arm, Group, NextCase, NextJob, ProbeRow } from "./nextstep.ts";
+import {
+  type Arm,
+  type Group,
+  HELP_ARMS,
+  type NextCase,
+  type NextJob,
+  type ProbeRow,
+} from "./nextstep.ts";
 import {
   cmhPower,
   type IccRow,
@@ -66,6 +73,8 @@ export interface CasePlan {
   r1: number;
   /** MDE at 80% power: own headline on the pooled win test at B = 18, others on the first loss step. */
   mde: number | null;
+  /** The arms the rounds run (a plan without them, frozen before the help arms: the case's own). */
+  arms?: Arm[];
 }
 
 /** Full mode runs R1 → R2 → R3 → R4 per group; fast mode decides on R1 and gates in C7 (§4.7). */
@@ -422,6 +431,13 @@ export function rhoFromB5(
   return { rho, rhoPool };
 }
 
+/**
+ * The arms a plan runs: the case's own, plus the help arms in fast mode unless turned off (hill2
+ * note 33: a help or flag variant is shown to the model only through them).
+ */
+export const planArms = (c: NextCase, mode: Mode, helpArms = true): Arm[] =>
+  mode === "fast" && helpArms ? [...new Set([...c.arms, ...HELP_ARMS])] : [...c.arms];
+
 const caseKind = (c: NextCase, group: Group): CasePlan["kind"] =>
   c.role === "guard" ? "guard" : c.group === group ? "own" : "cross";
 
@@ -434,18 +450,20 @@ export function nPlan(
   cases: readonly NextCase[],
   setup: Pick<SetupRow, "rho" | "rhoPool" | "models"> | null,
   mode: Mode = "full",
+  o: { helpArms?: boolean } = {},
 ): CasePlan[] {
   const models = setup ? [...setup.models.weak, setup.models.gate] : [];
   const fast = mode === "fast";
   return cases.flatMap((c) => {
     const kind = caseKind(c, group);
     if (fast && kind !== "own") return [];
+    const arms = planArms(c, mode, o.helpArms ?? true);
     const rhos = models.map((m) => setup?.rho[c.id]?.[m] ?? DEFAULT_RHO);
     const rho = rhos.length > 0 ? Math.max(...rhos) : DEFAULT_RHO;
     const rhoPool = setup?.rhoPool[c.id] ?? DEFAULT_RHO;
     const plan = solvePlan({
       paraphrases: c.paraphrases.length,
-      arms: c.arms.length,
+      arms: arms.length,
       rho,
       target: fast
         ? FAST_TARGET.own
@@ -467,7 +485,7 @@ export function nPlan(
             "greater",
           )
         : mde(0.8, Math.round(plan.nEff), 0.05 / LOSS_FAMILY, "less");
-    return [{ case: c.id, kind, plan, r1: kind !== "own" ? 0 : fast ? plan.r : 1, mde: m }];
+    return [{ case: c.id, kind, plan, r1: kind !== "own" ? 0 : fast ? plan.r : 1, mde: m, arms }];
   });
 }
 
@@ -597,7 +615,7 @@ export function roundJobs(
     const paraphrases = c.paraphrases.slice(0, p.plan.paraphrases);
     for (const { label, surface } of s.surfaces)
       for (const model of s.models)
-        for (const arm of c.arms)
+        for (const arm of p.arms ?? c.arms)
           for (const para of paraphrases)
             for (let k = 0; k < reps; k++)
               jobs.push({
@@ -607,7 +625,7 @@ export function roundJobs(
                 surface,
                 model,
                 caseId: c.id,
-                arm: arm as Arm,
+                arm,
                 paraphrase: para.id,
                 rep: repBase(round, o.epoch) + k,
               });

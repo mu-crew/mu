@@ -106,6 +106,7 @@ const GROUPS: readonly Group[] = [
 
 const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   --fast on plan/freeze (then r1, decide, report follow the frozen mode): R1 decides, no R2/R3/R4 per group, C7 gates
+  fast plans add the help and skill+help arms to every case (--no-help-arms: the case's own arms only)
   --win-alpha <a> --correct none|variants|bonferroni on freeze --fast / migrate-fast: the fast win threshold (default 0.2, bonferroni over variants x headline cases)
   freeze <g> [--fast [--win-alpha a] [--correct c]] --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
   refreeze <g> --row <row id> --why "<reason>"
@@ -117,7 +118,7 @@ const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
   build <g> [--scenarios a,b] [--passes 4] [--force]   (golden passes at once, each row claims; --force re-assesses built variants from cached traces)
   r1 <g> | r2 <g>   [--concurrency auto|n] [--model-concurrency 8]   (auto: as many probe rows as muzzle's budget holds)
   decide --fast <g>   (fast mode: the R1 decision; at most one winner)
-  final --combined [--groups a,b] [--drop v1,v2] [--concurrency 6]   (C7: every group's winner on one surface; R4, then holdouts once)
+  final --combined [--base <sha>] [--groups a,b] [--drop v1,v2] [--concurrency 6]   (C7: every group's winner on one surface; R4, then holdouts once; every group must be frozen on the one base, else refused)
   review <g> --stop <id> --decision drop|continue --why "<transcript lines>"
   status <g>
   r3 <g> [--scenarios a,b] [--concurrency 6]
@@ -636,7 +637,9 @@ export async function tournamentCli(argv: string[]): Promise<number> {
       if (!setupOf(rows)) appendControl(dir, setup);
       const h = judgesHash(REPO_ROOT);
       const mode = fastFlag ? "fast" : "full";
-      const plan = nPlan(group, NEXT_CASES, setup, mode);
+      const plan = nPlan(group, NEXT_CASES, setup, mode, {
+        helpArms: !rest.includes("--no-help-arms"),
+      });
       const win = fastFlag
         ? parseWinRule(flag(rest, "--win-alpha"), flag(rest, "--correct"))
         : null;
@@ -690,7 +693,9 @@ export async function tournamentCli(argv: string[]): Promise<number> {
       const plan =
         freeze?.kind === "freeze"
           ? freeze.nPlan
-          : nPlan(group, NEXT_CASES, setup, fast ? "fast" : "full");
+          : nPlan(group, NEXT_CASES, setup, fast ? "fast" : "full", {
+              helpArms: !rest.includes("--no-help-arms"),
+            });
       const n = Number(flag(rest, "--variants") ?? 12);
       if (fast) {
         const rule = freeze

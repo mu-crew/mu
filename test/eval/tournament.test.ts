@@ -37,6 +37,7 @@ import {
   admit,
   behaviourDiff,
   type CorpusFile,
+  capRule,
   deriveMarkers,
   type GoldenTrace,
   jsonShape,
@@ -679,6 +680,41 @@ describe("variant patches", () => {
     const long = { file: "src/a.ts", text: "x".repeat(61), parts: [], base: "y".repeat(20) };
     expect(lengthViolations([long])).toHaveLength(1);
     expect(lengthViolations([{ ...long, text: "x".repeat(60) }])).toEqual([]);
+  });
+
+  it("skill and recipe text gets max(2x base, base+200); src strings keep their cap; the admission says which", () => {
+    expect(capRule("skills/mu/recipes/orchestrator-loop.md")).toBe("skill");
+    expect(capRule("skills/mu/SKILL.md")).toBe("skill");
+    expect(capRule("docs/guide/upgrade.md")).toBe("skill");
+    expect(capRule("src/cli/wait.ts")).toBe("src");
+    expect(capRule("extension/mu-pi.ts")).toBe("src");
+    expect(lengthCap(null, "skill")).toBe(200);
+    expect(lengthCap(100, "skill")).toBe(300);
+    expect(lengthCap(400, "skill")).toBe(800);
+    expect(lengthCap(1000, "skill")).toBe(2000);
+    // C3's refused recipe line: 196 chars on a 113-char base, over the src cap 153, within 313
+    const line = {
+      file: "skills/mu/recipes/orchestrator-loop.md",
+      text: "x".repeat(196),
+      parts: [],
+      base: "y".repeat(113),
+    };
+    expect(lengthViolations([line])).toEqual([]);
+    expect(lengthViolations([{ ...line, file: "src/cli/notes.ts" }])).toEqual([
+      expect.stringContaining("over its cap 153 (src cap"),
+    ]);
+    expect(lengthViolations([{ ...line, text: "x".repeat(314) }])).toEqual([
+      expect.stringContaining("over its cap 313 (skill cap"),
+    ]);
+    const a = admit({
+      files: [],
+      built: { ok: true },
+      helpExit: 0,
+      words: { skill: 1, recipes: 1 },
+      changed: [line, { ...line, file: "src/a.ts", text: "x", base: "y" }],
+      spec: { markers: ["m"], contextMarkers: [], newNames: [], changedCalls: [] },
+    });
+    expect(a).toMatchObject({ ok: true, caps: { src: 1, skill: 1 } });
   });
 
   it("refuses a patch outside src, extension and skills", () => {

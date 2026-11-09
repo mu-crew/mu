@@ -29,7 +29,12 @@ import {
   scoreFinal,
   scoreR4,
 } from "../../tools/eval/tournament-r4-score.ts";
-import { committedControl, powerFacts, writeReport } from "../../tools/eval/tournament-report.ts";
+import {
+  committedControl,
+  powerFacts,
+  publicControl,
+  writeReport,
+} from "../../tools/eval/tournament-report.ts";
 import type { DestructiveFx, Surface } from "../../tools/eval/types.ts";
 
 const MARK = "the worker's result follows below";
@@ -948,7 +953,7 @@ describe("writeReport", () => {
     expect(await writeReport({ group: "c1_wait", dir, repo, args: [], out })).toBe(0);
     const md = readFileSync(join(repo, out), "utf8").replaceAll(tmp, "<tmp>");
     expect(readFileSync(committedControl(repo, "c1_wait"), "utf8")).toBe(
-      readFileSync(controlFile(dir), "utf8"),
+      publicControl(readFileSync(controlFile(dir), "utf8")),
     );
     expect(md).not.toContain("x.rpc.jsonl");
     expect(md).toContain("per-model n_eff 64");

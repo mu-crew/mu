@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # hill-r2 tournament: c1_wait
 
 ## 1. Setup
@@ -115,3 +117,4 @@ Cut: ranking v1; eligible v1; advance 1: v1
 |---|---|---|---|
 | r4 | 0 | claude-sonnet-5-5 120000 | 2.0 h |
 
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

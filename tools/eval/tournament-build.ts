@@ -457,20 +457,50 @@ export async function cachedTraces<T>(file: string, run: () => Promise<T>): Prom
 
 // ---- admission ----------------------------------------------------------------------------------
 
-/** §3.1 length cap: max(⌈1.25·base⌉, base + 40), never above base + 120; no counterpart: 120. */
-export function lengthCap(base: number | null): number {
+/** Which length cap a changed string falls under: skill and recipe text, or a src string. */
+export type CapRule = "skill" | "src";
+
+/**
+ * Skill text: `skills/**`, and a doc the skill links to (`docs/**.md`; admission refuses a docs/
+ * path today, so in practice skills/** only). Everything else is a src string.
+ */
+export const capRule = (file: string): CapRule =>
+  /^skills\//.test(file) || /^docs\/.*\.md$/.test(file) ? "skill" : "src";
+
+/**
+ * §3.1 length cap. A src string: max(⌈1.25·base⌉, base + 40), never above base + 120; no
+ * counterpart: 120. Skill and recipe text (hill2 note 33: the src cap refused 5 of C3's 8 variants
+ * on one recipe line): max(2·base, base + 200), no ceiling; no counterpart: 200.
+ */
+export function lengthCap(base: number | null, rule: CapRule = "src"): number {
+  if (rule === "skill") return base === null ? 200 : Math.max(2 * base, base + 200);
   if (base === null) return 120;
   return Math.min(Math.max(Math.ceil(1.25 * base), base + 40), base + 120);
 }
 
+const CAP_TEXT: Record<CapRule, string> = {
+  src: "src cap max(1.25x base, base+40) <= base+120",
+  skill: "skill cap max(2x base, base+200)",
+};
+
 export function lengthViolations(changed: readonly ChangedString[]): string[] {
   return changed.flatMap((c) => {
     const len = flatText(c.text).length;
-    const cap = lengthCap(c.base === null ? null : flatText(c.base).length);
+    const rule = capRule(c.file);
+    const cap = lengthCap(c.base === null ? null : flatText(c.base).length, rule);
     return len > cap
-      ? [`${c.file}: changed string of ${len} chars over its cap ${cap}: ${c.text.slice(0, 60)}`]
+      ? [
+          `${c.file}: changed string of ${len} chars over its cap ${cap} (${CAP_TEXT[rule]}): ${c.text.slice(0, 60)}`,
+        ]
       : [];
   });
+}
+
+/** How many changed strings each cap checked: the admission's record of which cap applied. */
+export function capsApplied(changed: readonly ChangedString[]): Record<CapRule, number> {
+  const n: Record<CapRule, number> = { src: 0, skill: 0 };
+  for (const c of changed) n[capRule(c.file)]++;
+  return n;
 }
 
 const wc = (p: string): number => (existsSync(p) ? words(readFileSync(p, "utf8")).length : 0);
@@ -505,6 +535,8 @@ export function textDelta(
 export interface Admission {
   ok: boolean;
   failures: string[];
+  /** Changed strings per length cap (absent on a row admitted before the skill cap). */
+  caps?: Record<CapRule, number>;
 }
 
 /** §3.1 admission: each failure blocks, and all of them go into the `variant` row. */
@@ -529,7 +561,7 @@ export function admit(o: {
   const s = o.spec;
   if (s.markers.length === 0 && s.newNames.length === 0 && s.changedCalls.length === 0)
     failures.push("inert: no derived marker, no new name and no changed call");
-  return { ok: failures.length === 0, failures };
+  return { ok: failures.length === 0, failures, caps: capsApplied(o.changed) };
 }
 
 // ---- building a variant -------------------------------------------------------------------------

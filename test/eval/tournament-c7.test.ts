@@ -10,7 +10,14 @@ import type { ExposureSpec } from "../../tools/eval/exposure.ts";
 import type { Group } from "../../tools/eval/nextstep.ts";
 import { controlFile, readControl, type SetupRow } from "../../tools/eval/tournament.ts";
 import { HOLDOUTS, type VariantRow } from "../../tools/eval/tournament-build.ts";
-import { bisectWinners, c7Dir, runCombined, setLabel } from "../../tools/eval/tournament-c7.ts";
+import {
+  baseProblems,
+  bisectWinners,
+  c7Dir,
+  runCombined,
+  sameBase,
+  setLabel,
+} from "../../tools/eval/tournament-c7.ts";
 import { type ScoredRow, scoreR4 } from "../../tools/eval/tournament-r4-score.ts";
 import type { Surface } from "../../tools/eval/types.ts";
 import { fakeRun, metrics, tool } from "./_r4-fakes.ts";
@@ -309,6 +316,56 @@ describe("runCombined (tournament final --combined)", () => {
         deps: { hash: () => "other" },
       }),
     ).rejects.toThrow(/judges changed/);
+  });
+
+  /** Rewrite one group's setup row to another base sha. */
+  const rebase = (root: string, group: Group, sha: string): void => {
+    const f = controlFile(join(root, group));
+    const rows = readControl(join(root, group)).map((r) =>
+      r.kind === "setup" ? { ...r, baseSha: sha } : r,
+    );
+    writeFileSync(f, rows.map((r) => `${JSON.stringify(r)}\n`).join(""));
+  };
+  const combined = (root: string, repo: string, args: string[] = []) =>
+    runCombined({
+      repo,
+      root,
+      groups: ["c1_wait", "c2_close", "c3_notes", "c4_read"],
+      args,
+      deps: { hash: () => "h", build: fakeBuild().build },
+    });
+
+  it("refuses mixed bases whole, naming every group's base, before building anything", async () => {
+    const { root, repo } = world();
+    rebase(root, "c2_close", "d9acd750");
+    // c3 has no winner (base stays): its base still counts, the combined tree is one tree
+    rebase(root, "c3_notes", "d9acd750");
+    await expect(combined(root, repo)).rejects.toThrow(
+      /mixed bases \(c1_wait abc123, c2_close d9acd750, c3_notes d9acd750, c4_read abc123\).*re-freeze c2_close, c3_notes/,
+    );
+    expect(readControl(c7Dir(root))).toEqual([]);
+  });
+
+  it("takes one --base: a group frozen on another base is refused; a longer spelling of it is not", () => {
+    expect(sameBase("473b3f5e", "473b3f5e2bcb69aa")).toBe(true);
+    expect(sameBase("473b3f5e", "d9acd750")).toBe(false);
+    expect(sameBase("abc", "abc123")).toBe(false);
+    const setups = [
+      { group: "c1_wait" as const, baseSha: "473b3f5e" },
+      { group: "c2_close" as const, baseSha: "473b3f5e2bcb69aa" },
+    ];
+    expect(baseProblems(setups)).toEqual([]);
+    expect(baseProblems(setups, "473b3f5e2b")).toEqual([]);
+    expect(baseProblems(setups, "d9acd750")).toEqual([
+      expect.stringContaining("(--base d9acd750); re-freeze c1_wait, c2_close"),
+    ]);
+  });
+
+  it("refuses a --base the groups are not on, and a base surface built at another sha", async () => {
+    const { root, repo, baseDir } = world();
+    await expect(combined(root, repo, ["--base", "fff0000"])).rejects.toThrow(/mixed bases/);
+    writeFileSync(join(baseDir, ".ref"), "d9acd750aaaa\n");
+    await expect(combined(root, repo)).rejects.toThrow(/built at d9acd750aaaa/);
   });
 });
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

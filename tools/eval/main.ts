@@ -29,6 +29,7 @@ import { parseAutHarness } from "./harness.ts";
 import { parseWorkers } from "./mix.ts";
 import {
   type Arm,
+  HELP_ARMS,
   type NextJob,
   nextLint,
   nextSelftest,
@@ -54,7 +55,7 @@ const USAGE = `usage: node tools/eval/main.ts <command>
   cold-guess run --surface [label=]<spec>... --model <m>... [--reps 3] [--intents a,b] [--concurrency 4] [--provider-ext p] --out <cold-guess.jsonl>
   cold-guess check [--surface <spec>] [--intents a,b] [--concurrency 4]
   cold-guess report <cold-guess.jsonl> [--out file.md]
-  nextstep run --surface [label=]<spec>... --model <m>... --out <probe.jsonl> [--cases a,b] [--arms none,skill] [--reps 1] [--round b5] [--seed s] [--prompt-dir d] [--concurrency 6] [--model-concurrency 8] [--provider-ext p]
+  nextstep run --surface [label=]<spec>... --model <m>... --out <probe.jsonl> [--cases a,b] [--arms none,skill,help,skill+help] [--reps 1] [--round b5] [--seed s] [--prompt-dir d] [--concurrency 6] [--model-concurrency 8] [--provider-ext p]
   nextstep check [--surface <spec>] [--cases a,b] [--concurrency 4]
   nextstep lint [--surface [label=]<spec>...] [--cases a,b]
   nextstep selftest [--surface <spec>] [--cases a,b]
@@ -329,14 +330,15 @@ async function nextstep(rest: string[]): Promise<number> {
       const out = flag(args, "--out");
       if (flagAll(args, "--surface").length === 0 || models.length === 0 || !out)
         throw new Error(USAGE);
-      const arms = flagAll(args, "--arms");
+      const arms = flagAll(args, "--arms").flatMap((a) => a.split(","));
       const round = (flag(args, "--round") ?? "b5") as NextJob["round"];
       const reps = Number(flag(args, "--reps") ?? 1);
       const jobs: NextJob[] = [];
+      // the help arms run on every case when --arms names them; a bare run keeps the case's own
       for (const { label, surface } of surfaces)
         for (const c of cases)
-          for (const arm of c.arms)
-            if (arms.length === 0 || arms.includes(arm))
+          for (const arm of [...new Set([...c.arms, ...HELP_ARMS])])
+            if (arms.length === 0 ? c.arms.includes(arm) : arms.includes(arm))
               for (const p of c.paraphrases)
                 for (const model of models)
                   for (let rep = 1; rep <= reps; rep++)

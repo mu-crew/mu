@@ -5,16 +5,11 @@
 // the hashes of the row files; it never opens `sealed/`, and holdout numbers come from the
 // `final_score` control row.
 import { createHash } from "node:crypto";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Group } from "./nextstep.ts";
+import { RIG_CANARY } from "./rig-private.ts";
 import { fisherPower, nEffPooled } from "./stats.ts";
 import {
   ALPHA,
@@ -47,6 +42,63 @@ import { fastErrorRates, type McCase, type VariantScore } from "./tournament-sco
 /** The committed copy of a group's control file (§6, Q3). */
 export const committedControl = (repo: string, group: Group): string =>
   join(repo, "docs", "eval", "hill-r2", `${group}.tournament.jsonl`);
+
+// ---- publishing: what the committed report and control copy must pass ---------------------------
+
+/** The canary line a committed report carries first and last (test/eval/rig-guard.test.ts). */
+export const CANARY_LINE = `<!-- ${RIG_CANARY}: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->`;
+/** The canary row the committed control copy carries first and last. */
+export const CANARY_ROW = JSON.stringify({
+  kind: "canary",
+  note: `${RIG_CANARY}: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.`,
+});
+
+/** `home` spelled `~` (test/public-tree.test.ts refuses a real home path in the tree). */
+export const tildeHome = (text: string, home = homedir()): string =>
+  home === "" || home === "/"
+    ? text
+    : text.replace(new RegExp(`${escapeRe(home)}(?![\\w.-])`, "g"), "~");
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** A fence longer than any backtick run in `body`, so a fenced line inside cannot close it. */
+export const fenceFor = (body: string): string =>
+  "`".repeat(Math.max(3, ...[...body.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+
+/**
+ * Link syntax in prose, defanged as `]\(` and `\[x]:`: a report quotes recipe and skill text (a
+ * marker, an admission failure) whose relative links resolve from skills/, not docs/eval/, and
+ * fail test/doc-links.test.ts. Fenced blocks and inline code are left as they are, as the link
+ * checker (scripts/check-doc-links.mjs) skips them.
+ */
+export function defangLinks(md: string): string {
+  let fence: string | null = null;
+  return md
+    .split("\n")
+    .map((line) => {
+      const m = line.match(/^\s*(`{3,}|~{3,})/);
+      if (m) {
+        const marker = m[1] ?? "";
+        if (fence === null) fence = marker;
+        else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+        return line;
+      }
+      if (fence !== null) return line;
+      return line
+        .split(/((`+)[^`]*?\2)/)
+        .map((part, i) => (i % 3 === 0 ? part.replace(/\]\(/g, "]\\(") : i % 3 === 1 ? part : ""))
+        .join("")
+        .replace(/^(\s{0,3})\[([^\]]+)\]:/, "$1\\[$2]:");
+    })
+    .join("\n");
+}
+
+/** The committed form of a report: canary first and last, `~` for home, links defanged. */
+export const publicReport = (md: string, home = homedir()): string =>
+  `${CANARY_LINE}\n\n${defangLinks(tildeHome(md.trimEnd(), home))}\n\n${CANARY_LINE}\n`;
+
+/** The committed form of tournament.jsonl: a canary row first and last, `~` for home. */
+export const publicControl = (jsonl: string, home = homedir()): string =>
+  `${CANARY_ROW}\n${tildeHome(jsonl.trimEnd(), home)}\n${CANARY_ROW}\n`;
 
 const sha256 = (p: string): string => createHash("sha256").update(readFileSync(p)).digest("hex");
 const f2 = (x: number): string => x.toFixed(2);
@@ -338,20 +390,21 @@ function variantsSection(vs: readonly VariantRow[], candDir: string): string[] {
   const out = ["## 2. Variants", ""];
   if (vs.length === 0) out.push("none", "");
   for (const v of vs) {
-    const patch = patchOf(candDir, v.id);
+    const patch = (patchOf(candDir, v.id) ?? "(patch not found)").trimEnd();
+    const fence = fenceFor(patch);
     out.push(
       `### ${v.id}`,
       "",
       `- ${v.manifest.summary} (kind ${v.manifest.kind.join(", ")}; session ${v.session})`,
       `- markers: ${v.spec.markers.map((m) => `\`${m}\``).join(", ") || "-"}; context: ${v.spec.contextMarkers.map((m) => `\`${m}\``).join(", ") || "-"}`,
       `- behaviour: names ${v.spec.newNames.join(" ") || "-"}; calls ${v.spec.changedCalls.join(" ") || "-"}`,
-      `- text delta ${v.textDelta}; admission ${v.admission.ok ? "ok" : `REFUSED: ${v.admission.failures.join("; ")}`}; goldenCompat ${v.goldenCompat.notRun !== undefined ? `not run (${v.goldenCompat.notRun})` : v.goldenCompat.broken.join(", ") || "clean"}`,
+      `- text delta ${v.textDelta}; admission ${v.admission.ok ? "ok" : `REFUSED: ${v.admission.failures.join("; ")}`}${v.admission.caps ? ` (length caps: src ${v.admission.caps.src}, skill ${v.admission.caps.skill} strings)` : ""}; goldenCompat ${v.goldenCompat.notRun !== undefined ? `not run (${v.goldenCompat.notRun})` : v.goldenCompat.broken.join(", ") || "clean"}`,
       "",
       "<details><summary>patch</summary>",
       "",
-      "```diff",
-      (patch ?? "(patch not found)").trimEnd(),
-      "```",
+      `${fence}diff`,
+      patch,
+      fence,
       "",
       "</details>",
       "",
@@ -635,10 +688,10 @@ export async function writeReport(
   });
   const out = resolve(o.repo, o.out);
   mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, `${md}\n`);
+  writeFileSync(out, publicReport(md));
   const copy = committedControl(o.repo, o.group);
   mkdirSync(dirname(copy), { recursive: true });
-  copyFileSync(ctl, copy);
+  writeFileSync(copy, publicControl(readFileSync(ctl, "utf8")));
   console.log(`report: ${out}; control file copied to ${copy}`);
   return 0;
 }
