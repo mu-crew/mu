@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -16,7 +17,7 @@
   {
     "calls": [
       {
-        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu state -w eval"
+        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu agent close w1 -w eval --json | true; mu state -w eval"
       }
     ]
   },
@@ -35,6 +36,12 @@
     "text": "Waiting for the measurement."
   },
   {
+    "text": "That settle was k10's close; still waiting for the course delegates."
+  },
+  {
+    "text": "That settle was w1's last run; still waiting for the course delegates."
+  },
+  {
     "calls": [
       {
         "bash": "mu human-needed -w eval 'course check: 2 proposed changes, see note'"
@@ -43,5 +50,6 @@
   },
   {
     "text": "Stopped for the course check."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

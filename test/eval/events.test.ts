@@ -119,6 +119,27 @@ describe("MetricsCollector", () => {
     c.push(null);
     expect(c.lastActivity()).toBe(9);
   });
+
+  it("records a custom message as delegate_msg, whether delivered or appended by a settle", () => {
+    let t = 0;
+    const c = new MetricsCollector(() => t);
+    t = 1;
+    c.push({
+      type: "message_start",
+      message: { role: "custom", customType: "d", content: "sent" },
+    });
+    t = 2;
+    c.push({
+      type: "entry_appended",
+      entry: { type: "custom_message", customType: "k", content: "settled", display: true },
+    });
+    c.push({ type: "entry_appended", entry: { type: "label", content: "not a message" } });
+    const r = c.result({ wallMs: 0, prods: 0, aborted: null });
+    expect(r.events.filter((e) => e.kind === "delegate_msg")).toEqual([
+      { t: 1, kind: "delegate_msg", name: "d", text: "sent" },
+      { t: 2, kind: "delegate_msg", name: "k", text: "settled" },
+    ]);
+  });
 });
 
 describe("MetricsCollector turn and idx", () => {

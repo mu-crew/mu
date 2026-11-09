@@ -85,6 +85,11 @@ export class MetricsCollector {
       case "message_start":
         this.onMessageStart(event.message);
         break;
+      case "entry_appended":
+        // a settle's entries (nudge.ts: the wait result, delegate answers) reach the model this way
+        if (isRec(event.entry) && event.entry.type === "custom_message")
+          this.onMessageStart({ ...event.entry, role: "custom" });
+        break;
       case "turn_end":
         this.turns++;
         break;
@@ -104,7 +109,7 @@ export class MetricsCollector {
     this.events.push({ t: this.now(), kind, ...rest });
   }
 
-  /** A custom message (a delegate's delivery) entering the conversation. */
+  /** A custom message (a delegate's delivery, a settle's entry) entering the conversation. */
   private onMessageStart(message: unknown): void {
     if (!isRec(message) || message.role !== "custom") return;
     this.mark("delegate_msg", {

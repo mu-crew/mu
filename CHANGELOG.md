@@ -194,21 +194,25 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   isolation audit takes the museum checkout from `EVAL_MUSEUM_DIR` (no
   default) and denies any dir named `museum` holding `skills/museum`.
 
-- **Course checks resume on their own** (hill-r2 s_course_auto, user report
-  2026-11-07: three checks in one session each stopped for a human, though every
-  proposal was in the plan). `recipes/course-correct.md` now applies in-plan
-  changes (DAG edges, order, merge batching, briefs, habits) with the
-  `COURSE CHECK` note and resumes. It dispatches nothing until the measurement
-  and its refutation answer, and stops with `mu human-needed` only for scope,
-  spend or goal changes, irreversible or external steps, or a judgment call
-  (`--no-stop` for a to-do). The SKILL.md bullet reads "finish merging, then
-  course-correct; resume only after it" (599 words, unchanged). Eval:
-  `course_check` now requires the measurement, the note and the resume, and the
-  new `course_check_escalate` seeds a scope overrun where the stop is right. On
-  haiku ×5, course_check went 0/5 → 5/5 and course_check_escalate held at 5/5.
-  The neighbours held (delegate_saturation 4/5 → 5/5, refute_verdicts 5/5 → 4/5
-  on a path the text does not touch) with no destructive op from the
-  candidate. Log: docs/eval/hill-r2/course-auto.md.
+- **Course checks resume on their own** (hill-r2 s_course_auto and
+  s_course_auto_2, user report 2026-11-07: three checks in one session each
+  stopped for a human, though every proposal was in the plan).
+  `recipes/course-correct.md` now applies in-plan changes (DAG edges, order,
+  merge batching, briefs, habits) with the `COURSE CHECK` note and resumes. A
+  second delegate refutes the measurement, nothing is dispatched until both
+  answer, and it stops with `mu human-needed` only for scope, spend or goal
+  changes, irreversible or external steps, or a judgment call (`--no-stop` for
+  a to-do). The SKILL.md bullet reads "finish merging, then course-correct;
+  resume only after it" (599 words, unchanged). Eval: `course_check` requires
+  that the orchestrator saw both delegates' answers (not just made the calls:
+  `mu_delegate` returns at once), then the note, then the resume. The new
+  `course_check_escalate` hides a scope overrun in k11's and k12's notes, so it
+  shows up first in the measurement, and requires both answers before the
+  stop. The rig now records a settle's entries (`entry_appended`) as delivered
+  messages; before, no judge saw an answer a settle delivered. On haiku ×5,
+  base → candidate: course_check 0/5 → 4/5, course_check_escalate 1/5 → 4/5,
+  delegate_saturation 5/5 → 5/5, refute_verdicts 5/5 → 5/5, no destructive op.
+  Log: docs/eval/hill-r2/course-auto.md.
 - **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
   events arrive in one block, one line per event, plus a line for what is
   still owed, instead of one block per event. A superseded wait that consumed

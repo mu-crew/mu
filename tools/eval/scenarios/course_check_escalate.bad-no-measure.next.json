@@ -17,7 +17,7 @@
   {
     "calls": [
       {
-        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu state -w eval"
+        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu agent close w1 -w eval --json | true; mu state -w eval"
       }
     ]
   },

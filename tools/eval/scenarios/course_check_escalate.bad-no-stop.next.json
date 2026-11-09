@@ -17,7 +17,7 @@
   {
     "calls": [
       {
-        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu state -w eval"
+        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu agent close w1 -w eval --json | true; mu state -w eval"
       }
     ]
   },
@@ -27,13 +27,28 @@
         "tool": "mu_delegate",
         "args": {
           "label": "course",
-          "task": "Read-only course check of workstream eval: count CLOSED tasks by status with `mu sql`, list what is left under umbrella u, and report the numbers. Do not change anything."
+          "task": "Read-only course check of workstream eval: count CLOSED tasks by status with `mu sql`, list what is left under umbrella u, and report the numbers. Do not change anything.",
+          "wave": "course"
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "course-refute",
+          "wave": "course",
+          "task": "Read-only refuter for a course check of workstream eval: re-count CLOSED tasks with `mu sql` and git log, read the notes of k11 and k12, and say whether the numbers and the code budget against the plan on u hold. Do not change anything."
         }
       }
     ]
   },
   {
     "text": "Waiting for the measurement."
+  },
+  {
+    "text": "That settle was k10's close; still waiting for the course delegates."
+  },
+  {
+    "text": "That settle was w1's last run; still waiting for the course delegates."
   },
   {
     "text": "Course check done; stopping here."

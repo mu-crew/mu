@@ -12,7 +12,7 @@ On `course check due` or a request.
    mu task tree <umbrella> -w <ws>
    ```
 
-2. **A second refutes the numbers.** Dispatch nothing until both answer.
+2. **A second delegate refutes them.** Dispatch nothing until both answer.
 3. **Compare with the spec**:
    - Switch line: critical-path units movable after it.
    - Review cost: rounds per unit, findings by severity (high: fix + re-review; medium: fix + evidence; low: one batch).

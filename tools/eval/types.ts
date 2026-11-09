@@ -71,7 +71,7 @@ export type LifecycleKind =
   | "agent_settled"
   | "tool_start"
   | "tool_end"
-  | "delegate_msg" // a custom message (mu-delegate delivery) entered the conversation
+  | "delegate_msg" // a custom message (mu-delegate delivery, a settle entry) entered the conversation
   | "assistant_text"; // an assistant message with text and no tool call: a stop attempt
 
 export interface LifecycleEvent {

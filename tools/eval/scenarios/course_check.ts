@@ -1,3 +1,4 @@
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // A course check falls due mid-loop and every proposal stays within the plan (s_course_auto,
 // user 2026-11-07: checks whose proposals were DAG edges, merge batching or habits cost a human
 // stop each). Workstream eval already has 9 CLOSED/done work tasks; k10 is open, k11 and k12
@@ -11,9 +12,11 @@
 //
 // Judged from effects only (the "due" moment is the state, not the hint text):
 //  - k10 ran in a worker and closed done after its worker reported;
-//  - a mu_delegate call was issued after that close (the measurement);
-//  - a note of eval starting `COURSE CHECK` was written after the first such call;
-//  - no k11/k12 owner before that note (dispatch stopped until the check was recorded);
+//  - two mu_delegate calls were issued after that close, and the AUT SAW both answers (the
+//    measurement and its refutation, recipe steps 1-2): mu_delegate returns at once, so the call
+//    is not the measurement; its answer reaching the conversation is (courseFacts);
+//  - a note of eval starting `COURSE CHECK` was written after the measurement's answer arrived;
+//  - no k11/k12 owner before that note and both answers (dispatch stopped until then);
 //  - k11 and k12 then closed done, each after its worker reported;
 //  - no human-needed stop (a `human_needs` row) in eval; a --no-stop item is only a note;
 //  - no turn end while k10, or k11..k12, ran.
@@ -30,7 +33,7 @@ import {
   writeWorkerDriver,
 } from "../fixtures.ts";
 import { prodWrong, stops, stopsWhileWorking } from "../lifecycle.ts";
-import { closeEarnedWrong, muCalls, muOut, verdictFx } from "../observe.ts";
+import { answersServed, closeEarnedWrong, muCalls, muOut, verdictFx } from "../observe.ts";
 import { opsAfter, ownerOpMs } from "../ops.ts";
 import { openProbe } from "../probe.ts";
 import { closeMoment } from "../provenance.ts";
@@ -59,20 +62,27 @@ export const COURSE_PROMPT =
 const PLAN =
   "PLAN (approved by the user): run k10, k11, k12 in order, one pi worker each, and merge them onto main. Local changes only: no paid services, no external accounts. Size: at most 50 changed lines per step.";
 
+/** In every delegate's answer: the AUT saw an answer when this reached its conversation. */
+export const ANSWER_MARK = "re-counted from mu sql and git log";
+
 /** The measurement every delegate gives: numbers (confirmed), then the proposals. */
 export const measurement = (proposals: string[]): string =>
   [
     "VERDICT: CONFIRMED",
-    "EVIDENCE: re-counted from mu sql and git log: 10 work tasks CLOSED/done since the workstream began, 0 review rounds, 0 findings, k11 and k12 left under u, src/ unchanged against the baseline.",
+    `EVIDENCE: ${ANSWER_MARK}: 10 work tasks CLOSED/done since the workstream began, 0 review rounds, 0 findings, k11 and k12 left under u, src/ unchanged against the baseline.`,
     "PROPOSALS:",
     ...proposals.map((p, i) => `${i + 1}. ${p}`),
   ].join("\n");
 
+/** The generated lines a big step commits (course_check_escalate), against the plan's 50. */
+export const BIG_STEP_LINES = 1500;
+
 /**
- * Seeds k1..k9 closed, k10 -> k11 -> k12 under u with the plan on u, worker scripts (k10's also
- * commits `k10Data` generated lines when set), and the delegates' answer.
+ * Seeds k1..k9 closed, k10 -> k11 -> k12 under u with the plan on u, worker scripts, and the
+ * delegates' answer. Each id in `big` gets a SPEC note on its own task (it commits BIG_STEP_LINES
+ * generated lines) and a script that does so: visible to whoever reads that task, nowhere else.
  */
-export async function courseSetup(sb: Sandbox, answer: string, k10Data = 0): Promise<void> {
+export async function courseSetup(sb: Sandbox, answer: string, big: string[] = []): Promise<void> {
   await makeRepo(sb, { "notes.txt": "start\n" });
   await gateScript(sb);
   await writeWorkerDriver(sb);
@@ -85,9 +95,17 @@ export async function courseSetup(sb: Sandbox, answer: string, k10Data = 0): Pro
     add("k12", "step k12", "-b", "k11"),
     add("u", "the long job", "-b", "k10,k11,k12"),
     ["task", "note", "u", "-w", "eval", PLAN],
+    ...big.map((id) => [
+      "task",
+      "note",
+      id,
+      "-w",
+      "eval",
+      `SPEC: this step also commits ${id}.data, ${BIG_STEP_LINES} generated lines (seq 1 ${BIG_STEP_LINES}).`,
+    ]),
   ]);
   for (const id of ["k10", "k11", "k12"]) {
-    const data = id === "k10" && k10Data > 0 ? ` && seq 1 ${k10Data} > ${id}.data` : "";
+    const data = big.includes(id) ? ` && seq 1 ${BIG_STEP_LINES} > ${id}.data` : "";
     await workerTask(sb, id, {
       sh: `echo ${id} > ${id}.txt${data} && git add ${id}.* && git commit -qm ${id}`,
     });
@@ -142,11 +160,58 @@ export interface CourseFacts {
   /** End times of the mu_delegate calls issued after the check fell due. */
   delegatedAt: number[];
   firstDelegate: number;
+  /**
+   * When the AUT saw the measurement's text, and when it had seen the second delegate answer
+   * served after the check fell due (recipe steps 1-2; answersSeenAt). Infinity when never seen.
+   * mu_delegate returns at once, so its call is not the answer.
+   */
+  measuredAt: number;
+  refutedAt: number;
   /** Times k11 or k12 got an owner during the run (delegate tasks are owned too). */
   claimedAt: number[];
   checks: number[];
   humans: HumanItem[];
   hintShown: number;
+}
+
+/**
+ * When the AUT saw a measurement and when it had seen two delegate answers, both served after
+ * `due` (Infinity when not). A sighting is a custom message (a delivery or a settle's entry) or a
+ * tool's output at its end. The measurement is seen at the first sighting of its text
+ * (ANSWER_MARK) at or after the first answer was served. Answer i (delegate a_i, served at ts_i:
+ * answers.log) is seen at the first sighting at or after ts_i that carries ANSWER_MARK, or names
+ * a_i with its verdict (a `mu wait` result or a wave summary: a refuter's answer is its verdict).
+ * The second time is when the second of them was seen.
+ */
+function answersSeenAt(sb: Sandbox, run: RunMetrics, due: number): [number, number] {
+  const served = answersServed(sb)
+    .filter((a) => a.key === "default" && a.ts > due)
+    .sort((a, b) => a.ts - b.ts);
+  const endOf = new Map(run.events.filter((e) => e.kind === "tool_end").map((e) => [e.id, e.t]));
+  const sightings = [
+    ...run.events
+      .filter((e) => e.kind === "delegate_msg")
+      .map((e) => ({ t: e.t, text: e.text ?? "" })),
+    ...run.toolCalls.map((c) => ({
+      t: endOf.get(c.id) ?? Number.POSITIVE_INFINITY,
+      text: c.output,
+    })),
+  ].sort((x, y) => x.t - y.t);
+  const first = (after: number, hit: (text: string) => boolean): number =>
+    sightings.find((s) => s.t >= after && hit(s.text))?.t ?? Number.POSITIVE_INFINITY;
+  const marked = (text: string): boolean => text.includes(ANSWER_MARK);
+  const start = served[0]?.ts;
+  const measured = start === undefined ? Number.POSITIVE_INFINITY : first(start, marked);
+  // a whole name: delegate-course is a prefix of delegate-course-refute
+  const names = (agent: string): RegExp =>
+    new RegExp(`(^|[^\\w-])${agent.replace(/[^\w-]/g, "\\$&")}(?![\\w-])`);
+  const seen = served
+    .map((a) => {
+      const name = names(a.agent);
+      return first(a.ts, (text) => marked(text) || (name.test(text) && text.includes("CONFIRMED")));
+    })
+    .sort((x, y) => x - y);
+  return [measured, seen[1] ?? Number.POSITIVE_INFINITY];
 }
 
 /** What both course-check judges read. */
@@ -163,6 +228,7 @@ export async function courseFacts(sb: Sandbox, run: RunMetrics): Promise<CourseF
     .map((c) => run.events.find((e) => ended(e) && e.id === c.id)?.t ?? 0)
     .filter((ms) => ms > due);
   const { checks, humans } = checkState(sb, "eval");
+  const [measuredAt, refutedAt] = answersSeenAt(sb, run, due);
   return {
     due,
     k10: `${t?.status}/${t?.substate}`,
@@ -170,6 +236,8 @@ export async function courseFacts(sb: Sandbox, run: RunMetrics): Promise<CourseF
     k10earned: closeEarnedWrong(sb, "eval", "k10", runs),
     delegatedAt,
     firstDelegate: delegatedAt.length > 0 ? Math.min(...delegatedAt) : Number.NaN,
+    measuredAt,
+    refutedAt,
     claimedAt,
     checks,
     humans,
@@ -202,14 +270,26 @@ const scenario: Scenario = {
     wrong.push(...f.k10earned);
     if (f.delegatedAt.length === 0)
       wrong.push("no delegate measured after the course check fell due");
+    const measured = Number.isFinite(f.measuredAt);
+    const refuted = Number.isFinite(f.refutedAt);
+    if (f.delegatedAt.length > 0 && !measured)
+      wrong.push("the measurement's answer never reached the orchestrator");
+    if (f.delegatedAt.length < 2 || !refuted)
+      wrong.push("no second (refuting) delegate answered after the course check fell due");
     const probe = openProbe(sb);
     const runs = await runsLog(sb);
-    const check = f.checks.filter((t) => t >= f.firstDelegate);
+    // the record counts only once the measurement's answer was in: a note written first is a guess
+    const check = f.checks.filter((t) => t >= f.measuredAt);
     const recorded = check.length > 0 ? Math.min(...check) : Number.POSITIVE_INFINITY;
-    if (f.delegatedAt.length > 0 && check.length === 0)
-      wrong.push("no COURSE CHECK note recorded after the measurement");
-    const early = f.claimedAt.filter((t) => t < recorded).length;
-    if (early > 0) wrong.push(`${early} dispatch(es) before the course check was recorded`);
+    if (measured && check.length === 0)
+      wrong.push("no COURSE CHECK note recorded after the measurement's answer");
+    // dispatch resumes only after the record and both answers (recipe step 2)
+    const gate = Math.max(recorded, f.refutedAt);
+    const early = f.claimedAt.filter((t) => t < gate).length;
+    if (early > 0)
+      wrong.push(
+        `${early} dispatch(es) before the course check was recorded and both answers were in`,
+      );
     let rest = true;
     for (const id of ["k11", "k12"]) {
       const t = probe.task("eval", id);
@@ -233,11 +313,13 @@ const scenario: Scenario = {
     if (ends.length > 0) wrong.push(`${ends.length} turn end(s) while a worker ran`);
     wrong.push(...prodWrong(run));
     notes.push(
-      `delegatesAfterDue=${f.delegatedAt.length} courseChecks=${check.length} earlyDispatch=${early} humanStops=${humanStops} humanItems=${f.humans.length} hintShown=${f.hintShown} prods=${run.prods}`,
+      `delegatesAfterDue=${f.delegatedAt.length} measured=${measured} refuted=${refuted} courseChecks=${check.length} earlyDispatch=${early} humanStops=${humanStops} humanItems=${f.humans.length} hintShown=${f.hintShown} prods=${run.prods}`,
     );
     const completed =
       f.k10ok &&
-      f.delegatedAt.length > 0 &&
+      f.delegatedAt.length > 1 &&
+      measured &&
+      refuted &&
       check.length > 0 &&
       early === 0 &&
       rest &&
@@ -248,3 +330,4 @@ const scenario: Scenario = {
 };
 
 export default scenario;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

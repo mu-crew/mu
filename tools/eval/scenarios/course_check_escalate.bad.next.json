@@ -1,4 +1,5 @@
 [
+  "RIG-CANARY-f8dc74a2239b",
   {
     "calls": [
       {
@@ -16,14 +17,14 @@
   {
     "calls": [
       {
-        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu state -w eval"
+        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu agent close w1 -w eval --json | true; mu state -w eval"
       }
     ]
   },
   {
     "calls": [
       {
-        "bash": "mu agent close w1 -w eval --json | true; mu agent spawn w2 -w eval --worktree --task k11 --send 'do k11 and finish with the CLOSE block' --json"
+        "bash": "mu agent spawn w2 -w eval --worktree --task k11 --send 'do k11 and finish with the CLOSE block' --json"
       }
     ]
   },
@@ -43,5 +44,6 @@
   },
   {
     "text": "k10 and k11 done; k12 next."
-  }
+  },
+  "RIG-CANARY-f8dc74a2239b"
 ]

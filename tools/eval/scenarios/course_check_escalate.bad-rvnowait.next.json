@@ -1,0 +1,55 @@
+[
+  "RIG-CANARY-f8dc74a2239b",
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn w1 -w eval --worktree --task k10 --send 'do k10 and finish with the CLOSE block' --json"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent wait w1 -w eval --after-runs 0 --json --timeout 120"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task close k10 -w eval --evidence 'worker finished k10'; git cherry-pick $(git -C $MU_STATE_DIR/worktrees/eval/w1 rev-parse HEAD); mu agent close w1 -w eval --json | true; mu state -w eval"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "course",
+          "task": "Read-only course check of workstream eval: count CLOSED tasks by status with `mu sql`, list what is left under umbrella u, and report the numbers. Do not change anything.",
+          "wave": "course"
+        }
+      },
+      {
+        "tool": "mu_delegate",
+        "args": {
+          "label": "course-refute",
+          "wave": "course",
+          "task": "Read-only refuter for a course check of workstream eval: re-count CLOSED tasks with `mu sql` and git log, read the notes of k11 and k12, and say whether the numbers and the code budget against the plan on u hold. Do not change anything."
+        }
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu task note u -w eval 'COURSE CHECK after k10: measurement confirmed; k11 and k12 each commit 1500 generated lines against the plan limit of 50 per step: needs the user (raise the limit or cut them). Applied: batch the last cherry-picks.'; mu human-needed -w eval 'course check: k11/k12 exceed the plan size limit, see the COURSE CHECK note on u'"
+      }
+    ]
+  },
+  {
+    "text": "A course check fell due after k10. Two delegates measured and refuted; k11 and k12 break the plan's size limit, so I recorded a human-needed stop before dispatching k11."
+  },
+  "RIG-CANARY-f8dc74a2239b"
+]
