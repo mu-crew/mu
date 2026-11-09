@@ -195,6 +195,8 @@ interface Pending {
   reject(e: Error): void;
   /** Clear the request's timer and abort listener: the stop sequence owns it now. */
   disarm(): void;
+  /** It was written to the plugin's stdin: an effect may have happened. */
+  sent: boolean;
 }
 
 type Unrefable = { ref?: () => void; unref?: () => void };
@@ -314,6 +316,13 @@ export class PluginProcess {
     if (this.state !== "starting" && this.state !== "ready") {
       return Promise.reject(new RpcUnanswered(`not sent: ${this.broken ?? this.state}`, false));
     }
+    // Aborted before it could be written: nothing went out, and the plugin is untouched.
+    if (opts.signal?.aborted) {
+      return Promise.reject(new RpcUnanswered("not sent: cancelled before it was sent", false));
+    }
+    if (this.child.stdin?.writable !== true) {
+      return Promise.reject(new RpcUnanswered("not sent: the plugin's stdin is closed", false));
+    }
     const id = this.nextId++;
     const line = encodeMessage({ jsonrpc: "2.0", id, method, params });
     return new Promise((resolve, reject) => {
@@ -339,18 +348,17 @@ export class PluginProcess {
           ),
         opts.timeoutMs,
       );
-      this.pending.set(id, {
+      const pending: Pending = {
         resolve: (v) => settle(() => resolve(v)),
         reject: (e) => settle(() => reject(e)),
         disarm,
-      });
+        sent: false,
+      };
+      this.pending.set(id, pending);
       this.refStreams(true);
-      if (opts.signal?.aborted) {
-        onAbort();
-        return;
-      }
       opts.signal?.addEventListener("abort", onAbort, { once: true });
-      this.write(line);
+      // Written in this same turn, so a stop can never find it registered but unsent.
+      pending.sent = this.write(line);
     });
   }
 
@@ -386,7 +394,7 @@ export class PluginProcess {
       this.child.stderr?.destroy();
       this.child.stdin?.destroy();
       const reason = `${why}${this.stderrHead ? `: ${this.stderrLine()}` : ""}`;
-      for (const p of [...this.pending.values()]) p.reject(new RpcUnanswered(reason, true));
+      for (const p of [...this.pending.values()]) p.reject(new RpcUnanswered(reason, p.sent));
       this.state = "gone";
       this.refStreams(false);
       live.delete(this);
@@ -407,9 +415,12 @@ export class PluginProcess {
     return this.stopping;
   }
 
-  private write(line: string): void {
+  /** Write one line; false when stdin no longer takes it (nothing went out). */
+  private write(line: string): boolean {
+    if (this.child.stdin?.writable !== true) return false;
     tap?.("in", line.trimEnd());
-    if (this.child.stdin?.writable) this.child.stdin.write(line);
+    this.child.stdin.write(line);
+    return true;
   }
 
   private onLine(line: string): void {

@@ -189,7 +189,10 @@ wire calls.
   mu sends `{"jsonrpc":"2.0","method":"$/cancel","params":{"id":<id>}}`,
   then stops the plugin as above: the deadline plus one grace bounds every
   call. A reply that arrives meanwhile is ignored, and does not cut the
-  grace short. The call has no answer: a read is unknown, an effect
+  grace short.
+- A call whose cancel came before it was written is never sent: it fails
+  as a definite refusal (exit 5), not an unknown outcome, and the plugin
+  is not stopped. The call has no answer: a read is unknown, an effect
   is an unknown outcome. The next call starts the plugin again; a plugin
   that sent an invalid message stays refused for the invocation.
 

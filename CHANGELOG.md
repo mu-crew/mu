@@ -50,6 +50,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the first terminating signal sets a latch after which no plugin starts or
   restarts and no request is sent; a reply during the stop never cuts the
   grace short (`plugin-lifecycle`: every phase by every plugin behaviour).
+  After the third review (task `p6b_fix3`): a call aborted before it is
+  written is a not-sent `PluginCallError` (exit 5), never an unknown
+  outcome, and leaves the plugin running; the lifecycle table's bound is
+  measured and tight (a stop that holds the grace ends within 1.5 graces,
+  any other within one), so one grace too many fails every cell.
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`

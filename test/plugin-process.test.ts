@@ -228,6 +228,20 @@ describe("timeouts and cancel", () => {
     expect(groupGone(s.process.pgid)).toBe(true);
   });
 
+  it("a call aborted before it is written is a definite not-sent error, and the plugin stays usable", async () => {
+    const p = await start();
+    const ac = new AbortController();
+    ac.abort();
+    const err = await exec(p, "echo effect", { signal: ac.signal }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(PluginCallError);
+    expect((err as PluginCallError).kind).toBe("permanent");
+    expect((err as Error).message).toMatch(/not sent: cancelled before it was sent/);
+    expect(classifyError(err).exitCode).toBe(5);
+    expect(execCalls()).toEqual([]);
+    expect(f.calls().map((c) => c.method)).toEqual(["initialize"]); // no $/cancel, no stop
+    expect((await exec(p, "echo still")).stdout).toBe("still\n");
+  });
+
   it("an abort (a verb's SIGINT) takes the same path", async () => {
     const p = await start({ faults: { "link.exec": ["hang"] } });
     const ac = new AbortController();

@@ -15,7 +15,7 @@
 // The signal is `process.emit`, with the runner's own listeners set aside and
 // the re-raise recorded instead of delivered.
 
-import { mkdtempSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -34,8 +34,17 @@ import { addPlugin, closePluginSessions, pluginSession } from "../src/plugins/re
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
-const GRACE = 300;
-const SLACK = 500;
+// The bound, measured (LIFECYCLE_TIMES=<file> appends each cell's signal-to-re-raise time).
+// At GRACE 300 on an idle host, three runs: a plugin that holds the grace stops in
+// GRACE + 10-17 ms (the group kill and the pipe's close); every other one in 3-146 ms
+// (the fake's own EOF cleanup, which runs `ps`). So at GRACE 600 a held stop must end
+// before GRACE * 1.5 and any other before GRACE: one grace too many fails every cell,
+// and the 300 ms margins leave room for a loaded host.
+const GRACE = 600;
+/** A stop that waits out the grace ends within it plus this. */
+const HELD_MAX = GRACE * 1.5;
+/** A stop the plugin ends by exiting never waits a grace. */
+const UNHELD_MAX = GRACE;
 const CALL_TIMEOUT = 150;
 
 const PHASES = ["starting", "handshake", "idle", "in-flight", "its cancel", "shutdown"] as const;
@@ -50,11 +59,8 @@ const PLUGINS = {
 } as const;
 type Behaviour = keyof typeof PLUGINS;
 
-/** The plugin is still there to ignore its stop when the signal comes: the grace runs whole. */
-const holdsTheGrace = (b: Behaviour, phase: Phase): boolean =>
-  (b === "ignores shutdown" || b === "replies late") &&
-  phase !== "its cancel" &&
-  phase !== "shutdown";
+/** The plugin ignores its stop: the grace runs whole (in every phase, from the signal). */
+const holdsTheGrace = (b: Behaviour): boolean => b === "ignores shutdown" || b === "replies late";
 
 const CELLS: Array<[Phase, Behaviour]> = PHASES.flatMap((p) =>
   (Object.keys(PLUGINS) as Behaviour[]).map((b) => [p, b] as [Phase, Behaviour]),
@@ -89,6 +95,8 @@ let db: Db;
 let f: FakePlugin;
 let onTap: ((stream: string, text: string) => void) | undefined;
 let raised: string[];
+/** When mu raised the signal again: the end of the stop, to the millisecond. */
+let raisedAt: number;
 
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "mplc-"));
@@ -98,7 +106,11 @@ beforeEach(async () => {
   raised = [];
   onTap = undefined;
   setPluginGraceForTests(GRACE);
-  setSignalRaiseForTests((sig) => raised.push(sig));
+  raisedAt = 0;
+  setSignalRaiseForTests((sig) => {
+    raisedAt ||= Date.now();
+    raised.push(sig);
+  });
   setPluginTapForTests((stream, text) => onTap?.(stream, text));
 });
 
@@ -186,8 +198,10 @@ describe("a terminating signal, in every phase, against every plugin", () => {
     const again = await pluginSession(db, "fake")
       .then((s) => exec(s, "echo after-the-signal"))
       .catch((e: unknown) => e);
-    await until(() => raised.length > 0, GRACE + SLACK + 2000);
-    const took = Date.now() - signalAt;
+    await until(() => raised.length > 0, GRACE * 2 + 3000);
+    const took = raisedAt - signalAt;
+    const timesFile = process.env.LIFECYCLE_TIMES; // measuring: append each cell's stop time
+    if (timesFile) appendFileSync(timesFile, `${phase} | ${behaviour} | ${took}\n`);
 
     // No restart: one plugin, and after the signal only its stop reached it.
     expect(again).toBeInstanceOf(PluginCallError);
@@ -198,11 +212,19 @@ describe("a terminating signal, in every phase, against every plugin", () => {
       phase === "starting" ? 0 : 1,
     );
     for (const m of calls.slice(logAt)) expect(["$/cancel", "shutdown"]).toContain(m);
-    // The bound: one grace from the signal; the call's deadline plus one grace.
-    expect(took).toBeLessThan(GRACE + SLACK);
-    if (holdsTheGrace(behaviour, phase)) expect(took).toBeGreaterThanOrEqual(GRACE - 20);
-    if (phase === "its cancel")
-      expect(Date.now() - callStart).toBeLessThan(CALL_TIMEOUT + GRACE + SLACK);
+    // The bound: one grace from the signal, held whole only by a plugin that ignores its stop;
+    // the call's deadline plus that one grace.
+    if (holdsTheGrace(behaviour)) {
+      expect(took).toBeGreaterThanOrEqual(GRACE - 20);
+      expect(took).toBeLessThan(HELD_MAX);
+    } else {
+      expect(took).toBeLessThan(UNHELD_MAX);
+    }
+    if (phase === "its cancel") {
+      expect(raisedAt - callStart).toBeLessThan(
+        CALL_TIMEOUT + (holdsTheGrace(behaviour) ? HELD_MAX : UNHELD_MAX),
+      );
+    }
     // The group is empty, and nothing of mu's still runs.
     for (const g of pgids) expect(alive(-g), `group ${g}`).toBe(false);
     expect(livePluginProcesses()).toEqual([]);
