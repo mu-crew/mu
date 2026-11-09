@@ -1537,7 +1537,7 @@ cited lines before it was settled.
 | D6 | medium | dispositions | `checkSteps(host, call)` cannot make `job`/`ctl` steps or split phases | fixed | D11 `CheckContext` with phases, `db`, `agent`, `root` |
 | D7 | medium | dispositions | the host seam has no caps or handshake object | fixed | D6 `KeyCaps`, `caps.acquire`; D13 `host` seam object |
 | D8 | medium | dispositions | mule's `remoteOnTimeout: "stopped"` contradicts the 5 s grace | fixed | D13 example and D15: `"unknown"` |
-| D9 | medium | dispositions | `collect_due` set only by `mu wait` | fixed (R5) | D10: due is a comparison on the settled count, read by any mu read |
+| D9 | medium | dispositions | `collect_due` set only by `mu wait` | fixed (R5) | D10: due is a comparison on the settled count, read by any mu read (superseded in draft 6 by R8: the final-collect flag, D10) |
 | D10 | medium | dispositions | the text implied an out-of-repo provider is in use | fixed | Principle 7, D6, D18.1: stated as a condition, not a fact |
 | D11 | low | dispositions | P3 allowlist omits `src/rebuild.ts:137` | deferred to unit brief | P3 invariant |
 | D12 | low | dispositions | a released `agent answer` types into a read-only view | cut-by-R2 | D5 |
@@ -1549,8 +1549,8 @@ cited lines before it was settled.
 | X4 | high | races | no resolver ownership columns | fixed (R4) | D5 `effects` |
 | X5 | high | races | recovery reads and resends not fenced on the instance | fixed (R4) | D4 step 2; F10 |
 | X6 | high | races | a crash after the release intent leaves a host releasing forever | fixed (R4) | D1 release rows; D4 table: reissue; F11 |
-| X7 | high | races | an older collect clears a newer due turn | fixed (R5) | D10 compare-and-clear on the count read before the fetch (`src/remote-collect.ts:337-338` fences no turn today) |
-| X8 | high | races | a reap drops the collect obligation | fixed (R5) / cut-by-R2 | D10: it lives on the job record; released builds cannot open v14 |
+| X7 | high | races | an older collect clears a newer due turn | fixed (R5) | D10 compare-and-clear on the count read before the fetch (`src/remote-collect.ts:337-338` fences no turn today) (superseded in draft 6 by R8: the final-collect flag, D10) |
+| X8 | high | races | a reap drops the collect obligation | fixed (R5) / cut-by-R2 | D10: it lives on the job record (superseded in draft 6 by R8: the final-collect flag, D10); released builds cannot open v14 |
 | X9 | high | races | a released `host add` collides with a provider host's name | cut-by-R2 | D5; `host_identity` also refuses a re-acquired name |
 | B1 | critical | buildability | deduped replay unbuildable for channels, job start and hosts | fixed (R3) | D4 rule table, `effects`, D6 `KeyCaps` |
 | B2 | critical | buildability | waits carry no msgId; child-woken final turn | cut-by-R1 | D1 Turn |
@@ -1604,7 +1604,7 @@ with the smallest rule or column that does it; it adds no new mechanism.
 | K4 | low | crash | `upgradeSchema` cannot nest; the id seed does nothing on an existing row | fixed | D5 step 5: an `UPDATE` first, then `upgradeSchema` in its own transaction, then the 13 → 14 step; the rename is the commit point |
 | K5 | medium | crash | the claim accepts a live creator's row; result writes are unfenced | fixed | D4 claim: a live creator owns `pending`; result writes are compare-and-set on owner; F12 |
 | K6 | medium | crash | abandon ignores live effect owners and leaves effect rows | fixed | D1 abandon rows: refuse while a live owner holds an effect; delete the effect rows and log their keys |
-| K7 | medium | crash | the clear compares `runs` across opaque incarnations | fixed | as A4 |
+| K7 | medium | crash | the clear compares `runs` across opaque incarnations | fixed | as A4 (superseded in draft 6 by R8: the final-collect flag, D10) |
 | K8 | medium | crash | a deduped resend can land after a newer send | fixed | D4: a delivery is resent only while no newer delivery to the agent exists |
 | K9 | medium | crash | F11 does not converge on a `lost` host | fixed | D1 `lost` row and D6 "`gone` is a proof": close records the tree gone and the job stopped; F11 |
 | K10 | medium | crash | the fetch contract is unstated | fixed | as A8 |
@@ -1622,7 +1622,8 @@ dispositions changed:
 
 - **B10 / D5:** a no-row plugin reattach is now cut rather than specified
   (S4).
-- **X7:** the compare-and-clear is now on pairs (A4).
+- **X7:** the compare-and-clear is now on pairs (A4). Draft 6 supersedes
+  both by R8: the final-collect flag (D10).
 
 ## Refutation round 4
 
