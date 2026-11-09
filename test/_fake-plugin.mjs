@@ -14,8 +14,9 @@
 // (reply its own protocol even with no overlap), schema (the digest it
 // claims; default the published file's), seams, home, lateMs, ignoreEof (keep
 // running on stdin EOF), detach (leave a setsid'd helper holding stdout; a
-// string: the file its pid is written to),
-// leakCanary (write MU_PLUGIN_CANARY to stderr and into a reply), envDump (a
+// string: the file its pid is written to), detachExec (hostile: run each
+// exec in its own session, out of the fake's group), checkSteps (the
+// link.checkSteps result to return), leakCanary (write MU_PLUGIN_CANARY to stderr and into a reply), envDump (a
 // path the start-up env is written to), stderr (a line written at start),
 // faults: { "<method>": ["<fault>", ...] }, the nth call taking the nth entry:
 //   retryable | permanent | human | unknown-outcome   an error of that kind
@@ -27,9 +28,14 @@
 //   hang           no reply, ever; a $/cancel is ignored
 //   late           the reply after lateMs, a $/cancel ignored
 //   exit           the process exits mid-call
+//   exitWithHelper the process exits mid-call, leaving a helper in its group
+//                  that holds stdout (its pid in `<config>.helper`)
+//   badUtf8        a reply with a byte that is not UTF-8
 //   ok             the normal answer
+//
+// Every request and every $/cancel is logged.
 
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -93,21 +99,52 @@ if (start.detach) {
   helper.unref();
 }
 
-/** In-flight runs by request id: their process groups, for $/cancel and EOF. */
+/** In-flight runs by request id: their pids, for $/cancel and EOF. */
 const running = new Map();
 /** Requests whose reply is withheld (hang, late): a $/cancel does not answer them. */
 const deaf = new Set();
 
-const killGroup = (pid) => {
+/** pid, ppid and pgid of every process. */
+const processes = () =>
+  execFileSync("ps", ["-A", "-o", "pid=,ppid=,pgid="], { encoding: "utf8" })
+    .trim()
+    .split("\n")
+    .map((l) => l.trim().split(/\s+/).map(Number));
+
+const kill = (pid) => {
   try {
-    process.kill(-pid, "SIGKILL");
+    process.kill(pid, "SIGKILL");
   } catch {}
 };
 
+/** A run and everything it started that still descends from it. */
+const killTree = (root) => {
+  const table = processes();
+  const tree = new Set([root]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const [pid, ppid] of table) {
+      if (tree.has(ppid) && !tree.has(pid)) {
+        tree.add(pid);
+        grew = true;
+      }
+    }
+  }
+  for (const pid of tree) kill(pid);
+};
+
+/** Everything left in the fake's own group but the fake (a run's orphans included). */
+const killGroupButMe = () => {
+  for (const [pid, , pgid] of processes())
+    if (pgid === process.pid && pid !== process.pid) kill(pid);
+};
+
+// Runs stay in the fake's process group, so nothing they start can outlive it (D13
+// no-detach). `detachExec` is the hostile variant: each run in its own session.
 function run(id, argv, cwd, timeoutMs, done) {
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
-    detached: true,
+    detached: config().detachExec === true,
     stdio: ["ignore", "pipe", "pipe"],
   });
   running.set(id, child.pid);
@@ -122,7 +159,7 @@ function run(id, argv, cwd, timeoutMs, done) {
   });
   const timer = setTimeout(() => {
     timedOut = true;
-    killGroup(child.pid);
+    killTree(child.pid);
   }, timeoutMs);
   child.on("error", (e) => {
     clearTimeout(timer);
@@ -131,7 +168,6 @@ function run(id, argv, cwd, timeoutMs, done) {
   });
   child.on("close", (code) => {
     clearTimeout(timer);
-    killGroup(child.pid); // nothing it started outlives the call
     running.delete(id);
     done({ exitCode: timedOut ? null : code, stdout, stderr, partial: false });
   });
@@ -159,6 +195,10 @@ function answer(id, method, params) {
       );
       return;
     case "link.checkSteps":
+      if (c.checkSteps !== undefined) {
+        reply(id, c.checkSteps);
+        return;
+      }
       reply(
         id,
         params.phase === "reach" ? [{ step: "reachable", ok: true, detail: "fake answered" }] : [],
@@ -193,10 +233,14 @@ function initialize(id, params) {
 
 function onMessage(msg) {
   if (msg.method === "$/cancel") {
+    appendFileSync(
+      `${configPath}.log`,
+      `${JSON.stringify({ method: msg.method, params: msg.params })}\n`,
+    );
     const id = msg.params?.id;
     if (deaf.has(id)) return;
     const pid = running.get(id);
-    if (pid !== undefined) killGroup(pid);
+    if (pid !== undefined) killTree(pid);
     return;
   }
   appendFileSync(
@@ -245,6 +289,22 @@ function onMessage(msg) {
     case "exit":
       process.exit(9);
       return;
+    case "exitWithHelper": {
+      // The leader exits mid-call, leaving a helper in its group that holds stdout.
+      const helper = spawn("/bin/sleep", ["30"], { stdio: ["ignore", "inherit", "ignore"] });
+      writeFileSync(`${configPath}.helper`, String(helper.pid));
+      process.exit(9);
+      return;
+    }
+    case "badUtf8":
+      process.stdout.write(
+        Buffer.concat([
+          Buffer.from(`{"jsonrpc":"2.0","id":${id},"result":{"exitCode":0,"stdout":"`),
+          Buffer.from([0xff]),
+          Buffer.from('","stderr":"","partial":false}}\n'),
+        ]),
+      );
+      return;
     default:
       answer(id, msg.method, msg.params);
   }
@@ -265,6 +325,7 @@ process.stdin.on("end", () => {
     setInterval(() => {}, 1000);
     return;
   }
-  for (const pid of running.values()) killGroup(pid);
+  for (const pid of running.values()) killTree(pid);
+  if (!config().detachExec) killGroupButMe();
   process.exit(0);
 });

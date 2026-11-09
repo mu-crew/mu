@@ -176,10 +176,14 @@ export function removePlugin(db: Db, name: string): boolean {
 // ─── Sessions: one per plugin per invocation ───────────────────────────
 
 const sessions = new Map<string, Promise<PluginSession>>();
+/** The sessions that started, by the same key: to tell one that has since ended. */
+const started = new Map<string, PluginSession>();
 
 /**
  * The plugin's session for this invocation, started on first need. `needs`: the seams the
- * caller requires, refused at load when the plugin lacks one.
+ * caller requires, refused at load when the plugin lacks one. A session whose plugin was
+ * stopped without breaking the protocol (a cancelled call kills its group) is started again
+ * on the next need; one that broke the protocol stays refused for the invocation.
  */
 export function pluginSession(
   db: Db,
@@ -187,9 +191,17 @@ export function pluginSession(
   needs: readonly SeamName[] = [],
 ): Promise<PluginSession> {
   const key = `${db.name}\0${name}`;
+  const ended = started.get(key)?.process;
+  if (ended !== undefined && ended.broken !== undefined && !ended.poisoned) {
+    sessions.delete(key);
+    started.delete(key);
+  }
   let s = sessions.get(key);
   if (s === undefined) {
-    s = openSession(db, name);
+    s = openSession(db, name).then((session) => {
+      started.set(key, session);
+      return session;
+    });
     sessions.set(key, s);
   }
   return s.then((session) => {
@@ -206,7 +218,11 @@ export function pluginSession(
 
 async function openSession(db: Db, name: string): Promise<PluginSession> {
   const row = getPlugin(db, name);
-  const s = await startPlugin(name, pluginArgv(row));
+  const argv = pluginArgv(row);
+  // The trust rules hold at every use, not only at `add`: the file may have changed since.
+  const trust = trustProblems(name, argv[0] ?? "");
+  if (trust.length > 0) throw new PluginRefusedError(name, trust);
+  const s = await startPlugin(name, argv);
   const declared = JSON.stringify(s.init.seams);
   if (declared !== row.caps_json) {
     await s.shutdown();
@@ -228,6 +244,7 @@ async function openSession(db: Db, name: string): Promise<PluginSession> {
 export async function closePluginSessions(): Promise<void> {
   const open = [...sessions.values()];
   sessions.clear();
+  started.clear();
   await Promise.all(
     open.map(async (p) => {
       try {

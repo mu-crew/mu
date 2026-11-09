@@ -27,6 +27,7 @@ mu plugin rm <name>
 - The executable's basename is `mu-plugin-<name>`. mu refuses the plugin
   if the path is not absolute, if the file (or a symlink's target) is not
   a regular file you own, or if the group or the world can write it.
+  These checks run at `add` and again every time mu starts the plugin.
 - `add` runs the handshake once and stores what the plugin declared.
   Running `add` again with the same argv re-checks the plugin and records
   its new declaration. A different argv for a registered name is refused
@@ -48,7 +49,8 @@ it is refused until the plugin job kind ships.
 
 - JSON-RPC 2.0. Each message is one JSON object on one line, UTF-8, at
   most 1 MiB, on the plugin's stdin (from mu) and stdout (from the
-  plugin).
+  plugin). A line that is not valid UTF-8 is an invalid message; mu
+  never repairs one.
 - stderr is drained and never parsed or stored. Its first line may appear
   in an error, cut to 400 characters.
 - A reply always carries `result`; an absent result is `null`. An error
@@ -67,12 +69,18 @@ it is refused until the plugin job kind ships.
   (`MU_DB_PATH`, `MU_STATE_DIR`, `MU_SYNC_DIR`, the agent identity and
   control-socket variables). Every call's `target` carries the identity
   it needs.
-- At a normal exit mu sends `shutdown`, closes stdin, waits 5 s and kills
-  the group.
+- To stop a plugin, at a normal exit or on a SIGINT, SIGTERM or SIGHUP,
+  mu sends `$/cancel` for each pending call and `shutdown`, closes stdin,
+  waits at most 5 s for the plugin's group to empty, and kills the
+  group. A signal no verb handles is then raised again. Only an exit that
+  cannot wait (a crash) kills the group at once.
 - On stdin EOF the plugin must cancel or finish its in-flight calls and
   exit within 5 s. This is what it sees when mu dies, even by SIGKILL.
-- The plugin never detaches a helper (`setsid`, a double fork). Anything
-  left in its group is killed with it.
+- mu tracks the group, not the leader. When the leader exits, anything
+  left in its group is killed at once.
+- The plugin never detaches a helper or a run (`setsid`, a double fork
+  into another group): everything it starts stays in its group. The
+  contract suite reports a process the plugin started outside its group.
 
 ## Handshake
 
@@ -149,7 +157,7 @@ and the `deadline` are new each time.
 | --- | --- | --- |
 | `link.exec` | `script` (POSIX sh), `cwd` (`.` is the login directory), `timeoutMs` | `{exitCode, stdout, stderr, partial}`; `exitCode: null` when timed out, `partial` when output was cut |
 | `link.fetch` | `remoteCwd`, `localRepo`, `timeoutMs` | as `link.exec`. On success `localRepo`'s `FETCH_HEAD` names `remoteCwd`'s HEAD |
-| `link.checkSteps` | `phase`, `root?`, `agent?` | `[{step, ok, detail}]`; mu names each step `<plugin>:<step>` |
+| `link.checkSteps` | `phase`, `root?`, `agent?` | `[{step, ok, detail}]`; mu names each step `<plugin>:<step>`, except `handback`. A `human` error, or a `handback` step, is a hand-back: `host check` skips the steps that follow |
 
 The plugin enforces `timeoutMs` itself and answers with `exitCode: null`.
 With `remoteOnTimeout: "stopped"` it guarantees nothing it started still
@@ -169,14 +177,16 @@ wire calls.
 ## Timeouts and cancel
 
 - `link.exec` and `link.fetch` take the caller's `timeoutMs` (20 s by
-  default). mu waits that long plus 5 s for the reply.
+  default) as their deadline. The plugin enforces it and answers with
+  `exitCode: null`.
 - Reads (the handshake, `link.checkSteps`) take 10 s.
 - Past the deadline, or when the verb cancels the call (its abort signal),
   mu sends `{"jsonrpc":"2.0","method":"$/cancel","params":{"id":<id>}}`,
-  waits up to 5 s, and kills the plugin's group. A reply that arrives
-  after the cancel is ignored. The call has no answer: a read is unknown,
-  an effect is an unknown outcome.
-- A mu that exits on a signal kills the plugin's group at once.
+  waits up to 5 s (a reply to the call ends the wait early), and kills the
+  plugin's group: the deadline plus one grace bounds every call. The
+  reply is ignored. The call has no answer: a read is unknown, an effect
+  is an unknown outcome. The next call starts the plugin again; a plugin
+  that sent an invalid message stays refused for the invocation.
 
 ## Secrets
 

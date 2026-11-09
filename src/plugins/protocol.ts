@@ -111,19 +111,30 @@ export function encodeMessage(msg: Record<string, unknown>): string {
   return `${line}\n`;
 }
 
-/** Splits a byte stream into lines; `overflow` once a line passes MAX_MESSAGE_BYTES. */
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+
+/**
+ * Splits a byte stream into lines. `invalid` is set, and no further line read, once a line
+ * passes MAX_MESSAGE_BYTES or is not valid UTF-8: an invalid frame, never a repaired one.
+ */
 export class LineReader {
   private parts: Buffer[] = [];
   private size = 0;
-  overflow = false;
+  invalid: string | undefined;
 
   push(chunk: Buffer): string[] {
     const lines: string[] = [];
+    if (this.invalid !== undefined) return lines;
     let at = 0;
     for (let nl = chunk.indexOf(10, at); nl !== -1; nl = chunk.indexOf(10, at)) {
       this.add(chunk.subarray(at, nl));
-      if (this.overflow) return lines;
-      lines.push(Buffer.concat(this.parts).toString("utf8"));
+      if (this.invalid !== undefined) return lines;
+      try {
+        lines.push(UTF8.decode(Buffer.concat(this.parts)));
+      } catch {
+        this.invalid = "not UTF-8";
+        return lines;
+      }
       this.parts = [];
       this.size = 0;
       at = nl + 1;
@@ -134,7 +145,7 @@ export class LineReader {
 
   private add(b: Buffer): void {
     this.size += b.length;
-    if (this.size > MAX_MESSAGE_BYTES) this.overflow = true;
+    if (this.size > MAX_MESSAGE_BYTES) this.invalid = "a message over 1 MiB";
     else if (b.length > 0) this.parts.push(Buffer.from(b));
   }
 }

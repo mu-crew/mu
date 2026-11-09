@@ -16,7 +16,8 @@
 // and an exhausted `retryable` propagate (`PluginCallError`); no answer or
 // `unknown-outcome` is a run with no exit code, the outcome a timed-out
 // template leaves (the link's `remoteOnTimeout` says what may still run).
-// A check read with no answer is one failed step.
+// A check read with no answer is one failed step; a check's hand-back is the
+// template runner's `handback` step, so checkHost skips the rest.
 
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -29,7 +30,7 @@ import {
   templateLink,
 } from "../host-link.js";
 import type { HostView } from "../host-provider.js";
-import { HOST_GRACE_MS, type HostCheckStep, HostHandbackError, withHostChannel } from "../hosts.js";
+import { HANDED_BACK, type HostCheckStep, HostHandbackError, withHostChannel } from "../hosts.js";
 import { git } from "../vcs/git.js";
 import { PLUGIN_READ_TIMEOUT_MS, type PluginSession } from "./client.js";
 import {
@@ -90,14 +91,12 @@ export function pluginLink(db: Db, name: string): HostLink {
   ): Promise<LinkRun> => {
     const s = await session();
     try {
-      // The plugin enforces `timeoutMs` and answers; mu's own deadline adds the grace.
+      // The plugin enforces `timeoutMs` and answers. Past it, the process manager's one
+      // grace is the whole bound (D13): $/cancel, the grace, the group killed.
       return await s.call(
         method,
         { target: target(host), ...params, timeoutMs },
-        {
-          kind: "effect",
-          timeoutMs: timeoutMs + HOST_GRACE_MS,
-        },
+        { kind: "effect", timeoutMs },
         narrowLinkRun,
       );
     } catch (e) {
@@ -166,13 +165,22 @@ export function pluginLink(db: Db, name: string): HostLink {
           { kind: "read", timeoutMs: Math.max(PLUGIN_READ_TIMEOUT_MS, ctx.timeoutMs) },
           narrowCheckSteps,
         );
-        return steps.map((st) => ({ ...st, step: `${name}:${st.step}` }));
+        // `handback` keeps its name: checkHost skips the rest on it, as on the template's.
+        return steps.map((st) =>
+          st.step === "handback" ? st : { ...st, step: `${name}:${st.step}` },
+        );
       } catch (e) {
         if (e instanceof PluginAnswerUnknownError) {
           return [{ step: `${name}:checks`, ok: false, detail: `no answer: ${e.reason}` }];
         }
         if (e instanceof PluginCallError && e.kind === "human") {
-          throw new HostHandbackError(ctx.host.name, "exec", e.remedy ?? e.detail);
+          // The template runner's hand-back report (checkRunner): the step skipped, then the
+          // `handback` step checkHost reads to skip what follows.
+          const back = new HostHandbackError(ctx.host.name, "exec", e.remedy ?? e.detail);
+          return [
+            { step: `${name}:checks`, ok: null, detail: HANDED_BACK },
+            { step: "handback", ok: false, detail: `${name}:checks: ${back.message}` },
+          ];
         }
         throw e;
       }

@@ -34,6 +34,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   changes. Tests: `link-contract` (the template link and the fake plugin's,
   one suite), `plugin-schema`, `plugin-skew`, `plugin-load`,
   `plugin-process`, `plugin-cli`; the fake plugin is `test/_fake-plugin.mjs`.
+  After review (task `p6b_fix`): a SIGINT, SIGTERM or SIGHUP stops each
+  plugin with `$/cancel` and `shutdown` and one grace before the group kill,
+  then re-raises the signal when no verb handles it; the group, not the
+  leader, is tracked until empty; every call is bounded by its deadline plus
+  one grace (the link no longer adds its own); the trust rules are
+  re-checked each time a plugin starts; a line that is not UTF-8 is an
+  invalid message; a check's `human` answer is the `handback` step `host
+  check` skips on; the fake plugin keeps its runs in its group, and the
+  contract test reports a plugin whose runs leave it
+  (`plugin-containment`, `plugin-signal.integration`).
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`

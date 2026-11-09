@@ -5,17 +5,25 @@
 // for one invocation. Requests are framed lines on its stdin; replies and
 // notifications come back on its stdout; stderr is drained, never parsed and
 // never stored (its first line may name a failure). An invalid message breaks
-// the plugin for the rest of the invocation: every pending call loses its
-// answer and the group is reaped.
+// the plugin for the rest of the invocation (`poisoned`): every pending call
+// loses its answer and the group is reaped.
 //
-// Cancel: on a call's deadline or its abort signal, mu sends `$/cancel {id}`,
-// gives the plugin HOST_GRACE_MS to wind the call down (a reply to it ends the
-// wait early, and is ignored), then kills the group; the call has no answer.
-// A verb's SIGINT reaches a call through its abort signal. At a normal exit mu
-// sends `shutdown`, closes stdin, waits HOST_GRACE_MS and kills the group,
-// which also takes any helper the plugin left in its group. On any other exit
-// the group is killed at once (signal-exit), and a mu killed by SIGKILL leaves
-// the plugin its stdin EOF, on which it must exit within the grace.
+// The group, not the leader, is what mu tracks: a plugin is live until its
+// group is empty. When the leader exits, whatever it left in its group is
+// killed at once (it has no one to answer for). A helper that left the group
+// (setsid, a double fork into another group) is a protocol violation mu cannot
+// reach; the contract suite detects it.
+//
+// One grace, owned here (`graceMs`, HOST_GRACE_MS): on a call's deadline or
+// its abort signal mu sends `$/cancel {id}`, waits at most one grace (a reply
+// to the call ends the wait early, and is ignored), then kills the group. To
+// stop a plugin (a normal exit, or a SIGINT, SIGTERM or SIGHUP mu receives)
+// mu sends `$/cancel` for each pending call and `shutdown`, closes stdin,
+// waits at most one grace for the group to empty, then kills it. A signal
+// that no verb handles is raised again once every plugin is stopped. An exit
+// that cannot wait (`process.exit`, a crash) kills the groups at once
+// (signal-exit). A mu killed by SIGKILL leaves the plugin its stdin EOF, on
+// which it must exit within the grace.
 //
 // The streams are unref'd while no call is pending: a plugin never holds mu
 // open.
@@ -65,6 +73,13 @@ export function setPluginTapForTests(fn: Tap | undefined): void {
   tap = fn;
 }
 
+let defaultGraceMs = HOST_GRACE_MS;
+
+/** Tests: the grace a plugin started without an explicit one gets (default HOST_GRACE_MS). */
+export function setPluginGraceForTests(ms: number | undefined): void {
+  defaultGraceMs = ms ?? HOST_GRACE_MS;
+}
+
 const live = new Set<PluginProcess>();
 let removeExitHook: (() => void) | undefined;
 
@@ -79,6 +94,69 @@ function signalGroup(pgid: number, sig: NodeJS.Signals | 0): boolean {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+// ─── Signals ────────────────────────────────────────────────────────────
+
+const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+type StopSignal = (typeof SIGNALS)[number];
+
+let raise = (sig: StopSignal): void => {
+  process.kill(process.pid, sig);
+};
+
+/** Tests: what mu does with a signal no verb handles, once its plugins are stopped. */
+export function setSignalRaiseForTests(fn: ((sig: StopSignal) => void) | undefined): void {
+  raise =
+    fn ??
+    ((sig) => {
+      process.kill(process.pid, sig);
+    });
+}
+
+/** signal-exit's own listeners on each signal (one per loaded instance). */
+function signalExitListeners(): number {
+  const emitter = (globalThis as Record<symbol, { count?: unknown } | undefined>)[
+    Symbol.for("signal-exit emitter")
+  ];
+  return typeof emitter?.count === "number" ? emitter.count : 0;
+}
+
+let signalled = false;
+const onSignal = new Map<StopSignal, () => void>(
+  SIGNALS.map((sig) => [
+    sig,
+    () => {
+      // A verb that listens handles the signal itself (and exits through handle()); else mu
+      // raises it again once the plugins are stopped. signal-exit stands aside while we listen.
+      const verbs = process.listeners(sig).length - 1 - signalExitListeners();
+      if (signalled) return;
+      signalled = true;
+      void Promise.all([...live].map((p) => p.stop(`mu got ${sig}`))).then(() => {
+        signalled = false;
+        uninstallSignals();
+        if (verbs <= 0) raise(sig);
+      });
+    },
+  ]),
+);
+
+function installSignals(): void {
+  removeExitHook ??= onExit(killLive);
+  for (const [sig, fn] of onSignal) if (!process.listeners(sig).includes(fn)) process.on(sig, fn);
+}
+
+function uninstallSignals(): void {
+  if (live.size > 0) return;
+  for (const [sig, fn] of onSignal) process.off(sig, fn);
+  removeExitHook?.();
+  removeExitHook = undefined;
+}
+
+function killLive(): void {
+  for (const p of live) signalGroup(p.pgid, "SIGKILL");
+}
+
+// ─── The process ────────────────────────────────────────────────────────
+
 interface Pending {
   resolve(v: unknown): void;
   reject(e: Error): void;
@@ -90,8 +168,10 @@ export class PluginProcess {
   readonly pgid: number;
   /** The group leader's start time, where the platform tells it (Linux), for D4's group proof. */
   readonly pgidStart: string | null;
-  /** Why the plugin is broken for this invocation; undefined while it is usable. */
+  /** Why the plugin can take no call in this invocation; undefined while it can. */
   broken: string | undefined;
+  /** It broke the protocol (an invalid message): it stays refused for the invocation. */
+  poisoned = false;
   /** The notification handler; without one a notification breaks the plugin. */
   onNotification: ((method: string, params: unknown) => void) | undefined;
   private stderrHead = "";
@@ -100,9 +180,11 @@ export class PluginProcess {
   private readonly pending = new Map<number, Pending>();
   /** Cancelled ids whose late reply is ignored; the value ends the cancel's grace early. */
   private readonly cancelled = new Map<number, () => void>();
-  private exitedFlag = false;
-  private readonly exited: Promise<void>;
-  private shuttingDown: Promise<void> | undefined;
+  private leaderExit: string | undefined;
+  private readonly leaderGone: Promise<void>;
+  private readonly stdoutClosed: Promise<void>;
+  private ending: Promise<void> | undefined;
+  private stopping: Promise<void> | undefined;
 
   private constructor(
     private readonly child: ChildProcess & { pid: number },
@@ -110,38 +192,24 @@ export class PluginProcess {
   ) {
     this.pgid = child.pid;
     this.pgidStart = pidStart(child.pid);
-    let exit = "";
-    this.exited = new Promise((resolve) => {
+    this.leaderGone = new Promise((resolve) => {
       child.once("exit", (code, signal) => {
-        this.exitedFlag = true;
-        exit = String(code ?? signal);
-        live.delete(this);
-        if (live.size === 0) {
-          removeExitHook?.();
-          removeExitHook = undefined;
-        }
+        this.leaderExit = String(code ?? signal);
         resolve();
+        // What the leader left in its group answers for no one: killed now.
+        void this.end(`the plugin exited (${this.leaderExit})`);
       });
     });
-    // No reply can come once stdout closes (a helper holding it open keeps it, until the reap).
-    child.stdout?.once("close", () => {
-      // Its exit status usually follows the pipe's close: wait a moment to name it.
-      void Promise.race([this.exited, sleep(200)]).then(() => {
-        const how = exit === "" ? "closed its stdout" : `exited (${exit})`;
-        const why = `the plugin ${how}${this.stderrHead ? `: ${this.stderrLine()}` : ""}`;
-        this.broken ??= why;
-        this.failPending(why);
-      });
-    });
+    this.stdoutClosed = new Promise((resolve) => child.stdout?.once("close", () => resolve()));
     const reader = new LineReader();
     child.stdout?.on("data", (chunk: Buffer) => {
-      if (this.broken !== undefined) return;
+      if (this.poisoned) return;
       for (const line of reader.push(chunk)) {
         tap?.("out", line);
         this.onLine(line);
-        if (this.broken !== undefined) return;
+        if (this.poisoned) return;
       }
-      if (reader.overflow) this.break("a message over 1 MiB");
+      if (reader.invalid !== undefined) this.poison(`an invalid message (${reader.invalid})`);
     });
     child.stderr?.on("data", (chunk: Buffer) => {
       const text = chunk.toString("utf8");
@@ -161,7 +229,7 @@ export class PluginProcess {
   static start(
     argv: readonly string[],
     env: NodeJS.ProcessEnv,
-    graceMs = HOST_GRACE_MS,
+    graceMs = defaultGraceMs,
   ): Promise<PluginProcess> {
     const [cmd, ...args] = argv;
     if (cmd === undefined) return Promise.reject(new Error("empty plugin argv"));
@@ -176,8 +244,8 @@ export class PluginProcess {
           return;
         }
         const p = new PluginProcess(child as ChildProcess & { pid: number }, graceMs);
-        if (live.size === 0) removeExitHook = onExit(killLive);
         live.add(p);
+        installSignals();
         resolve(p);
       });
     });
@@ -236,54 +304,82 @@ export class PluginProcess {
     });
   }
 
-  /** `shutdown`, stdin closed, the grace, then the group killed. Idempotent. */
+  /** `shutdown`, at a normal exit: the one-grace stop. Idempotent. */
   shutdown(): Promise<void> {
-    this.shuttingDown ??= (async () => {
-      if (!this.exitedFlag && this.broken === undefined) {
-        try {
-          await this.request("shutdown", null, { timeoutMs: this.graceMs });
-        } catch {}
+    return this.stop("shut down");
+  }
+
+  /**
+   * Stop the plugin: `$/cancel` for each pending call, `shutdown`, stdin closed, at most one
+   * grace for the group to empty, then the group killed. Idempotent.
+   */
+  stop(why: string): Promise<void> {
+    this.stopping ??= (async () => {
+      this.broken ??= why;
+      if (this.leaderExit === undefined) {
+        for (const id of [...this.pending.keys()]) {
+          this.cancelled.set(id, () => {});
+          this.write(encodeMessage({ jsonrpc: "2.0", method: "$/cancel", params: { id } }));
+        }
+        if (!this.poisoned) {
+          this.write(
+            encodeMessage({ jsonrpc: "2.0", id: this.nextId++, method: "shutdown", params: null }),
+          );
+        }
       }
-      await this.reap();
+      this.child.stdin?.end();
+      this.refStreams(true);
+      await Promise.race([this.leaderGone, sleep(this.graceMs)]);
+      await this.end(why);
     })();
-    return this.shuttingDown;
+    return this.stopping;
   }
 
-  /** stdin closed (the plugin's EOF), up to the grace for it to exit, then the group killed. */
-  private async reap(): Promise<void> {
-    this.child.stdin?.end();
-    this.refStreams(true);
-    await Promise.race([this.exited, sleep(this.graceMs)]);
-    // The leader may be gone while a helper it left in the group lives on.
-    for (let i = 0; i < 500 && signalGroup(this.pgid, "SIGKILL"); i++) await sleep(10);
-    await this.exited;
-    // A helper that left the group may still hold the pipes: mu stops reading them.
-    this.child.stdout?.destroy();
-    this.child.stderr?.destroy();
-    this.refStreams(false);
+  /** The group killed until empty, the pipes closed, every pending call unanswered. Idempotent. */
+  private end(why: string): Promise<void> {
+    this.ending ??= (async () => {
+      this.refStreams(true);
+      for (let i = 0; i < 500 && signalGroup(this.pgid, "SIGKILL"); i++) await sleep(10);
+      await this.leaderGone;
+      // With the group gone the pipe drains and closes; a helper that left the group may
+      // still hold it, so mu stops reading after a moment.
+      await Promise.race([this.stdoutClosed, sleep(200)]);
+      this.child.stdout?.destroy();
+      this.child.stderr?.destroy();
+      this.child.stdin?.destroy();
+      const reason = `${why}${this.stderrHead ? `: ${this.stderrLine()}` : ""}`;
+      this.broken ??= reason;
+      this.failPending(reason);
+      this.refStreams(false);
+      live.delete(this);
+      uninstallSignals();
+    })();
+    return this.ending;
   }
 
+  /** The deadline's (or abort's) cancel: `$/cancel`, at most one grace, the group killed. */
   private async cancel(id: number, why: string): Promise<RpcUnanswered> {
     this.refStreams(true);
     const answered = new Promise<void>((resolve) => this.cancelled.set(id, resolve));
-    if (!this.exitedFlag)
+    if (this.leaderExit === undefined) {
       this.write(encodeMessage({ jsonrpc: "2.0", method: "$/cancel", params: { id } }));
-    await Promise.race([answered, this.exited, sleep(this.graceMs)]);
+    }
+    await Promise.race([answered, this.leaderGone, sleep(this.graceMs)]);
     this.broken ??= `a call was cancelled (${why}): the plugin was killed`;
-    await this.reap();
+    await this.end(this.broken);
     return new RpcUnanswered(`${why}; cancelled, and the plugin was killed`, true);
   }
 
   private write(line: string): void {
     tap?.("in", line.trimEnd());
-    this.child.stdin?.write(line);
+    if (this.child.stdin?.writable) this.child.stdin.write(line);
   }
 
   private onLine(line: string): void {
     if (line.trim() === "") return;
     const parsed = parseMessage(line);
     if (!parsed.ok) {
-      this.break(`an invalid message (${parsed.reason})`);
+      this.poison(`an invalid message (${parsed.reason})`);
       return;
     }
     const m = parsed.value;
@@ -292,12 +388,12 @@ export class PluginProcess {
       if (this.onNotification !== undefined) {
         this.onNotification(m.method, m.params);
       } else {
-        this.break(`an unexpected notification ${m.method}`);
+        this.poison(`an unexpected notification ${m.method}`);
       }
       return;
     }
     if (m.type === "error" && m.id === null) {
-      this.break(`an error with no id (${firstLine(m.error.message)})`);
+      this.poison(`an error with no id (${firstLine(m.error.message)})`);
       return;
     }
     if (m.id === null) return;
@@ -308,7 +404,9 @@ export class PluginProcess {
     }
     const p = this.pending.get(m.id);
     if (p === undefined) {
-      this.break(`a reply to no pending request (id ${m.id})`);
+      // The reply to `shutdown` (sent without a pending entry) is expected; anything else is not.
+      if (this.stopping !== undefined) return;
+      this.poison(`a reply to no pending request (id ${m.id})`);
       return;
     }
     if (m.type === "error") {
@@ -318,12 +416,16 @@ export class PluginProcess {
     }
   }
 
-  /** Mark the plugin broken for the invocation; pending calls lose their answer; reap it. */
-  break(reason: string): void {
-    if (this.broken !== undefined) return;
-    this.broken = reason;
+  /**
+   * It broke the protocol (an invalid message, or a result mu found invalid): refused for the
+   * invocation; pending calls lose their answer; stopped.
+   */
+  poison(reason: string): void {
+    if (this.poisoned) return;
+    this.poisoned = true;
+    this.broken ??= reason;
     this.failPending(reason);
-    void this.reap();
+    void this.stop(reason);
   }
 
   private failPending(reason: string): void {
@@ -341,11 +443,7 @@ export class PluginProcess {
   }
 }
 
-function killLive(): void {
-  for (const p of live) signalGroup(p.pgid, "SIGKILL");
-}
-
-/** Every plugin process this invocation started and that still runs. */
+/** Every plugin process this invocation started whose group is not yet empty. */
 export function livePluginProcesses(): PluginProcess[] {
   return [...live];
 }

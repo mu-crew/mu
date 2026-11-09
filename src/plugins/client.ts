@@ -142,7 +142,7 @@ function session(name: string, init: InitializeResult, proc: PluginProcess): Plu
         }
         const r = narrow(raw);
         if (r.ok) return r.value;
-        proc.break(`an invalid ${method} result (${r.reason})`);
+        proc.poison(`an invalid ${method} result (${r.reason})`);
         throw unknown(`an invalid result: ${r.reason}`);
       }
     },
