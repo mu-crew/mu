@@ -815,7 +815,7 @@ export interface JobKind {
   /** Computed by mu, never a wire call: the stop fence (host_stop bytes for lease; the handshake instance for a plugin). */
   identity(host: HostView | null): string;
   start(host: HostView | null, spec: JobSpec, key: EffectKey, call: Call): Promise<JobStart>;
-  /** `found`: a `handle: "reply"` kind returns the whole `JobStart` the start returned, as a deduped resend would; a `handle: "file"` kind need fill only `handle`. */
+  /** `found`: a `handle: "reply"` kind returns the `JobStart` the start returned, as a deduped resend would (its `view` may be omitted: mu then asks `attach`); a `handle: "file"` kind need fill only `handle`. */
   lookup(host: HostView | null, key: EffectKey, opts: { fence: boolean }, call: Call): Promise<KeyLookup<{ handle: string } & Partial<JobStart>>>;
   status(db: Db, job: JobRef, call: Call): Promise<JobLiveness>;
   /** Idempotent; resolves only on proof the job is gone; a hand-back throws HostHandbackError. */
@@ -914,7 +914,8 @@ delivery into `job.start`:
   (`src/cli/agents.ts:253`). `mu wait agent:<name>@0` waits for the first
   turn.
 - **Recovery (G1a).** `job.lookup`'s `found` is the `JobStart` the start
-  returned: handle, view and baseline. So a replay that resolves the
+  returned: handle and baseline, and its view, which a plugin may omit
+  (mu then asks `job.attach` for one). So a replay that resolves the
   start by `lookup` has what a deduped resend would return. It records
   the handle and `first_inc`, opens the view from `view`, moves the
   receipt to `sent` with the baseline, and finishes readiness.
@@ -1075,15 +1076,16 @@ start with provider hosts (P6d).
     - `mu host release`'s refusal, which lists every owing job.
 - **In-life collects** are best-effort protection on hosts with idle
   reclaim or a deadline.
-  - **When.** They are attempted at each observed settle (by a `mu wait`,
-    `mu state` or `mu next` that sees one) and before the deadline margin.
+  - **When.** They are attempted after a `mu wait` that observes an
+    agent's settle or its host's `deadline` event.
   - **Retries.** On failure, the job record's `collect_next_at` backs off:
-    one poll interval, doubling to 5 minutes. The next mu verb or wait that
-    touches the host retries once it has passed. Each failure is a warning.
+    one poll interval, doubling to 5 minutes; inside the deadline margin a
+    success backs off too. A later such wait retries once it has passed.
+    Each failure is a warning.
   - **What they record.** `collected_head`, as `mu agent collect` does.
     They never touch `final_owed`.
-  - **Timing.** They run after a wait's result is decided, outside its
-    synchronous settle and commit, from the job record's `collect_repo`
+  - **Timing.** They run after a wait's result is printed and its resume
+    saved, outside its synchronous settle and commit, from the job record's `collect_repo`
     (the spawning invocation's local repository root). Without one, a
     notice suggests `mu agent collect`.
 
@@ -1091,7 +1093,7 @@ start with provider hosts (P6d).
 `MU_HOST_DEADLINE_MARGIN_MS` of the deadline:
 
 - spawns refuse (`HostDeadlineError`), and the host moves to `draining`;
-- `mu wait` fires an urgent `deadline` event;
+- `mu wait` fires an urgent `deadline` event, once per host per deadline;
 - `mu state` lists each agent's collect and close as `next`.
 
 mu never closes an agent on its own.
@@ -1480,7 +1482,7 @@ recorded as needing the user, who may overrule it.
    together.
 2. **Registration** is the `mu plugin add` verb (D14).
 3. **One view pane per agent**, read-only on a plugin channel (D3).
-4. **Collect at settle** runs in mu's own reads (D10). It runs the
+4. **Collect at settle** runs after a `mu wait` that observes one (D10). It runs the
    operator's own template or plugin, as `mu agent collect` does
    (`docs/ROADMAP.md:139-141`).
 5. **Static `host rm`** keeps today's behaviour (D6).
@@ -1613,7 +1615,7 @@ The order follows blast radius:
   loses that turn's commits. mu reports it, but cannot prevent it: the
   final collect finds the host gone, and the job goes lost with
   "uncollected work". mu has no daemon, so in-life collects run only when
-  some mu invocation runs.
+  a `mu wait` observes a settle or a deadline.
 - **The deadline margin is a guess.** A collect slower than the margin
   loses work. The `deadline` event is urgent so that an orchestrator acts
   early.
@@ -1958,5 +1960,11 @@ the first high. All four are fixed.
   Round 6b then fixes four findings on draft 7: lookup recovery returns
   the `JobStart`, the job record is a taskless first prompt's receipt,
   the send result is P4's `ChannelSendReply`, and P6b is marked in review.
+- **P6e2 review** (2026-11-10, targeted): in-life collects run after a
+  `mu wait` that observes a settle or a deadline, and later such waits
+  retry (`mu state` and `mu next` dropped from the trigger list); the
+  `deadline` event fires once per host per deadline; a reply kind's
+  `found` may omit `view`, and mu then asks `job.attach` (as the schema and
+  the protocol page say).
 
 <!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
