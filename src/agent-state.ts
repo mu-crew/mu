@@ -58,6 +58,8 @@ export interface StateAgentRef {
   gateToken?: string | null;
   /** The channel the row recorded at spawn; null or absent: derived (see `expectsCtl`). */
   channel?: ChannelName | null;
+  /** A plugin channel's plugin: with `channel`, the channel's identity (plugins spec D9). */
+  channelPlugin?: string | null;
   /** The agent's job, when the caller listed it with its row (plugins spec D9); absent: its pane's. */
   job?: JobRef;
 }

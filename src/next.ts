@@ -581,7 +581,7 @@ function unreconcilable(
   }
   // A receipt is asked by msgId (ctl) or through the inbox (a run past its baseline, hooks,
   // spec D17); a channel with no receipt leaves nothing to ask.
-  if (sent && (channelNamed(receipt.transport)?.caps.receipt ?? "none") === "none") {
+  if (sent && (channelNamed(receipt.transport, db)?.caps.receipt ?? "none") === "none") {
     return lost("the send went through the pane: there is no receipt to ask");
   }
   return undefined;

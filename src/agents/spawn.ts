@@ -1212,8 +1212,9 @@ export function spawnerFromEnv(env: NodeJS.ProcessEnv = process.env): string | n
 export function finalizeAgentRow(
   db: Db,
   args: {
-    /** A plugin job kind's channel (plugins spec D8): recorded as is. */
+    /** A plugin job kind's channel and its plugin (plugins spec D8, D9): recorded as is. */
     channel?: ChannelName | undefined;
+    channelPlugin?: string | undefined;
     opts: SpawnAgentOptions;
     cli: string;
     paneId: string;
@@ -1269,6 +1270,7 @@ export function finalizeAgentRow(
       hostTransport,
       gateToken: gateToken ?? null,
       channel,
+      channelPlugin: args.channelPlugin ?? null,
       remoteKey: args.remoteKey ?? null,
     };
     if (host === undefined) return insertAgent(db, row);
@@ -1286,7 +1288,7 @@ export function finalizeAgentRow(
   // pending): a row replaced since is not ours to repoint.
   const patched = db
     .prepare(
-      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, remote_key = ?, repo = ?, updated_at = ?
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, channel_plugin = ?, remote_key = ?, repo = ?, updated_at = ?
       WHERE id = ? AND pane_id = ?
         AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
@@ -1301,6 +1303,7 @@ export function finalizeAgentRow(
       host ?? null,
       hostTransport,
       channel,
+      args.channelPlugin ?? null,
       args.remoteKey ?? null,
       staged.host !== undefined ? staged.root : null,
       new Date().toISOString(),

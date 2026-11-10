@@ -665,7 +665,7 @@ async function drive(
   // ── delivered: nothing below may fail the attempt ──
   // The run baseline the channel reports: ctl's runs and incarnation; on hooks the
   // confirmed paste's (turns settled before its run, its session).
-  const baseline = sentRun(sent)?.baseline;
+  const baseline = sentRun(sent, db)?.baseline;
   try {
     rec = updateReceipt(db, taskId, key, {
       state: "sent",
@@ -717,7 +717,7 @@ async function reconcile(
   };
   if (id.agent === undefined) return stay(`the sending agent is ${id.stale ?? "gone"}`);
   // The channel's receipt decides how a replay asks (plugins spec D4, D12).
-  const receipt = channelNamed(saved.transport)?.caps.receipt ?? "none";
+  const receipt = channelNamed(saved.transport, db)?.caps.receipt ?? "none";
   if (receipt === "acknowledged") return reconcileHooks(db, req, saved, id.agent, stay);
   if (receipt === "none") return stay("the send went through the pane: no receipt to ask");
   const target = channelTarget(db, id.agent);

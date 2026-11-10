@@ -210,6 +210,11 @@ export interface AgentRow {
    * the column, whose channel is derived (see `expectsCtl`).
    */
   channel: ChannelName | null;
+  /**
+   * A plugin channel's plugin (`agents.channel_plugin`): with `channel`, the channel's identity
+   * (plugins spec D9). Absent for a built-in channel.
+   */
+  channelPlugin?: string;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
@@ -304,6 +309,8 @@ export interface InsertAgentInput {
   hostTransport?: string | null;
   /** The channel the agent is reached through (`agents.channel`); null: derived on each read. */
   channel?: ChannelName | null;
+  /** A plugin channel's plugin (`agents.channel_plugin`). */
+  channelPlugin?: string | null;
   /** A remote hook-harness worker's key on its node (`agents.remote_key`, spec D11); null: none. */
   remoteKey?: string | null;
   /** The lease spawn's own `carrier_jobs` reservation token: the one the name fence lets through. */
@@ -329,6 +336,7 @@ interface RawAgentRow {
   repo: string | null;
   gate_token: string | null;
   channel: string | null;
+  channel_plugin: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -354,6 +362,7 @@ const SELECT_AGENT_COLS = `
   a.repo AS repo,
   a.gate_token AS gate_token,
   a.channel AS channel,
+  a.channel_plugin AS channel_plugin,
   a.created_at AS created_at,
   a.updated_at AS updated_at
 `;
@@ -385,6 +394,7 @@ function rowFromDb(row: RawAgentRow): AgentRow {
     gateToken: row.gate_token,
     // Any stored name: a built-in, or a plugin channel the registry resolves (plugins spec D9).
     channel: row.channel === "" ? null : row.channel,
+    ...(row.channel_plugin !== null ? { channelPlugin: row.channel_plugin } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -416,10 +426,10 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
     // carrier_jobs reservation other than the caller's own (src/carrier-jobs.ts).
     inserted = db
       .prepare(
-        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, channel, remote_key, created_at, updated_at)
+        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, channel, channel_plugin, remote_key, created_at, updated_at)
        SELECT @name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
                COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource,
-               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @channel, @remoteKey, @now, @now
+               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @channel, @channelPlugin, @remoteKey, @now, @now
        WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs c
                          WHERE c.workstream = @workstream AND c.name = @name AND c.token IS NOT @reservation)`,
       )
@@ -442,6 +452,7 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
         gateToken: input.gateToken ?? null,
         hostTransport: input.hostTransport ?? null,
         channel: input.channel ?? null,
+        channelPlugin: input.channelPlugin ?? null,
         remoteKey: input.remoteKey ?? null,
         reservation: input.reservation ?? null,
         now,

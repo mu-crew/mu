@@ -36,6 +36,9 @@ mu plugin rm <name>
   (`mu plugin rm` first).
 - `rm` is refused while a host profile, a host record, a job record or an
   effect names the plugin.
+- A channel's identity is its plugin and its name, and an agent's row
+  records both. `add` refuses a plugin whose channel name another registered
+  plugin's channel holds in the same DB.
 - mu does not hash the binary. The handshake's `instance` is the fence.
 
 A host profile uses a plugin as its link:

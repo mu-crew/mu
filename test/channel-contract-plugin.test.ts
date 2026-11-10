@@ -34,14 +34,17 @@ const live = async (config: Record<string, unknown> = {}) => {
 };
 
 describe("the fake plugin's channel: the contract", () => {
-  it("declares its capabilities once; the registry serves it by name and by its readings' source", async () => {
+  it("declares its capabilities once; its DB's registry serves it by identity, name and readings' source", async () => {
     const { t } = await live();
     const ch = agentChannel(t);
     expect(ch.name).toBe("cloud");
     expect(ch.caps).toEqual(CLOUD.caps);
     expect(ch.fence).toBe(false);
-    expect(channelNamed("cloud")).toBe(ch);
-    expect(channelNamed("plugin:fake")).toBe(ch);
+    expect(channelNamed("cloud", h.db)).toBe(ch);
+    expect(channelNamed("plugin:fake", h.db)).toBe(ch);
+    expect(channelNamed("cloud", h.db, "fake")).toBe(ch);
+    // Every plugin lookup is scoped by its DB: unscoped, only a built-in resolves.
+    expect(channelNamed("cloud")).toBeUndefined();
   });
 
   it("reads: turn state with runs and incarnation, a baseline, exact receipts", async () => {

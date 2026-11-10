@@ -85,11 +85,15 @@ export function armWait(db: Db, refs: readonly RegisterRef[]): ArmResult {
  * interrupt already carries them as `runs`). An unconfirmed paste and a mux
  * send give none.
  */
-export function sentRunBaseline(sent: SentFacts | ChannelSendReply): {
+export function sentRunBaseline(
+  sent: SentFacts | ChannelSendReply,
+  /** Resolves a plugin channel's name: every plugin lookup is scoped by its DB. */
+  db?: Db,
+): {
   runs?: number;
   incarnation?: string;
 } {
-  return sentRun(sent)?.baseline ?? {};
+  return sentRun(sent, db)?.baseline ?? {};
 }
 
 /**
@@ -110,7 +114,7 @@ export function armSend(
   const row = getAgent(db, agent.name, agent.workstreamName);
   if (row === undefined) return { armed: false };
   // The channel says whether the send started a run (a ctl session command starts none).
-  const run = sentRun(sent);
+  const run = sentRun(sent, db);
   if (run === null) return armWait(db, extraRefs);
   return armWait(db, [...extraRefs, agentRef(row, run.baseline ?? {})]);
 }

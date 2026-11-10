@@ -188,8 +188,7 @@ export function pluginChannel(
     caps,
     fence: false,
     liveness: async (a) => {
-      const row = getAgent(db, a.name, a.workstreamName);
-      const job = row === undefined ? undefined : getCarrierJobByAgent(db, row.incarnation);
+      const { job } = facts(a);
       const ref = job === undefined ? undefined : pluginJobRef(db, job.token);
       if (ref === undefined) return { state: "unknown", reason: "no job record names the agent" };
       return jobLiveness(db, ref);

@@ -100,6 +100,8 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   ["host_profiles", "capabilities", "TEXT"],
   // Plugins spec D4: an agent's delivery high-water mark (src/effects.ts).
   ["agents", "delivery_seq", "INTEGER NOT NULL DEFAULT 0"],
+  // Plugins spec D9: a plugin channel's plugin; with `channel`, the channel's identity.
+  ["agents", "channel_plugin", "TEXT"],
   // Plugins spec D5: a job record's kind, plugin and fences, its tree's base, the final-collect
   // columns (D10) and an `at-start` kind's first-delivery receipt (D8).
   ...(
@@ -545,6 +547,7 @@ CREATE TABLE IF NOT EXISTS agents (
   gate_token    TEXT,                           -- remote command gate: spawn-unique token, also the key of its remote result record (machine-local); NULL: not a gate
   host_transport TEXT,                          -- the transport of the profile it was spawned on, 'session' | 'lease' (machine-local); NULL: local, or a row older than the column
   channel       TEXT,                           -- the channel mu reaches it through, 'ctl' | 'hooks' | 'mux' (machine-local), recorded at spawn; NULL: a row older than the column (derived)
+  channel_plugin TEXT,                          -- a plugin channel's plugin (plugins D9): with channel, its identity; NULL: a built-in
   remote_key    TEXT,                           -- a remote hook-harness worker's key on its node, '<origin host>/<pane key>' (machine-local, spec D11); NULL: none
   delivery_seq  INTEGER NOT NULL DEFAULT 0,     -- plugins D4: the newest delivery effect written to it (src/effects.ts)
   created_at    TEXT NOT NULL,

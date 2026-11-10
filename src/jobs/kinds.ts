@@ -136,17 +136,6 @@ export function targetObservation(
   return why === undefined ? obs : { ...obs, status: null, settled: false, reason: why };
 }
 
-/** The reading of an agent whose row names a channel no one provides: unknown, never a death. */
-export function unregisteredReading(channel: string): StateReading {
-  return {
-    state: "unknown",
-    source: "none",
-    since: null,
-    alive: true,
-    reason: `channel ${channel} is not registered`,
-  };
-}
-
 declare const JOB_GONE: unique symbol;
 /**
  * The job's word that it is gone. Only `jobUp` mints one, so a channel's

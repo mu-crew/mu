@@ -31,7 +31,14 @@ import type { JobLiveness } from "../jobs/types.js";
 /** Who an observation is about. */
 export type ObservedAgent = Pick<
   AgentRow,
-  "name" | "workstreamName" | "paneId" | "cli" | "incarnation" | "gateToken" | "channel"
+  | "name"
+  | "workstreamName"
+  | "paneId"
+  | "cli"
+  | "incarnation"
+  | "gateToken"
+  | "channel"
+  | "channelPlugin"
 >;
 
 export interface AgentObservation {

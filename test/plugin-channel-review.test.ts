@@ -20,6 +20,7 @@ import { getCarrierJobByAgent, listCarrierJobs } from "../src/carrier-jobs.js";
 import { composeChannel } from "../src/channels/compose.js";
 import {
   agentChannel,
+  channelNamed,
   channelTarget,
   deliver,
   readAgentStates,
@@ -30,10 +31,11 @@ import { openDb } from "../src/db.js";
 import { acquireHost } from "../src/host-lifecycle.js";
 import { HostSpawnUnsupportedError } from "../src/hosts.js";
 import { jobUp } from "../src/jobs/kinds.js";
-import { pluginChannel } from "../src/plugins/channel.js";
-import { EffectOutcomeUnknownError } from "../src/plugins/errors.js";
+import { loadPluginChannels, pluginChannel } from "../src/plugins/channel.js";
+import { EffectOutcomeUnknownError, PluginRefusedError } from "../src/plugins/errors.js";
 import { pluginJobKind, pluginJobRef } from "../src/plugins/job.js";
 import { addPlugin } from "../src/plugins/registry.js";
+import { type AgentTrack, rewatchOnPoll } from "../src/wait-latch.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { fakePlugin, providerSeams } from "./_plugin.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
@@ -256,5 +258,60 @@ describe("ruling 5: the plugin's ack is kept", () => {
     expect(sent.channelAck).toBe("none");
     expect(agentChannel(channelTarget(h.db, a)).sendRun(sent)?.ack).toBe("none");
     expect(sentRun(sent)).toEqual({});
+  });
+});
+
+describe("round 2: a plugin channel's identity is (plugin, name); every lookup is scoped by its DB", () => {
+  it("a second plugin declaring a channel name another plugin holds in this DB is refused", async () => {
+    await h.setup();
+    const a = await h.spawn();
+    const target = channelTarget(h.db, a);
+    const dir = join(h.dir, "other");
+    mkdirSync(dir);
+    const other = fakePlugin(
+      dir,
+      { seams: { ...providerSeams({ channel: "cloud" }), channel: CLOUD } },
+      "other",
+    );
+    await expect(addPlugin(h.db, "other", other.argv)).rejects.toBeInstanceOf(PluginRefusedError);
+    await agentChannel(target).send(target, "to A", {});
+    expect(other.backend().deliveries).toBe(0);
+    expect(h.f.backend().deliveries).toBe(1);
+  });
+
+  it("the row records the channel's plugin: a registration naming the same channel never takes its agent", async () => {
+    await h.setup();
+    const a = await h.spawn();
+    expect(getAgent(h.db, "w1", "ws")?.channelPlugin).toBe("fake");
+    // A colliding registration written past `mu plugin add` (an older DB): never an overwrite.
+    h.db
+      .prepare(
+        "INSERT INTO plugins (name, argv_json, protocol, version, instance, seams_json, caps_json, schema_digest, added_at, checked_at) SELECT 'other', argv_json, protocol, version, instance, seams_json, caps_json, schema_digest, added_at, checked_at FROM plugins WHERE name = 'fake'",
+      )
+      .run();
+    const target = channelTarget(h.db, a);
+    await agentChannel(target).send(target, "to A", {});
+    expect(h.f.backend().deliveries).toBe(1);
+  });
+
+  it("a closed DB handle never hides a live DB's streaming capability", async () => {
+    await h.setup({ view: "detached" });
+    await h.spawn();
+    const track = () => ({ baseline: 0, needWatch: false }) as AgentTrack;
+    const r = { status: "needs_input", source: "plugin:fake", runs: 1 } as Parameters<
+      typeof rewatchOnPoll
+    >[1];
+    expect(rewatchOnPoll(track(), r, h.db)).toBe(true);
+    const dbB = openDb({ path: join(h.dir, "second.db") });
+    try {
+      await addPlugin(dbB, "fake", h.f.argv);
+      loadPluginChannels(dbB);
+      dbB.close();
+      expect(rewatchOnPoll(track(), r, h.db)).toBe(true);
+      // Unscoped, a plugin name never resolves.
+      expect(channelNamed("plugin:fake")).toBeUndefined();
+    } finally {
+      if (dbB.open) dbB.close();
+    }
   });
 });

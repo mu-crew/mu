@@ -251,6 +251,7 @@ export async function spawnPluginAgent(
           hooks: false,
           piHooks: false,
           channel: kind.caps.channel,
+          channelPlugin: kind.plugin,
         });
         owned = r.incarnation;
         if (!bindCarrierJobAgent(db, token, r.incarnation, pid)) {
@@ -269,22 +270,10 @@ export async function spawnPluginAgent(
       "agent.spawn",
       `agent spawn ${name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${row.paneId}, host=${host.name}, job=${kind.plugin}:${kind.name}, channel=${kind.caps.channel})`,
     );
-    const firstSend: SendResult | undefined =
-      prompt === undefined
-        ? undefined
-        : {
-            transport: kind.caps.channel ?? "",
-            runs: baseline.runs,
-            msgId: prompt.msgId,
-            ...(baseline.incarnation !== undefined ? { incarnation: baseline.incarnation } : {}),
-          };
-    // A plugin channel's agent has no control socket.
-    return {
-      ...row,
-      ctl: "skipped",
-      ctlSocket: "",
-      ...(firstSend !== undefined ? { firstSend } : {}),
-    };
+    // An at-start kind's first prompt, delivered by the start; no control socket.
+    const firstSend: SendResult = { transport: kind.caps.channel ?? "", ...baseline };
+    if (prompt !== undefined) firstSend.msgId = prompt.msgId;
+    return { ...row, ctl: "skipped", ctlSocket: "", ...(prompt ? { firstSend } : {}) };
   } catch (err) {
     try {
       await rollbackSpawn(db, name, paneId, staged, owned, ws, undefined, carrier);

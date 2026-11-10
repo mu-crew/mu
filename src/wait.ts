@@ -626,7 +626,7 @@ export async function waitForEvents(
       // No settle seen (`unknown`): the watch ends and the agent is polled instead.
       if (r.status === "unknown") t.handle = undefined;
       else settle(t, r);
-    } else if (opts.watchAgent !== undefined && rewatchOnPoll(t, r)) {
+    } else if (opts.watchAgent !== undefined && rewatchOnPoll(t, r, db)) {
       // A watch is set up again (see rewatchOnPoll): the settled run is read from it.
     } else if (r.status === "busy") {
       t.wasBusy = true;
@@ -780,7 +780,7 @@ export async function waitForEvents(
     ctlBrokenSince.delete(ownerKey);
     if (r.status !== "needs_input" || r.since === undefined || r.since === null) return null;
     // A streaming channel's own answer is exact: no stale-age grace.
-    const viaCtl = channelNamed(r.source)?.caps.watch === "stream" && r.ctl === "ok";
+    const viaCtl = channelNamed(r.source, db)?.caps.watch === "stream" && r.ctl === "ok";
     if (viaCtl && r.pending === true) return null;
     const age = Date.now() - r.since;
     return age >= stuckAfter(viaCtl) ? age : null;

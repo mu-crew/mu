@@ -74,7 +74,7 @@ export function supersededBy(t: AgentTrack, r: AgentReading): number | undefined
  *     no run text, so its CLOSE block would never apply: the extension answers a watch past the
  *     same baseline at once with the settled run's facts.
  */
-export function rewatchOnPoll(t: AgentTrack, r: AgentReading): boolean {
+export function rewatchOnPoll(t: AgentTrack, r: AgentReading, db?: object): boolean {
   if (t.watchLost === true && r.ctl === "ok" && t.rewatchedAt !== (r.runs ?? -1)) {
     t.watchLost = false;
     t.rewatchedAt = r.runs ?? -1;
@@ -84,7 +84,7 @@ export function rewatchOnPoll(t: AgentTrack, r: AgentReading): boolean {
   if (
     r.status !== "unknown" &&
     r.status !== "busy" &&
-    channelNamed(r.source)?.caps.watch === "stream" &&
+    channelNamed(r.source, db)?.caps.watch === "stream" &&
     r.runs !== undefined &&
     t.baseline !== undefined &&
     r.runs > t.baseline &&

@@ -482,7 +482,7 @@ async function cmdSpawnTask(
     });
   } else if (
     out.state === "unknown" &&
-    channelNamed(rec.transport)?.caps.receipt === "exact" &&
+    channelNamed(rec.transport, db)?.caps.receipt === "exact" &&
     out.stale === undefined
   ) {
     const row = getAgent(db, agentName, workstream);

@@ -149,24 +149,38 @@ export async function addPlugin(
   await s.shutdown();
   const now = new Date().toISOString();
   const init = s.init;
-  db.prepare(
-    `INSERT INTO plugins (name, argv_json, protocol, version, instance, seams_json, caps_json, schema_digest, added_at, checked_at)
+  // A channel's identity is (plugin, name): a name another plugin's channel holds in this DB
+  // refuses, in the insert's own transaction (plugins spec D9; P6e1 review round 2).
+  const channel = init.seams.channel?.name;
+  db.transaction(() => {
+    const taken =
+      channel === undefined
+        ? undefined
+        : listPlugins(db).find((p) => p.name !== name && pluginSeams(p).channel?.name === channel);
+    if (taken !== undefined) {
+      throw new PluginRefusedError(name, [
+        `its channel ${channel} is already plugin ${taken.name}'s in this DB: a channel name is one plugin's`,
+      ]);
+    }
+    db.prepare(
+      `INSERT INTO plugins (name, argv_json, protocol, version, instance, seams_json, caps_json, schema_digest, added_at, checked_at)
      VALUES (@name, @argv_json, @protocol, @version, @instance, @seams_json, @caps_json, @schema_digest, @now, @now)
      ON CONFLICT (name) DO UPDATE SET protocol = excluded.protocol, version = excluded.version,
        instance = excluded.instance, seams_json = excluded.seams_json, caps_json = excluded.caps_json,
        schema_digest = excluded.schema_digest, checked_at = excluded.checked_at
      WHERE argv_json = excluded.argv_json`,
-  ).run({
-    name,
-    argv_json: argvJson,
-    protocol: init.protocol,
-    version: init.plugin.version,
-    instance: init.instance,
-    seams_json: JSON.stringify(declaredSeams(init.seams)),
-    caps_json: JSON.stringify(init.seams),
-    schema_digest: init.schema,
-    now,
-  });
+    ).run({
+      name,
+      argv_json: argvJson,
+      protocol: init.protocol,
+      version: init.plugin.version,
+      instance: init.instance,
+      seams_json: JSON.stringify(declaredSeams(init.seams)),
+      caps_json: JSON.stringify(init.seams),
+      schema_digest: init.schema,
+      now,
+    });
+  }).immediate();
   const plugin = getPlugin(db, name);
   if (plugin.argv_json !== argvJson) throw new PluginExistsError(name); // raced another add
   return { plugin, refreshed: existing !== undefined };

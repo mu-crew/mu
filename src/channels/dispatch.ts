@@ -16,7 +16,7 @@ import type { ObservedAgent } from "../agents/observe.js";
 import { getCarrierJobByAgent } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
-import { agentJobRef, unregisteredReading } from "../jobs/kinds.js";
+import { agentJobRef, readingWithLiveness } from "../jobs/kinds.js";
 import { queuedPanes } from "../muzzle-queue.js";
 import { loadPluginChannels } from "../plugins/channel.js";
 import { pluginJobRef } from "../plugins/job.js";
@@ -95,13 +95,13 @@ export function agentChannel(target: ChannelTarget): AgentChannel {
 
 /** The registered channel named by `channelOf`; a name none provides refuses (`ChannelUnknownError`). */
 function channelFor(
-  agent: Parameters<typeof channelOf>[0],
+  agent: Parameters<typeof channelOf>[0] & { channelPlugin?: string | null },
   stateDir?: string,
   socket?: string,
   db?: object,
 ): AgentChannel {
   const name = channelOf(agent, stateDir, socket);
-  const channel = channelNamed(name, db);
+  const channel = channelNamed(name, db, agent.channelPlugin);
   if (channel === undefined) throw new ChannelUnknownError(agent.name, agent.workstreamName, name);
   return channel;
 }
@@ -122,12 +122,16 @@ export async function readAgentStates(
   const gates = agents.filter((a) => a.gateToken !== undefined && a.gateToken !== null);
   // A row on a channel nothing provides reads unknown (a verb on it refuses, typed).
   const unregistered = agents.filter(
-    (a) => !gates.includes(a) && channelNamed(channelOf(a, opts.stateDir), opts.db) === undefined,
+    (a) =>
+      !gates.includes(a) &&
+      channelNamed(channelOf(a, opts.stateDir), opts.db, a.channelPlugin) === undefined,
   );
   const rest = agents.filter((a) => !gates.includes(a) && !unregistered.includes(a));
   const readings = await readChannelStates(rest, opts);
   for (const a of unregistered) {
-    readings.set(agentKey(a), unregisteredReading(channelOf(a, opts.stateDir)));
+    const reason = `channel ${channelOf(a, opts.stateDir)} is not registered`;
+    const turn = { state: "unknown", source: "none", since: null, reason } as const;
+    readings.set(agentKey(a), readingWithLiveness(turn, { state: "unknown", reason }));
   }
   await markQueued(rest, readings, opts);
   if (gates.length === 0) return readings;

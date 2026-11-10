@@ -103,7 +103,7 @@ export async function cmdSend(
   const warnings = armed.warning === undefined ? [] : [armed.warning];
   if (!opts.json && !opts.wait) for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
   // The run this send started, as a wait counts it: ctl's runs, or a confirmed paste's.
-  const baseline = sentRunBaseline(sent);
+  const baseline = sentRunBaseline(sent, db);
   if (opts.wait && sig !== undefined) {
     return enterSendWait(db, { name, workstreamName: ws }, baseline, {
       sig,
@@ -163,7 +163,7 @@ export async function cmdSend(
     console.error(pc.yellow(`warning: ${undelivered.message}`));
   } else {
     const how =
-      channelNamed(sent.transport)?.describeSend(sent, { fresh: opts.fresh === true }) ??
+      channelNamed(sent.transport, db)?.describeSend(sent, { fresh: opts.fresh === true }) ??
       `via ${sent.transport}`;
     const receipt =
       sent.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
@@ -256,27 +256,32 @@ async function cmdSendInterrupt(
   const warnings = armed.warning === undefined ? [] : [armed.warning];
   if (!opts.json && !opts.wait) for (const w of warnings) console.error(pc.yellow(`warning: ${w}`));
   if (opts.wait && sig !== undefined) {
-    return enterSendWait(db, { name, workstreamName: ws }, sentRunBaseline({ ...r, transport }), {
-      sig,
-      verb: "mu agent send --interrupt --wait",
-      undelivered,
-      receipt: {
-        agentName: name,
-        sentBytes: Buffer.byteLength(text),
-        transport,
-        interrupt: true,
-        wasBusy: r.wasBusy,
-        ...(r.pending ? { pending: true } : {}),
-        ...(r.runs !== undefined ? { runs: r.runs } : {}),
-        ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
-        ...(r.msgId !== undefined ? { msgId: r.msgId } : {}),
-        ...(r.receipt !== undefined ? { receipt: r.receipt } : {}),
-        ...(r.stopped !== undefined ? { stopped: r.stopped } : {}),
-        ...(r.ack !== undefined ? { ack: r.ack } : {}),
-        ...(r.runCount !== undefined ? { runCount: r.runCount } : {}),
+    return enterSendWait(
+      db,
+      { name, workstreamName: ws },
+      sentRunBaseline({ ...r, transport }, db),
+      {
+        sig,
+        verb: "mu agent send --interrupt --wait",
+        undelivered,
+        receipt: {
+          agentName: name,
+          sentBytes: Buffer.byteLength(text),
+          transport,
+          interrupt: true,
+          wasBusy: r.wasBusy,
+          ...(r.pending ? { pending: true } : {}),
+          ...(r.runs !== undefined ? { runs: r.runs } : {}),
+          ...(r.incarnation !== undefined ? { incarnation: r.incarnation } : {}),
+          ...(r.msgId !== undefined ? { msgId: r.msgId } : {}),
+          ...(r.receipt !== undefined ? { receipt: r.receipt } : {}),
+          ...(r.stopped !== undefined ? { stopped: r.stopped } : {}),
+          ...(r.ack !== undefined ? { ack: r.ack } : {}),
+          ...(r.runCount !== undefined ? { runCount: r.runCount } : {}),
+        },
+        warnings,
       },
-      warnings,
-    });
+    );
   }
   if (r.runs !== undefined) {
     setNextOutcome({
@@ -309,7 +314,7 @@ async function cmdSendInterrupt(
     console.error(pc.yellow(`warning: ${undelivered}`));
     return;
   }
-  const how = channelNamed(transport)?.describeInterrupt(r) ?? `via ${transport}`;
+  const how = channelNamed(transport, db)?.describeInterrupt(r) ?? `via ${transport}`;
   const receipt = r.receipt === undefined ? "" : "; no reply, but its receipt confirms it landed";
   console.log(pc.dim(`sent ${Buffer.byteLength(text)} bytes to ${name} (${how}${receipt})`));
   if (r.pending) console.log(pc.yellow("queued messages went back to the pane's editor unsent"));

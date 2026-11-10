@@ -238,8 +238,6 @@ export class PluginProcess {
   broken: string | undefined;
   /** It broke the protocol (an invalid message): it stays refused for the invocation. */
   poisoned = false;
-  /** The notification handler; without one a notification breaks the plugin. */
-  onNotification: ((method: string, params: unknown) => void) | undefined;
   private stderrHead = "";
   private stderrDone = false;
   private nextId = 1;
@@ -522,8 +520,6 @@ export class PluginProcess {
         this.watches.delete(id);
         this.refStreams(this.busy());
         on({ method: m.method, params: m.params });
-      } else if (this.onNotification !== undefined) {
-        this.onNotification(m.method, m.params);
       } else if (typeof id === "string" && !this.cancelled.has(id)) {
         // A settled turn is reported at once, maybe before mu has read the watch's reply:
         // held until the reply's caller claims it, at most until the next macrotask.

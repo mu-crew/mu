@@ -51,16 +51,15 @@ export function registerChannel(impl: ChannelImpl): AgentChannel {
 }
 
 /**
- * Plugin channels, per DB handle, by name: loaded from that DB's registrations
- * (src/plugins/channel.ts), each with the registration it was built from. One DB's agent is
- * never served another DB's adapter (plugins spec D9; P6e1 review ruling 1).
+ * Plugin channels, per DB handle, by their identity (plugin, channel name): loaded from that
+ * DB's registrations (src/plugins/channel.ts), each with the registration it was built from.
+ * One DB's agent is never served another DB's adapter, nor another plugin's (plugins spec D9).
  */
-type PluginEntry = { plugin: string; registration: string; channel: AgentChannel };
+type PluginEntry = { plugin: string; name: string; registration: string; channel: AgentChannel };
 const plugins = new WeakMap<object, Map<string, PluginEntry>>();
-const loaded = new Set<WeakRef<object>>();
 
 /**
- * Plugin `plugin`'s channel in DB `db`, served composed; built again when its registration
+ * Plugin `plugin`'s channel `name` in DB `db`, served composed; built again when its registration
  * (`registration`: its row's declaration and instance) changed. A built-in's name is never a plugin's.
  */
 export function registerPluginChannel(
@@ -68,50 +67,40 @@ export function registerPluginChannel(
   c: { plugin: string; name: string; registration: string; build: () => ChannelImpl },
 ): void {
   if (channels().has(c.name)) return;
-  let byName = plugins.get(db);
-  if (byName === undefined) {
-    byName = new Map();
-    plugins.set(db, byName);
-    loaded.add(new WeakRef(db));
+  let byId = plugins.get(db);
+  if (byId === undefined) {
+    byId = new Map();
+    plugins.set(db, byId);
   }
-  const had = byName.get(c.name);
-  if (had?.plugin === c.plugin && had.registration === c.registration) return;
-  byName.set(c.name, { ...c, channel: composeChannel(c.build()) });
-}
-
-function inDb(
-  byName: Map<string, PluginEntry> | undefined,
-  name: string,
-): AgentChannel | undefined {
-  if (byName === undefined) return undefined;
-  const c = byName.get(name)?.channel;
-  if (c !== undefined || !name.startsWith("plugin:")) return c;
-  const plugin = name.slice("plugin:".length);
-  return [...byName.values()].find((p) => p.plugin === plugin)?.channel;
+  const id = `${c.plugin}\0${c.name}`;
+  if (byId.get(id)?.registration === c.registration) return;
+  byId.set(id, { ...c, channel: composeChannel(c.build()) });
 }
 
 /**
- * The channel registered as `name` (a reading's `source` `plugin:<plugin>` names its plugin's):
- * a built-in, else `db`'s plugin channel. Without `db` (a caller holding only a name, for its
- * capabilities), a plugin channel only when exactly one loaded DB declares it. Undefined for a
- * null, absent or unknown name.
+ * The channel registered as `name`: a built-in, else `db`'s plugin channel, by its identity
+ * (`plugin` and `name`, as an agent row records them), by its readings' source
+ * `plugin:<plugin>`, or by a name exactly one of `db`'s plugins holds. Every plugin lookup is
+ * scoped by its DB: without `db` only a built-in resolves. Undefined for a null, absent or
+ * unknown name.
  */
 export function channelNamed(
   name: ChannelName | null | undefined,
   db?: object,
+  plugin?: string | null,
 ): AgentChannel | undefined {
   if (name == null) return undefined;
   const builtin = channels().get(name);
-  if (builtin !== undefined) return builtin;
-  if (db !== undefined) return inDb(plugins.get(db), name);
-  const found = new Set<AgentChannel>();
-  for (const ref of loaded) {
-    const d = ref.deref();
-    if (d === undefined) loaded.delete(ref);
-    const c = d === undefined ? undefined : inDb(plugins.get(d), name);
-    if (c !== undefined) found.add(c);
-  }
-  return found.size === 1 ? [...found][0] : undefined;
+  if (builtin !== undefined || db === undefined) return builtin;
+  const all = [...(plugins.get(db)?.values() ?? [])];
+  const match = (e: PluginEntry): boolean =>
+    plugin != null
+      ? e.plugin === plugin && e.name === name
+      : name.startsWith("plugin:")
+        ? e.plugin === name.slice("plugin:".length)
+        : e.name === name;
+  const found = all.filter(match);
+  return found.length === 1 ? found[0]?.channel : undefined;
 }
 
 /** An agent's row names a channel no built-in or registered plugin provides (D5, D9). Exit 4. */
@@ -168,9 +157,9 @@ export function toSendResult(reply: ChannelSendReply): SendResult {
  * it (`AgentChannel.sendRun`); with no `transport`, or an unregistered one,
  * its own `runs` (when present) is the baseline. null: no run started.
  */
-export function sentRun(sent: SentFacts | ChannelSendReply): SentRun | null {
+export function sentRun(sent: SentFacts | ChannelSendReply, db?: object): SentRun | null {
   if (isSendReply(sent)) return sent.baseline !== undefined ? { baseline: sent.baseline } : {};
-  const channel = channelNamed(sent.transport);
+  const channel = channelNamed(sent.transport, db);
   if (channel !== undefined) {
     const reply = channel.sendRun(sent);
     if (reply === null) return null;
