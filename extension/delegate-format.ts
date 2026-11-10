@@ -34,7 +34,7 @@ export type PaneFate = { closed: true } | { closed: false; why: string };
 
 /** Extras for the follow-up message; all optional. */
 export type MessageExtras = {
-  /** `mu agent read -n 50` for the outcomes without text. */
+  /** `mu agent read --text -n 50` for the outcomes without text. */
   tail?: string;
   attach?: string;
   timeoutS?: number;
@@ -114,7 +114,7 @@ export function delegateMessage(
   const fate = pane.closed ? "Pane closed." : `Pane kept (${pane.why}).`;
   const look = [
     x.attach ? `Attach: ${x.attach}` : undefined,
-    `Read: mu agent read ${name} -n 50 -w ${W}`,
+    `Read: mu agent read ${name} --text -n 50 -w ${W}`,
   ].filter((v) => v !== undefined);
   const tailBlock = x.tail?.trim() ? `\n\nPane tail:\n${x.tail.trimEnd()}` : "";
   const ws = x.workspace ? ` Workspace: ${x.workspace}` : "";

@@ -12,6 +12,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu agent read --text` and `mu agent show --text`: just the worker's
+  words** (task `land_c4_read_text`, the C4 tournament winner,
+  docs/eval/hill-r2/c4.md on branch `hill2/c4r`). `--text` drops pane
+  furniture (blank runs, rules, scroll markers, spinner, status and footer
+  rows) and keeps every other line; with `--text`, `-n` counts text lines,
+  read from the full scrollback. `--json --text` adds `text` beside the raw
+  `scrollback`. The default output is unchanged. `mu_delegate`'s pane tail
+  and its read hints use `--text`, and the orchestrator recipe's exit-7 step
+  names it. Fast mode won on `agent_read_text` with pooled z 3.51 (>= 1.96):
+  gemini-3.8-flash 27/56 against base's 12, haiku a tie (46 against 48),
+  sonnet 32 against 28; the win is on the help arms, where `--text` is shown
+  (gemini 26/28 against 11/28).
+
 - **Eval: markers from the rendered help** (task `f_help_markers`, spec
   revision 4). `deriveMarkers` also diffs `mu <path> --help` of every command
   path, base against variant: a help line the variant prints and base's help

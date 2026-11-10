@@ -673,7 +673,7 @@ export function registerDelegate(
     const tail =
       outcome === "done" || outcome === "timeout" || outcome === "pending" || outcome === "error"
         ? undefined
-        : (await mu(["agent", "read", name, "-n", "50", "-w", ws])).stdout;
+        : (await mu(["agent", "read", name, "--text", "-n", "50", "-w", ws])).stdout;
     const sessionFile = agent?.sessionFile ?? extras.sessionFile;
     const x: MessageExtras = {
       ...extras,
@@ -837,7 +837,7 @@ export function registerDelegate(
         );
       } catch (e) {
         // A throw here would be an unhandled rejection and a lost answer.
-        const content = `Delegate ${ws}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${ws}`;
+        const content = `Delegate ${ws}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} --text -n 50 -w ${ws}`;
         await Promise.resolve(
           send(
             {

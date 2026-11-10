@@ -150,6 +150,7 @@ are re-export hubs.
 | Module | Responsibility |
 | --- | --- |
 | `src/agents.ts` | CRUD (incarnation CAS), send, read, list, liveness, reaper; hub re-exporting close |
+| `src/pane-text.ts` | `paneText`: a worker's words out of a captured pane (blank runs folded; rules, scroll markers, spinner, status and footer rows dropped), pure, for `agent read --text` / `agent show --text`; `tailText` counts `-n` in those lines |
 | `src/agents/spawn.ts` | spawn: CLI resolution, `mux.spawnAgent`, row finalize; re-exports the readiness names and `rollbackSpawn` so `agents/spawn.js` imports keep working |
 | `src/agents/spawn-rollback.ts` | `rollbackSpawn`: a failed spawn's undo (pane, host channel, lease job, worktree, row, reservation), best-effort and idempotent; imports only types from `spawn.ts` |
 | `src/agents/spawn-ready.ts` | spawn readiness: the ctl handshake (`awaitCtlHandshake`, its clock seam), the liveness window, the startup-error and Claude trust-dialog scan (`checkSpawnHealth`) |

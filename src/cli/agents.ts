@@ -52,6 +52,7 @@ import { leftoverLines, listLeftovers } from "../leftovers.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
 import { pc } from "../output.js";
+import { paneText, tailText } from "../pane-text.js";
 import { buildTaskBrief, TaskBriefMissingError } from "../task-brief.js";
 import { getTask } from "../tasks/queries.js";
 import { type WaitSnapshot, waitForEvents } from "../wait.js";
@@ -647,14 +648,16 @@ function countLines(text: string): number {
 export async function cmdRead(
   db: Db,
   rawName: string,
-  opts: { lines?: number; workstream?: string; json?: boolean },
+  opts: { lines?: number; workstream?: string; json?: boolean; text?: boolean },
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
   const ws = await resolveExistingWorkstream(db, opts.workstream);
+  // --text counts -n in text lines: read everything, filter, then tail.
+  const textTail = opts.text === true && opts.json !== true;
   const text = await readAgent(db, name, {
     workstream: ws,
-    ...(opts.lines !== undefined ? { lines: opts.lines } : {}),
+    ...(opts.lines !== undefined && !textTail ? { lines: opts.lines } : {}),
   });
   if (opts.json) {
     emitJson({
@@ -662,11 +665,13 @@ export async function cmdRead(
       lines: opts.lines ?? null,
       scrollback: text,
       scrollbackLines: countLines(text),
+      ...(opts.text === true ? { text: paneText(text) } : {}),
     });
     return;
   }
-  process.stdout.write(text);
-  if (!text.endsWith("\n")) process.stdout.write("\n");
+  const out = textTail ? tailText(paneText(text), opts.lines) : text;
+  process.stdout.write(out);
+  if (!out.endsWith("\n")) process.stdout.write("\n");
 }
 
 export async function cmdList(
@@ -703,7 +708,7 @@ export async function cmdList(
 export async function cmdAgentShow(
   db: Db,
   rawName: string,
-  opts: { lines?: number; json?: boolean; workstream?: string },
+  opts: { lines?: number; json?: boolean; workstream?: string; text?: boolean },
 ): Promise<void> {
   const { name } = await resolveEntityRef(db, rawName, opts, "agent");
   assertAgentInWorkstream(db, name, opts.workstream);
@@ -743,6 +748,7 @@ export async function cmdAgentShow(
       agent: liveAgentToOutput(displayed, workstreamIdOf(db, agent.workstreamName)),
       scrollback,
       scrollbackLines: countLines(scrollback),
+      ...(opts.text === true ? { text: paneText(scrollback) } : {}),
     });
     return;
   }
@@ -759,12 +765,19 @@ export async function cmdAgentShow(
   console.log(`  updated    : ${pc.dim(agent.updatedAt)}`);
 
   console.log("");
-  console.log(pc.bold(`Recent scrollback (last ${lines} lines)`));
-  if (scrollback.trim() === "") {
+  const shown = opts.text === true ? paneText(scrollback) : scrollback;
+  console.log(
+    pc.bold(
+      opts.text === true
+        ? `Recent text (last ${lines} lines, furniture dropped)`
+        : `Recent scrollback (last ${lines} lines)`,
+    ),
+  );
+  if (shown.trim() === "") {
     console.log(pc.dim("  (pane gone or empty)"));
     return;
   }
-  for (const line of scrollback.replace(/\n+$/, "").split("\n")) {
+  for (const line of shown.replace(/\n+$/, "").split("\n")) {
     console.log(`  ${line}`);
   }
 }
@@ -1222,8 +1235,12 @@ export function wireAgentCommands(program: Command): void {
 
   agent
     .command("read <name>")
-    .description("Read an agent's pane scrollback")
+    .description("Read an agent's pane scrollback (--text: just the words)")
     .option("-n, --lines <n>", "show last N lines (default: full scrollback)", parseLines)
+    .option(
+      "--text",
+      "only the words: drop blank runs, rules, scroll markers, spinner and footer rows",
+    )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string) {
@@ -1231,6 +1248,7 @@ export function wireAgentCommands(program: Command): void {
         lines?: number;
         workstream?: string;
         json?: boolean;
+        text?: boolean;
       };
       return handle((db) => cmdRead(db, name, opts), this as Command)();
     });
@@ -1258,6 +1276,7 @@ export function wireAgentCommands(program: Command): void {
     .command("show <name>")
     .description("Show an agent: registry row + recent scrollback (last N lines, default 20)")
     .option("-n, --lines <n>", "how many scrollback lines to show (default 20)", parseLines)
+    .option("--text", "show the scrollback's words only, screen furniture dropped")
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .action(function (name: string) {
@@ -1265,6 +1284,7 @@ export function wireAgentCommands(program: Command): void {
         lines?: number;
         json?: boolean;
         workstream?: string;
+        text?: boolean;
       };
       return handle((db) => cmdAgentShow(db, name, opts), this as Command)();
     });
