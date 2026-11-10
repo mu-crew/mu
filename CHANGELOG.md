@@ -12,6 +12,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu task notes <id> --report`: the report, raw** (task
+  `land_c3_report_flag`, the C3 tournament winner,
+  docs/eval/hill-r2/c3_notes.md on branch `hill2/c3r`). Prints the task's
+  latest `kind=report` note as its own text (newlines intact, no `\n`
+  escaping); `--json` gives `{n, kind, author, created_at, content}`. With no
+  report note it exits 1 with `(no report note on <id>)` on stderr (the
+  closer's-note stand-in of the default view does not count). It refuses
+  `--tail`/`--last`/`--since`/`--since-claim`/`--all`/`--from`. Fast mode won
+  on `notes_report_read` with pooled z 4.74 (>= 2.13): haiku 35/50 against
+  base's 16, gemini-3.8-flash 44 against 29, sonnet 24 against 16.
+
 - **`mu agent read --text` and `mu agent show --text`: just the worker's
   words** (task `land_c4_read_text`, the C4 tournament winner,
   docs/eval/hill-r2/c4.md on branch `hill2/c4r`). `--text` drops pane

@@ -707,16 +707,19 @@ export async function cmdTaskNotes(
     json?: boolean;
     workstream?: string;
     tail?: number;
+    report?: boolean;
     since?: string;
     sinceClaim?: boolean;
     all?: boolean;
     from?: number;
   } = {},
 ): Promise<void> {
-  const filtered = opts.tail !== undefined || opts.since !== undefined || opts.sinceClaim === true;
+  const cutoff = opts.tail !== undefined || opts.since !== undefined || opts.sinceClaim === true;
+  const filtered = cutoff || opts.report === true;
   if ((opts.all === true || opts.from !== undefined) && filtered) {
     throw new UsageError(say("task.notes_all_from"));
   }
+  if (opts.report === true && cutoff) throw new UsageError(say("task.notes_report_filter"));
   if (opts.all === true && opts.from !== undefined) {
     throw new UsageError(say("task.notes_all_is_from"));
   }
@@ -753,6 +756,36 @@ export async function cmdTaskNotes(
   const ws = await resolveExistingWorkstream(db, opts.workstream);
   const task = getTask(db, localId, ws);
   if (!task) throw new TaskNotFoundError(localId, ws);
+
+  if (opts.report === true) {
+    const allNotes = listNotes(db, localId, task.workstreamName, {});
+    const reportNote = allNotes
+      .slice()
+      .reverse()
+      .find((n) => n.kind === "report");
+    if (!reportNote) {
+      if (opts.json) {
+        emitJson({ error: "no report found" });
+      } else {
+        console.error(pc.dim(`(no report note on ${localId})`));
+      }
+      process.exitCode = 1;
+      return;
+    }
+    if (opts.json) {
+      emitJson({
+        n: reportNote.n,
+        kind: reportNote.kind,
+        author: reportNote.author,
+        created_at: reportNote.createdAt,
+        content: reportNote.content,
+      });
+    } else {
+      console.log(reportNote.content);
+    }
+    return;
+  }
+
   let page: NotesPage;
   let total: number;
   const notesWire = {
