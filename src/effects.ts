@@ -32,16 +32,6 @@ import { groupAlive, pidProvenGone, pidStart } from "./hosts.js";
 export type EffectSubjectKind = "host" | "job" | "delivery";
 export type EffectState = "pending" | "resolving" | "unknown";
 
-/** The delivery methods (D4): a delivery effect's subject is an agent plus a msgId. */
-export const DELIVERY_METHODS: readonly string[] = [
-  "channel.send",
-  "channel.fresh",
-  "channel.interrupt",
-  "channel.abort",
-  "channel.answer",
-  "channel.command",
-];
-
 /** An `effects` row (D5). Times are epoch ms. */
 export interface EffectRow {
   key: string;

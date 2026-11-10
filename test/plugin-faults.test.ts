@@ -181,7 +181,7 @@ describe("plugin faults (D16)", () => {
     crashedIntent();
     f.set({ lookupAnswer: { found: { handle: "job-7" } } });
     const [r] = await kind.resolve(token);
-    expect(r).toMatchObject({ state: "unknown", reason: expect.stringMatching(/no view/) });
+    expect(r).toMatchObject({ state: "unknown", reason: expect.stringMatching(/found\.view/) });
     expect(getCarrierJob(db, token)?.job).toBeNull();
   });
 
@@ -404,7 +404,6 @@ describe("deliveries (D4): never resent past a newer one", () => {
         mode: "followUp",
         force: false,
       },
-      narrow: narrowObject,
     });
   const prep = async (receipt: string) => {
     await setup({}, channel(receipt));

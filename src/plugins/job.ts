@@ -20,7 +20,7 @@ import type { Db } from "../db.js";
 import { effectsOf, getEffect } from "../effects.js";
 import type { CheckContext } from "../host-link.js";
 import type { HostView, KeyLookup } from "../host-provider.js";
-import { HANDED_BACK, type HostCheckStep, HostHandbackError } from "../hosts.js";
+import { type HostCheckStep, HostHandbackError } from "../hosts.js";
 import {
   HONOURS_DEFAULT,
   type JobKind,
@@ -30,25 +30,16 @@ import {
   type JobStart,
   type PaneCommand,
 } from "../jobs/types.js";
-import { PLUGIN_READ_TIMEOUT_MS } from "./client.js";
 import {
   EffectFencedError,
   EffectOutcomeUnknownError,
   PluginAnswerUnknownError,
   PluginCallError,
 } from "./errors.js";
-import {
-  type Narrowed,
-  narrowCheckSteps,
-  narrowJobLiveness,
-  narrowJobLookup,
-  narrowJobStart,
-  narrowNull,
-  narrowPaneCommand,
-  type PluginJobCaps,
-} from "./protocol.js";
-import { type Resolution, resolveEffect, runEffect } from "./reconcile.js";
-import { getPlugin, pluginSeams, pluginSession } from "./registry.js";
+import { checkReport } from "./link.js";
+import type { JobFound, Obj, PluginJobCaps, PluginMethod } from "./protocol.js";
+import { pluginCall, type Resolution, resolveEffect, runEffect } from "./reconcile.js";
+import { getPlugin, pluginSeams } from "./registry.js";
 
 export interface PluginJobKind extends JobKind {
   readonly plugin: string;
@@ -61,24 +52,12 @@ export interface PluginJobKind extends JobKind {
    * that says nothing happened puts it back to unlaunched; no answer leaves it to `resolve`.
    */
   start(host: HostView, spec: JobSpec, key: string): Promise<JobStart>;
-  lookup(
-    host: HostView,
-    key: string,
-    opts: { fence: boolean },
-  ): Promise<KeyLookup<Partial<JobStart> & { handle: string }>>;
+  lookup(host: HostView, key: string, opts: { fence: boolean }): Promise<KeyLookup<JobFound>>;
   /** Idempotent; resolves only on proof the job is gone. Refuses a changed instance. */
   stop(db: Db, job: JobRef): Promise<void>;
   attach(db: Db, job: JobRef): Promise<PaneCommand>;
   /** Every unresolved effect of job record `token`, by the rule table (D4). */
   resolve(token: string): Promise<Resolution[]>;
-}
-
-/** The wire `target` of a job call (D13). */
-function target(job: { kind: string; key: string; handle?: string | null; host: string }) {
-  return {
-    job: { kind: job.kind, key: job.key, ...(job.handle != null ? { handle: job.handle } : {}) },
-    host: { name: job.host },
-  };
 }
 
 /** The key of a job's stop effect: one per job, so a re-run reissues the same request. */
@@ -89,28 +68,31 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
   const declared = pluginSeams(getPlugin(db, name)).job;
   if (declared === undefined) return undefined;
   const caps: PluginJobCaps = { ...declared, honours: declared.honours ?? HONOURS_DEFAULT };
-  const session = () => pluginSession(db, name, ["job"]);
   const instance = () => getPlugin(db, name).instance;
 
-  const readCall = async <T>(
-    method: string,
-    params: Record<string, unknown>,
-    narrow: (x: unknown) => Narrowed<T>,
-  ): Promise<T> =>
-    (await session()).call(
-      method,
-      params,
-      { kind: "read", timeoutMs: PLUGIN_READ_TIMEOUT_MS },
-      narrow,
-    );
-
-  const jobTarget = (job: JobRef) =>
-    target({
-      kind: declared.kind,
-      key: job.key ?? "",
-      handle: job.handle ?? null,
-      host: job.host?.name ?? "",
+  /**
+   * A read through the one call path. `recorded`: the instance the job was started under, for
+   * a call naming a recorded job; another one refuses before sending (`instance-changed`).
+   */
+  const ask = <M extends PluginMethod>(m: M, p: Obj, key: string, recorded?: string | null) => {
+    const fence = {
+      instance: recorded ?? "",
+      subject: `${m} of job ${key}`,
+      why: "instance-changed" as const,
+    };
+    return pluginCall(db, name, m, p, {
+      kind: "read",
+      needs: ["job"],
+      ...(recorded === undefined ? {} : { fence }),
     });
+  };
+
+  /** The wire `target` of a job call (D13). */
+  const target = (key: string, host: string, handle?: string | null) => ({
+    job: { kind: declared.kind, key, ...(handle != null ? { handle } : {}) },
+    host: { name: host },
+  });
+  const jobTarget = (job: JobRef) => target(job.key ?? "", job.host?.name ?? "", job.handle);
 
   /** A plugin's `human` answer is the host's hand-back. */
   const handBack = (host: string, field: "exec" | "stop", e: unknown): never => {
@@ -127,7 +109,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
     identity: instance,
 
     async start(host, spec, key) {
-      const params = { target: target({ kind: declared.kind, key, host: host.name }), key, spec };
+      const params = { target: target(key, host.name), key, spec };
       try {
         return await runEffect(db, {
           key,
@@ -139,7 +121,6 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
           plugin: name,
           method: "job.start",
           params,
-          narrow: narrowJobStart,
           alongside: (inst) => {
             if (!markPluginJobLaunch(db, key, inst)) {
               throw new Error(`job record ${key} is not an unlaunched ${name} job`);
@@ -156,11 +137,15 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
     },
 
     async lookup(host, key, opts) {
+      // A recorded job's (or effect's) key is asked only of the instance it went to.
+      const recorded =
+        getEffect(db, key)?.instance ?? getCarrierJob(db, key)?.instance ?? undefined;
       try {
-        return await readCall(
+        return await ask(
           "job.lookup",
-          { target: target({ kind: declared.kind, key, host: host.name }), key, fence: opts.fence },
-          narrowJobLookup,
+          { target: target(key, host.name), key, fence: opts.fence },
+          key,
+          recorded,
         );
       } catch (e) {
         if (e instanceof PluginAnswerUnknownError) return { unknown: e.reason };
@@ -170,9 +155,16 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
 
     async status(_db, job): Promise<JobLiveness> {
       try {
-        return await readCall("job.status", { target: jobTarget(job) }, narrowJobLiveness);
+        return await ask(
+          "job.status",
+          { target: jobTarget(job) },
+          job.key ?? "",
+          job.identity ?? null,
+        );
       } catch (e) {
+        // Cannot tell, or not asked (another instance): unknown, never a throw.
         if (e instanceof PluginAnswerUnknownError) return { state: "unknown", reason: e.reason };
+        if (e instanceof EffectFencedError) return { state: "unknown", reason: e.message };
         if (e instanceof PluginCallError && e.kind !== "human") {
           return { state: "unknown", reason: e.message };
         }
@@ -184,10 +176,6 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
       const token = job.key ?? "";
       const host = job.host?.name ?? "";
       const key = stopKey(token);
-      const current = (await session()).init.instance;
-      if (job.identity !== current) {
-        throw new EffectFencedError(name, key, job.identity ?? "(none)", current);
-      }
       try {
         if (getEffect(db, key) !== undefined) {
           const r = await resolveEffect(db, key);
@@ -201,7 +189,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
           plugin: name,
           method: "job.stop",
           params: { target: jobTarget(job), key },
-          narrow: narrowNull,
+          fence: job.identity ?? "",
         });
       } catch (e) {
         handBack(host, "stop", e);
@@ -209,7 +197,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
     },
 
     async attach(_db, job) {
-      return readCall("job.attach", { target: jobTarget(job) }, narrowPaneCommand);
+      return ask("job.attach", { target: jobTarget(job) }, job.key ?? "", job.identity ?? null);
     },
 
     async resolve(token) {
@@ -238,24 +226,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
         phase: ctx.phase,
         ...(ctx.agent !== undefined ? { agent: ctx.agent } : {}),
       };
-      try {
-        const steps = await readCall("job.checkSteps", params, narrowCheckSteps);
-        return steps.map((st) =>
-          st.step === "handback" ? st : { ...st, step: `${name}:${st.step}` },
-        );
-      } catch (e) {
-        if (e instanceof PluginAnswerUnknownError) {
-          return [{ step: `${name}:job`, ok: false, detail: `no answer: ${e.reason}` }];
-        }
-        if (e instanceof PluginCallError && e.kind === "human") {
-          const back = new HostHandbackError(ctx.host.name, "exec", e.remedy ?? e.detail);
-          return [
-            { step: `${name}:job`, ok: null, detail: HANDED_BACK },
-            { step: "handback", ok: false, detail: `${name}:job: ${back.message}` },
-          ];
-        }
-        throw e;
-      }
+      return checkReport(name, ctx.host.name, "job", () => ask("job.checkSteps", params, ""));
     },
   };
   return kind;

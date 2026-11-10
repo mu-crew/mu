@@ -168,7 +168,7 @@ export function firstLine(text: string): string {
 
 class Invalid extends Error {}
 
-type Obj = Record<string, unknown>;
+export type Obj = Record<string, unknown>;
 
 function fail(path: string, want: string): never {
   throw new Invalid(`${path}: expected ${want}`);
@@ -571,10 +571,17 @@ function keyLookup<T>(
     });
 }
 
-/** `found`: the handle, and for a `handle: "reply"` kind the whole `JobStart` (checked by the reconciler). */
-export const narrowJobLookup = keyLookup(
-  (x, path) => jobReply(x, path, "handle") as Partial<JobStart> & { handle: string },
-);
+/** A lookup's `found`: its handle, and for a reply kind (`whole`) the whole `JobStart` (D8). */
+export type JobFound = Partial<JobStart> & { handle: string };
+
+const jobFound = (whole: boolean) => (x: unknown, path: string) => {
+  const r = jobReply(x, path, "handle");
+  if (whole && r.view === undefined) fail(`${path}.view`, "a reply kind's whole start reply");
+  return r as JobFound;
+};
+
+/** The shape alone (the schema's `jobLookup`); the request-bound check is `replyNarrower`. */
+export const narrowJobLookup = keyLookup(jobFound(false));
 
 export const narrowHostLookup = keyLookup(hostFacts);
 
@@ -646,6 +653,107 @@ export function narrowMessageCheck(x: unknown): Narrowed<MessageCheck> {
         : {}),
     };
   });
+}
+
+// ─── Replies, bound to their requests ───────────────────────────────────
+
+/** Each method's reply as mu reads it (D13). Deliveries' fields are the channel adapter's (P6e). */
+export interface MethodReplies {
+  "job.start": JobStart;
+  "job.lookup": KeyLookup<JobFound>;
+  "job.status": JobLiveness;
+  "job.stop": null;
+  "job.attach": PaneCommand;
+  "job.checkSteps": WireCheckStep[];
+  "host.acquire": HostFacts;
+  "host.lookup": KeyLookup<HostFacts>;
+  "host.release": null;
+  "channel.receipt": MessageCheck;
+  /** Exactly the asked agent's reading, keyed `<workstream>/<name>`. */
+  "channel.readStates": Record<string, Obj>;
+  "channel.send": Obj;
+  "channel.fresh": Obj;
+  "channel.interrupt": Obj;
+  "channel.abort": Obj;
+  "channel.answer": Obj;
+  "channel.command": Obj;
+}
+export type PluginMethod = keyof MethodReplies;
+
+const value = <T>(n: Narrowed<T>): T => {
+  if (!n.ok) throw new Invalid(n.reason);
+  return n.value;
+};
+
+/** The `<workstream>/<name>` a request's target names (D13 wire maps). */
+function askedAgent(params: Obj): string | undefined {
+  const targets = Array.isArray(params.targets) ? params.targets : [params.target];
+  const a = (targets[0] as { agent?: { workstream?: unknown; name?: unknown } } | undefined)?.agent;
+  return typeof a?.workstream === "string" && typeof a.name === "string"
+    ? `${a.workstream}/${a.name}`
+    : undefined;
+}
+
+/**
+ * THE narrower of `method`'s reply, bound to its request and the plugin's declaration. Every
+ * entry point uses it (the adapter's calls, an effect's first send, a resend, a reconcile read):
+ * the handle a kind's handle source promises (a reply kind's start and found carry the whole
+ * `JobStart`), echoed ids (a receipt's and a send's `msgId`), the asked agent's reading only (a
+ * reply without it is invalid; others are dropped). A reply that fails is invalid: an unknown
+ * outcome for an effect, an unknown answer for a read, never a success.
+ */
+export function replyNarrower<M extends PluginMethod>(
+  method: M,
+  params: Obj,
+  seams: PluginSeams,
+): (x: unknown) => Narrowed<MethodReplies[M]> {
+  const reply = seams.job?.handle === "reply";
+  const read = (x: unknown): unknown => {
+    switch (method) {
+      case "job.start": {
+        const r = jobStart(x, "result");
+        if (reply && r.handle === undefined) fail("result.handle", 'the handle of a "reply" kind');
+        return r;
+      }
+      case "job.lookup":
+        return value(keyLookup(jobFound(reply))(x));
+      case "job.status":
+        return value(narrowJobLiveness(x));
+      case "job.attach":
+        return value(narrowPaneCommand(x));
+      case "job.checkSteps":
+        return value(narrowCheckSteps(x));
+      case "job.stop":
+      case "host.release":
+        return value(narrowNull(x));
+      case "host.acquire":
+        return hostFacts(x, "result");
+      case "host.lookup":
+        return value(narrowHostLookup(x));
+      case "channel.receipt": {
+        const r = value(narrowMessageCheck(x));
+        if (r.id !== params.msgId) fail("result.id", `the asked msgId ${String(params.msgId)}`);
+        return r;
+      }
+      case "channel.readStates": {
+        const key = askedAgent(params);
+        const all = value(narrowObject(x));
+        const mine = key === undefined ? undefined : all[key];
+        if (key === undefined || mine === undefined)
+          fail(`result.${key ?? "?"}`, "the asked agent's reading");
+        const r = obj(mine, `result.${key}`, Object.keys((mine as Obj | null) ?? {}));
+        str(r.state, `result.${key}.state`, 64);
+        return { [key]: r };
+      }
+      default: {
+        const r = value(narrowObject(x));
+        if (r.msgId !== undefined && r.msgId !== params.msgId)
+          fail("result.msgId", "the sent msgId");
+        return r;
+      }
+    }
+  };
+  return (x) => narrow(() => read(x) as MethodReplies[M]);
 }
 
 // ─── Load rules ─────────────────────────────────────────────────────────

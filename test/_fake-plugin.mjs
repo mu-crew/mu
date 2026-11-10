@@ -43,7 +43,9 @@
 // key (a start) or a msgId (a send) returns the first result and makes no
 // second effect (exact dedupe). Config: viewCommand (a start's view),
 // lookupAnswer (job.lookup's answer for an unknown key; default none),
-// receiptAnswer (channel.receipt's for an unknown msgId; default not-accepted).
+// receiptAnswer (channel.receipt's for an unknown msgId; default not-accepted),
+// replies ({ "<method>": <result> }: that method's reply, verbatim, whatever it
+// is asked; the contract tests' malformed and foreign answers).
 //
 // Every request and every $/cancel is logged.
 
@@ -260,6 +262,10 @@ function backendAnswer(method, params, c) {
 function answer(id, method, params) {
   const c = config();
   const home = c.home ?? process.cwd();
+  if (c.replies !== undefined && method in c.replies) {
+    reply(id, c.replies[method]);
+    return;
+  }
   const fromBackend = backendAnswer(method, params, c);
   if (fromBackend !== undefined) {
     reply(id, fromBackend);

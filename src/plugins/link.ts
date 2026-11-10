@@ -39,7 +39,7 @@ import {
   PluginCallError,
   PluginRefusedError,
 } from "./errors.js";
-import { narrowCheckSteps, narrowLinkRun } from "./protocol.js";
+import { narrowCheckSteps, narrowLinkRun, type WireCheckStep } from "./protocol.js";
 import { getPlugin, pluginSeams, pluginSession } from "./registry.js";
 
 /** The wire `target` of a link call: the host's name (D13). */
@@ -151,40 +151,52 @@ export function pluginLink(db: Db, name: string): HostLink {
     // The check runs under the caller's channel; the plugin only reads.
     async checkSteps(ctx: CheckContext, _call: LinkCall): Promise<HostCheckStep[]> {
       if (!declared.checks?.includes(ctx.phase)) return [];
-      const s = await session();
       const params = {
         target: target(ctx.host),
         phase: ctx.phase,
         ...(ctx.root !== undefined ? { root: ctx.root } : {}),
         ...(ctx.agent !== undefined ? { agent: ctx.agent } : {}),
       };
-      try {
-        const steps = await s.call(
+      const timeoutMs = Math.max(PLUGIN_READ_TIMEOUT_MS, ctx.timeoutMs);
+      return checkReport(name, ctx.host.name, "checks", async () =>
+        (await session()).call(
           "link.checkSteps",
           params,
-          { kind: "read", timeoutMs: Math.max(PLUGIN_READ_TIMEOUT_MS, ctx.timeoutMs) },
+          { kind: "read", timeoutMs },
           narrowCheckSteps,
-        );
-        // `handback` keeps its name: checkHost skips the rest on it, as on the template's.
-        return steps.map((st) =>
-          st.step === "handback" ? st : { ...st, step: `${name}:${st.step}` },
-        );
-      } catch (e) {
-        if (e instanceof PluginAnswerUnknownError) {
-          return [{ step: `${name}:checks`, ok: false, detail: `no answer: ${e.reason}` }];
-        }
-        if (e instanceof PluginCallError && e.kind === "human") {
-          // The template runner's hand-back report (checkRunner): the step skipped, then the
-          // `handback` step checkHost reads to skip what follows.
-          const back = new HostHandbackError(ctx.host.name, "exec", e.remedy ?? e.detail);
-          return [
-            { step: `${name}:checks`, ok: null, detail: HANDED_BACK },
-            { step: "handback", ok: false, detail: `${name}:checks: ${back.message}` },
-          ];
-        }
-        throw e;
-      }
+        ),
+      );
     },
   };
   return link;
+}
+
+/**
+ * A plugin's check steps, named `<plugin>:<step>` (`handback` keeps its name: checkHost skips the
+ * rest on it). No answer is one failed `<plugin>:<label>` step; a `human` answer is the template
+ * runner's hand-back report (checkRunner): the step skipped, then the `handback` step.
+ */
+export async function checkReport(
+  name: string,
+  host: string,
+  label: string,
+  steps: () => Promise<WireCheckStep[]>,
+): Promise<HostCheckStep[]> {
+  try {
+    return (await steps()).map((st) =>
+      st.step === "handback" ? st : { ...st, step: `${name}:${st.step}` },
+    );
+  } catch (e) {
+    if (e instanceof PluginAnswerUnknownError) {
+      return [{ step: `${name}:${label}`, ok: false, detail: `no answer: ${e.reason}` }];
+    }
+    if (e instanceof PluginCallError && e.kind === "human") {
+      const back = new HostHandbackError(host, "exec", e.remedy ?? e.detail);
+      return [
+        { step: `${name}:${label}`, ok: null, detail: HANDED_BACK },
+        { step: "handback", ok: false, detail: `${name}:${label}: ${back.message}` },
+      ];
+    }
+    throw e;
+  }
 }

@@ -8,9 +8,14 @@
 // (`retryable` after its retries, `permanent`, `human`, or never sent) deletes
 // the row as a definite outcome; anything else leaves it `unknown`.
 //
+// `pluginCall` is the one call path of the job adapter and the reconciler:
+// the method's reply narrower bound to its request (`replyNarrower`), and the
+// instance fence for any call naming a recorded job, host or effect (a
+// changed instance refuses before anything is sent).
+//
 // `resolveEffect` is every later verb's: claim the row (a live creator or
-// resolver refuses), fence on the instance (a changed one refuses,
-// `stop-changed`, and nothing is asked or resent), then by method:
+// resolver refuses), then by method, every call fenced on the row's instance
+// (`stop-changed`):
 //
 //   host.release, job.stop      reissue the persisted request (idempotent)
 //   host.acquire, job.start     lookup(key) if declared, else a deduped resend
@@ -37,7 +42,7 @@ import {
   writeEffect,
 } from "../effects.js";
 import type { KeyCaps } from "../host-provider.js";
-import { PLUGIN_READ_TIMEOUT_MS, type PluginSession } from "./client.js";
+import { PLUGIN_READ_TIMEOUT_MS } from "./client.js";
 import {
   EffectFencedError,
   EffectOutcomeUnknownError,
@@ -45,14 +50,11 @@ import {
   PluginCallError,
 } from "./errors.js";
 import {
-  type Narrowed,
-  narrowHostFacts,
-  narrowHostLookup,
-  narrowJobLookup,
-  narrowJobStart,
-  narrowMessageCheck,
-  narrowNull,
-  narrowObject,
+  type MethodReplies,
+  type Obj,
+  type PluginMethod,
+  replyNarrower,
+  type SeamName,
 } from "./protocol.js";
 import { pluginSession } from "./registry.js";
 
@@ -68,29 +70,61 @@ export function effectTimeoutMs(method: string): number {
   return timeoutForTests ?? (method === "host.acquire" ? 600_000 : PLUGIN_READ_TIMEOUT_MS);
 }
 
-/** How each method's reply is narrowed, for the first send and any resend. */
-const REPLY: Record<string, (x: unknown) => Narrowed<unknown>> = {
-  "host.acquire": narrowHostFacts,
-  "host.release": narrowNull,
-  "job.start": narrowJobStart,
-  "job.stop": narrowNull,
-};
-const replyNarrower = (method: string) => REPLY[method] ?? narrowObject;
+/** The instance a call's subject was recorded under, and what to call the refusal. */
+export interface Fence {
+  instance: string;
+  subject: string;
+  why?: "stop-changed" | "instance-changed";
+}
 
-export interface EffectCall<T> extends Omit<EffectIntent, "instance" | "pgid" | "pgidStart"> {
-  narrow: (x: unknown) => Narrowed<T>;
+/**
+ * The one call path: refuses (`EffectFencedError`) before sending when `fence` names another
+ * instance than the plugin's, and narrows the reply against this request.
+ */
+export async function pluginCall<M extends PluginMethod>(
+  db: Db,
+  plugin: string,
+  method: M,
+  params: Obj,
+  opts: { kind: "read" | "effect"; fence?: Fence; needs?: readonly SeamName[] },
+): Promise<MethodReplies[M]> {
+  const s = await pluginSession(db, plugin, opts.needs);
+  const f = opts.fence;
+  if (f !== undefined && f.instance !== s.init.instance) {
+    throw new EffectFencedError(plugin, f.subject, f.instance, s.init.instance, f.why);
+  }
+  const timeoutMs = opts.kind === "effect" ? effectTimeoutMs(method) : PLUGIN_READ_TIMEOUT_MS;
+  return s.call(
+    method,
+    params,
+    { kind: opts.kind, timeoutMs },
+    replyNarrower(method, params, s.init.seams),
+  );
+}
+
+export interface EffectCall<M extends PluginMethod>
+  extends Omit<EffectIntent, "instance" | "pgid" | "pgidStart" | "method"> {
+  method: M;
+  /** The instance the subject was recorded under (a stop's job): refused before the intent. */
+  fence?: string;
   /** The subject's own change, in the intent's transaction (given the instance it goes to). */
   alongside?: (instance: string) => void;
   /** The reply, recorded on the subject in the transaction that deletes the row. */
-  record?: (result: T) => void;
+  record?: (result: MethodReplies[M]) => void;
   /** Nothing happened: recorded with the row's delete. */
   refused?: () => void;
 }
 
 /** The creator's path: write ahead, call, record once. Throws the call's typed error. */
-export async function runEffect<T>(db: Db, e: EffectCall<T>): Promise<T> {
+export async function runEffect<M extends PluginMethod>(
+  db: Db,
+  e: EffectCall<M>,
+): Promise<MethodReplies[M]> {
   const s = await pluginSession(db, e.plugin);
   const instance = s.init.instance;
+  if (e.fence !== undefined && e.fence !== instance) {
+    throw new EffectFencedError(e.plugin, e.key, e.fence, instance);
+  }
   const row = writeEffect(
     db,
     {
@@ -107,15 +141,13 @@ export async function runEffect<T>(db: Db, e: EffectCall<T>): Promise<T> {
   );
   // Every send and retry carries the committed bytes, never the caller's object (which it may
   // still mutate): a resend after a crash then repeats exactly what this call sent.
-  const committed = JSON.parse(row.params_json) as Record<string, unknown>;
-  let result: T;
+  const committed = JSON.parse(row.params_json) as Obj;
+  let result: MethodReplies[M];
   try {
-    result = await s.call(
-      e.method,
-      committed,
-      { kind: "effect", timeoutMs: effectTimeoutMs(e.method) },
-      e.narrow,
-    );
+    result = await pluginCall(db, e.plugin, e.method, committed, {
+      kind: "effect",
+      fence: { instance, subject: e.key },
+    });
   } catch (err) {
     if (err instanceof PluginCallError) settleEffect(db, e.key, e.refused);
     else leaveEffectUnknown(db, e.key);
@@ -153,11 +185,7 @@ export async function resolveEffect(
   const { row, newest } = claimed;
   let out: Resolution;
   try {
-    const s = await pluginSession(db, row.plugin);
-    if (s.init.instance !== row.instance) {
-      throw new EffectFencedError(row.plugin, key, row.instance, s.init.instance);
-    }
-    out = await byRule(s, row, newest);
+    out = await byRule(db, row, newest);
   } catch (err) {
     leaveEffectUnknown(db, key);
     throw err;
@@ -175,16 +203,26 @@ export async function resolveEffect(
 
 const unknown = (reason: string): Resolution => ({ state: "unknown", reason });
 
-async function byRule(s: PluginSession, row: EffectRow, newest: boolean): Promise<Resolution> {
-  const params = JSON.parse(row.params_json) as Record<string, unknown>;
+async function byRule(db: Db, row: EffectRow, newest: boolean): Promise<Resolution> {
+  const params = JSON.parse(row.params_json) as Obj;
+  const fence: Fence = { instance: row.instance, subject: row.key };
+  const call = <M extends PluginMethod>(method: M, p: Obj, kind: "read" | "effect") =>
+    pluginCall(db, row.plugin, method, p, { kind, fence });
+  /** A read: its value, or `unknown` for no answer (an invalid reply included). */
+  const read = async <M extends PluginMethod>(
+    method: M,
+    p: Obj,
+  ): Promise<{ value: MethodReplies[M] } | { unknown: string }> => {
+    try {
+      return { value: await call(method, p, "read") };
+    } catch (e) {
+      if (e instanceof PluginAnswerUnknownError) return { unknown: e.reason };
+      throw e;
+    }
+  };
   const resend = async (): Promise<Resolution> => {
     try {
-      const result = await s.call(
-        row.method,
-        params,
-        { kind: "effect", timeoutMs: effectTimeoutMs(row.method) },
-        replyNarrower(row.method),
-      );
+      const result = await call(row.method as PluginMethod, params, "effect");
       return { state: "recorded", via: "reply", result };
     } catch (e) {
       if (e instanceof EffectOutcomeUnknownError) return unknown(e.reason);
@@ -193,91 +231,46 @@ async function byRule(s: PluginSession, row: EffectRow, newest: boolean): Promis
   };
   const within = (d: { windowMs: number } | undefined): boolean =>
     d !== undefined && Date.now() - row.created_at < d.windowMs;
-  const seams = s.init.seams;
+  const seams = (await pluginSession(db, row.plugin)).init.seams;
   const channel = seams.channel?.caps;
-  switch (row.method) {
-    case "host.release":
-    case "job.stop":
-      return resend();
-    case "host.acquire":
-    case "job.start": {
-      const job = row.method === "job.start";
-      const caps: KeyCaps | undefined = job ? seams.job?.start : seams.host?.acquire;
-      if (caps === undefined) return unknown(`plugin ${row.plugin} no longer declares the seam`);
-      if (caps.lookup) {
-        return lookup(s, row, params, caps, job && seams.job?.handle === "file");
-      }
-      if (within(caps.dedupe)) return resend();
-      return unknown("no lookup, and the dedupe window has passed");
+  const m = row.method;
+  if (m === "host.release" || m === "job.stop") return resend();
+  if (m === "host.acquire" || m === "job.start") {
+    const job = m === "job.start";
+    const caps: KeyCaps | undefined = job ? seams.job?.start : seams.host?.acquire;
+    if (caps === undefined) return unknown(`plugin ${row.plugin} no longer declares the seam`);
+    if (!caps.lookup) {
+      return within(caps.dedupe)
+        ? resend()
+        : unknown("no lookup, and the dedupe window has passed");
     }
-    case "channel.send":
-    case "channel.fresh":
-    case "channel.interrupt": {
-      if (channel?.receipt === "exact" && row.msg_id !== null) {
-        const r = await read(
-          s,
-          "channel.receipt",
-          { target: params.target, msgId: row.msg_id },
-          narrowMessageCheck,
-        );
-        if ("unknown" in r) return unknown(r.unknown);
-        if (r.value.state === "accepted")
-          return { state: "recorded", via: "receipt", result: r.value };
-        return unknown(`receipt: ${r.value.state}`);
-      }
-      return dedupedDelivery(row, newest, channel?.dedupe?.[deliveryName(row.method)], resend);
-    }
-    case "channel.abort": {
-      const r = await read(s, "channel.readStates", { targets: [params.target] }, narrowObject);
-      if ("unknown" in r) return unknown(r.unknown);
-      const states = Object.values(r.value) as Array<{ state?: unknown }>;
-      if (states.length === 1 && states[0]?.state === "idle") {
-        return { state: "recorded", via: "idle", result: r.value };
-      }
-      return unknown("the agent is not idle");
-    }
-    case "channel.answer":
-    case "channel.command":
-      return dedupedDelivery(row, newest, channel?.dedupe?.[deliveryName(row.method)], resend);
-    default:
-      return unknown(`no rule for ${row.method}`);
+    return lookup(row, caps, job && seams.job?.handle === "file", (fence) =>
+      read(job ? "job.lookup" : "host.lookup", { target: params.target, key: row.key, fence }),
+    );
   }
-
-  function dedupedDelivery(
-    r: EffectRow,
-    isNewest: boolean,
-    d: { windowMs: number } | undefined,
-    again: () => Promise<Resolution>,
-  ): Promise<Resolution> | Resolution {
-    if (!within(d)) return unknown(`delivery unknown: ${r.method} has no dedupe in its window`);
-    if (!isNewest) return unknown("delivery unknown: a newer delivery to the agent was written");
-    return again();
+  if (m === "channel.abort") {
+    const r = await read("channel.readStates", { targets: [params.target] });
+    if (!("value" in r)) return unknown(r.unknown);
+    // The narrower kept exactly the asked agent's reading.
+    const idle = Object.values(r.value)[0]?.state === "idle";
+    return idle ? { state: "recorded", via: "idle", result: r.value } : unknown("not idle");
   }
-}
-
-const deliveryName = (method: string) =>
-  method.slice("channel.".length) as "send" | "fresh" | "interrupt" | "answer" | "command";
-
-/** A read: its value, or `unknown` for no answer. */
-async function read<T>(
-  s: PluginSession,
-  method: string,
-  params: Record<string, unknown>,
-  narrow: (x: unknown) => Narrowed<T>,
-): Promise<{ value: T } | { unknown: string }> {
-  try {
-    return {
-      value: await s.call(
-        method,
-        params,
-        { kind: "read", timeoutMs: PLUGIN_READ_TIMEOUT_MS },
-        narrow,
-      ),
-    };
-  } catch (e) {
-    if (e instanceof PluginAnswerUnknownError) return { unknown: e.reason };
-    throw e;
+  if (!m.startsWith("channel.")) return unknown(`no rule for ${m}`);
+  const receipts = m === "channel.send" || m === "channel.fresh" || m === "channel.interrupt";
+  if (receipts && channel?.receipt === "exact" && row.msg_id !== null) {
+    const r = await read("channel.receipt", { target: params.target, msgId: row.msg_id });
+    if (!("value" in r)) return unknown(r.unknown);
+    if (r.value.state === "accepted") return { state: "recorded", via: "receipt", result: r.value };
+    return unknown(`receipt: ${r.value.state}`);
   }
+  const name = m.slice("channel.".length) as keyof NonNullable<
+    NonNullable<typeof channel>["dedupe"]
+  >;
+  if (!within(channel?.dedupe?.[name])) {
+    return unknown(`delivery unknown: ${m} has no dedupe in its window`);
+  }
+  if (!newest) return unknown("delivery unknown: a newer delivery to the agent was written");
+  return resend();
 }
 
 /**
@@ -287,26 +280,20 @@ async function read<T>(
  * intent. A `handle: "file"` kind never acts on `none`: its dispatcher is the view pane.
  */
 async function lookup(
-  s: PluginSession,
   row: EffectRow,
-  params: Record<string, unknown>,
   caps: KeyCaps,
   fileKind: boolean,
+  ask: (
+    fence: boolean,
+  ) => Promise<{ value: MethodReplies["job.lookup" | "host.lookup"] } | { unknown: string }>,
 ): Promise<Resolution> {
   const owners = creatorGone(row) && pluginGroupGone(row);
   const fence = caps.fenceKey && owners && !fileKind;
-  const method = row.method === "job.start" ? "job.lookup" : "host.lookup";
-  const narrow = row.method === "job.start" ? narrowJobLookup : narrowHostLookup;
-  const r = await read(s, method, { target: params.target, key: row.key, fence }, narrow);
+  const r = await ask(fence);
   if ("unknown" in r) return unknown(r.unknown);
   const l = r.value;
-  if ("found" in l) {
-    // A reply kind's found is the whole JobStart (D8 G1a): without its view it proves too little.
-    if (row.method === "job.start" && !fileKind && !("view" in (l.found as object))) {
-      return unknown("lookup: a reply kind's found carries no view");
-    }
-    return { state: "recorded", via: "lookup", result: l.found };
-  }
+  // The narrower held a reply kind's found to the whole JobStart (D8 G1a).
+  if ("found" in l) return { state: "recorded", via: "lookup", result: l.found };
   if ("pending" in l) return unknown("the plugin says it is still in flight");
   if ("unknown" in l) return unknown(l.unknown);
   if (fileKind) return unknown("lookup: none (a file-handle kind's job file decides)");

@@ -211,6 +211,15 @@ another resolving it, still lives:
 A repeat within the dedupe window must return the first result and make no
 second effect.
 
+Every reply is checked against its request: a `reply` kind's `job.start`
+result and `job.lookup` `found` carry the handle and the view; a
+`channel.receipt` echoes the asked `msgId`; a `channel.readStates` answer
+holds the asked agent's reading (others are ignored). A reply that fails is
+an unknown outcome or an unknown answer, never a success. Every call that
+names a recorded job, host or effect (a stop, a resend, `job.status`,
+`job.attach`, a lookup, a receipt, a readStates) goes only to the instance
+it was recorded under; under another, mu sends nothing.
+
 ## Errors
 
 | `data.kind` | Means | mu does |

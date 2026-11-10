@@ -91,20 +91,22 @@ export class EffectOutcomeUnknownError extends Error {
 }
 
 /**
- * The plugin's instance is not the one an effect was written to (D4 step 2): the backend
- * configuration changed, so mu neither asks nor resends (`stop-changed`). Exit 4.
+ * The plugin's instance is not the one recorded for the job, host or effect a call names
+ * (D4 step 2, D13): the backend configuration changed, so mu sends nothing. `stop-changed` for
+ * a stop, a release or an effect's resolution; `instance-changed` for an ask. Exit 4.
  */
 export class EffectFencedError extends Error {
   override readonly name = "EffectFencedError";
-  readonly why = "stop-changed";
   constructor(
     public readonly plugin: string,
-    public readonly key: string,
+    /** What the call names: an effect key, or `<method> of <job key>`. */
+    public readonly subject: string,
     public readonly recorded: string,
     public readonly current: string,
+    public readonly why: "stop-changed" | "instance-changed" = "stop-changed",
   ) {
     super(
-      `effect ${key}: plugin ${plugin}'s instance is ${current}, not ${recorded} as when it was written (stop-changed): nothing is asked or resent; a human decides (abandon)`,
+      `${subject}: plugin ${plugin}'s instance is ${current}, not ${recorded} as recorded (${why}): nothing is sent; a human decides (abandon)`,
     );
   }
 }

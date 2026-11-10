@@ -31,7 +31,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   being resolved). The job adapter (`src/plugins/job.ts`) makes a plugin's
   job seam a bound `JobKind`: journaled `job.start` and `job.stop`, and
   `job.lookup`, `job.status`, `job.attach`, `job.checkSteps` reads that
-  answer `unknown` for cannot-tell. On the wire: the job caps `firstTurn`,
+  answer `unknown` for cannot-tell. One call path serves the adapter and
+  the reconciler: each method's reply is checked against its request (a
+  reply kind's handle and view, a receipt's echoed msgId, the asked
+  agent's reading), failing replies are unknown, and every call naming a
+  recorded job, host or effect is fenced on its instance. On the wire: the job caps `firstTurn`,
   `outlivesHost` and `honours`, the link cap `push` with `link.push`'s
   params (a plugin that declares it now loads; the adapter calls it from
   P6d), the job methods' params and results (one schema digest change,
