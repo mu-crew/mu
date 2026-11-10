@@ -10,6 +10,11 @@
 //   7 inside the margin: the wait's deadline timer fires `deadline`, notices name
 //   collect and close, spawns refuse; close: job.stop, final collect, tree;
 //   release.
+// Deliberately not repeated here (each has its own test): the CLI forms of
+// register and acquire and acquire's crash re-run (plugin-cli, host-lifecycle),
+// honours and max_jobs refusals (plugin-channel, host-lifecycle), a send's
+// unknown outcome (plugin-channel), the in-life backoff through a wait
+// (plugin-in-life), and the lost-host close (plugin-faults F11).
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
