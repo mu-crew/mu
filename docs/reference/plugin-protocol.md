@@ -112,8 +112,8 @@ version, an `instance`, the schema digest and its seams:
 
 | Seam | Object | Notes |
 | --- | --- | --- |
-| `link` | `fetch`, `slots` (`mu`: each call holds a host channel; `self`: the plugin arbitrates), `remoteOnTimeout` (`stopped` or `unknown`), `quiescence` (`provable` or `unprovable`), `maxScriptBytes`, `checks` | `maxScriptBytes` is required |
-| `job` | `kind`, `view` (`bound`, `detached`), `handle` (`pane`, `file`, `reply`), `start` (key capabilities), `channel`, `checks` | |
+| `link` | `fetch`, `push` (optional: can seed a host's repo with a commit), `slots` (`mu`: each call holds a host channel; `self`: the plugin arbitrates), `remoteOnTimeout` (`stopped` or `unknown`), `quiescence` (`provable` or `unprovable`), `maxScriptBytes`, `checks` | `maxScriptBytes` is required |
+| `job` | `kind`, `view` (`bound`, `detached`), `handle` (`pane`, `file`, `reply`), `start` (key capabilities), `channel`, `checks`, and optional `firstTurn` (`on-send`, `at-start`), `outlivesHost`, `honours` (`{command, env, sockets, roles}`) | `honours` absent: `env` only, `full-access` only |
 | `host` | `acquire` (key capabilities) | needs `link` and `job` |
 | `channel` | `name`, `caps` (`fence`, `receipt`, `dedupe`, `steer`, `interrupt`, `fresh`, `answer`, `command`, `watch`, `settleText`) | |
 
@@ -139,6 +139,8 @@ mu refuses the plugin (exit 4) when:
 - a channel declares `watch` other than `stream`, `settleText: "none"`, or
   a `fence` other than `none`;
 - `job.channel` is not the channel seam's `name`;
+- `firstTurn: "at-start"` comes without `handle: "reply"`, or
+  `honours.env: false` without a `channel`;
 - the declaration differs from the one recorded by `mu plugin add`.
 
 ## Calls
@@ -162,6 +164,7 @@ and the `deadline` are new each time.
 | --- | --- | --- |
 | `link.exec` | `script` (POSIX sh), `cwd` (`.` is the login directory), `timeoutMs` | `{exitCode, stdout, stderr, partial}`; `exitCode: null` when timed out, `partial` when output was cut |
 | `link.fetch` | `remoteCwd`, `localRepo`, `timeoutMs` | as `link.exec`. On success `localRepo`'s `FETCH_HEAD` names `remoteCwd`'s HEAD |
+| `link.push` (only with `push: true`) | `localRepo`, `remoteRepo`, `rev` (a full sha), `timeoutMs` | as `link.exec`. On success `remoteRepo` (created as a git repository if absent) holds `rev`. Idempotent: a repo that already holds it succeeds untouched. Not an effect: a timed-out push is re-run, and mu's own `rev-parse` check still runs before a worktree is made from `rev` |
 | `link.checkSteps` | `phase`, `root?`, `agent?` | `[{step, ok, detail}]`; mu names each step `<plugin>:<step>`, except `handback`. A `human` error, or a `handback` step, is a hand-back: `host check` skips the steps that follow |
 
 The plugin enforces `timeoutMs` itself and answers with `exitCode: null`.
@@ -169,6 +172,44 @@ With `remoteOnTimeout: "stopped"` it guarantees nothing it started still
 runs. mu computes `fits` (a script's bytes against `maxScriptBytes`) and
 the host identity, and deletes `FETCH_HEAD` before a fetch. These are not
 wire calls.
+
+### The job
+
+| Method | Params beyond `target`, `deadline` | Result |
+| --- | --- | --- |
+| `job.start` (effect) | `key` (the job record's token), `spec` (the whole `JobSpec`: workstream, name, harness, role, cmd, `commandSource`, cwd, env, sockets?, firstPrompt?) | `{view: {command, env, cwd?}, handle?, baseline?}`; `handle` when the kind's handle is `reply` |
+| `job.lookup` | `key`, `fence` | exactly one of `{found: <the start's reply, with its handle>}`, `{pending: true}`, `{none: true}`, `{unknown: reason}` |
+| `job.status` | — | `{state: "running"}`, `{state: "ended", exit}`, `{state: "lost" \| "unknown", reason}` |
+| `job.stop` (effect, idempotent) | `key` | `null`, only on proof the job is gone |
+| `job.attach` | — | a view `{command, env, cwd?}` |
+| `job.checkSteps` | `phase`, `agent?` | steps, as `link.checkSteps` |
+
+A spawn that requests a `JobSpec` field the kind does not `honours` (a
+`read-only` role, a `--command`, the sockets of an agent on ctl) is refused
+before any call (exit 2); mu never drops the field.
+
+### Effects and replay
+
+Before an effect (`job.start`, `job.stop`, `host.acquire`, `host.release`, a
+delivery), mu writes its intent: the key, the exact `params` and their
+sha256, the plugin's `instance` and process group. A definite reply deletes
+it. After a crash, a timeout or `unknown-outcome`, the next verb on the
+subject resolves it, and refuses while the invocation that wrote it, or
+another resolving it, still lives:
+
+- under another `instance`, nothing is asked or resent (`stop-changed`);
+- `job.stop` and `host.release` are reissued;
+- `job.start` and `host.acquire`: `lookup(key)` if declared, else the
+  identical `params` again if `dedupe` is exact and inside its window. A
+  `none` counts only once mu's writer and the plugin process it called are
+  proven gone, and either the lookup was fenced (`fenceKey`) or
+  `inFlightMs` has passed; a `handle: "file"` kind never acts on it;
+- a delivery: `channel.receipt` if `receipt: "exact"` (only `accepted`
+  resolves), else a deduped resend, only while no newer delivery to the
+  agent was written.
+
+A repeat within the dedupe window must return the first result and make no
+second effect.
 
 ## Errors
 

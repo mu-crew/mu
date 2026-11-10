@@ -21,7 +21,7 @@ import { addHost, HOST_GRACE_MS, HostHandbackError } from "../src/hosts.js";
 import { narrowSeams } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
-import { fakePlugin } from "./_plugin.js";
+import { fakePlugin, linkSeam } from "./_plugin.js";
 
 interface Impl {
   name: string;
@@ -185,5 +185,52 @@ describe.each(IMPLS)("the link contract: $name", (impl) => {
       expect(steps[0]?.ok).toBe(true);
       if (impl.name === "plugin") for (const s of steps) expect(s.step).toMatch(/^fake:/);
     }
+  });
+});
+
+// `push` (D7 G3) on the wire: a link that declares it loads and the adapter's caps carry it;
+// one that does not (the template, the default fake) has none; a malformed one is refused at
+// load. The adapter's `link.push` call and the provider-host base rule are P6d's.
+describe("the link contract: push", () => {
+  let dir: string;
+  let db: Db;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mlp-"));
+    db = openDb({ path: join(dir, "mu.db") });
+  });
+
+  afterEach(async () => {
+    await closePluginSessions();
+    db.close();
+    rmFixtureDir(dir);
+  });
+
+  it("a plugin link that declares push loads, and its caps say so", async () => {
+    const f = fakePlugin(dir, { seams: linkSeam({ push: true }) });
+    await addPlugin(db, "fake", f.argv);
+    addHost(db, { name: "dev", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
+    expect(resolveHost(db, "dev").link.caps.push).toBe(true);
+  });
+
+  it("the template link and a link without it declare no push", async () => {
+    addHost(db, {
+      name: "t",
+      shell: "true",
+      exec: "{cmd}",
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    expect(resolveHost(db, "t").link.caps.push).toBeUndefined();
+    const f = fakePlugin(dir);
+    await addPlugin(db, "fake", f.argv);
+    addHost(db, { name: "dev", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
+    expect(resolveHost(db, "dev").link.caps.push).toBeUndefined();
+  });
+
+  it("a push that is not a boolean is refused at load", async () => {
+    const f = fakePlugin(dir, { seams: linkSeam({ push: "yes" }) });
+    await expect(addPlugin(db, "fake", f.argv)).rejects.toThrow(/push: expected a boolean/);
   });
 });

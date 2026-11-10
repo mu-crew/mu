@@ -89,3 +89,22 @@ export class EffectOutcomeUnknownError extends Error {
     super(`plugin ${plugin} ${method}: outcome unknown: ${reason}`);
   }
 }
+
+/**
+ * The plugin's instance is not the one an effect was written to (D4 step 2): the backend
+ * configuration changed, so mu neither asks nor resends (`stop-changed`). Exit 4.
+ */
+export class EffectFencedError extends Error {
+  override readonly name = "EffectFencedError";
+  readonly why = "stop-changed";
+  constructor(
+    public readonly plugin: string,
+    public readonly key: string,
+    public readonly recorded: string,
+    public readonly current: string,
+  ) {
+    super(
+      `effect ${key}: plugin ${plugin}'s instance is ${current}, not ${recorded} as when it was written (stop-changed): nothing is asked or resent; a human decides (abandon)`,
+    );
+  }
+}

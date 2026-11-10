@@ -12,8 +12,17 @@
 // a known notification (a request to mu included: there is no RPC into mu) is
 // invalid, and an invalid message breaks the plugin for the invocation.
 
+import type { MessageCheck } from "../channels/types.js";
 import type { CheckPhase, LinkCaps } from "../host-link.js";
-import type { KeyCaps } from "../host-provider.js";
+import type { HostFacts, KeyCaps, KeyLookup } from "../host-provider.js";
+import type {
+  JobCaps,
+  JobHonours,
+  JobLiveness,
+  JobRole,
+  JobStart,
+  PaneCommand,
+} from "../jobs/types.js";
 
 /** The protocol versions this build speaks. */
 export const PROTOCOL_MIN = 1;
@@ -27,7 +36,7 @@ export const PLUGIN_SCHEMA_FILE = "schemas/plugin-protocol-v1.json";
 
 /** sha256 of the exact bytes of PLUGIN_SCHEMA_FILE (pinned by test/plugin-schema.test.ts). */
 export const PLUGIN_SCHEMA_DIGEST =
-  "sha256:5fdb995f02c8dec531e06e13effe0ceb23356572b1296fccb62c0c25e05d5be4";
+  "sha256:7c13b0bb67db6a7cbbae0d147b05d1845be3b5749278dae04e36dfb88d9b34f3";
 
 /** Error text mu keeps from a plugin: the first line, at most this many characters (D14). */
 export const ERROR_TEXT_MAX = 400;
@@ -43,15 +52,10 @@ export type SeamName = (typeof SEAM_NAMES)[number];
 
 const CHECK_PHASES: readonly CheckPhase[] = ["template", "reach", "agent"];
 
-/** A plugin's job seam as declared (spec D8, D13). */
-export interface PluginJobCaps {
+/** A plugin's job seam as declared (spec D8, D13): its kind's name and capabilities. */
+export interface PluginJobCaps extends JobCaps {
   kind: string;
-  view: "bound" | "detached";
-  handle: "pane" | "file" | "reply";
   start: KeyCaps;
-  /** The channel the kind's agents take: the channel seam's name. */
-  channel?: string;
-  checks?: CheckPhase[];
 }
 
 type Dedupe = { exact: true; windowMs: number };
@@ -226,6 +230,7 @@ function keyCaps(x: unknown, path: string): KeyCaps {
 function linkCaps(x: unknown, path: string): NonNullable<PluginSeams["link"]> {
   const l = obj(x, path, [
     "fetch",
+    "push",
     "slots",
     "remoteOnTimeout",
     "quiescence",
@@ -234,6 +239,7 @@ function linkCaps(x: unknown, path: string): NonNullable<PluginSeams["link"]> {
   ]);
   return {
     fetch: bool(l.fetch, `${path}.fetch`),
+    ...(l.push !== undefined ? { push: bool(l.push, `${path}.push`) } : {}),
     slots: oneOf(l.slots, `${path}.slots`, ["mu", "self"] as const),
     remoteOnTimeout: oneOf(l.remoteOnTimeout, `${path}.remoteOnTimeout`, [
       "stopped",
@@ -245,8 +251,33 @@ function linkCaps(x: unknown, path: string): NonNullable<PluginSeams["link"]> {
   };
 }
 
+const ROLES: readonly JobRole[] = ["full-access", "read-only"];
+
+function honours(x: unknown, path: string): JobHonours {
+  const h = obj(x, path, ["command", "env", "sockets", "roles"]);
+  if (!Array.isArray(h.roles)) fail(`${path}.roles`, "an array of roles");
+  const roles = h.roles.map((r, i) => oneOf(r, `${path}.roles[${i}]`, ROLES));
+  if (new Set(roles).size !== roles.length) fail(`${path}.roles`, "each role once");
+  return {
+    command: bool(h.command, `${path}.command`),
+    env: bool(h.env, `${path}.env`),
+    sockets: bool(h.sockets, `${path}.sockets`),
+    roles,
+  };
+}
+
 function jobCaps(x: unknown, path: string): PluginJobCaps {
-  const j = obj(x, path, ["kind", "view", "handle", "start", "channel", "checks"]);
+  const j = obj(x, path, [
+    "kind",
+    "view",
+    "handle",
+    "start",
+    "channel",
+    "checks",
+    "firstTurn",
+    "outlivesHost",
+    "honours",
+  ]);
   return {
     kind: str(j.kind, `${path}.kind`, 64),
     view: oneOf(j.view, `${path}.view`, ["bound", "detached"] as const),
@@ -254,6 +285,13 @@ function jobCaps(x: unknown, path: string): PluginJobCaps {
     start: keyCaps(j.start, `${path}.start`),
     ...(j.channel !== undefined ? { channel: str(j.channel, `${path}.channel`, 64) } : {}),
     ...(j.checks !== undefined ? { checks: phases(j.checks, `${path}.checks`) } : {}),
+    ...(j.firstTurn !== undefined
+      ? { firstTurn: oneOf(j.firstTurn, `${path}.firstTurn`, ["on-send", "at-start"] as const) }
+      : {}),
+    ...(j.outlivesHost !== undefined
+      ? { outlivesHost: bool(j.outlivesHost, `${path}.outlivesHost`) }
+      : {}),
+    ...(j.honours !== undefined ? { honours: honours(j.honours, `${path}.honours`) } : {}),
   };
 }
 
@@ -442,6 +480,169 @@ export function narrowCheckSteps(x: unknown): Narrowed<WireCheckStep[]> {
   });
 }
 
+/** A job or host handle: opaque, one line of these bytes (src/hosts.ts JOB_HANDLE_RE). */
+export const HANDLE_RE = /^[A-Za-z0-9._:@-]{1,128}$/;
+
+function handle(x: unknown, path: string): string {
+  if (typeof x !== "string" || !HANDLE_RE.test(x)) fail(path, "a handle ([A-Za-z0-9._:@-]{1,128})");
+  return x;
+}
+
+function strings(x: unknown, path: string): Record<string, string> {
+  const o = obj(x, path, Object.keys((x as Obj | null) ?? {}));
+  for (const [k, v] of Object.entries(o))
+    if (typeof v !== "string") fail(`${path}.${k}`, "a string");
+  return o as Record<string, string>;
+}
+
+function paneCommand(x: unknown, path: string): PaneCommand {
+  const v = obj(x, path, ["command", "env", "cwd"]);
+  return {
+    command: str(v.command, `${path}.command`, 65536),
+    env: strings(v.env, `${path}.env`),
+    ...(v.cwd !== undefined ? { cwd: str(v.cwd, `${path}.cwd`, 4096) } : {}),
+  };
+}
+
+function jobStart(x: unknown, path: string): JobStart {
+  const r = obj(x, path, ["view", "handle", "baseline"]);
+  let baseline: JobStart["baseline"];
+  if (r.baseline !== undefined) {
+    const b = obj(r.baseline, `${path}.baseline`, ["runs", "incarnation"]);
+    baseline = {
+      runs: int(b.runs, `${path}.baseline.runs`, 0),
+      ...(b.incarnation !== undefined
+        ? { incarnation: str(b.incarnation, `${path}.baseline.incarnation`) }
+        : {}),
+    };
+  }
+  return {
+    view: paneCommand(r.view, `${path}.view`),
+    ...(r.handle !== undefined ? { handle: handle(r.handle, `${path}.handle`) } : {}),
+    ...(baseline !== undefined ? { baseline } : {}),
+  };
+}
+
+function hostFacts(x: unknown, path: string): HostFacts {
+  const r = obj(x, path, ["handle", "deadlineAt", "idleReclaimMs", "maxJobs"]);
+  const opt = (k: string, min: number) =>
+    r[k] !== undefined ? { [k]: int(r[k], `${path}.${k}`, min) } : {};
+  return {
+    handle: handle(r.handle, `${path}.handle`),
+    ...opt("deadlineAt", 0),
+    ...opt("idleReclaimMs", 0),
+    ...opt("maxJobs", 1),
+  };
+}
+
+/** A `job.start` reply (D8 `JobStart`). */
+export const narrowJobStart = (x: unknown): Narrowed<JobStart> =>
+  narrow(() => jobStart(x, "result"));
+
+/** A `host.acquire` reply (D6 `HostFacts`). */
+export const narrowHostFacts = (x: unknown): Narrowed<HostFacts> =>
+  narrow(() => hostFacts(x, "result"));
+
+/** A lookup by key (D4): `found` carries the method's result; a job's always has a handle. */
+function keyLookup<T>(
+  found: (x: unknown, path: string) => T,
+): (x: unknown) => Narrowed<KeyLookup<T>> {
+  return (x) =>
+    narrow(() => {
+      const r = obj(x, "result", ["found", "pending", "none", "unknown"]);
+      const keys = Object.keys(r);
+      if (keys.length !== 1) fail("result", "exactly one of found, pending, none, unknown");
+      if (r.found !== undefined) return { found: found(r.found, "result.found") };
+      if (r.pending !== undefined) {
+        if (r.pending !== true) fail("result.pending", "true");
+        return { pending: true };
+      }
+      if (r.none !== undefined) {
+        if (r.none !== true) fail("result.none", "true");
+        return { none: true };
+      }
+      return { unknown: str(r.unknown, "result.unknown", 4096) };
+    });
+}
+
+export const narrowJobLookup = keyLookup((x, path) => {
+  const s = jobStart(x, path);
+  if (s.handle === undefined) fail(`${path}.handle`, "a handle");
+  return s as JobStart & { handle: string };
+});
+
+export const narrowHostLookup = keyLookup(hostFacts);
+
+/** A `job.status` reply (D1 liveness). */
+export function narrowJobLiveness(x: unknown): Narrowed<JobLiveness> {
+  return narrow((): JobLiveness => {
+    const state = oneOf(obj(x, "result", ["state", "exit", "reason"]).state, "result.state", [
+      "running",
+      "ended",
+      "lost",
+      "unknown",
+    ] as const);
+    if (state === "running") {
+      obj(x, "result", ["state"]);
+      return { state };
+    }
+    if (state === "ended") {
+      const r = obj(x, "result", ["state", "exit"]);
+      if (!("exit" in r)) fail("result.exit", "an exit code or null");
+      return { state, exit: r.exit === null ? null : int(r.exit, "result.exit", 0) };
+    }
+    return {
+      state,
+      reason: str(obj(x, "result", ["state", "reason"]).reason, "result.reason", 4096),
+    };
+  });
+}
+
+/** A `job.attach` reply: the command a new view runs. */
+export const narrowPaneCommand = (x: unknown): Narrowed<PaneCommand> =>
+  narrow(() => paneCommand(x, "result"));
+
+/** An idempotent effect's reply (`job.stop`, `host.release`): `null`. */
+export function narrowNull(x: unknown): Narrowed<null> {
+  return x === null ? { ok: true, value: null } : { ok: false, reason: "result: expected null" };
+}
+
+/** A delivery's reply. Its fields are the channel adapter's (P6e); here, an object. */
+export function narrowObject(x: unknown): Narrowed<Record<string, unknown>> {
+  return narrow(() => obj(x, "result", Object.keys((x as Obj | null) ?? {})));
+}
+
+/** A `channel.receipt` reply (D9 `MessageCheck`). */
+export function narrowMessageCheck(x: unknown): Narrowed<MessageCheck> {
+  return narrow((): MessageCheck => {
+    const any = obj(x, "result", ["state", "id", "runs", "at", "incarnation", "reason"]);
+    const state = oneOf(any.state, "result.state", [
+      "accepted",
+      "not-accepted",
+      "unreachable",
+    ] as const);
+    const id = str(any.id, "result.id");
+    if (state === "not-accepted") {
+      obj(x, "result", ["state", "id"]);
+      return { state, id };
+    }
+    if (state === "unreachable") {
+      const r = obj(x, "result", ["state", "id", "reason"]);
+      return { state, id, reason: str(r.reason, "result.reason", 4096) };
+    }
+    const r = obj(x, "result", ["state", "id", "runs", "at", "incarnation"]);
+    return {
+      state,
+      id,
+      ...(r.runs !== undefined ? { runs: int(r.runs, "result.runs", 0) } : {}),
+      ...(r.at !== undefined ? { at: int(r.at, "result.at", 0) } : {}),
+      ...(r.incarnation !== undefined
+        ? { incarnation: str(r.incarnation, "result.incarnation") }
+        : {}),
+    };
+  });
+}
+
 // ─── Load rules ─────────────────────────────────────────────────────────
 
 /**
@@ -479,6 +680,12 @@ export function loadRefusals(
   }
   if (s.job?.handle === "reply" && !keyed(s.job.start)) {
     out.push('job.start with handle "reply" declares neither lookup nor exact dedupe');
+  }
+  if (s.job?.firstTurn === "at-start" && s.job.handle !== "reply") {
+    out.push('firstTurn "at-start" needs handle "reply"');
+  }
+  if (s.job?.honours?.env === false && s.job.channel === undefined) {
+    out.push("honours.env false needs a channel: a harness's own channel finds its agent by env");
   }
   if (s.channel !== undefined) {
     const c = s.channel.caps;

@@ -1,7 +1,7 @@
 // A JSON Schema checker for the subset schemas/plugin-protocol-v1.json uses
 // (no dependency): type, const, enum, properties, required,
-// additionalProperties, items, oneOf, $ref into $defs, minimum, minLength,
-// maxLength. An unknown keyword fails loudly, so the schema cannot drift past
+// additionalProperties (false or a schema), items, uniqueItems, oneOf, $ref
+// into $defs, minimum, minLength, maxLength, pattern. An unknown keyword fails loudly, so the schema cannot drift past
 // what this checks.
 
 type Schema = Record<string, unknown>;
@@ -24,6 +24,8 @@ const KNOWN = new Set([
   "minimum",
   "minLength",
   "maxLength",
+  "pattern",
+  "uniqueItems",
 ]);
 
 function typeOf(x: unknown): string {
@@ -56,6 +58,7 @@ export function validates(root: Schema, def: string, value: unknown): boolean {
       const str = x as string;
       if (typeof s.minLength === "number" && str.length < s.minLength) return false;
       if (typeof s.maxLength === "number" && str.length > s.maxLength) return false;
+      if (typeof s.pattern === "string" && !new RegExp(s.pattern, "u").test(str)) return false;
     }
     if (
       (t === "integer" || t === "number") &&
@@ -63,6 +66,10 @@ export function validates(root: Schema, def: string, value: unknown): boolean {
       (x as number) < s.minimum
     ) {
       return false;
+    }
+    if (t === "array" && s.uniqueItems === true) {
+      const seen = (x as unknown[]).map((i) => JSON.stringify(i));
+      if (new Set(seen).size !== seen.length) return false;
     }
     if (
       t === "array" &&
@@ -81,6 +88,8 @@ export function validates(root: Schema, def: string, value: unknown): boolean {
           if (!check(p, v)) return false;
         } else if (s.additionalProperties === false) {
           return false;
+        } else if (typeof s.additionalProperties === "object") {
+          if (!check(s.additionalProperties as Schema, v)) return false;
         }
       }
     }

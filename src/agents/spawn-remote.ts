@@ -10,7 +10,7 @@ import { deleteAgent, getAgent, insertAgent, pendingPaneIdFor } from "../agents.
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
 import { refuseMissingHarness } from "../host-harnesses.js";
-import { requireProfile, resolveHost } from "../host-provider.js";
+import { type HostView, requireProfile, resolveHost } from "../host-provider.js";
 import {
   admitHostChannel,
   type HostLease,
@@ -19,6 +19,7 @@ import {
   HostSpawnUnsupportedError,
   releaseHostChannel,
 } from "../hosts.js";
+import { HONOURS_ALL } from "../jobs/types.js";
 import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
@@ -58,9 +59,48 @@ export function isCommandGate(opts: { host?: string; cli?: string; command?: str
  * A spawn of a harness whose launcher the host's recorded probe did not find is refused here
  * (`HostHarnessMissingError`, spec D17).
  */
+/**
+ * A spawn requests a `JobSpec` field its host's job kind does not enforce (plugins spec D8,
+ * honour or refuse): refused before any effect, never run with the field dropped. Exit 2.
+ */
+export class JobSpecUnsupportedError extends HostProfileError {
+  override readonly name: string = "JobSpecUnsupportedError";
+  constructor(
+    public readonly host: string,
+    public readonly kind: string,
+    public readonly field: "role" | "command" | "sockets",
+    detail: string,
+  ) {
+    super(`host ${host}'s job kind ${kind} does not honour ${detail}: refused before anything ran`);
+  }
+}
+
+/** Honour or refuse: every requested field the kind enforces, or the spawn refuses. */
+function refuseUnhonoured(host: HostView, opts: SpawnAgentOptions): void {
+  const kind = host.jobKind;
+  const h = kind.caps.honours ?? HONOURS_ALL;
+  const role = opts.role === "read-only" ? "read-only" : "full-access";
+  const refuse = (field: JobSpecUnsupportedError["field"], detail: string): never => {
+    throw new JobSpecUnsupportedError(host.name, kind.name, field, detail);
+  };
+  // A read-only spawn never runs with a wider role.
+  if (!h.roles.includes(role)) refuse("role", `role ${role}`);
+  // A remote spawn's command is --command or the cli key (never the local MU_<CLI>_COMMAND).
+  if (opts.command !== undefined && !h.command) refuse("command", `a --command`);
+  // Sockets go only to an agent on ctl (pi), and never to a kind with its own channel.
+  const cli = opts.cli ?? "pi";
+  const onCtl =
+    kind.caps.channel === undefined &&
+    !isCommandGate(opts) &&
+    harnessOfCli(cli, opts.command ?? cli) === "pi";
+  if (onCtl && !h.sockets) refuse("sockets", "the control sockets a pi agent needs");
+}
+
 export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise<HostProfile> {
   const host = opts.host ?? "";
-  const profile = requireProfile(resolveHost(db, host));
+  const view = resolveHost(db, host);
+  const profile = requireProfile(view);
+  refuseUnhonoured(view, opts);
   if (profile.plugin != null) {
     // The plugin's job kind (its view command, its handle) is not driven by this build yet.
     throw new HostProfileError(

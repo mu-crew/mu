@@ -356,7 +356,10 @@ on line wrapping and lost notes: state belongs in the DB, not in pane
 text.
 
 Known gaps, none promoted yet: `--evidence` grounds but does not verify,
-mutations have no declared idempotency keys, most mutations have no dry
+mutations have no declared idempotency keys except plugin effects (each is
+written ahead with a mu-generated key and its exact request, and replayed
+by one rule table: [plugins spec](specs/2026-11-09-mu-plugins.md) D4), most
+mutations have no dry
 run (`workstream teardown`, `task delete`, `agent close`, `db compact`
 and `db forget` preview; the rest apply at once), and the `role`
 field is stored but not enforced.

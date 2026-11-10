@@ -33,7 +33,16 @@
 //   exitWithHelper the process exits mid-call, leaving a helper in its group
 //                  that holds stdout (its pid in `<config>.helper`)
 //   badUtf8        a reply with a byte that is not UTF-8
+//   effectThenExit the effect happens, then the process exits before replying
 //   ok             the normal answer
+//
+// The job seam (declared through `seams.job`) and the channel's deliveries keep
+// a fake backend in `<config>.jobs` (JSON): jobs by key, and counters of the
+// effects that really happened (`starts`, `stops`, `deliveries`). A repeat of a
+// key (a start) or a msgId (a send) returns the first result and makes no
+// second effect (exact dedupe). Config: viewCommand (a start's view),
+// lookupAnswer (job.lookup's answer for an unknown key; default none),
+// receiptAnswer (channel.receipt's for an unknown msgId; default not-accepted).
 //
 // Every request and every $/cancel is logged.
 
@@ -175,9 +184,83 @@ function run(id, argv, cwd, timeoutMs, done) {
   });
 }
 
+const jobsPath = `${configPath}.jobs`;
+const backend = () =>
+  existsSync(jobsPath)
+    ? JSON.parse(readFileSync(jobsPath, "utf8"))
+    : { jobs: {}, sends: {}, starts: 0, stops: 0, deliveries: 0 };
+const save = (b) => writeFileSync(jobsPath, JSON.stringify(b));
+const byHandle = (b, handle) => Object.values(b.jobs).find((j) => j.start.handle === handle);
+
+/** The job seam and the deliveries, over the fake backend. Undefined: not one of these. */
+function backendAnswer(method, params, c) {
+  const b = backend();
+  switch (method) {
+    case "job.start": {
+      const seen = b.jobs[params.key];
+      if (seen !== undefined) return seen.start;
+      b.starts += 1;
+      const start = {
+        view: { command: c.viewCommand ?? "sleep 600", env: {} },
+        ...(c.seams?.job?.handle === "file" ? {} : { handle: `job-${b.starts}` }),
+      };
+      b.jobs[params.key] = { start, stopped: false };
+      save(b);
+      return start;
+    }
+    case "job.lookup": {
+      const seen = b.jobs[params.key];
+      return seen !== undefined ? { found: seen.start } : (c.lookupAnswer ?? { none: true });
+    }
+    case "job.status": {
+      const j = byHandle(b, params.target?.job?.handle);
+      if (j === undefined) return { state: "unknown", reason: "no such job" };
+      return j.stopped ? { state: "ended", exit: 0 } : { state: "running" };
+    }
+    case "job.stop": {
+      const j = Object.entries(b.jobs).find(
+        ([, v]) => v.start.handle === params.target?.job?.handle,
+      );
+      if (j !== undefined && !j[1].stopped) {
+        j[1].stopped = true;
+        b.stops += 1;
+        save(b);
+      }
+      return null;
+    }
+    case "job.attach": {
+      const j = byHandle(b, params.target?.job?.handle);
+      return j?.start.view ?? { command: "true", env: {} };
+    }
+    case "job.checkSteps":
+      return c.jobCheckSteps ?? [];
+    case "channel.send":
+    case "channel.fresh":
+    case "channel.command": {
+      if (b.sends[params.msgId] === undefined) {
+        b.deliveries += 1;
+        b.sends[params.msgId] = { channel: c.seams?.channel?.name ?? "fake", ack: "exact" };
+        save(b);
+      }
+      return b.sends[params.msgId];
+    }
+    case "channel.receipt":
+      return b.sends[params.msgId] !== undefined
+        ? { state: "accepted", id: params.msgId }
+        : (c.receiptAnswer ?? { state: "not-accepted", id: params.msgId });
+    default:
+      return undefined;
+  }
+}
+
 function answer(id, method, params) {
   const c = config();
   const home = c.home ?? process.cwd();
+  const fromBackend = backendAnswer(method, params, c);
+  if (fromBackend !== undefined) {
+    reply(id, fromBackend);
+    return;
+  }
   switch (method) {
     case "link.exec":
       run(id, ["/bin/sh", "-c", params.script], resolve(home, params.cwd), params.timeoutMs, (r) =>
@@ -305,6 +388,10 @@ function onMessage(msg) {
       process.exit(9);
       return;
     }
+    case "effectThenExit":
+      backendAnswer(msg.method, msg.params, config());
+      process.exit(9);
+      return;
     case "badUtf8":
       process.stdout.write(
         Buffer.concat([

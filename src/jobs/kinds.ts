@@ -8,6 +8,7 @@ import type { AgentObservation } from "../agents/observe.js";
 import type { AgentRow } from "../agents.js";
 import type { ChannelObservation, ChannelReading } from "../channels/types.js";
 import type { Db } from "../db.js";
+import { pluginJobKind } from "../plugins/job.js";
 import { gateKind } from "./gate.js";
 import { leaseKind } from "./lease.js";
 import { paneKind, paneUp } from "./pane.js";
@@ -29,8 +30,19 @@ export function jobKind(name: JobKindName): JobKind {
   }
 }
 
-/** Liveness: whether the job runs, answered by its kind. */
+const isBuiltin = (name: string): name is JobKindName =>
+  name === "pane" || name === "lease" || name === "gate";
+
+/** Liveness: whether the job runs, answered by its kind (a plugin's through the job adapter). */
 export function jobLiveness(db: Db, job: JobRef): Promise<JobLiveness> {
+  if (job.plugin !== undefined) {
+    const kind = pluginJobKind(db, job.plugin);
+    if (kind !== undefined) return kind.status(db, job);
+    return Promise.resolve({ state: "unknown", reason: `plugin ${job.plugin} has no job seam` });
+  }
+  if (!isBuiltin(job.kind)) {
+    return Promise.resolve({ state: "unknown", reason: `job kind ${job.kind} names no plugin` });
+  }
   return jobKind(job.kind).status(db, job);
 }
 
@@ -41,7 +53,7 @@ export function jobLiveness(db: Db, job: JobRef): Promise<JobLiveness> {
  * pane, or forwarded from the job on its host.
  */
 export function answerProvesRunning(job: Pick<JobRef, "kind">): boolean {
-  return jobKind(job.kind).answer === "running";
+  return isBuiltin(job.kind) && jobKind(job.kind).answer === "running";
 }
 
 /** The job a state ref names: the one its caller listed, else its pane's (a gate's, by its token). */

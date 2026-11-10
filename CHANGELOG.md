@@ -12,6 +12,37 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Plugins: effects, the reconciler and the job adapter** (plugins spec
+  P6c, D4, D8). Every plugin effect is written ahead in a new `effects`
+  row (key, the exact params and their sha256, the plugin instance, the
+  creator and the plugin's process group), in one immediate transaction
+  with its subject's change, and deleted with the definite result. A live
+  creator owns its row: another verb's claim refuses, naming its pid
+  (`EffectHeldError`, exit 4). Resolution follows the D4 rule table, fenced
+  on the instance (a changed one refuses, `EffectFencedError`, exit 4):
+  `job.stop` and `host.release` reissued; `job.start` and `host.acquire` by
+  `lookup` (whose `none` counts only once the creator and the plugin group
+  are proven gone and the lookup was fenced or `inFlightMs` passed) or a
+  byte-identical deduped resend inside its window; deliveries by an exact
+  receipt or a deduped resend, never once a newer delivery to the agent was
+  written (`agents.delivery_seq`; a new delivery refuses while another is
+  being resolved). The job adapter (`src/plugins/job.ts`) makes a plugin's
+  job seam a bound `JobKind`: journaled `job.start` and `job.stop`, and
+  `job.lookup`, `job.status`, `job.attach`, `job.checkSteps` reads that
+  answer `unknown` for cannot-tell. On the wire: the job caps `firstTurn`,
+  `outlivesHost` and `honours`, the link cap `push` with `link.push`'s
+  params (a plugin that declares it now loads; the adapter calls it from
+  P6d), the job methods' params and results (one schema digest change,
+  `link-contract` checks `push`), and two load rules
+  (`at-start` needs `handle: "reply"`; `honours.env: false` needs a
+  `channel`). Honour or refuse: a `--host` spawn requesting a role, a
+  `--command` or ctl sockets its kind does not honour refuses before any
+  effect (`JobSpecUnsupportedError`, exit 2); built-ins honour all. `mu
+  plugin rm` also refuses while a job record or an effect names the
+  plugin. Spawning on a plugin kind still waits for P6e. Tests:
+  `job-contract` (pane, lease, gate and the fake plugin's kind),
+  `plugin-faults` (F1-F10, F12), `effects`, `plugin-job-wire`.
+
 - **Plugins: the protocol core and the link adapter** (plugins spec P6b,
   D13, D14). `mu plugin add <name> -- <absolute path> [args…]` registers an
   executable named `mu-plugin-<name>` (owned by you, writable by no one
@@ -199,6 +230,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   process holds its -shm file, so a worker whose orchestrator slept gave up.
 
 ### Changed
+
+- **Schema: `effects`, `agents.delivery_seq` and the job record columns**
+  (plugins spec D5, P6c). A new machine-local, unrebuildable `effects`
+  table; `agents` gains `delivery_seq`; `carrier_jobs` gains `kind`,
+  `plugin`, `instance`, `host_id`, `tree_base`, `collect_repo`,
+  `final_owed`, `stop_gen`, `collect_next_at`, `first_msg_id` and
+  `first_inc`, and its `host_stop` becomes nullable (a plugin job's fence is
+  its instance). An existing file is completed in place, its carrier_jobs
+  rebuilt with rows and name index kept. `CAPTURE_VERSION` is unchanged.
 
 - **Schema: `plugins` and `host_profiles.plugin`** (plugins spec D5, P6b).
   A new machine-local, unrebuildable `plugins` table. `host_profiles` gains

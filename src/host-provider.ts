@@ -21,6 +21,7 @@ import { type HostLink, templateLink } from "./host-link.js";
 import { getHost, HostNotFoundError, type HostProfile, HostProfileError } from "./hosts.js";
 import { jobKind } from "./jobs/kinds.js";
 import type { JobKind } from "./jobs/types.js";
+import { pluginJobKind } from "./plugins/job.js";
 import { pluginLink } from "./plugins/link.js";
 
 /** An idempotency key: mu-generated, persisted with its effect before the call (spec D4). */
@@ -134,8 +135,9 @@ export const staticProvider: HostProvider = {
 
 /**
  * The view of a profile already read: an admitted snapshot (inside `withHostChannel`). A
- * `--plugin` profile's link is the plugin's (src/plugins/link.ts), its job kind the pane's
- * until the plugin job kind joins (spawn refuses such a host meanwhile).
+ * `--plugin` profile's link is the plugin's (src/plugins/link.ts), and so is its job kind
+ * when the plugin declares a job seam (src/plugins/job.ts); a link-only plugin's jobs are
+ * panes. Spawn refuses a `--plugin` host until P6e drives its spawn path.
  */
 export function admittedView(db: Db, profile: HostProfile): HostView {
   const plugin = profile.plugin ?? null;
@@ -143,7 +145,9 @@ export function admittedView(db: Db, profile: HostProfile): HostView {
     name: profile.name,
     link: plugin === null ? templateLink(db) : pluginLink(db, plugin),
     provider: staticProvider,
-    jobKind: jobKind(profile.transport === "lease" ? "lease" : "pane"),
+    jobKind:
+      (plugin === null ? undefined : pluginJobKind(db, plugin)) ??
+      jobKind(profile.transport === "lease" ? "lease" : "pane"),
     profile,
   };
 }

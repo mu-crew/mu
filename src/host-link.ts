@@ -65,6 +65,8 @@ export interface CheckContext {
 
 export interface LinkCaps {
   fetch: boolean;
+  /** Can seed a host's repo with a local commit (`link.push`, D7 G3; driven from P6d). Absent: false. */
+  push?: boolean;
   /** "mu": every call holds a host channel (src/hosts.ts admission). "self": the link arbitrates its connection. */
   slots: "mu" | "self";
   /** After a timeout: the remote script proven stopped, or possibly still running. */

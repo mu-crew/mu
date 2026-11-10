@@ -83,6 +83,7 @@ import {
 } from "../delegates.js";
 import { DriftDetectedError } from "../drift.js";
 import { editDistance } from "../edit-distance.js";
+import { DeliveryResolvingError, EffectHeldError } from "../effects.js";
 import { checkDbInsideSyncDir, DbInsideSyncDirError, HazardFailError } from "../fleet-hazards.js";
 import { HostHarnessMissingError } from "../host-harnesses.js";
 import {
@@ -117,6 +118,7 @@ import {
 } from "../output.js";
 import { encodeEnvelope, type NextPlan, RESULT_BYTES } from "../output-contract.js";
 import {
+  EffectFencedError,
   EffectOutcomeUnknownError,
   PluginAnswerUnknownError,
   PluginCallError,
@@ -545,6 +547,10 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof PluginRefusedError ||
     err instanceof PluginExistsError ||
     err instanceof PluginInUseError ||
+    // A plugin effect another mu owns, a delivery being resolved, or a changed instance (D4).
+    err instanceof EffectHeldError ||
+    err instanceof DeliveryResolvingError ||
+    err instanceof EffectFencedError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||

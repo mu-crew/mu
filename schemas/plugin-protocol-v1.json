@@ -169,6 +169,7 @@
       "additionalProperties": false,
       "properties": {
         "fetch": { "type": "boolean" },
+        "push": { "type": "boolean", "description": "Can seed a host's repo with a local commit (link.push). Absent: false." },
         "slots": { "enum": ["mu", "self"] },
         "remoteOnTimeout": { "enum": ["stopped", "unknown"] },
         "quiescence": { "enum": ["provable", "unprovable"] },
@@ -186,7 +187,22 @@
         "handle": { "enum": ["pane", "file", "reply"] },
         "start": { "$ref": "#/$defs/keyCaps" },
         "channel": { "type": "string", "minLength": 1, "maxLength": 64 },
-        "checks": { "$ref": "#/$defs/checks" }
+        "checks": { "$ref": "#/$defs/checks" },
+        "firstTurn": { "enum": ["on-send", "at-start"], "description": "at-start: job.start carries the first prompt and begins its turn (needs handle reply). Absent: on-send." },
+        "outlivesHost": { "type": "boolean", "description": "The job may survive its machine: a host's gone does not prove it gone. Absent: false." },
+        "honours": { "$ref": "#/$defs/honours" }
+      }
+    },
+    "honours": {
+      "description": "The JobSpec fields the kind enforces; mu refuses a spawn requesting any other. Absent: env only, and only full-access.",
+      "type": "object",
+      "required": ["command", "env", "sockets", "roles"],
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": "boolean" },
+        "env": { "type": "boolean" },
+        "sockets": { "type": "boolean" },
+        "roles": { "type": "array", "uniqueItems": true, "items": { "enum": ["full-access", "read-only"] } }
       }
     },
     "channelCaps": {
@@ -275,6 +291,20 @@
         "timeoutMs": { "type": "integer", "minimum": 1 }
       }
     },
+    "linkPushParams": {
+      "description": "link.push, declared by push: true. Make remoteRepo hold commit rev (a full sha) from localRepo, creating it as a git repository if absent. Idempotent: a repo that already holds rev succeeds untouched. Not an effect: a timed-out push is re-run. Result: linkRun.",
+      "type": "object",
+      "required": ["target", "deadline", "localRepo", "remoteRepo", "rev", "timeoutMs"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "deadline": { "$ref": "#/$defs/deadline" },
+        "localRepo": { "type": "string" },
+        "remoteRepo": { "type": "string" },
+        "rev": { "type": "string", "minLength": 40, "maxLength": 64 },
+        "timeoutMs": { "type": "integer", "minimum": 1 }
+      }
+    },
     "linkRun": {
       "type": "object",
       "required": ["exitCode", "stdout", "stderr", "partial"],
@@ -315,6 +345,192 @@
           "detail": { "type": "string" }
         }
       }
-    }
+    },
+    "handle": { "description": "Opaque to mu: one line of these bytes.", "type": "string", "pattern": "^[A-Za-z0-9._:@-]{1,128}$" },
+    "key": { "description": "An effect's idempotency key, mu-generated and persisted before the call.", "type": "string", "minLength": 1 },
+    "paneCommand": {
+      "description": "What a job's view pane runs.",
+      "type": "object",
+      "required": ["command", "env"],
+      "additionalProperties": false,
+      "properties": {
+        "command": { "type": "string", "minLength": 1, "maxLength": 65536 },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "cwd": { "type": "string", "minLength": 1, "maxLength": 4096 }
+      }
+    },
+    "jobSpec": {
+      "type": "object",
+      "required": ["workstream", "name", "harness", "role", "cmd", "commandSource", "cwd", "env"],
+      "additionalProperties": false,
+      "properties": {
+        "workstream": { "type": "string" },
+        "name": { "type": "string" },
+        "harness": { "type": "string" },
+        "role": { "enum": ["full-access", "read-only"] },
+        "model": { "type": "string" },
+        "cmd": { "type": "string" },
+        "commandSource": { "enum": ["cli-key", "env", "explicit"] },
+        "cwd": { "type": "string" },
+        "env": { "type": "object", "additionalProperties": { "type": "string" } },
+        "sockets": {
+          "type": "object",
+          "required": ["local", "remote"],
+          "additionalProperties": false,
+          "properties": { "local": { "type": "string" }, "remote": { "type": "string" } }
+        },
+        "firstPrompt": {
+          "type": "object",
+          "required": ["text", "msgId"],
+          "additionalProperties": false,
+          "properties": { "text": { "type": "string" }, "msgId": { "type": "string", "minLength": 1 } }
+        }
+      }
+    },
+    "jobStartParams": {
+      "description": "job.start, an effect: the whole JobSpec under its key (the job record's token).",
+      "type": "object",
+      "required": ["target", "deadline", "key", "spec"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "deadline": { "$ref": "#/$defs/deadline" },
+        "key": { "$ref": "#/$defs/key" },
+        "spec": { "$ref": "#/$defs/jobSpec" }
+      }
+    },
+    "jobStopParams": {
+      "description": "job.stop, an idempotent effect: resolves only on proof the job is gone.",
+      "type": "object",
+      "required": ["target", "deadline", "key"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "deadline": { "$ref": "#/$defs/deadline" },
+        "key": { "$ref": "#/$defs/key" }
+      }
+    },
+    "lookupParams": {
+      "description": "job.lookup and host.lookup, reads. fence: make the key unusable for a late request (fenceKey).",
+      "type": "object",
+      "required": ["target", "deadline", "key", "fence"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "deadline": { "$ref": "#/$defs/deadline" },
+        "key": { "$ref": "#/$defs/key" },
+        "fence": { "type": "boolean" }
+      }
+    },
+    "targetParams": {
+      "description": "job.status and job.attach, reads.",
+      "type": "object",
+      "required": ["target", "deadline"],
+      "additionalProperties": false,
+      "properties": { "target": { "$ref": "#/$defs/target" }, "deadline": { "$ref": "#/$defs/deadline" } }
+    },
+    "jobStart": {
+      "description": "job.start's result, and job.lookup's found.",
+      "type": "object",
+      "required": ["view"],
+      "additionalProperties": false,
+      "properties": {
+        "view": { "$ref": "#/$defs/paneCommand" },
+        "handle": { "$ref": "#/$defs/handle" },
+        "baseline": {
+          "type": "object",
+          "required": ["runs"],
+          "additionalProperties": false,
+          "properties": {
+            "runs": { "type": "integer", "minimum": 0 },
+            "incarnation": { "type": "string", "minLength": 1, "maxLength": 256 }
+          }
+        }
+      }
+    },
+    "jobLookup": {
+      "description": "job.lookup's result: exactly one of found (the start's reply, with its handle), pending, none, unknown.",
+      "oneOf": [
+        { "type": "object", "required": ["found"], "additionalProperties": false, "properties": { "found": { "$ref": "#/$defs/jobStartWithHandle" } } },
+        { "$ref": "#/$defs/lookupPending" },
+        { "$ref": "#/$defs/lookupNone" },
+        { "$ref": "#/$defs/lookupUnknown" }
+      ]
+    },
+    "jobStartWithHandle": { "$ref": "#/$defs/jobStart", "required": ["view", "handle"] },
+    "hostFacts": {
+      "type": "object",
+      "required": ["handle"],
+      "additionalProperties": false,
+      "properties": {
+        "handle": { "$ref": "#/$defs/handle" },
+        "deadlineAt": { "type": "integer", "minimum": 0 },
+        "idleReclaimMs": { "type": "integer", "minimum": 0 },
+        "maxJobs": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "hostLookup": {
+      "oneOf": [
+        { "type": "object", "required": ["found"], "additionalProperties": false, "properties": { "found": { "$ref": "#/$defs/hostFacts" } } },
+        { "$ref": "#/$defs/lookupPending" },
+        { "$ref": "#/$defs/lookupNone" },
+        { "$ref": "#/$defs/lookupUnknown" }
+      ]
+    },
+    "lookupPending": { "type": "object", "required": ["pending"], "additionalProperties": false, "properties": { "pending": { "const": true } } },
+    "lookupNone": { "type": "object", "required": ["none"], "additionalProperties": false, "properties": { "none": { "const": true } } },
+    "lookupUnknown": { "type": "object", "required": ["unknown"], "additionalProperties": false, "properties": { "unknown": { "type": "string", "minLength": 1, "maxLength": 4096 } } },
+    "jobLiveness": {
+      "description": "job.status's result. unknown is an honest answer, never a death.",
+      "oneOf": [
+        { "type": "object", "required": ["state"], "additionalProperties": false, "properties": { "state": { "const": "running" } } },
+        {
+          "type": "object",
+          "required": ["state", "exit"],
+          "additionalProperties": false,
+          "properties": { "state": { "const": "ended" }, "exit": { "oneOf": [{ "type": "integer", "minimum": 0 }, { "type": "null" }] } }
+        },
+        {
+          "type": "object",
+          "required": ["state", "reason"],
+          "additionalProperties": false,
+          "properties": { "state": { "enum": ["lost", "unknown"] }, "reason": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+        }
+      ]
+    },
+    "messageCheck": {
+      "description": "channel.receipt's result: whether the message that carried msgId was accepted.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["state", "id"],
+          "additionalProperties": false,
+          "properties": {
+            "state": { "const": "accepted" },
+            "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "runs": { "type": "integer", "minimum": 0 },
+            "at": { "type": "integer", "minimum": 0 },
+            "incarnation": { "type": "string", "minLength": 1, "maxLength": 256 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["state", "id"],
+          "additionalProperties": false,
+          "properties": { "state": { "const": "not-accepted" }, "id": { "type": "string", "minLength": 1, "maxLength": 256 } }
+        },
+        {
+          "type": "object",
+          "required": ["state", "id", "reason"],
+          "additionalProperties": false,
+          "properties": {
+            "state": { "const": "unreachable" },
+            "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "reason": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          }
+        }
+      ]
+    },
+    "null": { "description": "job.stop's and host.release's result.", "type": "null" }
   }
 }

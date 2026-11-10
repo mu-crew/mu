@@ -17,7 +17,9 @@
 
 import { lstatSync, statSync } from "node:fs";
 import { basename, isAbsolute } from "node:path";
+import { carrierJobsOfPlugin } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
+import { effectsOfPlugin } from "../effects.js";
 import { hostsOfPlugin } from "../hosts.js";
 import { type PluginSession, startPlugin } from "./client.js";
 import {
@@ -102,7 +104,11 @@ export function trustProblems(name: string, path: string): string[] {
 
 /** Things that name the plugin, which `mu plugin rm` refuses over. */
 function pluginUsers(db: Db, name: string): string[] {
-  return hostsOfPlugin(db, name).map((h) => `host ${h}`);
+  return [
+    ...hostsOfPlugin(db, name).map((h) => `host ${h}`),
+    ...carrierJobsOfPlugin(db, name).map((j) => `job ${j.workstream}/${j.name}`),
+    ...effectsOfPlugin(db, name).map((e) => `effect ${e.key}`),
+  ];
 }
 
 export interface PluginAdded {

@@ -21,6 +21,15 @@ export interface FakePlugin {
   calls(): Array<{ method: string; params: Record<string, unknown> }>;
   /** How many times the fake finished its EOF cleanup and exited on its own. */
   cleanExits(): number;
+  /** The fake backend: jobs by key and the effects that really happened. */
+  backend(): FakeBackend;
+}
+
+export interface FakeBackend {
+  jobs: Record<string, { start: { handle?: string; view: unknown }; stopped: boolean }>;
+  starts: number;
+  stops: number;
+  deliveries: number;
 }
 
 /** The log line the fake writes when it exits on EOF after its cleanup. */
@@ -64,6 +73,13 @@ export function fakePlugin(
     cleanExits() {
       return log().filter((e) => e.method === CLEAN_EXIT).length;
     },
+    backend() {
+      try {
+        return JSON.parse(readFileSync(`${configPath}.jobs`, "utf8")) as FakeBackend;
+      } catch {
+        return { jobs: {}, starts: 0, stops: 0, deliveries: 0 };
+      }
+    },
   };
 }
 
@@ -77,6 +93,20 @@ export function linkSeam(patch: Record<string, unknown> = {}): Record<string, un
       quiescence: "provable",
       maxScriptBytes: 131072,
       checks: ["reach"],
+      ...patch,
+    },
+  };
+}
+
+/** The fake's link and a bound `reply` job seam (lookup and exact dedupe), with `patch` applied. */
+export function jobSeams(patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ...linkSeam(),
+    job: {
+      kind: "fakejob",
+      view: "bound",
+      handle: "reply",
+      start: { lookup: true, dedupe: { exact: true, windowMs: 60_000 }, fenceKey: true },
       ...patch,
     },
   };

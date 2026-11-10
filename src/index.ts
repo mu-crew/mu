@@ -265,6 +265,8 @@ export {
   driftRemediation,
   formatDriftRecord,
 } from "./drift.js";
+// The effects journal's refusals (plugins spec D4).
+export { DeliveryResolvingError, EffectHeldError } from "./effects.js";
 export {
   type FileLockOptions,
   locksDir,
@@ -465,6 +467,7 @@ export {
 } from "./pi-migrate.js";
 // The plugin protocol's typed errors (plugins spec D13, D14).
 export {
+  EffectFencedError,
   EffectOutcomeUnknownError,
   PluginAnswerUnknownError,
   PluginCallError,

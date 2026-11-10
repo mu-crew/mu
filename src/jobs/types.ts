@@ -7,16 +7,82 @@
 // (spec D3); every built-in view is bound: its death ends the job or starts
 // its stop.
 //
-// P1 holds the reads. `start`, `lookup` and the generic `stop`/`attach` join
-// this interface with `HostView` and `EffectKey` (P3, P6c); until then the
-// lease kind's effects are its own methods (src/jobs/lease.ts).
+// The built-ins' effects stay their own: the pane and gate kinds start with
+// the spawn's pane, and the lease kind's stop, handshake and attach are its
+// methods (src/jobs/lease.ts). A plugin kind's `start`, `lookup`, `stop` and
+// `attach` are wire calls behind the job adapter (src/plugins/job.ts), each
+// effect written ahead (src/effects.ts).
 
+import type { RunBaseline } from "../channels/types.js";
 import type { Db } from "../db.js";
 import type { CheckContext, CheckPhase } from "../host-link.js";
+import type { KeyCaps } from "../host-provider.js";
 import type { HostCheckStep } from "../hosts.js";
+import type { CommandSource } from "../mux/types.js";
 
-/** The built-in job kinds. A plugin kind joins in P6. */
+/** The built-in job kinds. A plugin kind is named by its plugin's job seam. */
 export type JobKindName = "pane" | "lease" | "gate";
+
+export type JobRole = "full-access" | "read-only";
+
+/** The `JobSpec` fields a kind enforces (D8 honour or refuse). */
+export interface JobHonours {
+  /** A command other than the harness's default (`commandSource` other than `cli-key`). */
+  command: boolean;
+  env: boolean;
+  sockets: boolean;
+  roles: JobRole[];
+}
+
+/** Every built-in enforces every field. */
+export const HONOURS_ALL: JobHonours = {
+  command: true,
+  env: true,
+  sockets: true,
+  roles: ["full-access", "read-only"],
+};
+
+/** A plugin kind that declares no `honours`: `env` only, and only full-access. */
+export const HONOURS_DEFAULT: JobHonours = {
+  command: false,
+  env: true,
+  sockets: false,
+  roles: ["full-access"],
+};
+
+/** What a view pane runs: the fields `MuxBackend.spawnAgent` takes. */
+export interface PaneCommand {
+  command: string;
+  env: Record<string, string>;
+  cwd?: string;
+}
+
+/** What a plugin kind's `job.start` gets (D8). */
+export interface JobSpec {
+  workstream: string;
+  name: string;
+  harness: string;
+  role: JobRole;
+  model?: string;
+  cmd: string;
+  /** Where `cmd` came from: only `cli-key` is the harness's default. */
+  commandSource: CommandSource;
+  cwd: string;
+  /** mu's identity map (HOST_ENV_KEYS); `{}` for a kind without `honours.env`. */
+  env: Record<string, string>;
+  sockets?: { local: string; remote: string };
+  /** Exactly for a `firstTurn: "at-start"` kind: the prompt whose turn the start begins. */
+  firstPrompt?: { text: string; msgId: string };
+}
+
+/** A plugin kind's `job.start` reply, and its `job.lookup`'s `found`. */
+export interface JobStart {
+  view: PaneCommand;
+  /** Present when the kind's handle is `reply`. */
+  handle?: string;
+  /** An `at-start` kind's first turn's baseline (`runs: 0`, the incarnation). */
+  baseline?: RunBaseline;
+}
 
 /** Liveness (spec D1): whether the job runs. `unknown` is an honest answer, never a death. */
 export type JobLiveness =
@@ -27,7 +93,9 @@ export type JobLiveness =
 
 /** What mu records about one job: enough for its kind to answer about it. */
 export interface JobRef {
-  kind: JobKindName;
+  /** A built-in's name, or a plugin kind's (then `plugin` names its plugin). */
+  kind: string;
+  plugin?: string;
   /** The view's pane: for a pane or gate job, also the handle. */
   viewPaneId: string;
   /** The agent row (its registry incarnation), when one exists. */
@@ -39,8 +107,10 @@ export interface JobRef {
   host?: { name: string };
   /** A gate's spawn-unique token: the key of its completion record. */
   gateToken?: string;
-  /** The recorded stop fence: a lease job's `host_stop` bytes. */
+  /** The recorded stop fence: a lease job's `host_stop` bytes, a plugin job's instance. */
   identity?: string;
+  /** A plugin job's key: its job record's token. */
+  key?: string;
 }
 
 export interface JobCaps {
@@ -50,10 +120,20 @@ export interface JobCaps {
   handle: "pane" | "file" | "reply";
   /** The `checkHost` phases this kind contributes steps for (spec D11). */
   checks?: CheckPhase[];
+  /** A plugin kind's `job.start` key capabilities (D6): required for `handle: "reply"`. */
+  start?: KeyCaps;
+  /** The channel the kind's agents use (a plugin's channel seam); absent: the harness's own. */
+  channel?: string;
+  /** `at-start`: `job.start` carries the first prompt and begins its turn. Absent: `on-send`. */
+  firstTurn?: "on-send" | "at-start";
+  /** The job may outlive its host's machine: `gone` does not prove it gone (D1, D6). */
+  outlivesHost?: boolean;
+  /** The JobSpec fields it enforces. Absent on a built-in: all (HONOURS_ALL); the job adapter fills a plugin's declaration, or HONOURS_DEFAULT. */
+  honours?: JobHonours;
 }
 
 export interface JobKind {
-  readonly name: JobKindName;
+  readonly name: string;
   readonly caps: JobCaps;
   /**
    * `running`: an answer from the job's own process (its channel's control
