@@ -18,6 +18,7 @@ import { shellWord } from "../shell-quote.js";
 import { AgentExistsError, AgentReplacedError } from "./errors.js";
 import { leaseJobFile } from "./lease-carrier.js";
 import { readMarker } from "./reattach-marker.js";
+import { previewViewReattach } from "./reattach-view.js";
 
 /** One reason the name cannot be reattached now; `code` names the preflight step. */
 export interface Blocker {
@@ -186,6 +187,8 @@ export async function planSnapshot(db: Db, ws: string, name: string) {
 
 /** Bare `agent reattach`: the preflight, its facts, and the revision `--if` needs. Read only. */
 export async function previewReattach(db: Db, ws: string, name: string) {
+  const view = await previewViewReattach(db, ws, name);
+  if (view !== undefined) return view;
   const { p, revision } = await planSnapshot(db, ws, name);
   return { ...factsOf(ws, p), revision };
 }

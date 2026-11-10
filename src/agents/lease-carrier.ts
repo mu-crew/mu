@@ -38,6 +38,7 @@ import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
 import { isJsonMode } from "../output.js";
+import { pluginJobKind, pluginJobRef } from "../plugins/job.js";
 import {
   AgentExistsError,
   CarrierJobKeptError,
@@ -189,6 +190,25 @@ export async function rollbackLeaseJob(
   try {
     let job = getCarrierJob(db, a.token);
     if (job === undefined) return kept("?", null, "its reservation is gone");
+    // A plugin job (D8): started by its reply, stopped by its kind; an unresolved start stays.
+    if (job.plugin !== null) {
+      if (job.job === null) {
+        return job.launch === "none" ? "none" : kept(job.host, null, "its job.start is unresolved");
+      }
+      const ref = pluginJobRef(db, job.token);
+      const kind = pluginJobKind(db, job.plugin);
+      if (ref === undefined || kind === undefined) return kept(job.host, job.job, "no job seam");
+      try {
+        await kind.stop(db, ref);
+      } catch (e) {
+        return kept(
+          job.host,
+          job.job,
+          `stop failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
+      return "stopped";
+    }
     if (job.job === null) {
       if (job.launch === "none") return "none";
       const read = readJobFile(jobFile);

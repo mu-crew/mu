@@ -78,6 +78,7 @@ import {
   stopLeaseReservation,
 } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
+import { detachedJob } from "./reattach-view.js";
 
 export interface CloseAgentOptions {
   /**
@@ -537,6 +538,10 @@ async function closeLocked(
   // the pane dies. The kill names the pane of the incarnation checked here.
   if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   fence();
+  // A detached plugin job outlives its view (plugins spec D3): stopped first, the view after.
+  const detached = detachedJob(db, opts.workstream, name) !== undefined;
+  const early = detached ? await stopAgentLease(db, agent, opts.abandonJob === true) : undefined;
+  if (detached && replaced()) throw new AgentReplacedError(name, opts.workstream);
   // (The mux is resolved first, so nothing is awaited between the checks
   // and the kill.) A row that vanished (pruned as a ghost) has no pane left
   // to name: nothing to kill.
@@ -572,7 +577,7 @@ async function closeLocked(
   if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   // A lease job: its pane is proven gone, but not its job. Stop it now, before the
   // tree is touched; any refusal or failure keeps the row and the reservation.
-  const lease = await stopAgentLease(db, agent, opts.abandonJob === true);
+  const lease = detached ? early : await stopAgentLease(db, agent, opts.abandonJob === true);
   if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   if (lease !== undefined) cleanLeaseJobFile(db, lease);
   // Re-checks the state: a write after the pre-check still refuses, with
@@ -598,7 +603,10 @@ async function closeLocked(
     remoteHandled = true;
     // The pane is gone (checked above): free its channel by id + pane.
     releaseHostChannelsForAgent(db, agent.incarnation, agent.paneId);
-    worktree = await closeRemoteWorktree(db, agent, {
+    // Re-read: a plugin job's final collect (its stop, above) recorded the collected head.
+    const now =
+      lease?.reservation.plugin != null ? getAgentForCleanup(db, name, opts.workstream) : undefined;
+    worktree = await closeRemoteWorktree(db, now ?? agent, {
       keepBranch: opts.keepBranch === true,
       force: opts.force === true,
       paneAlive: viewRunning,

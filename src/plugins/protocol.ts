@@ -12,7 +12,7 @@
 // a known notification (a request to mu included: there is no RPC into mu) is
 // invalid, and an invalid message breaks the plugin for the invocation.
 
-import type { MessageCheck } from "../channels/types.js";
+import { CHANNEL_NAMES, type MessageCheck, type RunBaseline } from "../channels/types.js";
 import type { CheckPhase, LinkCaps } from "../host-link.js";
 import type { HostFacts, HostStatus, KeyCaps, KeyLookup } from "../host-provider.js";
 import type {
@@ -36,7 +36,7 @@ export const PLUGIN_SCHEMA_FILE = "schemas/plugin-protocol-v1.json";
 
 /** sha256 of the exact bytes of PLUGIN_SCHEMA_FILE (pinned by test/plugin-schema.test.ts). */
 export const PLUGIN_SCHEMA_DIGEST =
-  "sha256:90a07dea4d7a124af92846ed0b62cadfac5bc4dd0664f921038c772df66441ac";
+  "sha256:6ea6e13cabf6baebe44e961e21370a66ddf523082bfd73bcf169ec627fc71a25";
 
 /** Error text mu keeps from a plugin: the first line, at most this many characters (D14). */
 export const ERROR_TEXT_MAX = 400;
@@ -523,20 +523,22 @@ function jobStart(x: unknown, path: string): JobStart {
 function jobReply(x: unknown, path: string, need: "view" | "handle"): Partial<JobStart> {
   const r = obj(x, path, ["view", "handle", "baseline"]);
   if (r[need] === undefined) fail(`${path}.${need}`, need === "view" ? "a view" : "a handle");
-  let baseline: JobStart["baseline"];
-  if (r.baseline !== undefined) {
-    const b = obj(r.baseline, `${path}.baseline`, ["runs", "incarnation"]);
-    baseline = {
-      runs: int(b.runs, `${path}.baseline.runs`, 0),
-      ...(b.incarnation !== undefined
-        ? { incarnation: str(b.incarnation, `${path}.baseline.incarnation`) }
-        : {}),
-    };
-  }
+  const baseline =
+    r.baseline === undefined ? undefined : runBaseline(r.baseline, `${path}.baseline`);
   return {
     ...(r.view !== undefined ? { view: paneCommand(r.view, `${path}.view`) } : {}),
     ...(r.handle !== undefined ? { handle: handle(r.handle, `${path}.handle`) } : {}),
     ...(baseline !== undefined ? { baseline } : {}),
+  };
+}
+
+function runBaseline(x: unknown, path: string): RunBaseline {
+  const b = obj(x, path, ["runs", "incarnation"]);
+  return {
+    runs: int(b.runs, `${path}.runs`, 0),
+    ...(b.incarnation !== undefined
+      ? { incarnation: str(b.incarnation, `${path}.incarnation`) }
+      : {}),
   };
 }
 
@@ -654,7 +656,7 @@ export function narrowNull(x: unknown): Narrowed<null> {
   return x === null ? { ok: true, value: null } : { ok: false, reason: "result: expected null" };
 }
 
-/** A delivery's reply. Its fields are the channel adapter's (P6e); here, an object. */
+/** Any JSON object (a wire map's shape before its entries are read). */
 export function narrowObject(x: unknown): Narrowed<Record<string, unknown>> {
   return narrow(() => obj(x, "result", Object.keys((x as Obj | null) ?? {})));
 }
@@ -690,9 +692,188 @@ export function narrowMessageCheck(x: unknown): Narrowed<MessageCheck> {
   });
 }
 
+// ─── The channel seam's replies (D9, D13) ───────────────────────────────
+
+/** A plugin's turn state: `blocked` is a pending dialog. mu adds liveness; a plugin never reports a death. */
+export type WireTurnState = "idle" | "busy" | "blocked" | "unknown";
+const TURN_STATES: readonly WireTurnState[] = ["idle", "busy", "blocked", "unknown"];
+
+/** One agent's reading: its turn state, its dense turn count and its channel incarnation. */
+export interface WireReading {
+  state: WireTurnState;
+  since: number | null;
+  runs: number;
+  incarnation: string;
+  reason?: string;
+  pending?: boolean;
+}
+
+/** A watch's or a last run's observation, without the identity fields mu adds from its row. */
+export interface WireObservation extends Omit<WireReading, "state"> {
+  status: WireTurnState;
+  settled: boolean;
+  lastText?: string;
+  lastTextTruncated?: boolean;
+  lastError?: string;
+}
+
+const READING = ["since", "runs", "incarnation", "reason", "pending"] as const;
+const OBSERVATION = ["status", "settled", "lastText", "lastTextTruncated", "lastError"];
+
+function turnFields(r: Obj, path: string): Omit<WireReading, "state"> {
+  const since = r.since === null ? null : int(r.since, `${path}.since`, 0);
+  return {
+    since,
+    runs: int(r.runs, `${path}.runs`, 0),
+    incarnation: str(r.incarnation, `${path}.incarnation`),
+    ...(r.reason !== undefined ? { reason: str(r.reason, `${path}.reason`, 4096) } : {}),
+    ...(r.pending !== undefined ? { pending: bool(r.pending, `${path}.pending`) } : {}),
+  };
+}
+
+function reading(x: unknown, path: string): WireReading {
+  const r = obj(x, path, ["state", ...READING]);
+  return { state: oneOf(r.state, `${path}.state`, TURN_STATES), ...turnFields(r, path) };
+}
+
+function observation(x: unknown, path: string): WireObservation {
+  const r = obj(x, path, [...READING, ...OBSERVATION]);
+  const text = (k: string, max: number) => {
+    const v = r[k];
+    if (v === undefined) return {};
+    if (typeof v !== "string" || v.length > max)
+      fail(`${path}.${k}`, `a string of 0-${max} characters`);
+    return { [k]: v };
+  };
+  return {
+    status: oneOf(r.status, `${path}.status`, TURN_STATES),
+    settled: bool(r.settled, `${path}.settled`),
+    ...turnFields(r, path),
+    ...text("lastText", 65536),
+    ...text("lastError", 4096),
+    ...(r.lastTextTruncated !== undefined
+      ? { lastTextTruncated: bool(r.lastTextTruncated, `${path}.lastTextTruncated`) }
+      : {}),
+  };
+}
+
+/** `channel.watch`'s reply: the watch's id and the agent's state now; one notification ends it. */
+export interface WireWatch {
+  watchId: string;
+  initial: WireObservation;
+  afterRuns?: number;
+}
+
+/** A delivery's reply (D9 `ChannelSendReply`), its channel the plugin's own. */
+export interface WireSendReply {
+  channel: string;
+  ack: "exact" | "acknowledged" | "none";
+  baseline?: RunBaseline;
+  msgId?: string;
+}
+
+export interface WireInterrupt {
+  wasBusy: boolean;
+  pending: boolean;
+  runs?: number;
+  msgId?: string;
+  incarnation?: string;
+}
+
+export interface WireAbort {
+  before: "idle" | "busy";
+  after: "idle" | "busy";
+  settled: boolean;
+  aborted: boolean;
+  pending: boolean;
+}
+
+export interface WireAnswer {
+  keys: string[];
+  ack: "confirmed" | "unknown";
+}
+
+/** The `watch/settled` or `watch/restarted` notification's params. */
+export type WatchEnd =
+  | { watchId: string; observation: WireObservation }
+  | { watchId: string; incarnation: string };
+
+export function narrowWatchEnd(method: string, x: unknown): Narrowed<WatchEnd> {
+  return narrow((): WatchEnd => {
+    if (method === "watch/settled") {
+      const r = obj(x, "params", ["watchId", "observation"]);
+      return {
+        watchId: str(r.watchId, "params.watchId"),
+        observation: observation(r.observation, "params.observation"),
+      };
+    }
+    const r = obj(x, "params", ["watchId", "incarnation"]);
+    return {
+      watchId: str(r.watchId, "params.watchId"),
+      incarnation: str(r.incarnation, "params.incarnation"),
+    };
+  });
+}
+
+function sendReply(x: unknown, params: Obj, channel: string | undefined): WireSendReply {
+  const r = obj(x, "result", ["channel", "ack", "baseline", "msgId"]);
+  if (r.channel !== channel) fail("result.channel", `the channel's name ${String(channel)}`);
+  if (r.msgId !== undefined && r.msgId !== params.msgId) fail("result.msgId", "the sent msgId");
+  return {
+    channel: r.channel as string,
+    ack: oneOf(r.ack, "result.ack", ["exact", "acknowledged", "none"] as const),
+    ...(r.baseline !== undefined ? { baseline: runBaseline(r.baseline, "result.baseline") } : {}),
+    ...(r.msgId !== undefined ? { msgId: r.msgId as string } : {}),
+  };
+}
+
+function interruptReply(x: unknown, params: Obj): WireInterrupt {
+  const r = obj(x, "result", ["wasBusy", "pending", "runs", "msgId", "incarnation"]);
+  if (r.msgId !== undefined && r.msgId !== params.msgId) fail("result.msgId", "the sent msgId");
+  return {
+    wasBusy: bool(r.wasBusy, "result.wasBusy"),
+    pending: bool(r.pending, "result.pending"),
+    ...(r.runs !== undefined ? { runs: int(r.runs, "result.runs", 0) } : {}),
+    ...(r.msgId !== undefined ? { msgId: r.msgId as string } : {}),
+    ...(r.incarnation !== undefined
+      ? { incarnation: str(r.incarnation, "result.incarnation") }
+      : {}),
+  };
+}
+
+function abortReply(x: unknown): WireAbort {
+  const r = obj(x, "result", ["before", "after", "settled", "aborted", "pending"]);
+  const ctl = ["idle", "busy"] as const;
+  return {
+    before: oneOf(r.before, "result.before", ctl),
+    after: oneOf(r.after, "result.after", ctl),
+    settled: bool(r.settled, "result.settled"),
+    aborted: bool(r.aborted, "result.aborted"),
+    pending: bool(r.pending, "result.pending"),
+  };
+}
+
+function answerReply(x: unknown): WireAnswer {
+  const r = obj(x, "result", ["keys", "ack"]);
+  if (!Array.isArray(r.keys)) fail("result.keys", "an array of keys");
+  return {
+    keys: r.keys.map((k, i) => str(k, `result.keys[${i}]`, 64)),
+    ack: oneOf(r.ack, "result.ack", ["confirmed", "unknown"] as const),
+  };
+}
+
+function watchReply(x: unknown): WireWatch {
+  const r = obj(x, "result", ["watchId", "initial", "afterRuns"]);
+  return {
+    watchId: str(r.watchId, "result.watchId"),
+    initial: observation(r.initial, "result.initial"),
+    ...(r.afterRuns !== undefined ? { afterRuns: int(r.afterRuns, "result.afterRuns", 0) } : {}),
+  };
+}
+
 // ─── Replies, bound to their requests ───────────────────────────────────
 
-/** Each method's reply as mu reads it (D13). Deliveries' fields are the channel adapter's (P6e). */
+/** Each method's reply as mu reads it (D13). */
 export interface MethodReplies {
   "job.start": JobStart;
   "job.lookup": KeyLookup<JobFound>;
@@ -710,13 +891,16 @@ export interface MethodReplies {
   "host.release": null;
   "channel.receipt": MessageCheck;
   /** Exactly the asked agent's reading, keyed `<workstream>/<name>`. */
-  "channel.readStates": Record<string, Obj>;
-  "channel.send": Obj;
-  "channel.fresh": Obj;
-  "channel.interrupt": Obj;
-  "channel.abort": Obj;
-  "channel.answer": Obj;
-  "channel.command": Obj;
+  "channel.readStates": Record<string, WireReading>;
+  "channel.baseline": RunBaseline | null;
+  "channel.lastRun": WireObservation | null;
+  "channel.watch": WireWatch;
+  "channel.send": WireSendReply;
+  "channel.fresh": WireSendReply;
+  "channel.command": WireSendReply;
+  "channel.interrupt": WireInterrupt;
+  "channel.abort": WireAbort;
+  "channel.answer": WireAnswer;
 }
 export type PluginMethod = keyof MethodReplies;
 
@@ -788,16 +972,24 @@ export function replyNarrower<M extends PluginMethod>(
         const mine = key === undefined ? undefined : all[key];
         if (key === undefined || mine === undefined)
           fail(`result.${key ?? "?"}`, "the asked agent's reading");
-        const r = obj(mine, `result.${key}`, Object.keys((mine as Obj | null) ?? {}));
-        str(r.state, `result.${key}.state`, 64);
-        return { [key]: r };
+        return { [key]: reading(mine, `result.${key}`) };
       }
-      default: {
-        const r = value(narrowObject(x));
-        if (r.msgId !== undefined && r.msgId !== params.msgId)
-          fail("result.msgId", "the sent msgId");
-        return r;
-      }
+      case "channel.baseline":
+        return x === null ? null : runBaseline(x, "result");
+      case "channel.lastRun":
+        return x === null ? null : observation(x, "result");
+      case "channel.watch":
+        return watchReply(x);
+      case "channel.send":
+      case "channel.fresh":
+      case "channel.command":
+        return sendReply(x, params, seams.channel?.name);
+      case "channel.interrupt":
+        return interruptReply(x, params);
+      case "channel.abort":
+        return abortReply(x);
+      case "channel.answer":
+        return answerReply(x);
     }
   };
   return (x) => narrow(() => read(x) as MethodReplies[M]);
@@ -853,6 +1045,8 @@ export function loadRefusals(
     if (c.settleText === "none")
       out.push('a plugin channel must declare a settleText other than "none"');
     if (c.fence !== "none") out.push('a plugin channel has no write fence: fence must be "none"');
+    if ((CHANNEL_NAMES as readonly string[]).includes(s.channel.name))
+      out.push(`channel name ${s.channel.name} is a built-in channel's`);
   }
   if (s.job?.channel !== undefined && s.job.channel !== s.channel?.name) {
     out.push(`job.channel ${JSON.stringify(s.job.channel)} is not the channel seam's name`);

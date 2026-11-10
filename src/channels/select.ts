@@ -13,7 +13,7 @@ import { resolveCliCommand, speaksMuCtl } from "../agents/spawn.js";
 import type { AgentRow } from "../agents.js";
 import { ctlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
-import type { ChannelName, ChannelTarget } from "./types.js";
+import { CHANNEL_NAMES, type ChannelName, type ChannelTarget } from "./types.js";
 
 type ChannelRef = Pick<AgentRow, "cli" | "name" | "workstreamName"> & {
   gateToken?: string | null;
@@ -84,6 +84,10 @@ export function channelOf(
   stateDir?: string,
   socket?: string,
 ): ChannelName {
+  // A plugin channel's name (plugins spec D9): the registry resolves it, or refuses it typed.
+  if (agent.channel != null && !(CHANNEL_NAMES as readonly string[]).includes(agent.channel)) {
+    return agent.channel;
+  }
   if (agent.cli === undefined) return "mux";
   if (agent.channel === "hooks") return agent.gateToken != null ? "mux" : "hooks";
   const ref = {

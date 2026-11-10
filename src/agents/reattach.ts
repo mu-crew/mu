@@ -32,6 +32,7 @@ import {
   recoveryBlocker,
 } from "./reattach-check.js";
 import { clearMarker, markerPane, markerPath, publishMarker } from "./reattach-marker.js";
+import { detachedJob, reattachView } from "./reattach-view.js";
 import { spawnerFromEnv } from "./spawn.js";
 import { withSpawnLock } from "./spawn-lock.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
@@ -79,6 +80,8 @@ export async function reattachAgent(
   name: string,
   opts: { ifRevision: number; signal?: AbortSignal; tasks?: readonly string[] },
 ) {
+  // A detached plugin job's row whose view is gone: a new view, the row kept (plugins spec D3).
+  if (detachedJob(db, ws, name) !== undefined) return reattachView(db, ws, name, opts);
   const sock = ctlSocketPath(ws, name, dirname(db.name));
   const mux = await activeMux();
   const session = `mu-${ws}`;

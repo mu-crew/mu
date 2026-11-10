@@ -51,10 +51,13 @@ import {
 } from "./errors.js";
 import {
   type MethodReplies,
+  narrowWatchEnd,
   type Obj,
   type PluginMethod,
   replyNarrower,
   type SeamName,
+  type WatchEnd,
+  type WireWatch,
 } from "./protocol.js";
 import { pluginSession } from "./registry.js";
 
@@ -123,6 +126,46 @@ export async function pluginCall<M extends PluginMethod>(
     },
     replyNarrower(method, params, s.init.seams),
   );
+}
+
+/** How a plugin watch ended: its notification, or `gone` (no answer: the plugin stopped, the watch was cancelled, an invalid notification). */
+export type WatchOutcome = WatchEnd | { gone: string };
+
+/**
+ * `channel.watch` through the one call path, then its one end (D13 Streaming watch). An abort of
+ * `signal` sends `$/cancel {watchId}` and ends it `gone`; a watch lives only in this invocation.
+ */
+export async function pluginWatch(
+  db: Db,
+  plugin: string,
+  params: Obj,
+  fence: Fence | undefined,
+  signal: AbortSignal,
+): Promise<{ start: WireWatch; end: Promise<WatchOutcome> }> {
+  const start = await pluginCall(db, plugin, "channel.watch", params, {
+    kind: "read",
+    ...(fence !== undefined ? { fence } : {}),
+    // Not the watch's signal: an abort before the reply would stop the plugin; after it, it cancels the watch.
+    needs: ["channel"],
+  });
+  const proc = (await pluginSession(db, plugin)).process;
+  const end = new Promise<WatchOutcome>((resolve) => {
+    const cancel = proc.watch(start.watchId, (n) => {
+      signal.removeEventListener("abort", onAbort);
+      if (n.method === "gone") return resolve({ gone: String(n.params) });
+      const r = narrowWatchEnd(n.method, n.params);
+      if (r.ok && r.value.watchId === start.watchId) return resolve(r.value);
+      proc.poison(`an invalid ${n.method} notification (${r.ok ? "another watch" : r.reason})`);
+      resolve({ gone: "an invalid notification" });
+    });
+    const onAbort = (): void => {
+      cancel();
+      resolve({ gone: "cancelled" });
+    };
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
+  return { start, end };
 }
 
 /** The plugin's grace (D13): a `stopping` link run is waited out for one. */

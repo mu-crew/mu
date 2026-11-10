@@ -6,9 +6,10 @@
 import type { StateAgentRef, StateReading } from "../agent-state.js";
 import type { AgentObservation } from "../agents/observe.js";
 import type { AgentRow } from "../agents.js";
+import { getCarrierJobByAgent } from "../carrier-jobs.js";
 import type { ChannelObservation, ChannelReading } from "../channels/types.js";
 import type { Db } from "../db.js";
-import { pluginJobKind } from "../plugins/job.js";
+import { pluginJobKind, pluginJobRef } from "../plugins/job.js";
 import { gateKind } from "./gate.js";
 import { leaseKind } from "./lease.js";
 import { paneKind, paneUp } from "./pane.js";
@@ -85,6 +86,40 @@ export async function withJobLiveness(
   return { ...view, ...(reading.ctl !== undefined ? { ctl: reading.ctl } : {}) };
 }
 
+/** Why the job's liveness says it is gone (ended or lost); undefined: it runs, or unknown (never a death). */
+function goneWhy(l: JobLiveness): string | undefined {
+  if (l.state === "ended") return `the job ended${l.exit === null ? "" : ` (exit ${l.exit})`}`;
+  return l.state === "lost" ? `the job is lost: ${l.reason}` : undefined;
+}
+
+/**
+ * A plugin channel's reading with its job's liveness (plugins spec D9): `alive` is the job's
+ * word, unconditionally; the plugin reports turn state only and never decides it.
+ */
+export function readingWithLiveness(turn: ChannelReading, l: JobLiveness): StateReading {
+  const why = goneWhy(l);
+  if (why === undefined) return { ...turn, alive: true };
+  return { ...turn, state: "unknown", alive: false, reason: why };
+}
+
+/** A plugin channel's observation with its job's liveness: a gone job is a dead agent. */
+export function observationWithLiveness(o: ChannelObservation, l: JobLiveness): AgentObservation {
+  const obs = jobObservation(o);
+  const why = goneWhy(l);
+  return why === undefined ? obs : { ...obs, status: null, settled: false, reason: why };
+}
+
+/** The reading of an agent whose row names a channel no one provides: unknown, never a death. */
+export function unregisteredReading(channel: string): StateReading {
+  return {
+    state: "unknown",
+    source: "none",
+    since: null,
+    alive: true,
+    reason: `channel ${channel} is not registered`,
+  };
+}
+
 declare const JOB_GONE: unique symbol;
 /**
  * The job's word that it is gone. Only `jobUp` mints one, so a channel's
@@ -156,6 +191,19 @@ export function gateJobRef(
     ...(agent.gateToken === null ? {} : { gateToken: agent.gateToken }),
     ...(agent.host === null ? {} : { host: { name: agent.host } }),
   };
+}
+
+/**
+ * Whether agent `agentId`'s job outlives its gone view (plugins spec D3): a detached plugin
+ * kind whose job reads running or unknown. Reconcile keeps such a row; any other is a ghost.
+ */
+export async function detachedJobLives(db: Db, agentId: number): Promise<boolean> {
+  const r = getCarrierJobByAgent(db, agentId);
+  if (r?.plugin == null || pluginJobKind(db, r.plugin)?.caps.view !== "detached") return false;
+  const ref = pluginJobRef(db, r.token);
+  if (ref === undefined) return false;
+  const l = await jobLiveness(db, ref);
+  return l.state === "running" || l.state === "unknown";
 }
 
 /**

@@ -130,7 +130,7 @@ export async function observeAgentStates(
 ): Promise<Map<string, AgentObservation>> {
   const gates = agents.filter((a) => a.gateToken !== null);
   const rest = agents.filter((a) => a.gateToken === null);
-  const readings = await readAgentStates(rest, { stateDir: dirname(db.name) });
+  const readings = await readAgentStates(rest, { stateDir: dirname(db.name), db });
   const out = new Map<string, AgentObservation>(
     rest.map((a) => [agentKey(a), observationFromReading(a, readings.get(agentKey(a)))]),
   );

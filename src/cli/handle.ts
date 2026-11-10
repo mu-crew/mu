@@ -66,6 +66,7 @@ import {
   SpawnTrustDialogError,
 } from "../agents.js";
 import { CarrierStopFailedError, CarrierStopRefusedError } from "../carrier-stop.js";
+import { ChannelUnknownError } from "../channels/registry.js";
 import { CheckArgError, CheckNotFoundError } from "../checks.js";
 import {
   type Db,
@@ -564,6 +565,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof EffectHeldError ||
     err instanceof DeliveryResolvingError ||
     err instanceof EffectFencedError ||
+    // An agent's row names a channel no built-in or registered plugin provides (D9).
+    err instanceof ChannelUnknownError ||
     err instanceof AgentExistsError ||
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||

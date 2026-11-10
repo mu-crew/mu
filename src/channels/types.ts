@@ -20,7 +20,7 @@ import type { AgentObservation, ObservedAgent, ObservedWatch } from "../agents/o
 import type { AgentRow } from "../agents.js";
 import type { CtlCommandName, CtlState } from "../ctl/protocol.js";
 import type { JobGone } from "../jobs/kinds.js";
-import type { JobRef } from "../jobs/types.js";
+import type { JobLiveness, JobRef } from "../jobs/types.js";
 import type { SendOptions } from "../mux.js";
 
 /** The ctl protocol's state facts, as the rest of mu names them. */
@@ -292,6 +292,11 @@ export interface ChannelImpl extends ChannelDelivery {
     signal: AbortSignal,
     opts: { afterRuns?: number; inc?: string },
   ): Promise<ChannelWatch | undefined>;
+  /**
+   * A plugin channel's (plugins spec D9): the agent's job liveness, which decides every
+   * reading's and observation's `alive`, unconditionally (./compose.ts). Absent on a built-in.
+   */
+  readonly liveness?: (agent: { workstreamName: string; name: string }) => Promise<JobLiveness>;
   /** The run count a wait counts from now; undefined when the channel has none or does not answer. */
   baseline(target: ChannelTarget): Promise<RunBaseline | undefined>;
   /** Ask whether the message that carried `msgId` was accepted. Never throws. */

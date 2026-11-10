@@ -13,6 +13,7 @@
 
 import * as agentSdk from "./agents.js";
 import type { Db } from "./db.js";
+import { detachedJobLives } from "./jobs/kinds.js";
 import { activeMux, type MuxPane } from "./mux.js";
 
 /**
@@ -129,6 +130,9 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
     if (agentSdk.isPendingPaneId(agent.paneId)) {
       pendingSurvivors.push(agent);
     } else if (paneById.has(agent.paneId)) {
+      survivors.push(agent);
+    } else if (await detachedJobLives(db, agent.incarnation)) {
+      // Its view is gone, its job is not (plugins spec D3): `mu agent reattach` opens a new view.
       survivors.push(agent);
     } else {
       if (mode !== "full") {

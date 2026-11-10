@@ -209,6 +209,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
     ...(opts.host !== undefined ? { host: opts.host } : {}),
     ...(opts.model !== undefined ? { model: opts.model } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+    ...(sendText !== undefined ? { firstPrompt: sendText } : {}),
   });
   // --next-free may have picked another name than the one asked for.
   const name = agent.name;
@@ -245,7 +246,21 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
       }
     : sendText === undefined
       ? undefined
-      : await spawnSend(db, agent, sendText);
+      : agent.firstSend !== undefined
+        ? // An at-start plugin kind's job.start delivered it (plugins spec D8): never sent again.
+          {
+            ok: true,
+            sentBytes: Buffer.byteLength(sendText),
+            transport: agent.firstSend.transport,
+            ...(agent.firstSend.runs !== undefined ? { runs: agent.firstSend.runs } : {}),
+            ...(agent.firstSend.msgId !== undefined ? { msgId: agent.firstSend.msgId } : {}),
+            ...(agent.firstSend.incarnation !== undefined
+              ? { incarnation: agent.firstSend.incarnation }
+              : {}),
+            delivery: "delivered" as const,
+            delivered: true,
+          }
+        : await spawnSend(db, agent, sendText);
   // A DELIVERED --send owes a wait: arm it for the ACTUAL agent (--next-free may have
   // renamed it), fenced by the runs/incarnation the send measured. Trust-skipped,
   // undelivered and failed or UNKNOWN sends arm nothing.
@@ -728,7 +743,7 @@ export async function cmdAgentShow(
     scrollback = "";
   }
 
-  const reading = (await readAgentStates([agent], { stateDir: dirname(db.name) })).get(
+  const reading = (await readAgentStates([agent], { stateDir: dirname(db.name), db })).get(
     agentKey(agent),
   );
   const displayed = {

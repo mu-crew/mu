@@ -24,7 +24,6 @@ import { reapAgentRow } from "./agents/reap.js";
 import {
   type AnswerResult,
   agentChannel,
-  CHANNEL_NAMES,
   type ChannelName,
   channelTarget,
   deliver,
@@ -384,7 +383,8 @@ function rowFromDb(row: RawAgentRow): AgentRow {
     collectedHead: row.collected_head,
     repo: row.repo,
     gateToken: row.gate_token,
-    channel: CHANNEL_NAMES.find((c) => c === row.channel) ?? null,
+    // Any stored name: a built-in, or a plugin channel the registry resolves (plugins spec D9).
+    channel: row.channel === "" ? null : row.channel,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -842,13 +842,13 @@ export async function readLiveAgents(
   );
   const stateDir = dirname(db.name);
   let readings: ReadonlyMap<string, StateReading>;
-  if (states === undefined) readings = await readAgentStates(baseAgents, { stateDir });
+  if (states === undefined) readings = await readAgentStates(baseAgents, { stateDir, db });
   else {
     const due = states.probe
       ? baseAgents
       : baseAgents.filter((a) => !states.cache.has(agentKey(a)));
     if (due.length > 0) {
-      for (const [k, r] of await readAgentStates(due, { stateDir })) states.cache.set(k, r);
+      for (const [k, r] of await readAgentStates(due, { stateDir, db })) states.cache.set(k, r);
     }
     readings = states.cache;
   }

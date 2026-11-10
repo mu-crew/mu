@@ -16,7 +16,8 @@ import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
 
 export type RuntimeState = "busy" | "needs_input" | "needs_permission" | "unknown";
-export type StateSource = "murmur" | MuxBackendName | "ctl" | "none";
+/** Where a reading came from; a plugin channel's is `plugin:<plugin>` (plugins spec D13). */
+export type StateSource = "murmur" | MuxBackendName | "ctl" | "none" | `plugin:${string}`;
 /** How a pi agent's control socket answered; "n/a" for non-pi agents. */
 export type CtlLink = "ok" | "missing" | "refused" | "n/a";
 

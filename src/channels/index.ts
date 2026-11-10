@@ -37,6 +37,7 @@ export {
 } from "./hooks-spawn.js";
 export { muxChannel } from "./mux.js";
 export {
+  ChannelUnknownError,
   channelNamed,
   isSendReply,
   registerChannel,

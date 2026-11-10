@@ -8,11 +8,18 @@
 // test/channel-names.test.ts).
 
 import { agentKey, readBaseStates, type StateAgentRef, type StateReading } from "../agent-state.js";
-import type { ObservedWatch } from "../agents/observe.js";
-import { jobObservation, stateRefJob, withJobLiveness } from "../jobs/kinds.js";
+import type { AgentObservation, ObservedWatch } from "../agents/observe.js";
+import {
+  jobObservation,
+  observationWithLiveness,
+  readingWithLiveness,
+  stateRefJob,
+  withJobLiveness,
+} from "../jobs/kinds.js";
 import type {
   AgentChannel,
   ChannelImpl,
+  ChannelObservation,
   ChannelReading,
   ChannelReadOptions,
   ChannelWatch,
@@ -31,15 +38,18 @@ type TurnRead = Exclude<ChannelImpl["readTurns"], "base">;
  */
 export async function composedStates(
   agents: readonly StateAgentRef[],
-  channelOf: (a: StateAgentRef) => Pick<ChannelImpl, "readTurns">,
+  channelOf: (a: StateAgentRef) => Pick<ChannelImpl, "readTurns" | "liveness">,
   opts: ChannelReadOptions,
   views: boolean,
 ): Promise<Map<string, StateReading>> {
   const groups = new Map<TurnRead, StateAgentRef[]>();
   const byKey = new Map<string, StateAgentRef>();
+  const liveness = new Map<string, Liveness>();
   for (const a of agents) {
     byKey.set(agentKey(a), a);
-    const read = channelOf(a).readTurns;
+    const c = channelOf(a);
+    if (c.liveness !== undefined) liveness.set(agentKey(a), c.liveness);
+    const read = c.readTurns;
     if (read === "base") continue;
     groups.set(read, [...(groups.get(read) ?? []), a]);
   }
@@ -49,7 +59,10 @@ export async function composedStates(
     for (const [key, turn] of await read(group, opts)) {
       const agent = byKey.get(key);
       if (agent === undefined) continue;
-      if (views && (turn.ctl === "missing" || turn.ctl === "refused")) unanswered.set(key, turn);
+      const live = liveness.get(key);
+      if (live !== undefined) readings.set(key, readingWithLiveness(turn, await live(agent)));
+      else if (views && (turn.ctl === "missing" || turn.ctl === "refused"))
+        unanswered.set(key, turn);
       else readings.set(key, await withJobLiveness(turn, stateRefJob(agent)));
     }
   }
@@ -71,6 +84,44 @@ export async function composedStates(
   return readings;
 }
 
+type Liveness = NonNullable<ChannelImpl["liveness"]>;
+
+/** An observation of a plugin channel's agent: dead when its job is gone. */
+async function liveObservation(o: ChannelObservation, live: Liveness): Promise<AgentObservation> {
+  return observationWithLiveness(o, await live({ workstreamName: o.workstream, name: o.name }));
+}
+
+let livenessPollMs = 5_000;
+/** TEST SEAM: how often a plugin channel's open watch asks the job's liveness. */
+export function setLivenessPollForTests(ms: number | undefined): void {
+  livenessPollMs = ms ?? 5_000;
+}
+
+/**
+ * A plugin channel's watch: its observations are dead when the job is gone, asked at the start,
+ * at the end, and while it is open (a job that dies mid-turn ends the watch dead).
+ */
+function liveWatch(w: ChannelWatch, live: Liveness, signal: AbortSignal): ObservedWatch {
+  const { workstream: ws, name } = w.initial;
+  const died = new Promise<AgentObservation>((resolve) => {
+    const tick = async (): Promise<void> => {
+      if (signal.aborted) return;
+      const o = observationWithLiveness(w.initial, await live({ workstreamName: ws, name }));
+      if (o.status === null) resolve(o);
+      else timer = setTimeout(tick, livenessPollMs);
+    };
+    let timer = setTimeout(tick, livenessPollMs);
+    const stop = (): void => clearTimeout(timer);
+    signal.addEventListener("abort", stop, { once: true });
+    void w.settled.finally(stop).catch(() => {});
+  });
+  return {
+    initial: jobObservation(w.initial),
+    ...(w.afterRuns !== undefined ? { afterRuns: w.afterRuns } : {}),
+    settled: Promise.race([w.settled.then((o) => liveObservation(o, live)), died]),
+  };
+}
+
 /** A channel watch as the wait reads it. */
 function observedWatch(w: ChannelWatch): ObservedWatch {
   return {
@@ -90,13 +141,25 @@ export async function composedWatch(
 
 /** The channel implementation served as mu reaches it. Frozen: no caller replaces a read. */
 export function composeChannel(impl: ChannelImpl): AgentChannel {
+  const live = impl.liveness;
   return Object.freeze({
     ...impl,
     readStates: (agents, opts) => composedStates(agents, () => impl, opts, false),
-    watch: (target, signal, opts) => composedWatch(impl.watch(target, signal, opts)),
+    watch: async (target, signal, opts) => {
+      if (live === undefined) return composedWatch(impl.watch(target, signal, opts));
+      const w = await impl.watch(target, signal, opts);
+      if (w === undefined) return undefined;
+      const watch = liveWatch(w, live, signal);
+      // A job gone before the watch began: its initial state is dead too.
+      const initial = await liveObservation(w.initial, live);
+      return initial.status === null
+        ? { ...watch, initial, settled: Promise.resolve(initial) }
+        : watch;
+    },
     lastRun: async (target, opts) => {
       const r = await impl.lastRun(target, opts);
-      return r === undefined ? undefined : jobObservation(r);
+      if (r === undefined) return undefined;
+      return live === undefined ? jobObservation(r) : liveObservation(r, live);
     },
   } satisfies AgentChannel);
 }

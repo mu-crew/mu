@@ -13,7 +13,9 @@ import {
   narrowLinkRun,
   PLUGIN_SCHEMA_DIGEST,
   PLUGIN_SCHEMA_FILE,
+  type PluginMethod,
   parseMessage,
+  replyNarrower,
 } from "../src/plugins/protocol.js";
 import { ROOT } from "./_imports.js";
 import { validates } from "./_json-schema.js";
@@ -332,7 +334,95 @@ const FIXTURES: Fixture[] = [
     [{ step: "s", ok: "yes", detail: "" }],
     false,
   ],
+  // The channel seam's replies (P6e), through the request-bound narrower.
+  ...channelFixtures(),
 ];
+
+/** The channel replies: one narrower per method, bound to a request naming msgId `m1` and agent ws/a. */
+function channelFixtures(): Fixture[] {
+  const seams = { channel: { name: "cloud", caps: CHANNEL } } as never;
+  const params = { targets: [{ agent: { workstream: "ws", name: "a" } }], msgId: "m1" };
+  const reply = (m: PluginMethod) => (x: unknown) => replyNarrower(m, params, seams)(x);
+  const turn = { since: null, runs: 2, incarnation: "i1" };
+  const obs = { status: "idle", settled: true, ...turn, lastText: "done" };
+  return [
+    [
+      "a reading",
+      "readStates",
+      reply("channel.readStates"),
+      { "ws/a": { state: "busy", ...turn } },
+      true,
+    ],
+    [
+      "a reading without runs",
+      "reading",
+      reply("channel.readStates"),
+      { "ws/a": { state: "busy", since: null, incarnation: "i" } },
+      false,
+    ],
+    [
+      "a reading of a dead agent",
+      "reading",
+      reply("channel.readStates"),
+      { "ws/a": { state: "dead", ...turn } },
+      false,
+    ],
+    ["an observation", "observation", reply("channel.lastRun"), obs, true],
+    [
+      "an observation with alive",
+      "observation",
+      reply("channel.lastRun"),
+      { ...obs, alive: false },
+      false,
+    ],
+    ["no last run", "lastRun", reply("channel.lastRun"), null, true],
+    ["a baseline", "channelBaseline", reply("channel.baseline"), { runs: 0 }, true],
+    [
+      "a watch",
+      "watchResult",
+      reply("channel.watch"),
+      { watchId: "w1", initial: obs, afterRuns: 1 },
+      true,
+    ],
+    ["a watch without its id", "watchResult", reply("channel.watch"), { initial: obs }, false],
+    [
+      "a send reply",
+      "sendReply",
+      reply("channel.send"),
+      { channel: "cloud", ack: "exact", baseline: { runs: 1 }, msgId: "m1" },
+      true,
+    ],
+    [
+      "a send reply with another ack",
+      "sendReply",
+      reply("channel.send"),
+      { channel: "cloud", ack: "confirmed" },
+      false,
+    ],
+    [
+      "an interrupt",
+      "interruptResult",
+      reply("channel.interrupt"),
+      { wasBusy: true, pending: false, runs: 2 },
+      true,
+    ],
+    [
+      "an abort",
+      "abortOutcome",
+      reply("channel.abort"),
+      { before: "busy", after: "idle", settled: true, aborted: true, pending: false },
+      true,
+    ],
+    [
+      "an abort without settled",
+      "abortOutcome",
+      reply("channel.abort"),
+      { before: "busy", after: "idle", aborted: true, pending: false },
+      false,
+    ],
+    ["an answer", "answerResult", reply("channel.answer"), { keys: ["1"], ack: "unknown" }, true],
+  ];
+}
 
 describe("schemas/plugin-protocol-v1.json", () => {
   it("the handshake's digest is the sha256 of the file's exact bytes", () => {

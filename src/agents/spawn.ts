@@ -31,6 +31,7 @@ import {
   recordCarrierPane,
   setCarrierJobStop,
 } from "../carrier-jobs.js";
+import type { ChannelName, SendResult } from "../channels/types.js";
 import { CTL_SOCK_ENV, ctlSocketPath } from "../ctl/path.js";
 import {
   type Db,
@@ -40,6 +41,7 @@ import {
   WorkstreamTornDownError,
 } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
+import { resolveHost } from "../host-provider.js";
 import {
   bindHostChannel,
   type HostLease,
@@ -84,6 +86,7 @@ import {
 } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
 import { withSpawnLock } from "./spawn-lock.js";
+import { pluginKindOf, spawnPluginAgent } from "./spawn-plugin.js";
 import { launchCommand } from "./spawn-presets.js";
 import {
   awaitCtlHandshake,
@@ -341,6 +344,8 @@ export interface SpawnAgentOptions {
   orchestrator?: boolean;
   /** `--model`: passed to the harness through its row's model flag (spec D17). Local only. */
   model?: string;
+  /** `--send`'s text: an at-start plugin kind's job.start carries it (plugins spec D8); others ignore it. */
+  firstPrompt?: string;
 }
 
 /** How many taken names a `nextFree` spawn skips past before it gives up. */
@@ -392,6 +397,8 @@ export type SpawnedAgent = AgentRow & {
   ctlIncarnation?: string;
   /** Set when the startup scan saw a Claude trust dialog parked in the pane. */
   trustDialog?: true;
+  /** An at-start plugin kind's first prompt, delivered by its job.start (plugins spec D8). */
+  firstSend?: SendResult;
 };
 
 /**
@@ -484,6 +491,12 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
   const windowName = opts.tab ?? opts.name;
   const cli = opts.cli ?? "pi";
   const resolved = resolveCliCommandWithSource(cli);
+  // A host whose job kind is a plugin's takes the plugin spawn path (plugins spec D8).
+  const pluginHost = opts.host === undefined ? undefined : resolveHost(db, opts.host);
+  const pluginKind = pluginHost === undefined ? undefined : pluginKindOf(pluginHost);
+  if (pluginHost !== undefined && pluginKind !== undefined) {
+    return spawnPluginAgent(db, opts, pluginHost, pluginKind, spawnerFromEnv());
+  }
   // A remote command runs on the host: the local PATH and local
   // $MU_<CLI>_COMMAND knobs say nothing about it.
   // Admission (below) re-reads it inside the transaction that counts the cap:
@@ -1196,9 +1209,11 @@ export function spawnerFromEnv(env: NodeJS.ProcessEnv = process.env): string | n
  * row (the placeholder vanished mid-spawn; reconcile's pending-pane
  * prune skip guards against that).
  */
-function finalizeAgentRow(
+export function finalizeAgentRow(
   db: Db,
   args: {
+    /** A plugin job kind's channel (plugins spec D8): recorded as is. */
+    channel?: ChannelName | undefined;
     opts: SpawnAgentOptions;
     cli: string;
     paneId: string;
@@ -1227,7 +1242,8 @@ function finalizeAgentRow(
   // pi's control socket (or, on the D15 fallback, its pane inbox), a hook harness's
   // pane inbox on tmux (local or remote), else the mux.
   const channel =
-    gateToken !== undefined
+    args.channel ??
+    (gateToken !== undefined
       ? "mux"
       : args.piHooks
         ? "hooks"
@@ -1235,7 +1251,7 @@ function finalizeAgentRow(
           ? "ctl"
           : args.hooks
             ? "hooks"
-            : "mux";
+            : "mux");
   if (staged === undefined) {
     const row: InsertAgentInput = {
       ...(args.reservation !== undefined ? { reservation: args.reservation } : {}),

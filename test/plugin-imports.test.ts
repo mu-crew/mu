@@ -36,7 +36,18 @@ describe("the plugin adapter's boundary", () => {
       ],
       "src/plugins/registry.ts": ["src/cli/handle.ts", "src/cli/plugin.ts"],
       "src/plugins/link.ts": ["src/host-provider.ts"],
-      "src/plugins/job.ts": ["src/host-provider.ts", "src/jobs/kinds.ts", "src/host-policy.ts"],
+      "src/plugins/job.ts": [
+        "src/host-provider.ts",
+        "src/jobs/kinds.ts",
+        "src/host-policy.ts",
+        // P6e: the plugin spawn path, its rollback, the detached view, a plugin row's job ref.
+        "src/agents/spawn-plugin.ts",
+        "src/agents/lease-carrier.ts",
+        "src/agents/reattach-view.ts",
+        "src/channels/dispatch.ts",
+      ],
+      // P6e: the channel adapter, loaded by the channel dispatch.
+      "src/plugins/channel.ts": ["src/channels/dispatch.ts"],
       // P6d: the provider adapter, wired into resolveHost and the host verbs.
       "src/plugins/provider.ts": ["src/host-provider.ts", "src/host-lifecycle.ts"],
       "src/plugins/reconcile.ts": ["src/host-lifecycle.ts"],

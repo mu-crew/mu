@@ -1,5 +1,5 @@
 // mu — the job adapter (plugins spec D8, D13): a plugin's job seam as a
-// `JobKind`, bound views only until P6e drives the spawn path.
+// `JobKind`, driven by the plugin spawn path (src/agents/spawn-plugin.ts).
 //
 // What mu computes stays mu's: the kind's identity (the stop fence: the
 // registration's handshake instance), every key (a job's start key is its job
@@ -14,6 +14,7 @@ import {
   fillCarrierJob,
   getCarrierJob,
   markPluginJobLaunch,
+  recordFirstInc,
   unlaunchPluginJob,
 } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
@@ -122,12 +123,14 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
           method: "job.start",
           params,
           alongside: (inst) => {
-            if (!markPluginJobLaunch(db, key, inst)) {
+            if (!markPluginJobLaunch(db, key, inst, spec.firstPrompt?.msgId)) {
               throw new Error(`job record ${key} is not an unlaunched ${name} job`);
             }
           },
           record: (r) => {
             if (r.handle !== undefined) fillCarrierJob(db, key, r.handle);
+            if (r.baseline?.incarnation !== undefined)
+              recordFirstInc(db, key, r.baseline.incarnation);
           },
           refused: () => unlaunchPluginJob(db, key, "the plugin refused the start"),
         });

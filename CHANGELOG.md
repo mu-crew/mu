@@ -12,6 +12,41 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Plugins: the channel adapter, the plugin spawn path and detached views**
+  (plugins spec P6e1: D3, D8, D9, D13). A plugin's `channel` seam is a
+  registered channel (`src/plugins/channel.ts`), loaded from the plugins table
+  under its name; its readings' source is `plugin:<plugin>`. Reads
+  (`channel.readStates`, `baseline`, `receipt`, `lastRun`) go through the one
+  call path; `channel.watch` streams: its reply, then one `watch/settled` or
+  `watch/restarted` notification, `$/cancel {watchId}` on abort. Every
+  delivery (`send`, `fresh`, `command`, `interrupt`, `abort`, `answer`) is an
+  effect, written ahead with the agent's next `delivery_seq`; a capability
+  that is `none` refuses with the built-ins' typed error before anything is
+  written, and a job on a `lost` host takes no delivery. A plugin channel
+  never decides liveness: every reading, watch and last run is composed with
+  the job's `job.status`, unconditionally (an ended or lost job reads dead
+  whatever turn state the plugin reports; `unknown` is never a death), and an
+  open watch asks it while it waits. Spawn on a provider host or a `--plugin`
+  profile whose plugin declares a job seam (`src/agents/spawn-plugin.ts`):
+  honour or refuse, then the job record (a provider host's atomic admission),
+  the site (a `--worktree` pushed and made from the caller's commit), the
+  `job.start` effect with the whole `JobSpec`, then a read-only view (stdin
+  `/dev/null`) and the row on the kind's channel; readiness is the channel's
+  `baseline` within `MU_SPAWN_JOB_MS`, and a failure after the start stops the
+  job by its handle. An `at-start` kind's `--send` text goes only with
+  `job.start` (its msgId as `first_msg_id`, the opening incarnation as
+  `first_inc`), never as a send; such a spawn without a prompt refuses
+  (`JobSpecUnsupportedError`, exit 2). Detached views: reconcile keeps a row
+  whose view is gone while its job runs, `agent close` stops the job before it
+  kills the view, and `agent reattach` opens a new view by `job.attach` and
+  compares-and-sets the row's pane, keeping its incarnation. A live agent's
+  close on a provider host runs its final collect from the row before the
+  tree. A row whose channel no built-in or registered plugin provides is
+  `ChannelUnknownError` (exit 4) for a verb and reads `unknown`. The protocol
+  schema gains the channel replies (one digest change). Not yet driven
+  (P6e2): `--task` on an `at-start` kind, `mu agent check` on a first
+  prompt, spawn replay by lookup, in-life collects at observed settles, the
+  wait's deadline timer and `mu state`'s notices.
 - **Plugins: provider hosts** (plugins spec P6d, D1, D5, D6, D7 G3, D10).
   `mu host acquire <name> --provider <plugin> [--param k=v]… [--repo
   <path>]` writes a `hosts` record and its `host.acquire` effect in one

@@ -160,7 +160,7 @@ export {
 } from "./carrier-jobs.js";
 export { CarrierStopFailedError, CarrierStopRefusedError, runStop } from "./carrier-stop.js";
 export { ctlRuntimeState } from "./channels/ctl.js";
-export { readAgentStates } from "./channels/index.js";
+export { ChannelUnknownError, readAgentStates } from "./channels/index.js";
 export {
   CheckArgError,
   CheckNotFoundError,

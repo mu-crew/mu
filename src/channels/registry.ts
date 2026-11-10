@@ -50,14 +50,49 @@ export function registerChannel(impl: ChannelImpl): AgentChannel {
   return channel;
 }
 
-/** The channel registered as `name`; undefined for a null, absent or unknown name. */
-export function channelNamed(name: ChannelName | null | undefined): AgentChannel | undefined {
-  return name == null ? undefined : channels().get(name);
+/** Plugin channels by name, as the DB they were loaded from declared them (src/plugins/channel.ts). */
+const plugins = new Map<string, { db: object; plugin: string; channel: AgentChannel }>();
+
+/**
+ * A plugin's channel, served composed. Loaded from a DB's registrations (`loadPluginChannels`),
+ * again for another DB handle; a built-in's name is never a plugin's.
+ */
+export function registerPluginChannel(db: object, plugin: string, impl: ChannelImpl): void {
+  if (channels().has(impl.name)) return;
+  const had = plugins.get(impl.name);
+  if (had?.db === db && had.plugin === plugin) return;
+  plugins.set(impl.name, { db, plugin, channel: composeChannel(impl) });
 }
 
-/** Every registered channel, built-ins first. */
+/**
+ * The channel registered as `name` (a reading's `source` `plugin:<plugin>` names its plugin's);
+ * undefined for a null, absent or unknown name.
+ */
+export function channelNamed(name: ChannelName | null | undefined): AgentChannel | undefined {
+  if (name == null) return undefined;
+  const c = channels().get(name) ?? plugins.get(name)?.channel;
+  if (c !== undefined || !name.startsWith("plugin:")) return c;
+  const plugin = name.slice("plugin:".length);
+  return [...plugins.values()].find((p) => p.plugin === plugin)?.channel;
+}
+
+/** An agent's row names a channel no built-in or registered plugin provides (D5, D9). Exit 4. */
+export class ChannelUnknownError extends Error {
+  override readonly name = "ChannelUnknownError";
+  constructor(
+    public readonly agentName: string,
+    public readonly workstream: string,
+    public readonly channel: string,
+  ) {
+    super(
+      `agent ${agentName} is on channel ${channel}, which no built-in or registered plugin provides: register its plugin again (mu plugin add), or close the agent`,
+    );
+  }
+}
+
+/** Every registered channel, built-ins first, then the loaded plugin channels. */
 export function registeredChannels(): AgentChannel[] {
-  return [...channels().values()];
+  return [...channels().values(), ...[...plugins.values()].map((p) => p.channel)];
 }
 
 /** Test-only: drop a channel a test registered. The built-ins cannot be dropped. */
@@ -66,6 +101,7 @@ export function unregisterChannelForTests(name: ChannelName): void {
     throw new Error(`channel ${name} is built in`);
   }
   channels().delete(name);
+  plugins.delete(name);
 }
 
 /** True for a reply in the normalized form (it names its `channel`; today's results name a `transport`). */

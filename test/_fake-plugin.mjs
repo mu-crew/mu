@@ -48,6 +48,13 @@
 // replies ({ "<method>": <result> }: that method's reply, verbatim, whatever it
 // is asked; the contract tests' malformed and foreign answers).
 //
+// The channel seam (declared through `seams.channel`) keeps its agents in the same
+// file: each a dense turn count, an incarnation and the running turn, which a
+// delivery (or an at-start job.start's firstPrompt) begins and which settles
+// `turnMs` later (default 100) with text `done: <prompt>`. channelState forces
+// every reading's and observation's state (the liveness plants); watchSilent: a
+// watch is answered but never notified.
+//
 // The host seam (declared through `seams.host`) keeps its hosts in the same
 // backend file: hosts by acquire key, and the effects that happened (`acquires`,
 // `releases`). Config: hostFacts (merged into an acquire's facts), hostGone (a
@@ -228,6 +235,76 @@ const hostByHandle = (b, handle) =>
 const save = (b) => writeFileSync(jobsPath, JSON.stringify(b));
 const byHandle = (b, handle) => Object.values(b.jobs).find((j) => j.start.handle === handle);
 
+/**
+ * The channel's agents, by `<workstream>/<name>`: a dense turn count, an incarnation and the
+ * running turn, which settles `turnMs` after its delivery (read lazily: the fake lives only as
+ * long as one mu invocation). A settled turn's text is `done: <prompt>`.
+ */
+function agentOf(b, target) {
+  const t = target?.agent ?? {};
+  b.agents ??= {};
+  const key = `${t.workstream}/${t.name}`;
+  b.agents[key] ??= { runs: 0, inc: "inc-1", turn: null, lastText: null };
+  const a = b.agents[key];
+  if (a.turn !== null && Date.now() >= a.turn.settleAt) endTurn(a);
+  return a;
+}
+function startTurn(a, text, c) {
+  a.turn = { text, settleAt: Date.now() + (c.turnMs ?? 100) };
+}
+function endTurn(a, error) {
+  a.runs += 1;
+  a.lastText = error ? null : `done: ${a.turn.text}`;
+  a.lastError = error ?? null;
+  a.turn = null;
+}
+function observe(a, settled, c) {
+  return {
+    status: c.channelState ?? (a.turn ? "busy" : "idle"),
+    settled,
+    since: null,
+    runs: a.runs,
+    incarnation: a.inc,
+    ...(settled && a.lastText !== null ? { lastText: a.lastText } : {}),
+    ...(settled && a.lastError ? { lastError: a.lastError } : {}),
+  };
+}
+
+/** Open watches: their timers, by watchId. */
+const watches = new Map();
+
+/** `channel.watch`: the reply, then one `watch/settled` once a turn past `afterRuns` settled. */
+function watch(id, params, c) {
+  const b = backend();
+  const a = agentOf(b, params.target);
+  save(b);
+  const watchId = `w-${id}`;
+  const after = params.afterRuns ?? (a.turn ? a.runs : a.runs);
+  reply(id, { watchId, initial: observe(a, false, c), afterRuns: after });
+  if (c.watchSilent) return;
+  const notify = () => {
+    watches.delete(watchId);
+    const now = backend();
+    const x = agentOf(now, params.target);
+    save(now);
+    if (x.runs > after) {
+      write({
+        jsonrpc: "2.0",
+        method: "watch/settled",
+        params: { watchId, observation: observe(x, true, c) },
+      });
+    } else if (x.turn !== null) {
+      watches.set(watchId, setTimeout(notify, Math.max(0, x.turn.settleAt - Date.now()) + 5));
+    } else watches.set(watchId, setTimeout(notify, 50));
+  };
+  if (a.runs > after) notify();
+  else
+    watches.set(
+      watchId,
+      setTimeout(notify, a.turn ? Math.max(0, a.turn.settleAt - Date.now()) + 5 : 50),
+    );
+}
+
 /** The job seam and the deliveries, over the fake backend. Undefined: not one of these. */
 function backendAnswer(method, params, c) {
   const b = backend();
@@ -236,9 +313,14 @@ function backendAnswer(method, params, c) {
       const seen = b.jobs[params.key];
       if (seen !== undefined) return seen.start;
       b.starts += 1;
+      // An at-start kind's first prompt begins turn 1 (D8): its baseline is runs 0.
+      const first = params.spec?.firstPrompt;
+      const a = first ? agentOf(b, { agent: params.spec }) : undefined;
+      if (a !== undefined) startTurn(a, first.text, c);
       const start = {
         view: { command: c.viewCommand ?? "sleep 600", env: {} },
         ...(c.seams?.job?.handle === "file" ? {} : { handle: `job-${b.starts}` }),
+        ...(a !== undefined ? { baseline: { runs: 0, incarnation: a.inc } } : {}),
       };
       // A file-handle kind's handle is the one its view pane would publish.
       const fileHandle = c.seams?.job?.handle === "file" ? `file-job-${b.starts}` : undefined;
@@ -276,13 +358,71 @@ function backendAnswer(method, params, c) {
     case "channel.send":
     case "channel.fresh":
     case "channel.command": {
-      if (b.sends[params.msgId] === undefined) {
+      const msgId = params.msgId ?? `cmd-${b.deliveries + 1}`;
+      if (b.sends[msgId] === undefined) {
         b.deliveries += 1;
-        b.sends[params.msgId] = { channel: c.seams?.channel?.name ?? "fake", ack: "exact" };
+        const a = agentOf(b, params.target);
+        const baseline = { runs: a.runs, incarnation: a.inc };
+        startTurn(a, params.text ?? `/${params.name}`, c);
+        b.sends[msgId] = {
+          channel: c.seams?.channel?.name ?? "fake",
+          ack: "exact",
+          baseline,
+          ...(params.msgId ? { msgId } : {}),
+        };
         save(b);
       }
-      return b.sends[params.msgId];
+      return b.sends[msgId];
     }
+    case "channel.readStates": {
+      const out = {};
+      for (const t of params.targets ?? []) {
+        const a = agentOf(b, t);
+        out[`${t.agent?.workstream}/${t.agent?.name}`] = {
+          state: c.channelState ?? (a.turn ? "busy" : "idle"),
+          since: null,
+          runs: a.runs,
+          incarnation: a.inc,
+        };
+      }
+      save(b);
+      return out;
+    }
+    case "channel.baseline": {
+      const a = agentOf(b, params.target);
+      save(b);
+      return { runs: a.runs, incarnation: a.inc };
+    }
+    case "channel.lastRun": {
+      const a = agentOf(b, params.target);
+      save(b);
+      return a.runs > params.afterRuns ? observe(a, true, c) : null;
+    }
+    case "channel.interrupt": {
+      const a = agentOf(b, params.target);
+      const wasBusy = a.turn !== null;
+      if (wasBusy) endTurn(a, "interrupted");
+      b.deliveries += 1;
+      const runs = a.runs;
+      startTurn(a, params.text, c);
+      save(b);
+      return { wasBusy, pending: false, runs, msgId: params.msgId, incarnation: a.inc };
+    }
+    case "channel.abort": {
+      const a = agentOf(b, params.target);
+      const busy = a.turn !== null;
+      if (busy) endTurn(a, "aborted");
+      save(b);
+      return {
+        before: busy ? "busy" : "idle",
+        after: "idle",
+        settled: true,
+        aborted: busy,
+        pending: false,
+      };
+    }
+    case "channel.answer":
+      return { keys: params.keys, ack: "unknown" };
     case "host.acquire": {
       const seen = hostsOf(b)[params.key];
       if (seen !== undefined) return seen.facts;
@@ -341,6 +481,9 @@ function answer(id, method, params) {
     return;
   }
   switch (method) {
+    case "channel.watch":
+      watch(id, params, c);
+      return;
     case "link.exec":
       run(id, ["/bin/sh", "-c", params.script], resolve(home, params.cwd), params.timeoutMs, (r) =>
         reply(
@@ -417,6 +560,11 @@ function onMessage(msg) {
       `${configPath}.log`,
       `${JSON.stringify({ method: msg.method, params: msg.params })}\n`,
     );
+    if (msg.params?.watchId !== undefined) {
+      clearTimeout(watches.get(msg.params.watchId));
+      watches.delete(msg.params.watchId);
+      return;
+    }
     const id = msg.params?.id;
     // replyOnCancel: answer the cancelled call at once (mu must ignore it, and wait on).
     if (config().replyOnCancel) {

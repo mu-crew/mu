@@ -249,13 +249,27 @@ export function markCarrierLaunch(db: Db, token: string): boolean {
  * A plugin job's launch (`launching`, D1): written with its `job.start` effect, in the effect's
  * transaction, recording the instance the start goes to (the job's stop fence).
  */
-export function markPluginJobLaunch(db: Db, token: string, instance: string): boolean {
+export function markPluginJobLaunch(
+  db: Db,
+  token: string,
+  instance: string,
+  /** An at-start kind's first delivery (D8 G1b): its msgId, written with the start's intent. */
+  firstMsgId?: string,
+): boolean {
   return (
     db
       .prepare(
-        "UPDATE carrier_jobs SET launch = 'intent', instance = ? WHERE token = ? AND plugin IS NOT NULL AND job IS NULL",
+        "UPDATE carrier_jobs SET launch = 'intent', instance = ?, first_msg_id = COALESCE(?, first_msg_id) WHERE token = ? AND plugin IS NOT NULL AND job IS NULL",
       )
-      .run(instance, token).changes === 1
+      .run(instance, firstMsgId ?? null, token).changes === 1
+  );
+}
+
+/** The opening incarnation of an at-start kind's first turn, from its start's baseline (D8 G1b). */
+export function recordFirstInc(db: Db, token: string, inc: string): void {
+  db.prepare("UPDATE carrier_jobs SET first_inc = ? WHERE token = ? AND first_inc IS NULL").run(
+    inc,
+    token,
   );
 }
 

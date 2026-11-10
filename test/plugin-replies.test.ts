@@ -314,7 +314,10 @@ describe("a reply is checked against its request: a failing one is unknown, neve
     await setup();
     f.set({
       replies: {
-        "channel.readStates": { "ws/a1": { state: "idle" }, "other/agent": { state: "running" } },
+        "channel.readStates": {
+          "ws/a1": { state: "idle", since: null, runs: 0, incarnation: "i" },
+          "other/agent": { state: "running" },
+        },
       },
     });
     const key = seedDelivery("channel.abort", "m1");

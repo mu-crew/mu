@@ -226,6 +226,9 @@ interface Pending {
 
 type Unrefable = { ref?: () => void; unref?: () => void };
 
+/** How a watch ended: its notification, or `gone` (the plugin stopped; `params` says why). */
+export type WatchNote = { method: string; params: unknown };
+
 export class PluginProcess {
   readonly pgid: number;
   /** The group leader's start time, where the platform tells it (Linux), for D4's group proof. */
@@ -241,6 +244,11 @@ export class PluginProcess {
   private stderrDone = false;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
+  /** Open watches by id (D13 Streaming watch): their one notification, or the stop, ends each. */
+  private readonly watches = new Map<string, (end: WatchNote) => void>();
+  /** Watches mu cancelled: a notification for one that crossed the cancel is ignored. */
+  private readonly cancelled = new Set<string>();
+  private readonly early = new Map<string, WatchNote>();
   private leaderExit: string | undefined;
   private leaderExitAt: number | null = null;
   private readonly leaderGone: Promise<void>;
@@ -364,7 +372,7 @@ export class PluginProcess {
         settled = true;
         disarm();
         this.pending.delete(id);
-        this.refStreams(this.pending.size > 0);
+        this.refStreams(this.busy());
         fn();
       };
       // A deadline or an abort stops the plugin: the one stop sequence owns it from here.
@@ -388,6 +396,35 @@ export class PluginProcess {
       // Written in this same turn, so a stop can never find it registered but unsent.
       pending.sent = this.write(line);
     });
+  }
+
+  /**
+   * Route watch `id`'s notification to `on`, once; a stop ends it with `gone`. The plugin stays
+   * referenced while a watch is open. Returns the cancel: `$/cancel {watchId}`, then nothing more.
+   */
+  watch(id: string, on: (end: WatchNote) => void): () => void {
+    if (this.state === "stopping" || this.state === "gone") {
+      on({ method: "gone", params: this.broken ?? this.state });
+      return () => {};
+    }
+    const early = this.early.get(id);
+    if (early !== undefined) {
+      this.early.delete(id);
+      on(early);
+      return () => {};
+    }
+    this.watches.set(id, on);
+    this.refStreams(true);
+    return () => {
+      if (!this.watches.delete(id)) return;
+      this.cancelled.add(id);
+      this.refStreams(this.busy());
+      this.write(encodeMessage({ jsonrpc: "2.0", method: "$/cancel", params: { watchId: id } }));
+    };
+  }
+
+  private busy(): boolean {
+    return this.pending.size > 0 || this.watches.size > 0;
   }
 
   /** A normal exit's stop. Idempotent. */
@@ -429,6 +466,8 @@ export class PluginProcess {
       this.child.stdin?.destroy();
       const reason = `${why}${this.stderrHead ? `: ${this.stderrLine()}` : ""}`;
       for (const p of [...this.pending.values()]) p.reject(new RpcUnanswered(reason, p.sent));
+      for (const on of [...this.watches.values()]) on({ method: "gone", params: reason });
+      this.watches.clear();
       this.state = "gone";
       this.refStreams(false);
       live.delete(this);
@@ -477,9 +516,22 @@ export class PluginProcess {
     const m = parsed.value;
     if (m.type === "notification") {
       // A watch owns its notifications; with none open, one is unexpected.
-      if (this.onNotification !== undefined) {
+      const id = (m.params as { watchId?: unknown }).watchId;
+      const on = typeof id === "string" ? this.watches.get(id) : undefined;
+      if (on !== undefined && typeof id === "string") {
+        this.watches.delete(id);
+        this.refStreams(this.busy());
+        on({ method: m.method, params: m.params });
+      } else if (this.onNotification !== undefined) {
         this.onNotification(m.method, m.params);
-      } else {
+      } else if (typeof id === "string" && !this.cancelled.has(id)) {
+        // A settled turn is reported at once, maybe before mu has read the watch's reply:
+        // held until the reply's caller claims it, at most until the next macrotask.
+        this.early.set(id, { method: m.method, params: m.params });
+        setImmediate(() => {
+          if (this.early.delete(id)) this.poison(`an unexpected notification ${m.method}`);
+        });
+      } else if (typeof id !== "string") {
         this.poison(`an unexpected notification ${m.method}`);
       }
       return;

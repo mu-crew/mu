@@ -38,6 +38,7 @@ import {
   agentChannel,
   type ChannelName,
   type ChannelTarget,
+  ChannelUnknownError,
   channelTarget,
   ctlChannel,
   type DeliveryTarget,
@@ -1082,10 +1083,12 @@ describe("the agents row decides the channel", () => {
     expect(raw.channel).toBe("ctl");
   });
 
-  it("an unknown stored value reads null, so the row is derived", () => {
+  it("an unknown stored value is kept, and a verb on it refuses typed (plugins spec D9, P6e)", () => {
     rowWith("rx", "pi", null);
     db.prepare("UPDATE agents SET channel = 'later' WHERE name = 'rx'").run();
-    expect(getAgent(db, "rx", WS)?.channel).toBeNull();
+    const row = getAgent(db, "rx", WS);
+    expect(row?.channel).toBe("later");
+    expect(() => agentChannel(channelTarget(db, row as AgentRow))).toThrow(ChannelUnknownError);
   });
 
   it("a `ctl` row of a non-pi cli key is on ctl: its silent socket is unreachable, not a send-unsupported", async () => {

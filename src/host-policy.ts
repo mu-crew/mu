@@ -7,6 +7,7 @@
 
 import { CarrierJobKeptError, CarrierJobUnresolvedError } from "./agents/errors.js";
 import type { LeaseClose } from "./agents/lease-carrier.js";
+import { getAgent } from "./agents.js";
 import {
   abandonCarrierJob,
   bumpStopGen,
@@ -196,6 +197,9 @@ async function finalCollect(db: Db, r: CarrierJob): Promise<void> {
   const rec = recoveriesFor(db, r.workstream, r.name).find(
     (x) => x.host === r.host && x.cwd === r.treePath,
   );
+  // A live agent's close (its row still names the tree): collected from the row.
+  const live = getAgent(db, r.name, r.workstream);
+  const fromRow = live?.host === r.host && live.cwd === r.treePath;
   const owed = (why: string): never => {
     throw new CarrierJobKeptError(
       r.name,
@@ -204,20 +208,18 @@ async function finalCollect(db: Db, r: CarrierJob): Promise<void> {
       `job ${r.job ?? "-"} is stopped, but its final collect is owed (${why})`,
     );
   };
-  if (rec === undefined) return owed("no recovery record names its tree");
-  if (r.collectRepo === null)
-    return owed(`mu agent collect ${r.name} --recovery ${rec.agentId} --repo <local repo>`);
+  if (rec === undefined && !fromRow) return owed("no recovery record names its tree");
+  const by = rec === undefined ? "" : ` --recovery ${rec.agentId}`;
+  if (r.collectRepo === null) return owed(`mu agent collect ${r.name}${by} --repo <local repo>`);
   try {
     await collectRemoteAgentLocked(db, {
       workstream: r.workstream,
       name: r.name,
       repo: r.collectRepo,
-      recoveryId: rec.agentId,
+      ...(rec !== undefined && !fromRow ? { recoveryId: rec.agentId } : {}),
     });
   } catch (e) {
-    owed(
-      `${e instanceof Error ? e.message : String(e)}; mu agent collect ${r.name} --recovery ${rec.agentId}`,
-    );
+    owed(`${e instanceof Error ? e.message : String(e)}; mu agent collect ${r.name}${by}`);
   }
   if (getCarrierJob(db, r.token)?.finalOwed !== false) owed("the collect did not clear it");
 }

@@ -543,6 +543,134 @@
         }
       ]
     },
+    "turnState": {
+      "description": "A plugin's turn state: blocked is a pending dialog. A plugin never reports a death: mu reads the job's liveness.",
+      "enum": ["idle", "busy", "blocked", "unknown"]
+    },
+    "reading": {
+      "description": "One agent's reading: its turn state, its dense turn count (0 before any settle, one more per settled turn) and its channel incarnation.",
+      "type": "object",
+      "required": ["state", "since", "runs", "incarnation"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "$ref": "#/$defs/turnState" },
+        "since": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
+        "runs": { "type": "integer", "minimum": 0 },
+        "incarnation": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "pending": { "type": "boolean" }
+      }
+    },
+    "readStates": {
+      "description": "channel.readStates's result: readings keyed <workstream>/<name>; only the asked agent's is read.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/reading" }
+    },
+    "observation": {
+      "description": "A watch's or a last run's observation, without the identity fields mu adds from its row.",
+      "type": "object",
+      "required": ["status", "settled", "since", "runs", "incarnation"],
+      "additionalProperties": false,
+      "properties": {
+        "status": { "$ref": "#/$defs/turnState" },
+        "settled": { "type": "boolean" },
+        "since": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
+        "runs": { "type": "integer", "minimum": 0 },
+        "incarnation": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "reason": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "pending": { "type": "boolean" },
+        "lastText": { "type": "string", "maxLength": 65536 },
+        "lastTextTruncated": { "type": "boolean" },
+        "lastError": { "type": "string", "maxLength": 4096 }
+      }
+    },
+    "channelBaseline": {
+      "description": "channel.baseline's result: the turn count a wait counts from, or null.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/baseline" }]
+    },
+    "lastRun": {
+      "description": "channel.lastRun's result: the settled turn past afterRuns, or null.",
+      "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/observation" }]
+    },
+    "watchResult": {
+      "description": "channel.watch's result. One notification (watch/settled or watch/restarted) ends the watch; mu ends it early with $/cancel {watchId}.",
+      "type": "object",
+      "required": ["watchId", "initial"],
+      "additionalProperties": false,
+      "properties": {
+        "watchId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "initial": { "$ref": "#/$defs/observation" },
+        "afterRuns": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "watchSettled": {
+      "description": "watch/settled's params.",
+      "type": "object",
+      "required": ["watchId", "observation"],
+      "additionalProperties": false,
+      "properties": {
+        "watchId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "observation": { "$ref": "#/$defs/observation" }
+      }
+    },
+    "watchRestarted": {
+      "description": "watch/restarted's params: the agent's channel restarted under another incarnation.",
+      "type": "object",
+      "required": ["watchId", "incarnation"],
+      "additionalProperties": false,
+      "properties": {
+        "watchId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "incarnation": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "sendReply": {
+      "description": "channel.send, fresh and command's result (ChannelSendReply): channel is the seam's name, msgId the sent one.",
+      "type": "object",
+      "required": ["channel", "ack"],
+      "additionalProperties": false,
+      "properties": {
+        "channel": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "ack": { "enum": ["exact", "acknowledged", "none"] },
+        "baseline": { "$ref": "#/$defs/baseline" },
+        "msgId": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "interruptResult": {
+      "description": "channel.interrupt's result.",
+      "type": "object",
+      "required": ["wasBusy", "pending"],
+      "additionalProperties": false,
+      "properties": {
+        "wasBusy": { "type": "boolean" },
+        "pending": { "type": "boolean" },
+        "runs": { "type": "integer", "minimum": 0 },
+        "msgId": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "incarnation": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
+    "abortOutcome": {
+      "description": "channel.abort's result.",
+      "type": "object",
+      "required": ["before", "after", "settled", "aborted", "pending"],
+      "additionalProperties": false,
+      "properties": {
+        "before": { "enum": ["idle", "busy"] },
+        "after": { "enum": ["idle", "busy"] },
+        "settled": { "type": "boolean" },
+        "aborted": { "type": "boolean" },
+        "pending": { "type": "boolean" }
+      }
+    },
+    "answerResult": {
+      "description": "channel.answer's result.",
+      "type": "object",
+      "required": ["keys", "ack"],
+      "additionalProperties": false,
+      "properties": {
+        "keys": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+        "ack": { "enum": ["confirmed", "unknown"] }
+      }
+    },
     "null": { "description": "job.stop's and host.release's result.", "type": "null" }
   }
 }

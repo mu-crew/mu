@@ -9,10 +9,12 @@ This page is the normative prose. The machine-readable schema is
 [`schemas/plugin-protocol-v1.json`](../../schemas/plugin-protocol-v1.json),
 shipped in the package. Terms are in [VOCABULARY](../VOCABULARY.md#plugins-hosts-and-jobs).
 
-Status: this build drives the **link** seam (`mu host add --plugin`). The
-host, job and channel seams are declared and validated at the handshake.
-Their methods (`host.*`, `job.*`, `channel.*`), effect keys and the watch
-stream are not yet called.
+Status: this build drives every seam: the **link** (`mu host add
+--plugin`), the **host** (`mu host acquire --provider`), the **job** (spawn,
+stop, reattach of an agent on a plugin host) and the **channel** (its agents'
+reads, watches and deliveries). Not yet driven: a `--task` spawn on an
+`at-start` kind, `mu agent check` on its first prompt, and the deadline and
+in-life collect timers inside `mu wait`.
 
 ## Registration and trust
 
@@ -32,7 +34,8 @@ mu plugin rm <name>
   Running `add` again with the same argv re-checks the plugin and records
   its new declaration. A different argv for a registered name is refused
   (`mu plugin rm` first).
-- `rm` is refused while a host profile names the plugin.
+- `rm` is refused while a host profile, a host record, a job record or an
+  effect names the plugin.
 - mu does not hash the binary. The handshake's `instance` is the fence.
 
 A host profile uses a plugin as its link:
@@ -43,8 +46,9 @@ mu host add box --plugin <name> [--fetch '<template>'] [--repo …] [--max-sessi
 
 Such a profile has no `--shell` and no `--exec`. Its `--fetch` template
 runs when the plugin's link declares `fetch: false`, and is required
-then; a link that declares `fetch: true` needs none. Spawning an agent on
-it is refused until the plugin job kind ships.
+then; a link that declares `fetch: true` needs none. An agent spawns on it
+through the plugin's job seam (below); a link-only plugin's host takes no
+spawn.
 
 ## Transport
 
@@ -214,6 +218,78 @@ wire calls.
 A spawn that requests a `JobSpec` field the kind does not `honours` (a
 `read-only` role, a `--command`, the sockets of an agent on ctl) is refused
 before any call (exit 2); mu never drops the field.
+
+A spawn on a plugin host (`mu agent spawn <name> --host <h>`, a provider
+host or a `--plugin` profile whose plugin declares `job`) runs in this
+order, each step before the next one's effect:
+
+1. Refusals, before anything is written: a field the kind does not
+   `honours`, a kind without `channel` (its agents' own channel is not
+   driven yet), a backend that cannot run a command line (herdr), an
+   `at-start` kind without `--send`.
+2. The job record (the name's fence; a provider host's admission: `ready`,
+   outside the deadline margin, under `maxJobs`).
+3. The site. A `--worktree` on a provider host resolves `--from` (default
+   `HEAD`) in the caller's checkout, `link.push`es it when declared, and
+   makes the tree from that commit; the record owes its final collect.
+4. `job.start` with the whole `JobSpec`. An `at-start` kind's
+   `firstPrompt` is `--send`'s text: that delivery goes only here, never as
+   a `channel.send`.
+5. The view: a pane running the start's `view` command with stdin from
+   `/dev/null`, and the agent row on the kind's channel.
+6. Readiness: the start's `baseline` (an `at-start` kind), else
+   `channel.baseline` answering within `MU_SPAWN_JOB_MS`. A failure after
+   the start stops the job (`job.stop`) before the tree and the record go.
+
+A `bound` view's death ends the job: `agent close` kills the view, then
+stops the job. A `detached` job outlives its view: reconcile keeps a row
+whose view is gone while `job.status` reads `running` or `unknown`, `agent
+close` stops the job before it kills the view, and `agent reattach` opens a
+new view from `job.attach` on the same row.
+
+### The channel
+
+A plugin channel's `name` is the agents' `agents.channel`, and its readings'
+source is `plugin:<plugin>`. It never decides liveness: mu asks the job's
+`job.status` for every reading, watch and last run, and an `ended` or
+`lost` job reads dead whatever turn state the plugin reports (`unknown` is
+never a death). A turn state is `idle`, `busy`, `blocked` (a pending
+dialog) or `unknown`; `runs` is dense (0 before any settle, one more per
+settled turn in the incarnation); `incarnation` names the channel's
+session.
+
+| Method | Params beyond `target`, `deadline` | Result |
+| --- | --- | --- |
+| `channel.readStates` | `targets` (mu asks one agent per call) | `{"<workstream>/<name>": {state, since, runs, incarnation, reason?, pending?}}` |
+| `channel.baseline` | — | `{runs, incarnation?}` or `null` |
+| `channel.receipt` | `msgId` | `{state: "accepted", id, runs?, at?, incarnation?}`, `{state: "not-accepted", id}`, `{state: "unreachable", id, reason}` |
+| `channel.lastRun` | `afterRuns`, `inc?` | the settled turn past `afterRuns` as an observation, or `null` |
+| `channel.watch` | `afterRuns?`, `inc?` | `{watchId, initial, afterRuns?}`, then one notification |
+| `channel.send` (effect) | `text`, `msgId`, `mode` (`followUp`, `steer`), `force`, `firstPrompt` (never true for an `at-start` kind), `expectIncarnation?` | `{channel, ack, baseline?, msgId?}` |
+| `channel.fresh` (effect) | `text`, `msgId`, `force`, `expectIncarnation?` | as `send` |
+| `channel.command` (effect) | `name`, `instructions?`, `force`, `expectIncarnation?` | as `send` |
+| `channel.interrupt` (effect) | `text`, `msgId`, `timeoutMs`, `expectIncarnation?` | `{wasBusy, pending, runs?, msgId?, incarnation?}` |
+| `channel.abort` (effect) | `timeoutMs` | `{before, after, settled, aborted, pending}` (`idle` or `busy`) |
+| `channel.answer` (effect) | `keys`, `force` | `{keys, ack}` (`confirmed` or `unknown`) |
+
+An observation is `{status, settled, since, runs, incarnation, reason?,
+pending?, lastText?, lastTextTruncated?, lastError?}`: mu adds the agent's
+identity from its own row. A send reply's `channel` is the seam's name, its
+`msgId` the one sent; `baseline` is the turn count before the turn the
+delivery started, which the delivery's wait counts from.
+
+The watch streams. After the reply the plugin sends exactly one
+notification, `watch/settled {watchId, observation}` once a turn past
+`afterRuns` settled (at once if one already has), or `watch/restarted
+{watchId, incarnation}` when the channel restarted. mu ends a watch early
+with `$/cancel {watchId}`; a notification that crosses the cancel is
+ignored. A watch lives only in the invocation that asked.
+
+A capability that is `none` or `false` means mu never calls that method:
+`steer: "none"` refuses `send --steer`, `fresh` other than `in-place`
+refuses `send --fresh`, `interrupt: "none"` refuses interrupt and abort,
+`answer` and `command` false refuse theirs, each with the built-ins' typed
+error. A job on a `lost` host takes no delivery.
 
 ### Effects and replay
 

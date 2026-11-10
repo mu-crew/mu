@@ -68,7 +68,7 @@ export class JobSpecUnsupportedError extends HostProfileError {
   constructor(
     public readonly host: string,
     public readonly kind: string,
-    public readonly field: "role" | "command" | "sockets",
+    public readonly field: "role" | "command" | "sockets" | "prompt",
     detail: string,
   ) {
     super(`host ${host}'s job kind ${kind} does not honour ${detail}: refused before anything ran`);
@@ -76,7 +76,7 @@ export class JobSpecUnsupportedError extends HostProfileError {
 }
 
 /** Honour or refuse: every requested field the kind enforces, or the spawn refuses. */
-function refuseUnhonoured(host: HostView, kind: JobKind, opts: SpawnAgentOptions): void {
+export function refuseUnhonoured(host: HostView, kind: JobKind, opts: SpawnAgentOptions): void {
   const h = kind.caps.honours ?? HONOURS_ALL;
   const role = opts.role === "read-only" ? "read-only" : "full-access";
   const refuse = (field: JobSpecUnsupportedError["field"], detail: string): never => {
