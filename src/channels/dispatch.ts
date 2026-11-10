@@ -50,6 +50,7 @@ export function channelTarget<A extends ObservedAgent>(
   const pluginJob = record?.plugin != null ? pluginJobRef(db, record.token) : undefined;
   return {
     agent,
+    db,
     stateDir: dirname(db.name),
     ...(socket !== undefined ? { socket } : {}),
     ...(remote !== undefined ? { remote } : {}),
@@ -89,7 +90,7 @@ function remoteOf(
 
 /** The channel `target.agent` is on: the one its row recorded at spawn (see `expectsCtl`). */
 export function agentChannel(target: ChannelTarget): AgentChannel {
-  return channelFor(target.agent, target.stateDir, target.socket);
+  return channelFor(target.agent, target.stateDir, target.socket, target.db);
 }
 
 /** The registered channel named by `channelOf`; a name none provides refuses (`ChannelUnknownError`). */
@@ -97,9 +98,10 @@ function channelFor(
   agent: Parameters<typeof channelOf>[0],
   stateDir?: string,
   socket?: string,
+  db?: object,
 ): AgentChannel {
   const name = channelOf(agent, stateDir, socket);
-  const channel = channelNamed(name);
+  const channel = channelNamed(name, db);
   if (channel === undefined) throw new ChannelUnknownError(agent.name, agent.workstreamName, name);
   return channel;
 }
@@ -120,7 +122,7 @@ export async function readAgentStates(
   const gates = agents.filter((a) => a.gateToken !== undefined && a.gateToken !== null);
   // A row on a channel nothing provides reads unknown (a verb on it refuses, typed).
   const unregistered = agents.filter(
-    (a) => !gates.includes(a) && channelNamed(channelOf(a, opts.stateDir)) === undefined,
+    (a) => !gates.includes(a) && channelNamed(channelOf(a, opts.stateDir), opts.db) === undefined,
   );
   const rest = agents.filter((a) => !gates.includes(a) && !unregistered.includes(a));
   const readings = await readChannelStates(rest, opts);
@@ -163,7 +165,12 @@ async function markQueued(
 /** Each agent's state, read by its channel and composed with its job's liveness (./compose.ts). */
 function readChannelStates(
   agents: readonly StateAgentRef[],
-  opts: { now?: number; stateDir?: string },
+  opts: { now?: number; stateDir?: string; db?: Db },
 ): Promise<Map<string, StateReading>> {
-  return composedStates(agents, (a) => channelFor(a, opts.stateDir), opts, true);
+  return composedStates(
+    agents,
+    (a) => channelFor(a, opts.stateDir, undefined, opts.db),
+    opts,
+    true,
+  );
 }

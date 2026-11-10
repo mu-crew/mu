@@ -124,6 +124,7 @@ export async function spawnPluginAgent(
   let cwd = opts.cwd ?? host.record?.repo ?? host.profile?.repo ?? ".";
   let paneId: string | undefined;
   let owned: number | undefined;
+  let viewDone: Promise<unknown> = Promise.resolve();
   try {
     if (opts.worktree && provider && localRepo !== undefined) {
       const placeholder = await withAgentLock(db, ws, name, async () =>
@@ -223,7 +224,8 @@ export async function spawnPluginAgent(
           name,
           cli,
           command: viewLine(started.view.command),
-          commandSource: "cli-key",
+          // mu's own command line, never the harness's: a backend that starts its agent kinds itself refuses it.
+          commandSource: "explicit",
           ...(started.view.cwd !== undefined ? { cwd: started.view.cwd } : {}),
           env: started.view.env,
           onPaneCreated: onCreated,
@@ -231,6 +233,7 @@ export async function spawnPluginAgent(
         done.catch(() => {});
         const pid = await Promise.race([created, done]);
         paneId = pid;
+        viewDone = done;
         recordCarrierPane(db, token, pid);
         const r: AgentRow = finalizeAgentRow(db, {
           opts,
@@ -257,6 +260,8 @@ export async function spawnPluginAgent(
         return r;
       }),
     );
+    // The backend's own completion: a view that failed after it reported its pane rolls back.
+    await viewDone;
     const baseline = started.baseline ?? (await readiness(db, row));
     emitEvent(
       db,

@@ -282,11 +282,20 @@ describe("the normalized send reply (ChannelSendReply, D9/D13)", () => {
     expect(sentRun({ channel: "cloud", ack: "none" })).toEqual({});
   });
 
-  it("converts to today's SendResult, whose wait baseline is the same", () => {
+  it("converts to today's SendResult, whose wait baseline is the same; its ack is kept (P6e1 ruling 5)", () => {
     const result = toSendResult({ ...cloud, msgId: "m1" });
-    expect(result).toEqual({ transport: "cloud", runs: 7, incarnation: "s", msgId: "m1" });
+    expect(result).toEqual({
+      transport: "cloud",
+      channelAck: cloud.ack,
+      runs: 7,
+      incarnation: "s",
+      msgId: "m1",
+    });
     expect(sentRunBaseline(result)).toEqual({ runs: 7, incarnation: "s" });
-    expect(toSendResult({ channel: "cloud", ack: "none" })).toEqual({ transport: "cloud" });
+    expect(toSendResult({ channel: "cloud", ack: "none" })).toEqual({
+      transport: "cloud",
+      channelAck: "none",
+    });
   });
 
   it("each built-in's result reads as the normalized reply", () => {

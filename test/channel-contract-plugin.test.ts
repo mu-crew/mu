@@ -62,10 +62,16 @@ describe("the fake plugin's channel: the contract", () => {
     expect((await ch.receipt(t, "m-other")).state).toBe("not-accepted");
   });
 
-  it("a reply is normalized: its baseline is the wait's, and --json prints today's SendResult", async () => {
+  it("a reply is normalized: its baseline is the wait's, its ack kept, --json today's SendResult", async () => {
     const { t } = await live();
     const sent = await deliver(t, "one", { msgId: "m-1" });
-    expect(sent).toEqual({ transport: "cloud", runs: 0, incarnation: "inc-1", msgId: "m-1" });
+    expect(sent).toEqual({
+      transport: "cloud",
+      channelAck: "exact",
+      runs: 0,
+      incarnation: "inc-1",
+      msgId: "m-1",
+    });
     expect(sentRun(sent)).toEqual({ baseline: { runs: 0, incarnation: "inc-1" } });
   });
 

@@ -46,7 +46,7 @@ import type {
   WireTurnState,
 } from "./protocol.js";
 import { type Fence, pluginCall, pluginWatch, runEffect } from "./reconcile.js";
-import { listPlugins, pluginSeams } from "./registry.js";
+import { getPlugin, listPlugins, pluginSeams } from "./registry.js";
 
 /** A plugin's turn state as mu's runtime state: idle is waiting for input, blocked a dialog. */
 const RUNTIME = {
@@ -60,7 +60,13 @@ const RUNTIME = {
 export function loadPluginChannels(db: Db): void {
   for (const row of listPlugins(db)) {
     const c = pluginSeams(row).channel;
-    if (c !== undefined) registerPluginChannel(db, row.name, pluginChannel(db, row.name, c));
+    if (c === undefined) continue;
+    registerPluginChannel(db, {
+      plugin: row.name,
+      name: c.name,
+      registration: `${row.caps_json}\0${row.instance}`,
+      build: () => pluginChannel(db, row.name, c),
+    });
   }
 }
 
@@ -73,6 +79,7 @@ export function pluginChannel(
   decl: { name: string; caps: ChannelCaps },
 ): ChannelImpl {
   const { name, caps } = decl;
+  const atStart = (): boolean => pluginSeams(getPlugin(db, plugin)).job?.firstTurn === "at-start";
   const source = `plugin:${plugin}` as const;
 
   /** The agent's row and job record: the wire target (D13) and the instance its job went to. */
@@ -189,7 +196,7 @@ export function pluginChannel(
     },
     sendRun: (s) => ({
       channel: name,
-      ack: caps.receipt,
+      ack: s.channelAck ?? caps.receipt,
       ...(s.msgId !== undefined ? { msgId: s.msgId } : {}),
       ...(s.runs !== undefined
         ? {
@@ -312,7 +319,8 @@ export function pluginChannel(
         msgId,
         mode: opts.mode ?? "followUp",
         force: opts.force === true,
-        firstPrompt: opts.firstPrompt === true,
+        // An at-start kind's first prompt went with job.start (D8): no send is ever one.
+        firstPrompt: opts.firstPrompt === true && !atStart(),
         ...expect(opts.expectIncarnation),
       };
       return sent(await deliver(t, "channel.send", p, msgId));

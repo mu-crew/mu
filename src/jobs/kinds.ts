@@ -102,9 +102,36 @@ export function readingWithLiveness(turn: ChannelReading, l: JobLiveness): State
   return { ...turn, state: "unknown", alive: false, reason: why };
 }
 
-/** A plugin channel's observation with its job's liveness: a gone job is a dead agent. */
-export function observationWithLiveness(o: ChannelObservation, l: JobLiveness): AgentObservation {
-  const obs = jobObservation(o);
+/**
+ * A plugin channel's observation as the requested target's (plugins spec D9, P6e1 review ruling
+ * 3): its identity is the target's, a foreign observation or a gone verdict the channel carried
+ * is an unknown turn, and only the target's job liveness makes it dead.
+ */
+export function targetObservation(
+  o: ChannelObservation,
+  target: Pick<AgentRow, "workstreamName" | "name" | "incarnation" | "paneId">,
+  l: JobLiveness,
+): AgentObservation {
+  const foreign =
+    o.workstream !== target.workstreamName ||
+    o.name !== target.name ||
+    o.agentId !== target.incarnation;
+  const id = {
+    workstream: target.workstreamName,
+    name: target.name,
+    agentId: target.incarnation,
+    paneId: target.paneId,
+  };
+  const obs: AgentObservation = foreign
+    ? {
+        ...id,
+        source: o.source,
+        status: "unknown",
+        since: null,
+        settled: false,
+        reason: "an observation of another agent",
+      }
+    : { ...o, ...id, status: isJobGone(o.status) ? "unknown" : o.status };
   const why = goneWhy(l);
   return why === undefined ? obs : { ...obs, status: null, settled: false, reason: why };
 }

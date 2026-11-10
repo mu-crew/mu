@@ -1234,7 +1234,9 @@ recorded on every host record, job record and effect row. Every stop,
 release, ask and resend is fenced on it (D4).
 
 **Every call** carries `deadline`, and every effect also carries `key`.
-Every host, link, job and channel call carries a serialisable `target`:
+Every host, link, job and channel call carries a serialisable `target`
+(`channel.readStates` carries `targets`, a list of them, and answers a map
+keyed by each one's agent):
 
 ```ts
 {
@@ -1265,7 +1267,7 @@ computed by mu (D7, D8); they are not wire calls.
 | `host.acquire`, `host.lookup`, `host.status`, `host.release` | `params`; `fence`; `handle` | as D6 |
 | `link.exec`, `link.fetch`, `link.push`, `link.checkSteps` | as D7; `checkSteps` takes `CheckContext` without `db` and `host`: `{phase, root?, agent?}` | `LinkRun`, steps |
 | `job.start` (the whole `JobSpec`, with `commandSource`, and `firstPrompt` for an `at-start` kind), `job.lookup`, `job.status`, `job.stop`, `job.attach`, `job.checkSteps` | as D8, plus `phase` | as D8. An `at-start` kind's `JobStart` carries `baseline`, and `job.lookup`'s `found` is that `JobStart`. |
-| `channel.readStates`, `channel.baseline`, `channel.receipt`, `channel.lastRun` | as D9 | readings and observations. A plugin reading's `source` is `plugin:<name>`, and `StateSource` (`src/agent-state.ts:12`) widens to admit it. A plugin reading must carry `runs` and `incarnation`, its turn count and channel incarnation, which today only ctl fills. `runs` is dense (D1): 0 before any settle, then one more per settled turn, never a backend's sequence id. |
+| `channel.readStates`, `channel.baseline`, `channel.receipt`, `channel.lastRun` | as D9; `readStates` takes `targets` in place of `target` | readings and observations. A plugin reading's `source` is `plugin:<name>`, and `StateSource` (`src/agent-state.ts:12`) widens to admit it. A plugin reading must carry `runs` and `incarnation`, its turn count and channel incarnation, which today only ctl fills. `runs` is dense (D1): 0 before any settle, then one more per settled turn, never a backend's sequence id. |
 | `channel.watch` | `afterRuns?`, `inc?` | `{watchId, initial, afterRuns?}`, then one notification. A turn past `afterRuns` that already settled is reported at once, as ctl's `wait` does. |
 | `channel.send` | `text`, `msgId`, `mode: "followUp" \| "steer"`, `force`, `firstPrompt` (a flag, never true for an `at-start` kind, whose first prompt went with `job.start`), `expectIncarnation?` | `ChannelSendReply` (D9) |
 | `channel.fresh` | `text`, `msgId`, `force`, `expectIncarnation?` | `ChannelSendReply` |

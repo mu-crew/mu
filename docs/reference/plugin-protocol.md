@@ -234,7 +234,9 @@ order, each step before the next one's effect:
    makes the tree from that commit; the record owes its final collect.
 4. `job.start` with the whole `JobSpec`. An `at-start` kind's
    `firstPrompt` is `--send`'s text: that delivery goes only here, never as
-   a `channel.send`.
+   a `channel.send` (every later send carries `firstPrompt: false`). Its
+   reply, and its `job.lookup`'s `found`, must carry `baseline` with `runs:
+   0`: anything else is an invalid reply, so the start's outcome is unknown.
 5. The view: a pane running the start's `view` command with stdin from
    `/dev/null`, and the agent row on the kind's channel.
 6. Readiness: the start's `baseline` (an `at-start` kind), else
@@ -245,7 +247,10 @@ A `bound` view's death ends the job: `agent close` kills the view, then
 stops the job. A `detached` job outlives its view: reconcile keeps a row
 whose view is gone while `job.status` reads `running` or `unknown`, `agent
 close` stops the job before it kills the view, and `agent reattach` opens a
-new view from `job.attach` on the same row.
+new view from `job.attach` on the same row (refused before the call on a
+backend that cannot run a command line). A view the backend fails to start,
+even after it reported the pane, fails the spawn (the job is stopped) or the
+reattach (the row keeps its pane).
 
 ### The channel
 
@@ -253,7 +258,9 @@ A plugin channel's `name` is the agents' `agents.channel`, and its readings'
 source is `plugin:<plugin>`. It never decides liveness: mu asks the job's
 `job.status` for every reading, watch and last run, and an `ended` or
 `lost` job reads dead whatever turn state the plugin reports (`unknown` is
-never a death). A turn state is `idle`, `busy`, `blocked` (a pending
+never a death). An observation or reading is the asked agent's: one about
+another agent, or one with no reading at all, is an unknown turn, and its
+liveness is still the asked job's. A turn state is `idle`, `busy`, `blocked` (a pending
 dialog) or `unknown`; `runs` is dense (0 before any settle, one more per
 settled turn in the incarnation); `incarnation` names the channel's
 session.

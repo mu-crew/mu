@@ -78,6 +78,8 @@ export interface ChannelTarget {
   agent: ObservedAgent;
   stateDir?: string;
   socket?: string;
+  /** The DB the target was built from (`channelTarget`): a plugin channel resolves in it alone. */
+  db?: object;
   /**
    * A remote hook harness worker (spec D11): its state lives on its host and
    * reaches the local pane's inbox only through this reader. Set by
@@ -215,6 +217,8 @@ export interface ChannelReadOptions {
  */
 export interface SentFacts {
   transport?: ChannelName;
+  /** A plugin channel's own reply's ack, kept as the plugin gave it (plugins spec D9). */
+  channelAck?: ChannelSendReply["ack"];
   runs?: number;
   incarnation?: string;
   ack?: "confirmed" | "unknown" | "sent";
@@ -345,6 +349,8 @@ export interface AgentChannel extends Omit<ChannelImpl, "watch" | "lastRun"> {
 /** What a delivery did. The ctl-only fields are absent on `hooks` and `mux`. */
 export type SendResult = {
   transport: ChannelName;
+  /** A plugin channel only: its reply's normalized ack, as the plugin gave it (plugins spec D9). */
+  channelAck?: "exact" | "acknowledged" | "none";
   /**
    * hooks only: `confirmed` when the agent's `run_count` rose (or a new
    * session started a run) within `MU_SEND_ACK_MS` of the paste, else

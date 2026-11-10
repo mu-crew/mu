@@ -43,8 +43,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   close on a provider host runs its final collect from the row before the
   tree. A row whose channel no built-in or registered plugin provides is
   `ChannelUnknownError` (exit 4) for a verb and reads `unknown`. The protocol
-  schema gains the channel replies (one digest change). Not yet driven
-  (P6e2): `--task` on an `at-start` kind, `mu agent check` on a first
+  schema gains the channel replies (one digest change). Review fixes: a
+  plugin channel is resolved per DB handle and registration, never by a
+  process-wide name; a view whose backend fails after it reported its pane
+  fails the spawn (its job stopped) or the reattach (the row keeps its pane);
+  reattach refuses on a backend that cannot run a view, and a view is never
+  labelled the harness's own command; composition is by the requested target
+  (a missing reading, a foreign observation or a stale gone verdict never
+  decides liveness); an at-start start's reply must open at `runs: 0`, and
+  later sends carry `firstPrompt: false`; a plugin's send ack is kept
+  (`SendResult.channelAck`). Not yet driven (P6e2): `--task` on an `at-start` kind, `mu agent check` on a first
   prompt, spawn replay by lookup, in-life collects at observed settles, the
   wait's deadline timer and `mu state`'s notices.
 - **Plugins: provider hosts** (plugins spec P6d, D1, D5, D6, D7 G3, D10).

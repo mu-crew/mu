@@ -7,6 +7,7 @@
 import { getAgent } from "../agents.js";
 import { type CarrierJob, getCarrierJobByAgent } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
+import { HostSpawnUnsupportedError } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
@@ -73,8 +74,10 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
       if (await viewPresent(d.paneId)) refuseOpen(db, ws, name, d.paneId);
       const ref = pluginJobRef(db, d.r.token);
       if (ref === undefined) throw new AgentReplacedError(name, ws);
-      const view = await d.kind.attach(db, ref);
       const mux = await activeMux();
+      // A view runs a command line: refused before any call where the backend cannot (D3).
+      if (!mux.runsShellCommand) throw new HostSpawnUnsupportedError(d.r.host, mux.name);
+      const view = await d.kind.attach(db, ref);
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
         onCreated = res;
@@ -85,7 +88,7 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
         name,
         cli: getAgent(db, name, ws)?.cli ?? "pi",
         command: `exec </dev/null; ${view.command}`,
-        commandSource: "cli-key",
+        commandSource: "explicit",
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
         env: view.env,
         onPaneCreated: onCreated,
@@ -93,6 +96,8 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
       try {
+        // The backend's own completion: a view that failed is never the row's pane.
+        await done;
         db.transaction(() => {
           const row = db
             .prepare("UPDATE agents SET pane_id = ?, updated_at = ? WHERE id = ? AND pane_id = ?")

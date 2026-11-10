@@ -932,15 +932,25 @@ export function replyNarrower<M extends PluginMethod>(
   seams: PluginSeams,
 ): (x: unknown) => Narrowed<MethodReplies[M]> {
   const reply = seams.job?.handle === "reply";
+  /** An at-start kind's start (and its lookup's `found`) opens its first turn at runs 0 (D8). */
+  const opening = (r: Partial<JobStart>, path: string): void => {
+    if (seams.job?.firstTurn === "at-start" && r.baseline?.runs !== 0) {
+      fail(`${path}.baseline`, "an at-start kind's opening baseline, runs 0");
+    }
+  };
   const read = (x: unknown): unknown => {
     switch (method) {
       case "job.start": {
         const r = jobStart(x, "result");
         if (reply && r.handle === undefined) fail("result.handle", 'the handle of a "reply" kind');
+        opening(r, "result");
         return r;
       }
-      case "job.lookup":
-        return value(keyLookup(jobFound(reply))(x));
+      case "job.lookup": {
+        const r = value(keyLookup(jobFound(reply))(x));
+        if ("found" in r) opening(r.found, "result.found");
+        return r;
+      }
       case "job.status":
         return value(narrowJobLiveness(x));
       case "job.attach":
