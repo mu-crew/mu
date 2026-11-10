@@ -32,8 +32,9 @@ const rel = (path: string): string => relative(ROOT, path).split(sep).join("/");
  * Each is a feature of one built-in channel that a plugin channel never gets.
  */
 const PINNED: Readonly<Record<string, number>> = {
-  // 1. The hooks brief file and session wait.
-  'src/agents/task-spawn.ts#drive === "hooks"': 2,
+  // 1. The hooks brief file and session wait (the `sending` journal is drive's closure since P6e2).
+  'src/agents/task-spawn.ts#drive === "hooks"': 1,
+  'src/agents/task-spawn.ts#journal === "hooks"': 1,
   // 2. The hooks turn failure: its read and its acknowledgement.
   'src/next-recover.ts#idleAtError === "hooks"': 1,
   'src/next-recover.ts#observeWorkers === "hooks"': 1,

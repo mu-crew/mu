@@ -81,7 +81,9 @@ async function wait(...refs: string[]): Promise<{ data: Record<string, unknown>;
   } catch (e) {
     exit = (e as { exitCode?: number }).exitCode ?? -1;
   }
-  const line = out.mock.calls.map((c) => String(c[0])).find((l) => l.startsWith("{"));
+  const line = out.mock.calls
+    .map((c: unknown[]) => String(c[0]))
+    .find((l: string) => l.startsWith("{"));
   const env = JSON.parse(line ?? "{}") as { data?: Record<string, unknown> };
   return { data: env.data ?? {}, exit };
 }
