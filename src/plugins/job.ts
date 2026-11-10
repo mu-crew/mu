@@ -19,7 +19,7 @@ import {
 import type { Db } from "../db.js";
 import { effectsOf, getEffect } from "../effects.js";
 import type { CheckContext } from "../host-link.js";
-import type { HostView, KeyLookup } from "../host-provider.js";
+import type { Call, HostView, KeyLookup } from "../host-provider.js";
 import { type HostCheckStep, HostHandbackError } from "../hosts.js";
 import {
   HONOURS_DEFAULT,
@@ -54,10 +54,10 @@ export interface PluginJobKind extends JobKind {
   start(host: HostView, spec: JobSpec, key: string): Promise<JobStart>;
   lookup(host: HostView, key: string, opts: { fence: boolean }): Promise<KeyLookup<JobFound>>;
   /** Idempotent; resolves only on proof the job is gone. Refuses a changed instance. */
-  stop(db: Db, job: JobRef): Promise<void>;
+  stop(db: Db, job: JobRef, call?: Call): Promise<void>;
   attach(db: Db, job: JobRef): Promise<PaneCommand>;
   /** Every unresolved effect of job record `token`, by the rule table (D4). */
-  resolve(token: string): Promise<Resolution[]>;
+  resolve(token: string, call?: Call): Promise<Resolution[]>;
 }
 
 /** The key of a job's stop effect: one per job, so a re-run reissues the same request. */
@@ -172,13 +172,13 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
       }
     },
 
-    async stop(_db, job) {
+    async stop(_db, job, call) {
       const token = job.key ?? "";
       const host = job.host?.name ?? "";
       const key = stopKey(token);
       try {
         if (getEffect(db, key) !== undefined) {
-          const r = await resolveEffect(db, key);
+          const r = await resolveEffect(db, key, {}, call);
           if (r?.state === "unknown")
             throw new EffectOutcomeUnknownError(name, "job.stop", r.reason);
           return;
@@ -190,6 +190,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
           method: "job.stop",
           params: { target: jobTarget(job), key },
           fence: job.identity ?? "",
+          ...(call !== undefined ? { call } : {}),
         });
       } catch (e) {
         handBack(host, "stop", e);
@@ -200,20 +201,25 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
       return ask("job.attach", { target: jobTarget(job) }, job.key ?? "", job.identity ?? null);
     },
 
-    async resolve(token) {
+    async resolve(token, call) {
       const out: Resolution[] = [];
       for (const row of effectsOf(db, "job", token)) {
-        const r = await resolveEffect(db, row.key, {
-          record: ({ result }) => {
-            const handle = (result as JobStart | null)?.handle;
-            if (row.method === "job.start" && handle !== undefined)
-              fillCarrierJob(db, token, handle);
+        const r = await resolveEffect(
+          db,
+          row.key,
+          {
+            record: ({ result }) => {
+              const handle = (result as JobStart | null)?.handle;
+              if (row.method === "job.start" && handle !== undefined)
+                fillCarrierJob(db, token, handle);
+            },
+            none: () => {
+              if (row.method === "job.start")
+                unlaunchPluginJob(db, token, "lookup proved the start never happened");
+            },
           },
-          none: () => {
-            if (row.method === "job.start")
-              unlaunchPluginJob(db, token, "lookup proved the start never happened");
-          },
-        });
+          call,
+        );
         if (r !== undefined) out.push(r);
       }
       return out;

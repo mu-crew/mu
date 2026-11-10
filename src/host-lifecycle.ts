@@ -54,7 +54,7 @@ export async function acquireHost(
     if (seen.state !== "acquiring" || seen.provider !== a.provider) {
       throw new HostExistsError(a.name);
     }
-    for (const r of await providerOf(db, seen).resolve()) {
+    for (const r of await providerOf(db, seen).resolve(callFor("host.acquire"))) {
       if (r.state === "unknown")
         throw new EffectOutcomeUnknownError(a.provider, "host.acquire", r.reason);
     }

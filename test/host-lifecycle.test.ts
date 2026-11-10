@@ -659,4 +659,51 @@ describe("review fixes (p6d_fix)", () => {
     ).rejects.toThrow(/host is lost/);
     expect(calls("link.fetch")).toHaveLength(1);
   });
+
+  const aborted = () => {
+    const ac = new AbortController();
+    ac.abort();
+    return { deadline: Date.now() + 5000, signal: ac.signal };
+  };
+
+  it("fix2: an unresolved release resolved under an aborted Call sends nothing and keeps the host", async () => {
+    await setup({ faults: { "host.release": ["exit"] } });
+    const rec = await acquire();
+    await drainHost(db, "box");
+    const p = resolveHost(db, "box").provider;
+    const live = { deadline: Date.now() + 5000, signal: new AbortController().signal };
+    await expect(p.release("host-1", "k1", live)).rejects.toBeInstanceOf(EffectOutcomeUnknownError);
+    const before = calls("host.release").length;
+    await expect(p.release("host-1", "k1", aborted())).rejects.toThrow();
+    expect(calls("host.release")).toHaveLength(before);
+    expect(getHostRecord(db, "box")?.state).toBe("releasing");
+    expect(getEffect(db, "k1")).toBeDefined();
+    // A live Call then reissues it and converges.
+    await p.release("host-1", "k1", live);
+    expect(getHostRecord(db, "box")).toBeUndefined();
+    expect(rec?.id).toBeDefined();
+  });
+
+  it("fix2: an unresolved job stop and start resolved under an aborted Call send nothing", async () => {
+    await setup();
+    await acquire();
+    const view = resolveHost(db, "box");
+    const kind = view.jobKind as PluginJobKind;
+    const token = reserve()?.token ?? "";
+    await kind.start(view, SPEC, token);
+    const ref = pluginJobRef(db, token);
+    if (ref === undefined) throw new Error("no ref");
+    f.set({ faults: { "job.stop": ["exit"] } });
+    await expect(kind.stop(db, ref)).rejects.toBeInstanceOf(EffectOutcomeUnknownError);
+    const stops = calls("job.stop").length;
+    await expect(kind.stop(db, ref, aborted())).rejects.toThrow();
+    expect(calls("job.stop")).toHaveLength(stops);
+    const lookups = calls("job.lookup").length;
+    db.prepare("UPDATE effects SET method = 'job.start', key = ? WHERE key = ?").run(
+      `${token}x`,
+      `${token}:stop`,
+    );
+    await expect(kind.resolve(token, aborted())).rejects.toThrow();
+    expect(calls("job.lookup")).toHaveLength(lookups);
+  });
 });

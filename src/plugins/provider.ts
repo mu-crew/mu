@@ -28,7 +28,7 @@ import { getPlugin, pluginSeams } from "./registry.js";
 export interface PluginHostProvider extends HostProvider {
   readonly plugin: string;
   /** Every unresolved effect of the host's record, by the rule table (D4). */
-  resolve(): Promise<Resolution[]>;
+  resolve(call?: Call): Promise<Resolution[]>;
 }
 
 /** The key of a record's release: one per record, so a re-run reissues the same request. */
@@ -143,7 +143,7 @@ export function pluginProvider(
       if (rec === undefined) return;
       if (getEffect(db, key) !== undefined) {
         // A crashed or unanswered release: reissued (idempotent by contract, D4).
-        const r = await resolveEffect(db, key, settleHooks);
+        const r = await resolveEffect(db, key, settleHooks, call);
         if (r?.state === "unknown")
           throw new EffectOutcomeUnknownError(plugin, "host.release", r.reason);
         return;
@@ -161,12 +161,12 @@ export function pluginProvider(
       });
     },
 
-    async resolve() {
+    async resolve(call) {
       const rec = record();
       if (rec === undefined) return [];
       const out: Resolution[] = [];
       for (const row of effectsOf(db, "host", String(rec.id))) {
-        const r = await resolveEffect(db, row.key, settleHooks);
+        const r = await resolveEffect(db, row.key, settleHooks, call);
         if (r !== undefined) out.push(r);
       }
       return out;

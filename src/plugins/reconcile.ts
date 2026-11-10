@@ -212,13 +212,15 @@ export async function resolveEffect(
   db: Db,
   key: string,
   hooks: ResolveHooks = {},
+  /** The caller's deadline and cancel (D6): every ask and resend of the resolution honours it. */
+  call?: Call,
 ): Promise<Resolution | undefined> {
   const claimed = claimEffect(db, key);
   if (claimed === undefined) return undefined;
   const { row, newest } = claimed;
   let out: Resolution;
   try {
-    out = await byRule(db, row, newest);
+    out = await byRule(db, row, newest, call);
   } catch (err) {
     leaveEffectUnknown(db, key);
     throw err;
@@ -236,11 +238,20 @@ export async function resolveEffect(
 
 const unknown = (reason: string): Resolution => ({ state: "unknown", reason });
 
-async function byRule(db: Db, row: EffectRow, newest: boolean): Promise<Resolution> {
+async function byRule(
+  db: Db,
+  row: EffectRow,
+  newest: boolean,
+  caller: Call | undefined,
+): Promise<Resolution> {
   const params = JSON.parse(row.params_json) as Obj;
   const fence: Fence = { instance: row.instance, subject: row.key };
   const call = <M extends PluginMethod>(method: M, p: Obj, kind: "read" | "effect") =>
-    pluginCall(db, row.plugin, method, p, { kind, fence });
+    pluginCall(db, row.plugin, method, p, {
+      kind,
+      fence,
+      ...(caller !== undefined ? { call: caller } : {}),
+    });
   /** A read: its value, or `unknown` for no answer (an invalid reply included). */
   const read = async <M extends PluginMethod>(
     method: M,
