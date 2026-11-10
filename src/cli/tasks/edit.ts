@@ -49,6 +49,7 @@ import {
   updateTask,
 } from "../../tasks.js";
 import { noteRecord, planNotes, type ShownNote, stubAuthor, stubPreview } from "../format.js";
+import { CliExitError } from "../handle.js";
 import { readStdinText, STDIN_ARG } from "../stdin.js";
 import {
   escapeRecordText,
@@ -765,10 +766,12 @@ export async function cmdTaskNotes(
       .find((n) => n.kind === "report");
     if (!reportNote) {
       if (opts.json) {
-        emitJson({ error: "no report found" });
-      } else {
-        console.error(pc.dim(`(no report note on ${localId})`));
+        throw new CliExitError(1, {
+          error: "NoReportError",
+          message: `no report note on ${localId}`,
+        });
       }
+      console.error(pc.dim(`(no report note on ${localId})`));
       process.exitCode = 1;
       return;
     }

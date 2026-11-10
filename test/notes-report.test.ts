@@ -70,10 +70,10 @@ describe("mu task notes --report", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("no report note under --json: exit 1, an error field", async () => {
+  it("no report note under --json: an ok:false failure envelope, exit 1", async () => {
     const r = await notes("--report", "--json");
-    expect(JSON.parse(r.stdout).data).toEqual({ error: "no report found" });
-    expect(process.exitCode).toBe(1);
+    expect(JSON.parse(r.stdout)).toMatchObject({ ok: false, error: "NoReportError", exit: 1 });
+    expect(r.exitCode ?? process.exitCode).toBe(1);
   });
 
   it.each([
