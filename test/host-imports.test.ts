@@ -74,12 +74,11 @@ describe("the host provider seam", () => {
     expect(lookupTakers(all())).toEqual([]);
   });
 
-  it("inside hosts.ts getHost is called only by addHost, admission and checkHost", () => {
+  it("inside hosts.ts getHost is called only by addHost and admission", () => {
     expect(callersOf(text("hosts.ts"), /\bgetHost\(/, /function getHost\(/)).toEqual([
       "addHost",
       "admit",
       "admit",
-      "checkHost",
     ]);
   });
 
@@ -112,12 +111,8 @@ describe("the host provider seam", () => {
       for (const c of calls(t, "admittedView")) out.push(`${file}: ${c}`);
       if (/\bhostView\b/.test(t)) out.push(`${file}: hostView`);
     }
-    // check's and prepare's admitted profile (close's runs under withHostView, P6d).
-    expect(out).toEqual([
-      "src/hosts.ts: admittedView(db, profile)",
-      "src/remote-worktree.ts: admittedView(db, profile)",
-    ]);
-    expect(callersOf(text("hosts.ts"), /\badmittedView\(/, /^$/)).toEqual(["checkHost"]);
+    // prepare's admitted profile (close and check run under withHostView, P6d).
+    expect(out).toEqual(["src/remote-worktree.ts: admittedView(db, profile)"]);
     expect(callersOf(text("remote-worktree.ts"), /\badmittedView\(/, /^$/)).toEqual([
       "prepareRemote",
     ]);

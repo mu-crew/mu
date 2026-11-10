@@ -31,7 +31,7 @@ import {
   insertHostRecord,
   reserveProviderJob,
 } from "../src/host-records.js";
-import { addHost, HostExistsError } from "../src/hosts.js";
+import { addHost, checkHost, HostExistsError } from "../src/hosts.js";
 import { listLogs } from "../src/logs.js";
 import { EffectFencedError, EffectOutcomeUnknownError } from "../src/plugins/errors.js";
 import { type PluginJobKind, pluginJobRef } from "../src/plugins/job.js";
@@ -234,6 +234,21 @@ describe("mu host release (D1)", () => {
     expect(getHostRecord(db, "box")).toMatchObject({ state: "lost", reason: "reclaimed" });
     await releaseHost(db, "box");
     expect(getHostRecord(db, "box")).toBeUndefined();
+  });
+});
+
+describe("mu host check on a provider host (D11)", () => {
+  it("runs the provider link's check steps with the host's handle, never asking for a profile", async () => {
+    await setup({
+      checkSteps: [{ step: "reachable", ok: false, detail: "kept offline" }],
+    });
+    await acquire();
+    const r = await checkHost(db, "box");
+    expect(r.host).toBe("box");
+    expect(r.steps[0]).toEqual({ step: "fake:reachable", ok: false, detail: "kept offline" });
+    expect(r.steps.find((s) => s.step === "harnesses")?.detail).toBe("skipped: host not reachable");
+    const check = f.calls().find((c) => c.method === "link.checkSteps");
+    expect(check?.params.target).toMatchObject({ host: { name: "box", handle: "host-1" } });
   });
 });
 

@@ -1173,7 +1173,8 @@ export function checkRunner(
 }
 
 /**
- * Check a host under ONE channel, in phases (spec 2026-11-09-mu-plugins.md, D11): the
+ * Check a host (a profile under ONE channel; a provider host, D6, through its provider's
+ * link, its record's repo the default `root`), in phases (spec 2026-11-09-mu-plugins.md, D11): the
  * `template` phase (the job kind's; a lease profile's shell, stop and attach, never run),
  * the `reach` phase (the link's: it answers, and the repo, `root` else the profile's,
  * is a git repo), then mu's own steps through the link: which harnesses resolve in the
@@ -1190,26 +1191,28 @@ export async function checkHost(
   host: string,
   opts: HostCheckOptions = {},
 ): Promise<HostCheckReport> {
-  getHost(db, host);
   // Imported at the call, not the top: host-provider.ts (and the link and kinds it views a
   // profile with) imports this module and subclasses its errors at load.
-  const { admittedView } = await import("./host-provider.js");
+  const { withHostView } = await import("./host-provider.js");
+  const holder = `check:${process.pid}`;
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   const steps: HostCheckStep[] = [];
   let warnings: string[] = [];
   let capabilities: HostCapabilities | undefined;
 
-  await withHostChannel(
+  await withHostView(
     db,
     host,
-    `check:${process.pid}`,
-    async (profile, lease) => {
-      // Everything below follows the ADMITTED profile (admission re-reads it after the pane
-      // probes), never a read taken before: a profile that changed transport mid-probe would
-      // otherwise get the other transport's shell mode and job kind.
-      const view = admittedView(db, profile);
-      const root = opts.root ?? profile.repo ?? undefined;
-      const call = { lease };
+    holder,
+    async (view, lease) => {
+      // A profile's view is the ADMITTED one (admission re-reads it after the pane probes),
+      // never a read taken before: a profile that changed transport mid-probe would otherwise
+      // get the other transport's shell mode and job kind. A provider host (D6) has no
+      // profile: its record names the repo, and its link admits its own calls.
+      const profile = view.profile;
+      const bareShell = profile?.transport === "lease";
+      const root = opts.root ?? profile?.repo ?? view.record?.repo ?? undefined;
+      const call = lease !== undefined ? { lease } : { holder };
       const ctx = (phase: CheckPhase): CheckContext => ({
         db,
         host: view,
@@ -1226,7 +1229,7 @@ export async function checkHost(
           ? await view.jobKind.checkSteps(ctx(p))
           : []),
       ];
-      warnings = sessionShellWarnings(profile);
+      warnings = profile === undefined ? [] : sessionShellWarnings(profile);
       steps.push(...(await phase("template")));
       const reach = await phase("reach");
       steps.push(...reach);
@@ -1240,11 +1243,11 @@ export async function checkHost(
       // A lease job runs in a non-login shell (the starter's `sh -c`): a login-shell success says
       // nothing about it, so the pi and extension steps run bare for a lease profile.
       const login = (cmd: string): string =>
-        profile.transport === "lease" ? cmd : `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`;
+        bareShell ? cmd : `"\${SHELL:-sh}" -ilc ${shellQuote(cmd)}`;
       if (reachable) {
         // The literal launchers, in the shell a spawn's command gets (spec D17): recorded even
         // when none is found, so a spawn for a missing harness is refused by name.
-        const shell = profile.transport === "lease" ? "sh" : "login";
+        const shell = bareShell ? "sh" : "login";
         await runner.step(
           steps,
           "harnesses",
@@ -1256,7 +1259,8 @@ export async function checkHost(
           () => noHarnessDetail(capabilities),
         );
         if (capabilities !== undefined) {
-          recordHostCapabilities(db, profile, capabilities);
+          // A provider host has no profile to record the probe on: the report carries it.
+          if (profile !== undefined) recordHostCapabilities(db, profile, capabilities);
           const hooks = hooksStep(capabilities);
           steps.push(hooks.step);
           warnings.push(...hooks.warnings);

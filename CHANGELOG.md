@@ -64,6 +64,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   A provider plugin may declare `host` with `link` alone: its hosts run no
   jobs (no job kind in their view), and a spawn on one is refused up front
   instead of failing at a placeholder `job.start`.
+  `mu host check <provider host>` runs: it resolves the host through
+  `resolveHost` and checks it through its provider's link (its record's
+  repo is the default `--root`), where it refused with "no host profile".
 - **Plugins: effects, the reconciler and the job adapter** (plugins spec
   P6c, D4, D8). Every plugin effect is written ahead in a new `effects`
   row (key, the exact params and their sha256, the plugin instance, the
