@@ -35,16 +35,12 @@ describe("the plugin adapter's boundary", () => {
         "src/host-provider.ts",
         "src/host-lifecycle.ts",
       ],
-      "src/plugins/registry.ts": [
-        "src/cli/handle.ts",
-        "src/cli/plugin.ts",
-        "src/host-lifecycle.ts",
-      ],
+      "src/plugins/registry.ts": ["src/cli/handle.ts", "src/cli/plugin.ts"],
       "src/plugins/link.ts": ["src/host-provider.ts"],
       "src/plugins/job.ts": ["src/host-provider.ts", "src/jobs/kinds.ts", "src/host-policy.ts"],
       // P6d: the provider adapter, wired into resolveHost and the host verbs.
       "src/plugins/provider.ts": ["src/host-provider.ts", "src/host-lifecycle.ts"],
-      "src/plugins/reconcile.ts": [],
+      "src/plugins/reconcile.ts": ["src/host-lifecycle.ts"],
       "src/plugins/process.ts": [],
       "src/plugins/client.ts": [],
       "src/plugins/protocol.ts": [],
@@ -66,5 +62,22 @@ describe("the plugin adapter's boundary", () => {
       files.map((f) => `${f} -> ${t}`),
     );
     expect(seen.sort()).toEqual(permitted.sort());
+  });
+
+  it("one call path: only reconcile.ts takes a plugin session, and only it calls one (ruling 1)", () => {
+    const takers: string[] = [];
+    const callers: string[] = [];
+    for (const [file, text] of all()) {
+      const b = bindingsFrom(file, text, "src/plugins/registry.ts");
+      const names = b === "namespace" ? ["*"] : b.map((x) => x.name);
+      if (names.some((n) => n === "pluginSession" || n === "*")) takers.push(file);
+      const c = bindingsFrom(file, text, "src/plugins/client.ts");
+      const fromClient = c === "namespace" ? ["*"] : c.map((x) => x.name);
+      if (fromClient.some((n) => n !== "PLUGIN_READ_TIMEOUT_MS")) takers.push(`${file} (client)`);
+      // A session's own `call(method, params, opts, narrow)`: a direct send past the fence.
+      if (/\.call\(\s*(?:method|"[a-z]+\.[a-zA-Z]+")/.test(text)) callers.push(file);
+    }
+    expect(takers.sort()).toEqual(["src/plugins/reconcile.ts", "src/plugins/registry.ts (client)"]);
+    expect(callers).toEqual(["src/plugins/reconcile.ts"]);
   });
 });

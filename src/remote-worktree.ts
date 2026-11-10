@@ -41,21 +41,21 @@ export class RemotePrepareError extends Error {
   }
 }
 
-/**
- * A provider host's repo lacks the commit a `--worktree` spawn starts from, and its link cannot
- * push it (plugins spec D7 G3). Exit 5, the prepare lane. Names the sha and the repo to push to.
- */
+/** A provider host's repo lacks a `--worktree` spawn's base commit (D7 G3). Exit 5; names both. */
 export class RemoteBaseMissingError extends RemotePrepareError {
   override readonly name: string = "RemoteBaseMissingError";
   constructor(
     host: string,
     public readonly rev: string,
     public readonly repo: string,
+    pushed = false,
   ) {
     super(
       host,
       "creating the remote worktree failed",
-      `${repo} on ${host} lacks commit ${rev}, and its link cannot push: push ${rev} to ${repo} on ${host}, then spawn again`,
+      pushed
+        ? `${repo} on ${host} lacks commit ${rev} although its link's push reported success: the plugin's push is broken; push ${rev} to ${repo} by hand, then spawn again`
+        : `${repo} on ${host} lacks commit ${rev}, and its link cannot push: push ${rev} to ${repo} on ${host}, then spawn again`,
     );
   }
 }
@@ -143,11 +143,8 @@ export async function prepareRemote(
 }
 
 /**
- * A `--worktree` site on a provider host (plugins spec D7 G3), which starts with no clone of the
- * project and never sees commits made after its acquire: `from` (default `HEAD`) resolves in the
- * caller's local checkout `localRepo` to a sha; a link with `push` seeds the host's repo
- * (`root`, else the record's) with it, and the worktree is made from that sha. Without `push`, a
- * repo that lacks the commit refuses (`RemoteBaseMissingError`).
+ * A `--worktree` site on a provider host (D7 G3): `from` resolves in the local checkout, a link
+ * with `push` seeds the host's repo with it, and the worktree is made from that sha.
  */
 export async function prepareProviderWorktree(
   h: HostView,
@@ -178,7 +175,7 @@ export async function prepareProviderWorktree(
       throw new RemotePrepareError(h.name, what, `pushing ${rev} to ${root} failed (${why})`);
     }
   }
-  return prepareOn(h, call, { ...opts, worktree: true, root }, rev);
+  return prepareOn(h, call, { ...opts, worktree: true, root }, rev, h.link.push !== undefined);
 }
 
 /** The prepare exec on view `h` under `call`; `rev`, a provider host's base sha (no `from` lookup remotely). */
@@ -187,6 +184,7 @@ async function prepareOn(
   call: LinkCall,
   opts: PrepareOpts,
   rev?: string,
+  pushed = false,
 ): Promise<RemoteSite> {
   if (opts.worktree && opts.root === undefined) {
     throw new RemotePrepareError(
@@ -246,7 +244,7 @@ async function prepareOn(
     );
   }
   if (rev !== undefined && r.exitCode === 8)
-    throw new RemoteBaseMissingError(h.name, rev, opts.root ?? "");
+    throw new RemoteBaseMissingError(h.name, rev, opts.root ?? "", pushed);
   if (r.exitCode !== 0) {
     const why = firstLine(r.stderr) || firstLine(r.stdout);
     throw new RemotePrepareError(h.name, what, `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);

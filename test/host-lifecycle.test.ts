@@ -24,14 +24,18 @@ import {
   getHostRecord,
   HostDeadlineError,
   HostJobsFullError,
+  HostNameRecoveryError,
   HostReferencedError,
   HostStateError,
+  insertHostRecord,
   reserveProviderJob,
 } from "../src/host-records.js";
 import { addHost, HostExistsError } from "../src/hosts.js";
 import { listLogs } from "../src/logs.js";
-import { EffectOutcomeUnknownError } from "../src/plugins/errors.js";
+import { EffectFencedError, EffectOutcomeUnknownError } from "../src/plugins/errors.js";
+import { type PluginJobKind, pluginJobRef } from "../src/plugins/job.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
+import { collectRemoteAgent } from "../src/remote-collect.js";
 import {
   assertRecoveryUsable,
   listRemoteRecoveries,
@@ -308,8 +312,9 @@ describe("the host identity a recovery pins (D5)", () => {
     if (r === undefined) throw new Error("no record");
     expect(() => assertRecoveryUsable(db, r)).not.toThrow();
     db.prepare("DELETE FROM hosts").run();
-    await acquire();
     expect(() => assertRecoveryUsable(db, r)).toThrow(RemoteRecoveryRefusedError);
+    // The name is not free while an older host's recovery record names it.
+    await expect(acquire()).rejects.toBeInstanceOf(HostNameRecoveryError);
   });
 
   it("a file from before host_identity gets the column, its records backfilled from host_exec, and the new triggers", () => {
@@ -432,5 +437,226 @@ describe("the provider-host base (D7 G3)", () => {
     expect(String(err)).toContain(sha);
     expect(String(err)).toContain(remote);
     expect(f.calls().some((c) => c.method === "link.push")).toBe(false);
+  });
+});
+
+describe("review fixes (p6d_fix)", () => {
+  const SPEC = {
+    workstream: "ws",
+    name: "w",
+    harness: "claude",
+    role: "full-access" as const,
+    cmd: "claude",
+    commandSource: "cli-key" as const,
+    cwd: "/r",
+    env: {},
+  };
+  const calls = (m: string) => f.calls().filter((c) => c.method === m);
+
+  it("ruling 1: a provider host's link call refuses a replacement plugin instance before sending", async () => {
+    await setup();
+    await acquire();
+    const view = resolveHost(db, "box");
+    await closePluginSessions();
+    f.set({ instance: "fake-2" });
+    await addPlugin(db, "fake", f.argv);
+    const before = calls("link.exec").length;
+    await expect(
+      view.link.exec(view, { script: "true", cwd: ".", timeoutMs: 1000 }, { holder: "t" }),
+    ).rejects.toBeInstanceOf(EffectFencedError);
+    expect(calls("link.exec")).toHaveLength(before);
+  });
+
+  it("ruling 2: every job and link call on a provider host carries its handle and instance", async () => {
+    await setup({ requireHostHandle: true });
+    await acquire();
+    const view = resolveHost(db, "box");
+    const kind = view.jobKind as PluginJobKind;
+    const token = reserve()?.token ?? "";
+    await kind.start(view, SPEC, token);
+    const ref = pluginJobRef(db, token);
+    if (ref === undefined) throw new Error("no ref");
+    expect(await kind.status(db, ref)).toEqual({ state: "running" });
+    await kind.attach(db, ref);
+    await kind.stop(db, ref);
+    const run = await view.link.exec(
+      view,
+      { script: "true", cwd: ".", timeoutMs: 5000 },
+      { holder: "t" },
+    );
+    expect(run.exitCode).toBe(0);
+    for (const m of ["job.start", "job.status", "job.attach", "job.stop", "link.exec"]) {
+      expect(calls(m)[0]?.params.target).toMatchObject({
+        host: { name: "box", handle: "host-1", instance: "fake-1" },
+      });
+    }
+  });
+
+  it("ruling 3: --abandon's loss record commits with the deletions (a crash right after the commit keeps it)", async () => {
+    await setup();
+    await acquire();
+    reserve();
+    const real = db.transaction.bind(db);
+    db.transaction = ((fn: () => unknown) => {
+      const tx = real(fn);
+      return {
+        immediate: () => {
+          tx.immediate();
+          throw new Error("crash after commit");
+        },
+      };
+    }) as unknown as typeof db.transaction;
+    try {
+      expect(() => abandonHost(db, "box")).toThrow(/crash after commit/);
+    } finally {
+      db.transaction = real;
+    }
+    expect(getHostRecord(db, "box")).toBeUndefined();
+    expect(
+      events().some((e) => /host release box abandoned: dropped job records ws\/w/.test(e)),
+    ).toBe(true);
+  });
+
+  it("ruling 5: recoveries name a provider host by identity; the adapter honours D6's handle and key", async () => {
+    await setup();
+    const rec = await acquire();
+    // A stale record of another identity under the name: neither blocks nor goes with the host.
+    insertAgent(db, {
+      name: "r1",
+      workstream: "ws",
+      paneId: "%2",
+      host: "box",
+      cwd: "/wt",
+      base: "b".repeat(40),
+      repo: "/r",
+    });
+    deleteAgent(db, "r1", "ws");
+    db.prepare("UPDATE remote_recovery SET host_identity = 'sh -c {cmd}'").run();
+    const provider = resolveHost(db, "box").provider;
+    await provider.status("named-handle", {
+      deadline: Date.now() + 5000,
+      signal: new AbortController().signal,
+    });
+    expect(calls("host.status").at(-1)?.params.target).toMatchObject({
+      host: { handle: "named-handle" },
+    });
+    await drainHost(db, "box");
+    await provider.release("host-1", "caller-key", {
+      deadline: Date.now() + 5000,
+      signal: new AbortController().signal,
+    });
+    expect(calls("host.release")[0]?.params.key).toBe("caller-key");
+    expect(getHostRecord(db, "box")).toBeUndefined();
+    expect(listRemoteRecoveries(db)).toHaveLength(1);
+    expect(rec?.id).toBeDefined();
+  });
+
+  it("ruling 5: an aborted Call never waits on the plugin: status is unknown", async () => {
+    await setup();
+    await acquire();
+    const ac = new AbortController();
+    ac.abort();
+    const st = await resolveHost(db, "box").provider.status("host-1", {
+      deadline: Date.now() + 5000,
+      signal: ac.signal,
+    });
+    expect(st.state).toBe("unknown");
+  });
+
+  it("ruling 5: a profile's name check and insert are one immediate transaction", async () => {
+    await setup();
+    const real = db.prepare.bind(db);
+    let racer: unknown;
+    db.prepare = ((sql: string) => {
+      const st = real(sql);
+      if (sql !== "SELECT 1 FROM hosts WHERE name = ?") return st;
+      return {
+        get: (n: string) => {
+          // Another process acquiring the name meanwhile cannot get the write lock.
+          const other = openDb({ path: db.name });
+          other.pragma("busy_timeout = 0");
+          try {
+            insertHostRecord(
+              other,
+              { name: "race", provider: "fake", params: {}, repo: null },
+              "fake-1",
+            );
+          } catch (e) {
+            racer = e;
+          } finally {
+            other.close();
+          }
+          return st.get(n);
+        },
+      };
+    }) as unknown as typeof db.prepare;
+    try {
+      addHost(db, {
+        name: "race",
+        shell: "s",
+        exec: "e {cmd}",
+        fetch: "f",
+        repo: null,
+        max_sessions: null,
+      });
+    } finally {
+      db.prepare = real;
+    }
+    expect(String(racer)).toMatch(/SQLITE_BUSY|database is locked/);
+    expect(getHostRecord(db, "race")).toBeUndefined();
+  });
+
+  it("ruling 6: a push that reported success but left no commit says so", async () => {
+    const home = process.env.HOME;
+    process.env.HOME = dir;
+    try {
+      await setup({ pushNoop: true }, providerSeams({}, { push: true }));
+      await acquire();
+      const local = join(dir, "local");
+      mkdirSync(local);
+      execFileSync("git", ["init", "-q"], { cwd: local });
+      execFileSync(
+        "git",
+        ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
+        { cwd: local },
+      );
+      const err = await prepareProviderWorktree(resolveHost(db, "box"), {
+        workstream: "ws",
+        name: "w",
+        localRepo: local,
+        root: join(dir, "remote"),
+      }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(RemoteBaseMissingError);
+      expect(String(err)).toMatch(/push reported success/);
+    } finally {
+      process.env.HOME = home;
+    }
+  });
+
+  it("ruling 6: a collect whose fetch fails on a reclaimed host takes the lost path", async () => {
+    await setup({ faults: { "link.fetch": ["exit"] } });
+    await acquire();
+    insertAgent(db, {
+      name: "r1",
+      workstream: "ws",
+      paneId: "%2",
+      host: "box",
+      cwd: "/wt",
+      base: "b".repeat(40),
+      repo: "/r",
+    });
+    deleteAgent(db, "r1", "ws");
+    f.set({ hostGone: "reclaimed" });
+    const local = join(dir, "local");
+    mkdirSync(local);
+    execFileSync("git", ["init", "-q"], { cwd: local });
+    await expect(
+      collectRemoteAgent(db, { workstream: "ws", name: "r1", repo: local }),
+    ).rejects.toThrow(/host is lost/);
+    expect(getHostRecord(db, "box")?.state).toBe("lost");
+    await expect(
+      collectRemoteAgent(db, { workstream: "ws", name: "r1", repo: local }),
+    ).rejects.toThrow(/host is lost/);
+    expect(calls("link.fetch")).toHaveLength(1);
   });
 });

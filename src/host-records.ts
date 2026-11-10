@@ -1,24 +1,17 @@
-// mu — `hosts`: provider host records (plugins spec D1, D5, D6), the table and
-// nothing that calls a plugin. A record is written with its `host.acquire`
-// effect (src/plugins/provider.ts) and mu alone moves its state:
-//
-//   acquiring → ready (the acquire's facts) → draining → releasing → deleted
-//   ready | draining → lost (a `gone` status)       any → deleted (--abandon)
-//
-// A name is a profile's or a record's, never both: inserting a record refuses
-// a profile's name, and `addHost` refuses a record's (src/hosts.ts).
-//
-// Two transactions here are the seam's guarantees. Atomic admission
-// (`reserveProviderJob`) re-reads the record, refuses unless `ready` and
-// outside the deadline margin, and counts the host's job records against
-// `max_jobs`, inserting the job record in the same immediate transaction. The
-// release proof (`beginHostRelease`) moves the host to `releasing` only while
-// no agent row, job record or recovery record names it. SQLite's write lock
-// orders the two, so a spawn and a release never both pass.
+// mu — `hosts`: provider host records (plugins spec D1, D5, D6), the table only.
+// acquiring → ready → draining → releasing → deleted; ready|draining → lost.
+// Atomic admission and the release proof are each one immediate transaction,
+// so a spawn and a release never both pass.
 
 import { type CarrierJob, getCarrierJob, reserveCarrierJob } from "./carrier-jobs.js";
 import type { Db } from "./db.js";
-import { findHost, type HostFacts, type HostRecord, type HostState } from "./host-provider.js";
+import {
+  findHost,
+  type HostFacts,
+  type HostRecord,
+  type HostState,
+  providerIdentity,
+} from "./host-provider.js";
 import { HostExistsError, pidStart } from "./hosts.js";
 
 /** A host verb on a record in a state it does not accept. Exit 4. */
@@ -32,6 +25,28 @@ export class HostStateError extends Error {
     super(`host ${host} is ${state}: ${want}`);
   }
 }
+
+/** `host acquire` of a name an older host's recovery records still name: they would be its. Exit 4. */
+export class HostNameRecoveryError extends Error {
+  override readonly name = "HostNameRecoveryError";
+  constructor(
+    public readonly host: string,
+    public readonly recoveries: readonly number[],
+  ) {
+    super(
+      `recovery records ${recoveries.join(", ")} still name host ${host}: close them first (mu agent close <name> --recovery <id>), or acquire another name`,
+    );
+  }
+}
+
+const recoveriesNaming = (db: Db, host: string): number[] =>
+  (
+    db
+      .prepare("SELECT agent_id FROM remote_recovery WHERE host = ? ORDER BY agent_id")
+      .all(host) as {
+      agent_id: number;
+    }[]
+  ).map((r) => r.agent_id);
 
 /** A spawn inside a host's deadline margin (D10): refused, and the host is draining. Exit 4. */
 export class HostDeadlineError extends Error {
@@ -125,6 +140,8 @@ export function insertHostRecord(
   instance: string,
 ): number {
   if (findHost(db, a.name) !== undefined) throw new HostExistsError(a.name);
+  const older = recoveriesNaming(db, a.name);
+  if (older.length > 0) throw new HostNameRecoveryError(a.name, older);
   const t = now();
   return Number(
     db
@@ -204,19 +221,18 @@ export function hostReferences(db: Db, rec: HostRecord): HostReferences {
   )
     .map((r) => getCarrierJob(db, r.token))
     .filter((j): j is CarrierJob => j !== undefined);
+  // By identity: a record under an older owner of the name reaches another machine.
   const recoveries = (
     db
-      .prepare("SELECT agent_id FROM remote_recovery WHERE host = ? ORDER BY agent_id")
-      .all(rec.name) as { agent_id: number }[]
+      .prepare(
+        "SELECT agent_id FROM remote_recovery WHERE host = ? AND host_identity = ? ORDER BY agent_id",
+      )
+      .all(rec.name, providerIdentity(rec)) as { agent_id: number }[]
   ).map((r) => r.agent_id);
   return { agents, jobs, recoveries };
 }
 
-/**
- * The release proof (D1), inside the caller's immediate transaction: nothing names the host,
- * then `releasing`. Refuses `HostReferencedError`, or `HostStateError` outside draining, lost
- * or releasing.
- */
+/** The release proof (D1), in the caller's transaction: nothing names the host, then `releasing`. */
 export function beginHostRelease(db: Db, id: number): void {
   const rec = hostRecordById(db, id);
   if (rec === undefined) throw new Error(`host record ${id} is gone`);
@@ -235,13 +251,7 @@ export function inDeadlineMargin(rec: HostRecord, at = Date.now()): boolean {
   return rec.deadline_at !== null && at >= rec.deadline_at - hostDeadlineMarginMs();
 }
 
-/**
- * Atomic admission (D6): in ONE immediate transaction, re-read the record, refuse unless
- * `ready` (`HostStateError`), inside the deadline margin (`HostDeadlineError`, the host moved
- * to `draining`), or at `max_jobs` (`HostJobsFullError`); then the job record, naming the host
- * by id, owing its final collect when it is a `--worktree` job (D10). Undefined when the name
- * is reserved already.
- */
+/** Atomic admission (D6): `ready`, outside the deadline margin, under `max_jobs`, then the job record. */
 export function reserveProviderJob(
   db: Db,
   host: string,

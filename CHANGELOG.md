@@ -47,6 +47,16 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   New log intents `host.acquire` and `host.release` (machine-local entity
   `host`). Not yet driven: spawn on a provider host, its live-agent close,
   in-life collects at observed settles and the wait's deadline timer (P6e).
+  Review fixes: every link call goes through the one call path, so a
+  provider host's link refuses a replacement plugin instance before sending;
+  job and link calls on a provider host carry its handle and instance;
+  `--abandon`'s loss event commits with the deletions; a lost host's job
+  drops its unresolved effects as lost in the same transaction (`mu plugin
+  rm` then succeeds) and never reissues its start; recovery records name a
+  provider host by identity, and acquire refuses a name one still names
+  (`HostNameRecoveryError`, exit 4); a profile's name check and insert are
+  one transaction; a collect whose fetch fails on a reclaimed host reports
+  it lost.
 - **Plugins: effects, the reconciler and the job adapter** (plugins spec
   P6c, D4, D8). Every plugin effect is written ahead in a new `effects`
   row (key, the exact params and their sha256, the plugin instance, the

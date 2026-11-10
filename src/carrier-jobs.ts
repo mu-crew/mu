@@ -270,10 +270,7 @@ export function unlaunchPluginJob(db: Db, token: string, reason: string): boolea
   );
 }
 
-/**
- * The remote worktree a provider-host spawn prepared for the job, written before its start:
- * its path and base, and the local checkout collects fetch into (D5, D10).
- */
+/** The tree a provider-host spawn prepared, before its start, and its local collect repo (D5). */
 export function recordJobTree(
   db: Db,
   token: string,
@@ -306,10 +303,7 @@ export function bumpStopGen(db: Db, token: string): number | undefined {
   return r?.stop_gen;
 }
 
-/**
- * The final collect done: cleared only while the stop generation is the one the collect read
- * before it fetched (D10 compare-and-clear). Nothing ever sets the flag again.
- */
+/** The final collect done, only under the stop generation read before the fetch (D10). */
 export function clearFinalCollect(db: Db, token: string, stopGen: number): boolean {
   return (
     db

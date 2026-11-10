@@ -455,6 +455,11 @@ export function deleteRemoteRecovery(db: Db, rec: RemoteRecovery): boolean {
   );
 }
 
+/** Drop record `agentId` whatever it holds (a provider host abandoned with its trees, D1). */
+export function deleteRecoveryById(db: Db, agentId: number): void {
+  db.prepare("DELETE FROM remote_recovery WHERE agent_id = ?").run(agentId);
+}
+
 /** Put back exactly `r`, every column (a reattach's readiness rollback). Throws when its `agent_id` exists. */
 export function restoreRemoteRecovery(db: Db, r: RemoteRecovery): void {
   const row = Object.fromEntries(

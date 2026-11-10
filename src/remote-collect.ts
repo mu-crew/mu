@@ -28,12 +28,14 @@ import { dirname, join } from "node:path";
 import { AgentLockBusyError, AgentNotFoundError, AgentReplacedError } from "./agents/errors.js";
 import { withAgentLock } from "./agents/lock.js";
 import { type AgentRow, getAgent } from "./agents.js";
-import { clearFinalCollect, owingJobOfTree } from "./carrier-jobs.js";
+import { clearFinalCollect, noteCarrierJob, owingJobOfTree } from "./carrier-jobs.js";
 import { channelTarget } from "./channels/index.js";
 import { applySettledClose } from "./close-block.js";
 import type { Db } from "./db.js";
 import { locksDir, withFileLock } from "./file-lock.js";
+import { observeHost } from "./host-lifecycle.js";
 import { resolveHost } from "./host-provider.js";
+import { getHostRecord } from "./host-records.js";
 import { viewRunning } from "./jobs/view.js";
 import { say } from "./messages.js";
 import {
@@ -197,6 +199,18 @@ export async function collectRemoteAgentLocked(
       // A job record owing this tree's final collect, and the stop generation read now,
       // before the fetch: only a collect that started after the stop clears it (D10).
       const owed = owingJobOfTree(db, host, cwd);
+      // A lost provider host's tree went with the machine (D1): nothing to fetch.
+      const lostHost = (): RemoteCollectError | undefined => {
+        const rec = getHostRecord(db, host);
+        if (rec?.state !== "lost") return undefined;
+        if (owed !== undefined) noteCarrierJob(db, owed.token, "uncollected work");
+        return new RemoteCollectError(
+          host,
+          `the host is lost (${rec.reason ?? "gone"}): its worktree went with the machine; nothing recorded (mu agent close ${name} records it gone)`,
+        );
+      };
+      const gone = lostHost();
+      if (gone !== undefined) throw gone;
       const h = resolveHost(db, host);
       if (h.link.fetch === undefined) {
         // No built-in link lacks fetch; a plugin's may (mule's, spec D7).
@@ -213,6 +227,12 @@ export async function collectRemoteAgentLocked(
             assertRecoveryProfile(rec, { exec: admitted.link.fingerprint(admitted) });
         },
       );
+      if (r.exitCode !== 0 && h.record !== undefined) {
+        // A failed call on a provider host asks its status once: a reclaimed one is lost.
+        await observeHost(db, host);
+        const lost = lostHost();
+        if (lost !== undefined) throw lost;
+      }
       if (r.exitCode === null) {
         throw new RemoteCollectError(
           host,

@@ -30,7 +30,12 @@ import { type PluginJobKind, pluginJobRef } from "../src/plugins/job.js";
 import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { narrowObject } from "../src/plugins/protocol.js";
 import { resolveEffect, runEffect, setEffectTimeoutForTests } from "../src/plugins/reconcile.js";
-import { addPlugin, closePluginSessions, pluginSession } from "../src/plugins/registry.js";
+import {
+  addPlugin,
+  closePluginSessions,
+  pluginSession,
+  removePlugin,
+} from "../src/plugins/registry.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -455,7 +460,11 @@ describe("F11: a provider host lost under its jobs, a crashed release (D1, D16)"
   const BASE = "b".repeat(40);
 
   /** A provider host `box` with one started job of `ws/w` whose agent row is gone (its tree a recovery record). */
-  async function lostJob(job: Record<string, unknown>, worktree: boolean) {
+  async function lostJob(
+    job: Record<string, unknown>,
+    worktree: boolean,
+    o: { startFault?: boolean } = {},
+  ) {
     f = fakePlugin(dir, { seams: providerSeams(job) });
     await addPlugin(db, "fake", f.argv);
     ensureWorkstream(db, "ws");
@@ -470,7 +479,12 @@ describe("F11: a provider host lost under its jobs, a crashed release (D1, D16)"
       worktree,
     });
     token = r?.token ?? "";
-    await kind.start(view, SPEC, token);
+    if (o.startFault) {
+      f.set({ faults: { "job.start": ["exit"] } });
+      await expect(kind.start(view, SPEC, token)).rejects.toThrow(/outcome unknown/);
+    } else {
+      await kind.start(view, SPEC, token);
+    }
     const a = insertAgent(db, {
       reservation: token,
       name: "w",
@@ -548,5 +562,31 @@ describe("F11: a provider host lost under its jobs, a crashed release (D1, D16)"
     await close();
     expect(getCarrierJob(db, token)).toBeUndefined();
     expect(f.backend().stops).toBe(1);
+  });
+
+  it("ruling 4: a lost host's job first settles its unresolved stop as lost, in the same transaction; release and plugin rm then succeed", async () => {
+    await lostJob({}, false);
+    f.set({ hostGone: undefined, faults: { "job.stop": ["exit"] } });
+    await expect(close()).rejects.toThrow(/outcome unknown/);
+    expect(getEffect(db, `${token}:stop`)?.state).toBe("unknown");
+    f.set({ hostGone: "reclaimed" });
+    await close();
+    expect(getEffect(db, `${token}:stop`)).toBeUndefined();
+    expect(getCarrierJob(db, token)).toBeUndefined();
+    expect(
+      listLogs(db, { limit: 50 }).some((l) => /job\.stop .* lost with the host/.test(l.payload)),
+    ).toBe(true);
+    await releaseHost(db, "box");
+    await closePluginSessions();
+    expect(removePlugin(db, "fake")).toBe(true);
+  });
+
+  it("ruling 4: a lost host's unresolved start is not reissued: it is recorded lost with the host", async () => {
+    await lostJob({}, false, { startFault: true });
+    const before = f.calls().filter((c) => c.method === "job.start").length;
+    await close();
+    expect(f.calls().filter((c) => c.method === "job.start")).toHaveLength(before);
+    expect(getEffect(db, token)).toBeUndefined();
+    expect(getCarrierJob(db, token)).toBeUndefined();
   });
 });

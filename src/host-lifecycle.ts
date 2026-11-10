@@ -1,22 +1,12 @@
-// mu — the provider host verbs (plugins spec D1, D6): `mu host acquire`,
-// `drain`, `release` and `release --abandon`, and the one status read that
-// moves a host to `lost`.
-//
-// The record moves only with its effects (src/plugins/provider.ts); this file
-// sequences them. `acquire` on a name still `acquiring` reconciles the same
-// effect, never acquiring a second host. `release` asks the host's status
-// first (a `gone` host is `lost`, and a lost host's release is the same
-// effect), proves nothing names it and reissues a crashed release. `--abandon`
-// is a human decision: it calls nothing and drops the host with its job
-// records, recovery records and effects in one transaction, logging each.
-//
-// `observeHost` is the status read (D1): asked by the host verbs, and once by a
-// close or collect on a provider host before it reports. `gone` is the
-// provider's proof that the machine and its worktrees no longer exist.
+// mu — the provider host verbs (plugins spec D1, D6): acquire (a re-run resolves
+// the same effect), drain, release (a crashed release reissued), --abandon (one
+// transaction with its loss record), and `observeHost`, the status read that
+// moves a `gone` host to `lost`.
 
+import { abandonCarrierJob } from "./carrier-jobs.js";
 import type { Db } from "./db.js";
-import { creatorGone, EffectHeldError, type EffectRow, effectsOf } from "./effects.js";
-import { type HostRecord, type HostStatus, recordView } from "./host-provider.js";
+import { deleteEffect, effectsOf, refuseLiveOwner } from "./effects.js";
+import { type Call, type HostRecord, type HostStatus, recordView } from "./host-provider.js";
 import {
   deleteHostRecord,
   getHostRecord,
@@ -27,14 +17,23 @@ import {
   refreshHostFacts,
   setHostState,
 } from "./host-records.js";
-import { HostExistsError, HostNotFoundError, pidProvenGone } from "./hosts.js";
+import { HostExistsError, HostNotFoundError } from "./hosts.js";
 import { emitEvent } from "./logs.js";
 import { EffectOutcomeUnknownError } from "./plugins/errors.js";
-import { acquireKey, type PluginHostProvider, pluginProvider } from "./plugins/provider.js";
-import { pluginSession } from "./plugins/registry.js";
+import {
+  acquireKey,
+  type PluginHostProvider,
+  pluginProvider,
+  releaseKey,
+} from "./plugins/provider.js";
+import { effectTimeoutMs } from "./plugins/reconcile.js";
+import { deleteRecoveryById } from "./remote-recovery.js";
 
-/** A `host.*` call's `Call`: the adapter's own deadlines apply (D13); this one only cancels. */
-const CALL = { deadline: Number.MAX_SAFE_INTEGER, signal: new AbortController().signal };
+/** A verb's `Call` for `method`: the method's own bound (D13), cancelled by mu's process latch. */
+const callFor = (method: string): Call => ({
+  deadline: Date.now() + effectTimeoutMs(method),
+  signal: new AbortController().signal,
+});
 
 const providerOf = (db: Db, rec: HostRecord): PluginHostProvider =>
   recordView(db, rec).provider as PluginHostProvider;
@@ -45,11 +44,7 @@ function requireRecord(db: Db, name: string): HostRecord {
   return rec;
 }
 
-/**
- * Acquire host `name` from provider `provider` (D1). A record still `acquiring` (an earlier
- * acquire crashed or got no answer) is reconciled, its effect resolved by the rule table; an
- * unresolved one throws `EffectOutcomeUnknownError` with the record kept.
- */
+/** Acquire host `name` (D1); a record still `acquiring` has its effect resolved instead. */
 export async function acquireHost(
   db: Db,
   a: { name: string; provider: string; params: Record<string, string>; repo: string | null },
@@ -74,10 +69,8 @@ export async function acquireHost(
     }
     return now;
   }
-  // A plugin without the host seam (and its link and job, D6) is refused before any intent.
-  await pluginSession(db, a.provider, ["host", "link", "job"]);
   const provider = pluginProvider(db, a.provider, a.name, { repo: a.repo });
-  await provider.acquire(a.params, acquireKey(), CALL);
+  await provider.acquire(a.params, acquireKey(), callFor("host.acquire"));
   const rec = getHostRecord(db, a.name);
   emitEvent(
     db,
@@ -88,16 +81,12 @@ export async function acquireHost(
   return rec;
 }
 
-/**
- * Ask the provider once what host `name` is now (D1). `gone` moves a ready or draining host to
- * `lost`; `up` refreshes its facts, and inside the deadline margin a ready host drains (D10).
- * Undefined for a host with nothing to ask (no record, no handle, or released).
- */
+/** Ask host `name`'s status once (D1): `gone` makes it `lost`; `up` refreshes its facts. */
 export async function observeHost(db: Db, name: string): Promise<HostStatus | undefined> {
   const rec = getHostRecord(db, name);
   if (rec === undefined || rec.handle === null) return undefined;
   if (rec.state !== "ready" && rec.state !== "draining") return undefined;
-  const st = await providerOf(db, rec).status(rec.handle, CALL);
+  const st = await providerOf(db, rec).status(rec.handle, callFor("host.status"));
   if (st.state === "gone") {
     setHostState(db, rec.id, ["ready", "draining"], "lost", st.reason);
   } else if (st.state === "up") {
@@ -120,10 +109,7 @@ export async function drainHost(db: Db, name: string): Promise<HostRecord> {
   return requireRecord(db, name);
 }
 
-/**
- * `mu host release` (D1): the release proof and the `host.release` effect, reissued after a
- * crash. A ready host must be drained first; a lost one releases as it is.
- */
+/** `mu host release` (D1): the proof and the `host.release` effect, reissued after a crash. */
 export async function releaseHost(db: Db, name: string): Promise<void> {
   const rec = requireRecord(db, name);
   await observeHost(db, name);
@@ -134,7 +120,11 @@ export async function releaseHost(db: Db, name: string): Promise<void> {
       "its acquire is unresolved (mu host acquire again, or --abandon)",
     );
   }
-  await providerOf(db, requireRecord(db, name)).release(rec.handle ?? "", "", CALL);
+  await providerOf(db, requireRecord(db, name)).release(
+    rec.handle ?? "",
+    releaseKey(rec.id),
+    callFor("host.release"),
+  );
   if (getHostRecord(db, name) === undefined) {
     emitEvent(
       db,
@@ -155,26 +145,9 @@ export interface Abandoned {
   running: string[];
 }
 
-/** An effect whose creator or resolver still lives. */
-function liveOwner(e: EffectRow): { by: "creator" | "resolver"; pid: number } | undefined {
-  if (e.state === "pending" && !creatorGone(e)) return { by: "creator", pid: e.creator_pid };
-  if (
-    e.state === "resolving" &&
-    e.resolver_pid !== null &&
-    !pidProvenGone(e.resolver_pid, e.resolver_start)
-  ) {
-    return { by: "resolver", pid: e.resolver_pid };
-  }
-  return undefined;
-}
-
-/**
- * `mu host release <name> --abandon` (D1): a human decision. Refuses while an agent row names
- * the host, or an effect on it or its jobs has a live owner; otherwise drops the host, its job
- * records, recovery records and effect rows in one transaction, and logs them all.
- */
+/** `--abandon` (D1): drops the host and its records with the loss event in one transaction. */
 export function abandonHost(db: Db, name: string): Abandoned {
-  const out = db
+  return db
     .transaction((): Abandoned => {
       const rec = requireRecord(db, name);
       const refs = hostReferences(db, rec);
@@ -185,42 +158,38 @@ export function abandonHost(db: Db, name: string): Abandoned {
         ...effectsOf(db, "host", String(rec.id)),
         ...refs.jobs.flatMap((j) => effectsOf(db, "job", j.token)),
       ];
-      for (const e of effects) {
-        const owner = liveOwner(e);
-        if (owner !== undefined) throw new EffectHeldError(e.key, owner.by, owner.pid);
-      }
+      for (const e of effects) refuseLiveOwner(e);
       const outlives = recordView(db, rec).jobKind.caps.outlivesHost === true;
-      const del = (sql: string, ...args: unknown[]) => db.prepare(sql).run(...args);
-      for (const e of effects) del("DELETE FROM effects WHERE key = ?", e.key);
-      for (const j of refs.jobs) del("DELETE FROM carrier_jobs WHERE token = ?", j.token);
-      del("DELETE FROM remote_recovery WHERE host = ?", name);
+      for (const e of effects) deleteEffect(db, e.key);
+      for (const j of refs.jobs) abandonCarrierJob(db, j);
+      for (const id of refs.recoveries) deleteRecoveryById(db, id);
       deleteHostRecord(db, rec.id);
-      const jobs = refs.jobs.map(
-        (j) =>
-          `${j.workstream}/${j.name}${j.job === null ? "" : ` (job ${j.job})`}${j.finalOwed ? " uncollected work lost" : ""}`,
-      );
-      return {
+      const out: Abandoned = {
         host: name,
-        jobs,
+        jobs: refs.jobs.map(
+          (j) =>
+            `${j.workstream}/${j.name}${j.job === null ? "" : ` (job ${j.job})`}${j.finalOwed ? " uncollected work lost" : ""}`,
+        ),
         recoveries: refs.recoveries,
         effects: effects.map((e) => `${e.method} ${e.key}`),
         running: outlives
           ? refs.jobs.filter((j) => j.job !== null).map((j) => `${j.workstream}/${j.name}`)
           : [],
       };
+      const bits = [
+        out.jobs.length > 0 ? `job records ${out.jobs.join(", ")}` : "",
+        out.recoveries.length > 0 ? `recovery records ${out.recoveries.join(", ")}` : "",
+        out.effects.length > 0 ? `unresolved effects ${out.effects.join(", ")}` : "",
+        out.running.length > 0 ? `possibly still running: ${out.running.join(", ")}` : "",
+      ].filter((b) => b !== "");
+      // The loss record commits with the loss: a crash after the deletions cannot drop it.
+      emitEvent(
+        db,
+        null,
+        "host.release",
+        `host release ${name} abandoned${bits.length > 0 ? `: dropped ${bits.join("; ")}` : ""}`,
+      );
+      return out;
     })
     .immediate();
-  const bits = [
-    out.jobs.length > 0 ? `job records ${out.jobs.join(", ")}` : "",
-    out.recoveries.length > 0 ? `recovery records ${out.recoveries.join(", ")}` : "",
-    out.effects.length > 0 ? `unresolved effects ${out.effects.join(", ")}` : "",
-    out.running.length > 0 ? `possibly still running: ${out.running.join(", ")}` : "",
-  ].filter((b) => b !== "");
-  emitEvent(
-    db,
-    null,
-    "host.release",
-    `host release ${name} abandoned${bits.length > 0 ? `: dropped ${bits.join("; ")}` : ""}`,
-  );
-  return out;
 }

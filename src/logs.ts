@@ -356,7 +356,7 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   const key = opts.workstream ?? MACHINE_WIDE_KEY;
   const group = randomUUID();
   const payload = singleLinePayload(opts.payload);
-  const insert = db.transaction(() =>
+  const run = () =>
     db
       .prepare(
         `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
@@ -372,9 +372,9 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
         key,
         payload,
         createdAt,
-      ),
-  );
-  const result = insert.immediate();
+      );
+  // Inside a caller's transaction the row commits with it (an abandon's loss record).
+  const result = db.inTransaction ? run() : db.transaction(run).immediate();
   return {
     seq: Number(result.lastInsertRowid),
     workstreamName: opts.workstream,

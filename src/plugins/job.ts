@@ -36,7 +36,7 @@ import {
   PluginAnswerUnknownError,
   PluginCallError,
 } from "./errors.js";
-import { checkReport } from "./link.js";
+import { checkReport, hostTarget } from "./link.js";
 import type { JobFound, Obj, PluginJobCaps, PluginMethod } from "./protocol.js";
 import { pluginCall, type Resolution, resolveEffect, runEffect } from "./reconcile.js";
 import { getPlugin, pluginSeams } from "./registry.js";
@@ -90,7 +90,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
   /** The wire `target` of a job call (D13). */
   const target = (key: string, host: string, handle?: string | null) => ({
     job: { kind: declared.kind, key, ...(handle != null ? { handle } : {}) },
-    host: { name: host },
+    ...hostTarget(db, host),
   });
   const jobTarget = (job: JobRef) => target(job.key ?? "", job.host?.name ?? "", job.handle);
 
@@ -222,7 +222,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
     async checkSteps(ctx: CheckContext): Promise<HostCheckStep[]> {
       if (!declared.checks?.includes(ctx.phase)) return [];
       const params = {
-        target: { host: { name: ctx.host.name } },
+        target: hostTarget(db, ctx.host.name),
         phase: ctx.phase,
         ...(ctx.agent !== undefined ? { agent: ctx.agent } : {}),
       };

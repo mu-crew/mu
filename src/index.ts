@@ -326,6 +326,7 @@ export {
 export {
   HostDeadlineError,
   HostJobsFullError,
+  HostNameRecoveryError,
   HostReferencedError,
   HostStateError,
 } from "./host-records.js";

@@ -242,10 +242,9 @@ export async function cmdHostRelease(
       emitJson({ host: name, released: true, abandoned: out });
       return;
     }
-    console.log(`abandoned host ${name}: nothing was asked of its provider`);
-    for (const j of out.jobs) console.log(`  dropped job record ${j}`);
-    for (const r of out.recoveries) console.log(`  dropped recovery record ${r}`);
-    for (const e of out.effects) console.log(`  dropped unresolved effect ${e}`);
+    const dropped = [...out.jobs, ...out.recoveries.map((r) => `recovery ${r}`), ...out.effects];
+    console.log(`abandoned host ${name} (nothing asked of its provider; mu log has the loss)`);
+    for (const d of dropped) console.log(`  dropped ${d}`);
     for (const j of out.running) console.log(`  ${pc.yellow("possibly still running")}: ${j}`);
     return;
   }

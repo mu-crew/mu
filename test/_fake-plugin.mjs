@@ -53,7 +53,9 @@
 // `releases`). Config: hostFacts (merged into an acquire's facts), hostGone (a
 // reason: every status answers gone), hostLookupAnswer (host.lookup's answer
 // for an unknown key; default none). `link.push` fetches the commit into the
-// remote repo (a path under `home`), initialising it when absent.
+// remote repo (a path under `home`), initialising it when absent; pushNoop
+// answers success without pushing. requireHostHandle: a job or link call whose
+// target.host carries no handle and instance fails (a plugin with no map of its own).
 //
 // Every request and every $/cancel is logged.
 
@@ -320,6 +322,11 @@ function backendAnswer(method, params, c) {
 
 function answer(id, method, params) {
   const c = config();
+  const h = params?.target?.host;
+  if (c.requireHostHandle && /^(job|link)\./.test(method) && !(h?.handle && h?.instance)) {
+    fail(id, "permanent", `${method}: target.host names no handle and instance`);
+    return;
+  }
   const home = c.home ?? process.cwd();
   if (c.replies !== undefined && method in c.replies) {
     reply(id, c.replies[method]);
@@ -349,6 +356,10 @@ function answer(id, method, params) {
       );
       return;
     case "link.push": {
+      if (c.pushNoop) {
+        reply(id, { exitCode: 0, stdout: "", stderr: "", partial: false });
+        return;
+      }
       const repo = resolve(home, params.remoteRepo);
       const sh = `mkdir -p "$1" && { [ -e "$1/.git" ] || git -C "$1" init -q; } && git -C "$1" fetch -q "$2" "$3"`;
       run(

@@ -319,24 +319,27 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
   }
   const problem = profileTemplateProblem(p);
   if (problem !== undefined) throw new HostTemplateError(problem);
-  // A name is a profile's or a provider host's, never both (plugins spec D1). Read here, not
-  // through src/host-records.ts: that module needs this one loaded first.
-  if (db.prepare("SELECT 1 FROM hosts WHERE name = ?").get(p.name) !== undefined) {
-    throw new HostExistsError(p.name);
-  }
-  try {
-    // A template profile's row is the one it always was: `plugin` is written only when given.
-    db.prepare(
-      p.plugin === null
-        ? "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach)"
-        : "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach, plugin) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach, @plugin)",
-    ).run(p);
-  } catch (e) {
-    if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
+  // A name is a profile's or a provider host's, never both (plugins spec D1): checked and
+  // inserted in ONE immediate transaction, as an acquire's record is. Read here, not through
+  // src/host-records.ts: that module needs this one loaded first.
+  db.transaction(() => {
+    if (db.prepare("SELECT 1 FROM hosts WHERE name = ?").get(p.name) !== undefined) {
       throw new HostExistsError(p.name);
     }
-    throw e;
-  }
+    try {
+      // A template profile's row is the one it always was: `plugin` is written only when given.
+      db.prepare(
+        p.plugin === null
+          ? "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach)"
+          : "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach, plugin) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach, @plugin)",
+      ).run(p);
+    } catch (e) {
+      if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
+        throw new HostExistsError(p.name);
+      }
+      throw e;
+    }
+  }).immediate();
   return getHost(db, p.name);
 }
 

@@ -41,7 +41,7 @@ import {
   settleEffect,
   writeEffect,
 } from "../effects.js";
-import type { KeyCaps } from "../host-provider.js";
+import type { Call, KeyCaps } from "../host-provider.js";
 import { PLUGIN_READ_TIMEOUT_MS } from "./client.js";
 import {
   EffectFencedError,
@@ -77,29 +77,57 @@ export interface Fence {
   why?: "stop-changed" | "instance-changed";
 }
 
+/** How one call runs: its kind, its fence, the seams it needs, and its bound. */
+export interface CallOpts {
+  kind: "read" | "effect";
+  fence?: Fence;
+  needs?: readonly SeamName[];
+  /** The call's own budget (a link run's `timeoutMs`), else the method's. */
+  timeoutMs?: number;
+  /** Add the plugin's grace to the budget (a link run: the plugin answers at its timeout). */
+  plusGrace?: boolean;
+  /** The caller's `Call` (D6): its deadline caps the budget, its signal cancels. */
+  call?: Call;
+}
+
 /**
- * The one call path: refuses (`EffectFencedError`) before sending when `fence` names another
- * instance than the plugin's, and narrows the reply against this request.
+ * The one call path (every plugin call: host, link, job, channel): refuses (`EffectFencedError`)
+ * before sending when `fence` names another instance than the plugin's, and narrows the reply
+ * against this request.
  */
 export async function pluginCall<M extends PluginMethod>(
   db: Db,
   plugin: string,
   method: M,
   params: Obj,
-  opts: { kind: "read" | "effect"; fence?: Fence; needs?: readonly SeamName[] },
+  opts: CallOpts,
 ): Promise<MethodReplies[M]> {
   const s = await pluginSession(db, plugin, opts.needs);
   const f = opts.fence;
   if (f !== undefined && f.instance !== s.init.instance) {
     throw new EffectFencedError(plugin, f.subject, f.instance, s.init.instance, f.why);
   }
-  const timeoutMs = opts.kind === "effect" ? effectTimeoutMs(method) : PLUGIN_READ_TIMEOUT_MS;
+  let timeoutMs =
+    (opts.timeoutMs ??
+      (opts.kind === "effect" ? effectTimeoutMs(method) : PLUGIN_READ_TIMEOUT_MS)) +
+    (opts.plusGrace === true ? s.process.graceMs : 0);
+  if (opts.call !== undefined)
+    timeoutMs = Math.max(1, Math.min(timeoutMs, opts.call.deadline - Date.now()));
   return s.call(
     method,
     params,
-    { kind: opts.kind, timeoutMs },
+    {
+      kind: opts.kind,
+      timeoutMs,
+      ...(opts.call !== undefined ? { signal: opts.call.signal } : {}),
+    },
     replyNarrower(method, params, s.init.seams),
   );
+}
+
+/** The plugin's grace (D13): a `stopping` link run is waited out for one. */
+export async function pluginGraceMs(db: Db, plugin: string): Promise<number> {
+  return (await pluginSession(db, plugin)).process.graceMs;
 }
 
 export interface EffectCall<M extends PluginMethod>
@@ -107,6 +135,10 @@ export interface EffectCall<M extends PluginMethod>
   method: M;
   /** The instance the subject was recorded under (a stop's job): refused before the intent. */
   fence?: string;
+  /** The seams the plugin must declare, refused at load before the intent. */
+  needs?: readonly SeamName[];
+  /** The caller's deadline and cancel (D6). */
+  call?: Call;
   /** The subject's own change, in the intent's transaction (given the instance it goes to); a subject it creates returns its id. */
   alongside?: (instance: string) => unknown;
   /** The reply, recorded on the subject in the transaction that deletes the row. */
@@ -120,7 +152,7 @@ export async function runEffect<M extends PluginMethod>(
   db: Db,
   e: EffectCall<M>,
 ): Promise<MethodReplies[M]> {
-  const s = await pluginSession(db, e.plugin);
+  const s = await pluginSession(db, e.plugin, e.needs);
   const instance = s.init.instance;
   if (e.fence !== undefined && e.fence !== instance) {
     throw new EffectFencedError(e.plugin, e.key, e.fence, instance);
@@ -147,6 +179,7 @@ export async function runEffect<M extends PluginMethod>(
     result = await pluginCall(db, e.plugin, e.method, committed, {
       kind: "effect",
       fence: { instance, subject: e.key },
+      ...(e.call !== undefined ? { call: e.call } : {}),
     });
   } catch (err) {
     if (err instanceof PluginCallError) settleEffect(db, e.key, e.refused);

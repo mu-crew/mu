@@ -89,6 +89,7 @@ import { HostHarnessMissingError } from "../host-harnesses.js";
 import {
   HostDeadlineError,
   HostJobsFullError,
+  HostNameRecoveryError,
   HostReferencedError,
   HostStateError,
 } from "../host-records.js";
@@ -554,6 +555,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof HostDeadlineError ||
     err instanceof HostJobsFullError ||
     err instanceof HostReferencedError ||
+    err instanceof HostNameRecoveryError ||
     // A plugin's load or trust rules refused it, its name is taken, or something names it.
     err instanceof PluginRefusedError ||
     err instanceof PluginExistsError ||

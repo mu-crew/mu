@@ -248,16 +248,7 @@ export function claimEffect(db: Db, key: string): { row: EffectRow; newest: bool
     .transaction(() => {
       const row = getEffect(db, key);
       if (row === undefined) return undefined;
-      if (row.state === "pending" && !creatorGone(row)) {
-        throw new EffectHeldError(key, "creator", row.creator_pid);
-      }
-      if (
-        row.state === "resolving" &&
-        row.resolver_pid !== null &&
-        !pidProvenGone(row.resolver_pid, row.resolver_start)
-      ) {
-        throw new EffectHeldError(key, "resolver", row.resolver_pid);
-      }
+      refuseLiveOwner(row);
       const now = Date.now();
       db.prepare(
         "UPDATE effects SET state = 'resolving', resolver_pid = ?, resolver_start = ?, updated_at = ? WHERE key = ? AND state = ?",
@@ -280,4 +271,23 @@ export function claimEffect(db: Db, key: string): { row: EffectRow; newest: bool
       };
     })
     .immediate();
+}
+
+/** Refuse (`EffectHeldError`) while the row's creator (`pending`) or resolver (`resolving`) lives. */
+export function refuseLiveOwner(r: EffectRow): void {
+  if (r.state === "pending" && !creatorGone(r)) {
+    throw new EffectHeldError(r.key, "creator", r.creator_pid);
+  }
+  if (
+    r.state === "resolving" &&
+    r.resolver_pid !== null &&
+    !pidProvenGone(r.resolver_pid, r.resolver_start)
+  ) {
+    throw new EffectHeldError(r.key, "resolver", r.resolver_pid);
+  }
+}
+
+/** Drop a row without an outcome: an abandon, or a job lost with its host (the caller logs it). */
+export function deleteEffect(db: Db, key: string): void {
+  db.prepare("DELETE FROM effects WHERE key = ?").run(key);
 }

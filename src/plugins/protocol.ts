@@ -599,41 +599,17 @@ export const narrowHostLookup = keyLookup(hostFacts);
 /** A `host.status` reply (D6): `up` with its facts, `gone`, `needs-human` or `unknown`. */
 export function narrowHostStatus(x: unknown): Narrowed<HostStatus> {
   return narrow((): HostStatus => {
-    const any = obj(x, "result", [
-      "state",
-      "handle",
-      "deadlineAt",
-      "idleReclaimMs",
-      "maxJobs",
-      "reason",
-      "remedy",
-    ]);
-    const state = oneOf(any.state, "result.state", [
-      "up",
-      "gone",
-      "needs-human",
-      "unknown",
-    ] as const);
+    const FACTS = ["handle", "deadlineAt", "idleReclaimMs", "maxJobs"];
+    const r = obj(x, "result", ["state", ...FACTS, "reason", "remedy"]);
+    const state = oneOf(r.state, "result.state", ["up", "gone", "needs-human", "unknown"] as const);
+    const only = (k: string[]) => obj(x, "result", ["state", ...k]);
     if (state === "up") {
-      const { state: _s, ...facts } = obj(x, "result", [
-        "state",
-        "handle",
-        "deadlineAt",
-        "idleReclaimMs",
-        "maxJobs",
-      ]);
+      const { state: _s, ...facts } = only(FACTS);
       return { state, ...hostFacts(facts, "result") };
     }
-    if (state === "needs-human") {
-      return {
-        state,
-        remedy: str(obj(x, "result", ["state", "remedy"]).remedy, "result.remedy", 4096),
-      };
-    }
-    return {
-      state,
-      reason: str(obj(x, "result", ["state", "reason"]).reason, "result.reason", 4096),
-    };
+    const k = state === "needs-human" ? "remedy" : "reason";
+    const text = str(only([k])[k], `result.${k}`, 4096);
+    return state === "needs-human" ? { state, remedy: text } : { state, reason: text };
   });
 }
 
@@ -717,6 +693,10 @@ export interface MethodReplies {
   "job.stop": null;
   "job.attach": PaneCommand;
   "job.checkSteps": WireCheckStep[];
+  "link.exec": WireLinkRun;
+  "link.fetch": WireLinkRun;
+  "link.push": WireLinkRun;
+  "link.checkSteps": WireCheckStep[];
   "host.acquire": HostFacts;
   "host.lookup": KeyLookup<HostFacts>;
   "host.status": HostStatus;
@@ -775,7 +755,12 @@ export function replyNarrower<M extends PluginMethod>(
       case "job.attach":
         return value(narrowPaneCommand(x));
       case "job.checkSteps":
+      case "link.checkSteps":
         return value(narrowCheckSteps(x));
+      case "link.exec":
+      case "link.fetch":
+      case "link.push":
+        return value(narrowLinkRun(x));
       case "job.stop":
       case "host.release":
         return value(narrowNull(x));

@@ -35,32 +35,37 @@ import {
   templateLink,
 } from "../host-link.js";
 import { type HostView, providerIdentity } from "../host-provider.js";
+import { getHostRecord } from "../host-records.js";
 import { HANDED_BACK, type HostCheckStep, HostHandbackError, withHostChannel } from "../hosts.js";
 import { git } from "../vcs/git.js";
-import { PLUGIN_READ_TIMEOUT_MS, type PluginSession } from "./client.js";
+import { PLUGIN_READ_TIMEOUT_MS } from "./client.js";
 import {
   EffectOutcomeUnknownError,
   PluginAnswerUnknownError,
   PluginCallError,
   PluginRefusedError,
 } from "./errors.js";
-import { narrowCheckSteps, narrowLinkRun, type WireCheckStep } from "./protocol.js";
-import { getPlugin, pluginSeams, pluginSession } from "./registry.js";
+import type { WireCheckStep } from "./protocol.js";
+import { pluginCall, pluginGraceMs } from "./reconcile.js";
+import { getPlugin, pluginSeams } from "./registry.js";
 
-/** The wire `target` of a link call (D13): the host's name, and a provider host's handle and instance. */
-export function hostTarget(host: HostView): {
-  host: { name: string; handle?: string; instance?: string };
-} {
-  const r = host.record;
+/**
+ * The wire `target.host` of every call naming a host (D13): its name, and a provider host's
+ * handle and instance (read from its record), so the plugin keeps no map of its own.
+ */
+export function hostTarget(
+  db: Db,
+  name: string,
+): { host: { name: string; handle?: string; instance?: string } } {
+  const r = getHostRecord(db, name);
   return {
     host: {
-      name: host.name,
+      name,
       ...(r?.handle != null ? { handle: r.handle } : {}),
       ...(r?.instance != null ? { instance: r.instance } : {}),
     },
   };
 }
-const target = hostTarget;
 
 /**
  * The link of plugin `name`, from its registration. Refuses a plugin with no link seam. A
@@ -79,7 +84,17 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     fetch: declared.fetch || opts.provider !== true,
     remoteOnTimeout: declared.remoteOnTimeout === "unknown" ? "unknown" : "stopped",
   } as const;
-  const session = (): Promise<PluginSession> => pluginSession(db, name, ["link"]);
+  /** A provider host's calls are fenced on the instance it was acquired from (D4). */
+  const fence = (host: HostView, method: string) =>
+    host.record?.instance != null
+      ? {
+          fence: {
+            instance: host.record.instance,
+            subject: `${method} on host ${host.name}`,
+            why: "instance-changed" as const,
+          },
+        }
+      : {};
 
   /** Admission per `slots`, then `admitted` on the snapshot, then `body`. */
   const admit = async <T>(
@@ -113,21 +128,21 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     params: Record<string, unknown>,
     timeoutMs: number,
   ): Promise<LinkRun> => {
-    const s = await session();
     try {
       // The plugin enforces `timeoutMs` and answers. mu's timer allows one grace on top, so
       // an answer at the deadline is a reply, not a kill (D13); past it, $/cancel, the
       // grace, the group killed.
-      const r = await s.call(
+      const r = await pluginCall(
+        db,
+        name,
         method,
-        { target: target(host), ...params, timeoutMs },
-        { kind: "effect", timeoutMs: timeoutMs + s.process.graceMs },
-        narrowLinkRun,
+        { target: hostTarget(db, host.name), ...params, timeoutMs },
+        { kind: "effect", needs: ["link"], timeoutMs, plusGrace: true, ...fence(host, method) },
       );
       // `stopping`: the remote run stops within one grace after the reply. Wait it out, still
       // under the call's admission, so a timed-out run returns stopped.
       if (r.exitCode === null && declared.remoteOnTimeout === "stopping") {
-        await delay(s.process.graceMs);
+        await delay(await pluginGraceMs(db, name));
       }
       return r;
     } catch (e) {
@@ -204,19 +219,19 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     async checkSteps(ctx: CheckContext, _call: LinkCall): Promise<HostCheckStep[]> {
       if (!declared.checks?.includes(ctx.phase)) return [];
       const params = {
-        target: target(ctx.host),
+        target: hostTarget(db, ctx.host.name),
         phase: ctx.phase,
         ...(ctx.root !== undefined ? { root: ctx.root } : {}),
         ...(ctx.agent !== undefined ? { agent: ctx.agent } : {}),
       };
       const timeoutMs = Math.max(PLUGIN_READ_TIMEOUT_MS, ctx.timeoutMs);
-      return checkReport(name, ctx.host.name, "checks", async () =>
-        (await session()).call(
-          "link.checkSteps",
-          params,
-          { kind: "read", timeoutMs },
-          narrowCheckSteps,
-        ),
+      return checkReport(name, ctx.host.name, "checks", () =>
+        pluginCall(db, name, "link.checkSteps", params, {
+          kind: "read",
+          needs: ["link"],
+          timeoutMs,
+          ...fence(ctx.host, "link.checkSteps"),
+        }),
       );
     },
   };

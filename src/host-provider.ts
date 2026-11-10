@@ -179,11 +179,7 @@ export function recordView(db: Db, record: HostRecord): HostView {
   };
 }
 
-/**
- * The view of host `name`: a profile's or a provider host's record. Throws `HostNotFoundError`
- * when nothing holds the name, and refuses a name in both tables (a defence: neither verb
- * writes one).
- */
+/** The view of host `name` (a profile or a record; a name in both refuses). `HostNotFoundError`. */
 export function resolveHost(db: Db, name: string): HostView {
   const record = getHostRecord(db, name);
   let profile: HostProfile | undefined;
@@ -201,10 +197,7 @@ export function resolveHost(db: Db, name: string): HostView {
   return recordView(db, record);
 }
 
-/**
- * Run `fn` on host `name`'s admitted view: a profile's under its channel (`withHostChannel`), a
- * provider host's at once, with no lease (it has no session cap; its job slots are `max_jobs`).
- */
+/** `fn` on host `name`'s admitted view: a profile's under its channel, a provider host's at once. */
 export async function withHostView<T>(
   db: Db,
   name: string,
