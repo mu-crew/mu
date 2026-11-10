@@ -213,6 +213,18 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **SKILL.md: wait for all of a set, then read every outcome** (hill-r2
+  C6 tournament winner `claudeopus55-wait-all`, task `land_c6_wait_all`;
+  report `docs/eval/hill-r2/c6.md` on branch `hill2/c6b`). The wait rule
+  now names `mu wait --all task:<ws>/<a> task:<ws>/<b>` and says to read
+  each task with `mu task show` after it. To pay for the words it cuts the
+  `-w <workstream>` sentence (each verb's `--help` lists `-w` or not) and
+  the `mu task block A --by B` line (`task block --help` gives the
+  direction). On `sleep_poll`, fast mode R1 with 50 clusters per model:
+  haiku 31/50 against base 8, gemini 42 against 22, sonnet 29 against 8;
+  pooled z 6.53 against a threshold of 2.01. Patch applied verbatim;
+  SKILL.md drops from 599 to 595 words.
+
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove
   the mac to load ~250 on 2026-11-08). One run fanned out to 24 sandboxes
