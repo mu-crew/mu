@@ -660,12 +660,17 @@ export async function cmdRead(
     ...(opts.lines !== undefined && !textTail ? { lines: opts.lines } : {}),
   });
   if (opts.json) {
+    // `scrollback` keeps its raw -n rows; `text` counts -n in text lines.
+    const full =
+      opts.text === true && opts.lines !== undefined
+        ? await readAgent(db, name, { workstream: ws })
+        : text;
     emitJson({
       agentName: name,
       lines: opts.lines ?? null,
       scrollback: text,
       scrollbackLines: countLines(text),
-      ...(opts.text === true ? { text: paneText(text) } : {}),
+      ...(opts.text === true ? { text: tailText(paneText(full), opts.lines) } : {}),
     });
     return;
   }
