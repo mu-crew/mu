@@ -507,7 +507,7 @@ async function round(
   if (fast) {
     for (const s of scores)
       console.log(
-        `${s.id}: fast wins ${s.wins} (z ${s.winZ.toFixed(2)})${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
+        `${s.id}: fast wins ${s.wins} (z ${s.winZ.toFixed(2)}), infra ${s.infra.retries} retries / ${s.infra.excludedRows} excluded${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
       );
     console.log(`fast mode: no cut; next \`tournament decide --fast ${group}\``);
     return 0;

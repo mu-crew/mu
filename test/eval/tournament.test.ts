@@ -404,6 +404,7 @@ describe("rank and cut", () => {
     attributable: [],
     reviews: [],
     invalidRows: 0,
+    infra: { retries: 0, excludedRows: 0, droppedClusters: 0 },
     r1Score: 0,
     wins: 0,
     winZ: 0,

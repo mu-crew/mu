@@ -423,6 +423,10 @@ function caseResult(s: VariantScore, c: string): string {
   return `tie${cue}`;
 }
 
+/** Host noise per variant (infra-retry.ts). */
+export const infraLine = ({ infra: i }: Pick<VariantScore, "infra">): string =>
+  `Infra: ${i.retries} retries, ${i.excludedRows} rows infra-invalid (left out), ${i.droppedClusters} cluster pairings dropped from both sides`;
+
 function roundSection(rows: readonly ControlRow[], round: "r1" | "r2", epoch: number): string[] {
   const out = [`### ${round.toUpperCase()}`, ""];
   const rs = lastOf(rows, "round_score", (r) => r.round === round && r.epoch === epoch);
@@ -457,6 +461,8 @@ function roundSection(rows: readonly ControlRow[], round: "r1" | "r2", epoch: nu
       `CMH per model: ${s.cmh.map((c) => `${c.model} z ${f2(c.z)} p ${fp(c.p)}${c.loss ? " LOSS" : ""}`).join("; ")}`,
       "",
       `Keys: R1 score ${f2(s.r1Score)}, wins ${s.wins}, win z ${f2(s.winZ)}, exposed weak hits ${s.hitsExposed}, mean tokens ${s.meanTokens.toFixed(0)}, text delta ${s.textDelta}; eliminated: ${s.eliminated.join(", ") || "no"}`,
+      // scores from before the retry rule carry no infra counts
+      ...((s as Partial<VariantScore>).infra ? ["", infraLine(s)] : []),
       "",
     );
   }

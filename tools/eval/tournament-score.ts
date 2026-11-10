@@ -14,6 +14,7 @@ import {
   probeExposure,
   winClusters,
 } from "./exposure.ts";
+import { infraCluster } from "./infra-retry.ts";
 import type { Group, NameCue, ProbeRow } from "./nextstep.ts";
 import { cmh, deff, fisher, holm, kish, type Stratum } from "./stats.ts";
 import {
@@ -74,6 +75,8 @@ export interface VariantScore {
   attributable: string[];
   reviews: Omit<ReviewStopRow, "kind" | "id">[];
   invalidRows: number;
+  /** Host noise (infra-retry.ts): retries taken, rows left out, clusters dropped from both sides. */
+  infra: { retries: number; excludedRows: number; droppedClusters: number };
   r1Score: number;
   wins: number;
   winZ: number;
@@ -141,7 +144,7 @@ const exitClass = (e: number): string => (e === 0 ? "0" : e === -1 ? "killed" : 
 function baseLeadIn(rows: readonly ProbeRow[]): Map<string, string> {
   const counts = new Map<string, Map<string, number>>();
   for (const r of rows) {
-    if (r.surface !== BASE || r.invalid) continue;
+    if (r.surface !== BASE || r.invalid || r.infra !== undefined) continue;
     const k = `${r.case}|${r.leadIn}`;
     const v = (r.leadInExits ?? []).map(exitClass).join(",");
     const m = counts.get(k) ?? new Map<string, number>();
@@ -170,7 +173,8 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
   const models = [...weak, o.setup.models.gate];
   const rhoOf = (c: string, m: string): number => o.setup.rho[c]?.[m] ?? DEFAULT_RHO;
   const baseClasses = baseLeadIn(o.rows);
-  const baseRows = o.rows.filter((r) => r.surface === BASE);
+  const allBase = o.rows.filter((r) => r.surface === BASE);
+  const baseInfra = new Set(allBase.filter((r) => r.infra !== undefined).map(infraCluster));
   const decided = new Map((o.decisions ?? []).map((d) => [d.stop, d.decision]));
   const cases = [...new Set(o.rows.map((r) => r.case))].sort();
   const out: VariantScore[] = [];
@@ -180,8 +184,15 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
     );
     const eliminated: string[] = [];
     let invalidRows = 0;
-    const vRows = o.rows
-      .filter((r) => r.surface === v.id)
+    // an infra-invalid row on either side drops its cluster from both: never a loss, never invalid
+    const own = o.rows.filter((r) => r.surface === v.id);
+    const dropped = new Set([
+      ...baseInfra,
+      ...own.filter((r) => r.infra !== undefined).map(infraCluster),
+    ]);
+    const baseRows = allBase.filter((r) => !dropped.has(infraCluster(r)));
+    const vRows = own
+      .filter((r) => !dropped.has(infraCluster(r)))
       .map((r) => {
         const want = baseClasses.get(`${r.case}|${r.leadIn}`);
         const got = (r.leadInExits ?? []).map(exitClass).join(",");
@@ -388,6 +399,12 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
       attributable,
       reviews,
       invalidRows,
+      infra: {
+        retries: own.reduce((t, r) => t + (r.infraRetries ?? 0), 0),
+        excludedRows: own.filter((r) => r.infra !== undefined).length,
+        droppedClusters: new Set([...dropped].filter((k) => own.some((r) => infraCluster(r) === k)))
+          .size,
+      },
       r1Score: win.reduce((t, w) => t + w.z, 0),
       wins: winsN,
       winZ: win.filter((w) => w.win).reduce((t, w) => t + w.z, 0),

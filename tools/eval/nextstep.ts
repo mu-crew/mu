@@ -25,6 +25,7 @@ import { type Claim, rowPool } from "./claim.ts";
 import { askModel, buildId, extractCommand, firstReach, muInText } from "./cold-guess.ts";
 import { neutralityLeaks, runHelp, surfaceVocab } from "./cold-help.ts";
 import type { ColdEffect, GuessRun } from "./cold-intents.ts";
+import { leadInFault, VARIANT_FAILS_TO_STOP, withInfraRetry } from "./infra-retry.ts";
 import { NEXT_CASES } from "./nextstep-cases.ts";
 import {
   answerCalls,
@@ -153,6 +154,8 @@ export interface RunNextOpts {
   providerExt?: string;
   cases?: NextCase[];
   onRow?: (row: ProbeRow) => void;
+  /** Waits before each host-noise retry (infra-retry.ts INFRA_BACKOFF_MS). */
+  infraBackoffMs?: readonly number[];
 }
 
 /** §1.6. No exposure field: exposure.ts derives those at score time. */
@@ -192,6 +195,14 @@ export interface ProbeRow {
   modelError?: string;
   /** The answer named the rig (rig-guard.ts): refused unrun, an invalid row, out of ρ̂. */
   rigReads?: string[];
+  /** The row never ran: its sandbox or the rig threw (infra-retry.ts). */
+  rigError?: string;
+  /** A lead-in step timed out unasked, or exited 128+ on host stderr (infra-retry.ts). */
+  leadInFault?: string;
+  /** Host-noise retries this row took (infra-retry.ts). */
+  infraRetries?: number;
+  /** Infra-invalid: still failing on host stderr after the retries; left out of scoring with its pairing. */
+  infra?: string;
 }
 
 // ---- prompt -------------------------------------------------------------------------------------
@@ -366,13 +377,14 @@ export interface PlayOpts {
   gapMs?: number;
 }
 
-/** Seed, lead-in, prompt, answer, judge: one row. The sandbox lives for the row only. */
-export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
-  const started = Date.now();
+/** A row of `c` that has not run yet. */
+export function blankRow(
+  c: NextCase,
+  o: Pick<PlayOpts, "surface" | "surfaceLabel" | "arm" | "paraphrase">,
+): ProbeRow {
   const para = c.paraphrases.find((p) => p.id === o.paraphrase);
   if (!para) throw new Error(`${c.id}: no paraphrase ${o.paraphrase}`);
-  const limitMs = c.limitMs ?? DEFAULT_LIMIT_MS;
-  const row: ProbeRow = {
+  return {
     kind: "probe",
     group: c.group,
     round: "check",
@@ -405,6 +417,15 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
     tokens: 0,
     ms: 0,
   };
+}
+
+/** Seed, lead-in, prompt, answer, judge: one row. The sandbox lives for the row only. */
+export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
+  const started = Date.now();
+  const row = blankRow(c, o);
+  const para = c.paraphrases.find((p) => p.id === o.paraphrase);
+  if (!para) throw new Error(`${c.id}: no paraphrase ${o.paraphrase}`);
+  const limitMs = c.limitMs ?? DEFAULT_LIMIT_MS;
   const sb = await createSandbox(o.surface, { env: { PI_SESSION_ID: ORCH_SESSION } });
   try {
     let st: St;
@@ -421,6 +442,11 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
     const steps = c.leadIn(sb, st, para.leadIn);
     const lead = await runLeadIn(sb, steps, c.shell, limitMs);
     row.leadInExits = lead.map((r) => (r.killed ? -1 : r.exit));
+    const fault = leadInFault(
+      lead,
+      steps.map((s) => s.killAfterMs !== undefined),
+    );
+    if (fault !== undefined) row.leadInFault = fault;
     for (const s of steps) {
       const bad = s.expect ? await s.expect(sb, st) : null;
       if (bad !== null) {
@@ -629,29 +655,47 @@ export async function runNext(o: RunNextOpts): Promise<{ written: number; skippe
     return l;
   };
   let written = 0;
+  // per surface and case: rows that failed every try without host stderr (the variant's own failure)
+  const variantFails = new Map<string, number>();
   const worker = async (claim: Claim): Promise<void> => {
     for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
       const c = byId.get(job.caseId);
       if (!c) continue;
       const para = c.paraphrases.find((p) => p.id === job.paraphrase);
+      const failKey = `${job.surfaceLabel}|${c.id}`;
       try {
-        const row = await claim(() =>
-          playCase(c, {
-            surface: job.surface,
-            surfaceLabel: job.surfaceLabel,
-            arm: job.arm,
-            paraphrase: job.paraphrase,
-            promptDir: o.promptDir,
-            reply: async (st, system, user) => {
-              const faux = fauxReplies(c, st, para?.leadIn ?? "a");
-              const ask = () => askModel(job.model, system, user, o.providerExt, faux);
-              const slot = providerSlot(job.model);
-              let r = await slot(ask);
-              for (let i = 0; i < 2 && r.error !== undefined; i++) r = await slot(ask);
-              return r;
-            },
-          }),
-        );
+        // each try under its own claim; a throw (no sandbox) is a row with `rigError`
+        const once = (): Promise<ProbeRow> =>
+          claim(() =>
+            playCase(c, {
+              surface: job.surface,
+              surfaceLabel: job.surfaceLabel,
+              arm: job.arm,
+              paraphrase: job.paraphrase,
+              promptDir: o.promptDir,
+              reply: async (st, system, user) => {
+                const faux = fauxReplies(c, st, para?.leadIn ?? "a");
+                const ask = () => askModel(job.model, system, user, o.providerExt, faux);
+                const slot = providerSlot(job.model);
+                let r = await slot(ask);
+                for (let i = 0; i < 2 && r.error !== undefined; i++) r = await slot(ask);
+                return r;
+              },
+            }),
+          ).catch((e: unknown) => {
+            const r = blankRow(c, job);
+            r.invalid = true;
+            r.rigError = `rig error: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`;
+            r.why.push(r.rigError);
+            return r;
+          });
+        const { row, persistent } = await withInfraRetry(once, {
+          ...(o.infraBackoffMs ? { backoffMs: o.infraBackoffMs } : {}),
+          mayRetry: () => (variantFails.get(failKey) ?? 0) < VARIANT_FAILS_TO_STOP,
+          log: (l) => console.error(`nextstep ${l}`),
+        });
+        if (persistent !== null && !persistent.host)
+          variantFails.set(failKey, (variantFails.get(failKey) ?? 0) + 1);
         row.round = job.round;
         row.group = job.group;
         row.model = job.model;
