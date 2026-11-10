@@ -19,7 +19,7 @@ import {
   HostSpawnUnsupportedError,
   releaseHostChannel,
 } from "../hosts.js";
-import { HONOURS_ALL } from "../jobs/types.js";
+import { HONOURS_ALL, type JobKind } from "../jobs/types.js";
 import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
@@ -76,8 +76,7 @@ export class JobSpecUnsupportedError extends HostProfileError {
 }
 
 /** Honour or refuse: every requested field the kind enforces, or the spawn refuses. */
-function refuseUnhonoured(host: HostView, opts: SpawnAgentOptions): void {
-  const kind = host.jobKind;
+function refuseUnhonoured(host: HostView, kind: JobKind, opts: SpawnAgentOptions): void {
   const h = kind.caps.honours ?? HONOURS_ALL;
   const role = opts.role === "read-only" ? "read-only" : "full-access";
   const refuse = (field: JobSpecUnsupportedError["field"], detail: string): never => {
@@ -99,8 +98,13 @@ function refuseUnhonoured(host: HostView, opts: SpawnAgentOptions): void {
 export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise<HostProfile> {
   const host = opts.host ?? "";
   const view = resolveHost(db, host);
+  if (view.jobKind === undefined) {
+    throw new HostProfileError(
+      `host ${host}'s provider ${view.provider.name} runs no jobs: its plugin declares no job seam`,
+    );
+  }
   const profile = requireProfile(view);
-  refuseUnhonoured(view, opts);
+  refuseUnhonoured(view, view.jobKind, opts);
   if (profile.plugin != null) {
     // The plugin's job kind (its view command, its handle) is not driven by this build yet.
     throw new HostProfileError(

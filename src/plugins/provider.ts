@@ -86,7 +86,7 @@ export function pluginProvider(
       return runEffect(db, {
         key,
         call,
-        needs: ["host", "link", "job"],
+        needs: ["host", "link"],
         subject: { kind: "host", id: "" },
         plugin,
         method: "host.acquire",

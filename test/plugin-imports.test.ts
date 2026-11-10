@@ -32,7 +32,6 @@ describe("the plugin adapter's boundary", () => {
         "src/hosts.ts",
         "src/index.ts",
         "src/cli/handle.ts",
-        "src/host-provider.ts",
         "src/host-lifecycle.ts",
       ],
       "src/plugins/registry.ts": ["src/cli/handle.ts", "src/cli/plugin.ts"],

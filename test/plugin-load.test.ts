@@ -111,10 +111,10 @@ describe("load rules", () => {
     expect(await refusal({ seams: { ...linkSeam(), mux: {} } })).toMatch(/seams\.mux/);
   });
 
-  it("a host seam without the link and job seams", async () => {
+  it("a host seam without the link seam", async () => {
     expect(
       await refusal({ seams: { host: { acquire: { lookup: true, fenceKey: true } } } }),
-    ).toMatch(/host seam needs the link and job seams/);
+    ).toMatch(/host seam needs the link seam/);
   });
 
   it("host.acquire with neither lookup nor exact dedupe", async () => {

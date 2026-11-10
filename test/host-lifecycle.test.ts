@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { requireHostSpawn } from "../src/agents/spawn-remote.js";
 import { deleteAgent, insertAgent } from "../src/agents.js";
 import { getCarrierJob } from "../src/carrier-jobs.js";
 import { type Db, openDb } from "../src/db.js";
@@ -233,6 +234,20 @@ describe("mu host release (D1)", () => {
     expect(getHostRecord(db, "box")).toMatchObject({ state: "lost", reason: "reclaimed" });
     await releaseHost(db, "box");
     expect(getHostRecord(db, "box")).toBeUndefined();
+  });
+});
+
+describe("a link-only provider (D6)", () => {
+  it("loads with host and link alone, acquires, and its host refuses a spawn up front", async () => {
+    const { job: _job, ...seams } = providerSeams();
+    await setup({}, seams);
+    const rec = await acquire();
+    expect(rec).toMatchObject({ state: "ready", handle: "host-1" });
+    expect(resolveHost(db, "box").jobKind).toBeUndefined();
+    await expect(
+      requireHostSpawn(db, { name: "w", workstream: "ws", host: "box" }),
+    ).rejects.toThrow(/host box's provider fake runs no jobs/);
+    expect(f.calls().some((c) => c.method.startsWith("job."))).toBe(false);
   });
 });
 

@@ -61,6 +61,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   that a re-run resolves by lookup logs its `host acquire` entry with the
   handle. A `host.status` that answers `up` keeps a fact it omits and
   clears one it sends as `null`, so a provider need not repeat every fact.
+  A provider plugin may declare `host` with `link` alone: its hosts run no
+  jobs (no job kind in their view), and a spawn on one is refused up front
+  instead of failing at a placeholder `job.start`.
 - **Plugins: effects, the reconciler and the job adapter** (plugins spec
   P6c, D4, D8). Every plugin effect is written ahead in a new `effects`
   row (key, the exact params and their sha256, the plugin instance, the

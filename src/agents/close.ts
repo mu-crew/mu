@@ -749,7 +749,7 @@ function hostTransportOf(db: Db, incarnation: number): string | null {
 /** Is `host` a lease profile now (only for a row that recorded no transport)? A gone profile says nothing, so no. */
 function isLeaseHost(db: Db, host: string): boolean {
   try {
-    return resolveHost(db, host).jobKind.name === "lease";
+    return resolveHost(db, host).jobKind?.name === "lease";
   } catch {
     return false;
   }

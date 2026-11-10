@@ -62,7 +62,7 @@ describe("resolveHost", () => {
     expect(h.name).toBe("dev");
     expect(h.link.name).toBe("template");
     expect(h.provider).toBe(staticProvider);
-    expect(h.jobKind.name).toBe("pane");
+    expect(h.jobKind?.name).toBe("pane");
     expect(h.profile).toEqual(getHost(db, "dev"));
     expect(h.record).toBeUndefined();
     expect(h.link.fingerprint(h)).toBe("ssh dev {cmd}");
@@ -70,8 +70,8 @@ describe("resolveHost", () => {
 
   it("a lease profile's jobs run as the lease kind", () => {
     const h = resolveHost(db, "farm");
-    expect(h.jobKind.name).toBe("lease");
-    expect(h.jobKind.caps).toEqual({
+    expect(h.jobKind?.name).toBe("lease");
+    expect(h.jobKind?.caps).toEqual({
       view: "bound",
       handle: "file",
       checks: ["template", "agent"],

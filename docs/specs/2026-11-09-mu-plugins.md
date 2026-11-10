@@ -1202,8 +1202,9 @@ A channel seam, for a plugin that has one, adds
 The plugin declares every seam it implements: `host`, `link`, `job` and
 `channel`, each with its capabilities:
 
-- **`host`** is `{acquire: KeyCaps}`, and must come with `link` and `job`
-  (D6).
+- **`host`** is `{acquire: KeyCaps}`, and must come with `link`, and with
+  `job` when its hosts run jobs: a provider host with no job kind refuses
+  a spawn up front (D6).
 - **`channel`** is `{name, caps}`. `name` is the channel's registered
   name, and the job seam's `channel` must equal it.
 - **A plugin channel** must declare `watch: "stream"` and a `settleText`

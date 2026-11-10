@@ -1222,7 +1222,7 @@ export async function checkHost(
         ...(view.link.caps.checks?.includes(p) && view.link.checkSteps
           ? await view.link.checkSteps(ctx(p), call)
           : []),
-        ...(view.jobKind.caps.checks?.includes(p) && view.jobKind.checkSteps
+        ...(view.jobKind?.caps.checks?.includes(p) && view.jobKind.checkSteps
           ? await view.jobKind.checkSteps(ctx(p))
           : []),
       ];

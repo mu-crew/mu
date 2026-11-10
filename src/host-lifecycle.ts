@@ -165,7 +165,7 @@ export function abandonHost(db: Db, name: string): Abandoned {
         ...refs.jobs.flatMap((j) => effectsOf(db, "job", j.token)),
       ];
       for (const e of effects) refuseLiveOwner(e);
-      const outlives = recordView(db, rec).jobKind.caps.outlivesHost === true;
+      const outlives = recordView(db, rec).jobKind?.caps.outlivesHost === true;
       for (const e of effects) deleteEffect(db, e.key);
       for (const j of refs.jobs) abandonCarrierJob(db, j);
       for (const id of refs.recoveries) deleteRecoveryById(db, id);

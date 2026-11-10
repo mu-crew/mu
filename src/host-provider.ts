@@ -29,7 +29,6 @@ import {
 } from "./hosts.js";
 import { jobKind } from "./jobs/kinds.js";
 import type { JobKind } from "./jobs/types.js";
-import { PluginRefusedError } from "./plugins/errors.js";
 import { pluginJobKind } from "./plugins/job.js";
 import { pluginLink } from "./plugins/link.js";
 import { pluginProvider } from "./plugins/provider.js";
@@ -122,7 +121,8 @@ export interface HostView {
   name: string;
   link: HostLink;
   provider: HostProvider;
-  jobKind: JobKind;
+  /** Absent: a provider host whose plugin declares no job seam runs no jobs (D6). */
+  jobKind?: JobKind;
   profile?: HostProfile;
   record?: HostRecord;
 }
@@ -167,19 +167,17 @@ export function admittedView(db: Db, profile: HostProfile): HostView {
   };
 }
 
-/** The view of a provider host's record: its provider plugin's provider, link and job kind (D6). */
+/**
+ * The view of a provider host's record: its provider plugin's provider, link and job kind
+ * (D6). A plugin with no job seam provides hosts that run no jobs: no job kind.
+ */
 export function recordView(db: Db, record: HostRecord): HostView {
   const kind = pluginJobKind(db, record.provider);
-  if (kind === undefined) {
-    throw new PluginRefusedError(record.provider, [
-      "it implements no job seam, which a provider host needs",
-    ]);
-  }
   return {
     name: record.name,
     link: pluginLink(db, record.provider, { provider: true }),
     provider: pluginProvider(db, record.provider, record.name),
-    jobKind: kind,
+    ...(kind !== undefined ? { jobKind: kind } : {}),
     record,
   };
 }

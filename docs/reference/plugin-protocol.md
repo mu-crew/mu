@@ -162,7 +162,8 @@ and the `deadline` are new each time.
 ### The host
 
 A provider plugin (`mu host acquire --provider <name>`) declares `host`
-with `link` and `job`. A provider host's link and job calls carry its
+with `link`, and with `job` when its hosts run jobs (a host whose provider
+declares no job seam refuses a spawn up front). A provider host's link and job calls carry its
 `handle` and `instance` in `target.host`.
 
 | Method | Params beyond `target`, `deadline` | Result |

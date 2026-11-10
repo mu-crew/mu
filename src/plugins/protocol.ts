@@ -832,8 +832,8 @@ export function loadRefusals(
     if (s[need] === undefined) out.push(`it implements no ${need} seam, which this needs`);
   }
   if (SEAM_NAMES.every((n) => s[n] === undefined)) out.push("it declares no seam");
-  if (s.host !== undefined && (s.link === undefined || s.job === undefined)) {
-    out.push("a host seam needs the link and job seams for the hosts it provides");
+  if (s.host !== undefined && s.link === undefined) {
+    out.push("a host seam needs the link seam for the hosts it provides");
   }
   if (s.host !== undefined && !keyed(s.host.acquire)) {
     out.push("host.acquire declares neither lookup nor exact dedupe");
