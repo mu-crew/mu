@@ -654,7 +654,7 @@ export function wireWaitCommand(program: Command): void {
     )
     .option("--first", "end on the first event (default)")
     .option("--first-of", "alias for --first")
-    .option("--all", "end when every named ref is done (an urgent event still ends it early)")
+    .option("--all", "end when every named ref is done (a named ref that dies counts as done; a stall, input, or an unnamed death ends it early)")
     .option("--all-of", "alias for --all")
     .option(
       "--ready",

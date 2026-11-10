@@ -44,7 +44,7 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Alwa
 
 - **Claim before work is sent.** `agent spawn --task <id> --send ...` does both.
 - **Wait with `mu wait`, never `sleep` loops.** All of a set: `mu wait --all task:<ws>/<a> task:<ws>/<b>`.
-- **Then read every outcome:** `mu task show <id>` per task. Exit 6 or 7 ends `--all` early: act, then wait on the rest.
+- **Then read every outcome:** `mu task show <id>` per task. Exit 7 ends `--all` early: act, then wait on the rest.
 - **A send that timed out is unknown, never resent**: `mu agent check <a> <msgId>`.
 - **New work: `send --fresh`.** A running worker never sees a note: send
   ([modes](recipes/orchestrator-loop.md#sending)).

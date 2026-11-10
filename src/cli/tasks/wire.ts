@@ -601,7 +601,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("block <blocked>")
     .description(
-      "Add blocking edges: --by <ids...> blocks <blocked>. Accepts repeat or comma-separated ids (same shape as `mu task add --blocked-by`). Validates same-workstream + cycle.",
+      "Add blocking edges: --by <ids...> blocks <blocked>. Accepts repeat or comma-separated ids (same shape as `mu task add --blocked-by`). Validates same-workstream + cycle. Chain tasks that edit the same files, so their cherry-picks never conflict.",
     )
     .requiredOption(
       "-b, --by <blockers...>",
