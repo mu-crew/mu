@@ -36,6 +36,7 @@
 // (fails closed); the advisory spawn lock stays inside spawnAgent.
 
 import { type AgentRow, getAgentForCleanup } from "../agents.js";
+import { getCarrierJobByName } from "../carrier-jobs.js";
 import {
   agentChannel,
   awaitHooksSession,
@@ -104,6 +105,7 @@ import {
   type StagedWorktree,
   spawnAgent,
 } from "./spawn.js";
+import { FirstPromptUnknownError, resolveFirstTurn } from "./spawn-plugin.js";
 import { recordSend } from "./transport.js";
 
 export interface TaskSpawnRequest {
@@ -493,76 +495,23 @@ async function drive(
     throw err;
   };
 
-  let row: AgentRow;
-  try {
-    if (agent === undefined) {
-      // An executor attempt's oversized remote brief: nothing is spawned for it.
-      assertBriefFitsSpawn(req);
-      spawnThrew = true;
-      const spawned = await spawnAgent(db, {
-        ...req.spawn,
-        ...delegateSession(db, req.task, ws),
-        onIdentity: (r) => {
-          rec = updateReceipt(db, taskId, key, {
-            state: "pane",
-            name: r.name,
-            agentId: r.incarnation,
-            paneId: r.paneId,
-          });
-          if (req.spawn.worktree === true) staged = stagedOf(db, r);
-          agent = r;
-        },
-      });
-      agent = spawned;
-      spawnThrew = false;
-      // The pi this spawn's handshake saw: every send below is bound to it.
-      if (spawned.ctlIncarnation !== undefined) {
-        rec = updateReceipt(db, taskId, key, { incarnation: spawned.ctlIncarnation });
-      }
-      // The pane is up but cannot take (or confirm) a prompt: nothing was sent.
-      if (spawned.ctl === "missing" || spawned.ctl === "refused") {
-        throw new AgentCtlUnreachableError(
-          spawned.name,
-          ws,
-          spawned.ctlSocket,
-          spawned.ctl,
-          spawned.host,
-        );
-      }
-      if (spawned.trustDialog === true) throw new SpawnTrustDialogError(spawned.name);
-    }
-    const target = agent;
-    if (!claimed) {
-      await claimTask(db, req.task, {
-        workstream: ws,
-        agentName: target.name,
-        expectedAgentId: target.incarnation,
-      });
-      claimed = true;
-      rec = updateReceipt(db, taskId, key, { state: "claimed" });
-    }
-    // hooks: the harness's hello, then the brief file. Both before `sending`: a
-    // failure here is unsent, and a replay writes the same bytes again. A remote
-    // worker's file is written on its host, in its remote cwd (spec D17).
-    const hooksTarget = channelTarget(db, target);
-    if (agentChannel(hooksTarget).name === "hooks") {
-      const t = hooksTarget.agent;
-      if (t.cwd === null) {
-        const why = say("agent.task_brief_hooks", t.name);
-        throw new AgentSendUnsupportedError(t.name, ws, t.cli, why);
-      }
-      ready = await awaitHooksSession(hooksTarget);
-      const file =
-        t.host !== null
-          ? await writeRemoteBriefFile(db, t.host, t.cwd, t.name, ws, key, req.text)
-          : writeBriefFile(t.cwd, t.name, key, req.text);
-      hooksText = briefPointer(file);
-    }
-    // One immediate transaction right before the write (no await inside):
-    // the delivery targets the SAVED registry id + pane, never whatever holds
-    // the name now, and only while the claim is still this agent's and the
-    // task still open (a resume from 'claimed' trusts no earlier view).
-    // 'sending' is journaled BEFORE the write: from here a crash means "may have landed".
+  /** Claim the task for `target`, once: its registry id owns it from here. */
+  const claim = async (target: AgentRow): Promise<void> => {
+    if (claimed) return;
+    await claimTask(db, req.task, {
+      workstream: ws,
+      agentName: target.name,
+      expectedAgentId: target.incarnation,
+    });
+    claimed = true;
+    rec = updateReceipt(db, taskId, key, { state: "claimed" });
+  };
+  // One immediate transaction right before the write (no await inside):
+  // the delivery targets the SAVED registry id + pane, never whatever holds
+  // the name now, and only while the claim is still this agent's and the
+  // task still open (a resume from 'claimed' trusts no earlier view).
+  // 'sending' is journaled BEFORE the write: from here a crash means "may have landed".
+  const journal = (target: AgentRow): AgentRow => {
     req.spawn.signal?.throwIfAborted(); // the last point an abort still rolls back
     const checked = db
       .transaction((): { row: AgentRow; rec: SpawnReceipt } => {
@@ -599,10 +548,108 @@ async function drive(
         return { row: now, rec: journaled };
       })
       .immediate();
-    row = checked.row;
     rec = checked.rec;
     sending = true;
+    return checked.row;
+  };
+  // An at-start plugin kind (plugins spec D8 G1): the claim and `sending` on its placeholder,
+  // then job.start is the write, carrying the receipt's msgId.
+  const firstTurn: NonNullable<SpawnAgentOptions["firstTurn"]> = {
+    msgId: rec.msgId,
+    begin: async (p) => {
+      agent = p;
+      await claim(p);
+      journal(p);
+    },
+    undo: (p) => {
+      try {
+        releaseTask(db, req.task, { workstream: ws, expectedOwnerId: p.incarnation });
+      } catch {
+        // best-effort: a held task is left for `mu task release`
+      }
+    },
+  };
+  /** The at-start start's delivery: set when job.start carried the prompt. */
+  let firstSent: SendResult | undefined;
+
+  let row: AgentRow;
+  try {
+    if (agent === undefined) {
+      // An executor attempt's oversized remote brief: nothing is spawned for it.
+      assertBriefFitsSpawn(req);
+      spawnThrew = true;
+      const spawned = await spawnAgent(db, {
+        ...req.spawn,
+        ...delegateSession(db, req.task, ws),
+        firstPrompt: req.text,
+        firstTurn,
+        onIdentity: (r) => {
+          rec = updateReceipt(db, taskId, key, {
+            state: "pane",
+            name: r.name,
+            agentId: r.incarnation,
+            paneId: r.paneId,
+          });
+          if (req.spawn.worktree === true) staged = stagedOf(db, r);
+          agent = r;
+        },
+      });
+      agent = spawned;
+      spawnThrew = false;
+      firstSent = spawned.firstSend;
+      // The pi this spawn's handshake saw: every send below is bound to it.
+      if (spawned.ctlIncarnation !== undefined) {
+        rec = updateReceipt(db, taskId, key, { incarnation: spawned.ctlIncarnation });
+      }
+      // The pane is up but cannot take (or confirm) a prompt: nothing was sent.
+      if (spawned.ctl === "missing" || spawned.ctl === "refused") {
+        throw new AgentCtlUnreachableError(
+          spawned.name,
+          ws,
+          spawned.ctlSocket,
+          spawned.ctl,
+          spawned.host,
+        );
+      }
+      if (spawned.trustDialog === true) throw new SpawnTrustDialogError(spawned.name);
+    }
+    const target = agent;
+    if (firstSent !== undefined) row = target;
+    else {
+      await claim(target);
+      // hooks: the harness's hello, then the brief file. Both before `sending`: a
+      // failure here is unsent, and a replay writes the same bytes again. A remote
+      // worker's file is written on its host, in its remote cwd (spec D17).
+      const hooksTarget = channelTarget(db, target);
+      if (agentChannel(hooksTarget).name === "hooks") {
+        const t = hooksTarget.agent;
+        if (t.cwd === null) {
+          const why = say("agent.task_brief_hooks", t.name);
+          throw new AgentSendUnsupportedError(t.name, ws, t.cli, why);
+        }
+        ready = await awaitHooksSession(hooksTarget);
+        const file =
+          t.host !== null
+            ? await writeRemoteBriefFile(db, t.host, t.cwd, t.name, ws, key, req.text)
+            : writeBriefFile(t.cwd, t.name, key, req.text);
+        hooksText = briefPointer(file);
+      }
+      row = journal(target);
+    }
   } catch (err) {
+    // The start carrying the prompt has no answer: kept, like any unknown write (D8 G1b).
+    if (err instanceof FirstPromptUnknownError) {
+      const reason = err.message;
+      const unknownRec = updateReceipt(db, taskId, key, { state: "unknown", detail: reason });
+      return {
+        state: "unknown",
+        replay: false,
+        receipt: unknownRec,
+        agent,
+        reason,
+        brief: "pending",
+      };
+    }
     return unsent(err);
   }
 
@@ -614,7 +661,8 @@ async function drive(
   };
   try {
     sent =
-      hooksText !== undefined
+      firstSent ??
+      (hooksText !== undefined
         ? // A just-launched worker has no turn to wait for, and a first-prompt harness
           // (codex, muse) no murmur row yet: the gate's unknown is expected, never a
           // dialog (a dialog is refused even so). An in-place retry is gated as usual.
@@ -629,7 +677,7 @@ async function drive(
             msgId: rec.msgId,
             ...(rec.incarnation !== null ? { expectIncarnation: rec.incarnation } : {}),
             onUndelivered,
-          });
+          }));
   } catch (err) {
     if (sending && definitelyUnsent(err)) return unsent(err);
     const reason = err instanceof Error ? err.message : String(err);
@@ -665,7 +713,13 @@ async function drive(
   // ── delivered: nothing below may fail the attempt ──
   // The run baseline the channel reports: ctl's runs and incarnation; on hooks the
   // confirmed paste's (turns settled before its run, its session).
-  const baseline = sentRun(sent, db)?.baseline;
+  const baseline =
+    firstSent !== undefined
+      ? {
+          runs: firstSent.runs ?? 0,
+          ...(firstSent.incarnation !== undefined ? { incarnation: firstSent.incarnation } : {}),
+        }
+      : sentRun(sent, db)?.baseline;
   try {
     rec = updateReceipt(db, taskId, key, {
       state: "sent",
@@ -716,6 +770,29 @@ async function reconcile(
     };
   };
   if (id.agent === undefined) return stay(`the sending agent is ${id.stale ?? "gone"}`);
+  // An at-start kind's first prompt went with job.start: resolved by its rule-table row (D8 G1a).
+  const first = await resolveFirstTurn(db, id.agent, saved.msgId);
+  if (first?.state === "unreachable") return stay(first.reason, "unreachable");
+  if (first?.state === "never") return neverStarted(db, req, saved, id.agent);
+  if (first?.state === "accepted") {
+    const rec = updateReceipt(db, saved.taskId, saved.attemptKey, {
+      state: "sent",
+      detail: null,
+      agentId: first.agent.incarnation,
+      paneId: first.agent.paneId,
+      runs: first.runs,
+      ...(first.incarnation !== undefined ? { incarnation: first.incarnation } : {}),
+    });
+    const brief = await tryPinBrief(db, req);
+    return {
+      state: "sent",
+      replay: true,
+      receipt: rec,
+      agent: first.agent,
+      checked: "accepted",
+      brief,
+    };
+  }
   // The channel's receipt decides how a replay asks (plugins spec D4, D12).
   const receipt = channelNamed(saved.transport, db)?.caps.receipt ?? "none";
   if (receipt === "acknowledged") return reconcileHooks(db, req, saved, id.agent, stay);
@@ -737,6 +814,40 @@ async function reconcile(
   });
   const brief = await tryPinBrief(db, req);
   return { state: "sent", replay: true, receipt: rec, agent: id.agent, checked: "accepted", brief };
+}
+
+/**
+ * A replay whose at-start job.start lookup proved never happened (D4): nothing was sent. The
+ * claim goes back, the placeholder, its job record and its tree are rolled back, and the
+ * attempt fails; a manual key runs again from scratch.
+ */
+async function neverStarted(
+  db: Db,
+  req: TaskSpawnRequest,
+  saved: SpawnReceipt,
+  agent: AgentRow,
+): Promise<never> {
+  const ws = req.spawn.workstream;
+  try {
+    releaseTask(db, req.task, { workstream: ws, expectedOwnerId: agent.incarnation });
+  } catch {
+    // best-effort: a held task is left for `mu task release`
+  }
+  const why = "its job.start never happened (lookup proved it); nothing was sent";
+  const job = getCarrierJobByName(db, ws, agent.name);
+  const carrier = job === undefined ? undefined : { token: job.token };
+  await rollbackSpawn(
+    db,
+    agent.name,
+    undefined,
+    stagedOf(db, agent),
+    agent.incarnation,
+    ws,
+    undefined,
+    carrier,
+  );
+  updateReceipt(db, saved.taskId, saved.attemptKey, { state: "failed", detail: why });
+  throw new SpawnAttemptFailedError(req.task, saved.attemptKey, why);
 }
 
 /**

@@ -212,9 +212,12 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
           row.key,
           {
             record: ({ result }) => {
-              const handle = (result as JobStart | null)?.handle;
-              if (row.method === "job.start" && handle !== undefined)
-                fillCarrierJob(db, token, handle);
+              const start = result as JobStart | null;
+              if (row.method !== "job.start") return;
+              if (start?.handle !== undefined) fillCarrierJob(db, token, start.handle);
+              // G1a: a found start is the whole reply, its opening baseline included.
+              if (start?.baseline?.incarnation !== undefined)
+                recordFirstInc(db, token, start.baseline.incarnation);
             },
             none: () => {
               if (row.method === "job.start")

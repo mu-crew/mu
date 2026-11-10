@@ -12,6 +12,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Plugins: an at-start first turn under `--task`, and its recovery**
+  (plugins spec P6e2: D8 G1, G1a, G1b). `mu agent spawn --task` on a host
+  whose plugin job kind declares `firstTurn: "at-start"` folds the brief into
+  `job.start`: the placeholder row comes first (stamped with the row's cwd,
+  command and channel), claims the task and journals `sending`; the start is
+  the write, carrying the receipt's msgId, and its reply's baseline (`runs:
+  0`) sends the receipt. A start that provably did nothing is unsent (claim
+  released, everything rolled back); one whose outcome is unknown keeps the
+  placeholder, the claim and the job record, never resends, and says so
+  (`EffectOutcomeUnknownError`, exit 1, naming the msgId and the effect key;
+  a taskless `--send` spawn the same). A replay of the attempt, or `mu agent
+  check <agent> <msgId>` on the job record's `first_msg_id`, resolves the
+  start by its rule-table row: a found start records its handle and
+  `first_inc`, opens the view from the start's reply (else `job.attach`) and
+  answers `accepted runs=0`; an unresolved one answers `unreachable` naming
+  the key; a proven `none` fails the attempt and rolls it back (the check
+  then asks the channel's receipt, as for any msgId).
+
 - **Plugins: the channel adapter, the plugin spawn path and detached views**
   (plugins spec P6e1: D3, D8, D9, D13). A plugin's `channel` seam is a
   registered channel (`src/plugins/channel.ts`), loaded from the plugins table
@@ -351,6 +369,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Schema (v14, no bump): `spawn_receipts.transport` has no CHECK**
+  (plugins spec D5, P6e2). A receipt's transport may name a plugin channel;
+  a file whose table still has the CHECK (before `hooks`, or before plugin
+  channels) is rebuilt by its column list in the upgrade's one transaction.
 - **Schema (v14, no bump): `hosts` and `remote_recovery.host_identity`**
   (plugins spec D5, P6d). A new machine-local, unrebuildable `hosts` table
   (32 tables). `remote_recovery` gains `host_identity` (a profile's exec

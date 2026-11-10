@@ -346,6 +346,16 @@ export interface SpawnAgentOptions {
   model?: string;
   /** `--send`'s text: an at-start plugin kind's job.start carries it (plugins spec D8); others ignore it. */
   firstPrompt?: string;
+  /**
+   * A task spawn's first prompt on an at-start plugin kind (plugins spec D8 G1): its msgId (the
+   * receipt's), `begin` on the placeholder before job.start (claim, journal `sending`; a throw is
+   * unsent), `undo` before the rollback of a definite failure after it. Others ignore it.
+   */
+  firstTurn?: {
+    msgId: string;
+    begin: (placeholder: AgentRow) => Promise<void>;
+    undo: (placeholder: AgentRow) => void;
+  };
 }
 
 /** How many taken names a `nextFree` spawn skips past before it gives up. */
@@ -1235,6 +1245,8 @@ export function finalizeAgentRow(
     piHooks: boolean;
     /** A remote hook harness worker's key on its node (spec D11). */
     remoteKey?: string;
+    /** An at-start plugin spawn's placeholder with no worktree (plugins spec D8): patched, not inserted. */
+    placeholder?: number;
   },
 ): AgentRow {
   const { opts, cli, paneId, cwd, staged, command, commandSource, spawner, host, gateToken } = args;
@@ -1253,7 +1265,8 @@ export function finalizeAgentRow(
           : args.hooks
             ? "hooks"
             : "mux");
-  if (staged === undefined) {
+  const placeholder = staged?.incarnation ?? args.placeholder;
+  if (placeholder === undefined) {
     const row: InsertAgentInput = {
       ...(args.reservation !== undefined ? { reservation: args.reservation } : {}),
       name: opts.name,
@@ -1295,8 +1308,8 @@ export function finalizeAgentRow(
     )
     .run(
       paneId,
-      staged.path,
-      staged.base,
+      staged?.path ?? cwd,
+      staged?.base ?? null,
       command,
       commandSource,
       spawner,
@@ -1305,15 +1318,15 @@ export function finalizeAgentRow(
       channel,
       args.channelPlugin ?? null,
       args.remoteKey ?? null,
-      staged.host !== undefined ? staged.root : null,
+      staged?.host !== undefined ? staged.root : null,
       new Date().toISOString(),
-      staged.incarnation,
+      placeholder,
       pendingPaneIdFor(opts.name),
       opts.name,
       opts.workstream,
     );
   const row = getAgent(db, opts.name, opts.workstream);
-  if (patched.changes === 0 || !row || row.incarnation !== staged.incarnation)
+  if (patched.changes === 0 || !row || row.incarnation !== placeholder)
     throw new Error(`spawnAgent: agent vanished after worktree stage: ${opts.name}`);
   return row;
 }

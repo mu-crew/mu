@@ -59,7 +59,7 @@ import {
   carrierJobsStopRequired,
 } from "./db-carrier.js";
 import { checksTableMissing, refoldStoredChecks } from "./db-checks.js";
-import { SPAWN_RECEIPTS_REBUILD, spawnReceiptsPreHooks } from "./db-receipts.js";
+import { SPAWN_RECEIPTS_REBUILD, spawnReceiptsChecked } from "./db-receipts.js";
 import { LEGACY_RECOVERY_TRIGGERS, RECOVERY_TRIGGERS } from "./db-recovery.js";
 import {
   ADDED_COLUMNS,
@@ -600,10 +600,10 @@ function applySchemaDdl(db: Db): void {
   // a handle: the copy and the drop commit together or not at all.
   const oldCarrierJobs = carrierJobsPreReservation(db);
   if (oldCarrierJobs) db.exec("ALTER TABLE carrier_jobs RENAME TO carrier_jobs_pre_reservation");
-  // spawn_receipts before the `hooks` transport: set aside and copied whole (same
-  // columns, same order) into the widened CHECK below, in this one transaction.
-  const oldReceipts = spawnReceiptsPreHooks(db);
-  if (oldReceipts) db.exec("ALTER TABLE spawn_receipts RENAME TO spawn_receipts_pre_hooks");
+  // spawn_receipts with a transport CHECK (before `hooks`, or before plugin channels): set
+  // aside and copied by its column list into the unchecked shape below, in this one transaction.
+  const oldReceipts = spawnReceiptsChecked(db);
+  if (oldReceipts) db.exec("ALTER TABLE spawn_receipts RENAME TO spawn_receipts_pre_plugin");
   db.exec(CURRENT_SCHEMA);
   if (oldCarrierJobs) {
     db.exec(CARRIER_JOBS_REBUILD);
@@ -611,7 +611,7 @@ function applySchemaDdl(db: Db): void {
   }
   if (oldReceipts) {
     db.exec(SPAWN_RECEIPTS_REBUILD);
-    db.exec("DROP TABLE spawn_receipts_pre_hooks");
+    db.exec("DROP TABLE spawn_receipts_pre_plugin");
   }
   // Columns a v13 DB written before they existed still lacks.
   for (const [table, column, ddl] of ADDED_COLUMNS) {
@@ -717,7 +717,7 @@ function schemaIsCurrent(db: Db): boolean {
   if (hostProfilesPrePlugin(db)) return false;
   if (carrierJobsPreReservation(db)) return false;
   if (carrierJobsStopRequired(db)) return false;
-  if (spawnReceiptsPreHooks(db)) return false;
+  if (spawnReceiptsChecked(db)) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
     if (have.get(`view:${name}`) !== sql) return false;

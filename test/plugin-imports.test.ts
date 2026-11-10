@@ -33,6 +33,8 @@ describe("the plugin adapter's boundary", () => {
         "src/index.ts",
         "src/cli/handle.ts",
         "src/host-lifecycle.ts",
+        // P6e2: an at-start start's unknown outcome (FirstPromptUnknownError).
+        "src/agents/spawn-plugin.ts",
       ],
       "src/plugins/registry.ts": ["src/cli/handle.ts", "src/cli/plugin.ts"],
       "src/plugins/link.ts": ["src/host-provider.ts"],

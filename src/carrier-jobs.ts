@@ -76,6 +76,9 @@ export interface CarrierJob {
   stopGen: number | null;
   collectNextAt: number | null;
   collectDelayMs: number | null;
+  /** An at-start kind's first delivery (D8 G1b): its msgId, and the opening incarnation once started. */
+  firstMsgId: string | null;
+  firstInc: string | null;
 }
 
 interface Raw {
@@ -106,6 +109,8 @@ interface Raw {
   stop_gen: number | null;
   collect_next_at: number | null;
   collect_delay_ms: number | null;
+  first_msg_id: string | null;
+  first_inc: string | null;
 }
 
 const toJob = (r: Raw): CarrierJob => ({
@@ -136,6 +141,8 @@ const toJob = (r: Raw): CarrierJob => ({
   stopGen: r.stop_gen,
   collectNextAt: r.collect_next_at,
   collectDelayMs: r.collect_delay_ms,
+  firstMsgId: r.first_msg_id,
+  firstInc: r.first_inc,
 });
 
 const now = (): string => new Date().toISOString();

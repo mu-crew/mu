@@ -9,6 +9,7 @@ import { dirname } from "node:path";
 import { agentToOutput, liveAgentToOutput, workstreamIdOf } from "../agent-output.js";
 import { agentKey, type RuntimeState } from "../agent-state.js";
 import { isCommandGate } from "../agents/spawn.js";
+import { resolveFirstTurn } from "../agents/spawn-plugin.js";
 import {
   AgentCtlUnreachableError,
   AgentNotFoundError,
@@ -31,6 +32,7 @@ import {
   blockedReason,
   channelNamed,
   channelTarget,
+  type MessageCheck,
   readAgentStates,
   requireFeature,
 } from "../channels/index.js";
@@ -807,7 +809,19 @@ export async function cmdAgentCheck(
   if (agent === undefined) throw new AgentNotFoundError(name, ws);
   // A receipt is the channel's: a pi on the `hooks` fallback is never asked over ctl (spec D15).
   const target = channelTarget(db, agent);
-  const check = await agentChannel(target).receipt(target, msgId);
+  // An at-start kind's first prompt went with job.start: its job record answers (plugins spec D8).
+  const first = await resolveFirstTurn(db, agent, msgId);
+  const check: MessageCheck =
+    first === undefined || first.state === "never"
+      ? await agentChannel(target).receipt(target, msgId)
+      : first.state === "accepted"
+        ? {
+            state: "accepted",
+            id: msgId,
+            runs: 0,
+            ...(first.incarnation ? { incarnation: first.incarnation } : {}),
+          }
+        : { state: "unreachable", id: msgId, reason: first.reason };
   const exit = check.state === "accepted" ? 0 : check.state === "not-accepted" ? 3 : 1;
   if (opts.json) {
     // A check that is not "accepted" fails with ONE document: the verdict
