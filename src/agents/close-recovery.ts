@@ -15,6 +15,7 @@
 // Runs under the agent lock `closeAgent` took.
 
 import type { Db } from "../db.js";
+import { hostLost, observeBeforeClose } from "../host-policy.js";
 import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import {
@@ -72,6 +73,25 @@ export async function closeRecovery(
     );
   }
   assertRecoveryUsable(db, rec);
+  // A provider host is asked once; on a lost one the tree went with the machine (`gone` is the
+  // provider's proof, plugins spec D1): the record closes without the host.
+  await observeBeforeClose(db, rec.host);
+  if (hostLost(db, rec.host)) {
+    const deleted = deleteRemoteRecovery(db, rec);
+    if (!deleted) assertRecoveryUnchanged(db, rec);
+    emitEvent(
+      db,
+      rec.workstream,
+      "agent.close",
+      `agent close ${rec.name} (recovery ${rec.agentId}, worktree gone: host ${rec.host} is lost)`,
+    );
+    return {
+      killedPane: false,
+      deletedRow: false,
+      worktree: { path: rec.cwd, action: "gone" },
+      recovery: { id: rec.agentId, deleted },
+    };
+  }
   const worktree = await closeRemoteWorktree(
     db,
     {
@@ -90,7 +110,7 @@ export async function closeRecovery(
       force: opts.force === true,
       paneAlive: viewRunning,
       recoveryId: rec.agentId,
-      checkProfile: (profile) => assertRecoveryProfile(rec, profile),
+      checkProfile: (h) => assertRecoveryProfile(rec, { exec: h.link.fingerprint(h) }),
       beforeRemove: () => {
         assertRecoveryUnchanged(db, rec);
         assertRecoveryUsable(db, rec);

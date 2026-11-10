@@ -144,7 +144,7 @@ describe("v12 shape", () => {
 
   it("task_auto is a machine-local table with its defaults", () => {
     expect(EXPECTED_TABLES).toContain("task_auto");
-    expect(EXPECTED_TABLES).toHaveLength(31);
+    expect(EXPECTED_TABLES).toHaveLength(32);
     expect(MACHINE_LOCAL_TABLES).toContain("task_auto");
     const c = cols("task_auto");
     expect([...c.keys()]).toEqual([

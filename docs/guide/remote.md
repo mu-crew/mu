@@ -272,6 +272,29 @@ mu host show dev              # templates and the holders of its channels
   fetch). Spawning on such a host is not
   supported yet. See [the plugin protocol](../reference/plugin-protocol.md).
 
+## Provider hosts
+
+A host can also come from a provider plugin (`mu plugin add`) instead of
+a profile: a machine provisioned on demand.
+
+```bash
+mu host acquire box1 --provider cloud --param size=large --repo /work/repo
+mu host list                 # asks each provider host its status once
+mu host drain box1           # no new spawns; agents keep running
+mu host release box1         # once no agent, job or recovery record names it
+```
+
+A crashed or unanswered acquire stays `acquiring`: run the same
+`mu host acquire` again and it resolves that request, never acquiring a
+second host. A host the provider reports gone is `lost`: closing its
+agents records their trees gone, and a final collect still owed there is
+kept as uncollected work until `mu agent close <name> --abandon-job`.
+`mu host release <name> --abandon` drops the host and every record of
+it without asking the provider, and logs what was lost. Inside
+`MU_HOST_DEADLINE_MARGIN_MS` of the provider's deadline, spawns refuse
+and the host drains. Spawning on a provider host comes with the plugin
+spawn path.
+
 ## Session-capped hosts
 
 Some hosts allow one ssh session per connection (`MaxSessions 1`, e.g. a

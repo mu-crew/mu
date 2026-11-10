@@ -18,6 +18,16 @@ import {
 import type { Db } from "../db.js";
 import { advertised, hostCapabilities } from "../host-harnesses.js";
 import {
+  abandonHost,
+  acquireHost,
+  drainHost,
+  observeHost,
+  releaseHost,
+} from "../host-lifecycle.js";
+import { deadlineNotice } from "../host-policy.js";
+import type { HostRecord } from "../host-provider.js";
+import { hostReferences, listHostRecords } from "../host-records.js";
+import {
   addHost,
   checkHost,
   getHost,
@@ -82,14 +92,47 @@ export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
   console.log(`added host ${pc.bold(host.name)}`);
 }
 
-export function cmdHostList(db: Db): void {
+/** A provider host as `--json` prints it: the record, its params parsed. */
+function recordJson(r: HostRecord): Record<string, unknown> {
+  const { params_json, creator_pid: _p, creator_start: _s, ...rest } = r;
+  return { ...rest, params: JSON.parse(params_json) as unknown };
+}
+
+/** The provider hosts, each asked its status once (a `gone` one is `lost`, D1). */
+async function providerHosts(db: Db): Promise<HostRecord[]> {
+  for (const r of listHostRecords(db)) await observeHost(db, r.name);
+  return listHostRecords(db);
+}
+
+function printRecords(db: Db, records: readonly HostRecord[]): void {
+  const t = muTable({ head: ["HOST", "PROVIDER", "STATE", "HANDLE", "DEADLINE", "JOBS"] });
+  for (const r of records) {
+    const d = deadlineNotice(r);
+    const jobs = hostReferences(db, r).jobs.length;
+    t.push([
+      r.name,
+      r.provider,
+      r.reason === null || r.state !== "lost" ? r.state : `lost: ${r.reason}`,
+      r.handle ?? "-",
+      d === undefined
+        ? "-"
+        : `${new Date(d.deadlineAt).toISOString()}${d.inMargin ? " (margin)" : ""}`,
+      `${jobs}/${r.max_jobs ?? "∞"}`,
+    ]);
+  }
+  console.log(t.toString());
+}
+
+export async function cmdHostList(db: Db): Promise<void> {
   const hosts = listHosts(db);
+  const records = await providerHosts(db);
   if (isJsonMode()) {
-    emitJsonCollection(hosts.map(hostJson));
+    emitJsonCollection([...hosts.map(hostJson), ...records.map(recordJson)]);
     return;
   }
+  if (records.length > 0) printRecords(db, records);
   if (hosts.length === 0) {
-    console.log("no host profiles (mu host init prints a starter)");
+    if (records.length === 0) console.log("no host profiles (mu host init prints a starter)");
     return;
   }
   const held = new Map<string, number>();
@@ -147,6 +190,71 @@ export function cmdHostRm(db: Db, name: string): void {
     return;
   }
   console.log(removed ? `removed host ${name}` : `no host profile named ${name}`);
+}
+
+/** `--param k=v`, repeatable. */
+function collectParam(v: string, prev: Record<string, string>): Record<string, string> {
+  const eq = v.indexOf("=");
+  if (eq <= 0) throw new UsageError(`--param takes key=value, got ${JSON.stringify(v)}`);
+  return { ...prev, [v.slice(0, eq)]: v.slice(eq + 1) };
+}
+
+export async function cmdHostAcquire(
+  db: Db,
+  name: string,
+  opts: { provider: string; param?: Record<string, string>; repo?: string },
+): Promise<void> {
+  if (!isValidHostName(name)) throw new UsageError(`invalid host name ${JSON.stringify(name)}`);
+  const rec = await acquireHost(db, {
+    name,
+    provider: opts.provider,
+    params: opts.param ?? {},
+    repo: opts.repo ?? null,
+  });
+  if (isJsonMode()) {
+    emitJson({ host: rec === undefined ? null : recordJson(rec), acquired: rec !== undefined });
+    return;
+  }
+  console.log(
+    rec === undefined
+      ? `host ${name} was never acquired: nothing is held`
+      : `acquired host ${pc.bold(name)} from ${rec.provider} (${rec.state}, handle ${rec.handle ?? "-"})`,
+  );
+}
+
+export async function cmdHostDrain(db: Db, name: string): Promise<void> {
+  const rec = await drainHost(db, name);
+  if (isJsonMode()) {
+    emitJson({ host: recordJson(rec) });
+    return;
+  }
+  console.log(`host ${name} is ${rec.state}: no new jobs`);
+}
+
+export async function cmdHostRelease(
+  db: Db,
+  name: string,
+  opts: { abandon?: boolean },
+): Promise<void> {
+  if (opts.abandon === true) {
+    const out = abandonHost(db, name);
+    if (isJsonMode()) {
+      emitJson({ host: name, released: true, abandoned: out });
+      return;
+    }
+    console.log(`abandoned host ${name}: nothing was asked of its provider`);
+    for (const j of out.jobs) console.log(`  dropped job record ${j}`);
+    for (const r of out.recoveries) console.log(`  dropped recovery record ${r}`);
+    for (const e of out.effects) console.log(`  dropped unresolved effect ${e}`);
+    for (const j of out.running) console.log(`  ${pc.yellow("possibly still running")}: ${j}`);
+    return;
+  }
+  await releaseHost(db, name);
+  if (isJsonMode()) {
+    emitJson({ host: name, released: true });
+    return;
+  }
+  console.log(`released host ${name}`);
 }
 
 /** Print a starter. Never executes it: the user reviews, edits and pastes. */
@@ -295,10 +403,50 @@ export function wireHostCommands(program: Command): void {
     });
   host
     .command("list")
-    .description("List host profiles with channels held / cap")
+    .description(
+      "List host profiles with channels held / cap, and provider hosts with their state (each asked its status once)",
+    )
     .option(...JSON_OPT)
     .action(function () {
       return handle(async (db) => cmdHostList(db), this as Command)();
+    });
+  host
+    .command("acquire <name>")
+    .description(
+      "Acquire a provider host from a registered plugin. The record and its acquire are written first: a re-run after a crash resolves the same request",
+    )
+    .requiredOption("--provider <plugin>", "the registered plugin that provides the host")
+    .option("--param <key=value>", "a provider parameter (repeatable)", collectParam, {})
+    .option("--repo <path>", "the host's repo for `agent spawn --worktree` without --root")
+    .option(...JSON_OPT)
+    .action(function (name: string) {
+      const opts = (this as Command).opts() as {
+        provider: string;
+        param?: Record<string, string>;
+        repo?: string;
+      };
+      return handle(async (db) => cmdHostAcquire(db, name, opts), this as Command)();
+    });
+  host
+    .command("drain <name>")
+    .description("Stop spawns on a provider host; its agents keep running until you close them")
+    .option(...JSON_OPT)
+    .action(function (name: string) {
+      return handle(async (db) => cmdHostDrain(db, name), this as Command)();
+    });
+  host
+    .command("release <name>")
+    .description(
+      "Release a drained or lost provider host; refuses while an agent, job or recovery record names it. A crashed release is reissued",
+    )
+    .option(
+      "--abandon",
+      "drop the host, its job records, recovery records and unresolved effects; logged, and the work is lost",
+    )
+    .option(...JSON_OPT)
+    .action(function (name: string) {
+      const opts = (this as Command).opts() as { abandon?: boolean };
+      return handle(async (db) => cmdHostRelease(db, name, opts), this as Command)();
     });
   host
     .command("show <name>")

@@ -36,7 +36,18 @@ export const OWNED = (a: string): string =>
        AND ${a}.base IS NOT NULL AND ${a}.base <> ''`;
 
 const COLUMNS = `agent_id, workstream, workstream_id, workstream_created_at, name, pane_id, host, cwd,
-       base, collected_head, aside, host_exec, host_repo, reason, preserved_at`;
+       base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity`;
+
+/**
+ * The host identity a record pins (plugins spec D5), as `link.fingerprint` computes it for
+ * host `h`: a template profile's exec bytes, a `--plugin` profile's `plugin:<name>:<instance>`,
+ * a provider host's `provider:<hosts.id>:<instance>`. NULL when nothing holds the name.
+ */
+const IDENTITY = (h: string): string => `COALESCE(
+         (SELECT exec FROM host_profiles WHERE name = ${h}),
+         (SELECT 'plugin:' || p.name || ':' || p.instance FROM host_profiles hp
+            JOIN plugins p ON p.name = hp.plugin WHERE hp.name = ${h}),
+         (SELECT 'provider:' || x.id || ':' || COALESCE(x.instance, '') FROM hosts x WHERE x.name = ${h}))`;
 
 const NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
@@ -46,7 +57,8 @@ export const LEGACY_RECOVERY_TRIGGERS = [
   "remote_recovery_workstream_del",
 ];
 
-/** The triggers REMOTE_RECOVERY_DDL creates: their bodies read host_profiles. */
+/** The triggers REMOTE_RECOVERY_DDL creates: their bodies read host_profiles. One whose
+ *  stored body does not write `host_identity` is from before it, and is replaced. */
 export const RECOVERY_TRIGGERS = [
   "remote_recovery_agent_del_v2",
   "remote_recovery_workstream_del_v2",
@@ -57,7 +69,8 @@ export const REMOTE_RECOVERY_DDL = `
 -- worktree, written by triggers when the row is deleted (machine-local; see
 -- src/db-recovery.ts). No foreign key on purpose: it must outlive the agent,
 -- its workstream and its host profile. host_exec pins the profile's
--- identity when the profile existed; host_repo is the worktree's repo. A receipt of the resource,
+-- exec when the profile existed, host_identity the host's identity (a profile's
+-- exec, plugin:<name>:<instance>, or provider:<id>:<instance>); host_repo is the worktree's repo. A receipt of the resource,
 -- not a live channel.
 CREATE TABLE IF NOT EXISTS remote_recovery (
   agent_id             INTEGER PRIMARY KEY,
@@ -74,7 +87,8 @@ CREATE TABLE IF NOT EXISTS remote_recovery (
   host_exec            TEXT,
   host_repo            TEXT,
   reason               TEXT NOT NULL CHECK (reason IN ('reap', 'teardown', 'workstream-delete')),
-  preserved_at         TEXT NOT NULL
+  preserved_at         TEXT NOT NULL,
+  host_identity        TEXT
 );
 
 CREATE TRIGGER IF NOT EXISTS remote_recovery_agent_del_v2
@@ -87,7 +101,7 @@ BEGIN
          OLD.base, OLD.collected_head, OLD.cwd || '.mu-removing-' || OLD.id,
          (SELECT exec FROM host_profiles WHERE name = OLD.host),
          OLD.repo,
-         ${REASON}, ${NOW}
+         ${REASON}, ${NOW}, ${IDENTITY("OLD.host")}
     FROM workstreams ws WHERE ws.id = OLD.workstream_id;
 END;
 
@@ -99,7 +113,7 @@ BEGIN
          a.base, a.collected_head, a.cwd || '.mu-removing-' || a.id,
          (SELECT exec FROM host_profiles WHERE name = a.host),
          a.repo,
-         'workstream-delete', ${NOW}
+         'workstream-delete', ${NOW}, ${IDENTITY("a.host")}
     FROM agents a
    WHERE a.workstream_id = OLD.id AND ${OWNED("a")};
 END;

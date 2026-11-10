@@ -65,7 +65,7 @@ export interface CheckContext {
 
 export interface LinkCaps {
   fetch: boolean;
-  /** Can seed a host's repo with a local commit (`link.push`, D7 G3; driven from P6d). Absent: false. */
+  /** Can seed a host's repo with a local commit (`link.push`, D7 G3). Absent: false. */
   push?: boolean;
   /** "mu": every call holds a host channel (src/hosts.ts admission). "self": the link arbitrates its connection. */
   slots: "mu" | "self";
@@ -121,6 +121,17 @@ export interface HostLink {
   fetch?(
     host: HostView,
     req: { remoteCwd: string; localRepo: string; timeoutMs: number },
+    call: LinkCall,
+    admitted?: (h: HostView) => void,
+  ): Promise<LinkRun>;
+  /**
+   * Make `remoteRepo` hold commit `rev` (a full sha) from `localRepo`, creating it as a git
+   * repository if absent (D7 G3). Idempotent and not an effect: a timed-out push is re-run, and
+   * make's own `rev-parse` still checks the result. Present exactly with `caps.push`.
+   */
+  push?(
+    host: HostView,
+    req: { localRepo: string; remoteRepo: string; rev: string; timeoutMs: number },
     call: LinkCall,
     admitted?: (h: HostView) => void,
   ): Promise<LinkRun>;

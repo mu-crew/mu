@@ -28,10 +28,22 @@ describe("the plugin adapter's boundary", () => {
 
   it("outside src/plugins/, the process and client are never imported; the rest only by the wiring", () => {
     const allowed: Record<string, readonly string[]> = {
-      "src/plugins/errors.ts": ["src/hosts.ts", "src/index.ts", "src/cli/handle.ts"],
-      "src/plugins/registry.ts": ["src/cli/handle.ts", "src/cli/plugin.ts"],
+      "src/plugins/errors.ts": [
+        "src/hosts.ts",
+        "src/index.ts",
+        "src/cli/handle.ts",
+        "src/host-provider.ts",
+        "src/host-lifecycle.ts",
+      ],
+      "src/plugins/registry.ts": [
+        "src/cli/handle.ts",
+        "src/cli/plugin.ts",
+        "src/host-lifecycle.ts",
+      ],
       "src/plugins/link.ts": ["src/host-provider.ts"],
-      "src/plugins/job.ts": ["src/host-provider.ts", "src/jobs/kinds.ts"],
+      "src/plugins/job.ts": ["src/host-provider.ts", "src/jobs/kinds.ts", "src/host-policy.ts"],
+      // P6d: the provider adapter, wired into resolveHost and the host verbs.
+      "src/plugins/provider.ts": ["src/host-provider.ts", "src/host-lifecycle.ts"],
       "src/plugins/reconcile.ts": [],
       "src/plugins/process.ts": [],
       "src/plugins/client.ts": [],

@@ -51,6 +51,8 @@ export interface RemoteRecovery {
   hostRepo: string | null;
   reason: RemoteRecoveryReason;
   preservedAt: string;
+  /** The host's identity when the agent was removed (plugins spec D5): what a use compares. Null: none held the name. */
+  hostIdentity: string | null;
 }
 
 interface RawRow {
@@ -69,6 +71,7 @@ interface RawRow {
   host_repo: string | null;
   reason: RemoteRecoveryReason;
   preserved_at: string;
+  host_identity: string | null;
 }
 
 // ─── Selection: which record a close or collect means ───────────────────────
@@ -112,6 +115,7 @@ const rowToRecovery = (r: RawRow): RemoteRecovery => ({
   hostRepo: r.host_repo,
   reason: r.reason,
   preservedAt: r.preserved_at,
+  hostIdentity: r.host_identity,
 });
 
 /** Every record, oldest incarnation first. */
@@ -341,7 +345,11 @@ export function refuseOwnedRemotePath(
   }
 }
 
-/** The profile at the time of use must be the one the record pinned. Missing provenance refuses. */
+/**
+ * The host at the time of use must be the one the record pinned: `profile.exec` is its identity
+ * now (`hostIdentity`: a profile's exec bytes, or a plugin or provider host's identity, D5).
+ * Missing provenance refuses. A provider host acquired again under the name has a new identity.
+ */
 export function assertRecoveryProfile(
   rec: RemoteRecovery,
   profile: { exec: string | null } | undefined,
@@ -351,14 +359,15 @@ export function assertRecoveryProfile(
       rec.agentId,
     ]);
   };
+  const pinned = rec.hostIdentity ?? rec.hostExec;
   if (profile === undefined) refuse(`host ${rec.host} has no profile now`);
-  if (rec.hostExec === null) {
+  if (pinned === null) {
     refuse(
       `host ${rec.host} had no profile when the agent was removed: nothing proves the profile now named ${rec.host} reaches that worktree`,
     );
   }
   if (rec.hostRepo === null) refuse(`recovery ${rec.agentId} names no repo for its worktree`);
-  if (profile?.exec !== rec.hostExec) {
+  if (profile?.exec !== pinned) {
     refuse(`host ${rec.host}'s profile changed since the agent was removed (exec differs)`);
   }
 }

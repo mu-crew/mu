@@ -139,6 +139,8 @@ const UNREBUILDABLE_TABLES = [
   "plugins",
   // Unresolved plugin effects (key, exact request, owner): no op carries them.
   "effects",
+  // Provider hosts: a provider's handle and facts, never in an op.
+  "hosts",
   "host_channels",
   "spawn_receipts",
   // The stall actions a wait took (steer exclusion, release record): no op carries them.

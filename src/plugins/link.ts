@@ -1,5 +1,6 @@
 // mu — the link adapter (spec 2026-11-09-mu-plugins.md, D7, D13): `HostLink`
-// over a plugin's `link.exec`, `link.fetch` and `link.checkSteps`.
+// over a plugin's `link.exec`, `link.fetch`, `link.push` and `link.checkSteps`,
+// for a `--plugin` profile and for a provider host (its provider's link).
 //
 // What mu computes stays mu's: the fingerprint (`plugin:<name>:<instance>`,
 // the registration's instance), `fits` (the script's bytes against the
@@ -10,7 +11,9 @@
 // declares `fetch: false`, the profile's fetch runs through the template link,
 // so the view's link always fetches. With `slots: "mu"` each call holds a
 // host channel as the template link's does; with `slots: "self"` the plugin
-// arbitrates its own connection and mu admits nothing.
+// arbitrates its own connection and mu admits nothing. A provider host has no
+// profile and no session cap (its job slots are `max_jobs`): nothing to admit,
+// no fetch template, and its fingerprint is `provider:<id>:<instance>`.
 //
 // Errors: `human` is the host's hand-back (`HostHandbackError`); `permanent`
 // and an exhausted `retryable` propagate (`PluginCallError`); no answer or
@@ -31,7 +34,7 @@ import {
   type LinkRun,
   templateLink,
 } from "../host-link.js";
-import type { HostView } from "../host-provider.js";
+import { type HostView, providerIdentity } from "../host-provider.js";
 import { HANDED_BACK, type HostCheckStep, HostHandbackError, withHostChannel } from "../hosts.js";
 import { git } from "../vcs/git.js";
 import { PLUGIN_READ_TIMEOUT_MS, type PluginSession } from "./client.js";
@@ -44,22 +47,36 @@ import {
 import { narrowCheckSteps, narrowLinkRun, type WireCheckStep } from "./protocol.js";
 import { getPlugin, pluginSeams, pluginSession } from "./registry.js";
 
-/** The wire `target` of a link call: the host's name (D13). */
-function target(host: HostView): { host: { name: string } } {
-  return { host: { name: host.name } };
+/** The wire `target` of a link call (D13): the host's name, and a provider host's handle and instance. */
+export function hostTarget(host: HostView): {
+  host: { name: string; handle?: string; instance?: string };
+} {
+  const r = host.record;
+  return {
+    host: {
+      name: host.name,
+      ...(r?.handle != null ? { handle: r.handle } : {}),
+      ...(r?.instance != null ? { instance: r.instance } : {}),
+    },
+  };
 }
+const target = hostTarget;
 
-/** The link of plugin `name`, from its registration. Refuses a plugin with no link seam. */
-export function pluginLink(db: Db, name: string): HostLink {
+/**
+ * The link of plugin `name`, from its registration. Refuses a plugin with no link seam. A
+ * provider host's (`provider`) has no fetch template behind it: it fetches only as declared.
+ */
+export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = {}): HostLink {
   const row = getPlugin(db, name);
   const declared = pluginSeams(row).link;
   if (declared === undefined) {
     throw new PluginRefusedError(name, ["it implements no link seam, which a --plugin host needs"]);
   }
   // `stopping` is `stopped` once the adapter has waited the grace out after a timed-out run.
+  // A provider host's link has no fetch template behind it: it fetches only as declared.
   const caps = {
     ...declared,
-    fetch: true,
+    fetch: declared.fetch || opts.provider !== true,
     remoteOnTimeout: declared.remoteOnTimeout === "unknown" ? "unknown" : "stopped",
   } as const;
   const session = (): Promise<PluginSession> => pluginSession(db, name, ["link"]);
@@ -71,7 +88,7 @@ export function pluginLink(db: Db, name: string): HostLink {
     admitted: ((h: HostView) => void) | undefined,
     body: (h: HostView) => Promise<T>,
   ): Promise<T> => {
-    if (declared.slots === "self" || "lease" in call) {
+    if (declared.slots === "self" || "lease" in call || host.record !== undefined) {
       admitted?.(host);
       return body(host);
     }
@@ -92,7 +109,7 @@ export function pluginLink(db: Db, name: string): HostLink {
   /** One run: the plugin's reply, its hand-back, or no answer (no exit code). */
   const run = async (
     host: HostView,
-    method: "link.exec" | "link.fetch",
+    method: "link.exec" | "link.fetch" | "link.push",
     params: Record<string, unknown>,
     timeoutMs: number,
   ): Promise<LinkRun> => {
@@ -117,7 +134,7 @@ export function pluginLink(db: Db, name: string): HostLink {
       if (e instanceof PluginCallError && e.kind === "human") {
         throw new HostHandbackError(
           host.name,
-          method === "link.exec" ? "exec" : "fetch",
+          method === "link.fetch" ? "fetch" : "exec",
           e.remedy ?? e.detail,
         );
       }
@@ -133,11 +150,14 @@ export function pluginLink(db: Db, name: string): HostLink {
     }
   };
 
-  const fetchByTemplate = templateLink(db).fetch;
+  const fetchByTemplate = opts.provider === true ? undefined : templateLink(db).fetch;
   const link: HostLink = {
     name,
     caps,
-    fingerprint: () => `plugin:${name}:${getPlugin(db, name).instance}`,
+    fingerprint: (host) =>
+      host.record !== undefined
+        ? providerIdentity(host.record)
+        : `plugin:${name}:${getPlugin(db, name).instance}`,
     fits: (_host, script) => {
       const bytes = Buffer.byteLength(script);
       return { ok: bytes <= declared.maxScriptBytes, bytes, limit: declared.maxScriptBytes };
@@ -146,22 +166,40 @@ export function pluginLink(db: Db, name: string): HostLink {
       admit(host, call, admitted, (h) =>
         run(h, "link.exec", { script: req.script, cwd: req.cwd }, req.timeoutMs),
       ),
-    fetch: (host, req, call, admitted) => {
-      if (!declared.fetch && fetchByTemplate !== undefined) {
-        return fetchByTemplate(host, req, call, admitted);
-      }
-      return admit(host, call, admitted, async (h) => {
-        // A stale FETCH_HEAD must not pass for this fetch's answer.
-        const fetchHead = await git(["rev-parse", "--git-path", "FETCH_HEAD"], req.localRepo);
-        await rm(resolve(req.localRepo, fetchHead), { force: true });
-        return run(
-          h,
-          "link.fetch",
-          { remoteCwd: req.remoteCwd, localRepo: req.localRepo },
-          req.timeoutMs,
-        );
-      });
-    },
+    ...(caps.fetch
+      ? {
+          fetch: (host, req, call, admitted) => {
+            if (!declared.fetch && fetchByTemplate !== undefined) {
+              return fetchByTemplate(host, req, call, admitted);
+            }
+            return admit(host, call, admitted, async (h) => {
+              // A stale FETCH_HEAD must not pass for this fetch's answer.
+              const fetchHead = await git(["rev-parse", "--git-path", "FETCH_HEAD"], req.localRepo);
+              await rm(resolve(req.localRepo, fetchHead), { force: true });
+              return run(
+                h,
+                "link.fetch",
+                { remoteCwd: req.remoteCwd, localRepo: req.localRepo },
+                req.timeoutMs,
+              );
+            });
+          },
+        }
+      : {}),
+    // Declared by `push: true` only (D7 G3): mu never calls an undeclared method.
+    ...(declared.push === true
+      ? {
+          push: (host, req, call, admitted) =>
+            admit(host, call, admitted, (h) =>
+              run(
+                h,
+                "link.push",
+                { localRepo: req.localRepo, remoteRepo: req.remoteRepo, rev: req.rev },
+                req.timeoutMs,
+              ),
+            ),
+        }
+      : {}),
     // The check runs under the caller's channel; the plugin only reads.
     async checkSteps(ctx: CheckContext, _call: LinkCall): Promise<HostCheckStep[]> {
       if (!declared.checks?.includes(ctx.phase)) return [];

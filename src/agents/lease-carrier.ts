@@ -31,6 +31,7 @@ import {
 } from "../carrier-jobs.js";
 import { carrierJobFilePath } from "../ctl/path.js";
 import type { Db } from "../db.js";
+import { closePluginJob } from "../host-policy.js";
 import { type HostProfile, HostProfileError, pidProvenGone, pidStart } from "../hosts.js";
 import { describeRead, type JobFile, leaseJobRef, leaseKind, readJobFile } from "../jobs/lease.js";
 import { viewPresent } from "../jobs/view.js";
@@ -337,7 +338,8 @@ function emitAbandoned(db: Db, r: CarrierJob, facts: string): void {
  */
 export interface LeaseClose {
   reservation: CarrierJob;
-  action: "stopped" | "abandon" | "unlaunched";
+  /** `kept`: a plugin job on a lost host whose final collect is owed (src/host-policy.ts): its record stays. */
+  action: "stopped" | "abandon" | "unlaunched" | "kept";
   /** What the abandon event names (the handle, or the empty reservation's facts). */
   facts: string;
 }
@@ -362,6 +364,8 @@ export async function stopLeaseReservation(
 ): Promise<LeaseClose | undefined> {
   let r = getCarrierJob(db, reservation.token);
   if (r === undefined) return undefined;
+  // A plugin job record is its kind's to stop (plugins spec D1, D10).
+  if (r.plugin !== null) return closePluginJob(db, r, opts);
   const ws = r.workstream;
   if (opts.abandon === true) {
     // Dropped now, with its event: the tree's close may still refuse (a host gone for
@@ -438,7 +442,7 @@ export function cleanLeaseJobFile(db: Db, close: LeaseClose): void {
  * refuses with it kept.
  */
 export function releaseLeaseClose(db: Db, close: LeaseClose): void {
-  if (close.action === "abandon") return;
+  if (close.action === "abandon" || close.action === "kept") return;
   const r = close.reservation;
   if (!releaseCarrierJob(db, r)) {
     if (getCarrierJob(db, r.token) === undefined) return;

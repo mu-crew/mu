@@ -30,6 +30,10 @@ export interface FakeBackend {
   starts: number;
   stops: number;
   deliveries: number;
+  /** The host seam: hosts by acquire key, and the acquires and releases that happened. */
+  hosts?: Record<string, { facts: { handle: string }; released: boolean }>;
+  acquires?: number;
+  releases?: number;
 }
 
 /** The log line the fake writes when it exits on EOF after its cleanup. */
@@ -109,5 +113,17 @@ export function jobSeams(patch: Record<string, unknown> = {}): Record<string, un
       start: { lookup: true, dedupe: { exact: true, windowMs: 60_000 }, fenceKey: true },
       ...patch,
     },
+  };
+}
+
+/** The fake as a provider: a host seam (lookup, exact dedupe, fenceKey) with its link and job seams. */
+export function providerSeams(
+  job: Record<string, unknown> = {},
+  link: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    ...jobSeams(job),
+    link: { ...(linkSeam().link as Record<string, unknown>), ...link },
+    host: { acquire: { lookup: true, dedupe: { exact: true, windowMs: 60_000 }, fenceKey: true } },
   };
 }

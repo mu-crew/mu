@@ -87,6 +87,12 @@ import { DeliveryResolvingError, EffectHeldError } from "../effects.js";
 import { checkDbInsideSyncDir, DbInsideSyncDirError, HazardFailError } from "../fleet-hazards.js";
 import { HostHarnessMissingError } from "../host-harnesses.js";
 import {
+  HostDeadlineError,
+  HostJobsFullError,
+  HostReferencedError,
+  HostStateError,
+} from "../host-records.js";
+import {
   HostChannelBusyError,
   HostCheckFailedError,
   HostExistsError,
@@ -543,6 +549,11 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof ReattachRefusedError ||
     err instanceof ReattachFailedError ||
     err instanceof HostInUseError ||
+    // A provider host in the wrong state, at its deadline or job slots, or still named (D1, D6).
+    err instanceof HostStateError ||
+    err instanceof HostDeadlineError ||
+    err instanceof HostJobsFullError ||
+    err instanceof HostReferencedError ||
     // A plugin's load or trust rules refused it, its name is taken, or something names it.
     err instanceof PluginRefusedError ||
     err instanceof PluginExistsError ||

@@ -115,8 +115,13 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
       ["collect_next_at", "INTEGER"],
       ["first_msg_id", "TEXT"],
       ["first_inc", "TEXT"],
+      // P6d: the in-life collect's current backoff, doubled per failure (D10).
+      ["collect_delay_ms", "INTEGER"],
     ] as const
   ).map(([c, ddl]) => ["carrier_jobs", c, ddl] as const),
+  // Plugins spec D5: the host identity a recovery pins (src/db-recovery.ts); backfilled from
+  // host_exec when added.
+  ["remote_recovery", "host_identity", "TEXT"],
 ];
 
 /** The schema version a fresh DB starts at. v12 adds the kernel columns
@@ -149,7 +154,7 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it; nor did keep_driving or checks). Sorted; exactly 31 entries. */
+ *  additive, and an older mu ignores it; nor did keep_driving or checks). Sorted; exactly 32 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
@@ -159,6 +164,7 @@ export const EXPECTED_TABLES: readonly string[] = [
   "effects",
   "host_channels",
   "host_profiles",
+  "hosts",
   "human_needs",
   "keep_driving",
   "machine_identity",
@@ -227,7 +233,14 @@ export type SyncedEntity = (typeof SYNCED_ENTITIES)[number];
  *  forward-compatibly — recorded in `ops`, projected nowhere, exactly
  *  like 'message'. Reader vocabulary may lag writer vocabulary; that is
  *  a fact of a mixed fleet, not a corruption. */
-export const MACHINE_LOCAL_ENTITIES = ["agent", "workspace", "event", "broadcast"] as const;
+export const MACHINE_LOCAL_ENTITIES = [
+  "agent",
+  "workspace",
+  "event",
+  "broadcast",
+  // A provider host's events (plugins spec D1): acquired, released, abandoned.
+  "host",
+] as const;
 
 export type MachineLocalEntity = (typeof MACHINE_LOCAL_ENTITIES)[number];
 
@@ -317,6 +330,7 @@ export const MACHINE_LOCAL_TABLES = [
   "effects",
   "host_channels",
   "host_profiles",
+  "hosts",
   "human_needs",
   "keep_driving",
   "machine_identity",
@@ -815,6 +829,29 @@ CREATE TABLE IF NOT EXISTS effects (
   updated_at        INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_effects_subject ON effects (subject_kind, subject_id);
+
+-- hosts: provider hosts (machine-local; plugins spec D1, D5; src/host-records.ts).
+-- One row per 'mu host acquire', written with its host.acquire effect; mu alone
+-- moves 'state'. The facts (handle, deadline, idle window, job slots) are the
+-- provider's acquire reply. A name is a profile's or a record's, never both.
+CREATE TABLE IF NOT EXISTS hosts (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  name            TEXT NOT NULL UNIQUE,
+  provider        TEXT NOT NULL,             -- plugins.name
+  params_json     TEXT NOT NULL,
+  repo            TEXT,
+  handle          TEXT,                      -- NULL while acquiring
+  instance        TEXT,                      -- the provider's instance at acquire (the fence)
+  state           TEXT NOT NULL CHECK (state IN ('acquiring', 'ready', 'draining', 'releasing', 'lost')),
+  deadline_at     INTEGER,                   -- epoch ms
+  idle_reclaim_ms INTEGER,
+  max_jobs        INTEGER,
+  creator_pid     INTEGER,
+  creator_start   TEXT,
+  reason          TEXT,                      -- why it is lost
+  created_at      TEXT NOT NULL,
+  updated_at      TEXT NOT NULL
+);
 
 ${CARRIER_JOBS_DDL}
 -- host_channels: the connection slots of a host (machine-local). One row

@@ -2,7 +2,8 @@
 // over the fake plugin's bound `reply` job kind and its deliveries. At every
 // point replay yields exactly one effect (the fake backend counts the effects
 // that really happened) and reconcile converges, or the effect stays unknown
-// for a human where the rule table says so. F11 and F13 are P6d's.
+// for a human where the rule table says so. F11 (a provider host lost under
+// its jobs, a crashed release) is at the end; F13 is test/host-policy.test.ts.
 //
 // A crashed mu is a creator that is gone: the journal's owner seam names a
 // pid that existed and exited (`deadPid`), and the plugin group it sent to is
@@ -13,22 +14,27 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { insertAgent } from "../src/agents.js";
-import { getCarrierJob, reserveCarrierJob } from "../src/carrier-jobs.js";
+import { closeAgent } from "../src/agents/close.js";
+import { deleteAgent, insertAgent } from "../src/agents.js";
+import { getCarrierJob, recordJobTree, reserveCarrierJob } from "../src/carrier-jobs.js";
 import { type Db, openDb } from "../src/db.js";
 import { EffectHeldError, getEffect, setEffectOwnerForTests, writeEffect } from "../src/effects.js";
+import { acquireHost, releaseHost } from "../src/host-lifecycle.js";
 import { resolveHost } from "../src/host-provider.js";
+import { getHostRecord, HostReferencedError, reserveProviderJob } from "../src/host-records.js";
 import { addHost, HOST_GRACE_MS } from "../src/hosts.js";
 import type { JobSpec } from "../src/jobs/types.js";
+import { listLogs } from "../src/logs.js";
 import { EffectFencedError } from "../src/plugins/errors.js";
 import { type PluginJobKind, pluginJobRef } from "../src/plugins/job.js";
 import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { narrowObject } from "../src/plugins/protocol.js";
 import { resolveEffect, runEffect, setEffectTimeoutForTests } from "../src/plugins/reconcile.js";
 import { addPlugin, closePluginSessions, pluginSession } from "../src/plugins/registry.js";
+import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { type FakePlugin, fakePlugin, jobSeams } from "./_plugin.js";
+import { type FakePlugin, fakePlugin, jobSeams, providerSeams } from "./_plugin.js";
 
 const SPEC: JobSpec = {
   workstream: "ws",
@@ -442,5 +448,105 @@ describe("deliveries (D4): never resent past a newer one", () => {
       reason: "receipt: not-accepted",
     });
     expect(f.calls().filter((c) => c.method === "channel.send")).toHaveLength(2);
+  });
+});
+
+describe("F11: a provider host lost under its jobs, a crashed release (D1, D16)", () => {
+  const BASE = "b".repeat(40);
+
+  /** A provider host `box` with one started job of `ws/w` whose agent row is gone (its tree a recovery record). */
+  async function lostJob(job: Record<string, unknown>, worktree: boolean) {
+    f = fakePlugin(dir, { seams: providerSeams(job) });
+    await addPlugin(db, "fake", f.argv);
+    ensureWorkstream(db, "ws");
+    await acquireHost(db, { name: "box", provider: "fake", params: {}, repo: "/work" });
+    const view = resolveHost(db, "box");
+    kind = view.jobKind as PluginJobKind;
+    const r = reserveProviderJob(db, "box", {
+      workstream: "ws",
+      name: "w",
+      kind: kind.name,
+      plugin: "fake",
+      worktree,
+    });
+    token = r?.token ?? "";
+    await kind.start(view, SPEC, token);
+    const a = insertAgent(db, {
+      reservation: token,
+      name: "w",
+      workstream: "ws",
+      paneId: "%1",
+      host: "box",
+      cwd: "/wt/w",
+      base: BASE,
+      repo: "/work",
+    });
+    recordJobTree(db, token, {
+      path: "/wt/w",
+      base: BASE,
+      agentId: a.incarnation,
+      collectRepo: dir,
+    });
+    deleteAgent(db, "w", "ws");
+    expect(listRemoteRecoveries(db)).toHaveLength(1);
+    // The provider reclaimed the machine.
+    f.set({ hostGone: "reclaimed" });
+  }
+  const close = (o: { abandonJob?: boolean } = {}) =>
+    closeAgent(db, "w", { workstream: "ws", ...o });
+  const execs = () => f.calls().filter((c) => c.method === "link.exec");
+
+  it("close on a lost host records the tree gone and the job stopped, without the host; an owed collect is kept as uncollected work until abandoned; then release converges", async () => {
+    await lostJob({}, true);
+    const r = await close();
+    expect(getHostRecord(db, "box")).toMatchObject({ state: "lost", reason: "reclaimed" });
+    expect(r.recovery).toMatchObject({ deleted: true });
+    expect(r.worktree).toMatchObject({ action: "gone" });
+    expect(listRemoteRecoveries(db)).toEqual([]);
+    // Not outlivesHost: the job went with the machine, recorded stopped with no call.
+    expect(f.calls().some((c) => c.method === "job.stop")).toBe(false);
+    expect(execs()).toEqual([]);
+    expect(getCarrierJob(db, token)).toMatchObject({
+      reason: "uncollected work",
+      finalOwed: true,
+      stopGen: 1,
+    });
+    expect(r.carrierJobs).toEqual([{ host: "box", job: "job-1", action: "kept" }]);
+    // The release waits on the kept record; the abandon logs the loss and drops it.
+    await expect(releaseHost(db, "box")).rejects.toBeInstanceOf(HostReferencedError);
+    await close({ abandonJob: true });
+    expect(getCarrierJob(db, token)).toBeUndefined();
+    const logs = listLogs(db, { limit: 50 }).map((l) => l.payload);
+    expect(logs.some((p) => /abandoned .*uncollected work/.test(p))).toBe(true);
+    // A crash after the release intent: the next release reissues it and converges.
+    f.set({ faults: { "host.release": ["effectThenExit"] } });
+    await expect(releaseHost(db, "box")).rejects.toThrow(/outcome unknown/);
+    expect(getHostRecord(db, "box")?.state).toBe("releasing");
+    await releaseHost(db, "box");
+    expect(getHostRecord(db, "box")).toBeUndefined();
+    expect(f.backend().releases).toBe(1);
+  });
+
+  it("an outlivesHost job on a lost host is stopped by job.stop with proof before its record goes", async () => {
+    await lostJob({ outlivesHost: true }, false);
+    const r = await close();
+    expect(f.backend().stops).toBe(1);
+    expect(r.carrierJobs).toEqual([{ host: "box", job: "job-1", action: "stopped" }]);
+    expect(getCarrierJob(db, token)).toBeUndefined();
+    expect(listRemoteRecoveries(db)).toEqual([]);
+    expect(execs()).toEqual([]);
+  });
+
+  it("an outlivesHost job whose stop has no answer keeps everything: the close refuses", async () => {
+    await lostJob({ outlivesHost: true }, false);
+    f.set({ faults: { "job.stop": ["exit"] } });
+    await expect(close()).rejects.toThrow(/outcome unknown/);
+    expect(getCarrierJob(db, token)).toBeDefined();
+    expect(listRemoteRecoveries(db)).toHaveLength(1);
+    expect(getEffect(db, `${token}:stop`)?.state).toBe("unknown");
+    // The next close reissues the stop (idempotent) and converges.
+    await close();
+    expect(getCarrierJob(db, token)).toBeUndefined();
+    expect(f.backend().stops).toBe(1);
   });
 });

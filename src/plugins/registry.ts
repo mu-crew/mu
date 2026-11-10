@@ -20,6 +20,7 @@ import { basename, isAbsolute } from "node:path";
 import { carrierJobsOfPlugin } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { effectsOfPlugin } from "../effects.js";
+import { hostRecordsOfProvider } from "../host-records.js";
 import { hostsOfPlugin } from "../hosts.js";
 import { type PluginSession, startPlugin } from "./client.js";
 import {
@@ -106,6 +107,7 @@ export function trustProblems(name: string, path: string): string[] {
 function pluginUsers(db: Db, name: string): string[] {
   return [
     ...hostsOfPlugin(db, name).map((h) => `host ${h}`),
+    ...hostRecordsOfProvider(db, name).map((h) => `provider host ${h}`),
     ...carrierJobsOfPlugin(db, name).map((j) => `job ${j.workstream}/${j.name}`),
     ...effectsOfPlugin(db, name).map((e) => `effect ${e.key}`),
   ];

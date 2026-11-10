@@ -12,6 +12,41 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Plugins: provider hosts** (plugins spec P6d, D1, D5, D6, D7 G3, D10).
+  `mu host acquire <name> --provider <plugin> [--param k=v]… [--repo
+  <path>]` writes a `hosts` record and its `host.acquire` effect in one
+  immediate transaction; a re-run on a name still `acquiring` resolves the
+  same effect (lookup or deduped resend), never acquiring a second host. A
+  name is a profile's or a provider host's, never both. `mu host drain`
+  stops spawns; `mu host release` proves no agent, job record or recovery
+  record names the host (listing every owed final collect;
+  `HostReferencedError`, exit 4) and reissues a crashed release; `--abandon`
+  drops the host with its job records, recovery records and dead effects in
+  one transaction, logging each (refused while an agent row names it or an
+  effect has a live owner). `mu host list` asks each provider host its
+  status once: `gone` moves it to `lost`. The provider adapter
+  (`src/plugins/provider.ts`) is the plugin's host seam as a `HostProvider`;
+  `resolveHost` builds a provider host's view from its provider's link and
+  job kind, and a provider host's link calls carry its handle and instance.
+  Atomic admission (`reserveProviderJob`, for P6e's spawn path) refuses
+  unless `ready`, inside `MU_HOST_DEADLINE_MARGIN_MS` (default 10 min; the
+  host drains, `HostDeadlineError`) or at `max_jobs` (`HostJobsFullError`).
+  The link adapter calls `link.push` when declared, and a provider host's
+  `--worktree` base resolves in the caller's checkout: pushed, or refused
+  with `RemoteBaseMissingError` (exit 5) naming the commit and the repo.
+  The host policies (`src/host-policy.ts`): the final-collect flag is set
+  for a `--worktree` job on a provider host and cleared only by a collect
+  that read the stop generation before its fetch (`stop_gen`
+  compare-and-clear); in-life collects back off from the poll interval to
+  5 minutes; `deadlineNotice`. A close with no agent row of a plugin job
+  record goes through its kind: on a `lost` host the tree is recorded gone
+  and the job stopped without a call, unless the kind `outlivesHost` (then
+  `job.stop` with proof); an owed final collect there is kept as
+  "uncollected work" until `--abandon-job`. On a live host the close runs
+  the final collect from the record's `collect_repo` before the tree.
+  New log intents `host.acquire` and `host.release` (machine-local entity
+  `host`). Not yet driven: spawn on a provider host, its live-agent close,
+  in-life collects at observed settles and the wait's deadline timer (P6e).
 - **Plugins: effects, the reconciler and the job adapter** (plugins spec
   P6c, D4, D8). Every plugin effect is written ahead in a new `effects`
   row (key, the exact params and their sha256, the plugin instance, the
@@ -247,6 +282,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Schema (v14, no bump): `hosts` and `remote_recovery.host_identity`**
+  (plugins spec D5, P6d). A new machine-local, unrebuildable `hosts` table
+  (32 tables). `remote_recovery` gains `host_identity` (a profile's exec
+  bytes, `plugin:<name>:<instance>`, or `provider:<id>:<instance>`), written
+  by the recovery triggers; an older file's triggers are replaced (same
+  names) and its records backfilled from `host_exec`. A recovery's use
+  compares the host's identity now with it, so a provider host acquired
+  again under the name refuses. `carrier_jobs` gains `collect_delay_ms`
+  (the in-life collect's backoff).
 - **Schema: `effects`, `agents.delivery_seq` and the job record columns**
   (plugins spec D5, P6c). A new machine-local, unrebuildable `effects`
   table; `agents` gains `delivery_seq`; `carrier_jobs` gains `kind`,

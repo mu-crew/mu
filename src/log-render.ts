@@ -190,6 +190,8 @@ const VERBS: Record<KnownIntent, string> = {
   // Payload prose reads "agent stalled ..."; keep the verb matching it
   // so the emitted text is not printed with a second, different verb.
   "agent.stall": "agent stalled",
+  "host.acquire": "host acquire",
+  "host.release": "host release",
 };
 
 /** Every intent this formatter knows, derived from the verb table so
@@ -386,7 +388,9 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
     case "agent.kick":
     case "agent.send":
     case "agent.abort":
-    case "agent.stall": {
+    case "agent.stall":
+    case "host.acquire":
+    case "host.release": {
       const verb = VERBS[intent];
       // These payloads are prose by construction (emitEvent writes them).
       // Guard anyway: a JSON payload here would otherwise be dumped raw

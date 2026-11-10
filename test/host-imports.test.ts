@@ -96,8 +96,13 @@ describe("the host provider seam", () => {
     const subqueries = text("db-recovery.ts").match(
       /\(SELECT exec FROM host_profiles WHERE name = (?:OLD|a)\.host\)/g,
     );
-    expect(subqueries?.length).toBe(triggers);
-    expect(triggers).toBe(2);
+    // Plus the host identity each trigger pins (P6d): a profile's exec, or its plugin's identity.
+    const identity = text("db-recovery.ts").match(
+      /FROM host_profiles WHERE name = \$\{h\}\)|FROM host_profiles hp\s+JOIN plugins p ON p\.name = hp\.plugin WHERE hp\.name = \$\{h\}\)/g,
+    );
+    expect(subqueries?.length).toBe(2);
+    expect(identity?.length).toBe(2);
+    expect(triggers).toBe(4);
   });
 
   it("a view from a profile already read is built only from an admitted snapshot", () => {
@@ -107,21 +112,19 @@ describe("the host provider seam", () => {
       for (const c of calls(t, "admittedView")) out.push(`${file}: ${c}`);
       if (/\bhostView\b/.test(t)) out.push(`${file}: hostView`);
     }
-    // check's, prepare's admitted profile, and close's `withHostChannel` callback.
+    // check's and prepare's admitted profile (close's runs under withHostView, P6d).
     expect(out).toEqual([
       "src/hosts.ts: admittedView(db, profile)",
-      "src/remote-worktree.ts: admittedView(db, profile)",
       "src/remote-worktree.ts: admittedView(db, profile)",
     ]);
     expect(callersOf(text("hosts.ts"), /\badmittedView\(/, /^$/)).toEqual(["checkHost"]);
     expect(callersOf(text("remote-worktree.ts"), /\badmittedView\(/, /^$/)).toEqual([
       "prepareRemote",
-      "closeRemoteWorktree",
     ]);
-    // resolveHost views the profile it just read.
+    // resolveHost views the profile it just read; withHostView the one its channel admitted.
     expect(
       callersOf(text("host-provider.ts"), /\badmittedView\(/, /function admittedView\(/),
-    ).toEqual(["resolveHost"]);
+    ).toEqual(["resolveHost", "withHostView"]);
   });
 
   it("each form is caught, one planted file per form", () => {

@@ -324,6 +324,12 @@ export {
   staticProvider,
 } from "./host-provider.js";
 export {
+  HostDeadlineError,
+  HostJobsFullError,
+  HostReferencedError,
+  HostStateError,
+} from "./host-records.js";
+export {
   addHost,
   admitHostChannel,
   bindHostChannel,

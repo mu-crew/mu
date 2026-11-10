@@ -159,6 +159,24 @@ Every request's `params` carries `deadline` (epoch ms) and a `target`:
 The `params` mu sends are the same on every resend. Only the envelope `id`
 and the `deadline` are new each time.
 
+### The host
+
+A provider plugin (`mu host acquire --provider <name>`) declares `host`
+with `link` and `job`. A provider host's link and job calls carry its
+`handle` and `instance` in `target.host`.
+
+| Method | Params beyond `target`, `deadline` | Result |
+| --- | --- | --- |
+| `host.acquire` (effect) | `key`, `params` (the `--param` map) | `{handle, deadlineAt?, idleReclaimMs?, maxJobs?}` |
+| `host.lookup` | `key`, `fence` | exactly one of `{found: <acquire's result>}`, `{pending: true}`, `{none: true}`, `{unknown: reason}` |
+| `host.status` | — | `{state: "up", handle, …facts}`, `{state: "gone", reason}`, `{state: "needs-human", remedy}`, `{state: "unknown", reason}` |
+| `host.release` (effect, idempotent) | `key` | `null`; a host already released resolves |
+
+`gone` is a proof: the machine and its worktrees no longer exist, and its
+jobs too unless the job seam declares `outlivesHost`. mu then records the
+host `lost`: its trees are recorded gone and its jobs stopped without a
+call, except an `outlivesHost` job, which mu still stops with `job.stop`.
+
 ### The link
 
 | Method | Params beyond `target`, `deadline` | Result |

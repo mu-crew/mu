@@ -136,15 +136,16 @@ export function effectsOfPlugin(db: Db, name: string): EffectRow[] {
 
 /**
  * Write the intent ahead of the call, with `alongside` (the subject's own change) in the same
- * immediate transaction. A delivery takes the agent's next `delivery_seq`, and refuses while
- * another delivery to the agent is being resolved.
+ * immediate transaction; a subject it creates (a host record) returns its id. A delivery takes
+ * the agent's next `delivery_seq`, and refuses while another delivery to the agent is being
+ * resolved.
  */
-export function writeEffect(db: Db, e: EffectIntent, alongside?: () => void): EffectRow {
+export function writeEffect(db: Db, e: EffectIntent, alongside?: () => unknown): EffectRow {
   const { json, sha } = paramsDigest(e.params);
   const me = effectOwner();
   return db
     .transaction(() => {
-      alongside?.();
+      const created = alongside?.();
       let subjectId: string;
       let seq: number | null = null;
       if (e.subject.kind === "delivery") {
@@ -163,7 +164,7 @@ export function writeEffect(db: Db, e: EffectIntent, alongside?: () => void): Ef
         if (r === undefined) throw new Error(`no agent row ${e.subject.agentId} for a delivery`);
         seq = r.delivery_seq;
       } else {
-        subjectId = e.subject.id;
+        subjectId = typeof created === "string" ? created : e.subject.id;
       }
       const now = Date.now();
       db.prepare(

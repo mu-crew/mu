@@ -24,7 +24,8 @@ export const CARRIER_JOBS_DDL = `
 -- 'instance' (the stop fence of a plugin job, whose 'host_stop' is NULL), 'host_id' (a
 -- provider host's record), 'tree_base' and 'collect_repo' (its tree's base, the local
 -- repo collects fetch into), the final-collect flag and its generation (D10), and an
--- at-start kind's first delivery ('first_msg_id', 'first_inc': D8).
+-- at-start kind's first delivery ('first_msg_id', 'first_inc': D8). 'collect_delay_ms': the
+-- in-life collect's backoff behind 'collect_next_at'.
 CREATE TABLE IF NOT EXISTS carrier_jobs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   token         TEXT NOT NULL UNIQUE,
@@ -55,7 +56,8 @@ CREATE TABLE IF NOT EXISTS carrier_jobs (
   stop_gen      INTEGER,
   collect_next_at INTEGER,
   first_msg_id  TEXT,
-  first_inc     TEXT
+  first_inc     TEXT,
+  collect_delay_ms INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_jobs_name ON carrier_jobs (workstream, name, ordinal);
 `;

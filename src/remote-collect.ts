@@ -28,6 +28,7 @@ import { dirname, join } from "node:path";
 import { AgentLockBusyError, AgentNotFoundError, AgentReplacedError } from "./agents/errors.js";
 import { withAgentLock } from "./agents/lock.js";
 import { type AgentRow, getAgent } from "./agents.js";
+import { clearFinalCollect, owingJobOfTree } from "./carrier-jobs.js";
 import { channelTarget } from "./channels/index.js";
 import { applySettledClose } from "./close-block.js";
 import type { Db } from "./db.js";
@@ -159,112 +160,123 @@ export async function collectRemoteAgent(
   db: Db,
   opts: { workstream: string; name: string; repo: string; recoveryId?: number },
 ): Promise<CollectResult> {
+  return withAgentLock(db, opts.workstream, opts.name, () => collectRemoteAgentLocked(db, opts));
+}
+
+/** `collectRemoteAgent` for a caller that holds the agent lock already (a close's final collect). */
+export async function collectRemoteAgentLocked(
+  db: Db,
+  opts: { workstream: string; name: string; repo: string; recoveryId?: number },
+): Promise<CollectResult> {
   const { workstream, name, repo } = opts;
-  return withAgentLock(db, workstream, name, () =>
-    withFileLock(
-      repoLockPath(db, repo),
-      `collect ${repo}`,
-      async () => {
-        const agent = getAgent(db, name, workstream);
-        // A removed agent's worktree (`remote_recovery`): by id, or the one
-        // left when no agent holds the name. A live agent beside a named id
-        // refuses in assertRecoveryUsable.
-        const rec =
-          opts.recoveryId !== undefined || agent === undefined
-            ? selectRemoteRecovery(db, workstream, name, opts.recoveryId)
-            : undefined;
-        if (rec === undefined && opts.recoveryId !== undefined) {
-          throw recoveryGone(workstream, name, opts.recoveryId);
-        }
-        let target: CollectTarget;
-        if (rec !== undefined) {
-          assertRecoveryUsable(db, rec);
-          target = recoveryTarget(db, rec);
-        } else if (agent !== undefined) {
-          target = agentTarget(db, agent);
-        } else {
-          throw new AgentNotFoundError(name, workstream);
-        }
-        const { host, cwd, base } = target;
-        const h = resolveHost(db, host);
-        if (h.link.fetch === undefined) {
-          // No built-in link lacks fetch; a plugin's may (mule's, spec D7).
-          throw new RemoteCollectUnsupportedError(name, `host ${host}'s link cannot fetch`);
-        }
-        // The link deletes FETCH_HEAD only once the recovery's profile pin held, so a
-        // refused collect touches nothing.
-        const r = await h.link.fetch(
-          h,
-          { remoteCwd: cwd, localRepo: repo, timeoutMs: REMOTE_COLLECT_TIMEOUT_MS },
-          { holder: `collect:${workstream}/${name}`, paneAlive: viewRunning },
-          (admitted) => {
-            if (rec !== undefined) assertRecoveryProfile(rec, admitted.profile);
-          },
-        );
-        if (r.exitCode === null) {
-          throw new RemoteCollectError(
-            host,
-            `timed out after ${REMOTE_COLLECT_TIMEOUT_MS}ms; nothing recorded`,
-          );
-        }
-        if (r.exitCode !== 0) {
-          const why = firstLine(r.stderr) || firstLine(r.stdout);
-          throw new RemoteCollectError(
-            host,
-            `fetch exited ${r.exitCode}${why === "" ? "" : `: ${why}`}; nothing recorded`,
-          );
-        }
-        let head: string;
-        try {
-          head = await git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"], repo);
-        } catch {
-          throw new RemoteCollectError(
-            host,
-            "the fetch template succeeded but left no commit in FETCH_HEAD (does it `git fetch`?); nothing recorded",
-          );
-        }
-        // The fetch was slow: the identity must still hold before a ref is moved.
-        target.recheck();
-        const ref = collectRef(workstream, name);
-        const prior = await git(["rev-parse", "--verify", "-q", ref], repo).catch(() => undefined);
-        // The ref is ONE per (workstream, name), not per incarnation: moving it
-        // would drop the pin another unresolved recovery's commit relies on.
-        if (prior !== undefined && prior !== head) {
-          const holders = pinnedByOthers(db, { workstream, name, agentId: target.ownerId }, prior);
-          if (holders.length > 0) {
-            throw new RemoteRecoveryRefusedError(
-              workstream,
-              name,
-              "pin",
-              `${ref} pins ${prior.slice(0, 12)}, the collected HEAD of recovery ${holders.join(", ")}; close that recovery first, then collect`,
-              holders,
-            );
-          }
-        }
-        await git(["update-ref", ref, head], repo);
-        if ((await git(["rev-parse", "--verify", ref], repo)) !== head) {
-          throw new RemoteCollectError(host, `could not pin ${ref}; nothing recorded`);
-        }
-        const changed = head !== (target.collectedHead ?? base);
-        await recordCollected(target, head, ref, repo, prior);
-        const close =
-          rec === undefined && agent !== undefined ? await remoteClose(db, agent) : undefined;
-        return {
-          head,
-          ref,
-          merge: `git merge ${head}`,
-          changed,
-          ...(rec === undefined ? {} : { recoveryId: rec.agentId }),
-          ...(close !== undefined ? { close } : {}),
-        };
-      },
-      {
-        strict: true,
-        onUnavailable: () => {
-          throw new AgentLockBusyError(name, workstream);
+  return withFileLock(
+    repoLockPath(db, repo),
+    `collect ${repo}`,
+    async () => {
+      const agent = getAgent(db, name, workstream);
+      // A removed agent's worktree (`remote_recovery`): by id, or the one
+      // left when no agent holds the name. A live agent beside a named id
+      // refuses in assertRecoveryUsable.
+      const rec =
+        opts.recoveryId !== undefined || agent === undefined
+          ? selectRemoteRecovery(db, workstream, name, opts.recoveryId)
+          : undefined;
+      if (rec === undefined && opts.recoveryId !== undefined) {
+        throw recoveryGone(workstream, name, opts.recoveryId);
+      }
+      let target: CollectTarget;
+      if (rec !== undefined) {
+        assertRecoveryUsable(db, rec);
+        target = recoveryTarget(db, rec);
+      } else if (agent !== undefined) {
+        target = agentTarget(db, agent);
+      } else {
+        throw new AgentNotFoundError(name, workstream);
+      }
+      const { host, cwd, base } = target;
+      // A job record owing this tree's final collect, and the stop generation read now,
+      // before the fetch: only a collect that started after the stop clears it (D10).
+      const owed = owingJobOfTree(db, host, cwd);
+      const h = resolveHost(db, host);
+      if (h.link.fetch === undefined) {
+        // No built-in link lacks fetch; a plugin's may (mule's, spec D7).
+        throw new RemoteCollectUnsupportedError(name, `host ${host}'s link cannot fetch`);
+      }
+      // The link deletes FETCH_HEAD only once the recovery's profile pin held, so a
+      // refused collect touches nothing.
+      const r = await h.link.fetch(
+        h,
+        { remoteCwd: cwd, localRepo: repo, timeoutMs: REMOTE_COLLECT_TIMEOUT_MS },
+        { holder: `collect:${workstream}/${name}`, paneAlive: viewRunning },
+        (admitted) => {
+          if (rec !== undefined)
+            assertRecoveryProfile(rec, { exec: admitted.link.fingerprint(admitted) });
         },
+      );
+      if (r.exitCode === null) {
+        throw new RemoteCollectError(
+          host,
+          `timed out after ${REMOTE_COLLECT_TIMEOUT_MS}ms; nothing recorded`,
+        );
+      }
+      if (r.exitCode !== 0) {
+        const why = firstLine(r.stderr) || firstLine(r.stdout);
+        throw new RemoteCollectError(
+          host,
+          `fetch exited ${r.exitCode}${why === "" ? "" : `: ${why}`}; nothing recorded`,
+        );
+      }
+      let head: string;
+      try {
+        head = await git(["rev-parse", "--verify", "FETCH_HEAD^{commit}"], repo);
+      } catch {
+        throw new RemoteCollectError(
+          host,
+          "the fetch template succeeded but left no commit in FETCH_HEAD (does it `git fetch`?); nothing recorded",
+        );
+      }
+      // The fetch was slow: the identity must still hold before a ref is moved.
+      target.recheck();
+      const ref = collectRef(workstream, name);
+      const prior = await git(["rev-parse", "--verify", "-q", ref], repo).catch(() => undefined);
+      // The ref is ONE per (workstream, name), not per incarnation: moving it
+      // would drop the pin another unresolved recovery's commit relies on.
+      if (prior !== undefined && prior !== head) {
+        const holders = pinnedByOthers(db, { workstream, name, agentId: target.ownerId }, prior);
+        if (holders.length > 0) {
+          throw new RemoteRecoveryRefusedError(
+            workstream,
+            name,
+            "pin",
+            `${ref} pins ${prior.slice(0, 12)}, the collected HEAD of recovery ${holders.join(", ")}; close that recovery first, then collect`,
+            holders,
+          );
+        }
+      }
+      await git(["update-ref", ref, head], repo);
+      if ((await git(["rev-parse", "--verify", ref], repo)) !== head) {
+        throw new RemoteCollectError(host, `could not pin ${ref}; nothing recorded`);
+      }
+      const changed = head !== (target.collectedHead ?? base);
+      await recordCollected(target, head, ref, repo, prior);
+      if (owed?.stopGen != null) clearFinalCollect(db, owed.token, owed.stopGen);
+      const close =
+        rec === undefined && agent !== undefined ? await remoteClose(db, agent) : undefined;
+      return {
+        head,
+        ref,
+        merge: `git merge ${head}`,
+        changed,
+        ...(rec === undefined ? {} : { recoveryId: rec.agentId }),
+        ...(close !== undefined ? { close } : {}),
+      };
+    },
+    {
+      strict: true,
+      onUnavailable: () => {
+        throw new AgentLockBusyError(name, workstream);
       },
-    ),
+    },
   );
 }
 

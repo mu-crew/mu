@@ -107,8 +107,8 @@ export interface EffectCall<M extends PluginMethod>
   method: M;
   /** The instance the subject was recorded under (a stop's job): refused before the intent. */
   fence?: string;
-  /** The subject's own change, in the intent's transaction (given the instance it goes to). */
-  alongside?: (instance: string) => void;
+  /** The subject's own change, in the intent's transaction (given the instance it goes to); a subject it creates returns its id. */
+  alongside?: (instance: string) => unknown;
   /** The reply, recorded on the subject in the transaction that deletes the row. */
   record?: (result: MethodReplies[M]) => void;
   /** Nothing happened: recorded with the row's delete. */

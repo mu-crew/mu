@@ -10,19 +10,29 @@
 // The built-in provider is `static`: a host profile is always ready, and
 // `mu host add`/`rm` are its whole lifecycle, so `status` answers `up` with no
 // round trip and `acquire`, `lookup` and `release` refuse. A provider host
-// (a `hosts` record, any state) joins with the records in P6d; then
-// `resolveHost` reads both tables, refuses a name found in both, and each
-// verb checks the state it needs (spawn `ready`; close, stop and collect
-// `ready`, `draining`, `lost`; release `draining`, `lost`, `releasing`).
-// Until then every view is a profile's.
+// is a `hosts` record in any state (src/host-records.ts): its provider, link
+// and job kind are its provider plugin's. `resolveHost` reads both tables,
+// refuses a name found in both, and each verb checks the state it needs
+// (spawn `ready`; close, stop and collect `ready`, `draining`, `lost`;
+// release `draining`, `lost`, `releasing`).
 
 import type { Db } from "./db.js";
 import { type HostLink, templateLink } from "./host-link.js";
-import { getHost, HostNotFoundError, type HostProfile, HostProfileError } from "./hosts.js";
+import { getHostRecord } from "./host-records.js";
+import {
+  getHost,
+  type HostLease,
+  HostNotFoundError,
+  type HostProfile,
+  HostProfileError,
+  withHostChannel,
+} from "./hosts.js";
 import { jobKind } from "./jobs/kinds.js";
 import type { JobKind } from "./jobs/types.js";
+import { PluginRefusedError } from "./plugins/errors.js";
 import { pluginJobKind } from "./plugins/job.js";
 import { pluginLink } from "./plugins/link.js";
+import { pluginProvider } from "./plugins/provider.js";
 
 /** An idempotency key: mu-generated, persisted with its effect before the call (spec D4). */
 export type EffectKey = string;
@@ -45,7 +55,7 @@ export interface HostFacts {
   maxJobs?: number;
 }
 
-/** `gone` is a proof: the machine and everything on it (jobs, worktrees) no longer exist. */
+/** `gone` is a proof: the machine and its worktrees no longer exist; its jobs too, unless their kind declares `outlivesHost`. */
 export type HostStatus =
   | ({ state: "up" } & HostFacts)
   | { state: "gone"; reason: string }
@@ -74,7 +84,7 @@ export interface HostProvider {
 /** A provider host's state (spec D1): mu alone moves it. */
 export type HostState = "acquiring" | "ready" | "draining" | "releasing" | "lost";
 
-/** A `hosts` row (spec D5). The table joins in P6d; until then no view carries one. */
+/** A `hosts` row (spec D5; src/host-records.ts). */
 export interface HostRecord {
   id: number;
   name: string;
@@ -152,9 +162,65 @@ export function admittedView(db: Db, profile: HostProfile): HostView {
   };
 }
 
-/** The view of host `name`. Throws `HostNotFoundError` when nothing holds the name. */
+/** The view of a provider host's record: its provider plugin's provider, link and job kind (D6). */
+export function recordView(db: Db, record: HostRecord): HostView {
+  const kind = pluginJobKind(db, record.provider);
+  if (kind === undefined) {
+    throw new PluginRefusedError(record.provider, [
+      "it implements no job seam, which a provider host needs",
+    ]);
+  }
+  return {
+    name: record.name,
+    link: pluginLink(db, record.provider, { provider: true }),
+    provider: pluginProvider(db, record.provider, record.name),
+    jobKind: kind,
+    record,
+  };
+}
+
+/**
+ * The view of host `name`: a profile's or a provider host's record. Throws `HostNotFoundError`
+ * when nothing holds the name, and refuses a name in both tables (a defence: neither verb
+ * writes one).
+ */
 export function resolveHost(db: Db, name: string): HostView {
-  return admittedView(db, getHost(db, name));
+  const record = getHostRecord(db, name);
+  let profile: HostProfile | undefined;
+  try {
+    profile = getHost(db, name);
+  } catch (e) {
+    if (!(e instanceof HostNotFoundError) || record === undefined) throw e;
+  }
+  if (record === undefined) return admittedView(db, profile as HostProfile);
+  if (profile !== undefined) {
+    throw new HostProfileError(
+      `host ${name} is both a profile and a provider host: remove one (mu host rm, mu host release)`,
+    );
+  }
+  return recordView(db, record);
+}
+
+/**
+ * Run `fn` on host `name`'s admitted view: a profile's under its channel (`withHostChannel`), a
+ * provider host's at once, with no lease (it has no session cap; its job slots are `max_jobs`).
+ */
+export async function withHostView<T>(
+  db: Db,
+  name: string,
+  holder: string,
+  fn: (h: HostView, lease: HostLease | undefined) => Promise<T>,
+  opts?: Parameters<typeof withHostChannel>[4],
+): Promise<T> {
+  const record = getHostRecord(db, name);
+  if (record !== undefined) return fn(resolveHost(db, name), undefined);
+  return withHostChannel(
+    db,
+    name,
+    holder,
+    (profile, lease) => fn(admittedView(db, profile), lease),
+    opts,
+  );
 }
 
 /** `resolveHost`, or undefined when nothing holds the name (any other error propagates). */
@@ -171,19 +237,27 @@ export function findHost(db: Db, name: string): HostView | undefined {
  * The identity a remote recovery pins for host `name` (spec D5), as `link.fingerprint`
  * computes it: a template profile's exec bytes, read alone (one column, not the view:
  * recovery's last read before a remote command, src/remote-recovery.ts, as it was); a
- * `--plugin` profile's `plugin:<name>:<instance>`, from its view. Undefined when no host
- * holds the name.
+ * `--plugin` profile's `plugin:<name>:<instance>`, from its view; a provider host's
+ * `provider:<id>:<instance>`. Undefined when no host holds the name.
  */
 export function hostIdentity(db: Db, name: string): string | undefined {
   const row = db.prepare("SELECT exec FROM host_profiles WHERE name = ?").get(name) as
     | { exec: string | null }
     | undefined;
-  if (row === undefined) return undefined;
+  if (row === undefined) {
+    // A provider host: `provider:<id>:<instance>`, so a name acquired again differs.
+    const rec = getHostRecord(db, name);
+    return rec === undefined ? undefined : providerIdentity(rec);
+  }
   if (row.exec !== null) return row.exec;
   // No exec: a `--plugin` profile, whose link computes its identity.
   const view = findHost(db, name);
   return view?.link.fingerprint(view);
 }
+
+/** A provider host's identity (D5): its record's id and the instance it was acquired from. */
+export const providerIdentity = (rec: HostRecord): string =>
+  `provider:${rec.id}:${rec.instance ?? ""}`;
 
 /** The view's profile, for what only a static host has (its templates, its transport). */
 export function requireProfile(host: HostView): HostProfile {

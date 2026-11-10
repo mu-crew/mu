@@ -66,6 +66,16 @@ export interface CarrierJob {
   workstreamId: number | null;
   createdAt: string;
   recordedAt: string | null;
+  /** A provider host's record (`hosts.id`); null on a static host. */
+  hostId: number | null;
+  /** The tree's base and the local repo collects fetch into (a provider-host job). */
+  treeBase: string | null;
+  collectRepo: string | null;
+  /** The final collect is owed (D10); `stopGen` counts the stops and losses, `collectNextAt` an in-life retry. */
+  finalOwed: boolean;
+  stopGen: number | null;
+  collectNextAt: number | null;
+  collectDelayMs: number | null;
 }
 
 interface Raw {
@@ -89,6 +99,13 @@ interface Raw {
   workstream_id: number | null;
   created_at: string;
   recorded_at: string | null;
+  host_id: number | null;
+  tree_base: string | null;
+  collect_repo: string | null;
+  final_owed: number;
+  stop_gen: number | null;
+  collect_next_at: number | null;
+  collect_delay_ms: number | null;
 }
 
 const toJob = (r: Raw): CarrierJob => ({
@@ -112,6 +129,13 @@ const toJob = (r: Raw): CarrierJob => ({
   workstreamId: r.workstream_id,
   createdAt: r.created_at,
   recordedAt: r.recorded_at,
+  hostId: r.host_id,
+  treeBase: r.tree_base,
+  collectRepo: r.collect_repo,
+  finalOwed: r.final_owed === 1,
+  stopGen: r.stop_gen,
+  collectNextAt: r.collect_next_at,
+  collectDelayMs: r.collect_delay_ms,
 });
 
 const now = (): string => new Date().toISOString();
@@ -244,6 +268,68 @@ export function unlaunchPluginJob(db: Db, token: string, reason: string): boolea
       )
       .run(reason, token).changes === 1
   );
+}
+
+/**
+ * The remote worktree a provider-host spawn prepared for the job, written before its start:
+ * its path and base, and the local checkout collects fetch into (D5, D10).
+ */
+export function recordJobTree(
+  db: Db,
+  token: string,
+  t: { path: string; base: string; agentId: number; collectRepo: string },
+): boolean {
+  return (
+    db
+      .prepare(
+        "UPDATE carrier_jobs SET tree_path = ?, tree_base = ?, tree_agent_id = ?, collect_repo = ? WHERE token = ?",
+      )
+      .run(t.path, t.base, t.agentId, t.collectRepo, token).changes === 1
+  );
+}
+
+/** The job record owing the final collect of the tree at `path` on `host`, if any (D10). */
+export function owingJobOfTree(db: Db, host: string, path: string): CarrierJob | undefined {
+  const r = db
+    .prepare("SELECT * FROM carrier_jobs WHERE host = ? AND tree_path = ? AND final_owed = 1")
+    .get(host, path) as Raw | undefined;
+  return r === undefined ? undefined : toJob(r);
+}
+
+/** The job stopped, or was lost with its host: no turn can follow (D10). The new generation. */
+export function bumpStopGen(db: Db, token: string): number | undefined {
+  const r = db
+    .prepare(
+      "UPDATE carrier_jobs SET stop_gen = COALESCE(stop_gen, 0) + 1 WHERE token = ? RETURNING stop_gen",
+    )
+    .get(token) as { stop_gen: number } | undefined;
+  return r?.stop_gen;
+}
+
+/**
+ * The final collect done: cleared only while the stop generation is the one the collect read
+ * before it fetched (D10 compare-and-clear). Nothing ever sets the flag again.
+ */
+export function clearFinalCollect(db: Db, token: string, stopGen: number): boolean {
+  return (
+    db
+      .prepare(
+        "UPDATE carrier_jobs SET final_owed = 0 WHERE token = ? AND final_owed = 1 AND stop_gen = ?",
+      )
+      .run(token, stopGen).changes === 1
+  );
+}
+
+/** An in-life collect's retry time and its backoff (D10); nulls clear both. */
+export function setCollectNextAt(
+  db: Db,
+  token: string,
+  at: number | null,
+  delayMs: number | null,
+): void {
+  db.prepare(
+    "UPDATE carrier_jobs SET collect_next_at = ?, collect_delay_ms = ? WHERE token = ?",
+  ).run(at, delayMs, token);
 }
 
 /** Every job record naming plugin `name` (`mu plugin rm` refuses over them). */

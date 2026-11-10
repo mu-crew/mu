@@ -48,6 +48,13 @@
 // replies ({ "<method>": <result> }: that method's reply, verbatim, whatever it
 // is asked; the contract tests' malformed and foreign answers).
 //
+// The host seam (declared through `seams.host`) keeps its hosts in the same
+// backend file: hosts by acquire key, and the effects that happened (`acquires`,
+// `releases`). Config: hostFacts (merged into an acquire's facts), hostGone (a
+// reason: every status answers gone), hostLookupAnswer (host.lookup's answer
+// for an unknown key; default none). `link.push` fetches the commit into the
+// remote repo (a path under `home`), initialising it when absent.
+//
 // Every request and every $/cancel is logged.
 
 import { execFileSync, spawn } from "node:child_process";
@@ -207,6 +214,14 @@ const backend = () =>
   existsSync(jobsPath)
     ? JSON.parse(readFileSync(jobsPath, "utf8"))
     : { jobs: {}, sends: {}, starts: 0, stops: 0, deliveries: 0 };
+const hostsOf = (b) => {
+  b.hosts ??= {};
+  b.acquires ??= 0;
+  b.releases ??= 0;
+  return b.hosts;
+};
+const hostByHandle = (b, handle) =>
+  Object.values(hostsOf(b)).find((h) => h.facts.handle === handle);
 const save = (b) => writeFileSync(jobsPath, JSON.stringify(b));
 const byHandle = (b, handle) => Object.values(b.jobs).find((j) => j.start.handle === handle);
 
@@ -265,6 +280,35 @@ function backendAnswer(method, params, c) {
       }
       return b.sends[params.msgId];
     }
+    case "host.acquire": {
+      const seen = hostsOf(b)[params.key];
+      if (seen !== undefined) return seen.facts;
+      b.acquires += 1;
+      const facts = { handle: `host-${b.acquires}`, ...(c.hostFacts ?? {}) };
+      b.hosts[params.key] = { facts, released: false };
+      save(b);
+      return facts;
+    }
+    case "host.lookup": {
+      const seen = hostsOf(b)[params.key];
+      return seen !== undefined ? { found: seen.facts } : (c.hostLookupAnswer ?? { none: true });
+    }
+    case "host.status": {
+      const h = hostByHandle(b, params.target?.host?.handle);
+      if (h === undefined) return { state: "unknown", reason: "no such host" };
+      if (h.released) return { state: "gone", reason: "released" };
+      if (c.hostGone) return { state: "gone", reason: c.hostGone };
+      return { state: "up", ...h.facts };
+    }
+    case "host.release": {
+      const h = hostByHandle(b, params.target?.host?.handle);
+      if (h !== undefined && !h.released) {
+        h.released = true;
+        b.releases += 1;
+        save(b);
+      }
+      return null;
+    }
     case "channel.receipt":
       return b.sends[params.msgId] !== undefined
         ? { state: "accepted", id: params.msgId }
@@ -304,6 +348,18 @@ function answer(id, method, params) {
         (r) => reply(id, r),
       );
       return;
+    case "link.push": {
+      const repo = resolve(home, params.remoteRepo);
+      const sh = `mkdir -p "$1" && { [ -e "$1/.git" ] || git -C "$1" init -q; } && git -C "$1" fetch -q "$2" "$3"`;
+      run(
+        id,
+        ["/bin/sh", "-c", sh, "push", repo, params.localRepo, params.rev],
+        home,
+        params.timeoutMs,
+        (r) => reply(id, r),
+      );
+      return;
+    }
     case "link.checkSteps":
       if (c.checkSteps !== undefined) {
         reply(id, c.checkSteps);

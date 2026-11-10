@@ -775,7 +775,13 @@ function closeLine(
   for (const j of jobs) {
     const what = j.reservation.job === null ? "lease reservation" : `job ${j.reservation.job}`;
     const did =
-      j.action === "stopped" ? "stopped" : j.action === "abandon" ? "abandoned" : "released";
+      j.action === "stopped"
+        ? "stopped"
+        : j.action === "abandon"
+          ? "abandoned"
+          : j.action === "kept"
+            ? "kept (uncollected work)"
+            : "released";
     bits.push(`${what} on ${j.reservation.host} ${did}`);
   }
   if (wt !== null) {

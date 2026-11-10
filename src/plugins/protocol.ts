@@ -14,7 +14,7 @@
 
 import type { MessageCheck } from "../channels/types.js";
 import type { CheckPhase, LinkCaps } from "../host-link.js";
-import type { HostFacts, KeyCaps, KeyLookup } from "../host-provider.js";
+import type { HostFacts, HostStatus, KeyCaps, KeyLookup } from "../host-provider.js";
 import type {
   JobCaps,
   JobHonours,
@@ -596,6 +596,47 @@ export const narrowJobLookup = keyLookup(jobFound(false));
 
 export const narrowHostLookup = keyLookup(hostFacts);
 
+/** A `host.status` reply (D6): `up` with its facts, `gone`, `needs-human` or `unknown`. */
+export function narrowHostStatus(x: unknown): Narrowed<HostStatus> {
+  return narrow((): HostStatus => {
+    const any = obj(x, "result", [
+      "state",
+      "handle",
+      "deadlineAt",
+      "idleReclaimMs",
+      "maxJobs",
+      "reason",
+      "remedy",
+    ]);
+    const state = oneOf(any.state, "result.state", [
+      "up",
+      "gone",
+      "needs-human",
+      "unknown",
+    ] as const);
+    if (state === "up") {
+      const { state: _s, ...facts } = obj(x, "result", [
+        "state",
+        "handle",
+        "deadlineAt",
+        "idleReclaimMs",
+        "maxJobs",
+      ]);
+      return { state, ...hostFacts(facts, "result") };
+    }
+    if (state === "needs-human") {
+      return {
+        state,
+        remedy: str(obj(x, "result", ["state", "remedy"]).remedy, "result.remedy", 4096),
+      };
+    }
+    return {
+      state,
+      reason: str(obj(x, "result", ["state", "reason"]).reason, "result.reason", 4096),
+    };
+  });
+}
+
 /** A `job.status` reply (D1 liveness). */
 export function narrowJobLiveness(x: unknown): Narrowed<JobLiveness> {
   return narrow((): JobLiveness => {
@@ -678,6 +719,7 @@ export interface MethodReplies {
   "job.checkSteps": WireCheckStep[];
   "host.acquire": HostFacts;
   "host.lookup": KeyLookup<HostFacts>;
+  "host.status": HostStatus;
   "host.release": null;
   "channel.receipt": MessageCheck;
   /** Exactly the asked agent's reading, keyed `<workstream>/<name>`. */
@@ -741,6 +783,8 @@ export function replyNarrower<M extends PluginMethod>(
         return hostFacts(x, "result");
       case "host.lookup":
         return value(narrowHostLookup(x));
+      case "host.status":
+        return value(narrowHostStatus(x));
       case "channel.receipt": {
         const r = value(narrowMessageCheck(x));
         if (r.id !== params.msgId) fail("result.id", `the asked msgId ${String(params.msgId)}`);

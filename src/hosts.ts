@@ -319,6 +319,11 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
   }
   const problem = profileTemplateProblem(p);
   if (problem !== undefined) throw new HostTemplateError(problem);
+  // A name is a profile's or a provider host's, never both (plugins spec D1). Read here, not
+  // through src/host-records.ts: that module needs this one loaded first.
+  if (db.prepare("SELECT 1 FROM hosts WHERE name = ?").get(p.name) !== undefined) {
+    throw new HostExistsError(p.name);
+  }
   try {
     // A template profile's row is the one it always was: `plugin` is written only when given.
     db.prepare(

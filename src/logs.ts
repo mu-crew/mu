@@ -581,7 +581,9 @@ export type LocalIntent =
   | "agent.kick"
   | "agent.send"
   | "agent.abort"
-  | "agent.stall";
+  | "agent.stall"
+  | "host.acquire"
+  | "host.release";
 
 /** Entity for a local intent: the token before the dot. Keeps
  *  `entity`/`intent` consistent by construction instead of asking each

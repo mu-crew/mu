@@ -16,27 +16,47 @@
 
 import type { AgentRow } from "./agents.js";
 import type { Db } from "./db.js";
-import { admittedView, resolveHost } from "./host-provider.js";
+import type { LinkCall } from "./host-link.js";
+import { admittedView, type HostView, resolveHost, withHostView } from "./host-provider.js";
 import {
   HOST_COMMAND_TIMEOUT_MS,
   type HostLease,
   type HostProfile,
   remotePathWord,
-  withHostChannel,
 } from "./hosts.js";
 import { say } from "./messages.js";
 import { shellQuote, shellWord } from "./shell-quote.js";
+import { git } from "./vcs/git.js";
 import type { ReleasedWorktree } from "./worktree.js";
 
 /** A remote exec step failed or answered nothing mu can use. Exit 5 (substrate). */
 export class RemotePrepareError extends Error {
-  override readonly name = "RemotePrepareError";
+  override readonly name: string = "RemotePrepareError";
   constructor(
     public readonly host: string,
     what: string,
     detail: string,
   ) {
     super(say("remote.prepare", host, what, detail));
+  }
+}
+
+/**
+ * A provider host's repo lacks the commit a `--worktree` spawn starts from, and its link cannot
+ * push it (plugins spec D7 G3). Exit 5, the prepare lane. Names the sha and the repo to push to.
+ */
+export class RemoteBaseMissingError extends RemotePrepareError {
+  override readonly name: string = "RemoteBaseMissingError";
+  constructor(
+    host: string,
+    public readonly rev: string,
+    public readonly repo: string,
+  ) {
+    super(
+      host,
+      "creating the remote worktree failed",
+      `${repo} on ${host} lacks commit ${rev}, and its link cannot push: push ${rev} to ${repo} on ${host}, then spawn again`,
+    );
   }
 }
 
@@ -101,27 +121,78 @@ function reclaimLines(): string[] {
  * leftover of an earlier prepare whose answer was lost (`reclaimLines`): that
  * one is answered as if just made, so a retry of the spawn takes it over.
  */
+interface PrepareOpts {
+  workstream: string;
+  name: string;
+  worktree: boolean;
+  from?: string;
+  cwd?: string;
+  /** May a leftover at the path be reclaimed (spawn refuses first while a recovery record names the name on this host). */
+  reclaim?: boolean;
+  /** The remote repo: the worktree is added to it, and it is the default cwd without one. */
+  root?: string;
+}
+
 export async function prepareRemote(
   db: Db,
   lease: HostLease,
   profile: HostProfile,
-  opts: {
-    workstream: string;
-    name: string;
-    worktree: boolean;
-    from?: string;
-    cwd?: string;
-    /** May a leftover at the path be reclaimed (spawn refuses first while a recovery record names the name on this host). */
-    reclaim?: boolean;
-    /** The remote repo: the worktree is added to it, and it is the default cwd without one. */
-    root?: string;
-  },
+  opts: PrepareOpts,
+): Promise<RemoteSite> {
+  return prepareOn(admittedView(db, profile), { lease }, opts);
+}
+
+/**
+ * A `--worktree` site on a provider host (plugins spec D7 G3), which starts with no clone of the
+ * project and never sees commits made after its acquire: `from` (default `HEAD`) resolves in the
+ * caller's local checkout `localRepo` to a sha; a link with `push` seeds the host's repo
+ * (`root`, else the record's) with it, and the worktree is made from that sha. Without `push`, a
+ * repo that lacks the commit refuses (`RemoteBaseMissingError`).
+ */
+export async function prepareProviderWorktree(
+  h: HostView,
+  opts: Omit<PrepareOpts, "worktree" | "cwd"> & { localRepo: string },
+): Promise<RemoteSite> {
+  const root = opts.root ?? h.record?.repo ?? undefined;
+  const what = "creating the remote worktree failed";
+  if (root === undefined) {
+    throw new RemotePrepareError(
+      h.name,
+      what,
+      `host ${h.name} has no repo: pass --root <remote repo path>`,
+    );
+  }
+  const from = opts.from ?? "HEAD";
+  const rev = await git(["rev-parse", "--verify", `${from}^{commit}`], opts.localRepo).catch(() => {
+    throw new RemotePrepareError(h.name, what, `${from} names no commit in ${opts.localRepo}`);
+  });
+  const call = { holder: `spawn:${opts.workstream}/${opts.name}` };
+  if (h.link.caps.push === true && h.link.push !== undefined) {
+    const r = await h.link.push(
+      h,
+      { localRepo: opts.localRepo, remoteRepo: root, rev, timeoutMs: REMOTE_PREPARE_TIMEOUT_MS },
+      call,
+    );
+    if (r.exitCode !== 0) {
+      const why = r.exitCode === null ? "timed out" : `exit ${r.exitCode}: ${firstLine(r.stderr)}`;
+      throw new RemotePrepareError(h.name, what, `pushing ${rev} to ${root} failed (${why})`);
+    }
+  }
+  return prepareOn(h, call, { ...opts, worktree: true, root }, rev);
+}
+
+/** The prepare exec on view `h` under `call`; `rev`, a provider host's base sha (no `from` lookup remotely). */
+async function prepareOn(
+  h: HostView,
+  call: LinkCall,
+  opts: PrepareOpts,
+  rev?: string,
 ): Promise<RemoteSite> {
   if (opts.worktree && opts.root === undefined) {
     throw new RemotePrepareError(
-      profile.name,
+      h.name,
       "creating the remote worktree failed",
-      `host ${profile.name} has no default repo: pass --root <remote repo path>`,
+      `host ${h.name} has no default repo: pass --root <remote repo path>`,
     );
   }
   const root = remotePathWord(opts.root ?? "~");
@@ -136,7 +207,9 @@ export async function prepareRemote(
     ? [
         `root=${root}`,
         `wt=${remoteWorktreeWord(opts.workstream, opts.name)}`,
-        `base=$(git -C "$root" rev-parse --verify ${shellQuote(`${opts.from ?? "HEAD"}^{commit}`)}) || exit 5`,
+        rev === undefined
+          ? `base=$(git -C "$root" rev-parse --verify ${shellQuote(`${opts.from ?? "HEAD"}^{commit}`)}) || exit 5`
+          : `base=${rev}; git -C "$root" rev-parse -q --verify "$base^{commit}" >/dev/null || exit 8`,
         opts.reclaim === true
           ? `if [ -e "$wt" ]; then\n${reclaimLines().join("\n")}\n${answer}\nexit 0\nfi`
           : `[ ! -e "$wt" ] || { echo "$wt already exists" >&2; exit 4; }`,
@@ -147,13 +220,16 @@ export async function prepareRemote(
         answer,
       ].join("\n")
     : `cd ${remotePathWord(opts.cwd ?? opts.root ?? "~")} && printf 'MU_CWD %s\\n' "$(pwd -P)"`;
-  const h = admittedView(db, profile);
   const r = await h.link.exec(
     h,
     // `.`, not `~`, without a repo: a template's `cd {cwd:sh}` stays where the login shell
     // started (a quoted `~` never expands); the script itself resolves --cwd and "$HOME".
-    { script: script(body), cwd: opts.root ?? ".", timeoutMs: REMOTE_PREPARE_TIMEOUT_MS },
-    { lease },
+    {
+      script: script(body),
+      cwd: rev === undefined ? (opts.root ?? ".") : ".",
+      timeoutMs: REMOTE_PREPARE_TIMEOUT_MS,
+    },
+    call,
   );
   const what = opts.worktree
     ? "creating the remote worktree failed"
@@ -164,18 +240,16 @@ export async function prepareRemote(
     : "";
   if (r.exitCode === null) {
     throw new RemotePrepareError(
-      profile.name,
+      h.name,
       what,
       `timed out after ${REMOTE_PREPARE_TIMEOUT_MS}ms${lost}`,
     );
   }
+  if (rev !== undefined && r.exitCode === 8)
+    throw new RemoteBaseMissingError(h.name, rev, opts.root ?? "");
   if (r.exitCode !== 0) {
     const why = firstLine(r.stderr) || firstLine(r.stdout);
-    throw new RemotePrepareError(
-      profile.name,
-      what,
-      `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`,
-    );
+    throw new RemotePrepareError(h.name, what, `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);
   }
   const lines = r.stdout.split("\n").map((l) => l.trim());
   if (opts.worktree) {
@@ -197,7 +271,7 @@ export async function prepareRemote(
       if (m?.[1] !== undefined) return { cwd: m[1], base: null, repo: null };
     }
   }
-  throw new RemotePrepareError(profile.name, what, `the host's answer named no path${lost}`);
+  throw new RemotePrepareError(h.name, what, `the host's answer named no path${lost}`);
 }
 
 /** The hex-encoded absolute path of a `MU_REPO` line, or undefined when it is not one. */
@@ -395,8 +469,8 @@ export async function closeRemoteWorktree(
     beforeRemove?: () => void;
     /** The removed agent's recovery record (src/remote-recovery.ts) when there is no row: refusals name it. */
     recoveryId?: number;
-    /** Runs on the ADMITTED profile before any exec; throws to stop (a recovery pins the profile it was made for). */
-    checkProfile?: (profile: HostProfile) => void;
+    /** Runs on the ADMITTED view before any exec; throws to stop (a recovery pins the host identity it was made for). */
+    checkProfile?: (h: HostView) => void;
     /** Test seam: where the quiescence scan looks (default /proc, then `lsof`). */
     probe?: { proc: string; lsof: string };
     /** Remove past a holder or an unprovable scan (each becomes a warning). Never past dirt or a moved HEAD. */
@@ -412,22 +486,22 @@ export async function closeRemoteWorktree(
   const refuse = (reason: RemoteCloseRefusedError["reason"], detail: string): never => {
     throw new RemoteCloseRefusedError(name, ws, reason, detail, opts.recoveryId);
   };
-  return withHostChannel(
+  const holder = `close:${ws}/${name}`;
+  return withHostView(
     db,
     host,
-    `close:${ws}/${name}`,
-    async (profile, lease) => {
-      opts.checkProfile?.(profile);
+    holder,
+    async (h, lease) => {
+      opts.checkProfile?.(h);
       const root = shellQuote(repo);
       const wt = shellQuote(path);
       const aside = shellQuote(asidePath);
       // Both execs run under this one channel, from the admitted snapshot.
-      const h = admittedView(db, profile);
       const run = async (body: string): Promise<{ out: string; why: string }> => {
         const r = await h.link.exec(
           h,
           { script: script(body), cwd: repo, timeoutMs: REMOTE_PREPARE_TIMEOUT_MS },
-          { lease },
+          lease === undefined ? { holder } : { lease },
         );
         if (r.exitCode === null) refuse("unreadable", `host ${host} timed out`);
         if (r.exitCode !== 0) {

@@ -170,6 +170,8 @@ const CARRIER_JOBS_COLUMNS = [
   "collect_next_at",
   "first_msg_id",
   "first_inc",
+  // P6d.
+  "collect_delay_ms",
 ];
 
 /** A current v13 copy whose carrier_jobs has the pre-reservation shape, with three handles. */
@@ -1040,7 +1042,7 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(31);
+    expect(EXPECTED_TABLES).toHaveLength(32);
     expect(PORTABLE_TABLES).toEqual(["checks", "task_edges", "task_notes", "tasks", "workstreams"]);
   });
 

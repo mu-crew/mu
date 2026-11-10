@@ -591,6 +591,10 @@ function applySchemaDdl(db: Db): void {
   // are dropped, and its recovery triggers replaced by the _v2 ones below.
   if (hostProfilesRepoRequired(db)) db.exec("DROP TABLE host_profiles");
   for (const t of LEGACY_RECOVERY_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
+  // Recovery triggers from before host_identity: replaced by CURRENT_SCHEMA's below.
+  for (const t of staleRecoveryTriggers(db)) db.exec(`DROP TRIGGER ${t}`);
+  const backfillIdentity =
+    hasTable(db, "remote_recovery") && !hasColumn(db, "remote_recovery", "host_identity");
   // carrier_jobs before reservations (one row per agent incarnation, no token): set
   // aside, then copied whole into the final shape below. Never dropped while it holds
   // a handle: the copy and the drop commit together or not at all.
@@ -613,6 +617,8 @@ function applySchemaDdl(db: Db): void {
   for (const [table, column, ddl] of ADDED_COLUMNS) {
     if (!hasColumn(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
   }
+  // A record written before host_identity pinned its profile's exec bytes, its identity then.
+  if (backfillIdentity) db.exec("UPDATE remote_recovery SET host_identity = host_exec");
   // host_profiles before `plugin` and carrier_jobs before plugin jobs, completed above: each
   // set aside and copied whole into its shape with the nullable columns (plugins spec D5).
   // The recovery triggers read host_profiles and the name index sits on carrier_jobs, so they
@@ -665,6 +671,24 @@ function expectedObjects(): ExpectedObjects {
 
 export { SPAWN_RECEIPT_STATES, type SpawnReceiptState } from "./db-receipts.js";
 
+function hasTable(db: Db, table: string): boolean {
+  return (
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?").get(table) !==
+    undefined
+  );
+}
+
+/** Recovery triggers whose stored body predates `host_identity` (plugins spec D5). */
+function staleRecoveryTriggers(db: Db): string[] {
+  const rows = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'").all() as {
+    name: string;
+    sql: string | null;
+  }[];
+  return rows
+    .filter((r) => RECOVERY_TRIGGERS.includes(r.name) && !(r.sql ?? "").includes("host_identity"))
+    .map((r) => r.name);
+}
+
 function hasColumn(db: Db, table: string, column: string): boolean {
   return (
     db.prepare("SELECT 1 AS x FROM pragma_table_info(?) WHERE name = ?").get(table, column) !==
@@ -688,6 +712,7 @@ function schemaIsCurrent(db: Db): boolean {
   if (expected.triggers.some((t) => !have.has(`trigger:${t}`))) return false;
   if (ADDED_COLUMNS.some(([t, c]) => !hasColumn(db, t, c))) return false;
   if (LEGACY_RECOVERY_TRIGGERS.some((t) => have.has(`trigger:${t}`))) return false;
+  if (staleRecoveryTriggers(db).length > 0) return false;
   if (hostProfilesRepoRequired(db)) return false;
   if (hostProfilesPrePlugin(db)) return false;
   if (carrierJobsPreReservation(db)) return false;
