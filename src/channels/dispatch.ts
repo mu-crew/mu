@@ -18,7 +18,6 @@ import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
 import { agentJobRef, readingWithLiveness } from "../jobs/kinds.js";
 import { queuedPanes } from "../muzzle-queue.js";
-import { loadPluginChannels } from "../plugins/channel.js";
 import { pluginJobRef } from "../plugins/job.js";
 import { composedStates } from "./compose.js";
 import { remoteReader } from "./hooks-remote.js";
@@ -44,7 +43,6 @@ export function channelTarget<A extends ObservedAgent>(
     )
     .get(agent.incarnation, agent.paneId) as AgentFacts | undefined;
   const remote = agent.channel === "hooks" ? remoteOf(db, agent, row) : undefined;
-  loadPluginChannels(db);
   // A plugin job's ref is its job record's (its kind, key, handle and instance).
   const record = getCarrierJobByAgent(db, agent.incarnation);
   const pluginJob = record?.plugin != null ? pluginJobRef(db, record.token) : undefined;
@@ -118,14 +116,11 @@ export async function readAgentStates(
   agents: readonly StateAgentRef[],
   opts: { now?: number; stateDir?: string; db?: Db } = {},
 ): Promise<Map<string, StateReading>> {
-  if (opts.db !== undefined) loadPluginChannels(opts.db);
   const gates = agents.filter((a) => a.gateToken !== undefined && a.gateToken !== null);
   // A row on a channel nothing provides reads unknown (a verb on it refuses, typed).
-  const unregistered = agents.filter(
-    (a) =>
-      !gates.includes(a) &&
-      channelNamed(channelOf(a, opts.stateDir), opts.db, a.channelPlugin) === undefined,
-  );
+  const known = (a: StateAgentRef) =>
+    channelNamed(channelOf(a, opts.stateDir), opts.db, a.channelPlugin);
+  const unregistered = agents.filter((a) => !gates.includes(a) && known(a) === undefined);
   const rest = agents.filter((a) => !gates.includes(a) && !unregistered.includes(a));
   const readings = await readChannelStates(rest, opts);
   for (const a of unregistered) {

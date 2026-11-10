@@ -46,8 +46,8 @@ describe("the plugin adapter's boundary", () => {
         "src/agents/reattach-view.ts",
         "src/channels/dispatch.ts",
       ],
-      // P6e: the channel adapter, loaded by the channel dispatch.
-      "src/plugins/channel.ts": ["src/channels/dispatch.ts"],
+      // P6e: the channel adapter, loaded by the registry on every plugin-channel read.
+      "src/plugins/channel.ts": ["src/channels/registry.ts"],
       // P6d: the provider adapter, wired into resolveHost and the host verbs.
       "src/plugins/provider.ts": ["src/host-provider.ts", "src/host-lifecycle.ts"],
       "src/plugins/reconcile.ts": ["src/host-lifecycle.ts"],

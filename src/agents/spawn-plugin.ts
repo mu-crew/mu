@@ -58,7 +58,7 @@ export function pluginKindOf(host: HostView): PluginJobKind | undefined {
 /** Refused before any effect (D8 honour or refuse, D3 where a view can run). */
 async function refuse(host: HostView, kind: PluginJobKind, opts: SpawnAgentOptions): Promise<void> {
   refuseUnhonoured(host, kind, opts);
-  const caps = kind.caps;
+  const { caps } = kind;
   if (caps.channel === undefined) {
     throw new HostProfileError(
       `host ${host.name}'s job kind ${kind.name} has no channel: spawning a plugin kind whose agents use their harness's own channel is not supported yet`,
@@ -72,9 +72,8 @@ async function refuse(host: HostView, kind: PluginJobKind, opts: SpawnAgentOptio
       "a spawn without a first prompt (its jobs start with one: pass --send)",
     );
   }
-  if (!(await activeMux()).runsShellCommand) {
-    throw new HostSpawnUnsupportedError(host.name, (await activeMux()).name);
-  }
+  const mux = await activeMux();
+  if (!mux.runsShellCommand) throw new HostSpawnUnsupportedError(host.name, mux.name);
 }
 
 /** The view's command line: stdin /dev/null, so nothing reaches the job but the channel. */

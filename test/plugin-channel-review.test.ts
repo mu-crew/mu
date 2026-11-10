@@ -34,7 +34,7 @@ import { jobUp } from "../src/jobs/kinds.js";
 import { loadPluginChannels, pluginChannel } from "../src/plugins/channel.js";
 import { EffectOutcomeUnknownError, PluginRefusedError } from "../src/plugins/errors.js";
 import { pluginJobKind, pluginJobRef } from "../src/plugins/job.js";
-import { addPlugin } from "../src/plugins/registry.js";
+import { addPlugin, removePlugin } from "../src/plugins/registry.js";
 import { type AgentTrack, rewatchOnPoll } from "../src/wait-latch.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { fakePlugin, providerSeams } from "./_plugin.js";
@@ -313,5 +313,41 @@ describe("round 2: a plugin channel's identity is (plugin, name); every lookup i
     } finally {
       if (dbB.open) dbB.close();
     }
+  });
+});
+
+describe("round 3: every registry read loads its DB's plugin channels; a load replaces the set", () => {
+  it("a fresh DB handle resolves its plugin channel and its capabilities with no target built first", async () => {
+    await h.setup();
+    await h.spawn();
+    const fresh = openDb({ path: h.db.name });
+    try {
+      expect(channelNamed("cloud", fresh)?.caps.watch).toBe("stream");
+      const track = { baseline: 0, needWatch: false } as AgentTrack;
+      const r = { status: "needs_input", source: "plugin:fake", runs: 1 } as Parameters<
+        typeof rewatchOnPoll
+      >[1];
+      expect(rewatchOnPoll(track, r, fresh)).toBe(true);
+    } finally {
+      fresh.close();
+    }
+  });
+
+  it("a removed plugin's channel disappears; a replacement under the same name resolves", async () => {
+    const f = fakePlugin(h.dir, { seams: { channel: CLOUD } });
+    await addPlugin(h.db, "fake", f.argv);
+    loadPluginChannels(h.db); // the load a channel target runs
+    expect(channelNamed("cloud", h.db, "fake")).toBeDefined();
+    removePlugin(h.db, "fake");
+    loadPluginChannels(h.db);
+    expect(channelNamed("cloud", h.db)).toBeUndefined();
+    const dir = join(h.dir, "other");
+    mkdirSync(dir);
+    const other = fakePlugin(dir, { seams: { channel: CLOUD } }, "other");
+    await addPlugin(h.db, "other", other.argv);
+    loadPluginChannels(h.db);
+    expect(channelNamed("cloud", h.db)).toBe(channelNamed("cloud", h.db, "other"));
+    expect(channelNamed("cloud", h.db)).toBeDefined();
+    expect(channelNamed("cloud", h.db, "fake")).toBeUndefined();
   });
 });

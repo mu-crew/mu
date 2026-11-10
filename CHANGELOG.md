@@ -56,7 +56,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   the agent row records both (`agents.channel_plugin`, an added column),
   `mu plugin add` refuses a channel name another plugin holds in the DB
   (`PluginRefusedError`, exit 4), and every plugin-channel lookup, a
-  capability lookup by name included, is scoped by its DB. Not yet driven (P6e2): `--task` on an `at-start` kind, `mu agent check` on a first
+  capability lookup by name included, is scoped by its DB; every such read
+  loads the DB's registrations first, replacing its set (a removed plugin's
+  channel goes). Not yet driven (P6e2): `--task` on an `at-start` kind, `mu agent check` on a first
   prompt, spawn replay by lookup, in-life collects at observed settles, the
   wait's deadline timer and `mu state`'s notices.
 - **Plugins: provider hosts** (plugins spec P6d, D1, D5, D6, D7 G3, D10).

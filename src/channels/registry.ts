@@ -6,6 +6,8 @@
 // asks `channelNamed` for the channel and branches on its `caps`, never on the
 // name itself (test/channel-names.test.ts).
 
+import type { Db } from "../db.js";
+import { loadPluginChannels } from "../plugins/channel.js";
 import { composeChannel } from "./compose.js";
 import { ctlChannel } from "./ctl.js";
 import { hooksChannel } from "./hooks.js";
@@ -59,22 +61,24 @@ type PluginEntry = { plugin: string; name: string; registration: string; channel
 const plugins = new WeakMap<object, Map<string, PluginEntry>>();
 
 /**
- * Plugin `plugin`'s channel `name` in DB `db`, served composed; built again when its registration
- * (`registration`: its row's declaration and instance) changed. A built-in's name is never a plugin's.
+ * DB `db`'s plugin channels, replaced by `list` (its registrations now): a removed plugin's
+ * channel goes, an unchanged one (same `registration`: declaration and instance) is kept, a
+ * changed one is built again. A built-in's name is never a plugin's.
  */
-export function registerPluginChannel(
+export function replacePluginChannels(
   db: object,
-  c: { plugin: string; name: string; registration: string; build: () => ChannelImpl },
+  list: { plugin: string; name: string; registration: string; build: () => ChannelImpl }[],
 ): void {
-  if (channels().has(c.name)) return;
-  let byId = plugins.get(db);
-  if (byId === undefined) {
-    byId = new Map();
-    plugins.set(db, byId);
+  const had = plugins.get(db);
+  const next = new Map<string, PluginEntry>();
+  for (const c of list) {
+    if (channels().has(c.name)) continue;
+    const id = `${c.plugin}\0${c.name}`;
+    const old = had?.get(id);
+    const same = old !== undefined && old.registration === c.registration;
+    next.set(id, same ? old : { ...c, channel: composeChannel(c.build()) });
   }
-  const id = `${c.plugin}\0${c.name}`;
-  if (byId.get(id)?.registration === c.registration) return;
-  byId.set(id, { ...c, channel: composeChannel(c.build()) });
+  plugins.set(db, next);
 }
 
 /**
@@ -92,6 +96,8 @@ export function channelNamed(
   if (name == null) return undefined;
   const builtin = channels().get(name);
   if (builtin !== undefined || db === undefined) return builtin;
+  // Every read loads the DB's registrations first: a fresh handle, a removed plugin.
+  loadPluginChannels(db as Db);
   const all = [...(plugins.get(db)?.values() ?? [])];
   const match = (e: PluginEntry): boolean =>
     plugin != null

@@ -24,7 +24,7 @@ import {
 import type { ObservedAgent } from "../agents/observe.js";
 import { getAgent } from "../agents.js";
 import { type CarrierJob, getCarrierJobByAgent } from "../carrier-jobs.js";
-import { registerPluginChannel, toSendResult } from "../channels/registry.js";
+import { replacePluginChannels, toSendResult } from "../channels/registry.js";
 import type {
   ChannelCaps,
   ChannelImpl,
@@ -56,18 +56,17 @@ const RUNTIME = {
   unknown: "unknown",
 } as const satisfies Record<WireTurnState, string>;
 
-/** Register every plugin channel of `db` (reads the plugins table only; no plugin starts). */
+/** Load `db`'s plugin channels, replacing its set (reads the plugins table only; no plugin starts). */
 export function loadPluginChannels(db: Db): void {
-  for (const row of listPlugins(db)) {
+  const list = listPlugins(db).flatMap((row) => {
     const c = pluginSeams(row).channel;
-    if (c === undefined) continue;
-    registerPluginChannel(db, {
-      plugin: row.name,
-      name: c.name,
-      registration: `${row.caps_json}\0${row.instance}`,
-      build: () => pluginChannel(db, row.name, c),
-    });
-  }
+    if (c === undefined) return [];
+    const registration = `${row.caps_json}\0${row.instance}`;
+    return [
+      { plugin: row.name, name: c.name, registration, build: () => pluginChannel(db, row.name, c) },
+    ];
+  });
+  replacePluginChannels(db, list);
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
