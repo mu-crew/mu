@@ -236,6 +236,22 @@ describe("mu host release (D1)", () => {
   });
 });
 
+describe("mu host status (D6 facts)", () => {
+  it("an up status keeps a fact it omits, sets one it names and clears one it says null", async () => {
+    const deadlineAt = Date.now() + 86_400_000;
+    await setup({ hostFacts: { maxJobs: 3, idleReclaimMs: 60_000, deadlineAt } });
+    await acquire();
+    f.set({ hostStatusFacts: { maxJobs: 5, idleReclaimMs: null } });
+    expect((await observeHost(db, "box"))?.state).toBe("up");
+    expect(getHostRecord(db, "box")).toMatchObject({
+      state: "ready",
+      deadline_at: deadlineAt,
+      max_jobs: 5,
+      idle_reclaim_ms: null,
+    });
+  });
+});
+
 describe("mu host release --abandon (D1)", () => {
   it("refuses while an agent row names the host, or an effect on it has a live owner", async () => {
     await setup();

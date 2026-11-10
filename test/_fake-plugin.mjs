@@ -51,7 +51,8 @@
 // The host seam (declared through `seams.host`) keeps its hosts in the same
 // backend file: hosts by acquire key, and the effects that happened (`acquires`,
 // `releases`). Config: hostFacts (merged into an acquire's facts), hostGone (a
-// reason: every status answers gone), hostLookupAnswer (host.lookup's answer
+// reason: every status answers gone), hostStatusFacts (an up status's facts
+// instead of the acquire's, the handle kept), hostLookupAnswer (host.lookup's answer
 // for an unknown key; default none). `link.push` fetches the commit into the
 // remote repo (a path under `home`), initialising it when absent; pushNoop
 // answers success without pushing. requireHostHandle: a job or link call whose
@@ -300,7 +301,9 @@ function backendAnswer(method, params, c) {
       if (h === undefined) return { state: "unknown", reason: "no such host" };
       if (h.released) return { state: "gone", reason: "released" };
       if (c.hostGone) return { state: "gone", reason: c.hostGone };
-      return { state: "up", ...h.facts };
+      return c.hostStatusFacts
+        ? { state: "up", handle: h.facts.handle, ...c.hostStatusFacts }
+        : { state: "up", ...h.facts };
     }
     case "host.release": {
       const h = hostByHandle(b, params.target?.host?.handle);

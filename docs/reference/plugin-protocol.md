@@ -172,6 +172,9 @@ with `link` and `job`. A provider host's link and job calls carry its
 | `host.status` | — | `{state: "up", handle, …facts}`, `{state: "gone", reason}`, `{state: "needs-human", remedy}`, `{state: "unknown", reason}` |
 | `host.release` (effect, idempotent) | `key` | `null`; a host already released resolves |
 
+An `up` status's facts are a patch over the last ones mu recorded: an
+omitted fact keeps its value, and a fact sent as `null` is cleared.
+
 `gone` is a proof: the machine and its worktrees no longer exist, and its
 jobs too unless the job seam declares `outlivesHost`. mu then records the
 host `lost`: its trees are recorded gone and its jobs stopped without a

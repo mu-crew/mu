@@ -604,8 +604,15 @@ export function narrowHostStatus(x: unknown): Narrowed<HostStatus> {
     const state = oneOf(r.state, "result.state", ["up", "gone", "needs-human", "unknown"] as const);
     const only = (k: string[]) => obj(x, "result", ["state", ...k]);
     if (state === "up") {
+      // A null fact clears it (refreshHostFacts); an omitted one keeps its last value.
       const { state: _s, ...facts } = only(FACTS);
-      return { state, ...hostFacts(facts, "result") };
+      const cleared = FACTS.filter((k) => k !== "handle" && facts[k] === null);
+      for (const k of cleared) delete facts[k];
+      return {
+        state,
+        ...hostFacts(facts, "result"),
+        ...Object.fromEntries(cleared.map((k) => [k, null])),
+      };
     }
     const k = state === "needs-human" ? "remedy" : "reason";
     const text = str(only([k])[k], `result.${k}`, 4096);

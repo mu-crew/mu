@@ -8,6 +8,7 @@ import type { Db } from "./db.js";
 import {
   findHost,
   type HostFacts,
+  type HostFactsUpdate,
   type HostRecord,
   type HostState,
   providerIdentity,
@@ -176,11 +177,28 @@ export function fillHostRecord(db: Db, id: number, f: HostFacts): boolean {
   );
 }
 
-/** A later `up` status refreshes the facts a provider may move (deadline, idle window, slots). */
-export function refreshHostFacts(db: Db, id: number, f: HostFacts): void {
+/**
+ * A later `up` status refreshes the facts a provider may move (deadline, idle window, slots):
+ * a fact the status omits keeps its last value, one it says null is cleared.
+ */
+export function refreshHostFacts(db: Db, id: number, f: HostFactsUpdate): void {
+  const keep = (v: number | null | undefined) => (v === undefined ? 1 : 0);
   db.prepare(
-    "UPDATE hosts SET deadline_at = ?, idle_reclaim_ms = ?, max_jobs = ?, updated_at = ? WHERE id = ? AND handle = ?",
-  ).run(f.deadlineAt ?? null, f.idleReclaimMs ?? null, f.maxJobs ?? null, now(), id, f.handle);
+    `UPDATE hosts SET deadline_at = CASE WHEN ? THEN deadline_at ELSE ? END,
+       idle_reclaim_ms = CASE WHEN ? THEN idle_reclaim_ms ELSE ? END,
+       max_jobs = CASE WHEN ? THEN max_jobs ELSE ? END, updated_at = ?
+     WHERE id = ? AND handle = ?`,
+  ).run(
+    keep(f.deadlineAt),
+    f.deadlineAt ?? null,
+    keep(f.idleReclaimMs),
+    f.idleReclaimMs ?? null,
+    keep(f.maxJobs),
+    f.maxJobs ?? null,
+    now(),
+    id,
+    f.handle,
+  );
 }
 
 export function deleteHostRecord(db: Db, id: number): boolean {

@@ -55,9 +55,14 @@ export interface HostFacts {
   maxJobs?: number;
 }
 
+/** An `up` status's facts: an omitted fact keeps its last value, a null one clears it. */
+export type HostFactsUpdate = { handle: string } & {
+  [K in Exclude<keyof HostFacts, "handle">]?: HostFacts[K] | null;
+};
+
 /** `gone` is a proof: the machine and its worktrees no longer exist; its jobs too, unless their kind declares `outlivesHost`. */
 export type HostStatus =
-  | ({ state: "up" } & HostFacts)
+  | ({ state: "up" } & HostFactsUpdate)
   | { state: "gone"; reason: string }
   | { state: "needs-human"; remedy: string }
   | { state: "unknown"; reason: string };
