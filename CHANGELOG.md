@@ -57,6 +57,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (`HostNameRecoveryError`, exit 4); a profile's name check and insert are
   one transaction; a collect whose fetch fails on a reclaimed host reports
   it lost.
+  Follow-ups from the first live provider run (task `p6d_gaps`): an acquire
+  that a re-run resolves by lookup logs its `host acquire` entry with the
+  handle.
 - **Plugins: effects, the reconciler and the job adapter** (plugins spec
   P6c, D4, D8). Every plugin effect is written ahead in a new `effects`
   row (key, the exact params and their sha256, the plugin instance, the

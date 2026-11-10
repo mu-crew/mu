@@ -66,20 +66,26 @@ export async function acquireHost(
         "host.acquire",
         `host acquire ${a.name}: the provider never acquired it; nothing is held`,
       );
+    } else if (now.state !== "acquiring") {
+      // The lookup found the host: the acquire happened, so it is logged as one.
+      logAcquired(db, a.name, a.provider, now.handle);
     }
     return now;
   }
   const provider = pluginProvider(db, a.provider, a.name, { repo: a.repo });
   await provider.acquire(a.params, acquireKey(), callFor("host.acquire"));
   const rec = getHostRecord(db, a.name);
+  logAcquired(db, a.name, a.provider, rec?.handle ?? null);
+  return rec;
+}
+
+const logAcquired = (db: Db, name: string, provider: string, handle: string | null): void =>
   emitEvent(
     db,
     null,
     "host.acquire",
-    `host acquire ${a.name} (provider ${a.provider}, handle ${rec?.handle ?? "?"})`,
+    `host acquire ${name} (provider ${provider}, handle ${handle ?? "?"})`,
   );
-  return rec;
-}
 
 /** Ask host `name`'s status once (D1): `gone` makes it `lost`; `up` refreshes its facts. */
 export async function observeHost(db: Db, name: string): Promise<HostStatus | undefined> {

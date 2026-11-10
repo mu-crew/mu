@@ -122,6 +122,14 @@ describe("mu host acquire (D1)", () => {
     expect(f.calls().filter((c) => c.method === "host.lookup")[0]?.params.key).toBe(keys[0]);
   });
 
+  it("an acquire resolved by a re-run's lookup logs the acquire with its handle", async () => {
+    await setup({ faults: { "host.acquire": ["effectThenExit"] } });
+    await expect(acquire()).rejects.toBeInstanceOf(EffectOutcomeUnknownError);
+    expect(events().some((e) => e.startsWith("host acquire box"))).toBe(false);
+    await acquire();
+    expect(events()).toContain("host acquire box (provider fake, handle host-1)");
+  });
+
   it("a crashed acquire whose lookup proves none (creator and plugin gone, fenced) is deleted", async () => {
     await setup({ faults: { "host.acquire": ["exit"] } });
     setEffectOwnerForTests({ pid: deadPid(), start: null });
