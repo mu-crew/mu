@@ -91,12 +91,13 @@ export function pluginLink(db: Db, name: string): HostLink {
   ): Promise<LinkRun> => {
     const s = await session();
     try {
-      // The plugin enforces `timeoutMs` and answers. Past it, the process manager's one
-      // grace is the whole bound (D13): $/cancel, the grace, the group killed.
+      // The plugin enforces `timeoutMs` and answers. mu's timer allows one grace on top, so
+      // an answer at the deadline is a reply, not a kill (D13); past it, $/cancel, the
+      // grace, the group killed.
       return await s.call(
         method,
         { target: target(host), ...params, timeoutMs },
-        { kind: "effect", timeoutMs },
+        { kind: "effect", timeoutMs: timeoutMs + s.process.graceMs },
         narrowLinkRun,
       );
     } catch (e) {

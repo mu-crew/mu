@@ -232,8 +232,9 @@ it was recorded under; under another, mu sends nothing.
 ## Timeouts and cancel
 
 - `link.exec` and `link.fetch` take the caller's `timeoutMs` (20 s by
-  default) as their deadline. The plugin enforces it and answers with
-  `exitCode: null`.
+  default). The plugin enforces it and answers with `exitCode: null`.
+  mu's own deadline (the call's `deadline`) is `timeoutMs` plus one grace
+  (5 s), so an answer at `timeoutMs` arrives in time.
 - Reads (the handshake, `link.checkSteps`) take 10 s.
 - Past the deadline, or when the verb cancels the call (its abort signal),
   mu sends `{"jsonrpc":"2.0","method":"$/cancel","params":{"id":<id>}}`,

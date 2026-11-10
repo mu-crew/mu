@@ -249,7 +249,8 @@ export class PluginProcess {
 
   private constructor(
     private readonly child: ChildProcess & { pid: number },
-    private readonly graceMs: number,
+    /** The one grace: a stop's wait for the group to empty, and a run's reply allowance (link.ts). */
+    readonly graceMs: number,
   ) {
     this.pgid = child.pid;
     this.pgidStart = pidStart(child.pid);

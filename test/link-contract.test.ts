@@ -18,6 +18,7 @@ import { type Db, openDb } from "../src/db.js";
 import type { LinkCall } from "../src/host-link.js";
 import { type HostView, resolveHost } from "../src/host-provider.js";
 import { addHost, HOST_GRACE_MS, HostHandbackError } from "../src/hosts.js";
+import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { narrowSeams } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -232,5 +233,48 @@ describe("the link contract: push", () => {
   it("a push that is not a boolean is refused at load", async () => {
     const f = fakePlugin(dir, { seams: linkSeam({ push: "yes" }) });
     await expect(addPlugin(db, "fake", f.argv)).rejects.toThrow(/push: expected a boolean/);
+  });
+});
+
+// The adapter's timeouts (D13): the plugin answers a timed-out run itself, at `timeoutMs`; mu's
+// own timer allows one grace on top, so an answer at the deadline is a reply, not a kill.
+describe("the link adapter: timeouts", () => {
+  let dir: string;
+  let db: Db;
+  const GRACE = 1500;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "mlt-"));
+    db = openDb({ path: join(dir, "mu.db") });
+    setPluginGraceForTests(GRACE);
+  });
+
+  afterEach(async () => {
+    setPluginGraceForTests(undefined);
+    await closePluginSessions();
+    db.close();
+    rmFixtureDir(dir);
+  });
+
+  async function plugin(config: Record<string, unknown>) {
+    const f = fakePlugin(dir, { home: dir, ...config });
+    await addPlugin(db, "fake", f.argv);
+    addHost(db, { name: "dev", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
+    return { f, h: resolveHost(db, "dev") };
+  }
+
+  it("an answer that comes at the plugin's deadline is a reply: mu's timer is timeoutMs plus one grace", async () => {
+    const { f, h } = await plugin({ faults: { "link.exec": ["late"] }, lateMs: 500 });
+    const r = await h.link.exec(
+      h,
+      { script: "echo hi", cwd: ".", timeoutMs: 300 },
+      {
+        holder: "t",
+      },
+    );
+    expect(r).toMatchObject({ exitCode: 0, stdout: "hi\n" });
+    expect(f.calls().map((c) => c.method)).not.toContain("$/cancel");
+    const sent = f.calls().find((c) => c.method === "link.exec")?.params;
+    expect(sent?.timeoutMs).toBe(300);
   });
 });

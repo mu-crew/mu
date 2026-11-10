@@ -92,6 +92,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   outcome, and leaves the plugin running; the lifecycle table's bound is
   measured and tight (a stop that holds the grace ends within 1.5 graces,
   any other within one), so one grace too many fails every cell.
+  Follow-ups from the first live plugin run (task `p6b_gaps`): mu's timer on
+  a `link.exec` or `link.fetch` is the plugin's `timeoutMs` plus one grace,
+  so a plugin that answers a timeout at its deadline is not killed for it.
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`
