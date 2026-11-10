@@ -52,6 +52,7 @@ describe("openDb", () => {
       "carrier_jobs",
       "checks",
       "delegate_calls",
+      "effects",
       "host_channels",
       "host_profiles",
       "human_needs",
@@ -78,7 +79,7 @@ describe("openDb", () => {
       "workstreams",
       "worktrees",
     ]);
-    expect(tables).toHaveLength(30);
+    expect(tables).toHaveLength(31);
     expect([...tables].sort()).toEqual(tables);
     // schema_version stamped to current (v14).
     const v = (
@@ -446,6 +447,7 @@ describe("openDb", () => {
       "carrier_jobs",
       "checks",
       "delegate_calls",
+      "effects",
       "host_channels",
       "host_profiles",
       "human_needs",

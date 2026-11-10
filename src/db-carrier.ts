@@ -20,6 +20,11 @@ export const CARRIER_JOBS_DDL = `
 -- only once THAT tree's close succeeded. 'workstream_id': the id of the workstream the
 -- bound agent row lived in, stamped at finalize's bind (NULL before, or on a reservation
 -- older than the column); a reattach refuses unless it is the live workstream's id.
+-- Plugins spec D5: a job record of any kind. 'kind' (NULL: lease), 'plugin' and
+-- 'instance' (the stop fence of a plugin job, whose 'host_stop' is NULL), 'host_id' (a
+-- provider host's record), 'tree_base' and 'collect_repo' (its tree's base, the local
+-- repo collects fetch into), the final-collect flag and its generation (D10), and an
+-- at-start kind's first delivery ('first_msg_id', 'first_inc': D8).
 CREATE TABLE IF NOT EXISTS carrier_jobs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   token         TEXT NOT NULL UNIQUE,
@@ -27,7 +32,7 @@ CREATE TABLE IF NOT EXISTS carrier_jobs (
   name          TEXT NOT NULL,
   ordinal       INTEGER NOT NULL DEFAULT 0,
   host          TEXT NOT NULL,
-  host_stop     TEXT NOT NULL,
+  host_stop     TEXT,                          -- NULL only for a plugin job (its fence is 'instance')
   launch        TEXT NOT NULL DEFAULT 'none' CHECK (launch IN ('none', 'intent')),
   creator_pid   INTEGER,
   creator_start TEXT,
@@ -39,10 +44,31 @@ CREATE TABLE IF NOT EXISTS carrier_jobs (
   recorded_at   TEXT,
   tree_path     TEXT,
   tree_agent_id INTEGER,
-  workstream_id INTEGER
+  workstream_id INTEGER,
+  kind          TEXT,
+  plugin        TEXT,
+  instance      TEXT,
+  host_id       INTEGER,
+  tree_base     TEXT,
+  collect_repo  TEXT,
+  final_owed    INTEGER NOT NULL DEFAULT 0,
+  stop_gen      INTEGER,
+  collect_next_at INTEGER,
+  first_msg_id  TEXT,
+  first_inc     TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_jobs_name ON carrier_jobs (workstream, name, ordinal);
 `;
+
+/** carrier_jobs with `host_stop NOT NULL`, from before plugin jobs: rebuilt, rows kept (plugins spec D5). */
+export function carrierJobsStopRequired(db: Db): boolean {
+  const row = db
+    .prepare(
+      "SELECT \"notnull\" AS nn FROM pragma_table_info('carrier_jobs') WHERE name = 'host_stop'",
+    )
+    .get() as { nn: number } | undefined;
+  return row?.nn === 1;
+}
 
 /** A carrier_jobs table from before reservations: keyed by agent id, no spawn token. */
 export function carrierJobsPreReservation(db: Db): boolean {

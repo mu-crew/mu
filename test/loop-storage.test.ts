@@ -158,6 +158,18 @@ const CARRIER_JOBS_COLUMNS = [
   "tree_path",
   "tree_agent_id",
   "workstream_id",
+  // Plugins spec D5 (P6c).
+  "kind",
+  "plugin",
+  "instance",
+  "host_id",
+  "tree_base",
+  "collect_repo",
+  "final_owed",
+  "stop_gen",
+  "collect_next_at",
+  "first_msg_id",
+  "first_inc",
 ];
 
 /** A current v13 copy whose carrier_jobs has the pre-reservation shape, with three handles. */
@@ -595,7 +607,8 @@ describe("a populated DB is completed in place", () => {
     expect(columns(p, "carrier_jobs")).not.toContain("tree_path");
     expect(columns(p, "agents")).not.toContain("host_transport");
     const db = track(openDb({ path: p }));
-    expect(columns(p, "carrier_jobs")).toEqual(CARRIER_JOBS_COLUMNS);
+    // Re-added columns land last: the set is the shape, not the order.
+    expect([...columns(p, "carrier_jobs")].sort()).toEqual([...CARRIER_JOBS_COLUMNS].sort());
     expect(columns(p, "agents")).toContain("host_transport");
     expect(
       db
@@ -1027,7 +1040,7 @@ describe("machine-local state", () => {
       expect(PORTABLE_TABLES as readonly string[]).not.toContain(t);
       expect(EXPECTED_TABLES).toContain(t);
     }
-    expect(EXPECTED_TABLES).toHaveLength(30);
+    expect(EXPECTED_TABLES).toHaveLength(31);
     expect(PORTABLE_TABLES).toEqual(["checks", "task_edges", "task_notes", "tasks", "workstreams"]);
   });
 

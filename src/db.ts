@@ -53,7 +53,11 @@ import {
   sqliteTooOld,
   storedCaptureVersion,
 } from "./capture.js";
-import { CARRIER_JOBS_REBUILD, carrierJobsPreReservation } from "./db-carrier.js";
+import {
+  CARRIER_JOBS_REBUILD,
+  carrierJobsPreReservation,
+  carrierJobsStopRequired,
+} from "./db-carrier.js";
 import { checksTableMissing, refoldStoredChecks } from "./db-checks.js";
 import { SPAWN_RECEIPTS_REBUILD, spawnReceiptsPreHooks } from "./db-receipts.js";
 import { LEGACY_RECOVERY_TRIGGERS, RECOVERY_TRIGGERS } from "./db-recovery.js";
@@ -566,6 +570,21 @@ function hostProfilesPrePlugin(db: Db): boolean {
   return cols.length > 0 && !cols.some((c) => c.name === "plugin");
 }
 
+/** `table` renamed aside, recreated by CURRENT_SCHEMA, and every column it had copied back. */
+function rebuildInPlace(db: Db, table: string): void {
+  db.exec(`ALTER TABLE ${table} RENAME TO ${table}_pre_plugin`);
+  db.exec(CURRENT_SCHEMA);
+  const cols = (
+    db.prepare("SELECT name FROM pragma_table_info(?)").all(`${table}_pre_plugin`) as {
+      name: string;
+    }[]
+  )
+    .map((c) => `"${c.name}"`)
+    .join(", ");
+  db.exec(`INSERT INTO ${table} (${cols}) SELECT ${cols} FROM ${table}_pre_plugin`);
+  db.exec(`DROP TABLE ${table}_pre_plugin`);
+}
+
 /** The DDL half of upgradeSchema; the caller owns the transaction. */
 function applySchemaDdl(db: Db): void {
   // No migration (the profile names a machine now): an older file's profiles
@@ -594,22 +613,17 @@ function applySchemaDdl(db: Db): void {
   for (const [table, column, ddl] of ADDED_COLUMNS) {
     if (!hasColumn(db, table, column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
   }
-  // host_profiles before `plugin`, completed above: set aside and copied whole into the shape
-  // with `plugin` and a nullable shell and exec. The recovery triggers read it, so they go
-  // first (a rename would repoint them at the copy); CURRENT_SCHEMA puts them back.
+  // host_profiles before `plugin` and carrier_jobs before plugin jobs, completed above: each
+  // set aside and copied whole into its shape with the nullable columns (plugins spec D5).
+  // The recovery triggers read host_profiles and the name index sits on carrier_jobs, so they
+  // go first (a rename would carry them to the copy); CURRENT_SCHEMA puts them back.
   if (hostProfilesPrePlugin(db)) {
     for (const t of RECOVERY_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
-    db.exec("ALTER TABLE host_profiles RENAME TO host_profiles_pre_plugin");
-    db.exec(CURRENT_SCHEMA);
-    const cols = (
-      db.prepare("SELECT name FROM pragma_table_info('host_profiles_pre_plugin')").all() as {
-        name: string;
-      }[]
-    )
-      .map((c) => `"${c.name}"`)
-      .join(", ");
-    db.exec(`INSERT INTO host_profiles (${cols}) SELECT ${cols} FROM host_profiles_pre_plugin`);
-    db.exec("DROP TABLE host_profiles_pre_plugin");
+    rebuildInPlace(db, "host_profiles");
+  }
+  if (carrierJobsStopRequired(db)) {
+    db.exec("DROP INDEX IF EXISTS idx_carrier_jobs_name");
+    rebuildInPlace(db, "carrier_jobs");
   }
   // Seed the legal (status, substate) pairs from code. INSERT OR
   // IGNORE keeps it idempotent; the table is machine-local and never
@@ -677,6 +691,7 @@ function schemaIsCurrent(db: Db): boolean {
   if (hostProfilesRepoRequired(db)) return false;
   if (hostProfilesPrePlugin(db)) return false;
   if (carrierJobsPreReservation(db)) return false;
+  if (carrierJobsStopRequired(db)) return false;
   if (spawnReceiptsPreHooks(db)) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {

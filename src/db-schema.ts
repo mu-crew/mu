@@ -98,6 +98,25 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   ["carrier_jobs", "workstream_id", "INTEGER"],
   // The last `host check` harness probe and its time, JSON (spec D17; src/host-harnesses.ts).
   ["host_profiles", "capabilities", "TEXT"],
+  // Plugins spec D4: an agent's delivery high-water mark (src/effects.ts).
+  ["agents", "delivery_seq", "INTEGER NOT NULL DEFAULT 0"],
+  // Plugins spec D5: a job record's kind, plugin and fences, its tree's base, the final-collect
+  // columns (D10) and an `at-start` kind's first-delivery receipt (D8).
+  ...(
+    [
+      ["kind", "TEXT"],
+      ["plugin", "TEXT"],
+      ["instance", "TEXT"],
+      ["host_id", "INTEGER"],
+      ["tree_base", "TEXT"],
+      ["collect_repo", "TEXT"],
+      ["final_owed", "INTEGER NOT NULL DEFAULT 0"],
+      ["stop_gen", "INTEGER"],
+      ["collect_next_at", "INTEGER"],
+      ["first_msg_id", "TEXT"],
+      ["first_inc", "TEXT"],
+    ] as const
+  ).map(([c, ddl]) => ["carrier_jobs", c, ddl] as const),
 ];
 
 /** The schema version a fresh DB starts at. v12 adds the kernel columns
@@ -130,13 +149,14 @@ export const DEFAULT_EFFORT_DAYS = 1;
  *  `mu doctor` and any other consumer don't drift. Adding a new table
  *  = one new entry here AND a CREATE TABLE in CURRENT_SCHEMA, plus a
  *  CURRENT_SCHEMA_VERSION bump (sync_fingerprints went in without one:
- *  additive, and an older mu ignores it; nor did keep_driving or checks). Sorted; exactly 30 entries. */
+ *  additive, and an older mu ignores it; nor did keep_driving or checks). Sorted; exactly 31 entries. */
 export const EXPECTED_TABLES: readonly string[] = [
   "agent_settles",
   "agents",
   "carrier_jobs",
   "checks",
   "delegate_calls",
+  "effects",
   "host_channels",
   "host_profiles",
   "human_needs",
@@ -253,6 +273,8 @@ export type PortableTable = (typeof PORTABLE_TABLES)[number];
  *    host_profiles    ssh-free command templates per remote host.
  *    plugins          the user's registered plugins: argv and declared seams (spec D14).
  *                     Rebuild cannot restore it (UNREBUILDABLE_TABLES).
+ *    effects          every unresolved plugin effect: its key, exact request, instance,
+ *                     creator and resolver (plugins spec D4, src/effects.ts). Rebuild loses it.
  *    host_channels    the connection slots a host's `max_sessions` counts:
  *                     one row per live holder (invocation pid or agent pane).
  *    wait_resumes     one row per `mu wait` result that left something owed:
@@ -292,6 +314,7 @@ export const MACHINE_LOCAL_TABLES = [
   "agents",
   "carrier_jobs",
   "delegate_calls",
+  "effects",
   "host_channels",
   "host_profiles",
   "human_needs",
@@ -509,6 +532,7 @@ CREATE TABLE IF NOT EXISTS agents (
   host_transport TEXT,                          -- the transport of the profile it was spawned on, 'session' | 'lease' (machine-local); NULL: local, or a row older than the column
   channel       TEXT,                           -- the channel mu reaches it through, 'ctl' | 'hooks' | 'mux' (machine-local), recorded at spawn; NULL: a row older than the column (derived)
   remote_key    TEXT,                           -- a remote hook-harness worker's key on its node, '<origin host>/<pane key>' (machine-local, spec D11); NULL: none
+  delivery_seq  INTEGER NOT NULL DEFAULT 0,     -- plugins D4: the newest delivery effect written to it (src/effects.ts)
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,
   UNIQUE (workstream_id, name),
@@ -762,6 +786,35 @@ CREATE TABLE IF NOT EXISTS plugins (
   added_at      TEXT NOT NULL,
   checked_at    TEXT NOT NULL
 );
+
+-- effects: every unresolved plugin effect (machine-local; plugins spec D4, D5;
+-- src/effects.ts). Written in one immediate transaction with its subject's own
+-- change, before the call: the key, the method's params exactly as first sent
+-- and their sha256, the plugin instance, the creator and the plugin's process
+-- group. Deleted with the definite result. A delivery's seq is the value of its
+-- agent's delivery_seq it took. No FK: a subject may go first (an abandon).
+CREATE TABLE IF NOT EXISTS effects (
+  key               TEXT PRIMARY KEY,
+  subject_kind      TEXT NOT NULL CHECK (subject_kind IN ('host', 'job', 'delivery')),
+  subject_id        TEXT NOT NULL,           -- hosts.id, carrier_jobs.token, or agents.id
+  msg_id            TEXT,                    -- deliveries (and an at-start job.start)
+  seq               INTEGER,                 -- deliveries: agents.delivery_seq at intent
+  plugin            TEXT NOT NULL,
+  method            TEXT NOT NULL,
+  params_json       TEXT NOT NULL,
+  params_sha        TEXT NOT NULL,
+  instance          TEXT NOT NULL,
+  state             TEXT NOT NULL CHECK (state IN ('pending', 'resolving', 'unknown')),
+  creator_pid       INTEGER NOT NULL,
+  creator_start     TEXT,
+  plugin_pgid       INTEGER NOT NULL,
+  plugin_pgid_start TEXT,
+  resolver_pid      INTEGER,
+  resolver_start    TEXT,
+  created_at        INTEGER NOT NULL,        -- epoch ms: inFlightMs and dedupe windows count from it
+  updated_at        INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_effects_subject ON effects (subject_kind, subject_id);
 
 ${CARRIER_JOBS_DDL}
 -- host_channels: the connection slots of a host (machine-local). One row

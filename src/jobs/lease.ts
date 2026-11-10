@@ -193,14 +193,15 @@ export async function awaitLeaseJob(
 export const leaseJobRef = (r: {
   host: string;
   job: string;
-  hostStop: string;
+  hostStop: string | null;
   paneId: string | null;
 }): JobRef => ({
   kind: "lease",
   viewPaneId: r.paneId ?? "",
   handle: r.job,
   host: { name: r.host },
-  identity: r.hostStop,
+  // No recorded stop (a plugin job's record): no fence, so the stop refuses (stop-changed).
+  ...(r.hostStop === null ? {} : { identity: r.hostStop }),
 });
 
 /** The dummy handle `host check` expands a lease profile's `stop` with. Never run. */

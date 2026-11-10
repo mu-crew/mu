@@ -137,6 +137,8 @@ const UNREBUILDABLE_TABLES = [
   "host_profiles",
   // The user's plugin registrations (argv, declared seams): no op carries them.
   "plugins",
+  // Unresolved plugin effects (key, exact request, owner): no op carries them.
+  "effects",
   "host_channels",
   "spawn_receipts",
   // The stall actions a wait took (steer exclusion, release record): no op carries them.

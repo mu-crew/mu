@@ -771,7 +771,7 @@ export function pidProvenGone(pid: number, start: string | null): boolean {
  * reused (the leader pid is alive with another start time: a pid cannot be
  * reused while its group has members), means gone.
  */
-function groupAlive(pgid: number, start: string | null): boolean {
+export function groupAlive(pgid: number, start: string | null): boolean {
   try {
     process.kill(-pgid, 0);
   } catch (e) {

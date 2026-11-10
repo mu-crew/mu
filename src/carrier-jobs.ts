@@ -33,8 +33,12 @@ export interface CarrierJob {
   workstream: string;
   name: string;
   host: string;
-  /** The profile's `stop` template, as admitted. */
-  hostStop: string;
+  /** The profile's `stop` template, as admitted; null for a plugin job (its fence is `instance`). */
+  hostStop: string | null;
+  /** The job kind (null: lease) and, for a plugin kind, the plugin and its instance at start. */
+  kind: string | null;
+  plugin: string | null;
+  instance: string | null;
   launch: CarrierLaunch;
   /** The creating spawn's process (pid + start time where the platform has one). */
   creatorPid: number | null;
@@ -69,7 +73,10 @@ interface Raw {
   workstream: string;
   name: string;
   host: string;
-  host_stop: string;
+  host_stop: string | null;
+  kind: string | null;
+  plugin: string | null;
+  instance: string | null;
   launch: CarrierLaunch;
   creator_pid: number | null;
   creator_start: string | null;
@@ -90,6 +97,9 @@ const toJob = (r: Raw): CarrierJob => ({
   name: r.name,
   host: r.host,
   hostStop: r.host_stop,
+  kind: r.kind,
+  plugin: r.plugin,
+  instance: r.instance,
   launch: r.launch,
   creatorPid: r.creator_pid,
   creatorStart: r.creator_start,
@@ -117,7 +127,10 @@ export function reserveCarrierJob(
     workstream: string;
     name: string;
     host: string;
-    hostStop: string;
+    /** A lease job's admitted stop template; null for a plugin job. */
+    hostStop: string | null;
+    /** A plugin job's kind and plugin (absent: a lease job). */
+    plugin?: { kind: string; name: string };
     creatorPid?: number | null;
     creatorStart?: string | null;
   },
@@ -126,8 +139,8 @@ export function reserveCarrierJob(
   try {
     const r = db
       .prepare(
-        `INSERT INTO carrier_jobs (token, workstream, name, host, host_stop, launch, creator_pid, creator_start, created_at)
-         SELECT ?, ?, ?, ?, ?, 'none', ?, ?, ?
+        `INSERT INTO carrier_jobs (token, workstream, name, host, host_stop, kind, plugin, launch, creator_pid, creator_start, created_at)
+         SELECT ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?
          WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs WHERE workstream = ? AND name = ?)`,
       )
       .run(
@@ -136,6 +149,8 @@ export function reserveCarrierJob(
         a.name,
         a.host,
         a.hostStop,
+        a.plugin?.kind ?? null,
+        a.plugin?.name ?? null,
         a.creatorPid ?? null,
         a.creatorStart ?? null,
         now(),
@@ -204,6 +219,38 @@ export function markCarrierLaunch(db: Db, token: string): boolean {
   return (
     db.prepare("UPDATE carrier_jobs SET launch = 'intent' WHERE token = ?").run(token).changes === 1
   );
+}
+
+/**
+ * A plugin job's launch (`launching`, D1): written with its `job.start` effect, in the effect's
+ * transaction, recording the instance the start goes to (the job's stop fence).
+ */
+export function markPluginJobLaunch(db: Db, token: string, instance: string): boolean {
+  return (
+    db
+      .prepare(
+        "UPDATE carrier_jobs SET launch = 'intent', instance = ? WHERE token = ? AND plugin IS NOT NULL AND job IS NULL",
+      )
+      .run(instance, token).changes === 1
+  );
+}
+
+/** A plugin job's start proven never to have happened (D4): back to unlaunched, its reason kept. */
+export function unlaunchPluginJob(db: Db, token: string, reason: string): boolean {
+  return (
+    db
+      .prepare(
+        "UPDATE carrier_jobs SET launch = 'none', reason = ? WHERE token = ? AND plugin IS NOT NULL AND job IS NULL",
+      )
+      .run(reason, token).changes === 1
+  );
+}
+
+/** Every job record naming plugin `name` (`mu plugin rm` refuses over them). */
+export function carrierJobsOfPlugin(db: Db, name: string): CarrierJob[] {
+  return (
+    db.prepare("SELECT * FROM carrier_jobs WHERE plugin = ? ORDER BY id").all(name) as Raw[]
+  ).map(toJob);
 }
 
 /** The carrier's pane, the moment the mux reports it. Never overwrites another pane. */
