@@ -370,6 +370,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **A check that pastes the verdict template is read by the label after
+  it.** `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED REFUTED <line>` recorded
+  CONFIRMED (the template's first choice) and a review closed on it. Two or
+  more labels joined by `|` are now the template and skipped; a line with only
+  the template reads UNVERIFIED. A plain verdict line reads as before.
 - **The public tree stays scrubbed.** `docs/eval/hill-r2/baseline.md` had
   regained an absolute home path from a pre-audit branch; it now reads `~/`.
   `test/public-tree.test.ts` scans every tracked text file and fails on a

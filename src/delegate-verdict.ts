@@ -20,7 +20,11 @@ export function formatElapsed(ms: number): string {
  *  (`REFUTER: VERDICT: …`, which is how checks write it by hand). Nothing else
  *  may precede it, so a verdict quoted mid-line in the evidence is not one. */
 const VERDICT_LINE = /^(?:\w+: )?VERDICT:/;
-const LABEL_RE = new RegExp(`\\b(${VERDICT_LABELS.join("|")})\\b`);
+const LABEL_ALT = VERDICT_LABELS.join("|");
+const LABEL_RE = new RegExp(`\\b(${LABEL_ALT})\\b`);
+/** The brief's template echoed back (`CONFIRMED|REFUTED|UNVERIFIED`, or any two
+ *  or more labels joined by `|`): a choice list, not a label. */
+const TEMPLATE_RE = new RegExp(`\\b(?:${LABEL_ALT})(?:\\s*\\|\\s*(?:${LABEL_ALT}))+\\b`, "g");
 
 /** The index of the FIRST verdict line of `lines`, or -1. Later `VERDICT:`
  *  lines are evidence text, not a second verdict. */
@@ -29,11 +33,17 @@ function firstVerdictLine(lines: readonly string[]): number {
 }
 
 /** `line` as a verdict line: null when it is not one, else its label (the first
- *  known label after the colon; undefined when it names none). */
+ *  known label after the colon; undefined when it names none). A pasted template
+ *  (`VERDICT: t CONFIRMED|REFUTED|UNVERIFIED REFUTED …`) is skipped and the label
+ *  after it counts; a template with no label after it is UNVERIFIED, never its
+ *  first choice. */
 export function verdictLineLabel(line: string): VerdictLabel | undefined | null {
   if (!VERDICT_LINE.test(line)) return null;
   const after = line.slice(line.indexOf("VERDICT:") + "VERDICT:".length);
-  return LABEL_RE.exec(after)?.[1] as VerdictLabel | undefined;
+  const stripped = after.replace(TEMPLATE_RE, " ");
+  const label = LABEL_RE.exec(stripped)?.[1] as VerdictLabel | undefined;
+  if (stripped !== after) return label ?? "UNVERIFIED";
+  return label;
 }
 
 /** The label on the first `VERDICT:` line (the first known label after the
