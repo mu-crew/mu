@@ -99,6 +99,16 @@ export function requestSha(req: {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
+/**
+ * The receipt of first prompt `msgId` follows its agent's view (plugins spec D8 G1a): a lookup
+ * recovery that finished incarnation `agentId`'s placeholder repoints it to `paneId`.
+ */
+export function repointReceipts(db: Db, agentId: number, msgId: string, paneId: string): void {
+  db.prepare(
+    "UPDATE spawn_receipts SET pane_id = ?, updated_at = ? WHERE agent_id = ? AND msg_id = ?",
+  ).run(paneId, new Date().toISOString(), agentId, msgId);
+}
+
 export function getReceipt(db: Db, taskId: number, attemptKey: string): SpawnReceipt | undefined {
   const row = db
     .prepare("SELECT * FROM spawn_receipts WHERE task_id = ? AND attempt_key = ?")

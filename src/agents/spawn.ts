@@ -349,11 +349,14 @@ export interface SpawnAgentOptions {
   /**
    * A task spawn's first prompt on an at-start plugin kind (plugins spec D8 G1): its msgId (the
    * receipt's), `begin` on the placeholder before job.start (claim, journal `sending`; a throw is
-   * unsent), `undo` before the rollback of a definite failure after it. Others ignore it.
+   * unsent), `delivered` once the start answered, `undo` before any rollback after `begin`.
+   * Others ignore it.
    */
   firstTurn?: {
     msgId: string;
     begin: (placeholder: AgentRow) => Promise<void>;
+    /** job.start answered: the prompt is delivered, whatever follows (the receipt goes to `sent`). */
+    delivered: (baseline: { runs: number; incarnation?: string }) => void;
     undo: (placeholder: AgentRow) => void;
   };
 }

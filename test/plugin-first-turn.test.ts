@@ -142,3 +142,32 @@ describe("mu agent check on the first prompt's msgId (G1b)", () => {
     expect(h.calls("channel.receipt")).toHaveLength(0);
   });
 });
+
+describe("review of P6e2: first-turn receipts are monotone per attempt (ruling 1)", () => {
+  it("mu agent check's recovery repoints the receipt: the task replay then reports sent", async () => {
+    h.f.set({ faults: { "job.start": ["effectThenExit"] } });
+    expect((await spawnT1()).state).toBe("unknown");
+    await cmdAgentCheck(h.db, "w1", receipt()?.msgId ?? "", { workstream: "ws" });
+    expect(receipt()?.paneId).toBe("%1");
+    const out = await spawnT1();
+    expect(out).toMatchObject({ state: "sent", replay: true });
+    expect(out.stale).toBeUndefined();
+    expect(h.f.backend().starts).toBe(1);
+  });
+
+  it("a view failure after the start is sent-then-stopped, never failed; the same attempt starts nothing", async () => {
+    h.stubMux({
+      spawnAgent: async () => {
+        throw new Error("view failed");
+      },
+    });
+    await expect(spawnT1()).rejects.toThrow("view failed");
+    expect(receipt()).toMatchObject({ state: "sent", runs: 0 });
+    expect(receipt()?.detail).toMatch(/stopped.*view failed/);
+    expect(h.f.backend()).toMatchObject({ starts: 1, stops: 1 });
+    h.stubMux();
+    await expect(spawnT1()).rejects.toMatchObject({ name: "SpawnAttemptEndedError" });
+    expect(h.f.backend().starts).toBe(1);
+    expect(h.calls("channel.send")).toHaveLength(0);
+  });
+});

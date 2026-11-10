@@ -35,7 +35,7 @@
 // naming the next free key) instead of re-reporting the old delivery. The attempt lock is strict
 // (fails closed); the advisory spawn lock stays inside spawnAgent.
 
-import { type AgentRow, getAgentForCleanup } from "../agents.js";
+import { type AgentRow, getAgentForCleanup, isPendingPaneId } from "../agents.js";
 import { getCarrierJobByName } from "../carrier-jobs.js";
 import {
   agentChannel,
@@ -265,9 +265,9 @@ export function savedIdentity(
 ): { agent?: AgentRow; stale?: "deleted" | "replaced" } {
   const cur = getAgentForCleanup(db, rec.name, rec.workstream);
   if (cur === undefined) return { stale: "deleted" };
-  if (rec.agentId !== null && cur.incarnation === rec.agentId && cur.paneId === rec.paneId) {
-    return { agent: cur };
-  }
+  // A receipt naming its placeholder's pane is that incarnation's too: its view came later (D8).
+  const pane = cur.paneId === rec.paneId || (rec.paneId !== null && isPendingPaneId(rec.paneId));
+  if (rec.agentId !== null && cur.incarnation === rec.agentId && pane) return { agent: cur };
   return { stale: "replaced" };
 }
 
@@ -367,11 +367,16 @@ async function run(
         nextAttemptKey(db, taskId, key),
       );
     }
+    // An at-start start delivered before its view opened (a crash): the replay finishes the view.
+    if (id.agent !== undefined && isPendingPaneId(id.agent.paneId)) {
+      const first = await resolveFirstTurn(db, id.agent, saved.msgId);
+      if (first?.state === "accepted") id.agent = first.agent;
+    }
     const brief = await tryPinBrief(db, req);
     return {
       state: "sent",
       replay: true,
-      receipt: saved,
+      receipt: getReceipt(db, taskId, key) ?? saved,
       ...(id.agent !== undefined ? { agent: id.agent } : {}),
       ...(id.stale !== undefined ? { stale: id.stale } : {}),
       brief,
@@ -561,6 +566,15 @@ async function drive(
       await claim(p);
       journal(p);
     },
+    delivered: (b) => {
+      firstDelivered = true;
+      rec = updateReceipt(db, taskId, key, {
+        state: "sent",
+        detail: null,
+        runs: b.runs,
+        ...(b.incarnation !== undefined ? { incarnation: b.incarnation } : {}),
+      });
+    },
     undo: (p) => {
       try {
         releaseTask(db, req.task, { workstream: ws, expectedOwnerId: p.incarnation });
@@ -571,6 +585,8 @@ async function drive(
   };
   /** The at-start start's delivery: set when job.start carried the prompt. */
   let firstSent: SendResult | undefined;
+  /** job.start answered with the prompt: from here the attempt is sent, never failed. */
+  let firstDelivered = false;
 
   let row: AgentRow;
   try {
@@ -584,8 +600,9 @@ async function drive(
         firstPrompt: req.text,
         firstTurn,
         onIdentity: (r) => {
+          // Monotone (plugins spec D8): a view finalized after `sending` only repoints the pane.
           rec = updateReceipt(db, taskId, key, {
-            state: "pane",
+            ...(rec.state === "reserved" ? { state: "pane" as const } : {}),
             name: r.name,
             agentId: r.incarnation,
             paneId: r.paneId,
@@ -638,6 +655,12 @@ async function drive(
     }
   } catch (err) {
     // The start carrying the prompt has no answer: kept, like any unknown write (D8 G1b).
+    if (firstDelivered) {
+      // Sent, then its job was stopped by the spawn's rollback: the attempt ended, never unsent.
+      const why = err instanceof Error ? err.message : String(err);
+      updateReceipt(db, taskId, key, { detail: `delivered; its job was then stopped: ${why}` });
+      throw err;
+    }
     if (err instanceof FirstPromptUnknownError) {
       const reason = err.message;
       const unknownRec = updateReceipt(db, taskId, key, { state: "unknown", detail: reason });

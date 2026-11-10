@@ -55,6 +55,7 @@ import { prepareProviderWorktree } from "../remote-worktree.js";
 import { gitToplevel } from "../vcs/git.js";
 import { AgentExistsError } from "./errors.js";
 import { withAgentLock } from "./lock.js";
+import { repointReceipts } from "./receipts.js";
 import {
   finalizeAgentRow,
   type SpawnAgentOptions,
@@ -256,6 +257,8 @@ export async function spawnPluginAgent(
       kept = true;
       throw new FirstPromptUnknownError(kind.plugin, name, ws, prompt.msgId, token, e);
     }
+    // The first prompt is delivered: a later failure stops the job, never makes it unsent.
+    if (started.baseline !== undefined) opts.firstTurn?.delivered(started.baseline);
     const row = await openView(
       db,
       { opts, cli, command, commandSource, cwd, staged, spawner, host, kind, token },
@@ -512,7 +515,7 @@ export async function resolveFirstTurn(
           (pid) => {
             opened = pid;
           },
-          () => {},
+          (r) => repointReceipts(db, r.incarnation, msgId, r.paneId),
           agent.incarnation,
         );
       } catch (e) {

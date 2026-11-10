@@ -28,7 +28,15 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `first_inc`, opens the view from the start's reply (else `job.attach`) and
   answers `accepted runs=0`; an unresolved one answers `unreachable` naming
   the key; a proven `none` fails the attempt and rolls it back (the check
-  then asks the channel's receipt, as for any msgId).
+  then asks the channel's receipt, as for any msgId). Review fixes: the
+  receipt is monotone per attempt (`pane` → `sending` → `sent`, never back:
+  a view finalized later only repoints its pane); the start's answer sends it
+  at once, so a later view failure records the attempt sent-then-stopped (its
+  job stopped by handle), never failed, and a replay of that attempt starts
+  nothing (`SpawnAttemptEndedError` names the next key); a lookup recovery,
+  `mu agent check`'s included, repoints the receipt to the view it opened, and
+  a receipt naming its placeholder's pane still knows its incarnation, so a
+  replay after a SIGKILL anywhere in it reports `sent` with no second delivery.
 - **Plugins: provider-host facts in mu's reads** (plugins spec P6e2: D10,
   D16). `mu wait` caps its sleep at the earliest `deadline_at −
   MU_HOST_DEADLINE_MARGIN_MS` of the provider hosts its watched agents run on
