@@ -100,6 +100,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   it returns the run, and counts the link as `stopped`.
   `mu host add <h> --plugin <p>` takes no `--fetch` when the plugin's link
   declares `fetch: true` (it is required otherwise, as for a template host).
+  A plugin check step may answer `ok: "warn"`: it passes, and `mu host
+  check` prints it as a `warn` line (`--json`: `ok: true, warn: true`).
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`

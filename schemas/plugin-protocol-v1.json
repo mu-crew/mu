@@ -341,7 +341,7 @@
         "additionalProperties": false,
         "properties": {
           "step": { "type": "string", "minLength": 1, "maxLength": 64 },
-          "ok": { "oneOf": [{ "type": "boolean" }, { "type": "null" }] },
+          "ok": { "oneOf": [{ "type": "boolean" }, { "type": "null" }, { "const": "warn" }], "description": "true passed, false failed, null skipped, \"warn\" passed with a warning." },
           "detail": { "type": "string" }
         }
       }

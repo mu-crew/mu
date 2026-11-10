@@ -187,7 +187,7 @@ export function pluginLink(db: Db, name: string): HostLink {
 
 /**
  * A plugin's check steps, named `<plugin>:<step>` (`handback` keeps its name: checkHost skips the
- * rest on it). No answer is one failed `<plugin>:<label>` step; a `human` answer is the template
+ * rest on it); a `warn` step passes, marked `warn`. No answer is one failed `<plugin>:<label>` step; a `human` answer is the template
  * runner's hand-back report (checkRunner): the step skipped, then the `handback` step.
  */
 export async function checkReport(
@@ -197,9 +197,12 @@ export async function checkReport(
   steps: () => Promise<WireCheckStep[]>,
 ): Promise<HostCheckStep[]> {
   try {
-    return (await steps()).map((st) =>
-      st.step === "handback" ? st : { ...st, step: `${name}:${st.step}` },
-    );
+    return (await steps()).map(({ ok, ...st }): HostCheckStep => {
+      const level = ok === "warn" ? { ok: true, warn: true as const } : { ok };
+      return st.step === "handback"
+        ? { ...st, ...level }
+        : { ...st, step: `${name}:${st.step}`, ...level };
+    });
   } catch (e) {
     if (e instanceof PluginAnswerUnknownError) {
       return [{ step: `${name}:${label}`, ok: false, detail: `no answer: ${e.reason}` }];

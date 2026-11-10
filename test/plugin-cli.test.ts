@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requireHostSpawn } from "../src/agents/spawn-remote.js";
 import { type Db, openDb } from "../src/db.js";
 import { hostIdentity, resolveHost } from "../src/host-provider.js";
-import { addHost, getHost, HostProfileError } from "../src/hosts.js";
+import { addHost, checkHost, getHost, HostProfileError } from "../src/hosts.js";
 import { PluginNotFoundError, PluginRefusedError } from "../src/plugins/errors.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -204,6 +204,27 @@ describe("mu host add --plugin", () => {
     expect(() =>
       addHost(db, { name: "box2", plugin: "nofetch", repo: null, max_sessions: null }),
     ).toThrow(/--fetch is required: plugin nofetch's link does not fetch/);
+  });
+
+  it("a plugin check step at the warn level passes, and prints as a warn line", async () => {
+    f.set({
+      checkSteps: [
+        { step: "reachable", ok: false, detail: "kept offline" },
+        { step: "git", ok: "warn", detail: "no git identity" },
+      ],
+    });
+    await addPlugin(db, "fake", f.argv);
+    addHost(db, { name: "box", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
+    const r = await checkHost(db, "box");
+    expect(r.steps).toContainEqual({
+      step: "fake:git",
+      ok: true,
+      warn: true,
+      detail: "no git identity",
+    });
+    expect(r.steps.filter((s) => s.ok === false).map((s) => s.step)).toEqual(["fake:reachable"]);
+    const cli = await runCli(["host", "check", "box"], dbPath);
+    expect(cli.stdout).toMatch(/^warn fake:git +no git identity$/m);
   });
 
   it("refuses a plugin with no link seam", async () => {

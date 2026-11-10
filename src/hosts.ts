@@ -1054,6 +1054,8 @@ export interface HostCheckStep {
   step: string;
   /** null: skipped because the host was not reachable. */
   ok: boolean | null;
+  /** A plugin's step at the warn level: it passed (`ok` true), and prints as a warn line. */
+  warn?: true;
   detail: string;
 }
 

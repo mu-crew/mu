@@ -166,7 +166,7 @@ and the `deadline` are new each time.
 | `link.exec` | `script` (POSIX sh), `cwd` (`.` is the login directory), `timeoutMs` | `{exitCode, stdout, stderr, partial}`; `exitCode: null` when timed out, `partial` when output was cut |
 | `link.fetch` | `remoteCwd`, `localRepo`, `timeoutMs` | as `link.exec`. On success `localRepo`'s `FETCH_HEAD` names `remoteCwd`'s HEAD |
 | `link.push` (only with `push: true`) | `localRepo`, `remoteRepo`, `rev` (a full sha), `timeoutMs` | as `link.exec`. On success `remoteRepo` (created as a git repository if absent) holds `rev`. Idempotent: a repo that already holds it succeeds untouched. Not an effect: a timed-out push is re-run, and mu's own `rev-parse` check still runs before a worktree is made from `rev` |
-| `link.checkSteps` | `phase`, `root?`, `agent?` | `[{step, ok, detail}]`; mu names each step `<plugin>:<step>`, except `handback`. A `human` error, or a `handback` step, is a hand-back: `host check` skips the steps that follow |
+| `link.checkSteps` | `phase`, `root?`, `agent?` | `[{step, ok, detail}]`, `ok` one of `true`, `false`, `null` (skipped) or `"warn"` (passed with a warning: `host check` prints a `warn` line and does not fail); mu names each step `<plugin>:<step>`, except `handback`. A `human` error, or a `handback` step, is a hand-back: `host check` skips the steps that follow |
 
 The plugin enforces `timeoutMs` itself and answers with `exitCode: null`.
 With `remoteOnTimeout: "stopped"` it guarantees nothing it started still

@@ -312,6 +312,13 @@ const FIXTURES: Fixture[] = [
     true,
   ],
   [
+    "a step at the warn level",
+    "checkSteps",
+    narrowCheckSteps,
+    [{ step: "git", ok: "warn", detail: "no identity" }],
+    true,
+  ],
+  [
     "a step with an empty name",
     "checkSteps",
     narrowCheckSteps,

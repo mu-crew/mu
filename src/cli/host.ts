@@ -208,8 +208,13 @@ export async function cmdHostCheck(
     return;
   }
   for (const s of report.steps) {
-    const mark =
-      s.ok === true ? pc.green("ok  ") : s.ok === false ? pc.red("FAIL") : pc.dim("skip");
+    const mark = s.warn
+      ? pc.yellow("warn")
+      : s.ok === true
+        ? pc.green("ok  ")
+        : s.ok === false
+          ? pc.red("FAIL")
+          : pc.dim("skip");
     console.log(`${mark} ${s.step.padEnd(9)} ${s.detail}`);
   }
   for (const w of report.warnings) console.log(`${pc.yellow("warn")} ${w}`);
