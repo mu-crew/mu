@@ -12,6 +12,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **Eval: markers from the rendered help** (task `f_help_markers`, spec
+  revision 4). `deriveMarkers` also diffs `mu <path> --help` of every command
+  path, base against variant: a help line the variant prints and base's help
+  and corpus have nowhere is a marker; a base line the variant dropped is a
+  context marker when base's help and skills hold it once. The source hunks
+  missed what commander composes (`notes [options] [ids...]`) and literals
+  whose escapes `dist/` spells otherwise, so C3's multi-id variant had no
+  marker any help arm showed; it now has four, seen under `help` and
+  `skill+help` only. Error text a lead-in prints reaches the model through the
+  lead-in's output, which the golden diff already scores as a changed call.
+
 - **Eval: help arms, a skill-text length cap, a publishable report, one C7
   base** (task `f_help_arm`, hill2 notes 32-33, spec revision 4). The probe
   gains the arms `help` and `skill+help`: the prompt also carries

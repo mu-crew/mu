@@ -85,15 +85,94 @@ export interface DerivedMarkers {
   rejected: { text: string; why: string }[];
 }
 
+/** One command path's rendered `mu <path> --help` (`path` "" for `mu --help`). */
+export interface HelpPage {
+  path: string;
+  text: string;
+}
+
+/** Every `mu <path> --help` of the built surface at `root`, to the depth the help bundle walks. */
+export function renderedHelp(root: string): HelpPage[] {
+  // runHelp reads only `cli`; a dir with no build renders no help (runHelp gives "")
+  const surface: Surface = {
+    name: "help",
+    root,
+    cli: join(root, "dist", "cli.js"),
+    extension: join(root, "dist", "extension", "mu-pi.js"),
+    skillDir: join(root, "skills", "mu"),
+  };
+  const walk = (path: string[]): HelpPage[] => {
+    const text = runHelp(surface, path);
+    if (text === "") return [];
+    return [
+      { path: path.join(" "), text },
+      ...(path.length < 3 ? subcommands(text).flatMap((c) => walk([...path, c])) : []),
+    ];
+  };
+  return walk([]);
+}
+
+const helpLines = (t: string): string[] =>
+  t
+    .split("\n")
+    .map(flatText)
+    .filter((l) => l !== "");
+
+/**
+ * Markers from the rendered help (f_help_markers): the source hunks miss what commander composes
+ * (`notes [options] [ids...]` from `notes [ids...]`) and literals whose escapes `dist/` spells
+ * differently. Per command path, a line the variant's help prints and base's does not is a marker
+ * when base's help (any path) and base's corpus have it nowhere; a line base prints and the
+ * variant does not is a context marker when it occurs once in base's help and nowhere in base's
+ * skills. Whitespace is collapsed, so re-padded columns are no change.
+ */
+function helpMarkers(
+  variant: readonly HelpPage[],
+  base: readonly HelpPage[],
+  baseCorpus: readonly CorpusFile[],
+): DerivedMarkers {
+  const long = (s: string): boolean => s.length >= MIN_MARKER;
+  const pageOf = (pages: readonly HelpPage[]): Map<string, string[]> =>
+    new Map(pages.map((p) => [p.path, helpLines(p.text)]));
+  const B = pageOf(base);
+  const V = pageOf(variant);
+  // flat per page, as a prompt is matched: a line that base prints across a wrap still counts
+  const baseHelp = base.map((p) => ({ file: `help:${p.path}`, text: flatText(p.text) }));
+  const baseSkills = baseCorpus.filter((f) => f.file.startsWith("skills/"));
+  const markers = new Set<string>();
+  const contextMarkers = new Set<string>();
+  const rejected = new Map<string, string>();
+  for (const path of new Set([...B.keys(), ...V.keys()])) {
+    const b = new Set(B.get(path) ?? []);
+    const v = new Set(V.get(path) ?? []);
+    for (const l of v)
+      if (!b.has(l) && long(l) && places(baseHelp, l) === 0 && places(baseCorpus, l) === 0)
+        markers.add(l);
+    for (const l of b) {
+      if (v.has(l) || !long(l)) continue;
+      const n = places(baseHelp, l) + places(baseSkills, l);
+      if (n === 1) contextMarkers.add(l);
+      else rejected.set(l, `${n} places in base's help and skills`);
+    }
+  }
+  return {
+    markers: [...markers],
+    contextMarkers: [...contextMarkers],
+    rejected: [...rejected].map(([text, why]) => ({ text, why })),
+  };
+}
+
 /**
  * §3.1 steps 2-3. Markers: changed parts of ≥ 12 characters that the variant ships and base ships
  * nowhere. Context markers: removed or rewritten base parts of ≥ 12 characters that occur in
- * exactly one place in base's corpus.
+ * exactly one place in base's corpus. With both surfaces' rendered help, also the help lines the
+ * variant changed (`helpMarkers`).
  */
 export function deriveMarkers(
   diff: { changed: readonly ChangedString[]; removed: readonly RemovedString[] },
   variant: readonly CorpusFile[],
   base: readonly CorpusFile[],
+  help?: { variant: readonly HelpPage[]; base: readonly HelpPage[] },
 ): DerivedMarkers {
   const long = (s: string): boolean => flatText(s).length >= MIN_MARKER;
   const uniq = (xs: string[]): string[] => [...new Set(xs.map(flatText))];
@@ -107,7 +186,14 @@ export function deriveMarkers(
     if (n === 1) contextMarkers.push(c);
     else rejected.push({ text: c, why: n === 0 ? "not in base's corpus" : `${n} places in base` });
   }
-  return { markers, contextMarkers, rejected };
+  if (help === undefined) return { markers, contextMarkers, rejected };
+  const h = helpMarkers(help.variant, help.base, base);
+  const ctx = new Set(contextMarkers);
+  return {
+    markers: uniq([...markers, ...h.markers]),
+    contextMarkers: uniq([...contextMarkers, ...h.contextMarkers]),
+    rejected: [...rejected, ...h.rejected.filter((r) => !ctx.has(r.text))],
+  };
 }
 
 // ---- behaviour signature ------------------------------------------------------------------------
@@ -643,6 +729,14 @@ export function listCandidates(candDir: string): { manifest: string; patch: stri
     .sort((a, b) => a.manifest.localeCompare(b.manifest));
 }
 
+const baseHelps = new Map<string, HelpPage[]>();
+/** Base's rendered help, once per process: every variant of a group diffs against it. */
+const baseHelp = (root: string): HelpPage[] => {
+  const h = baseHelps.get(root) ?? renderedHelp(root);
+  baseHelps.set(root, h);
+  return h;
+};
+
 /** The `variant` control row (§6). */
 export interface VariantRow {
   kind: "variant";
@@ -683,7 +777,12 @@ export function assessVariant(o: {
   const diff = changedStrings(files);
   const built = o.build.built.ok;
   const vCorpus = built ? readCorpus(o.build.dir) : [];
-  const d = deriveMarkers(diff, vCorpus, readCorpus(o.baseRoot));
+  const d = deriveMarkers(
+    diff,
+    vCorpus,
+    readCorpus(o.baseRoot),
+    built ? { variant: renderedHelp(o.build.dir), base: baseHelp(o.baseRoot) } : undefined,
+  );
   const spec: ExposureSpec = {
     markers: d.markers,
     contextMarkers: d.contextMarkers,
