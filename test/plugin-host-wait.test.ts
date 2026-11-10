@@ -2,8 +2,9 @@
 // over the fake plugin as a provider whose agents use its channel; the
 // multiplexer is a stub. What holds:
 //   - a fully watched wait (no polling) wakes at deadline_at − margin and fires
-//     the urgent `deadline` event (exit 7) naming the agent; inside the margin
-//     it fires at once; with no deadline nothing changes;
+//     the urgent `deadline` event (exit 7) naming the agent, once per host per
+//     deadline (a later wait waits on; a new deadline fires again, at once inside
+//     its margin); with no deadline nothing changes;
 //   - a settle's in-life collect that fails backs off: a warning, collect_next_at
 //     set, final_owed untouched; a settle inside the backoff skips;
 //   - `mu state`'s notices: an owed final collect of a stopped job, and the
@@ -51,7 +52,10 @@ describe("the wait's deadline timer (D10)", () => {
     expect(r.exit).toBe(7);
     expect(r.timedOut).toBe(false);
     expect(r.delivered).toEqual([]);
-    // Inside the margin: at once.
+    // Once per host per deadline (review of P6e2, ruling 3): the next wait waits on.
+    expect((await watched(300)).event.kind).toBe("heartbeat");
+    // A new deadline is a new margin entry: inside it, at once.
+    h.db.prepare("UPDATE hosts SET deadline_at = deadline_at + 1000").run();
     const t1 = Date.now();
     expect((await watched(10_000)).event.kind).toBe("deadline");
     expect(Date.now() - t1).toBeLessThan(2_000);

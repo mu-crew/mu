@@ -55,6 +55,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   first turn, its in-life collect, send, wait, the deadline event and
   notices, close with the final collect, release. `docs/reference/plugin-protocol.md`
   covers the at-start `--task` spawn, its recovery and the host facts.
+  Review fixes: an in-life collect takes its own path
+  (`collectInLifeLocked`), which never touches `final_owed`, and reads and
+  writes its backoff under the agent lock with the fetch, so concurrent waits
+  lose no update; the `deadline` event fires once per host per deadline (the
+  claiming wait records it, `hosts.deadline_fired`; a new deadline fires
+  again); inside the margin a successful in-life collect backs off too; `mu
+  wait` prints its result and saves its resume before it collects.
 
 - **Plugins: the channel adapter, the plugin spawn path and detached views**
   (plugins spec P6e1: D3, D8, D9, D13). A plugin's `channel` seam is a
@@ -395,6 +402,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- **Schema (v14, no bump): `hosts.deadline_fired`** (plugins spec D10,
+  review of P6e2): the `deadline_at` a wait's `deadline` event fired for, an
+  added nullable column.
 - **Schema (v14, no bump): `spawn_receipts.transport` has no CHECK**
   (plugins spec D5, P6e2). A receipt's transport may name a plugin channel;
   a file whose table still has the CHECK (before `hooks`, or before plugin

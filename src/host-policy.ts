@@ -7,6 +7,7 @@
 
 import { CarrierJobKeptError, CarrierJobUnresolvedError } from "./agents/errors.js";
 import type { LeaseClose } from "./agents/lease-carrier.js";
+import { withAgentLock } from "./agents/lock.js";
 import { getAgent } from "./agents.js";
 import {
   abandonCarrierJob,
@@ -24,7 +25,7 @@ import type { HostRecord } from "./host-provider.js";
 import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-records.js";
 import { emitEvent } from "./logs.js";
 import { pluginJobKind, pluginJobRef } from "./plugins/job.js";
-import { collectRemoteAgent, collectRemoteAgentLocked } from "./remote-collect.js";
+import { collectInLifeLocked, collectRemoteAgentLocked } from "./remote-collect.js";
 import { recoveriesFor } from "./remote-recovery.js";
 import type { WaitResult } from "./wait-types.js";
 
@@ -37,7 +38,11 @@ export const inLifeCollectsOn = (rec: HostRecord): boolean =>
 
 export type InLifeCollect = "skipped" | "collected" | "failed";
 
-/** One in-life collect of job record `token` once its backoff passed; a failure doubles it (D10). */
+/**
+ * One in-life collect of job record `token` once its backoff passed; a failure doubles it, and
+ * so does a success inside the deadline margin (D10). Its caller holds the agent lock, so the
+ * backoff is read and written under it.
+ */
 export async function inLifeCollect(
   db: Db,
   token: string,
@@ -49,17 +54,19 @@ export async function inLifeCollect(
   if (job === undefined || host === undefined || !inLifeCollectsOn(host)) return "skipped";
   const at = opts.at ?? Date.now();
   if (job.collectNextAt !== null && at < job.collectNextAt) return "skipped";
+  const delay = Math.min(
+    IN_LIFE_BACKOFF_MAX_MS,
+    job.collectDelayMs === null ? opts.pollMs : job.collectDelayMs * 2,
+  );
   try {
     await collect(job);
   } catch {
-    const delay = Math.min(
-      IN_LIFE_BACKOFF_MAX_MS,
-      job.collectDelayMs === null ? opts.pollMs : job.collectDelayMs * 2,
-    );
     setCollectNextAt(db, token, at + delay, delay);
     return "failed";
   }
-  setCollectNextAt(db, token, null, null);
+  // Inside the deadline margin every wait may observe the host: a success backs off too.
+  if (deadlineNotice(host, at)?.inMargin === true) setCollectNextAt(db, token, at + delay, delay);
+  else setCollectNextAt(db, token, null, null);
   return "collected";
 }
 
@@ -85,16 +92,21 @@ export async function collectAtSettles(
     const repo = job?.collectRepo;
     if (job?.plugin == null || job.treePath === null || repo == null) continue;
     let why = "";
-    const r = await inLifeCollect(
-      db,
-      job.token,
-      () =>
-        collectRemoteAgent(db, { workstream: ref.workstream, name: ref.id, repo }).catch((e) => {
-          why = e instanceof Error ? e.message : String(e);
-          throw e;
-        }),
-      { pollMs },
-    );
+    const collect = () =>
+      collectInLifeLocked(db, { workstream: ref.workstream, name: ref.id, repo }).catch((e) => {
+        why = e instanceof Error ? e.message : String(e);
+        throw e;
+      });
+    let r: InLifeCollect;
+    try {
+      // The backoff's read-modify-write and the fetch under one agent lock (ruling 2).
+      r = await withAgentLock(db, ref.workstream, ref.id, () =>
+        inLifeCollect(db, job.token, collect, { pollMs }),
+      );
+    } catch (e) {
+      why = e instanceof Error ? e.message : String(e);
+      r = "failed";
+    }
     if (r === "failed") {
       warnings.push(
         `in-life collect of ${ref.workstream}/${ref.id} failed (${why}); retried at a later settle (mu agent collect ${ref.id} -w ${ref.workstream})`,

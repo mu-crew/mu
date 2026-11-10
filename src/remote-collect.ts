@@ -166,9 +166,29 @@ export async function collectRemoteAgent(
 }
 
 /** `collectRemoteAgent` for a caller that holds the agent lock already (a close's final collect). */
-export async function collectRemoteAgentLocked(
+export function collectRemoteAgentLocked(
   db: Db,
   opts: { workstream: string; name: string; repo: string; recoveryId?: number },
+): Promise<CollectResult> {
+  return collectLocked(db, opts, true);
+}
+
+/**
+ * An in-life collect of a live agent (plugins spec D10), under the agent lock the caller holds:
+ * it records the collected HEAD and never touches the final collect (`final_owed`, R8).
+ */
+export function collectInLifeLocked(
+  db: Db,
+  opts: { workstream: string; name: string; repo: string },
+): Promise<CollectResult> {
+  return collectLocked(db, opts, false);
+}
+
+async function collectLocked(
+  db: Db,
+  opts: { workstream: string; name: string; repo: string; recoveryId?: number },
+  /** May this collect clear the final collect it started after the stop of (D10)? */
+  final: boolean,
 ): Promise<CollectResult> {
   const { workstream, name, repo } = opts;
   return withFileLock(
@@ -198,7 +218,7 @@ export async function collectRemoteAgentLocked(
       const { host, cwd, base } = target;
       // A job record owing this tree's final collect, and the stop generation read now,
       // before the fetch: only a collect that started after the stop clears it (D10).
-      const owed = owingJobOfTree(db, host, cwd);
+      const owed = final ? owingJobOfTree(db, host, cwd) : undefined;
       // A lost provider host's tree went with the machine (D1): nothing to fetch.
       const lostHost = (): RemoteCollectError | undefined => {
         const rec = getHostRecord(db, host);

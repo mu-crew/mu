@@ -354,12 +354,13 @@ A provider host's `deadlineAt` and `idleReclaimMs` are facts; mu runs no
 daemon. Inside `MU_HOST_DEADLINE_MARGIN_MS` (default 10 minutes) of
 `deadlineAt`, spawns on the host refuse (`HostDeadlineError`) and it drains;
 `mu wait` caps its sleep at the earliest margin of the agents it watches
-and fires an urgent `deadline` event (exit 7) naming the agent; `mu state`
-lists the agent's collect and close as notices. On a host with either fact,
-a `mu wait` that fires an agent's settle, or its `deadline`, then runs one
+and fires an urgent `deadline` event (exit 7) naming the agent, once per
+host per deadline; `mu state` lists the agent's collect and close as
+notices. On a host with either fact, a `mu wait` that fires an agent's
+settle, or its `deadline`, then (after printing its result) runs one
 in-life collect over `link.fetch` (into the spawning checkout's repo),
-backing off on failure; it never clears the final collect, which `agent
-close` runs after `job.stop`. A job owing its final collect once stopped,
+backing off on failure, and inside the margin on success too; it never
+clears the final collect, which `agent close` runs after `job.stop`. A job owing its final collect once stopped,
 or whose agent is gone, is a `mu state` notice too.
 
 ## Errors

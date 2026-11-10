@@ -82,7 +82,7 @@ import {
   tallyCalls,
   type VerdictTally,
 } from "./delegates.js";
-import { earliestDeadline } from "./host-records.js";
+import { claimDeadline, earliestDeadline } from "./host-records.js";
 import { openHumanNeeds } from "./human-needed.js";
 import { emitEvent } from "./logs.js";
 import { taskRevision } from "./revision.js";
@@ -1408,7 +1408,8 @@ export async function waitForEvents(
         db,
         items.filter((i) => i.ref.kind === "agent").map((i) => i.ref),
       );
-      if (due !== undefined && due.at <= Date.now()) {
+      // Once per host per deadline: the wait that claims it fires it (review of P6e2).
+      if (due !== undefined && due.at <= Date.now() && claimDeadline(db, due.host)) {
         result = build("deadline", items, undefined, false, due.ref);
         break;
       }

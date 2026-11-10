@@ -135,7 +135,8 @@ completion loop. Result `data`: `event` (alias `firing`: `kind`, `ref`,
 `cursor`. Event kinds: `closed settled input dead stall delegate
 pane-exit exited pane-text heartbeat interrupted deadline`. `deadline`
 names an agent whose provider host is inside its deadline margin (urgent,
-exit 7, nothing consumed); the wait's sleep is capped at that margin. `exited` is a remote
+exit 7, nothing consumed, once per host per deadline); the wait's sleep is
+capped at that margin. `exited` is a remote
 command gate's own numeric status (`exit` is that code, 23 stays 23; under
 `--all` the first nonzero). Timeout is `ok:true` with `timedOut`
 and exit 0; dead 6, stall 7, deadline 7, interrupt 130. Heartbeat cap 1500 s.

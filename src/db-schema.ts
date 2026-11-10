@@ -124,6 +124,8 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   // Plugins spec D5: the host identity a recovery pins (src/db-recovery.ts); backfilled from
   // host_exec when added.
   ["remote_recovery", "host_identity", "TEXT"],
+  // Plugins spec D10 (review of P6e2): a wait's deadline event fires once per deadline.
+  ["hosts", "deadline_fired", "INTEGER"],
 ];
 
 /** The schema version a fresh DB starts at. v12 adds the kernel columns
@@ -853,7 +855,8 @@ CREATE TABLE IF NOT EXISTS hosts (
   creator_start   TEXT,
   reason          TEXT,                      -- why it is lost
   created_at      TEXT NOT NULL,
-  updated_at      TEXT NOT NULL
+  updated_at      TEXT NOT NULL,
+  deadline_fired  INTEGER                    -- the deadline_at a wait's deadline event fired for (D10)
 );
 
 ${CARRIER_JOBS_DDL}

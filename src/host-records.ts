@@ -272,7 +272,8 @@ export function inDeadlineMargin(rec: HostRecord, at = Date.now()): boolean {
 /**
  * The earliest deadline margin (`deadline_at − MU_HOST_DEADLINE_MARGIN_MS`, D10) of the provider
  * hosts the agents `refs` (`{workstream, id}`) run on, and the first such ref; undefined when none
- * runs on a host with a deadline. A `mu wait` caps its sleep at it and fires `deadline` there.
+ * runs on a host with a deadline whose event has not fired yet. A `mu wait` caps its sleep at it
+ * and fires `deadline` there (`claimDeadline`).
  */
 export function earliestDeadline<R extends { workstream: string; id: string }>(
   db: Db,
@@ -281,7 +282,8 @@ export function earliestDeadline<R extends { workstream: string; id: string }>(
   const q = db.prepare(
     `SELECT h.name AS host, h.deadline_at AS at FROM agents a
        JOIN workstreams w ON w.id = a.workstream_id JOIN hosts h ON h.name = a.host
-      WHERE a.name = ? AND w.name = ? AND h.deadline_at IS NOT NULL AND h.state IN ('ready', 'draining')`,
+      WHERE a.name = ? AND w.name = ? AND h.deadline_at IS NOT NULL AND h.state IN ('ready', 'draining')
+        AND h.deadline_fired IS NOT h.deadline_at`,
   );
   let out: { at: number; host: string; ref: R } | undefined;
   for (const ref of refs) {
@@ -335,6 +337,17 @@ export function hostNotices(db: Db, ws: string, at = Date.now()): string[] {
           `host ${a.host} reaches its deadline at ${new Date(a.at).toISOString()}: collect and close ${a.name}: mu agent collect ${a.name} -w ${ws}; mu agent close ${a.name} -w ${ws}`,
       ),
   ];
+}
+
+/** The one wait that fires host `host`'s deadline event for its current `deadline_at` (D10): true once. */
+export function claimDeadline(db: Db, host: string): boolean {
+  return (
+    db
+      .prepare(
+        "UPDATE hosts SET deadline_fired = deadline_at WHERE name = ? AND deadline_at IS NOT NULL AND deadline_fired IS NOT deadline_at",
+      )
+      .run(host).changes === 1
+  );
 }
 
 /** Atomic admission (D6): `ready`, outside the deadline margin, under `max_jobs`, then the job record. */

@@ -371,8 +371,6 @@ export async function runWait(
     clearInterval(beat);
     release();
   }
-  // In-life collects (plugins spec D10): after the result, outside its settle and commit.
-  for (const w of await collectAtSettles(db, result, 1000)) process.stderr.write(`mu wait: ${w}\n`);
 
   const signal = sig.which();
   const exit = result.interrupted ? (signal === "SIGTERM" ? 143 : 130) : result.exit;
@@ -457,6 +455,9 @@ export async function runWait(
       ...(opts.extraData !== undefined ? { extra: opts.extraData } : {}),
     }),
   );
+  // In-life collects (plugins spec D10): only once the result is printed and its resume saved,
+  // so a kill during a slow fetch loses no consumed event.
+  for (const w of await collectAtSettles(db, result, 1000)) process.stderr.write(`mu wait: ${w}\n`);
   sig.dispose();
   if (exit !== 0) throw new CliExitError(exit);
 }

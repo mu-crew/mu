@@ -21,7 +21,7 @@ import { spawnForTask } from "../src/agents/task-spawn.js";
 import { getAgent, sendToAgent } from "../src/agents.js";
 import { getCarrierJobByAgent, listCarrierJobs } from "../src/carrier-jobs.js";
 import { cmdWait } from "../src/cli/wait.js";
-import { drainHost, releaseHost } from "../src/host-lifecycle.js";
+import { releaseHost } from "../src/host-lifecycle.js";
 import { getHostRecord, HostDeadlineError } from "../src/host-records.js";
 import { computeNotices } from "../src/next-hints.js";
 import { addTask } from "../src/tasks/edit.js";
@@ -179,7 +179,8 @@ describe("the provisioning backend walkthrough", () => {
     expect(computeNotices(h.db, { callers: [], workstream: "ws" })).toEqual([]);
 
     // Release: no agent, job or recovery row names the host.
-    if (getHostRecord(h.db, "box")?.state === "ready") await drainHost(h.db, "box");
+    // Inside the margin the refused spawn drained the host (D10).
+    expect(getHostRecord(h.db, "box")?.state).toBe("draining");
     await releaseHost(h.db, "box");
     expect(getHostRecord(h.db, "box")).toBeUndefined();
     expect(h.f.backend().releases).toBe(1);
