@@ -36,7 +36,7 @@ export const PLUGIN_SCHEMA_FILE = "schemas/plugin-protocol-v1.json";
 
 /** sha256 of the exact bytes of PLUGIN_SCHEMA_FILE (pinned by test/plugin-schema.test.ts). */
 export const PLUGIN_SCHEMA_DIGEST =
-  "sha256:7c13b0bb67db6a7cbbae0d147b05d1845be3b5749278dae04e36dfb88d9b34f3";
+  "sha256:3409df3a7f84fc4dd12514c0be8894e003d4ac9e5c9f63d4f34b776c6ce56630";
 
 /** Error text mu keeps from a plugin: the first line, at most this many characters (D14). */
 export const ERROR_TEXT_MAX = 400;
@@ -504,8 +504,14 @@ function paneCommand(x: unknown, path: string): PaneCommand {
   };
 }
 
+/** A start's reply needs its view; a lookup's `found` its handle (a file-handle kind's is the handle alone, D8). */
 function jobStart(x: unknown, path: string): JobStart {
+  return jobReply(x, path, "view") as JobStart;
+}
+
+function jobReply(x: unknown, path: string, need: "view" | "handle"): Partial<JobStart> {
   const r = obj(x, path, ["view", "handle", "baseline"]);
+  if (r[need] === undefined) fail(`${path}.${need}`, need === "view" ? "a view" : "a handle");
   let baseline: JobStart["baseline"];
   if (r.baseline !== undefined) {
     const b = obj(r.baseline, `${path}.baseline`, ["runs", "incarnation"]);
@@ -517,7 +523,7 @@ function jobStart(x: unknown, path: string): JobStart {
     };
   }
   return {
-    view: paneCommand(r.view, `${path}.view`),
+    ...(r.view !== undefined ? { view: paneCommand(r.view, `${path}.view`) } : {}),
     ...(r.handle !== undefined ? { handle: handle(r.handle, `${path}.handle`) } : {}),
     ...(baseline !== undefined ? { baseline } : {}),
   };
@@ -565,11 +571,10 @@ function keyLookup<T>(
     });
 }
 
-export const narrowJobLookup = keyLookup((x, path) => {
-  const s = jobStart(x, path);
-  if (s.handle === undefined) fail(`${path}.handle`, "a handle");
-  return s as JobStart & { handle: string };
-});
+/** `found`: the handle, and for a `handle: "reply"` kind the whole `JobStart` (checked by the reconciler). */
+export const narrowJobLookup = keyLookup(
+  (x, path) => jobReply(x, path, "handle") as Partial<JobStart> & { handle: string },
+);
 
 export const narrowHostLookup = keyLookup(hostFacts);
 

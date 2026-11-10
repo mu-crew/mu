@@ -164,6 +164,44 @@ describe("plugin faults (D16)", () => {
     expect(getCarrierJob(db, token)?.job).toBe("job-1");
   });
 
+  it("F3 for a file-handle kind: lookup's found carries only the handle, and it fills the job record", async () => {
+    await setup({ handle: "file", start: { lookup: true, fenceKey: false } });
+    crashedIntent();
+    const s = await pluginSession(db, "fake");
+    await s.call("job.start", startParams(), { kind: "effect", timeoutMs: 5000 }, narrowObject);
+    const [r] = await kind.resolve(token);
+    expect(r).toMatchObject({ state: "recorded", via: "lookup", result: { handle: "file-job-1" } });
+    expect(getEffect(db, token)).toBeUndefined();
+    expect(getCarrierJob(db, token)?.job).toBe("file-job-1");
+    expect(f.backend().starts).toBe(1);
+  });
+
+  it("a reply kind's found without its view proves too little: unknown, the record untouched", async () => {
+    await setup();
+    crashedIntent();
+    f.set({ lookupAnswer: { found: { handle: "job-7" } } });
+    const [r] = await kind.resolve(token);
+    expect(r).toMatchObject({ state: "unknown", reason: expect.stringMatching(/no view/) });
+    expect(getCarrierJob(db, token)?.job).toBeNull();
+  });
+
+  it("every send and retry carries the committed payload, not the caller's input mutated meanwhile", async () => {
+    await setup();
+    f.set({ faults: { "job.start": ["lateRetryable", "effectThenExit"] } });
+    const spec: JobSpec = { ...SPEC, cmd: "original" };
+    const pending = kind.start(host(), spec, token);
+    const rejected = expect(pending).rejects.toThrow(/outcome unknown/);
+    for (let i = 0; i < 100 && jobCalls("job.start").length === 0; i++) await sleep(10);
+    spec.cmd = "changed";
+    await rejected;
+    const committed = getEffect(db, token)?.params_json;
+    const sent = jobCalls("job.start").map(({ params: { deadline: _d, ...p } }) =>
+      JSON.stringify(p),
+    );
+    expect(sent).toEqual([committed, committed]);
+    expect(committed).toContain('"cmd":"original"');
+  });
+
   it("F4: the reply lost (stdout closed): as F3", async () => {
     await setup();
     f.set({ faults: { "job.start": ["effectThenExit"] } });

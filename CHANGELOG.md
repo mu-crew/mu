@@ -21,9 +21,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (`EffectHeldError`, exit 4). Resolution follows the D4 rule table, fenced
   on the instance (a changed one refuses, `EffectFencedError`, exit 4):
   `job.stop` and `host.release` reissued; `job.start` and `host.acquire` by
-  `lookup` (whose `none` counts only once the creator and the plugin group
+  `lookup` (a file-handle kind's `found` may be the handle alone; a reply
+  kind's must carry its view; `none` counts only once the creator and the plugin group
   are proven gone and the lookup was fenced or `inFlightMs` passed) or a
-  byte-identical deduped resend inside its window; deliveries by an exact
+  byte-identical deduped resend inside its window (every send and retry
+  carries the committed params, never the caller's object); deliveries by an exact
   receipt or a deduped resend, never once a newer delivery to the agent was
   written (`agents.delivery_seq`; a new delivery refuses while another is
   being resolved). The job adapter (`src/plugins/job.ts`) makes a plugin's

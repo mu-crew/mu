@@ -178,7 +178,7 @@ wire calls.
 | Method | Params beyond `target`, `deadline` | Result |
 | --- | --- | --- |
 | `job.start` (effect) | `key` (the job record's token), `spec` (the whole `JobSpec`: workstream, name, harness, role, cmd, `commandSource`, cwd, env, sockets?, firstPrompt?) | `{view: {command, env, cwd?}, handle?, baseline?}`; `handle` when the kind's handle is `reply` |
-| `job.lookup` | `key`, `fence` | exactly one of `{found: <the start's reply, with its handle>}`, `{pending: true}`, `{none: true}`, `{unknown: reason}` |
+| `job.lookup` | `key`, `fence` | exactly one of `{found: {handle, view?, baseline?}}` (a `reply` kind's is its whole start reply; a `file` kind's may be the handle alone), `{pending: true}`, `{none: true}`, `{unknown: reason}` |
 | `job.status` | — | `{state: "running"}`, `{state: "ended", exit}`, `{state: "lost" \| "unknown", reason}` |
 | `job.stop` (effect, idempotent) | `key` | `null`, only on proof the job is gone |
 | `job.attach` | — | a view `{command, env, cwd?}` |

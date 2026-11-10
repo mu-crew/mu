@@ -437,27 +437,39 @@
       "properties": {
         "view": { "$ref": "#/$defs/paneCommand" },
         "handle": { "$ref": "#/$defs/handle" },
-        "baseline": {
-          "type": "object",
-          "required": ["runs"],
-          "additionalProperties": false,
-          "properties": {
-            "runs": { "type": "integer", "minimum": 0 },
-            "incarnation": { "type": "string", "minLength": 1, "maxLength": 256 }
-          }
-        }
+        "baseline": { "$ref": "#/$defs/baseline" }
+      }
+    },
+    "baseline": {
+      "description": "An at-start kind's first turn: runs 0 and the channel incarnation.",
+      "type": "object",
+      "required": ["runs"],
+      "additionalProperties": false,
+      "properties": {
+        "runs": { "type": "integer", "minimum": 0 },
+        "incarnation": { "type": "string", "minLength": 1, "maxLength": 256 }
       }
     },
     "jobLookup": {
-      "description": "job.lookup's result: exactly one of found (the start's reply, with its handle), pending, none, unknown.",
+      "description": "job.lookup's result: exactly one of found (jobFound), pending, none, unknown.",
       "oneOf": [
-        { "type": "object", "required": ["found"], "additionalProperties": false, "properties": { "found": { "$ref": "#/$defs/jobStartWithHandle" } } },
+        { "type": "object", "required": ["found"], "additionalProperties": false, "properties": { "found": { "$ref": "#/$defs/jobFound" } } },
         { "$ref": "#/$defs/lookupPending" },
         { "$ref": "#/$defs/lookupNone" },
         { "$ref": "#/$defs/lookupUnknown" }
       ]
     },
-    "jobStartWithHandle": { "$ref": "#/$defs/jobStart", "required": ["view", "handle"] },
+    "jobFound": {
+      "description": "job.lookup's found: the handle, and for a handle reply kind the whole start reply (view, baseline). A handle file kind's is the handle alone.",
+      "type": "object",
+      "required": ["handle"],
+      "additionalProperties": false,
+      "properties": {
+        "view": { "$ref": "#/$defs/paneCommand" },
+        "handle": { "$ref": "#/$defs/handle" },
+        "baseline": { "$ref": "#/$defs/baseline" }
+      }
+    },
     "hostFacts": {
       "type": "object",
       "required": ["handle"],

@@ -91,7 +91,7 @@ export interface EffectCall<T> extends Omit<EffectIntent, "instance" | "pgid" | 
 export async function runEffect<T>(db: Db, e: EffectCall<T>): Promise<T> {
   const s = await pluginSession(db, e.plugin);
   const instance = s.init.instance;
-  writeEffect(
+  const row = writeEffect(
     db,
     {
       key: e.key,
@@ -105,11 +105,14 @@ export async function runEffect<T>(db: Db, e: EffectCall<T>): Promise<T> {
     },
     e.alongside === undefined ? undefined : () => e.alongside?.(instance),
   );
+  // Every send and retry carries the committed bytes, never the caller's object (which it may
+  // still mutate): a resend after a crash then repeats exactly what this call sent.
+  const committed = JSON.parse(row.params_json) as Record<string, unknown>;
   let result: T;
   try {
     result = await s.call(
       e.method,
-      e.params,
+      committed,
       { kind: "effect", timeoutMs: effectTimeoutMs(e.method) },
       e.narrow,
     );
@@ -297,7 +300,13 @@ async function lookup(
   const r = await read(s, method, { target: params.target, key: row.key, fence }, narrow);
   if ("unknown" in r) return unknown(r.unknown);
   const l = r.value;
-  if ("found" in l) return { state: "recorded", via: "lookup", result: l.found };
+  if ("found" in l) {
+    // A reply kind's found is the whole JobStart (D8 G1a): without its view it proves too little.
+    if (row.method === "job.start" && !fileKind && !("view" in (l.found as object))) {
+      return unknown("lookup: a reply kind's found carries no view");
+    }
+    return { state: "recorded", via: "lookup", result: l.found };
+  }
   if ("pending" in l) return unknown("the plugin says it is still in flight");
   if ("unknown" in l) return unknown(l.unknown);
   if (fileKind) return unknown("lookup: none (a file-handle kind's job file decides)");

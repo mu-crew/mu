@@ -34,6 +34,7 @@
 //                  that holds stdout (its pid in `<config>.helper`)
 //   badUtf8        a reply with a byte that is not UTF-8
 //   effectThenExit the effect happens, then the process exits before replying
+//   lateRetryable  a retryable error after 200 ms (nothing happened)
 //   ok             the normal answer
 //
 // The job seam (declared through `seams.job`) and the channel's deliveries keep
@@ -204,12 +205,15 @@ function backendAnswer(method, params, c) {
         view: { command: c.viewCommand ?? "sleep 600", env: {} },
         ...(c.seams?.job?.handle === "file" ? {} : { handle: `job-${b.starts}` }),
       };
-      b.jobs[params.key] = { start, stopped: false };
+      // A file-handle kind's handle is the one its view pane would publish.
+      const fileHandle = c.seams?.job?.handle === "file" ? `file-job-${b.starts}` : undefined;
+      b.jobs[params.key] = { start, stopped: false, ...(fileHandle ? { fileHandle } : {}) };
       save(b);
       return start;
     }
     case "job.lookup": {
       const seen = b.jobs[params.key];
+      if (seen?.fileHandle !== undefined) return { found: { handle: seen.fileHandle } };
       return seen !== undefined ? { found: seen.start } : (c.lookupAnswer ?? { none: true });
     }
     case "job.status": {
@@ -388,6 +392,9 @@ function onMessage(msg) {
       process.exit(9);
       return;
     }
+    case "lateRetryable":
+      setTimeout(() => fail(id, "retryable", "injected delayed retryable"), 200);
+      return;
     case "effectThenExit":
       backendAnswer(msg.method, msg.params, config());
       process.exit(9);

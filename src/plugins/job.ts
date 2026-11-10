@@ -65,7 +65,7 @@ export interface PluginJobKind extends JobKind {
     host: HostView,
     key: string,
     opts: { fence: boolean },
-  ): Promise<KeyLookup<JobStart & { handle: string }>>;
+  ): Promise<KeyLookup<Partial<JobStart> & { handle: string }>>;
   /** Idempotent; resolves only on proof the job is gone. Refuses a changed instance. */
   stop(db: Db, job: JobRef): Promise<void>;
   attach(db: Db, job: JobRef): Promise<PaneCommand>;
