@@ -15,12 +15,14 @@
 // Errors: `human` is the host's hand-back (`HostHandbackError`); `permanent`
 // and an exhausted `retryable` propagate (`PluginCallError`); no answer or
 // `unknown-outcome` is a run with no exit code, the outcome a timed-out
-// template leaves (the link's `remoteOnTimeout` says what may still run).
+// template leaves (the link's `remoteOnTimeout` says what may still run; a
+// declared `stopping` is waited out for one grace, then `stopped`).
 // A check read with no answer is one failed step; a check's hand-back is the
 // template runner's `handback` step, so checkHost skips the rest.
 
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type { Db } from "../db.js";
 import {
   type CheckContext,
@@ -54,7 +56,12 @@ export function pluginLink(db: Db, name: string): HostLink {
   if (declared === undefined) {
     throw new PluginRefusedError(name, ["it implements no link seam, which a --plugin host needs"]);
   }
-  const caps = { ...declared, fetch: true };
+  // `stopping` is `stopped` once the adapter has waited the grace out after a timed-out run.
+  const caps = {
+    ...declared,
+    fetch: true,
+    remoteOnTimeout: declared.remoteOnTimeout === "unknown" ? "unknown" : "stopped",
+  } as const;
   const session = (): Promise<PluginSession> => pluginSession(db, name, ["link"]);
 
   /** Admission per `slots`, then `admitted` on the snapshot, then `body`. */
@@ -94,12 +101,18 @@ export function pluginLink(db: Db, name: string): HostLink {
       // The plugin enforces `timeoutMs` and answers. mu's timer allows one grace on top, so
       // an answer at the deadline is a reply, not a kill (D13); past it, $/cancel, the
       // grace, the group killed.
-      return await s.call(
+      const r = await s.call(
         method,
         { target: target(host), ...params, timeoutMs },
         { kind: "effect", timeoutMs: timeoutMs + s.process.graceMs },
         narrowLinkRun,
       );
+      // `stopping`: the remote run stops within one grace after the reply. Wait it out, still
+      // under the call's admission, so a timed-out run returns stopped.
+      if (r.exitCode === null && declared.remoteOnTimeout === "stopping") {
+        await delay(s.process.graceMs);
+      }
+      return r;
     } catch (e) {
       if (e instanceof PluginCallError && e.kind === "human") {
         throw new HostHandbackError(

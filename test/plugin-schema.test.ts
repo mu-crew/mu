@@ -140,6 +140,13 @@ const FIXTURES: Fixture[] = [
   ],
   ["the spec's handshake", "initializeResult", narrowInitializeResult, INIT, true],
   [
+    "a link that stops within the grace after a timeout",
+    "initializeResult",
+    narrowInitializeResult,
+    { ...INIT, seams: { link: { ...LINK, remoteOnTimeout: "stopping" } } },
+    true,
+  ],
+  [
     "a handshake with every seam",
     "initializeResult",
     narrowInitializeResult,

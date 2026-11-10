@@ -171,7 +171,7 @@
         "fetch": { "type": "boolean" },
         "push": { "type": "boolean", "description": "Can seed a host's repo with a local commit (link.push). Absent: false." },
         "slots": { "enum": ["mu", "self"] },
-        "remoteOnTimeout": { "enum": ["stopped", "unknown"] },
+        "remoteOnTimeout": { "enum": ["stopped", "stopping", "unknown"], "description": "After a timed-out run: stopped before the reply, stopping (stopped within one grace after it), or unknown." },
         "quiescence": { "enum": ["provable", "unprovable"] },
         "maxScriptBytes": { "type": "integer", "minimum": 1 },
         "checks": { "$ref": "#/$defs/checks" }

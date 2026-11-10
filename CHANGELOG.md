@@ -95,6 +95,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   Follow-ups from the first live plugin run (task `p6b_gaps`): mu's timer on
   a `link.exec` or `link.fetch` is the plugin's `timeoutMs` plus one grace,
   so a plugin that answers a timeout at its deadline is not killed for it.
+  A link may declare `remoteOnTimeout: "stopping"` (its remote run stops
+  within one grace after a timed-out reply): mu waits that grace out before
+  it returns the run, and counts the link as `stopped`.
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`

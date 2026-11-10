@@ -237,7 +237,9 @@ describe("the link contract: push", () => {
 });
 
 // The adapter's timeouts (D13): the plugin answers a timed-out run itself, at `timeoutMs`; mu's
-// own timer allows one grace on top, so an answer at the deadline is a reply, not a kill.
+// own timer allows one grace on top, so an answer at the deadline is a reply, not a kill. A
+// link that declares `remoteOnTimeout: "stopping"` stops what it started within one grace after
+// its reply: the adapter waits that grace out on a timed-out run, so the view's link is `stopped`.
 describe("the link adapter: timeouts", () => {
   let dir: string;
   let db: Db;
@@ -276,5 +278,24 @@ describe("the link adapter: timeouts", () => {
     expect(f.calls().map((c) => c.method)).not.toContain("$/cancel");
     const sent = f.calls().find((c) => c.method === "link.exec")?.params;
     expect(sent?.timeoutMs).toBe(300);
+  });
+
+  it('remoteOnTimeout "stopping" loads; a timed-out run returns once the grace has stopped it', async () => {
+    const pidFile = join(dir, "pid");
+    const { h } = await plugin({
+      seams: linkSeam({ remoteOnTimeout: "stopping" }),
+      stopLateMs: 400,
+    });
+    expect(h.link.caps.remoteOnTimeout).toBe("stopped");
+    const t0 = Date.now();
+    const r = await h.link.exec(
+      h,
+      { script: `echo $$ > '${pidFile}'; exec sleep 30`, cwd: ".", timeoutMs: 300 },
+      { holder: "t" },
+    );
+    expect(r.exitCode).toBeNull();
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(300 + GRACE);
+    const pid = Number(readFileSync(pidFile, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow();
   });
 });

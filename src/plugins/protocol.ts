@@ -36,7 +36,7 @@ export const PLUGIN_SCHEMA_FILE = "schemas/plugin-protocol-v1.json";
 
 /** sha256 of the exact bytes of PLUGIN_SCHEMA_FILE (pinned by test/plugin-schema.test.ts). */
 export const PLUGIN_SCHEMA_DIGEST =
-  "sha256:3409df3a7f84fc4dd12514c0be8894e003d4ac9e5c9f63d4f34b776c6ce56630";
+  "sha256:5c0e77d928b4928543f29d1bb544c6d4ec570c643ea31e1d5ce47f72176779e4";
 
 /** Error text mu keeps from a plugin: the first line, at most this many characters (D14). */
 export const ERROR_TEXT_MAX = 400;
@@ -77,8 +77,15 @@ export interface PluginChannelCaps {
 /** The seams a plugin declares at the handshake, each with its capabilities. */
 export interface PluginSeams {
   host?: { acquire: KeyCaps };
-  /** A plugin link always names its largest script. */
-  link?: LinkCaps & { maxScriptBytes: number };
+  /**
+   * A plugin link always names its largest script. Its `remoteOnTimeout` may also be
+   * `stopping`: what a timed-out run started stops within one grace after the reply (the
+   * adapter waits it out, src/plugins/link.ts, and its link is then `stopped`).
+   */
+  link?: Omit<LinkCaps, "remoteOnTimeout"> & {
+    remoteOnTimeout: LinkCaps["remoteOnTimeout"] | "stopping";
+    maxScriptBytes: number;
+  };
   job?: PluginJobCaps;
   channel?: { name: string; caps: PluginChannelCaps };
 }
@@ -243,6 +250,7 @@ function linkCaps(x: unknown, path: string): NonNullable<PluginSeams["link"]> {
     slots: oneOf(l.slots, `${path}.slots`, ["mu", "self"] as const),
     remoteOnTimeout: oneOf(l.remoteOnTimeout, `${path}.remoteOnTimeout`, [
       "stopped",
+      "stopping",
       "unknown",
     ] as const),
     quiescence: oneOf(l.quiescence, `${path}.quiescence`, ["provable", "unprovable"] as const),

@@ -16,7 +16,8 @@
 // running on stdin EOF), detach (leave a setsid'd helper holding stdout; a
 // string: the file its pid is written to), detachExec (hostile: run each
 // exec in its own session, out of the fake's group), checkSteps (the
-// link.checkSteps result to return), initDelayMs (answer the handshake late),
+// link.checkSteps result to return), stopLateMs (answer a timed-out run at once,
+// stop it this much later), initDelayMs (answer the handshake late),
 // replyOnCancel (answer a cancelled call at once), eofDelayMs (take this long
 // to exit on EOF, logging "(clean exit)"), leakCanary (write MU_PLUGIN_CANARY to stderr and into a reply), envDump (a
 // path the start-up env is written to), stderr (a line written at start),
@@ -171,19 +172,33 @@ function run(id, argv, cwd, timeoutMs, done) {
   child.stderr.on("data", (d) => {
     stderr += d;
   });
+  let answered = false;
+  const finish = (r) => {
+    if (answered) return;
+    answered = true;
+    done(r);
+  };
   const timer = setTimeout(() => {
     timedOut = true;
-    killTree(child.pid);
+    // stopLateMs: answer the timeout at once and stop the run only afterwards (a relay whose
+    // remote stops asynchronously: `remoteOnTimeout: "stopping"`).
+    const late = config().stopLateMs;
+    if (late === undefined) {
+      killTree(child.pid);
+      return;
+    }
+    finish({ exitCode: null, stdout, stderr, partial: false });
+    setTimeout(() => killTree(child.pid), late);
   }, timeoutMs);
   child.on("error", (e) => {
     clearTimeout(timer);
     running.delete(id);
-    done({ exitCode: 127, stdout: "", stderr: String(e.message), partial: false });
+    finish({ exitCode: 127, stdout: "", stderr: String(e.message), partial: false });
   });
   child.on("close", (code) => {
     clearTimeout(timer);
     running.delete(id);
-    done({ exitCode: timedOut ? null : code, stdout, stderr, partial: false });
+    finish({ exitCode: timedOut ? null : code, stdout, stderr, partial: false });
   });
 }
 

@@ -112,7 +112,7 @@ version, an `instance`, the schema digest and its seams:
 
 | Seam | Object | Notes |
 | --- | --- | --- |
-| `link` | `fetch`, `push` (optional: can seed a host's repo with a commit), `slots` (`mu`: each call holds a host channel; `self`: the plugin arbitrates), `remoteOnTimeout` (`stopped` or `unknown`), `quiescence` (`provable` or `unprovable`), `maxScriptBytes`, `checks` | `maxScriptBytes` is required |
+| `link` | `fetch`, `push` (optional: can seed a host's repo with a commit), `slots` (`mu`: each call holds a host channel; `self`: the plugin arbitrates), `remoteOnTimeout` (`stopped`, `stopping` or `unknown`), `quiescence` (`provable` or `unprovable`), `maxScriptBytes`, `checks` | `maxScriptBytes` is required |
 | `job` | `kind`, `view` (`bound`, `detached`), `handle` (`pane`, `file`, `reply`), `start` (key capabilities), `channel`, `checks`, and optional `firstTurn` (`on-send`, `at-start`), `outlivesHost`, `honours` (`{command, env, sockets, roles}`) | `honours` absent: `env` only, `full-access` only |
 | `host` | `acquire` (key capabilities) | needs `link` and `job` |
 | `channel` | `name`, `caps` (`fence`, `receipt`, `dedupe`, `steer`, `interrupt`, `fresh`, `answer`, `command`, `watch`, `settleText`) | |
@@ -169,7 +169,11 @@ and the `deadline` are new each time.
 
 The plugin enforces `timeoutMs` itself and answers with `exitCode: null`.
 With `remoteOnTimeout: "stopped"` it guarantees nothing it started still
-runs. mu computes `fits` (a script's bytes against `maxScriptBytes`) and
+runs when it answers. With `"stopping"` it guarantees that within one grace
+(5 s) after its answer: a relay whose remote side stops asynchronously. mu
+then waits the grace out, still holding the call's channel, before it
+returns the timed-out run, and counts the link as `stopped`. With
+`"unknown"` a timed-out script may still run. mu computes `fits` (a script's bytes against `maxScriptBytes`) and
 the host identity, and deletes `FETCH_HEAD` before a fetch. These are not
 wire calls.
 
