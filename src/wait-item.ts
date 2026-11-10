@@ -85,7 +85,13 @@ export const isCompletion = (i: Item): boolean =>
   i.kind === "delegate" ||
   (i.kind === "dead" && i.ref.kind === "agent");
 export const exitFor = (k: WaitEventKind): number =>
-  k === "dead" ? 6 : k === "input" || k === "stall" ? 7 : k === "interrupted" ? 130 : 0;
+  k === "dead"
+    ? 6
+    : k === "input" || k === "stall" || k === "deadline"
+      ? 7
+      : k === "interrupted"
+        ? 130
+        : 0;
 
 export const inputToken = (r: AgentReading): CursorToken => ({
   incarnation: `input:${r.incarnation ?? ""}`,

@@ -29,6 +29,7 @@ import { getAgent } from "./agents.js";
 import { pendingAttempts } from "./auto-attempt.js";
 import { expectsCtl } from "./channels/index.js";
 import type { Db } from "./db.js";
+import { hostNotices } from "./host-records.js";
 import { openHumanNeeds } from "./human-needed.js";
 import type { NextPlan } from "./output-contract.js";
 import { shellWord } from "./shell-quote.js";
@@ -286,8 +287,8 @@ export function computeNext(db: Db, ctx: NextContext): NextPlan {
 }
 
 /**
- * The one-line notices of a result, beside its `next` (they are not commands): today only
- * `courseCheckHint` for the call's workstream. `mu state` and `mu wait` print them as
+ * The one-line notices of a result, beside its `next` (they are not commands):
+ * `courseCheckHint` for the call's workstream and its provider-host notices (`hostNotices`). `mu state` and `mu wait` print them as
  * `data.notices` (`noticesField`); empty when nothing is due. Read-only.
  */
 export function computeNotices(db: Db, ctx: NextContext, now = Date.now()): string[] {
@@ -295,7 +296,9 @@ export function computeNotices(db: Db, ctx: NextContext, now = Date.now()): stri
     ctx.workstream === undefined || isScratchWorkstream(ctx.workstream)
       ? undefined
       : courseCheckHint(db, ctx.workstream, now);
-  return hint === undefined ? [] : [hint];
+  // Provider hosts (plugins spec D10): an owed final collect, a deadline margin.
+  const hosts = ctx.workstream === undefined ? [] : hostNotices(db, ctx.workstream, now);
+  return [...(hint === undefined ? [] : [hint]), ...hosts];
 }
 
 /** `computeNotices` over each workstream a result covers, in order, as `data.notices` (absent when empty). */

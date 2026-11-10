@@ -269,6 +269,74 @@ export function inDeadlineMargin(rec: HostRecord, at = Date.now()): boolean {
   return rec.deadline_at !== null && at >= rec.deadline_at - hostDeadlineMarginMs();
 }
 
+/**
+ * The earliest deadline margin (`deadline_at − MU_HOST_DEADLINE_MARGIN_MS`, D10) of the provider
+ * hosts the agents `refs` (`{workstream, id}`) run on, and the first such ref; undefined when none
+ * runs on a host with a deadline. A `mu wait` caps its sleep at it and fires `deadline` there.
+ */
+export function earliestDeadline<R extends { workstream: string; id: string }>(
+  db: Db,
+  refs: readonly R[],
+): { at: number; host: string; ref: R } | undefined {
+  const q = db.prepare(
+    `SELECT h.name AS host, h.deadline_at AS at FROM agents a
+       JOIN workstreams w ON w.id = a.workstream_id JOIN hosts h ON h.name = a.host
+      WHERE a.name = ? AND w.name = ? AND h.deadline_at IS NOT NULL AND h.state IN ('ready', 'draining')`,
+  );
+  let out: { at: number; host: string; ref: R } | undefined;
+  for (const ref of refs) {
+    const r = q.get(ref.id, ref.workstream) as { host: string; at: number } | undefined;
+    const at = r === undefined ? undefined : r.at - hostDeadlineMarginMs();
+    if (r !== undefined && at !== undefined && (out === undefined || at < out.at))
+      out = { at, host: r.host, ref };
+  }
+  return out;
+}
+
+/**
+ * `mu state`'s and `mu wait`'s host notices for workstream `ws` (D10): each job record owing its
+ * final collect whose job is stopped or lost or whose agent is gone, and each agent on a host
+ * inside its deadline margin, each with the verbs that settle it. Read-only.
+ */
+export function hostNotices(db: Db, ws: string, at = Date.now()): string[] {
+  const owing = db
+    .prepare(
+      `SELECT j.name, j.host, j.reason, EXISTS (SELECT 1 FROM agents a WHERE a.id = j.agent_id) AS live,
+              (SELECT r.agent_id FROM remote_recovery r WHERE r.host = j.host AND r.cwd = j.tree_path) AS rec
+         FROM carrier_jobs j WHERE j.workstream = ? AND j.final_owed = 1
+          AND (j.stop_gen IS NOT NULL OR (j.agent_id IS NOT NULL
+               AND NOT EXISTS (SELECT 1 FROM agents a WHERE a.id = j.agent_id)))
+        ORDER BY j.id`,
+    )
+    .all(ws) as {
+    name: string;
+    host: string;
+    reason: string | null;
+    live: number;
+    rec: number | null;
+  }[];
+  const near = db
+    .prepare(
+      `SELECT a.name, h.name AS host, h.deadline_at AS at FROM agents a
+         JOIN workstreams w ON w.id = a.workstream_id JOIN hosts h ON h.name = a.host
+        WHERE w.name = ? AND h.deadline_at IS NOT NULL AND h.state IN ('ready', 'draining')
+        ORDER BY a.id`,
+    )
+    .all(ws) as { name: string; host: string; at: number }[];
+  return [
+    ...owing.map(
+      (j) =>
+        `final collect owed: ${ws}/${j.name}'s job on ${j.host}${j.reason === null ? "" : ` (${j.reason})`}: mu agent collect ${j.name} -w ${ws}${j.live === 0 && j.rec !== null ? ` --recovery ${j.rec}` : ""}`,
+    ),
+    ...near
+      .filter((a) => at >= a.at - hostDeadlineMarginMs())
+      .map(
+        (a) =>
+          `host ${a.host} reaches its deadline at ${new Date(a.at).toISOString()}: collect and close ${a.name}: mu agent collect ${a.name} -w ${ws}; mu agent close ${a.name} -w ${ws}`,
+      ),
+  ];
+}
+
 /** Atomic admission (D6): `ready`, outside the deadline margin, under `max_jobs`, then the job record. */
 export function reserveProviderJob(
   db: Db,

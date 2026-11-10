@@ -13,6 +13,7 @@ import {
   bumpStopGen,
   type CarrierJob,
   getCarrierJob,
+  getCarrierJobByAgent,
   noteCarrierJob,
   setCollectNextAt,
 } from "./carrier-jobs.js";
@@ -23,8 +24,9 @@ import type { HostRecord } from "./host-provider.js";
 import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-records.js";
 import { emitEvent } from "./logs.js";
 import { pluginJobKind, pluginJobRef } from "./plugins/job.js";
-import { collectRemoteAgentLocked } from "./remote-collect.js";
+import { collectRemoteAgent, collectRemoteAgentLocked } from "./remote-collect.js";
 import { recoveriesFor } from "./remote-recovery.js";
+import type { WaitResult } from "./wait-types.js";
 
 /** The cap of an in-life collect's backoff (D10). */
 export const IN_LIFE_BACKOFF_MAX_MS = 300_000;
@@ -59,6 +61,47 @@ export async function inLifeCollect(
   }
   setCollectNextAt(db, token, null, null);
   return "collected";
+}
+
+/**
+ * The in-life collects a wait's result triggers (D10), after it is decided: each agent whose
+ * settle it fired, and on a `deadline` every agent it watched. Only a provider-host job record
+ * with a tree and a collect repo; `inLifeCollect` skips the rest. One warning per failure.
+ */
+export async function collectAtSettles(
+  db: Db,
+  result: Pick<WaitResult, "event" | "refs">,
+  pollMs: number,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  const due = result.refs.filter(
+    (s) =>
+      s.ref.kind === "agent" &&
+      ((s.fired && s.settled === true) || result.event.kind === "deadline"),
+  );
+  for (const { ref } of due) {
+    const agent = getAgent(db, ref.id, ref.workstream);
+    const job = agent === undefined ? undefined : getCarrierJobByAgent(db, agent.incarnation);
+    const repo = job?.collectRepo;
+    if (job?.plugin == null || job.treePath === null || repo == null) continue;
+    let why = "";
+    const r = await inLifeCollect(
+      db,
+      job.token,
+      () =>
+        collectRemoteAgent(db, { workstream: ref.workstream, name: ref.id, repo }).catch((e) => {
+          why = e instanceof Error ? e.message : String(e);
+          throw e;
+        }),
+      { pollMs },
+    );
+    if (r === "failed") {
+      warnings.push(
+        `in-life collect of ${ref.workstream}/${ref.id} failed (${why}); retried at a later settle (mu agent collect ${ref.id} -w ${ref.workstream})`,
+      );
+    }
+  }
+  return warnings;
 }
 
 export interface DeadlineNotice {

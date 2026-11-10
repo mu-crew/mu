@@ -269,8 +269,8 @@ mu host show dev              # templates and the holders of its channels
 - A registered plugin can be a host's link instead of `--shell` and
   `--exec`: `mu plugin add box -- /abs/mu-plugin-box`, then `mu host add dev
   --plugin box` (plus `--fetch '<fetch cmd>'` when the plugin's link does not
-  fetch). Spawning on such a host is not
-  supported yet. See [the plugin protocol](../reference/plugin-protocol.md).
+  fetch). An agent spawns on it when the plugin declares a job seam. See
+  [the plugin protocol](../reference/plugin-protocol.md).
 
 ## Provider hosts
 
@@ -292,8 +292,18 @@ kept as uncollected work until `mu agent close <name> --abandon-job`.
 `mu host release <name> --abandon` drops the host and every record of
 it without asking the provider, and logs what was lost. Inside
 `MU_HOST_DEADLINE_MARGIN_MS` of the provider's deadline, spawns refuse
-and the host drains. Spawning on a provider host comes with the plugin
-spawn path.
+and the host drains, `mu wait` fires `deadline` (exit 7) for its agents,
+and `mu state` lists their collect and close.
+
+```bash
+mu agent spawn w1 --host box1 --worktree --cli claude --task t1   # HEAD pushed, brief in the start
+mu wait agent:w1@0           # the first turn; its settle runs an in-life collect
+mu agent close w1            # stops the job, runs the final collect, closes the tree
+```
+
+`--worktree` there starts from your checkout's commit and must run inside
+it. A start with no answer is never resent: `mu agent check w1 <msgId>`
+resolves it.
 
 ## Session-capped hosts
 

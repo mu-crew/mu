@@ -133,10 +133,12 @@ event (`--first-of` alias); `--all` / `--all-of` keeps the all-of
 completion loop. Result `data`: `event` (alias `firing`: `kind`, `ref`,
 `incarnation`, `runs`), `exit`, `snapshots`, `resume`, `timedOut`,
 `cursor`. Event kinds: `closed settled input dead stall delegate
-pane-exit exited pane-text heartbeat interrupted`. `exited` is a remote
+pane-exit exited pane-text heartbeat interrupted deadline`. `deadline`
+names an agent whose provider host is inside its deadline margin (urgent,
+exit 7, nothing consumed); the wait's sleep is capped at that margin. `exited` is a remote
 command gate's own numeric status (`exit` is that code, 23 stays 23; under
 `--all` the first nonzero). Timeout is `ok:true` with `timedOut`
-and exit 0; dead 6, stall 7, interrupt 130. Heartbeat cap 1500 s.
+and exit 0; dead 6, stall 7, deadline 7, interrupt 130. Heartbeat cap 1500 s.
 `--until-idle`, `--until-text <re>` (bounded RegExp over authoritative
 ctl `lastText` or the task report, never pane text for a settle; an agent
 with no answering ctl socket matches its pane tail and ends the wait as the

@@ -1,11 +1,83 @@
 // mu — the database reads and writes behind waitForEvents that need no loop
-// state: the CLOSE application of a settled run, the existence check, and
-// the open-blocker traversal.
+// state: the CLOSE application of a settled run, the existence and up-front
+// ref checks, and the open-blocker traversal.
 
+import { AgentNotFoundError } from "./agents/errors.js";
 import { settledCloseInput } from "./agents/observe.js";
 import { applySettledClose } from "./close-block.js";
 import type { Db } from "./db.js";
-import type { AgentReading, CloseOutcome, WaitRef } from "./wait-types.js";
+import { DelegateNotFoundError, getDelegateCall, listDelegatesOf } from "./delegates.js";
+import { taskIdFor } from "./tasks/core.js";
+import { TaskNotFoundError } from "./tasks/errors.js";
+import { getTask } from "./tasks/queries.js";
+import {
+  type AgentReading,
+  type CloseOutcome,
+  WaitNothingError,
+  type WaitOptions,
+  type WaitRef,
+  WaitRefError,
+  WaveNotFoundError,
+} from "./wait-types.js";
+
+/**
+ * Every ref of a wait, checked before it begins: typed, exact, nothing ambiguous. Returns the
+ * `blockersOf` umbrella's task id (undefined without one).
+ */
+export function assertWaitRefs(
+  db: Db,
+  input: readonly WaitRef[],
+  callers: readonly string[],
+  opts: Pick<WaitOptions, "blockersOf" | "wave">,
+): number | undefined {
+  for (const ref of input) {
+    if (ref.kind === "task") {
+      if (getTask(db, ref.id, ref.workstream) === undefined) {
+        throw new TaskNotFoundError(`${ref.workstream}/${ref.id}`);
+      }
+    } else if (ref.kind === "agent") {
+      if (!agentExists(db, ref)) throw new AgentNotFoundError(ref.id);
+    } else {
+      const call = getDelegateCall(db, ref.id);
+      if (call === undefined || call.workstream !== ref.workstream) {
+        throw new DelegateNotFoundError(ref.id);
+      }
+      if (callers.length > 0 && !callers.includes(call.caller)) {
+        throw new WaitRefError(`delegate call ${ref.id} belongs to another caller`);
+      }
+      // A refused call never started and nothing will start it: waiting on it would never end.
+      if (call.state === "refused") {
+        throw new WaitRefError(
+          `delegate call ${ref.id} was refused (it never started): reissue it, mu_delegate_reissue`,
+        );
+      }
+    }
+  }
+  const umbrella =
+    opts.blockersOf === undefined
+      ? undefined
+      : taskIdFor(db, opts.blockersOf.id, opts.blockersOf.workstream);
+  if (opts.blockersOf !== undefined && umbrella === null) {
+    throw new TaskNotFoundError(`${opts.blockersOf.workstream}/${opts.blockersOf.id}`);
+  }
+  if (opts.wave !== undefined && callers.length === 0) {
+    throw new WaitRefError("wait: a wave belongs to callers; none given (no all-caller fallback)");
+  }
+  if (input.length === 0 && !opts.wave && !opts.blockersOf && callers.length === 0) {
+    throw new WaitNothingError();
+  }
+  // A wave is the callers' (never narrowed by the scope): a name none of their calls carry is a typo.
+  if (opts.wave !== undefined) {
+    const mine = listDelegatesOf(db, callers, opts.wave.workstream);
+    if (!mine.some((c) => c.wave === opts.wave?.name)) {
+      throw new WaveNotFoundError(
+        opts.wave.name,
+        mine.map((c) => c.wave),
+      );
+    }
+  }
+  return umbrella ?? undefined;
+}
 
 /**
  * Apply the CLOSE block of a settled ctl run, once; never throws.

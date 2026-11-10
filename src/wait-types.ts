@@ -43,7 +43,9 @@ export type WaitEventKind =
   /** An agent with no control socket: its pane tail matched `until.text`. Never a settled run. */
   | "pane-text"
   | "heartbeat"
-  | "interrupted";
+  | "interrupted"
+  /** An agent's provider host is inside its deadline margin (plugins spec D10): collect and close. Urgent. */
+  | "deadline";
 
 export interface WaitEvent {
   kind: WaitEventKind;

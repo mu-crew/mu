@@ -37,6 +37,7 @@ import {
   WORKSTREAM_OPT,
 } from "../cli.js";
 import { type Db, tryResolveLiveWorkstreamId } from "../db.js";
+import { collectAtSettles } from "../host-policy.js";
 import { noticesField, renderArgv } from "../next-hints.js";
 import { reconcile } from "../reconcile.js";
 import { TaskNotFoundError } from "../tasks/errors.js";
@@ -214,6 +215,10 @@ function eventReason(result: WaitResult, signal: string | undefined, open: numbe
     }
     case "delegate":
       return `${who} reached ${snap?.status ?? "a final state"}${snap?.verdict ? ` (${snap.verdict})` : ""}`;
+    case "deadline":
+      return e.ref === null
+        ? "a provider host is inside its deadline margin"
+        : `${who}'s host is inside its deadline margin (MU_HOST_DEADLINE_MARGIN_MS): spawns there refuse; collect and close it (mu agent collect ${e.ref.id} -w ${e.ref.workstream}; mu agent close ${e.ref.id} -w ${e.ref.workstream})`;
     case "interrupted":
       return `${signal ?? "interrupted"}: nothing consumed; ${open} still open`;
     case "heartbeat":
@@ -366,6 +371,8 @@ export async function runWait(
     clearInterval(beat);
     release();
   }
+  // In-life collects (plugins spec D10): after the result, outside its settle and commit.
+  for (const w of await collectAtSettles(db, result, 1000)) process.stderr.write(`mu wait: ${w}\n`);
 
   const signal = sig.which();
   const exit = result.interrupted ? (signal === "SIGTERM" ? 143 : 130) : result.exit;

@@ -11,10 +11,10 @@ shipped in the package. Terms are in [VOCABULARY](../VOCABULARY.md#plugins-hosts
 
 Status: this build drives every seam: the **link** (`mu host add
 --plugin`), the **host** (`mu host acquire --provider`), the **job** (spawn,
-stop, reattach of an agent on a plugin host) and the **channel** (its agents'
-reads, watches and deliveries). Not yet driven: a `--task` spawn on an
-`at-start` kind, `mu agent check` on its first prompt, and the deadline and
-in-life collect timers inside `mu wait`.
+`--task` included, stop, reattach of an agent on a plugin host) and the
+**channel** (its agents' reads, watches and deliveries). A provider host's
+facts drive `mu wait`'s deadline timer, its in-life collects and `mu state`'s
+notices (below).
 
 ## Registration and trust
 
@@ -229,22 +229,37 @@ order, each step before the next one's effect:
 1. Refusals, before anything is written: a field the kind does not
    `honours`, a kind without `channel` (its agents' own channel is not
    driven yet), a backend that cannot run a command line (herdr), an
-   `at-start` kind without `--send`.
+   `at-start` kind without a first prompt (`--send` or `--task`).
 2. The job record (the name's fence; a provider host's admission: `ready`,
    outside the deadline margin, under `maxJobs`).
 3. The site. A `--worktree` on a provider host resolves `--from` (default
    `HEAD`) in the caller's checkout, `link.push`es it when declared, and
    makes the tree from that commit; the record owes its final collect.
 4. `job.start` with the whole `JobSpec`. An `at-start` kind's
-   `firstPrompt` is `--send`'s text: that delivery goes only here, never as
-   a `channel.send` (every later send carries `firstPrompt: false`). Its
-   reply, and its `job.lookup`'s `found`, must carry `baseline` with `runs:
-   0`: anything else is an invalid reply, so the start's outcome is unknown.
+   `firstPrompt` is `--send`'s text, or `--task`'s brief: that delivery goes
+   only here, never as a `channel.send` (every later send carries
+   `firstPrompt: false`). Its reply, and its `job.lookup`'s `found`, must
+   carry `baseline` with `runs: 0`: anything else is an invalid reply, so the
+   start's outcome is unknown. Before it, an `at-start` kind's spawn writes
+   the agent's placeholder row; a `--task` spawn claims the task for it and
+   journals its receipt `sending`, and `firstPrompt.msgId` is the receipt's
+   msgId (the job record's `first_msg_id`).
 5. The view: a pane running the start's `view` command with stdin from
    `/dev/null`, and the agent row on the kind's channel.
 6. Readiness: the start's `baseline` (an `at-start` kind), else
    `channel.baseline` answering within `MU_SPAWN_JOB_MS`. A failure after
    the start stops the job (`job.stop`) before the tree and the record go.
+
+An `at-start` start with no definite answer is never resent and never
+rolled back: the placeholder, the claim and the job record stay, and the
+spawn reports the delivery unknown (exit 1) with the msgId. A replay of the
+same `--task` attempt, or `mu agent check <agent> <msgId>` with the job
+record's `first_msg_id`, resolves the start by its rule-table row (below):
+a `found` start records the handle and `first_inc`, opens the view from the
+reply's `view` (else `job.attach`) and answers `accepted runs=0` (exit 0);
+an unresolved one answers `unreachable` (exit 1) naming the effect key; a
+proven `none` fails the attempt and rolls it back, and the check then asks
+`channel.receipt` as for any msgId.
 
 A `bound` view's death ends the job: `agent close` kills the view, then
 stops the job. A `detached` job outlives its view: reconcile keeps a row
@@ -332,6 +347,20 @@ an unknown outcome or an unknown answer, never a success. Every call that
 names a recorded job, host or effect (a stop, a resend, `job.status`,
 `job.attach`, a lookup, a receipt, a readStates) goes only to the instance
 it was recorded under; under another, mu sends nothing.
+
+### Host facts in mu's reads
+
+A provider host's `deadlineAt` and `idleReclaimMs` are facts; mu runs no
+daemon. Inside `MU_HOST_DEADLINE_MARGIN_MS` (default 10 minutes) of
+`deadlineAt`, spawns on the host refuse (`HostDeadlineError`) and it drains;
+`mu wait` caps its sleep at the earliest margin of the agents it watches
+and fires an urgent `deadline` event (exit 7) naming the agent; `mu state`
+lists the agent's collect and close as notices. On a host with either fact,
+a `mu wait` that fires an agent's settle, or its `deadline`, then runs one
+in-life collect over `link.fetch` (into the spawning checkout's repo),
+backing off on failure; it never clears the final collect, which `agent
+close` runs after `job.stop`. A job owing its final collect once stopped,
+or whose agent is gone, is a `mu state` notice too.
 
 ## Errors
 

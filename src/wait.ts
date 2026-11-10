@@ -71,24 +71,23 @@
 // (v_wait_cli).
 
 import { agentKey } from "./agent-state.js";
-import { AgentNotFoundError, AgentRestartedError } from "./agents/errors.js";
+import { AgentRestartedError } from "./agents/errors.js";
 import { channelNamed } from "./channels/index.js";
 import { closeNotices } from "./close-notice.js";
 import { type Db, tryResolveWorkstreamId } from "./db.js";
 import {
-  DelegateNotFoundError,
   type DelegateRow,
   getDelegateCall,
   listDelegatesOf,
   tallyCalls,
   type VerdictTally,
 } from "./delegates.js";
+import { earliestDeadline } from "./host-records.js";
 import { openHumanNeeds } from "./human-needed.js";
 import { emitEvent } from "./logs.js";
 import { taskRevision } from "./revision.js";
 import { ambientFlush, ambientIngest } from "./sync.js";
 import { taskIdFor } from "./tasks/core.js";
-import { TaskNotFoundError } from "./tasks/errors.js";
 import { getTask, getTaskOwner } from "./tasks/queries.js";
 import { DEFAULT_SUBSTATE, type TaskStatus } from "./tasks/status.js";
 import {
@@ -102,6 +101,7 @@ import {
 import {
   agentExists,
   agentRowId,
+  assertWaitRefs,
   closeSettledRun,
   openBlockers,
   opsHead,
@@ -149,11 +149,9 @@ import {
   WaitNothingError,
   type WaitOptions,
   type WaitRef,
-  WaitRefError,
   type WaitResult,
   type WaitSnapshot,
   type WaitStallContext,
-  WaveNotFoundError,
 } from "./wait-types.js";
 
 let sleepSeam: ((ms: number) => Promise<void>) | undefined;
@@ -212,54 +210,9 @@ export async function waitForEvents(
   const sinceSeq = opts.sinceSeq ?? opsHead(db);
 
   // ─── resolve every ref upfront: typed, exact, nothing ambiguous ───
-  for (const ref of input) {
-    if (ref.kind === "task") {
-      if (getTask(db, ref.id, ref.workstream) === undefined) {
-        throw new TaskNotFoundError(`${ref.workstream}/${ref.id}`);
-      }
-    } else if (ref.kind === "agent") {
-      if (!agentExists(db, ref)) throw new AgentNotFoundError(ref.id);
-    } else {
-      const call = getDelegateCall(db, ref.id);
-      if (call === undefined || call.workstream !== ref.workstream) {
-        throw new DelegateNotFoundError(ref.id);
-      }
-      if (callers.length > 0 && !callers.includes(call.caller)) {
-        throw new WaitRefError(`delegate call ${ref.id} belongs to another caller`);
-      }
-      // A refused call never started and nothing will start it: waiting on it would never end.
-      if (call.state === "refused") {
-        throw new WaitRefError(
-          `delegate call ${ref.id} was refused (it never started): reissue it, mu_delegate_reissue`,
-        );
-      }
-    }
-  }
-  const umbrella =
-    opts.blockersOf === undefined
-      ? undefined
-      : taskIdFor(db, opts.blockersOf.id, opts.blockersOf.workstream);
-  if (opts.blockersOf !== undefined && umbrella === null) {
-    throw new TaskNotFoundError(`${opts.blockersOf.workstream}/${opts.blockersOf.id}`);
-  }
+  const umbrella = assertWaitRefs(db, input, callers, opts);
   const explicit = new Map<string, WaitRef>();
   for (const r of input) explicit.set(refKey(r), r);
-  if (opts.wave !== undefined && callers.length === 0) {
-    throw new WaitRefError("wait: a wave belongs to callers; none given (no all-caller fallback)");
-  }
-  if (input.length === 0 && !opts.wave && !opts.blockersOf && callers.length === 0) {
-    throw new WaitNothingError();
-  }
-  // A wave is the callers' (never narrowed by the scope): a name none of their calls carry is a typo.
-  if (opts.wave !== undefined) {
-    const mine = listDelegatesOf(db, callers, opts.wave.workstream);
-    if (!mine.some((c) => c.wave === opts.wave?.name)) {
-      throw new WaveNotFoundError(
-        opts.wave.name,
-        mine.map((c) => c.wave),
-      );
-    }
-  }
 
   // ─── one active wait per caller; cursors read before any await ────
   const begun = new Map<string, NonNullable<ReturnType<typeof beginWait>>>();
@@ -1297,6 +1250,8 @@ export async function waitForEvents(
     items: Item[],
     chosen?: Chosen,
     drained = false,
+    /** A `deadline` names its agent; it fires no item and consumes nothing. */
+    ref?: WaitRef,
   ): WaitResult => {
     const e = chosen?.event;
     const fired = new Set(chosen?.fired ?? []);
@@ -1304,7 +1259,7 @@ export async function waitForEvents(
     // target an earlier wait already consumed is not owed: it is history the ref set re-reads.
     const owed = (i: Item): boolean => i.ready && !fired.has(i) && !(i.target && i.seen === true);
     return {
-      event: eventOf(kind, e),
+      event: ref !== undefined ? { kind, ref } : eventOf(kind, e),
       ...(opts.mode === "ready" && chosen !== undefined
         ? { events: chosen.groups.map((g) => eventOf(g[0]?.kind ?? "closed", g[0])) }
         : {}),
@@ -1448,6 +1403,15 @@ export async function waitForEvents(
         result = build("heartbeat", items, undefined, true);
         break;
       }
+      // A watched agent's provider host inside its deadline margin (D10): urgent, nothing consumed.
+      const due = earliestDeadline(
+        db,
+        items.filter((i) => i.ref.kind === "agent").map((i) => i.ref),
+      );
+      if (due !== undefined && due.at <= Date.now()) {
+        result = build("deadline", items, undefined, false, due.ref);
+        break;
+      }
       if (stopReason !== undefined) continue;
       // Poll only what a watch does not cover: DB-backed refs, a caller's
       // registration and polled agents. All agents watched: sleep until a
@@ -1457,18 +1421,21 @@ export async function waitForEvents(
         observeOwners ||
         items.some((i) => i.ref.kind !== "agent") ||
         [...tracks.values()].some((t) => t.latched === undefined && t.handle === undefined);
-      const left = deadline - Date.now();
+      // The host deadline is a timer inside this invocation, like --timeout (D10).
+      const hostAt = due?.at ?? Number.POSITIVE_INFINITY;
+      const left = Math.min(deadline, hostAt) - Date.now();
       const ms = polled ? Math.min(pollMs, left) : left;
       if (ms <= 0) continue;
       let timer: ReturnType<typeof setTimeout> | undefined;
       const sleeper = opts.sleep ?? sleepSeam;
-      const slept = !polled
-        ? new Promise<void>(() => {})
-        : sleeper
-          ? sleeper(ms)
-          : new Promise<void>((resolve) => {
-              timer = setTimeout(resolve, ms);
-            });
+      const slept =
+        !polled && hostAt === Number.POSITIVE_INFINITY
+          ? new Promise<void>(() => {})
+          : sleeper
+            ? sleeper(ms)
+            : new Promise<void>((resolve) => {
+                timer = setTimeout(resolve, ms);
+              });
       await Promise.race([woken, slept, stopP]);
       clearTimeout(timer);
       woken = new Promise<void>((resolve) => {

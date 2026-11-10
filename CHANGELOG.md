@@ -29,6 +29,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   answers `accepted runs=0`; an unresolved one answers `unreachable` naming
   the key; a proven `none` fails the attempt and rolls it back (the check
   then asks the channel's receipt, as for any msgId).
+- **Plugins: provider-host facts in mu's reads** (plugins spec P6e2: D10,
+  D16). `mu wait` caps its sleep at the earliest `deadline_at −
+  MU_HOST_DEADLINE_MARGIN_MS` of the provider hosts its watched agents run on
+  (a timer inside the one invocation, like `--timeout`) and fires a new
+  urgent wait event, `deadline` (exit 7, nothing consumed), naming the agent;
+  a ready completion is still returned first. After a `mu wait` fires an
+  agent's settle, or its `deadline`, mu runs one in-life collect of that
+  agent's provider-host tree into its `collect_repo` (`collectAtSettles`):
+  a failure is a stderr warning and backs off (`collect_next_at`), and it
+  never clears `final_owed`. `mu state` and `mu wait` notices name each job
+  record owing its final collect once its job is stopped or its agent gone
+  (`mu agent collect …`), and each agent on a host inside its deadline margin
+  (`mu agent collect …; mu agent close …`). `test/plugin-e2e.integration.test.ts`
+  runs the spec's walkthrough against the fake plugin: register, acquire,
+  `--worktree --task` with push and the brief in `job.start`, wait for the
+  first turn, its in-life collect, send, wait, the deadline event and
+  notices, close with the final collect, release. `docs/reference/plugin-protocol.md`
+  covers the at-start `--task` spawn, its recovery and the host facts.
 
 - **Plugins: the channel adapter, the plugin spawn path and detached views**
   (plugins spec P6e1: D3, D8, D9, D13). A plugin's `channel` seam is a
