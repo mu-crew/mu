@@ -268,7 +268,8 @@ mu host show dev              # templates and the holders of its channels
   control socket, and on a lease agent reports its recorded job handle.
 - A registered plugin can be a host's link instead of `--shell` and
   `--exec`: `mu plugin add box -- /abs/mu-plugin-box`, then `mu host add dev
-  --plugin box --fetch '<fetch cmd>'`. Spawning on such a host is not
+  --plugin box` (plus `--fetch '<fetch cmd>'` when the plugin's link does not
+  fetch). Spawning on such a host is not
   supported yet. See [the plugin protocol](../reference/plugin-protocol.md).
 
 ## Session-capped hosts

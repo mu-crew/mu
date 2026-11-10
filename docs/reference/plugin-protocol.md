@@ -38,11 +38,12 @@ mu plugin rm <name>
 A host profile uses a plugin as its link:
 
 ```sh
-mu host add box --plugin <name> --fetch '<template>' [--repo …] [--max-sessions …]
+mu host add box --plugin <name> [--fetch '<template>'] [--repo …] [--max-sessions …]
 ```
 
 Such a profile has no `--shell` and no `--exec`. Its `--fetch` template
-runs when the plugin's link declares `fetch: false`. Spawning an agent on
+runs when the plugin's link declares `fetch: false`, and is required
+then; a link that declares `fetch: true` needs none. Spawning an agent on
 it is refused until the plugin job kind ships.
 
 ## Transport

@@ -16,7 +16,7 @@ import { addHost, getHost, HostProfileError } from "../src/hosts.js";
 import { PluginNotFoundError, PluginRefusedError } from "../src/plugins/errors.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
-import { type FakePlugin, fakePlugin } from "./_plugin.js";
+import { type FakePlugin, fakePlugin, linkSeam } from "./_plugin.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
@@ -184,6 +184,26 @@ describe("mu host add --plugin", () => {
       dbPath,
     );
     expect(cli.exitCode).toBe(3);
+  });
+
+  it("takes no --fetch when the plugin's link fetches; requires it when the link does not", async () => {
+    await addPlugin(db, "fake", f.argv);
+    const ok = await runCliJson(["host", "add", "box", "--plugin", "fake", "--json"], dbPath);
+    expect(ok.exitCode).toBeNull();
+    expect(getHost(db, "box").fetch).toBe("");
+    const show = await runCli(["host", "show", "box"], dbPath);
+    expect(show.stdout).not.toMatch(/fetch/);
+    const tmpl = await runCliJson(
+      ["host", "add", "dev", "--shell", "true", "--exec", "sh -c {cmd}", "--json"],
+      dbPath,
+    );
+    expect(tmpl.exitCode).not.toBeNull();
+    expect(JSON.stringify(tmpl.doc)).toMatch(/--fetch is required/);
+    const g = fakePlugin(dir, { seams: linkSeam({ fetch: false }) }, "nofetch");
+    await addPlugin(db, "nofetch", g.argv);
+    expect(() =>
+      addHost(db, { name: "box2", plugin: "nofetch", repo: null, max_sessions: null }),
+    ).toThrow(/--fetch is required: plugin nofetch's link does not fetch/);
   });
 
   it("refuses a plugin with no link seam", async () => {

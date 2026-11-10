@@ -182,6 +182,7 @@ export interface HostProfile {
   shell: string | null;
   /** The exec template; null only on a `--plugin` profile, whose link is the plugin. */
   exec: string | null;
+  /** The fetch template; "" only on a `--plugin` profile whose plugin's link fetches. */
   fetch: string;
   /** Default remote repo for a spawn without `--root`; null: none. */
   repo: string | null;
@@ -200,7 +201,8 @@ export interface HostProfile {
   /**
    * The registered plugin that is this host's link (`mu host add --plugin`); null: the
    * templates. A `--plugin` profile has no `shell` or `exec`, keeps its `fetch` template
-   * (run where the plugin's link does not fetch) and is a session profile.
+   * (run where the plugin's link does not fetch; optional where it does) and is a session
+   * profile.
    */
   plugin?: string | null;
 }
@@ -210,13 +212,16 @@ export type HostTransport = (typeof HOST_TRANSPORTS)[number];
 
 /**
  * What `addHost` takes: a session profile needs neither `transport`, `stop` nor `attach`; a
- * probe is never given. `shell` and `exec` are given exactly when `plugin` is not.
+ * probe is never given. `shell` and `exec` are given exactly when `plugin` is not; `fetch`
+ * may be left out only when `plugin`'s link fetches.
  */
 export type NewHostProfile = Omit<
   HostProfile,
-  "shell" | "exec" | "transport" | "stop" | "attach" | "capabilities" | "plugin"
+  "shell" | "exec" | "fetch" | "transport" | "stop" | "attach" | "capabilities" | "plugin"
 > &
-  Partial<Pick<HostProfile, "shell" | "exec" | "transport" | "stop" | "attach" | "plugin">>;
+  Partial<
+    Pick<HostProfile, "shell" | "exec" | "fetch" | "transport" | "stop" | "attach" | "plugin">
+  >;
 
 /** A job handle is opaque to mu: one line of these bytes, never parsed further. */
 export const JOB_HANDLE_RE = /^[A-Za-z0-9._:@-]{1,128}$/;
@@ -263,7 +268,7 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
     name: input.name,
     shell: input.shell ?? null,
     exec: input.exec ?? null,
-    fetch: input.fetch,
+    fetch: input.fetch ?? "",
     repo: input.repo,
     max_sessions: input.max_sessions,
     transport: input.transport ?? "session",
@@ -290,6 +295,7 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
         throw new HostProfileError(`--${f} is required (or --plugin <name>: a plugin as the link)`);
       }
     }
+    if (p.fetch === "") throw new HostProfileError("--fetch is required");
   }
   if (!(HOST_TRANSPORTS as readonly string[]).includes(p.transport)) {
     throw new HostProfileError(
@@ -349,8 +355,12 @@ function refusePluginProfile(db: Db, p: HostProfile): void {
     | { caps_json: string }
     | undefined;
   if (row === undefined) throw new PluginNotFoundError(name);
-  if ((JSON.parse(row.caps_json) as { link?: unknown }).link === undefined) {
+  const link = (JSON.parse(row.caps_json) as { link?: { fetch?: boolean } }).link;
+  if (link === undefined) {
     throw new PluginRefusedError(name, ["it implements no link seam, which a --plugin host needs"]);
+  }
+  if (p.fetch === "" && link.fetch !== true) {
+    throw new HostProfileError(`--fetch is required: plugin ${name}'s link does not fetch`);
   }
 }
 
@@ -636,7 +646,7 @@ function profileTemplateProblem(
           ],
         ]),
     ...(p.exec === null ? [] : [["exec", p.exec, "exec"] as [string, string, HostTemplateScope]]),
-    ["fetch", p.fetch, "fetch"],
+    ...(p.fetch === "" ? [] : [["fetch", p.fetch, "fetch"] as [string, string, HostTemplateScope]]),
     ...(p.stop === null ? [] : [["stop", p.stop, "stop"] as [string, string, HostTemplateScope]]),
     ...(p.attach === null
       ? []
@@ -993,7 +1003,7 @@ export async function runLeasedTemplate(
   localCwd?: string,
 ): Promise<HostRun> {
   const template = profile[field];
-  if (template === null)
+  if (template === null || template === "")
     throw new HostTemplateError(`host ${profile.name} has no ${field} template`);
   const expanded = expandHostTemplate(template, values, field);
   const run = await execGroupCapture("/bin/sh", ["-c", expanded], {

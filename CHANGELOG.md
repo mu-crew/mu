@@ -98,6 +98,8 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   A link may declare `remoteOnTimeout: "stopping"` (its remote run stops
   within one grace after a timed-out reply): mu waits that grace out before
   it returns the run, and counts the link as `stopped`.
+  `mu host add <h> --plugin <p>` takes no `--fetch` when the plugin's link
+  declares `fetch: true` (it is required otherwise, as for a template host).
 - **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
   rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
   goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`

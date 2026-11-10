@@ -68,7 +68,7 @@ export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
     ...(opts.shell !== undefined ? { shell: opts.shell } : {}),
     ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
     ...(opts.plugin !== undefined ? { plugin: opts.plugin } : {}),
-    fetch: opts.fetch,
+    ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
     repo: opts.repo ?? null,
     max_sessions: opts.maxSessions ?? null,
     transport: (opts.transport ?? "session") as HostTransport,
@@ -123,7 +123,7 @@ export function cmdHostShow(db: Db, name: string): void {
   );
   if (host.plugin != null) console.log(`  ${"plugin".padEnd(6)} ${host.plugin}`);
   for (const f of ["shell", "exec", "fetch"] as const) {
-    if (host[f] !== null) console.log(`  ${f.padEnd(6)} ${host[f]}`);
+    if (host[f] !== null && host[f] !== "") console.log(`  ${f.padEnd(6)} ${host[f]}`);
   }
   if (host.stop !== null) console.log(`  ${"stop".padEnd(6)} ${host.stop}`);
   if (host.attach !== null) console.log(`  ${"attach".padEnd(6)} ${host.attach}`);
@@ -227,7 +227,7 @@ export interface HostAddOptions {
   shell?: string;
   exec?: string;
   plugin?: string;
-  fetch: string;
+  fetch?: string;
   repo?: string;
   maxSessions?: number;
   transport?: string;
@@ -258,7 +258,10 @@ export function wireHostCommands(program: Command): void {
       "--plugin <name>",
       "a registered plugin (mu plugin add) runs this host's commands instead of --shell and --exec; --fetch runs where the plugin does not fetch",
     )
-    .requiredOption("--fetch <template>", "local template that fetches commits home ({cwd})")
+    .option(
+      "--fetch <template>",
+      "local template that fetches commits home ({cwd}; required unless --plugin's link fetches)",
+    )
     .option(
       "--repo <path>",
       "default remote repo for `agent spawn --host` without --root (a profile names a machine, not a repo)",
