@@ -194,6 +194,14 @@ describe("superseded results (D2)", () => {
     expect(text).toContain("Delegate answer: call c2,");
     expect(text).not.toContain("Delegate answer: call c1,");
     expect(text).toContain("1 more ready, not yet delivered: delegate c1 done");
+    // The printed result names only what was consumed: the unconsumed firing c1 is left out.
+    const json = text.split(`${RAN} Its result:\n`)[1]?.split("\n")[0] ?? "";
+    const shown = JSON.parse(json) as { firing?: unknown; events?: unknown };
+    expect(shown.firing).toBeUndefined();
+    expect(shown.events).toEqual([{ kind: "delegate", ref: "delegate:c2" }]);
+    expect(text).toContain(
+      "\n\nA newer mu wait of this session began; what is not shown here was not consumed, that wait returns it.",
+    );
     expect(h.delivered).toEqual([["c2"]]);
   });
 

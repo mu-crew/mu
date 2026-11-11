@@ -50,6 +50,7 @@ import {
 } from "../../tools/eval/tournament-build.ts";
 import {
   auditSession,
+  binLinkDirs,
   briefRefusals,
   type DenyContext,
   defaultDenyContext,
@@ -57,6 +58,7 @@ import {
   designerArgs,
   designerEnv,
   homePaths,
+  installDirs,
   nodeInstallDir,
   packTokens,
   scrubPack,
@@ -970,7 +972,8 @@ describe("designer isolation", () => {
       ownPack: "/p",
       ownDdir: "/d",
       caseIds: [],
-      home: dirname(node),
+      // two levels below HOME: a top-level child of HOME is never allowed (installDirs)
+      home: dirname(dirname(node)),
     });
     expect(denyHits(`    at Module._compile (${node}/lib/node_modules/x.js:1:1)`, c)).toEqual([]);
     expect(denyHits(`cat ${dirname(node)}/elsewhere`, c).map((h) => h.rule)).toEqual([
@@ -1002,6 +1005,32 @@ describe("designer isolation", () => {
     expect(denyHits(`cat ${join(home, "mise", "other")}`, c).map((h) => h.rule)).toEqual([
       "under the real HOME",
     ]);
+  });
+
+  it("a bin link into ~/bin allows no store: HOME, its ancestors and its top-level children are never allowed", () => {
+    // rv-hmark: npm -> ~/bin/npm makes the install prefix HOME itself
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-binlink-")));
+    const home = join(tmp, "home");
+    mkdirSync(join(home, "bin"), { recursive: true });
+    writeFileSync(join(home, "bin", "npm"), "");
+    const ddir = join(home, ".cache", "d");
+    mkdirSync(join(ddir, "bin"), { recursive: true });
+    symlinkSync(join(home, "bin", "npm"), join(ddir, "bin", "npm"));
+    expect(binLinkDirs(join(ddir, "bin"))).toContain(home);
+    const c = defaultDenyContext({
+      repo: "/no/such/repo",
+      ownPack: "/no/such/pack",
+      ownDdir: ddir,
+      caseIds: [],
+      home,
+    });
+    expect(c.allow).not.toContain(home);
+    expect(denyHits(`cat ${join(home, ".ssh", "config")}`, c).map((h) => h.rule)).toEqual([
+      "under the real HOME",
+    ]);
+    expect(
+      installDirs([home, tmp, join(home, ".local"), join(home, ".nvm", "v", "n")], home),
+    ).toEqual([join(home, ".nvm", "v", "n")]);
   });
 
   it("audits what the designer did strictly, and excuses what the pack itself shows it", () => {
@@ -1174,13 +1203,23 @@ describe("designer isolation", () => {
         "ls -R /home/u/..",
         "cd / && find . -name x",
         `${"cd ..; ".repeat(8)}rg VERDICT`,
+        // rv-b3b4: a wrapper before the search, a glob above HOME
+        "sudo find / -name '*.jsonl'",
+        "sudo -u root rg -l VERDICT /",
+        "env A=1 timeout 5 find / -name x",
+        "du -sh /home/*",
       ])
         expect(audit(c), c).toContain("search above HOME");
+      for (const c of ["ls /tmp/*", "sudo ls /usr/lib", "du -sh /tmp/x*", "sudo tr / _"])
+        expect(audit(c), c).toEqual([]);
       expect(audit("grep -r VERDICT ~/..")).not.toEqual([]);
       const mac = { ...ctx, home: "/Users/u" };
       expect(denyHits('{"command":"ls /Users"}', mac, ctx.ownPack).map((h) => h.rule)).toEqual([
         "search above HOME",
       ]);
+      expect(
+        denyHits('{"command":"du -sh /Users/*"}', mac, ctx.ownPack).map((h) => h.rule),
+      ).toEqual(["search above HOME"]);
       // a read or ls tool's path is checked too
       expect(denyHits('{"path":"/home"}', ctx, ctx.ownPack).map((h) => h.rule)).toEqual([
         "search above HOME",

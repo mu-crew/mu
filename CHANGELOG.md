@@ -375,6 +375,22 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   CONFIRMED (the template's first choice) and a review closed on it. Two or
   more labels joined by `|` are now the template and skipped; a line with only
   the template reads UNVERIFIED. A plain verdict line reads as before.
+- **A partly superseded settle shows only what it consumed.** When a newer
+  `mu wait` superseded the settle's wait after it consumed part of the batch,
+  the entry's printed result still carried the unconsumed `firing`. It now
+  prints only the consumed events and says the newer wait returns the rest.
+- **Eval: audit and judge gaps from the B3/B4 reviews** (f_low_batch3). The
+  designer audit sees a search behind a wrapper (`sudo find /`, `env … timeout
+  5 rg x /`) and a glob above HOME (`du -sh /Users/*` names `/Users`), and never
+  allows an install dir that is HOME or a top-level child of it (a bin link into
+  `~/bin`). The next-step judge counts a `| jq .` rendering as shown, caps a
+  shim span at 5 s past its call, and fails an answer that names the shim's
+  logs (`mu-shim.log`, `mu-calls.log`, `$EVAL_WORKER_DIR`). The R4 tests pin the
+  per-cell new-vs-base check and the half-exposed threshold;
+  `tournament-r4.test.ts` is split in two (shared fixtures in
+  `test/eval/_r4-fixtures.ts`). The report says the end-to-end figure is
+  computed from the null false-loss bounds, and rig-guard's canary test prints
+  the exact line a file lacks.
 - **The public tree stays scrubbed.** `docs/eval/hill-r2/baseline.md` had
   regained an absolute home path from a pre-audit branch; it now reads `~/`.
   `test/public-tree.test.ts` scans every tracked text file and fails on a

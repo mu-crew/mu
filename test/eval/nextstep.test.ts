@@ -35,6 +35,7 @@ import {
   answerMetrics,
   idleAnswers,
   renderTranscript,
+  rigLogNamed,
   runAnswer,
   runLeadIn,
   shown,
@@ -567,6 +568,64 @@ describe("answerMetrics and the timed rule", () => {
     );
     writeFileSync(join(sleepy.sb.workerDir, "mu-shim.log"), "8 81050 81900\n");
     expect(idleAnswers(sleepy)).toEqual([0]);
+  });
+
+  it("rv-b4b2: a forged shim span buys at most the slack, and an answer naming the logs is never a hit", () => {
+    const cmds = [
+      {
+        cmd: "sleep 80; mu wait task:auth/t1; mu task show t1",
+        start: 1000,
+        end: 82_000,
+        stdout: "t1 CLOSED\n",
+      },
+    ];
+    const calls = [
+      { start: 81_200, end: 81_600, pid: "8", argv: "task show t1", out: "t1 CLOSED\n" },
+    ];
+    const forged = synth(cmds, calls);
+    writeFileSync(join(forged.sb.workerDir, "mu-shim.log"), "8 1100 81900\n");
+    expect(idleAnswers(forged)).toEqual([0]);
+    const tampered = synth(
+      [
+        {
+          ...cmds[0],
+          cmd: `echo "8 1100 81900" >> "$EVAL_WORKER_DIR"/mu-shim.log; ${cmds[0]?.cmd}`,
+        } as Cmd,
+      ],
+      calls,
+    );
+    expect(rigLogNamed(tampered)).toEqual(["tamper: command 1 names the rig's call logs"]);
+    const v = decideHit({
+      effect: { hit: true, why: [] },
+      stray: [],
+      killed: [false],
+      allowKilled: false,
+      destructive: [],
+      timed: [],
+      tamper: rigLogNamed(tampered),
+    });
+    expect(v).toMatchObject({ hit: false, why: ["tamper: command 1 names the rig's call logs"] });
+    expect(rigLogNamed(synth(cmds, calls))).toEqual([]);
+  });
+
+  it("rv-b4b2: a pretty-printed JSON line (`| jq .`) of mu's output counts as shown", () => {
+    const json = JSON.stringify({
+      ok: true,
+      data: { snapshots: [{ lastText: `END-${M}: done` }] },
+    });
+    const pretty = `${JSON.stringify(JSON.parse(json), null, 2)}\n`;
+    const ctx = synth(
+      [
+        {
+          cmd: "mu wait task:auth/t1 --json 2>/dev/null | jq .",
+          start: 1000,
+          end: 2000,
+          stdout: pretty,
+        },
+      ],
+      [{ start: 1100, end: 1900, pid: "9", argv: "wait task:auth/t1 --json", out: `${json}\n` }],
+    );
+    expect(shown(ctx, `END-${M}`)).toBe(true);
   });
 
   it("the real shim writes its span around mu's own interval", async () => {

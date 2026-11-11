@@ -35,6 +35,7 @@ import {
   GAP_MS,
   ORCH_SESSION,
   renderTranscript,
+  rigLogNamed,
   runAnswer,
   runLeadIn,
   sleep,
@@ -541,6 +542,7 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
       allowKilled: c.allowKilled === true,
       destructive: row.destructive.map((d) => d.entry),
       timed: c.timed ? timedViolations(ctx) : [],
+      tamper: rigLogNamed(ctx),
     });
     row.hit = v.hit;
     row.partial = v.partial;

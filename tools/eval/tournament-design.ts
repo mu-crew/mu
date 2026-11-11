@@ -94,8 +94,7 @@ export function defaultDenyContext(o: {
     ownPack: resolve(o.ownPack),
     ownDdir: resolve(o.ownDdir),
     allow: [
-      nodeInstallDir(),
-      ...binLinkDirs(join(resolve(o.ownDdir), "bin")),
+      ...installDirs([nodeInstallDir(), ...binLinkDirs(join(resolve(o.ownDdir), "bin"))], home),
       ...(o.providerExt ? [resolve(o.providerExt)] : []),
       dirname(realpathOr(REAL_PI)),
     ],
@@ -129,6 +128,19 @@ export function binLinkDirs(binDir: string): string[] {
     out.add(nodeInstallDir(resolve(binDir, target)));
   }
   return [...out];
+}
+
+/**
+ * The install dirs safe to allow under `home`: never HOME itself, an ancestor of it, or a top-level
+ * child of it. A link into `~/bin` (npm -> ~/bin/npm) makes its prefix HOME, and allowing that, or
+ * `~/.local` or `~/opt`, would allow every store under it (rv-hmark).
+ */
+export function installDirs(dirs: readonly string[], home: string): string[] {
+  const h = resolve(home);
+  return [...new Set(dirs)].filter((d) => {
+    const p = resolve(d);
+    return p !== h && !ancestor(p, h) && dirname(p) !== h;
+  });
 }
 
 /** node's install dir: the prefix above `bin/node` (`~/.nvm/versions/node/v22`, a mise install), else its dir. */

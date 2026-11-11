@@ -28,7 +28,7 @@ n plan:
 - CMH loss power per model at the planned per-case n_eff (α 0.05/3, cold-guess stratum not counted): 0.8→0.7 0.27, 0.8→0.75 0.07.
 - R4 loss power per model (Fisher, 0.8 → 0.5, α 0.05/3; 48 runs wanted): k = 1: n 48, 0.80.
 - **False wins are controlled per group, not across groups.** Each group lands a false R2 win with probability at most 0.05; over the 6 groups the chance of at least one false winner in the combined surface is up to 1 − 0.95^6 = 0.26. The holdouts are a no-regression check only: they cannot catch a false win.
-- **End-to-end power.** A real 0.5 → 0.8 fix must survive a false loss in R1 (≤ 0.1), R2 (≤ 0.1) and R4 (≤ 0.05) and win R2: (1 − 0.1)·(1 − 0.1)·(1 − 0.05)·0.99 ≈ 0.76. The R1 cut and the holdout gate are not counted, so this is an upper bound.
+- **End-to-end power.** A real 0.5 → 0.8 fix must survive a false loss in R1 (≤ 0.1), R2 (≤ 0.1) and R4 (≤ 0.05) and win R2: (1 − 0.1)·(1 − 0.1)·(1 − 0.05)·0.99 ≈ 0.76. Each false-loss term is that round's bound under the null hypothesis (a variant no better or worse than base), not a rate measured on a real fix, and the R1 cut and the holdout gate are not counted: the figure is computed from those bounds, not an upper bound.
 
 Designer sessions:
 

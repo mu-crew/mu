@@ -274,7 +274,7 @@ function powerSection(p: PowerFacts): string[] {
     `- CMH loss power per model at the planned per-case n_eff (α 0.05/3, cold-guess stratum not counted): ${p.cmh.map((c) => `${c.drop} ${f2(c.power)}`).join(", ")}.`,
     `- R4 loss power per model (Fisher, 0.8 → 0.5, α 0.05/3; ${R4_RUNS} runs wanted): ${p.r4.map((r) => `k = ${r.k}: n ${r.n}, ${f2(r.power)}`).join("; ")}.`,
     `- **False wins are controlled per group, not across groups.** Each group lands a false R2 win with probability at most ${ALPHA}; over the ${GROUPS_N} groups the chance of at least one false winner in the combined surface is up to 1 − 0.95^${GROUPS_N} = ${f2(p.falseWinAny)}. The holdouts are a no-regression check only: they cannot catch a false win.`,
-    `- **End-to-end power.** A real 0.5 → 0.8 fix must survive a false loss in R1 (≤ ${FALSE_LOSS.r1}), R2 (≤ ${FALSE_LOSS.r2}) and R4 (≤ ${FALSE_LOSS.r4}) and win R2: (1 − ${FALSE_LOSS.r1})·(1 − ${FALSE_LOSS.r2})·(1 − ${FALSE_LOSS.r4})·${f2(p.winPower)} ≈ ${f2(p.endToEnd)}. The R1 cut and the holdout gate are not counted, so this is an upper bound.`,
+    `- **End-to-end power.** A real 0.5 → 0.8 fix must survive a false loss in R1 (≤ ${FALSE_LOSS.r1}), R2 (≤ ${FALSE_LOSS.r2}) and R4 (≤ ${FALSE_LOSS.r4}) and win R2: (1 − ${FALSE_LOSS.r1})·(1 − ${FALSE_LOSS.r2})·(1 − ${FALSE_LOSS.r4})·${f2(p.winPower)} ≈ ${f2(p.endToEnd)}. Each false-loss term is that round's bound under the null hypothesis (a variant no better or worse than base), not a rate measured on a real fix, and the R1 cut and the holdout gate are not counted: the figure is computed from those bounds, not an upper bound.`,
     "",
   ];
 }
