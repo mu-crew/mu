@@ -10,6 +10,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- The U0 spike kit (`spike/u0/`) is removed; its results stay in the
+  every-harness spec.
+
 ## [5.0.0] — 2026-11-11
 
 mu gets plugins: a registered executable (`mu plugin add`) can supply a

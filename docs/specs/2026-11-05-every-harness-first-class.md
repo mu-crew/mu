@@ -942,8 +942,9 @@ the paths it touches.
 
 The local half of U0 ran on macOS with Claude Code 2.1.310, Codex 0.164.0,
 cursor-agent 2026.10.22 and Muse Code 1.4.15. Each ran in a pane of the
-user's tmux server, through the kit in `spike/u0/`: a logging hook on every
-event, plus a driver that pastes test prompts. The D6 table holds the
+user's tmux server, through a kit once in `spike/u0/` (removed after
+5.0.0; see git history): a logging hook on every event, plus a driver
+that pastes test prompts. The D6 table holds the
 per-harness facts. In summary:
 
 - Hooks of all four could write all four crew state directories and reach
