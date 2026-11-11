@@ -14,7 +14,7 @@ import {
   probeExposure,
   winClusters,
 } from "./exposure.ts";
-import { infraCluster } from "./infra-retry.ts";
+import { clusterOf, MAX_DROPPED_SHARE, pairing } from "./infra-retry.ts";
 import type { Group, NameCue, ProbeRow } from "./nextstep.ts";
 import { cmh, deff, fisher, holm, kish, type Stratum } from "./stats.ts";
 import {
@@ -75,8 +75,21 @@ export interface VariantScore {
   attributable: string[];
   reviews: Omit<ReviewStopRow, "kind" | "id">[];
   invalidRows: number;
-  /** Host noise (infra-retry.ts): retries taken, rows left out, clusters dropped from both sides. */
-  infra: { retries: number; excludedRows: number; droppedClusters: number };
+  /**
+   * Failed rows (infra-retry.ts): retries taken, rows recovered by a retry, rows that failed every
+   * try, pairings dropped from both sides because base's row failed every try too (and the clusters
+   * they touch of `clusters`), and `undecided` when that exceeds MAX_DROPPED_SHARE: no win.
+   */
+  infra: {
+    retries: number;
+    recovered: number;
+    failedRows: number;
+    droppedPairings: number;
+    droppedClusters: number;
+    clusters: number;
+    dropped: string[];
+    undecided?: string;
+  };
   r1Score: number;
   wins: number;
   winZ: number;
@@ -144,7 +157,7 @@ const exitClass = (e: number): string => (e === 0 ? "0" : e === -1 ? "killed" : 
 function baseLeadIn(rows: readonly ProbeRow[]): Map<string, string> {
   const counts = new Map<string, Map<string, number>>();
   for (const r of rows) {
-    if (r.surface !== BASE || r.invalid || r.infra !== undefined) continue;
+    if (r.surface !== BASE || r.invalid) continue;
     const k = `${r.case}|${r.leadIn}`;
     const v = (r.leadInExits ?? []).map(exitClass).join(",");
     const m = counts.get(k) ?? new Map<string, number>();
@@ -174,7 +187,8 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
   const rhoOf = (c: string, m: string): number => o.setup.rho[c]?.[m] ?? DEFAULT_RHO;
   const baseClasses = baseLeadIn(o.rows);
   const allBase = o.rows.filter((r) => r.surface === BASE);
-  const baseInfra = new Set(allBase.filter((r) => r.infra !== undefined).map(infraCluster));
+  // base rows that failed every try: their pairing is host trouble, dropped from both sides
+  const baseFailed = new Set(allBase.filter((r) => r.infraFail !== undefined).map(pairing));
   const decided = new Map((o.decisions ?? []).map((d) => [d.stop, d.decision]));
   const cases = [...new Set(o.rows.map((r) => r.case))].sort();
   const out: VariantScore[] = [];
@@ -184,15 +198,14 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
     );
     const eliminated: string[] = [];
     let invalidRows = 0;
-    // an infra-invalid row on either side drops its cluster from both: never a loss, never invalid
+    // a pairing whose base row failed every try is dropped from both sides; a variant row that
+    // failed every try beside a base row that ran is the variant's own failure: invalid, as before
     const own = o.rows.filter((r) => r.surface === v.id);
-    const dropped = new Set([
-      ...baseInfra,
-      ...own.filter((r) => r.infra !== undefined).map(infraCluster),
-    ]);
-    const baseRows = allBase.filter((r) => !dropped.has(infraCluster(r)));
+    const droppedRows = own.filter((r) => baseFailed.has(pairing(r)));
+    const dropped = new Set(droppedRows.map(pairing));
+    const baseRows = allBase.filter((r) => !baseFailed.has(pairing(r)));
     const vRows = own
-      .filter((r) => !dropped.has(infraCluster(r)))
+      .filter((r) => !dropped.has(pairing(r)))
       .map((r) => {
         const want = baseClasses.get(`${r.case}|${r.leadIn}`);
         const got = (r.leadInExits ?? []).map(exitClass).join(",");
@@ -347,6 +360,14 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
         w.win = Object.values(w.direction).every(Boolean) && !lostHere;
       });
     }
+    // ---- too many pairings dropped: the comparison is the host's, not the variant's; no win
+    const clusters = new Set(own.map(clusterOf));
+    const droppedClusters = new Set(droppedRows.map(clusterOf));
+    const undecided =
+      droppedClusters.size > MAX_DROPPED_SHARE * clusters.size
+        ? `undecided: ${droppedClusters.size} of ${clusters.size} clusters lost a pairing to base rows that failed every try (> ${MAX_DROPPED_SHARE * 100}%)`
+        : undefined;
+    if (undecided !== undefined) for (const w of win) w.win = false;
     // ---- destructive entries: attributable eliminates; new against base stops for review
     const attributable: string[] = [];
     const reviews: VariantScore["reviews"] = [];
@@ -401,9 +422,16 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
       invalidRows,
       infra: {
         retries: own.reduce((t, r) => t + (r.infraRetries ?? 0), 0),
-        excludedRows: own.filter((r) => r.infra !== undefined).length,
-        droppedClusters: new Set([...dropped].filter((k) => own.some((r) => infraCluster(r) === k)))
-          .size,
+        recovered: own.filter((r) => (r.infraRetries ?? 0) > 0 && r.infraFail === undefined).length,
+        failedRows: own.filter((r) => r.infraFail !== undefined).length,
+        droppedPairings: dropped.size,
+        droppedClusters: droppedClusters.size,
+        clusters: clusters.size,
+        dropped: droppedRows.map(
+          (r) =>
+            `${pairing(r)}: ${r.infraFail !== undefined ? "both failed every try" : "base failed every try"}`,
+        ),
+        ...(undecided !== undefined ? { undecided } : {}),
       },
       r1Score: win.reduce((t, w) => t + w.z, 0),
       wins: winsN,
@@ -471,7 +499,7 @@ export function cut(
   scores: readonly VariantScore[],
 ): { ranking: string[]; eligible: string[]; advance: number; advanced: string[] } {
   const ranked = rank(round, scores);
-  const alive = ranked.filter((s) => s.eliminated.length === 0);
+  const alive = ranked.filter((s) => s.eliminated.length === 0 && s.infra.undecided === undefined);
   const eligible = (
     round === "r1" ? alive.filter((s) => s.r1Score > 0) : alive.filter((s) => s.wins > 0)
   ).map((s) => s.id);
@@ -577,15 +605,22 @@ export function decideFast(scores: readonly VariantScore[]): {
   why: string;
 } {
   const ranked = scores
-    .filter((s) => s.eliminated.length === 0 && s.reviews.length === 0 && s.wins > 0)
+    .filter(
+      (s) =>
+        s.eliminated.length === 0 &&
+        s.reviews.length === 0 &&
+        s.infra.undecided === undefined &&
+        s.wins > 0,
+    )
     .sort((a, b) => b.winZ - a.winZ || a.textDelta - b.textDelta || a.id.localeCompare(b.id));
   const w = ranked[0];
   if (!w) {
     const out = scores.filter((s) => s.eliminated.length > 0).map((s) => s.id);
+    const und = scores.filter((s) => s.infra.undecided !== undefined).map((s) => s.id);
     return {
       winner: null,
       ranking: [],
-      why: `fast: no surviving variant with a win${out.length > 0 ? ` (eliminated: ${out.join(", ")})` : ""}: base stays`,
+      why: `fast: no surviving variant with a win${out.length > 0 ? ` (eliminated: ${out.join(", ")})` : ""}${und.length > 0 ? ` (undecided, too many pairings dropped: ${und.join(", ")})` : ""}: base stays`,
     };
   }
   const cases = w.win.filter((x) => x.win).map((x) => `${x.case} z ${x.z.toFixed(2)}`);

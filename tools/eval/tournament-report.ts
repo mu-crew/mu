@@ -423,9 +423,19 @@ function caseResult(s: VariantScore, c: string): string {
   return `tie${cue}`;
 }
 
-/** Host noise per variant (infra-retry.ts). */
+/** Failed rows per variant (infra-retry.ts); UNDECIDED when too many pairings were dropped. */
 export const infraLine = ({ infra: i }: Pick<VariantScore, "infra">): string =>
-  `Infra: ${i.retries} retries, ${i.excludedRows} rows infra-invalid (left out), ${i.droppedClusters} cluster pairings dropped from both sides`;
+  `Infra: ${i.retries} retries, ${i.recovered} rows recovered by a retry, ${i.failedRows} rows failed every try (invalid unless base's failed too), ${i.droppedPairings} pairings dropped from both sides (base's row failed every try) in ${i.droppedClusters} of ${i.clusters} clusters${i.undecided !== undefined ? `; UNDECIDED (no win): ${i.undecided}` : ""}`;
+
+/** Each dropped pairing and why, the first `max`. */
+export const droppedLines = ({ infra: i }: Pick<VariantScore, "infra">, max = 10): string[] =>
+  i.dropped.length === 0
+    ? []
+    : [
+        "",
+        ...i.dropped.slice(0, max).map((d) => `- dropped ${d}`),
+        ...(i.dropped.length > max ? [`- … ${i.dropped.length - max} more`] : []),
+      ];
 
 function roundSection(rows: readonly ControlRow[], round: "r1" | "r2", epoch: number): string[] {
   const out = [`### ${round.toUpperCase()}`, ""];
@@ -462,7 +472,9 @@ function roundSection(rows: readonly ControlRow[], round: "r1" | "r2", epoch: nu
       "",
       `Keys: R1 score ${f2(s.r1Score)}, wins ${s.wins}, win z ${f2(s.winZ)}, exposed weak hits ${s.hitsExposed}, mean tokens ${s.meanTokens.toFixed(0)}, text delta ${s.textDelta}; eliminated: ${s.eliminated.join(", ") || "no"}`,
       // scores from before the retry rule carry no infra counts
-      ...((s as Partial<VariantScore>).infra ? ["", infraLine(s)] : []),
+      ...((s as Partial<VariantScore>).infra?.clusters !== undefined
+        ? ["", infraLine(s), ...droppedLines(s)]
+        : []),
       "",
     );
   }

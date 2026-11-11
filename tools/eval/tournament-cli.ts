@@ -90,7 +90,7 @@ import {
 } from "./tournament-design.ts";
 import { parseManifest } from "./tournament-patch.ts";
 import { EXIT_REVIEW, runFinal, runR4Gate, runScan } from "./tournament-r4.ts";
-import { writeReport } from "./tournament-report.ts";
+import { infraLine, writeReport } from "./tournament-report.ts";
 import { BASE, cut, decideFast, scoreRound } from "./tournament-score.ts";
 import type { Surface } from "./types.ts";
 
@@ -507,7 +507,7 @@ async function round(
   if (fast) {
     for (const s of scores)
       console.log(
-        `${s.id}: fast wins ${s.wins} (z ${s.winZ.toFixed(2)}), infra ${s.infra.retries} retries / ${s.infra.excludedRows} excluded${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
+        `${s.id}: fast wins ${s.wins} (z ${s.winZ.toFixed(2)}), ${infraLine(s)}${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
       );
     console.log(`fast mode: no cut; next \`tournament decide --fast ${group}\``);
     return 0;
@@ -516,7 +516,7 @@ async function round(
   appendControl(dir, { kind: "cut", round: which, epoch, ...c });
   for (const s of scores)
     console.log(
-      `${s.id}: ${which === "r1" ? `score ${s.r1Score.toFixed(2)}` : `wins ${s.wins}`}${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
+      `${s.id}: ${which === "r1" ? `score ${s.r1Score.toFixed(2)}` : `wins ${s.wins}`}${s.infra.undecided !== undefined ? " UNDECIDED" : ""}${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
     );
   console.log(`${which} cut: advance ${c.advance}: ${c.advanced.join(", ") || "none"}`);
   if (which === "r2" && c.advance === 0)

@@ -407,7 +407,7 @@ export const LOSS_FAMILY = 45;
  */
 export function rhoFromB5(
   probe: readonly (Pick<ProbeRow, "case" | "arm" | "paraphrase" | "model" | "hit" | "modelError"> &
-    Partial<Pick<ProbeRow, "rigReads" | "infra">>)[],
+    Partial<Pick<ProbeRow, "rigReads" | "infraFail">>)[],
   cold: readonly Pick<ColdRow, "intent" | "model" | "hit" | "modelError">[],
   models: { weak: readonly string[]; gate: string },
 ): Pick<SetupRow, "rho" | "rhoPool"> {
@@ -415,9 +415,10 @@ export function rhoFromB5(
   const rho: SetupRow["rho"] = {};
   const rhoPool: SetupRow["rhoPool"] = {};
   // a rig read (rig-guard.ts) is an invalid row, not a reading outcome either
-  // and an infra-invalid row (infra-retry.ts) is host noise
+  // and a row that failed every try (infra-retry.ts) never reached the model
   const ok = probe.filter(
-    (r) => r.modelError === undefined && (r.rigReads?.length ?? 0) === 0 && r.infra === undefined,
+    (r) =>
+      r.modelError === undefined && (r.rigReads?.length ?? 0) === 0 && r.infraFail === undefined,
   );
   for (const c of [...new Set(ok.map((r) => r.case))]) {
     const rows: IccRow[] = ok

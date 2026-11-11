@@ -25,7 +25,7 @@ import { type Claim, rowPool } from "./claim.ts";
 import { askModel, buildId, extractCommand, firstReach, muInText } from "./cold-guess.ts";
 import { neutralityLeaks, runHelp, surfaceVocab } from "./cold-help.ts";
 import type { ColdEffect, GuessRun } from "./cold-intents.ts";
-import { leadInFault, VARIANT_FAILS_TO_STOP, withInfraRetry } from "./infra-retry.ts";
+import { leadInFault, withInfraRetry } from "./infra-retry.ts";
 import { NEXT_CASES } from "./nextstep-cases.ts";
 import {
   answerCalls,
@@ -154,7 +154,7 @@ export interface RunNextOpts {
   providerExt?: string;
   cases?: NextCase[];
   onRow?: (row: ProbeRow) => void;
-  /** Waits before each host-noise retry (infra-retry.ts INFRA_BACKOFF_MS). */
+  /** Waits before each failed-row retry (infra-retry.ts INFRA_BACKOFF_MS). */
   infraBackoffMs?: readonly number[];
 }
 
@@ -197,12 +197,14 @@ export interface ProbeRow {
   rigReads?: string[];
   /** The row never ran: its sandbox or the rig threw (infra-retry.ts). */
   rigError?: string;
-  /** A lead-in step timed out unasked, or exited 128+ on host stderr (infra-retry.ts). */
+  /** A lead-in step timed out without asking to be killed (infra-retry.ts). */
   leadInFault?: string;
-  /** Host-noise retries this row took (infra-retry.ts). */
+  /** Retries this failed row took (infra-retry.ts). */
   infraRetries?: number;
-  /** Infra-invalid: still failing on host stderr after the retries; left out of scoring with its pairing. */
-  infra?: string;
+  /** Every try failed: why (infra-retry.ts). Invalid; dropped with its pairing only when base's also failed. */
+  infraFail?: string;
+  /** Label of `infraFail`: it names the host (tmux, git, sandbox). Never decides exclusion. */
+  infraHost?: boolean;
 }
 
 // ---- prompt -------------------------------------------------------------------------------------
@@ -655,14 +657,11 @@ export async function runNext(o: RunNextOpts): Promise<{ written: number; skippe
     return l;
   };
   let written = 0;
-  // per surface and case: rows that failed every try without host stderr (the variant's own failure)
-  const variantFails = new Map<string, number>();
   const worker = async (claim: Claim): Promise<void> => {
     for (let job = queue.shift(); job !== undefined; job = queue.shift()) {
       const c = byId.get(job.caseId);
       if (!c) continue;
       const para = c.paraphrases.find((p) => p.id === job.paraphrase);
-      const failKey = `${job.surfaceLabel}|${c.id}`;
       try {
         // each try under its own claim; a throw (no sandbox) is a row with `rigError`
         const once = (): Promise<ProbeRow> =>
@@ -689,13 +688,10 @@ export async function runNext(o: RunNextOpts): Promise<{ written: number; skippe
             r.why.push(r.rigError);
             return r;
           });
-        const { row, persistent } = await withInfraRetry(once, {
+        const row = await withInfraRetry(once, {
           ...(o.infraBackoffMs ? { backoffMs: o.infraBackoffMs } : {}),
-          mayRetry: () => (variantFails.get(failKey) ?? 0) < VARIANT_FAILS_TO_STOP,
           log: (l) => console.error(`nextstep ${l}`),
         });
-        if (persistent !== null && !persistent.host)
-          variantFails.set(failKey, (variantFails.get(failKey) ?? 0) + 1);
         row.round = job.round;
         row.group = job.group;
         row.model = job.model;

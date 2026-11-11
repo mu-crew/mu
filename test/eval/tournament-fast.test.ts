@@ -277,6 +277,7 @@ describe("fast win rule (decide --fast)", () => {
         winZ: 3,
         textDelta: 1,
         win: [],
+        infra: {},
         ...over,
       }) as VariantScore;
     expect(decideFast([s({ eliminated: ["loss (per-case Holm)"] })]).winner).toBeNull();
