@@ -10,6 +10,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [5.0.0] — 2026-11-11
+
+mu gets plugins: a registered executable (`mu plugin add`) can supply a
+remote or elastic backend's hosts, links, jobs and channels over a versioned
+JSON-RPC protocol on stdio (`docs/reference/plugin-protocol.md`), with mu
+owning every state machine, a write-ahead effects journal and
+reconcile-by-asking (spec `docs/specs/2026-11-09-mu-plugins.md`). Provider
+hosts are acquired, drained and released (`mu host acquire|drain|release`).
+**Breaking:** schema 14 and a new state directory, `~/.local/state/mu5`.
+The first mu 5 verb imports mu 4's DB once (it refuses while agents, lease
+reservations or delegate calls are live, and never writes `mu-next`); mu 4
+builds refuse the new DB. With no plugin registered, everyday verbs behave as
+in 4.6.0.
+
 ### Added
 
 - **Plugins: an at-start first turn under `--task`, and its recovery**
