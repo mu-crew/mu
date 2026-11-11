@@ -62,9 +62,25 @@ reports `EffectOutcomeUnknownError` (exit 1) and never resends.
 `mu agent check <agent> <msgId>` asks the plugin and settles it. Closing the
 agent drops whatever is still unresolved.
 
+## Try the example
+
+[`examples/plugins/mu-plugin-ssh`](../../examples/plugins/mu-plugin-ssh) is
+a plugin of about 200 lines that gives a host a link over plain ssh. The mu
+host's name is the ssh destination:
+
+```bash
+mu plugin add ssh -- "$(npm root -g)/@mu-crew/mu/examples/plugins/mu-plugin-ssh"
+mu host add devbox --plugin ssh
+mu host check devbox
+```
+
+It declares only the link seam, so no agent spawns on it. If your npm
+install is owned by root, copy the file somewhere you own first: mu refuses
+a plugin someone else can write.
+
 ## Write a plugin
 
-The contract is [the plugin protocol](../reference/plugin-protocol.md), with
+Start from the example. The contract is [the plugin protocol](../reference/plugin-protocol.md), with
 its schema in [`schemas/plugin-protocol-v1.json`](../../schemas/plugin-protocol-v1.json).
 [`test/_fake-plugin.mjs`](../../test/_fake-plugin.mjs) implements
 every seam (job, channel, host) for mu's tests. The design is in

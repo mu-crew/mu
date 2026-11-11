@@ -16,6 +16,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   provider host, unknown outcomes, where to start writing one), linked from
   the guide index and `remote.md`. `mu plugin --help` names every seam and
   everything `mu plugin rm` refuses over.
+- An example plugin, `examples/plugins/mu-plugin-ssh` (shipped in the
+  package): a host link over plain ssh, in about 200 lines. The link contract
+  suites run against it with a stand-in `ssh`.
 - The U0 spike kit (`spike/u0/`) is removed; its results stay in the
   every-harness spec.
 

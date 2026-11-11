@@ -22,7 +22,7 @@ import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { narrowSeams } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
-import { fakePlugin, linkSeam } from "./_plugin.js";
+import { fakePlugin, linkSeam, sshExample } from "./_plugin.js";
 
 interface Impl {
   name: string;
@@ -58,6 +58,18 @@ const IMPLS: Impl[] = [
       return {
         handBack: () => f.set({ faults: { "link.exec": ["human"] } }),
         fingerprint: "plugin:fake:fake-1",
+      };
+    },
+    call: { holder: "contract" },
+  },
+  {
+    name: "ssh",
+    async setup(db, dir, home) {
+      await addPlugin(db, "ssh", sshExample(dir, home));
+      addHost(db, { name: "dev", plugin: "ssh", fetch: "true", repo: null, max_sessions: null });
+      return {
+        handBack: () => writeFileSync(join(dir, "handback"), ""),
+        fingerprint: "plugin:ssh:ssh",
       };
     },
     call: { holder: "contract" },
@@ -103,7 +115,7 @@ describe.each(IMPLS)("the link contract: $name", (impl) => {
     const c = h.link.caps;
     // Every declared value is one the protocol admits (the template measures its exec instead).
     expect(narrowSeams({ link: { ...c, maxScriptBytes: c.maxScriptBytes ?? 1 } }).ok).toBe(true);
-    expect(h.link.name).toBe(impl.name === "template" ? "template" : "fake");
+    expect(h.link.name).toBe({ template: "template", plugin: "fake", ssh: "ssh" }[impl.name]);
   });
 
   it("runs a POSIX sh script in the remote cwd: exit code, stdout and stderr whole", async () => {
@@ -184,7 +196,9 @@ describe.each(IMPLS)("the link contract: $name", (impl) => {
       }
       expect(steps.length, phase).toBeGreaterThan(0);
       expect(steps[0]?.ok).toBe(true);
-      if (impl.name === "plugin") for (const s of steps) expect(s.step).toMatch(/^fake:/);
+      if (impl.name !== "template") {
+        for (const s of steps) expect(s.step).toMatch(new RegExp(`^${h.link.name}:`));
+      }
     }
   });
 });

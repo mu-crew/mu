@@ -127,3 +127,34 @@ export function providerSeams(
     host: { acquire: { lookup: true, dedupe: { exact: true, windowMs: 60_000 }, fenceKey: true } },
   };
 }
+
+/** The shipped example plugin (examples/plugins/mu-plugin-ssh). */
+export const SSH_EXAMPLE = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "examples",
+  "plugins",
+  "mu-plugin-ssh",
+);
+
+/**
+ * A stand-in `ssh` for the example plugin: skips ssh's options (git passes `-o`, `-p`), takes the
+ * destination, and runs the remote command with /bin/sh in `home`. With `<dir>/handback` present
+ * it fails as ssh does on a refused key. Returns the argv for `mu plugin add ssh --`.
+ */
+export function sshExample(dir: string, home: string): string[] {
+  const bin = join(dir, "bin");
+  mkdirSync(bin, { recursive: true });
+  const fake = join(bin, "fake-ssh");
+  writeFileSync(
+    fake,
+    `#!/bin/sh
+while :; do case "$1" in -o|-p|-J) shift 2 ;; -*) shift ;; *) break ;; esac; done
+shift
+[ -f '${join(dir, "handback")}' ] && { echo 'user@dev: Permission denied (publickey).' >&2; exit 255; }
+cd '${home}' && exec /bin/sh -c "$*"
+`,
+  );
+  chmodSync(fake, 0o755);
+  return [SSH_EXAMPLE, fake];
+}

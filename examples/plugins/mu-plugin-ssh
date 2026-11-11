@@ -1,0 +1,196 @@
+#!/usr/bin/env node
+// mu-plugin-ssh: a minimal example mu plugin. It provides one seam, the host
+// link, over plain ssh. Read it next to docs/reference/plugin-protocol.md.
+//
+//   mu plugin add ssh -- /abs/path/mu-plugin-ssh [ssh command…]
+//   mu host add devbox --plugin ssh
+//   mu host check devbox
+//
+// The mu host's name is the ssh destination, so give it a ~/.ssh/config
+// alias. Words after the path replace the ssh command (default: `ssh`), e.g.
+// `-- /abs/mu-plugin-ssh ssh -o BatchMode=yes -J jump`. The remote login
+// shell must be POSIX-like: the plugin sends it `cd <cwd> && exec /bin/sh -c`.
+//
+// The plugin declares no job seam, so mu spawns no agents through it. See
+// test/_fake-plugin.mjs for the job, channel and host seams.
+
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+// The digest of the schema this plugin was written against. mu refuses a
+// plugin whose digest is not the published file's; this one reads the copy
+// shipped beside it in the mu package.
+const SCHEMA = join(
+  dirname(realpathSync(fileURLToPath(import.meta.url))),
+  "..",
+  "..",
+  "schemas",
+  "plugin-protocol-v1.json",
+);
+const DIGEST = `sha256:${createHash("sha256").update(readFileSync(SCHEMA)).digest("hex")}`;
+
+const SSH = process.argv.length > 2 ? process.argv.slice(2) : ["ssh"];
+/** Each stream is cut here, so a reply stays under the protocol's 1 MiB line limit. */
+const MAX_OUTPUT = 256 * 1024;
+const SEAMS = {
+  link: {
+    fetch: true, // link.fetch brings a remote HEAD home, so a host needs no --fetch
+    slots: "mu", // every call is one ssh connection: mu counts them against --max-sessions
+    remoteOnTimeout: "unknown", // killing ssh does not prove the remote script stopped
+    quiescence: "provable", // mu's own scans see the host's processes
+    maxScriptBytes: 128 * 1024,
+    checks: ["reach"],
+  },
+};
+
+const send = (msg) => process.stdout.write(`${JSON.stringify(msg)}\n`);
+const reply = (id, result) => send({ jsonrpc: "2.0", id, result });
+const fail = (id, kind, message, remedy) =>
+  send({ jsonrpc: "2.0", id, error: { code: -32000, message, data: { kind, remedy } } });
+
+/** POSIX single-quoting, for the remote shell and GIT_SSH_COMMAND. */
+const q = (s) => `'${String(s).replaceAll("'", `'\\''`)}'`;
+
+// Calls in flight, by request id: their child, so $/cancel and EOF can stop it.
+const running = new Map();
+
+/** Run argv locally; answer `{exitCode, stdout, stderr, partial}`, or null exit on timeout. */
+function run(id, argv, { timeoutMs, env, cwd, host }) {
+  const child = spawn(argv[0], argv.slice(1), {
+    cwd,
+    env: env ?? process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  running.set(id, child);
+  const out = { stdout: "", stderr: "", partial: false };
+  const collect = (key) => (d) => {
+    const room = MAX_OUTPUT - out[key].length;
+    if (d.length > room) out.partial = true;
+    if (room > 0) out[key] += d.toString("utf8", 0, Math.min(d.length, room));
+  };
+  child.stdout.on("data", collect("stdout"));
+  child.stderr.on("data", collect("stderr"));
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    child.kill("SIGKILL");
+  }, timeoutMs);
+  const done = (exitCode) => {
+    clearTimeout(timer);
+    if (!running.delete(id)) return; // cancelled: mu ignores any answer now
+    // ssh exits 255 on its own errors. An auth failure ran nothing and needs a person.
+    if (exitCode === 255 && /Permission denied|Host key verification failed/.test(out.stderr)) {
+      fail(id, "human", out.stderr.split("\n")[0], `fix ssh access to ${host}`);
+      return;
+    }
+    reply(id, { exitCode: timedOut ? null : exitCode, ...out });
+  };
+  child.on("error", (e) => {
+    out.stderr = e.message;
+    done(127);
+  });
+  child.on("close", (code) => done(code ?? null));
+}
+
+/** ssh to the mu host and run `script` with /bin/sh in `cwd` (`.` is the login directory). */
+function exec(id, host, script, cwd, timeoutMs) {
+  run(id, [...SSH, host, `cd ${q(cwd)} && exec /bin/sh -c ${q(script)}`], { timeoutMs, host });
+}
+
+function answer(id, method, params) {
+  const host = params?.target?.host?.name;
+  switch (method) {
+    case "link.exec":
+      exec(id, host, params.script, params.cwd, params.timeoutMs);
+      return;
+    case "link.fetch": {
+      // Run git here; it reaches the host over the same ssh command.
+      const env =
+        SSH.length === 1 && SSH[0] === "ssh"
+          ? process.env
+          : { ...process.env, GIT_SSH_COMMAND: SSH.map(q).join(" ") };
+      run(id, ["git", "fetch", "--quiet", `${host}:${params.remoteCwd}`, "HEAD"], {
+        timeoutMs: params.timeoutMs,
+        env,
+        cwd: params.localRepo,
+        host,
+      });
+      return;
+    }
+    case "link.checkSteps": {
+      if (params.phase !== "reach") {
+        reply(id, []);
+        return;
+      }
+      const t0 = Date.now();
+      const child = spawn(SSH[0], [...SSH.slice(1), host, "true"], {
+        stdio: ["ignore", "ignore", "pipe"],
+      });
+      let stderr = "";
+      child.stderr.on("data", (d) => {
+        stderr += d;
+      });
+      const timer = setTimeout(() => child.kill("SIGKILL"), 8000);
+      const step = (ok, detail) => {
+        clearTimeout(timer);
+        reply(id, [{ step: "reachable", ok, detail }]);
+      };
+      child.on("error", (e) => step(false, e.message));
+      child.on("close", (code) =>
+        code === 0
+          ? step(true, `ssh ${host}: ${Date.now() - t0} ms`)
+          : step(false, stderr.trim().split("\n")[0] || `ssh ${host} exited ${code}`),
+      );
+      return;
+    }
+    case "shutdown":
+      reply(id, null);
+      return;
+    default:
+      fail(id, "permanent", `mu-plugin-ssh has no method ${method}`);
+  }
+}
+
+function onMessage(msg) {
+  if (msg.method === "initialize") {
+    const offered = msg.params?.protocol ?? { min: 0, max: 0 };
+    if (offered.min > 1 || offered.max < 1) {
+      fail(msg.id, "permanent", "mu-plugin-ssh speaks protocol 1 only");
+      return;
+    }
+    reply(msg.id, {
+      protocol: 1,
+      plugin: { name: "ssh", version: "1.0.0" },
+      instance: "ssh", // one configuration: the ssh command and your ssh config
+      schema: DIGEST,
+      seams: SEAMS,
+    });
+    return;
+  }
+  if (msg.method === "$/cancel") {
+    const child = running.get(msg.params?.id);
+    running.delete(msg.params?.id);
+    child?.kill("SIGKILL");
+    return;
+  }
+  answer(msg.id, msg.method, msg.params);
+}
+
+// One JSON message per line on stdin; replies go to stdout, logs only to stderr.
+let buffered = "";
+process.stdin.on("data", (chunk) => {
+  buffered += chunk;
+  for (let nl = buffered.indexOf("\n"); nl !== -1; nl = buffered.indexOf("\n")) {
+    const line = buffered.slice(0, nl);
+    buffered = buffered.slice(nl + 1);
+    if (line.trim() !== "") onMessage(JSON.parse(line));
+  }
+});
+// stdin EOF means mu is done (or died): stop what runs and exit.
+process.stdin.on("end", () => {
+  for (const child of running.values()) child.kill("SIGKILL");
+  process.exit(0);
+});

@@ -14,7 +14,7 @@ import { addHost } from "../src/hosts.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
 import { gitIn, initGitRepo } from "./_git.js";
-import { fakePlugin, linkSeam } from "./_plugin.js";
+import { fakePlugin, linkSeam, sshExample } from "./_plugin.js";
 
 const FETCH = "git fetch --quiet {cwd} HEAD";
 
@@ -44,6 +44,13 @@ const IMPLS: Array<[string, (db: Db, dir: string) => Promise<void>]> = [
     async (db, dir) => {
       await addPlugin(db, "fake", fakePlugin(dir, { seams: linkSeam({ fetch: false }) }).argv);
       addHost(db, { name: "dev", plugin: "fake", fetch: FETCH, repo: null, max_sessions: null });
+    },
+  ],
+  [
+    "the ssh example plugin",
+    async (db, dir) => {
+      await addPlugin(db, "ssh", sshExample(dir, dir));
+      addHost(db, { name: "dev", plugin: "ssh", fetch: "true", repo: null, max_sessions: null });
     },
   ],
 ];
