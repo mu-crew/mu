@@ -24,7 +24,7 @@ parallel.
 | `timeout` | Seconds to wait for the answer (default 3600), counted from the start: a `/reload` does not restart it. After it, the answer does not come back to pi; it still lands on the delegate task, whose report names a wait command. |
 | `workspace` | Own git worktree, for delegates that edit files. The tool result names its path. It isolates repository edits only. |
 | `cli` | Key for `$MU_<CLI>_COMMAND` (default `pi`). Only keys set in pi's environment exist. |
-| `model` | pi `--model` value, appended to the cli's command (`sonnet`, `<provider>/<model>:high`, copied from `pi --list-models`). Varies models across a panel. tmux and Rex: herdr refuses a command override. |
+| `model` | pi `--model` value, appended to the cli's command (`<provider>/<model>` from a `pi --list-models` row, optionally `:<effort>`). Varies models across a panel; which tier and effort for which work: [models recipe](../../skills/mu/recipes/models.md). tmux and Rex: herdr refuses a command override. |
 | `keep` | Keep the pane after it finishes, to talk to it again. |
 | `record` | `{ task, workstream? }` (or `task: "<ws>/<task>"`): write the answer's verdict onto that task as a note. See [Record a verdict](#record-a-verdict). |
 | `wave` | A label for one fan-out; `mu delegates tally` counts its verdicts per judged task. |

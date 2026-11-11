@@ -1120,7 +1120,7 @@ export function registerDelegate(
         model: {
           type: "string",
           description:
-            "Model for the subagent, passed to pi as --model (e.g. 'sonnet', '<provider>/<model>:high' copied from `pi --list-models`); appended to the cli's command. Default: the cli's own model. Use it to vary models across a review panel.",
+            "Model for the subagent, passed to pi as --model and appended to the cli's command: '<provider>/<model>' from a `pi --list-models` row, optionally ':<effort>' (off|minimal|low|medium|high|xhigh|max). Pick tier and effort per role (the mu skill's models recipe): medium unless the work needs more, since high and above can multiply run time; a check or review takes the author's tier or higher, another family, high effort. Default: the cli's own model. herdr refuses it. Use it to vary models across a review panel.",
         },
         keep: {
           type: "boolean",

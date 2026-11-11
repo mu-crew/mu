@@ -17,7 +17,7 @@ Grade strictly: `critical` needs a concrete path to data loss, breach or outage;
 
 ## Triage
 
-1. **Refute each** with a [call or check](tasks-or-calls.md) (`record` in pi). Skip low style. High: three refuters, accept at 2 CONFIRMED. High or critical: one from another family (a pi delegate or a `scratch` pane).
+1. **Refute each** with a [call or check](tasks-or-calls.md) (`record` in pi). Skip low style. High: three refuters, accept at 2 CONFIRMED. High or critical: one from [another family](models.md) (a pi delegate or a `scratch` pane).
 2. **Decide**; the state is the decision, and `--why` names the deciding evidence:
    - real: `mu task accept <id> --evidence "2/3 CONFIRMED: <why>"`
    - false: `mu task close <id> --as rejected --why "<the guard that disproves it>"`

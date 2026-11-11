@@ -77,7 +77,7 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Alwa
 | [findings](recipes/findings.md) | a check reports problems |
 | [adversarial-review](recipes/adversarial-review.md) | a unit needs a gate |
 | [test-health](recipes/test-health.md) | gates, or verifying a merge |
-| [models](recipes/models.md) | you pick a model |
+| [models](recipes/models.md) | you spawn, delegate or check |
 | [remote-workers](recipes/remote-workers.md) | an agent runs on another host |
 | [recovery](recipes/recovery.md) | teardown, rebuild, sync, `doctor` DRIFT |
 | [worker](recipes/worker.md) | you are the worker |

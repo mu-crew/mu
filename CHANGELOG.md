@@ -10,6 +10,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+### Changed
+
+- **The models recipe covers more labs, effort and speed.** Tier rows are
+  per lab (anthropic, openai, google, meta), plus grok, composer, kimi,
+  deepseek, glm, mistral and qwen as one family each. Effort is picked per
+  role, medium by default: high and above can multiply run time. When
+  someone waits, the fastest good-enough model wins. herdr takes no model:
+  `mu_delegate` is refused and spawn ignores it. The recipe index,
+  orchestrator loop, tasks-or-calls, findings and the delegate and
+  other-CLI guides link it where a model is picked.
+- **The `mu_delegate` `model` description no longer shows `:high`**, which
+  callers copied into every call. It builds the id from a
+  `pi --list-models` row plus an optional `:<effort>`, defaults to medium,
+  and gives checks the author's tier or higher, another family, high effort.
+
 ## [4.6.0] — 2026-11-11
 
 Reading results gets cheap. `mu wait --text`, `mu agent read --text` and
