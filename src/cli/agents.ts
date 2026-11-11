@@ -55,6 +55,7 @@ import { leftoverLines, listLeftovers } from "../leftovers.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
 import { pc } from "../output.js";
+import { checkDelivery } from "../plugins/channel.js";
 import { buildTaskBrief, TaskBriefMissingError } from "../task-brief.js";
 import { getTask } from "../tasks/queries.js";
 import { type WaitSnapshot, waitForEvents } from "../wait.js";
@@ -813,7 +814,9 @@ export async function cmdAgentCheck(
   const first = await resolveFirstTurn(db, agent, msgId);
   const check: MessageCheck =
     first === undefined || first.state === "never"
-      ? await agentChannel(target).receipt(target, msgId)
+      ? // An unresolved plugin delivery resolves by its rule-table row first (plugins spec D4).
+        ((await checkDelivery(db, agent.incarnation, msgId)) ??
+        (await agentChannel(target).receipt(target, msgId)))
       : first.state === "accepted"
         ? {
             state: "accepted",

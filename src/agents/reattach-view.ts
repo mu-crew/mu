@@ -1,7 +1,8 @@
 // mu — a detached plugin job's view (plugins spec D3): the job outlives its pane.
 // `agent reattach` on a row whose view is gone asks the kind for a new view
 // (`job.attach`) and compares-and-sets `agents.pane_id`, keeping the
-// incarnation and everything else the row holds. A no-row leftover of a plugin
+// incarnation and everything else the row holds; the spawn receipts naming the
+// old view follow it (`repoint`), refused while the spawn that made it runs. A no-row leftover of a plugin
 // kind is never reattached: `agent close` stops it.
 
 import { getAgent } from "../agents.js";
@@ -17,7 +18,9 @@ import { shellWord } from "../shell-quote.js";
 import { AgentReplacedError } from "./errors.js";
 import { withAgentLock } from "./lock.js";
 import { closeCommand, ReattachRefusedError } from "./reattach-check.js";
+import { repointReceipts } from "./receipts.js";
 import { withSpawnLock } from "./spawn-lock.js";
+import { jobRecordActor } from "./spawn-plugin.js";
 
 /** The agent's detached plugin job: its record and kind; undefined for any other agent. */
 export function detachedJob(
@@ -72,6 +75,15 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
         previewCommand: `mu agent reattach ${shellWord(name)} -w ${shellWord(ws)}`,
       });
       if (await viewPresent(d.paneId)) refuseOpen(db, ws, name, d.paneId);
+      // Owner-only (D8): while its spawn runs, the spawn's receipts are its own to move.
+      const actor = jobRecordActor(d.r);
+      if (actor === "other-alive") {
+        throw new ReattachRefusedError(
+          name,
+          [{ code: "carrier", detail: `its spawn's process ${d.r.creatorPid} is still running` }],
+          closeCommand(db, ws, name),
+        );
+      }
       const ref = pluginJobRef(db, d.r.token);
       if (ref === undefined) throw new AgentReplacedError(name, ws);
       const mux = await activeMux();
@@ -106,6 +118,9 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
             .prepare("UPDATE carrier_jobs SET pane_id = ? WHERE token = ? AND agent_id = ?")
             .run(pid, d.r.token, d.agentId);
           if (row.changes !== 1 || job.changes !== 1) throw new AgentReplacedError(name, ws);
+          // The spawn receipts follow the view, as a lookup recovery's do: a replay still
+          // names this incarnation, never a replaced one.
+          repointReceipts(db, d.agentId, { pane: d.paneId }, pid, actor);
         }).immediate();
       } catch (e) {
         await mux.killPane(pid).catch(() => {});

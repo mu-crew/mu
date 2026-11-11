@@ -456,8 +456,8 @@ export type FirstTurnCheck =
   /** The start provably never happened: the msgId is no first prompt of a job. */
   | { state: "never"; actor: ReceiptActor };
 
-/** Who this invocation is to job record `r`'s first turn (D8 owner-only rule). */
-function firstTurnActor(r: CarrierJob): ReceiptActor {
+/** Who this invocation is to job record `r`'s receipts: its first turn, its view (D8 owner-only rule). */
+export function jobRecordActor(r: CarrierJob): ReceiptActor {
   const me = effectOwner();
   if (r.creatorPid === null) return "other-gone";
   if (r.creatorPid === me.pid && r.creatorStart === me.start) return "creator";
@@ -494,7 +494,7 @@ export async function resolveFirstTurn(
     state: "unreachable",
     reason: `its job.start (effect ${rec.token}) is unresolved: ${why}`,
   });
-  const actor = firstTurnActor(rec);
+  const actor = jobRecordActor(rec);
   if (actor === "other-alive") {
     // Owner-only (D8): while its spawn runs, a check or replay never resolves or moves anything.
     const live = getAgent(db, row.name, row.workstreamName);
@@ -584,7 +584,7 @@ export async function resolveFirstTurn(
         throw e;
       }
       // The view opened: only now does the receipt follow it.
-      repointReceipts(db, agent.incarnation, msgId, agent.paneId, actor);
+      repointReceipts(db, agent.incarnation, { msgId }, agent.paneId, actor);
     } catch (e) {
       return {
         state: "unreachable",

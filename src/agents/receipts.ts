@@ -320,19 +320,25 @@ export function updateReceipt(
 }
 
 /**
- * Every receipt of first prompt `msgId` follows its agent's view (D8 G1a): the `repoint`
- * event, once a lookup recovery's view for incarnation `agentId` opened.
+ * The receipts of incarnation `agentId` follow its view to `paneId` (D8 G1a, D3): the `repoint`
+ * event, once a view opened. `of`: the receipts of first prompt `msgId` (a lookup recovery's
+ * view), or those naming the view `pane` that went (a detached view's reattach).
  */
 export function repointReceipts(
   db: Db,
   agentId: number,
-  msgId: string,
+  of: { msgId: string } | { pane: string },
   paneId: string,
   actor: ReceiptActor,
 ): void {
+  const [col, val] = "msgId" in of ? ["msg_id", of.msgId] : ["pane_id", of.pane];
+  // A reserved or failed attempt names no live view: nothing of it follows.
+  const from = RECEIPT_EVENTS.repoint.from.map((st) => `'${st}'`).join(", ");
   const rows = db
-    .prepare("SELECT task_id, attempt_key FROM spawn_receipts WHERE agent_id = ? AND msg_id = ?")
-    .all(agentId, msgId) as { task_id: number; attempt_key: string }[];
+    .prepare(
+      `SELECT task_id, attempt_key FROM spawn_receipts WHERE agent_id = ? AND ${col} = ? AND state IN (${from})`,
+    )
+    .all(agentId, val) as { task_id: number; attempt_key: string }[];
   for (const r of rows)
     transitionReceipt(db, r.task_id, r.attempt_key, "repoint", { paneId }, actor);
 }

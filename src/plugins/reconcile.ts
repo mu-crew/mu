@@ -26,10 +26,12 @@
 //   channel.abort               readStates: an idle agent means done
 //   channel.answer/command      a deduped resend
 //
-// A delivery is resent only while no newer delivery to its agent was written
-// (the claim reads `seq` against `agents.delivery_seq`). Whatever does not
+// A delivery (an at-start `job.start` carrying the first prompt included) is
+// resent only while no newer delivery to its agent was written (the claim reads
+// `seq` against `agents.delivery_seq`). Whatever does not
 // resolve stays `unknown` for a human.
 
+import type { MessageCheck } from "../channels/types.js";
 import type { Db } from "../db.js";
 import {
   claimEffect,
@@ -236,7 +238,8 @@ export async function runEffect<M extends PluginMethod>(
 export type Resolution =
   | { state: "recorded"; via: "reply" | "lookup" | "receipt" | "idle"; result: unknown }
   | { state: "none" }
-  | { state: "unknown"; reason: string };
+  /** `receipt`: the channel's answer when it asked one and it did not accept. */
+  | { state: "unknown"; reason: string; receipt?: MessageCheck };
 
 export interface ResolveHooks {
   /** The definite result (a reply, a lookup's `found`, an accepted receipt, an idle agent). */
@@ -327,9 +330,11 @@ async function byRule(
     const caps: KeyCaps | undefined = job ? seams.job?.start : seams.host?.acquire;
     if (caps === undefined) return unknown(`plugin ${row.plugin} no longer declares the seam`);
     if (!caps.lookup) {
-      return within(caps.dedupe)
-        ? resend()
-        : unknown("no lookup, and the dedupe window has passed");
+      if (!within(caps.dedupe)) return unknown("no lookup, and the dedupe window has passed");
+      // A start carrying the first prompt is the agent's first delivery (seq 1, K8).
+      if (!newest)
+        return unknown("a newer delivery to the agent was written since its first prompt");
+      return resend();
     }
     return lookup(row, caps, job && seams.job?.handle === "file", (fence) =>
       read(job ? "job.lookup" : "host.lookup", { target: params.target, key: row.key, fence }),
@@ -348,7 +353,7 @@ async function byRule(
     const r = await read("channel.receipt", { target: params.target, msgId: row.msg_id });
     if (!("value" in r)) return unknown(r.unknown);
     if (r.value.state === "accepted") return { state: "recorded", via: "receipt", result: r.value };
-    return unknown(`receipt: ${r.value.state}`);
+    return { state: "unknown", reason: `receipt: ${r.value.state}`, receipt: r.value };
   }
   const name = m.slice("channel.".length) as keyof NonNullable<
     NonNullable<typeof channel>["dedupe"]

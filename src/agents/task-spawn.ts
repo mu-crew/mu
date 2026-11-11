@@ -55,6 +55,7 @@ import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
 import { harnessOfCli } from "../harnesses.js";
 import { say } from "../messages.js";
+import { checkDelivery } from "../plugins/channel.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
 import { addNote } from "../tasks/edit.js";
 import { TaskAlreadyOwnedError, TaskNotFoundError } from "../tasks/errors.js";
@@ -825,12 +826,16 @@ async function reconcile(
       brief,
     };
   }
-  // The channel's receipt decides how a replay asks (plugins spec D4, D12).
+  // An unresolved plugin delivery: its rule-table row decides (plugins spec D4 "Who triggers").
+  const resolved = await checkDelivery(db, id.agent.incarnation, saved.msgId);
+  // Else the channel's receipt decides how a replay asks (plugins spec D4, D12).
   const receipt = channelNamed(saved.transport, db)?.caps.receipt ?? "none";
-  if (receipt === "acknowledged") return reconcileHooks(db, req, saved, id.agent, stay);
-  if (receipt === "none") return stay("the send went through the pane: no receipt to ask");
+  if (resolved === undefined && receipt === "acknowledged")
+    return reconcileHooks(db, req, saved, id.agent, stay);
+  if (resolved === undefined && receipt === "none")
+    return stay("the send went through the pane: no receipt to ask");
   const target = channelTarget(db, id.agent);
-  const check = await agentChannel(target).receipt(target, saved.msgId);
+  const check = resolved ?? (await agentChannel(target).receipt(target, saved.msgId));
   if (check.state !== "accepted") {
     return stay(
       check.state === "unreachable"

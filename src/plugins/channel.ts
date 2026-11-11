@@ -31,9 +31,11 @@ import type {
   ChannelObservation,
   ChannelReading,
   DeliveryTarget,
+  MessageCheck,
   SendResult,
 } from "../channels/types.js";
 import type { Db } from "../db.js";
+import { type EffectRow, effectsOf } from "../effects.js";
 import { getHostRecord } from "../host-records.js";
 import { jobLiveness } from "../jobs/kinds.js";
 import { pluginJobRef } from "./job.js";
@@ -45,7 +47,7 @@ import type {
   WireObservation,
   WireTurnState,
 } from "./protocol.js";
-import { type Fence, pluginCall, pluginWatch, runEffect } from "./reconcile.js";
+import { type Fence, pluginCall, pluginWatch, resolveEffect, runEffect } from "./reconcile.js";
 import { getPlugin, listPlugins, pluginSeams } from "./registry.js";
 
 /** A plugin's turn state as mu's runtime state: idle is waiting for input, blocked a dialog. */
@@ -70,6 +72,42 @@ export function loadPluginChannels(db: Db): void {
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/**
+ * `mu agent check` and a spawn replay on an unresolved plugin delivery (D4 "Who triggers"):
+ * delivery `msgId` to agent incarnation `agentId`, resolved by the rule table (an exact
+ * receipt, else a deduped resend while it is the newest). Undefined when no effect row names
+ * it (settled, or never a plugin delivery): the caller asks the channel's receipt as before.
+ */
+export async function checkDelivery(
+  db: Db,
+  agentId: number,
+  msgId: string,
+): Promise<MessageCheck | undefined> {
+  const row: EffectRow | undefined = effectsOf(db, "delivery", String(agentId)).find(
+    (e) => e.msg_id === msgId,
+  );
+  if (row === undefined) return undefined;
+  const r = await resolveEffect(db, row.key);
+  if (r === undefined) return undefined;
+  if (r.state === "recorded") {
+    if (r.via === "receipt") return r.result as MessageCheck;
+    const b = (r.result as Partial<MethodReplies["channel.send"]> | null)?.baseline;
+    return {
+      state: "accepted",
+      id: msgId,
+      ...(b?.runs !== undefined ? { runs: b.runs } : {}),
+      ...(b?.incarnation !== undefined ? { incarnation: b.incarnation } : {}),
+    };
+  }
+  if (r.state === "unknown" && r.receipt !== undefined) return r.receipt;
+  const why = r.state === "unknown" ? r.reason : "no rule settles it";
+  return {
+    state: "unreachable",
+    id: msgId,
+    reason: `delivery unknown (effect ${row.key}): ${why}`,
+  };
+}
 
 /** Plugin `plugin`'s channel seam `decl` as a channel implementation over `db`. */
 export function pluginChannel(

@@ -3,7 +3,8 @@
 // `reapAgentRow` runs INSIDE the caller's transaction (it opens none) and
 // does, in order: snapshot the tasks the agent holds IN_PROGRESS, DELETE the
 // row (the FK sets tasks.owner_id NULL; its trigger records a remote
-// worktree, src/db-recovery.ts), free its host channel, then reopen each snapshotted
+// worktree, src/db-recovery.ts), free its host channel, drop its unresolved
+// plugin deliveries with an event naming them, then reopen each snapshotted
 // task with a `[reaper]` note. A throw anywhere rolls the lot back with the
 // caller's transaction: the row stays, nothing is recorded.
 //
@@ -19,7 +20,9 @@
 // owner.
 
 import type { Db } from "../db.js";
+import { dropDeliveries } from "../effects.js";
 import { releaseHostChannelsForAgent } from "../hosts.js";
+import { emitEvent } from "../logs.js";
 import { withOpContext } from "../op-context.js";
 import { shellWord } from "../shell-quote.js";
 
@@ -67,6 +70,17 @@ export function reapAgentRow(
   // A remote agent's pane IS its host transport: the row's death frees the
   // channel it held, by registry id + pane (never a name).
   releaseHostChannelsForAgent(db, agentId, pane.pane_id);
+  // Its unresolved plugin deliveries go with it, the loss named (plugins spec D4: "until a human
+  // checks or closes"): nothing can resolve a delivery to a row that is gone.
+  const lost = dropDeliveries(db, agentId);
+  if (lost.length > 0) {
+    emitEvent(
+      db,
+      pane.ws,
+      "agent.send",
+      `delivery outcome lost with agent ${name}: ${lost.map((e) => `${e.method} ${e.key}`).join(", ")} (never confirmed; a late result is found by its key)`,
+    );
+  }
   const reopen = db.prepare(
     "UPDATE tasks SET status = 'OPEN', substate = CASE WHEN kind = 'human' OR ? THEN 'parked' ELSE 'todo' END, updated_at = ? WHERE id = ?",
   );

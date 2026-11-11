@@ -18,7 +18,8 @@
 // nothing, so one result is ever recorded.
 //
 // Deliveries. Each agent's `delivery_seq` is a durable high-water mark: a
-// delivery effect increments it in its intent's transaction and keeps the new
+// delivery effect (an at-start `job.start` carrying the first prompt included:
+// it takes seq 1) increments it in its intent's transaction and keeps the new
 // value (`seq`). A resend is allowed only while `seq` is still the mark (no
 // newer delivery was written), and a new delivery refuses while another to the
 // agent is being resolved. SQLite's write lock serializes both rules.
@@ -56,9 +57,18 @@ export interface EffectRow {
   updated_at: number;
 }
 
+/** `agentId` on a job: an at-start `job.start` carrying its agent's first prompt (a delivery, D4). */
 export type EffectSubject =
-  | { kind: "host" | "job"; id: string; msgId?: string }
+  | { kind: "host" | "job"; id: string; msgId?: string; agentId?: number }
   | { kind: "delivery"; agentId: number; msgId: string };
+
+/** The tokens of agent `@agent`'s job records, by its name (a placeholder is bound to none yet). */
+const AGENT_JOBS = `SELECT c.token FROM carrier_jobs c JOIN workstreams w ON w.name = c.workstream
+  JOIN agents a ON a.workstream_id = w.id AND a.name = c.name WHERE a.id = @agent`;
+
+/** The delivery effects of agent `@agent` (`@sid`, as text): its sends, and its first prompt's `job.start`. */
+const AGENT_DELIVERIES = `seq IS NOT NULL AND ((subject_kind = 'delivery' AND subject_id = @sid)
+  OR (subject_kind = 'job' AND subject_id IN (${AGENT_JOBS})))`;
 
 export interface EffectIntent {
   key: string;
@@ -146,25 +156,26 @@ export function writeEffect(db: Db, e: EffectIntent, alongside?: () => unknown):
   return db
     .transaction(() => {
       const created = alongside?.();
-      let subjectId: string;
+      const subjectId =
+        e.subject.kind === "delivery"
+          ? String(e.subject.agentId)
+          : typeof created === "string"
+            ? created
+            : e.subject.id;
       let seq: number | null = null;
-      if (e.subject.kind === "delivery") {
-        subjectId = String(e.subject.agentId);
+      const agent = e.subject.agentId;
+      if (agent !== undefined) {
         const busy = db
-          .prepare(
-            "SELECT key FROM effects WHERE subject_kind = 'delivery' AND subject_id = ? AND state = 'resolving'",
-          )
-          .get(subjectId) as { key: string } | undefined;
-        if (busy !== undefined) throw new DeliveryResolvingError(e.subject.agentId, busy.key);
+          .prepare(`SELECT key FROM effects WHERE state = 'resolving' AND ${AGENT_DELIVERIES}`)
+          .get({ agent, sid: String(agent) }) as { key: string } | undefined;
+        if (busy !== undefined) throw new DeliveryResolvingError(agent, busy.key);
         const r = db
           .prepare(
             "UPDATE agents SET delivery_seq = delivery_seq + 1 WHERE id = ? RETURNING delivery_seq",
           )
-          .get(e.subject.agentId) as { delivery_seq: number } | undefined;
-        if (r === undefined) throw new Error(`no agent row ${e.subject.agentId} for a delivery`);
+          .get(agent) as { delivery_seq: number } | undefined;
+        if (r === undefined) throw new Error(`no agent row ${agent} for a delivery`);
         seq = r.delivery_seq;
-      } else {
-        subjectId = typeof created === "string" ? created : e.subject.id;
       }
       const now = Date.now();
       db.prepare(
@@ -239,7 +250,8 @@ export const pluginGroupGone = (r: EffectRow): boolean =>
 /**
  * Claim the row for resolving (D4 step 1), compare-and-set. Refuses with EffectHeldError while
  * its creator (a `pending` row) or its resolver (a `resolving` one) lives. `newest`: no later
- * delivery to the agent was written (always true for a host or job), read in the claim.
+ * delivery to the agent was written (always true for a row with no `seq`: a host's, or a job's
+ * that carries no first prompt), read in the claim.
  * Undefined when the row is gone (resolved meanwhile).
  */
 export function claimEffect(db: Db, key: string): { row: EffectRow; newest: boolean } | undefined {
@@ -254,10 +266,15 @@ export function claimEffect(db: Db, key: string): { row: EffectRow; newest: bool
         "UPDATE effects SET state = 'resolving', resolver_pid = ?, resolver_start = ?, updated_at = ? WHERE key = ? AND state = ?",
       ).run(me.pid, me.start, now, key, row.state);
       let newest = true;
-      if (row.subject_kind === "delivery") {
-        const a = db.prepare("SELECT delivery_seq FROM agents WHERE id = ?").get(row.subject_id) as
-          | { delivery_seq: number }
-          | undefined;
+      if (row.seq !== null) {
+        const a = db
+          .prepare(
+            row.subject_kind === "delivery"
+              ? "SELECT delivery_seq FROM agents WHERE id = ?"
+              : `SELECT a.delivery_seq FROM carrier_jobs c JOIN workstreams w ON w.name = c.workstream
+                 JOIN agents a ON a.workstream_id = w.id AND a.name = c.name WHERE c.token = ?`,
+          )
+          .get(row.subject_id) as { delivery_seq: number } | undefined;
         newest = a !== undefined && a.delivery_seq === row.seq;
       }
       return {
@@ -290,4 +307,15 @@ export function refuseLiveOwner(r: EffectRow): void {
 /** Drop a row without an outcome: an abandon, or a job lost with its host (the caller logs it). */
 export function deleteEffect(db: Db, key: string): void {
   db.prepare("DELETE FROM effects WHERE key = ?").run(key);
+}
+
+/**
+ * The unresolved deliveries to agent incarnation `agentId`, dropped as its row goes (a close, the
+ * reaper): no verb can resolve a delivery to an agent that is gone. Returned for the caller's
+ * loss record, written in the same transaction.
+ */
+export function dropDeliveries(db: Db, agentId: number): EffectRow[] {
+  return db
+    .prepare("DELETE FROM effects WHERE subject_kind = 'delivery' AND subject_id = ? RETURNING *")
+    .all(String(agentId)) as EffectRow[];
 }

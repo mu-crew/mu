@@ -10,6 +10,7 @@
 // seam's `unknown`, never a throw for "cannot tell"; `human` is the host's
 // hand-back. Every stop and resend is fenced on the instance.
 
+import { getAgent } from "../agents.js";
 import {
   fillCarrierJob,
   getCarrierJob,
@@ -111,13 +112,19 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
 
     async start(host, spec, key) {
       const params = { target: target(key, host.name), key, spec };
+      const firstAgent = (): number => {
+        const a = getAgent(db, spec.name, spec.workstream);
+        if (a === undefined) throw new Error(`no placeholder row for ${spec.name}'s first prompt`);
+        return a.incarnation;
+      };
       try {
         return await runEffect(db, {
           key,
           subject: {
             kind: "job",
             id: key,
-            ...(spec.firstPrompt ? { msgId: spec.firstPrompt.msgId } : {}),
+            // The first prompt is its placeholder's first delivery (D4): seq 1.
+            ...(spec.firstPrompt ? { msgId: spec.firstPrompt.msgId, agentId: firstAgent() } : {}),
           },
           plugin: name,
           method: "job.start",

@@ -49,7 +49,12 @@ describe("the plugin adapter's boundary", () => {
         "src/channels/dispatch.ts",
       ],
       // P6e: the channel adapter, loaded by the registry on every plugin-channel read.
-      "src/plugins/channel.ts": ["src/channels/registry.ts"],
+      "src/plugins/channel.ts": [
+        "src/channels/registry.ts",
+        // An unresolved delivery's verbs (D4 "Who triggers"): `mu agent check` and the spawn replay.
+        "src/cli/agents.ts",
+        "src/agents/task-spawn.ts",
+      ],
       // P6d: the provider adapter, wired into resolveHost and the host verbs.
       "src/plugins/provider.ts": ["src/host-provider.ts", "src/host-lifecycle.ts"],
       "src/plugins/reconcile.ts": ["src/host-lifecycle.ts"],

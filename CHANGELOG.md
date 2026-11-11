@@ -701,6 +701,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
+- **Plugins: no unresolved effect is left without a way out** (final
+  refutation of the plugins run). A plugin-channel delivery whose outcome
+  is unknown is resolved by the rule table when `mu agent check <agent>
+  <msgId>` or a task spawn's replay asks about it (an exact receipt
+  settles it; a receipt that does not accept leaves it unknown), and goes
+  with its agent's row (a close, the reaper), an event naming each lost
+  key in the same transaction. Before, its row stayed for good and
+  `mu plugin rm` refused forever. Reattaching a detached view moves the
+  spawn receipts with the row's pane (refused while the spawn that made
+  it still runs), so a replay no longer calls the same agent "replaced"
+  and `mu next` keeps watching it. An at-start `job.start` carrying the
+  first prompt takes the agent's delivery seq 1: a newer delivery bars its
+  deduped resend, and a new delivery refuses while it is being resolved
+  (spec D4, K8).
+
 - **Eval: the rig's deny lists cover mu 5's state dir** (task `eval_rig_mu5`).
   The private stores shared by the AUT path rules and the designer deny list
   (`tools/eval/rig-private.ts`), the designer audit's strict terms and a live
