@@ -15,6 +15,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import { createServer, type Server } from "node:net";
@@ -403,7 +404,8 @@ describe("the pane is the transport", () => {
       encoding: "utf8",
       env: { HOME: home, PATH: process.env.PATH ?? "" },
     });
-    expect(out.trim()).toBe(`MU_CWD ${join(home, "it's here")}`);
+    // `pwd -P` prints the physical path (macOS: /var -> /private/var).
+    expect(out.trim()).toBe(`MU_CWD ${realpathSync(join(home, "it's here"))}`);
   });
 
   it("a remote claude worker (spec D11): its harness and remote key in {env}, an anchor holding the key, channel hooks", async () => {
