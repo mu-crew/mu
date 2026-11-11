@@ -28,6 +28,7 @@ import {
   CarrierJobUnstoppedError,
 } from "../agents/lease-carrier.js";
 import { ReattachFailedError, ReattachRefusedError } from "../agents/reattach.js";
+import { ReceiptTransitionError } from "../agents/receipts.js";
 import {
   AgentAbortNeedsCtlError,
   AgentAbortTimeoutError,
@@ -698,7 +699,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SpawnAttemptFailedError ||
     err instanceof SpawnAttemptGuardError ||
     err instanceof SpawnTaskStateError ||
-    err instanceof SpawnReceiptConflictError
+    err instanceof SpawnReceiptConflictError ||
+    err instanceof ReceiptTransitionError
   ) {
     // The name changed hands, or another mu holds the agent: retry after a preview.
     return { label: "conflict", exitCode: 4 };

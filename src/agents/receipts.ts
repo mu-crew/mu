@@ -16,10 +16,19 @@
 // exist) < claimed (the task is owned by agent_id) < sending (the prompt MAY
 // have been written: never resend) < sent | unknown. failed means definitely
 // unsent and rolled back. Pure SQL: no mux, no ctl.
+//
+// This module owns the state machine (plugins spec D8; review 2 of P6e2): a
+// state moves only by `transitionReceipt`, one event of `RECEIPT_EVENTS`,
+// compare-and-set from the state it read. No other code writes `state`. An
+// event names who may cause it: the attempt's own invocation (`creator`: the
+// spawn, or the replay that holds the attempt lock now), or another one (`mu
+// agent check`) acting on an at-start job record whose creating process is
+// proven gone (`other-gone`). While that process lives, another invocation only
+// reads (`other-alive`: nothing is allowed).
 
 import { createHash } from "node:crypto";
 import type { ChannelName } from "../channels/types.js";
-import type { Db, SpawnReceiptState } from "../db.js";
+import { type Db, SPAWN_RECEIPT_STATES, type SpawnReceiptState } from "../db.js";
 
 export interface SpawnReceipt {
   taskId: number;
@@ -99,16 +108,6 @@ export function requestSha(req: {
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 
-/**
- * The receipt of first prompt `msgId` follows its agent's view (plugins spec D8 G1a): a lookup
- * recovery that finished incarnation `agentId`'s placeholder repoints it to `paneId`.
- */
-export function repointReceipts(db: Db, agentId: number, msgId: string, paneId: string): void {
-  db.prepare(
-    "UPDATE spawn_receipts SET pane_id = ?, updated_at = ? WHERE agent_id = ? AND msg_id = ?",
-  ).run(paneId, new Date().toISOString(), agentId, msgId);
-}
-
 export function getReceipt(db: Db, taskId: number, attemptKey: string): SpawnReceipt | undefined {
   const row = db
     .prepare("SELECT * FROM spawn_receipts WHERE task_id = ? AND attempt_key = ?")
@@ -148,7 +147,79 @@ export function reserveReceipt(
   return row;
 }
 
-/** What `updateReceipt` may change. */
+/** Who causes a receipt event: the attempt's own invocation, or another (D8 owner-only rule). */
+export type ReceiptActor = "creator" | "other-alive" | "other-gone";
+
+/**
+ * The receipt events: the states each moves from, the state it moves to (`same`: a patch of
+ * the other columns), and who may cause it. Only `transitionReceipt` reads it.
+ */
+export const RECEIPT_EVENTS = {
+  /** The spawn's agent row and pane exist. */
+  pane: { from: ["reserved"], to: "pane", by: ["creator"] },
+  /** The task is owned by the receipt's agent (an executor's in-place retry claims at once). */
+  claim: { from: ["reserved", "pane"], to: "claimed", by: ["creator"] },
+  /** The prompt may be written from here: never resent. */
+  send: { from: ["claimed"], to: "sending", by: ["creator"] },
+  /** The write (a send, or an at-start job.start carrying the prompt) answered. */
+  delivered: { from: ["sending"], to: "sent", by: ["creator"] },
+  /** A replay or resolution proved the prompt landed. */
+  confirm: { from: ["sending", "unknown"], to: "sent", by: ["creator", "other-gone"] },
+  /** It may have landed: never resent. */
+  unknown: { from: ["sending", "unknown"], to: "unknown", by: ["creator", "other-gone"] },
+  /** Definitely nothing delivered (a refusal before the write, or a dead identity). */
+  unsent: { from: ["reserved", "pane", "claimed", "sending"], to: "failed", by: ["creator"] },
+  /** A lookup proved the at-start start never happened. */
+  never: { from: ["sending", "unknown"], to: "failed", by: ["creator", "other-gone"] },
+  /** A manual key runs again after a failure. */
+  reset: { from: ["failed"], to: "reserved", by: ["creator"] },
+  /** The pane of the receipt's agent, once a view opened for it. */
+  repoint: {
+    from: ["pane", "claimed", "sending", "sent", "unknown"],
+    to: "same",
+    by: ["creator", "other-gone"],
+  },
+  /** Facts beside the state (an incarnation, a detail). */
+  note: { from: [...SPAWN_RECEIPT_STATES], to: "same", by: ["creator"] },
+} as const satisfies Record<
+  string,
+  {
+    from: readonly SpawnReceiptState[];
+    to: SpawnReceiptState | "same";
+    by: readonly ReceiptActor[];
+  }
+>;
+export type ReceiptEvent = keyof typeof RECEIPT_EVENTS;
+
+/** A receipt event its current state or its actor does not allow (or a lost compare-and-set). Exit 4. */
+export class ReceiptTransitionError extends Error {
+  override readonly name = "ReceiptTransitionError";
+  constructor(
+    public readonly attemptKey: string,
+    public readonly event: ReceiptEvent,
+    public readonly state: SpawnReceiptState | "missing",
+    public readonly actor: ReceiptActor,
+  ) {
+    super(
+      `spawn receipt ${attemptKey}: ${event} by ${actor} is not allowed from ${state}; the attempt is left as it is`,
+    );
+  }
+}
+
+/** Whether `event` by `actor` may move a receipt in `state` (the table, and nothing else). */
+export function receiptEventAllowed(
+  state: SpawnReceiptState,
+  event: ReceiptEvent,
+  actor: ReceiptActor,
+): boolean {
+  const e = RECEIPT_EVENTS[event];
+  return (
+    (e.from as readonly SpawnReceiptState[]).includes(state) &&
+    (e.by as readonly ReceiptActor[]).includes(actor)
+  );
+}
+
+/** What an event may change beside the state. */
 export type ReceiptPatch = Partial<
   Pick<
     SpawnReceipt,
@@ -158,7 +229,6 @@ export type ReceiptPatch = Partial<
     | "transport"
     | "incarnation"
     | "runs"
-    | "state"
     | "detail"
     | "msgId"
     | "requestSha"
@@ -172,25 +242,74 @@ const COLUMN: Record<keyof ReceiptPatch, string> = {
   transport: "transport",
   incarnation: "incarnation",
   runs: "runs",
-  state: "state",
   detail: "detail",
   msgId: "msg_id",
   requestSha: "request_sha",
 };
 
-/** Patch a receipt (only the keys present). */
+/**
+ * THE way a receipt changes: `event` by `actor`, compare-and-set from the state read now.
+ * Throws `ReceiptTransitionError` when the table refuses it or the row moved meanwhile.
+ */
+export function transitionReceipt(
+  db: Db,
+  taskId: number,
+  attemptKey: string,
+  event: ReceiptEvent,
+  patch: ReceiptPatch = {},
+  actor: ReceiptActor = "creator",
+): SpawnReceipt {
+  const cur = getReceipt(db, taskId, attemptKey);
+  if (cur === undefined || !receiptEventAllowed(cur.state, event, actor)) {
+    throw new ReceiptTransitionError(attemptKey, event, cur?.state ?? "missing", actor);
+  }
+  const to: SpawnReceiptState =
+    RECEIPT_EVENTS[event].to === "same"
+      ? cur.state
+      : (RECEIPT_EVENTS[event].to as SpawnReceiptState);
+  const keys = (Object.keys(patch) as (keyof ReceiptPatch)[]).filter((k) => patch[k] !== undefined);
+  const sets = [...keys.map((k) => `${COLUMN[k]} = ?`), "state = ?", "updated_at = ?"];
+  const changed = db
+    .prepare(
+      `UPDATE spawn_receipts SET ${sets.join(", ")} WHERE task_id = ? AND attempt_key = ? AND state = ?`,
+    )
+    .run(
+      ...keys.map((k) => patch[k] as string | number | null),
+      to,
+      new Date().toISOString(),
+      taskId,
+      attemptKey,
+      cur.state,
+    ).changes;
+  if (changed !== 1) throw new ReceiptTransitionError(attemptKey, event, cur.state, actor);
+  const row = getReceipt(db, taskId, attemptKey);
+  if (row === undefined) throw new Error("spawn receipt vanished");
+  return row;
+}
+
+/**
+ * TEST SEAM: seed a receipt with any columns, its state included, bypassing the table (the
+ * fixtures of a receipt "left in each stage"). No source file calls it
+ * (test/receipt-states.test.ts).
+ */
 export function updateReceipt(
   db: Db,
   taskId: number,
   attemptKey: string,
-  patch: ReceiptPatch,
+  patch: ReceiptPatch & { state?: SpawnReceiptState },
 ): SpawnReceipt {
-  const keys = (Object.keys(patch) as (keyof ReceiptPatch)[]).filter((k) => patch[k] !== undefined);
-  const sets = [...keys.map((k) => `${COLUMN[k]} = ?`), "updated_at = ?"];
+  const { state, ...rest } = patch;
+  const keys = (Object.keys(rest) as (keyof ReceiptPatch)[]).filter((k) => rest[k] !== undefined);
+  const sets = [
+    ...keys.map((k) => `${COLUMN[k]} = ?`),
+    ...(state !== undefined ? ["state = ?"] : []),
+    "updated_at = ?",
+  ];
   db.prepare(
     `UPDATE spawn_receipts SET ${sets.join(", ")} WHERE task_id = ? AND attempt_key = ?`,
   ).run(
-    ...keys.map((k) => patch[k] as string | number | null),
+    ...keys.map((k) => rest[k] as string | number | null),
+    ...(state !== undefined ? [state] : []),
     new Date().toISOString(),
     taskId,
     attemptKey,
@@ -201,7 +320,25 @@ export function updateReceipt(
 }
 
 /**
- * Reuse a FAILED attempt: nothing was sent, so the same key may run again,
+ * Every receipt of first prompt `msgId` follows its agent's view (D8 G1a): the `repoint`
+ * event, once a lookup recovery's view for incarnation `agentId` opened.
+ */
+export function repointReceipts(
+  db: Db,
+  agentId: number,
+  msgId: string,
+  paneId: string,
+  actor: ReceiptActor,
+): void {
+  const rows = db
+    .prepare("SELECT task_id, attempt_key FROM spawn_receipts WHERE agent_id = ? AND msg_id = ?")
+    .all(agentId, msgId) as { task_id: number; attempt_key: string }[];
+  for (const r of rows)
+    transitionReceipt(db, r.task_id, r.attempt_key, "repoint", { paneId }, actor);
+}
+
+/**
+ * Reuse a FAILED attempt (the `reset` event): nothing was sent, so the same key may run again,
  * with a fresh msgId and the new request. Clears the old identity.
  */
 export function resetReceipt(
@@ -210,13 +347,13 @@ export function resetReceipt(
   attemptKey: string,
   next: Pick<SpawnReceipt, "name" | "requestSha" | "msgId">,
 ): SpawnReceipt {
-  db.prepare(
-    `UPDATE spawn_receipts
-        SET name = ?, request_sha = ?, msg_id = ?, agent_id = NULL, pane_id = NULL,
-            transport = NULL, incarnation = NULL, runs = NULL, state = 'reserved', detail = NULL, updated_at = ?
-      WHERE task_id = ? AND attempt_key = ?`,
-  ).run(next.name, next.requestSha, next.msgId, new Date().toISOString(), taskId, attemptKey);
-  const row = getReceipt(db, taskId, attemptKey);
-  if (row === undefined) throw new Error("spawn receipt vanished");
-  return row;
+  return transitionReceipt(db, taskId, attemptKey, "reset", {
+    ...next,
+    agentId: null,
+    paneId: null,
+    transport: null,
+    incarnation: null,
+    runs: null,
+    detail: null,
+  });
 }

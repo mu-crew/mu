@@ -91,11 +91,12 @@ import { withSpawnAttemptLock } from "./lock.js";
 import {
   getReceipt,
   nextAttemptKey,
+  type ReceiptActor,
   requestSha,
   reserveReceipt,
   resetReceipt,
   type SpawnReceipt,
-  updateReceipt,
+  transitionReceipt,
 } from "./receipts.js";
 import {
   isCommandGate,
@@ -394,14 +395,14 @@ async function run(
     if (req.spawn.nextFree !== true && getAgentForCleanup(db, saved.name, ws) !== undefined) {
       throw new AgentExistsError(saved.name);
     }
-    updateReceipt(db, taskId, key, { state: "failed", detail: "reservation never reached a pane" });
+    transitionReceipt(db, taskId, key, "unsent", { detail: "reservation never reached a pane" });
     return fresh(db, req, taskId, key, sha, true);
   }
 
   // pane | claimed: resume at the next step on the saved identity, or start over.
   if (id.agent === undefined) {
     const why = `saved agent ${saved.agentId ?? "?"} is ${id.stale ?? "gone"}; nothing was sent`;
-    updateReceipt(db, taskId, key, { state: "failed", detail: why });
+    transitionReceipt(db, taskId, key, "unsent", { detail: why });
     if (auto) return failedAttempt(why);
     return fresh(db, req, taskId, key, sha, true);
   }
@@ -490,8 +491,7 @@ async function drive(
       }
     }
     try {
-      updateReceipt(db, taskId, key, {
-        state: "failed",
+      transitionReceipt(db, taskId, key, "unsent", {
         detail: err instanceof Error ? err.message : String(err),
       });
     } catch {
@@ -509,7 +509,7 @@ async function drive(
       expectedAgentId: target.incarnation,
     });
     claimed = true;
-    rec = updateReceipt(db, taskId, key, { state: "claimed" });
+    rec = transitionReceipt(db, taskId, key, "claim");
   };
   // One immediate transaction right before the write (no await inside):
   // the delivery targets the SAVED registry id + pane, never whatever holds
@@ -545,8 +545,7 @@ async function drive(
           throw new AgentReplacedError(now.name, ws, "sent to");
         }
         // hooks: what the readiness read is the baseline a replay confirms the run against.
-        const journaled = updateReceipt(db, taskId, key, {
-          state: "sending",
+        const journaled = transitionReceipt(db, taskId, key, "send", {
           transport,
           ...(ready !== undefined ? { incarnation: ready.sessionId, runs: ready.runCount } : {}),
         });
@@ -568,8 +567,7 @@ async function drive(
     },
     delivered: (b) => {
       firstDelivered = true;
-      rec = updateReceipt(db, taskId, key, {
-        state: "sent",
+      rec = transitionReceipt(db, taskId, key, "delivered", {
         detail: null,
         runs: b.runs,
         ...(b.incarnation !== undefined ? { incarnation: b.incarnation } : {}),
@@ -601,8 +599,7 @@ async function drive(
         firstTurn,
         onIdentity: (r) => {
           // Monotone (plugins spec D8): a view finalized after `sending` only repoints the pane.
-          rec = updateReceipt(db, taskId, key, {
-            ...(rec.state === "reserved" ? { state: "pane" as const } : {}),
+          rec = transitionReceipt(db, taskId, key, rec.state === "reserved" ? "pane" : "repoint", {
             name: r.name,
             agentId: r.incarnation,
             paneId: r.paneId,
@@ -616,7 +613,7 @@ async function drive(
       firstSent = spawned.firstSend;
       // The pi this spawn's handshake saw: every send below is bound to it.
       if (spawned.ctlIncarnation !== undefined) {
-        rec = updateReceipt(db, taskId, key, { incarnation: spawned.ctlIncarnation });
+        rec = transitionReceipt(db, taskId, key, "note", { incarnation: spawned.ctlIncarnation });
       }
       // The pane is up but cannot take (or confirm) a prompt: nothing was sent.
       if (spawned.ctl === "missing" || spawned.ctl === "refused") {
@@ -658,12 +655,14 @@ async function drive(
     if (firstDelivered) {
       // Sent, then its job was stopped by the spawn's rollback: the attempt ended, never unsent.
       const why = err instanceof Error ? err.message : String(err);
-      updateReceipt(db, taskId, key, { detail: `delivered; its job was then stopped: ${why}` });
+      transitionReceipt(db, taskId, key, "note", {
+        detail: `delivered; its job was then stopped: ${why}`,
+      });
       throw err;
     }
     if (err instanceof FirstPromptUnknownError) {
       const reason = err.message;
-      const unknownRec = updateReceipt(db, taskId, key, { state: "unknown", detail: reason });
+      const unknownRec = transitionReceipt(db, taskId, key, "unknown", { detail: reason });
       return {
         state: "unknown",
         replay: false,
@@ -706,8 +705,7 @@ async function drive(
     const reason = err instanceof Error ? err.message : String(err);
     const inc = (err as { incarnation?: unknown }).incarnation;
     // Keep the pane, the claim and the receipt: the prompt may be running.
-    const unknownRec = updateReceipt(db, taskId, key, {
-      state: "unknown",
+    const unknownRec = transitionReceipt(db, taskId, key, "unknown", {
       detail: reason,
       ...(typeof inc === "string" ? { incarnation: inc } : {}),
     });
@@ -722,7 +720,7 @@ async function drive(
   }
   if (undelivered !== undefined) {
     // A paste that looked calm but never registered: not provably sent.
-    const unknownRec = updateReceipt(db, taskId, key, { state: "unknown", detail: undelivered });
+    const unknownRec = transitionReceipt(db, taskId, key, "unknown", { detail: undelivered });
     return {
       state: "unknown",
       replay: false,
@@ -744,8 +742,8 @@ async function drive(
         }
       : sentRun(sent, db)?.baseline;
   try {
-    rec = updateReceipt(db, taskId, key, {
-      state: "sent",
+    // An at-start start sent it already (`delivered`): the baseline is only noted.
+    rec = transitionReceipt(db, taskId, key, rec.state === "sent" ? "note" : "delivered", {
       detail: null,
       ...(baseline?.incarnation !== undefined ? { incarnation: baseline.incarnation } : {}),
       ...(baseline !== undefined ? { runs: baseline.runs } : {}),
@@ -780,7 +778,7 @@ async function reconcile(
     const rec =
       saved.state === "unknown"
         ? saved
-        : updateReceipt(db, saved.taskId, saved.attemptKey, { state: "unknown", detail: reason });
+        : transitionReceipt(db, saved.taskId, saved.attemptKey, "unknown", { detail: reason });
     return {
       state: "unknown",
       replay: true,
@@ -795,17 +793,28 @@ async function reconcile(
   if (id.agent === undefined) return stay(`the sending agent is ${id.stale ?? "gone"}`);
   // An at-start kind's first prompt went with job.start: resolved by its rule-table row (D8 G1a).
   const first = await resolveFirstTurn(db, id.agent, saved.msgId);
+  // Its spawn still runs in another process: this replay only reads (D8 owner-only rule).
+  if (first?.state === "held") return held(saved, id, first.reason);
   if (first?.state === "unreachable") return stay(first.reason, "unreachable");
-  if (first?.state === "never") return neverStarted(db, req, saved, id.agent);
+  if (first?.state === "never") return neverStarted(db, req, saved, id.agent, first.actor);
   if (first?.state === "accepted") {
-    const rec = updateReceipt(db, saved.taskId, saved.attemptKey, {
-      state: "sent",
-      detail: null,
-      agentId: first.agent.incarnation,
-      paneId: first.agent.paneId,
-      runs: first.runs,
-      ...(first.incarnation !== undefined ? { incarnation: first.incarnation } : {}),
-    });
+    const event = saved.state === "sent" ? "repoint" : "confirm";
+    const rec = transitionReceipt(
+      db,
+      saved.taskId,
+      saved.attemptKey,
+      event,
+      {
+        ...(event === "confirm" ? { detail: null } : {}),
+        agentId: first.agent.incarnation,
+        paneId: first.agent.paneId,
+        ...(event === "confirm" ? { runs: first.runs } : {}),
+        ...(first.incarnation !== undefined && event === "confirm"
+          ? { incarnation: first.incarnation }
+          : {}),
+      },
+      first.actor,
+    );
     const brief = await tryPinBrief(db, req);
     return {
       state: "sent",
@@ -830,13 +839,29 @@ async function reconcile(
       check.state,
     );
   }
-  const rec = updateReceipt(db, saved.taskId, saved.attemptKey, {
-    state: "sent",
+  const rec = transitionReceipt(db, saved.taskId, saved.attemptKey, "confirm", {
     ...(check.incarnation !== undefined ? { incarnation: check.incarnation } : {}),
     ...(check.runs !== undefined ? { runs: check.runs } : {}),
   });
   const brief = await tryPinBrief(db, req);
   return { state: "sent", replay: true, receipt: rec, agent: id.agent, checked: "accepted", brief };
+}
+
+/** A replay while the at-start spawn that created the job still runs: unknown, nothing written. */
+function held(
+  saved: SpawnReceipt,
+  id: { agent?: AgentRow; stale?: "deleted" | "replaced" },
+  reason: string,
+): TaskSpawnOutcome {
+  return {
+    state: "unknown",
+    replay: true,
+    receipt: saved,
+    ...(id.agent !== undefined ? { agent: id.agent } : {}),
+    reason,
+    checked: "unreachable",
+    brief: "pending",
+  };
 }
 
 /**
@@ -849,6 +874,7 @@ async function neverStarted(
   req: TaskSpawnRequest,
   saved: SpawnReceipt,
   agent: AgentRow,
+  actor: ReceiptActor,
 ): Promise<never> {
   const ws = req.spawn.workstream;
   try {
@@ -869,7 +895,7 @@ async function neverStarted(
     undefined,
     carrier,
   );
-  updateReceipt(db, saved.taskId, saved.attemptKey, { state: "failed", detail: why });
+  transitionReceipt(db, saved.taskId, saved.attemptKey, "never", { detail: why }, actor);
   throw new SpawnAttemptFailedError(req.task, saved.attemptKey, why);
 }
 
@@ -894,8 +920,7 @@ async function reconcileHooks(
   if (ran.state === "none") {
     return stay(say("agent.task_brief_hooks_unseen", agent.name), "not-accepted");
   }
-  const rec = updateReceipt(db, saved.taskId, saved.attemptKey, {
-    state: "sent",
+  const rec = transitionReceipt(db, saved.taskId, saved.attemptKey, "confirm", {
     detail: null,
     runs: ran.runs,
     ...(ran.sessionId !== null ? { incarnation: ran.sessionId } : {}),

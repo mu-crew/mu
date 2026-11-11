@@ -30,6 +30,7 @@ import {
 } from "../agents.js";
 import {
   bindCarrierJobAgent,
+  type CarrierJob,
   getCarrierJob,
   getCarrierJobByName,
   recordCarrierPane,
@@ -40,10 +41,16 @@ import { channelTarget } from "../channels/dispatch.js";
 import { agentChannel } from "../channels/index.js";
 import type { RunBaseline, SendResult } from "../channels/types.js";
 import type { Db } from "../db.js";
+import { effectOwner } from "../effects.js";
 import { harnessOfCli } from "../harnesses.js";
 import { type HostView, resolveHost } from "../host-provider.js";
 import { reserveProviderJob } from "../host-records.js";
-import { HostProfileError, HostSpawnUnsupportedError, releaseHostChannel } from "../hosts.js";
+import {
+  HostProfileError,
+  HostSpawnUnsupportedError,
+  pidProvenGone,
+  releaseHostChannel,
+} from "../hosts.js";
 import { defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
 import { emitEvent } from "../logs.js";
@@ -55,7 +62,7 @@ import { prepareProviderWorktree } from "../remote-worktree.js";
 import { gitToplevel } from "../vcs/git.js";
 import { AgentExistsError } from "./errors.js";
 import { withAgentLock } from "./lock.js";
-import { repointReceipts } from "./receipts.js";
+import { type ReceiptActor, repointReceipts } from "./receipts.js";
 import {
   finalizeAgentRow,
   type SpawnAgentOptions,
@@ -132,6 +139,9 @@ export async function spawnPluginAgent(
           host: host.name,
           hostStop: null,
           plugin: { kind: kind.name, name: kind.plugin },
+          // The creating process: while it lives, others only read its first turn (D8).
+          creatorPid: effectOwner().pid,
+          creatorStart: effectOwner().start,
         }),
   );
   if (job === undefined) throw new AgentExistsError(name);
@@ -252,13 +262,17 @@ export async function spawnPluginAgent(
       started = await kind.start(host, spec, token);
     } catch (e) {
       const r = getCarrierJob(db, token);
-      // The first prompt may be running: nothing is rolled back or resent (D8 G1b).
-      if (prompt === undefined || r?.launch !== "intent" || r.job !== null) throw e;
+      // The first prompt may be running (or, resolved meanwhile, ran): never rolled back or
+      // resent (D8 G1b). Only a start proven never to have happened is unsent.
+      if (prompt === undefined || r?.launch !== "intent") throw e;
       kept = true;
       throw new FirstPromptUnknownError(kind.plugin, name, ws, prompt.msgId, token, e);
     }
-    // The first prompt is delivered: a later failure stops the job, never makes it unsent.
-    if (started.baseline !== undefined) opts.firstTurn?.delivered(started.baseline);
+    // An at-start start that carried the prompt delivered it: a later failure stops the job,
+    // never makes it unsent. An on-send kind's start delivers nothing (its baseline is readiness).
+    if (prompt !== undefined && started.baseline !== undefined) {
+      opts.firstTurn?.delivered(started.baseline);
+    }
     const row = await openView(
       db,
       { opts, cli, command, commandSource, cwd, staged, spawner, host, kind, token },
@@ -434,10 +448,34 @@ export class FirstPromptUnknownError extends EffectOutcomeUnknownError {
 }
 
 export type FirstTurnCheck =
-  | { state: "accepted"; runs: 0; incarnation?: string; agent: AgentRow }
+  /** `actor`: who answered (the creator itself, or another once the creator is gone). */
+  | { state: "accepted"; runs: 0; incarnation?: string; agent: AgentRow; actor: ReceiptActor }
   | { state: "unreachable"; reason: string }
+  /** The spawn that created the job still runs in another process: read only, nothing moved. */
+  | { state: "held"; reason: string }
   /** The start provably never happened: the msgId is no first prompt of a job. */
-  | { state: "never" };
+  | { state: "never"; actor: ReceiptActor };
+
+/** Who this invocation is to job record `r`'s first turn (D8 owner-only rule). */
+function firstTurnActor(r: CarrierJob): ReceiptActor {
+  const me = effectOwner();
+  if (r.creatorPid === null) return "other-gone";
+  if (r.creatorPid === me.pid && r.creatorStart === me.start) return "creator";
+  return pidProvenGone(r.creatorPid, r.creatorStart) ? "other-gone" : "other-alive";
+}
+
+/** A recovery's view failed after the row took its pane: back to the placeholder for the next try. */
+function unfinalize(db: Db, agent: AgentRow, pane: string, token: string): void {
+  db.prepare("UPDATE agents SET pane_id = ? WHERE id = ? AND pane_id = ?").run(
+    pendingPaneIdFor(agent.name),
+    agent.incarnation,
+    pane,
+  );
+  db.prepare("UPDATE carrier_jobs SET pane_id = NULL WHERE token = ? AND pane_id = ?").run(
+    token,
+    pane,
+  );
+}
 
 /**
  * `msgId` as agent `row`'s first prompt (D8 G1a, G1b): undefined unless its job record's
@@ -456,6 +494,24 @@ export async function resolveFirstTurn(
     state: "unreachable",
     reason: `its job.start (effect ${rec.token}) is unresolved: ${why}`,
   });
+  const actor = firstTurnActor(rec);
+  if (actor === "other-alive") {
+    // Owner-only (D8): while its spawn runs, a check or replay never resolves or moves anything.
+    const live = getAgent(db, row.name, row.workstreamName);
+    if (rec.job !== null && live !== undefined && !isPendingPaneId(live.paneId)) {
+      return {
+        state: "accepted",
+        runs: 0,
+        ...(rec.firstInc !== null ? { incarnation: rec.firstInc } : {}),
+        agent: live,
+        actor,
+      };
+    }
+    return {
+      state: "held",
+      reason: `its spawn (pid ${rec.creatorPid}) is still running: ask again once it ends (job.start effect ${rec.token})`,
+    };
+  }
   const kind = pluginJobKind(db, rec.plugin);
   if (kind === undefined) return unresolved(`plugin ${rec.plugin} has no job seam`);
   let view: PaneCommand | undefined;
@@ -471,7 +527,7 @@ export async function resolveFirstTurn(
   }
   const now = getCarrierJob(db, rec.token);
   if (now?.job == null) {
-    return now?.launch === "intent" ? unresolved("no answer yet") : { state: "never" };
+    return now?.launch === "intent" ? unresolved("no answer yet") : { state: "never", actor };
   }
   let agent = getAgent(db, row.name, row.workstreamName) ?? row;
   if (isPendingPaneId(agent.paneId) && agent.host !== null) {
@@ -515,14 +571,20 @@ export async function resolveFirstTurn(
           (pid) => {
             opened = pid;
           },
-          (r) => repointReceipts(db, r.incarnation, msgId, r.paneId),
+          () => {},
           agent.incarnation,
         );
       } catch (e) {
-        // Only the pane this call opened: the row keeps its placeholder for the next try.
-        if (opened !== undefined) await (await activeMux()).killPane(opened).catch(() => {});
+        // Only the pane this call opened; the row goes back to its placeholder for the next try,
+        // and the receipt stays as it was (D8, review 2 of P6e2).
+        if (opened !== undefined) {
+          await (await activeMux()).killPane(opened).catch(() => {});
+          unfinalize(db, agent, opened, now.token);
+        }
         throw e;
       }
+      // The view opened: only now does the receipt follow it.
+      repointReceipts(db, agent.incarnation, msgId, agent.paneId, actor);
     } catch (e) {
       return {
         state: "unreachable",
@@ -535,6 +597,7 @@ export async function resolveFirstTurn(
     runs: 0,
     ...(now.firstInc !== null ? { incarnation: now.firstInc } : {}),
     agent,
+    actor,
   };
 }
 

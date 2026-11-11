@@ -26,6 +26,7 @@ export {
   reattachAgent,
   reattachBlockers,
 } from "./agents/reattach.js";
+export { ReceiptTransitionError } from "./agents/receipts.js";
 export {
   type AbortAgentOptions,
   type AbortResult,

@@ -171,3 +171,44 @@ describe("review of P6e2: first-turn receipts are monotone per attempt (ruling 1
     expect(h.calls("channel.send")).toHaveLength(0);
   });
 });
+
+describe("review 2 of P6e2: named cases", () => {
+  const failingView = () =>
+    h.stubMux({
+      spawnAgent: async (o) => {
+        h.panes.set("%bad", { command: o.command });
+        o.onPaneCreated?.("%bad");
+        await new Promise((r) => setTimeout(r, 30));
+        throw new Error("view completion failed");
+      },
+    });
+
+  it("a lookup recovery whose view fails leaves row and receipt; the next replay opens a live view", async () => {
+    h.f.set({ faults: { "job.start": ["effectThenExit"] } });
+    expect((await spawnT1()).state).toBe("unknown");
+    const before = receipt();
+    failingView();
+    expect((await spawnT1()).state).toBe("unknown");
+    expect(receipt()).toMatchObject({ state: before?.state, paneId: before?.paneId });
+    expect(isPendingPaneId(getAgent(h.db, "w1", "ws")?.paneId ?? "")).toBe(true);
+    h.stubMux();
+    const out = await spawnT1();
+    expect(out.state).toBe("sent");
+    expect(h.panes.has(out.agent?.paneId ?? "")).toBe(true);
+    expect(receipt()?.paneId).toBe(out.agent?.paneId);
+    expect(h.f.backend().starts).toBe(1);
+  });
+
+  it("mu agent check: a failed view is no accepted; the next check opens a live view", async () => {
+    h.f.set({ faults: { "job.start": ["effectThenExit"] } });
+    await spawnT1();
+    const msgId = receipt()?.msgId ?? "";
+    failingView();
+    await expect(cmdAgentCheck(h.db, "w1", msgId, { workstream: "ws" })).rejects.toMatchObject({
+      exitCode: 1,
+    });
+    h.stubMux();
+    await cmdAgentCheck(h.db, "w1", msgId, { workstream: "ws" });
+    expect(h.panes.has(getAgent(h.db, "w1", "ws")?.paneId ?? "")).toBe(true);
+  });
+});

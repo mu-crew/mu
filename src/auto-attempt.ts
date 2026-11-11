@@ -22,7 +22,7 @@ import {
   requestSha,
   reserveReceipt,
   type SpawnReceipt,
-  updateReceipt,
+  transitionReceipt,
 } from "./agents/receipts.js";
 import { savedIdentity } from "./agents/task-spawn.js";
 import { MAX_AGENT_NAME_LEN } from "./agents.js";
@@ -355,7 +355,7 @@ export function endAttempt(db: Db, taskId: number, key: string, end: AttemptEnd)
         .run(JSON.stringify({ ...record, end }), taskId).changes;
       if (changed !== 1) return false;
       if (receipt !== undefined && UNSENT_STATES.has(receipt.state)) {
-        updateReceipt(db, taskId, key, { state: "failed", detail: `${end.state}: ${end.reason}` });
+        transitionReceipt(db, taskId, key, "unsent", { detail: `${end.state}: ${end.reason}` });
       }
       return true;
     })
@@ -467,8 +467,7 @@ export function reserveRetry(
         requestSha: attemptSha(agent.name, plan.text),
         msgId: newMsgId(),
       });
-      updateReceipt(db, taskId, plan.key, {
-        state: "claimed",
+      transitionReceipt(db, taskId, plan.key, "claim", {
         agentId: agent.incarnation,
         paneId: agent.paneId,
         incarnation: target.pi,

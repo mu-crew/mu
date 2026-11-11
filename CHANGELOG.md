@@ -37,6 +37,19 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `mu agent check`'s included, repoints the receipt to the view it opened, and
   a receipt naming its placeholder's pane still knows its incarnation, so a
   replay after a SIGKILL anywhere in it reports `sent` with no second delivery.
+  Second review: one module owns the receipt state machine
+  (`src/agents/receipts.ts`: `RECEIPT_EVENTS`, an explicit table of events,
+  from-states, to-states and actors, and `transitionReceipt`, which checks it
+  and compares-and-sets from the state it read; `ReceiptTransitionError`, exit
+  4); spawn, replay, `mu agent check` and lookup recovery all go through it.
+  Owner-only resolution: while the process that created an at-start job
+  (`carrier_jobs.creator_pid`/`creator_start`) lives, a check or replay in
+  another process only reads, never resolving the start or moving the
+  receipt; a start with no answer stays kept even if resolved meanwhile.
+  `delivered` applies only to an at-start start that carried the prompt (an
+  on-send kind's start baseline is readiness, never a delivery). A lookup
+  recovery repoints the receipt only once its view opened; a failed view puts
+  the row back to its placeholder, so the next replay or check opens it.
 - **Plugins: provider-host facts in mu's reads** (plugins spec P6e2: D10,
   D16). `mu wait` caps its sleep at the earliest `deadline_at −
   MU_HOST_DEADLINE_MARGIN_MS` of the provider hosts its watched agents run on
