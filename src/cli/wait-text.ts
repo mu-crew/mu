@@ -14,7 +14,8 @@ import type { WaitSnapshot } from "../wait-types.js";
 import { refString, tallySummary, type WaitDataInput } from "./wait-output.js";
 
 /** A report note's content, keyed by `refString` of the task or delegate ref it answers. */
-export type ReportsByRef = ReadonlyMap<string, string>;
+/** Per shown ref: its latest report note, else its latest close note (a worker closes with --evidence). */
+export type ReportsByRef = ReadonlyMap<string, { kind: "report" | "close"; content: string }>;
 
 /** The refs this result consumed or fired on, firing ref first: the ones the text shows. */
 export function shownSnapshots(input: WaitDataInput): WaitSnapshot[] {
@@ -34,18 +35,22 @@ export function shownSnapshots(input: WaitDataInput): WaitSnapshot[] {
 
 /**
  * The latest report note (what `mu task notes --report` prints) of each shown task, and of each
- * shown delegate's own task (its answer).
+ * shown delegate's own task (its answer); without one, the latest close note (the evidence a worker
+ * closes with).
  */
 export function shownReports(db: Db, input: WaitDataInput): ReportsByRef {
-  const out = new Map<string, string>();
+  const out = new Map<string, { kind: "report" | "close"; content: string }>();
   for (const s of shownSnapshots(input)) {
     const task =
       s.ref.kind === "task" ? s.ref.id : s.ref.kind === "delegate" ? s.callTask : undefined;
     if (task === undefined) continue;
-    const report = listNotes(db, task, s.ref.workstream)
-      .reverse()
-      .find((n) => n.kind === "report");
-    if (report !== undefined) out.set(refString(s.ref), report.content);
+    const notes = listNotes(db, task, s.ref.workstream).reverse();
+    const report = notes.find((n) => n.kind === "report");
+    const close = notes.find((n) => n.kind === "close");
+    if (report !== undefined)
+      out.set(refString(s.ref), { kind: "report", content: report.content });
+    else if (close !== undefined)
+      out.set(refString(s.ref), { kind: "close", content: close.content });
   }
   return out;
 }
@@ -92,7 +97,10 @@ export function waitText(input: WaitDataInput, reports: ReportsByRef): string {
     out.push(stateLine(s));
     if (s.ref.kind === "agent") continue;
     const report = reports.get(refString(s.ref));
-    if (report !== undefined) out.push(`report of ${refString(s.ref)}:`, indent(report));
+    if (report?.kind === "report")
+      out.push(`report of ${refString(s.ref)}:`, indent(report.content));
+    else if (report?.kind === "close")
+      out.push(`close evidence of ${refString(s.ref)}:`, indent(report.content));
     else if (s.fired) out.push(`report of ${refString(s.ref)}: none filed`);
   }
   // The rest, one line each: what is still open, and what an earlier wait consumed.
@@ -117,7 +125,7 @@ export function waitText(input: WaitDataInput, reports: ReportsByRef): string {
   const first = words[0];
   if (first === undefined || refString(first.ref) !== firing) {
     out.push(
-      firing !== null && result.event.ref?.kind !== "agent"
+      firing !== null && result.event.ref?.kind !== "agent" && reports.has(firing)
         ? `no final text: ${firing} is a ${result.event.ref?.kind} ref; its report is above`
         : "no final text",
     );

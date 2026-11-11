@@ -77,10 +77,20 @@ describe("mu wait --text: task and delegate refs", () => {
     expect(body).toEqual(["no final text: task:w/a is a task ref; its report is above"]);
   });
 
-  it("a closed task without a report says so above ---", async () => {
-    closeTask(db, "a", { workstream: "w", evidence: "e" });
+  it("a task closed with --evidence only (the worker flow) prints its close evidence above ---", async () => {
+    closeTask(db, "a", { workstream: "w", evidence: "tests pass: npm test exit 0" });
+    const { head, body } = split((await wait(["task:w/a", "--text"])).stdout);
+    expect(head).toContain("close evidence of task:w/a:");
+    expect(head.join("\n")).toContain("tests pass: npm test exit 0");
+    expect(head).not.toContain("report of task:w/a: none filed");
+    expect(body).toEqual(["no final text: task:w/a is a task ref; its report is above"]);
+  });
+
+  it("a report beats the close evidence", async () => {
+    closeTask(db, "a", { workstream: "w", evidence: "ev", report: "THE REPORT" });
     const { head } = split((await wait(["task:w/a", "--text"])).stdout);
-    expect(head).toContain("report of task:w/a: none filed");
+    expect(head).toContain("report of task:w/a:");
+    expect(head).not.toContain("close evidence of task:w/a:");
   });
 
   it("the latest report wins, as `mu task notes --report` prints it", async () => {
