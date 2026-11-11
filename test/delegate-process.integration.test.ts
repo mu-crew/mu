@@ -59,10 +59,19 @@ let n = 0;
 beforeEach(() => {
   for (const k of KEYS) saved[k] = process.env[k];
   dir = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "mu-dp-"));
-  // PATH holds node and git only: tmux and herdr are not reachable.
+  // PATH holds node, git and lsof only: tmux and herdr are not reachable.
+  // lsof is the holder scan where there is no /proc (macOS).
   const bin = join(dir, "bin");
   mkdirSync(bin);
-  for (const b of ["git"]) symlinkSync(execFileSync("which", [b]).toString().trim(), join(bin, b));
+  for (const b of ["git", "lsof"]) {
+    let at = "";
+    try {
+      at = execFileSync("which", [b]).toString().trim();
+    } catch {
+      if (b === "git") throw new Error("git not on PATH");
+    }
+    if (at !== "") symlinkSync(at, join(bin, b));
+  }
   symlinkSync(process.execPath, join(bin, "node"));
   process.env.PATH = bin;
   for (const k of ["TMUX", "TMUX_PANE", "HERDR_ENV", "MU_MUX", "FAKE_PI"]) delete process.env[k];
