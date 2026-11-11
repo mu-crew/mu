@@ -80,7 +80,7 @@ export function wirePluginCommands(program: Command): void {
   const plugin = program
     .command("plugin")
     .description(
-      "Plugins: executables you register by absolute path that implement a host link for mu over a versioned stdio protocol. Never discovered (docs/reference/plugin-protocol.md)",
+      "Plugins: executables you register by absolute path that supply a host link, provider hosts, jobs or channels over a versioned stdio protocol. Never discovered (docs/guide/plugins.md)",
     );
   plugin
     .command("add <name> <argv...>")
@@ -101,7 +101,7 @@ export function wirePluginCommands(program: Command): void {
   plugin
     .command("rm <name>")
     .description(
-      "Remove a registration. Refuses while a host profile names it (mu host rm those first)",
+      "Remove a registration. Refuses while a host, provider host, job record or unresolved effect names it",
     )
     .option(...JSON_OPT)
     .action(function (name: string) {

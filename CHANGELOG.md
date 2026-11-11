@@ -12,6 +12,10 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Changed
 
+- Docs: a how-to for plugins, `docs/guide/plugins.md` (register, link host,
+  provider host, unknown outcomes, where to start writing one), linked from
+  the guide index and `remote.md`. `mu plugin --help` names every seam and
+  everything `mu plugin rm` refuses over.
 - The U0 spike kit (`spike/u0/`) is removed; its results stay in the
   every-harness spec.
 

@@ -270,7 +270,7 @@ mu host show dev              # templates and the holders of its channels
   `--exec`: `mu plugin add box -- /abs/mu-plugin-box`, then `mu host add dev
   --plugin box` (plus `--fetch '<fetch cmd>'` when the plugin's link does not
   fetch). An agent spawns on it when the plugin declares a job seam. See
-  [the plugin protocol](../reference/plugin-protocol.md).
+  [Use a plugin](plugins.md).
 
 ## Provider hosts
 
