@@ -10,7 +10,36 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ## [Unreleased]
 
+## [4.6.0] — 2026-11-11
+
+Reading results gets cheap. `mu wait --text`, `mu agent read --text` and
+`mu task notes --report` print just what an agent needs, and `mu wait
+--ready` returns up to five ready events in one wait: pi's settle and the
+Stop hook now drain with it, so N closes cost ceil(N/5) turns instead of N.
+Each reading change won a measured tournament on weak models (hill-r2,
+docs/eval/hill-r2/). A pipe now gets no colour, inside tmux too; set
+`MU_FORCE_COLOR=1` for `watch --color`.
+
 ### Added
+
+- **`mu wait --ready`: the ready batch** (hill-r2 A7, a7_ready_engine;
+  proposal a7_wait_drain_rca_2 P1/P2/P4 + a7_wait_drain_rca_3 D1/D2). One
+  wait returns every ready, never-returned completion, up to 5, as
+  `data.events` right after `firing`; an urgent event (dead, input, stall)
+  still fires alone, so exits 6 and 7 are unchanged. It is opt-in: it excludes
+  `--first` and `--all`, and a resume stores it. The commit guards every
+  member: a member another process consumed meanwhile is dropped, so it is
+  never printed by two waits. The members are never paged out of `snapshots`.
+  `reason` says "N events: …".
+
+- **Wait results mark what they consumed** (every mode). A snapshot reads
+  `delivered: true` when this result consumed it, and `owed: true` when it is
+  ready news the next wait returns. A top-level `owed: N` is never cut. Paging
+  order is firing, delivered, open, owed, rest. A result with owed news the
+  caller owns (not a named target) gets the notice
+  `N owed: mu wait --ready -w <ws>`, and its `next` is that command. While a
+  named target is still owed, `next` stays the resume: a bare `--ready` never
+  returns an unowned target.
 
 - **`mu wait --text`: the result as plain lines** (task
   `land_c1_wait_text`, the C1 tournament winner
@@ -59,6 +88,204 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   gemini-3.8-flash 27/56 against base's 12, haiku a tie (46 against 48),
   sonnet 32 against 28; the win is on the help arms, where `--text` is shown
   (gemini 26/28 against 11/28).
+
+### Changed
+
+- **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
+  events arrive in one block, one line per event, plus a line for what is
+  still owed, instead of one block per event. A superseded wait that consumed
+  nothing lets the turn end while the newer wait is live, and otherwise waits
+  once more. A partly consumed one blocks over what it delivered. The empty
+  block says "run `mu wait --ready` in the background".
+
+- **pi's settle drains with `--ready`** (hill-r2 A7, a7_ready_settle;
+  proposal a7_wait_drain_rca_2 P3 + a7_wait_drain_rca_3 D1-D3). The settle
+  runs `mu wait --ready --on-stall exit --json`, so N ready closes and answers
+  cost ceil(N/5) turns instead of N (the crew-hill2 repro: 7 closes, 2 turns).
+  A batch entry says "N events:" with one line per event, then the answer
+  blocks as before (each at 1500 characters beside others). Delegates of
+  several waves share ONE wait loop, and each wave is summarised once; a wave
+  an earlier settle already summarised prints `wave A: 1 more in`, the tally
+  line and the new answers only. Owed news gets one line ("2 more ready, not
+  yet delivered: …"). A superseded result that consumed nothing is shown as
+  one line and does not continue the turn; a partly consumed one shows only
+  what it delivered. One event with nothing owed reads as before, byte for
+  byte. The words for events are shared with the Stop hook
+  (`src/wait-event-text.ts`). The orchestrator loop recipe's bare wait is
+  `mu wait --ready -w <ws>`.
+
+- **A superseded wait result is narrowed.** `delivered` keeps only the
+  members whose caller's generation applied; the others read `owed`.
+  `eventConsumed` says whether the firing event was consumed. Before this,
+  `superseded:true` covered a result that, with two callers, had partly been
+  consumed.
+
+- **A pipe gets no colour, inside tmux too.** mu forced ANSI colour
+  whenever `$TMUX` was set (67014c7a, for `watch --color mu hud`), so a
+  third of agent results read through a pipe carried escape codes and
+  agents stripped them with `sed`. Colour now needs stdout to be a TTY;
+  `NO_COLOR`, `MU_FORCE_COLOR` and `FORCE_COLOR` keep their meaning;
+  `TERM=dumb` on a TTY inside tmux is now plain, like outside it.
+  `mu hud` is gone and the dashboard decides its own colour; for
+  `watch --color` or a popup piped to a pager, set `MU_FORCE_COLOR=1`
+  (docs/reference/env.md).
+
+- Docs: docs/guide/sql.md now says a verb's output format never follows
+  the TTY; only colour does. `mu agent list | head` printing JSON looked
+  like a pipe switch, but `agent list` prints JSON on a TTY too (4.0).
+
+- **SKILL.md: wait for all of a set, then read every outcome** (hill-r2
+  C6 tournament winner `claudeopus55-wait-all`, task `land_c6_wait_all`;
+  report `docs/eval/hill-r2/c6.md`). The wait rule
+  now names `mu wait --all task:<ws>/<a> task:<ws>/<b>` and says to read
+  each task with `mu task show` after it. To pay for the words it cuts the
+  `-w <workstream>` sentence (each verb's `--help` lists `-w` or not) and
+  the `mu task block A --by B` line (`task block --help` gives the
+  direction). On `sleep_poll`, fast mode R1 with 50 clusters per model:
+  haiku 31/50 against base 8, gemini 42 against 22, sonnet 29 against 8;
+  pooled z 6.53 against a threshold of 2.01. Patch applied verbatim;
+  SKILL.md drops from 599 to 595 words.
+
+- **Course checks resume on their own** (hill-r2 s_course_auto and
+  s_course_auto_2, user report 2026-11-07: three checks in one session each
+  stopped for a human, though every proposal was in the plan).
+  `recipes/course-correct.md` now applies in-plan changes (DAG edges, order,
+  merge batching, briefs, habits) with the `COURSE CHECK` note and resumes. A
+  second delegate refutes the measurement, nothing is dispatched until both
+  answer, and it stops with `mu human-needed` only for scope, spend or goal
+  changes, irreversible or external steps, or a judgment call (`--no-stop` for
+  a to-do). The SKILL.md bullet reads "finish merging, then course-correct;
+  resume only after it" (599 words, unchanged). Eval: `course_check` requires
+  that the orchestrator saw both delegates' answers (not just made the calls:
+  `mu_delegate` returns at once), then the note, then the resume. The new
+  `course_check_escalate` hides a scope overrun in k11's and k12's notes, so it
+  shows up first in the measurement, and requires both answers before the
+  stop. The rig now records a settle's entries (`entry_appended`) as delivered
+  messages; before, no judge saw an answer a settle delivered. On haiku ×5,
+  base → candidate: course_check 0/5 → 4/5, course_check_escalate 1/5 → 4/5,
+  delegate_saturation 5/5 → 5/5, refute_verdicts 5/5 → 5/5, no destructive op.
+  s_course_auto_3 tightens the judge: the `COURSE CHECK` note must come after
+  both answers, and each faux delegate answer carries its own id, so a re-read
+  of the first answer is not taken for the second. Faux workers' close
+  evidence now names their commit (`<task>: committed <sha> run=<nonce>`), no
+  longer a `<task>.sh` that is not in the repo. Re-run on haiku ×5: course_check
+  0/5 → 4/5, course_check_escalate 1/5 → 3/5 (two candidate runs read the
+  overrun in k11's notes and stopped without measuring). That misses the keep
+  rule (both ≥ 4/5).
+  Log: docs/eval/hill-r2/course-auto.md.
+
+- **The models recipe names a model per family and tier** (anthropic,
+  openai, google, meta; dated 2026-11-11), so a check told to use "another
+  family" knows which model sits where. Model ids come from the harness
+  being spawned, latest version only; it no longer assumes
+  `pi --list-models`.
+
+- **The move recipe moves a 4.x workstream between machines**: free the
+  work on the source, ship its ops by `MU_SYNC_DIR` or `mu db backup` plus
+  `mu sync --from`, verify, and watch the target's dashboard. No sqlite3.
+  The 3.x-to-4.0 move is now a section of `docs/guide/upgrade.md`. The
+  recovery recipe says when a respawn needs `--attempt <task>-2`.
+
+### Fixed
+
+- **A check that pastes the verdict template is read by the label after
+  it.** `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED REFUTED <line>` recorded
+  CONFIRMED (the template's first choice) and a review closed on it. Two or
+  more labels joined by `|` are now the template and skipped; a line with only
+  the template reads UNVERIFIED. A plain verdict line reads as before.
+
+- **A partly superseded settle shows only what it consumed.** When a newer
+  `mu wait` superseded the settle's wait after it consumed part of the batch,
+  the entry's printed result still carried the unconsumed `firing`. It now
+  prints only the consumed events and says the newer wait returns the rest.
+
+- **Help text matches 4.5's behaviour.** `mu --help` names Rex beside tmux
+  and herdr. `agent send --steer` says it is pi-only and that a hook harness
+  refuses it (another CLI in a herdr or Rex pane gets a plain send).
+  `agent send --timeout` and `agent abort --timeout` say what they wait
+  for: pi, or a local hook harness that reports its interrupt (codex, muse,
+  cursor-agent); claude and remote hook workers are not waited on.
+  `task verdict --help` and its missing-verdict error show the skill's
+  `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <line>` form.
+
+- **`mu task note`'s "will not see this note" hint names a send that works
+  for the owner's channel.** It always said `mu agent send <o> --steer` with
+  no text argument, which a hook harness (claude, codex, cursor-agent, Muse)
+  refuses: it has no mid-turn steer. Now a ctl owner gets `--steer -` (or
+  `--interrupt`), a hooks owner `mu agent wait` then a plain send (or
+  `--interrupt`), a mux owner a plain send; every variant shows the text as
+  `- <<'EOF'`, and `-w` names the owner's own workstream.
+
+- **SQL refusals name the verb you typed.** `mu sql` refusals (BEGIN/COMMIT,
+  PRAGMA, ATTACH, DDL, id changes, bookkeeping writes, the `--write` opt-in)
+  and a capped read's `retrieve` said `mu db query` (or always `mu sql`); each
+  now names `mu sql` or `mu db query` as typed.
+
+- **Guessed verbs name the command that works.** `mu finding` points at
+  `mu task show` (a finding is an `OPEN/triage` task), `mu findings` at
+  `mu task list --substate triage`, `mu ready` / `mu task ready` at
+  `mu task next -n 0`, `mu delegates check|verdict` at `mu task check|verdict`.
+  An unknown first word after `mu delegates` (whose default verb is `list`)
+  is now `unknown command 'x'` with the closest verb, not "too many arguments
+  for 'list'".
+
+- **`mu sql` name errors teach the real name.** A guessed column offers the
+  column that holds the data first: `name` on tasks -> `local_id, title` (it
+  suggested `wave`), `body`/`text` -> `content`, `workstream` ->
+  `workstream_id` plus the join that filters by workstream name, written with the query's
+  alias for the table (`FROM tasks t` -> `t.workstream_id`). `no such
+  table: x` (was passed through raw) is now a one-line `SqlTableError`
+  (exit 2) naming the closest table (`notes` -> `task_notes`, `edges` ->
+  `task_edges`) and listing every table and view.
+
+- **Lease-carrier hints carry `-w`.** The `mu agent close <name>` hints of a
+  refused stop, a spawn fenced by an unstopped or reserved job, and a dead
+  remote worker in `mu task next --recover` now name the agent and
+  `-w <ws>` (the refused stop printed a literal `<name>`), so they run
+  outside the agent's own workstream.
+
+- **A malformed CLOSE refusal names the shape it wanted.** Every
+  `no close (malformed): <reason>` (the task note, `mu wait`, `mu agent
+  collect`) now ends with the expected three lines, in one line: the
+  `CLOSE: task=<id> evidence="<command + result>"` header, then `REPORT:`
+  alone, then the report. The ctl close notice still prints them as lines.
+  The grammar is unchanged (a close never happens by guess). The
+  `remote-workers` and `worker` recipes show the block fenced, three lines,
+  `REPORT:` alone: 45 of 48 remote refusals since Nov 1 were a blank line
+  before `REPORT:` or text on it. `remote-workers` waits with `mu wait
+  agent:<ws>/<n>@<runs>` (the spawn's next) instead of the pi-only `mu agent
+  wait --after-runs`.
+
+- **A remote worktree close waits out a brief holder and names a lasting
+  one.** A process inside the parked tree is re-scanned once a second for
+  up to 5 s inside the same leased exec (no second exec, no extra rename),
+  so a short-lived tool no longer causes a refusal. One still there is refused as `process <pid> (<command, cut>,
+  <age>s old) on <host> is still inside <path>; ...`, from the host's `ps`
+  (the bare pid when `ps` cannot say). `--force` is unchanged: it neither
+  waits nor refuses.
+
+- **A local close no longer removes a tree under the agent's own pi.**
+  `mu agent close` killed the pane and scanned for holders at once, but pi
+  outlives the hangup while it saves its session and runs its exit hooks,
+  so the close warned `process … (pi) was still inside …; the tree was
+  removed under it`. The close now reads the pane's processes before the
+  kill and waits up to 5 s for them to exit before it scans. On macOS
+  (whose `ps` has no session id) those processes are the pane's
+  descendants still on its terminal (or in its process group); before, only the pane's first
+  process counted, so the preview listed the agent's own pi as a holder
+  too. pi's helpers that outlive the hangup (a plugin that moves to its own
+  process group and is reparented away from pi, its children, a
+  `setsid`'d drain) are waited for in the same 5 s
+  when they hold the tree: the close reads, before the kill, the process
+  groups of the pane's session and of each descendant that left it. The
+  5 s count from the kill and include the scans; the park, the holder scan
+  and the removal follow (1.5 to 2.5 s on a Mac), so a helper that never
+  exits gives a close of about 7 to 8 s. A helper still there at 5 s, and
+  any foreign holder, is still named (or refuses, as a writer) as before. The preview's `--if` revision never
+  depended on the holder list: two previews agree while those processes
+  churn (now pinned by a test).
+
+### Eval rig (not shipped)
 
 - **Eval: markers from the rendered help** (task `f_help_markers`, spec
   revision 4). `deriveMarkers` also diffs `mu <path> --help` of every command
@@ -143,23 +370,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   open (README). 5 kept B5 gemini rows carried it (`ps` of the driver, a grep
   of the unstripped surface's `docs/eval`) and were re-run.
 
-- **`mu wait --ready`: the ready batch** (hill-r2 A7, a7_ready_engine;
-  proposal a7_wait_drain_rca_2 P1/P2/P4 + a7_wait_drain_rca_3 D1/D2). One
-  wait returns every ready, never-returned completion, up to 5, as
-  `data.events` right after `firing`; an urgent event (dead, input, stall)
-  still fires alone, so exits 6 and 7 are unchanged. It is opt-in: it excludes
-  `--first` and `--all`, and a resume stores it. The commit guards every
-  member: a member another process consumed meanwhile is dropped, so it is
-  never printed by two waits. The members are never paged out of `snapshots`.
-  `reason` says "N events: …".
-- **Wait results mark what they consumed** (every mode). A snapshot reads
-  `delivered: true` when this result consumed it, and `owed: true` when it is
-  ready news the next wait returns. A top-level `owed: N` is never cut. Paging
-  order is firing, delivered, open, owed, rest. A result with owed news the
-  caller owns (not a named target) gets the notice
-  `N owed: mu wait --ready -w <ws>`, and its `next` is that command. While a
-  named target is still owed, `next` stays the resume: a bare `--ready` never
-  returns an unowned target.
 - **Eval: the hill-r2 tournament gate and report** (spec
   `docs/specs/2026-11-07-hill-r2-tournament.md` §4.4-§4.6, §5, §6, unit B3c).
   `tournament r3|r4|final|report` replace B3b's stubs. `tournament-r4.ts`
@@ -253,25 +463,11 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   poll waits (`poll_wave`), one note summarising four reports
   (`multi_notes`) and acting on a worker's result read through mu
   (`wait_report_act`). `cold-guess check --family next` is green again:
-  a sandbox copies the pi launcher's cached model catalog so a worker pi
-  starts inside a pi agent's seatbelt, the remote gate seed spawns as pi,
+  a sandbox copies pi's cached model catalog so a nested worker pi
+  starts, the remote gate seed spawns as pi,
   and `task_brief` is reworded. The faux worker reads its claim with a
   plain `sqlite3` connection: `-readonly` cannot open the WAL DB once no mu
   process holds its -shm file, so a worker whose orchestrator slept gave up.
-
-### Changed
-
-- **SKILL.md: wait for all of a set, then read every outcome** (hill-r2
-  C6 tournament winner `claudeopus55-wait-all`, task `land_c6_wait_all`;
-  report `docs/eval/hill-r2/c6.md`). The wait rule
-  now names `mu wait --all task:<ws>/<a> task:<ws>/<b>` and says to read
-  each task with `mu task show` after it. To pay for the words it cuts the
-  `-w <workstream>` sentence (each verb's `--help` lists `-w` or not) and
-  the `mu task block A --by B` line (`task block --help` gives the
-  direction). On `sleep_poll`, fast mode R1 with 50 clusters per model:
-  haiku 31/50 against base 8, gemini 42 against 22, sonnet 29 against 8;
-  pooled z 6.53 against a threshold of 2.01. Patch applied verbatim;
-  SKILL.md drops from 599 to 595 words.
 
 - **Eval rig: every row runs under its own muzzle claim; the load gate is
   gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove
@@ -300,7 +496,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   table. A worker's call drops from 11 to 3 (1 on bash 5).
 
 - **Eval rig: launcher variables come from `EVAL_LAUNCHER_ENV`** (public
-  audit). The rig no longer names a specific pi launcher's variables: it sets
+  audit). The rig no longer names any launcher's variables: it sets
   each `NAME=VALUE` pair in `EVAL_LAUNCHER_ENV` for every pi it starts (a
   caller value of `NAME` wins), and seeds any `[<name>-]model-catalog*.json`
   cache. The pairs never override the sandbox's own `HOME`, `PATH` or `MU_*`
@@ -310,92 +506,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   isolation audit takes the museum checkout from `EVAL_MUSEUM_DIR` (no
   default) and denies any dir named `museum` holding `skills/museum`.
 
-- **Course checks resume on their own** (hill-r2 s_course_auto and
-  s_course_auto_2, user report 2026-11-07: three checks in one session each
-  stopped for a human, though every proposal was in the plan).
-  `recipes/course-correct.md` now applies in-plan changes (DAG edges, order,
-  merge batching, briefs, habits) with the `COURSE CHECK` note and resumes. A
-  second delegate refutes the measurement, nothing is dispatched until both
-  answer, and it stops with `mu human-needed` only for scope, spend or goal
-  changes, irreversible or external steps, or a judgment call (`--no-stop` for
-  a to-do). The SKILL.md bullet reads "finish merging, then course-correct;
-  resume only after it" (599 words, unchanged). Eval: `course_check` requires
-  that the orchestrator saw both delegates' answers (not just made the calls:
-  `mu_delegate` returns at once), then the note, then the resume. The new
-  `course_check_escalate` hides a scope overrun in k11's and k12's notes, so it
-  shows up first in the measurement, and requires both answers before the
-  stop. The rig now records a settle's entries (`entry_appended`) as delivered
-  messages; before, no judge saw an answer a settle delivered. On haiku ×5,
-  base → candidate: course_check 0/5 → 4/5, course_check_escalate 1/5 → 4/5,
-  delegate_saturation 5/5 → 5/5, refute_verdicts 5/5 → 5/5, no destructive op.
-  s_course_auto_3 tightens the judge: the `COURSE CHECK` note must come after
-  both answers, and each faux delegate answer carries its own id, so a re-read
-  of the first answer is not taken for the second. Faux workers' close
-  evidence now names their commit (`<task>: committed <sha> run=<nonce>`), no
-  longer a `<task>.sh` that is not in the repo. Re-run on haiku ×5: course_check
-  0/5 → 4/5, course_check_escalate 1/5 → 3/5 (two candidate runs read the
-  overrun in k11's notes and stopped without measuring). That misses the keep
-  rule (both ≥ 4/5).
-  Log: docs/eval/hill-r2/course-auto.md.
-- **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
-  events arrive in one block, one line per event, plus a line for what is
-  still owed, instead of one block per event. A superseded wait that consumed
-  nothing lets the turn end while the newer wait is live, and otherwise waits
-  once more. A partly consumed one blocks over what it delivered. The empty
-  block says "run `mu wait --ready` in the background".
-- **pi's settle drains with `--ready`** (hill-r2 A7, a7_ready_settle;
-  proposal a7_wait_drain_rca_2 P3 + a7_wait_drain_rca_3 D1-D3). The settle
-  runs `mu wait --ready --on-stall exit --json`, so N ready closes and answers
-  cost ceil(N/5) turns instead of N (the crew-hill2 repro: 7 closes, 2 turns).
-  A batch entry says "N events:" with one line per event, then the answer
-  blocks as before (each at 1500 characters beside others). Delegates of
-  several waves share ONE wait loop, and each wave is summarised once; a wave
-  an earlier settle already summarised prints `wave A: 1 more in`, the tally
-  line and the new answers only. Owed news gets one line ("2 more ready, not
-  yet delivered: …"). A superseded result that consumed nothing is shown as
-  one line and does not continue the turn; a partly consumed one shows only
-  what it delivered. One event with nothing owed reads as before, byte for
-  byte. The words for events are shared with the Stop hook
-  (`src/wait-event-text.ts`). The orchestrator loop recipe's bare wait is
-  `mu wait --ready -w <ws>`.
-- **A superseded wait result is narrowed.** `delivered` keeps only the
-  members whose caller's generation applied; the others read `owed`.
-  `eventConsumed` says whether the firing event was consumed. Before this,
-  `superseded:true` covered a result that, with two callers, had partly been
-  consumed.
-- `select()` moved from src/wait.ts (1527 LOC, over the cap) to
-  src/wait-select.ts.
-
-- **A pipe gets no colour, inside tmux too.** mu forced ANSI colour
-  whenever `$TMUX` was set (67014c7a, for `watch --color mu hud`), so a
-  third of agent results read through a pipe carried escape codes and
-  agents stripped them with `sed`. Colour now needs stdout to be a TTY;
-  `NO_COLOR`, `MU_FORCE_COLOR` and `FORCE_COLOR` keep their meaning;
-  `TERM=dumb` on a TTY inside tmux is now plain, like outside it.
-  `mu hud` is gone and the dashboard decides its own colour; for
-  `watch --color` or a popup piped to a pager, set `MU_FORCE_COLOR=1`
-  (docs/reference/env.md).
-- Docs: docs/guide/sql.md now says a verb's output format never follows
-  the TTY; only colour does. `mu agent list | head` printing JSON looked
-  like a pipe switch, but `agent list` prints JSON on a TTY too (4.0).
-
-- **The move recipe moves a 4.x workstream between machines**: free the
-  work on the source, ship its ops by `MU_SYNC_DIR` or `mu db backup` plus
-  `mu sync --from`, verify, and watch the target's dashboard. No sqlite3.
-  The 3.x-to-4.0 move is now a section of `docs/guide/upgrade.md`. The
-  recovery recipe says when a respawn needs `--attempt <task>-2`.
-
-### Fixed
-
-- **A check that pastes the verdict template is read by the label after
-  it.** `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED REFUTED <line>` recorded
-  CONFIRMED (the template's first choice) and a review closed on it. Two or
-  more labels joined by `|` are now the template and skipped; a line with only
-  the template reads UNVERIFIED. A plain verdict line reads as before.
-- **A partly superseded settle shows only what it consumed.** When a newer
-  `mu wait` superseded the settle's wait after it consumed part of the batch,
-  the entry's printed result still carried the unconsumed `firing`. It now
-  prints only the consumed events and says the newer wait returns the rest.
 - **Eval: audit and judge gaps from the B3/B4 reviews** (f_low_batch3). The
   designer audit sees a search behind a wrapper (`sudo find /`, `env … timeout
   5 rg x /`) and a glob above HOME (`du -sh /Users/*` names `/Users`), and never
@@ -408,17 +518,20 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `test/eval/_r4-fixtures.ts`). The report says the end-to-end figure is
   computed from the null false-loss bounds, and rig-guard's canary test prints
   the exact line a file lacks.
+
 - **The public tree stays scrubbed.** `docs/eval/hill-r2/baseline.md` had
   regained an absolute home path from a pre-audit branch; it now reads `~/`.
   `test/public-tree.test.ts` scans every tracked text file and fails on a
   real `/Users/<name>/` or `/home/<name>/` path or on a term the public audit
   removed.
+
 - **Eval: `tournament pack` drops a rig entry from a JSON config list**
   (hill-r2 c2). `tsconfig.test.json` names `tools/eval/pi-ai.d.ts` in its
   `include` since f_eval_muzzle_2, and the pack refused base `d9acd750`
   outright ("pack still carries denied text"). A string in a JSON array
   that names the rig is now removed; any other hit in a JSON file is still
   reported and refuses the pack.
+
 - **Eval: the behaviour diff masks timing noise and data keys** (hill-r2
   c2). A call family the two base runs disagree on (in how often it ran or
   in any output: a poll while workers finish) compares on exit and JSON
@@ -427,6 +540,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   a name (`delegate_rev_3b9f1ea2`) and upper-case check ids. On c2's cached
   goldens the changed calls of every variant fell from five or six keys to
   the close calls each one really changes.
+
 - **Eval: the tournament build trusts only complete golden passes**
   (hill-r2 c2 review). A base golden pass that was cut short (not ok) is no
   evidence of noise: such a case masks nothing, is compared against the
@@ -437,11 +551,13 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `goldenCompat not run` and is refused ("golden pass not run"). The
   parallel passes now run through `passPool`, tested to keep per-row claims
   and the serial traces.
+
 - **Eval: a variant's new flag split over two lines is a new name**
   (hill-r2 c2). `newNames` matched `.option("--x"` on one added line, but
   the formatter writes `.option(` and the flag on separate lines, so c2's
   `--if-clean` and `--auto` had no behaviour signature. Runs of added lines
   are now joined before matching.
+
 - **Eval: the behaviour diff pairs golden calls by occurrence, not
   position** (hill-r2 c2). Workers interleave their calls differently from
   run to run (`wait_mixed_refs` claims in either order), and one swap shifted
@@ -450,6 +566,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   by their k-th occurrence of the same normalised argv; an occurrence the
   two base runs disagree on is chance. `build` caches each variant's golden
   traces per build ref, and `--force` re-assesses from them.
+
 - **Eval: a probe seed that fails on a surface gives an invalid row**
   (hill-r2 c2). Seeds are spelled in base grammar; a c2 variant that made a
   bare `agent close --json` apply the close broke the seed's revision read,
@@ -458,23 +575,27 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (`seed invalid: …`), scored like a failed lead-in (spec §1.4 lint 3: an
   invalid headline row eliminates), and a variant's failed golden pass no
   longer stops `build` for the others.
+
 - **Eval: `tournament build` runs its golden passes side by side**
   (hill-r2 c2). Base's two passes and up to `--passes` (default 4) variant
   passes run at once; each row still takes its own muzzle claim and rows are
   appended in candidate order. Serial, c2's eight variants took about 12 h
   of zero-cost goldens before R1 could start.
+
 - **Eval: the designer audit no longer reads `//` as a search of `/`**
   (hill-r2 c2). A `//` comment inside a heredoc (a python script that edits
   TypeScript) was a strict path `//`, so the root, and discarded the
   claude-opus designer session on three false "search above HOME" hits. A
   slash-only word is now treated like a bare `/`: a hit only as the start
   dir of a search (`rg x //`) or a `cd`.
+
 - **Eval: `tournament plan` plans from B5's rows before a freeze, and model
   errors stay out of ρ̂** (hill-r2 B5). `plan <g> --b5 <probe.jsonl>
   [--b5-cold <cold.jsonl>]` computes ρ̂ the way `freeze` does
   (`rhoFromB5`, shared by both), without writing a setup row. A row with a
   model error is rig noise, not a reading outcome; counted as a miss it
   faked a cluster effect.
+
 - **Eval: the next-step probe counts a field of mu's tab-separated text as a
   whole line** (hill-r2 B5). `task notes` prints
   `<kind>\t<n>\tby=…\tat=…\t<text>`, so a note's first line was never a whole
@@ -482,6 +603,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `notes_report_read` scored 174 of 360 base rows a miss on finding 1 alone.
   A field is mu's own unit, as a jq -r string is; a `grep -o` cut inside it
   still does not count.
+
 - **Eval: R4 scenarios run on macOS** (hill-r2 B5). `fanout_gates`'s commit
   hook stamped `date +%s%3N`, which BSD date prints as `<s>3N`: no merge was
   ever seen and its golden failed. Four bad scripts used GNU `sed -i '1i …'`
@@ -491,90 +613,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   README says to run on macOS with `TMPDIR=/private/tmp` (the `/tmp` symlink
   breaks the remote scenarios' path judges) and that `wait_interrupted` needs
   Linux.
-- **Help text matches 4.5's behaviour.** `mu --help` names Rex beside tmux
-  and herdr. `agent send --steer` says it is pi-only and that a hook harness
-  refuses it (another CLI in a herdr or Rex pane gets a plain send).
-  `agent send --timeout` and `agent abort --timeout` say what they wait
-  for: pi, or a local hook harness that reports its interrupt (codex, muse,
-  cursor-agent); claude and remote hook workers are not waited on.
-  `task verdict --help` and its missing-verdict error show the skill's
-  `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <line>` form.
-
-### Fixed
-
-- **`mu task note`'s "will not see this note" hint names a send that works
-  for the owner's channel.** It always said `mu agent send <o> --steer` with
-  no text argument, which a hook harness (claude, codex, cursor-agent, Muse)
-  refuses: it has no mid-turn steer. Now a ctl owner gets `--steer -` (or
-  `--interrupt`), a hooks owner `mu agent wait` then a plain send (or
-  `--interrupt`), a mux owner a plain send; every variant shows the text as
-  `- <<'EOF'`, and `-w` names the owner's own workstream.
-- **SQL refusals name the verb you typed.** `mu sql` refusals (BEGIN/COMMIT,
-  PRAGMA, ATTACH, DDL, id changes, bookkeeping writes, the `--write` opt-in)
-  and a capped read's `retrieve` said `mu db query` (or always `mu sql`); each
-  now names `mu sql` or `mu db query` as typed.
-- **Guessed verbs name the command that works.** `mu finding` points at
-  `mu task show` (a finding is an `OPEN/triage` task), `mu findings` at
-  `mu task list --substate triage`, `mu ready` / `mu task ready` at
-  `mu task next -n 0`, `mu delegates check|verdict` at `mu task check|verdict`.
-  An unknown first word after `mu delegates` (whose default verb is `list`)
-  is now `unknown command 'x'` with the closest verb, not "too many arguments
-  for 'list'".
-- **`mu sql` name errors teach the real name.** A guessed column offers the
-  column that holds the data first: `name` on tasks -> `local_id, title` (it
-  suggested `wave`), `body`/`text` -> `content`, `workstream` ->
-  `workstream_id` plus the join that filters by workstream name, written with the query's
-  alias for the table (`FROM tasks t` -> `t.workstream_id`). `no such
-  table: x` (was passed through raw) is now a one-line `SqlTableError`
-  (exit 2) naming the closest table (`notes` -> `task_notes`, `edges` ->
-  `task_edges`) and listing every table and view.
-- **Lease-carrier hints carry `-w`.** The `mu agent close <name>` hints of a
-  refused stop, a spawn fenced by an unstopped or reserved job, and a dead
-  remote worker in `mu task next --recover` now name the agent and
-  `-w <ws>` (the refused stop printed a literal `<name>`), so they run
-  outside the agent's own workstream.
-
-- **A malformed CLOSE refusal names the shape it wanted.** Every
-  `no close (malformed): <reason>` (the task note, `mu wait`, `mu agent
-  collect`) now ends with the expected three lines, in one line: the
-  `CLOSE: task=<id> evidence="<command + result>"` header, then `REPORT:`
-  alone, then the report. The ctl close notice still prints them as lines.
-  The grammar is unchanged (a close never happens by guess). The
-  `remote-workers` and `worker` recipes show the block fenced, three lines,
-  `REPORT:` alone: 45 of 48 remote refusals since Nov 1 were a blank line
-  before `REPORT:` or text on it. `remote-workers` waits with `mu wait
-  agent:<ws>/<n>@<runs>` (the spawn's next) instead of the pi-only `mu agent
-  wait --after-runs`.
-
-- **A remote worktree close waits out a brief holder and names a lasting
-  one.** A process inside the parked tree is re-scanned once a second for
-  up to 5 s inside the same leased exec (no second exec, no extra rename),
-  so a short-lived tool such as a guardrail spool drain no longer causes a
-  refusal. One still there is refused as `process <pid> (<command, cut>,
-  <age>s old) on <host> is still inside <path>; ...`, from the host's `ps`
-  (the bare pid when `ps` cannot say). `--force` is unchanged: it neither
-  waits nor refuses.
-
-- **A local close no longer removes a tree under the agent's own pi.**
-  `mu agent close` killed the pane and scanned for holders at once, but pi
-  outlives the hangup while it saves its session and runs its exit hooks,
-  so the close warned `process … (pi) was still inside …; the tree was
-  removed under it`. The close now reads the pane's processes before the
-  kill and waits up to 5 s for them to exit before it scans. On macOS
-  (whose `ps` has no session id) those processes are the pane's
-  descendants still on its terminal (or in its process group); before, only the pane's first
-  process counted, so the preview listed the agent's own pi as a holder
-  too. pi's helpers that outlive the hangup (the guardrails plugin, which
-  moves to its own process group and is reparented away from pi, its
-  logger children, a `setsid`'d drain) are waited for in the same 5 s
-  when they hold the tree: the close reads, before the kill, the process
-  groups of the pane's session and of each descendant that left it. The
-  5 s count from the kill and include the scans; the park, the holder scan
-  and the removal follow (1.5 to 2.5 s on a Mac), so a helper that never
-  exits gives a close of about 7 to 8 s. A helper still there at 5 s, and
-  any foreign holder, is still named (or refuses, as a writer) as before. The preview's `--if` revision never
-  depended on the holder list: two previews agree while those processes
-  churn (now pinned by a test).
 
 ## [4.5.0] — 2026-11-07
 

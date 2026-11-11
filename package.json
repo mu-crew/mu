@@ -1,6 +1,6 @@
 {
   "name": "@mu-crew/mu",
-  "version": "4.5.0",
+  "version": "4.6.0",
   "description": "A persistent, observable crew of coding agents (pi, Claude Code, Codex, cursor-agent, Muse Code) in tmux, herdr or Rex panes, coordinated through a built-in task DAG.",
   "publishConfig": {
     "access": "public"
