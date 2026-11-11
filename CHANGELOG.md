@@ -3025,7 +3025,7 @@ sessions to pick up the skill. No schema change.
 - **Skill: remote-workers recipe safety.** Poll only after the worker
   reports done (the poll closes the task); gate on a scratch checkout
   via a temporary ref, never `main`; `--after-runs` takes the send's
-  `runs` unchanged; no blanket `pkill -f 2fa-proxy`.
+  `runs` unchanged; no blanket `pkill` of the ssh proxy.
 - **`mu agent close` no longer deletes `cp -a` workspaces silently.** A
   `none`-backend workspace can't prove it is clean, so close refuses
   (`WorkspacePreservedError`) unless `--discard-workspace`. SKILL.md and
