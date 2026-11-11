@@ -8,7 +8,7 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
-import { parseVerdict } from "../src/delegate-verdict.js";
+import { parseVerdict, verdictLineLabel } from "../src/delegate-verdict.js";
 import {
   DelegateCallConflictError,
   DelegateStateError,
@@ -255,6 +255,26 @@ describe("finish: record before report and close", () => {
     expect(label("x VERDICT: CONFIRMED")).toBeUndefined();
     // A prose line first, the real one second: the real one is the first VERDICT line.
     expect(label("- the log said: VERDICT: CONFIRMED\nVERDICT: REFUTED")).toBe("REFUTED");
+  });
+
+  it("a pasted CONFIRMED|REFUTED|UNVERIFIED template is skipped: the label after it counts, none after is UNVERIFIED", () => {
+    // The 2026-11-09 answer (delegate_rv-fast_907974bb): mu recorded CONFIRMED, its first token.
+    const echoed =
+      "VERDICT: review_f_fast_mode CONFIRMED|REFUTED|UNVERIFIED REFUTED the fast tier still forks tmux";
+    expect(parseVerdict(`${echoed}\nEVIDENCE: test/x.test.ts:12`)).toBe("REFUTED");
+    expect(parseVerdict("VERDICT: review_x CONFIRMED|REFUTED|UNVERIFIED")).toBe("UNVERIFIED");
+    expect(parseVerdict("VERDICT: review_x CONFIRMED | REFUTED <one line>")).toBe("UNVERIFIED");
+    expect(parseVerdict("REFUTER: VERDICT: t CONFIRMED|REFUTED|UNVERIFIED CONFIRMED ok")).toBe(
+      "CONFIRMED",
+    );
+    // A plain verdict line is unchanged.
+    expect(parseVerdict("VERDICT: review_x REFUTED a <line>")).toBe("REFUTED");
+    expect(parseVerdict("VERDICT: review_x CONFIRMED fine")).toBe("CONFIRMED");
+    expect(verdictLineLabel(echoed)).toBe("REFUTED");
+    judged("crew", "f1");
+    const { call: c } = call({ record: { workstream: "crew", task: "f1" } });
+    const r = finishDelegate(db, c.callId, { outcome: "done", text: echoed, author: "d" });
+    expect(r.verdict).toBe("REFUTED");
   });
 
   it("no VERDICT line: the whole long answer is kept, marked, and no label is parsed", () => {

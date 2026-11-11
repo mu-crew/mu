@@ -8,8 +8,24 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ColdRow } from "./cold-guess.ts";
-import type { Arm, Group, NextCase, NextJob, ProbeRow } from "./nextstep.ts";
-import { cmhPower, type IccRow, iccModel, iccPooled, mde, type Plan, solvePlan } from "./stats.ts";
+import {
+  type Arm,
+  type Group,
+  HELP_ARMS,
+  type NextCase,
+  type NextJob,
+  type ProbeRow,
+} from "./nextstep.ts";
+import {
+  cmhPower,
+  type IccRow,
+  iccModel,
+  iccPooled,
+  mde,
+  normQuantile,
+  type Plan,
+  solvePlan,
+} from "./stats.ts";
 import type { VariantRow } from "./tournament-build.ts";
 import type { Surface } from "./types.ts";
 
@@ -57,12 +73,23 @@ export interface CasePlan {
   r1: number;
   /** MDE at 80% power: own headline on the pooled win test at B = 18, others on the first loss step. */
   mde: number | null;
+  /** The arms the rounds run (a plan without them, frozen before the help arms: the case's own). */
+  arms?: Arm[];
 }
+
+/** Full mode runs R1 → R2 → R3 → R4 per group; fast mode decides on R1 and gates in C7 (§4.7). */
+export type Mode = "full" | "fast";
 
 export interface FreezeRow {
   kind: "freeze";
   judgesHash: string;
   files: string[];
+  /** Absent on a row frozen before fast mode existed: full. */
+  mode?: Mode;
+  /** Fast mode: the n_eff targets the plan was solved for. */
+  targets?: { own: number; pooled: number };
+  /** Fast mode: the win threshold's family level and correction (§4.7); absent: LEGACY_WIN_RULE. */
+  win?: WinRule;
   nPlan: CasePlan[];
   /** CMH power per model at this plan for a broad drop from 0.8 (§4.2), keyed by the drop; absent on a row frozen before it was recorded. */
   cmhPower?: PlanPower[];
@@ -75,6 +102,23 @@ export interface RefreezeRow {
   why: string;
   judgesHash: string;
   epoch: number;
+}
+
+/**
+ * §4.7 migration: a group frozen in full mode, with R1 scored in its current epoch and no R2 score,
+ * switches to fast mode keeping the epoch, so `decide --fast` reads that epoch's R1 rows. The judges
+ * are re-checked: a hash that moved since the latest freeze or refreeze is named and accepted here.
+ */
+export interface MigrateFastRow {
+  kind: "migrate_fast";
+  from: "full";
+  epoch: number;
+  why: string;
+  win: WinRule;
+  judgesHash: string;
+  /** The hash of the latest freeze or refreeze, and the judge files that changed since it. */
+  previousJudgesHash: string;
+  judgesChanged: string[];
 }
 
 export interface IsolationRow {
@@ -105,6 +149,7 @@ export type ControlRow =
   | SetupRow
   | FreezeRow
   | RefreezeRow
+  | MigrateFastRow
   | IsolationRow
   | VariantRow
   | ReviewStopRow
@@ -112,7 +157,7 @@ export type ControlRow =
   | { kind: "round_score"; round: "r1" | "r2"; epoch: number; [k: string]: unknown }
   | { kind: "cut"; round: "r1" | "r2"; epoch: number; [k: string]: unknown }
   | {
-      kind: "decision" | "spend" | "scan" | "r4_score" | "final" | "final_score";
+      kind: "decision" | "spend" | "scan" | "r4_score" | "final" | "final_score" | "c7_r4";
       [k: string]: unknown;
     };
 
@@ -149,6 +194,115 @@ export const probeFile = (dir: string, epoch: number): string =>
 export const coldFile = (dir: string, epoch: number): string =>
   join(dir, epoch === 0 ? "cold-r2.jsonl" : `cold-r2.e${epoch}.jsonl`);
 
+/** The latest freeze or fast migration: the row the group's mode and win rule come from. */
+const modeRow = (rows: readonly ControlRow[]): FreezeRow | MigrateFastRow | undefined =>
+  [...rows].reverse().find((r) => r.kind === "freeze" || r.kind === "migrate_fast") as
+    | FreezeRow
+    | MigrateFastRow
+    | undefined;
+
+/** The mode of the latest freeze or migration (full before any freeze). */
+export const modeOf = (rows: readonly ControlRow[]): Mode => {
+  const r = modeRow(rows);
+  return r?.kind === "migrate_fast" ? "fast" : (r?.mode ?? "full");
+};
+
+/** The fast group was switched from full mode (`migrate-fast`), not frozen fast. */
+export const migratedOf = (rows: readonly ControlRow[]): MigrateFastRow | undefined => {
+  const r = modeRow(rows);
+  return r?.kind === "migrate_fast" ? r : undefined;
+};
+
+/** The judges' hash every command checks: the latest freeze, refreeze or migration row's. */
+export const frozenHash = (rows: readonly ControlRow[]): string | undefined =>
+  (
+    [...rows]
+      .reverse()
+      .find((r) => r.kind === "freeze" || r.kind === "refreeze" || r.kind === "migrate_fast") as
+      | { judgesHash: string }
+      | undefined
+  )?.judgesHash;
+
+// ---- the fast win threshold (§4.7) --------------------------------------------------------------
+
+/** How the fast win threshold corrects for the group's tests: none, over variants, or over variants × headline cases. */
+export type Correction = "none" | "variants" | "bonferroni";
+export const CORRECTIONS: readonly Correction[] = ["none", "variants", "bonferroni"];
+
+/** The fast win threshold as data: family level `alpha`, one-sided, split over the `correct` tests. */
+export interface WinRule {
+  alpha: number;
+  correct: Correction;
+}
+
+/** Fast mode's default (orch call, user delegated 2026-11-09): Bonferroni over variants × headline cases at family α 0.20. */
+export const DEFAULT_WIN_RULE: WinRule = { alpha: 0.2, correct: "bonferroni" };
+/** A fast freeze from before the rule was data: nominal one-sided 0.05 per test, uncorrected (z 1.645). */
+export const LEGACY_WIN_RULE: WinRule = { alpha: 0.05, correct: "none" };
+
+export const winRuleOf = (rows: readonly ControlRow[]): WinRule =>
+  modeRow(rows)?.win ?? LEGACY_WIN_RULE;
+
+/** The tests the rule divides `alpha` over, for a field of `variants` on `cases` own headline cases. */
+export const ruleTests = (rule: WinRule, variants: number, cases: number): number =>
+  Math.max(
+    1,
+    rule.correct === "none" ? 1 : rule.correct === "variants" ? variants : variants * cases,
+  );
+
+/** The pooled weak-model z a fast win needs: z at one-sided `alpha / tests`. */
+export const winZ = (rule: WinRule, variants: number, cases: number): number =>
+  normQuantile(1 - rule.alpha / ruleTests(rule, variants, cases));
+
+/** `--win-alpha <a> --correct none|variants|bonferroni` (each defaults to DEFAULT_WIN_RULE's). */
+export function parseWinRule(alpha: string | undefined, correct: string | undefined): WinRule {
+  const a = alpha === undefined ? DEFAULT_WIN_RULE.alpha : Number(alpha);
+  if (!(a > 0 && a < 1)) throw new Error(`--win-alpha ${alpha}: a level in (0, 1)`);
+  const c = (correct ?? DEFAULT_WIN_RULE.correct) as Correction;
+  if (!CORRECTIONS.includes(c))
+    throw new Error(`--correct ${correct}: one of ${CORRECTIONS.join(", ")}`);
+  return { alpha: a, correct: c };
+}
+
+/** One line naming a rule and, given the field, its threshold. */
+export const ruleLine = (rule: WinRule, variants?: number, cases?: number): string => {
+  const what =
+    rule.correct === "none"
+      ? "uncorrected"
+      : rule.correct === "variants"
+        ? "Bonferroni over variants"
+        : "Bonferroni over variants × headline cases";
+  if (variants === undefined || cases === undefined)
+    return `family α ${rule.alpha} one-sided, ${what}`;
+  const k = ruleTests(rule, variants, cases);
+  return `family α ${rule.alpha} one-sided, ${what}: ${k} tests, z ≥ ${winZ(rule, variants, cases).toFixed(2)}`;
+};
+
+export class FastModeError extends Error {}
+
+/**
+ * §4.7: a fast-mode group has no R2 and no per-group R3, R4 or final gate; C7 is the regression
+ * gate. `--fast` on a full-mode freeze, and `decide` on one, are refused too.
+ */
+export function assertMode(rows: readonly ControlRow[], sub: string, fastFlag: boolean): void {
+  const mode = modeOf(rows);
+  const frozen = rows.some((r) => r.kind === "freeze");
+  if (fastFlag && frozen && mode !== "fast" && sub !== "migrate-fast")
+    throw new FastModeError(
+      "this group is frozen in full mode: --fast needs a `freeze --fast`, or `migrate-fast <group>` once R1 is scored",
+    );
+  if (sub === "migrate-fast" && mode === "fast")
+    throw new FastModeError("this group is in fast mode already");
+  if (sub === "decide" && (!fastFlag || mode !== "fast"))
+    throw new FastModeError(
+      "`decide --fast` is fast mode only (a `freeze --fast` group); full mode decides in R4",
+    );
+  if (mode === "fast" && ["r2", "r3", "r4", "final"].includes(sub))
+    throw new FastModeError(
+      `fast mode: no ${sub.toUpperCase()} per group; decide on R1 (\`tournament decide --fast <group>\`), and C7 (\`tournament final --combined\`) is the regression gate`,
+    );
+}
+
 export class JudgesChangedError extends Error {}
 export class ReviewPendingError extends Error {}
 
@@ -159,7 +313,7 @@ export class ReviewPendingError extends Error {}
 export function assertFrozen(rows: readonly ControlRow[], currentHash: string): void {
   const f = last(rows, "freeze");
   if (!f) throw new JudgesChangedError("no freeze row: run `tournament freeze` first");
-  const want = last(rows, "refreeze")?.judgesHash ?? f.judgesHash;
+  const want = frozenHash(rows) ?? f.judgesHash;
   if (want !== currentHash)
     throw new JudgesChangedError(
       `judges changed since the freeze (${want} -> ${currentHash}); a judge changes only through \`tournament refreeze\``,
@@ -223,7 +377,7 @@ export function assertNoPendingStops(rows: readonly ControlRow[]): void {
     );
 }
 
-function ntfyPing(msg: string): void {
+export function ntfyPing(msg: string): void {
   try {
     spawnSync("ntfy-ping", [msg, "mu tournament"], { stdio: "ignore", timeout: 10_000 });
   } catch {}
@@ -236,6 +390,10 @@ export const ALPHA = 0.05;
 /** The stratified CMH loss test's level per model (Bonferroni over three models, §4.1). */
 export const CMH_ALPHA = ALPHA / 3;
 export const TARGET = { own: 60, pooled: 90, cross: 40, guard: 40 } as const;
+/** Fast mode's R1 targets for own headline cases (user decision 2026-11-09, §4.7). */
+export const FAST_TARGET = { own: 30, pooled: 45 } as const;
+/** The per-test Fisher level of a fast plan's MDE (the field, so the rule's tests, is not known at the freeze). */
+export const FAST_ALPHA = 0.05;
 /** Worst Bonferroni-Holm divisor of the win test's first step (§4.2: S ≤ 6, h ≤ 3). */
 export const WORST_B = 18;
 /** First step of the per-case loss family (§4.2: 15 strata × 3 models). */
@@ -249,7 +407,7 @@ export const LOSS_FAMILY = 45;
  */
 export function rhoFromB5(
   probe: readonly (Pick<ProbeRow, "case" | "arm" | "paraphrase" | "model" | "hit" | "modelError"> &
-    Partial<Pick<ProbeRow, "rigReads">>)[],
+    Partial<Pick<ProbeRow, "rigReads" | "infraFail">>)[],
   cold: readonly Pick<ColdRow, "intent" | "model" | "hit" | "modelError">[],
   models: { weak: readonly string[]; gate: string },
 ): Pick<SetupRow, "rho" | "rhoPool"> {
@@ -257,7 +415,11 @@ export function rhoFromB5(
   const rho: SetupRow["rho"] = {};
   const rhoPool: SetupRow["rhoPool"] = {};
   // a rig read (rig-guard.ts) is an invalid row, not a reading outcome either
-  const ok = probe.filter((r) => r.modelError === undefined && (r.rigReads?.length ?? 0) === 0);
+  // and a row that failed every try (infra-retry.ts) never reached the model
+  const ok = probe.filter(
+    (r) =>
+      r.modelError === undefined && (r.rigReads?.length ?? 0) === 0 && r.infraFail === undefined,
+  );
   for (const c of [...new Set(ok.map((r) => r.case))]) {
     const rows: IccRow[] = ok
       .filter((r) => r.case === c)
@@ -273,33 +435,61 @@ export function rhoFromB5(
   return { rho, rhoPool };
 }
 
+/**
+ * The arms a plan runs: the case's own, plus the help arms in fast mode unless turned off (hill2
+ * note 33: a help or flag variant is shown to the model only through them).
+ */
+export const planArms = (c: NextCase, mode: Mode, helpArms = true): Arm[] =>
+  mode === "fast" && helpArms ? [...new Set([...c.arms, ...HELP_ARMS])] : [...c.arms];
+
 const caseKind = (c: NextCase, group: Group): CasePlan["kind"] =>
   c.role === "guard" ? "guard" : c.group === group ? "own" : "cross";
 
-/** §4.2 n plan of one group: per case its kind, clusters, reps and n_eff; short cases say so. */
+/**
+ * §4.2 n plan of one group: per case its kind, clusters, reps and n_eff; short cases say so. Fast
+ * mode (§4.7) plans only the own headline cases, for R1, at FAST_TARGET: R1 runs `r` reps.
+ */
 export function nPlan(
   group: Group,
   cases: readonly NextCase[],
   setup: Pick<SetupRow, "rho" | "rhoPool" | "models"> | null,
+  mode: Mode = "full",
+  o: { helpArms?: boolean } = {},
 ): CasePlan[] {
   const models = setup ? [...setup.models.weak, setup.models.gate] : [];
-  return cases.map((c) => {
+  const fast = mode === "fast";
+  return cases.flatMap((c) => {
     const kind = caseKind(c, group);
+    if (fast && kind !== "own") return [];
+    const arms = planArms(c, mode, o.helpArms ?? true);
     const rhos = models.map((m) => setup?.rho[c.id]?.[m] ?? DEFAULT_RHO);
     const rho = rhos.length > 0 ? Math.max(...rhos) : DEFAULT_RHO;
     const rhoPool = setup?.rhoPool[c.id] ?? DEFAULT_RHO;
     const plan = solvePlan({
       paraphrases: c.paraphrases.length,
-      arms: c.arms.length,
+      arms: arms.length,
       rho,
-      target: kind === "own" ? TARGET.own : kind === "cross" ? TARGET.cross : TARGET.guard,
-      ...(kind === "own" ? { pooled: { target: TARGET.pooled, rho: rhoPool } } : {}),
+      target: fast
+        ? FAST_TARGET.own
+        : kind === "own"
+          ? TARGET.own
+          : kind === "cross"
+            ? TARGET.cross
+            : TARGET.guard,
+      ...(kind === "own"
+        ? { pooled: { target: fast ? FAST_TARGET.pooled : TARGET.pooled, rho: rhoPool } }
+        : {}),
     });
     const m =
       kind === "own"
-        ? mde(0.5, Math.round(plan.nEffPooled ?? plan.nEff), 0.05 / WORST_B, "greater")
+        ? mde(
+            0.5,
+            Math.round(plan.nEffPooled ?? plan.nEff),
+            fast ? FAST_ALPHA : 0.05 / WORST_B,
+            "greater",
+          )
         : mde(0.8, Math.round(plan.nEff), 0.05 / LOSS_FAMILY, "less");
-    return { case: c.id, kind, plan, r1: kind === "own" ? 1 : 0, mde: m };
+    return [{ case: c.id, kind, plan, r1: kind !== "own" ? 0 : fast ? plan.r : 1, mde: m, arms }];
   });
 }
 
@@ -382,7 +572,21 @@ export function shuffle<T>(xs: readonly T[], seed: string): T[] {
 
 /** Rep indices of a round never meet another round's: R1 from 1, R2 from 101, per epoch. */
 export const REP_BASE = { r1: 1, r2: 101 } as const;
-const repBase = (round: "r1" | "r2", epoch: number): number => epoch * 1000 + REP_BASE[round];
+export const repBase = (round: "r1" | "r2", epoch: number): number =>
+  epoch * 1000 + REP_BASE[round];
+
+/**
+ * The fresh rows of a round in an epoch's probe file: that round's rows from its rep floor up. R2
+ * rows (an R2 run a fast migration left behind) and an earlier epoch's reps are not R1's.
+ */
+export const freshRows = <R extends Pick<ProbeRow, "round" | "rep">>(
+  rows: readonly R[],
+  round: "r1" | "r2",
+  epoch: number,
+): R[] => {
+  const floor = repBase(round, epoch);
+  return rows.filter((r) => r.round === round && r.rep >= floor && r.rep < floor + 900);
+};
 
 export interface RoundSurfaces {
   /** "base" first, then the variants in the round. */
@@ -408,13 +612,14 @@ export function roundJobs(
   const jobs: NextJob[] = [];
   for (const c of cases) {
     const p = byCase.get(c.id);
+    // a fast plan (§4.7) has rows for the own headline cases only
+    if (round === "r1" && p?.kind !== "own") continue;
     if (!p) throw new Error(`case ${c.id} has no plan row`);
-    if (round === "r1" && p.kind !== "own") continue;
     const reps = round === "r1" ? p.r1 : p.plan.r;
     const paraphrases = c.paraphrases.slice(0, p.plan.paraphrases);
     for (const { label, surface } of s.surfaces)
       for (const model of s.models)
-        for (const arm of c.arms)
+        for (const arm of p.arms ?? c.arms)
           for (const para of paraphrases)
             for (let k = 0; k < reps; k++)
               jobs.push({
@@ -424,7 +629,7 @@ export function roundJobs(
                 surface,
                 model,
                 caseId: c.id,
-                arm: arm as Arm,
+                arm,
                 paraphrase: para.id,
                 rep: repBase(round, o.epoch) + k,
               });

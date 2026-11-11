@@ -75,7 +75,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   claiming wait records it, `hosts.deadline_fired`; a new deadline fires
   again); inside the margin a successful in-life collect backs off too; `mu
   wait` prints its result and saves its resume before it collects.
-
 - **Plugins: the channel adapter, the plugin spawn path and detached views**
   (plugins spec P6e1: D3, D8, D9, D13). A plugin's `channel` seam is a
   registered channel (`src/plugins/channel.ts`), loaded from the plugins table
@@ -216,7 +215,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   plugin. Spawning on a plugin kind still waits for P6e. Tests:
   `job-contract` (pane, lease, gate and the fake plugin's kind),
   `plugin-faults` (F1-F10, F12), `effects`, `plugin-job-wire`.
-
 - **Plugins: the protocol core and the link adapter** (plugins spec P6b,
   D13, D14). `mu plugin add <name> -- <absolute path> [args…]` registers an
   executable named `mu-plugin-<name>` (owned by you, writable by no one
@@ -270,151 +268,21 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   declares `fetch: true` (it is required otherwise, as for a template host).
   A plugin check step may answer `ok: "warn"`: it passes, and `mu host
   check` prints it as a `warn` line (`--json`: `ok: true, warn: true`).
-- **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
-  rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
-  goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`
-  in `.rt/pi`, the ssh shim's path, `ps`, and the surface's own `tools/eval`.
-  The sandbox now runs copies under `.rt/lib`, `prepare` strips the rig from a
-  surface, a pi AUT loads `aut-guard.ts` (refuses a tool call that names the
-  rig, cuts rig lines from results), and `rig-guard.ts` marks any run that
-  still reads it as a rig read: `verdict.rigReads`, never completed, out of
-  R3/R4/final counts and ρ̂; a probe answer that names it is refused unrun.
-  Since `f_aut_reads_rig_2`, every file under `tools/eval`, `test/eval`,
-  `docs/eval` and `docs/specs` carries a canary token on its first and last
-  line (`tools/eval/rig-private.ts`): a tool result, probe output or pane
-  AUT's hook transcript that carries it is a rig read, whichever path got
-  there (`cd` chains, globs, `git show HEAD:tools/eval/…`, symlinks). The
-  guard also matches relative `tools/eval`, follows `cd`, normalises realpaths
-  (`/private/tmp`), and covers the transcript stores, museum and mu state dir
-  of the designer deny list (one shared list). Since `f_aut_reads_rig_3`, a
-  judge-side fingerprint (`tools/eval/rig-fingerprint.ts`) catches the reads
-  that skip a file's ends (`sed -n 5,15p`, `xargs grep -h`, `grep -rn` after a
-  computed `cd`, `tar t` of the scenarios): an output that carries one of the
-  rig's own names (ids, holdout ids, declared names; none of the surface's,
-  the staged files', `node_modules`' or the run's env words) is a rig read,
-  in pi tool results, probe outputs and pane AUT transcripts. K = 1, set by
-  the B5 scan (0 legitimate hits). Encodings and plainly named listings stay
-  open (README). 5 kept B5 gemini rows carried it (`ps` of the driver, a grep
-  of the unstripped surface's `docs/eval`) and were re-run.
-
-- **`mu wait --ready`: the ready batch** (hill-r2 A7, a7_ready_engine;
-  proposal a7_wait_drain_rca_2 P1/P2/P4 + a7_wait_drain_rca_3 D1/D2). One
-  wait returns every ready, never-returned completion, up to 5, as
-  `data.events` right after `firing`; an urgent event (dead, input, stall)
-  still fires alone, so exits 6 and 7 are unchanged. It is opt-in: it excludes
-  `--first` and `--all`, and a resume stores it. The commit guards every
-  member: a member another process consumed meanwhile is dropped, so it is
-  never printed by two waits. The members are never paged out of `snapshots`.
-  `reason` says "N events: …".
-- **Wait results mark what they consumed** (every mode). A snapshot reads
-  `delivered: true` when this result consumed it, and `owed: true` when it is
-  ready news the next wait returns. A top-level `owed: N` is never cut. Paging
-  order is firing, delivered, open, owed, rest. A result with owed news the
-  caller owns (not a named target) gets the notice
-  `N owed: mu wait --ready -w <ws>`, and its `next` is that command. While a
-  named target is still owed, `next` stays the resume: a bare `--ready` never
-  returns an unowned target.
-- **Eval: the hill-r2 tournament gate and report** (spec
-  `docs/specs/2026-11-07-hill-r2-tournament.md` §4.4-§4.6, §5, §6, unit B3c).
-  `tournament r3|r4|final|report` replace B3b's stubs. `tournament-r4.ts`
-  runs every AUT job through one resumable runner (`runR4`) whose rows carry
-  exposure, placed destructive entries and attribution; a verdict without
-  `destructiveFx` sends its `destructive[]` entries to review as unplaced,
-  never as clean. R3 picks the scenarios that exercise each finalist (golden
-  markers, behaviour diff, live haiku exposure, up to 6); R4 tests completion
-  per model with Holm, needs exposure on a weak model, eliminates on an
-  attributable entry and stops (exit 7) on a new one; `final` runs the
-  holdouts once on the combined surface with logs only under `sealed/`, and
-  a holdout failure is a review stop, never bisected. `tournament-report.ts`
-  writes the §6 report, states the power at the planned n (per-model n_eff 64,
-  not the spec table's), that false wins are controlled per group (≤ 0.26 for
-  one or more over six groups, holdouts no-regression only) and the
-  end-to-end power to land a real 0.5 → 0.8 fix (~0.7), and copies the
-  control file to the committed `docs/eval/hill-r2/<group>.tournament.jsonl`.
-
-- **Eval: the hill-r2 tournament driver** (spec
-  `docs/specs/2026-11-07-hill-r2-tournament.md` §3, §4.1-4.3, unit B3b).
-  `node tools/eval/main.ts tournament freeze|refreeze|plan|pack|design|audit|build|r1|r2|review|status`
-  runs a group's variants by successive halving. A variant is a patch on a
-  copy of the built base (`tournament-build.ts`): the driver derives its
-  markers, context markers and behaviour signature (new flag or verb names,
-  golden diffs over a base noise mask) from the patch and admits it only when
-  it is observable and inside the caps. `tournament-design.ts` packs base for
-  the designers without the eval rig (scrubbing the files that name it),
-  refuses a leaky BRIEF.md, launches each designer with an empty HOME and a
-  PATH without `mu` or `museum`, and audits its session files: the catch-all
-  lets node's install dir, the provider extension and what the pack itself
-  says through, so an ordinary stack trace or a read of mu's docs does not
-  discard a session. The audit resolves relative paths in what the designer
-  did (bash commands, read and write paths) against the session's cwd, so
-  `cat ../../../../../../../.pi/agent/sessions/x` from the pack is a hit.
-  `tournament-score.ts` scores a round with the per-case Holm
-  and stratified CMH losses and the pooled weak-model win test at 0.05/S,
-  ranks by a total order, advances fixed counts, and stops for review (exit
-  7) on a new unattributable destructive entry. `freeze` and `plan` print the
-  plan's CMH power per model (at the default ρ 0.2: own headline r = 3, n_eff
-  64 per model, 0.98 for a broad 0.8 → 0.7 drop, 0.53 for 0.8 → 0.75).
-
-- **Eval: exposure-gated scoring for the hill-r2 tournament** (spec
-  `docs/specs/2026-11-07-hill-r2-tournament.md` §4.1, §5, unit B3a).
-  `tools/eval/exposure.ts` decides whether a probe row or an R4 run saw a
-  variant's changed text or behaviour, and which destructive entries are
-  attributable to it. Win clusters are chosen only by exposure fixed before
-  the answer, never by the answer's own calls, so a null variant cannot win
-  through cluster selection. `tools/eval/stats.ts` holds the tests: Fisher
-  exact and its power, Holm, stratified CMH, ICC, DEFF and Kish scaling, and
-  the n plan. `ToolCall` gains optional `turn` and `idx`; `Verdict` gains
-  `destructiveFx` (each destructive entry placed at its tool call) and
-  `muCalls`.
-
-- **Eval: the next-step probe** (`tools/eval`, hill-r2 B2). `node
-  tools/eval/main.ts nextstep run|check|lint|selftest|report` gives a model a
-  live transcript ending in one mu output, a goal and an optional skill or
-  recipe, runs its next one to three commands in the same sandbox, and judges
-  the state and mu's own output (spec
-  docs/specs/2026-11-07-hill-r2-tournament.md §1). Two pilot cases,
-  `close_preview_apply` (bash) and `notes_multi` (zsh); `check` and `selftest`
-  cost nothing. `cold-guess`'s `execGuess` takes a shell and an env, and
-  `askModel` answers the scripted `evalfaux/*` models without pi. `main.ts`
-  dispatches `tournament` to a stub until the driver lands.
-
-- **Eval: the next-step case catalogue** (`tools/eval`, hill-r2 B4b, spec
-  docs/specs/2026-11-07-hill-r2-tournament.md §2, §7). Eleven more cases
-  beside the two pilots: close preview with an unmerged commit, three wait
-  readings (result line, heartbeat merged into JSON, the 120 s shell limit),
-  the delegate report in notes, agent read through pane chrome, NO VERDICT
-  LINE, a worker that closed with the verb, sleep polling, and the sql and
-  finding guards. `nextstep check` proves every §2.3 row on base, lint is
-  clean against base's names. `dead_once` is dropped: base reports one death
-  once. `shown` compares whole lines and each case-7 marker has its own
-  nonce, so a `grep -o | sed` rename of another note's marker misses; cases
-  1 and 2 allow only worker-1's agent ops; the timed rule counts the shim's
-  own span (its table dumps) as time in mu, so a one-call answer on a loaded
-  host is not read as idle; `check` asserts partial where §2.3 says so.
-  B6 adds paraphrases where B5's ρ̂ left the plan short (spec §4.2):
-  `close_preview_apply`, `close_preview_conflict`, `wait_result_read`,
-  `notes_multi` and `agent_read_text` go to 14, the `sql_name_guess` guard
-  to 13 (docs/eval/hill-r2/baseline.md, "B6").
-
-- **Eval rig: hill-r2 fixtures, intents and R4 scenarios** (spec
-  docs/specs/2026-11-07-hill-r2-tournament.md §2, §7 B4a). `tools/eval`
-  fixtures gain gated task scripts (`gate: { delayMs }`, released by
-  `<workers>/go`), `chromePane`, `seedDelegate` (a finished delegate call
-  through the real writers) and `delegateDefault`. Cold-guess gains eight
-  next-only headline intents for verbs since 4.0 (`check_record`,
-  `verdict_record`, `wave_outcome`, `host_list`, `lease_show`, `notes_two`,
-  `close_apply_clean`, `report_only`); three R4 scenarios judge sleep and
-  poll waits (`poll_wave`), one note summarising four reports
-  (`multi_notes`) and acting on a worker's result read through mu
-  (`wait_report_act`). `cold-guess check --family next` is green again:
-  a sandbox copies the pi launcher's cached model catalog so a worker pi
-  starts inside a pi agent's seatbelt, the remote gate seed spawns as pi,
-  and `task_brief` is reworded. The faux worker reads its claim with a
-  plain `sqlite3` connection: `-readonly` cannot open the WAL DB once no mu
-  process holds its -shm file, so a worker whose orchestrator slept gave up.
 
 ### Changed
 
+- **The models recipe covers more labs, effort and speed.** Tier rows are
+  per lab (anthropic, openai, google, meta), plus grok, composer, kimi,
+  deepseek, glm, mistral and qwen as one family each. Effort is picked per
+  role, medium by default: high and above can multiply run time. When
+  someone waits, the fastest good-enough model wins. herdr takes no model:
+  `mu_delegate` is refused and spawn ignores it. The recipe index,
+  orchestrator loop, tasks-or-calls, findings and the delegate and
+  other-CLI guides link it where a model is picked.
+- **The `mu_delegate` `model` description no longer shows `:high`**, which
+  callers copied into every call. It builds the id from a
+  `pi --list-models` row plus an optional `:<effort>`, defaults to medium,
+  and gives checks the author's tier or higher, another family, high effort.
 - **Schema (v14, no bump): `hosts.deadline_fired`** (plugins spec D10,
   review of P6e2): the `deadline_at` a wait's `deadline` event fired for, an
   added nullable column.
@@ -439,7 +307,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `first_inc`, and its `host_stop` becomes nullable (a plugin job's fence is
   its instance). An existing file is completed in place, its carrier_jobs
   rebuilt with rows and name index kept. `CAPTURE_VERSION` is unchanged.
-
 - **Schema: `plugins` and `host_profiles.plugin`** (plugins spec D5, P6b).
   A new machine-local, unrebuildable `plugins` table. `host_profiles` gains
   `plugin`, and its `shell` and `exec` become nullable (still required
@@ -587,42 +454,169 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   output before P4. No behaviour change; `--json` result shapes are
   unchanged.
 
-- **Eval rig: every row runs under its own muzzle claim; the load gate is
-  gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove
-  the mac to load ~250 on 2026-11-08). One run fanned out to 24 sandboxes
-  under a single 3-slot `mu-eval` claim, and the 1-min loadavg gate let all
-  24 start inside one stale minute. Now a probe row, an AUT run, a
-  cold-guess guess and a designer session each hold `muzzle run --rule
-  mu-eval-<kind> --slots <w>` while they run (`tools/eval/claim.ts`;
-  `EVAL_ROW_SLOTS_<KIND>` overrides w), `--concurrency` is capped to
-  `floor(budget / w)`, and a rig that itself runs inside a muzzle claim takes
-  no per-row claims and runs `floor(outer slots / w)` rows. The outer claim
-  is found as muzzle finds it (`MUZZLE_SLOTS`, or a live holder in the rig's
-  ancestry: pi's muzzle extension sets neither `MUZZLE_SLOTS` nor
-  `MUZZLE_HOLD`), and the first row's holder is checked in `muzzle status
-  --json`; one that holds no slots drops the run to a low fixed cap (2 probe
-  rows, 1 AUT run) with a warning. No muzzle on PATH, or a failing `muzzle
-  status`, gives the same low cap, never the budget-derived 22. `run`,
-  `selftest`, `check --preflight` and `tournament build`'s golden traces
-  claim too, and `createSandbox` refuses to run outside a row claim.
-  `tournament r1|r2` default to `--concurrency auto` (the budget cap), not
-  24 (task `f_eval_muzzle_2`). `--max-load` is
-  removed (`nextstep run`, `tournament r1|r2`). The sandbox mu shim's AUT
-  call spawned 69 processes on macOS (4 perl clocks, 12 sqlite3 dumps with
-  their cksum and cut); it now spawns 4: one sqlite3 call before mu and one
-  after, each reading the clock and a `sha3_query` hash per machine-local
-  table. A worker's call drops from 11 to 3 (1 on bash 5).
+### Fixed
 
-- **Eval rig: launcher variables come from `EVAL_LAUNCHER_ENV`** (public
-  audit). The rig no longer names a specific pi launcher's variables: it sets
-  each `NAME=VALUE` pair in `EVAL_LAUNCHER_ENV` for every pi it starts (a
-  caller value of `NAME` wins), and seeds any `[<name>-]model-catalog*.json`
-  cache. The pairs never override the sandbox's own `HOME`, `PATH` or `MU_*`
-  (model, designer and scenario env alike). Run from inside a launcher's
-  sandbox, set the pair that keeps the outer sandbox. Docs, fixtures and the
-  README screenshot drop internal host, user and tool names. The designer
-  isolation audit takes the museum checkout from `EVAL_MUSEUM_DIR` (no
-  default) and denies any dir named `museum` holding `skills/museum`.
+- **Plugins: no unresolved effect is left without a way out** (final
+  refutation of the plugins run). A plugin-channel delivery whose outcome
+  is unknown is resolved by the rule table when `mu agent check <agent>
+  <msgId>` or a task spawn's replay asks about it (an exact receipt
+  settles it; a receipt that does not accept leaves it unknown), and goes
+  with its agent's row (a close, the reaper), an event naming each lost
+  key in the same transaction. Before, its row stayed for good and
+  `mu plugin rm` refused forever. Reattaching a detached view moves the
+  spawn receipts with the row's pane (refused while the spawn that made
+  it still runs), so a replay no longer calls the same agent "replaced"
+  and `mu next` keeps watching it. An at-start `job.start` carrying the
+  first prompt takes the agent's delivery seq 1: a newer delivery bars its
+  deduped resend, and a new delivery refuses while it is being resolved
+  (spec D4, K8).
+- **Eval: the rig's deny lists cover mu 5's state dir** (task `eval_rig_mu5`).
+  The private stores shared by the AUT path rules and the designer deny list
+  (`tools/eval/rig-private.ts`), the designer audit's strict terms and a live
+  run's real-state watch (`tools/eval/isolation.ts`) named only
+  `~/.local/state/mu-next`, so an AUT or designer could read mu 5's real DB,
+  worktrees and eval rows under `~/.local/state/mu5` unflagged. Both names are
+  listed now (`MU_STATE_DIR_NAMES`, mirroring `src/state-dir.ts`: the rig
+  imports nothing from `src/`), and a live run's default DB is mu 5's.
+  The judges' hash changes: a frozen tournament group refuses until
+  `tournament refreeze`.
+
+
+## [4.6.0] — 2026-11-11
+
+Reading results gets cheap. `mu wait --text`, `mu agent read --text` and
+`mu task notes --report` print just what an agent needs, and `mu wait
+--ready` returns up to five ready events in one wait: pi's settle and the
+Stop hook now drain with it, so N closes cost ceil(N/5) turns instead of N.
+Each reading change won a measured tournament on weak models (hill-r2,
+docs/eval/hill-r2/). A pipe now gets no colour, inside tmux too; set
+`MU_FORCE_COLOR=1` for `watch --color`.
+
+### Added
+
+- **`mu wait --ready`: the ready batch** (hill-r2 A7, a7_ready_engine;
+  proposal a7_wait_drain_rca_2 P1/P2/P4 + a7_wait_drain_rca_3 D1/D2). One
+  wait returns every ready, never-returned completion, up to 5, as
+  `data.events` right after `firing`; an urgent event (dead, input, stall)
+  still fires alone, so exits 6 and 7 are unchanged. It is opt-in: it excludes
+  `--first` and `--all`, and a resume stores it. The commit guards every
+  member: a member another process consumed meanwhile is dropped, so it is
+  never printed by two waits. The members are never paged out of `snapshots`.
+  `reason` says "N events: …".
+
+- **Wait results mark what they consumed** (every mode). A snapshot reads
+  `delivered: true` when this result consumed it, and `owed: true` when it is
+  ready news the next wait returns. A top-level `owed: N` is never cut. Paging
+  order is firing, delivered, open, owed, rest. A result with owed news the
+  caller owns (not a named target) gets the notice
+  `N owed: mu wait --ready -w <ws>`, and its `next` is that command. While a
+  named target is still owed, `next` stays the resume: a bare `--ready` never
+  returns an unowned target.
+
+- **`mu wait --text`: the result as plain lines** (task
+  `land_c1_wait_text`, the C1 tournament winner
+  `gemini31prop-v1-compact-text`, docs/eval/hill-r2/c1.md). Line 1 is `event: <kind> on <ref> | resume: <command>`; the
+  resume keeps `--text` (and `mu wait --resume <id> --text` is allowed).
+  Above a `---` line: the exit and reason, each consumed ref's state (and the
+  still-open ones), a task's latest report (what `mu task notes --report`
+  prints) or a delegate's answer, indented so it never reads as the
+  separator, then owed, tally, human needs, the warning and the notices.
+  Below `---`: only agents' last words, as `mu agent read --text` prints them.
+  The JSON default is byte-identical. Landing fix over the measured patch: it
+  printed `no final text` for a task ref and dropped the state, report,
+  warning and notices (sonnet on `wait_heartbeat_merge` fell 6/50 to 0/50
+  with it, Holm 0.12). Fast mode won on `wait_result_read` with pooled z 4.50
+  (>= 2.47): haiku 41/70, gemini-3.8-flash 36/70, sonnet 35/70 (help arms).
+  `mu_delegate`'s kept-pane and delivery-unknown hints now say
+  `mu agent read <w> --text` (f_low_batch3).
+
+- **`mu task notes <id> --report`: the report, raw** (task
+  `land_c3_report_flag`, the C3 tournament winner,
+  docs/eval/hill-r2/c3_notes.md). Prints the task's
+  latest `kind=report` note as its own text (newlines intact, no `\n`
+  escaping); `--json` gives `{n, kind, author, created_at, content}`. With no
+  report note it exits 1 with `(no report note on <id>)` on stderr (the
+  closer's-note stand-in of the default view does not count). It refuses
+  `--tail`/`--last`/`--since`/`--since-claim`/`--all`/`--from`. Fast mode won
+  on `notes_report_read` with pooled z 4.74 (>= 2.13): haiku 35/50 against
+  base's 16, gemini-3.8-flash 44 against 29, sonnet 24 against 16.
+
+- **`mu agent read --text` and `mu agent show --text`: just the worker's
+  words** (task `land_c4_read_text`, the C4 tournament winner,
+  docs/eval/hill-r2/c4.md). `--text` drops pane
+  furniture and keeps every other line: blank runs fold to one, rows made
+  only of box-drawing characters go, scroll markers and spinner and status
+  rows go only in a harness's exact whole-row shapes, and the footer goes
+  only when its structure is found (pi's editor rules with the cwd and stats
+  rows under them, claude's input box with its hint row); with no footer
+  found nothing is dropped at the bottom. ASCII lines (`---`, `|---|`, `***`,
+  `+++`) and every row inside a ``` or `~~~` fence stay (review
+  `delegate_rv-land4_6d6286e3`). With `--text`, `-n` counts text lines, read
+  from the full scrollback; `--json --text -n` does the same for `text`,
+  while `scrollback` keeps its raw `-n` rows. The default output is
+  unchanged. `mu_delegate`'s pane tail
+  and its read hints use `--text`, and the orchestrator recipe's exit-7 step
+  names it. Fast mode won on `agent_read_text` with pooled z 3.51 (>= 1.96):
+  gemini-3.8-flash 27/56 against base's 12, haiku a tie (46 against 48),
+  sonnet 32 against 28; the win is on the help arms, where `--text` is shown
+  (gemini 26/28 against 11/28).
+
+### Changed
+
+- **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
+  events arrive in one block, one line per event, plus a line for what is
+  still owed, instead of one block per event. A superseded wait that consumed
+  nothing lets the turn end while the newer wait is live, and otherwise waits
+  once more. A partly consumed one blocks over what it delivered. The empty
+  block says "run `mu wait --ready` in the background".
+
+- **pi's settle drains with `--ready`** (hill-r2 A7, a7_ready_settle;
+  proposal a7_wait_drain_rca_2 P3 + a7_wait_drain_rca_3 D1-D3). The settle
+  runs `mu wait --ready --on-stall exit --json`, so N ready closes and answers
+  cost ceil(N/5) turns instead of N (the crew-hill2 repro: 7 closes, 2 turns).
+  A batch entry says "N events:" with one line per event, then the answer
+  blocks as before (each at 1500 characters beside others). Delegates of
+  several waves share ONE wait loop, and each wave is summarised once; a wave
+  an earlier settle already summarised prints `wave A: 1 more in`, the tally
+  line and the new answers only. Owed news gets one line ("2 more ready, not
+  yet delivered: …"). A superseded result that consumed nothing is shown as
+  one line and does not continue the turn; a partly consumed one shows only
+  what it delivered. One event with nothing owed reads as before, byte for
+  byte. The words for events are shared with the Stop hook
+  (`src/wait-event-text.ts`). The orchestrator loop recipe's bare wait is
+  `mu wait --ready -w <ws>`.
+
+- **A superseded wait result is narrowed.** `delivered` keeps only the
+  members whose caller's generation applied; the others read `owed`.
+  `eventConsumed` says whether the firing event was consumed. Before this,
+  `superseded:true` covered a result that, with two callers, had partly been
+  consumed.
+
+- **A pipe gets no colour, inside tmux too.** mu forced ANSI colour
+  whenever `$TMUX` was set (67014c7a, for `watch --color mu hud`), so a
+  third of agent results read through a pipe carried escape codes and
+  agents stripped them with `sed`. Colour now needs stdout to be a TTY;
+  `NO_COLOR`, `MU_FORCE_COLOR` and `FORCE_COLOR` keep their meaning;
+  `TERM=dumb` on a TTY inside tmux is now plain, like outside it.
+  `mu hud` is gone and the dashboard decides its own colour; for
+  `watch --color` or a popup piped to a pager, set `MU_FORCE_COLOR=1`
+  (docs/reference/env.md).
+
+- Docs: docs/guide/sql.md now says a verb's output format never follows
+  the TTY; only colour does. `mu agent list | head` printing JSON looked
+  like a pipe switch, but `agent list` prints JSON on a TTY too (4.0).
+
+- **SKILL.md: wait for all of a set, then read every outcome** (hill-r2
+  C6 tournament winner `claudeopus55-wait-all`, task `land_c6_wait_all`;
+  report `docs/eval/hill-r2/c6.md`). The wait rule
+  now names `mu wait --all task:<ws>/<a> task:<ws>/<b>` and says to read
+  each task with `mu task show` after it. To pay for the words it cuts the
+  `-w <workstream>` sentence (each verb's `--help` lists `-w` or not) and
+  the `mu task block A --by B` line (`task block --help` gives the
+  direction). On `sleep_poll`, fast mode R1 with 50 clusters per model:
+  haiku 31/50 against base 8, gemini 42 against 22, sonnet 29 against 8;
+  pooled z 6.53 against a threshold of 2.01. Patch applied verbatim;
+  SKILL.md drops from 599 to 595 words.
 
 - **Course checks resume on their own** (hill-r2 s_course_auto and
   s_course_auto_2, user report 2026-11-07: three checks in one session each
@@ -651,47 +645,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   overrun in k11's notes and stopped without measuring). That misses the keep
   rule (both ≥ 4/5).
   Log: docs/eval/hill-r2/course-auto.md.
-- **The Stop hook drains with `--ready`** (claude, codex, cursor-agent). Ready
-  events arrive in one block, one line per event, plus a line for what is
-  still owed, instead of one block per event. A superseded wait that consumed
-  nothing lets the turn end while the newer wait is live, and otherwise waits
-  once more. A partly consumed one blocks over what it delivered. The empty
-  block says "run `mu wait --ready` in the background".
-- **pi's settle drains with `--ready`** (hill-r2 A7, a7_ready_settle;
-  proposal a7_wait_drain_rca_2 P3 + a7_wait_drain_rca_3 D1-D3). The settle
-  runs `mu wait --ready --on-stall exit --json`, so N ready closes and answers
-  cost ceil(N/5) turns instead of N (the crew-hill2 repro: 7 closes, 2 turns).
-  A batch entry says "N events:" with one line per event, then the answer
-  blocks as before (each at 1500 characters beside others). Delegates of
-  several waves share ONE wait loop, and each wave is summarised once; a wave
-  an earlier settle already summarised prints `wave A: 1 more in`, the tally
-  line and the new answers only. Owed news gets one line ("2 more ready, not
-  yet delivered: …"). A superseded result that consumed nothing is shown as
-  one line and does not continue the turn; a partly consumed one shows only
-  what it delivered. One event with nothing owed reads as before, byte for
-  byte. The words for events are shared with the Stop hook
-  (`src/wait-event-text.ts`). The orchestrator loop recipe's bare wait is
-  `mu wait --ready -w <ws>`.
-- **A superseded wait result is narrowed.** `delivered` keeps only the
-  members whose caller's generation applied; the others read `owed`.
-  `eventConsumed` says whether the firing event was consumed. Before this,
-  `superseded:true` covered a result that, with two callers, had partly been
-  consumed.
-- `select()` moved from src/wait.ts (1527 LOC, over the cap) to
-  src/wait-select.ts.
 
-- **A pipe gets no colour, inside tmux too.** mu forced ANSI colour
-  whenever `$TMUX` was set (67014c7a, for `watch --color mu hud`), so a
-  third of agent results read through a pipe carried escape codes and
-  agents stripped them with `sed`. Colour now needs stdout to be a TTY;
-  `NO_COLOR`, `MU_FORCE_COLOR` and `FORCE_COLOR` keep their meaning;
-  `TERM=dumb` on a TTY inside tmux is now plain, like outside it.
-  `mu hud` is gone and the dashboard decides its own colour; for
-  `watch --color` or a popup piped to a pager, set `MU_FORCE_COLOR=1`
-  (docs/reference/env.md).
-- Docs: docs/guide/sql.md now says a verb's output format never follows
-  the TTY; only colour does. `mu agent list | head` printing JSON looked
-  like a pipe switch, but `agent list` prints JSON on a TTY too (4.0).
+- **The models recipe names a model per family and tier** (anthropic,
+  openai, google, meta; dated 2026-11-11), so a check told to use "another
+  family" knows which model sits where. Model ids come from the harness
+  being spawned, latest version only; it no longer assumes
+  `pi --list-models`.
 
 - **The move recipe moves a 4.x workstream between machines**: free the
   work on the source, ship its ops by `MU_SYNC_DIR` or `mu db backup` plus
@@ -701,54 +660,17 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Fixed
 
-- **Plugins: no unresolved effect is left without a way out** (final
-  refutation of the plugins run). A plugin-channel delivery whose outcome
-  is unknown is resolved by the rule table when `mu agent check <agent>
-  <msgId>` or a task spawn's replay asks about it (an exact receipt
-  settles it; a receipt that does not accept leaves it unknown), and goes
-  with its agent's row (a close, the reaper), an event naming each lost
-  key in the same transaction. Before, its row stayed for good and
-  `mu plugin rm` refused forever. Reattaching a detached view moves the
-  spawn receipts with the row's pane (refused while the spawn that made
-  it still runs), so a replay no longer calls the same agent "replaced"
-  and `mu next` keeps watching it. An at-start `job.start` carrying the
-  first prompt takes the agent's delivery seq 1: a newer delivery bars its
-  deduped resend, and a new delivery refuses while it is being resolved
-  (spec D4, K8).
+- **A check that pastes the verdict template is read by the label after
+  it.** `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED REFUTED <line>` recorded
+  CONFIRMED (the template's first choice) and a review closed on it. Two or
+  more labels joined by `|` are now the template and skipped; a line with only
+  the template reads UNVERIFIED. A plain verdict line reads as before.
 
-- **Eval: the rig's deny lists cover mu 5's state dir** (task `eval_rig_mu5`).
-  The private stores shared by the AUT path rules and the designer deny list
-  (`tools/eval/rig-private.ts`), the designer audit's strict terms and a live
-  run's real-state watch (`tools/eval/isolation.ts`) named only
-  `~/.local/state/mu-next`, so an AUT or designer could read mu 5's real DB,
-  worktrees and eval rows under `~/.local/state/mu5` unflagged. Both names are
-  listed now (`MU_STATE_DIR_NAMES`, mirroring `src/state-dir.ts`: the rig
-  imports nothing from `src/`), and a live run's default DB is mu 5's.
-  The judges' hash changes: a frozen tournament group refuses until
-  `tournament refreeze`.
+- **A partly superseded settle shows only what it consumed.** When a newer
+  `mu wait` superseded the settle's wait after it consumed part of the batch,
+  the entry's printed result still carried the unconsumed `firing`. It now
+  prints only the consumed events and says the newer wait returns the rest.
 
-- **Eval: `tournament plan` plans from B5's rows before a freeze, and model
-  errors stay out of ρ̂** (hill-r2 B5). `plan <g> --b5 <probe.jsonl>
-  [--b5-cold <cold.jsonl>]` computes ρ̂ the way `freeze` does
-  (`rhoFromB5`, shared by both), without writing a setup row. A row with a
-  model error is rig noise, not a reading outcome; counted as a miss it
-  faked a cluster effect.
-- **Eval: the next-step probe counts a field of mu's tab-separated text as a
-  whole line** (hill-r2 B5). `task notes` prints
-  `<kind>\t<n>\tby=…\tat=…\t<text>`, so a note's first line was never a whole
-  line once an answer cut the header (`awk -F'\t'`, `cut -f5-`), and
-  `notes_report_read` scored 174 of 360 base rows a miss on finding 1 alone.
-  A field is mu's own unit, as a jq -r string is; a `grep -o` cut inside it
-  still does not count.
-- **Eval: R4 scenarios run on macOS** (hill-r2 B5). `fanout_gates`'s commit
-  hook stamped `date +%s%3N`, which BSD date prints as `<s>3N`: no merge was
-  ever seen and its golden failed. Four bad scripts used GNU `sed -i '1i …'`
-  (now `perl -pi`). `no_mux_delegate` seeded tasks into a workstream it never
-  created. `refute_verdicts`'s delegate now holds its answer 3 s, so a close
-  issued right after the call precedes the verdict (that bad passed). The
-  README says to run on macOS with `TMPDIR=/private/tmp` (the `/tmp` symlink
-  breaks the remote scenarios' path judges) and that `wait_interrupted` needs
-  Linux.
 - **Help text matches 4.5's behaviour.** `mu --help` names Rex beside tmux
   and herdr. `agent send --steer` says it is pi-only and that a hook harness
   refuses it (another CLI in a herdr or Rex pane gets a plain send).
@@ -758,8 +680,6 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `task verdict --help` and its missing-verdict error show the skill's
   `VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <line>` form.
 
-### Fixed
-
 - **`mu task note`'s "will not see this note" hint names a send that works
   for the owner's channel.** It always said `mu agent send <o> --steer` with
   no text argument, which a hook harness (claude, codex, cursor-agent, Muse)
@@ -767,10 +687,12 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   `--interrupt`), a hooks owner `mu agent wait` then a plain send (or
   `--interrupt`), a mux owner a plain send; every variant shows the text as
   `- <<'EOF'`, and `-w` names the owner's own workstream.
+
 - **SQL refusals name the verb you typed.** `mu sql` refusals (BEGIN/COMMIT,
   PRAGMA, ATTACH, DDL, id changes, bookkeeping writes, the `--write` opt-in)
   and a capped read's `retrieve` said `mu db query` (or always `mu sql`); each
   now names `mu sql` or `mu db query` as typed.
+
 - **Guessed verbs name the command that works.** `mu finding` points at
   `mu task show` (a finding is an `OPEN/triage` task), `mu findings` at
   `mu task list --substate triage`, `mu ready` / `mu task ready` at
@@ -778,6 +700,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   An unknown first word after `mu delegates` (whose default verb is `list`)
   is now `unknown command 'x'` with the closest verb, not "too many arguments
   for 'list'".
+
 - **`mu sql` name errors teach the real name.** A guessed column offers the
   column that holds the data first: `name` on tasks -> `local_id, title` (it
   suggested `wave`), `body`/`text` -> `content`, `workstream` ->
@@ -786,6 +709,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   table: x` (was passed through raw) is now a one-line `SqlTableError`
   (exit 2) naming the closest table (`notes` -> `task_notes`, `edges` ->
   `task_edges`) and listing every table and view.
+
 - **Lease-carrier hints carry `-w`.** The `mu agent close <name>` hints of a
   refused stop, a spawn fenced by an unstopped or reserved job, and a dead
   remote worker in `mu task next --recover` now name the agent and
@@ -807,8 +731,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 - **A remote worktree close waits out a brief holder and names a lasting
   one.** A process inside the parked tree is re-scanned once a second for
   up to 5 s inside the same leased exec (no second exec, no extra rename),
-  so a short-lived tool such as a guardrail spool drain no longer causes a
-  refusal. One still there is refused as `process <pid> (<command, cut>,
+  so a short-lived tool no longer causes a refusal. One still there is refused as `process <pid> (<command, cut>,
   <age>s old) on <host> is still inside <path>; ...`, from the host's `ps`
   (the bare pid when `ps` cannot say). `--force` is unchanged: it neither
   waits nor refuses.
@@ -822,9 +745,9 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   (whose `ps` has no session id) those processes are the pane's
   descendants still on its terminal (or in its process group); before, only the pane's first
   process counted, so the preview listed the agent's own pi as a holder
-  too. pi's helpers that outlive the hangup (the guardrails plugin, which
-  moves to its own process group and is reparented away from pi, its
-  logger children, a `setsid`'d drain) are waited for in the same 5 s
+  too. pi's helpers that outlive the hangup (a plugin that moves to its own
+  process group and is reparented away from pi, its children, a
+  `setsid`'d drain) are waited for in the same 5 s
   when they hold the tree: the close reads, before the kill, the process
   groups of the pane's session and of each descendant that left it. The
   5 s count from the kill and include the scans; the park, the holder scan
@@ -833,6 +756,335 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
   any foreign holder, is still named (or refuses, as a writer) as before. The preview's `--if` revision never
   depended on the holder list: two previews agree while those processes
   churn (now pinned by a test).
+
+### Eval rig (not shipped)
+
+- **Eval: markers from the rendered help** (task `f_help_markers`, spec
+  revision 4). `deriveMarkers` also diffs `mu <path> --help` of every command
+  path, base against variant: a help line the variant prints and base's help
+  and corpus have nowhere is a marker; a base line the variant dropped is a
+  context marker when base's help and skills hold it once. The source hunks
+  missed what commander composes (`notes [options] [ids...]`) and literals
+  whose escapes `dist/` spells otherwise, so C3's multi-id variant had no
+  marker any help arm showed; it now has four, seen under `help` and
+  `skill+help` only. Error text a lead-in prints reaches the model through the
+  lead-in's output, which the golden diff already scores as a changed call.
+
+- **Eval: help arms, a skill-text length cap, a publishable report, one C7
+  base** (task `f_help_arm`, hill2 notes 32-33, spec revision 4). The probe
+  gains the arms `help` and `skill+help`: the prompt also carries
+  `mu <group> --help` and `mu <verb> --help` of every verb the lead-in spells,
+  rendered live from the surface under test (16 000 chars at most; group
+  entries drop first, and lint fails a case base would cut). A variant that
+  changes only help text or adds a flag can now be exposed. Fast
+  `plan|freeze` add both arms to every case (`--no-help-arms` keeps the
+  case's own), and R1 runs the arms the freeze row's plan records.
+  `nextstep check` also runs each golden under both arms. A changed string in
+  skill or recipe text (`skills/**`, docs the skill links to) is capped at
+  max(2x base, base + 200); src strings keep their cap, and the admission row
+  counts the strings under each cap. `tournament report` writes the canary
+  first and last (report and control copy), spells home `~`, defangs prose
+  links and fences each patch past its own backtick runs, so the
+  rig-guard, public-tree and doc-links tests pass on a generated report.
+  `final --combined` takes one base: it lists every group's base and refuses
+  a mixed set (or one off `--base <sha>`), and a base surface rebuilt at
+  another sha. Every group must be (re)frozen on that one base.
+
+- **Eval: fast mode's win threshold is data, and a full group can go fast**
+  (task `f_fast_mode_2`, spec §4.7). `freeze --fast` and the new
+  `migrate-fast` take `--win-alpha <a> --correct none|variants|bonferroni`
+  (default: Bonferroni over variants × headline cases at family α 0.20, so z
+  ≥ 2.13 at 6 × 2); the row records the rule, `decide --fast` computes z from
+  the R1 field and writes it into the decision row. `migrate-fast <g> --why`
+  switches a full-mode group whose R1 is scored (and R2 is not) to fast,
+  keeping its epoch, so `decide --fast` reads that epoch's R1 rows with no
+  re-run; a judges hash that moved since the freeze is listed file by file and
+  needs `--accept-judges <hash>`. The fast report prints the rule and, by Monte
+  Carlo at the group's R1 design and variants × headline cases, its per-group
+  false-win rate (about 0.15) and power for 0.5 → 0.8.
+
+- **Eval: tournament fast mode** (task `f_fast_mode`, user decision
+  2026-11-09, spec §4.7). `tournament plan|freeze --fast` plans R1 at
+  `n_eff` 30 per model and 45 pooled; `decide --fast <g>` decides on R1 rows
+  (ahead of base on both weak models and pooled z ≥ 1.65; losses as in §4.1;
+  at most one winner per group). R2 and the per-group R3, R4 and final refuse
+  on a fast group. `final --combined` (C7) puts every group's winner on one
+  surface, runs R4 with sonnet and both weak models, then the holdouts once,
+  and on a regression bisects the winners on the R4 scenarios only and names
+  the one to drop. The report states the accepted false-win rates (about 0.10
+  per group, 0.47 over six) and the group's bound 1 − 0.95^(N·h), which
+  Monte Carlo puts at 0.17-0.58 for 6-12 variants.
+
+- **Eval: the AUT cannot read the rig** (task `f_aut_reads_rig`). In B5's R4
+  rows 57 of 115 gemini runs read `tools/eval` (scenario and holdout sources,
+  goldens, judges) through the faux workers' `-e <checkout>/tools/eval/faux.ts`
+  in `.rt/pi`, the ssh shim's path, `ps`, and the surface's own `tools/eval`.
+  The sandbox now runs copies under `.rt/lib`, `prepare` strips the rig from a
+  surface, a pi AUT loads `aut-guard.ts` (refuses a tool call that names the
+  rig, cuts rig lines from results), and `rig-guard.ts` marks any run that
+  still reads it as a rig read: `verdict.rigReads`, never completed, out of
+  R3/R4/final counts and ρ̂; a probe answer that names it is refused unrun.
+  Since `f_aut_reads_rig_2`, every file under `tools/eval`, `test/eval`,
+  `docs/eval` and `docs/specs` carries a canary token on its first and last
+  line (`tools/eval/rig-private.ts`): a tool result, probe output or pane
+  AUT's hook transcript that carries it is a rig read, whichever path got
+  there (`cd` chains, globs, `git show HEAD:tools/eval/…`, symlinks). The
+  guard also matches relative `tools/eval`, follows `cd`, normalises realpaths
+  (`/private/tmp`), and covers the transcript stores, museum and mu state dir
+  of the designer deny list (one shared list). Since `f_aut_reads_rig_3`, a
+  judge-side fingerprint (`tools/eval/rig-fingerprint.ts`) catches the reads
+  that skip a file's ends (`sed -n 5,15p`, `xargs grep -h`, `grep -rn` after a
+  computed `cd`, `tar t` of the scenarios): an output that carries one of the
+  rig's own names (ids, holdout ids, declared names; none of the surface's,
+  the staged files', `node_modules`' or the run's env words) is a rig read,
+  in pi tool results, probe outputs and pane AUT transcripts. K = 1, set by
+  the B5 scan (0 legitimate hits). Encodings and plainly named listings stay
+  open (README). 5 kept B5 gemini rows carried it (`ps` of the driver, a grep
+  of the unstripped surface's `docs/eval`) and were re-run.
+
+- **Eval: the hill-r2 tournament gate and report** (spec
+  `docs/specs/2026-11-07-hill-r2-tournament.md` §4.4-§4.6, §5, §6, unit B3c).
+  `tournament r3|r4|final|report` replace B3b's stubs. `tournament-r4.ts`
+  runs every AUT job through one resumable runner (`runR4`) whose rows carry
+  exposure, placed destructive entries and attribution; a verdict without
+  `destructiveFx` sends its `destructive[]` entries to review as unplaced,
+  never as clean. R3 picks the scenarios that exercise each finalist (golden
+  markers, behaviour diff, live haiku exposure, up to 6); R4 tests completion
+  per model with Holm, needs exposure on a weak model, eliminates on an
+  attributable entry and stops (exit 7) on a new one; `final` runs the
+  holdouts once on the combined surface with logs only under `sealed/`, and
+  a holdout failure is a review stop, never bisected. `tournament-report.ts`
+  writes the §6 report, states the power at the planned n (per-model n_eff 64,
+  not the spec table's), that false wins are controlled per group (≤ 0.26 for
+  one or more over six groups, holdouts no-regression only) and the
+  end-to-end power to land a real 0.5 → 0.8 fix (~0.7), and copies the
+  control file to the committed `docs/eval/hill-r2/<group>.tournament.jsonl`.
+
+- **Eval: the hill-r2 tournament driver** (spec
+  `docs/specs/2026-11-07-hill-r2-tournament.md` §3, §4.1-4.3, unit B3b).
+  `node tools/eval/main.ts tournament freeze|refreeze|plan|pack|design|audit|build|r1|r2|review|status`
+  runs a group's variants by successive halving. A variant is a patch on a
+  copy of the built base (`tournament-build.ts`): the driver derives its
+  markers, context markers and behaviour signature (new flag or verb names,
+  golden diffs over a base noise mask) from the patch and admits it only when
+  it is observable and inside the caps. `tournament-design.ts` packs base for
+  the designers without the eval rig (scrubbing the files that name it),
+  refuses a leaky BRIEF.md, launches each designer with an empty HOME and a
+  PATH without `mu` or `museum`, and audits its session files: the catch-all
+  lets node's install dir, the provider extension and what the pack itself
+  says through, so an ordinary stack trace or a read of mu's docs does not
+  discard a session. The audit resolves relative paths in what the designer
+  did (bash commands, read and write paths) against the session's cwd, so
+  `cat ../../../../../../../.pi/agent/sessions/x` from the pack is a hit.
+  `tournament-score.ts` scores a round with the per-case Holm
+  and stratified CMH losses and the pooled weak-model win test at 0.05/S,
+  ranks by a total order, advances fixed counts, and stops for review (exit
+  7) on a new unattributable destructive entry. `freeze` and `plan` print the
+  plan's CMH power per model (at the default ρ 0.2: own headline r = 3, n_eff
+  64 per model, 0.98 for a broad 0.8 → 0.7 drop, 0.53 for 0.8 → 0.75).
+
+- **Eval: exposure-gated scoring for the hill-r2 tournament** (spec
+  `docs/specs/2026-11-07-hill-r2-tournament.md` §4.1, §5, unit B3a).
+  `tools/eval/exposure.ts` decides whether a probe row or an R4 run saw a
+  variant's changed text or behaviour, and which destructive entries are
+  attributable to it. Win clusters are chosen only by exposure fixed before
+  the answer, never by the answer's own calls, so a null variant cannot win
+  through cluster selection. `tools/eval/stats.ts` holds the tests: Fisher
+  exact and its power, Holm, stratified CMH, ICC, DEFF and Kish scaling, and
+  the n plan. `ToolCall` gains optional `turn` and `idx`; `Verdict` gains
+  `destructiveFx` (each destructive entry placed at its tool call) and
+  `muCalls`.
+
+- **Eval: the next-step probe** (`tools/eval`, hill-r2 B2). `node
+  tools/eval/main.ts nextstep run|check|lint|selftest|report` gives a model a
+  live transcript ending in one mu output, a goal and an optional skill or
+  recipe, runs its next one to three commands in the same sandbox, and judges
+  the state and mu's own output (spec
+  docs/specs/2026-11-07-hill-r2-tournament.md §1). Two pilot cases,
+  `close_preview_apply` (bash) and `notes_multi` (zsh); `check` and `selftest`
+  cost nothing. `cold-guess`'s `execGuess` takes a shell and an env, and
+  `askModel` answers the scripted `evalfaux/*` models without pi. `main.ts`
+  dispatches `tournament` to a stub until the driver lands.
+
+- **Eval: the next-step case catalogue** (`tools/eval`, hill-r2 B4b, spec
+  docs/specs/2026-11-07-hill-r2-tournament.md §2, §7). Eleven more cases
+  beside the two pilots: close preview with an unmerged commit, three wait
+  readings (result line, heartbeat merged into JSON, the 120 s shell limit),
+  the delegate report in notes, agent read through pane chrome, NO VERDICT
+  LINE, a worker that closed with the verb, sleep polling, and the sql and
+  finding guards. `nextstep check` proves every §2.3 row on base, lint is
+  clean against base's names. `dead_once` is dropped: base reports one death
+  once. `shown` compares whole lines and each case-7 marker has its own
+  nonce, so a `grep -o | sed` rename of another note's marker misses; cases
+  1 and 2 allow only worker-1's agent ops; the timed rule counts the shim's
+  own span (its table dumps) as time in mu, so a one-call answer on a loaded
+  host is not read as idle; `check` asserts partial where §2.3 says so.
+  B6 adds paraphrases where B5's ρ̂ left the plan short (spec §4.2):
+  `close_preview_apply`, `close_preview_conflict`, `wait_result_read`,
+  `notes_multi` and `agent_read_text` go to 14, the `sql_name_guess` guard
+  to 13 (docs/eval/hill-r2/baseline.md, "B6").
+
+- **Eval rig: hill-r2 fixtures, intents and R4 scenarios** (spec
+  docs/specs/2026-11-07-hill-r2-tournament.md §2, §7 B4a). `tools/eval`
+  fixtures gain gated task scripts (`gate: { delayMs }`, released by
+  `<workers>/go`), `chromePane`, `seedDelegate` (a finished delegate call
+  through the real writers) and `delegateDefault`. Cold-guess gains eight
+  next-only headline intents for verbs since 4.0 (`check_record`,
+  `verdict_record`, `wave_outcome`, `host_list`, `lease_show`, `notes_two`,
+  `close_apply_clean`, `report_only`); three R4 scenarios judge sleep and
+  poll waits (`poll_wave`), one note summarising four reports
+  (`multi_notes`) and acting on a worker's result read through mu
+  (`wait_report_act`). `cold-guess check --family next` is green again:
+  a sandbox copies pi's cached model catalog so a nested worker pi
+  starts, the remote gate seed spawns as pi,
+  and `task_brief` is reworded. The faux worker reads its claim with a
+  plain `sqlite3` connection: `-readonly` cannot open the WAL DB once no mu
+  process holds its -shm file, so a worker whose orchestrator slept gave up.
+
+- **Eval rig: every row runs under its own muzzle claim; the load gate is
+  gone; the mu shim is cheap** (task `f_eval_muzzle`, after eval runs drove
+  the mac to load ~250 on 2026-11-08). One run fanned out to 24 sandboxes
+  under a single 3-slot `mu-eval` claim, and the 1-min loadavg gate let all
+  24 start inside one stale minute. Now a probe row, an AUT run, a
+  cold-guess guess and a designer session each hold `muzzle run --rule
+  mu-eval-<kind> --slots <w>` while they run (`tools/eval/claim.ts`;
+  `EVAL_ROW_SLOTS_<KIND>` overrides w), `--concurrency` is capped to
+  `floor(budget / w)`, and a rig that itself runs inside a muzzle claim takes
+  no per-row claims and runs `floor(outer slots / w)` rows. The outer claim
+  is found as muzzle finds it (`MUZZLE_SLOTS`, or a live holder in the rig's
+  ancestry: pi's muzzle extension sets neither `MUZZLE_SLOTS` nor
+  `MUZZLE_HOLD`), and the first row's holder is checked in `muzzle status
+  --json`; one that holds no slots drops the run to a low fixed cap (2 probe
+  rows, 1 AUT run) with a warning. No muzzle on PATH, or a failing `muzzle
+  status`, gives the same low cap, never the budget-derived 22. `run`,
+  `selftest`, `check --preflight` and `tournament build`'s golden traces
+  claim too, and `createSandbox` refuses to run outside a row claim.
+  `tournament r1|r2` default to `--concurrency auto` (the budget cap), not
+  24 (task `f_eval_muzzle_2`). `--max-load` is
+  removed (`nextstep run`, `tournament r1|r2`). The sandbox mu shim's AUT
+  call spawned 69 processes on macOS (4 perl clocks, 12 sqlite3 dumps with
+  their cksum and cut); it now spawns 4: one sqlite3 call before mu and one
+  after, each reading the clock and a `sha3_query` hash per machine-local
+  table. A worker's call drops from 11 to 3 (1 on bash 5).
+
+- **Eval rig: launcher variables come from `EVAL_LAUNCHER_ENV`** (public
+  audit). The rig no longer names any launcher's variables: it sets
+  each `NAME=VALUE` pair in `EVAL_LAUNCHER_ENV` for every pi it starts (a
+  caller value of `NAME` wins), and seeds any `[<name>-]model-catalog*.json`
+  cache. The pairs never override the sandbox's own `HOME`, `PATH` or `MU_*`
+  (model, designer and scenario env alike). Run from inside a launcher's
+  sandbox, set the pair that keeps the outer sandbox. Docs, fixtures and the
+  README screenshot drop internal host, user and tool names. The designer
+  isolation audit takes the museum checkout from `EVAL_MUSEUM_DIR` (no
+  default) and denies any dir named `museum` holding `skills/museum`.
+
+- **Eval: audit and judge gaps from the B3/B4 reviews** (f_low_batch3). The
+  designer audit sees a search behind a wrapper (`sudo find /`, `env … timeout
+  5 rg x /`) and a glob above HOME (`du -sh /Users/*` names `/Users`), and never
+  allows an install dir that is HOME or a top-level child of it (a bin link into
+  `~/bin`). The next-step judge counts a `| jq .` rendering as shown, caps a
+  shim span at 5 s past its call, and fails an answer that names the shim's
+  logs (`mu-shim.log`, `mu-calls.log`, `$EVAL_WORKER_DIR`). The R4 tests pin the
+  per-cell new-vs-base check and the half-exposed threshold;
+  `tournament-r4.test.ts` is split in two (shared fixtures in
+  `test/eval/_r4-fixtures.ts`). The report says the end-to-end figure is
+  computed from the null false-loss bounds, and rig-guard's canary test prints
+  the exact line a file lacks.
+
+- **The public tree stays scrubbed.** `docs/eval/hill-r2/baseline.md` had
+  regained an absolute home path from a pre-audit branch; it now reads `~/`.
+  `test/public-tree.test.ts` scans every tracked text file and fails on a
+  real `/Users/<name>/` or `/home/<name>/` path or on a term the public audit
+  removed.
+
+- **Eval: `tournament pack` drops a rig entry from a JSON config list**
+  (hill-r2 c2). `tsconfig.test.json` names `tools/eval/pi-ai.d.ts` in its
+  `include` since f_eval_muzzle_2, and the pack refused base `d9acd750`
+  outright ("pack still carries denied text"). A string in a JSON array
+  that names the rig is now removed; any other hit in a JSON file is still
+  reported and refuses the pack.
+
+- **Eval: the behaviour diff masks timing noise and data keys** (hill-r2
+  c2). A call family the two base runs disagree on (in how often it ran or
+  in any output: a poll while workers finish) compares on exit and JSON
+  shape only; JSON object keys are normalised (a cursor keyed by a ref with a
+  nonce); `normalise` also covers UUIDs, 6-character hex, a hex id glued to
+  a name (`delegate_rev_3b9f1ea2`) and upper-case check ids. On c2's cached
+  goldens the changed calls of every variant fell from five or six keys to
+  the close calls each one really changes.
+
+- **Eval: the tournament build trusts only complete golden passes**
+  (hill-r2 c2 review). A base golden pass that was cut short (not ok) is no
+  evidence of noise: such a case masks nothing, is compared against the
+  complete pass if there is one, and the build lists it. The trace caches
+  (`golden-base-<key>.json`, `golden-<id>-<key>.json`) are keyed by build
+  ref, judges hash and the scenario and golden files, so a refreeze never
+  reuses stale traces. A variant whose golden pass threw reports
+  `goldenCompat not run` and is refused ("golden pass not run"). The
+  parallel passes now run through `passPool`, tested to keep per-row claims
+  and the serial traces.
+
+- **Eval: a variant's new flag split over two lines is a new name**
+  (hill-r2 c2). `newNames` matched `.option("--x"` on one added line, but
+  the formatter writes `.option(` and the flag on separate lines, so c2's
+  `--if-clean` and `--auto` had no behaviour signature. Runs of added lines
+  are now joined before matching.
+
+- **Eval: the behaviour diff pairs golden calls by occurrence, not
+  position** (hill-r2 c2). Workers interleave their calls differently from
+  run to run (`wait_mixed_refs` claims in either order), and one swap shifted
+  every later pair, so all c2 variants carried a dozen unrelated changed
+  calls (`task claim|--for`, `wait|--json,--timeout`, ...). Calls now pair
+  by their k-th occurrence of the same normalised argv; an occurrence the
+  two base runs disagree on is chance. `build` caches each variant's golden
+  traces per build ref, and `--force` re-assesses from them.
+
+- **Eval: a probe seed that fails on a surface gives an invalid row**
+  (hill-r2 c2). Seeds are spelled in base grammar; a c2 variant that made a
+  bare `agent close --json` apply the close broke the seed's revision read,
+  and the throw crashed `tournament build` (and would have dropped the rows
+  in R1 instead of scoring them). `playCase` now marks the row invalid
+  (`seed invalid: …`), scored like a failed lead-in (spec §1.4 lint 3: an
+  invalid headline row eliminates), and a variant's failed golden pass no
+  longer stops `build` for the others.
+
+- **Eval: `tournament build` runs its golden passes side by side**
+  (hill-r2 c2). Base's two passes and up to `--passes` (default 4) variant
+  passes run at once; each row still takes its own muzzle claim and rows are
+  appended in candidate order. Serial, c2's eight variants took about 12 h
+  of zero-cost goldens before R1 could start.
+
+- **Eval: the designer audit no longer reads `//` as a search of `/`**
+  (hill-r2 c2). A `//` comment inside a heredoc (a python script that edits
+  TypeScript) was a strict path `//`, so the root, and discarded the
+  claude-opus designer session on three false "search above HOME" hits. A
+  slash-only word is now treated like a bare `/`: a hit only as the start
+  dir of a search (`rg x //`) or a `cd`.
+
+- **Eval: `tournament plan` plans from B5's rows before a freeze, and model
+  errors stay out of ρ̂** (hill-r2 B5). `plan <g> --b5 <probe.jsonl>
+  [--b5-cold <cold.jsonl>]` computes ρ̂ the way `freeze` does
+  (`rhoFromB5`, shared by both), without writing a setup row. A row with a
+  model error is rig noise, not a reading outcome; counted as a miss it
+  faked a cluster effect.
+
+- **Eval: the next-step probe counts a field of mu's tab-separated text as a
+  whole line** (hill-r2 B5). `task notes` prints
+  `<kind>\t<n>\tby=…\tat=…\t<text>`, so a note's first line was never a whole
+  line once an answer cut the header (`awk -F'\t'`, `cut -f5-`), and
+  `notes_report_read` scored 174 of 360 base rows a miss on finding 1 alone.
+  A field is mu's own unit, as a jq -r string is; a `grep -o` cut inside it
+  still does not count.
+
+- **Eval: R4 scenarios run on macOS** (hill-r2 B5). `fanout_gates`'s commit
+  hook stamped `date +%s%3N`, which BSD date prints as `<s>3N`: no merge was
+  ever seen and its golden failed. Four bad scripts used GNU `sed -i '1i …'`
+  (now `perl -pi`). `no_mux_delegate` seeded tasks into a workstream it never
+  created. `refute_verdicts`'s delegate now holds its answer 3 s, so a close
+  issued right after the call precedes the verdict (that bad passed). The
+  README says to run on macOS with `TMPDIR=/private/tmp` (the `/tmp` symlink
+  breaks the remote scenarios' path judges) and that `wait_interrupted` needs
+  Linux.
 
 ## [4.5.0] — 2026-11-07
 

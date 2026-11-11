@@ -85,15 +85,94 @@ export interface DerivedMarkers {
   rejected: { text: string; why: string }[];
 }
 
+/** One command path's rendered `mu <path> --help` (`path` "" for `mu --help`). */
+export interface HelpPage {
+  path: string;
+  text: string;
+}
+
+/** Every `mu <path> --help` of the built surface at `root`, to the depth the help bundle walks. */
+export function renderedHelp(root: string): HelpPage[] {
+  // runHelp reads only `cli`; a dir with no build renders no help (runHelp gives "")
+  const surface: Surface = {
+    name: "help",
+    root,
+    cli: join(root, "dist", "cli.js"),
+    extension: join(root, "dist", "extension", "mu-pi.js"),
+    skillDir: join(root, "skills", "mu"),
+  };
+  const walk = (path: string[]): HelpPage[] => {
+    const text = runHelp(surface, path);
+    if (text === "") return [];
+    return [
+      { path: path.join(" "), text },
+      ...(path.length < 3 ? subcommands(text).flatMap((c) => walk([...path, c])) : []),
+    ];
+  };
+  return walk([]);
+}
+
+const helpLines = (t: string): string[] =>
+  t
+    .split("\n")
+    .map(flatText)
+    .filter((l) => l !== "");
+
+/**
+ * Markers from the rendered help (f_help_markers): the source hunks miss what commander composes
+ * (`notes [options] [ids...]` from `notes [ids...]`) and literals whose escapes `dist/` spells
+ * differently. Per command path, a line the variant's help prints and base's does not is a marker
+ * when base's help (any path) and base's corpus have it nowhere; a line base prints and the
+ * variant does not is a context marker when it occurs once in base's help and nowhere in base's
+ * skills. Whitespace is collapsed, so re-padded columns are no change.
+ */
+function helpMarkers(
+  variant: readonly HelpPage[],
+  base: readonly HelpPage[],
+  baseCorpus: readonly CorpusFile[],
+): DerivedMarkers {
+  const long = (s: string): boolean => s.length >= MIN_MARKER;
+  const pageOf = (pages: readonly HelpPage[]): Map<string, string[]> =>
+    new Map(pages.map((p) => [p.path, helpLines(p.text)]));
+  const B = pageOf(base);
+  const V = pageOf(variant);
+  // flat per page, as a prompt is matched: a line that base prints across a wrap still counts
+  const baseHelp = base.map((p) => ({ file: `help:${p.path}`, text: flatText(p.text) }));
+  const baseSkills = baseCorpus.filter((f) => f.file.startsWith("skills/"));
+  const markers = new Set<string>();
+  const contextMarkers = new Set<string>();
+  const rejected = new Map<string, string>();
+  for (const path of new Set([...B.keys(), ...V.keys()])) {
+    const b = new Set(B.get(path) ?? []);
+    const v = new Set(V.get(path) ?? []);
+    for (const l of v)
+      if (!b.has(l) && long(l) && places(baseHelp, l) === 0 && places(baseCorpus, l) === 0)
+        markers.add(l);
+    for (const l of b) {
+      if (v.has(l) || !long(l)) continue;
+      const n = places(baseHelp, l) + places(baseSkills, l);
+      if (n === 1) contextMarkers.add(l);
+      else rejected.set(l, `${n} places in base's help and skills`);
+    }
+  }
+  return {
+    markers: [...markers],
+    contextMarkers: [...contextMarkers],
+    rejected: [...rejected].map(([text, why]) => ({ text, why })),
+  };
+}
+
 /**
  * §3.1 steps 2-3. Markers: changed parts of ≥ 12 characters that the variant ships and base ships
  * nowhere. Context markers: removed or rewritten base parts of ≥ 12 characters that occur in
- * exactly one place in base's corpus.
+ * exactly one place in base's corpus. With both surfaces' rendered help, also the help lines the
+ * variant changed (`helpMarkers`).
  */
 export function deriveMarkers(
   diff: { changed: readonly ChangedString[]; removed: readonly RemovedString[] },
   variant: readonly CorpusFile[],
   base: readonly CorpusFile[],
+  help?: { variant: readonly HelpPage[]; base: readonly HelpPage[] },
 ): DerivedMarkers {
   const long = (s: string): boolean => flatText(s).length >= MIN_MARKER;
   const uniq = (xs: string[]): string[] => [...new Set(xs.map(flatText))];
@@ -107,27 +186,49 @@ export function deriveMarkers(
     if (n === 1) contextMarkers.push(c);
     else rejected.push({ text: c, why: n === 0 ? "not in base's corpus" : `${n} places in base` });
   }
-  return { markers, contextMarkers, rejected };
+  if (help === undefined) return { markers, contextMarkers, rejected };
+  const h = helpMarkers(help.variant, help.base, base);
+  const ctx = new Set(contextMarkers);
+  return {
+    markers: uniq([...markers, ...h.markers]),
+    contextMarkers: uniq([...contextMarkers, ...h.contextMarkers]),
+    rejected: [...rejected, ...h.rejected.filter((r) => !ctx.has(r.text))],
+  };
 }
 
 // ---- behaviour signature ------------------------------------------------------------------------
 
 /** §3.1 behaviour step 1: flag and command names on `+` lines of `src/` that base's parser lacks. */
+/** The texts of a hunk's runs of consecutive `+` lines, each run joined with newlines. */
+function addedRuns(h: readonly { op: string; text: string }[]): string[] {
+  const runs: string[] = [];
+  let cur: string[] = [];
+  for (const l of h) {
+    if (l.op === "+") cur.push(l.text);
+    else if (cur.length > 0) {
+      runs.push(cur.join("\n"));
+      cur = [];
+    }
+  }
+  if (cur.length > 0) runs.push(cur.join("\n"));
+  return runs;
+}
+
 export function newNames(files: readonly FilePatch[], baseVocab: ReadonlySet<string>): string[] {
   const out = new Set<string>();
   for (const f of files) {
     if (!f.path.startsWith("src/")) continue;
+    // runs of added lines, joined: the formatter puts `.option(` and its flags on two lines
     for (const h of f.hunks)
-      for (const l of h) {
-        if (l.op !== "+") continue;
-        for (const m of l.text.matchAll(/\.(?:option|requiredOption)\(\s*["'`]([^"'`]+)["'`]/g))
+      for (const text of addedRuns(h)) {
+        for (const m of text.matchAll(/\.(?:option|requiredOption)\(\s*["'`]([^"'`]+)["'`]/g))
           for (const flag of (m[1] ?? "").matchAll(/(--?[A-Za-z][\w-]*)/g)) {
             const f1 = flag[1] ?? "";
             const name = f1.replace(/^--?/, "");
             if (f1.startsWith("--") && !baseVocab.has(name)) out.add(f1);
             if (!f1.startsWith("--") && !baseVocab.has(f1)) out.add(f1);
           }
-        for (const m of l.text.matchAll(/\.command\(\s*["'`]([A-Za-z][\w-]*)/g)) {
+        for (const m of text.matchAll(/\.command\(\s*["'`]([A-Za-z][\w-]*)/g)) {
           const name = m[1] ?? "";
           if (!baseVocab.has(name)) out.add(name);
         }
@@ -147,12 +248,17 @@ export interface GoldenTrace {
 
 /** Nonces, shas, ids, times and counts: what differs between two runs of one golden by chance. */
 export function normalise(s: string): string {
-  return s
-    .replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "<ts>")
-    .replace(/\b[0-9a-f]{7,64}\b/g, "<hex>")
-    .replace(/\b(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{8}\b/g, "<nonce>")
-    .replace(/\/[^\s"']*\/(mu-eval|mu-nextstep|mu-cold)[^\s"']*/g, "<path>")
-    .replace(/\d+(\.\d+)?/g, "<n>");
+  return (
+    s
+      .replace(/\d{4}-\d\d-\d\dT[\d:.]+Z?/g, "<ts>")
+      .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g, "<uuid>")
+      .replace(/(?<![0-9A-Za-z])[0-9a-f]{6,64}(?![0-9A-Za-z])/g, "<hex>")
+      // a check id (`--check 1MNYRC…`): a long upper-case base-32 token
+      .replace(/\b(?=[A-Z0-9]*\d)(?=[A-Z0-9]*[A-Z])[A-Z0-9]{16,}\b/g, "<id>")
+      .replace(/\b(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{8}\b/g, "<nonce>")
+      .replace(/\/[^\s"']*\/(mu-eval|mu-nextstep|mu-cold)[^\s"']*/g, "<path>")
+      .replace(/\d+(\.\d+)?/g, "<n>")
+  );
 }
 
 /** The key-and-type tree of a JSON text (null when it is not JSON). */
@@ -161,10 +267,11 @@ export function jsonShape(text: string): string | null {
     Array.isArray(v)
       ? [v.length > 0 ? shape(v[0]) : "empty"]
       : v !== null && typeof v === "object"
-        ? Object.fromEntries(
+        ? // a key can be data (a cursor keyed by a ref with a nonce): its normalised form
+          Object.fromEntries(
             Object.keys(v)
-              .sort()
-              .map((k) => [k, shape((v as Record<string, unknown>)[k])]),
+              .map((k) => [normalise(k), shape((v as Record<string, unknown>)[k])] as const)
+              .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
           )
         : v === null
           ? "null"
@@ -182,7 +289,8 @@ export function jsonShape(text: string): string | null {
  * `--json` key-and-type tree or normalised output differs. A call with no partner (the runs
  * diverged) is changed too. `baseAgain` is a second base run of the same goldens: a call whose
  * output already differs between the two base runs (a per-row random phrase, a wall-clock count)
- * is compared on exit and JSON shape only, so chance never reads as behaviour.
+ * is compared on exit, JSON shape and the lines both base runs agree on (when they printed as many
+ * lines), so chance never reads as behaviour.
  */
 export function behaviourDiff(
   base: readonly GoldenTrace[],
@@ -190,35 +298,88 @@ export function behaviourDiff(
   key: (argv: string) => string,
   baseAgain: readonly GoldenTrace[] = [],
 ): string[] {
+  // calls pair by their k-th occurrence of the same normalised argv, not by position: workers
+  // interleave differently from run to run, and one swap would shift every later pair
+  const byOccurrence = (t: GoldenTrace | undefined): Map<string, GoldenTrace["calls"][number]> => {
+    const seen = new Map<string, number>();
+    const m = new Map<string, GoldenTrace["calls"][number]>();
+    for (const c of t?.calls ?? []) {
+      const n = normalise(c.argv);
+      const k = seen.get(n) ?? 0;
+      seen.set(n, k + 1);
+      m.set(`${n}\0${k}`, c);
+    }
+    return m;
+  };
   const out = new Set<string>();
   const vById = new Map(variant.map((t) => [t.id, t]));
   const again = new Map(baseAgain.map((t) => [t.id, t]));
   for (const b of base) {
-    const b2 = again.get(b.id);
     const v = vById.get(b.id);
     if (!v) continue;
-    const n = Math.max(b.calls.length, v.calls.length);
-    for (let i = 0; i < n; i++) {
-      const x = b.calls[i];
-      const y = v.calls[i];
-      if (!x || !y || normalise(x.argv) !== normalise(y.argv)) {
+    // noise is what two COMPLETE base passes disagree on: a pass cut short (not ok) is no evidence
+    // of chance, so a case with one masks nothing (its calls compare in full; see unmaskedCases).
+    // When only the second pass is complete, it is the one the variant is compared against.
+    const b2 = again.get(b.id);
+    const [p, q] = !b.ok && b2?.ok === true ? [b2, b] : [b, b2];
+    const B = byOccurrence(p);
+    const V = byOccurrence(v);
+    const B2 = q === undefined || !p.ok || !q.ok ? null : byOccurrence(q);
+    // a call family (normalised argv) the two base runs disagree on anywhere, in how often it ran
+    // or in any output, is timing-driven (a poll while workers finish): chance, not behaviour, so
+    // its calls compare on exit and JSON shape only and its extra or missing occurrences are noise
+    const fam = (k: string): string => k.slice(0, k.lastIndexOf("\0"));
+    const noisyFam = new Set<string>();
+    if (B2 !== null)
+      for (const k of new Set([...B.keys(), ...B2.keys()])) {
+        const x = B.get(k);
+        const x2 = B2.get(k);
+        if (!x || !x2 || normalise(x.out) !== normalise(x2.out)) noisyFam.add(fam(k));
+      }
+    // within a noisy family, a call both base passes ran with the same line count keeps the lines
+    // they agree on (a pane read whose one random-phrase line differs keeps its 30 blank and rule
+    // rows): the variant differs when its line count or one of those lines does
+    const lines = (out: string): string[] => normalise(out).split("\n");
+    const stableLines = (k: string): (string | null)[] | null => {
+      const x = B.get(k);
+      const x2 = B2?.get(k);
+      if (!x || !x2) return null;
+      const [l, l2] = [lines(x.out), lines(x2.out)];
+      return l.length === l2.length ? l.map((v, i) => (v === l2[i] ? v : null)) : null;
+    };
+    const stableDiffers = (k: string, out: string): boolean => {
+      const st = stableLines(k);
+      if (st === null) return false;
+      const l = lines(out);
+      return l.length !== st.length || st.some((v, i) => v !== null && v !== l[i]);
+    };
+    for (const k of new Set([...B.keys(), ...V.keys()])) {
+      const x = B.get(k);
+      const y = V.get(k);
+      const noisy = noisyFam.has(fam(k));
+      if (!x || !y) {
+        if (noisy) continue;
         if (x) out.add(key(x.argv));
         if (y) out.add(key(y.argv));
         continue;
       }
-      const x2 = b2?.calls[i];
-      const noisy =
-        x2 !== undefined &&
-        normalise(x2.argv) === normalise(x.argv) &&
-        normalise(x2.out) !== normalise(x.out);
       const differs =
         x.exit !== y.exit ||
         jsonShape(x.out) !== jsonShape(y.out) ||
-        (!noisy && normalise(x.out) !== normalise(y.out));
+        (noisy ? stableDiffers(k, y.out) : normalise(x.out) !== normalise(y.out));
       if (differs) out.add(key(x.argv));
     }
   }
   return [...out].sort();
+}
+
+/** Goldens whose two base passes are not both complete (ok): behaviourDiff masks no noise there. */
+export function unmaskedCases(
+  base: readonly GoldenTrace[],
+  baseAgain: readonly GoldenTrace[],
+): string[] {
+  const again = new Map(baseAgain.map((t) => [t.id, t]));
+  return base.filter((b) => !b.ok || again.get(b.id)?.ok !== true).map((b) => b.id);
 }
 
 /** The surface's command paths (`agent close`, `wait`, …), for call keys. */
@@ -328,22 +489,104 @@ export async function collectGoldenTraces(
   return traces;
 }
 
+/**
+ * Run `pass` over `items`, `width` at a time; results in item order, as a serial loop gives them.
+ * Each golden row inside a pass takes its own muzzle claim (withRowClaim in collectGoldenTraces),
+ * so `width` bounds passes in flight, never host load.
+ */
+export async function passPool<T, R>(
+  items: readonly T[],
+  width: number,
+  pass: (item: T, i: number) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(Math.max(1, width), items.length) }, async () => {
+      for (let i = next++; i < items.length; i = next++) out[i] = await pass(items[i] as T, i);
+    }),
+  );
+  return out;
+}
+
+/**
+ * The key of a cached golden pass: the surface's build ref, the frozen judges' hash and the bytes
+ * of every scenario and golden script the pass runs, so a refreeze with changed goldens (or a
+ * scenario root that changed under the same judges) never reuses stale traces.
+ */
+export function traceCacheKey(o: {
+  ref: string;
+  judgesHash: string;
+  scenarios: readonly string[];
+  scenarioRoot?: string;
+}): string {
+  const h = createHash("sha256").update(`${o.ref}\0${o.judgesHash}\0`);
+  const roots = [...new Set([o.scenarioRoot ?? scenarioDir(), scenarioDir()])];
+  for (const id of o.scenarios)
+    for (const root of roots)
+      for (const f of [`${id}.ts`, scriptFile(id, "golden", "next")]) {
+        const p = join(root, f);
+        h.update(`${id}\0${p}\0`);
+        if (existsSync(p)) h.update(readFileSync(p));
+        h.update("\0");
+      }
+  return h.digest("hex").slice(0, 16);
+}
+
+/** `run`'s traces, cached in `file` (JSON): read back when it exists, written when `run` returns. */
+export async function cachedTraces<T>(file: string, run: () => Promise<T>): Promise<T> {
+  if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8")) as T;
+  const t = await run();
+  writeFileSync(file, JSON.stringify(t));
+  return t;
+}
+
 // ---- admission ----------------------------------------------------------------------------------
 
-/** §3.1 length cap: max(⌈1.25·base⌉, base + 40), never above base + 120; no counterpart: 120. */
-export function lengthCap(base: number | null): number {
+/** Which length cap a changed string falls under: skill and recipe text, or a src string. */
+export type CapRule = "skill" | "src";
+
+/**
+ * Skill text: `skills/**`, and a doc the skill links to (`docs/**.md`; admission refuses a docs/
+ * path today, so in practice skills/** only). Everything else is a src string.
+ */
+export const capRule = (file: string): CapRule =>
+  /^skills\//.test(file) || /^docs\/.*\.md$/.test(file) ? "skill" : "src";
+
+/**
+ * §3.1 length cap. A src string: max(⌈1.25·base⌉, base + 40), never above base + 120; no
+ * counterpart: 120. Skill and recipe text (hill2 note 33: the src cap refused 5 of C3's 8 variants
+ * on one recipe line): max(2·base, base + 200), no ceiling; no counterpart: 200.
+ */
+export function lengthCap(base: number | null, rule: CapRule = "src"): number {
+  if (rule === "skill") return base === null ? 200 : Math.max(2 * base, base + 200);
   if (base === null) return 120;
   return Math.min(Math.max(Math.ceil(1.25 * base), base + 40), base + 120);
 }
 
+const CAP_TEXT: Record<CapRule, string> = {
+  src: "src cap max(1.25x base, base+40) <= base+120",
+  skill: "skill cap max(2x base, base+200)",
+};
+
 export function lengthViolations(changed: readonly ChangedString[]): string[] {
   return changed.flatMap((c) => {
     const len = flatText(c.text).length;
-    const cap = lengthCap(c.base === null ? null : flatText(c.base).length);
+    const rule = capRule(c.file);
+    const cap = lengthCap(c.base === null ? null : flatText(c.base).length, rule);
     return len > cap
-      ? [`${c.file}: changed string of ${len} chars over its cap ${cap}: ${c.text.slice(0, 60)}`]
+      ? [
+          `${c.file}: changed string of ${len} chars over its cap ${cap} (${CAP_TEXT[rule]}): ${c.text.slice(0, 60)}`,
+        ]
       : [];
   });
+}
+
+/** How many changed strings each cap checked: the admission's record of which cap applied. */
+export function capsApplied(changed: readonly ChangedString[]): Record<CapRule, number> {
+  const n: Record<CapRule, number> = { src: 0, skill: 0 };
+  for (const c of changed) n[capRule(c.file)]++;
+  return n;
 }
 
 const wc = (p: string): number => (existsSync(p) ? words(readFileSync(p, "utf8")).length : 0);
@@ -378,6 +621,8 @@ export function textDelta(
 export interface Admission {
   ok: boolean;
   failures: string[];
+  /** Changed strings per length cap (absent on a row admitted before the skill cap). */
+  caps?: Record<CapRule, number>;
 }
 
 /** §3.1 admission: each failure blocks, and all of them go into the `variant` row. */
@@ -402,7 +647,7 @@ export function admit(o: {
   const s = o.spec;
   if (s.markers.length === 0 && s.newNames.length === 0 && s.changedCalls.length === 0)
     failures.push("inert: no derived marker, no new name and no changed call");
-  return { ok: failures.length === 0, failures };
+  return { ok: failures.length === 0, failures, caps: capsApplied(o.changed) };
 }
 
 // ---- building a variant -------------------------------------------------------------------------
@@ -429,15 +674,17 @@ export function cloneDir(from: string, to: string): void {
  * §3.1 build: copy the base surface dir (with `node_modules`) to `hill2-<v>`, `git apply --check`
  * then `git apply`, `npm run build`, stamp `.ref = <base sha>+<sha256(patch)[:12]>`. Reuses a
  * built copy with the same stamp. Never throws on a bad patch or build: admission reports it.
+ * Several patches (C7's combined surface, §4.7) apply in order; the stamp hashes them concatenated.
  */
 export function buildVariant(
   baseRoot: string,
   baseSha: string,
   variantId: string,
-  patchFile: string,
+  patchFile: string | readonly string[],
   dir: string = surfaceDir(`hill2-${variantId}`),
 ): { dir: string; ref: string; built: { ok: boolean; why?: string }; helpExit: number } {
-  const patch = readFileSync(patchFile);
+  const patchFiles = typeof patchFile === "string" ? [patchFile] : [...patchFile];
+  const patch = Buffer.concat(patchFiles.map((f) => readFileSync(f)));
   const ref = `${baseSha}+${sha256(patch).slice(0, 12)}`;
   const stamp = join(dir, ".ref");
   const help = (): number => {
@@ -465,9 +712,10 @@ export function buildVariant(
     }
   };
   const why =
-    step("git", ["apply", "--check", patchFile]) ??
-    step("git", ["apply", patchFile]) ??
-    step("npm", ["run", "build"]);
+    patchFiles.reduce<string | null>(
+      (w, f) => w ?? step("git", ["apply", "--check", f]) ?? step("git", ["apply", f]),
+      null,
+    ) ?? step("npm", ["run", "build"]);
   if (why !== null) return { dir, ref, built: { ok: false, why }, helpExit: -1 };
   writeFileSync(stamp, `${ref}\n`);
   return { dir, ref, built: { ok: true }, helpExit: help() };
@@ -480,6 +728,14 @@ export function listCandidates(candDir: string): { manifest: string; patch: stri
     .filter((c) => existsSync(c.patch))
     .sort((a, b) => a.manifest.localeCompare(b.manifest));
 }
+
+const baseHelps = new Map<string, HelpPage[]>();
+/** Base's rendered help, once per process: every variant of a group diffs against it. */
+const baseHelp = (root: string): HelpPage[] => {
+  const h = baseHelps.get(root) ?? renderedHelp(root);
+  baseHelps.set(root, h);
+  return h;
+};
 
 /** The `variant` control row (§6). */
 export interface VariantRow {
@@ -494,8 +750,11 @@ export interface VariantRow {
   rejectedContext: DerivedMarkers["rejected"];
   textDelta: number;
   admission: Admission;
-  /** Goldens that hit on base and stop hitting on the variant: recorded, never blocking. */
-  goldenCompat: { broken: string[] };
+  /**
+   * Goldens that hit on base and stop hitting on the variant: recorded, never blocking. `notRun`:
+   * the variant's golden pass threw, so nothing was compared (and the variant is refused).
+   */
+  goldenCompat: { broken: string[]; notRun?: string };
 }
 
 /** Everything about one candidate except the golden runs, which the caller supplies. */
@@ -510,13 +769,20 @@ export function assessVariant(o: {
   /** A second base run of the goldens: its noise is not behaviour. */
   baseAgain?: readonly GoldenTrace[];
   variantTraces: readonly GoldenTrace[];
+  /** The variant's golden pass threw (why): its traces are no evidence of anything. */
+  goldenError?: string;
   key: (argv: string) => string;
 }): VariantRow {
   const files = parsePatch(o.patchText);
   const diff = changedStrings(files);
   const built = o.build.built.ok;
   const vCorpus = built ? readCorpus(o.build.dir) : [];
-  const d = deriveMarkers(diff, vCorpus, readCorpus(o.baseRoot));
+  const d = deriveMarkers(
+    diff,
+    vCorpus,
+    readCorpus(o.baseRoot),
+    built ? { variant: renderedHelp(o.build.dir), base: baseHelp(o.baseRoot) } : undefined,
+  );
   const spec: ExposureSpec = {
     markers: d.markers,
     contextMarkers: d.contextMarkers,
@@ -526,6 +792,19 @@ export function assessVariant(o: {
   const baseWords = skillWords(o.baseRoot);
   const vWords = built ? skillWords(o.build.dir) : baseWords;
   const vOk = new Map(o.variantTraces.map((t) => [t.id, t.ok]));
+  const admission = admit({
+    files,
+    built: o.build.built,
+    helpExit: o.build.helpExit,
+    words: vWords,
+    changed: diff.changed,
+    spec,
+  });
+  // no golden ran: no changed call and no broken golden is known, so neither may read as clean
+  if (built && o.goldenError !== undefined) {
+    admission.failures.push(`golden pass not run: ${o.goldenError}`);
+    admission.ok = false;
+  }
   return {
     kind: "variant",
     id: o.manifest.id,
@@ -537,17 +816,13 @@ export function assessVariant(o: {
     spec,
     rejectedContext: d.rejected,
     textDelta: textDelta(diff.changed, baseWords, vWords),
-    admission: admit({
-      files,
-      built: o.build.built,
-      helpExit: o.build.helpExit,
-      words: vWords,
-      changed: diff.changed,
-      spec,
-    }),
-    goldenCompat: {
-      broken: o.baseTraces.filter((t) => t.ok && vOk.get(t.id) === false).map((t) => t.id),
-    },
+    admission,
+    goldenCompat:
+      built && o.goldenError !== undefined
+        ? { broken: [], notRun: o.goldenError }
+        : {
+            broken: o.baseTraces.filter((t) => t.ok && vOk.get(t.id) === false).map((t) => t.id),
+          },
   };
 }
 

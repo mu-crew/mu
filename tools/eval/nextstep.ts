@@ -23,8 +23,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type Claim, rowPool } from "./claim.ts";
 import { askModel, buildId, extractCommand, firstReach, muInText } from "./cold-guess.ts";
-import { neutralityLeaks, surfaceVocab } from "./cold-help.ts";
+import { neutralityLeaks, runHelp, surfaceVocab } from "./cold-help.ts";
 import type { ColdEffect, GuessRun } from "./cold-intents.ts";
+import { leadInFault, withInfraRetry } from "./infra-retry.ts";
 import { NEXT_CASES } from "./nextstep-cases.ts";
 import {
   answerCalls,
@@ -35,6 +36,7 @@ import {
   GAP_MS,
   ORCH_SESSION,
   renderTranscript,
+  rigLogNamed,
   runAnswer,
   runLeadIn,
   sleep,
@@ -61,7 +63,9 @@ export {
 
 // ---- §1.5 interface -----------------------------------------------------------------------------
 
-export type Arm = "none" | "skill" | `recipe:${string}`;
+export type Arm = "none" | "skill" | "help" | "skill+help" | `recipe:${string}`;
+/** The help arms (hill2 note 33): the prompt also carries the `--help` of the lead-in's verbs. */
+export const HELP_ARMS: readonly Arm[] = ["help", "skill+help"];
 export type Group =
   | "c1_wait"
   | "c2_close"
@@ -150,6 +154,8 @@ export interface RunNextOpts {
   providerExt?: string;
   cases?: NextCase[];
   onRow?: (row: ProbeRow) => void;
+  /** Waits before each failed-row retry (infra-retry.ts INFRA_BACKOFF_MS). */
+  infraBackoffMs?: readonly number[];
 }
 
 /** §1.6. No exposure field: exposure.ts derives those at score time. */
@@ -189,6 +195,16 @@ export interface ProbeRow {
   modelError?: string;
   /** The answer named the rig (rig-guard.ts): refused unrun, an invalid row, out of ρ̂. */
   rigReads?: string[];
+  /** The row never ran: its sandbox or the rig threw (infra-retry.ts). */
+  rigError?: string;
+  /** A lead-in step timed out without asking to be killed (infra-retry.ts). */
+  leadInFault?: string;
+  /** Retries this failed row took (infra-retry.ts). */
+  infraRetries?: number;
+  /** Every try failed: why (infra-retry.ts). Invalid; dropped with its pairing only when base's also failed. */
+  infraFail?: string;
+  /** Label of `infraFail`: it names the host (tmux, git, sandbox). Never decides exclusion. */
+  infraHost?: boolean;
 }
 
 // ---- prompt -------------------------------------------------------------------------------------
@@ -201,23 +217,110 @@ export const sha12 = (s: string): string =>
   createHash("sha256").update(s).digest("hex").slice(0, 12);
 export const SYSTEM_SHA = sha12(SYSTEM_TEMPLATE);
 
-/** The arm's text, read from the surface under test (never the checkout). */
-export function armText(surface: Surface, arm: Arm): string {
+/** Characters of `--help` text a help arm may carry; whole entries over it are left out, groups first. */
+export const HELP_BUDGET = 16_000;
+
+/**
+ * The command paths whose `--help` a help arm shows: per mu call the lead-in spells, its first-reach
+ * verb, preceded by its group for a two-word verb (`task`, then `task notes`). In lead-in order,
+ * each once. Read from the lead-in's text, so base and every variant show the same commands.
+ */
+export function helpPaths(cmds: readonly string[]): string[][] {
+  const out: string[][] = [];
+  const seen = new Set<string>();
+  const add = (p: string[]): void => {
+    const k = p.join(" ");
+    if (p.length === 0 || seen.has(k)) return;
+    seen.add(k);
+    out.push(p);
+  };
+  for (const cmd of cmds)
+    for (const call of muInText(cmd)) {
+      const verb = firstReach(call)
+        .verb.split(" ")
+        .filter((w) => w !== "");
+      if (verb.length > 1) add(verb.slice(0, 1));
+      add(verb);
+    }
+  return out;
+}
+
+const helps = new Map<string, string>();
+/** `mu <path> --help` on the surface, once per process and build. */
+const helpOf = (surface: Surface, path: string[]): string => {
+  const k = `${surface.cli}\0${buildOf(surface)}\0${path.join(" ")}`;
+  const h = helps.get(k) ?? runHelp(surface, path).trimEnd();
+  helps.set(k, h);
+  return h;
+};
+
+/**
+ * The help block of a help arm, rendered live from the surface: `$ mu <path> --help` and its
+ * output per path. Over HELP_BUDGET, whole entries drop, group entries (one word, listed before a
+ * verb of theirs) before verbs and the longest first, and the block names what it left out.
+ */
+export function helpBlock(
+  surface: Surface,
+  paths: readonly string[][],
+): { text: string; omitted: string[] } {
+  const entries = paths.map((p) => ({
+    cmd: `mu ${[...p, "--help"].join(" ")}`,
+    group: p.length === 1 && paths.some((q) => q.length > 1 && q[0] === p[0]),
+    body: "",
+    keep: true,
+  }));
+  for (const [i, e] of entries.entries()) e.body = `$ ${e.cmd}\n${helpOf(surface, paths[i] ?? [])}`;
+  const size = (): number =>
+    entries.filter((e) => e.keep).reduce((t, e) => t + e.body.length + 2, 0);
+  for (const groups of [true, false])
+    for (const e of [...entries].sort((x, y) => y.body.length - x.body.length))
+      if (size() > HELP_BUDGET && e.group === groups) e.keep = false;
+  const omitted = entries.filter((e) => !e.keep).map((e) => e.cmd);
+  const body = entries
+    .filter((e) => e.keep)
+    .map((e) => e.body)
+    .join("\n\n");
+  const note =
+    omitted.length === 0 ? "" : `\n\n(left out, over the help budget: ${omitted.join(", ")})`;
+  return { text: `${body}${note}`, omitted };
+}
+
+const hasHelp = (arm: Arm): boolean => arm === "help" || arm === "skill+help";
+
+/**
+ * The arm's text, read from the surface under test (never the checkout). A help arm needs the
+ * lead-in's commands (`leadIn`) to know which `--help` to show.
+ */
+export function armText(surface: Surface, arm: Arm, leadIn: readonly string[] = []): string {
   if (arm === "none") return "";
-  const skill = readFileSync(join(surface.skillDir, "SKILL.md"), "utf8").trimEnd();
-  let t = `Below is the mu skill you loaded.\n\n<skill>\n${skill}\n</skill>\n\n`;
+  let t = "";
+  if (arm !== "help") {
+    const skill = readFileSync(join(surface.skillDir, "SKILL.md"), "utf8").trimEnd();
+    t += `Below is the mu skill you loaded.\n\n<skill>\n${skill}\n</skill>\n\n`;
+  }
   if (arm.startsWith("recipe:")) {
     const name = arm.slice("recipe:".length);
     const body = readFileSync(join(surface.skillDir, "recipes", `${name}.md`), "utf8").trimEnd();
     t += `<recipe name="${name}">\n${body}\n</recipe>\n\n`;
   }
+  if (hasHelp(arm)) {
+    const h = helpBlock(surface, helpPaths(leadIn));
+    t += `Below is the --help of each mu command in the transcript.\n\n<help>\n${h.text}\n</help>\n\n`;
+  }
   return t;
 }
 
-export function systemPromptFor(surface: Surface, arm: Arm, limitMs = DEFAULT_LIMIT_MS): string {
-  return SYSTEM_TEMPLATE.replace("{ARM}", armText(surface, arm)).replace(
-    "{LIMIT}",
-    String(Math.round(limitMs / 1000)),
+export function systemPromptFor(
+  surface: Surface,
+  arm: Arm,
+  limitMs = DEFAULT_LIMIT_MS,
+  leadIn: readonly string[] = [],
+): string {
+  // a function replacer: help and skill text may hold `$&` or `$'`, which a string one expands
+  const arms = armText(surface, arm, leadIn);
+  return SYSTEM_TEMPLATE.replace("{LIMIT}", String(Math.round(limitMs / 1000))).replace(
+    "{ARM}",
+    () => arms,
   );
 }
 
@@ -276,13 +379,14 @@ export interface PlayOpts {
   gapMs?: number;
 }
 
-/** Seed, lead-in, prompt, answer, judge: one row. The sandbox lives for the row only. */
-export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
-  const started = Date.now();
+/** A row of `c` that has not run yet. */
+export function blankRow(
+  c: NextCase,
+  o: Pick<PlayOpts, "surface" | "surfaceLabel" | "arm" | "paraphrase">,
+): ProbeRow {
   const para = c.paraphrases.find((p) => p.id === o.paraphrase);
   if (!para) throw new Error(`${c.id}: no paraphrase ${o.paraphrase}`);
-  const limitMs = c.limitMs ?? DEFAULT_LIMIT_MS;
-  const row: ProbeRow = {
+  return {
     kind: "probe",
     group: c.group,
     round: "check",
@@ -315,13 +419,36 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
     tokens: 0,
     ms: 0,
   };
+}
+
+/** Seed, lead-in, prompt, answer, judge: one row. The sandbox lives for the row only. */
+export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
+  const started = Date.now();
+  const row = blankRow(c, o);
+  const para = c.paraphrases.find((p) => p.id === o.paraphrase);
+  if (!para) throw new Error(`${c.id}: no paraphrase ${o.paraphrase}`);
+  const limitMs = c.limitMs ?? DEFAULT_LIMIT_MS;
   const sb = await createSandbox(o.surface, { env: { PI_SESSION_ID: ORCH_SESSION } });
   try {
-    const st = await c.seed(sb);
+    let st: St;
+    try {
+      st = await c.seed(sb);
+    } catch (e) {
+      // the seed is spelled in base grammar: a surface it fails on broke a base spelling (§1.4
+      // lint 3), so the row is invalid like a failed lead-in, never a crash of the round
+      row.invalid = true;
+      row.why.push(`seed invalid: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`);
+      return row;
+    }
     const leadStart = Date.now();
     const steps = c.leadIn(sb, st, para.leadIn);
     const lead = await runLeadIn(sb, steps, c.shell, limitMs);
     row.leadInExits = lead.map((r) => (r.killed ? -1 : r.exit));
+    const fault = leadInFault(
+      lead,
+      steps.map((s) => s.killAfterMs !== undefined),
+    );
+    if (fault !== undefined) row.leadInFault = fault;
     for (const s of steps) {
       const bad = s.expect ? await s.expect(sb, st) : null;
       if (bad !== null) {
@@ -333,7 +460,12 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
       .filter((m) => m.start >= leadStart)
       .map((m) => ({ argv: m.argv, exit: m.exit }));
     const transcript = renderTranscript(lead);
-    const system = systemPromptFor(o.surface, o.arm, limitMs);
+    const system = systemPromptFor(
+      o.surface,
+      o.arm,
+      limitMs,
+      steps.map((s) => s.cmd),
+    );
     const user = userPrompt(transcript, para.goal);
     row.promptSha = sha12(`${system}\n\n${user}`);
     mkdirSync(o.promptDir, { recursive: true });
@@ -438,6 +570,7 @@ export async function playCase(c: NextCase, o: PlayOpts): Promise<ProbeRow> {
       allowKilled: c.allowKilled === true,
       destructive: row.destructive.map((d) => d.entry),
       timed: c.timed ? timedViolations(ctx) : [],
+      tamper: rigLogNamed(ctx),
     });
     row.hit = v.hit;
     row.partial = v.partial;
@@ -530,23 +663,35 @@ export async function runNext(o: RunNextOpts): Promise<{ written: number; skippe
       if (!c) continue;
       const para = c.paraphrases.find((p) => p.id === job.paraphrase);
       try {
-        const row = await claim(() =>
-          playCase(c, {
-            surface: job.surface,
-            surfaceLabel: job.surfaceLabel,
-            arm: job.arm,
-            paraphrase: job.paraphrase,
-            promptDir: o.promptDir,
-            reply: async (st, system, user) => {
-              const faux = fauxReplies(c, st, para?.leadIn ?? "a");
-              const ask = () => askModel(job.model, system, user, o.providerExt, faux);
-              const slot = providerSlot(job.model);
-              let r = await slot(ask);
-              for (let i = 0; i < 2 && r.error !== undefined; i++) r = await slot(ask);
-              return r;
-            },
-          }),
-        );
+        // each try under its own claim; a throw (no sandbox) is a row with `rigError`
+        const once = (): Promise<ProbeRow> =>
+          claim(() =>
+            playCase(c, {
+              surface: job.surface,
+              surfaceLabel: job.surfaceLabel,
+              arm: job.arm,
+              paraphrase: job.paraphrase,
+              promptDir: o.promptDir,
+              reply: async (st, system, user) => {
+                const faux = fauxReplies(c, st, para?.leadIn ?? "a");
+                const ask = () => askModel(job.model, system, user, o.providerExt, faux);
+                const slot = providerSlot(job.model);
+                let r = await slot(ask);
+                for (let i = 0; i < 2 && r.error !== undefined; i++) r = await slot(ask);
+                return r;
+              },
+            }),
+          ).catch((e: unknown) => {
+            const r = blankRow(c, job);
+            r.invalid = true;
+            r.rigError = `rig error: ${(e instanceof Error ? e.message : String(e)).slice(0, 300)}`;
+            r.why.push(r.rigError);
+            return r;
+          });
+        const row = await withInfraRetry(once, {
+          ...(o.infraBackoffMs ? { backoffMs: o.infraBackoffMs } : {}),
+          log: (l) => console.error(`nextstep ${l}`),
+        });
         row.round = job.round;
         row.group = job.group;
         row.model = job.model;
@@ -598,11 +743,23 @@ export async function runNextCheck(
     kind: string;
     expect: "hit" | "miss";
     partial?: boolean;
+    arm?: Arm;
     cmds: (st: St) => string[];
   }[] = [];
   for (const c of o.cases ?? NEXT_CASES)
     for (const { v, paraphrase } of variantsOf(c)) {
       jobs.push({ c, v, paraphrase, kind: "golden", expect: "hit", cmds: (st) => c.golden(st, v) });
+      // under the help arms too: the prompt renders, and carries the --help of every lead-in verb
+      for (const arm of HELP_ARMS)
+        jobs.push({
+          c,
+          v,
+          paraphrase,
+          kind: `golden ${arm}`,
+          expect: "hit",
+          arm,
+          cmds: (st) => c.golden(st, v),
+        });
       jobs.push({
         c,
         v,
@@ -634,14 +791,20 @@ export async function runNextCheck(
           playCase(j.c, {
             surface,
             surfaceLabel: "check",
-            arm: "none",
+            arm: j.arm ?? "none",
             paraphrase: j.paraphrase,
             promptDir,
             reply: async (st) => ({ text: fence(j.cmds(st)), tokens: 0 }),
           }),
         );
         const partialOk = j.partial !== true || row.partial;
-        const ok = !row.invalid && (j.expect === "hit" ? row.hit : !row.hit) && partialOk;
+        const helpBad = j.arm === undefined ? null : helpArmProblem(j.c, row, j.v);
+        if (helpBad !== null) row.why.push(helpBad);
+        const ok =
+          !row.invalid &&
+          (j.expect === "hit" ? row.hit : !row.hit) &&
+          partialOk &&
+          helpBad === null;
         results.push({ case: j.c.id, leadIn: j.v, kind: j.kind, expect: j.expect, ok, row });
         const exp = `${j.expect}${j.partial ? ", partial" : ""}`;
         log(
@@ -658,6 +821,24 @@ export async function runNextCheck(
     failures === 0 ? "nextstep check: every row as expected" : `nextstep check: ${failures} FAILED`,
   );
   return { failures, results };
+}
+
+/**
+ * What is wrong with a help-arm row's stored prompt: a missing help block, a lead-in verb whose
+ * `--help` is not in it, or a skill that is or is not there against its arm. Null when sound.
+ */
+export function helpArmProblem(c: NextCase, row: ProbeRow, v: "a" | "b"): string | null {
+  const prompt = existsSync(row.transcriptPath) ? readFileSync(row.transcriptPath, "utf8") : "";
+  if (!prompt.includes("<help>")) return "help arm: no <help> block in the prompt";
+  if (prompt.includes("<skill>") !== (row.arm === "skill+help"))
+    return `help arm ${row.arm}: skill ${prompt.includes("<skill>") ? "shown" : "missing"}`;
+  // the verbs themselves: a group entry is the first to go over the budget
+  const paths = helpPaths(c.leadIn(STUB_SB, STUB_ST, v).map((s) => s.cmd));
+  const verbs = paths.filter(
+    (p) => p.length > 1 || !paths.some((q) => q.length > 1 && q[0] === p[0]),
+  );
+  const missing = verbs.map((p) => `$ mu ${p.join(" ")} --help`).filter((h) => !prompt.includes(h));
+  return missing.length === 0 ? null : `help arm: no ${missing.join(", ")}`;
 }
 
 // ---- lint ---------------------------------------------------------------------------------------
@@ -702,7 +883,20 @@ export function nextLint(
     return v;
   };
   const vocab = Object.fromEntries(surfaces.map((s) => [s.label, vocabOf(s.surface)]));
-  return nextLintVocab(vocab, cases, baseLabel);
+  const r = nextLintVocab(vocab, cases, baseLabel);
+  // a help arm must show every lead-in verb's --help on base whole: a cut there is the case's fault
+  const base = (surfaces.find((s) => s.label === baseLabel) ?? surfaces[0])?.surface;
+  if (base && base.cli !== "")
+    for (const c of cases)
+      for (const { v } of variantsOf(c)) {
+        const cmds = c.leadIn(STUB_SB, STUB_ST, v).map((s) => s.cmd);
+        const { omitted } = helpBlock(base, helpPaths(cmds));
+        if (omitted.length > 0)
+          r.failures.push(
+            `${c.id}/${v}: help arm over ${HELP_BUDGET} chars on base: ${omitted.join(", ")} left out`,
+          );
+      }
+  return r;
 }
 
 /** nextLint over given vocabularies (label -> names); the base is `baseLabel`, else the first label. */
@@ -763,14 +957,20 @@ export async function nextSelftest(
     const promptDir = join(dir, "prompts");
     const jobs: NextJob[] = cases.flatMap((c) =>
       variantsOf(c).flatMap(({ paraphrase }) =>
-        (["evalfaux/golden", "evalfaux/bad"] as const).map((model) => ({
+        (
+          [
+            ["evalfaux/golden", c.arms[c.arms.length - 1] ?? "none"],
+            ["evalfaux/golden", "help"],
+            ["evalfaux/bad", "none"],
+          ] as const
+        ).map(([model, arm]) => ({
           round: "check" as const,
           group: c.group,
           surfaceLabel: "base",
           surface,
           model,
           caseId: c.id,
-          arm: (model === "evalfaux/golden" ? c.arms[c.arms.length - 1] : "none") ?? "none",
+          arm: arm as Arm,
           paraphrase,
           rep: 1,
         })),
@@ -806,10 +1006,9 @@ export async function nextSelftest(
       );
       check(
         `${name} prompt carries its arm`,
-        r.arm === "none"
-          ? !prompt.includes("<skill>")
-          : prompt.includes("<skill>") &&
-              (!r.arm.startsWith("recipe:") || prompt.includes("<recipe name=")),
+        prompt.includes("<skill>") === (r.arm !== "none" && r.arm !== "help") &&
+          prompt.includes("<help>") === hasHelp(r.arm) &&
+          (!r.arm.startsWith("recipe:") || prompt.includes("<recipe name=")),
       );
       check(`${name} zero tokens`, r.tokens === 0 && r.systemSha === SYSTEM_SHA);
     }

@@ -4,7 +4,7 @@ Use when finished units are ready to land on `<base>`.
 
 ## Inline
 
-Cherry-pick new commits as workers close. Gate one pinned batch ([test-health](test-health.md)), then push the verified tree. Accept evidence, not close notes: rerun the check.
+Cherry-pick new commits as workers close. Gate one pinned batch ([test-health](test-health.md)), then push the verified tree. Accept evidence, not close notes: rerun the check. Chain units that edit the same files (`mu task block`) so their picks never conflict.
 
 ## Merge task
 

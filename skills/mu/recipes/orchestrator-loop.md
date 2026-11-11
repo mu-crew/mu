@@ -5,17 +5,17 @@ For dispatch and merge. Not pi: `mu orchestrate -w <ws> --cli <harness>` (wait i
 ## Each turn
 
 1. `mu state -w <ws> --json`.
-2. Note the ceiling on the umbrella (`CONCURRENCY: workers 4`); one worker per ready task.
-3. Dispatch with a [brief](brief.md) on stdin. New worker:
+2. Ceiling: umbrella's `CONCURRENCY: workers 4`; one worker per ready task.
+3. Dispatch: a [brief](brief.md) on stdin, a [model](models.md). New worker:
 
    ```bash
-   mu agent spawn worker-1 -w <ws> --worktree --task <id> --send - <<'EOF'
+   mu agent spawn worker-1 -w <ws> --worktree --task <id> --model <m> --send - <<'EOF'
    <brief>
    EOF
    ```
 
    Idle worker: `mu task claim <id> -w <ws> --for <w> --evidence "..."`; `git -C <cwd> fetch && git -C <cwd> rebase <base>` (conflict: `rebase --abort`, tell the human); `mu agent send <w> -w <ws> --fresh -`.
-4. Wait: managed/`pi:` bare `mu wait --ready -w <ws>`; else spawn/`send` `next` or `mu wait task:<ws>/<id>` / `--as <ws>/<name>`. Exit 0: `data.firing` or `timedOut` (`data.resume`); 6: died, re-dispatch; 7: `mu agent read <w>`, answer.
+4. Wait: managed/`pi:` bare `mu wait --ready -w <ws>`; else spawn/`send` `next` or `mu wait task:<ws>/<id>` / `--as <ws>/<name>`. Exit 0: `data.firing` or `timedOut` (`data.resume`); 6: died, re-dispatch; 7: `mu agent read <w> --text`, answer.
 5. Merge. Close a finished worker: `mu agent close <w> -w <ws>` only previews; run its printed `--if <rev>`. Then step 1.
 
 ## Merging

@@ -5,7 +5,9 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -37,14 +39,18 @@ import {
   admit,
   behaviourDiff,
   type CorpusFile,
+  capRule,
   deriveMarkers,
   type GoldenTrace,
+  jsonShape,
   lengthCap,
   lengthViolations,
   newNames,
+  normalise,
 } from "../../tools/eval/tournament-build.ts";
 import {
   auditSession,
+  binLinkDirs,
   briefRefusals,
   type DenyContext,
   defaultDenyContext,
@@ -52,6 +58,7 @@ import {
   designerArgs,
   designerEnv,
   homePaths,
+  installDirs,
   nodeInstallDir,
   packTokens,
   scrubPack,
@@ -73,111 +80,7 @@ import {
   type VariantScore,
 } from "../../tools/eval/tournament-score.ts";
 
-// ---- synthetic rows -----------------------------------------------------------------------------
-
-const HAIKU = "claude-haiku-5-5";
-const GEMINI = "gemini-3.8-flash";
-const SONNET = "claude-sonnet-5-5";
-const MARK = "the worker's final report line is shown below";
-const spec: ExposureSpec = { markers: [MARK], contextMarkers: [], newNames: [], changedCalls: [] };
-const PROMPTS: Record<string, string> = { exposed: `x ${MARK} y`, plain: "x y" };
-const prompt = (sha: string): string => PROMPTS[sha] ?? "";
-
-/** mulberry32 */
-function rng(seed: number): () => number {
-  let a = seed >>> 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function row(over: Partial<ProbeRow>): ProbeRow {
-  return {
-    kind: "probe",
-    group: "c1_wait",
-    round: "r2",
-    case: "h1",
-    role: "headline",
-    paraphrase: "p1",
-    leadIn: "a",
-    arm: "none",
-    surface: BASE,
-    surfaceId: "s",
-    build: "b",
-    model: HAIKU,
-    rep: 101,
-    promptSha: "exposed",
-    systemSha: "x",
-    transcriptPath: "",
-    leadInCalls: [],
-    leadInExits: [0],
-    reply: "",
-    commands: [],
-    tooMany: false,
-    perCommand: [],
-    muCalls: [],
-    hit: false,
-    partial: false,
-    invalid: false,
-    why: [],
-    stray: [],
-    destructive: [],
-    tokens: 100,
-    ms: 1,
-    ...over,
-  };
-}
-
-/**
- * Rows of one (surface, case) over `models`: m = arms × paraphrases clusters of r rows per model,
- * hit rate p, intra-cluster correlation ρ through a shared cluster draw (each row takes it with
- * probability √ρ, so two rows of a cluster correlate at ρ). The weak models share the cluster
- * draw (one prompt), sonnet has its own.
- */
-function cellRows(o: {
-  surface: string;
-  caseId: string;
-  models: string[];
-  p: number | Record<string, number>;
-  m?: number;
-  r: number;
-  rho?: number;
-  rand: () => number;
-  round?: "r1" | "r2";
-  promptSha?: string;
-}): ProbeRow[] {
-  const out: ProbeRow[] = [];
-  const mix = Math.sqrt(o.rho ?? 0.2);
-  const m = o.m ?? 30;
-  for (let c = 0; c < m; c++) {
-    const shared = o.rand();
-    const own = o.rand();
-    for (const model of o.models) {
-      const p = typeof o.p === "number" ? o.p : (o.p[model] ?? 0);
-      const u = model === SONNET ? own : shared;
-      for (let k = 0; k < o.r; k++) {
-        const hit = o.rand() < mix ? u < p : o.rand() < p;
-        out.push(
-          row({
-            surface: o.surface,
-            case: o.caseId,
-            model,
-            arm: `a${c % 3}` as ProbeRow["arm"],
-            paraphrase: `p${Math.floor(c / 3)}`,
-            rep: (o.round === "r1" ? 1 : 101) + k,
-            round: o.round ?? "r2",
-            hit,
-            promptSha: o.promptSha ?? "exposed",
-          }),
-        );
-      }
-    }
-  }
-  return out;
-}
+import { cellRows, GEMINI, HAIKU, prompt, rng, row, SONNET, spec } from "./_tournament-rows.ts";
 
 const setup: ScoreInput["setup"] = {
   models: { weak: [HAIKU, GEMINI], gate: SONNET },
@@ -501,6 +404,15 @@ describe("rank and cut", () => {
     attributable: [],
     reviews: [],
     invalidRows: 0,
+    infra: {
+      retries: 0,
+      recovered: 0,
+      failedRows: 0,
+      droppedPairings: 0,
+      droppedClusters: 0,
+      clusters: 0,
+      dropped: [],
+    },
     r1Score: 0,
     wins: 0,
     winZ: 0,
@@ -783,6 +695,41 @@ describe("variant patches", () => {
     expect(lengthViolations([{ ...long, text: "x".repeat(60) }])).toEqual([]);
   });
 
+  it("skill and recipe text gets max(2x base, base+200); src strings keep their cap; the admission says which", () => {
+    expect(capRule("skills/mu/recipes/orchestrator-loop.md")).toBe("skill");
+    expect(capRule("skills/mu/SKILL.md")).toBe("skill");
+    expect(capRule("docs/guide/upgrade.md")).toBe("skill");
+    expect(capRule("src/cli/wait.ts")).toBe("src");
+    expect(capRule("extension/mu-pi.ts")).toBe("src");
+    expect(lengthCap(null, "skill")).toBe(200);
+    expect(lengthCap(100, "skill")).toBe(300);
+    expect(lengthCap(400, "skill")).toBe(800);
+    expect(lengthCap(1000, "skill")).toBe(2000);
+    // C3's refused recipe line: 196 chars on a 113-char base, over the src cap 153, within 313
+    const line = {
+      file: "skills/mu/recipes/orchestrator-loop.md",
+      text: "x".repeat(196),
+      parts: [],
+      base: "y".repeat(113),
+    };
+    expect(lengthViolations([line])).toEqual([]);
+    expect(lengthViolations([{ ...line, file: "src/cli/notes.ts" }])).toEqual([
+      expect.stringContaining("over its cap 153 (src cap"),
+    ]);
+    expect(lengthViolations([{ ...line, text: "x".repeat(314) }])).toEqual([
+      expect.stringContaining("over its cap 313 (skill cap"),
+    ]);
+    const a = admit({
+      files: [],
+      built: { ok: true },
+      helpExit: 0,
+      words: { skill: 1, recipes: 1 },
+      changed: [line, { ...line, file: "src/a.ts", text: "x", base: "y" }],
+      spec: { markers: ["m"], contextMarkers: [], newNames: [], changedCalls: [] },
+    });
+    expect(a).toMatchObject({ ok: true, caps: { src: 1, skill: 1 } });
+  });
+
   it("refuses a patch outside src, extension and skills", () => {
     const files = parsePatch(PATCH.replace(/src\/cli\/wait\.ts/g, "tools/eval/x.ts"));
     expect(pathsOutside(files)).toContain("tools/eval/x.ts");
@@ -812,6 +759,11 @@ describe("variant patches", () => {
     const files = parsePatch(PATCH);
     expect(newNames(files, new Set(["timeout"]))).toEqual(["--text"]);
     expect(newNames(files, new Set(["text"]))).toEqual([]);
+    // the formatter's two-line form: `.option(` on one added line, the flags on the next
+    const split = parsePatch(
+      'diff --git a/src/x.ts b/src/x.ts\n--- a/src/x.ts\n+++ b/src/x.ts\n@@ -1,2 +1,6 @@\n const a = 1;\n+  .option(\n+    "--if-clean",\n+    "apply in one call when clean",\n+  )\n const b = 2;\n',
+    );
+    expect(newNames(split, new Set(["if"]))).toEqual(["--if-clean"]);
     expect(admitWith({ ...none, newNames: ["--text"] }).ok).toBe(true);
     const calls = behaviourDiff(traces(0), traces(3), key);
     expect(calls).toEqual(["agent close|--if"]);
@@ -836,6 +788,62 @@ describe("variant patches", () => {
     expect(
       behaviourDiff(traces(0, '{"a":1}'), traces(0, '{"a":1,"b":2}'), key, traces(0, '{"a":7}')),
     ).toEqual(["agent close|--if"]);
+  });
+
+  it("normalises ids glued to a name, check ids and JSON keys that are data", () => {
+    expect(normalise("task notes delegate_rev_3b9f1ea2 -w auth")).toBe(
+      "task notes delegate_rev_<hex> -w auth",
+    );
+    expect(normalise("--check 1MNYRCNEVWKNJSNCNFNXRAP")).toBe("--check <id>");
+    expect(normalise("delegate:scratch/pi:01a1bd95-394c-7735-a0d7-e50e085700a9:9fce1a-1")).toBe(
+      normalise("delegate:scratch/pi:01a1be5a-0c36-7233-8e0e-95744efe4880:17f8c0-2"),
+    );
+    expect(jsonShape('{"cursor":{"delegate:auth/rv-95e575d7":{"runs":1}}}')).toBe(
+      jsonShape('{"cursor":{"delegate:auth/rv-09bad6f3":{"runs":2}}}'),
+    );
+    expect(jsonShape('{"a":1}')).not.toBe(jsonShape('{"b":1}'));
+  });
+
+  it("masks a call family the two base runs disagree on, in count or output", () => {
+    const run = (calls: [string, string][]): GoldenTrace[] => [
+      { id: "r4:p", ok: true, calls: calls.map(([argv, out]) => ({ argv, exit: 0, out })) },
+    ];
+    const k = (argv: string): string => argv;
+    const b1 = run([
+      ["task notes c5", ""],
+      ["task notes c5", "verdict x"],
+      ["wait", "w"],
+    ]);
+    const b2 = run([
+      ["task notes c5", "verdict x"],
+      ["wait", "w"],
+    ]);
+    const v = run([
+      ["task notes c5", ""],
+      ["task notes c5", ""],
+      ["task notes c5", "verdict x"],
+      ["wait", "w"],
+    ]);
+    expect(behaviourDiff(b1, v, k, b2)).toEqual([]);
+    // without the second base run the extra poll reads as behaviour
+    expect(behaviourDiff(b1, v, k)).toEqual(["task notes c5"]);
+  });
+
+  it("pairs calls by occurrence: workers interleaving in another order is no behaviour", () => {
+    const run = (argvs: string[], out = "ok", id = "r4:x"): GoldenTrace[] => [
+      { id, ok: true, calls: argvs.map((argv) => ({ argv, exit: 0, out })) },
+    ];
+    const k = (argv: string): string => argv.split(" -")[0] ?? argv;
+    const order1 = ["task claim a", "task claim b", "task close a", "wait x"];
+    const order2 = ["task claim b", "task claim a", "task close a", "wait x"];
+    expect(behaviourDiff(run(order1), run(order2), k, run(order2))).toEqual([]);
+    expect(behaviourDiff(run(order1), run(order2), k)).toEqual([]);
+    // a call the variant drops, that both base runs make, is behaviour
+    expect(behaviourDiff(run(order1), run(order1.slice(0, 3)), k, run(order2))).toEqual(["wait x"]);
+    // one the base runs disagree on (made once of two) is chance
+    expect(behaviourDiff(run(order1), run(order1.slice(0, 3)), k, run(order1.slice(0, 3)))).toEqual(
+      [],
+    );
   });
 });
 
@@ -891,9 +899,29 @@ describe("designer isolation", () => {
     expect(rules('{"command":"grep museum test/mu-init.test.ts"}')).toEqual([]);
     expect(rules("mu task notes hill2 -w crew-hill2")).toContain("task notes");
     expect(rules("mu task notes b3b_tournament_driver")).toContain("task notes");
+    expect(rules("mu task notes b5_baseline -w crew-hill2")).toContain("task notes");
+    // a designer's own scratch task named b in its empty DB is not a phase B unit
+    expect(rules("$M task notes b -w t1 --report")).not.toContain("task notes");
+    expect(rules("mu task notes blog-draft -w t1")).not.toContain("task notes");
     expect(rules("mu task notes delegate_friction-orch_b97e7056 -w scratch")).toContain(
       "task notes",
     );
+  });
+
+  it("with `exists`, a catch-all path in a top dir below HOME this host lacks is no hit", () => {
+    const only = new Set(["/home/u/.ssh", "/home/u/src"]);
+    const c: DenyContext = { ...ctx, exists: (p) => only.has(p) };
+    const r = (t: string): string[] => denyHits(t, c, "/home/u/x").map((h) => h.rule);
+    // a pane footer typed into a test string: ~/repo does not exist
+    expect(r("cat > t.ts <<E\nconst s = `~/repo/wt/worker-1 (mu/worker-1)`;\nE")).toEqual([]);
+    expect(r("ls /home/u/code/mu")).toEqual([]);
+    // a top dir that exists still hits, at any depth, and HOME itself always does
+    expect(r("cat ~/.ssh/nothing-here")).toEqual(["under the real HOME"]);
+    expect(r("ls /home/u")).toEqual(["under the real HOME"]);
+    // named stores are not the catch-all: an absent museum store still hits
+    expect(r("ls /home/u/museum/db")).toContain("museum");
+    // without `exists` (the default context) nothing is excused
+    expect(rules("ls /home/u/code/mu")).toEqual(["under the real HOME"]);
   });
 
   it("the catch-all denies any other path under the real HOME, but lets node's install dir through", () => {
@@ -956,12 +984,65 @@ describe("designer isolation", () => {
       ownPack: "/p",
       ownDdir: "/d",
       caseIds: [],
-      home: dirname(node),
+      // two levels below HOME: a top-level child of HOME is never allowed (installDirs)
+      home: dirname(dirname(node)),
     });
     expect(denyHits(`    at Module._compile (${node}/lib/node_modules/x.js:1:1)`, c)).toEqual([]);
     expect(denyHits(`cat ${dirname(node)}/elsewhere`, c).map((h) => h.rule)).toEqual([
       "under the real HOME",
     ]);
+  });
+
+  it("lets the install dir its own bin links name through, literal and resolved", () => {
+    // c5: npm linked from another node install than the rig's node; `ls -l bin` printed it
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-binlink-")));
+    const home = join(tmp, "home");
+    const real = join(home, "mise", "node", "26.13.0");
+    mkdirSync(join(real, "bin"), { recursive: true });
+    writeFileSync(join(real, "bin", "npm"), "");
+    symlinkSync("./26.13.0", join(home, "mise", "node", "26"));
+    const ddir = join(home, ".cache", "d");
+    mkdirSync(join(ddir, "bin"), { recursive: true });
+    symlinkSync(join(home, "mise", "node", "26", "bin", "npm"), join(ddir, "bin", "npm"));
+    const c = defaultDenyContext({
+      repo: "/no/such/repo",
+      ownPack: "/no/such/pack",
+      ownDdir: ddir,
+      caseIds: [],
+      home,
+    });
+    const ls = `${join(ddir, "bin", "npm")} -> ${join(home, "mise", "node", "26", "bin", "npm")}`;
+    expect(denyHits(ls, c)).toEqual([]);
+    expect(denyHits(`cat ${join(real, "bin", "npm")}`, c)).toEqual([]);
+    expect(denyHits(`cat ${join(home, "mise", "other")}`, c).map((h) => h.rule)).toEqual([
+      "under the real HOME",
+    ]);
+  });
+
+  it("a bin link into ~/bin allows no store: HOME, its ancestors and its top-level children are never allowed", () => {
+    // rv-hmark: npm -> ~/bin/npm makes the install prefix HOME itself
+    tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-binlink-")));
+    const home = join(tmp, "home");
+    mkdirSync(join(home, "bin"), { recursive: true });
+    writeFileSync(join(home, "bin", "npm"), "");
+    const ddir = join(home, ".cache", "d");
+    mkdirSync(join(ddir, "bin"), { recursive: true });
+    symlinkSync(join(home, "bin", "npm"), join(ddir, "bin", "npm"));
+    expect(binLinkDirs(join(ddir, "bin"))).toContain(home);
+    const c = defaultDenyContext({
+      repo: "/no/such/repo",
+      ownPack: "/no/such/pack",
+      ownDdir: ddir,
+      caseIds: [],
+      home,
+    });
+    expect(c.allow).not.toContain(home);
+    expect(denyHits(`cat ${join(home, ".ssh", "config")}`, c).map((h) => h.rule)).toEqual([
+      "under the real HOME",
+    ]);
+    expect(
+      installDirs([home, tmp, join(home, ".local"), join(home, ".nvm", "v", "n")], home),
+    ).toEqual([join(home, ".nvm", "v", "n")]);
   });
 
   it("audits what the designer did strictly, and excuses what the pack itself shows it", () => {
@@ -1126,6 +1207,7 @@ describe("designer isolation", () => {
         "echo $HOME",
         "ls /opt/homebrew && find /usr/lib -name x",
         "cd /tmp && grep -r x . | tr / _",
+        "python3 - <<'EOF'\ns = 1  # x\n// a TS comment in a heredoc\nEOF",
         "ls /home/u/.nvm/versions/node/v22.1.0/bin",
       ])
         expect(audit(c), c).toEqual([]);
@@ -1137,17 +1219,28 @@ describe("designer isolation", () => {
         "grep -r VERDICT /home",
         "ls /home",
         "rg -l VERDICT /",
+        "rg -l VERDICT //",
         "fd jsonl /home/",
         "ls -R /home/u/..",
         "cd / && find . -name x",
         `${"cd ..; ".repeat(8)}rg VERDICT`,
+        // rv-b3b4: a wrapper before the search, a glob above HOME
+        "sudo find / -name '*.jsonl'",
+        "sudo -u root rg -l VERDICT /",
+        "env A=1 timeout 5 find / -name x",
+        "du -sh /home/*",
       ])
         expect(audit(c), c).toContain("search above HOME");
+      for (const c of ["ls /tmp/*", "sudo ls /usr/lib", "du -sh /tmp/x*", "sudo tr / _"])
+        expect(audit(c), c).toEqual([]);
       expect(audit("grep -r VERDICT ~/..")).not.toEqual([]);
       const mac = { ...ctx, home: "/Users/u" };
       expect(denyHits('{"command":"ls /Users"}', mac, ctx.ownPack).map((h) => h.rule)).toEqual([
         "search above HOME",
       ]);
+      expect(
+        denyHits('{"command":"du -sh /Users/*"}', mac, ctx.ownPack).map((h) => h.rule),
+      ).toEqual(["search above HOME"]);
       // a read or ls tool's path is checked too
       expect(denyHits('{"path":"/home"}', ctx, ctx.ownPack).map((h) => h.rule)).toEqual([
         "search above HOME",
@@ -1281,6 +1374,21 @@ describe("designer isolation", () => {
     expect(readFileSync(join(tmp, "README.md"), "utf8")).toBe("keep\nkeep too\n");
     writeFileSync(join(tmp, "b.ts"), 'const p = "tools/eval";\n');
     expect(scrubPack(tmp, { caseIds: [] })).toEqual(['b.ts: const p = "tools/eval";']);
+  });
+
+  it("drops a config list entry that names the rig (tsconfig include) and reports any other", () => {
+    tmp = mkdtempSync(join(tmpdir(), "mu-pack-"));
+    writeFileSync(
+      join(tmp, "tsconfig.test.json"),
+      JSON.stringify({ include: ["src/**/*", "tools/eval/pi-ai.d.ts"], strict: true }),
+    );
+    expect(scrubPack(tmp, { caseIds: [] })).toEqual([]);
+    expect(JSON.parse(readFileSync(join(tmp, "tsconfig.test.json"), "utf8"))).toEqual({
+      include: ["src/**/*"],
+      strict: true,
+    });
+    writeFileSync(join(tmp, "c.json"), JSON.stringify({ path: "tools/eval" }));
+    expect(scrubPack(tmp, { caseIds: [] })).toEqual(['c.json: "path": "tools/eval"']);
   });
 });
 

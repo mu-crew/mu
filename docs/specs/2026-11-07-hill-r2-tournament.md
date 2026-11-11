@@ -36,8 +36,9 @@ A one-shot reading test of the surface in the middle of a session. The question 
    - `none`: no skill text.
    - `skill`: the surface's `skills/mu/SKILL.md`, frontmatter included, verbatim.
    - `recipe:<name>`: SKILL.md plus `skills/mu/recipes/<name>.md`.
+   - `help`, `skill+help` (revision 4): the `--help` of every lead-in verb and its group, rendered from the surface under test, alone or after SKILL.md.
    - The text always comes from the surface under test (the variant's own copy), never from the checkout.
-   - No help bundle in any arm. The transcript is the context. A `--help` command in the answer runs, but its output is never shown, so it only spends one of the three steps. Consequence, accepted: a flag documented only in `--help` can win only through a `next:` hint or the skill.
+   - No help bundle in any other arm. The transcript is the context. A `--help` command in the answer runs, but its output is never shown, so it only spends one of the three steps. Consequence, accepted: a flag documented only in `--help` can win only through a `next:` hint or the skill.
 2. **Transcript, generated live.** Per row, the rig creates a fresh sandbox (`createSandbox`, `tools/eval/sandbox.ts:530`, with its own private tmux socket, `sandbox.ts:44-48`) on the surface under test, runs the case's `seed`, then runs each lead-in step as the orchestrator and captures what it actually printed. Nothing is canned.
    - Every step runs as `{ <cmd> ; } 2>&1` under the case's shell (bash, or zsh where the case says so) in `sb.repoDir`, with the orchestrator env (`PI_SESSION_ID=nextstep-orch`).
    - This merges stdout and stderr the way a shell tool result does, so a heartbeat line lands in the middle of the JSON, as it did in the friction.
@@ -129,7 +130,7 @@ The probe row records the entries only. Exposure and attribution are computed by
 ### 1.5 Interface (B2 owns `tools/eval/nextstep.ts`; B4b fills `tools/eval/nextstep-cases.ts`)
 
 ```ts
-export type Arm = "none" | "skill" | `recipe:${string}`;
+export type Arm = "none" | "skill" | "help" | "skill+help" | `recipe:${string}`;
 export type Group = "c1_wait" | "c2_close" | "c3_notes" | "c4_read" | "c5_outcome" | "c6_skill" | "guard";
 type St = Record<string, string>;
 
@@ -334,6 +335,7 @@ Only cases 4, 5 and 12 have a pending goal state at `t0`; each one's sleep-wait 
   2. **Markers** = changed parts of at least 12 characters (whitespace collapsed) that occur in the variant's `dist/` or `skills/` and in **no** place in base's `dist/` or `skills/`.
   3. **Context markers** (for cuts and rewordings, where the new text may be short): base counterparts of at least 12 characters that the patch removed or rewrote. Each must occur in **exactly one** place in base's `dist/` plus `skills/` (one file, one offset). A string that occurs more than once in base is rejected, so a common string such as `next:` cannot mark every row as exposed.
   4. Exposure (§5) matches markers in variant rows and context markers in base rows only, so a context marker that the variant removed is never "seen" on the variant.
+  5. **Help markers** (revision 4, `f_help_markers`). Render `mu <path> --help` of every command path on base and on the variant. Per path, a line (whitespace collapsed) of at least 12 characters that the variant prints and base does not is a marker when base's rendered help (any path, flattened, so across a wrap too) and base's `dist/` plus `skills/` hold it nowhere; a base line the variant no longer prints is a context marker when base's help plus `skills/` hold it in exactly one place. This catches what the hunks cannot: commander's composed usage line (`notes [options] [ids...]`) and literals whose escapes `dist/` spells differently. Error text needs no pass of its own: a lead-in that prints it differs in its output, which the golden diff scores as a changed call.
 - **Behaviour signature** (`behaviourDiff`, B3b), for changes that print no marker (an exit code, a `--json` shape, a short new flag or verb name):
   1. **New names.** Every flag or command name on a `+` line of `src/` (`.option("<flags>"`, `.command("<name>"`) that base's parser lacks. Any length: `--text` counts.
   2. **Golden diff.** Run every golden on base and on the variant at fixed seeds (`nextstep check` goldens per lead-in variant, `cold-guess check` goldens, the R4 goldens of `check --family next`), pair the mu calls of the two runs by position and argv (nonces normalised), and compare exit status, the key-and-type tree of `--json` output, and `mu-out` text (nonces and timestamps normalised).
@@ -540,6 +542,18 @@ Holdouts run **once**, only in `tournament final`, on the final combined winners
 - There is **no bisection** and no re-run of holdouts on a subset. A person (with the C7 unit) decides from the non-holdout evidence (R2 and R4 rows, which winner touched what) whether to drop a winner. If any winner is dropped after a holdout stop, the report states that the holdouts have been spent and the new combination has no clean holdout result.
 - A person opens `sealed/` only after the decision is written.
 
+### 4.7 Fast mode (user decision 2026-11-09)
+
+Phase C may run in fast mode (`hill2` note 28): looser accuracy for about 1.5 days in total. `tournament plan|freeze --fast <g>` sets it; the `freeze` row records `mode: "fast"`, the targets and the achieved MDE per case, and `r1`, `decide` and `report` follow the frozen mode.
+
+- **Plan.** Own headline cases only, for R1: per-model `n_eff ≥ 30`, pooled weak-model `n_eff ≥ 45`, paraphrases capped as in §4.2; R1 runs the plan's `r` (1 at `ρ̂ = 0.2`: 30 per model, 50 pooled).
+- **Decide on R1** (`tournament decide --fast <g>`, R1 rows only, base interleaved). A variant wins headline case `c` if, on its exposed clusters (§4.1, `nameCue` rows out, ≥ 4 clusters), its raw hit rate is above base's on both weak models and the pooled weak-model z (Kish-scaled, `ρ̂_pool`) is at least the win threshold `z*`, with no loss on `c`. Losses are §4.1's: per-case Holm and CMH over the R1 family, sonnet included; a loss eliminates. At most one winner per group: the largest **sum** of pooled z over its win cases (so two wins beat one), then the shorter text delta, then id. No win, base stays. The `decision` row carries the scores.
+- **Win threshold** (data on the freeze row: `--win-alpha <α> --correct none|variants|bonferroni`). `z*` is the one-sided normal quantile at `α / k`, `k` = 1, N, or N·h (N the R1 field, h the own headline cases), computed at `decide` and written into the decision row. Default (the orchestrator's call, delegated by the user 2026-11-09): Bonferroni over N·h at family α 0.20, so `z*` 1.83 at 6 tests, 2.13 at 12, 2.29 at 18. A fast freeze row without the field is the old rule: α 0.05, uncorrected (`z*` 1.645).
+- **Migration** (`tournament migrate-fast <g> --why "..."`). A group frozen in full mode whose R1 is scored in its current epoch, with no R2 score and no decision yet, switches to fast keeping that epoch: `decide --fast` reads the epoch's R1 rows (`probe.e<k>.jsonl`, rep ≥ the R1 floor; R2 rows in the file are skipped) and nothing re-runs. The `migrate_fast` control row records the rule and the judges: if the hash moved since the latest freeze or refreeze, the command lists the changed files and needs `--accept-judges <new hash>`, so the operator checks that none of them decides an R1 row.
+- **No R2 and no per-group R3, R4 or final.** The CLI refuses them on a fast group and names C7.
+- **C7** (`tournament final --combined [--base <sha>] [--drop <ids>]`, rows in `<root>/c7/`). One surface with every group's winning patch on the shared base. Every group must be frozen (or refrozen) on that one base: C7 refuses a mixed set, naming each group's base (revision 4). R3's scan (§4.4) per winner, R4 (§4.5) on the union of their exercising scenarios with sonnet and both weak models at `max(5, ⌈48/k⌉)` reps. A regression is an R4 Holm loss, an attributable destructive entry or a review stop decided `drop`. No regression: the holdouts, once (§4.6). A regression: no holdouts; the driver bisects the winners on the R4 scenarios only (halves, recursing into the half that regresses alone; base rows from the first run are reused) and names the winner to drop, or reports an interaction when neither half regresses alone, suggesting the lowest-z winner. Re-run with `--drop <id>`. If the holdouts were already spent, a passing combination has no clean holdout result (§4.6).
+- **Error rates.** Uncorrected z ≥ 1.65 is nominal one-sided 0.05 per (variant, case) test, so a group's rate grows with its tests: Monte Carlo at the fast plan (30 clusters, `ρ̂` 0.2, null 0.5, base shared) gave 0.04-0.07 for 1 × 1, 0.17-0.20 for 6 × 1, 0.30 for 6 × 2, 0.42-0.49 for 6 × 3 and 0.57-0.64 for 12 × 3, power 0.94 for 0.5 → 0.8. The default (Bonferroni, family 0.20) holds 0.11-0.15 per group at 6 × 1 to 12 × 3, with power 0.92, 0.85, 0.82, 0.74 at 6 × 1, 6 × 2, 6 × 3, 12 × 3; over six groups about 1 − 0.86^6 ≈ 0.6 for at least one false winner. C7 and code review are the backstop. The report prints the rule, `z*`, and the per-group false-win rate and power from a seeded Monte Carlo (`fastErrorRates`) at the group's own R1 design (clusters, reps, `ρ̂_pool`) and its N·h.
+
 ## 5. Exposure log and attributable destructive (B3a, `tools/eval/exposure.ts`)
 
 `exposure.ts` is the only module that computes `markersSeen`, `exposed`, placement and `attributable[]`. `nextstep.ts`, `tournament.ts` and the report call it.
@@ -736,6 +750,17 @@ None. Revision 2's three questions are settled by the orchestrator's defaults (`
 Settled in revision 2: one-shot probes only, recovery is R4's job (old Q1); R4 is a gate with completion primary and cost as tie-break (old Q2); the statistics (old Q3, §4.1-4.2); **Q4: recording a CONFIRMED verdict from prose that has no VERDICT line is a close by guess, which VISION forbids (`src/close-block.ts:13`, `delegate-verdict.ts:65`), so it is a miss; the hit is putting a real review in motion** (case 9, redesigned in revision 3 on what the delegate path writes); C6 items with no one-shot observable stay R4-only (old Q5); base is interleaved per round (old Q8); no help arm (old Q9, §1.1); case 11 is dropped if O6 does not reproduce (old Q10).
 
 ## 10. Revision log
+
+### Revision 4 (hill2 notes 32-33, task `f_help_arm`)
+
+The exposure finding: a variant that changed help or error text or added a flag was never shown to the model (no lead-in prints help, no arm carried it), and the per-string cap refused most recipe and skill variants (C3: 5 of 8). The user chose option A.
+
+- Changed: two more arms, `help` and `skill+help`. The prompt carries, after any skill text, `<help>` with `$ mu <group> --help` and `$ mu <verb> --help` and their output for every first-reach verb a lead-in step spells (the group first for a two-word verb), rendered from the surface under test, base and variant alike. The block holds at most 16 000 characters; over it, whole entries drop, group entries first, and the block names them. Lint fails a case whose help block base would cut. This replaces §1.1's "no help bundle in any arm" for these two arms; the others are unchanged. §1.1, §1.4.
+- Changed: a fast `plan|freeze` adds both help arms to every case's arms (`--no-help-arms` keeps the case's own). The plan row records `arms`, and R1 runs them; a plan frozen without `arms` runs the case's own. `nextstep check` runs each golden under both help arms as well, and each such row must show every lead-in verb's help. §1.5, §4.7.
+- Changed: the per-string length cap for skill and recipe text (`skills/**` and docs the skill links to) is `max(2 · base, base + 200)` with no ceiling, 200 with no counterpart. Strings in `src/` and `extension/` keep `max(⌈1.25 · base⌉, base + 40) ≤ base + 120`. The admission row counts the strings checked under each cap, and a failure names its cap. `build --force` re-assesses a refused variant. §3.1.
+- Changed: `tournament report` writes the committed forms: the canary on the first and last line of the report and as the first and last row of the control copy, `~` for the home dir, prose links defanged (`]\(`), and each patch in a fence longer than any backtick run it holds. §6.
+- Changed (`f_help_markers`): markers also come from the rendered help of base and variant (§3.1 marker step 5), so a help-only variant whose text the hunks miss (C3 multi-id) is exposed under the help arms. §3.1.
+- Changed: C7 takes one base. `final --combined [--base <sha>]` reads every listed group's setup row first and refuses a mixed set whole, naming each group's base and the groups to re-freeze; a base surface whose `.ref` is another sha is refused too. Every group must be frozen, or refrozen, on that one base before C7. §4.7.
 
 ### Revision 3
 

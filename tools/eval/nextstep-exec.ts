@@ -195,7 +195,8 @@ function jsonStrings(v: unknown, out: string[]): void {
  * lines decoded (a jq -r rendering), each field of a tab-separated line (a `cut -f` rendering, the
  * text form's jq -r: `task notes` prints `<kind>\t<n>\tby=…\tat=…\t<text>`, so without it a note's
  * first line is never a whole line once the header is cut), and each line or field holding a literal
- * `\n` escape split on it (a `sed 's/\\n/\n/g'` rendering of a note's text).
+ * `\n` escape split on it (a `sed 's/\\n/\n/g'` rendering of a note's text), and the lines of each
+ * JSON line pretty-printed (a `jq .` rendering: `"lastText": "…",` is then a whole line).
  */
 export function muText(sb: Sandbox, call: MuCall): string {
   const raw = strip(muOut(sb, call));
@@ -206,7 +207,10 @@ export function muText(sb: Sandbox, call: MuCall): string {
     for (const p of [l, ...fields]) if (p.includes("\\n")) decoded.push(...p.split("\\n"));
     if (!/^\s*[[{]/.test(l)) continue;
     try {
-      jsonStrings(JSON.parse(l), decoded);
+      const v: unknown = JSON.parse(l);
+      jsonStrings(v, decoded);
+      // a pretty-printed rendering (`| jq .`): each of its lines, a string value's with its key
+      decoded.push(...JSON.stringify(v, null, 2).split("\n"));
     } catch {
       // not JSON
     }
@@ -299,10 +303,38 @@ export function shimSpans(sb: Sandbox): Map<string, [number, number]> {
   return out;
 }
 
-/** A call's interval for the timed rule: its shim span when that holds the call, else mu's own. */
+/** How far a shim span may reach past its mu call on each side (its table dumps: ~1.5 s loaded). */
+export const SHIM_SLACK_MS = 5000;
+
+/**
+ * A call's interval for the timed rule: its shim span when that holds the call within
+ * SHIM_SLACK_MS on each side, else mu's own. The answer can write the log too (it runs as the same
+ * user): a forged span stretches a call by at most the slack, and rigLogNamed flags the forgery.
+ */
 export function blockedSpan(c: MuCall, spans: Map<string, [number, number]>): [number, number] {
   const s = spans.get(c.pid);
-  return s && s[0] <= c.start && s[1] >= c.end ? s : [c.start, c.end];
+  return s &&
+    s[0] <= c.start &&
+    s[1] >= c.end &&
+    c.start - s[0] <= SHIM_SLACK_MS &&
+    s[1] - c.end <= SHIM_SLACK_MS
+    ? s
+    : [c.start, c.end];
+}
+
+/** The shim's logs and outputs under <workers> (sandbox.ts muShim), and the var that names them. */
+const RIG_LOGS = /mu-(?:shim|calls|local)\.log|mu-out\b|EVAL_WORKER_DIR/;
+
+/**
+ * Answer commands that name the shim's logs (mu-calls.log, mu-shim.log, mu-local.log, mu-out/, or
+ * `$EVAL_WORKER_DIR`): the judge reads its calls, spans and outputs from them, so a command that
+ * names one may forge them (a fake span hides an idle sleep). Never a hit. A path computed at run
+ * time is not seen; SHIM_SLACK_MS bounds what a forged span buys.
+ */
+export function rigLogNamed(ctx: NextCtx): string[] {
+  return ctx.runs.flatMap((r, i) =>
+    RIG_LOGS.test(r.cmd) ? [`tamper: command ${i + 1} names the rig's call logs`] : [],
+  );
 }
 
 /**
@@ -352,7 +384,10 @@ export function decideHit(o: {
   allowKilled: boolean;
   destructive: string[];
   timed: string[];
+  /** rigLogNamed: an answer that may have forged the shim's logs. */
+  tamper?: string[];
 }): { hit: boolean; partial: boolean; why: string[] } {
+  const tamper = o.tamper ?? [];
   const killed = o.allowKilled
     ? []
     : o.killed.flatMap((k, i) => (k ? [`killed: command ${i + 1}`] : []));
@@ -362,13 +397,15 @@ export function decideHit(o: {
     ...killed,
     ...o.destructive.map((d) => `destructive: ${d}`),
     ...o.timed,
+    ...tamper,
   ];
   const hit =
     o.effect.hit &&
     o.stray.length === 0 &&
     killed.length === 0 &&
     o.destructive.length === 0 &&
-    o.timed.length === 0;
+    o.timed.length === 0 &&
+    tamper.length === 0;
   return { hit, partial: o.effect.partial === true, why };
 }
 

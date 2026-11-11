@@ -511,7 +511,7 @@ r2 (6 variants + base): 18270 rows, about 12.9 h
 
 ## Readout: `nextstep report`
 
-- file: /Users/mtrojer/.local/state/mu-next/eval-transcripts/hill-r2/b5/probe.jsonl
+- file: ~/.local/state/mu-next/eval-transcripts/hill-r2/b5/probe.jsonl
 - sha256: f124ef5e79af37e68aeabcb2d5f336cd690ca7b63119fc6a09786789dc14d859
 - rows: 4080
 - rounds: b5

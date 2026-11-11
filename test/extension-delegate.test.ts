@@ -669,6 +669,17 @@ describe("mu_delegate", () => {
     expect(content).toContain("died");
     expect(content).toContain("last pane lines");
     expect(sentText(p)).toContain("Pane kept (kept as evidence)");
+    // The tail is the worker's words, not the screen furniture.
+    expect(mu.calls.find((c) => c[1] === "read")).toEqual([
+      "agent",
+      "read",
+      "delegate-2",
+      "--text",
+      "-n",
+      "50",
+      "-w",
+      "scratch",
+    ]);
   });
 
   it("an API error keeps the pane, names the error, and leaves nothing outstanding", async () => {
@@ -821,7 +832,9 @@ describe("errors and corner cases", () => {
     const err = await tool(p)
       .execute("t", { task: "x" })
       .catch((e: unknown) => e as Error);
-    expect(String(err)).toMatch(/delivery unknown.*Pane kept.*mu agent read delegate-2 -w scratch/);
+    expect(String(err)).toMatch(
+      /delivery unknown.*Pane kept.*mu agent read delegate-2 --text -n 20 -w scratch/,
+    );
     expect(mu.calls.some((c) => c[1] === "close")).toBe(false);
     expect(mu.calls.filter((c) => c[1] === "spawn")).toHaveLength(1);
   });
@@ -852,6 +865,7 @@ describe("errors and corner cases", () => {
     await flush();
     await flush();
     expect(sentText(p)).toMatch(/delivering its answer failed: read exploded/);
+    expect(sentText(p)).toContain("Read it with: mu agent read delegate-2 --text -n 50 -w scratch");
   });
 
   it("cancel whose abort fails keeps the delegate tracked and delivers an answer that landed meanwhile", async () => {
@@ -1277,7 +1291,7 @@ describe("pending reports and delivery tracking", () => {
     expect(droppedNote([a])).toBe(
       [
         "Interrupted: 1 delegate answer recorded but not shown; the next settle shows it:",
-        "- scratch/delegate-3 (error; call pi:s:1): mu task notes delegate_ab -w scratch. Pane kept (kept as evidence): mu agent read delegate-3 -n 50 -w scratch.",
+        "- scratch/delegate-3 (error; call pi:s:1): mu task notes delegate_ab -w scratch. Pane kept (kept as evidence): mu agent read delegate-3 --text -n 50 -w scratch.",
       ].join("\n"),
     );
     expect(
@@ -1308,6 +1322,7 @@ describe("delegateMessage", () => {
     const t = delegateMessage("d", { outcome: "timeout" }, { closed: false, why: "evidence" });
     expect(t).toContain("still running");
     expect(t).toContain("will not arrive here");
+    expect(t).toContain("Read: mu agent read d --text -n 50 -w scratch");
     expect(t).toContain("mu agent wait d -w scratch --json");
     const tb = delegateMessage(
       "d",

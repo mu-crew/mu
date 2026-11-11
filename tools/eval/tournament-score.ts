@@ -14,6 +14,7 @@ import {
   probeExposure,
   winClusters,
 } from "./exposure.ts";
+import { clusterOf, MAX_DROPPED_SHARE, pairing } from "./infra-retry.ts";
 import type { Group, NameCue, ProbeRow } from "./nextstep.ts";
 import { cmh, deff, fisher, holm, kish, type Stratum } from "./stats.ts";
 import {
@@ -58,6 +59,8 @@ export interface WinCell {
   z: number;
   /** Raw hit rate on the exposed clusters is at least base's, per weak model. */
   direction: Record<string, boolean>;
+  /** Raw hit rate on the exposed clusters is above base's, per weak model (fast mode's rule). */
+  ahead?: Record<string, boolean>;
   /** Holm threshold this case's p had to clear (null in R1: no win test). */
   threshold: number | null;
   win: boolean;
@@ -72,6 +75,21 @@ export interface VariantScore {
   attributable: string[];
   reviews: Omit<ReviewStopRow, "kind" | "id">[];
   invalidRows: number;
+  /**
+   * Failed rows (infra-retry.ts): retries taken, rows recovered by a retry, rows that failed every
+   * try, pairings dropped from both sides because base's row failed every try too (and the clusters
+   * they touch of `clusters`), and `undecided` when that exceeds MAX_DROPPED_SHARE: no win.
+   */
+  infra: {
+    retries: number;
+    recovered: number;
+    failedRows: number;
+    droppedPairings: number;
+    droppedClusters: number;
+    clusters: number;
+    dropped: string[];
+    undecided?: string;
+  };
   r1Score: number;
   wins: number;
   winZ: number;
@@ -102,6 +120,10 @@ export interface ScoreInput {
   decisions?: readonly { stop: string; decision: "drop" | "continue" }[];
   /** Rep floor of the round (fresh rows): a row below it is an earlier round's. */
   repFloor?: number;
+  /** Fast mode (§4.7): R1 is the deciding round, with the fast win rule. */
+  fast?: boolean;
+  /** Fast mode: the pooled weak-model z a win needs (`winZ` of the frozen rule at this field). */
+  fastZ?: number;
 }
 
 export const BASE = "base";
@@ -164,7 +186,9 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
   const models = [...weak, o.setup.models.gate];
   const rhoOf = (c: string, m: string): number => o.setup.rho[c]?.[m] ?? DEFAULT_RHO;
   const baseClasses = baseLeadIn(o.rows);
-  const baseRows = o.rows.filter((r) => r.surface === BASE);
+  const allBase = o.rows.filter((r) => r.surface === BASE);
+  // base rows that failed every try: their pairing is host trouble, dropped from both sides
+  const baseFailed = new Set(allBase.filter((r) => r.infraFail !== undefined).map(pairing));
   const decided = new Map((o.decisions ?? []).map((d) => [d.stop, d.decision]));
   const cases = [...new Set(o.rows.map((r) => r.case))].sort();
   const out: VariantScore[] = [];
@@ -174,8 +198,14 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
     );
     const eliminated: string[] = [];
     let invalidRows = 0;
-    const vRows = o.rows
-      .filter((r) => r.surface === v.id)
+    // a pairing whose base row failed every try is dropped from both sides; a variant row that
+    // failed every try beside a base row that ran is the variant's own failure: invalid, as before
+    const own = o.rows.filter((r) => r.surface === v.id);
+    const droppedRows = own.filter((r) => baseFailed.has(pairing(r)));
+    const dropped = new Set(droppedRows.map(pairing));
+    const baseRows = allBase.filter((r) => !baseFailed.has(pairing(r)));
+    const vRows = own
+      .filter((r) => !dropped.has(pairing(r)))
       .map((r) => {
         const want = baseClasses.get(`${r.case}|${r.leadIn}`);
         const got = (r.leadInExits ?? []).map(exitClass).join(",");
@@ -271,17 +301,15 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
         bs.map((x) => ({ hit: x.hit, c: cluster(x) })),
         rho,
       );
-      const direction = Object.fromEntries(
-        weak.map((m) => {
-          const a = vs.filter((x) => x.row.model === m);
-          const b = bs.filter((x) => x.model === m);
-          const ok =
-            a.length > 0 &&
-            b.length > 0 &&
-            a.filter((x) => x.hit).length / a.length >= b.filter((x) => x.hit).length / b.length;
-          return [m, ok];
-        }),
-      );
+      const rates = weak.map((m) => {
+        const a = vs.filter((x) => x.row.model === m);
+        const b = bs.filter((x) => x.model === m);
+        const rate = (xs: readonly { hit: boolean }[]): number =>
+          xs.filter((x) => x.hit).length / xs.length;
+        return { m, some: a.length > 0 && b.length > 0, va: rate(a), ba: rate(b) };
+      });
+      const direction = Object.fromEntries(rates.map((r) => [r.m, r.some && r.va >= r.ba]));
+      const ahead = Object.fromEntries(rates.map((r) => [r.m, r.some && r.va > r.ba]));
       const p = sel.unexposed
         ? 1
         : fisher(vSide.hitsStar, vSide.nStar, bSide.hitsStar, bSide.nStar, "greater");
@@ -295,10 +323,26 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
         p,
         z: sel.unexposed ? 0 : zScore(vSide, bSide),
         direction,
+        ...(o.fast ? { ahead } : {}),
         threshold: null,
         win: false,
       };
     });
+    if (o.fast) {
+      if (o.round !== "r1") throw new Error("fast mode scores R1 rows only (§4.7)");
+      const fastZ = o.fastZ;
+      if (fastZ === undefined) throw new Error("fast mode needs the win threshold (fastZ)");
+      // §4.7: ahead of base on both weak models and pooled z ≥ the rule's z, exposure-gated, per case
+      for (const w of win) {
+        const lostHere = lossCells.some((l) => l.case === w.case && l.loss);
+        w.win =
+          !w.unexposed &&
+          w.z >= fastZ &&
+          Object.values(w.ahead ?? {}).every(Boolean) &&
+          Object.keys(w.ahead ?? {}).length === weak.length &&
+          !lostHere;
+      }
+    }
     if (o.round === "r2") {
       const S = o.S ?? 1;
       const alphaV = ALPHA / S;
@@ -316,6 +360,14 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
         w.win = Object.values(w.direction).every(Boolean) && !lostHere;
       });
     }
+    // ---- too many pairings dropped: the comparison is the host's, not the variant's; no win
+    const clusters = new Set(own.map(clusterOf));
+    const droppedClusters = new Set(droppedRows.map(clusterOf));
+    const undecided =
+      droppedClusters.size > MAX_DROPPED_SHARE * clusters.size
+        ? `undecided: ${droppedClusters.size} of ${clusters.size} clusters lost a pairing to base rows that failed every try (> ${MAX_DROPPED_SHARE * 100}%)`
+        : undefined;
+    if (undecided !== undefined) for (const w of win) w.win = false;
     // ---- destructive entries: attributable eliminates; new against base stops for review
     const attributable: string[] = [];
     const reviews: VariantScore["reviews"] = [];
@@ -368,6 +420,19 @@ export function scoreRound(o: ScoreInput): VariantScore[] {
       attributable,
       reviews,
       invalidRows,
+      infra: {
+        retries: own.reduce((t, r) => t + (r.infraRetries ?? 0), 0),
+        recovered: own.filter((r) => (r.infraRetries ?? 0) > 0 && r.infraFail === undefined).length,
+        failedRows: own.filter((r) => r.infraFail !== undefined).length,
+        droppedPairings: dropped.size,
+        droppedClusters: droppedClusters.size,
+        clusters: clusters.size,
+        dropped: droppedRows.map(
+          (r) =>
+            `${pairing(r)}: ${r.infraFail !== undefined ? "both failed every try" : "base failed every try"}`,
+        ),
+        ...(undecided !== undefined ? { undecided } : {}),
+      },
       r1Score: win.reduce((t, w) => t + w.z, 0),
       wins: winsN,
       winZ: win.filter((w) => w.win).reduce((t, w) => t + w.z, 0),
@@ -434,7 +499,7 @@ export function cut(
   scores: readonly VariantScore[],
 ): { ranking: string[]; eligible: string[]; advance: number; advanced: string[] } {
   const ranked = rank(round, scores);
-  const alive = ranked.filter((s) => s.eliminated.length === 0);
+  const alive = ranked.filter((s) => s.eliminated.length === 0 && s.infra.undecided === undefined);
   const eligible = (
     round === "r1" ? alive.filter((s) => s.r1Score > 0) : alive.filter((s) => s.wins > 0)
   ).map((s) => s.id);
@@ -447,6 +512,129 @@ export function cut(
     eligible,
     advance,
     advanced: eligible.slice(0, advance),
+  };
+}
+
+// ---- fast mode's error rates (Monte Carlo) -------------------------------------------------------
+
+/** One own headline case of an R1 design: clusters, reps per weak model per cluster, ρ̂_pool. */
+export interface McCase {
+  clusters: number;
+  reps: number;
+  rho: number;
+}
+
+/**
+ * §4.7 error rates of the fast rule by Monte Carlo, on `variants` variants against one shared base
+ * per case, the R1 design `cases`, every cluster exposed. A cluster's rows (both weak models, every
+ * rep) take one shared draw with probability √ρ, so two rows of a cluster correlate at ρ; the z is
+ * scoreRound's (Kish-scaled at the pooled design effect). `falseWin`: P(≥ 1 win in the group) with
+ * every arm at `p0`. `power`: P(one variant at `p1` wins a case), the lowest over the cases. Losses
+ * are left out: under the null they only remove wins. Seeded, so a report reprints its numbers.
+ */
+export function fastErrorRates(o: {
+  variants: number;
+  cases: readonly McCase[];
+  z: number;
+  p0?: number;
+  p1?: number;
+  iters?: number;
+  seed?: number;
+}): { falseWin: number; power: number } {
+  const p0 = o.p0 ?? 0.5;
+  const p1 = o.p1 ?? 0.8;
+  const iters = o.iters ?? 4000;
+  let a = (o.seed ?? 20261109) >>> 0;
+  const rnd = (): number => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  /** Hits per weak model on one surface of a case. */
+  const draw = (c: McCase, p: number): [number, number] => {
+    const mix = Math.sqrt(c.rho);
+    const h: [number, number] = [0, 0];
+    for (let k = 0; k < c.clusters; k++) {
+      const u = rnd();
+      for (let m = 0; m < 2; m++)
+        for (let r = 0; r < c.reps; r++)
+          if (rnd() < mix ? u < p : rnd() < p) h[m as 0 | 1] = (h[m as 0 | 1] ?? 0) + 1;
+    }
+    return h;
+  };
+  const wins = (c: McCase, v: [number, number], b: [number, number]): boolean => {
+    const n = 2 * c.clusters * c.reps;
+    const d = deff(2 * c.reps, c.rho);
+    const vs = kish(n, v[0] + v[1], d);
+    const bs = kish(n, b[0] + b[1], d);
+    return (
+      v[0] > b[0] &&
+      v[1] > b[1] &&
+      zScore({ nStar: vs.n, hitsStar: vs.hits }, { nStar: bs.n, hitsStar: bs.hits }) >= o.z
+    );
+  };
+  let falseWins = 0;
+  for (let i = 0; i < iters; i++) {
+    let any = false;
+    for (const c of o.cases) {
+      const b = draw(c, p0);
+      for (let k = 0; k < o.variants && !any; k++) any = wins(c, draw(c, p0), b);
+      if (any) break;
+    }
+    if (any) falseWins++;
+  }
+  const power = Math.min(
+    ...o.cases.map((c) => {
+      let w = 0;
+      for (let i = 0; i < iters; i++) if (wins(c, draw(c, p1), draw(c, p0))) w++;
+      return w / iters;
+    }),
+  );
+  return { falseWin: falseWins / iters, power: o.cases.length === 0 ? 0 : power };
+}
+
+/**
+ * §4.7 fast decision over R1 scores: at most one winner, among the survivors (no elimination, no
+ * pending review) with at least one fast win, by the larger sum of win-case pooled z, then the
+ * shorter text delta, then the id. Base stays on no winner: a tie is never a win.
+ */
+export function decideFast(scores: readonly VariantScore[]): {
+  winner: string | null;
+  ranking: string[];
+  why: string;
+} {
+  const ranked = scores
+    .filter(
+      (s) =>
+        s.eliminated.length === 0 &&
+        s.reviews.length === 0 &&
+        s.infra.undecided === undefined &&
+        s.wins > 0,
+    )
+    .sort((a, b) => b.winZ - a.winZ || a.textDelta - b.textDelta || a.id.localeCompare(b.id));
+  const w = ranked[0];
+  if (!w) {
+    const out = scores.filter((s) => s.eliminated.length > 0).map((s) => s.id);
+    const und = scores.filter((s) => s.infra.undecided !== undefined).map((s) => s.id);
+    return {
+      winner: null,
+      ranking: [],
+      why: `fast: no surviving variant with a win${out.length > 0 ? ` (eliminated: ${out.join(", ")})` : ""}${und.length > 0 ? ` (undecided, too many pairings dropped: ${und.join(", ")})` : ""}: base stays`,
+    };
+  }
+  const cases = w.win.filter((x) => x.win).map((x) => `${x.case} z ${x.z.toFixed(2)}`);
+  return {
+    winner: w.id,
+    ranking: ranked.map((s) => s.id),
+    why: `fast: ${w.id} wins on ${cases.join(", ")}${
+      ranked.length > 1
+        ? `, ahead of ${ranked
+            .slice(1)
+            .map((s) => s.id)
+            .join(", ")}`
+        : ""
+    }`,
   };
 }
 

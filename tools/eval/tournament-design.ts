@@ -11,6 +11,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   rmSync,
   statSync,
@@ -64,6 +65,12 @@ export interface DenyContext {
    */
   allow: string[];
   caseIds: string[];
+  /**
+   * Set by the CLI audit (`existsSync`): a catch-all path whose first dir below HOME does not
+   * exist on this host names nothing a designer could read (a pane footer it typed into a test
+   * string, `~/repo/wt/worker-1`), so it is no hit. Unset (tests, fake homes): every such path hits.
+   */
+  exists?: (p: string) => boolean;
 }
 
 export function defaultDenyContext(o: {
@@ -87,7 +94,7 @@ export function defaultDenyContext(o: {
     ownPack: resolve(o.ownPack),
     ownDdir: resolve(o.ownDdir),
     allow: [
-      nodeInstallDir(),
+      ...installDirs([nodeInstallDir(), ...binLinkDirs(join(resolve(o.ownDdir), "bin"))], home),
       ...(o.providerExt ? [resolve(o.providerExt)] : []),
       dirname(realpathOr(REAL_PI)),
     ],
@@ -103,9 +110,42 @@ const realpathOr = (p: string): string => {
   }
 };
 
+/**
+ * The install dirs the session's own bin links point into (`designerPath` links node, npm and
+ * npx from the caller's PATH), in the link's literal spelling and resolved: an `ls -l` of its own
+ * bin prints them, and npm may come from another install than the node running the rig.
+ */
+export function binLinkDirs(binDir: string): string[] {
+  const out = new Set<string>();
+  for (const tool of ["node", "npm", "npx"]) {
+    let target: string;
+    try {
+      target = readlinkSync(join(binDir, tool));
+    } catch {
+      continue;
+    }
+    out.add(nodeInstallDir(resolve(binDir, target), false));
+    out.add(nodeInstallDir(resolve(binDir, target)));
+  }
+  return [...out];
+}
+
+/**
+ * The install dirs safe to allow under `home`: never HOME itself, an ancestor of it, or a top-level
+ * child of it. A link into `~/bin` (npm -> ~/bin/npm) makes its prefix HOME, and allowing that, or
+ * `~/.local` or `~/opt`, would allow every store under it (rv-hmark).
+ */
+export function installDirs(dirs: readonly string[], home: string): string[] {
+  const h = resolve(home);
+  return [...new Set(dirs)].filter((d) => {
+    const p = resolve(d);
+    return p !== h && !ancestor(p, h) && dirname(p) !== h;
+  });
+}
+
 /** node's install dir: the prefix above `bin/node` (`~/.nvm/versions/node/v22`, a mise install), else its dir. */
-export function nodeInstallDir(execPath: string = process.execPath): string {
-  const real = realpathOr(execPath);
+export function nodeInstallDir(execPath: string = process.execPath, resolveLinks = true): string {
+  const real = resolveLinks ? realpathOr(execPath) : execPath;
   const dir = dirname(real);
   return basename(dir) === "bin" ? dirname(dir) : dir;
 }
@@ -133,9 +173,10 @@ function termRules(ctx: Pick<DenyContext, "caseIds">): { rule: string; re: RegEx
     { rule: "tools/eval", re: /tools\/eval/ },
     { rule: "test/eval", re: /test\/eval/ },
     { rule: "museum skill", re: /skills\/museum/ },
+    // the phase B units are b<digit>…; a designer's own scratch task `b` (or `blog`) is not one
     {
       rule: "task notes",
-      re: /task\s+notes\s+(?:hill2|b[\w-]*|delegate_friction-[\w-]*)(?![\w-])/,
+      re: /task\s+notes\s+(?:hill2|b\d[\w-]*|delegate_friction-[\w-]*)(?![\w-])/,
     },
   ];
 }
@@ -284,9 +325,9 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
     if (n) hits.push({ rule: n.rule, match: p, raw });
     else if (under(p, ctx.packs) && !under(p, ctx.ownPack) && !under(p, ctx.ownDdir))
       hits.push({ rule: "another pack", match: p, raw });
-    else if (under(p, ctx.home) && !allowed.some((a) => under(p, a)))
-      hits.push({ rule: "under the real HOME", match: p, raw });
-    else if (
+    else if (under(p, ctx.home) && !allowed.some((a) => under(p, a))) {
+      if (!absentBelowHome(p, ctx)) hits.push({ rule: "under the real HOME", match: p, raw });
+    } else if (
       cwd !== undefined &&
       roots.some((r) => ancestor(p, r)) &&
       !allowed.some((a) => under(p, a))
@@ -294,6 +335,13 @@ export function denyHits(text: string, ctx: DenyContext, cwd?: string): DenyHit[
       hits.push({ rule: "search above HOME", match: p, raw });
   }
   return hits;
+}
+
+/** `p` lies in a top dir below HOME that does not exist (needs `ctx.exists`). */
+function absentBelowHome(p: string, ctx: DenyContext): boolean {
+  if (ctx.exists === undefined) return false;
+  const top = relative(ctx.home, p).split(sep)[0];
+  return top !== undefined && top !== "" && !ctx.exists(join(ctx.home, top));
 }
 
 function textFile(p: string): boolean {
@@ -526,6 +574,27 @@ export function scrubPack(dir: string, ctx: Pick<DenyContext, "caseIds">): strin
       }
       writeFileSync(f, `${JSON.stringify(pkg, null, 2)}\n`);
       continue;
+    }
+    if (rel.endsWith(".json")) {
+      // a config list entry that names the rig (tsconfig `include`) goes; any other hit is left
+      let doc: unknown;
+      try {
+        doc = JSON.parse(text);
+      } catch {
+        doc = undefined;
+      }
+      if (doc !== undefined) {
+        const drop = (v: unknown): unknown =>
+          Array.isArray(v)
+            ? v.filter((x) => !(typeof x === "string" && hit(x))).map(drop)
+            : v !== null && typeof v === "object"
+              ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, drop(x)]))
+              : v;
+        const out = `${JSON.stringify(drop(doc), null, 2)}\n`;
+        writeFileSync(f, out);
+        for (const l of out.split("\n")) if (hit(l)) left.push(`${rel}: ${l.trim().slice(0, 100)}`);
+        continue;
+      }
     }
     const prose = /\.(md|txt)$|(^|\/)\.gitignore$/.test(rel);
     const lines = text.split("\n");

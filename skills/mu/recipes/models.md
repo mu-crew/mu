@@ -1,27 +1,28 @@
 # Models
 
-Use when you pick a model. mu passes it through.
+Use when you spawn, delegate or check. Pick model and effort per role.
 
-Rank a model within its own family; the id prefix in `pi --list-models` names the family, the provider column often does not. 
+Take ids from the harness you spawn, latest version only. A family is a lab.
 
-| Tier | Position | Examples (2026-10) |
-| --- | --- | --- |
-| frontier | above the flagship | fable |
-| strong | the flagship | opus |
-| mid | everyday default | sonnet |
-| cheap | small, fast, hosted | haiku, flash |
-| local | on this machine | qwen |
+Tiers frontier/strong/mid/cheap, as of 2026-11-11:
 
-| Work | Tier |
-| --- | --- |
-| scouts, watchers, first-pass finders | cheap |
-| building, routine fixes | mid |
-| design, plans, root cause, synthesis | strong |
-| review, refute, judge, audit | the author's or higher |
-| a strong attempt failed; a close final call | frontier, else the strongest unused family |
+- **anthropic**: fable/opus/sonnet/haiku
+- **openai**: astra/sol/terra/luna
+- **google**: carbon/argon/flash/flash-lite (no Pro: the latest Flash beats it)
+- **meta**: none/wonder/spark/ember (prefer wonder full)
+- **one family each**, mid: grok, composer, kimi, deepseek, glm, mistral large, qwen max; cheap: glm flash, mistral small, qwen flash
+- **local**: qwen
 
-A cheap finder's misses stay missed: use mid or strong where omission is costly. Effort is no other family. A local model never checks.
+Work to tier:
 
-**Checkers** must not share the author's blind spots: the author's tier or higher, another family when one exists; else the same model, fresh context, higher effort.
+- scouts, watchers, first-pass finders: cheap; mid or strong where a miss is costly
+- building, routine fixes: mid
+- design, plans, root cause, synthesis: strong
+- review, refute, judge, audit: the author's tier or higher, another family; with one family, the same model, fresh context, higher effort
+- a strong attempt failed; a close final call: frontier, else the strongest unused family
 
-**Passing it.** Spawn: `--model <id>`, through the harness's own flag (`--cli codex --model <id>`). pi: `<provider>/<id>:<effort>`, effort `off|minimal|low|medium|high|xhigh|max`, ids from `pi --list-models`; `mu_delegate` takes the same as `model`. No model: the cli default. A native subagent takes its harness's names. herdr refuses a command override.
+Higher effort is not another family. A local model never checks.
+
+**Speed.** Smaller models answer faster. High effort is no default: as of 2026-11-11 it can multiply run time. Use medium; high for design, root cause and review; low for scouts and mechanical edits. When someone waits, pick the fastest good-enough pair.
+
+**Passing it.** `mu agent spawn` passes `--model <id>` through the harness's own flag (`--cli codex --model <id>`). pi: `<provider>/<id>:<effort>` from `pi --list-models`, effort `off|minimal|low|medium|high|xhigh|max`; `mu_delegate`'s `model` likewise. No model: cli default. A native subagent takes its harness's names. herdr picks the binary: omit the model (`mu_delegate` is refused, spawn ignores it).

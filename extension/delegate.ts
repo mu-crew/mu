@@ -561,7 +561,7 @@ export function registerDelegate(
       // The prompt may already be running: keep the pane, never auto-retry.
       const reason = typeof sent.message === "string" ? sent.message : "no reply";
       throw new SpawnFail(
-        `mu agent send to ${ws}/${name}: delivery unknown (${reason}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} -w ${ws} -n 20 (or attach), then close it with: mu agent close ${name} -w ${ws}`,
+        `mu agent send to ${ws}/${name}: delivery unknown (${reason}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} --text -n 20 -w ${ws} (or attach), then close it with: mu agent close ${name} -w ${ws}`,
         "unknown",
       );
     }
@@ -673,7 +673,7 @@ export function registerDelegate(
     const tail =
       outcome === "done" || outcome === "timeout" || outcome === "pending" || outcome === "error"
         ? undefined
-        : (await mu(["agent", "read", name, "-n", "50", "-w", ws])).stdout;
+        : (await mu(["agent", "read", name, "--text", "-n", "50", "-w", ws])).stdout;
     const sessionFile = agent?.sessionFile ?? extras.sessionFile;
     const x: MessageExtras = {
       ...extras,
@@ -837,7 +837,7 @@ export function registerDelegate(
         );
       } catch (e) {
         // A throw here would be an unhandled rejection and a lost answer.
-        const content = `Delegate ${ws}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} -n 50 -w ${ws}`;
+        const content = `Delegate ${ws}/${name} settled, but delivering its answer failed: ${e instanceof Error ? e.message : String(e)}. Read it with: mu agent read ${name} --text -n 50 -w ${ws}`;
         await Promise.resolve(
           send(
             {
@@ -1120,7 +1120,7 @@ export function registerDelegate(
         model: {
           type: "string",
           description:
-            "Model for the subagent, passed to pi as --model (e.g. 'sonnet', '<provider>/<model>:high' copied from `pi --list-models`); appended to the cli's command. Default: the cli's own model. Use it to vary models across a review panel.",
+            "Model for the subagent, passed to pi as --model and appended to the cli's command: '<provider>/<model>' from a `pi --list-models` row, optionally ':<effort>' (off|minimal|low|medium|high|xhigh|max). Pick tier and effort per role (the mu skill's models recipe): medium unless the work needs more, since high and above can multiply run time; a check or review takes the author's tier or higher, another family, high effort. Default: the cli's own model. herdr refuses it. Use it to vary models across a review panel.",
         },
         keep: {
           type: "boolean",

@@ -5,39 +5,100 @@
 // the hashes of the row files; it never opens `sealed/`, and holdout numbers come from the
 // `final_score` control row.
 import { createHash } from "node:crypto";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import type { Group } from "./nextstep.ts";
-import { fisherPower } from "./stats.ts";
+import { RIG_CANARY } from "./rig-private.ts";
+import { fisherPower, nEffPooled } from "./stats.ts";
 import {
   ALPHA,
   type CasePlan,
   type ControlRow,
   controlFile,
+  DEFAULT_RHO,
   epochOf,
   type FreezeRow,
   type IsolationRow,
+  type MigrateFastRow,
+  migratedOf,
+  modeOf,
   planCmhPower,
   readControl,
+  ruleLine,
+  ruleTests,
   type SetupRow,
   setupOf,
+  type WinRule,
   WORST_B,
+  winRuleOf,
+  winZ,
 } from "./tournament.ts";
 import { listCandidates, type VariantRow } from "./tournament-build.ts";
 import type { GateOpts } from "./tournament-r4.ts";
 import { R4_RUNS, type R4Score, r4Reps, type ScanResult } from "./tournament-r4-score.ts";
-import type { VariantScore } from "./tournament-score.ts";
+import { fastErrorRates, type McCase, type VariantScore } from "./tournament-score.ts";
 
 /** The committed copy of a group's control file (§6, Q3). */
 export const committedControl = (repo: string, group: Group): string =>
   join(repo, "docs", "eval", "hill-r2", `${group}.tournament.jsonl`);
+
+// ---- publishing: what the committed report and control copy must pass ---------------------------
+
+/** The canary line a committed report carries first and last (test/eval/rig-guard.test.ts). */
+export const CANARY_LINE = `<!-- ${RIG_CANARY}: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->`;
+/** The canary row the committed control copy carries first and last. */
+export const CANARY_ROW = JSON.stringify({
+  kind: "canary",
+  note: `${RIG_CANARY}: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.`,
+});
+
+/** `home` spelled `~` (test/public-tree.test.ts refuses a real home path in the tree). */
+export const tildeHome = (text: string, home = homedir()): string =>
+  home === "" || home === "/"
+    ? text
+    : text.replace(new RegExp(`${escapeRe(home)}(?![\\w.-])`, "g"), "~");
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** A fence longer than any backtick run in `body`, so a fenced line inside cannot close it. */
+export const fenceFor = (body: string): string =>
+  "`".repeat(Math.max(3, ...[...body.matchAll(/`+/g)].map((m) => m[0].length + 1)));
+
+/**
+ * Link syntax in prose, defanged as `]\(` and `\[x]:`: a report quotes recipe and skill text (a
+ * marker, an admission failure) whose relative links resolve from skills/, not docs/eval/, and
+ * fail test/doc-links.test.ts. Fenced blocks and inline code are left as they are, as the link
+ * checker (scripts/check-doc-links.mjs) skips them.
+ */
+export function defangLinks(md: string): string {
+  let fence: string | null = null;
+  return md
+    .split("\n")
+    .map((line) => {
+      const m = line.match(/^\s*(`{3,}|~{3,})/);
+      if (m) {
+        const marker = m[1] ?? "";
+        if (fence === null) fence = marker;
+        else if (marker[0] === fence[0] && marker.length >= fence.length) fence = null;
+        return line;
+      }
+      if (fence !== null) return line;
+      return line
+        .split(/((`+)[^`]*?\2)/)
+        .map((part, i) => (i % 3 === 0 ? part.replace(/\]\(/g, "]\\(") : i % 3 === 1 ? part : ""))
+        .join("")
+        .replace(/^(\s{0,3})\[([^\]]+)\]:/, "$1\\[$2]:");
+    })
+    .join("\n");
+}
+
+/** The committed form of a report: canary first and last, `~` for home, links defanged. */
+export const publicReport = (md: string, home = homedir()): string =>
+  `${CANARY_LINE}\n\n${defangLinks(tildeHome(md.trimEnd(), home))}\n\n${CANARY_LINE}\n`;
+
+/** The committed form of tournament.jsonl: a canary row first and last, `~` for home. */
+export const publicControl = (jsonl: string, home = homedir()): string =>
+  `${CANARY_ROW}\n${tildeHome(jsonl.trimEnd(), home)}\n${CANARY_ROW}\n`;
 
 const sha256 = (p: string): string => createHash("sha256").update(readFileSync(p)).digest("hex");
 const f2 = (x: number): string => x.toFixed(2);
@@ -122,6 +183,88 @@ export function powerFacts(
   };
 }
 
+export interface FastFacts {
+  ownPerModel: number[];
+  ownPooled: number[];
+  rule: WinRule;
+  /** The R1 field and the own headline cases the rule's threshold is set at. */
+  variants: number;
+  cases: number;
+  tests: number;
+  z: number;
+  /** The R1 design per own case: clusters, reps per weak model, ρ̂_pool. */
+  design: McCase[];
+  /** Monte Carlo at this design and field (fastErrorRates): P(≥ 1 false win in the group), power for 0.5 → 0.8. */
+  falseWin: number;
+  power: number;
+  /** P(≥ 1 false winner over the six groups) if each lands one at `falseWin`. */
+  falseWinAny: number;
+  /** The group was frozen in full mode and switched with `migrate-fast`. */
+  migrated: MigrateFastRow | null;
+}
+
+/**
+ * The numbers a fast-mode report states (§4.7): the win rule and its threshold at the R1 field, and
+ * its per-group false-win rate and power by Monte Carlo at the R1 design (own headline clusters ×
+ * R1 reps, ρ̂_pool from the setup) and the group's actual variants × headline cases.
+ */
+export function fastFacts(
+  plan: readonly CasePlan[],
+  variants: number,
+  o: {
+    rule: WinRule;
+    rhoPool?: Record<string, number>;
+    migrated?: MigrateFastRow | null;
+    iters?: number;
+  },
+): FastFacts {
+  const own = plan.filter((p) => p.kind === "own");
+  const design = own.map((p) => ({
+    clusters: p.plan.m,
+    reps: p.r1,
+    rho: o.rhoPool?.[p.case] ?? DEFAULT_RHO,
+  }));
+  const z = winZ(o.rule, variants, own.length);
+  const mc = fastErrorRates({
+    variants: Math.max(1, variants),
+    cases: design,
+    z,
+    ...(o.iters !== undefined ? { iters: o.iters } : {}),
+  });
+  return {
+    ownPerModel: own.map((p) => Math.round(p.plan.nEff)),
+    ownPooled: own.map((p) => Math.round(p.plan.nEffPooled ?? p.plan.nEff)),
+    rule: o.rule,
+    variants,
+    cases: own.length,
+    tests: ruleTests(o.rule, variants, own.length),
+    z,
+    design,
+    falseWin: mc.falseWin,
+    power: mc.power,
+    falseWinAny: 1 - (1 - mc.falseWin) ** GROUPS_N,
+    migrated: o.migrated ?? null,
+  };
+}
+
+function fastSection(f: FastFacts): string[] {
+  const m = f.migrated;
+  return [
+    "### Fast mode (user decision 2026-11-09)",
+    "",
+    ...(m
+      ? [
+          `- **Migrated from full mode** (epoch ${m.epoch} kept, its R1 rows decide; nothing re-ran): ${m.why}. Judges ${m.previousJudgesHash === m.judgesHash ? `unchanged (\`${m.judgesHash}\`)` : `\`${m.previousJudgesHash}\` → \`${m.judgesHash}\`, accepted (${m.judgesChanged.length} files changed)`}.`,
+        ]
+      : []),
+    `- **Win rule**: ${ruleLine(f.rule, f.variants, f.cases)} (${f.variants} variants × ${f.cases} headline cases). R1 decides. A variant wins a headline case when, on its exposed clusters, it is ahead of base on both weak models and the pooled weak-model z is at least ${f.z.toFixed(2)}. Losses (per-case Holm and CMH over the R1 family, sonnet included) eliminate. At most one winner per group: the largest sum of pooled z over its win cases, then the shorter text.`,
+    `- R1 design per own headline case: ${f.design.map((d) => `${d.clusters} clusters × ${d.reps} rep${d.reps === 1 ? "" : "s"} per weak model, ρ̂_pool ${f2(d.rho)}, pooled n_eff ${nEffPooled(d.clusters, d.reps, d.rho).toFixed(0)}`).join("; ") || "-"} (the frozen plan's n_eff: per model ${f.ownPerModel.join(", ") || "-"}, pooled ${f.ownPooled.join(", ") || "-"}).`,
+    `- **False wins and power** (Monte Carlo at this design and ${f.variants} × ${f.cases}, null 0.5, every cluster exposed): per-group false-win rate ${f2(f.falseWin)}; power for a real 0.5 → 0.8 fix ${f2(f.power)} on the weakest own case. Over the ${GROUPS_N} groups, P(≥ 1 false winner) ≈ 1 − (1 − ${f2(f.falseWin)})^${GROUPS_N} = ${f2(f.falseWinAny)}.`,
+    "- **No R2 and no per-group R4.** C7 (`tournament final --combined`) is the regression gate: every group's winner on one surface, R4 on sonnet and both weak models, the holdouts once; code review is the other backstop.",
+    "",
+  ];
+}
+
 function powerSection(p: PowerFacts): string[] {
   return [
     "### Error rates and power (at the frozen plan)",
@@ -131,7 +274,7 @@ function powerSection(p: PowerFacts): string[] {
     `- CMH loss power per model at the planned per-case n_eff (α 0.05/3, cold-guess stratum not counted): ${p.cmh.map((c) => `${c.drop} ${f2(c.power)}`).join(", ")}.`,
     `- R4 loss power per model (Fisher, 0.8 → 0.5, α 0.05/3; ${R4_RUNS} runs wanted): ${p.r4.map((r) => `k = ${r.k}: n ${r.n}, ${f2(r.power)}`).join("; ")}.`,
     `- **False wins are controlled per group, not across groups.** Each group lands a false R2 win with probability at most ${ALPHA}; over the ${GROUPS_N} groups the chance of at least one false winner in the combined surface is up to 1 − 0.95^${GROUPS_N} = ${f2(p.falseWinAny)}. The holdouts are a no-regression check only: they cannot catch a false win.`,
-    `- **End-to-end power.** A real 0.5 → 0.8 fix must survive a false loss in R1 (≤ ${FALSE_LOSS.r1}), R2 (≤ ${FALSE_LOSS.r2}) and R4 (≤ ${FALSE_LOSS.r4}) and win R2: (1 − ${FALSE_LOSS.r1})·(1 − ${FALSE_LOSS.r2})·(1 − ${FALSE_LOSS.r4})·${f2(p.winPower)} ≈ ${f2(p.endToEnd)}. The R1 cut and the holdout gate are not counted, so this is an upper bound.`,
+    `- **End-to-end power.** A real 0.5 → 0.8 fix must survive a false loss in R1 (≤ ${FALSE_LOSS.r1}), R2 (≤ ${FALSE_LOSS.r2}) and R4 (≤ ${FALSE_LOSS.r4}) and win R2: (1 − ${FALSE_LOSS.r1})·(1 − ${FALSE_LOSS.r2})·(1 − ${FALSE_LOSS.r4})·${f2(p.winPower)} ≈ ${f2(p.endToEnd)}. Each false-loss term is that round's bound under the null hypothesis (a variant no better or worse than base), not a rate measured on a real fix, and the R1 cut and the holdout gate are not counted: the figure is computed from those bounds, not an upper bound.`,
     "",
   ];
 }
@@ -144,6 +287,7 @@ function setupSection(
   setup: SetupRow | undefined,
   freeze: FreezeRow | undefined,
   power: PowerFacts | null,
+  fast: FastFacts | null = null,
 ): string[] {
   const out = ["## 1. Setup", ""];
   if (setup) {
@@ -207,7 +351,8 @@ function setupSection(
       "",
     );
   }
-  if (power) out.push(...powerSection(power));
+  if (fast) out.push(...fastSection(fast));
+  else if (power) out.push(...powerSection(power));
   const iso = rows.filter((r): r is IsolationRow => r.kind === "isolation");
   out.push("Designer sessions:", "");
   if (iso.length === 0) out.push("- none");
@@ -245,20 +390,21 @@ function variantsSection(vs: readonly VariantRow[], candDir: string): string[] {
   const out = ["## 2. Variants", ""];
   if (vs.length === 0) out.push("none", "");
   for (const v of vs) {
-    const patch = patchOf(candDir, v.id);
+    const patch = (patchOf(candDir, v.id) ?? "(patch not found)").trimEnd();
+    const fence = fenceFor(patch);
     out.push(
       `### ${v.id}`,
       "",
       `- ${v.manifest.summary} (kind ${v.manifest.kind.join(", ")}; session ${v.session})`,
       `- markers: ${v.spec.markers.map((m) => `\`${m}\``).join(", ") || "-"}; context: ${v.spec.contextMarkers.map((m) => `\`${m}\``).join(", ") || "-"}`,
       `- behaviour: names ${v.spec.newNames.join(" ") || "-"}; calls ${v.spec.changedCalls.join(" ") || "-"}`,
-      `- text delta ${v.textDelta}; admission ${v.admission.ok ? "ok" : `REFUSED: ${v.admission.failures.join("; ")}`}; goldenCompat ${v.goldenCompat.broken.join(", ") || "clean"}`,
+      `- text delta ${v.textDelta}; admission ${v.admission.ok ? "ok" : `REFUSED: ${v.admission.failures.join("; ")}`}${v.admission.caps ? ` (length caps: src ${v.admission.caps.src}, skill ${v.admission.caps.skill} strings)` : ""}; goldenCompat ${v.goldenCompat.notRun !== undefined ? `not run (${v.goldenCompat.notRun})` : v.goldenCompat.broken.join(", ") || "clean"}`,
       "",
       "<details><summary>patch</summary>",
       "",
-      "```diff",
-      (patch ?? "(patch not found)").trimEnd(),
-      "```",
+      `${fence}diff`,
+      patch,
+      fence,
       "",
       "</details>",
       "",
@@ -276,6 +422,20 @@ function caseResult(s: VariantScore, c: string): string {
   if (w.unexposed) return `unexposed${cue}`;
   return `tie${cue}`;
 }
+
+/** Failed rows per variant (infra-retry.ts); UNDECIDED when too many pairings were dropped. */
+export const infraLine = ({ infra: i }: Pick<VariantScore, "infra">): string =>
+  `Infra: ${i.retries} retries, ${i.recovered} rows recovered by a retry, ${i.failedRows} rows failed every try (invalid unless base's failed too), ${i.droppedPairings} pairings dropped from both sides (base's row failed every try) in ${i.droppedClusters} of ${i.clusters} clusters${i.undecided !== undefined ? `; UNDECIDED (no win): ${i.undecided}` : ""}`;
+
+/** Each dropped pairing and why, the first `max`. */
+export const droppedLines = ({ infra: i }: Pick<VariantScore, "infra">, max = 10): string[] =>
+  i.dropped.length === 0
+    ? []
+    : [
+        "",
+        ...i.dropped.slice(0, max).map((d) => `- dropped ${d}`),
+        ...(i.dropped.length > max ? [`- … ${i.dropped.length - max} more`] : []),
+      ];
 
 function roundSection(rows: readonly ControlRow[], round: "r1" | "r2", epoch: number): string[] {
   const out = [`### ${round.toUpperCase()}`, ""];
@@ -311,6 +471,10 @@ function roundSection(rows: readonly ControlRow[], round: "r1" | "r2", epoch: nu
       `CMH per model: ${s.cmh.map((c) => `${c.model} z ${f2(c.z)} p ${fp(c.p)}${c.loss ? " LOSS" : ""}`).join("; ")}`,
       "",
       `Keys: R1 score ${f2(s.r1Score)}, wins ${s.wins}, win z ${f2(s.winZ)}, exposed weak hits ${s.hitsExposed}, mean tokens ${s.meanTokens.toFixed(0)}, text delta ${s.textDelta}; eliminated: ${s.eliminated.join(", ") || "no"}`,
+      // scores from before the retry rule carry no infra counts
+      ...((s as Partial<VariantScore>).infra?.clusters !== undefined
+        ? ["", infraLine(s), ...droppedLines(s)]
+        : []),
       "",
     );
   }
@@ -493,17 +657,33 @@ export function renderReport(o: { group: Group; dir: string; candDir: string }):
       rows.filter((r): r is VariantRow => r.kind === "variant").map((r) => [r.id, r]),
     ).values(),
   ];
+  const r1 = lastOf(rows, "round_score", (r) => r.round === "r1" && r.epoch === epoch);
+  const fast =
+    freeze && modeOf(rows) === "fast"
+      ? fastFacts(freeze.nPlan, Array.isArray(r1?.scores) ? r1.scores.length : vs.length, {
+          rule: winRuleOf(rows),
+          ...(setup ? { rhoPool: setup.rhoPool } : {}),
+          migrated: migratedOf(rows) ?? null,
+        })
+      : null;
   return [
     `# hill-r2 tournament: ${o.group}`,
     "",
-    ...setupSection(o.dir, rows, setup, freeze, power),
+    ...setupSection(o.dir, rows, setup, freeze, power, fast),
     ...variantsSection(vs, o.candDir),
     "## 3. R1 / R2",
     "",
     ...roundSection(rows, "r1", epoch),
-    ...roundSection(rows, "r2", epoch),
-    ...scanSection(rows, epoch),
-    ...r4Section(rows, epoch),
+    ...(fast
+      ? [
+          "R2, R3 and R4: not run in fast mode; C7 (`tournament final --combined`) is the regression gate.",
+          "",
+        ]
+      : [
+          ...roundSection(rows, "r2", epoch),
+          ...scanSection(rows, epoch),
+          ...r4Section(rows, epoch),
+        ]),
     ...reviewSection(rows),
     ...decisionSection(rows),
     ...spendSection(rows),
@@ -511,7 +691,9 @@ export function renderReport(o: { group: Group; dir: string; candDir: string }):
 }
 
 /** `tournament report <group> --out <md>`: the §6 sections, and the copy of tournament.jsonl. Exit code. */
-export async function writeReport(o: GateOpts & { out: string }): Promise<number> {
+export async function writeReport(
+  o: Omit<GateOpts, "group"> & { group: Group; out: string },
+): Promise<number> {
   const ctl = controlFile(o.dir);
   if (!existsSync(ctl)) {
     console.error(`no control file ${ctl}`);
@@ -524,10 +706,10 @@ export async function writeReport(o: GateOpts & { out: string }): Promise<number
   });
   const out = resolve(o.repo, o.out);
   mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, `${md}\n`);
+  writeFileSync(out, publicReport(md));
   const copy = committedControl(o.repo, o.group);
   mkdirSync(dirname(copy), { recursive: true });
-  copyFileSync(ctl, copy);
+  writeFileSync(copy, publicControl(readFileSync(ctl, "utf8")));
   console.log(`report: ${out}; control file copied to ${copy}`);
   return 0;
 }

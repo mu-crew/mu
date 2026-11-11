@@ -159,6 +159,19 @@ export function normCdf(z: number): number {
   return z > 0 ? 1 - c : c;
 }
 
+/** The standard normal quantile: the z with normCdf(z) = p, by bisection on normCdf (|z| ≤ 37). */
+export function normQuantile(p: number): number {
+  if (!(p > 0 && p < 1)) throw new Error(`normQuantile: p ${p} outside (0, 1)`);
+  let lo = -37;
+  let hi = 37;
+  for (let i = 0; i < 200 && hi - lo > 1e-12; i++) {
+    const mid = (lo + hi) / 2;
+    if (normCdf(mid) < p) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
 export interface Stratum {
   /** variant hits */
   x1: number;

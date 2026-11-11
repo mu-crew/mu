@@ -140,6 +140,22 @@ function pictureOf(d: Rec): Set<string> | undefined {
   );
 }
 
+/** The partly consumed result's not-consumed half, which the newer wait returns. */
+const PARTLY_SUPERSEDED =
+  "A newer mu wait of this session began; what is not shown here was not consumed, that wait returns it.";
+
+/**
+ * `d` as the entry prints it. A superseded result names events it did not consume (its `firing`,
+ * members of `events`): those leave the printed JSON, so it shows only what was delivered here.
+ */
+function consumedView(d: Rec, consumed: readonly Rec[]): Rec {
+  if (d.superseded !== true) return d;
+  const { firing, events: _all, ...rest } = d;
+  const f = typeof firing === "object" && firing !== null ? (firing as Rec) : undefined;
+  const kept = f !== undefined && consumed.some((e) => e.ref === f.ref && e.kind === f.kind);
+  return { ...rest, ...(kept ? { firing: f } : {}), events: consumed };
+}
+
 /** What the settle needs from its host: the same wait again, one mu read, and cancellation. */
 export interface SettleIo {
   wait: () => Promise<MuResult>;
@@ -276,9 +292,7 @@ export async function settleBody(
     if (superseded) {
       // The newer wait returns what this one did not consume; waiting again would supersede it.
       after.push(
-        got.length === 0
-          ? SUPERSEDED_LINE.replace("[mu] settle: ", "")
-          : "A newer mu wait of this session began; what is not shown here was not consumed, that wait returns it.",
+        got.length === 0 ? SUPERSEDED_LINE.replace("[mu] settle: ", "") : PARTLY_SUPERSEDED,
       );
       break;
     }
@@ -302,8 +316,13 @@ export async function settleBody(
   const head =
     labels.length === 0
       ? n === 1
-        ? [`${ran} Its result:`, JSON.stringify(d)]
-        : [`${ran} ${n} events:`, ...events.map(lineOf), "Its result:", JSON.stringify(d)]
+        ? [`${ran} Its result:`, JSON.stringify(consumedView(d, events))]
+        : [
+            `${ran} ${n} events:`,
+            ...events.map(lineOf),
+            "Its result:",
+            JSON.stringify(consumedView(d, events)),
+          ]
       : n === 1 && only !== undefined
         ? [
             complete(only)
@@ -333,6 +352,8 @@ export async function settleBody(
   const cap = standalone.length > 1 ? WAVE_REPORT_CAP : REPORT_CAP;
   for (const [id, c] of standalone)
     blocks.push(c === undefined ? unreadable(id) : await answerBlock(io.mu, c, cap));
+  // Partly consumed (nudge.ts shows a result that consumed nothing as one line instead).
+  if (d.superseded === true && !after.includes(PARTLY_SUPERSEDED)) blocks.push(PARTLY_SUPERSEDED);
   blocks.push(...after);
   const owed = last === undefined ? undefined : owedLine(last, "the next settle");
   if (owed !== undefined) blocks.push(owed);

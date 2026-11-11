@@ -13,7 +13,7 @@ Spawn, refute, check, or delegate: a **task** or a **call**?
 
 ## The call
 
-In pi: `mu_delegate`, with `record: {task: "<ws>/<id>"}` when it judges a task, `wave` for a fan-out. Brief: claim, paths, criteria, ending:
+In pi: `mu_delegate`, with `record: {task: "<ws>/<id>"}` when it judges a task, `wave` for a fan-out, `model` per [models](models.md). Brief: claim, paths, criteria, ending:
 
 ```text
 VERDICT: <id> CONFIRMED|REFUTED|UNVERIFIED <one line>

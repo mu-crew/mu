@@ -52,7 +52,8 @@ import type { DestructiveFx, RunResult, Scenario, Surface } from "./types.ts";
 // ---- the runner ---------------------------------------------------------------------------------
 
 export interface R4Job {
-  group: Group;
+  /** The group, or "c7" for the combined gate (tournament-c7.ts). */
+  group: Group | "c7";
   round: "scan" | "r4" | "final";
   /** "base" or a variant id (the final gate: "combined"). */
   variant: string;
@@ -63,7 +64,7 @@ export interface R4Job {
 }
 
 export type R4Row = RunResult & {
-  group: Group;
+  group: R4Job["group"];
   round: R4Job["round"];
   variant: string;
   exposure: Exposure[];
@@ -219,7 +220,7 @@ export async function runR4(o: RunR4Opts): Promise<{ written: number; skipped: n
 
 /** What every gate command gets from the CLI: the group, its row dir, the repo and its own args. */
 export interface GateOpts {
-  group: Group;
+  group: R4Job["group"];
   /** The group's row dir (tournament.ts rowDir). */
   dir: string;
   repo: string;
@@ -236,18 +237,18 @@ export interface GateOpts {
 /** Exit code of a review stop (§5.2, §4.6). */
 export const EXIT_REVIEW = 7;
 
-function flag(args: string[], name: string): string | undefined {
+export function flag(args: string[], name: string): string | undefined {
   const i = args.indexOf(name);
   return i >= 0 ? args[i + 1] : undefined;
 }
-const num = (args: string[], name: string, d: number): number => {
+export const num = (args: string[], name: string, d: number): number => {
   const v = flag(args, name);
   return v === undefined ? d : Number(v);
 };
 
 /** Rep indices never meet another round's: scan from 301, R4 from 201, final from 401, per epoch. */
 export const R4_REP_BASE = { r4: 201, scan: 301, final: 401 } as const;
-const repFloor = (round: R4Job["round"], epoch: number): number =>
+export const repFloor = (round: R4Job["round"], epoch: number): number =>
   epoch * 1000 + R4_REP_BASE[round];
 
 const roundFile = (dir: string, name: "r4" | "scan", epoch: number): string =>
@@ -257,7 +258,7 @@ export const scanFile = (dir: string, epoch: number): string => roundFile(dir, "
 export const holdoutsFile = (dir: string): string => join(dir, "holdouts.jsonl");
 export const sealedDir = (dir: string): string => join(dir, "sealed");
 
-const surfaceOf = (label: string, root: string): Surface => ({
+export const surfaceOf = (label: string, root: string): Surface => ({
   ...surfaceFromDir(label, root),
   family: "next",
 });
@@ -304,10 +305,99 @@ const specFor =
 const haiku = (setup: SetupRow): string =>
   setup.models.weak.find((m) => m.includes("haiku")) ?? setup.models.weak[0] ?? "";
 
-const goldens = (s: Surface, scenarios: readonly string[]): Promise<GoldenTrace[]> =>
+export const goldens = (s: Surface, scenarios: readonly string[]): Promise<GoldenTrace[]> =>
   collectGoldenTraces(s, { cases: [], intents: [], scenarios });
 
+/** What scanning one variant needs besides the variant: base's goldens, twice, and the call key. */
+export interface ScanContext {
+  group: R4Job["group"];
+  /** The row dir whose scan.jsonl gets the live runs. */
+  dir: string;
+  setup: SetupRow;
+  epoch: number;
+  scenarios: readonly string[];
+  baseFirst: readonly GoldenTrace[];
+  baseAgain: readonly GoldenTrace[];
+  key: (argv: string) => string;
+  spec: (variant: string) => ExposureSpec;
+  concurrency: number;
+  deps?: GateOpts["deps"];
+}
+
+/** §4.4 steps 1-5 for one variant: text, behaviour, and live haiku runs when needed. */
+export async function scanOne(c: ScanContext, v: VariantRow): Promise<ScanResult> {
+  const traces = c.deps?.traces ?? goldens;
+  const vSurface = surfaceOf(`hill2-${v.id}`, v.dir);
+  const zero = scanZero({
+    kind: v.manifest.kind,
+    spec: v.spec,
+    scenarios: c.scenarios,
+    base: c.baseFirst,
+    baseAgain: c.baseAgain,
+    variant: await traces(vSurface, c.scenarios),
+    key: c.key,
+  });
+  if (!needsLive(v.manifest.kind, zero)) return scanSelect(v.id, zero, null);
+  const floor = repFloor("scan", c.epoch);
+  const jobs: R4Job[] = c.scenarios.flatMap((scenario) =>
+    Array.from({ length: SCAN_LIVE_RUNS }, (_, k) => ({
+      group: c.group,
+      round: "scan" as const,
+      variant: v.id,
+      surface: vSurface,
+      scenario,
+      model: haiku(c.setup),
+      rep: floor + k,
+    })),
+  );
+  const out = scanFile(c.dir, c.epoch);
+  await runR4({
+    jobs: shuffle(jobs, `${c.setup.seed}:scan:${c.epoch}:${v.id}`),
+    out,
+    logRoot: join(c.dir, "logs"),
+    concurrency: c.concurrency,
+    providerExt: c.setup.providerExt ?? undefined,
+    spec: c.spec,
+    run: c.deps?.run,
+  });
+  const live = readR4Rows(out).filter(
+    (r) =>
+      r.round === "scan" &&
+      r.variant === v.id &&
+      r.rep >= floor &&
+      r.rep < floor + 900 &&
+      validRun(r),
+  );
+  return scanSelect(v.id, zero, live);
+}
+
 // ---- R3 (§4.4) ----------------------------------------------------------------------------------
+
+/** Base's goldens (run twice: noise mask) and the call key, for scanning variants against base. */
+export async function scanContext(
+  o: Pick<GateOpts, "group" | "dir" | "args" | "deps">,
+  setup: SetupRow,
+  epoch: number,
+  scenarios: readonly string[],
+  spec: (variant: string) => ExposureSpec,
+): Promise<ScanContext> {
+  const traces = o.deps?.traces ?? goldens;
+  const base = surfaceOf("hill2-base", setup.baseDir);
+  const paths = (o.deps?.paths ?? commandPaths)(base);
+  return {
+    group: o.group,
+    dir: o.dir,
+    setup,
+    epoch,
+    scenarios,
+    baseFirst: await traces(base, scenarios),
+    baseAgain: await traces(base, scenarios),
+    key: (argv) => callKey(argv, paths),
+    spec,
+    concurrency: num(o.args, "--concurrency", 6),
+    deps: o.deps,
+  };
+}
 
 /** §4.4 R3: which scenarios exercise each finalist (text, behaviour, live haiku runs). Exit code. */
 export async function runScan(o: GateOpts): Promise<number> {
@@ -321,60 +411,11 @@ export async function runScan(o: GateOpts): Promise<number> {
   const vs = variantRows(rows);
   const only = flag(o.args, "--scenarios")?.split(",").filter(Boolean);
   const scenarios = (only ?? scenarioIds(false)).filter((id) => !HOLDOUTS.includes(id));
-  const traces = o.deps?.traces ?? goldens;
-  const base = surfaceOf("hill2-base", setup.baseDir);
-  const baseFirst = await traces(base, scenarios);
-  const baseAgain = await traces(base, scenarios);
-  const paths = (o.deps?.paths ?? commandPaths)(base);
-  const key = (argv: string): string => callKey(argv, paths);
-  const spec = specFor(vs, ids);
-  const floor = repFloor("scan", epoch);
+  const ctx = await scanContext(o, setup, epoch, scenarios, specFor(vs, ids));
   for (const id of ids) {
     const v = vs.get(id);
     if (!v) throw new Error(`no variant row ${id}`);
-    const vSurface = surfaceOf(`hill2-${id}`, v.dir);
-    const zero = scanZero({
-      kind: v.manifest.kind,
-      spec: v.spec,
-      scenarios,
-      base: baseFirst,
-      baseAgain,
-      variant: await traces(vSurface, scenarios),
-      key,
-    });
-    let live: R4Row[] | null = null;
-    if (needsLive(v.manifest.kind, zero)) {
-      const jobs: R4Job[] = scenarios.flatMap((scenario) =>
-        Array.from({ length: SCAN_LIVE_RUNS }, (_, k) => ({
-          group: o.group,
-          round: "scan" as const,
-          variant: id,
-          surface: vSurface,
-          scenario,
-          model: haiku(setup),
-          rep: floor + k,
-        })),
-      );
-      const out = scanFile(o.dir, epoch);
-      await runR4({
-        jobs: shuffle(jobs, `${setup.seed}:scan:${epoch}:${id}`),
-        out,
-        logRoot: join(o.dir, "logs"),
-        concurrency: num(o.args, "--concurrency", 6),
-        providerExt: setup.providerExt ?? undefined,
-        spec,
-        run: o.deps?.run,
-      });
-      live = readR4Rows(out).filter(
-        (r) =>
-          r.round === "scan" &&
-          r.variant === id &&
-          r.rep >= floor &&
-          r.rep < floor + 900 &&
-          validRun(r),
-      );
-    }
-    const res = scanSelect(id, zero, live);
+    const res = await scanOne(ctx, v);
     appendControl(o.dir, { kind: "scan", epoch, ...res });
     console.log(
       `${id}: ${res.selected.length > 0 ? `R4 on ${res.selected.join(", ")}` : "no exercising scenario: it cannot win (add one, §2.2)"}`,

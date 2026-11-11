@@ -15,6 +15,14 @@ export const RIG_CANARY: string = ["RIG", "CANARY", "f8dc74a2239b"].join("-");
 /** A text holds the canary: it came from a rig file. */
 export const hasCanary = (text: string): boolean => text.includes(RIG_CANARY);
 
+/** The canary line a rig file of `path`'s kind carries first and last (what to add to a new file). */
+export function canaryLine(path: string): string {
+  const note = `${RIG_CANARY}: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.`;
+  if (path.endsWith(".md")) return `<!-- ${note} -->`;
+  if (path.endsWith(".json")) return `"${RIG_CANARY}" (the first and last element of its array)`;
+  return `// ${note}`;
+}
+
 /** `src` without its canary lines: a rig module staged into a sandbox (stageRig). */
 export const stripCanary = (src: string): string =>
   src

@@ -3,6 +3,7 @@
 // docs/specs/2026-11-07-hill-r2-tournament.md §3-§4, unit B3b). main.ts dispatches here and nowhere
 // else. Order per group: freeze → pack → design → audit → build → r1 → r2 → r3 → r4 (→ final,
 // report). Every command after the freeze refuses on changed judges and on a pending review stop.
+import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -29,13 +30,19 @@ import {
   appendReviewStop,
   assertB0,
   assertFrozen,
+  assertMode,
   assertNoPendingStops,
   type ControlRow,
   coldFile,
   epochOf,
+  FAST_TARGET,
+  freshRows,
+  frozenHash,
   GATE,
   type IsolationRow,
+  modeOf,
   nPlan,
+  parseWinRule,
   pendingStops,
   planCmhPower,
   powerLine,
@@ -45,22 +52,32 @@ import {
   rhoFromB5,
   roundJobs,
   rowDir,
+  ruleLine,
+  ruleTests,
   type SetupRow,
   setupOf,
   WEAK,
+  type WinRule,
   wallEstimate,
+  winRuleOf,
+  winZ,
 } from "./tournament.ts";
 import {
   assessVariant,
   buildVariant,
+  cachedTraces,
   collectGoldenTraces,
   commandPaths,
   type GoldenTrace,
   HOLDOUTS,
   judgesHash,
   listCandidates,
+  passPool,
+  traceCacheKey,
+  unmaskedCases,
   type VariantRow,
 } from "./tournament-build.ts";
+import { runCombined } from "./tournament-c7.ts";
 import {
   auditSession,
   collectVariants,
@@ -73,8 +90,8 @@ import {
 } from "./tournament-design.ts";
 import { parseManifest } from "./tournament-patch.ts";
 import { EXIT_REVIEW, runFinal, runR4Gate, runScan } from "./tournament-r4.ts";
-import { writeReport } from "./tournament-report.ts";
-import { BASE, cut, scoreRound } from "./tournament-score.ts";
+import { infraLine, writeReport } from "./tournament-report.ts";
+import { BASE, cut, decideFast, scoreRound } from "./tournament-score.ts";
 import type { Surface } from "./types.ts";
 
 const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -88,14 +105,20 @@ const GROUPS: readonly Group[] = [
 ];
 
 const USAGE = `usage: node tools/eval/main.ts tournament <sub> <group> ...
-  freeze <g> --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
+  --fast on plan/freeze (then r1, decide, report follow the frozen mode): R1 decides, no R2/R3/R4 per group, C7 gates
+  fast plans add the help and skill+help arms to every case (--no-help-arms: the case's own arms only)
+  --win-alpha <a> --correct none|variants|bonferroni on freeze --fast / migrate-fast: the fast win threshold (default 0.2, bonferroni over variants x headline cases)
+  freeze <g> [--fast [--win-alpha a] [--correct c]] --base <sha> --b0 <rows.jsonl> --b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m] [--provider-ext p] [--seed s] [--no-checks]
   refreeze <g> --row <row id> --why "<reason>"
-  plan <g> [--variants 12] [--entrants 6] [--b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m]]
+  migrate-fast <g> --why "<reason>" [--win-alpha a] [--correct c] [--accept-judges <hash>]   (a full group with R1 scored switches to fast, keeping its epoch's R1 rows)
+  plan <g> [--fast] [--variants 12] [--entrants 6] [--b5 <probe.jsonl> [--b5-cold <cold.jsonl>] [--weak a,b] [--gate m]]
   pack <g> [--brief tools/eval/candidates/<g>/brief.src.md]
   design <g> --model <m> [--session <name>]
   audit <g> [--session <name>]
-  build <g> [--scenarios a,b]
+  build <g> [--scenarios a,b] [--passes 4] [--force]   (golden passes at once, each row claims; --force re-assesses built variants from cached traces)
   r1 <g> | r2 <g>   [--concurrency auto|n] [--model-concurrency 8]   (auto: as many probe rows as muzzle's budget holds)
+  decide --fast <g>   (fast mode: the R1 decision; at most one winner)
+  final --combined [--base <sha>] [--groups a,b] [--drop v1,v2] [--concurrency 6]   (C7: every group's winner on one surface; R4, then holdouts once; every group must be frozen on the one base, else refused)
   review <g> --stop <id> --decision drop|continue --why "<transcript lines>"
   status <g>
   r3 <g> [--scenarios a,b] [--concurrency 6]
@@ -191,20 +214,35 @@ async function makeSetup(group: Group, args: string[]): Promise<SetupRow> {
 const r4Scenarios = (only?: string[]): string[] =>
   (only ?? scenarioIds(false)).filter((id) => !HOLDOUTS.includes(id));
 
-/** Base's golden traces, run twice (noise mask), cached in the row dir. */
+/**
+ * Base's golden traces, run twice (noise mask) side by side, cached in the row dir under the
+ * base ref, the judges' hash and the scenario files (traceCacheKey).
+ */
 async function baseTraces(
   dir: string,
   surface: Surface,
+  ref: string,
   scenarios: string[],
 ): Promise<{ first: GoldenTrace[]; again: GoldenTrace[] }> {
-  const f = join(dir, "golden-base.json");
-  if (existsSync(f)) return JSON.parse(readFileSync(f, "utf8"));
+  const key = traceCacheKey({
+    ref,
+    judgesHash: judgesHash(REPO_ROOT).hash,
+    scenarios,
+    scenarioRoot: surface.scenarioRoot,
+  });
   const o = { cases: NEXT_CASES, scenarios };
-  const t = {
-    first: await collectGoldenTraces(surface, o),
-    again: await collectGoldenTraces(surface, o),
-  };
-  writeFileSync(f, JSON.stringify(t));
+  const t = await cachedTraces(join(dir, `golden-base-${key}.json`), async () => {
+    // two independent passes over fresh sandboxes; each row still takes its own muzzle claim
+    const [first = [], again = []] = await passPool([0, 1], 2, () =>
+      collectGoldenTraces(surface, o),
+    );
+    return { first, again };
+  });
+  const unmasked = unmaskedCases(t.first, t.again);
+  if (unmasked.length > 0)
+    console.log(
+      `base goldens not complete on both passes (no noise mask, every difference counts): ${unmasked.join(" ")}`,
+    );
   return t;
 }
 
@@ -225,6 +263,8 @@ function audit(group: Group, rows: readonly ControlRow[], dir: string, only?: st
       providerExt: setupOf(rows)?.providerExt ?? undefined,
     });
     ctx.allow.push(join(PACKS_DIR, group));
+    // a path below HOME in a top dir this host lacks names nothing the designer could read
+    ctx.exists = existsSync;
     // what the pristine pack itself says is no leak (mu's docs name its own state dirs)
     excused ??= packTokens(join(PACKS_DIR, group), ctx);
     const hits = auditSession(join(ddir, "sessions"), ctx, excused);
@@ -241,6 +281,131 @@ function audit(group: Group, rows: readonly ControlRow[], dir: string, only?: st
   return n;
 }
 
+const surfacesOf = (
+  setup: SetupRow,
+  entrants: readonly VariantRow[],
+): { label: string; surface: Surface }[] => [
+  { label: BASE, surface: baseSurface(setup) },
+  ...entrants.map((v) => ({
+    label: v.id,
+    surface: { ...surfaceFromDir(`hill2-${v.id}`, v.dir), family: "next" as const },
+  })),
+];
+
+/** Score a round from its probe rows of this epoch (fresh rows only: the round's rep range). */
+function scoreFrom(o: {
+  which: "r1" | "r2";
+  group: Group;
+  dir: string;
+  rows: readonly ControlRow[];
+  setup: SetupRow;
+  entrants: readonly VariantRow[];
+  cold: readonly ColdRow[];
+  fast: boolean;
+  rule: WinRule;
+}): { scores: ReturnType<typeof scoreRound>; probe: ProbeRow[] } {
+  const epoch = epochOf(o.rows);
+  const floor = epoch * 1000 + REP_BASE[o.which];
+  const promptDir = join(o.dir, "prompts");
+  const probe = freshRows(readProbeRows(probeFile(o.dir, epoch)), o.which, epoch);
+  const lint = nextLint(surfacesOf(o.setup, o.entrants), NEXT_CASES);
+  const headline = ownHeadline(o.group);
+  const scores = scoreRound({
+    round: o.which,
+    group: o.group,
+    rows: probe,
+    cold: o.cold,
+    variants: o.entrants,
+    setup: o.setup,
+    headline,
+    headlineAny: NEXT_CASES.filter((c) => c.role === "headline").map((c) => c.id),
+    nameCues: lint.nameCues,
+    prompt: (sha) => {
+      const f = join(promptDir, `${sha}.txt`);
+      return existsSync(f) ? readFileSync(f, "utf8") : "";
+    },
+    S: o.which === "r2" ? o.entrants.length : undefined,
+    decisions: o.rows.flatMap((r) => (r.kind === "review_decision" ? [r] : [])),
+    repFloor: floor,
+    fast: o.fast,
+    ...(o.fast ? { fastZ: winZ(o.rule, o.entrants.length, headline.length) } : {}),
+  });
+  return { scores, probe };
+}
+
+const ownHeadline = (group: Group): string[] =>
+  NEXT_CASES.filter((c) => c.group === group && c.role === "headline").map((c) => c.id);
+
+/** The judge files that differ between two judges trees (best effort: a tree may be gone). */
+function judgesDiff(from: string, to: string): string[] {
+  try {
+    return execFileSync("git", ["-C", REPO_ROOT, "diff-tree", "-r", "--name-only", from, to], {
+      encoding: "utf8",
+    })
+      .split("\n")
+      .filter(Boolean);
+  } catch {
+    return [`(tree ${from} not in this repo: the changed files are unknown)`];
+  }
+}
+
+/** Append and print every pending review stop of a score; true when there was one (exit 7). */
+function stopFor(dir: string, scores: ReturnType<typeof scoreRound>): boolean {
+  const stops = scores.flatMap((s) => s.reviews);
+  for (const s of stops)
+    console.log(
+      `review stop ${appendReviewStop(dir, s)}: ${s.variant} ${s.cell}: ${s.entries.join("; ")}`,
+    );
+  return stops.length > 0;
+}
+
+/**
+ * §4.7 `decide --fast <group>`: re-score the group's R1 rows of this epoch (base interleaved, fresh
+ * rows only) with the fast win rule, and write the decision row: at most one winner. Exit code.
+ */
+export function decide(group: Group, dir: string): number {
+  const rows = readControl(dir);
+  const setup = setupOf(rows);
+  assertB0(setup);
+  if (!setup) return 2;
+  const epoch = epochOf(rows);
+  if (!rows.some((r) => r.kind === "round_score" && r.round === "r1" && r.epoch === epoch))
+    throw new Error("no R1 in this epoch: run `tournament r1` first");
+  const entrants = field(rows);
+  const rule = winRuleOf(rows);
+  const { scores } = scoreFrom({
+    which: "r1",
+    group,
+    dir,
+    rows,
+    setup,
+    entrants,
+    cold: [],
+    fast: true,
+    rule,
+  });
+  if (stopFor(dir, scores)) return EXIT_REVIEW;
+  const d = decideFast(scores);
+  const h = ownHeadline(group).length;
+  console.log(`fast win rule: ${ruleLine(rule, entrants.length, h)}`);
+  appendControl(dir, {
+    kind: "decision",
+    mode: "fast",
+    epoch,
+    rule: {
+      ...rule,
+      tests: ruleTests(rule, entrants.length, h),
+      z: winZ(rule, entrants.length, h),
+    },
+    winner: d.winner,
+    ranking: d.ranking,
+    why: d.why,
+    scores,
+  });
+  console.log(`decision: ${d.winner ?? "base stays"} (${d.why})`);
+  return 0;
+}
+
 async function round(
   group: Group,
   which: "r1" | "r2",
@@ -253,6 +418,7 @@ async function round(
   if (!setup) return 2;
   const freeze = [...rows].reverse().find((r) => r.kind === "freeze");
   if (freeze?.kind !== "freeze") throw new Error("no freeze row");
+  const fast = modeOf(rows) === "fast";
   const epoch = epochOf(rows);
   const all = field(rows);
   let entrants = all;
@@ -269,13 +435,7 @@ async function round(
       return 0;
     }
   }
-  const surfaces = [
-    { label: BASE, surface: baseSurface(setup) },
-    ...entrants.map((v) => ({
-      label: v.id,
-      surface: { ...surfaceFromDir(`hill2-${v.id}`, v.dir), family: "next" as const },
-    })),
-  ];
+  const surfaces = surfacesOf(setup, entrants);
   const models = [...setup.models.weak, setup.models.gate];
   const jobs = roundJobs(
     which,
@@ -296,13 +456,11 @@ async function round(
   console.log(
     `${which}: ${est.rows} rows, about ${est.hours.toFixed(1)} h (slots ${est.slotHours.toFixed(1)} h, models ${est.modelHours.toFixed(1)} h)`,
   );
-  const out = probeFile(dir, epoch);
-  const promptDir = join(dir, "prompts");
   const started = Date.now();
   await runNext({
     jobs,
-    out,
-    promptDir,
+    out: probeFile(dir, epoch),
+    promptDir: join(dir, "prompts"),
     ...conc,
     providerExt: setup.providerExt ?? undefined,
   });
@@ -322,53 +480,43 @@ async function round(
     });
     cold = readRows(coldFile(dir, epoch));
   }
-  const floor = epoch * 1000 + REP_BASE[which];
-  const probe = readProbeRows(out).filter(
-    (r) => r.round === which && r.rep >= floor && r.rep < floor + 900,
-  );
-  const lint = nextLint(surfaces, NEXT_CASES);
-  const scores = scoreRound({
-    round: which,
+  const { scores, probe } = scoreFrom({
+    which,
     group,
-    rows: probe,
-    cold,
-    variants: entrants,
+    dir,
+    rows,
     setup,
-    headline: NEXT_CASES.filter((c) => c.group === group && c.role === "headline").map((c) => c.id),
-    headlineAny: NEXT_CASES.filter((c) => c.role === "headline").map((c) => c.id),
-    nameCues: lint.nameCues,
-    prompt: (sha) => {
-      const f = join(promptDir, `${sha}.txt`);
-      return existsSync(f) ? readFileSync(f, "utf8") : "";
-    },
-    S: which === "r2" ? entrants.length : undefined,
-    decisions: rows.flatMap((r) => (r.kind === "review_decision" ? [r] : [])),
-    repFloor: floor,
+    entrants,
+    cold,
+    fast,
+    rule: winRuleOf(rows),
   });
   appendControl(dir, {
     kind: "round_score",
     round: which,
     epoch,
     S: which === "r2" ? entrants.length : null,
+    ...(fast ? { mode: "fast" } : {}),
     scores,
   });
   const tokens: Record<string, number> = {};
   for (const r of probe) tokens[r.model] = (tokens[r.model] ?? 0) + r.tokens;
   for (const r of cold) tokens[r.model] = (tokens[r.model] ?? 0) + r.tokens;
   appendControl(dir, { kind: "spend", round: which, epoch, tokens, wallMs: Date.now() - started });
-  const stops = scores.flatMap((s) => s.reviews);
-  if (stops.length > 0) {
-    for (const s of stops)
+  if (stopFor(dir, scores)) return EXIT_REVIEW;
+  if (fast) {
+    for (const s of scores)
       console.log(
-        `review stop ${appendReviewStop(dir, s)}: ${s.variant} ${s.cell}: ${s.entries.join("; ")}`,
+        `${s.id}: fast wins ${s.wins} (z ${s.winZ.toFixed(2)}), ${infraLine(s)}${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
       );
-    return EXIT_REVIEW;
+    console.log(`fast mode: no cut; next \`tournament decide --fast ${group}\``);
+    return 0;
   }
   const c = cut(which, scores);
   appendControl(dir, { kind: "cut", round: which, epoch, ...c });
   for (const s of scores)
     console.log(
-      `${s.id}: ${which === "r1" ? `score ${s.r1Score.toFixed(2)}` : `wins ${s.wins}`}${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
+      `${s.id}: ${which === "r1" ? `score ${s.r1Score.toFixed(2)}` : `wins ${s.wins}`}${s.infra.undecided !== undefined ? " UNDECIDED" : ""}${s.eliminated.length > 0 ? ` OUT (${s.eliminated.join(", ")})` : ""}`,
     );
   console.log(`${which} cut: advance ${c.advance}: ${c.advanced.join(", ") || "none"}`);
   if (which === "r2" && c.advance === 0)
@@ -380,12 +528,77 @@ async function round(
   return 0;
 }
 
-export async function tournamentCli(args: string[]): Promise<number> {
+/**
+ * §4.7 `migrate-fast <group>`: a full-mode group with R1 scored in this epoch (and no R2 score, so
+ * the switch never follows an R2 result) goes fast, keeping the epoch: `decide --fast` then reads
+ * this epoch's R1 rows, nothing re-runs. The judges are re-checked against the latest freeze or
+ * refreeze; a moved hash lists the changed files and needs `--accept-judges <the new hash>`.
+ */
+export function migrateFast(
+  group: Group,
+  dir: string,
+  rows: readonly ControlRow[],
+  args: string[],
+  deps: { hash?: () => string; diff?: (from: string, to: string) => string[] } = {},
+): number {
+  const why = flag(args, "--why");
+  if (!why) throw new Error(USAGE);
+  if (!rows.some((r) => r.kind === "freeze")) throw new Error("not frozen yet");
+  const epoch = epochOf(rows);
+  const scored = (round: string): boolean =>
+    rows.some((r) => r.kind === "round_score" && r.round === round && r.epoch === epoch);
+  if (!scored("r1"))
+    throw new Error(
+      `no R1 score in epoch ${epoch}: migrate-fast reuses a scored R1, run \`tournament r1\` first`,
+    );
+  if (scored("r2") || rows.some((r) => r.kind === "decision"))
+    throw new Error(
+      `epoch ${epoch} already has an R2 score or a decision: switching to fast now would follow its result`,
+    );
+  const win = parseWinRule(flag(args, "--win-alpha"), flag(args, "--correct"));
+  const previous = frozenHash(rows) ?? "";
+  const current = (deps.hash ?? (() => judgesHash(REPO_ROOT).hash))();
+  const changed = previous === current ? [] : (deps.diff ?? judgesDiff)(previous, current);
+  if (changed.length > 0 && flag(args, "--accept-judges") !== current) {
+    console.error(
+      `judges changed since the freeze (${previous} -> ${current}): ${changed.length} files\n${changed.map((f) => `  ${f}`).join("\n")}\nmigrate-fast reuses rows judged before the change: check none of these decides an R1 row, then pass --accept-judges ${current}`,
+    );
+    return 1;
+  }
+  appendControl(dir, {
+    kind: "migrate_fast",
+    from: "full",
+    epoch,
+    why,
+    win,
+    judgesHash: current,
+    previousJudgesHash: previous,
+    judgesChanged: changed,
+  });
+  const h = ownHeadline(group).length;
+  const n = field(rows).length;
+  console.log(
+    `migrated to fast mode (epoch ${epoch} kept; its R1 rows decide): win rule ${ruleLine(win, n, h)}${changed.length > 0 ? `; judges ${previous} -> ${current} accepted (${changed.length} files)` : ""}`,
+  );
+  console.log(`next: \`tournament decide --fast ${group}\``);
+  return 0;
+}
+
+export async function tournamentCli(argv: string[]): Promise<number> {
+  // `--fast` and `--combined` may stand anywhere (`decide --fast <group>`, `final --combined`)
+  const fastFlag = argv.includes("--fast");
+  const args = argv.filter((a) => a !== "--fast");
   const [sub, g, ...rest] = args;
   if (!sub || sub === "--help" || sub === "help") {
     console.log(USAGE);
     return sub ? 0 : 2;
   }
+  if (sub === "final" && args.includes("--combined"))
+    return runCombined({
+      repo: REPO_ROOT,
+      groups: GROUPS,
+      args: args.slice(1).filter((a) => a !== "--combined"),
+    });
   const group = g as Group;
   if (!GROUPS.includes(group)) {
     console.error(USAGE);
@@ -394,6 +607,7 @@ export async function tournamentCli(args: string[]): Promise<number> {
   const dir = rowDir(group);
   const rows = readControl(dir);
   const frozen = (): void => assertFrozen(rows, judgesHash(REPO_ROOT).hash);
+  assertMode(rows, sub, fastFlag);
   switch (sub) {
     case "freeze": {
       if (rows.some((r) => r.kind === "freeze"))
@@ -422,11 +636,19 @@ export async function tournamentCli(args: string[]): Promise<number> {
       }
       if (!setupOf(rows)) appendControl(dir, setup);
       const h = judgesHash(REPO_ROOT);
-      const plan = nPlan(group, NEXT_CASES, setup);
+      const mode = fastFlag ? "fast" : "full";
+      const plan = nPlan(group, NEXT_CASES, setup, mode, {
+        helpArms: !rest.includes("--no-help-arms"),
+      });
+      const win = fastFlag
+        ? parseWinRule(flag(rest, "--win-alpha"), flag(rest, "--correct"))
+        : null;
       appendControl(dir, {
         kind: "freeze",
         judgesHash: h.hash,
         files: h.files,
+        mode,
+        ...(win ? { targets: { ...FAST_TARGET }, win } : {}),
         nPlan: plan,
         cmhPower: planCmhPower(plan),
         checks,
@@ -436,9 +658,12 @@ export async function tournamentCli(args: string[]): Promise<number> {
           `${p.case} ${p.kind}: m ${p.plan.m} r ${p.plan.r} n_eff ${p.plan.nEff.toFixed(0)}${p.plan.nEffPooled ? `/${p.plan.nEffPooled.toFixed(0)}` : ""}${p.plan.reached ? "" : ` SHORT (+${p.plan.add} paraphrases, MDE ${p.mde})`}`,
         );
       console.log(powerLine(planCmhPower(plan)));
-      console.log(`frozen: judges ${h.hash}`);
+      if (win) console.log(`fast win rule: ${ruleLine(win)}`);
+      console.log(`frozen (${mode} mode): judges ${h.hash}`);
       return 0;
     }
+    case "migrate-fast":
+      return migrateFast(group, dir, rows, rest);
     case "refreeze": {
       const row = flag(rest, "--row");
       const why = flag(rest, "--why");
@@ -464,8 +689,25 @@ export async function tournamentCli(args: string[]): Promise<number> {
         setupOf(rows) ??
         (b5 ? { models: { weak, gate }, ...rhoFromB5(b5.probe, b5.cold, { weak, gate }) } : null);
       const freeze = [...rows].reverse().find((r) => r.kind === "freeze");
-      const plan = freeze?.kind === "freeze" ? freeze.nPlan : nPlan(group, NEXT_CASES, setup);
+      const fast = freeze?.kind === "freeze" ? freeze.mode === "fast" : fastFlag;
+      const plan =
+        freeze?.kind === "freeze"
+          ? freeze.nPlan
+          : nPlan(group, NEXT_CASES, setup, fast ? "fast" : "full", {
+              helpArms: !rest.includes("--no-help-arms"),
+            });
       const n = Number(flag(rest, "--variants") ?? 12);
+      if (fast) {
+        const rule = freeze
+          ? winRuleOf(rows)
+          : parseWinRule(flag(rest, "--win-alpha"), flag(rest, "--correct"));
+        console.log(
+          `fast mode: R1 decides (own headline n_eff ${FAST_TARGET.own} per model, ${FAST_TARGET.pooled} pooled); no R2, no per-group R4; C7 is the gate`,
+        );
+        console.log(
+          `fast win rule at ${n} variants: ${ruleLine(rule, n, plan.filter((p) => p.kind === "own").length)}`,
+        );
+      }
       const s = Number(flag(rest, "--entrants") ?? Math.ceil(n / 2));
       const models = setup ? [...setup.models.weak, setup.models.gate] : [...WEAK, GATE];
       const stub = (k: number): { label: string; surface: Surface }[] =>
@@ -484,10 +726,13 @@ export async function tournamentCli(args: string[]): Promise<number> {
       console.log(
         powerLine((freeze?.kind === "freeze" ? freeze.cmhPower : undefined) ?? planCmhPower(plan)),
       );
-      for (const [which, k] of [
-        ["r1", n],
-        ["r2", s],
-      ] as const) {
+      const rounds: (readonly ["r1" | "r2", number])[] = fast
+        ? [["r1", n]]
+        : [
+            ["r1", n],
+            ["r2", s],
+          ];
+      for (const [which, k] of rounds) {
         const e = wallEstimate(
           roundJobs(
             which,
@@ -568,10 +813,16 @@ export async function tournamentCli(args: string[]): Promise<number> {
       const base = baseSurface(setup);
       const clean = cleanSessions(now);
       const scenarios = r4Scenarios(list(flag(rest, "--scenarios")));
-      const traces = await baseTraces(dir, base, scenarios);
+      const traces = await baseTraces(dir, base, setup.baseSha, scenarios);
       const vocab = surfaceVocab(base);
       const paths = commandPaths(base);
       const have = new Map(variantRows(now).map((v) => [v.id, v.patchSha]));
+      const todo: {
+        manifest: ReturnType<typeof parseManifest>;
+        session: string;
+        patchText: string;
+        build: ReturnType<typeof buildVariant>;
+      }[] = [];
       for (const c of listCandidates(candDir(group))) {
         const session = c.manifest.slice(candDir(group).length + 1).split("/")[0] ?? "";
         if (!clean.has(session)) {
@@ -582,16 +833,49 @@ export async function tournamentCli(args: string[]): Promise<number> {
         const patchText = readFileSync(c.patch, "utf8");
         const build = buildVariant(setup.baseDir, setup.baseSha, manifest.id, c.patch);
         if (
+          !rest.includes("--force") &&
           have.get(manifest.id) !== undefined &&
           now.some((r) => r.kind === "variant" && r.id === manifest.id && r.ref === build.ref)
         )
           continue;
-        const vSurface = build.built.ok
-          ? { ...surfaceFromDir(`hill2-${manifest.id}`, build.dir), family: "next" as const }
-          : null;
-        const vTraces = vSurface
-          ? await collectGoldenTraces(vSurface, { cases: NEXT_CASES, scenarios })
-          : [];
+        todo.push({ manifest, session, patchText, build });
+      }
+      // the variants' golden passes run side by side (each row under its own muzzle claim);
+      // rows are appended in candidate order once all are in
+      const width = Math.max(1, Number(flag(rest, "--passes") ?? 4));
+      const judges = judgesHash(REPO_ROOT).hash;
+      const passes = await passPool(
+        todo,
+        width,
+        async (t): Promise<{ traces: GoldenTrace[]; error?: string }> => {
+          if (!t.build.built.ok) return { traces: [] };
+          const surface = {
+            ...surfaceFromDir(`hill2-${t.manifest.id}`, t.build.dir),
+            family: "next" as const,
+          };
+          // cached like base's: a re-assessment (`--force`) reruns no golden, a refreeze does
+          const key = traceCacheKey({
+            ref: t.build.ref,
+            judgesHash: judges,
+            scenarios,
+            scenarioRoot: surface.scenarioRoot,
+          });
+          try {
+            const traces = await cachedTraces(
+              join(dir, `golden-${t.manifest.id}-${key}.json`),
+              () => collectGoldenTraces(surface, { cases: NEXT_CASES, scenarios }),
+            );
+            return { traces };
+          } catch (e) {
+            // one variant's broken golden pass must not discard the others'
+            const error = e instanceof Error ? e.message : String(e);
+            console.log(`${t.manifest.id}: golden pass failed (${error}); goldens not run`);
+            return { traces: [], error };
+          }
+        },
+      );
+      for (const [i, { manifest, session, patchText, build }] of todo.entries()) {
+        const pass = passes[i] ?? { traces: [], error: "no pass" };
         const row = assessVariant({
           manifest,
           session,
@@ -601,7 +885,8 @@ export async function tournamentCli(args: string[]): Promise<number> {
           baseVocab: vocab,
           baseTraces: traces.first,
           baseAgain: traces.again,
-          variantTraces: vTraces,
+          variantTraces: pass.traces,
+          goldenError: pass.error,
           key: (argv) => callKey(argv, paths),
         });
         appendControl(dir, row);
@@ -616,6 +901,10 @@ export async function tournamentCli(args: string[]): Promise<number> {
       frozen();
       assertNoPendingStops(rows);
       return round(group, sub, rest, dir);
+    case "decide":
+      frozen();
+      assertNoPendingStops(rows);
+      return decide(group, dir);
     case "review": {
       const stop = flag(rest, "--stop");
       const decision = flag(rest, "--decision");

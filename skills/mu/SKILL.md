@@ -12,14 +12,11 @@ description: >-
 
 # mu
 
-**`mu --help` and `mu <verb> --help` outrank this skill**; a verb they omit does not exist. A verb takes
-`-w <workstream>` only if its `--help` lists it (`doctor`, `sync`, `delegates
-show` do not); workers get it.
+**`mu --help` and `mu <verb> --help` outrank this skill**; a verb they omit does not exist.
 
 - **umbrella**: a job's parent task, blocked by every unit; holds brief, criteria, stop rule.
 - **finding**: an `OPEN/triage` task. **verdict**: `VERDICT: <id>
   CONFIRMED|REFUTED|UNVERIFIED <line>` plus `EVIDENCE:`.
-- `mu task block A --by B`: B blocks A. Chain tasks sharing files.
 
 ## Channels
 
@@ -46,7 +43,8 @@ human is needed. Ending a turn mid-run stalls the crew.
 Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Always:
 
 - **Claim before work is sent.** `agent spawn --task <id> --send ...` does both.
-- **Wait with `mu wait` (refs if unmanaged), never `sleep` loops.**
+- **Wait with `mu wait`, never `sleep` loops.** All of a set: `mu wait --all task:<ws>/<a> task:<ws>/<b>`.
+- **Then read every outcome:** `mu task show <id>` per task. Exit 6 or 7 ends `--all` early: act, then wait on the rest.
 - **A send that timed out is unknown, never resent**: `mu agent check <a> <msgId>`.
 - **New work: `send --fresh`.** A running worker never sees a note: send
   ([modes](recipes/orchestrator-loop.md#sending)).
@@ -79,7 +77,7 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Alwa
 | [findings](recipes/findings.md) | a check reports problems |
 | [adversarial-review](recipes/adversarial-review.md) | a unit needs a gate |
 | [test-health](recipes/test-health.md) | gates, or verifying a merge |
-| [models](recipes/models.md) | you pick a model |
+| [models](recipes/models.md) | you spawn, delegate or check |
 | [remote-workers](recipes/remote-workers.md) | an agent runs on another host |
 | [recovery](recipes/recovery.md) | teardown, rebuild, sync, `doctor` DRIFT |
 | [worker](recipes/worker.md) | you are the worker |

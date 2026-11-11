@@ -154,9 +154,12 @@ describe("claim sites: pooled rows", () => {
       promptDir: join(tmp, "prompts"),
       concurrency: 2,
       modelConcurrency: 1,
+      infraBackoffMs: [0, 0],
     });
-    expect(r.written).toBe(0);
-    expectClaimed("probe", 3);
+    // a sandbox that never comes up is a failed row: each row tries 3 times, each try claimed, then
+    // is written failed every try (infra-retry.ts)
+    expect(r.written).toBe(3);
+    expectClaimed("probe", 9);
   });
 
   it("runNextCheck: each check row", async () => {

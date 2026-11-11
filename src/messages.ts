@@ -252,6 +252,8 @@ export const MESSAGES = {
   },
   "task.notes_all_from": () =>
     "--all/--from pick a page of the whole history; they do not combine with --tail/--since/--since-claim",
+  "task.notes_report_filter": () =>
+    "Cannot combine --report with --tail, --since, or --since-claim",
   "task.notes_all_is_from": () => "--all is --from 1; pass one of them",
   "task.notes_since_twice": () =>
     "--since and --since-claim are mutually exclusive (both define a cutoff); pick one",

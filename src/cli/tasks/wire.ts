@@ -302,6 +302,7 @@ export function wireTaskCommands(program: Command): void {
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)
     .option("--tail <n>", "print only the last N notes (alias --last)", parsePositiveNumber)
+    .option("--report", "print only the task's report note, unescaped as readable text")
     .option("--last <n>", "alias for --tail", parsePositiveNumber)
     .option("--since <iso>", "print only notes created after this ISO 8601 timestamp")
     .option(
@@ -314,6 +315,7 @@ export function wireTaskCommands(program: Command): void {
         workstream?: string;
         tail?: number;
         last?: number;
+        report?: boolean;
         since?: string;
         sinceClaim?: boolean;
         all?: boolean;
@@ -326,12 +328,14 @@ export function wireTaskCommands(program: Command): void {
         json?: boolean;
         workstream?: string;
         tail?: number;
+        report?: boolean;
         since?: string;
         sinceClaim?: boolean;
         all?: boolean;
         from?: number;
       } = {};
       if (opts.all !== undefined) merged.all = opts.all;
+      if (opts.report !== undefined) merged.report = opts.report;
       if (opts.from !== undefined) merged.from = opts.from;
       if (opts.json !== undefined) merged.json = opts.json;
       if (opts.workstream !== undefined) merged.workstream = opts.workstream;
@@ -601,7 +605,7 @@ export function wireTaskCommands(program: Command): void {
   task
     .command("block <blocked>")
     .description(
-      "Add blocking edges: --by <ids...> blocks <blocked>. Accepts repeat or comma-separated ids (same shape as `mu task add --blocked-by`). Validates same-workstream + cycle.",
+      "Add blocking edges: --by <ids...> blocks <blocked> (repeat or comma-separated, like `mu task add --blocked-by`). Validates same-workstream + cycle. Chain tasks that edit the same files, so their cherry-picks never conflict.",
     )
     .requiredOption(
       "-b, --by <blockers...>",

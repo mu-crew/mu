@@ -17,17 +17,25 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { askModel, execGuess } from "../../tools/eval/cold-guess.ts";
 import {
+  armText,
   decideHit,
   extractCommands,
+  HELP_BUDGET,
+  helpArmProblem,
+  helpBlock,
+  helpPaths,
   type NextCase,
   type NextCtx,
+  nextLint,
   nextLintVocab,
   type ProbeRow,
+  systemPromptFor,
 } from "../../tools/eval/nextstep.ts";
 import {
   answerMetrics,
   idleAnswers,
   renderTranscript,
+  rigLogNamed,
   runAnswer,
   runLeadIn,
   shown,
@@ -38,7 +46,7 @@ import {
 import { nextReport } from "../../tools/eval/nextstep-report.ts";
 import { idleCalls, muCalls, muIn, pollingCalls } from "../../tools/eval/observe.ts";
 import { muShim } from "../../tools/eval/sandbox.ts";
-import type { Sandbox } from "../../tools/eval/types.ts";
+import type { Sandbox, Surface } from "../../tools/eval/types.ts";
 
 let dir = "";
 
@@ -562,6 +570,64 @@ describe("answerMetrics and the timed rule", () => {
     expect(idleAnswers(sleepy)).toEqual([0]);
   });
 
+  it("rv-b4b2: a forged shim span buys at most the slack, and an answer naming the logs is never a hit", () => {
+    const cmds = [
+      {
+        cmd: "sleep 80; mu wait task:auth/t1; mu task show t1",
+        start: 1000,
+        end: 82_000,
+        stdout: "t1 CLOSED\n",
+      },
+    ];
+    const calls = [
+      { start: 81_200, end: 81_600, pid: "8", argv: "task show t1", out: "t1 CLOSED\n" },
+    ];
+    const forged = synth(cmds, calls);
+    writeFileSync(join(forged.sb.workerDir, "mu-shim.log"), "8 1100 81900\n");
+    expect(idleAnswers(forged)).toEqual([0]);
+    const tampered = synth(
+      [
+        {
+          ...cmds[0],
+          cmd: `echo "8 1100 81900" >> "$EVAL_WORKER_DIR"/mu-shim.log; ${cmds[0]?.cmd}`,
+        } as Cmd,
+      ],
+      calls,
+    );
+    expect(rigLogNamed(tampered)).toEqual(["tamper: command 1 names the rig's call logs"]);
+    const v = decideHit({
+      effect: { hit: true, why: [] },
+      stray: [],
+      killed: [false],
+      allowKilled: false,
+      destructive: [],
+      timed: [],
+      tamper: rigLogNamed(tampered),
+    });
+    expect(v).toMatchObject({ hit: false, why: ["tamper: command 1 names the rig's call logs"] });
+    expect(rigLogNamed(synth(cmds, calls))).toEqual([]);
+  });
+
+  it("rv-b4b2: a pretty-printed JSON line (`| jq .`) of mu's output counts as shown", () => {
+    const json = JSON.stringify({
+      ok: true,
+      data: { snapshots: [{ lastText: `END-${M}: done` }] },
+    });
+    const pretty = `${JSON.stringify(JSON.parse(json), null, 2)}\n`;
+    const ctx = synth(
+      [
+        {
+          cmd: "mu wait task:auth/t1 --json 2>/dev/null | jq .",
+          start: 1000,
+          end: 2000,
+          stdout: pretty,
+        },
+      ],
+      [{ start: 1100, end: 1900, pid: "9", argv: "wait task:auth/t1 --json", out: `${json}\n` }],
+    );
+    expect(shown(ctx, `END-${M}`)).toBe(true);
+  });
+
   it("the real shim writes its span around mu's own interval", async () => {
     const sb = fakeSandbox();
     await runAnswer(sb, ["mu task list"], { shell: "bash", go: async () => {} });
@@ -746,6 +812,104 @@ describe("nextLint", () => {
     expect(nextLintVocab(vocab, [kase({ role: "headline" })]).failures).toEqual([
       "k: 6 paraphrases (want 10..14)",
     ]);
+  });
+});
+
+describe("the help arms", () => {
+  /** A surface whose CLI prints `HELP <path>` (and `tag`) for `--help`, and a skill. */
+  const stubSurface = (name: string, tag: string, big = ""): Surface => {
+    const root = join(dir, name);
+    mkdirSync(join(root, "skills", "mu"), { recursive: true });
+    writeFileSync(join(root, "skills", "mu", "SKILL.md"), `---\nname: mu\n---\nSKILL ${name}\n`);
+    const cli = join(root, "cli.mjs");
+    writeFileSync(
+      cli,
+      [
+        'const a = process.argv.slice(2).filter((x) => x !== "--help").join(" ");',
+        `if (a === ${JSON.stringify(big)}) console.log("x".repeat(${HELP_BUDGET}));`,
+        `console.log("HELP " + a + " ${tag}");`,
+        "",
+      ].join("\n"),
+    );
+    return { name, root, cli, extension: "", skillDir: join(root, "skills", "mu") };
+  };
+  const LEAD = ["mu task notes t1 -w auth", "mu wait -w auth; mu agent read w1 -w auth"];
+
+  it("helpPaths: each lead-in call's verb, its group first, once each, in lead-in order", () => {
+    expect(
+      helpPaths([...LEAD, "mu task notes t2 -w auth", "git log", "mu sql 'select 1'"]),
+    ).toEqual([["task"], ["task", "notes"], ["wait"], ["agent"], ["agent", "read"], ["sql"]]);
+  });
+
+  it("help shows the --help of every lead-in verb, rendered live from the surface under test", () => {
+    const base = stubSurface("base", "on-base");
+    const v1 = stubSurface("v1", "on-v1");
+    const t = armText(base, "help", LEAD);
+    expect(t).not.toContain("<skill>");
+    for (const p of ["task", "task notes", "wait", "agent", "agent read"])
+      expect(t).toContain(`$ mu ${p} --help\nHELP ${p} on-base`);
+    // the variant's own help, never base's
+    expect(armText(v1, "help", LEAD)).toContain("HELP task notes on-v1");
+    expect(armText(v1, "help", LEAD)).not.toContain("on-base");
+    const both = armText(base, "skill+help", LEAD);
+    expect(both.indexOf("<skill>")).toBeGreaterThanOrEqual(0);
+    expect(both.indexOf("<skill>")).toBeLessThan(both.indexOf("<help>"));
+    // the old arms carry no help
+    expect(armText(base, "skill", LEAD)).not.toContain("<help>");
+    expect(armText(base, "none", LEAD)).toBe("");
+  });
+
+  it("over the budget, a group's help goes first and the block names it; the verbs stay", () => {
+    const s = stubSurface("big", "t", "task");
+    const b = helpBlock(s, helpPaths(LEAD));
+    expect(b.omitted).toEqual(["mu task --help"]);
+    expect(b.text).toContain("$ mu task notes --help");
+    expect(b.text).toContain("(left out, over the help budget: mu task --help)");
+    expect(b.text.length).toBeLessThan(HELP_BUDGET + 200);
+    expect(helpBlock(stubSurface("small", "t"), helpPaths(LEAD)).omitted).toEqual([]);
+  });
+
+  it("the system prompt takes help text verbatim, $-patterns included", () => {
+    const s = stubSurface("dollar", "$& $' $1");
+    expect(systemPromptFor(s, "help", 120_000, ["mu wait -w a"])).toContain("HELP wait $& $' $1");
+  });
+
+  it("lint fails a case whose help arm base would cut", () => {
+    const k = {
+      id: "k",
+      leadIn: () => [{ cmd: LEAD[0] ?? "" }],
+      paraphrases: [{ id: "p1", goal: "g", leadIn: "a" }],
+      leadInVerbs: ["task notes"],
+      role: "guard",
+    } as unknown as NextCase;
+    const big = [{ label: "base", surface: stubSurface("big2", "t", "task") }];
+    expect(nextLint(big, [k]).failures).toContain(
+      `k/a: help arm over ${HELP_BUDGET} chars on base: mu task --help left out`,
+    );
+    const ok = [{ label: "base", surface: stubSurface("ok2", "t") }];
+    expect(nextLint(ok, [k]).failures.filter((f) => f.includes("help arm"))).toEqual([]);
+  });
+
+  it("check's help rows fail a prompt that lacks a lead-in verb's help or gets the skill wrong", () => {
+    const k = { leadIn: () => LEAD.map((cmd) => ({ cmd })) } as unknown as NextCase;
+    const s = stubSurface("chk", "t");
+    const at = (arm: "help" | "skill+help", text: string): ProbeRow => {
+      const p = join(dir, `${arm}.txt`);
+      writeFileSync(p, text);
+      return { arm, transcriptPath: p } as ProbeRow;
+    };
+    expect(helpArmProblem(k, at("help", systemPromptFor(s, "help", 1000, LEAD)), "a")).toBeNull();
+    expect(
+      helpArmProblem(k, at("skill+help", systemPromptFor(s, "skill+help", 1000, LEAD)), "a"),
+    ).toBeNull();
+    expect(helpArmProblem(k, at("skill+help", systemPromptFor(s, "help", 1000, LEAD)), "a")).toBe(
+      "help arm skill+help: skill missing",
+    );
+    const cut = systemPromptFor(s, "help", 1000, LEAD).replace("$ mu agent read --help", "");
+    expect(helpArmProblem(k, at("help", cut), "a")).toBe("help arm: no $ mu agent read --help");
+    expect(helpArmProblem(k, at("help", "no block"), "a")).toBe(
+      "help arm: no <help> block in the prompt",
+    );
   });
 });
 

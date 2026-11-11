@@ -90,7 +90,8 @@ provider, key or proxy for it.
 | mu's skill | `~/.claude/skills/mu` | `~/.codex/skills/mu` | Claude Code's or Codex's, else `~/.cursor/skills/mu` | `muse skills` |
 | failed turn under `mu task auto` | retried once in place | not reported | retried once in place | parked as a human need |
 
-Every row takes `--model <id>` through its own `--model` flag. The prompts pi
+Every row takes `--model <id>` through its own `--model` flag; the
+[models recipe](../../skills/mu/recipes/models.md) says which. The prompts pi
 gets as commands (`/mu-review`, `/ultrathink`) are skills of the same name for
 claude and cursor-agent: `/mu-review <target>`. They run only when you invoke
 them (`disable-model-invocation`), so the model never starts a crew on its

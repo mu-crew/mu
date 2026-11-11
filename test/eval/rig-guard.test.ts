@@ -20,7 +20,7 @@ import {
   TRANSCRIPTS_DIR,
   WITHHELD,
 } from "../../tools/eval/rig-guard.ts";
-import { RIG_CANARY, stripCanary } from "../../tools/eval/rig-private.ts";
+import { canaryLine, RIG_CANARY, stripCanary } from "../../tools/eval/rig-private.ts";
 import type { ToolCall } from "../../tools/eval/types.ts";
 
 const own = "/tmp/mu-eval-1-2-abc123";
@@ -184,8 +184,7 @@ describe("the canary backstop", () => {
       { encoding: "utf8" },
     )
       .split("\n")
-      // a file snapshot is the exact bytes of a synthetic report: no line to spare
-      .filter((f) => f !== "" && f !== "test/eval/__snapshots__/tournament-report.md");
+      .filter((f) => f !== "");
     expect(files.length).toBeGreaterThan(100);
     const missing = files.filter((f) => {
       const lines = readFileSync(join(RIG_REPO, f), "utf8").trimEnd().split("\n");
@@ -194,7 +193,17 @@ describe("the canary backstop", () => {
         !(lines.at(-1)?.includes(RIG_CANARY) || lines.at(-2)?.includes(RIG_CANARY))
       );
     });
-    expect(missing).toEqual([]);
+    // the fix, printed: a new file lacks the line most often at its end
+    expect(missing.map((f) => `${f}: add as its first and last line: ${canaryLine(f)}`)).toEqual(
+      [],
+    );
+  });
+
+  it("canaryLine is the line the rig's files carry, per kind", () => {
+    const first = (f: string) => readFileSync(join(RIG_REPO, f), "utf8").split("\n")[0];
+    expect(first("tools/eval/rig-guard.ts")).toBe(canaryLine("x.ts"));
+    expect(first("tools/eval/README.md")).toBe(canaryLine("x.md"));
+    expect(canaryLine("x.json")).toContain(`"${RIG_CANARY}"`);
   });
 
   it("an output that carries the canary is a rig read, however the path was spelled", () => {
