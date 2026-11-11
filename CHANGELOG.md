@@ -14,8 +14,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **`mu wait --text`: the result as plain lines** (task
   `land_c1_wait_text`, the C1 tournament winner
-  `gemini31prop-v1-compact-text`, docs/eval/hill-r2/c1.md on branch
-  `hill2/c1`). Line 1 is `event: <kind> on <ref> | resume: <command>`; the
+  `gemini31prop-v1-compact-text`, docs/eval/hill-r2/c1.md). Line 1 is `event: <kind> on <ref> | resume: <command>`; the
   resume keeps `--text` (and `mu wait --resume <id> --text` is allowed).
   Above a `---` line: the exit and reason, each consumed ref's state (and the
   still-open ones), a task's latest report (what `mu task notes --report`
@@ -32,7 +31,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **`mu task notes <id> --report`: the report, raw** (task
   `land_c3_report_flag`, the C3 tournament winner,
-  docs/eval/hill-r2/c3_notes.md on branch `hill2/c3r`). Prints the task's
+  docs/eval/hill-r2/c3_notes.md). Prints the task's
   latest `kind=report` note as its own text (newlines intact, no `\n`
   escaping); `--json` gives `{n, kind, author, created_at, content}`. With no
   report note it exits 1 with `(no report note on <id>)` on stderr (the
@@ -43,7 +42,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **`mu agent read --text` and `mu agent show --text`: just the worker's
   words** (task `land_c4_read_text`, the C4 tournament winner,
-  docs/eval/hill-r2/c4.md on branch `hill2/c4r`). `--text` drops pane
+  docs/eval/hill-r2/c4.md). `--text` drops pane
   furniture and keeps every other line: blank runs fold to one, rows made
   only of box-drawing characters go, scroll markers and spinner and status
   rows go only in a harness's exact whole-row shapes, and the footer goes
@@ -264,7 +263,7 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 - **SKILL.md: wait for all of a set, then read every outcome** (hill-r2
   C6 tournament winner `claudeopus55-wait-all`, task `land_c6_wait_all`;
-  report `docs/eval/hill-r2/c6.md` on branch `hill2/c6b`). The wait rule
+  report `docs/eval/hill-r2/c6.md`). The wait rule
   now names `mu wait --all task:<ws>/<a> task:<ws>/<b>` and says to read
   each task with `mu task show` after it. To pay for the words it cuts the
   `-w <workstream>` sentence (each verb's `--help` lists `-w` or not) and
