@@ -1017,11 +1017,11 @@ docs/eval/hill-r2/). A pipe now gets no colour, inside tmux too; set
   computed from the null false-loss bounds, and rig-guard's canary test prints
   the exact line a file lacks.
 
-- **The public tree stays scrubbed.** `docs/eval/hill-r2/baseline.md` had
-  regained an absolute home path from a pre-audit branch; it now reads `~/`.
+- **No home paths in tracked files.** `docs/eval/hill-r2/baseline.md` had
+  regained an absolute home path from an older branch; it now reads `~/`.
   `test/public-tree.test.ts` scans every tracked text file and fails on a
-  real `/Users/<name>/` or `/home/<name>/` path or on a term the public audit
-  removed.
+  real `/Users/<name>/` or `/home/<name>/` path, or on a term from an
+  optional local list.
 
 - **Eval: `tournament pack` drops a rig entry from a JSON config list**
   (hill-r2 c2). `tsconfig.test.json` names `tools/eval/pi-ai.d.ts` in its

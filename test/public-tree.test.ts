@@ -1,11 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// The repo is public. The public audit (ee966368, 623f999a, 8a69c900) removed
-// real home paths and internal-infra names; a later commit from a pre-audit
-// branch put one back. This guard fails the fast gate on a reintroduction.
+// Tracked files carry no real home path, and no term from the local term
+// list (one term per line, `#` comments) at $MU_PUBLIC_TERMS, else
+// $XDG_CONFIG_HOME/mu/public-terms.txt. Without that file only home paths
+// are checked.
 
 const ROOT = join(import.meta.dirname, "..");
 const SELF = "test/public-tree.test.ts";
@@ -16,25 +18,18 @@ const PLACEHOLDER_USERS = new Set(["u", "someone", "x", "alice", "real", "me"]);
 /** A home path at a path start: not `<sandbox>/home/...` or `/sb/home/...`. */
 const HOME_PATH = /(?<![\w>.}-])\/(?:Users|home)\/([A-Za-z0-9._-]+)\//g;
 
-/** Terms the audit removed. Matched case-insensitively. */
-const MUST_GO = [
-  "LAUNCHER",
-  "llm-router",
-  "openai-proxy",
-  "log_shipper",
-  "policy_plugin",
-  "linuxpc",
-  "devserver",
-  "pi-dist",
-  "Agent Launcher",
-  "hacking/crew",
-];
+/** The local term list, matched case-insensitively. Empty when there is none. */
+function localTerms(): string[] {
+  const config = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  const file = process.env.MU_PUBLIC_TERMS || join(config, "mu", "public-terms.txt");
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && !l.startsWith("#"));
+}
 
-/**
- * Kept judgment calls from the audit: a line matching one of these is not
- * scanned. They contain no must-go term today; the list pins that they stay
- * allowed if one is ever written next to them.
- */
+/** Lines matching one of these are not scanned. */
 const ALLOWED_LINE = [
   /pi-meta/,
   /-sol\b/,
@@ -44,7 +39,7 @@ const ALLOWED_LINE = [
 /** Files whose author lines name the real author on purpose. */
 const ALLOWED_FILE = new Set([".mailmap"]);
 
-function scanText(text: string): string[] {
+function scanText(text: string, terms: readonly string[] = []): string[] {
   const hits: string[] = [];
   const lines = text.split("\n");
   for (const [i, line] of lines.entries()) {
@@ -54,7 +49,7 @@ function scanText(text: string): string[] {
       if (!PLACEHOLDER_USERS.has(user)) hits.push(`${i + 1}: home path ${m[0]}`);
     }
     const lower = line.toLowerCase();
-    for (const term of MUST_GO) {
+    for (const term of terms) {
       if (lower.includes(term.toLowerCase())) hits.push(`${i + 1}: term ${term}`);
     }
   }
@@ -71,19 +66,21 @@ function trackedFiles(): string[] | undefined {
 }
 
 describe("public tree", () => {
-  it("scanText flags a real home path and a must-go term, not placeholders", () => {
+  it("scanText flags a real home path and a listed term, not placeholders", () => {
     expect(scanText("- file: /Users/jdoe/.local/state/x.jsonl")).toHaveLength(1);
     expect(scanText("see /home/jdoe/src")).toHaveLength(1);
-    expect(scanText("uses DEVSERVER hosts")).toHaveLength(1);
+    expect(scanText("uses ACME hosts", ["acme"])).toHaveLength(1);
+    expect(scanText("uses ACME hosts")).toEqual([]);
     expect(scanText("/Users/alice/x /home/me/ws <sandbox>/home/.local /sb/home/.local")).toEqual(
       [],
     );
     expect(scanText("- file: ~/.local/state/mu-next/x.jsonl")).toEqual([]);
   });
 
-  it("tracked text files carry no real home path or audit must-go term", () => {
+  it("tracked text files carry no real home path or listed term", () => {
     const files = trackedFiles();
     if (!files) return;
+    const terms = localTerms();
     const failures: string[] = [];
     for (const file of files) {
       if (file === SELF || ALLOWED_FILE.has(file)) continue;
@@ -94,7 +91,7 @@ describe("public tree", () => {
         continue; // deleted in the working tree
       }
       if (buf.includes(0)) continue; // binary
-      for (const hit of scanText(buf.toString("utf8"))) failures.push(`${file}:${hit}`);
+      for (const hit of scanText(buf.toString("utf8"), terms)) failures.push(`${file}:${hit}`);
     }
     expect(failures).toEqual([]);
   });
