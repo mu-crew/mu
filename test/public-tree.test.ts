@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 
 // Tracked files carry no real home path, and no term from the local term
 // list (one term per line, `#` comments) at $MU_PUBLIC_TERMS, else
-// $XDG_CONFIG_HOME/mu/public-terms.txt. Without that file only home paths
-// are checked.
+// ~/.config/mu/public-terms.txt. Not $XDG_CONFIG_HOME: test/_setup.ts points
+// that at a scratch dir. Without the file only home paths are checked.
 
 const ROOT = join(import.meta.dirname, "..");
 const SELF = "test/public-tree.test.ts";
@@ -20,8 +20,7 @@ const HOME_PATH = /(?<![\w>.}-])\/(?:Users|home)\/([A-Za-z0-9._-]+)\//g;
 
 /** The local term list, matched case-insensitively. Empty when there is none. */
 function localTerms(): string[] {
-  const config = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
-  const file = process.env.MU_PUBLIC_TERMS || join(config, "mu", "public-terms.txt");
+  const file = process.env.MU_PUBLIC_TERMS || join(homedir(), ".config", "mu", "public-terms.txt");
   if (!existsSync(file)) return [];
   return readFileSync(file, "utf8")
     .split("\n")
