@@ -12,6 +12,24 @@ Older releases: [docs/history/CHANGELOG-pre-3.md](docs/history/CHANGELOG-pre-3.m
 
 ### Added
 
+- **`mu wait --text`: the result as plain lines** (task
+  `land_c1_wait_text`, the C1 tournament winner
+  `gemini31prop-v1-compact-text`, docs/eval/hill-r2/c1.md on branch
+  `hill2/c1`). Line 1 is `event: <kind> on <ref> | resume: <command>`; the
+  resume keeps `--text` (and `mu wait --resume <id> --text` is allowed).
+  Above a `---` line: the exit and reason, each consumed ref's state (and the
+  still-open ones), a task's latest report (what `mu task notes --report`
+  prints) or a delegate's answer, indented so it never reads as the
+  separator, then owed, tally, human needs, the warning and the notices.
+  Below `---`: only agents' last words, as `mu agent read --text` prints them.
+  The JSON default is byte-identical. Landing fix over the measured patch: it
+  printed `no final text` for a task ref and dropped the state, report,
+  warning and notices (sonnet on `wait_heartbeat_merge` fell 6/50 to 0/50
+  with it, Holm 0.12). Fast mode won on `wait_result_read` with pooled z 4.50
+  (>= 2.47): haiku 41/70, gemini-3.8-flash 36/70, sonnet 35/70 (help arms).
+  `mu_delegate`'s kept-pane and delivery-unknown hints now say
+  `mu agent read <w> --text` (f_low_batch3).
+
 - **`mu task notes <id> --report`: the report, raw** (task
   `land_c3_report_flag`, the C3 tournament winner,
   docs/eval/hill-r2/c3_notes.md on branch `hill2/c3r`). Prints the task's

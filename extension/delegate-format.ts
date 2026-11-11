@@ -184,7 +184,7 @@ function answerLine(a: WakeAnswer): string {
     .filter((x) => x !== undefined)
     .join(", ");
   const pane = a.kept
-    ? ` Pane kept (${a.kept}): mu agent read ${a.name} -n 50 -w ${a.workstream}.`
+    ? ` Pane kept (${a.kept}): mu agent read ${a.name} --text -n 50 -w ${a.workstream}.`
     : "";
   return `- ${a.workstream}/${a.name} (${how}; call ${a.callId}): mu task notes ${a.task} -w ${a.workstream}.${pane}`;
 }

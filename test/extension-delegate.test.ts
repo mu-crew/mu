@@ -832,7 +832,9 @@ describe("errors and corner cases", () => {
     const err = await tool(p)
       .execute("t", { task: "x" })
       .catch((e: unknown) => e as Error);
-    expect(String(err)).toMatch(/delivery unknown.*Pane kept.*mu agent read delegate-2 -w scratch/);
+    expect(String(err)).toMatch(
+      /delivery unknown.*Pane kept.*mu agent read delegate-2 --text -n 20 -w scratch/,
+    );
     expect(mu.calls.some((c) => c[1] === "close")).toBe(false);
     expect(mu.calls.filter((c) => c[1] === "spawn")).toHaveLength(1);
   });
@@ -1289,7 +1291,7 @@ describe("pending reports and delivery tracking", () => {
     expect(droppedNote([a])).toBe(
       [
         "Interrupted: 1 delegate answer recorded but not shown; the next settle shows it:",
-        "- scratch/delegate-3 (error; call pi:s:1): mu task notes delegate_ab -w scratch. Pane kept (kept as evidence): mu agent read delegate-3 -n 50 -w scratch.",
+        "- scratch/delegate-3 (error; call pi:s:1): mu task notes delegate_ab -w scratch. Pane kept (kept as evidence): mu agent read delegate-3 --text -n 50 -w scratch.",
       ].join("\n"),
     );
     expect(

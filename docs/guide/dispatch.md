@@ -182,13 +182,16 @@ mu wait task:auth/build task:auth/docs
 
 `mu wait` prints ONE JSON document, with no `--json` flag. Refs are typed
 (`task:`, `agent:`, `delegate:`); with none, it waits on what you started.
+`--text` prints plain lines instead: the event and resume, each ref's state,
+a task's or delegate's report and any warning above a `---` line, and the
+agent's last words below it. Its resume keeps `--text`.
 
 - `data.firing` is the event: `closed`, `settled`, `input`, `dead`, `stall`,
   `delegate`, or `heartbeat` on a timeout (`ok:true`, `timedOut`, exit 0).
 - `data.snapshots` are the refs' real states; `data.resume` is the command
   that keeps waiting, with every flag you gave. Run it as printed: it takes
-  no other flag (only a matching `-w`). When two watched owners die in one
-  wait, only the first fires; follow `resume` to hear the second. A fresh
+  no other flag (only a matching `-w`, or `--text`). When two watched owners
+  die in one wait, only the first fires; follow `resume` to hear the second. A fresh
   `mu wait` with the same refs starts a new anchor and reports the earlier
   death as history.
 - A snapshot marked `delivered` was consumed by this result; `owed` is

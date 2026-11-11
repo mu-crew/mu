@@ -57,8 +57,9 @@ import { compileTextMatcher } from "../wait-regex.js";
 import { loadResume, type ResumeSpec, saveResume } from "../wait-resume.js";
 import { READY_BATCH_MAX } from "../wait-select.js";
 import { CliExitError, setNextOutcome } from "./handle.js";
-import { owedRefs, resumeCommand, waitData } from "./wait-output.js";
+import { owedRefs, resumeCommand, type WaitDataInput, waitData } from "./wait-output.js";
 import { parseWaitRef, TYPED_FORMS } from "./wait-ref.js";
+import { shownReports, waitText } from "./wait-text.js";
 
 /** Heartbeat to stderr every this many ms while a wait is open. */
 const HEARTBEAT_MS = 60_000;
@@ -268,6 +269,8 @@ export async function runWait(
     callers?: readonly string[];
     /** `--as`: refuse when another live process already waits as these callers (CallerBusyError). */
     refuseBusy?: boolean;
+    /** `--text`: print the result as plain lines (src/cli/wait-text.ts), not JSON. */
+    text?: boolean;
     /** The producer's receipt (`sent`, `claimed`, `warnings`) when a verb entered the wait: see WaitDataInput.extra. */
     extraData?: Record<string, unknown>;
   } = {},
@@ -425,31 +428,32 @@ export async function runWait(
     result.timedOut && spec.timeout !== undefined && spec.timeout > 0 && spec.timeout < 300
       ? `--timeout ${spec.timeout} is below the ${WAIT_DEFAULT_TIMEOUT_S}s default: the wait ended at your deadline, not on an event; run the resume command`
       : undefined;
-  emitJson(
-    waitData({
-      result,
-      exit,
-      resume,
-      ...(resume === null
-        ? {
-            resumeWhy:
-              "everything named was delivered and no caller owns more: nothing left to wait for",
-          }
-        : {}),
-      ...(signal !== undefined ? { signal } : {}),
-      reason: reasonOf(result, signal, openNow),
-      ...(short !== undefined ? { warning: short } : {}),
-      // The call's workstream: its -w, else every workstream its refs name.
-      ...withOwedNotice(
-        noticesField(
-          db,
-          spec.scope !== undefined ? [spec.scope] : result.refs.map((s) => s.ref.workstream),
-        ),
-        owedNow > 0 ? `${owedNow} owed: ${renderArgv(readyArgv)}` : undefined,
+
+  const input: WaitDataInput = {
+    result,
+    exit,
+    resume,
+    ...(resume === null
+      ? {
+          resumeWhy:
+            "everything named was delivered and no caller owns more: nothing left to wait for",
+        }
+      : {}),
+    ...(signal !== undefined ? { signal } : {}),
+    reason: reasonOf(result, signal, openNow),
+    ...(short !== undefined ? { warning: short } : {}),
+    // The call's workstream: its -w, else every workstream its refs name.
+    ...withOwedNotice(
+      noticesField(
+        db,
+        spec.scope !== undefined ? [spec.scope] : result.refs.map((s) => s.ref.workstream),
       ),
-      ...(opts.extraData !== undefined ? { extra: opts.extraData } : {}),
-    }),
-  );
+      owedNow > 0 ? `${owedNow} owed: ${renderArgv(readyArgv)}` : undefined,
+    ),
+    ...(opts.extraData !== undefined ? { extra: opts.extraData } : {}),
+  };
+  if (opts.text === true) console.log(waitText(input, shownReports(db, input)));
+  else emitJson(waitData(input));
   sig.dispose();
   if (exit !== 0) throw new CliExitError(exit);
 }
@@ -484,6 +488,7 @@ interface WaitOpts {
   resume?: string;
   as?: string;
   workstream?: string | string[];
+  text?: boolean;
 }
 
 /** `--first`/`--first-of` versus `--all`/`--all-of` versus `--ready`: one mode, or a usage error (never a silent pick). */
@@ -583,12 +588,10 @@ export async function cmdWait(
       : {}),
     ...(o.timeout !== undefined ? { timeout: o.timeout } : {}),
   };
-  await runWait(
-    db,
-    spec,
-    sig,
-    o.as === undefined ? {} : { callers: [asCaller(o.as)], refuseBusy: true },
-  );
+  await runWait(db, spec, sig, {
+    ...(o.as === undefined ? {} : { callers: [asCaller(o.as)], refuseBusy: true }),
+    text: o.text === true,
+  });
 }
 
 /**
@@ -642,7 +645,10 @@ async function cmdWaitResume(
       { showHelp: false },
     );
   }
-  await runWait(db, { ...stored.spec, verb: "mu wait --resume" }, sig, { callers: stored.callers });
+  await runWait(db, { ...stored.spec, verb: "mu wait --resume" }, sig, {
+    callers: stored.callers,
+    text: o.text === true,
+  });
 }
 
 export function wireWaitCommand(program: Command): void {
@@ -650,7 +656,11 @@ export function wireWaitCommand(program: Command): void {
     .command("wait")
     .argument("[refs...]", `typed: ${TYPED_FORMS}; none = what this caller started`)
     .description(
-      "Block until the first event you own, then print ONE JSON result: `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (consumed; `cursorCut` = entries dropped to fit), `resume` (run as printed; no other flags).",
+      "Block until the first event you own, then print ONE JSON result (`--text`: lines): `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (consumed; `cursorCut` = entries dropped to fit), `resume` (run as printed).",
+    )
+    .option(
+      "--text",
+      "compact text output instead of JSON: firing event, final text, and resume handle",
     )
     .option("--first", "end on the first event (default)")
     .option("--first-of", "alias for --first")
@@ -712,7 +722,7 @@ export function wireWaitCommand(program: Command): void {
     )
     .option(
       "--resume <id>",
-      "continue the wait a result's `resume` handle names, with every stored condition (refs with their run baseline and pi incarnation, mode, filters, deadline, callers); only -w may be added (it must match the stored scope)",
+      "continue the wait a result's `resume` handle names, with every stored condition (refs with their run baseline and pi incarnation, mode, filters, deadline, callers); only -w (matching the stored scope) and --text may be added",
     )
     .option(...WORKSTREAM_OPT)
     .option(...JSON_OPT)

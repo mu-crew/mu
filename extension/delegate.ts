@@ -561,7 +561,7 @@ export function registerDelegate(
       // The prompt may already be running: keep the pane, never auto-retry.
       const reason = typeof sent.message === "string" ? sent.message : "no reply";
       throw new SpawnFail(
-        `mu agent send to ${ws}/${name}: delivery unknown (${reason}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} -w ${ws} -n 20 (or attach), then close it with: mu agent close ${name} -w ${ws}`,
+        `mu agent send to ${ws}/${name}: delivery unknown (${reason}). Pane kept; do NOT resend blindly. Check with: mu agent read ${name} --text -n 20 -w ${ws} (or attach), then close it with: mu agent close ${name} -w ${ws}`,
         "unknown",
       );
     }
