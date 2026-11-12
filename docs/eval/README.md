@@ -2,20 +2,14 @@
 
 # Eval reports
 
-The evidence behind the 4.0 release: how the 4.0 surface compares with
-3.13.3 on the eval harness ([tools/eval/](../../tools/eval/README.md)),
-and what isolated dogfood runs found. Each report names the commit it
-measured. The raw JSONL rows are not in the tree; see
-[history](../history/README.md#raw-eval-runs).
+Reports from the eval harness ([tools/eval/](../../tools/eval/README.md)).
+Each names the commit it measured. Raw JSONL rows are not committed, except
+each tournament group's control file.
 
-| Report | What it measured |
+| Report | What it measures |
 | --- | --- |
-| [baseline-3.13.3.md](baseline-3.13.3.md), [baseline-3.13.3-v2.md](baseline-3.13.3-v2.md) | 3.13.3 on the scenarios, before and after the harness fixes (v2 supersedes v1) |
-| [matrix-pre-settle.md](matrix-pre-settle.md) | first full 4.0 vs 3.13.3 matrix |
-| [matrix-release.md](matrix-release.md) | the release-gate matrix and its gate re-run |
-| [cold-guess.md](cold-guess.md) | one-command guesses from help text alone, no skill |
-| [dogfood-1.md](dogfood-1.md) … [dogfood-4.md](dogfood-4.md), [dogfood-switch.md](dogfood-switch.md), [dogfood-full.md](dogfood-full.md) | isolated orchestrator runs on the checkout |
-| [harnesses.md](harnesses.md) | mu driven from codex and cursor-agent |
-| [every-harness.md](every-harness.md) | E1–E7 on claude, codex and pi orchestrators with mixed worker harnesses (template) |
+| [every-harness.md](every-harness.md) | E1–E7 on claude, codex and pi orchestrators with mixed worker harnesses (template and live commands) |
+| [hill-r2/](hill-r2/README.md) | the hill-r2 tournament: per-group results and what shipped |
+| [eval-load.md](eval-load.md) | why each eval row runs under its own muzzle claim |
 
 <!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

@@ -3,8 +3,8 @@
 The contract mu 4.0 is built to: what every result, wait, delegate and
 CLOSE block promises an agent caller, and the budgets on what it reads.
 Terms are in [VOCABULARY](../VOCABULARY.md), the module map in
-[ARCHITECTURE](../ARCHITECTURE.md), the reasons in the
-[design history](../history/mu-next-design/README.md). Where this page
+[ARCHITECTURE](../ARCHITECTURE.md), the reasons in
+[VISION](../VISION.md). Where this page
 and the source disagree, the source is right and this page is a bug.
 
 A change that alters a contract here updates this page, ARCHITECTURE

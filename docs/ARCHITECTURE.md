@@ -309,12 +309,13 @@ are re-export hubs.
 | `src/output.ts`, `src/shell-quote.ts` | colour, `muTable`/`renderBoxTable`, JSON-mode and verb-argv probes (`isJsonMode`, `isSqlVerbArgv`, `isWaitVerbArgv`), `usageLines`; POSIX quoting for `next` commands |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
 | `src/index.ts` | SDK entry point |
-| `skills/mu/` | the skill loaded into an agent's context (`SKILL.md` ≤ 600 words, 12 recipes ≤ 250 each and ≤ 4,000 together, pinned by `test/prose-budget.test.ts`, with failure-backed markers); `mu --help` owns the verb reference; every dropped 3.x rule has a destination in [rule-destinations](history/mu-next-design/rule-destinations.md) |
+| `skills/mu/` | the skill loaded into an agent's context (`SKILL.md` ≤ 600 words, 12 recipes ≤ 250 each and ≤ 4,000 together, pinned by `test/prose-budget.test.ts`, with failure-backed markers); `mu --help` owns the verb reference |
 | `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
 | `scripts/smoke-lease.sh`, `scripts/smoke-fake-pi.mjs` | the lease operator smoke: builds mule and mu, real mule against a loopback `sshd MaxSessions 1`, a ctl-speaking fake pi as the remote job ([remote.md](guide/remote.md#smoke-test-a-lease-end-to-end)); explicitly invoked, never in vitest |
 | `tools/screenshot/` | `dashboard.sh` seeds the dogfood `payments` scene on a private tmux socket, captures it at 200x40 and `ansi-to-png.py` renders the capture to `docs/img/tui-dashboard.png` (README); not shipped |
 | `tools/eval/` | the eval harness: scripted scenarios and judges run against a built surface (pi, claude or codex orchestrators; fake or real hook-harness workers), the release matrix, the cold-guess probe, the next-step probe and the hill-r2 tournament driver; reports in [docs/eval/](eval/README.md); not shipped |
-| `docs/history/` | records only: old changelogs and the [4.0 design history](history/mu-next-design/README.md) (design of record, rule destinations, release reviews, the TUI dogfood kit `dashboard.sh` runs); not shipped |
+| `tools/tui-dogfood/` | the TUI dogfood kit: seven seeded dashboard scenarios on a private tmux socket and a PTY smoke test ([README](../tools/tui-dogfood/README.md)); `dashboard.sh` seeds its scenario 4; not shipped |
+| `docs/history/` | the changelogs of mu 1 to 4, one file per major; not shipped |
 | `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 
 The shipped contract is

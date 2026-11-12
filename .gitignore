@@ -35,11 +35,7 @@ watch_*
 # eval candidate scenario roots (tournament private .next proofs)
 tools/eval/candidates/
 
-# eval matrix transcripts (commit only the md report)
-docs/eval/matrix-pre-settle/
-docs/eval/matrix-release/
-
-# raw eval run dumps: never committed (the reports cite them; see docs/history/README.md)
+# raw eval run dumps: never committed
 docs/eval/**/*.jsonl
 # except the small tournament control file per group (spec 2026-11-07-hill-r2-tournament §6, Q3)
 !docs/eval/hill-r2/*.tournament.jsonl

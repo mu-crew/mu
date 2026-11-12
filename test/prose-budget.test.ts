@@ -1,7 +1,6 @@
 // The shipped skill is capped, and each rule that a measured failure put
 // there is pinned by a marker. A budget test that cannot fail is theatre,
 // so the markers are checked against a tree with the guard deleted too.
-// Rule -> destination -> failure: docs/history/mu-next-design/rule-destinations.md.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";

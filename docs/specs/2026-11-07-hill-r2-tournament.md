@@ -407,7 +407,7 @@ The result is written as `{kind:"isolation", session, hits}`. Any hit discards e
 
 **Unit of test.** A cell is (surface, case, model). Each cell pools its rows across arms and paraphrases. Rows are **not** paired: base and variant rows are two independent samples, run in one interleaved, shuffled queue per round (seed in the `setup` row), so provider drift hits both sides alike. B5 rows set the spread and the correlation estimate only; they are never a round's comparator.
 
-**Correlation.** Rows that share (arm, paraphrase) share a prompt up to nonces, and the cold-guess record says such reps are highly correlated (`docs/eval/cold-guess.md`). A **cluster** is (arm, paraphrase). With `m` clusters of `r` rows each and intra-cluster correlation `ρ`:
+**Correlation.** Rows that share (arm, paraphrase) share a prompt up to nonces, and the cold-guess record says such reps are highly correlated (the 4.0 cold-guess report, removed from the tree; in git history). A **cluster** is (arm, paraphrase). With `m` clusters of `r` rows each and intra-cluster correlation `ρ`:
 - design effect `DEFF = 1 + (r − 1)·ρ`;
 - effective n `n_eff = m·r / DEFF`, which tends to `m/ρ` as `r` grows: extra reps stop helping, extra paraphrases do not.
 - `ρ̂` is estimated per (case, model) from B5's base rows (one-way ANOVA ICC over clusters), floored at 0.1 and written into the `setup` row before the freeze. It is never re-estimated from round rows.

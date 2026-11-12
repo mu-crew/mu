@@ -57,14 +57,6 @@ mu does not add these unless one earns its way back under the criteria:
   - any RPC into mu;
   - a seam with fewer than two real implementations.
 
-## Shipped in 4.0
-
-The 4.0 rewrite was approved as a whole and was exempt from the
-promotion criteria. Its units have merged: the contract as built is
-[surface-contract.md](reference/surface-contract.md), and what changed is
-in the [CHANGELOG](../CHANGELOG.md). Nothing beyond them is approved;
-anything else follows the criteria above.
-
 ## Approved: the lease transport (stage b)
 
 A remote worker on a session-capped host (`MaxSessions 1`, e.g. a managed dev VM)

@@ -1,5 +1,5 @@
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
-// cold-guess.jsonl -> the short markdown of docs/eval/cold-guess.md. Pure.
+// cold-guess.jsonl -> a short markdown report. Pure.
 import type { ColdRow } from "./cold-guess.ts";
 import { INTENTS } from "./cold-intents.ts";
 

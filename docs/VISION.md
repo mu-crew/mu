@@ -241,7 +241,7 @@ Every verb, result, error and line of prose is written for a model to
 read and act on; only the dashboard is for a human. The measure is how
 cheaply an agent reaches the correct next action: tokens read and
 written, and the mistakes it cannot make. 4.0 was rebuilt on these
-rules ([design history](history/mu-next-design/README.md)):
+rules:
 
 1. **Guarantees are code.** Atomicity, locking, cross-machine merge,
    exact delivery and identity each have a measured failure behind

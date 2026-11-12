@@ -1,57 +1,6 @@
-# Changelog before 3.0
+# Changelog: mu 1
 
-Releases 2.0.0 and older, moved verbatim from [CHANGELOG.md](../../CHANGELOG.md). Newer releases live there.
-
-## [2.0.0] — 2026-09-28
-
-### Changed
-
-- **Agent state comes from murmur.** mu no longer reads pane text to decide
-  what an agent is doing, and no longer stores it. On tmux it reads
-  [murmur](https://github.com/mu-crew/murmur) 1.0.0 or later: one
-  `tmux list-panes` call for local agents, and `murmur status --json`
-  (cached for 10 s) only for agents running on other hosts. On herdr it reads
-  herdr. Without murmur, agent state shows `unknown` and `mu doctor` says why.
-  Remote workers now report real state instead of an ssh-rendered pane.
-- `mu task wait --stuck-after` times the stall from murmur's
-  `@murmur_pane_since`, the moment the agent went idle, instead of the last
-  time mu happened to reconcile.
-- `mu agent spawn` waits for murmur to claim the pane. Without murmur it
-  returns after the liveness check; the first `mu agent send` still waits
-  for pi to accept input.
-- `mu doctor` has an `agent state` row (`environment.agentState` in `--json`).
-
-### Breaking
-
-- Agent JSON (`mu agent list/show --json`, `mu state --json`, `mu me --json`)
-  drops `status` and adds `state` (`busy`, `needs_input`,
-  `needs_permission` or `unknown`), `source` (`murmur`, `herdr` or `none`),
-  `since` (ISO time or null) and `reason` (when `unknown`).
-- `mu agent wait` and `mu task wait --stuck-after` never fire on `unknown`.
-  Without murmur they wait until `--timeout`.
-- The `free` and `spawning` agent statuses are gone. `mu agent adopt` no
-  longer marks an agent free.
-- SDK: removed `AgentStatus`, `detectPiStatus`, `extractTail`,
-  `updateAgentStatus`, `agentStatusGlyph`,
-  `AGENT_STATUS_GLYPH` and `STATUS_EMOJI`. Added `readAgentStates`,
-  `RuntimeState`, `StateSource`, `StateReading`, `LiveAgent`,
-  `agentStateGlyph` and `MuxPaneStatus`.
-- The `agents.status` column is unused and always `spawning`. It is dropped
-  at the next schema migration.
-
-### Unchanged
-
-Tasks, claims, `mu task wait` on task status, workspaces, spawn, send and read
-work the same with or without murmur.
-
-### Upgrade
-
-```sh
-npm i -g @mu-crew/mu@2 @mu-crew/murmur@^1
-murmur init        # once per machine
-murmur link pi     # then restart pi sessions
-mu doctor          # agent state : ok agent state from murmur 1.x
-```
+Releases 1.0.0 through 1.6.0, and the 0.x releases before them. Newer releases: [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [1.6.0] — 2026-09-27
 
@@ -281,8 +230,6 @@ mu doctor          # agent state : ok agent state from murmur 1.x
   have to track the task→agent mapping itself and run two waits concurrently.
   The description now says so and points at `mu task wait --stuck-after`.
 
----
-
 ## [1.3.1] — 2026-09-13
 
 ### Changed
@@ -318,8 +265,6 @@ mu doctor          # agent state : ok agent state from murmur 1.x
   `--drop-archives` as the explicit skip. A live/archive task-key
   collision still refuses rather than merging two histories onto one
   key. See `scripts/README.md`.
-
----
 
 ## [1.3.0] — 2026-09-11
 
@@ -359,8 +304,6 @@ mu doctor          # agent state : ok agent state from murmur 1.x
   Route by whether a refusal could look like success, not by duration. Also
   `git -C <path> rev-parse` fails over ssh where `cd <path> && git rev-parse`
   works — the previous fragment used the broken form.
-
----
 
 ## [1.2.0] — 2026-09-09
 
@@ -1278,9 +1221,6 @@ by herdr.
   column was 17 wide against a 19-char `$HERDR_WORKSPACE_ID`, and
   `$MU_SESSION` used a hardcoded pad that bypassed the constant
   entirely. Colons now line up on both backends.
-
----
-
 
 ## [1.0.0] — 2026-08-02
 
@@ -2475,9 +2415,6 @@ drift.
   asserting the exit CODE (not just the message) is added so it can't
   silently regress.
 
----
-
-
 ## [0.4.5] — 2026-06-09
 
 ### Added
@@ -2613,9 +2550,6 @@ drift.
     `SCRATCH_WORKSTREAM`, `isScratchWorkstream()`,
     `assertWorkstreamInitable()`, `WorkstreamNameReservedError`.
 
----
-
-
 ## [0.4.4] — 2026-05-30
 
 ### Added
@@ -2648,7 +2582,6 @@ drift.
   exhaustion is not an error — the agent row is already committed and
   reconcile picks up status on the next tick.
 
-
 ## [0.4.3] — 2026-05-23
 
 ### Performance
@@ -2659,7 +2592,6 @@ drift.
   list; the All-tasks popup reads SQLite directly while open. This
   reduces full-frame repaint pressure and large-task-list churn while
   preserving slow-tick refresh for subprocess-backed drills.
-
 
 ## [0.4.2] — 2026-05-17
 
@@ -2686,7 +2618,6 @@ drift.
 - Internal `ReconcileMode = "status-only"` variant. The placeholder-pane
   protection that motivated it is now defensive in the `reconcile()`
   prune loop itself, independent of mode.
-
 
 ## [0.4.1] — 2026-05-14
 
@@ -2746,7 +2677,6 @@ un-archive.
   `mu agent list -w <ws>` shows current owners.
 - `mu archive restore` does not restore `agent_logs` (archives don't
   snapshot the live event log).
-
 
 ## [0.4.0] — 2026-05-14
 
@@ -2998,7 +2928,6 @@ is the static card; both stay opt-in for non-TTY callers.
   folded into AGENTS.md + ARCHITECTURE.md).
 - `docs/plans/` (pre-TUI implementation scratchpads; long since
   shipped).
-
 
 ## [0.3.2] — 2026-05-11
 
@@ -3321,8 +3250,6 @@ top-level `mu adopt`, the pre-v0.3 export-bucket detection, the legacy
   SIGINT handlers between prestage and the first try-block (needs
   process-global state).
 
----
-
 ## [0.3.1] — 2026-05-11
 
 **First npm release.** Published as `@martintrojer/mu`. The skill
@@ -3483,8 +3410,6 @@ from the v0.3 dogfood feedback wave.
   and the result type gains `dryRun: boolean` + `present:
   boolean` (discriminator for the missing-row case). Idempotent
   on a missing task in both phases.
-
----
 
 ## [0.3.0] — 2026-05-10
 
