@@ -307,12 +307,12 @@ resolves it.
 
 ## Session-capped hosts
 
-Some hosts allow one ssh session per connection (`MaxSessions 1`, e.g. a
-managed dev VM). A `session` worker's pane holds that session for the worker's whole
-life, so every other `ssh` to the host (the murmur collector, `git fetch`, you)
-is refused, and it shows as a misleading `Permission denied`. A `lease` profile
-fixes that: the pane runs a local **carrier** that owns a detached remote job on
-its own connection, so no session is held.
+Some hosts allow one ssh session per connection (`MaxSessions 1`). A
+`session` worker's pane holds it for the worker's whole life, so every other
+`ssh` to the host (the murmur collector, `git fetch`, you) is refused, as a
+misleading `Permission denied`. A `lease` profile fixes that: the pane runs a
+local **carrier** that owns a detached remote job on its own connection, so
+no session is held.
 
 ```bash
 mu host init dev --mule   # prints the starter below; runs nothing
@@ -358,6 +358,9 @@ mu host check dev --root '~/repo'
   runs `pi` without a login shell on a lease profile for that reason.
 - An exit 3 from any host template (`stop` included) is a hand-back: stop and
   ask a human. mu never retries it.
+- Each dropped master is a hand-back. A resumable transport under the master
+  (for example Eternal Terminal forwarding a port to the host's sshd) makes
+  drops rare, with no template change. See mule's SPEC, *SSH master*.
 - `agent spawn --host` on a lease profile waits for the job handle
   (`MU_SPAWN_JOB_MS`, default 30 s) even under `--no-ctl`. A spawn that fails
   after the handle runs `stop` before it removes the worktree. A failed stop
