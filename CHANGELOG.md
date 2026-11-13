@@ -12,6 +12,18 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dashboard: the model column shows whatever murmur reports.** It asked
+  murmur only when a live agent's harness looked wired to it, and the pi check
+  looked for the `extensions/murmur.ts` shim murmur 2 no longer writes (it
+  installs as a pi package). So every pi agent showed `?`. The dashboard now
+  asks murmur whenever a live agent exists and shows every row it gets.
+- **The `murmur link pi` shim check is gone.** pi counts as wired to murmur
+  whenever murmur is on PATH. A pi agent murmur has no row for reads `murmur
+  has no row`, not `murmur pi extension not linked`, and `mu doctor` no longer
+  warns "run murmur link pi" (a command murmur 2 does not have).
+
 ## [5.0.1] — 2026-11-13
 
 ### Added

@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
@@ -74,7 +74,6 @@ export const MURMUR_STATUS_TIMEOUT_MS = 10_000;
 export const UNKNOWN_REASON = {
   murmurMissing: "murmur not installed",
   murmurTimeout: `murmur status timed out after ${MURMUR_STATUS_TIMEOUT_MS / 1000}s (its drain may be rebuilding its socket cache; retry)`,
-  extensionMissing: "murmur pi extension not linked",
   hooksMissing: "murmur hooks not installed",
   noRow: "murmur has no row",
   stale: "remote snapshot stale",
@@ -111,11 +110,6 @@ function murmurOnPath(): boolean {
     }
   }
   return false;
-}
-
-function murmurExtensionLinked(): boolean {
-  const piDir = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
-  return existsSync(join(piDir, "extensions", "murmur.ts"));
 }
 
 /**
@@ -194,23 +188,21 @@ export function murmurHooksInstalled(harness: Exclude<Harness, "pi">): boolean {
 
 /**
  * Whether murmur can report the state of an agent running `cli` (default pi):
- * murmur on PATH, plus its pi extension for pi, or its hook entries for a
- * hook harness. Per harness: claude hooks never stand in for a missing pi
- * extension (spec D13).
+ * murmur on PATH, plus its hook entries for a hook harness (per harness, spec
+ * D13). pi needs nothing more: murmur installs into pi as a package.
  */
 export function murmurAvailable(cli = "pi"): boolean {
   if (!murmurOnPath()) return false;
   const harness = murmurHarness(cli);
-  return harness === "pi" ? murmurExtensionLinked() : murmurHooksInstalled(harness);
+  // pi loads murmur as a package (murmur 2's only install path): on PATH is wired.
+  return harness === "pi" || murmurHooksInstalled(harness);
 }
 
 /** Why murmur has nothing for an agent running `cli`, when murmur is the source. */
 function murmurMissingReason(cli: string | undefined): string {
   if (murmurAvailable(cli)) return UNKNOWN_REASON.noRow;
   if (!murmurOnPath()) return UNKNOWN_REASON.murmurMissing;
-  return murmurHarness(cli) === "pi"
-    ? UNKNOWN_REASON.extensionMissing
-    : UNKNOWN_REASON.hooksMissing;
+  return UNKNOWN_REASON.hooksMissing;
 }
 
 const defaultMurmurRunner: MurmurRunner = async () => {
@@ -415,20 +407,16 @@ export function runtimeKey(a: RuntimeAgentRef): string {
 }
 
 /**
- * Every agent's runtime info by `runtimeKey`, from `murmur status --json`
- * through the state read's cache (one call per `MURMUR_CACHE_MS` at most,
- * shared with `readBaseStates`). Murmur is not asked at all unless one of
- * `clis` (the live agents' harnesses) is wired to it, so a dashboard with no
- * agents never touches murmur's state. Stale rows and a key two rows claim are
- * left out (unknown, never a guess). Null: murmur failed or timed out, so the
- * caller keeps what it had.
+ * Every agent's runtime info by `runtimeKey`: whatever `murmur status --json`
+ * reports, through the state read's cache (one call per `MURMUR_CACHE_MS` at
+ * most, shared with `readBaseStates`). Stale rows and a key two rows claim are
+ * left out (unknown, never a guess). Null: murmur failed, timed out or is not
+ * installed, so the caller keeps what it had.
  */
 export async function readMurmurRuntimes(
-  clis: readonly string[],
   now = Date.now(),
 ): Promise<Map<string, AgentRuntimeInfo> | null> {
   const out = new Map<string, AgentRuntimeInfo>();
-  if (![...new Set(clis)].some((cli) => murmurAvailable(cli))) return out;
   const stdout = await readMurmur(now);
   if (typeof stdout !== "string") return null;
   const seen = new Set<string>();

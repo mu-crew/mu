@@ -317,6 +317,24 @@ describe("runtime tiers", () => {
     expect(reads).toBe(3);
   });
 
+  it("never reads runtime info (murmur) while no live agent exists", async () => {
+    let reads = 0;
+    rt = createRuntime({
+      dbPath: join(tmp, "a.db"),
+      syncDb: db,
+      caller: null,
+      readRuntimes: async () => {
+        reads += 1;
+        return new Map();
+      },
+    });
+    await rt.refresh({}, { slow: true });
+    expect(reads).toBe(0);
+    insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1" });
+    await rt.refresh({}, { slow: true });
+    expect(reads).toBe(1);
+  });
+
   it("a fast refresh reads agent state from the slow tier's cache", async () => {
     insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1" });
     rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });

@@ -20,7 +20,6 @@ import { withEnv } from "./_env.js";
 
 const agent: StateAgentRef = { name: "worker-1", workstreamName: "demo", paneId: "%1" };
 const originalPath = process.env.PATH;
-const originalPiDir = process.env.PI_CODING_AGENT_DIR;
 let tempDir: string;
 
 function tmuxOutput(stdout: string): void {
@@ -59,16 +58,9 @@ function installMurmur(): void {
   process.env.PATH = bin;
 }
 
-function linkExtension(): void {
-  const extensions = join(tempDir, "pi", "extensions");
-  mkdirSync(extensions, { recursive: true });
-  writeFileSync(join(extensions, "murmur.ts"), "");
-}
-
 beforeEach(() => {
   tempDir = mkdtempSync(join(tmpdir(), "mu-agent-state-"));
   process.env.PATH = join(tempDir, "empty-bin");
-  process.env.PI_CODING_AGENT_DIR = join(tempDir, "pi");
   setMuxForTests(tmuxBackend);
   resetAgentStateCacheForTests();
 });
@@ -80,8 +72,6 @@ afterEach(() => {
   setMuxForTests(undefined);
   if (originalPath === undefined) delete process.env.PATH;
   else process.env.PATH = originalPath;
-  if (originalPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-  else process.env.PI_CODING_AGENT_DIR = originalPiDir;
   rmSync(tempDir, { recursive: true, force: true });
 });
 
@@ -106,13 +96,7 @@ describe("readMurmurRuntimes", () => {
     runtimeKey({ workstream: "demo", name, host: null, pane_id: paneId });
   const remote = (name: string) =>
     runtimeKey({ workstream: "demo", name, host: "dev", pane_id: "%9" });
-  const wired = (): void => {
-    installMurmur();
-    linkExtension();
-  };
-
   it("files a local pane under its pane, a peer's under its name; parses every field", async () => {
-    wired();
     setMurmurRunnerForTests(async () =>
       JSON.stringify({
         panes: [
@@ -121,7 +105,7 @@ describe("readMurmurRuntimes", () => {
         ],
       }),
     );
-    const got = await readMurmurRuntimes(["pi"], 1_000);
+    const got = await readMurmurRuntimes(1_000);
     expect(got?.get(local("worker-1", "%1"))).toEqual({
       model: "claude-opus-5-5",
       provider: "anthropic",
@@ -140,52 +124,37 @@ describe("readMurmurRuntimes", () => {
   });
 
   it("drops stale rows and a key two rows claim, keeping every other agent", async () => {
-    wired();
     const far = pane({ local: false, agent_name: "far" });
     setMurmurRunnerForTests(async () =>
       JSON.stringify({
         panes: [far, far, pane(), pane({ pane: "%3", agent_name: "old", freshness: "stale" })],
       }),
     );
-    const got = await readMurmurRuntimes(["pi"], 1_000);
+    const got = await readMurmurRuntimes(1_000);
     expect([...(got?.keys() ?? [])]).toEqual([local("worker-1", "%1")]);
   });
 
-  it("never asks murmur unless a live agent's harness is wired to it", async () => {
-    let calls = 0;
-    setMurmurRunnerForTests(async () => {
-      calls += 1;
-      return JSON.stringify({ panes: [pane()] });
-    });
-    expect((await readMurmurRuntimes([], 1_000))?.size).toBe(0);
-    expect((await readMurmurRuntimes(["pi"], 1_000))?.size).toBe(0); // murmur not on PATH
-    expect(calls).toBe(0);
-  });
-
   it("a failed or timed-out murmur is null (the caller keeps its last read)", async () => {
-    wired();
     setMurmurRunnerForTests(async () => ({ timedOut: true }));
-    expect(await readMurmurRuntimes(["pi"], 1_000)).toBeNull();
+    expect(await readMurmurRuntimes(1_000)).toBeNull();
     resetAgentStateCacheForTests();
     setMurmurRunnerForTests(async () => null);
-    expect(await readMurmurRuntimes(["pi"], 1_000)).toBeNull();
+    expect(await readMurmurRuntimes(1_000)).toBeNull();
   });
 
   it("shares one murmur call with the state read inside the cache window", async () => {
-    wired();
     tmuxOutput("%1\t\t"); // no local option: the state read asks murmur too
     let calls = 0;
     setMurmurRunnerForTests(async () => {
       calls += 1;
       return remoteRow();
     });
-    await readMurmurRuntimes(["pi"], Date.now());
+    await readMurmurRuntimes(Date.now());
     await reading();
     expect(calls).toBe(1);
   });
 
   it("stamps the cache when the answer came: a call that used the window is not stale at once", async () => {
-    wired();
     tmuxOutput("%1\t\t");
     let calls = 0;
     let clock = 1_000_000;
@@ -197,7 +166,7 @@ describe("readMurmurRuntimes", () => {
         clock += 10_000; // the whole timeout
         return { timedOut: true };
       });
-      expect(await readMurmurRuntimes(["pi"], clock)).toBeNull();
+      expect(await readMurmurRuntimes(clock)).toBeNull();
       await reading(); // the state read right after reuses the timed-out answer
       expect(calls).toBe(1);
     } finally {
@@ -305,14 +274,13 @@ describe("readAgentStates", () => {
       source: "none",
       since: null,
       alive: true,
-      reason: UNKNOWN_REASON.extensionMissing,
+      reason: UNKNOWN_REASON.noRow,
     });
   });
 
   it("a murmur status that timed out reads as its own explained unknown, never no row or missing", async () => {
     tmuxOutput("%1\t\t");
     installMurmur();
-    linkExtension();
     setMurmurRunnerForTests(async () => ({ timedOut: true }));
 
     expect((await reading()).get(agentKey(agent))).toEqual({
@@ -401,11 +369,9 @@ describe("readAgentStates", () => {
 });
 
 describe("murmurAvailable", () => {
-  it("requires both the executable and pi extension", () => {
+  it("pi needs only the executable (murmur installs into pi as a package)", () => {
     expect(murmurAvailable()).toBe(false);
     installMurmur();
-    expect(murmurAvailable()).toBe(false);
-    linkExtension();
     expect(murmurAvailable()).toBe(true);
   });
 });
@@ -430,21 +396,8 @@ describe("murmurAvailable(cli): per harness (spec D13)", () => {
     hooks: { Stop: [{ matcher: "", hooks: [{ type: "command", command }] }] },
   });
 
-  it("claude hooks installed: claude is available, a missing pi extension is not hidden", async () => {
+  it("murmur alone leaves a claude agent without murmur", () => {
     installMurmur();
-    hookFile(".claude/settings.json", grouped("murmur hook claude"));
-    expect(murmurAvailable("claude")).toBe(true);
-    expect(murmurAvailable("pi")).toBe(false);
-    expect(murmurAvailable()).toBe(false);
-    const { murmurDoctorCheck } = await import("../src/doctor-summary.js");
-    const check = murmurDoctorCheck("murmur");
-    expect(check.status).toBe("warn");
-    expect(check.detail).toContain(UNKNOWN_REASON.extensionMissing);
-  });
-
-  it("the pi extension alone leaves a claude agent without murmur", () => {
-    installMurmur();
-    linkExtension();
     expect(murmurAvailable("pi")).toBe(true);
     expect(murmurAvailable("claude")).toBe(false);
     expect(murmurAvailable("codex")).toBe(false);
@@ -492,7 +445,7 @@ describe("murmurAvailable(cli): per harness (spec D13)", () => {
     expect(murmurAvailable("codex")).toBe(false);
   });
 
-  it("an unreported claude agent reads `hooks not installed`, a pi agent `extension not linked`", async () => {
+  it("an unreported claude agent reads `hooks not installed`, a pi agent `no row`", async () => {
     installMurmur();
     tmuxOutput("%1\t\t\n%2\t\t");
     setMurmurRunnerForTests(async () => null);
@@ -503,13 +456,12 @@ describe("murmurAvailable(cli): per harness (spec D13)", () => {
       cli: "claude",
     };
     const got = await readAgentStates([agent, claude]);
-    expect(got.get(agentKey(agent))?.reason).toBe(UNKNOWN_REASON.extensionMissing);
+    expect(got.get(agentKey(agent))?.reason).toBe(UNKNOWN_REASON.noRow);
     expect(got.get(agentKey(claude))?.reason).toBe(UNKNOWN_REASON.hooksMissing);
   });
 
   it("murmur answering with no row still names the harness's missing wiring", async () => {
     installMurmur();
-    linkExtension();
     tmuxOutput("%1\t\t\n%2\t\t");
     setMurmurRunnerForTests(async () => JSON.stringify({ panes: [] }));
     const claude: StateAgentRef = {
@@ -522,12 +474,10 @@ describe("murmurAvailable(cli): per harness (spec D13)", () => {
     expect(got.get(agentKey(agent))?.reason).toBe(UNKNOWN_REASON.noRow);
     expect(got.get(agentKey(claude))?.reason).toBe(UNKNOWN_REASON.hooksMissing);
 
-    // claude hooks installed, the pi extension gone: the claude pane simply has no row yet.
+    // claude hooks installed: the claude pane simply has no row yet.
     hookFile(".claude/settings.json", grouped("murmur hook claude"));
-    rmSync(join(tempDir, "pi"), { recursive: true, force: true });
     resetAgentStateCacheForTests();
     got = await readAgentStates([agent, claude]);
-    expect(got.get(agentKey(agent))?.reason).toBe(UNKNOWN_REASON.extensionMissing);
     expect(got.get(agentKey(claude))?.reason).toBe(UNKNOWN_REASON.noRow);
   });
 });
