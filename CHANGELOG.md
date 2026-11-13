@@ -12,6 +12,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.0.1] — 2026-11-13
+
 ### Added
 
 - **Dashboard: model, effort and context per agent.** The Agents tab ends in
