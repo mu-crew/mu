@@ -190,7 +190,7 @@ export function boundState(
   });
   const count = snap.workstreams.length;
   const ways = retrieve === short ? [retrieve] : [retrieve, short];
-  const fit = (b: Bounded): Record<string, unknown> | null => {
+  const fitDoc = (b: Bounded): Record<string, unknown> | null => {
     for (const way of ways) {
       const doc = finish(b, way);
       if (sizeOf(doc) <= RESULT_BYTES) return doc;
@@ -198,16 +198,16 @@ export function boundState(
     return null;
   };
   for (const k of LIST_STEPS) {
-    const doc = fit(bound(snap, k, count));
+    const doc = fitDoc(bound(snap, k, count));
     if (doc !== null) return doc;
   }
   // Even bare counts overflow: page the workstreams themselves (none is allowed).
   for (let w = count - 1; w >= 1; w--) {
-    const doc = fit(bound(snap, 0, w));
+    const doc = fitDoc(bound(snap, 0, w));
     if (doc !== null) return doc;
   }
   for (const chars of FALLBACK_CHARS) {
-    const doc = fit(bound(snap, 0, 0, chars));
+    const doc = fitDoc(bound(snap, 0, 0, chars));
     if (doc !== null) return doc;
   }
   return finish(bound(snap, 0, 0, 1), short);
