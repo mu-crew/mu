@@ -153,12 +153,15 @@ first.
    naming a private `rex server run`) if it touches agents:
 
    ```bash
-   MU_SYNC_DIR= MU_DB_PATH=/tmp/mu-smoke.db node dist/cli.js <verb> ...
+   MU_SYNC_DIR= MU_DB_PATH=/tmp/mu-smoke.db MURMUR_STATE_DIR=/tmp/mu-smoke-murmur \
+     node dist/cli.js <verb> ...
    ```
 
    Blank `MU_SYNC_DIR` too. Otherwise the first flush writes the
    throwaway DB's `machine_id` into your real sync folder, and `mu sync`
-   lists that phantom peer forever.
+   lists that phantom peer forever. `MURMUR_STATE_DIR` keeps the
+   `murmur status` calls of the state read and the dashboard off your real
+   murmur, whose inbox they drain.
 
 ### Update the schema
 
