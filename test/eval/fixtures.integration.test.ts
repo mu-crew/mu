@@ -20,7 +20,7 @@ import {
   writeWorkerDriver,
 } from "../../tools/eval/fixtures.ts";
 import { answersServed } from "../../tools/eval/observe.ts";
-import { createSandbox, sh } from "../../tools/eval/sandbox.ts";
+import { createSandbox, REAL_PI, sh } from "../../tools/eval/sandbox.ts";
 import { surfaceFromDir } from "../../tools/eval/surface.ts";
 import type { Sandbox } from "../../tools/eval/types.ts";
 
@@ -33,7 +33,8 @@ function hasTmux(): boolean {
     return false;
   }
 }
-const ready = existsSync(join(ROOT, "dist", "cli.js")) && hasTmux();
+// Seeds spawn real pi agents (ctl handshake): no real pi, no run.
+const ready = existsSync(join(ROOT, "dist", "cli.js")) && hasTmux() && REAL_PI !== "pi";
 const surface = () => ({ ...surfaceFromDir("checkout", ROOT), family: "next" as const });
 
 const ANSWER = "All four fixes are in place. I found no real problems.";

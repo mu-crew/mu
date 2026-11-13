@@ -313,7 +313,8 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     });
     const r = await closeAgent(db, "worker-1", { workstream: "auth" });
     expect(r.worktree?.action).toBe("removed");
-    expect(r.worktree?.warnings ?? []).toEqual([]);
+    // Only the pane's own processes: a host may also hide some of yours (a runner's helpers).
+    expect(ours(r.worktree?.warnings)).toEqual([]);
     expect(existsSync(wt.path)).toBe(false);
   });
 

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execGuess, guessEffect, intentLeaks } from "../../tools/eval/cold-guess.ts";
 import { INTENTS } from "../../tools/eval/cold-intents.ts";
-import { createSandbox } from "../../tools/eval/sandbox.ts";
+import { createSandbox, REAL_PI } from "../../tools/eval/sandbox.ts";
 import { surfaceFromDir } from "../../tools/eval/surface.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -20,7 +20,8 @@ function hasTmux(): boolean {
     return false;
   }
 }
-const ready = existsSync(join(ROOT, "dist", "cli.js")) && hasTmux();
+// Seeds spawn real pi agents (ctl handshake): no real pi, no run.
+const ready = existsSync(join(ROOT, "dist", "cli.js")) && hasTmux() && REAL_PI !== "pi";
 const surface = () => ({ ...surfaceFromDir("checkout", ROOT), family: "next" as const });
 // a spread of kinds: a read, a write checked by state, a two-step close that must not lose work
 const SUBSET = [

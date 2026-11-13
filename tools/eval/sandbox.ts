@@ -36,9 +36,23 @@ export const FAUX_EXT: string = fileURLToPath(new URL("./faux.ts", import.meta.u
 
 function resolveRealPi(): string {
   try {
-    return execFileSync("which", ["pi"], { encoding: "utf8" }).trim() || "pi";
+    const all = execFileSync("which", ["-a", "pi"], { encoding: "utf8" }).split("\n");
+    // Skip the test setup's stub (test/_setup.ts): it only satisfies spawn's binary check.
+    const real = all.map((p) => p.trim()).find((p) => p !== "" && !isPiStub(p));
+    return real ?? "pi";
   } catch {
     return "pi";
+  }
+}
+
+/** The marker test/_setup.ts writes into its `pi` stub. */
+export const PI_STUB_MARKER = "pi: test stub (test/_setup.ts)";
+
+function isPiStub(path: string): boolean {
+  try {
+    return readFileSync(path, "utf8").slice(0, 200).includes(PI_STUB_MARKER);
+  } catch {
+    return false;
   }
 }
 

@@ -55,8 +55,10 @@ describe("muShim fp()", () => {
     expect(want).toMatch(/^[0-9a-f]{16}$/);
     expect(existsSync(`${db}-shm`)).toBe(false);
     // `sqlite3 -readonly` cannot open this state (error 14): the broken dump the old fp() read.
+    // A sqlite3 that can (Linux builds open it read-only) has no broken dump to reproduce;
+    // the shim must still see the write below.
     const ro = spawnSync("sqlite3", ["-readonly", db, ".dump agents"], { encoding: "utf8" });
-    expect(ro.stderr).toContain("(14)");
+    if (ro.status !== 0) expect(ro.stderr).toContain("(14)");
 
     // The "CLI" the shim wraps: a raw write to a machine-local table, no op.
     const cli = join(dir, "cli.mjs");

@@ -119,7 +119,8 @@ describe("a lost prepare answer", () => {
     answer();
     const holder = spawnChild("sleep", ["30"], { cwd: wt(), stdio: "ignore" });
     try {
-      await expect(prepare()).rejects.toThrow(/\(held \d+\)/);
+      // `held <pid> [<etime> <args>]`: ps adds the holder's age and command when it can.
+      await expect(prepare()).rejects.toThrow(/\(held \d+( [^)]*)?\)/);
     } finally {
       holder.kill("SIGKILL");
     }

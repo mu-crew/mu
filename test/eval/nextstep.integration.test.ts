@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { nextSelftest, runNextCheck } from "../../tools/eval/nextstep.ts";
 import { NEXT_CASES } from "../../tools/eval/nextstep-cases.ts";
+import { REAL_PI } from "../../tools/eval/sandbox.ts";
 import { surfaceFromDir } from "../../tools/eval/surface.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -21,8 +22,12 @@ const has = (bin: string, arg: string): boolean => {
     return false;
   }
 };
+// Seeds spawn real pi agents (ctl handshake): no real pi, no run.
 const ready =
-  existsSync(join(ROOT, "dist", "cli.js")) && has("tmux", "-V") && has("zsh", "--version");
+  existsSync(join(ROOT, "dist", "cli.js")) &&
+  has("tmux", "-V") &&
+  has("zsh", "--version") &&
+  REAL_PI !== "pi";
 const surface = () => ({ ...surfaceFromDir("checkout", ROOT), family: "next" as const });
 const untimed = NEXT_CASES.filter((c) => c.timed !== true);
 const timed = NEXT_CASES.filter((c) => c.timed === true);
