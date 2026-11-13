@@ -1,0 +1,89 @@
+name: Test
+
+# The local gate, on a runner: push a `ci/**` branch (a test balloon) to run it
+# without touching main, or start it by hand. Not on main pushes or tags: the
+# release gate stays local (RELEASING.md).
+on:
+  push:
+    branches:
+      - "ci/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the same branch supersedes the run in flight.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Full history and tags: state-import tests build released versions from their tags.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Agent environment (tmux, git identity)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh sqlite3 lsof
+          git config --global user.name "mu ci" && git config --global user.email ci@mu.invalid
+          git config --global init.defaultBranch main
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run test:fast
+
+  # The integration tier only (the fast job runs the rest), sharded: it runs one
+  # worker per machine (the tests share a tmux server), so machines are the parallelism.
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      # Full history and tags: state-import tests build released versions from their tags.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Agent environment (tmux, git identity)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh sqlite3 lsof
+          git config --global user.name "mu ci" && git config --global user.email ci@mu.invalid
+          git config --global init.defaultBranch main
+      - run: npm ci
+      - run: npm run build
+      - name: Integration shard ${{ matrix.shard }}/4
+        run: >-
+          npx vitest run integration.test --shard=${{ matrix.shard }}/4
+          --reporter=default --reporter=json --outputFile=vitest.json
+      - name: Failed files
+        if: always()
+        run: |
+          node -e '
+            const r = require("./vitest.json");
+            const bad = r.testResults.filter((f) => f.status !== "passed");
+            console.log(`${r.numFailedTests} failed tests in ${bad.length} files`);
+            for (const f of bad) {
+              console.log(`FILE ${f.name.replace(process.cwd() + "/", "")}`);
+              for (const a of f.assertionResults.filter((a) => a.status === "failed"))
+                console.log(`  x ${a.fullName}: ${(a.failureMessages[0] ?? "").split("\n")[0].slice(0, 200)}`);
+              if (f.assertionResults.length === 0) console.log(`  ! ${(f.message ?? "").split("\n")[0].slice(0, 200)}`);
+            }' || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vitest-integration-${{ matrix.shard }}
+          path: vitest.json
