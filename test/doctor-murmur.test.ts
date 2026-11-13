@@ -10,11 +10,9 @@ describe("murmurDoctorCheck (per-tick, no live hello)", () => {
   let tempDir: string;
   let murmurRoot: string;
   let originalPath: string | undefined;
-  let originalPiDir: string | undefined;
 
   beforeEach(() => {
     originalPath = process.env.PATH;
-    originalPiDir = process.env.PI_CODING_AGENT_DIR;
     tempDir = mkdtempSync(join(tmpdir(), "mu-doctor-summary-"));
 
     murmurRoot = join(tempDir, "murmur");
@@ -27,20 +25,12 @@ describe("murmurDoctorCheck (per-tick, no live hello)", () => {
     writeFileSync(join(murmurBin, "murmur"), "#!/bin/sh\nexit 0\n");
     chmodSync(join(murmurBin, "murmur"), 0o755);
     process.env.PATH = murmurBin;
-
-    const piDir = join(tempDir, "pi");
-    mkdirSync(join(piDir, "extensions"), { recursive: true });
-    writeFileSync(join(piDir, "extensions", "murmur.ts"), "");
-    process.env.PI_CODING_AGENT_DIR = piDir;
   });
 
   afterEach(() => {
     const pathKey = "PATH";
-    const piDirKey = "PI_CODING_AGENT_DIR";
     if (originalPath === undefined) delete process.env[pathKey];
     else process.env.PATH = originalPath;
-    if (originalPiDir === undefined) delete process.env[piDirKey];
-    else process.env.PI_CODING_AGENT_DIR = originalPiDir;
     rmSync(tempDir, { recursive: true, force: true });
   });
 
@@ -53,18 +43,6 @@ describe("murmurDoctorCheck (per-tick, no live hello)", () => {
       name: "murmur",
       status: "warn",
       detail: "murmur not installed: agent state shows unknown",
-    });
-  });
-
-  it("warns when the murmur pi extension is not linked", () => {
-    rmSync(join(process.env.PI_CODING_AGENT_DIR ?? "", "extensions", "murmur.ts"));
-
-    const murmur = murmurDoctorCheck("murmur");
-
-    expect(murmur).toEqual({
-      name: "murmur",
-      status: "warn",
-      detail: "murmur pi extension not linked: run murmur link pi",
     });
   });
 

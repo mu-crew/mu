@@ -25,14 +25,12 @@ const DB_KEY = "MU_DB_PATH";
 let home: string;
 let savedHome: string | undefined;
 let savedPath: string | undefined;
-let savedPiDir: string | undefined;
 let servers: Server[];
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "mu-dctl-"));
   savedHome = process.env[HOME_KEY];
   savedPath = process.env.PATH;
-  savedPiDir = process.env.PI_CODING_AGENT_DIR;
   process.env[HOME_KEY] = home;
   process.env[DB_KEY] = join(home, "mu.db");
   servers = [];
@@ -44,9 +42,6 @@ afterEach(async () => {
   if (savedHome === undefined) delete process.env[HOME_KEY];
   else process.env[HOME_KEY] = savedHome;
   process.env.PATH = savedPath;
-  const piDirKey = "PI_CODING_AGENT_DIR";
-  if (savedPiDir === undefined) delete process.env[piDirKey];
-  else process.env[piDirKey] = savedPiDir;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -138,10 +133,6 @@ describe("murmur row with the mu extension", () => {
     writeFileSync(join(bin, "murmur"), "#!/bin/sh\nexit 0\n");
     chmodSync(join(bin, "murmur"), 0o755);
     process.env.PATH = bin;
-    const piDir = join(home, "pi");
-    mkdirSync(join(piDir, "extensions"), { recursive: true });
-    writeFileSync(join(piDir, "extensions", "murmur.ts"), "");
-    process.env.PI_CODING_AGENT_DIR = piDir;
     expect(murmurDoctorCheck("murmur", { muExtOk: true })).toEqual({
       name: "murmur",
       status: "warn",
@@ -153,16 +144,12 @@ describe("murmur row with the mu extension", () => {
     );
   });
 
-  it("murmur installed + its extension linked keeps reporting murmur", () => {
+  it("murmur installed keeps reporting murmur", () => {
     const bin = join(home, "bin");
     mkdirSync(bin);
     writeFileSync(join(bin, "murmur"), "#!/bin/sh\nexit 0\n");
     chmodSync(join(bin, "murmur"), 0o755);
     process.env.PATH = bin;
-    const piDir = join(home, "pi");
-    mkdirSync(join(piDir, "extensions"), { recursive: true });
-    writeFileSync(join(piDir, "extensions", "murmur.ts"), "");
-    process.env.PI_CODING_AGENT_DIR = piDir;
     expect(murmurDoctorCheck("murmur", { muExtOk: true })).toMatchObject({
       status: "ok",
       detail: "agent state from murmur",

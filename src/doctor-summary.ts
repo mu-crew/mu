@@ -101,14 +101,6 @@ export function murmurDoctorCheck(
       detail: `${UNKNOWN_REASON.murmurMissing}: agent state shows unknown`,
     };
   }
-  if (!murmurAvailable()) {
-    return {
-      name: "murmur",
-      status: "warn",
-      detail: `${UNKNOWN_REASON.extensionMissing}: run murmur link pi`,
-    };
-  }
-
   const version = murmurVersion(executable);
   if (version !== null && olderThanMurmurOne(version)) {
     return {

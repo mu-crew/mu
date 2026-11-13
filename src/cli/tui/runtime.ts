@@ -69,11 +69,11 @@ export interface RuntimeOptions {
   now?: () => number;
   /**
    * The slow tier's read of every agent's model, effort and context
-   * (`readMurmurRuntimes`, whose cache the state read shares), given the live
-   * agents' harnesses. Null: the read failed, the previous one stands. Absent:
+   * (`readMurmurRuntimes`, whose cache the state read shares), made only while
+   * a live agent exists. Null: the read failed, the previous one stands. Absent:
    * none is read, every agent's runtime stays unknown (tests: no subprocess).
    */
-  readRuntimes?: (clis: readonly string[]) => Promise<ReadonlyMap<string, AgentRuntimeInfo> | null>;
+  readRuntimes?: () => Promise<ReadonlyMap<string, AgentRuntimeInfo> | null>;
 }
 
 const DEFAULT_SYNC_EVERY_MS = 10_000;
@@ -109,18 +109,19 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
     )
       .map((w) => w.name)
       .join("\n");
-    if (slow && opts.readRuntimes !== undefined) {
-      const clis = (
-        ro
-          .prepare(
-            `SELECT DISTINCT a.cli AS cli FROM agents a JOIN workstreams w ON w.id = a.workstream_id
-              WHERE w.torn_down_at IS NULL`,
-          )
-          .all() as { cli: string }[]
-      ).map((r) => r.cli);
+    // No live agent, no murmur call: `murmur status` drains murmur's inbox, so an empty
+    // dashboard must not touch it.
+    const anyAgent =
+      ro
+        .prepare(
+          `SELECT 1 FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+            WHERE w.torn_down_at IS NULL LIMIT 1`,
+        )
+        .get() !== undefined;
+    if (slow && opts.readRuntimes !== undefined && anyAgent) {
       try {
         // A failed read (null) keeps the previous one: one murmur timeout must not blank every row.
-        agentRuntimes = (await opts.readRuntimes(clis)) ?? agentRuntimes;
+        agentRuntimes = (await opts.readRuntimes()) ?? agentRuntimes;
       } catch {
         // Best effort: the previous read stands.
       }

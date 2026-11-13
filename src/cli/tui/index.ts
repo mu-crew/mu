@@ -33,7 +33,7 @@ export async function runDashboard(opts: RunDashboardOptions): Promise<void> {
     dbPath: opts.dbPath,
     syncDb: opts.syncDb,
     caller: spawnerFromEnv(),
-    readRuntimes: (clis) => readMurmurRuntimes(clis),
+    readRuntimes: () => readMurmurRuntimes(),
   });
   // The terminal's title and tmux's window name show `node` otherwise:
   // process.title renames the process (tmux automatic-rename reads it); OSC 2

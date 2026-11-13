@@ -459,9 +459,8 @@ describe("drills in the dashboard", () => {
       dbPath: join(tmp, "a.db"),
       syncDb: db,
       caller: null,
-      readRuntimes: async (clis) => {
+      readRuntimes: async () => {
         reads += 1;
-        expect(clis).toEqual(["pi"]);
         return w1Runtimes();
       },
     });

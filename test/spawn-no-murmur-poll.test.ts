@@ -15,12 +15,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";
 
-const ENV_KEYS = [
-  "PATH",
-  "PI_CODING_AGENT_DIR",
-  "MU_SPAWN_LIVENESS_MS",
-  "MU_SPAWN_CTL_MS",
-] as const;
+const ENV_KEYS = ["PATH", "MU_SPAWN_LIVENESS_MS", "MU_SPAWN_CTL_MS"] as const;
 
 describe("spawn does not poll murmur", () => {
   let tempDir: string;
@@ -34,7 +29,6 @@ describe("spawn does not poll murmur", () => {
     originalEnv = new Map(ENV_KEYS.map((key) => [key, process.env[key]]));
     process.env.MU_SPAWN_LIVENESS_MS = "1";
     process.env.MU_SPAWN_CTL_MS = "0";
-    process.env.PI_CODING_AGENT_DIR = join(tempDir, "pi");
     process.env.PATH = join(tempDir, "bin");
     setCommandResolverForTests(async () => ({ ok: true, binary: "pi", resolvedPath: "/pi" }));
     setSleepForTests(async () => {});
@@ -56,13 +50,10 @@ describe("spawn does not poll murmur", () => {
 
   function linkMurmur(): void {
     const binDir = join(tempDir, "bin");
-    const extensionDir = join(tempDir, "pi", "extensions");
     mkdirSync(binDir, { recursive: true });
-    mkdirSync(extensionDir, { recursive: true });
     const murmur = join(binDir, "murmur");
     writeFileSync(murmur, "#!/bin/sh\n");
     chmodSync(murmur, 0o755);
-    writeFileSync(join(extensionDir, "murmur.ts"), "");
   }
 
   function install(): { listCalls: () => number } {
