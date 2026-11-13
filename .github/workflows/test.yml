@@ -24,7 +24,7 @@ jobs:
           cache: npm
       - name: Agent environment (tmux, git identity)
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh
           git config --global user.name "mu ci" && git config --global user.email ci@mu.invalid
           git config --global init.defaultBranch main
       - run: npm ci
@@ -43,7 +43,7 @@ jobs:
           cache: npm
       - name: Agent environment (tmux, git identity)
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq tmux
+          sudo apt-get update -qq && sudo apt-get install -y -qq tmux zsh
           git config --global user.name "mu ci" && git config --global user.email ci@mu.invalid
           git config --global init.defaultBranch main
       - run: npm ci

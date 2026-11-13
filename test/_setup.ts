@@ -55,9 +55,9 @@
 // Forks are killed without their "exit" handlers, so a per-fork mkdtemp +
 // exit cleanup leaked one dir per fork (rr_r6_test_tmp_leaks).
 
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { inject } from "vitest";
 import {
   setMurmurHookRunnerForTests,
@@ -174,3 +174,17 @@ process.env.XDG_CACHE_HOME = join(xdgRoot, "cache");
 process.env.XDG_STATE_HOME = join(xdgRoot, "state");
 process.env.XDG_CONFIG_HOME = join(xdgRoot, "config");
 installRealDirGuard(realDirs);
+
+// Baseline: a `pi` on PATH. spawn refuses a harness binary it cannot find
+// (AgentSpawnCliNotFoundError), and most spawn tests use the default `--cli pi`
+// against a mocked mux, so they assumed the host had pi installed. The stub
+// goes LAST on PATH: a developer's real pi still wins, a bare host (CI) gets a
+// pane command that just waits. Tests that pin "not on PATH" set PATH themselves.
+{
+  const stubBin = join(xdgRoot, "stub-bin");
+  mkdirSync(stubBin, { recursive: true });
+  const stub = join(stubBin, "pi");
+  writeFileSync(stub, "#!/bin/sh\nexec sleep 86400\n");
+  chmodSync(stub, 0o755);
+  process.env.PATH = `${process.env.PATH ?? ""}${delimiter}${stubBin}`;
+}

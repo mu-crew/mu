@@ -957,6 +957,11 @@ describe("mu pi extension", () => {
       await new Promise<void>((r) => dead.close(() => r()));
       renameSync(keep, sock);
       expect(statSync(sock).ino).toBe(ino);
+      // Hold the stale file's inode alive under another name: Linux hands a freed
+      // inode number straight to the next file, so a takeover could keep the number.
+      const held = join(dir, "held");
+      rmSync(held, { force: true });
+      linkSync(sock, held);
       await fake.emit("session_start");
       expect(statSync(sock).ino).not.toBe(ino);
       expect(await ctlRequest(sock, { op: "hello" })).toMatchObject({ ok: true });
