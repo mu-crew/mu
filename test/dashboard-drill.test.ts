@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { createElement } from "react";
 import stringWidth from "string-width";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runtimeKey } from "../src/agent-state.js";
 import { insertAgent } from "../src/agents.js";
 import { App } from "../src/cli/tui/app.js";
 import {
@@ -17,7 +18,7 @@ import {
   type StepRunner,
   yankSequence,
 } from "../src/cli/tui/commands.js";
-import { clampTop, notesLines, wrap } from "../src/cli/tui/drill.js";
+import { clampTop, notesLines, runtimeLine, wrap } from "../src/cli/tui/drill.js";
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
 import { type Line, lineText } from "../src/cli/tui/text.js";
 import { type Db, openDb } from "../src/db.js";
@@ -62,6 +63,55 @@ describe("wrap and clampTop", () => {
     expect(clampTop(-3, 10, 4)).toBe(0);
     expect(clampTop(5, 2, 4)).toBe(0);
     expect(clampTop(Number.MAX_SAFE_INTEGER, 100, 10)).toBe(90);
+  });
+});
+
+/** ws/w1 on local pane %1, as murmur would report it (the drills' runtime fixture). */
+const W1_RUNTIME = {
+  model: "claude-opus-5-5",
+  provider: "anthropic",
+  effort: "high",
+  provider_effort: null,
+  context_pct: 8.6,
+  context_tokens: null,
+  context_window: null,
+  cost: null,
+};
+const w1Runtimes = (): Map<string, typeof W1_RUNTIME> =>
+  new Map([[runtimeKey({ workstream: "ws", name: "w1", host: null, pane_id: "%1" }), W1_RUNTIME]]);
+
+describe("runtimeLine", () => {
+  const none = {
+    model: null,
+    provider: null,
+    effort: null,
+    provider_effort: null,
+    context_pct: null,
+    context_tokens: null,
+    context_window: null,
+    cost: null,
+  };
+  it("says model, effort, context and cost; the applied effort only when it differs", () => {
+    expect(
+      runtimeLine({
+        model: "claude-opus-5-5",
+        provider: "anthropic",
+        effort: "high",
+        provider_effort: "medium",
+        context_pct: 8.5942,
+        context_tokens: 85_942,
+        context_window: 1_000_000,
+        cost: 0.0298,
+      }),
+    ).toBe(
+      "model: anthropic/claude-opus-5-5  effort: high (applied medium)  context: 85.9k/1.0M (8.6%)  cost: $0.03",
+    );
+    expect(runtimeLine({ ...none, effort: "low", provider_effort: "low" })).toBe(
+      "model: -  effort: low  context: -  cost: -",
+    );
+  });
+  it("no murmur row is no line", () => {
+    expect(runtimeLine(undefined)).toBeNull();
   });
 });
 
@@ -400,6 +450,43 @@ describe("drills in the dashboard", () => {
     ui.unmount();
   });
 
+  it("the scrollback drill pins the agent's runtime line from the slow tier's read", async () => {
+    seed();
+    agent();
+    mux = tmuxMux();
+    let reads = 0;
+    rt = createRuntime({
+      dbPath: join(tmp, "a.db"),
+      syncDb: db,
+      caller: null,
+      readRuntimes: async (clis) => {
+        reads += 1;
+        expect(clis).toEqual(["pi"]);
+        return w1Runtimes();
+      },
+    });
+    const ui = await renderApp(
+      createElement(App, {
+        runtime: rt,
+        initialTab: "tasks",
+        pollMs: null,
+        initialWorkstream: "ws",
+        now: () => 0,
+      }),
+      { columns: 100, rows: 20 },
+    );
+    await tab(ui, 2);
+    await ui.until((s) => s.includes("opus-5-5·high 9%"));
+    await ui.press(ENTER);
+    await ui.until(
+      (s) =>
+        s.includes("model: anthropic/claude-opus-5-5  effort: high  context: 8.6%") &&
+        s.includes("line two"),
+    );
+    expect(reads).toBe(1);
+    ui.unmount();
+  });
+
   it("a capture that lands after Esc is dropped (no stale body in the next drill)", async () => {
     seed();
     agent();
@@ -574,8 +661,13 @@ describe("attach", () => {
     stderr: "",
     exitCode: 0,
   });
-  const open = (runStep: StepRunner) => {
-    rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
+  const open = (runStep: StepRunner, withRuntime = false) => {
+    rt = createRuntime({
+      dbPath: join(tmp, "a.db"),
+      syncDb: db,
+      caller: null,
+      ...(withRuntime ? { readRuntimes: async () => w1Runtimes() } : {}),
+    });
     return renderApp(
       createElement(App, {
         runtime: rt,
@@ -811,10 +903,10 @@ describe("attach", () => {
     );
   });
 
-  it("a short terminal keeps body rows: the pinned head is capped", async () => {
+  it("a short terminal keeps body rows: the pinned head is capped, the reason before the runtime line", async () => {
     await withEnv("TMUX", undefined, async () => {
       mux = installMux("tmux", longPane);
-      const ui = await open(async () => ({ code: 1, stderr: "gone" }));
+      const ui = await open(async () => ({ code: 1, stderr: "gone" }), true);
       ui.resize(30, 8);
       await toAgents(ui);
       await ui.press("a");

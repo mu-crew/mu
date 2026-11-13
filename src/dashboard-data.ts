@@ -24,8 +24,8 @@
 // does not grow with the delegate history in `scratch`.
 
 import { type AgentOutput, liveAgentToOutput } from "./agent-output.js";
-import type { StateReading } from "./agent-state.js";
-import { UNKNOWN_REASON } from "./agent-state.js";
+import type { AgentRuntimeInfo, StateReading } from "./agent-state.js";
+import { runtimeKey, UNKNOWN_REASON } from "./agent-state.js";
 import { readLiveAgents } from "./agents.js";
 import type { CtlTool } from "./channels/index.js";
 import { type LogItem, logItem } from "./cli/log-records.js";
@@ -155,6 +155,8 @@ export interface DashboardAgent extends AgentOutput {
   task: string | null;
   /** The running tool; null = none running; absent = unknown (old extension, no ctl): never read as "none". */
   tool?: AgentTool | null;
+  /** Model, effort, context and cost as murmur reports them; absent = unknown (no murmur row). */
+  runtime?: AgentRuntimeInfo;
 }
 
 /** An op of the canonical log, rendered by the one formatter (`logItem`), plus its workstream. */
@@ -293,6 +295,8 @@ export interface DashboardOptions {
    * `probe: false` the read is SQL only for every cached agent. Absent: probe all.
    */
   agentStates?: { cache: Map<string, StateReading>; probe: boolean };
+  /** Runtime info by `runtimeKey` (`readMurmurRuntimes`, the slow tier's last read). */
+  agentRuntimes?: ReadonlyMap<string, AgentRuntimeInfo>;
 }
 
 const DEFAULT_STATUS: readonly TaskStatus[] = ["OPEN", "IN_PROGRESS"];
@@ -602,12 +606,15 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
   for (const ws of live) {
     for (const a of await readLiveAgents(db, ws.name, undefined, opts.agentStates)) {
       const mine = owned.get(a.incarnation) ?? [];
+      const out = liveAgentToOutput(a, ws.id);
+      const runtime = opts.agentRuntimes?.get(runtimeKey(out));
       everyAgent.push({
-        ...liveAgentToOutput(a, ws.id),
+        ...out,
         key: keyOf(ws.name, a.name),
         tasks: mine,
         task: mine[0] ?? null,
         ...toolOf(a.tool, now),
+        ...(runtime !== undefined ? { runtime } : {}),
       });
     }
   }

@@ -51,6 +51,8 @@ unset TMUX_PANE
 D="$ROOT/s$N"
 SOCK="${SOCK_OVERRIDE:-mudf-$N}"
 export MU_DB_PATH="$D/mu.db" MU_STATE_DIR="$D" MU_SYNC_DIR= MU_TMUX_SOCKET="$SOCK" MU_MUX=tmux
+# murmur too: the dashboard asks `murmur status` for runtime info, which drains its inbox.
+export MURMUR_STATE_DIR="$D/murmur"
 export MU_SPAWN_LIVENESS_MS=0 MU_DOGFOOD_REPO="$REPO"
 MU=(node "$REPO/dist/cli.js")
 

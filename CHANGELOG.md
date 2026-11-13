@@ -12,6 +12,21 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Added
+
+- **Dashboard: model, effort and context per agent.** The Agents tab ends in
+  a model column, `opus-5-5·high 9%` (`?` when murmur has no row for the
+  agent, `-` when it reports none; the Overview's Agents card leaves it out),
+  and the text filter matches it. The scrollback drill pins the full runtime
+  line under its notices: provider and model, requested effort (and the
+  applied one when the provider says otherwise), context tokens/window and
+  percent, session cost. Read from `murmur status --json` on the slow tick
+  only, through the cache the state read already shares (one call per 10 s at
+  most, none while no live agent's harness is wired to murmur); a failed read
+  keeps the last one. A local agent matches its own pane, a remote one its
+  peer's row; stale rows are ignored. The murmur cache is now stamped when the
+  answer comes, so a timed-out call is not repeated at once by the next reader.
+
 ### Changed
 
 - Docs: a how-to for plugins, `docs/guide/plugins.md` (register, link host,

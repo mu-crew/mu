@@ -366,9 +366,42 @@ function toolText(a: DashboardAgent, now: number): string {
   return `${a.tool.name} ${formatElapsed(ms)}`;
 }
 
-function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: number): Row[] {
+/** The tool column's cap, so one long tool name cannot push the model column off. */
+const TOOL_MAX = 28;
+/** As wide as `formatElapsed` gets (`59m59s`): the tool column is sized by names, never by a clock. */
+const ELAPSED_ROOM = "000000";
+
+/**
+ * Model, effort and context as one cell: `opus-5-5·high 9%` (the `claude-` prefix
+ * dropped for width; `-·high` when only the effort is known). `?` = murmur has no
+ * row for the agent (unknown); `-` = it has one that reports none of them.
+ */
+function modelText(a: DashboardAgent): string {
+  const r = a.runtime;
+  if (r === undefined) return "?";
+  const model = r.model?.replace(/^claude-/, "") ?? null;
+  const head = r.effort === null ? (model ?? "") : `${model ?? "-"}·${r.effort}`;
+  const pct = r.context_pct === null ? "" : `${Math.round(r.context_pct)}%`;
+  return [head, pct].filter((x) => x !== "").join(" ") || "-";
+}
+
+/**
+ * The Agents tab's rows: name, host, state, task, tool, then the model column, which
+ * is the clip column (last), so a narrow screen cuts the model before the tool (the
+ * stall signal). `model: false` drops it: the Overview card is a third of the screen.
+ */
+export function agentRows(
+  snap: DashboardSnapshot,
+  ws: string | null,
+  f: Filter,
+  now: number,
+  opts: { model?: boolean } = {},
+): Row[] {
+  const withModel = opts.model !== false;
   const mine = snap.agents.filter((a) => a.workstream === ws);
-  const agents = mine.filter((a) => matches(f.text, a.key, a.state, a.tool?.name, ...a.tasks));
+  const agents = mine.filter((a) =>
+    matches(f.text, a.key, a.state, a.tool?.name, withModel ? modelText(a) : null, ...a.tasks),
+  );
   // The tab shows one workstream: a bare name, the host in its own column (`local` =
   // none), and a task of another workstream keeps its qualifier.
   const taskOf = (a: DashboardAgent): string =>
@@ -377,13 +410,27 @@ function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: n
       : a.task.startsWith(`${a.workstream}/`)
         ? a.task.slice(a.workstream.length + 1)
         : a.task;
-  const specs = [protect(0, 32), fixed(HOST_WIDTH), fixed(STATE_WIDTH), protect(0, 32), CLIP];
+  const specs = [
+    protect(0, 32),
+    fixed(HOST_WIDTH),
+    fixed(STATE_WIDTH),
+    protect(0, 32),
+    ...(withModel ? [protect(0, TOOL_MAX), CLIP] : [CLIP]),
+  ];
   const line = layoutRows(
     // The task column is as wide as the workstream's task ids, not just the tasks owned
     // right now: an agent claiming or finishing a task must not move the tool column.
+    // The tool column is as wide as the tool names plus the widest elapsed, so a clock
+    // ticking from 9s to 1m05s does not move the model column.
     [
-      ...mine.map((a) => [a.name, "", "", taskOf(a)]),
-      ...snap.tasks.filter((t) => t.workstream === ws).map((t) => ["", "", "", t.id]),
+      ...mine.map((a) => [
+        a.name,
+        "",
+        "",
+        taskOf(a),
+        a.tool == null ? toolText(a, now) : `${a.tool.name} ${ELAPSED_ROOM}`,
+      ]),
+      ...snap.tasks.filter((t) => t.workstream === ws).map((t) => ["", "", "", t.id, ""]),
     ],
     specs,
   );
@@ -394,13 +441,21 @@ function agentRows(snap: DashboardSnapshot, ws: string | null, f: Filter, now: n
     rowOf(
       a.key,
       line(
-        [a.name, a.host ?? LOCAL, a.state ?? "?", taskOf(a), toolText(a, now)],
+        [
+          a.name,
+          a.host ?? LOCAL,
+          a.state ?? "?",
+          taskOf(a),
+          toolText(a, now),
+          ...(withModel ? [modelText(a)] : []),
+        ],
         [
           "id",
           "muted",
           flagged("dead", a.key) ? "bad" : agentStateRole(a.state),
           "muted",
           flagged("stalled", a.key) ? "warn" : "muted",
+          "muted",
         ],
       ),
       { drill: scrollbackOf(a) },

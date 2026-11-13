@@ -8,7 +8,7 @@ import type { ReactElement } from "react";
 import type { DashboardSnapshot } from "../../dashboard-data.js";
 import { Frame } from "./frame.js";
 import { COLUMN_GAP, columnCount, fitColumn, gridWidths, placeCards } from "./grid.js";
-import { NO_FILTER, tabRows, taskRows, waveRows } from "./rows.js";
+import { agentRows, NO_FILTER, tabRows, taskRows, waveRows } from "./rows.js";
 import { type Line, scrollTop } from "./text.js";
 import type { Role } from "./theme.js";
 
@@ -28,7 +28,7 @@ export interface Card {
 
 /** The cards of workstream `ws`, in order: five, plus Waves when it has delegate waves. */
 export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: number): Card[] {
-  const lines = (tab: "overview" | "agents" | "log"): Line[] =>
+  const lines = (tab: "overview" | "log"): Line[] =>
     tabRows(tab, snap, ws, NO_FILTER, now).map((r) => r.line);
   const tasks = (f: typeof NO_FILTER): Line[] =>
     taskRows(snap, ws, f, { call: false }).map((r) => r.line);
@@ -42,7 +42,13 @@ export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: n
       emptyRole: "good",
       max: 6,
     },
-    { id: "agents", title: "Agents", lines: lines("agents"), empty: "no agents", max: 6 },
+    {
+      id: "agents",
+      title: "Agents",
+      lines: agentRows(snap, ws, NO_FILTER, now, { model: false }).map((r) => r.line),
+      empty: "no agents",
+      max: 6,
+    },
     {
       id: "progress",
       title: "In progress",

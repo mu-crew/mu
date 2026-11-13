@@ -115,6 +115,110 @@ describe("model", () => {
     expect(formatElapsed(3_700_000)).toBe("1h01m");
   });
 
+  it("Agents: model column is `opus-5-5·high 9%`, last; `?` with no murmur row, `-` when none reported", () => {
+    const none = {
+      model: null,
+      provider: null,
+      effort: null,
+      provider_effort: null,
+      context_pct: null,
+      context_tokens: null,
+      context_window: null,
+      cost: null,
+    };
+    const base = { workstream: "w", state: "busy", tool: null, tasks: [], task: null } as const;
+    const snap = empty({
+      agents: [
+        {
+          ...base,
+          key: "w/a",
+          name: "a",
+          runtime: { ...none, model: "claude-opus-5-5", effort: "high", context_pct: 8.59 },
+        },
+        { ...base, key: "w/b", name: "b", runtime: { ...none, model: "gpt-6" } },
+        { ...base, key: "w/c", name: "c", runtime: none },
+        { ...base, key: "w/d", name: "d" },
+        { ...base, key: "w/e", name: "e", runtime: { ...none, effort: "low" } },
+      ] as never,
+    });
+    const [a, b, c, d, e] = tabRows("agents", snap, "w", NO_FILTER, 0).map((r) => r.text);
+    expect(a).toMatch(/\stool -\s+opus-5-5·high 9%$/);
+    expect(b).toMatch(/\stool -\s+gpt-6$/);
+    expect(c).toMatch(/\stool -\s+-$/);
+    expect(d).toMatch(/\stool -\s+\?$/);
+    expect(e).toMatch(/\stool -\s+-·low$/); // an effort alone never reads as a model
+    // The filter reaches the cell as shown: model and effort.
+    const keys = (text: string) =>
+      tabRows("agents", snap, "w", { ...NO_FILTER, text }, 0).map((r) => r.key);
+    expect(keys("gpt")).toEqual(["w/b"]);
+    expect(keys("high")).toEqual(["w/a"]);
+  });
+
+  it("Agents: the model column never moves the tool column, and a ticking clock never moves the model", () => {
+    const rt = (pct: number) => ({
+      model: "claude-opus-5-5",
+      provider: null,
+      effort: "high",
+      provider_effort: null,
+      context_pct: pct,
+      context_tokens: null,
+      context_window: null,
+      cost: null,
+    });
+    const at = (pct: number, ms: number): string => {
+      const snap = empty({
+        agents: [
+          {
+            workstream: "w",
+            key: "w/a",
+            name: "a",
+            state: "busy",
+            tasks: [],
+            task: null,
+            tool: { name: "bash", since: 0, elapsed_ms: ms },
+            runtime: rt(pct),
+          },
+        ] as never,
+      });
+      return tabRows("agents", snap, "w", NO_FILTER, 0)[0]?.text ?? "";
+    };
+    const early = at(9, 9_000);
+    const late = at(100, 3_700_000);
+    expect(early.indexOf("bash")).toBe(late.indexOf("bash"));
+    expect(early.indexOf("opus")).toBe(late.indexOf("opus"));
+  });
+
+  it("Overview's Agents card has no model column (the tool keeps the card's width)", () => {
+    const snap = empty({
+      workstreams: [{ name: "w", scratch: false, latest_seq: 0 }],
+      agents: [
+        {
+          workstream: "w",
+          key: "w/a",
+          name: "a",
+          state: "busy",
+          tasks: [],
+          task: null,
+          tool: { name: "bash", since: 0, elapsed_ms: 1_000 },
+          runtime: {
+            model: "claude-opus-5-5",
+            provider: null,
+            effort: "high",
+            provider_effort: null,
+            context_pct: 9,
+            context_tokens: null,
+            context_window: null,
+            cost: null,
+          },
+        },
+      ] as never,
+    });
+    const card = overviewCards(snap, "w", 0).find((c) => c.id === "agents");
+    const text = card?.lines.map(lineText).join("\n") ?? "";
+    expect(text).toMatch(/bash 1s$/);
+    expect(text).not.toContain("opus");
+  });
+
   it("Agents: bare names for the selected workstream, @host only on a remote agent", () => {
     const a = { workstream: "w", state: "busy", tool: null } as const;
     const snap = empty({
@@ -125,7 +229,7 @@ describe("model", () => {
       ] as never,
     });
     const [l, f, ...rest] = tabRows("agents", snap, "w", NO_FILTER, 0);
-    expect(l?.text).toMatch(/^local\s+local\s+busy\s+t1\s+tool -$/);
+    expect(l?.text).toMatch(/^local\s+local\s+busy\s+t1\s+tool -\s+\?$/);
     expect(l?.text).not.toContain("@");
     expect(f?.text).toMatch(/^far\s+dev\s+busy\s+other\/t2/);
     expect(rest).toEqual([]);
@@ -508,8 +612,8 @@ describe("tabs (Ink over a real snapshot)", () => {
       const one = tabRows("agents", snap, "w", { ...NO_FILTER, text: "idle" }, 0).map(
         (r) => r.text,
       );
-      expect(all[0]).toMatch(/^x +local +idle +- +tool -$/);
-      expect(all[1]).toMatch(/^longer-name +dev +needs_permission +- +tool -$/);
+      expect(all[0]).toMatch(/^x +local +idle +- +tool - +\?$/);
+      expect(all[1]).toMatch(/^longer-name +dev +needs_permission +- +tool - +\?$/);
       expect(col(one[0] ?? "", "idle")).toBe(col(all[0] ?? "", "idle"));
     });
 

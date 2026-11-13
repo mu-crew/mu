@@ -72,6 +72,8 @@ describe("bare mu", () => {
       MU_DB_PATH: join(tmp, "mu.db"),
       MU_STATE_DIR: join(tmp, "state"),
       MU_SYNC_DIR: "",
+      // Never the developer's murmur: a runtime read would drain its inbox.
+      MURMUR_STATE_DIR: join(tmp, "murmur"),
       TERM: "xterm-256color",
     };
     for (const k of ["TMUX", "TMUX_PANE", "HERDR_ENV", "MU_WORKSTREAM"]) delete env[k];

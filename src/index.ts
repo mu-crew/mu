@@ -4,6 +4,7 @@
 // through the same exports here so there is exactly one canonical surface.
 
 export {
+  type AgentRuntimeInfo,
   agentKey,
   type CtlLink,
   murmurAvailable,

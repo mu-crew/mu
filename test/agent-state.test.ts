@@ -6,7 +6,9 @@ import {
   agentKey,
   ambiguousReason,
   murmurAvailable,
+  readMurmurRuntimes,
   resetAgentStateCacheForTests,
+  runtimeKey,
   type StateAgentRef,
   setMurmurRunnerForTests,
   UNKNOWN_REASON,
@@ -81,6 +83,127 @@ afterEach(() => {
   if (originalPiDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = originalPiDir;
   rmSync(tempDir, { recursive: true, force: true });
+});
+
+describe("readMurmurRuntimes", () => {
+  const pane = (over: Record<string, unknown> = {}) => ({
+    pane: "%1",
+    local: true,
+    freshness: "fresh",
+    agent_name: "worker-1",
+    workstream: "demo",
+    model: "claude-opus-5-5",
+    provider: "anthropic",
+    effort: "high",
+    provider_effort: null,
+    context_pct: 8.5942,
+    context_tokens: 85_942,
+    context_window: 1_000_000,
+    usage: { cost_total: 0.0298 },
+    ...over,
+  });
+  const local = (name: string, paneId: string) =>
+    runtimeKey({ workstream: "demo", name, host: null, pane_id: paneId });
+  const remote = (name: string) =>
+    runtimeKey({ workstream: "demo", name, host: "dev", pane_id: "%9" });
+  const wired = (): void => {
+    installMurmur();
+    linkExtension();
+  };
+
+  it("files a local pane under its pane, a peer's under its name; parses every field", async () => {
+    wired();
+    setMurmurRunnerForTests(async () =>
+      JSON.stringify({
+        panes: [
+          pane(),
+          pane({ pane: "%7", local: false, agent_name: "far", model: 7, usage: null }),
+        ],
+      }),
+    );
+    const got = await readMurmurRuntimes(["pi"], 1_000);
+    expect(got?.get(local("worker-1", "%1"))).toEqual({
+      model: "claude-opus-5-5",
+      provider: "anthropic",
+      effort: "high",
+      provider_effort: null,
+      context_pct: 8.5942,
+      context_tokens: 85_942,
+      context_window: 1_000_000,
+      cost: 0.0298,
+    });
+    // A malformed field is unknown, not a crash.
+    expect(got?.get(remote("far"))).toMatchObject({ model: null, cost: null });
+    // The same name on another pane, or on a peer, is not this agent.
+    expect(got?.get(local("worker-1", "%2"))).toBeUndefined();
+    expect(got?.get(remote("worker-1"))).toBeUndefined();
+  });
+
+  it("drops stale rows and a key two rows claim, keeping every other agent", async () => {
+    wired();
+    const far = pane({ local: false, agent_name: "far" });
+    setMurmurRunnerForTests(async () =>
+      JSON.stringify({
+        panes: [far, far, pane(), pane({ pane: "%3", agent_name: "old", freshness: "stale" })],
+      }),
+    );
+    const got = await readMurmurRuntimes(["pi"], 1_000);
+    expect([...(got?.keys() ?? [])]).toEqual([local("worker-1", "%1")]);
+  });
+
+  it("never asks murmur unless a live agent's harness is wired to it", async () => {
+    let calls = 0;
+    setMurmurRunnerForTests(async () => {
+      calls += 1;
+      return JSON.stringify({ panes: [pane()] });
+    });
+    expect((await readMurmurRuntimes([], 1_000))?.size).toBe(0);
+    expect((await readMurmurRuntimes(["pi"], 1_000))?.size).toBe(0); // murmur not on PATH
+    expect(calls).toBe(0);
+  });
+
+  it("a failed or timed-out murmur is null (the caller keeps its last read)", async () => {
+    wired();
+    setMurmurRunnerForTests(async () => ({ timedOut: true }));
+    expect(await readMurmurRuntimes(["pi"], 1_000)).toBeNull();
+    resetAgentStateCacheForTests();
+    setMurmurRunnerForTests(async () => null);
+    expect(await readMurmurRuntimes(["pi"], 1_000)).toBeNull();
+  });
+
+  it("shares one murmur call with the state read inside the cache window", async () => {
+    wired();
+    tmuxOutput("%1\t\t"); // no local option: the state read asks murmur too
+    let calls = 0;
+    setMurmurRunnerForTests(async () => {
+      calls += 1;
+      return remoteRow();
+    });
+    await readMurmurRuntimes(["pi"], Date.now());
+    await reading();
+    expect(calls).toBe(1);
+  });
+
+  it("stamps the cache when the answer came: a call that used the window is not stale at once", async () => {
+    wired();
+    tmuxOutput("%1\t\t");
+    let calls = 0;
+    let clock = 1_000_000;
+    const realNow = Date.now;
+    Date.now = () => clock;
+    try {
+      setMurmurRunnerForTests(async () => {
+        calls += 1;
+        clock += 10_000; // the whole timeout
+        return { timedOut: true };
+      });
+      expect(await readMurmurRuntimes(["pi"], clock)).toBeNull();
+      await reading(); // the state read right after reuses the timed-out answer
+      expect(calls).toBe(1);
+    } finally {
+      Date.now = realNow;
+    }
+  });
 });
 
 describe("readAgentStates", () => {

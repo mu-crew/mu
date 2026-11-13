@@ -16,6 +16,7 @@
 import { Box, Text, useInput, useStdout, useWindowSize } from "ink";
 import { useEffect, useMemo, useRef, useState } from "react";
 import stringWidth from "string-width";
+import type { AgentRuntimeInfo } from "../../agent-state.js";
 import { verdictLineLabel } from "../../delegate-verdict.js";
 import { parseOpKey } from "../../log-render.js";
 import { activeMux } from "../../mux.js";
@@ -137,6 +138,42 @@ export function notesLines(sel: SelectedNotes, width: number): Line[] {
   return out;
 }
 
+/** `85.9k`, `1.0M`: a token count for the scrollback drill's runtime line. */
+const tokens = (n: number): string =>
+  n >= 1_000_000
+    ? `${(n / 1_000_000).toFixed(1)}M`
+    : n >= 1000
+      ? `${(n / 1000).toFixed(1)}k`
+      : `${n}`;
+
+/**
+ * The scrollback drill's runtime line: model, effort (requested, and applied when
+ * the provider says otherwise), context and cost, as murmur reports them. `-` is
+ * a field the harness does not report. Null: no murmur row, so no line (the row's
+ * model column already says `?`).
+ */
+export function runtimeLine(r: AgentRuntimeInfo | undefined): string | null {
+  if (r === undefined) return null;
+  const model = r.model === null ? "-" : r.provider === null ? r.model : `${r.provider}/${r.model}`;
+  const applied =
+    r.provider_effort !== null && r.provider_effort !== r.effort
+      ? ` (applied ${r.provider_effort})`
+      : "";
+  const pct = r.context_pct === null ? null : `${r.context_pct.toFixed(1)}%`;
+  const abs =
+    r.context_tokens !== null && r.context_window !== null
+      ? `${tokens(r.context_tokens)}/${tokens(r.context_window)}`
+      : null;
+  const context =
+    pct === null && abs === null
+      ? "-"
+      : [abs, pct === null ? null : abs === null ? pct : `(${pct})`]
+          .filter((x) => x !== null)
+          .join(" ");
+  const cost = r.cost === null ? "-" : `$${r.cost.toFixed(2)}`;
+  return `model: ${model}  effort: ${r.effort ?? "-"}${applied}  context: ${context}  cost: ${cost}`;
+}
+
 export function titleOf(t: DrillTarget): string {
   switch (t.kind) {
     case "notes":
@@ -220,6 +257,8 @@ export interface DrillProps {
   nonce?: number;
   /** The slow tier's counter: scrollback re-captures when it moves. */
   slowNonce?: number;
+  /** A scrollback drill's runtime line (`runtimeLine`), live from the snapshot; null: none. */
+  info?: string | null;
   onClose(): void;
   onAttach(target: Extract<DrillTarget, { kind: "scrollback" }>): void;
 }
@@ -234,6 +273,7 @@ export function Drill({
   onAttach,
   nonce = 0,
   slowNonce = 0,
+  info = null,
 }: DrillProps) {
   const { columns, rows } = useWindowSize();
   const yank = useYank();
@@ -312,6 +352,8 @@ export function Drill({
       ...(ready?.header !== undefined ? [ready.header] : []),
       ...(ready?.notices ?? []),
       ...above,
+      // Last: the pinned head is cut from the end, so a short screen drops this before a notice.
+      ...(target.kind === "scrollback" && info !== null ? [info] : []),
     ].flatMap((l) => wrap(l, columns));
     const plain = (t: string, role: Role = "text"): Line[] =>
       wrap(t, columns).map((l) => [{ text: l, role }]);
@@ -324,7 +366,7 @@ export function Drill({
             ? notesLines(load.notes, columns)
             : plain(load.text);
     return { head, body };
-  }, [load, notice, flash, columns]);
+  }, [load, notice, flash, columns, target, info]);
 
   // The head (notices, attach failure, yank confirmation) is pinned under the title, never part of
   // the scrolled body: a long scrollback opens at its END and must not push the reason out of view.

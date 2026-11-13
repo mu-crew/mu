@@ -272,12 +272,15 @@ async function readMurmur(now: number): Promise<MurmurStatusOutput> {
     return murmurCache.stdout;
   }
   let stdout: MurmurStatusOutput;
+  const started = Date.now();
   try {
     stdout = await (murmurRunnerForTests ?? defaultMurmurRunner)();
   } catch {
     stdout = null;
   }
-  murmurCache = { at: now, stdout };
+  // Stamped when the answer came, not when it was asked: a call that ran for the
+  // whole window (a timeout) must not leave a stale cache for the very next reader.
+  murmurCache = { at: now + (Date.now() - started), stdout };
   return stdout;
 }
 
@@ -346,6 +349,106 @@ function remoteReading(agent: StateAgentRef, panes: readonly MurmurPane[]): Stat
     since: typeof row.updated_at === "number" ? row.updated_at : null,
     alive: true,
   };
+}
+
+/**
+ * What an agent runs with, as murmur's pane row reports it (murmur's
+ * `AgentRuntime`, the fields the dashboard shows). Each is null when the
+ * harness does not report it.
+ */
+export interface AgentRuntimeInfo {
+  /** Model id, provider prefix stripped (`claude-opus-5`). */
+  model: string | null;
+  provider: string | null;
+  /** The effort requested (pi's closed set). */
+  effort: string | null;
+  /** The effort the provider says it applied (its own vocabulary). */
+  provider_effort: string | null;
+  /** Percent of the context window in use, 0..100. */
+  context_pct: number | null;
+  context_tokens: number | null;
+  context_window: number | null;
+  /** The session's cost so far (USD); null before a turn completed. */
+  cost: number | null;
+}
+
+const textOrNull = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
+const numOrNull = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+
+function runtimeOf(pane: Record<string, unknown>): AgentRuntimeInfo {
+  const usage = pane.usage;
+  return {
+    model: textOrNull(pane.model),
+    provider: textOrNull(pane.provider),
+    effort: textOrNull(pane.effort),
+    provider_effort: textOrNull(pane.provider_effort),
+    context_pct: numOrNull(pane.context_pct),
+    context_tokens: numOrNull(pane.context_tokens),
+    context_window: numOrNull(pane.context_window),
+    cost:
+      typeof usage === "object" && usage !== null && "cost_total" in usage
+        ? numOrNull(usage.cost_total)
+        : null,
+  };
+}
+
+/** What `runtimeKey` needs of an agent (a registry row or a dashboard agent). */
+export interface RuntimeAgentRef {
+  workstream: string;
+  name: string;
+  /** The remote host profile; null = local. */
+  host: string | null;
+  pane_id: string;
+}
+
+/**
+ * The key an agent's runtime info is filed under: a local agent by its own pane
+ * (and name, so a pane id on another tmux server cannot match it), a remote one
+ * by workstream and name among the rows murmur collected from peers (how
+ * `remoteReading` matches it).
+ */
+export function runtimeKey(a: RuntimeAgentRef): string {
+  return a.host === null
+    ? `local\u0000${a.workstream}/${a.name}\u0000${a.pane_id}`
+    : `remote\u0000${a.workstream}/${a.name}`;
+}
+
+/**
+ * Every agent's runtime info by `runtimeKey`, from `murmur status --json`
+ * through the state read's cache (one call per `MURMUR_CACHE_MS` at most,
+ * shared with `readBaseStates`). Murmur is not asked at all unless one of
+ * `clis` (the live agents' harnesses) is wired to it, so a dashboard with no
+ * agents never touches murmur's state. Stale rows and a key two rows claim are
+ * left out (unknown, never a guess). Null: murmur failed or timed out, so the
+ * caller keeps what it had.
+ */
+export async function readMurmurRuntimes(
+  clis: readonly string[],
+  now = Date.now(),
+): Promise<Map<string, AgentRuntimeInfo> | null> {
+  const out = new Map<string, AgentRuntimeInfo>();
+  if (![...new Set(clis)].some((cli) => murmurAvailable(cli))) return out;
+  const stdout = await readMurmur(now);
+  if (typeof stdout !== "string") return null;
+  const seen = new Set<string>();
+  for (const pane of remotePanes(stdout) as Record<string, unknown>[]) {
+    if (typeof pane.agent_name !== "string" || typeof pane.workstream !== "string") continue;
+    if (pane.freshness !== "fresh") continue;
+    const name = { workstream: pane.workstream, name: pane.agent_name };
+    let key: string;
+    if (pane.local === false) key = runtimeKey({ ...name, host: "remote", pane_id: "" });
+    else if (pane.local === true && typeof pane.pane === "string")
+      key = runtimeKey({ ...name, host: null, pane_id: pane.pane });
+    else continue;
+    if (seen.has(key)) {
+      out.delete(key);
+      continue;
+    }
+    seen.add(key);
+    out.set(key, runtimeOf(pane));
+  }
+  return out;
 }
 
 /** State from the mux's own per-pane status (herdr's classifier, Rex's OSC 7501 records). */

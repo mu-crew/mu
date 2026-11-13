@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { StateReading } from "../src/agent-state.js";
+import { runtimeKey, type StateReading } from "../src/agent-state.js";
 import { rmFixtureDir } from "./_fs.js";
 import { renderApp } from "./_ink-render.js";
 import { installMux, type MuxHarness } from "./_mux.js";
@@ -280,6 +280,41 @@ describe("runtime tiers", () => {
       "UPDATE workstreams SET torn_down_at = '2026-01-01T00:00:00Z' WHERE name = 'other'",
     ).run();
     expect((await seqs()).every((n) => n > 0)).toBe(true); // the set changed: ranked again
+  });
+
+  it("runtime info is read on the slow tier only, kept by fast reads, kept over a failed read", async () => {
+    insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1" });
+    const info = (model: string) => ({
+      model,
+      provider: null,
+      effort: null,
+      provider_effort: null,
+      context_pct: null,
+      context_tokens: null,
+      context_window: null,
+      cost: null,
+    });
+    const key = runtimeKey({ workstream: "ws", name: "w1", host: null, pane_id: "%1" });
+    const answers: (Map<string, ReturnType<typeof info>> | null)[] = [
+      new Map([[key, info("first")]]),
+      null, // murmur failed
+      new Map([[key, info("second")]]),
+    ];
+    let reads = 0;
+    rt = createRuntime({
+      dbPath: join(tmp, "a.db"),
+      syncDb: db,
+      caller: null,
+      readRuntimes: async () => answers[reads++] ?? null,
+    });
+    const model = async (slow: boolean) =>
+      (await rt?.refresh({}, { slow }))?.snapshot.agents[0]?.runtime?.model;
+    expect(await model(true)).toBe("first");
+    expect(await model(false)).toBe("first"); // fast: no read, the last one kept
+    expect(reads).toBe(1);
+    expect(await model(true)).toBe("first"); // failed read: the last one stands
+    expect(await model(true)).toBe("second");
+    expect(reads).toBe(3);
   });
 
   it("a fast refresh reads agent state from the slow tier's cache", async () => {

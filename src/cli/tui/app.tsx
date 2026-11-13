@@ -18,7 +18,7 @@ import {
   type StepRunner,
   spawnStep,
 } from "./commands.js";
-import { Drill, useYank } from "./drill.js";
+import { Drill, runtimeLine, useYank } from "./drill.js";
 import { FRAME_CHROME, FRAME_SIDES, Frame, Segs } from "./frame.js";
 import { NAV_HINT, navKey } from "./nav.js";
 import { Overview, overviewCards } from "./overview.js";
@@ -124,6 +124,19 @@ interface Open {
   notice: readonly string[];
 }
 type ScrollTarget = Extract<DrillTarget, { kind: "scrollback" }>;
+
+/**
+ * A scrollback drill's runtime line from the live snapshot: its agent by pane too, so
+ * a same-named agent spawned while the drill is open never labels the old pane. Null:
+ * another drill, the agent gone, or no murmur row.
+ */
+const scrollInfo = (t: DrillTarget, snap: DashboardSnapshot | null): string | null => {
+  if (t.kind !== "scrollback") return null;
+  const a = snap?.agents.find(
+    (x) => x.workstream === t.workstream && x.name === t.name && x.pane_id === t.paneId,
+  );
+  return runtimeLine(a?.runtime);
+};
 
 export function App({
   runtime,
@@ -402,6 +415,7 @@ export function App({
         busy={busy}
         nonce={state.nonce}
         slowNonce={state.slowNonce}
+        info={scrollInfo(drill.target, snap)}
         onClose={() => setDrill(null)}
         onAttach={(t) => void attach(t)}
       />

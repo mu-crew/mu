@@ -15,7 +15,7 @@
 // idempotent shutdown (`src/cli/dashboard-shutdown.ts`) runs it after every
 // step, on q/Esc, signals and boot errors alike.
 
-import type { StateReading } from "../../agent-state.js";
+import type { AgentRuntimeInfo, StateReading } from "../../agent-state.js";
 import {
   type DashboardOptions,
   type DashboardSnapshot,
@@ -67,6 +67,13 @@ export interface RuntimeOptions {
   syncEveryMs?: number;
   /** Clock seam for tests. */
   now?: () => number;
+  /**
+   * The slow tier's read of every agent's model, effort and context
+   * (`readMurmurRuntimes`, whose cache the state read shares), given the live
+   * agents' harnesses. Null: the read failed, the previous one stands. Absent:
+   * none is read, every agent's runtime stays unknown (tests: no subprocess).
+   */
+  readRuntimes?: (clis: readonly string[]) => Promise<ReadonlyMap<string, AgentRuntimeInfo> | null>;
 }
 
 const DEFAULT_SYNC_EVERY_MS = 10_000;
@@ -87,6 +94,8 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
   let closed = false;
   // The slow tier's agent readings, merged into every fast read.
   const agentStates = new Map<string, StateReading>();
+  // The slow tier's last runtime read, kept for the fast reads in between.
+  let agentRuntimes: ReadonlyMap<string, AgentRuntimeInfo> = new Map();
 
   async function run(query: DashboardQuery, slow: boolean): Promise<RefreshResult> {
     if (syncEnabled() && now() - lastSync >= every) {
@@ -100,6 +109,22 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
     )
       .map((w) => w.name)
       .join("\n");
+    if (slow && opts.readRuntimes !== undefined) {
+      const clis = (
+        ro
+          .prepare(
+            `SELECT DISTINCT a.cli AS cli FROM agents a JOIN workstreams w ON w.id = a.workstream_id
+              WHERE w.torn_down_at IS NULL`,
+          )
+          .all() as { cli: string }[]
+      ).map((r) => r.cli);
+      try {
+        // A failed read (null) keeps the previous one: one murmur timeout must not blank every row.
+        agentRuntimes = (await opts.readRuntimes(clis)) ?? agentRuntimes;
+      } catch {
+        // Best effort: the previous read stands.
+      }
+    }
     const activity = names !== seenNames;
     seenNames = names;
     const snapshot = await loadDashboard(ro, {
@@ -109,6 +134,7 @@ export function createRuntime(opts: RuntimeOptions): DashboardRuntime {
       callers: opts.callers ?? currentCallers(),
       syncWarnings: warnings,
       agentStates: { cache: agentStates, probe: slow },
+      agentRuntimes,
     });
     return { snapshot, warnings };
   }
