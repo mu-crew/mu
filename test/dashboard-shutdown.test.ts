@@ -87,7 +87,8 @@ describe("dashboard shutdown", () => {
       (c) => void codes.push(c),
     );
     process.emit("SIGINT");
-    await new Promise((r) => setTimeout(r, 20));
+    // The flush is a real sync write: poll for the exit, never a fixed sleep.
+    for (let i = 0; i < 100 && codes.length === 0; i++) await new Promise((r) => setTimeout(r, 50));
     expect(codes).toEqual([130]);
     expect(segments()).toHaveLength(1);
     release();
