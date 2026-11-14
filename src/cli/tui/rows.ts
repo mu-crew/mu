@@ -382,7 +382,7 @@ function modelText(a: DashboardAgent): string {
   const model = r.model?.replace(/^claude-/, "") ?? null;
   const head = r.effort === null ? (model ?? "") : `${model ?? "-"}·${r.effort}`;
   const pct = r.context_pct === null ? "" : `${Math.round(r.context_pct)}%`;
-  return [head, pct].filter((x) => x !== "").join(" ") || "-";
+  return [r.harness ?? "", head, pct].filter((x) => x !== "").join(" ") || "-";
 }
 
 /**

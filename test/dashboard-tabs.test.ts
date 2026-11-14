@@ -121,6 +121,7 @@ describe("model", () => {
       provider: null,
       effort: null,
       provider_effort: null,
+      harness: null,
       context_pct: null,
       context_tokens: null,
       context_window: null,
@@ -154,12 +155,54 @@ describe("model", () => {
     expect(keys("high")).toEqual(["w/a"]);
   });
 
+  it("Agents: the harness leads the model column; absent (older murmur) reads as today", () => {
+    const none = {
+      harness: null,
+      model: null,
+      provider: null,
+      effort: null,
+      provider_effort: null,
+      context_pct: null,
+      context_tokens: null,
+      context_window: null,
+      cost: null,
+    };
+    const base = { workstream: "w", state: "busy", tool: null, tasks: [], task: null } as const;
+    const snap = empty({
+      agents: [
+        { ...base, key: "w/p", name: "p", runtime: { ...none, harness: "pi", model: "gpt-6" } },
+        {
+          ...base,
+          key: "w/c",
+          name: "c",
+          runtime: {
+            ...none,
+            harness: "claude",
+            model: "claude-opus-5-5",
+            effort: "medium",
+            context_pct: 8.59,
+          },
+        },
+        { ...base, key: "w/x", name: "x", runtime: { ...none, harness: "codex", model: "gpt-5" } },
+        { ...base, key: "w/o", name: "o", runtime: { ...none, model: "gpt-5" } },
+        { ...base, key: "w/z", name: "z" },
+      ] as never,
+    });
+    const [p, c, x, o, z] = tabRows("agents", snap, "w", NO_FILTER, 0).map((r) => r.text);
+    expect(p).toMatch(/\stool -\s+pi gpt-6$/);
+    expect(c).toMatch(/\stool -\s+claude opus-5-5·medium 9%$/);
+    expect(x).toMatch(/\stool -\s+codex gpt-5$/);
+    expect(o).toMatch(/\stool -\s+gpt-5$/);
+    expect(z).toMatch(/\stool -\s+\?$/);
+  });
+
   it("Agents: the model column never moves the tool column, and a ticking clock never moves the model", () => {
     const rt = (pct: number) => ({
       model: "claude-opus-5-5",
       provider: null,
       effort: "high",
       provider_effort: null,
+      harness: null,
       context_pct: pct,
       context_tokens: null,
       context_window: null,
@@ -205,6 +248,7 @@ describe("model", () => {
             provider: null,
             effort: "high",
             provider_effort: null,
+            harness: null,
             context_pct: 9,
             context_tokens: null,
             context_window: null,

@@ -289,6 +289,7 @@ describe("runtime tiers", () => {
       provider: null,
       effort: null,
       provider_effort: null,
+      harness: null,
       context_pct: null,
       context_tokens: null,
       context_window: null,

@@ -349,6 +349,8 @@ function remoteReading(agent: StateAgentRef, panes: readonly MurmurPane[]): Stat
  * harness does not report it.
  */
 export interface AgentRuntimeInfo {
+  /** The harness murmur reports (`claude`, `pi`, ...); null from an older murmur. */
+  harness: string | null;
   /** Model id, provider prefix stripped (`claude-opus-5`). */
   model: string | null;
   provider: string | null;
@@ -371,6 +373,7 @@ const numOrNull = (v: unknown): number | null =>
 function runtimeOf(pane: Record<string, unknown>): AgentRuntimeInfo {
   const usage = pane.usage;
   return {
+    harness: textOrNull(pane.harness),
     model: textOrNull(pane.model),
     provider: textOrNull(pane.provider),
     effort: textOrNull(pane.effort),

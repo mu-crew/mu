@@ -107,6 +107,7 @@ describe("readMurmurRuntimes", () => {
     );
     const got = await readMurmurRuntimes(1_000);
     expect(got?.get(local("worker-1", "%1"))).toEqual({
+      harness: null,
       model: "claude-opus-5-5",
       provider: "anthropic",
       effort: "high",
@@ -116,6 +117,22 @@ describe("readMurmurRuntimes", () => {
       context_window: 1_000_000,
       cost: 0.0298,
     });
+    // The harness is read when murmur publishes it; a non-string is unknown.
+    setMurmurRunnerForTests(async () =>
+      JSON.stringify({ panes: [pane({ harness: "claude" }), pane({ pane: "%2", harness: 3 })] }),
+    );
+    const h = await readMurmurRuntimes(100_000);
+    expect(h?.get(local("worker-1", "%1"))?.harness).toBe("claude");
+    expect(h?.get(local("worker-1", "%2"))?.harness).toBeNull();
+    setMurmurRunnerForTests(async () =>
+      JSON.stringify({
+        panes: [
+          pane(),
+          pane({ pane: "%7", local: false, agent_name: "far", model: 7, usage: null }),
+        ],
+      }),
+    );
+    resetAgentStateCacheForTests();
     // A malformed field is unknown, not a crash.
     expect(got?.get(remote("far"))).toMatchObject({ model: null, cost: null });
     // The same name on another pane, or on a peer, is not this agent.

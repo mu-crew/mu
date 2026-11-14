@@ -72,6 +72,7 @@ const W1_RUNTIME = {
   provider: "anthropic",
   effort: "high",
   provider_effort: null,
+  harness: null,
   context_pct: 8.6,
   context_tokens: null,
   context_window: null,
@@ -86,6 +87,7 @@ describe("runtimeLine", () => {
     provider: null,
     effort: null,
     provider_effort: null,
+    harness: null,
     context_pct: null,
     context_tokens: null,
     context_window: null,
@@ -98,6 +100,7 @@ describe("runtimeLine", () => {
         provider: "anthropic",
         effort: "high",
         provider_effort: "medium",
+        harness: null,
         context_pct: 8.5942,
         context_tokens: 85_942,
         context_window: 1_000_000,
@@ -108,6 +111,19 @@ describe("runtimeLine", () => {
     );
     expect(runtimeLine({ ...none, effort: "low", provider_effort: "low" })).toBe(
       "model: -  effort: low  context: -  cost: -",
+    );
+  });
+  it("leads with the harness when murmur reports one; none reads as today", () => {
+    const pi = { ...none, harness: "pi", model: "gpt-6", effort: "high" };
+    expect(runtimeLine(pi)).toBe("harness: pi  model: gpt-6  effort: high  context: -  cost: -");
+    expect(
+      runtimeLine({ ...none, harness: "claude", model: "claude-opus-5-5", effort: "medium" }),
+    ).toBe("harness: claude  model: claude-opus-5-5  effort: medium  context: -  cost: -");
+    expect(runtimeLine({ ...none, harness: "codex", model: "gpt-5" })).toBe(
+      "harness: codex  model: gpt-5  effort: -  context: -  cost: -",
+    );
+    expect(runtimeLine({ ...pi, harness: null })).toBe(
+      "model: gpt-6  effort: high  context: -  cost: -",
     );
   });
   it("no murmur row is no line", () => {

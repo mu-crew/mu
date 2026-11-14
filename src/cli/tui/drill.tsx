@@ -171,7 +171,8 @@ export function runtimeLine(r: AgentRuntimeInfo | undefined): string | null {
           .filter((x) => x !== null)
           .join(" ");
   const cost = r.cost === null ? "-" : `$${r.cost.toFixed(2)}`;
-  return `model: ${model}  effort: ${r.effort ?? "-"}${applied}  context: ${context}  cost: ${cost}`;
+  const harness = r.harness === null ? "" : `harness: ${r.harness}  `;
+  return `${harness}model: ${model}  effort: ${r.effort ?? "-"}${applied}  context: ${context}  cost: ${cost}`;
 }
 
 export function titleOf(t: DrillTarget): string {
