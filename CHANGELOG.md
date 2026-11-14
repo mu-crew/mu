@@ -12,6 +12,16 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.1.0] — 2026-11-14
+
+### Added
+
+- **Dashboard: the harness per agent.** With murmur 2.1.0 or later (which
+  publishes each agent's harness in `murmur status --json`), the Agents tab's
+  model cell starts with the harness (`claude opus-5-5·medium 9%`) and the
+  scrollback drill's runtime line names it (`harness: claude`). An older
+  murmur reports none, and both read as before.
+
 ### Fixed
 
 - **Dashboard: the model column shows whatever murmur reports.** It asked
