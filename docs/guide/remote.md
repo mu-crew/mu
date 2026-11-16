@@ -127,6 +127,8 @@ and `murmur` must be on the PATH the profile's `--exec` sees.
 - The spawn gives the worker a remote key (`MU_REMOTE_KEY` and its anchor).
   Its hooks on the host write under that key to murmur's remote area, never
   the host's own `murmur status`.
+- On tmux the local pane carries `@mu_host <host>`, so murmur names the
+  host the worker runs on rather than `here`.
 - mu reads that area with `murmur pane --remote <key> --json` through
   `--exec`, and copies what it read into the local pane's inbox, only on a
   send (and `--interrupt`, abort, answer), during `mu agent wait` and `mu

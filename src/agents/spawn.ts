@@ -53,7 +53,7 @@ import { awaitLeaseJob } from "../jobs/lease.js";
 import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
-import { attachShellLine, type CommandSource } from "../mux/types.js";
+import { attachShellLine, type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode } from "../output.js";
 import { remoteShellCommand } from "../remote-agent.js";
@@ -893,6 +893,8 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
         // and rollbackSpawn skipped killPane, leaking the pane.
         paneId = pid;
         if (carrier) recordCarrierPane(db, carrier.token, pid);
+        // The pane here holds only the ssh client: name where the worker runs.
+        if (profile) await markPaneHost(mux, pid, profile.name);
         readiness = done;
         phase = "finalize";
         const row = finalizeAgentRow(db, {

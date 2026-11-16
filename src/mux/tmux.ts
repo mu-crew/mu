@@ -654,6 +654,12 @@ export async function pasteToPane(
   await tmux(["send-keys", "-t", paneId, "Enter"]);
 }
 
+/** Set the user option `name` (`@…`) on this pane only. */
+export async function setPaneOption(paneId: string, name: string, value: string): Promise<void> {
+  assertValidPaneId(paneId);
+  await tmux(["set-option", "-p", "-t", paneId, name, value]);
+}
+
 /** Type `keys` into the pane: tmux key names, or text with `literal`. */
 export async function sendKeys(
   paneId: string,
@@ -797,6 +803,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   capture,
   pasteToPane,
   sendKeys,
+  setPaneOption,
 
   attachCommands,
 

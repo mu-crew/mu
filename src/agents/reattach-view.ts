@@ -11,6 +11,7 @@ import type { Db } from "../db.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
+import { markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.js";
 import { agentRevision, assertRevision } from "../revision.js";
@@ -107,6 +108,7 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
+      await markPaneHost(mux, pid, d.r.host);
       try {
         // The backend's own completion: a view that failed is never the row's pane.
         await done;

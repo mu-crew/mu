@@ -317,6 +317,14 @@ describe("the pane is the transport", () => {
     expect(getAgent(db, "worker-1", "auth")).toMatchObject({ host: "dev", cwd: "/srv/repo/sub" });
   });
 
+  it("labels the local pane with the host the worker runs on (@mu_host), for murmur", async () => {
+    const a = await spawn({ cwd: "~/proj" });
+    const sets = mux.calls.filter((c) => c.includes("set-option") && c.includes("@mu_host"));
+    expect(sets.map((c) => c.slice(c.indexOf("set-option")))).toEqual([
+      ["set-option", "-p", "-t", a.paneId, "@mu_host", "dev"],
+    ]);
+  });
+
   it("a remote pi never gets a local pi session dir, even when one is asked for", async () => {
     await spawn({ piSessionDir: join(dir, "delegate-sessions", "auth") });
     const all = mux.calls.map((c) => c.join(" ")).join("\n");

@@ -14,6 +14,13 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- **A remote worker's local pane names its host.** On tmux, a spawn on a
+  host (`--host`, a lease reattach, a plugin host's view) sets the pane
+  option `@mu_host` to the host's name. The pane holds only the ssh client,
+  so murmur, which owns the pane's row, showed the worker as `here`; a
+  murmur that reads the option shows the host instead. Best effort: a
+  failed set leaves the pane unlabelled and the spawn unchanged.
+
 - **`mu host list` fits a terminal.** The profile table drops the STOP and
   ATTACH template columns (`mu host show` prints every template) and
   front-truncates the default repo, so a lease profile's row is no longer

@@ -54,7 +54,7 @@ import {
 import { defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
 import { emitEvent } from "../logs.js";
-import type { CommandSource } from "../mux/types.js";
+import { type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { EffectOutcomeUnknownError } from "../plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.js";
@@ -396,6 +396,7 @@ async function openView(
       onPane(pid);
       viewDone = done;
       recordCarrierPane(db, v.token, pid);
+      await markPaneHost(mux, pid, v.host.name);
       const r: AgentRow = finalizeAgentRow(db, {
         opts: opts as SpawnAgentOptions,
         cli: v.cli,

@@ -129,6 +129,23 @@ export interface AttachTarget {
   outside?: boolean;
 }
 
+/**
+ * The pane option naming the host a remote worker runs on, set on its local
+ * pane. That pane holds only the ssh client, so murmur, which owns the row of
+ * the pane, would otherwise call the worker local (it reads this to say where).
+ */
+export const MU_HOST_PANE_OPTION = "@mu_host";
+
+/** Label `paneId` with the host its worker runs on. Best effort: a backend
+ *  without pane options, or a failed set, leaves the pane unlabelled. */
+export async function markPaneHost(mux: MuxBackend, paneId: string, host: string): Promise<void> {
+  try {
+    await mux.setPaneOption?.(paneId, MU_HOST_PANE_OPTION, host);
+  } catch {
+    // presentation only: the worker runs the same without it
+  }
+}
+
 /** One argv the caller may execute to hand the terminal to the mux. */
 /** Where a spawn's command came from: the cli key itself, `MU_<CLI>_COMMAND`, or `--command`. */
 export type CommandSource = "cli-key" | "env" | "explicit";
@@ -342,6 +359,9 @@ export interface MuxBackend {
   attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]>;
 
   // — optional capabilities —
+  /** tmux only: set a user option (`@name`) on one pane, for a reader such
+   *  as murmur that looks the pane up by id (MU_HOST_PANE_OPTION). */
+  setPaneOption?(paneId: string, name: string, value: string): Promise<void>;
   /** The pane's runtime state as the mux itself reports it, or undefined
    *  when the pane is gone or unclassified. herdr (its classifier) and Rex
    *  (the program's OSC 7501 report): for non-pi agents. */

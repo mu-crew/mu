@@ -14,6 +14,7 @@ import { leaseJobRef, leaseKind } from "../jobs/lease.js";
 import type { JobRef } from "../jobs/types.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
+import { markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { deleteRemoteRecovery, restoreRemoteRecovery } from "../remote-recovery.js";
 import { assertRevision } from "../revision.js";
@@ -126,6 +127,7 @@ export async function reattachAgent(
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
+      await markPaneHost(mux, pid, p.r.host);
       try {
         const row = install(db, ws, p, pid);
         clearMarker(db, ws, name); // the row and the reservation name the pane now
