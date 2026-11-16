@@ -12,6 +12,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.2.0] — 2026-11-16
+
 ### Changed
 
 - **A remote worker's local pane names its host.** On tmux, a spawn on a
