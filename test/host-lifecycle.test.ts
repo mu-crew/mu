@@ -46,6 +46,7 @@ import { prepareProviderWorktree, RemoteBaseMissingError } from "../src/remote-w
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, providerSeams } from "./_plugin.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
 let db: Db;
@@ -263,6 +264,39 @@ describe("a link-only provider (D6)", () => {
       requireHostSpawn(db, { name: "w", workstream: "ws", host: "box" }),
     ).rejects.toThrow(/host box's provider fake runs no jobs/);
     expect(f.calls().some((c) => c.method.startsWith("job."))).toBe(false);
+  });
+});
+
+describe("mu host list over provider hosts", () => {
+  const dbPath = () => join(dir, "mu.db");
+
+  it("labels both sections, tags each --json item with its kind, and names a status it could not read", async () => {
+    await setup();
+    await acquire();
+    addHost(db, {
+      name: "dev",
+      shell: "s",
+      exec: "e {cmd}",
+      fetch: "f",
+      repo: null,
+      max_sessions: null,
+    });
+    const human = await runCli(["host", "list"], dbPath());
+    expect(human.stdout).toMatch(/Provider hosts[\s\S]*box[\s\S]*Profiles[\s\S]*dev/);
+    const listed = await runCliJson(["host", "list", "--json"], dbPath());
+    expect(listed.data.items.map((h: { kind: string; name: string }) => [h.kind, h.name])).toEqual([
+      ["profile", "dev"],
+      ["provider", "box"],
+    ]);
+    f.set({ faults: { "host.status": Array<string>(50).fill("permanent") } });
+    await closePluginSessions();
+    const failed = await runCli(["host", "list"], dbPath());
+    expect(failed.exitCode).toBeNull();
+    expect(failed.stdout).toMatch(/box[\s\S]*ready/);
+    expect(failed.stdout).toContain("warn box: status unknown:");
+    const js = await runCliJson(["host", "list", "--json"], dbPath());
+    expect(js.data.items[1]).toMatchObject({ kind: "provider", state: "ready" });
+    expect(js.data.items[1].status_note).toMatch(/^status unknown: .*permanent/);
   });
 });
 

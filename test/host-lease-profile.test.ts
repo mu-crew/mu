@@ -329,8 +329,8 @@ describe("mu host add | list | show with a transport", () => {
     expect(a.data.host).toMatchObject({ transport: "lease", stop: "x rm {job}" });
     const list = await runCli(["host", "list"], dbPath);
     expect(list.stdout).toMatch(/TRANSPORT/);
-    expect(list.stdout).toMatch(/STOP/);
-    expect(list.stdout).toMatch(/dev\s+│\s+lease\s+│\s+x rm \{job\}\s+│/);
+    expect(list.stdout).not.toMatch(/STOP/);
+    expect(list.stdout).toMatch(/dev\s+│\s+lease\s+│\s+-\s+│/);
     const show = await runCli(["host", "show", "dev"], dbPath);
     expect(show.stdout).toContain("transport lease");
     expect(show.stdout).toContain("stop   x rm {job}");
@@ -338,7 +338,7 @@ describe("mu host add | list | show with a transport", () => {
     expect(js.data.host).toMatchObject({ transport: "lease", stop: "x rm {job}" });
   });
 
-  it("adds --attach; show, list and --json print it; a session refuses it (exit 2)", async () => {
+  it("adds --attach; show and --json print it, list leaves it to show; a session refuses it (exit 2)", async () => {
     const ATTACH = "c --attach {job} --job-file {job_file} {local_sock}:{remote_sock}";
     const a = await runCliJson(
       [...add(["--transport", "lease", "--stop", "x rm {job}", "--attach", ATTACH]), "--json"],
@@ -346,7 +346,7 @@ describe("mu host add | list | show with a transport", () => {
     );
     expect(a.exitCode).toBeNull();
     expect(a.data.host).toMatchObject({ attach: ATTACH });
-    expect((await runCli(["host", "list"], dbPath)).stdout).toMatch(/ATTACH/);
+    expect((await runCli(["host", "list"], dbPath)).stdout).not.toMatch(/ATTACH/);
     expect((await runCli(["host", "show", "dev"], dbPath)).stdout).toContain(`attach ${ATTACH}`);
     const s = await runCli(
       ["host", "add", "s1", "--shell", "s", "--exec", "e", "--fetch", "f", "--attach", ATTACH],

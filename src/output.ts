@@ -146,11 +146,12 @@ export function renderBoxTable(
  * Build a cli-table3 Table with the mu-standard safety belt:
  * `wordWrap: false` (cells wider than their column truncate with `…`
  * instead of wrapping to a second visual row), per-column max widths
- * applied only where the caller asks (`null` = auto), and a default
- * borderless style mirroring the state/agent/workstream tables.
+ * applied only where the caller asks (`null` = auto), and uncoloured
+ * header and border lines. The table still draws full box borders and
+ * a rule between rows: cli-table3's `style` sets colours, not characters.
  *
  * Callers should pre-truncate values they care about via the
- * `truncate()` / `truncateFront()` helpers in cli.ts (the proactive
+ * `truncate()` / `truncateFront()` helpers in src/cli/format.ts (the proactive
  * path); `wordWrap: false` is the safety belt for the cells they
  * miss. This is load-bearing for renderers with fixed row budgets:
  * a single wrapped cell silently blows out the promised section height.
@@ -168,9 +169,9 @@ export function muTable(opts: {
    *  supplied, the array length must match `head`. cli-table3
    *  truncates with `…` because we set `wordWrap: false`. */
   colWidths?: (number | null)[];
-  /** Style override; defaults to `{ head: [], border: [] }` (mu's
-   *  borderless look). Pass `{ head: [] }` to keep cli-table3's
-   *  default border styling. */
+  /** Colour override; defaults to `{ head: [], border: [] }` (no
+   *  colour on the header text or the borders). Pass `{ head: [] }` to
+   *  keep cli-table3's grey borders. */
   style?: { head?: string[]; border?: string[] };
 }): InstanceType<typeof Table> {
   return new Table({

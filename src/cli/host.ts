@@ -44,7 +44,11 @@ import {
 } from "../hosts.js";
 import { isJsonMode, muTable, pc } from "../output.js";
 import { shellQuote } from "../shell-quote.js";
+import { relTimeAgo, truncateFront } from "./format.js";
 import { failureWithData } from "./handle.js";
+
+/** Width of `host list`'s repo cell: front-truncated so the repo's own name survives. */
+const REPO_BUDGET = 28;
 
 /**
  * A profile as `--json` prints it: the recorded harness probe parsed (null: never probed).
@@ -65,6 +69,12 @@ function harnessesCell(h: HostProfile): string {
   if (caps === undefined) return "-";
   const found = advertised(caps);
   return found.length === 0 ? "none" : found.join(",");
+}
+
+/** `3h ago`; the raw value when it does not parse (a hand-edited probe). */
+function probedAgo(iso: string): string {
+  const at = Date.parse(iso);
+  return Number.isNaN(at) ? iso : relTimeAgo(Date.now() - at);
 }
 
 function channelLine(c: HostChannel): string {
@@ -98,13 +108,33 @@ function recordJson(r: HostRecord): Record<string, unknown> {
   return { ...rest, params: JSON.parse(params_json) as unknown };
 }
 
-/** The provider hosts, each asked its status once (a `gone` one is `lost`, D1). */
-async function providerHosts(db: Db): Promise<HostRecord[]> {
-  for (const r of listHostRecords(db)) await observeHost(db, r.name);
-  return listHostRecords(db);
+/**
+ * The provider hosts, each asked its status once (a `gone` one is `lost`, D1).
+ * A status that cannot be read (`unknown`, `needs-human`, or a throw such as an
+ * unregistered plugin) leaves the recorded state and becomes that host's note,
+ * so one unreachable provider never fails the listing nor hides behind `ready`.
+ */
+async function providerHosts(
+  db: Db,
+): Promise<{ records: HostRecord[]; statusNotes: Map<string, string> }> {
+  const statusNotes = new Map<string, string>();
+  for (const r of listHostRecords(db)) {
+    try {
+      const st = await observeHost(db, r.name);
+      if (st?.state === "unknown") statusNotes.set(r.name, `status unknown: ${st.reason}`);
+      if (st?.state === "needs-human") statusNotes.set(r.name, `needs a human: ${st.remedy}`);
+    } catch (e) {
+      statusNotes.set(r.name, `status failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { records: listHostRecords(db), statusNotes };
 }
 
-function printRecords(db: Db, records: readonly HostRecord[]): void {
+function printRecords(
+  db: Db,
+  records: readonly HostRecord[],
+  statusNotes: ReadonlyMap<string, string>,
+): void {
   const t = muTable({ head: ["HOST", "PROVIDER", "STATE", "HANDLE", "DEADLINE", "JOBS"] });
   for (const r of records) {
     const d = deadlineNotice(r);
@@ -121,32 +151,53 @@ function printRecords(db: Db, records: readonly HostRecord[]): void {
     ]);
   }
   console.log(t.toString());
+  for (const [name, note] of statusNotes) {
+    console.log(pc.yellow(`warn ${name}: ${note} (state as last recorded)`));
+  }
 }
 
+/**
+ * `host list`: one row per host, templates left to `host show`. `--json` keeps
+ * the collection shape; `kind` tells a profile from a provider host.
+ */
 export async function cmdHostList(db: Db): Promise<void> {
   const hosts = listHosts(db);
-  const records = await providerHosts(db);
+  const { records, statusNotes } = await providerHosts(db);
   if (isJsonMode()) {
-    emitJsonCollection([...hosts.map(hostJson), ...records.map(recordJson)]);
+    emitJsonCollection([
+      ...hosts.map((h) => ({ kind: "profile", ...hostJson(h) })),
+      ...records.map((r) => {
+        const note = statusNotes.get(r.name);
+        return {
+          kind: "provider",
+          ...recordJson(r),
+          ...(note !== undefined ? { status_note: note } : {}),
+        };
+      }),
+    ]);
     return;
   }
-  if (records.length > 0) printRecords(db, records);
-  if (hosts.length === 0) {
-    if (records.length === 0) console.log("no host profiles (mu host init prints a starter)");
+  if (hosts.length === 0 && records.length === 0) {
+    console.log("no host profiles (mu host init prints a starter)");
     return;
   }
+  const both = hosts.length > 0 && records.length > 0;
+  if (records.length > 0) {
+    if (both) console.log(pc.bold("Provider hosts"));
+    printRecords(db, records, statusNotes);
+  }
+  if (hosts.length === 0) return;
+  if (both) console.log(pc.bold("\nProfiles"));
   const held = new Map<string, number>();
   for (const c of listHostChannels(db)) held.set(c.host, (held.get(c.host) ?? 0) + 1);
   const t = muTable({
-    head: ["HOST", "TRANSPORT", "STOP", "ATTACH", "DEFAULT REPO", "CHANNELS", "HARNESSES"],
+    head: ["HOST", "TRANSPORT", "DEFAULT REPO", "CHANNELS", "HARNESSES"],
   });
   for (const h of hosts) {
     t.push([
       h.name,
       h.transport,
-      h.stop ?? "-",
-      h.attach ?? "-",
-      h.repo ?? "-",
+      h.repo === null ? "-" : truncateFront(h.repo, REPO_BUDGET),
       `${held.get(h.name) ?? 0}/${h.max_sessions ?? "∞"}`,
       harnessesCell(h),
     ]);
@@ -174,7 +225,7 @@ export function cmdHostShow(db: Db, name: string): void {
   console.log(
     caps === undefined
       ? "  harnesses: not probed (mu host check)"
-      : `  harnesses: ${harnessesCell(host)} (probed ${caps.probedAt})`,
+      : `  harnesses: ${harnessesCell(host)} (probed ${probedAgo(caps.probedAt)})`,
   );
   console.log(
     channels.length === 0

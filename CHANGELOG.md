@@ -12,6 +12,26 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Changed
+
+- **`mu host list` fits a terminal.** The profile table drops the STOP and
+  ATTACH template columns (`mu host show` prints every template) and
+  front-truncates the default repo, so a lease profile's row is no longer
+  ~250 columns wide. With both kinds present, the provider-host and profile
+  tables print under `Provider hosts` / `Profiles` headings. `--json` items
+  carry `kind: "profile" | "provider"`; the collection shape is unchanged.
+- **`mu host show` prints the harness probe's age** (`probed 3h ago`), not
+  its raw timestamp. `--json` keeps `capabilities.probedAt`.
+
+### Fixed
+
+- **`mu host list` reports a provider status it could not read.** An
+  `unknown` or `needs-human` status answer was dropped, so the host read as
+  its last recorded state (`ready`) with no hint; a throw (an unregistered
+  plugin) failed the whole listing. Each now leaves the recorded state, prints
+  a `warn <host>: …` line under the table, and sets `status_note` on that
+  host's `--json` item.
+
 ## [5.1.0] — 2026-11-14
 
 ### Added

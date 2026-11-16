@@ -285,7 +285,9 @@ describe("mu host (CLI)", () => {
     expect(a.exitCode).toBeNull();
     expect(a.data).toMatchObject({ host: { name: "dev", max_sessions: 2, repo: "/r" } });
     const l = await runCliJson(["host", "list", "--json"], dbPath);
-    expect(l.data.items.map((h: { name: string }) => h.name)).toEqual(["dev"]);
+    expect(l.data.items.map((h: { name: string; kind: string }) => [h.kind, h.name])).toEqual([
+      ["profile", "dev"],
+    ]);
     const s = await runCliJson(["host", "show", "dev", "--json"], dbPath);
     expect(s.data.host).toMatchObject({ shell: "sh -c {cmd}" });
     expect(s.data.channels).toEqual([]);
