@@ -12,6 +12,13 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dashboard: the Next line is the shown workstream's.** The dashboard
+  computed Next with no workstream, so it never offered that workstream's
+  executor move (`mu next -w <ws>`) and its waits came from every workstream.
+  It now uses the shown workstream, the same scope as the tasks and DAG.
+
 ## [5.2.0] — 2026-11-16
 
 ### Changed

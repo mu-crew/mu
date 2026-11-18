@@ -439,6 +439,11 @@ describe("next: computeNext, the CLI's rule set", () => {
     expect(snap.next_source).toBe("computed");
     // No workstream filter: no scope, no executor move (the CLI's rule).
     expect((await loadDashboard(db, { caller: null })).next).toBeNull();
+    // The dashboard's scope (the shown workstream) is the Next line's scope too.
+    expect(
+      (await loadDashboard(db, { caller: null, scopeWorkstream: "ws" })).next?.commands,
+    ).toEqual(["mu next -w ws"]);
+    expect((await loadDashboard(db, { caller: null, scopeWorkstream: null })).next).toBeNull();
   });
 
   it("callers decide owned-wait moves; default is the caller alone", async () => {

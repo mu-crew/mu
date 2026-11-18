@@ -247,7 +247,7 @@ export interface DashboardSnapshot {
   agents: DashboardAgent[];
   /** The newest ops, oldest first. */
   log: DashboardLogItem[];
-  /** `computeNext` for the caller set and the workstream filter; null when `next_source` is `unavailable`, or computed and nothing is authorised. */
+  /** `computeNext` for the caller set and the workstream filter (else the live `scopeWorkstream`); null when `next_source` is `unavailable`, or computed and nothing is authorised. */
   next: NextPlan;
   /** `unavailable`: the computation failed; the UI must not read null as "no work". */
   next_source: "unavailable" | "computed";
@@ -625,11 +625,14 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     ),
   );
 
-  const next = nextOf(
-    db,
-    opts.callers ?? (opts.caller === null ? [] : [opts.caller]),
-    opts.workstream,
-  );
+  // Next is the shown workstream's, like the tasks: `scopeWorkstream` when it names a
+  // live one (the dashboard passes no `workstream`, and with none there is no executor move).
+  const nextWs =
+    opts.workstream ??
+    (opts.scopeWorkstream != null && live.some((w) => w.name === opts.scopeWorkstream)
+      ? opts.scopeWorkstream
+      : undefined);
+  const next = nextOf(db, opts.callers ?? (opts.caller === null ? [] : [opts.caller]), nextWs);
   const logWs = opts.logWorkstream ?? opts.workstream;
   const log = listLogs(db, {
     ...(logWs !== undefined ? { workstream: logWs } : {}),
