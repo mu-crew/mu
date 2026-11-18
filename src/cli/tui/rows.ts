@@ -28,13 +28,14 @@ import { type ColumnSpec, columnWidths, GUTTER, renderCells } from "./columns.js
 import { clean, type Line, lineText } from "./text.js";
 import { agentStateRole, type Role, type Seg, statusRole } from "./theme.js";
 
-export type TabId = "overview" | "tasks" | "dag" | "agents" | "log";
+export type TabId = "overview" | "tasks" | "dag" | "agents" | "log" | "attention";
 export const TABS: readonly { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "tasks", label: "Tasks" },
   { id: "dag", label: "DAG" },
   { id: "agents", label: "Agents" },
   { id: "log", label: "Log" },
+  { id: "attention", label: "Attention" },
 ];
 
 /** What Enter opens on a row (a tagged union). */
@@ -97,9 +98,9 @@ export function nextSortLabel(label: SortLabel): SortLabel {
   return SORT_LABELS[(i + 1) % SORT_LABELS.length] ?? "activity";
 }
 
-/** Filters (and cursors) persist per tab and workstream: every tab shows the selected one. */
+/** Filters (and cursors) persist per tab and workstream; the Attention tab lists every workstream, so it has one. */
 export const scopeKey = (tab: TabId, workstream: string | null): string =>
-  `${tab}\u0000${workstream ?? ""}`;
+  `${tab}\u0000${tab === "attention" ? "" : (workstream ?? "")}`;
 
 /**
  * The workstream to start on: the hint (the mux session's, or `-w`) when it is
@@ -505,40 +506,75 @@ function attentionLabel(a: DashboardAttention, ws: string | null): string {
   return `${where}${a.kind === "human" ? `human: ${a.text}` : a.text}`;
 }
 
-/** The attention strip (every view): `✓ all quiet` green, else the count and each item in its role. */
-export function attentionStrip(attention: readonly DashboardAttention[], ws: string | null): Line {
+/**
+ * The attention strip (every view): `✓ all quiet` green, else the count, how many are
+ * the shown workstream's, and the key to the Attention tab (`hint: false` in a drill,
+ * which owns the keys). Red when an agent is dead. The items themselves are listed on
+ * the Attention tab and the Overview card: a one-line list was always cut.
+ */
+export function attentionStrip(
+  attention: readonly DashboardAttention[],
+  ws: string | null,
+  opts: { hint?: boolean } = {},
+): Line {
   if (attention.length === 0) return [{ text: "✓ all quiet", role: "good" }];
+  const here = attention.filter((a) => a.workstream === ws).length;
   return [
-    { text: `⚠ ${attention.length} need you: `, role: "warn" },
-    ...attention.flatMap((a, i): Seg[] => [
-      ...(i > 0 ? [{ text: " · ", role: "muted" as const }] : []),
-      { text: attentionLabel(a, ws), role: attentionRole(a) },
-    ]),
+    {
+      text: `⚠ ${attention.length} need you${here === attention.length ? "" : ` (${here} here)`}`,
+      role: attention.some((a) => a.kind === "dead") ? "bad" : "warn",
+    },
+    ...(opts.hint === false ? [] : [{ text: "  ! list", role: "muted" as const }]),
   ];
 }
 
 /** 3.x attention colours: a dead agent red, everything else that needs you yellow. */
 const attentionRole = (a: DashboardAttention): Role => (a.kind === "dead" ? "bad" : "warn");
 
-/** The Overview's cursor stops: every attention item (all workstreams), Enter opens its agent or task, `y` copies its fix. */
-function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
-  return snap.attention.map((a) => {
-    const agent = snap.agents.find((x) => x.key === a.target);
-    // A task item's task comes from the item itself: snap.tasks is the shown workstream's only.
-    const id =
-      a.kind === "human" || a.kind === "delegate"
-        ? a.target?.slice((a.workstream?.length ?? 0) + 1)
-        : undefined;
-    const drill: DrillTarget | undefined = agent
-      ? scrollbackOf(agent)
-      : a.workstream !== null && id
-        ? { kind: "notes", workstream: a.workstream, id, title: a.text }
-        : undefined;
-    return rowOf(a.key, [{ text: attentionLabel(a, ws), role: attentionRole(a) }], {
-      ...(drill ? { drill } : {}),
-      ...(a.fix !== undefined ? { fix: a.fix } : {}),
-    });
+/** The Overview card's items: the shown workstream's, and the machine-wide ones (sync, next). */
+export const attentionHere = (snap: DashboardSnapshot, ws: string | null): DashboardAttention[] =>
+  snap.attention.filter((a) => a.workstream === ws || a.workstream === null);
+
+/** What Enter opens on an attention item: its agent's scrollback or its task's notes. */
+function attentionDrill(snap: DashboardSnapshot, a: DashboardAttention): DrillTarget | undefined {
+  const agent = snap.agents.find((x) => x.key === a.target);
+  if (agent) return scrollbackOf(agent);
+  // A task item's task comes from the item itself: snap.tasks is the shown workstream's only.
+  const id =
+    a.kind === "human" || a.kind === "delegate"
+      ? a.target?.slice((a.workstream?.length ?? 0) + 1)
+      : undefined;
+  return a.workstream !== null && id
+    ? { kind: "notes", workstream: a.workstream, id, title: a.text }
+    : undefined;
+}
+
+const attentionRow = (snap: DashboardSnapshot, a: DashboardAttention, line: Line): Row => {
+  const drill = attentionDrill(snap, a);
+  return rowOf(a.key, line, {
+    ...(drill ? { drill } : {}),
+    ...(a.fix !== undefined ? { fix: a.fix } : {}),
   });
+};
+
+/** The Overview's cursor stops: the shown workstream's items, Enter opens its agent or task, `y` copies its fix. */
+function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
+  return attentionHere(snap, ws).map((a) =>
+    attentionRow(snap, a, [{ text: attentionLabel(a, ws), role: attentionRole(a) }]),
+  );
+}
+
+/** The Attention tab: every workstream's items (`-`: machine-wide), the fix `y` copies in its own column. */
+function attentionTabRows(snap: DashboardSnapshot, f: Filter): Row[] {
+  const cells = (a: DashboardAttention): string[] => [
+    a.workstream ?? "-",
+    a.kind === "human" ? `human: ${a.text}` : a.text,
+    a.fix === undefined ? "" : `y: ${a.fix}`,
+  ];
+  const line = layoutRows(snap.attention.map(cells), [protect(0, 32), protect(0, 60), CLIP]);
+  return snap.attention
+    .filter((a) => matches(f.text, a.workstream, a.kind, a.text, a.fix))
+    .map((a) => attentionRow(snap, a, line(cells(a), ["id", attentionRole(a), "muted"])));
 }
 
 /** `refute-ws  5 calls  2 CONFIRMED  1 REFUTED  2 pending (1 refused)`: zero counts left out. */
@@ -571,7 +607,7 @@ export function waveRows(snap: DashboardSnapshot, ws: string | null): Row[] {
   );
 }
 
-/** Every tab shows the selected workstream only (scratch included, like any other). */
+/** Every tab shows the selected workstream only (scratch included, like any other); Attention shows them all. */
 export function tabRows(
   tab: TabId,
   snap: DashboardSnapshot,
@@ -590,6 +626,8 @@ export function tabRows(
       return agentRows(snap, ws, f, now);
     case "log":
       return logRows(snap, ws, f);
+    case "attention":
+      return attentionTabRows(snap, f);
   }
 }
 

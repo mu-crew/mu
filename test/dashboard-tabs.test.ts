@@ -626,8 +626,10 @@ describe("tabs (Ink over a real snapshot)", () => {
           },
         ],
       });
-      const [r] = tabRows("overview", snap, "w", NO_FILTER, 0);
-      expect(r?.text).toBe("scratch/delegate refused: api check");
+      // The Overview card is the shown workstream's: another one's item is on the Attention tab.
+      expect(tabRows("overview", snap, "w", NO_FILTER, 0)).toEqual([]);
+      const [r] = tabRows("overview", snap, "scratch", NO_FILTER, 0);
+      expect(r?.text).toBe("delegate refused: api check");
       expect(r?.drill).toEqual({
         kind: "notes",
         workstream: "scratch",
@@ -636,6 +638,32 @@ describe("tabs (Ink over a real snapshot)", () => {
       });
       expect(r?.fix).toBe(fix);
       expect(r?.line[0]?.role).toBe("warn");
+    });
+
+    it("Attention tab: every workstream's items, `-` for machine-wide, the fix after; `/` filters", () => {
+      const snap = empty({
+        attention: [
+          {
+            key: "dead:a/x",
+            workstream: "a",
+            kind: "dead",
+            text: "x dead",
+            target: "a/x",
+            fix: "mu agent close x -w a",
+          },
+          { key: "sync:0", workstream: null, kind: "sync", text: "sync: stale", target: null },
+        ],
+      });
+      const rows = tabRows("attention", snap, "w", NO_FILTER, 0);
+      expect(rows.map((r) => r.text)).toEqual([
+        "a  x dead       y: mu agent close x -w a",
+        "-  sync: stale",
+      ]);
+      expect(rows[0]?.fix).toBe("mu agent close x -w a");
+      expect(tabRows("attention", snap, "w", { ...NO_FILTER, text: "sync" }, 0)).toHaveLength(1);
+      // The machine-wide item stays on every workstream's Overview card; the dead one is a's.
+      expect(tabRows("overview", snap, "w", NO_FILTER, 0).map((r) => r.key)).toEqual(["sync:0"]);
+      expect(scopeKey("attention", "a")).toBe(scopeKey("attention", "b"));
     });
 
     it("Agents: host column is `local` or the host; columns do not move under a filter", () => {
@@ -911,7 +939,7 @@ describe("tabs (Ink over a real snapshot)", () => {
     const ui = await open({ columns: 80, rows: 20 }, "beta");
     await ui.until((s) => s.includes("t7") && s.includes("t0"));
     ui.resize(20, 10);
-    await ui.until((s) => s.includes("Tasks 2/5"));
+    await ui.until((s) => s.includes("Tasks 2/6"));
     let lines = ui.screen().split("\n");
     expect(lines).toHaveLength(10);
     expect(lines[0]).toContain("[beta]");

@@ -1,14 +1,15 @@
 // The Overview tab: framed cards over the selected workstream (Attention, Agents,
 // In progress, Open by ROI, Log) in 1/2/3 columns by width (grid.ts). The card
 // contents are the other tabs' own rows, so a line reads the same everywhere.
-// Attention is the cursor's list; the rest are read-only glances.
+// Attention (the workstream's items; the Attention tab lists every one) is the
+// cursor's list; the rest are read-only glances.
 
 import { Box } from "ink";
 import type { ReactElement } from "react";
 import type { DashboardSnapshot } from "../../dashboard-data.js";
 import { Frame } from "./frame.js";
 import { COLUMN_GAP, columnCount, fitColumn, gridWidths, placeCards } from "./grid.js";
-import { agentRows, NO_FILTER, tabRows, taskRows, waveRows } from "./rows.js";
+import { agentRows, attentionHere, NO_FILTER, tabRows, taskRows, waveRows } from "./rows.js";
 import { type Line, scrollTop } from "./text.js";
 import type { Role } from "./theme.js";
 
@@ -33,12 +34,14 @@ export function overviewCards(snap: DashboardSnapshot, ws: string | null, now: n
   const tasks = (f: typeof NO_FILTER): Line[] =>
     taskRows(snap, ws, f, { call: false }).map((r) => r.line);
   const waves = waveRows(snap, ws).map((r) => r.line);
+  // The card is the shown workstream's; the strip counts the rest and `!` lists them.
+  const elsewhere = snap.attention.length - attentionHere(snap, ws).length;
   return [
     {
       id: "attention",
       title: "Attention",
       lines: lines("overview"),
-      empty: "✓ all quiet",
+      empty: elsewhere > 0 ? `✓ quiet here (! lists ${elsewhere} elsewhere)` : "✓ all quiet",
       emptyRole: "good",
       max: 6,
     },

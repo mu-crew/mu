@@ -139,9 +139,18 @@ describe("styled rows", () => {
       ],
       "w",
     );
-    expect(lineText(line)).toBe("⚠ 2 need you: a dead · b permission");
-    expect(line.find((s) => s.text === "a dead")?.role).toBe("bad");
-    expect(line.find((s) => s.text === "b permission")?.role).toBe("warn");
+    expect(lineText(line)).toBe("⚠ 2 need you  ! list");
+    expect(line[0]?.role).toBe("bad"); // a dead agent
+    const perm = {
+      key: "p",
+      workstream: "x",
+      kind: "permission",
+      text: "b",
+      target: null,
+    } as const;
+    const other = attentionStrip([perm], "w", { hint: false });
+    expect(lineText(other)).toBe("⚠ 1 need you (0 here)");
+    expect(other[0]?.role).toBe("warn");
   });
 
   it("fitLine cuts by visual width across runs, keeping each run's role", () => {

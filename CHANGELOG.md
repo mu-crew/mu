@@ -12,6 +12,17 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard: an Attention tab, a count for the strip, a per-workstream
+  card.** The strip listed every attention item on one line, so past two or
+  three it was always cut. It now reads `⚠ 5 need you (2 here)  ! list` (or
+  `✓ all quiet`), and `!` opens a new Attention tab: every workstream's items
+  with their workstream and the fix `y` copies, Enter and `/` as on the other
+  tabs. The Overview's Attention card lists the shown workstream's items and
+  the machine-wide ones (`sync`, `next unavailable`), like the cards beside it;
+  with trouble only elsewhere it says `✓ quiet here (! lists N elsewhere)`.
+
 ### Fixed
 
 - **Dashboard: the Next line is the shown workstream's.** The dashboard

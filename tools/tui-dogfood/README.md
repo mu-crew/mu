@@ -61,7 +61,7 @@ runs inside your own tmux (a nested client).
 
 ## Keys to try (the dashboard's own hint line lists them too)
 
-`←/→` or Tab: tabs (Overview first: Attention, Agents, In progress, Open, Log cards; then Tasks, DAG, Agents, Log) · `[` `]`: workstream · `j/k`,
+`←/→` or Tab: tabs (Overview first: Attention, Agents, In progress, Open, Log cards; then Tasks, DAG, Agents, Log, Attention: every workstream's items) · `!`: the Attention tab · `[` `]`: workstream · `j/k`,
 Ctrl-d/Ctrl-u (half page), PgUp/PgDn, `g`/`gg` top, `G` bottom: move, in every list and drill · `Enter`: notes / scrollback / log entry · `a`
 (Agents tab): attach, the hint says how to get back (`detach: C-b C-b d` nested, `back: C-b L` on mu's own server) · `s` (Tasks): cycle the sort (activity, roi, age, id) · `o` (Tasks): cycle the status filter · `/`: text filter
 (Enter keeps, Esc cancels) · `c`: clear · `y`: copy the equivalent command ·

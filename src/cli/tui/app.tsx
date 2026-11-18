@@ -1,5 +1,6 @@
-// The dashboard: a workstream row, five tabs (Overview, Tasks, DAG, Agents, Log), an
-// attention strip (every view, drills too), a framed list that fills the screen, and Next plus a hint/error
+// The dashboard: a workstream row, six tabs (Overview, Tasks, DAG, Agents, Log,
+// Attention), an attention count strip (every view, drills too; `!` opens the
+// Attention tab), a framed list that fills the screen, and Next plus a hint/error
 // line pinned to the last row. Overview (the first screen) is a grid of framed cards
 // (overview.tsx). Enter drills into a row, `a` attaches to an agent, `y` copies its command.
 // Plain text only: every line is
@@ -310,6 +311,11 @@ export function App({
         return;
       }
       if (input === "q" || key.escape) return exit();
+      if (input === "!") {
+        setTab("attention");
+        state.refresh();
+        return;
+      }
       // The Overview's cursor is the Attention card's; its page is the screen's data area.
       const nav = navKey(input, key, height);
       const ids = TABS.map((t) => t.id);
@@ -378,6 +384,7 @@ export function App({
     names.findIndex((w) => w.name === ws),
   );
   const strip = attentionStrip(attention, ws);
+  const drillStrip = attentionStrip(attention, ws, { hint: false });
   const empty =
     snap === null
       ? state.error
@@ -386,7 +393,9 @@ export function App({
       : all.length === 0
         ? f.text !== ""
           ? "no rows match the filter"
-          : "nothing here"
+          : tab === "attention"
+            ? "✓ all quiet"
+            : "nothing here"
         : "";
   const footer = flash
     ? { text: flash, role: "text" as const }
@@ -410,7 +419,7 @@ export function App({
       <Drill
         target={drill.target}
         notice={drill.notice}
-        strip={strip}
+        strip={drillStrip}
         runtime={runtime}
         busy={busy}
         nonce={state.nonce}

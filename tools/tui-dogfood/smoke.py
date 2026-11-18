@@ -74,7 +74,7 @@ def run(n, budget=40):
 # ── screen checks: run.sh inside a private tmux server, read the real screen with capture-pane ──
 HINT = re.compile(r"^←/→ tab")  # the last line of every screen (cut with … when narrow)
 MORE = re.compile(r"\+\d+ (more|older)")
-TABS = ["Overview", "Tasks", "DAG", "Agents", "Log"]
+TABS = ["Overview", "Tasks", "DAG", "Agents", "Log", "Attention"]
 SIZES = [(200, 50), (120, 40), (80, 24)]
 
 class Screen:
@@ -153,7 +153,7 @@ def fill_check(ns=(2, 4, 5, 7)):
                     if t: scr.keys("Right")
                     time.sleep(0.4)
                     probs += [f"{tab}: {p}" for p in fill_problems(scr.grab(), h, tab, alert=n == 4)]
-                scr.keys(*["Left"] * 4)  # back to Overview for the next size
+                scr.keys(*["Left"] * (len(TABS) - 1))  # back to Overview for the next size
                 bad += bool(probs)
                 print(f"fill s{n} {w}x{h}: {'OK ' if not probs else 'FAIL'}")
                 for p in probs: print("   ", p)

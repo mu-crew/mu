@@ -68,12 +68,12 @@ describe("dashboard screen", () => {
       [80, 24],
     ] as const) {
       const ui = await open(columns, rows);
-      await ui.until((s) => s.includes("Attention") && s.includes("Open"));
+      await ui.until((s) => s.includes("> human: decide"));
       const lines = ui.screen().split("\n");
       const at = `${columns}x${rows}`;
       expect(lines, at).toHaveLength(rows);
       expect(lines[1], at).toContain("Overview");
-      expect(lines[2], at).toMatch(/^⚠ 1 need you: human: decide/); // the strip, under the tabs
+      expect(lines[2], at).toMatch(/^⚠ 1 need you {2}! list/); // the strip, under the tabs
       expect(lines.at(-1), at).toContain("q quit"); // footer pinned to the last row
       expect(lines.join("\n"), at).toContain("human: decide the fx policy");
       expect(lines.join("\n"), at).toContain("t29"); // highest ROI first in Open
@@ -84,32 +84,32 @@ describe("dashboard screen", () => {
 
   it("a wide screen puts the cards in columns; a narrow one stacks them", async () => {
     const wide = await open(200, 50);
-    await wide.until((s) => s.includes("Open"));
+    await wide.until((s) => s.includes("> human: decide"));
     const row = wide
       .screen()
       .split("\n")
-      .find((l) => l.includes("Attention"));
+      .find((l) => l.includes("─ Attention"));
     expect(row).toContain("In progress"); // side by side
     wide.unmount();
     const narrow = await open(80, 24);
-    await narrow.until((s) => s.includes("Attention"));
+    await narrow.until((s) => s.includes("> human: decide"));
     expect(
       narrow
         .screen()
         .split("\n")
-        .find((l) => l.includes("Attention")),
+        .find((l) => l.includes("─ Attention")),
     ).not.toContain("Agents");
     narrow.unmount();
   });
 
   it("a drill keeps the attention strip under its title", async () => {
     const ui = await open(100, 30);
-    await ui.until((s) => s.includes("Attention"));
+    await ui.until((s) => s.includes("> human: decide"));
     await ui.press("\r"); // Enter on the attention item: the human task's notes
     await ui.until((s) => s.includes("Notes  "));
     const lines = ui.screen().split("\n");
     expect(lines[0]).toContain("Notes  ");
-    expect(lines[1]).toMatch(/^⚠ 1 need you: human: decide/);
+    expect(lines[1]).toMatch(/^⚠ 1 need you\s*$/); // no `! list`: the drill owns the keys
     expect(lines).toHaveLength(30);
     expect(lines.at(-1)).toContain("Esc back");
     ui.unmount();
@@ -117,12 +117,12 @@ describe("dashboard screen", () => {
 
   it("the attention strip stays on the other tabs; a framed tab fills the screen", async () => {
     const ui = await open(100, 30);
-    await ui.until((s) => s.includes("Attention"));
+    await ui.until((s) => s.includes("> human: decide"));
     await ui.press("\u001b[C"); // right: Tasks
     await ui.until((s) => s.includes("╭─ Tasks"));
     const lines = ui.screen().split("\n");
     expect(lines).toHaveLength(30);
-    expect(lines[2]).toContain("⚠ 1 need you: human: decide the fx policy");
+    expect(lines[2]).toContain("⚠ 1 need you  ! list");
     expect(lines.at(-1)).toContain("q quit");
     expect(lines.at(-2)).toContain("next"); // Next above the pinned footer
     expect(lines.some((l) => l.startsWith("╰─ ") && /\d+\/\d+/.test(l))).toBe(true);
@@ -151,7 +151,7 @@ describe("dashboard screen", () => {
     ui.unmount();
   });
 
-  it("Enter on another workstream's human item opens its notes (the snapshot is scoped to beta)", async () => {
+  it("another workstream's item is off the Overview card; `!` lists it on the Attention tab, Enter opens its notes", async () => {
     ensureWorkstream(db, "alpha");
     addTask(db, {
       workstream: "alpha",
@@ -162,11 +162,34 @@ describe("dashboard screen", () => {
       kind: "human",
     });
     const ui = await open(120, 40);
-    await ui.until((s) => s.includes("> alpha/human: approve the budget"));
+    await ui.until((s) => s.includes("> human: decide"));
+    expect(ui.screen()).toContain("⚠ 2 need you (1 here)  ! list");
+    expect(ui.screen()).not.toContain("approve the budget");
+    await ui.press("!");
+    await ui.until((s) => s.includes("╭─ Attention") && s.includes("approve the budget"));
+    const rows = ui.screen().split("\n");
+    expect(rows.find((l) => l.includes("approve the budget"))).toMatch(/alpha\s+human: approve/);
+    expect(rows.find((l) => l.includes("decide the fx"))).toMatch(/beta\s+human: decide/);
+    expect(ui.screen()).toContain("y: mu task close");
+    await ui.press("j"); // alpha sorts first; j to beta, k back
+    await ui.press("k");
     await ui.press("\r");
     await ui.until(
-      (s) => s.includes("Notes  ") && s.includes("approve the budget") && !s.includes("Attention"),
+      (s) =>
+        s.includes("Notes  ") && s.includes("approve the budget") && !s.includes("╭─ Attention"),
     );
+    ui.unmount();
+  });
+
+  it("the Overview card says when the trouble is elsewhere", async () => {
+    ensureWorkstream(db, "quiet");
+    const ui = await open(120, 40);
+    await ui.until((s) => s.includes("> human: decide"));
+    await ui.press("]"); // beta -> quiet
+    await ui.until(
+      (s) => s.includes("[quiet]") && s.includes("✓ quiet here (! lists 1 elsewhere)"),
+    );
+    expect(ui.screen()).toContain("⚠ 1 need you (0 here)  ! list");
     ui.unmount();
   });
 });
