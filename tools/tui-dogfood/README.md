@@ -84,8 +84,9 @@ python3 tools/tui-dogfood/smoke.py live         # opt-in, about 4 min: live upda
   behind.
 - **fill** (s2, s4, s5, s7 at 200x50, 120x40 and 80x24, every tab, read off
   a private tmux screen): row 3 is the attention strip (s4: `⚠ N need you`,
-  Overview included), and the last row is the hint. A tab's frame reaches the
-  last body row. An Overview column whose card says `+N more` reaches it too.
+  Overview included), and the last row is the hint. A tab's frame is titled
+  with the tab's name and reaches the last body row (above Next, `next:` or
+  `next (<mode>):`). An Overview column whose card says `+N more` reaches it too.
   A column of short cards may leave blank rows.
 - **stable** (s6): on Tasks and Log, two screens 5 s apart; the second column
   starts at the same x on every row of both.

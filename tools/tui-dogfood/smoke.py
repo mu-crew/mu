@@ -3,8 +3,8 @@
    python3 smoke.py [N ... | fill | stable | drill | live]   (default: scenarios + fill, stable, drill). Exit 0 = all green.
      N       scenario N seeds, renders, takes keys, quits 0, leaves no tmux server
      fill    s2 s4 s5 s7 at 200x50, 120x40, 80x24, every tab, read off a private tmux screen:
-             row 3 is the attention strip (s4: "⚠ N need you"); the last row is the hint; a frame reaches the bottom body row (tabs always, an
-             Overview column whenever one of its cards says "+N more")
+             row 3 is the attention strip (s4: "⚠ N need you"); the last row is the hint; a tab's frame carries its name; a frame reaches the bottom body
+             row (tabs always, an Overview column whenever one of its cards says "+N more")
      stable  s6, two screens 5 s apart: the second column of Tasks and of Log starts at the same x
      drill   s2 at 120x40 and 80x24: Enter on a Tasks row and on a DAG row opens the notes, strip on row 2, hint on the last row
      live    (opt-in) every view updates from another process with no key: per-view latency, idle and s6 CPU
@@ -116,6 +116,7 @@ def frames(lines):
     return out
 
 STRIP = re.compile(r"^(⚠ \d+ need you|✓ all quiet)")
+NEXT = re.compile(r"^next( \([^)]*\))?:")
 
 def fill_problems(lines, h, tab, alert=False):
     """What is wrong with one screen, as strings (empty = fine). `alert`: the strip must say ⚠."""
@@ -127,7 +128,11 @@ def fill_problems(lines, h, tab, alert=False):
     if not lines or not HINT.search(lines[-1]): bad.append(f"last row is not the hint: {lines[-1:]!r}")
     fs = frames(lines)
     if not fs: return bad + ["no frame on screen"]
-    nxt = next((i for i, l in enumerate(lines) if l.startswith("next:")), h - 1)
+    # A tab is one frame titled with its name: a screen still on another tab must not pass.
+    if tab != "Overview" and not any(lines[f[2]][f[0]:].startswith(f"╭─ {tab}") for f in fs):
+        bad.append(f"no frame titled {tab!r}: the tab never showed")
+    # `next: …`, or `next (<mode>): …` when Next has a command.
+    nxt = next((i for i, l in enumerate(lines) if NEXT.match(l)), h - 1)
     last_body = nxt - 1  # the row above Next (or above the hint on a short screen)
     for x0 in sorted({f[0] for f in fs}):
         col = [f for f in fs if f[0] == x0]
