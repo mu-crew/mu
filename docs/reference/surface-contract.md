@@ -67,7 +67,7 @@ their guarantees:
   128 KiB). `host check` records
   which harnesses the host has (`host_profiles.capabilities`), runs the pi
   steps only on a host with pi, and a spawn for a harness it lacks is refused.
-- **Surfaces.** In-process `mu db query` (alias `mu sql`), five-tab
+- **Surfaces.** In-process `mu db query` (alias `mu sql`), six-tab
   read-only dashboard, pi package (3.x's link verb is gone), `mu pi migrate`,
   `mu init` (mu's Stop hook entry and skill copy per hook harness, prompt
   skills for claude and cursor-agent, touching only what it wrote, never a

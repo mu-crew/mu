@@ -18,7 +18,7 @@ tmux -L "$SOCK" -f /dev/null new-session -d -s shot -x "$COLS" -y "$ROWS" \
   "env -u TMUX -u TMUX_PANE MU_DOGFOOD_REPO='$REPO' '$REPO/tools/tui-dogfood/run.sh' 4; sleep 5"
 for _ in $(seq 60); do # wait for the first full frame
   sleep 1
-  tmux -L "$SOCK" capture-pane -p -t shot | grep -q 'Attention' && break
+  tmux -L "$SOCK" capture-pane -p -t shot | grep -q '╭─ Attention' && break
 done
 sleep 2
 tmux -L "$SOCK" capture-pane -e -p -t shot >"$ANSI"

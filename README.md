@@ -96,10 +96,11 @@ package), or spawn into the reserved `scratch` workstream:
 `mu agent spawn scout-1 -w scratch`. Another harness uses its own subagent
 and records the check with `mu task check`.
 
-Run `mu` with no arguments for the read-only dashboard. It has five tabs
-(Overview, Tasks, DAG, Agents, Log), with what needs a human on top: a
-dead or stalled worker, one waiting on a permission or on input, a
-`human-needed` task, a refused or failed delegate call.
+Run `mu` with no arguments for the read-only dashboard. It has six tabs
+(Overview, Tasks, DAG, Agents, Log, Attention), with a count of what needs
+a human on top: a dead or stalled worker, one waiting on a permission or on
+input, a `human-needed` task, a refused delegate call. `!` lists them all
+on the Attention tab.
 
 ![The mu dashboard: a payments workstream with a dead worker, one waiting on a permission, one stalled on a tool, and a human-needed task.](docs/img/tui-dashboard.png)
 

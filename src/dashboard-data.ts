@@ -190,8 +190,9 @@ export interface DashboardDelegate {
 
 /**
  * Something a human has to look at. Read over EVERY live workstream and blind
- * to the status/text filters and the workstream scope, so each surface (the
- * strip under the tabs, the Overview card) agrees.
+ * to the status/text filters and the workstream scope: the UI cuts it per surface
+ * (the strip counts it, the Overview card keeps the shown workstream's and the
+ * machine-wide items, the Attention tab lists it all).
  *
  * - `dead`: the agent's pane (or gate process) is gone.
  * - `permission`: `needs_permission`; `text` carries how long.
@@ -266,8 +267,8 @@ export interface DashboardOptions {
    * Read tasks, edges and frontier of this workstream ONLY (a name that is not live,
    * or null: none), leaving agents, log, caller panels and attention machine-wide:
    * the dashboard shows one workstream, and reading every other one's tasks and DAG
-   * each tick is what made it costly. Absent: every live workstream. `workstream`, when
-   * set, wins.
+   * each tick is what made it costly. A live one also scopes `next`. Absent: every live
+   * workstream. `workstream`, when set, wins.
    */
   scopeWorkstream?: string | null;
   /** Statuses to list; default OPEN + IN_PROGRESS (CLOSED is hidden). */
@@ -700,7 +701,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
       key: `human:${keyOf(t.ws, t.id)}`,
       workstream: t.ws,
       kind: "human",
-      // The strip labels it `human: ` already; drop recordHumanNeeded's `human needed: ` title prefix.
+      // The UI labels it `human: ` already; drop recordHumanNeeded's `human needed: ` title prefix.
       text: t.title.replace(/^human needed:\s*/i, ""),
       target: keyOf(t.ws, t.id),
       fix: `mu task close ${shellWord(t.id)} -w ${shellWord(t.ws)} --evidence '<what you decided>'`,
