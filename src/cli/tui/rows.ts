@@ -500,28 +500,32 @@ function logProse(l: DashboardLogItem): Seg[] {
   ];
 }
 
-/** One attention item as a line: another workstream's is qualified, bare names otherwise. */
-function attentionLabel(a: DashboardAttention, ws: string | null): string {
-  const where = a.workstream !== null && a.workstream !== ws ? `${a.workstream}/` : "";
-  return `${where}${a.kind === "human" ? `human: ${a.text}` : a.text}`;
-}
+/** One attention item as a line on the Overview card (the shown workstream's or machine-wide: bare). */
+const attentionLabel = (a: DashboardAttention): string =>
+  a.kind === "human" ? `human: ${a.text}` : a.text;
+
+/** An item the shown workstream's views count as theirs: its own, or a machine-wide one (sync, next). */
+const isHere = (a: DashboardAttention, ws: string | null): boolean =>
+  a.workstream === ws || a.workstream === null;
 
 /**
- * The attention strip (every view): `✓ all quiet` green, else the count, how many are
- * the shown workstream's, and the key to the Attention tab (`hint: false` in a drill,
- * which owns the keys). Red when an agent is dead. The items themselves are listed on
- * the Attention tab and the Overview card: a one-line list was always cut.
+ * The attention strip (every view): `✓ all quiet` green, else the count, how many the
+ * Overview card lists (`here: false` on the Attention tab, which lists them all), and the
+ * key to that tab (`hint: false` there and in a drill, which owns the keys). Red when an
+ * agent is dead. The items themselves are on the tab and the card: a one-line list was
+ * always cut.
  */
 export function attentionStrip(
   attention: readonly DashboardAttention[],
   ws: string | null,
-  opts: { hint?: boolean } = {},
+  opts: { hint?: boolean; here?: boolean } = {},
 ): Line {
   if (attention.length === 0) return [{ text: "✓ all quiet", role: "good" }];
-  const here = attention.filter((a) => a.workstream === ws).length;
+  const here = attention.filter((a) => isHere(a, ws)).length;
+  const count = opts.here === false || here === attention.length ? "" : ` (${here} here)`;
   return [
     {
-      text: `⚠ ${attention.length} need you${here === attention.length ? "" : ` (${here} here)`}`,
+      text: `⚠ ${attention.length} need you${count}`,
       role: attention.some((a) => a.kind === "dead") ? "bad" : "warn",
     },
     ...(opts.hint === false ? [] : [{ text: "  ! list", role: "muted" as const }]),
@@ -531,9 +535,9 @@ export function attentionStrip(
 /** 3.x attention colours: a dead agent red, everything else that needs you yellow. */
 const attentionRole = (a: DashboardAttention): Role => (a.kind === "dead" ? "bad" : "warn");
 
-/** The Overview card's items: the shown workstream's, and the machine-wide ones (sync, next). */
+/** The Overview card's items: the shown workstream's, and the machine-wide ones. */
 export const attentionHere = (snap: DashboardSnapshot, ws: string | null): DashboardAttention[] =>
-  snap.attention.filter((a) => a.workstream === ws || a.workstream === null);
+  snap.attention.filter((a) => isHere(a, ws));
 
 /** What Enter opens on an attention item: its agent's scrollback or its task's notes. */
 function attentionDrill(snap: DashboardSnapshot, a: DashboardAttention): DrillTarget | undefined {
@@ -560,21 +564,36 @@ const attentionRow = (snap: DashboardSnapshot, a: DashboardAttention, line: Line
 /** The Overview's cursor stops: the shown workstream's items, Enter opens its agent or task, `y` copies its fix. */
 function attentionRows(snap: DashboardSnapshot, ws: string | null): Row[] {
   return attentionHere(snap, ws).map((a) =>
-    attentionRow(snap, a, [{ text: attentionLabel(a, ws), role: attentionRole(a) }]),
+    attentionRow(snap, a, [{ text: attentionLabel(a), role: attentionRole(a) }]),
   );
 }
 
-/** The Attention tab: every workstream's items (`-`: machine-wide), the fix `y` copies in its own column. */
+/** The Attention tab's workstream column: wide enough for most names, never the whole screen. */
+const ATTENTION_WS_MAX = 20;
+
+/**
+ * The Attention tab: every workstream's items (`-`: machine-wide), the text in the clip
+ * column so it gets the whole width. The cursor row's fix shows on the filter line
+ * (`attentionFix`), not in a column: a command per row left no room for the text.
+ */
 function attentionTabRows(snap: DashboardSnapshot, f: Filter): Row[] {
-  const cells = (a: DashboardAttention): string[] => [
-    a.workstream ?? "-",
-    a.kind === "human" ? `human: ${a.text}` : a.text,
-    a.fix === undefined ? "" : `y: ${a.fix}`,
-  ];
-  const line = layoutRows(snap.attention.map(cells), [protect(0, 32), protect(0, 60), CLIP]);
+  const where = (a: DashboardAttention): string => a.workstream ?? "-";
+  const line = layoutRows(
+    snap.attention.map((a) => [where(a), ""]),
+    [protect(0, ATTENTION_WS_MAX), CLIP],
+  );
   return snap.attention
     .filter((a) => matches(f.text, a.workstream, a.kind, a.text, a.fix))
-    .map((a) => attentionRow(snap, a, line(cells(a), ["id", attentionRole(a), "muted"])));
+    .map((a) =>
+      attentionRow(snap, a, line([where(a), attentionLabel(a)], ["id", attentionRole(a)])),
+    );
+}
+
+/** The filter line's note for the Attention tab's cursor row: its fix, or what Enter does instead. */
+export function attentionFix(row: Row | undefined): string {
+  if (row === undefined) return "";
+  if (row.fix !== undefined) return `y: ${row.fix}`;
+  return row.drill ? "no fix: Enter opens it" : "no fix";
 }
 
 /** `refute-ws  5 calls  2 CONFIRMED  1 REFUTED  2 pending (1 refused)`: zero counts left out. */

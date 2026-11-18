@@ -11,6 +11,7 @@ import { insertAgent } from "../src/agents.js";
 import { App, layout } from "../src/cli/tui/app.js";
 import { overviewCards } from "../src/cli/tui/overview.js";
 import {
+  attentionFix,
   cursorIndex,
   moveCursor,
   NO_FILTER,
@@ -640,7 +641,7 @@ describe("tabs (Ink over a real snapshot)", () => {
       expect(r?.line[0]?.role).toBe("warn");
     });
 
-    it("Attention tab: every workstream's items, `-` for machine-wide, the fix after; `/` filters", () => {
+    it("Attention tab: every workstream's items, `-` for machine-wide, the fix on the filter line; `/` filters", () => {
       const snap = empty({
         attention: [
           {
@@ -655,11 +656,19 @@ describe("tabs (Ink over a real snapshot)", () => {
         ],
       });
       const rows = tabRows("attention", snap, "w", NO_FILTER, 0);
-      expect(rows.map((r) => r.text)).toEqual([
-        "a  x dead       y: mu agent close x -w a",
-        "-  sync: stale",
-      ]);
+      expect(rows.map((r) => r.text)).toEqual(["a  x dead", "-  sync: stale"]);
       expect(rows[0]?.fix).toBe("mu agent close x -w a");
+      expect(attentionFix(rows[0])).toBe("y: mu agent close x -w a");
+      expect(attentionFix(rows[1])).toBe("no fix");
+      // A long workstream name is capped, so the text keeps the width.
+      const long = empty({
+        attention: [
+          { key: "k", workstream: "w".repeat(40), kind: "input", text: "z input", target: null },
+        ],
+      });
+      expect(tabRows("attention", long, "w", NO_FILTER, 0)[0]?.text).toBe(
+        `${"w".repeat(19)}…  z input`,
+      );
       expect(tabRows("attention", snap, "w", { ...NO_FILTER, text: "sync" }, 0)).toHaveLength(1);
       // The machine-wide item stays on every workstream's Overview card; the dead one is a's.
       expect(tabRows("overview", snap, "w", NO_FILTER, 0).map((r) => r.key)).toEqual(["sync:0"]);

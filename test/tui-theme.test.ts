@@ -151,6 +151,20 @@ describe("styled rows", () => {
     const other = attentionStrip([perm], "w", { hint: false });
     expect(lineText(other)).toBe("⚠ 1 need you (0 here)");
     expect(other[0]?.role).toBe("warn");
+    // A machine-wide item is on every workstream's card, so it counts as here.
+    const sync = {
+      key: "s",
+      workstream: null,
+      kind: "sync",
+      text: "sync: x",
+      target: null,
+    } as const;
+    expect(lineText(attentionStrip([sync, perm], "w"))).toBe("⚠ 2 need you (1 here)  ! list");
+    expect(lineText(attentionStrip([sync], "w"))).toBe("⚠ 1 need you  ! list");
+    // The Attention tab: the count alone.
+    expect(lineText(attentionStrip([sync, perm], "w", { hint: false, here: false }))).toBe(
+      "⚠ 2 need you",
+    );
   });
 
   it("fitLine cuts by visual width across runs, keeping each run's role", () => {

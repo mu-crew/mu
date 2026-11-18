@@ -11,6 +11,7 @@ import { App } from "../src/cli/tui/app.js";
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask } from "../src/tasks/edit.js";
+import { closeTask } from "../src/tasks/lifecycle.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { renderApp } from "./_ink-render.js";
@@ -170,14 +171,29 @@ describe("dashboard screen", () => {
     const rows = ui.screen().split("\n");
     expect(rows.find((l) => l.includes("approve the budget"))).toMatch(/alpha\s+human: approve/);
     expect(rows.find((l) => l.includes("decide the fx"))).toMatch(/beta\s+human: decide/);
-    expect(ui.screen()).toContain("y: mu task close");
+    expect(ui.screen()).toContain("⚠ 2 need you\n"); // the tab lists them: the strip only counts
+    // The cursor row's fix is on the filter line, and follows the cursor.
+    await ui.until((s) => s.includes("y: mu task close ask -w alpha"));
     await ui.press("j"); // alpha sorts first; j to beta, k back
+    await ui.until(
+      (s) => /> beta\s+human: decide/.test(s) && s.includes("y: mu task close decide"),
+    );
     await ui.press("k");
+    await ui.until((s) => /> alpha\s+human: approve/.test(s));
     await ui.press("\r");
     await ui.until(
       (s) =>
         s.includes("Notes  ") && s.includes("approve the budget") && !s.includes("╭─ Attention"),
     );
+    ui.unmount();
+  });
+
+  it("the Attention tab with nothing to list says all quiet", async () => {
+    closeTask(db, "decide", { workstream: "beta", evidence: "decided" });
+    const ui = await open(100, 30);
+    await ui.until((s) => s.includes("✓ all quiet") && s.includes("─ Attention"));
+    await ui.press("!");
+    await ui.until((s) => s.includes("╭─ Attention · 0") && s.includes("  ✓ all quiet"));
     ui.unmount();
   });
 

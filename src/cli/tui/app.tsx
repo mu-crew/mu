@@ -24,6 +24,7 @@ import { FRAME_CHROME, FRAME_SIDES, Frame, Segs } from "./frame.js";
 import { NAV_HINT, navKey } from "./nav.js";
 import { Overview, overviewCards } from "./overview.js";
 import {
+  attentionFix,
   attentionStrip,
   cursorIndex,
   type DrillTarget,
@@ -89,6 +90,7 @@ export function layout(
 const HINT_HEAD = `←/→ tab  q quit  [/] workstream  ${NAV_HINT} move`;
 const HINT_OVERVIEW = `${HINT_HEAD}  Enter open  y copy fix  +/- rate`;
 const HINT = `${HINT_HEAD}  Enter open  / filter  c clear  y copy  +/- rate`;
+const HINT_ATTENTION = `${HINT_HEAD}  Enter open  / filter  c clear  y copy fix  +/- rate`;
 const HINT_TASKS = `${HINT_HEAD}  Enter open  s sort  o status  / filter  c clear  y copy  +/- rate`;
 const hintAgents = (attachKey: string): string =>
   `${HINT_HEAD}  Enter scrollback  ${attachKey}  / filter  c clear  y copy  +/- rate`;
@@ -372,6 +374,8 @@ export function App({
     tab === "tasks" ? `sort: ${f.sort} ${SORT_ARROWS[f.sort]}` : "",
     `filter: ${f.text}${editing ? "_" : ""}`,
     snap ? `${all.length} row${all.length === 1 ? "" : "s"}` : "",
+    // The cursor row's fix: the Attention tab's rows have no room for it.
+    tab === "attention" ? attentionFix(all[sel]) : "",
     state.stale || (state.loading && !snap) ? "loading…" : "",
   ]
     .filter((p) => p !== "")
@@ -383,7 +387,12 @@ export function App({
     0,
     names.findIndex((w) => w.name === ws),
   );
-  const strip = attentionStrip(attention, ws);
+  // The Attention tab lists every item itself: the strip only counts them there.
+  const strip = attentionStrip(
+    attention,
+    ws,
+    tab === "attention" ? { hint: false, here: false } : {},
+  );
   const drillStrip = attentionStrip(attention, ws, { hint: false });
   const empty =
     snap === null
@@ -410,7 +419,9 @@ export function App({
                 ? hintAgents(attachKey)
                 : tab === "tasks"
                   ? HINT_TASKS
-                  : HINT,
+                  : tab === "attention"
+                    ? HINT_ATTENTION
+                    : HINT,
           role: "muted" as const,
         };
 
@@ -432,7 +443,16 @@ export function App({
 
   const bodyLines: Line[] = [
     ...visible.map((r, i) => lineOf(r, top + i)),
-    ...(empty ? [[{ text: `  ${empty}`, role: "muted" as const }]] : []),
+    ...(empty
+      ? [
+          [
+            {
+              text: `  ${empty}`,
+              role: empty === "✓ all quiet" ? ("good" as const) : ("muted" as const),
+            },
+          ],
+        ]
+      : []),
   ];
   const tabLabel = TABS[tabIndex]?.label ?? "";
 
