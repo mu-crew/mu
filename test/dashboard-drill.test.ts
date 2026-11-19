@@ -353,7 +353,7 @@ describe("drills in the dashboard", () => {
       const pinned = (): void => {
         const lines = ui.screen().split("\n");
         expect(lines.length, at).toBe(size.rows);
-        expect(lines.at(-1), at).toContain("Esc back");
+        expect(lines.at(-1), at).toContain("q back");
       };
       await ui.press(ENTER);
       await ui.until((s) => s.includes("Notes  ws/"));

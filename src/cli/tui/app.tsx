@@ -86,9 +86,12 @@ export function layout(
   return { shown, height: Math.max(0, rows - TOP_LINES - shown.size) };
 }
 
-// `q quit` comes right after the tab keys: a narrow terminal cuts the hint from the right.
-const HINT_HEAD = `←/→ tab  q quit  [/] workstream  ${NAV_HINT} move`;
-const HINT_OVERVIEW = `${HINT_HEAD}  Enter open  y copy fix  +/- rate`;
+// q and Esc go back one level everywhere: a drill closes, the Attention tab returns to
+// where `!` opened it, any other tab returns to the Overview, and only the Overview
+// quits (Ctrl-C quits from anywhere). `q back` / `q quit` comes right after the tab
+// keys: a narrow terminal cuts the hint from the right.
+const HINT_HEAD = `←/→ tab  q back  [/] workstream  ${NAV_HINT} move`;
+const HINT_OVERVIEW = `←/→ tab  q quit  [/] workstream  ${NAV_HINT} move  Enter open  y copy fix  +/- rate`;
 const HINT = `${HINT_HEAD}  Enter open  / filter  c clear  y copy  +/- rate`;
 const HINT_ATTENTION = `${HINT_HEAD}  Enter open  / filter  c clear  y copy fix  +/- rate`;
 const HINT_TASKS = `${HINT_HEAD}  Enter open  s sort  o status  / filter  c clear  y copy  +/- rate`;
@@ -166,6 +169,8 @@ export function App({
   }, []);
   const { columns, rows: screenRows } = useWindowSize();
   const [tab, setTab] = useState<TabId>(initialTab);
+  // The tab `!` opened the Attention tab from: q/Esc there returns to it (null: the Overview).
+  const [attentionFrom, setAttentionFrom] = useState<TabId | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [views, setViews] = useState<Record<string, View>>({});
   const [editing, setEditing] = useState<{ before: string } | null>(null);
@@ -312,8 +317,15 @@ export function App({
           setFilter({ text: view.filter.text + clean(input) });
         return;
       }
-      if (input === "q" || key.escape) return exit();
+      // Back one level (see HINT_HEAD); `!` on the Attention tab is back too, a toggle.
+      if (input === "q" || key.escape || (input === "!" && tab === "attention")) {
+        if (tab === "overview") return exit();
+        setTab(tab === "attention" ? (attentionFrom ?? "overview") : "overview");
+        setAttentionFrom(null);
+        return;
+      }
       if (input === "!") {
+        setAttentionFrom(tab);
         setTab("attention");
         state.refresh();
         return;
@@ -324,6 +336,7 @@ export function App({
       if (key.tab || key.rightArrow || key.leftArrow) {
         const back = key.leftArrow || (key.tab && key.shift);
         setTab((cycle(ids, tab, back ? -1 : 1) ?? tab) as TabId);
+        setAttentionFrom(null); // moved sideways: back from Attention is the Overview again
         state.refresh(); // 3.x: a tab switch fetches eagerly, agent states included
       } else if (input === "[" || input === "]") {
         const next = cycle(

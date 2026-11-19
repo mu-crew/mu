@@ -381,10 +381,10 @@ export function Drill({
   topSeen.current = first;
   const hint =
     target.kind === "notes"
-      ? `${NAV_HINT} scroll  A all notes  r reload  y copy cmd  Esc back`
+      ? `${NAV_HINT} scroll  A all notes  r reload  y copy cmd  q back`
       : target.kind === "scrollback"
-        ? `${NAV_HINT} scroll  r reload  a attach  y copy cmd  Esc back`
-        : `${NAV_HINT} scroll  y copy cmd  Esc back`;
+        ? `${NAV_HINT} scroll  r reload  a attach  y copy cmd  q back`
+        : `${NAV_HINT} scroll  y copy cmd  q back`;
 
   useInput((input, key) => {
     if (busy.current) return;

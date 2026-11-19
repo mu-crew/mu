@@ -55,12 +55,17 @@ def run(n, budget=40):
     for k in [bytes([c]) for c in keys]:
         os.write(fd, k); pump(0.6)
     ok2 = pump(8, after) if after else True
-    os.write(fd, b"q")  # a drill swallows the first q (closes it); a second quits
-    pump(1.0)
-    try: os.write(fd, b"q")
-    except OSError: pass
-    t = time.time(); code = None
-    while time.time() - t < 15:
+    # q goes back one level (drill, then tab, then the Overview quits): up to three.
+    code = None
+    for _ in range(3):
+        try: os.write(fd, b"q")
+        except OSError: break
+        pump(1.0)
+        p, st = os.waitpid(pid, os.WNOHANG)
+        if p:
+            code = os.waitstatus_to_exitcode(st); break
+    t = time.time()
+    while code is None and time.time() - t < 15:
         p, st = os.waitpid(pid, os.WNOHANG)
         if p:
             code = os.waitstatus_to_exitcode(st); break
@@ -182,7 +187,7 @@ def drill_check():
                 lines = scr.grab()
                 probs = [] if opened else ["Enter opened no notes"]
                 if len(lines) != h: probs.append(f"{len(lines)} rows, want {h}")
-                if not lines or "Esc back" not in lines[-1]: probs.append(f"last row is not the hint: {lines[-1:]!r}")
+                if not lines or "q back" not in lines[-1]: probs.append(f"last row is not the hint: {lines[-1:]!r}")
                 if len(lines) < 2 or not STRIP.match(lines[1]): probs.append(f"row 2 is not the attention strip: {lines[1:2]!r}")
                 bad += bool(probs)
                 print(f"drill s2 {name} {w}x{h}: {'OK ' if not probs else 'FAIL'}")

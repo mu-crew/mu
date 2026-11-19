@@ -137,24 +137,28 @@ describe("dashboard shell", () => {
     expect(readdirSync(syncDir)).toEqual([]);
   });
 
-  it("renders the snapshot, and q exits", async () => {
+  it("renders the snapshot; q goes back to the Overview, then exits", async () => {
     seed(a, "t1");
     const rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: a, caller: null });
     const ui = await renderApp(
       createElement(App, { runtime: rt, initialTab: "tasks", pollMs: null }),
     );
-    await ui.until((s) => s.includes("t1"));
+    await ui.until((s) => s.includes("t1") && s.includes("q back"));
+    await ui.press("q");
+    await ui.until((s) => s.includes("Open · by ROI") && s.includes("q quit"));
     await ui.press("q");
     await ui.exited;
     await rt.close();
   });
 
-  it("Esc exits too", async () => {
+  it("Esc is q: back to the Overview, then exits", async () => {
     const rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: a, caller: null });
     const ui = await renderApp(
       createElement(App, { runtime: rt, initialTab: "tasks", pollMs: null }),
     );
     await ui.until((s) => s.includes("no workstreams"));
+    await ui.press("\u001b");
+    await ui.until((s) => s.includes("q quit"));
     await ui.press("\u001b");
     await ui.exited;
     await rt.close();

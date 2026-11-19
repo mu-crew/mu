@@ -993,11 +993,13 @@ describe("tabs (Ink over a real snapshot)", () => {
     ui.unmount();
   });
 
-  it("empty database: no workstreams, no crash, q quits", async () => {
+  it("empty database: no workstreams, no crash, q backs out to the Overview and quits", async () => {
     const ui = await open();
     await ui.until((s) => s.includes("no workstreams") && s.includes("next: unavailable"));
     await ui.press("j");
     await ui.press("]");
+    await ui.press("q"); // Tasks -> Overview
+    await ui.until((s) => s.includes("q quit"));
     await ui.press("q");
     await ui.exited;
   });

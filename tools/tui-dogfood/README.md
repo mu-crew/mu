@@ -65,7 +65,7 @@ runs inside your own tmux (a nested client).
 Ctrl-d/Ctrl-u (half page), PgUp/PgDn, `g`/`gg` top, `G` bottom: move, in every list and drill · `Enter`: notes / scrollback / log entry · `a`
 (Agents tab): attach, the hint says how to get back (`detach: C-b C-b d` nested, `back: C-b L` on mu's own server) · `s` (Tasks): cycle the sort (activity, roi, age, id) · `o` (Tasks): cycle the status filter · `/`: text filter
 (Enter keeps, Esc cancels) · `c`: clear · `y`: copy the equivalent command ·
-`+`/`-`: refresh rate (default 1 s, 100 ms to 10 s) · `r`: refresh now, agent state included · `q` or Esc: back out / quit.
+`+`/`-`: refresh rate (default 1 s, 100 ms to 10 s) · `r`: refresh now, agent state included · `q` or Esc: back one level (a drill closes, the Attention tab returns to where `!` opened it, any other tab to the Overview; the Overview quits; Ctrl-C quits from anywhere) · `!` again: back from Attention.
 
 Everything is live, drills included: a DB change from another shell shows within
 about a second, and agent state and scrollback within one 10 s slow tick, as in 3.x.

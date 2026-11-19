@@ -112,7 +112,7 @@ describe("dashboard screen", () => {
     expect(lines[0]).toContain("Notes  ");
     expect(lines[1]).toMatch(/^⚠ 1 need you\s*$/); // no `! list`: the drill owns the keys
     expect(lines).toHaveLength(30);
-    expect(lines.at(-1)).toContain("Esc back");
+    expect(lines.at(-1)).toContain("q back");
     ui.unmount();
   });
 
@@ -124,7 +124,7 @@ describe("dashboard screen", () => {
     const lines = ui.screen().split("\n");
     expect(lines).toHaveLength(30);
     expect(lines[2]).toContain("⚠ 1 need you  ! list");
-    expect(lines.at(-1)).toContain("q quit");
+    expect(lines.at(-1)).toContain("q back"); // a tab goes back to the Overview
     expect(lines.at(-2)).toContain("next"); // Next above the pinned footer
     expect(lines.some((l) => l.startsWith("╰─ ") && /\d+\/\d+/.test(l))).toBe(true);
     ui.unmount();
@@ -186,6 +186,31 @@ describe("dashboard screen", () => {
         s.includes("Notes  ") && s.includes("approve the budget") && !s.includes("╭─ Attention"),
     );
     ui.unmount();
+  });
+
+  it("q and Esc go back one level: drill, then Attention to where `!` opened it, then the Overview, then quit", async () => {
+    const ui = await open(120, 40, "tasks");
+    await ui.until((s) => s.includes("╭─ Tasks") && s.includes("q back"));
+    await ui.press("!"); // from Tasks
+    await ui.until((s) => s.includes("╭─ Attention") && s.includes("decide the fx"));
+    await ui.press("\r"); // its notes
+    await ui.until((s) => s.includes("Notes  ") && s.includes("q back"));
+    await ui.press("q"); // drill -> Attention
+    await ui.until((s) => s.includes("╭─ Attention"));
+    await ui.press("\u001b"); // Attention -> Tasks, where `!` was pressed
+    await ui.until((s) => s.includes("╭─ Tasks"));
+    await ui.press("!");
+    await ui.until((s) => s.includes("╭─ Attention"));
+    await ui.press("!"); // `!` again is back too
+    await ui.until((s) => s.includes("╭─ Tasks"));
+    await ui.press("\u001b[D"); // sideways (←) to Overview, then → … to Attention: back is the Overview
+    await ui.until((s) => s.includes("Open · by ROI") && s.includes("q quit"));
+    await ui.press("\u001b[D"); // ← wraps to Attention
+    await ui.until((s) => s.includes("╭─ Attention"));
+    await ui.press("q");
+    await ui.until((s) => s.includes("Open · by ROI") && s.includes("q quit"));
+    await ui.press("q");
+    await ui.exited;
   });
 
   it("the Attention tab with nothing to list says all quiet", async () => {

@@ -12,6 +12,16 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Changed
+
+- **Dashboard: q and Esc go back one level everywhere; only the Overview
+  quits.** A drill closes to its tab (as before), the Attention tab returns
+  to the tab `!` opened it from (`!` again does the same), and Tasks, DAG,
+  Agents and Log return to the Overview, which quits. Before, `q` quit from
+  every tab, so leaving the Attention tab meant quitting. Ctrl-C still quits
+  from anywhere. The hint says `q quit` on the Overview and `q back`
+  everywhere else, drills included (was `Esc back`).
+
 ## [5.2.1] — 2026-11-19
 
 ### Changed
