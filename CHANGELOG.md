@@ -12,6 +12,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.2.1] — 2026-11-19
+
 ### Changed
 
 - **Dashboard: an Attention tab, a count for the strip, a per-workstream
@@ -20,9 +22,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   `✓ all quiet`; "here" counts what the Overview card lists), and `!` opens a
   new Attention tab: every workstream's items with their workstream, the
   cursor row's fix (what `y` copies) on the filter line, Enter and `/` as on
-  the other tabs; there the strip only counts. The Overview's Attention card lists the shown workstream's items and
-  the machine-wide ones (`sync`, `next unavailable`), like the cards beside it;
-  with trouble only elsewhere it says `✓ quiet here (! lists N elsewhere)`.
+  the other tabs; there the strip only counts. The Overview's Attention card
+  lists the shown workstream's items and the machine-wide ones (`sync`,
+  `next unavailable`), like the cards beside it; with trouble only elsewhere
+  it says `✓ quiet here (! lists N elsewhere)`.
 
 ### Fixed
 
