@@ -9,35 +9,31 @@ permissions:
   contents: read
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
-    # id-token: npm trusted publishing. No npm token is stored anywhere; npmjs.com
-    # trusts this repo's release.yml for @mu-crew/mu.
     permissions:
+      actions: read # the Test run of the tagged commit
       contents: write # the GitHub release
-      id-token: write
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
-        with:
-          node-version-file: .nvmrc
       - name: Check release version
         run: node scripts/check-release-version.mjs "${{ github.ref_name }}"
-      # Tests are the local gate: the integration tier drives real tmux panes,
-      # and even the fast tier (panes mocked) needs tmux and pi on PATH for mux
-      # detection and spawn's binary check. A runner has neither. Run npm run
-      # test before tagging. CI re-checks what needs no agent environment.
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm run build
-      # Trusted publishing (OIDC) needs npm 11.5.1+; older npm fails with a
-      # misleading 404.
-      - run: npm install -g npm@^11.5.1
-      # Everything that can fail runs before the irreversible publish: the notes
-      # (a missing [x.y.z] section or one over GitHub's 125000-character body
-      # limit fails here), then the GitHub release with those notes. A re-run
-      # after a failed publish edits the existing release instead of failing.
+      # The gate is the Test workflow (.github/workflows/test.yml) on THIS commit:
+      # push the release commit to a ci/** branch and wait for it to go green
+      # before tagging (RELEASING.md). No green run, no release.
+      - name: Test workflow green on the tagged commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          green=$(gh run list -R "$GITHUB_REPOSITORY" --workflow test.yml --commit "$GITHUB_SHA" \
+            --status success --json databaseId --jq length)
+          if [ "$green" = "0" ]; then
+            echo "::error::no successful Test run for $GITHUB_SHA: push it to a ci/** branch and wait for green (RELEASING.md)"
+            exit 1
+          fi
+          echo "Test workflow green for $GITHUB_SHA ($green run(s))"
+      # The notes fail here when the [x.y.z] section is missing or over GitHub's
+      # 125000-character body limit. A re-run edits the existing release.
       - name: Release notes
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -52,5 +48,5 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" --title "mu $version" --notes-file notes.md --verify-tag
           fi
-      - name: Publish
-        run: npm publish --access public
+      # npm publish is manual for now (RELEASING.md): trusted publishing has failed
+      # with ENEEDAUTH on every release since the repo moved to mu-crew/mu.

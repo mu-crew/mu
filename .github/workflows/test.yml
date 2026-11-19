@@ -1,8 +1,9 @@
 name: Test
 
 # The local gate, on a runner: push a `ci/**` branch (a test balloon) to run it
-# without touching main, or start it by hand. Not on main pushes or tags: the
-# release gate stays local (RELEASING.md).
+# without touching main, or start it by hand. Not on main pushes or tags: a
+# release commit is pushed to ci/release-X.Y.Z first, and the Release workflow
+# requires this workflow's green run on the tagged commit (RELEASING.md).
 on:
   push:
     branches:
