@@ -12,6 +12,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.2.2] — 2026-11-19
+
 ### Changed
 
 - **Dashboard: q and Esc go back one level everywhere; only the Overview
