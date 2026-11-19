@@ -199,6 +199,10 @@ describe("addTasks", () => {
           updated_at: string;
         }
       ).updated_at;
+    // Created in beforeEach, maybe in this same millisecond: backdate it so a bump shows.
+    db.prepare("UPDATE tasks SET updated_at = ? WHERE local_id = 'umbrella'").run(
+      "2000-01-01T00:00:00.000Z",
+    );
     const before = at();
     addTasks(db, U, { workstream: "w", blocks: ["umbrella"] });
     expect(at() > before).toBe(true);
