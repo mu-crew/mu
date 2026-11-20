@@ -106,6 +106,10 @@ track them; delete the row when one ships.
 
 ## Open questions
 
+- **Ladder placement (pending approval, not approved).** Part 1 of the
+  [ladder placement spec](specs/2026-11-20-ladder-placement.md) is the core
+  contract for the D15 path; its §G drafts the `Approved` section.
+
 - **Capability tags on operations.** Today the only authorization is
   "the agent ran the verb". Enforce capabilities when an agent does real
   damage.
