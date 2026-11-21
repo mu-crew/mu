@@ -34,8 +34,14 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   carries `sockets` `{local, remote}` and `MU_CTL_SOCK`, the kind's view
   forwards the socket, and spawn runs the ctl handshake. A hook harness is on
   remote `hooks` on tmux (its key in the env and the anchored launch, its
-  node read through the plugin's `link.exec`), any other harness on `mux`.
-  The view is interactive on a built-in channel. An `at-start` kind still
+  node read through the plugin's `link.exec`), any other CLI on `mux`.
+  The view is interactive on a built-in channel, and stays so on
+  `mu agent reattach`. `ctl` follows the same rule as a template spawn
+  (`--cli pi --command claude` is on ctl), so a kind that does not honour
+  sockets refuses it before any effect. `--no-ctl` and `MU_SPAWN_CTL_MS=0`
+  skip only the handshake: the view still passes the liveness window. A link
+  with `slots: "self"` takes no mu host channel, not even during the
+  prepare. An `at-start` kind still
   needs its own channel. A `--plugin` profile whose plugin declares a job
   seam now takes the remote spawn's refusals (harness probe, repo, recovered
   tree); a link-only plugin still refuses. No protocol schema change.

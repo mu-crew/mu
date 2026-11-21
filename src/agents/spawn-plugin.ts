@@ -11,8 +11,8 @@
 //   pane and the row, the kind's channel recorded -> readiness: the start's baseline (an
 //   at-start kind) or the channel's `baseline` within MU_SPAWN_JOB_MS.
 // A failure after the start stops the job by its handle (`rollbackSpawn`, the job adapter's
-// stop) before the tree and the record go. The view's stdin is /dev/null: every delivery
-// goes through the channel's effects.
+// stop) before the tree and the record go. On a kind's own channel the view's stdin is
+// /dev/null: every delivery goes through the channel's effects.
 //
 // An at-start kind (D8 G1) folds the first delivery into `job.start`: its placeholder row
 // comes first, stamped with what the finished row will hold, and a task spawn claims for
@@ -153,8 +153,14 @@ async function refuse(
     );
   }
   const cli = opts.cli ?? "pi";
-  if (speaksMuCtl(cli, opts.command ?? cli)) return { channel: "ctl", ctl: true, hooks: false };
-  return mux.anchorsPanes && mux.pasteToPane !== undefined
+  const command = opts.command ?? cli;
+  if (speaksMuCtl(cli, command)) return { channel: "ctl", ctl: true, hooks: false };
+  // Only a hook harness emits the hooks a remote `hooks` channel reads (as a template spawn).
+  const harness = harnessOfCli(cli, command);
+  return harness !== undefined &&
+    harness !== "pi" &&
+    mux.anchorsPanes &&
+    mux.pasteToPane !== undefined
     ? { channel: "hooks", ctl: false, hooks: true }
     : { channel: "mux", ctl: false, hooks: false };
 }
@@ -165,7 +171,7 @@ async function refuse(
  * a TUI), and runs without the local-only mu variables a tmux pane inherits (R5: only
  * `HOST_ENV_KEYS` reach the worker, through the JobSpec).
  */
-const viewLine = (command: string, interactive: boolean): string =>
+export const viewLine = (command: string, interactive: boolean): string =>
   interactive
     ? `exec env ${LOCAL_ONLY_ENV.map((k) => `-u ${k}`).join(" ")} /bin/sh -c ${shellQuote(command)}`
     : `exec </dev/null; ${command}`;
@@ -786,7 +792,7 @@ async function readiness(db: Db, row: AgentRow): Promise<RunBaseline> {
 /**
  * Readiness on a built-in channel, as on a template host: pi's ctl handshake on the local socket
  * (its view's death meanwhile rolls back; a timeout is only control missing, the job runs), else
- * the view's liveness window.
+ * the view's liveness window (also when the handshake is skipped).
  */
 async function builtInReadiness(
   row: AgentRow,
@@ -795,12 +801,11 @@ async function builtInReadiness(
   localSock: string | undefined,
   opts: SpawnAgentOptions,
 ): Promise<{ ctl: SpawnCtl; incarnation?: string; trustDialog: boolean }> {
-  if (localSock === undefined) {
+  // No handshake (no socket, --no-ctl, MU_SPAWN_CTL_MS=0) still proves the view alive.
+  if (localSock === undefined || opts.ctl === false || defaultSpawnCtlMs() === 0) {
     const trustDialog = await awaitSpawnLiveness(row.paneId, row.name, command, host);
     return { ctl: "skipped", trustDialog };
   }
-  if (opts.ctl === false || defaultSpawnCtlMs() === 0)
-    return { ctl: "skipped", trustDialog: false };
   const check = defaultSpawnLivenessMs() !== 0;
   const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
   const alive = async (): Promise<void> => {

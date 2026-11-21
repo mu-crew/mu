@@ -8,8 +8,9 @@
 import { basename } from "node:path";
 import { deleteAgent, getAgent, insertAgent, pendingPaneIdFor } from "../agents.js";
 import type { Db } from "../db.js";
-import { harnessOfCli } from "../harnesses.js";
+import { harnessOfCli, speaksMuCtl } from "../harnesses.js";
 import { refuseMissingHarness } from "../host-harnesses.js";
+import type { LinkCall } from "../host-link.js";
 import { type HostView, requireProfile, resolveHost } from "../host-provider.js";
 import {
   admitHostChannel,
@@ -87,12 +88,13 @@ export function refuseUnhonoured(host: HostView, kind: JobKind, opts: SpawnAgent
   if (!h.roles.includes(role)) refuse("role", `role ${role}`);
   // A remote spawn's command is --command or the cli key (never the local MU_<CLI>_COMMAND).
   if (opts.command !== undefined && !h.command) refuse("command", `a --command`);
-  // Sockets go only to an agent on ctl (pi), and never to a kind with its own channel.
+  // Sockets go only to an agent on ctl, and never to a kind with its own channel. On ctl is
+  // the rule that picks the channel (speaksMuCtl), so `--cli pi --command claude` asks too.
   const cli = opts.cli ?? "pi";
   const onCtl =
     kind.caps.channel === undefined &&
     !isCommandGate(opts) &&
-    harnessOfCli(cli, opts.command ?? cli) === "pi";
+    speaksMuCtl(cli, opts.command ?? cli);
   if (onCtl && !h.sockets) refuse("sockets", "the control sockets a pi agent needs");
 }
 
@@ -143,7 +145,7 @@ async function prestageRemote(
   opts: SpawnAgentOptions,
   cli: string,
   spawner: string | null,
-  lease: HostLease,
+  call: LinkCall,
   profile: HostProfile,
   reservation: string | undefined,
   rev: string | undefined,
@@ -164,7 +166,7 @@ async function prestageRemote(
       hostTransport: profile.transport,
     });
     try {
-      const made = await prepareRemote(db, lease, profile, {
+      const made = await prepareRemote(db, call, profile, {
         workstream: opts.workstream,
         name: opts.name,
         worktree: true,
@@ -201,6 +203,8 @@ async function prestageRemote(
 /**
  * The remote half of admission: reserve the host channel (a full host refuses
  * here), then prepare the remote worktree (`--worktree`) or the remote site.
+ * A plugin link with `slots: "self"` arbitrates its own connection: mu takes no
+ * channel at all (ladder §4.2, §I), and the lease returned is undefined.
  * Returns the lease and the ADMITTED profile snapshot every template runs from.
  * A failure after admission frees the channel here (no pane was opened under it).
  * A lease profile's channel is transient: released once prepare ends, so the
@@ -224,6 +228,22 @@ export async function admitRemoteSpawn(
 }> {
   // A worktree's base, resolved here before any remote call (§3.3): the host gets the sha.
   const rev = opts.worktree ? await resolveStaticBase(profile.name, opts.from) : undefined;
+  const view = resolveHost(db, profile.name);
+  if (view.link.caps.slots === "self") {
+    const current = requireProfile(view);
+    admit?.(current);
+    const prepared = await prepareSite(
+      db,
+      opts,
+      cli,
+      spawner,
+      { holder: `spawn:${opts.workstream}/${opts.name}` },
+      current,
+      reservation,
+      rev,
+    );
+    return { lease: undefined, profile: current, ...prepared };
+  }
   const admitted = await admitHostChannel(
     db,
     profile.name,
@@ -235,34 +255,47 @@ export async function admitRemoteSpawn(
   const transient = admittedProfile.transport === "lease";
   try {
     admit?.(admittedProfile);
-    let staged: StagedWorktree | undefined;
-    let site: RemoteSite | undefined;
-    if (opts.worktree) {
-      staged = await prestageRemote(
-        db,
-        opts,
-        cli,
-        spawner,
-        lease,
-        admittedProfile,
-        reservation,
-        rev,
-      );
-    } else {
-      site = await prepareRemote(db, lease, admittedProfile, {
-        workstream: opts.workstream,
-        name: opts.name,
-        worktree: false,
-        ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-        ...remoteRoot(opts, admittedProfile),
-      });
-    }
+    const { staged, site } = await prepareSite(
+      db,
+      opts,
+      cli,
+      spawner,
+      { lease },
+      admittedProfile,
+      reservation,
+      rev,
+    );
     if (transient) releaseHostChannel(db, lease); // prepare is over: nothing binds to the pane
     return { lease: transient ? undefined : lease, profile: admittedProfile, staged, site };
   } catch (err) {
     releaseHostChannel(db, lease); // no pane was ever opened under it
     throw err;
   }
+}
+
+/** The remote worktree (`--worktree`) or the remote site, under `call`. */
+async function prepareSite(
+  db: Db,
+  opts: SpawnAgentOptions,
+  cli: string,
+  spawner: string | null,
+  call: LinkCall,
+  profile: HostProfile,
+  reservation: string | undefined,
+  rev: string | undefined,
+): Promise<{ staged: StagedWorktree | undefined; site: RemoteSite | undefined }> {
+  if (opts.worktree) {
+    const staged = await prestageRemote(db, opts, cli, spawner, call, profile, reservation, rev);
+    return { staged, site: undefined };
+  }
+  const site = await prepareRemote(db, call, profile, {
+    workstream: opts.workstream,
+    name: opts.name,
+    worktree: false,
+    ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+    ...remoteRoot(opts, profile),
+  });
+  return { staged: undefined, site };
 }
 
 /** A static `--worktree` spawn's `--from` names no commit in the caller's checkout. Exit 2, nothing run. */

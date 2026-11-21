@@ -21,7 +21,7 @@ import { withAgentLock } from "./lock.js";
 import { closeCommand, ReattachRefusedError } from "./reattach-check.js";
 import { repointReceipts } from "./receipts.js";
 import { withSpawnLock } from "./spawn-lock.js";
-import { jobRecordActor } from "./spawn-plugin.js";
+import { jobRecordActor, viewLine } from "./spawn-plugin.js";
 
 /** The agent's detached plugin job: its record and kind; undefined for any other agent. */
 export function detachedJob(
@@ -100,7 +100,9 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
         window: name,
         name,
         cli: getAgent(db, name, ws)?.cli ?? "pi",
-        command: `exec </dev/null; ${view.command}`,
+        // A kind with its own channel: stdin /dev/null. On a built-in channel the view stays
+        // interactive, as at spawn (`hooks` pastes into it, `mux` types).
+        command: viewLine(view.command, d.kind.caps.channel === undefined),
         commandSource: "explicit",
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
         env: view.env,

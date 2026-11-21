@@ -18,12 +18,7 @@ import type { AgentRow } from "./agents.js";
 import type { Db } from "./db.js";
 import type { LinkCall } from "./host-link.js";
 import { admittedView, type HostView, resolveHost, withHostView } from "./host-provider.js";
-import {
-  HOST_COMMAND_TIMEOUT_MS,
-  type HostLease,
-  type HostProfile,
-  remotePathWord,
-} from "./hosts.js";
+import { HOST_COMMAND_TIMEOUT_MS, type HostProfile, remotePathWord } from "./hosts.js";
 import { say } from "./messages.js";
 import { shellQuote, shellWord } from "./shell-quote.js";
 import { git } from "./vcs/git.js";
@@ -163,11 +158,11 @@ interface PrepareOpts {
 
 export async function prepareRemote(
   db: Db,
-  lease: HostLease,
+  call: LinkCall,
   profile: HostProfile,
   opts: PrepareOpts,
 ): Promise<RemoteSite> {
-  return prepareOn(admittedView(db, profile), { lease }, opts, opts.rev, "static");
+  return prepareOn(admittedView(db, profile), call, opts, opts.rev, "static");
 }
 
 /**

@@ -11,7 +11,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
   type AgentRow,
@@ -40,7 +40,7 @@ import {
   tornDownAtOf,
   WorkstreamTornDownError,
 } from "../db.js";
-import { harnessOfCli } from "../harnesses.js";
+import { harnessOfCli, speaksMuCtl } from "../harnesses.js";
 import { resolveHost } from "../host-provider.js";
 import {
   bindHostChannel,
@@ -414,16 +414,7 @@ export type SpawnedAgent = AgentRow & {
   firstSend?: SendResult;
 };
 
-/**
- * True when the agent runs pi, so the mu pi extension should answer on
- * its control socket: `cli` is "pi", or the command's argv0 basename is
- * `pi` / `pi-meta`.
- */
-export function speaksMuCtl(cli: string, command: string): boolean {
-  if (cli === "pi") return true;
-  const argv0 = basename(parseFirstToken(command));
-  return argv0 === "pi" || argv0 === "pi-meta";
-}
+export { speaksMuCtl };
 
 /** The env var that asks for the pi fallback (spec D15). murmur's pi extension reads the same one. */
 export const PI_CHANNEL_ENV = "MU_PI_CHANNEL";

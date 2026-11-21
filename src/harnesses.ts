@@ -11,7 +11,7 @@
 // configures or authenticates a harness; each launcher keeps its own sandbox,
 // auth and model access (D1).
 
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { shellWord } from "./shell-quote.js";
 
 /** The agent CLIs mu treats as first-class. */
@@ -491,6 +491,18 @@ export function harnessOfCli(cli: string, command?: string): Harness | undefined
     if (row !== undefined) return row;
   }
   return undefined;
+}
+
+/**
+ * True when the agent runs pi, so the mu pi extension should answer on
+ * its control socket: `cli` is "pi", or the command's argv0 basename is
+ * `pi` / `pi-meta`. The one rule for "this spawn is on ctl": the template
+ * spawn, the plugin spawn's built-in channel and its honour-or-refuse check.
+ */
+export function speaksMuCtl(cli: string, command: string): boolean {
+  if (cli === "pi") return true;
+  const argv0 = basename(command.trim().match(/^\S+/)?.[0] ?? "");
+  return argv0 === "pi" || argv0 === "pi-meta";
 }
 
 /**

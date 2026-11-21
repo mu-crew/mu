@@ -172,14 +172,14 @@ describe("the remote worktree's exec boundaries", () => {
   it("prepare is one exec under the caller's held channel (cwd and worktree)", async () => {
     const lease = await reserveHostChannel(db, "dev", "spawn:ws/worker-1");
     try {
-      const site = await prepareRemote(db, lease, getHost(db, "dev"), {
+      const site = await prepareRemote(db, { lease }, getHost(db, "dev"), {
         workstream: "ws",
         name: "worker-1",
         worktree: false,
         root: "/srv/repo",
       });
       expect(site).toEqual({ cwd: "/srv/repo", base: null, repo: null });
-      const tree = await prepareRemote(db, lease, getHost(db, "dev"), {
+      const tree = await prepareRemote(db, { lease }, getHost(db, "dev"), {
         workstream: "ws",
         name: "worker-1",
         worktree: true,

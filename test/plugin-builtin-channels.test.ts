@@ -16,6 +16,7 @@ import { createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
+import { previewReattach, reattachAgent } from "../src/agents/reattach.js";
 import { getReceipt } from "../src/agents/receipts.js";
 import { JobSpecUnsupportedError, RemoteBaseRefError } from "../src/agents/spawn-remote.js";
 import { spawnForTask } from "../src/agents/task-spawn.js";
@@ -29,7 +30,14 @@ import { channelTarget } from "../src/channels/index.js";
 import { cmdWait } from "../src/cli/wait.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
-import { addHost, HOST_ENV_KEYS } from "../src/hosts.js";
+import {
+  addHost,
+  admitHostChannel,
+  HOST_ENV_KEYS,
+  HostChannelBusyError,
+  listHostChannels,
+  releaseHostChannel,
+} from "../src/hosts.js";
 import { HONOURS_ALL } from "../src/jobs/types.js";
 import { addPlugin } from "../src/plugins/registry.js";
 import { RemoteBaseMissingError } from "../src/remote-worktree.js";
@@ -134,11 +142,18 @@ async function staticPlugin(
   job: Record<string, unknown> = {},
   link: Record<string, unknown> = {},
   config: Record<string, unknown> = {},
+  maxSessions: number | null = null,
 ): Promise<void> {
   const seams = { ...jobSeams({ honours: HONOURS_ALL, ...job }), ...linkSeam(link) };
   h.f = fakePlugin(h.dir, { seams, ...config });
   await addPlugin(h.db, "fake", h.f.argv);
-  addHost(h.db, { name: "box", plugin: "fake", fetch: "true", repo: remote, max_sessions: null });
+  addHost(h.db, {
+    name: "box",
+    plugin: "fake",
+    fetch: "true",
+    repo: remote,
+    max_sessions: maxSessions,
+  });
 }
 
 type Spec = {
@@ -187,6 +202,19 @@ describe("pi on the built-in ctl (ladder placement §A, R5)", () => {
     await staticPlugin({ honours: { ...HONOURS_ALL, sockets: false } });
     forwardOnView();
     const err = await h.spawn({ cli: "pi", cwd: remote }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(JobSpecUnsupportedError);
+    expect((err as JobSpecUnsupportedError).field).toBe("sockets");
+    expect(h.f.calls().filter((c) => c.method.startsWith("job."))).toEqual([]);
+    expect(listCarrierJobs(h.db)).toEqual([]);
+    expect(h.panes.size).toBe(0);
+  });
+
+  it("--cli pi with another harness's --command is still on ctl: a kind without sockets refuses it before any job call", async () => {
+    await staticPlugin({ honours: { ...HONOURS_ALL, sockets: false } });
+    forwardOnView();
+    const err = await h
+      .spawn({ cli: "pi", command: "claude --version", cwd: remote })
+      .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(JobSpecUnsupportedError);
     expect((err as JobSpecUnsupportedError).field).toBe("sockets");
     expect(h.f.calls().filter((c) => c.method.startsWith("job."))).toEqual([]);
@@ -272,6 +300,64 @@ describe("pi on the built-in ctl (ladder placement §A, R5)", () => {
   });
 });
 
+describe("--no-ctl skips the handshake, never the view's liveness", () => {
+  for (const how of ["--no-ctl", "MU_SPAWN_CTL_MS=0"] as const) {
+    it(`${how}: a view that is gone rolls back, stopping the job`, async () => {
+      await staticPlugin();
+      const saved = process.env.MU_SPAWN_LIVENESS_MS;
+      process.env.MU_SPAWN_LIVENESS_MS = "20";
+      if (how === "MU_SPAWN_CTL_MS=0") process.env.MU_SPAWN_CTL_MS = "0";
+      try {
+        h.stubMux({
+          spawnAgent: async (o) => {
+            o.onPaneCreated?.("%9");
+            return "%9";
+          },
+        });
+        const err = await h
+          .spawn({ cli: "pi", cwd: remote, ...(how === "--no-ctl" ? { ctl: false } : {}) })
+          .catch((e: unknown) => e);
+        expect((err as Error).name).toBe("AgentDiedOnSpawnError");
+        expect(h.f.backend().stops).toBe(1);
+        expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
+        expect(listCarrierJobs(h.db)).toEqual([]);
+      } finally {
+        if (saved === undefined) delete process.env.MU_SPAWN_LIVENESS_MS;
+        else process.env.MU_SPAWN_LIVENESS_MS = saved;
+      }
+    });
+  }
+});
+
+describe("admission follows the link's slots (§4.2, §I)", () => {
+  it('slots "self": mu takes no channel, so a host mu would count as full still spawns', async () => {
+    await staticPlugin({}, { slots: "self" }, {}, 1);
+    forwardOnView();
+    const other = await admitHostChannel(h.db, "box", "other");
+    try {
+      const a = await h.spawn({ cli: "pi", worktree: true });
+      expect(a).toMatchObject({ ctl: "ok" });
+      expect(listHostChannels(h.db, "box").map((r) => r.holder)).toEqual(["other"]);
+    } finally {
+      releaseHostChannel(h.db, other.lease);
+    }
+  });
+
+  it('slots "mu": the full host refuses before any job call', async () => {
+    await staticPlugin({}, { slots: "mu" }, {}, 1);
+    forwardOnView();
+    const other = await admitHostChannel(h.db, "box", "other");
+    try {
+      const err = await h.spawn({ cli: "pi", cwd: remote }).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(HostChannelBusyError);
+      expect(h.calls("job.start")).toEqual([]);
+      expect(listHostChannels(h.db, "box").map((r) => r.holder)).toEqual(["other"]);
+    } finally {
+      releaseHostChannel(h.db, other.lease);
+    }
+  });
+});
+
 describe("a hook harness on remote hooks, read through the plugin's link (spec D11)", () => {
   let node: FakeRemoteNode;
   let fake: FakeHarness;
@@ -323,6 +409,34 @@ describe("a hook harness on remote hooks, read through the plugin's link (spec D
     expect(channelPlugin()).toBeNull();
     expect(startSpec().env.MU_REMOTE_KEY).toBeUndefined();
     expect(viewCommand()).not.toContain("</dev/null");
+  });
+
+  it("a CLI with no hook harness on a backend that anchors and pastes is on mux: no key, no anchor", async () => {
+    await staticPlugin();
+    forwardOnView({ anchorsPanes: true, pasteToPane: async () => {} });
+    const a = await h.spawn({ cli: "bash", cwd: remote });
+    expect(a).toMatchObject({ channel: "mux", ctl: "skipped" });
+    const spec = startSpec();
+    expect(spec.env.MU_REMOTE_KEY).toBeUndefined();
+    expect(spec.cmd).not.toContain("mu-anchor");
+    const key = h.db.prepare("SELECT remote_key FROM agents WHERE name = 'w1'").get() as {
+      remote_key: string | null;
+    };
+    expect(key.remote_key).toBeNull();
+  });
+
+  it("reattaching a detached built-in hooks view keeps it interactive (stdin not /dev/null)", async () => {
+    await staticPlugin({ view: "detached" }, {}, { pathPrefix: join(node.dir, "bin") });
+    forwardOnView({ anchorsPanes: true, pasteToPane: async () => {} });
+    const a = await h.spawn({ cli: "claude", cwd: remote });
+    expect(a).toMatchObject({ channel: "hooks" });
+    expect(viewCommand()).not.toContain("</dev/null");
+    h.panes.delete(a.paneId);
+    const p = await previewReattach(h.db, "ws", "w1");
+    const r = await reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision });
+    const cmd = h.panes.get(r.pane_id)?.command ?? expect.fail("no new view");
+    expect(cmd).not.toContain("</dev/null");
+    expect(cmd).toContain("-u MU_DB_PATH");
   });
 });
 

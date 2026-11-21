@@ -63,7 +63,7 @@ const wt = () => join(home, ".local", "state", "mu-next", "remote-worktrees", "w
 const prepare = async (reclaim = true) => {
   const lease = await reserveHostChannel(db, "dev", `t:${leases.length}`);
   leases.push(lease);
-  return prepareRemote(db, lease, getHost(db, "dev"), {
+  return prepareRemote(db, { lease }, getHost(db, "dev"), {
     workstream: "ws",
     name: "worker-1",
     worktree: true,
@@ -131,7 +131,7 @@ describe("the repo the host reports (agents.repo)", () => {
   const prepareIn = async (root: string) => {
     const lease = await reserveHostChannel(db, "dev", `r:${leases.length}`);
     leases.push(lease);
-    return prepareRemote(db, lease, getHost(db, "dev"), {
+    return prepareRemote(db, { lease }, getHost(db, "dev"), {
       workstream: "ws",
       name: "worker-1",
       worktree: true,
