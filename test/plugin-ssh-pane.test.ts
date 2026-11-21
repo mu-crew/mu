@@ -5,7 +5,7 @@
 // with a stub multiplexer and a stand-in ssh (test/_ssh-pane.ts). Nothing reaches a real host.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import type { Server } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -15,6 +15,7 @@ import { getCarrierJobByName, listCarrierJobs } from "../src/carrier-jobs.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../src/ctl/path.js";
 import { addHost } from "../src/hosts.js";
 import { addPlugin } from "../src/plugins/registry.js";
+import { SSH_EXAMPLE } from "./_plugin.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 import { type FakeSsh, fakeSsh, PluginWire, serveCtl } from "./_ssh-pane.js";
 
@@ -153,6 +154,45 @@ describe("job.stop answers only on proof", () => {
       message: expect.stringContaining("no pid recorded"),
     });
   }, 15_000);
+
+  it("an ssh that exits 0 without running the stop script is no proof: no receipt, an error", async () => {
+    const noop = join(h.dir, "bin", "noop-ssh");
+    writeFileSync(noop, "#!/bin/sh\nexit 0\n");
+    chmodSync(noop, 0o755);
+    wire = new PluginWire([SSH_EXAMPLE, noop]);
+    const { handle } = result(await start("k"));
+    const m = await stop(handle);
+    expect(m.result).toBeUndefined();
+    expect(m.error).toMatchObject({ data: { kind: "retryable" } });
+    // A receipt for another job does not count either.
+    const other = join(h.dir, "bin", "other-ssh");
+    writeFileSync(
+      other,
+      "#!/bin/sh\necho 'mu-plugin-ssh-receipt ssh-00000000000000000000000000000000 gone'\nexit 0\n",
+    );
+    chmodSync(other, 0o755);
+    wire.close();
+    wire = new PluginWire([SSH_EXAMPLE, other]);
+    expect((await stop(handle)).error).toMatchObject({ data: { kind: "retryable" } });
+  });
+
+  it("start and stop in sessions with different XDG_STATE_HOME use the same state namespace", async () => {
+    wire = new PluginWire(ssh.argv);
+    const { view, handle } = result(await start("k"));
+    ssh.xdgAt(join(h.dir, "xdg-a"));
+    // The late launch runs under A; the stop under B must still fence it where the launch looks.
+    ssh.xdgAt(join(h.dir, "xdg-b"));
+    expect((await stop(handle)).result).toBeNull();
+    ssh.xdgAt(join(h.dir, "xdg-a"));
+    let status = 0;
+    try {
+      execFileSync("/bin/sh", ["-c", view.command], { stdio: "pipe" });
+    } catch (e) {
+      status = (e as { status: number }).status;
+    }
+    expect(status).toBe(1);
+    expect(existsSync(join(h.dir, "xdg-b"))).toBe(false);
+  });
 
   it("refuses a handle that is not ours before any ssh", async () => {
     wire = new PluginWire(ssh.argv);

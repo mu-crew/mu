@@ -26,11 +26,14 @@
 // MaxSessions 1 does not block it, a host with one practical connection does.
 //
 // Lifetime: the view is bound, so mu kills the view, then asks job.stop. The
-// remote side keeps `$XDG_STATE_HOME/mu-plugin-ssh/<handle>/`: the launch claims
+// remote side keeps `$HOME/.local/state/mu-plugin-ssh/<handle>/` (or the plugin's
+// MU_SSH_STATE_DIR; never the host's XDG_STATE_HOME, which two ssh sessions can disagree
+// on): the launch claims
 // it with an atomic mkdir and records its pid and start time; job.stop answers
-// null only on proof. Proof is: the launch never claimed (the stop claims it
+// null only on proof: the script's exit 0 and its receipt line for this handle. Proof is: the launch never claimed (the stop claims it
 // first, so it never can), or the recorded leader is gone and its process group
-// is empty (the group is signalled HUP, TERM, KILL while the leader matches).
+// is empty (members are listed with ps and signalled by pid, HUP, TERM, KILL, while the leader
+// matches; the harness runs with job control off so it stays in that group).
 // Any doubt (ssh fails, no pid recorded, a process remains) is an error, so mu
 // keeps the tree and the job record. Descendants that left the process group
 // are not covered by the proof.
@@ -136,7 +139,18 @@ function exec(id, host, script, cwd, timeoutMs) {
 
 // ─── The pane job kind ──────────────────────────────────────────────────
 
-const STATE_DIR = '"${XDG_STATE_HOME:-$HOME/.local/state}/mu-plugin-ssh"';
+/**
+ * The host's state directory, one namespace for every call of this plugin process: start and stop
+ * run in different ssh sessions, whose XDG_STATE_HOME can differ (a startup file that sets it only
+ * on a tty), so it is never read from the host's environment. $HOME is the account's, or the
+ * plugin's own MU_SSH_STATE_DIR (an absolute path on the host).
+ */
+const STATE_DIR = process.env.MU_SSH_STATE_DIR
+  ? q(process.env.MU_SSH_STATE_DIR)
+  : '"$HOME/.local/state/mu-plugin-ssh"';
+const NEED_HOME = process.env.MU_SSH_STATE_DIR ? "true" : '[ -n "$HOME" ] || { echo "no HOME" >&2; exit 5; }';
+/** The line a stop prints last when (and only when) it proved the job gone: scoped to its handle. */
+const receiptOf = (handle) => `mu-plugin-ssh-receipt ${handle}`;
 /** The job's handle: a pure function of mu's job key, so job.stop always has it. */
 const handleOf = (key) => `ssh-${createHash("sha256").update(String(key)).digest("hex").slice(0, 32)}`;
 const HANDLE = /^ssh-[0-9a-f]{32}$/;
@@ -147,25 +161,31 @@ const STARTED = String.raw`ps -o lstart= -p "$P" 2>/dev/null | tr -s ' ' | sed '
 function launchScript(handle, cwd, env, cmd) {
   const envWords = Object.entries(env).map(([k, v]) => `${k}=${q(v)}`);
   return [
-    `D=${STATE_DIR}; H=${handle}`,
+    `${NEED_HOME}; D=${STATE_DIR}; H=${handle}`,
     // The atomic claim: a stop that got here first wins, and then nothing ever runs.
     `mkdir -p "$D" && mkdir "$D/$H" 2>/dev/null || { echo "mu-plugin-ssh: job $H is stopped or already started" >&2; exit 1; }`,
     `P=$$; printf '%s %s\\n' "$P" "$(${STARTED})" > "$D/$H/pid.tmp" && mv "$D/$H/pid.tmp" "$D/$H/pid"`,
-    `cd ${q(cwd)} && exec env ${envWords.join(" ")} "\${SHELL:-/bin/sh}" -ilc ${q(cmd)}`,
+    `cd ${q(cwd)} && exec env ${envWords.join(" ")} "\${SHELL:-/bin/sh}" -ilc ${q(`set +m; ${cmd}`)}`,
   ].join("\n");
 }
 
 /** The shell prelude of a stop or status: read the recorded leader. */
-const READ_STATE = `D=${STATE_DIR}; H=%H
-leader() { P=$1; [ "$(${STARTED})" = "$2" ]; }
-group() { kill -0 -- "-$1" 2>/dev/null; }`;
+// Job control is off for the harness (set +m above): under a tty an interactive shell would put
+// each foreground command in its own process group, out of the one this script checks.
+// Group members are listed with ps and signalled by pid: dash's kill rejects `-- -PGID`, and a
+// failed probe must never read as an empty group.
+const READ_STATE = `${NEED_HOME}; D=${STATE_DIR}; H=%H
+# A zombie leader is dead: it is only waiting for its parent to reap it.
+leader() { P=$1; [ "$(${STARTED})" = "$2" ] && case "$(ps -o stat= -p "$P" 2>/dev/null)" in Z*) false ;; *) true ;; esac; }
+members() { t=$(ps -A -o pid= -o pgid= -o stat= 2>/dev/null) || return 2; printf '%s\\n' "$t" | awk -v g="$1" '$2==g && $3 !~ /^Z/ {print $1}'; }
+group() { m=$(members "$1") || return 0; [ -n "$m" ]; }`;
 
 /** job.stop's remote script: exit 0 only on proof (see the header). */
 function stopScript(handle) {
-  return `${READ_STATE.replace("%H", handle)}
+  return `${READ_STATE.replace("%H", handle)}; RECEIPT=${q(receiptOf(handle))}
 mkdir -p "$D" || exit 5
-if mkdir "$D/$H" 2>/dev/null; then echo stopped > "$D/$H/stopped"; echo "never started"; exit 0; fi
-[ -f "$D/$H/stopped" ] && { echo "already stopped"; exit 0; }
+if mkdir "$D/$H" 2>/dev/null; then echo stopped > "$D/$H/stopped"; echo "$RECEIPT never-started"; exit 0; fi
+[ -f "$D/$H/stopped" ] && { echo "already stopped"; echo "$RECEIPT already-stopped"; exit 0; }
 n=0; while [ ! -f "$D/$H/pid" ] && [ $n -lt 5 ]; do sleep 1; n=$((n+1)); done
 [ -f "$D/$H/pid" ] || { echo "claimed but no pid recorded" >&2; exit 3; }
 read -r P L < "$D/$H/pid"
@@ -174,12 +194,13 @@ gone() { ! leader "$P" "$L" && ! group "$P"; }
 if [ $mine = 1 ]; then
   for s in HUP TERM KILL; do
     gone && break
-    kill -$s -- "-$P" 2>/dev/null; kill -$s "$P" 2>/dev/null
+    m=$(members "$P") || { echo "ps failed" >&2; exit 6; }
+    kill -$s $P $m 2>/dev/null
     n=0; while ! gone && [ $n -lt 3 ]; do sleep 1; n=$((n+1)); done
   done
 fi
 gone || { echo "process $P or its group still runs" >&2; exit 4; }
-echo stopped > "$D/$H/stopped"; echo gone`;
+echo stopped > "$D/$H/stopped"; echo "$RECEIPT gone"`;
 }
 
 /** job.status's remote script: one line, `running`, `ended` or `unknown <why>`. */
@@ -259,10 +280,12 @@ function jobStop(id, params) {
     return;
   }
   remote(id, params, stopScript(handle), (r) => {
-    // Only the script's own exit 0 is proof. Everything else leaves the job as it is.
-    if (r.exitCode === 0) reply(id, null);
+    // Proof is the script's exit 0 and its receipt for this handle: a login shell, a forced
+    // command or a wrapper can exit 0 without running it. Anything else leaves the job as it is.
+    const receipt = new RegExp(`^${receiptOf(handle)} (never-started|already-stopped|gone)$`, "m");
+    if (r.exitCode === 0 && receipt.test(r.stdout)) reply(id, null);
     else {
-      const why = r.exitCode === null ? "timed out" : `exit ${r.exitCode}`;
+      const why = r.exitCode === null ? "timed out" : r.exitCode === 0 ? "no receipt" : `exit ${r.exitCode}`;
       fail(
         id,
         "retryable",

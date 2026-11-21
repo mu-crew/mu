@@ -13,7 +13,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { createServer } from "node:net";
+import { connect, createServer } from "node:net";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -48,6 +48,8 @@ function killGroup(pid: number | undefined): void {
   } catch {}
 }
 
+const q = (v: string): string => `'${v.replaceAll("'", "'\\''")}'`;
+
 const alive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -71,13 +73,24 @@ async function launch(
   xdg: string,
   key: string,
   spec: Record<string, unknown>,
+  opts: { pty?: boolean } = {},
 ): Promise<{ handle: string; view: ChildProcess; pid: number }> {
   const m = await w.call(
     "job.start",
     PluginWire.params({ key, spec: { cwd: dir, env: {}, ...spec } }),
   );
   const { view, handle } = m.result as { view: { command: string }; handle: string };
-  const child = spawn("/bin/sh", ["-c", view.command], { detached: true, stdio: "ignore" });
+  const child = opts.pty
+    ? // The view on a real terminal, as in a pane: the command's session gets a controlling tty.
+      spawn(
+        "python3",
+        ["-c", "import pty,sys; pty.spawn(['/bin/sh','-c',sys.argv[1]])", view.command],
+        {
+          detached: true,
+          stdio: ["pipe", "ignore", "ignore"],
+        },
+      )
+    : spawn("/bin/sh", ["-c", view.command], { detached: true, stdio: "ignore" });
   views.push(child);
   const pidFile = join(xdg, "mu-plugin-ssh", handle, "pid");
   await until(() => existsSync(pidFile), "the launch to record its pid");
@@ -139,6 +152,65 @@ describe("a running remote job and its stop proof (stand-in ssh)", () => {
     expect(alive(pid)).toBe(false);
   }, 60_000);
 
+  it("the pane command stays in the checked process group on a tty, so a stop reaches a HUP-ignoring foreground command", async () => {
+    const bash = ["/bin/bash", "/usr/bin/bash"].find((b) => existsSync(b));
+    if (bash === undefined) return;
+    const fg = fakeSsh(dir, dir, { foreground: true, shell: bash });
+    wire?.close();
+    const w = new PluginWire(fg.argv);
+    wire = w;
+    const pidFile = join(dir, "runner.pid");
+    const { handle } = await launch(
+      w,
+      fg.xdg,
+      "k5",
+      {
+        cmd: `sh -c 'trap "" HUP; echo $$ > ${pidFile}; exec sleep 300'`,
+      },
+      { pty: true },
+    );
+    await until(() => existsSync(pidFile), "the foreground command to start");
+    const runner = Number(readFileSync(pidFile, "utf8"));
+    pids.push(runner);
+    expect((await stop(w, "k5", handle)).result).toBeNull();
+    expect(alive(runner)).toBe(false);
+  }, 60_000);
+
+  const dash = existsSync("/bin/dash") ? it : it.skip;
+  dash(
+    "under dash a reaped leader with a live group member is no proof, and nothing is signalled",
+    async () => {
+      const d = fakeSsh(dir, dir, { sh: "/bin/dash" });
+      wire?.close();
+      const w = new PluginWire(d.argv);
+      wire = w;
+      // A group whose leader is gone: `sleep` keeps the leader's pgid.
+      const g = spawn("/bin/sh", ["-c", "sleep 300 >/dev/null 2>&1 & echo $!; echo $$"], {
+        detached: true,
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      let out = "";
+      g.stdout?.on("data", (c) => {
+        out += c;
+      });
+      await new Promise((r) => g.on("close", r));
+      const [member, leader] = out.trim().split("\n").map(Number);
+      pids.push(member ?? 0);
+      expect(alive(leader ?? 0)).toBe(false);
+      const handle = `ssh-${"a".repeat(32)}`;
+      mkdirSync(join(d.xdg, "mu-plugin-ssh", handle), { recursive: true });
+      writeFileSync(
+        join(d.xdg, "mu-plugin-ssh", handle, "pid"),
+        `${leader} Thu Jan 1 00:00:00 2000\n`,
+      );
+      const m = await stop(w, "k6", handle);
+      expect(m.result).toBeUndefined();
+      expect(m.error).toMatchObject({ data: { kind: "retryable" } });
+      expect(alive(member ?? 0)).toBe(true);
+    },
+    30_000,
+  );
+
   it("the claim is atomic: a second launch of the same job runs nothing", async () => {
     const w = wire ?? expect.fail("no wire");
     const { handle } = await launch(w, ssh.xdg, "k4", { cmd: "sleep 300" });
@@ -191,7 +263,7 @@ describe.skipIf(!haveSshd())("over a real sshd on loopback", () => {
     });
   }
 
-  it("a -L forward through a client config that wants a control master: no master, the forward binds, the stop proves", async () => {
+  it("a PTY-backed view forwards ctl: traffic crosses the -L, no master is opened by the view, the stop proves", async () => {
     const keys = join(dir, "keys");
     mkdirSync(keys);
     const kg = (...a: string[]) => execFileSync("ssh-keygen", ["-q", "-N", "", ...a]);
@@ -216,8 +288,6 @@ describe.skipIf(!haveSshd())("over a real sshd on loopback", () => {
         "PasswordAuthentication no",
         "AllowStreamLocalForwarding yes",
         "AllowTcpForwarding yes",
-        // The host side keeps its job state here, not under the real home.
-        `SetEnv XDG_STATE_HOME=${join(dir, "xdg")}`,
       ].join("\n"),
     );
     sshd = spawn(sshdPath, ["-D", "-e", "-f", join(keys, "sshd_config")], {
@@ -260,20 +330,57 @@ describe.skipIf(!haveSshd())("over a real sshd on loopback", () => {
       }
     }, "sshd to accept");
 
+    // The host side keeps its job state here, not under the real home: one namespace for the
+    // plugin's start and stop.
+    const xdg = join(dir, "xdg");
+    process.env.MU_SSH_STATE_DIR = join(xdg, "mu-plugin-ssh");
     wire = new PluginWire([SSH_EXAMPLE, "ssh", "-F", clientConfig]);
     const local = join(dir, "local.sock");
-    const xdg = join(dir, "xdg");
-    const { handle, view, pid } = await launch(wire, xdg, "real-1", {
-      cmd: "sleep 300",
-      sockets: { local, remote: join(dir, "remote.sock") },
-    });
-    // The forward is bound by this client, and the config's shared master was never opened.
+    const remoteSock = join(dir, "remote.sock");
+    // The "harness": a listener on the host's socket that answers a line with `pong`.
+    const server = join(dir, "server.mjs");
+    writeFileSync(
+      server,
+      `import { connect, createServer } from "node:net";
+createServer((s) => s.on("data", () => s.end("pong\\n"))).listen(${JSON.stringify(remoteSock)});
+`,
+    );
+    const { handle, view, pid } = await launch(
+      wire,
+      xdg,
+      "real-1",
+      { cmd: `${q(process.execPath)} ${q(server)}`, sockets: { local, remote: remoteSock } },
+      { pty: true },
+    );
+    // The view's own connection carries the forward: a client through it reaches the listener.
     await until(() => existsSync(local), "the -L forward to bind");
+    await until(() => existsSync(remoteSock), "the host listener to bind");
+    const reply = await new Promise<string>((resolve, reject) => {
+      const c = connect(local);
+      let got = "";
+      c.setEncoding("utf8");
+      c.on("data", (d) => {
+        got += d;
+      });
+      c.on("error", reject);
+      c.on("close", () => resolve(got));
+      c.write("ping\n");
+    });
+    expect(reply).toBe("pong\n");
+    // Only the view has connected so far, and it asked for no shared master.
     expect(readdirSync(cm)).toEqual([]);
-    expect(await status(wire, "real-1", handle)).toEqual({ state: "running" });
-    killGroup(view.pid);
-    expect((await stop(wire, "real-1", handle)).result).toBeNull();
-    expect(alive(pid)).toBe(false);
-    expect(readdirSync(cm)).toEqual([]);
+    // The status and stop calls use the user's ssh config (ControlMaster auto): they may open a
+    // master of their own, which is cleaned up below, not asserted away.
+    try {
+      expect(await status(wire, "real-1", handle)).toEqual({ state: "running" });
+      killGroup(view.pid);
+      expect((await stop(wire, "real-1", handle)).result).toBeNull();
+      expect(alive(pid)).toBe(false);
+    } finally {
+      try {
+        execFileSync("ssh", ["-F", clientConfig, "-O", "exit", "box"], { stdio: "ignore" });
+      } catch {}
+      delete process.env.MU_SSH_STATE_DIR;
+    }
   }, 60_000);
 });

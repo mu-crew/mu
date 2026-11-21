@@ -13,13 +13,15 @@ import { SSH_EXAMPLE } from "./_plugin.js";
 export interface FakeSsh {
   /** `mu plugin add ssh --` argv: the example plugin and this stand-in as its ssh command. */
   argv: string[];
-  /** The remote side's state directory (`$XDG_STATE_HOME` of the commands it runs). */
+  /** The remote side's state directory (`$HOME/.local/state`: the plugin's namespace lives under it). */
   xdg: string;
   /** Every ssh invocation's arguments, in order. */
   invocations(): string[][];
   /** From now on ssh fails like an unreachable host (exit 255) until `up()`. */
   down(): void;
   up(): void;
+  /** From now on the remote sessions run with this XDG_STATE_HOME. */
+  xdgAt(path: string): void;
 }
 
 /**
@@ -27,10 +29,15 @@ export interface FakeSsh {
  * runs the remote command with /bin/sh in `home`, as a child (killing the stand-in leaves it running). No pty and no hangup: a view that dies leaves
  * the remote process running, the case job.stop's proof exists for.
  */
-export function fakeSsh(dir: string, home: string): FakeSsh {
+export function fakeSsh(
+  dir: string,
+  home: string,
+  opts: { foreground?: boolean; sh?: string; shell?: string } = {},
+): FakeSsh {
   const bin = join(dir, "bin");
   mkdirSync(bin, { recursive: true });
-  const xdg = join(dir, "xdg");
+  const xdg = join(home, ".local", "state");
+  const xdgFile = join(dir, "session-xdg");
   const log = join(dir, "ssh.log");
   const downFile = join(dir, "down");
   const fake = join(bin, "fake-ssh");
@@ -42,8 +49,13 @@ while :; do case "$1" in -o|-p|-J|-L|-i|-F) shift 2 ;; -*) shift ;; *) break ;; 
 shift
 [ "$1" = -t ] && shift
 [ -f '${downFile}' ] && { echo 'ssh: connect to host box port 22: Connection refused' >&2; exit 255; }
-export HOME='${home}' XDG_STATE_HOME='${xdg}' SHELL=/bin/sh
-cd '${home}' && { /bin/sh -c "$*" & wait $!; }
+export HOME='${home}' SHELL='${opts.shell ?? "/bin/sh"}'
+# What a remote startup file may do: another XDG_STATE_HOME per session (see \`xdgAt\`).
+[ -f '${xdgFile}' ] && export XDG_STATE_HOME="$(cat '${xdgFile}')"
+cmd="$*"
+${opts.sh ? `cmd="exec ${opts.sh} \${cmd#exec /bin/sh }"` : ""}
+cd '${home}' || exit 1
+${opts.foreground ? `exec /bin/sh -c "$cmd"` : `{ /bin/sh -c "$cmd" & wait $!; }`}
 `,
   );
   chmodSync(fake, 0o755);
@@ -62,6 +74,7 @@ cd '${home}' && { /bin/sh -c "$*" & wait $!; }
     },
     down: () => writeFileSync(downFile, ""),
     up: () => rmSync(downFile, { force: true }),
+    xdgAt: (path) => writeFileSync(xdgFile, path),
   };
 }
 
