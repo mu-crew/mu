@@ -74,6 +74,19 @@ Built in units: the profile (`--transport lease`, `--stop`, `{job_file}`,
 publish, announce) before mule's `--lease`, `forward`, `exec` and the `rm`
 stop contract are released.
 
+## Approved: ladder placement core (D15 path)
+
+Part 1 of the [ladder placement spec](specs/2026-11-20-ladder-placement.md),
+approved by the human 2026-11-20 with its Open items 1-6 as recommended:
+four places, ownership, per-host admission, `mu host exec` <!-- doc-cli-drift:skip -->
+(planned, unit `host_exec`), a dropped
+master is not host loss, the refusals, drain-before-switch migration,
+cross-DB refusal. It gates `job_plugin_builtin_channels`,
+`plugin_mule_link`, `plugin_mule_lease`, `host_exec` and `plugin_ssh_pane`.
+Rung 2 is a separate track (GO on mule serve, paused until this approval;
+serve runs fixed read, stat and write ops only). The first release is D15
+only: no serve, no pi extension.
+
 ## Candidates
 
 Each has a design but no proven friction yet. Most come from the prior
@@ -105,10 +118,6 @@ track them; delete the row when one ships.
   documented shape. Conforming breaks `.agents` readers, `mu_delegate` among them.
 
 ## Open questions
-
-- **Ladder placement (pending approval, not approved).** Part 1 of the
-  [ladder placement spec](specs/2026-11-20-ladder-placement.md) is the core
-  contract for the D15 path; its §G drafts the `Approved` section.
 
 - **Capability tags on operations.** Today the only authorization is
   "the agent ran the verb". Enforce capabilities when an agent does real

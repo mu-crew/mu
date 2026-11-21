@@ -2,12 +2,15 @@
 
 # Ladder placement: where an agent's loop, workspace, shell and DB live
 
-Status: draft 2, 2026-11-20. Draft 1 was refuted (round 1, 13 findings;
-disposition in §H). Awaits refutation round 2, then the human's approval
-of Part 1. Part 1 is **normative**: the core contract the D15 path builds
-on (`job_plugin_builtin_channels`, `plugin_mule_link`, `plugin_mule_lease`,
-`host_exec`, `plugin_ssh_pane`). Part 2 is **informative**, except §I,
-which binds each owning unit to its tests.
+Status: approved 2026-11-20 (Part 1 + Open items 1-6). Draft 1 was
+refuted (round 1, 13 findings; disposition in §H); round 2's five D15
+lifecycle findings went into the D15 unit briefs as acceptance criteria.
+The human approved Part 1 and decided each Open item as recommended
+(recorded in place below). Part 1 is **normative**: the core contract the
+D15 path builds on (`job_plugin_builtin_channels`, `plugin_mule_link`,
+`plugin_mule_lease`, `host_exec`, `plugin_ssh_pane`). Part 2 is
+**informative** and not approved, except §I, which binds each owning unit
+to its tests.
 
 Builds on the [plugins spec](2026-11-09-mu-plugins.md) (D1, D3, D4, D7, D8,
 D15), the [lease transport spec](2026-10-28-lease-transport.md), mule's
@@ -22,31 +25,42 @@ decided (Open item 6). Every rule cites code or a spec line.
 
 §I binds each rule's owner unit to its tests; §F holds today's code.
 
-### Open for approval
+### Open for approval (decided 2026-11-20)
 
 Part 1 states the recommended option and tags the rule with the item.
+The human chose the recommended option for every item; each decision is
+recorded after the item.
 
 1. **Q5's reading** (§3.3). "Fetchable" = already in the host's repo; mu
    neither fetches nor pushes. "Before any effect" = before any mu tree,
    `job.start`, pane or kept reservation; the check's own transport
    artifacts (over mule, an exec job removed in the same round trip,
    mule `SPEC.md:347-353`) don't count.
+   **Decided:** as stated. The base commit must already be in the host's
+   repo, refused before any effect; no automatic fetch or push. The
+   missing-base refusal names the exact fix, since an orchestrator acts
+   on it: guardrails with actionable messages.
 2. **`mu host exec`'s surface** (§6): flags, the 600 s default, the 1 MiB
    bound, the outcome table and metadata-only log fields are proposed (Q6
    set behaviour). Logging command text needs its own decision.
+   **Decided:** the surface as proposed; the log keeps metadata only.
 3. **Migration fence** (§7.3). (a) `host add --plugin` refuses while
    records name the host, with a restore path (recommended). (b) `host rm`
    refuses too, which breaks today's rm-then-add edit
    (`docs/guide/remote.md:342-343`).
+   **Decided:** (a).
 4. **Backend binding** (§8.2). (a) Advisory spawn refusal plus reconcile
    keeping other backends' rows (recommended). (b) A durable per-workstream
    backend: a schema change (parked approval), the only fix for two racing
    first spawns.
+   **Decided:** (a).
 5. **Status ask after a provider hand-back** (§5.5). (a) None, as collect
    does today (recommended). (b) Ask once, and let `gone` win.
+   **Decided:** (a).
 6. **Proposed mechanisms, not Qn decisions:** the §7.3 guard, the §8.2
    shape check, the §8.3 `MU_ORCHESTRATOR` check, the §9 marker, `mkdir`
    claim and exit 4, and R4 as a rung-2 rule.
+   **Decided:** all approved.
 
 ### §1. The four places (*decided*, Q1)
 
@@ -347,10 +361,13 @@ third ssh use class of bounded synchronous ops (a remote timeout of at most
 1 s plus a hard local kill), each one locked round trip without tmux, from
 a per-caller stdio child with no daemon.
 
-**Not in the first D15 release** (course check #4): serve and its pi
-extension ship in neither artifact. Serve work is paused until Part 1 is
-approved. One human decision is open: whether serve runs fixed read, stat
-and write ops only, or bounded exec too. The track's units are
+**Not in the first D15 release** (course check #4): the first release is
+D15 only; serve and its pi extension ship in neither artifact. Serve work
+was paused until Part 1's approval (2026-11-20).
+
+**Serve scope** (*decided*, 2026-11-20): fixed read, stat and write ops
+only. Arbitrary commands, the agent's `bash` among them, stay on detached
+mule jobs; serve runs no bounded exec. The track's units are
 `serve_lifetime`, `serve_integrity` and `serve_final_acceptance`, which
 runs one combined acceptance on the final sha (Linux, `MaxSessions 1`,
 the thresholds below). `serve_production` is closed.
@@ -476,7 +493,10 @@ numbers.
   (`src/agents/spawn-plugin.ts:185-215`). `closePluginJob` looks the job
   up only when its handle is missing (`src/host-policy.ts:217-240`).
 
-### §G. ROADMAP draft (pasted only on approval)
+### §G. ROADMAP entry (pasted on approval, 2026-11-20)
+
+The pasted entry adds the approval date, the serve scope (§C) and the
+D15-only first release.
 
 > **Approved: ladder placement core (D15 path).** Part 1 of the ladder
 > placement spec (`specs/2026-11-20-ladder-placement.md`): four places,
@@ -486,7 +506,7 @@ numbers.
 > `plugin_mule_lease`, `host_exec` and `plugin_ssh_pane`. Rung 2 is a
 > separate track (GO on mule serve, paused until this approval).
 
-The approval commit also edits the plugins spec: D1 and D8 point at §5,
+The approval commit also edits the plugins spec (done): D1 and D8 point at §5,
 D15's migration bullet at §7.2, D15's job capabilities at §10's file
 handle.
 

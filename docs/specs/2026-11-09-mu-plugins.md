@@ -113,6 +113,12 @@ the survey won:
 Three state machines. mu alone moves them. Implementations report the
 facts that move them.
 
+A dropped master or any other hand-back is not host loss: where this
+section and D8 differ on it, [ladder placement
+§5](2026-11-20-ladder-placement.md#5-a-dropped-master-is-not-host-loss-decided-q13)
+(approved 2026-11-20) supersedes them. In particular, no `host.status`
+ask follows a provider hand-back (that spec's Open item 5a).
+
 #### Host
 
 A machine that jobs run on.
@@ -743,6 +749,10 @@ written to be re-run (reclaim, marks, the aside).
 (`mule/SPEC.md:47,541`) and `slots: "self"`.
 
 ### D8. Seam: job kind
+
+On a dropped master, [ladder placement
+§5](2026-11-20-ladder-placement.md#5-a-dropped-master-is-not-host-loss-decided-q13)
+supersedes this section (D1).
 
 ```ts
 // src/jobs/types.ts (new cluster: types, view, pane, lease, gate; an ARCHITECTURE row)
@@ -1387,7 +1397,9 @@ The gaps, which no shim can close:
 - link: `fetch: false`, no `push`, `slots: "self"`, `quiescence: "provable"`;
 - job: `view: "bound"`, `handle: "file"`, `start.lookup: true`, and
   `honours` with every field and both roles: its view runs the command mu
-  builds, as the lease template does today.
+  builds, as the lease template does today. How mu allocates, passes and
+  reads that file handle is [ladder placement
+  §10](2026-11-20-ladder-placement.md#10-the-d15-file-handle).
 
 The view stays interactive, and there is no detached lease (D18).
 
@@ -1396,8 +1408,11 @@ The view stays interactive, and there is no detached lease (D18).
 - `mu host add <h> --plugin mule` keeps only the `fetch` template, the
   one seam mule does not implement. The view command comes from the
   plugin's `job.start`, with `--key <token>` in it.
-- A reservation made before the plugin was used is stopped by the
-  plugin's `rm` on the same handle.
+- ~~A reservation made before the plugin was used is stopped by the
+  plugin's `rm` on the same handle.~~ Superseded by [ladder placement
+  §7.2](2026-11-20-ladder-placement.md#7-templates-and-migration-decided-q8)
+  (approved 2026-11-20): drain, collect and close before switching; no
+  live conversion.
 
 ### D16. Proof: contract suites and fault injection
 
