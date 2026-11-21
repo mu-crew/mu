@@ -88,7 +88,8 @@ cd '${home}' && exec sh -c "$last"
       addHost(db, { name: "nofetch", plugin: "mule", repo: null, max_sessions: null }),
     ).toThrow(/fetch/);
     expect(c.push).toBeUndefined();
-    expect(h.link.fingerprint(h)).toBe("plugin:mule:mule");
+    // The instance names the backend (host targets, sockets, config), opaque: not the plugin.
+    expect(h.link.fingerprint(h)).toMatch(/^plugin:mule:mule-[0-9a-f]{16}$/);
   });
 
   it("runs a script in the remote cwd: exit code, stdout and stderr", async () => {
@@ -134,6 +135,7 @@ cd '${home}' && exec sh -c "$last"
     const up = (await h.link.checkSteps?.(ctx, { holder: "contract" })) ?? [];
     expect(up.length).toBeGreaterThan(0);
     expect(up.every((s) => s.ok === true)).toBe(true);
+    expect(up.some((s) => s.step.includes("tmux"))).toBe(true); // proven on the remote, no job dispatched
     writeFileSync(join(dir, "master-down"), "");
     const down = (await h.link.checkSteps?.(ctx, { holder: "contract" })) ?? [];
     expect(down.some((s) => s.step.includes("handback") && s.ok === false)).toBe(true);
