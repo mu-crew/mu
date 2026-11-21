@@ -41,23 +41,49 @@ export class RemotePrepareError extends Error {
   }
 }
 
-/** A provider host's repo lacks a `--worktree` spawn's base commit (D7 G3). Exit 5; names both. */
+/**
+ * The host's repo lacks a `--worktree` spawn's base commit: a provider host's after its push
+ * (D7 G3), or a static host's, which mu never pushes to (ladder placement spec §3.3). Exit 5;
+ * names host, repo and the sha, and the fix. `rev` is the sha; `from`, the ref it resolved from.
+ */
 export class RemoteBaseMissingError extends RemotePrepareError {
   override readonly name: string = "RemoteBaseMissingError";
   constructor(
     host: string,
     public readonly rev: string,
     public readonly repo: string,
-    pushed = false,
+    /** `pushed`: a provider link's push reported success; `nopush`: a provider link with none; `static`: a static host. */
+    how: "pushed" | "nopush" | "static" = "nopush",
+    public readonly from?: string,
   ) {
     super(
       host,
       "creating the remote worktree failed",
-      pushed
-        ? `${repo} on ${host} lacks commit ${rev} although its link's push reported success: the plugin's push is broken; push ${rev} to ${repo} by hand, then spawn again`
-        : `${repo} on ${host} lacks commit ${rev}, and its link cannot push: push ${rev} to ${repo} on ${host}, then spawn again`,
+      baseMissingDetail(host, rev, repo, how, from),
     );
   }
+}
+
+function baseMissingDetail(
+  host: string,
+  rev: string,
+  repo: string,
+  how: "pushed" | "nopush" | "static",
+  from: string | undefined,
+): string {
+  if (how === "pushed") {
+    return `${repo} on ${host} lacks commit ${rev} although its link's push reported success: the plugin's push is broken; push ${rev} to ${repo} by hand, then spawn again`;
+  }
+  if (how === "nopush") {
+    return `${repo} on ${host} lacks commit ${rev}, and its link cannot push: push ${rev} to ${repo} on ${host}, then spawn again`;
+  }
+  const named = from === undefined || from === rev ? "" : ` (--from ${from})`;
+  return [
+    `${repo} on ${host} lacks commit ${rev}${named}; mu never fetches or pushes for a static host.`,
+    `If ${rev} is published (a remote the host can fetch has it): mu host exec ${host} -- git -C ${shellWord(repo)} fetch <remote> ${rev}.`,
+    `If it is local-only: push it to a remote the host can fetch, then run that fetch on the host; or spawn from a published commit.`,
+    `Then spawn again with --from ${rev}.`,
+  ].join(" ");
 }
 
 /** Budget for the one remote step that may clone-sized work (a worktree add). */
@@ -131,6 +157,8 @@ interface PrepareOpts {
   reclaim?: boolean;
   /** The remote repo: the worktree is added to it, and it is the default cwd without one. */
   root?: string;
+  /** A static `--worktree` spawn's base, resolved from `from` in the local checkout (§3.3). */
+  rev?: string;
 }
 
 export async function prepareRemote(
@@ -139,7 +167,7 @@ export async function prepareRemote(
   profile: HostProfile,
   opts: PrepareOpts,
 ): Promise<RemoteSite> {
-  return prepareOn(admittedView(db, profile), { lease }, opts);
+  return prepareOn(admittedView(db, profile), { lease }, opts, opts.rev, "static");
 }
 
 /**
@@ -175,7 +203,13 @@ export async function prepareProviderWorktree(
       throw new RemotePrepareError(h.name, what, `pushing ${rev} to ${root} failed (${why})`);
     }
   }
-  return prepareOn(h, call, { ...opts, worktree: true, root }, rev, h.link.push !== undefined);
+  return prepareOn(
+    h,
+    call,
+    { ...opts, worktree: true, root },
+    rev,
+    h.link.push !== undefined ? "pushed" : "nopush",
+  );
 }
 
 /** The prepare exec on view `h` under `call`; `rev`, a provider host's base sha (no `from` lookup remotely). */
@@ -184,7 +218,7 @@ async function prepareOn(
   call: LinkCall,
   opts: PrepareOpts,
   rev?: string,
-  pushed = false,
+  how: "pushed" | "nopush" | "static" = "nopush",
 ): Promise<RemoteSite> {
   if (opts.worktree && opts.root === undefined) {
     throw new RemotePrepareError(
@@ -224,7 +258,7 @@ async function prepareOn(
     // started (a quoted `~` never expands); the script itself resolves --cwd and "$HOME".
     {
       script: script(body),
-      cwd: rev === undefined ? (opts.root ?? ".") : ".",
+      cwd: rev === undefined || how === "static" ? (opts.root ?? ".") : ".",
       timeoutMs: REMOTE_PREPARE_TIMEOUT_MS,
     },
     call,
@@ -244,7 +278,7 @@ async function prepareOn(
     );
   }
   if (rev !== undefined && r.exitCode === 8)
-    throw new RemoteBaseMissingError(h.name, rev, opts.root ?? "", pushed);
+    throw new RemoteBaseMissingError(h.name, rev, opts.root ?? "", how, opts.from ?? "HEAD");
   if (r.exitCode !== 0) {
     const why = firstLine(r.stderr) || firstLine(r.stdout);
     throw new RemotePrepareError(h.name, what, `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);

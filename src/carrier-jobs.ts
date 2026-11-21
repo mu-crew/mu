@@ -295,7 +295,7 @@ export function unlaunchPluginJob(db: Db, token: string, reason: string): boolea
 export function recordJobTree(
   db: Db,
   token: string,
-  t: { path: string; base: string; agentId: number; collectRepo: string },
+  t: { path: string; base: string; agentId: number; collectRepo: string | null },
 ): boolean {
   return (
     db

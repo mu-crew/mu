@@ -64,6 +64,8 @@
 // remote repo (a path under `home`), initialising it when absent; pushNoop
 // answers success without pushing. requireHostHandle: a job or link call whose
 // target.host carries no handle and instance fails (a plugin with no map of its own).
+// pathPrefix: a directory put first on PATH for the link's runs (a fake remote tool, such as
+// test/_fake-remote-node.ts's murmur).
 //
 // Every request and every $/cancel is logged.
 
@@ -174,8 +176,12 @@ const killGroupButMe = () => {
 // Runs stay in the fake's process group, so nothing they start can outlive it (D13
 // no-detach). `detachExec` is the hostile variant: each run in its own session.
 function run(id, argv, cwd, timeoutMs, done) {
+  const pathPrefix = config().pathPrefix;
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
+    ...(typeof pathPrefix === "string"
+      ? { env: { ...process.env, PATH: `${pathPrefix}:${process.env.PATH ?? ""}` } }
+      : {}),
     detached: config().detachExec === true,
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -127,6 +127,8 @@ function addDevHost(piCommand = `node ${join(dir, "pishim.js")}`): { command: st
   return { command: piCommand };
 }
 
+let prevCwd: string;
+
 beforeEach(() => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), "mrsi-")));
   home = join(dir, "home");
@@ -134,6 +136,9 @@ beforeEach(() => {
   mkdirSync(home);
   mkdirSync(repo);
   initGitRepo(repo);
+  // The caller's checkout is the host's repo: a --worktree base resolves locally (§3.3).
+  prevCwd = process.cwd();
+  process.chdir(repo);
   writeFileSync(join(dir, "pishim.js"), PI_SHIM);
   writeFileSync(join(dir, "fakessh.js"), FAKE_SSH);
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
@@ -152,6 +157,7 @@ afterEach(async () => {
     await killSession(`mu-${ws}`);
   } catch {}
   db.close();
+  process.chdir(prevCwd);
   rmFixtureDir(dir);
   for (const k of ENV_KEYS) {
     const v = saved[k];

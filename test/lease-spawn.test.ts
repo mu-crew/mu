@@ -68,7 +68,7 @@ import {
   runHostTemplate,
 } from "../src/hosts.js";
 import { listLogs } from "../src/logs.js";
-import { listRemoteRecoveries } from "../src/remote-recovery.js";
+import { listRemoteRecoveries, RemoteRecoveryRefusedError } from "../src/remote-recovery.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { helloReply, withHello } from "./_ctl-ext.js";
@@ -527,17 +527,33 @@ describe("reviewer probes: the job file is never an ownerless pointer", () => {
     deleteAgent(db, "worker-1", "auth");
     expect(reservation()).toMatchObject({ job: "new-job", treePath: WT });
     expect(reservation()?.reason).toContain(WT);
-    expect(listRemoteRecoveries(db).map((r) => r.agentId)).toEqual([prior.incarnation]);
+    // The stamped placeholder left the new tree its own record (ladder placement R2), beside the older one.
+    const recs = listRemoteRecoveries(db);
+    const mine = recs.find((r) => r.cwd === WT)?.agentId;
+    expect(recs.map((r) => r.agentId).sort()).toEqual([mine, prior.incarnation].sort());
     writeFileSync(
       join(dir, "fake-exec.sh"),
       `#!/bin/sh\ncase "$1" in\n *MU_STATE*) echo "MU_STATE clean ${SHA}";;\n *MU_RM*) echo "MU_RM removed";;\nesac\n`,
     );
-    const result = await closeAgent(db, "worker-1", { workstream: "auth" }).catch(
+    // Two records: a close by name refuses as ambiguous, the reservation kept.
+    const ambiguous = await closeAgent(db, "worker-1", { workstream: "auth" }).catch(
       (e: unknown) => e,
     );
+    expect(ambiguous).toBeInstanceOf(RemoteRecoveryRefusedError);
+    expect(reservation()?.reason).toContain(WT);
+    // Closing the older record cannot release the pointer kept for the new tree.
+    const result = await closeAgent(db, "worker-1", {
+      workstream: "auth",
+      recoveryId: prior.incarnation,
+    }).catch((e: unknown) => e);
     expect(result).toBeInstanceOf(CarrierJobKeptError);
     expect((result as Error).message).toContain(WT);
     expect(reservation()?.reason).toContain(WT);
+    // Closing THAT tree's record releases it.
+    rmSync(join(dir, "rm-fail"), { force: true });
+    const res = await closeAgent(db, "worker-1", { workstream: "auth", recoveryId: mine });
+    expect(res.recovery).toEqual({ id: mine, deleted: true });
+    expect(listCarrierJobs(db)).toEqual([]);
   });
 
   it("a stopped rollback that kept its tree: close-by-name closes THAT tree's recovery and only then releases", async () => {

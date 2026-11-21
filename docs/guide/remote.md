@@ -56,6 +56,11 @@ EOF
   `~/.local/state/mu-next/remote-worktrees/<ws>/<name>` on the host. Its path,
   base commit and the repo's absolute toplevel are the agent's `cwd`, `base`
   and `repo`; close and recovery use that repo, never the profile's.
+  The base is `--from` (default `HEAD`) resolved in your checkout, so run
+  the spawn inside it. mu never fetches or pushes for a static host: a host
+  repo without that commit refuses, naming the sha and the fix (fetch it on
+  the host, or push it somewhere the host can fetch first); retry with
+  `--from <sha>`.
   `--cwd` names an existing remote directory instead; without either, the
   agent starts in `--root` (default the profile's repo), else the login
   directory. Without a repo, templates get `.` for `{cwd}`. `--root` is part

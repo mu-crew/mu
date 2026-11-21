@@ -157,14 +157,12 @@ describe("honour or refuse at spawn (G4)", () => {
     expect(f.calls().filter((c) => c.method.startsWith("job."))).toEqual([]);
   });
 
-  it("a plugin kind that declares them passes the honour step (spawn itself waits for P6e)", async () => {
+  it("a plugin kind that declares them passes the remote spawn's refusals", async () => {
     await fakeKind(db, dir, { honours: HONOURS_ALL });
-    const err = await requireHostSpawn(
-      db,
-      spawnOn({ role: "read-only", command: "c", cli: "pi" }),
-    ).catch((e: unknown) => e);
-    expect(err).not.toBeInstanceOf(JobSpecUnsupportedError);
-    expect(String(err)).toMatch(/does not drive yet/);
+    setMuxForTests({ ...tmuxBackend, runsShellCommand: true });
+    await expect(
+      requireHostSpawn(db, spawnOn({ role: "read-only", command: "c", cli: "pi" })),
+    ).resolves.toMatchObject({ name: "dev" });
   });
 });
 

@@ -227,14 +227,26 @@ host or a `--plugin` profile whose plugin declares `job`) runs in this
 order, each step before the next one's effect:
 
 1. Refusals, before anything is written: a field the kind does not
-   `honours`, a kind without `channel` (its agents' own channel is not
-   driven yet), a backend that cannot run a command line (herdr), an
-   `at-start` kind without a first prompt (`--send` or `--task`).
+   `honours`, a backend that cannot run a command line (herdr), an
+   `at-start` kind without a first prompt (`--send` or `--task`) or without
+   its own `channel`, and, on a kind without `channel`, a `--command` that
+   runs no harness (a gate needs a session profile). A `--plugin` profile
+   also takes the remote spawn's refusals (the harness probe, a repo for
+   `--worktree`, a recovered tree at the name), and its `--worktree` base:
+   `--from` (default `HEAD`) resolves to a sha in the caller's checkout
+   before any call, and a ref that names no commit there refuses (exit 2).
 2. The job record (the name's fence; a provider host's admission: `ready`,
    outside the deadline margin, under `maxJobs`).
 3. The site. A `--worktree` on a provider host resolves `--from` (default
    `HEAD`) in the caller's checkout, `link.push`es it when declared, and
-   makes the tree from that commit; the record owes its final collect.
+   makes the tree from that commit; the record owes its final collect. On a
+   `--plugin` profile the tree is made from the sha step 1 resolved, never
+   pushed whatever the link declares; a host repo without that commit refuses
+   (exit 5) naming host, repo and sha with the fix (fetch it on the host if
+   it is published; else push it to a remote the host can fetch, or spawn
+   from a published commit), and the retry names the same `--from <sha>`.
+   The placeholder row records the tree as soon as the prepare answers, so
+   a mu that dies before the view leaves a tree `mu agent close` closes.
 4. `job.start` with the whole `JobSpec`. An `at-start` kind's
    `firstPrompt` is `--send`'s text, or `--task`'s brief: that delivery goes
    only here, never as a `channel.send` (every later send carries
@@ -244,10 +256,20 @@ order, each step before the next one's effect:
    the agent's placeholder row; a `--task` spawn claims the task for it and
    journals its receipt `sending`, and `firstPrompt.msgId` is the receipt's
    msgId (the job record's `first_msg_id`).
-5. The view: a pane running the start's `view` command with stdin from
-   `/dev/null`, and the agent row on the kind's channel.
+5. The view: a pane running the start's `view` command, and the agent row.
+   On the kind's `channel`, stdin is `/dev/null`. A kind without `channel`
+   gives its agents mu's built-in one, as a template host does: pi on `ctl`
+   (`spec.sockets` is `{local, remote}` and `spec.env.MU_CTL_SOCK` the
+   remote path: the view forwards `local` to `remote`), a hook harness on
+   remote `hooks` where the backend anchors and pastes (tmux: `spec.env`
+   carries `MU_REMOTE_KEY`, `spec.cmd` is the anchored launch, and mu reads
+   the node through `link.exec`), any other harness on `mux`. That view is
+   interactive and runs without mu's local-only variables; `spec.cmd` has
+   the harness's spawn presets applied, so run it as given.
 6. Readiness: the start's `baseline` (an `at-start` kind), else
-   `channel.baseline` answering within `MU_SPAWN_JOB_MS`. A failure after
+   `channel.baseline` answering within `MU_SPAWN_JOB_MS`; on `ctl`, the
+   handshake on `local` (a timeout reports ctl missing, the job runs), on
+   built-in `hooks` or `mux` the view's liveness window. A failure after
    the start stops the job (`job.stop`) before the tree and the record go.
 
 An `at-start` start with no definite answer is never resent and never

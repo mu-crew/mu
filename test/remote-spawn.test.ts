@@ -387,12 +387,14 @@ describe("the pane is the transport", () => {
   });
 
   it("--worktree: one remote exec makes a detached worktree and records host, path and base", async () => {
-    const a = await spawn({ worktree: true, from: "main" });
+    // --from resolves in the caller's checkout (ladder placement §3.3): the host gets the sha.
+    const local = execFileSync("git", ["rev-parse", "HEAD^{commit}"], { encoding: "utf8" }).trim();
+    const a = await spawn({ worktree: true, from: "HEAD" });
     const [only, ...rest] = execCalls();
     expect(rest).toEqual([]);
     expect(only).toContain("worktree add --detach");
     expect(only).toContain("remote-worktrees/auth/worker-1");
-    expect(only).toContain("main^{commit}");
+    expect(only).toContain(`base=${local};`);
     expect(only).toContain("/srv/repo");
     expect(a).toMatchObject({ host: "dev", cwd: WT, base: SHA });
     expect(getAgent(db, "worker-1", "auth")).toMatchObject({ host: "dev", cwd: WT, base: SHA });

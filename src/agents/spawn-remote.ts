@@ -25,6 +25,7 @@ import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { refuseRecoveredWorktree } from "../remote-recovery.js";
 import { prepareRemote, type RemoteSite, removeRemoteWorktree } from "../remote-worktree.js";
+import { git, gitToplevel } from "../vcs/git.js";
 import { withAgentLock } from "./lock.js";
 import type { SpawnAgentOptions, StagedWorktree } from "./spawn.js";
 
@@ -105,10 +106,12 @@ export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise
   }
   const profile = requireProfile(view);
   refuseUnhonoured(view, view.jobKind, opts);
-  if (profile.plugin != null) {
-    // The plugin's job kind (its view command, its handle) is not driven by this build yet.
+  // A plugin that declares a job seam spawns through its job kind (spawn-plugin.ts), which runs
+  // these checks too. A link-only plugin's jobs would be panes running a `shell` template its
+  // profile does not have: refused until a pane job over a plugin link exists.
+  if (profile.plugin != null && typeof (view.jobKind as { plugin?: unknown }).plugin !== "string") {
     throw new HostProfileError(
-      `host ${host}'s link is plugin ${profile.plugin}: spawning on it needs the plugin's job seam, which this build does not drive yet`,
+      `host ${host}'s link is plugin ${profile.plugin}, which declares no job seam: spawning on a link-only plugin is not supported yet`,
     );
   }
   if (!isCommandGate(opts)) {
@@ -143,6 +146,7 @@ async function prestageRemote(
   lease: HostLease,
   profile: HostProfile,
   reservation: string | undefined,
+  rev: string | undefined,
 ): Promise<StagedWorktree> {
   return withAgentLock(db, opts.workstream, opts.name, async () => {
     refuseRecoveredWorktree(db, opts.workstream, opts.name, profile.name);
@@ -169,7 +173,12 @@ async function prestageRemote(
         // An unused leftover of a prepare whose answer was lost is taken over: no
         // removed agent's recovery record names a tree there (checked above, under the lock).
         reclaim: true,
+        ...(rev !== undefined ? { rev } : {}),
       });
+      // The placeholder names its tree before anything else can fail: a mu that dies from
+      // here to the finalize leaves a row whose close removes that tree, and whose delete
+      // writes its `remote_recovery` record (an owned remote row), never a tree no record names.
+      stampPlaceholderTree(db, placeholder.incarnation, opts.name, made);
       return {
         path: made.cwd,
         base: made.base ?? "",
@@ -213,6 +222,8 @@ export async function admitRemoteSpawn(
   staged: StagedWorktree | undefined;
   site: RemoteSite | undefined;
 }> {
+  // A worktree's base, resolved here before any remote call (§3.3): the host gets the sha.
+  const rev = opts.worktree ? await resolveStaticBase(profile.name, opts.from) : undefined;
   const admitted = await admitHostChannel(
     db,
     profile.name,
@@ -227,7 +238,16 @@ export async function admitRemoteSpawn(
     let staged: StagedWorktree | undefined;
     let site: RemoteSite | undefined;
     if (opts.worktree) {
-      staged = await prestageRemote(db, opts, cli, spawner, lease, admittedProfile, reservation);
+      staged = await prestageRemote(
+        db,
+        opts,
+        cli,
+        spawner,
+        lease,
+        admittedProfile,
+        reservation,
+        rev,
+      );
     } else {
       site = await prepareRemote(db, lease, admittedProfile, {
         workstream: opts.workstream,
@@ -243,6 +263,52 @@ export async function admitRemoteSpawn(
     releaseHostChannel(db, lease); // no pane was ever opened under it
     throw err;
   }
+}
+
+/** A static `--worktree` spawn's `--from` names no commit in the caller's checkout. Exit 2, nothing run. */
+export class RemoteBaseRefError extends HostProfileError {
+  override readonly name: string = "RemoteBaseRefError";
+  constructor(
+    public readonly host: string,
+    public readonly ref: string,
+    detail: string,
+  ) {
+    super(`--worktree on host ${host}: --from ${ref} ${detail}; nothing ran on ${host}`);
+  }
+}
+
+/**
+ * The base of a `--worktree` spawn on a static host (ladder placement spec §3.3): `from`
+ * (default `HEAD`) resolved to a sha in the caller's checkout, before any remote call, so the
+ * host is asked for exactly that commit and a retry names the same one. mu never fetches or
+ * pushes for it: a host that lacks it refuses with the sha (`RemoteBaseMissingError`).
+ */
+export async function resolveStaticBase(host: string, from: string | undefined): Promise<string> {
+  const ref = from ?? "HEAD";
+  const repo = await gitToplevel(process.cwd());
+  if (repo === undefined) {
+    throw new RemoteBaseRefError(
+      host,
+      ref,
+      "cannot be resolved: run the spawn inside the checkout the host's repo follows",
+    );
+  }
+  try {
+    return await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], repo);
+  } catch {
+    throw new RemoteBaseRefError(host, ref, `names no commit in ${repo}`);
+  }
+}
+
+/** A remote placeholder's tree, recorded the moment its prepare answered (only while still pending). */
+function stampPlaceholderTree(db: Db, id: number, name: string, site: RemoteSite): void {
+  db.prepare("UPDATE agents SET cwd = ?, base = ?, repo = ? WHERE id = ? AND pane_id = ?").run(
+    site.cwd,
+    site.base ?? "",
+    site.repo ?? null,
+    id,
+    pendingPaneIdFor(name),
+  );
 }
 
 /**

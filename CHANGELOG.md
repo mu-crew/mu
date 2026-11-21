@@ -29,10 +29,37 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   (`--json` included); a nonzero exit keeps all piped stderr; no answer says
   the remote command "may still run"; nothing is retried.
 
+- **A plugin job kind without a channel of its own uses mu's built-in
+  channels** (ladder placement spec §A). pi is on `ctl`: the `JobSpec`
+  carries `sockets` `{local, remote}` and `MU_CTL_SOCK`, the kind's view
+  forwards the socket, and spawn runs the ctl handshake. A hook harness is on
+  remote `hooks` on tmux (its key in the env and the anchored launch, its
+  node read through the plugin's `link.exec`), any other harness on `mux`.
+  The view is interactive on a built-in channel. An `at-start` kind still
+  needs its own channel. A `--plugin` profile whose plugin declares a job
+  seam now takes the remote spawn's refusals (harness probe, repo, recovered
+  tree); a link-only plugin still refuses. No protocol schema change.
+
 ### Changed
 
 - `host check` and close take no `host_channels` row for a `slots: "self"`
   link (the link arbitrates its own connection).
+- **A `--worktree` spawn on a static host resolves `--from` locally** (ladder
+  placement spec §3.3). `--from` (default `HEAD`) becomes a sha in the
+  caller's checkout before any remote call; a ref that names no commit there
+  refuses (exit 2, `RemoteBaseRefError`, nothing run). A host repo without
+  the sha refuses (exit 5, `RemoteBaseMissingError`) naming host, repo and
+  sha, and both fixes: a published commit is fetched on the host
+  (`mu host exec <h> -- git -C <repo> fetch <remote> <sha>`), a local-only
+  one is pushed to a remote the host can fetch, or the spawn uses a
+  published commit. The retry is `--from <sha>`. mu never fetches or pushes
+  for a static host. Provider hosts keep their push and its message.
+- **A remote spawn's prepared tree has an owner before the view opens.**
+  The placeholder row records the tree (host, path, base, repo) as soon as
+  the prepare answers, so a mu that dies before the finalize leaves a row
+  whose `mu agent close` removes exactly that tree; a deleted placeholder
+  writes its `remote_recovery` record. A static plugin job record names its
+  tree too. Before, the placeholder named no path and the tree had no record.
 
 ## [5.2.2] — 2026-11-19
 

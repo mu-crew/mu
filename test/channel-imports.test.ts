@@ -114,6 +114,8 @@ const CTL_IMPORTS: Record<string, readonly string[]> = {
   "src/agents/lease-carrier.ts": ["carrierJobFilePath"],
   // reattach: a new lease carrier forwards the reaped pi's control socket
   "src/agents/reattach.ts": ["ctlSocketPath", "remoteCtlSocketPath"],
+  // a plugin job kind on the built-in ctl: the socket pair its JobSpec carries
+  "src/agents/spawn-plugin.ts": ["ctlSocketPath", "remoteCtlSocketPath"],
   "src/remote-agent.ts": ["remoteCtlSocketPath"],
 };
 

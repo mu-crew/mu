@@ -21,6 +21,8 @@
 // `resolveFirstTurn` resolves it by the rule table and finishes the view (G1a).
 
 import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync } from "node:fs";
+import { dirname } from "node:path";
 import {
   type AgentRow,
   getAgent,
@@ -28,6 +30,7 @@ import {
   isPendingPaneId,
   pendingPaneIdFor,
 } from "../agents.js";
+import { newRemoteKey, remoteAnchorWrapper } from "../anchors.js";
 import {
   bindCarrierJobAgent,
   type CarrierJob,
@@ -39,7 +42,8 @@ import {
 } from "../carrier-jobs.js";
 import { channelTarget } from "../channels/dispatch.js";
 import { agentChannel } from "../channels/index.js";
-import type { RunBaseline, SendResult } from "../channels/types.js";
+import type { ChannelName, RunBaseline, SendResult } from "../channels/types.js";
+import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { effectOwner } from "../effects.js";
 import { harnessOfCli } from "../harnesses.js";
@@ -53,14 +57,17 @@ import {
 } from "../hosts.js";
 import { defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
+import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { EffectOutcomeUnknownError } from "../plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.js";
+import { LOCAL_ONLY_ENV } from "../remote-agent.js";
 import { prepareProviderWorktree } from "../remote-worktree.js";
+import { shellQuote } from "../shell-quote.js";
 import { gitToplevel } from "../vcs/git.js";
-import { AgentExistsError } from "./errors.js";
+import { AgentDiedOnSpawnError, AgentExistsError } from "./errors.js";
 import { withAgentLock } from "./lock.js";
 import { type ReceiptActor, repointReceipts } from "./receipts.js";
 import {
@@ -68,9 +75,24 @@ import {
   type SpawnAgentOptions,
   type SpawnedAgent,
   type StagedWorktree,
+  speaksMuCtl,
 } from "./spawn.js";
 import { withSpawnLock } from "./spawn-lock.js";
-import { admitRemoteSpawn, JobSpecUnsupportedError, refuseUnhonoured } from "./spawn-remote.js";
+import { launchCommand } from "./spawn-presets.js";
+import {
+  awaitCtlHandshake,
+  awaitSpawnLiveness,
+  defaultSpawnCtlMs,
+  defaultSpawnLivenessMs,
+  type SpawnCtl,
+} from "./spawn-ready.js";
+import {
+  admitRemoteSpawn,
+  isCommandGate,
+  JobSpecUnsupportedError,
+  refuseUnhonoured,
+  requireHostSpawn,
+} from "./spawn-remote.js";
 import { rollbackSpawn } from "./spawn-rollback.js";
 
 /** The host's job kind when it is a plugin's: then spawn takes this path. */
@@ -79,13 +101,39 @@ export function pluginKindOf(host: HostView): PluginJobKind | undefined {
   return typeof k?.plugin === "string" ? (host.jobKind as PluginJobKind) : undefined;
 }
 
-/** Refused before any effect (D8 honour or refuse, D3 where a view can run). */
-async function refuse(host: HostView, kind: PluginJobKind, opts: SpawnAgentOptions): Promise<void> {
-  refuseUnhonoured(host, kind, opts);
+/**
+ * The built-in channel an agent of a kind without a channel of its own is on (ladder placement
+ * spec §A): its harness's, as on a template host. pi is on `ctl` (the kind forwards the socket
+ * pair); a hook harness on a backend that anchors and pastes (tmux) on remote `hooks`, read
+ * through the host's link; any other harness on `mux`.
+ */
+export interface BuiltInChannel {
+  channel: "ctl" | "hooks" | "mux";
+  /** pi on ctl: the kind gets the socket pair. */
+  ctl: boolean;
+  /** A hook harness on remote hooks: it gets a remote key. */
+  hooks: boolean;
+}
+
+/**
+ * Refused before any effect (D8 honour or refuse, D3 where a view can run). A `--plugin`
+ * profile also takes the remote spawn's refusals (`requireHostSpawn`: the harness probe, a
+ * repo for `--worktree`, a recovered tree at the name). Returns the built-in channel of a kind
+ * without its own.
+ */
+async function refuse(
+  db: Db,
+  host: HostView,
+  kind: PluginJobKind,
+  opts: SpawnAgentOptions,
+): Promise<BuiltInChannel | undefined> {
+  if (host.record === undefined) await requireHostSpawn(db, opts);
+  else refuseUnhonoured(host, kind, opts);
   const { caps } = kind;
-  if (caps.channel === undefined) {
+  if (caps.firstTurn === "at-start" && caps.channel === undefined) {
+    // Its first prompt goes in job.start, so only its own channel can tell its turns (§A).
     throw new HostProfileError(
-      `host ${host.name}'s job kind ${kind.name} has no channel: spawning a plugin kind whose agents use their harness's own channel is not supported yet`,
+      `host ${host.name}'s job kind ${kind.name} starts its first turn at start but has no channel: such a kind needs its own channel`,
     );
   }
   if (caps.firstTurn === "at-start" && opts.firstPrompt === undefined) {
@@ -98,10 +146,29 @@ async function refuse(host: HostView, kind: PluginJobKind, opts: SpawnAgentOptio
   }
   const mux = await activeMux();
   if (!mux.runsShellCommand) throw new HostSpawnUnsupportedError(host.name, mux.name);
+  if (caps.channel !== undefined) return undefined;
+  if (isCommandGate(opts)) {
+    throw new HostProfileError(
+      `host ${host.name}'s job kind ${kind.name} runs agents, not command gates: a --command that runs no harness needs a session profile`,
+    );
+  }
+  const cli = opts.cli ?? "pi";
+  if (speaksMuCtl(cli, opts.command ?? cli)) return { channel: "ctl", ctl: true, hooks: false };
+  return mux.anchorsPanes && mux.pasteToPane !== undefined
+    ? { channel: "hooks", ctl: false, hooks: true }
+    : { channel: "mux", ctl: false, hooks: false };
 }
 
-/** The view's command line: stdin /dev/null, so nothing reaches the job but the channel. */
-const viewLine = (command: string): string => `exec </dev/null; ${command}`;
+/**
+ * The view's command line. On a plugin channel stdin is /dev/null: nothing reaches the job but
+ * the channel. On a built-in one it is interactive (`hooks` pastes, `mux` types, a pi on ctl is
+ * a TUI), and runs without the local-only mu variables a tmux pane inherits (R5: only
+ * `HOST_ENV_KEYS` reach the worker, through the JobSpec).
+ */
+const viewLine = (command: string, interactive: boolean): string =>
+  interactive
+    ? `exec env ${LOCAL_ONLY_ENV.map((k) => `-u ${k}`).join(" ")} /bin/sh -c ${shellQuote(command)}`
+    : `exec </dev/null; ${command}`;
 
 export async function spawnPluginAgent(
   db: Db,
@@ -110,11 +177,23 @@ export async function spawnPluginAgent(
   kind: PluginJobKind,
   spawner: string | null,
 ): Promise<SpawnedAgent> {
-  await refuse(host, kind, opts);
+  const builtIn = await refuse(db, host, kind, opts);
   const { name, workstream: ws } = opts;
   const cli = opts.cli ?? "pi";
   const command = opts.command ?? cli;
   const commandSource = opts.command !== undefined ? "explicit" : "cli-key";
+  const channel: ChannelName = kind.caps.channel ?? builtIn?.channel ?? "";
+  // A pi on the built-in ctl: the derived local socket the kind's view forwards to the remote one.
+  const sockets =
+    builtIn?.ctl === true
+      ? {
+          local: ctlSocketPath(ws, name, dirname(db.name)),
+          remote: remoteCtlSocketPath(ws, name, process.getuid?.() ?? 0),
+        }
+      : undefined;
+  if (sockets !== undefined) mkdirSync(dirname(sockets.local), { recursive: true, mode: 0o700 });
+  // A remote hook harness's key on its node (spec D11): in its anchor and its env.
+  const remoteKey = builtIn?.hooks === true ? newRemoteKey(ws, name) : undefined;
   const provider = host.record !== undefined;
   const atStart = kind.caps.firstTurn === "at-start";
   // A --worktree on a provider host starts from the caller's commit (D7 G3).
@@ -210,6 +289,15 @@ export async function spawnPluginAgent(
       if (admitted.lease !== undefined) releaseHostChannel(db, admitted.lease); // the view holds no link
       staged = admitted.staged;
       owned = staged?.incarnation;
+      // The job record names its tree too (§10.4); the placeholder, stamped at prepare, is its owner.
+      if (staged !== undefined) {
+        recordJobTree(db, token, {
+          path: staged.path,
+          base: staged.base,
+          agentId: staged.incarnation,
+          collectRepo: null,
+        });
+      }
       if (admitted.site !== undefined) cwd = admitted.site.cwd;
     }
     if (staged !== undefined) cwd = staged.path;
@@ -229,8 +317,24 @@ export async function spawnPluginAgent(
       begun = row;
       await opts.firstTurn?.begin(row);
     }
-    const harness = harnessOfCli(cli, command) ?? cli;
+    const harnessRow = harnessOfCli(cli, command);
+    const harness = harnessRow ?? cli;
     const h = kind.caps.honours;
+    // On a built-in channel mu launches the harness as on a template host: its spawn presets,
+    // and a hook harness's remote anchor. The row keeps the command as given.
+    const launch =
+      builtIn === undefined ? command : launchCommand(command, harnessRow, opts, { remote: true });
+    const cmd =
+      remoteKey === undefined
+        ? launch
+        : remoteAnchorWrapper(launch, {
+            agent_name: name,
+            workstream: ws,
+            role: "worker",
+            cli: harness,
+            orchestrator: false,
+            remote_key: remoteKey,
+          });
     const prompt =
       atStart && opts.firstPrompt !== undefined
         ? { text: opts.firstPrompt, msgId: opts.firstTurn?.msgId ?? randomUUID() }
@@ -241,9 +345,10 @@ export async function spawnPluginAgent(
       harness,
       role: opts.role === "read-only" ? "read-only" : "full-access",
       ...(opts.model !== undefined ? { model: opts.model } : {}),
-      cmd: command,
+      cmd,
       commandSource,
       cwd,
+      // Only HOST_ENV_KEYS (R5).
       env:
         h?.env === false
           ? {}
@@ -253,7 +358,10 @@ export async function spawnPluginAgent(
               MU_WORKSTREAM: ws,
               MU_REMOTE: "1",
               MU_AGENT_CLI: harness,
+              ...(sockets !== undefined ? { MU_CTL_SOCK: sockets.remote } : {}),
+              ...(remoteKey !== undefined ? { MU_REMOTE_KEY: remoteKey } : {}),
             },
+      ...(sockets !== undefined ? { sockets } : {}),
       ...(prompt !== undefined ? { firstPrompt: prompt } : {}),
     };
     opts.signal?.throwIfAborted();
@@ -275,7 +383,22 @@ export async function spawnPluginAgent(
     }
     const row = await openView(
       db,
-      { opts, cli, command, commandSource, cwd, staged, spawner, host, kind, token },
+      {
+        opts,
+        cli,
+        command,
+        commandSource,
+        cwd,
+        staged,
+        spawner,
+        host,
+        kind,
+        token,
+        channel,
+        ...(builtIn !== undefined ? { builtIn } : {}),
+        ...(sockets !== undefined ? { localSock: sockets.local } : {}),
+        ...(remoteKey !== undefined ? { remoteKey } : {}),
+      },
       started.view,
       (pid) => {
         paneId = pid;
@@ -285,6 +408,22 @@ export async function spawnPluginAgent(
       },
       atStart ? owned : undefined,
     );
+    if (builtIn !== undefined) {
+      const ready = await builtInReadiness(row, command, host.name, sockets?.local, opts);
+      emitEvent(
+        db,
+        ws,
+        "agent.spawn",
+        `agent spawn ${name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${row.paneId}, host=${host.name}, job=${kind.plugin}:${kind.name}, channel=${channel}, ctl=${ready.ctl})`,
+      );
+      return {
+        ...row,
+        ctl: ready.ctl,
+        ctlSocket: sockets?.local ?? "",
+        ...(ready.incarnation !== undefined ? { ctlIncarnation: ready.incarnation } : {}),
+        ...(ready.trustDialog ? { trustDialog: true as const } : {}),
+      };
+    }
     const baseline = started.baseline ?? (await readiness(db, row));
     emitEvent(
       db,
@@ -354,6 +493,14 @@ interface ViewOf {
   host: HostView;
   kind: PluginJobKind;
   token: string;
+  /** The row's channel: the kind's own, or the built-in one. */
+  channel: ChannelName;
+  /** Set on a built-in channel: the view is interactive. */
+  builtIn?: BuiltInChannel;
+  /** A pi on ctl: the local socket the view binds (a stale file of the name is removed first). */
+  localSock?: string;
+  /** A remote hook harness's key. */
+  remoteKey?: string;
 }
 
 /**
@@ -375,6 +522,8 @@ async function openView(
   const row = await withAgentLock(db, opts.workstream, opts.name, () =>
     withSpawnLock(session, async () => {
       const mux = await activeMux();
+      // The name is ours: no live agent owns a socket at this path; the view's forward binds it.
+      if (v.localSock !== undefined) rmSync(v.localSock, { force: true });
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
         onCreated = res;
@@ -384,7 +533,7 @@ async function openView(
         window: opts.tab ?? opts.name,
         name: opts.name,
         cli: v.cli,
-        command: viewLine(view.command),
+        command: viewLine(view.command, v.builtIn !== undefined),
         // mu's own command line, never the harness's: a backend that starts its agent kinds itself refuses it.
         commandSource: "explicit",
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
@@ -410,10 +559,11 @@ async function openView(
         hostTransport: undefined,
         gateToken: undefined,
         reservation: v.token,
-        hooks: false,
+        hooks: v.builtIn?.hooks === true,
         piHooks: false,
-        channel: kind.caps.channel,
-        channelPlugin: kind.plugin,
+        channel: v.channel,
+        ...(v.builtIn === undefined ? { channelPlugin: kind.plugin } : {}),
+        ...(v.remoteKey !== undefined ? { remoteKey: v.remoteKey } : {}),
         ...(v.staged === undefined && placeholder !== undefined ? { placeholder } : {}),
       });
       onRow(r);
@@ -567,6 +717,7 @@ export async function resolveFirstTurn(
             host: resolveHost(db, agent.host),
             kind,
             token: now.token,
+            channel: kind.caps.channel ?? agent.channel ?? "",
           },
           view,
           (pid) => {
@@ -630,4 +781,36 @@ async function readiness(db: Db, row: AgentRow): Promise<RunBaseline> {
     }
     await new Promise((r) => setTimeout(r, 200));
   }
+}
+
+/**
+ * Readiness on a built-in channel, as on a template host: pi's ctl handshake on the local socket
+ * (its view's death meanwhile rolls back; a timeout is only control missing, the job runs), else
+ * the view's liveness window.
+ */
+async function builtInReadiness(
+  row: AgentRow,
+  command: string,
+  host: string,
+  localSock: string | undefined,
+  opts: SpawnAgentOptions,
+): Promise<{ ctl: SpawnCtl; incarnation?: string; trustDialog: boolean }> {
+  if (localSock === undefined) {
+    const trustDialog = await awaitSpawnLiveness(row.paneId, row.name, command, host);
+    return { ctl: "skipped", trustDialog };
+  }
+  if (opts.ctl === false || defaultSpawnCtlMs() === 0)
+    return { ctl: "skipped", trustDialog: false };
+  const check = defaultSpawnLivenessMs() !== 0;
+  const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
+  const alive = async (): Promise<void> => {
+    if (await viewPresent(row.paneId, await activeMux())) return;
+    throw new AgentDiedOnSpawnError(row.name, row.paneId, undefined, command, when, host);
+  };
+  const hs = await awaitCtlHandshake(localSock, check ? alive : undefined, opts.signal);
+  return {
+    ctl: hs.ctl,
+    ...(hs.incarnation !== undefined ? { incarnation: hs.incarnation } : {}),
+    trustDialog: false,
+  };
 }
