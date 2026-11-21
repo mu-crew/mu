@@ -7,7 +7,6 @@
 // target, or only an extra one, is `unknown`: an effect stays journaled and
 // nothing is recorded. Fence: under a changed instance nothing is sent.
 
-import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,10 +26,12 @@ import type { JobSpec } from "../src/jobs/types.js";
 import { EffectFencedError } from "../src/plugins/errors.js";
 import { type PluginJobKind, pluginJobRef, stopKey } from "../src/plugins/job.js";
 import { resolveEffect } from "../src/plugins/reconcile.js";
-import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
+import { closePluginSessions } from "../src/plugins/registry.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, jobSeams } from "./_plugin.js";
+import { registerFixturePlugin, withPluginPipes } from "./_plugin-handshake.js";
 
 const SPEC: JobSpec = {
   workstream: "ws",
@@ -65,8 +66,7 @@ let kind: PluginJobKind;
 let token: string;
 let agent: { workstream: string; name: string; incarnation: number };
 
-const deadPid = () =>
-  Number(spawnSync("/bin/sh", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim());
+const deadPid = cachedDeadPid();
 
 async function setup(job: Record<string, unknown> = {}) {
   f = fakePlugin(dir, {
@@ -76,7 +76,7 @@ async function setup(job: Record<string, unknown> = {}) {
       host: { acquire: { lookup: true, fenceKey: true } },
     },
   });
-  await addPlugin(db, "fake", f.argv);
+  await registerFixturePlugin(db, f);
   addHost(db, { name: "dev", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
   kind = resolveHost(db, "dev").jobKind as PluginJobKind;
   token =
@@ -153,7 +153,7 @@ afterEach(async () => {
 });
 
 /** [name, method answered, its reply, the seam patch, the entry point; it asserts unknown and the effect kept]. */
-type Row = [string, string, unknown, Record<string, unknown>, () => Promise<void>];
+type Row = [string, string, unknown, Record<string, unknown>, () => Promise<void>, "pipes"?];
 
 const kept = (key: string) => expect(getEffect(db, key)?.state).toBe("unknown");
 
@@ -193,6 +193,7 @@ const REPLIES: Row[] = [
         "unknown",
       );
     },
+    "pipes",
   ],
   [
     "job.lookup (the reconciler's): a reply kind's found without its view",
@@ -268,6 +269,7 @@ const REPLIES: Row[] = [
       expect(await resolveEffect(db, key)).toMatchObject({ state: "unknown" });
       kept(key);
     },
+    "pipes",
   ],
   [
     "channel.readStates: another agent idle, the asked one absent (an abort)",
@@ -290,6 +292,7 @@ const REPLIES: Row[] = [
       expect(await resolveEffect(db, key)).toMatchObject({ state: "unknown" });
       kept(key);
     },
+    "pipes",
   ],
   [
     "host.lookup: a found host without its handle",
@@ -305,10 +308,15 @@ const REPLIES: Row[] = [
 ];
 
 describe("a reply is checked against its request: a failing one is unknown, never success", () => {
-  it.each(REPLIES)("%s", async (_name, method, reply, job, entry) => {
+  it.each(REPLIES)("%s", async (_name, method, reply, job, entry, transport) => {
     await setup(job);
-    f.set({ replies: { [method]: reply } });
-    await entry();
+    if (transport === "pipes") {
+      await withPluginPipes(f, entry, { method, result: reply });
+      expect(sent(method)).toBe(1);
+    } else {
+      f.set({ replies: { [method]: reply } });
+      await entry();
+    }
   });
 
   it("channel.readStates: the asked agent's reading counts, extra targets are ignored", async () => {

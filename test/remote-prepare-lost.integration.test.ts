@@ -20,7 +20,7 @@ import {
 } from "../src/hosts.js";
 import { prepareRemote, RemotePrepareError } from "../src/remote-agent.js";
 import { rmFixtureDir } from "./_fs.js";
-import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
+import { commitFileIn, copyGitFixture, gitIn } from "./_git.js";
 
 let dir: string;
 let home: string;
@@ -35,7 +35,7 @@ beforeEach(() => {
   repo = join(dir, "repo");
   mkdirSync(home);
   mkdirSync(repo);
-  initGitRepo(repo);
+  copyGitFixture(repo);
   savedHome = process.env.HOME;
   process.env.HOME = home;
   db = openDb({ path: join(dir, "mu.db") });

@@ -41,7 +41,7 @@ import { type Db, openDb } from "../src/db.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { listWorktrees, worktreePath } from "../src/worktree.js";
-import { initGitRepo } from "./_git.js";
+import { copyGitFixture } from "./_git.js";
 import { runCli, runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
@@ -203,7 +203,7 @@ describe("spawnAgent — pre-flight PATH check (Part A)", () => {
     // a typo in --cli leaves an orphan worktree behind.
     const stateDir = mkdtempSync(join(tmpdir(), "mu-spawn-validation-state-"));
     const projectRoot = mkdtempSync(join(tmpdir(), "mu-spawn-validation-proj-"));
-    initGitRepo(projectRoot);
+    copyGitFixture(projectRoot);
     process.env.MU_STATE_DIR = stateDir;
     try {
       ensureWorkstream(db, "auth");

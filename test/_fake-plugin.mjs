@@ -70,26 +70,11 @@
 // Every request and every $/cancel is logged.
 
 import { execFileSync, spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
+import { initializeReply } from "./_plugin-initialize.mjs";
 
 const configPath = process.argv[2];
-const here = dirname(fileURLToPath(import.meta.url));
-const SCHEMA = join(here, "..", "schemas", "plugin-protocol-v1.json");
-const digest = `sha256:${createHash("sha256").update(readFileSync(SCHEMA)).digest("hex")}`;
-
-const DEFAULT_SEAMS = {
-  link: {
-    fetch: true,
-    slots: "self",
-    remoteOnTimeout: "stopped",
-    quiescence: "provable",
-    maxScriptBytes: 131072,
-    checks: ["reach"],
-  },
-};
 
 const config = () => {
   try {
@@ -541,25 +526,6 @@ function answer(id, method, params) {
   }
 }
 
-function initialize(id, params) {
-  const c = config();
-  const [min, max] = c.speaks ?? [1, 1];
-  const offered = params?.protocol ?? { min: 0, max: 0 };
-  const hi = Math.min(max, offered.max);
-  const common = hi >= Math.max(min, offered.min) ? hi : null;
-  if (common === null && !c.liar) {
-    fail(id, "permanent", `no common protocol version: the fake speaks ${min}..${max}`);
-    return;
-  }
-  reply(id, {
-    protocol: common ?? max,
-    plugin: { name: c.name ?? "fake", version: c.version ?? "0.1.0" },
-    instance: c.instance ?? "fake-1",
-    schema: c.schema ?? digest,
-    seams: c.seams ?? DEFAULT_SEAMS,
-  });
-}
-
 function onMessage(msg) {
   if (msg.method === "$/cancel") {
     appendFileSync(
@@ -588,8 +554,9 @@ function onMessage(msg) {
   );
   if (msg.method === "initialize") {
     const delay = config().initDelayMs;
-    if (delay) setTimeout(() => initialize(msg.id, msg.params), delay);
-    else initialize(msg.id, msg.params);
+    const initialize = () => write(initializeReply(config(), msg.id, msg.params));
+    if (delay) setTimeout(initialize, delay);
+    else initialize();
     return;
   }
   const fault = nextFault(msg.method);

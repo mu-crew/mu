@@ -11,6 +11,7 @@ import { execFile, execFileSync, spawn } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -23,7 +24,7 @@ import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { stateDirIn } from "../src/state-dir.js";
-import { initGitRepo } from "./_git.js";
+import { copyGitFixture } from "./_git.js";
 
 const execFileP = promisify(execFile);
 const CLI = join(process.cwd(), "dist", "cli.js");
@@ -55,8 +56,8 @@ describeIfBuilt("spawn --worktree killed mid-create", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "mu-abort-"));
     repo = join(dir, "repo");
-    execFileSync("mkdir", ["-p", repo]);
-    initGitRepo(repo);
+    mkdirSync(repo);
+    copyGitFixture(repo);
     hookPid = join(dir, "hook.pid");
     const hook = join(repo, ".git", "hooks", "post-checkout");
     writeFileSync(hook, `#!/bin/sh\necho $$ > ${hookPid}\nexec sleep 20\n`);

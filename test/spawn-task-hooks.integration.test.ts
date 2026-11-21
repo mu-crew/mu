@@ -5,8 +5,7 @@
 // preset, with no prompt. The multiplexer is the mock tmux; a fake hook
 // harness (test/_fake-harness.ts) stands in for codex on pane %1.
 
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -25,7 +24,7 @@ import { addTask } from "../src/tasks/edit.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
-import { gitIn, initGitRepo } from "./_git.js";
+import { copyGitFixture, gitIn } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
@@ -40,8 +39,8 @@ const envKeys = ["MU_STATE_DIR", "MU_SPAWN_CTL_MS", "MU_SPAWN_LIVENESS_MS"] as c
 beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-sth-")));
   root = join(tmp, "repo");
-  execFileSync("mkdir", ["-p", root]);
-  initGitRepo(root);
+  mkdirSync(root);
+  copyGitFixture(root);
   process.env.MU_STATE_DIR = join(tmp, "state");
   process.env.MU_SPAWN_CTL_MS = "0";
   process.env.MU_SPAWN_LIVENESS_MS = "0";

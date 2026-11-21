@@ -1,6 +1,5 @@
 import { cpus } from "node:os";
-import { mergeConfig } from "vitest/config";
-import baseConfig from "./vitest.config.js";
+import { suiteConfig } from "./vitest.config.js";
 
 /**
  * The pre-commit suite: everything that does NOT drive a real tmux server.
@@ -22,10 +21,9 @@ import baseConfig from "./vitest.config.js";
  *
  * Derived from the machine rather than pinned: 8 was the measurement, not a
  * tuned optimum, and a hard-coded worker count is how a config stops matching
- * the box it runs on. Setting `maxWorkers` to `undefined` does NOT work --
- * mergeConfig keeps the inherited value, so the cap survived and the suite still
- * took 188s. The override has to be a real number. (vitest 4+ has no
- * `minWorkers`; only `maxWorkers` sizes the pool.)
+ * the box it runs on. Pass a real numeric cap to both projects: an undefined
+ * override used to leave the full suite's inherited cap in place. (Vitest 4+
+ * has no `minWorkers`; only `maxWorkers` sizes the pool.)
  *
  * Under muzzle the admitted slot count wins: `MUZZLE_SLOTS` (min 1) is the
  * share of the host muzzle granted this run, and each fork is a process
@@ -40,9 +38,4 @@ const workers = Number.isFinite(slots)
   ? Math.max(1, Math.floor(slots))
   : Math.max(2, Math.min(8, Math.floor((cpus().length || 4) / 2)));
 
-export default mergeConfig(baseConfig, {
-  test: {
-    exclude: ["**/*.integration.test.ts", "**/*.smoke.test.ts"],
-    maxWorkers: workers,
-  },
-});
+export default suiteConfig(workers, ["**/*.integration.test.ts", "**/*.smoke.test.ts"]);

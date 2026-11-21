@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { gitToplevel, isAncestor, owningRoot, upstreamRefs } from "../src/vcs/git.js";
-import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
+import { commitFileIn, copyGitFixture, gitIn } from "./_git.js";
 
 let tmp: string;
 let repo: string;
@@ -15,7 +15,7 @@ beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-vcs-git-")));
   repo = join(tmp, "repo");
   mkdirSync(repo);
-  initGitRepo(repo);
+  copyGitFixture(repo);
 });
 afterEach(() => rmSync(tmp, { recursive: true, force: true }));
 

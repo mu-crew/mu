@@ -13,7 +13,7 @@
 //  3. Remote work needs a runs.log record whose cwd is under <hostRoot>/home.
 import { statSync } from "node:fs";
 import Database from "better-sqlite3";
-import { sh } from "./sandbox.ts";
+import { git, sh } from "./sandbox.ts";
 import type { Sandbox } from "./types.ts";
 
 export interface RunRecord {
@@ -181,7 +181,7 @@ export async function workerCommitOnMain(
   if (produced.length === 0)
     return { ok: false, why: `no worker run produced a commit for ${task} (runs.log)` };
   const range = opts.since ? `${opts.since}..main` : "main";
-  const log = await sh(sb, `git log --format='%H %ae %s' ${range}`, { allowFail: true });
+  const log = await git(sb, ["log", "--format=%H %ae %s", range, "--"]);
   const subject = opts.subject ?? task;
   const onMain = log.stdout
     .split("\n")
@@ -195,11 +195,18 @@ export async function workerCommitOnMain(
     return { ok: false, why: `${onMain.length} commits named ${subject} on main (want 1)` };
   const c = onMain[0];
   if (!c) return { ok: false, why: `no commit named ${subject} on main` };
-  const pid = (
-    await sh(sb, `git show --format= ${c.sha} | git patch-id --stable | cut -d' ' -f1`, {
-      allowFail: true,
-    })
-  ).stdout.trim();
+  // A SHA proves identity without Git diffing it. Preserve run-log order if an
+  // earlier candidate could still match by patch and author.
+  const firstExact = produced.findIndex((r) => r.sha === c.sha);
+  const earlier = firstExact === -1 ? produced : produced.slice(0, firstExact);
+  const needsPatch = earlier.some((r) => r.patchId && c.email === workerEmail(r.agent));
+  const pid = needsPatch
+    ? ((
+        await sh(sb, `git show --format= ${c.sha} | git patch-id --stable`, { allowFail: true })
+      ).stdout
+        .trim()
+        .split(/\s+/)[0] ?? "")
+    : "";
   const worker = produced.find(
     (r) => r.sha === c.sha || (r.patchId === pid && pid !== "" && c.email === workerEmail(r.agent)),
   );

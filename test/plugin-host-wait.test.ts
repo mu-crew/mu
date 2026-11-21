@@ -18,7 +18,7 @@ import { type AgentReading, type WaitRef, type WaitResult, waitForEvents } from 
 import { ensureWorkstream } from "../src/workstream.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
-const h = pluginHostFixture();
+const h = pluginHostFixture({ handshakeInProcess: true });
 const MARGIN = "MU_HOST_DEADLINE_MARGIN_MS";
 const REF: WaitRef = { kind: "agent", workstream: "ws", id: "w1", afterRuns: 0 };
 const BUSY: AgentReading = { status: "busy", runs: 0 };

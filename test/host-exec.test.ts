@@ -24,6 +24,7 @@ import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { addPlugin, closePluginSessions, removePlugin } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, linkSeam, providerSeams } from "./_plugin.js";
+import { registerFixturePlugin } from "./_plugin-handshake.js";
 
 let dir: string;
 let home: string;
@@ -70,7 +71,8 @@ async function plugin(
   max_sessions: number | null = null,
 ): Promise<FakePlugin> {
   const f = fakePlugin(dir, { home, seams: linkSeam(seam), ...config });
-  await addPlugin(db, "fake", f.argv);
+  if (config.initDelayMs === undefined) await registerFixturePlugin(db, f);
+  else await addPlugin(db, "fake", f.argv);
   addHost(db, { name: "p", plugin: "fake", fetch: "true", repo: null, max_sessions });
   return f;
 }

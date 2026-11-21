@@ -18,6 +18,7 @@ import {
 } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
 import { fakePlugin, linkSeam } from "./_plugin.js";
+import { withPluginPipes } from "./_plugin-handshake.js";
 
 let dir: string;
 let db: Db;
@@ -57,7 +58,9 @@ async function refusal(
   needs?: Array<"link" | "job">,
 ): Promise<string> {
   const f = fakePlugin(dir, config);
-  const err = await startPlugin("fake", f.argv, { graceMs: 200, ...(needs ? { needs } : {}) }).then(
+  const start = () => startPlugin("fake", f.argv, { graceMs: 200, ...(needs ? { needs } : {}) });
+  // Keep real-child checks for wire refusal, stderr and transport/launch failures.
+  const err = await (config.stderr === undefined ? withPluginPipes(f, start) : start()).then(
     async (s) => {
       await s.shutdown();
       return undefined;

@@ -316,7 +316,7 @@ are re-export hubs.
 | `tools/eval/` | the eval harness: scripted scenarios and judges run against a built surface (pi, claude or codex orchestrators; fake or real hook-harness workers), the release matrix, the cold-guess probe, the next-step probe and the hill-r2 tournament driver; reports in [docs/eval/](eval/README.md); not shipped |
 | `tools/tui-dogfood/` | the TUI dogfood kit: seven seeded dashboard scenarios on a private tmux socket and a PTY smoke test ([README](../tools/tui-dogfood/README.md)); `dashboard.sh` seeds its scenario 4; not shipped |
 | `docs/history/` | the changelogs of mu 1 to 4, one file per major; not shipped |
-| `test/` | vitest suites; `*.integration.test.ts` touch real tmux, herdr or VCS ([sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
+| `test/` | Vitest suites: `pure` reuses forks for the explicit allowlist; `isolated` keeps separate forks and fixture setup. `*.integration.test.ts` may touch real tmux, herdr or VCS ([test conventions](../test/README.md), [sdk.md § Testing layers](architecture/sdk.md#testing-layers)) |
 
 The shipped contract is
 [reference/surface-contract.md](reference/surface-contract.md).

@@ -3,7 +3,7 @@
 // the release proof, the host identity a recovery pins, and the provider-host
 // base rule (`link.push`, `RemoteBaseMissingError`).
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -44,8 +44,10 @@ import {
 } from "../src/remote-recovery.js";
 import { prepareProviderWorktree, RemoteBaseMissingError } from "../src/remote-worktree.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, providerSeams } from "./_plugin.js";
+import { registerFixturePlugin } from "./_plugin-handshake.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
@@ -53,12 +55,11 @@ let db: Db;
 let f: FakePlugin;
 
 /** A pid that existed and is gone now. */
-const deadPid = (): number =>
-  Number(spawnSync("/bin/sh", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim());
+const deadPid = cachedDeadPid();
 
 async function setup(config: Record<string, unknown> = {}, seams = providerSeams()) {
   f = fakePlugin(dir, { seams, ...config });
-  await addPlugin(db, "fake", f.argv);
+  await registerFixturePlugin(db, f);
 }
 const acquire = (name = "box") =>
   acquireHost(db, { name, provider: "fake", params: { size: "s" }, repo: "/work" });

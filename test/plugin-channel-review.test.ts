@@ -40,7 +40,7 @@ import { ensureWorkstream } from "../src/workstream.js";
 import { fakePlugin, providerSeams } from "./_plugin.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
 
-const h = pluginHostFixture();
+const h = pluginHostFixture({ handshakeInProcess: true });
 
 const stopJob = async (incarnation: number) => {
   const r = getCarrierJobByAgent(h.db, incarnation);

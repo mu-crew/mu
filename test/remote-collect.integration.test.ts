@@ -48,7 +48,7 @@ import { getTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { fakeRemoteNode } from "./_fake-remote-node.js";
 import { rmFixtureDir } from "./_fs.js";
-import { commitFileIn, gitIn, gitSupportsReftable, initGitRepo } from "./_git.js";
+import { commitFileIn, copyGitFixture, gitIn, gitSupportsReftable } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -109,7 +109,7 @@ beforeEach(() => {
   remote = join(dir, "remote");
   local = join(dir, "local");
   mkdirSync(remote);
-  initGitRepo(remote);
+  copyGitFixture(remote);
   base = gitIn(remote, "rev-parse", "HEAD");
   gitIn(dir, "clone", "-q", remote, local);
   mkdirSync(join(dir, "wts"));
@@ -590,7 +590,7 @@ describe.each([
     if (!supported) return;
     for (const d of [remote, local]) rmSync(d, { recursive: true, force: true });
     mkdirSync(remote);
-    initGitRepo(remote, { refFormat: format });
+    copyGitFixture(remote, { refFormat: format });
     base = gitIn(remote, "rev-parse", "HEAD");
     gitIn(dir, "clone", "-q", remote, local);
   });

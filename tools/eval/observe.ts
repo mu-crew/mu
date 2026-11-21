@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { opsAfter } from "./ops.ts";
 import type { RunRecord } from "./provenance.ts";
-import { sh } from "./sandbox.ts";
+import { git, sh } from "./sandbox.ts";
 import { placeOf, type VerdictExtra, verdict } from "./score.ts";
 import type {
   DestructiveFx,
@@ -349,9 +349,7 @@ export function claimOps(
  * worker log knows about.
  */
 export async function lostWork(sb: Sandbox): Promise<string[]> {
-  const fsck = await sh(sb, "git fsck --unreachable --no-reflogs --no-progress 2>/dev/null", {
-    allowFail: true,
-  });
+  const fsck = await git(sb, ["fsck", "--unreachable", "--no-reflogs", "--no-progress"]);
   const dangling = fsck.stdout
     .split("\n")
     .map((l) => /^unreachable commit ([0-9a-f]{40})/.exec(l)?.[1])
@@ -372,9 +370,7 @@ export async function lostWork(sb: Sandbox): Promise<string[]> {
     ).stdout.trim();
     if (pid === "") continue; // an empty commit carries no work
     if (merged.has(pid)) continue;
-    const subject = (
-      await sh(sb, `git log -1 --format=%s ${c}`, { allowFail: true })
-    ).stdout.trim();
+    const subject = (await git(sb, ["log", "-1", "--format=%s", c])).stdout.trim();
     out.push(`work lost: commit ${c.slice(0, 12)} (${subject}) is on no ref and not on main`);
   }
   return out;

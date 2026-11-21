@@ -2,7 +2,7 @@
 // test: `<dir>/bin/mu-plugin-<name>` runs the fake under this node with its
 // JSON config. `calls()` reads the requests it got.
 
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +17,8 @@ export interface FakePlugin {
   readonly configPath: string;
   /** Replace keys of the config (re-read by the fake on every request). */
   set(patch: Record<string, unknown>): void;
+  /** Clear config overrides and logs between reply-only cases on an idle peer. */
+  reset(): void;
   /** Every request (and `$/cancel`) the fake got, in order (initialize included). */
   calls(): Array<{ method: string; params: Record<string, unknown> }>;
   /** How many times the fake finished its EOF cleanup and exited on its own. */
@@ -55,7 +57,8 @@ export function fakePlugin(
     : `#!${process.execPath}\nimport(${JSON.stringify(FAKE.href)});\n`;
   writeFileSync(path, launcher);
   chmodSync(path, 0o755);
-  let current: Record<string, unknown> = { name, home: dir, ...config };
+  const initial: Record<string, unknown> = { name, home: dir, ...config };
+  let current = initial;
   const log = (): Array<{ method: string; params: Record<string, unknown> }> => {
     try {
       return readFileSync(`${configPath}.log`, "utf8")
@@ -75,6 +78,12 @@ export function fakePlugin(
     set(patch) {
       current = { ...current, ...patch };
       writeFileSync(configPath, JSON.stringify(current));
+    },
+    reset() {
+      current = initial;
+      writeFileSync(configPath, JSON.stringify(current));
+      for (const suffix of ["log", "state", "jobs"])
+        rmSync(`${configPath}.${suffix}`, { force: true });
     },
     calls() {
       return log().filter((e) => e.method !== CLEAN_EXIT);

@@ -2,8 +2,7 @@
 // identity re-check and the staged-spawn rollback's worktree ownership. The
 // multiplexer is the mock tmux; no pane is real.
 
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -43,7 +42,7 @@ import {
   worktreePath,
 } from "../src/worktree.js";
 import { rmFixtureDir } from "./_fs.js";
-import { gitIn, initGitRepo } from "./_git.js";
+import { copyGitFixture, gitIn } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";
 
@@ -56,8 +55,8 @@ const envKeys = ["MU_STATE_DIR", "MU_SPAWN_CTL_MS", "MU_SPAWN_LIVENESS_MS"];
 beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-guards-race-")));
   root = join(tmp, "repo");
-  execFileSync("mkdir", ["-p", root]);
-  initGitRepo(root);
+  mkdirSync(root);
+  copyGitFixture(root);
   process.env.MU_STATE_DIR = join(tmp, "state");
   process.env.MU_SPAWN_CTL_MS = "0";
   process.env.MU_SPAWN_LIVENESS_MS = "0";

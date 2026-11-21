@@ -50,7 +50,7 @@ import { type FakeRemoteNode, fakeRemoteNode } from "./_fake-remote-node.js";
 import { fakePlugin, jobSeams, linkSeam } from "./_plugin.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
 
-const h = pluginHostFixture();
+const h = pluginHostFixture({ handshakeInProcess: true });
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
     cwd,

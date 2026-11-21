@@ -28,7 +28,7 @@ import { addTask } from "../src/tasks/edit.js";
 import { taskIdFor } from "../src/tasks.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
-const h = pluginHostFixture();
+const h = pluginHostFixture({ handshakeInProcess: true });
 const effects = () =>
   h.db.prepare("SELECT key, method, state, seq FROM effects ORDER BY created_at").all() as Array<{
     key: string;

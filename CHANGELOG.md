@@ -58,6 +58,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - The fast test tier honours `MUZZLE_SLOTS`. On macOS test processes use
   the toolchain Git directly, and plugin and eval fixtures launch fewer
   processes. Production command resolution is unchanged.
+- Both test tiers reuse forks for an allowlist of pure unit files. Plugin
+  fixtures use in-process pipes for setup-only handshakes, and the typed
+  error matrix shares one real child. Integration Git fixtures copy a
+  seed repo; eval judgements avoid shells for single Git commands.
 - `host check` and close take no `host_channels` row for a `slots: "self"`
   link (the link arbitrates its own connection).
 - **A `--worktree` spawn on a static host resolves `--from` locally** (ladder

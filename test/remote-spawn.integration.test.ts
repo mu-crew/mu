@@ -33,7 +33,7 @@ import { getTask } from "../src/tasks.js";
 import { killSession, tmux } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { gitIn, initGitRepo } from "./_git.js";
+import { copyGitFixture, gitIn } from "./_git.js";
 import { tmuxIntegrationAvailable } from "./_mux.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
@@ -135,7 +135,7 @@ beforeEach(() => {
   repo = join(dir, "repo");
   mkdirSync(home);
   mkdirSync(repo);
-  initGitRepo(repo);
+  copyGitFixture(repo);
   // The caller's checkout is the host's repo: a --worktree base resolves locally (§3.3).
   prevCwd = process.cwd();
   process.chdir(repo);

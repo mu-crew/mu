@@ -307,6 +307,11 @@ export async function sh(
   return r;
 }
 
+/** Read the sandbox repository without a shell. Never throws. */
+export function git(sb: Sandbox, args: string[]): Promise<ExecResult> {
+  return exec("git", args, { env: sb.env, cwd: sb.repoDir });
+}
+
 /** Run the surface's mu. Never throws. */
 export async function mu(sb: Sandbox, args: string[]): Promise<ExecResult> {
   return exec("node", [sb.surface.cli, ...args], { env: sb.env, cwd: sb.repoDir });

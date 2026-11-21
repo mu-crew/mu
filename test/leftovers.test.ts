@@ -4,7 +4,6 @@
 // shared preflight is clear, else the close. The mu-side stop-failure record lifecycle too.
 // Fake tmux; `stop` and `exec` are sh shims logging to one order log.
 
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -31,6 +30,7 @@ import { addHost } from "../src/hosts.js";
 import { type Leftover, leftoverLines, listLeftovers, withStopFailed } from "../src/leftovers.js";
 import { safeJsonLine } from "../src/output-contract.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli, runCliJson } from "./_runCli.js";
@@ -68,7 +68,7 @@ const reservation = (): CarrierJob => {
   if (r === undefined) throw new Error("no reservation");
   return r;
 };
-const deadPid = (): number => spawnSync("true").pid ?? 999_999;
+const deadPid = cachedDeadPid();
 const leftovers = () => listLeftovers(db, "auth");
 const REATTACH = "mu agent reattach worker-1 -w auth";
 const CLOSE = "mu agent close worker-1 -w auth";

@@ -2,7 +2,6 @@
 // needs: the `effects` table, `agents.delivery_seq`, the carrier_jobs columns
 // and its nullable `host_stop`, completed in place on an existing v14 file.
 
-import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +23,7 @@ import {
   writeEffect,
 } from "../src/effects.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 
 let dir: string;
@@ -41,10 +41,7 @@ afterEach(() => {
 });
 
 /** A pid that existed and is gone now: a crashed creator. */
-function deadPid(): number {
-  const r = spawnSync("/bin/sh", ["-c", "echo $$"], { encoding: "utf8" });
-  return Number(r.stdout.trim());
-}
+const deadPid = cachedDeadPid();
 
 const intent = (over: Partial<EffectIntent> = {}): EffectIntent => ({
   key: "k1",

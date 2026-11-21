@@ -1,7 +1,6 @@
 // Host channels (v_host_profiles): max_sessions admission, holder identity and
 // reclamation. Independent DB connections stand in for separate mu processes.
 
-import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,6 +17,7 @@ import {
   reserveHostChannel,
   withHostChannel,
 } from "../src/hosts.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 
 let dir: string;
@@ -56,10 +56,7 @@ afterEach(() => {
 });
 
 /** A pid that certainly no longer exists. */
-function deadPid(): number {
-  const r = spawnSync("true");
-  return r.pid;
-}
+const deadPid = cachedDeadPid();
 
 describe("admission", () => {
   it("cap 1: a second holder is refused with one line naming the first", async () => {

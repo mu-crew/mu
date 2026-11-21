@@ -9,8 +9,8 @@
 // pid that existed and exited (`deadPid`), and the plugin group it sent to is
 // gone too once its session is closed.
 
-import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -38,8 +38,10 @@ import {
 } from "../src/plugins/registry.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, jobSeams, providerSeams } from "./_plugin.js";
+import { registerFixturePlugin, withPluginPipes } from "./_plugin-handshake.js";
 
 const SPEC: JobSpec = {
   workstream: "ws",
@@ -59,14 +61,12 @@ let kind: PluginJobKind;
 let token: string;
 
 /** A pid that existed and is gone now. */
-function deadPid(): number {
-  return Number(spawnSync("/bin/sh", ["-c", "echo $$"], { encoding: "utf8" }).stdout.trim());
-}
+const deadPid = cachedDeadPid();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function setup(patch: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
   f = fakePlugin(dir, { seams: { ...jobSeams(patch), ...extra } });
-  await addPlugin(db, "fake", f.argv);
+  await registerFixturePlugin(db, f);
   addHost(db, { name: "dev", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
   kind = resolveHost(db, "dev").jobKind as PluginJobKind;
   token =
@@ -129,7 +129,10 @@ describe("plugin faults (D16)", () => {
   it("F1: mu killed after the intent, before the call: the next touch claims it; none counts only under the gate", async () => {
     await setup();
     crashedIntent();
-    const [r] = await kind.resolve(token);
+    const [r] = await withPluginPipes(f, () => kind.resolve(token), {
+      method: "job.lookup",
+      result: { none: true },
+    });
     expect(r).toEqual({ state: "none" });
     expect(jobCalls("job.lookup")[0]?.params).toMatchObject({ key: token, fence: true });
     expect(getEffect(db, token)).toBeUndefined();
@@ -277,7 +280,7 @@ describe("plugin faults (D16)", () => {
       },
     );
     for (let i = 0; i < 250 && jobCalls("job.start").length === 0; i++) await sleep(20);
-    const pgid = Number(spawnSync("cat", [pidFile], { encoding: "utf8" }).stdout);
+    const pgid = Number(readFileSync(pidFile, "utf8"));
     setEffectOwnerForTests({ pid: mu.pid ?? 0, start: null });
     writeEffect(db, {
       key: token,

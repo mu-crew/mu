@@ -50,7 +50,7 @@
 // when set. Production code never sets the var; this file is the only
 // caller.
 
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import Database from "better-sqlite3";
@@ -431,6 +431,12 @@ export async function setup(project?: unknown): Promise<void> {
   vitestTmpDir = leakedVitestTmpDir(project);
   // One scratch dir per run, removed in teardown: forks' XDG roots go inside.
   runRoot = mkdtempSync(join(tmpdir(), `mu-test-run-${process.pid.toString(36)}-`));
+  // Git fixtures don't need the machine's system config or sample hooks.
+  process.env.GIT_CONFIG_NOSYSTEM = "1";
+  const gitTemplate = mkdtempSync(join(runRoot, "git-template-"));
+  // A few fixtures write their own exclude file or hooks here.
+  for (const dir of ["info", "hooks"]) mkdirSync(join(gitTemplate, dir));
+  process.env.GIT_TEMPLATE_DIR = gitTemplate;
   (project as { provide?: (k: string, v: unknown) => void } | undefined)?.provide?.(
     RUN_ROOT_KEY,
     runRoot,

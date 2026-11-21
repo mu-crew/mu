@@ -52,13 +52,16 @@ function plantHolder(caller: string, pid: number, startedMs: number): string {
   return file;
 }
 
-/** `ps`'s start of a live pid, in ms, as the reader computes it. */
-function startOf(pid: number): number {
-  const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+let parentStart: number | undefined;
+/** The same parent holds these marks throughout this isolated file. */
+function parentStartedAt(): number {
+  if (parentStart !== undefined) return parentStart;
+  const out = execFileSync("ps", ["-o", "lstart=", "-p", String(process.ppid)], {
     encoding: "utf8",
     env: { ...process.env, LC_ALL: "C" },
   });
-  return Date.parse(out.trim().replace(/\s+/g, " "));
+  parentStart = Date.parse(out.trim().replace(/\s+/g, " "));
+  return parentStart;
 }
 
 /** A pid that is not running. */
@@ -103,7 +106,7 @@ describe("live wait marks", () => {
 
   it("a live other process holds; a dead or reused pid does not, and its mark is pruned", () => {
     const parent = process.ppid;
-    plantHolder("auth/orch", parent, startOf(parent));
+    plantHolder("auth/orch", parent, parentStartedAt());
     expect(liveHolder("auth/orch")?.pid).toBe(parent);
 
     const dead = plantHolder("auth/w1", deadPid(), Date.now());
@@ -111,7 +114,7 @@ describe("live wait marks", () => {
     expect(readdirSync(callerDir("auth/w1"))).not.toContain(dead.split("/").at(-1));
 
     // The parent's pid with another start time: a later process took the pid.
-    plantHolder("auth/w2", parent, startOf(parent) - 3_600_000);
+    plantHolder("auth/w2", parent, parentStartedAt() - 3_600_000);
     expect(liveHolder("auth/w2")).toBeUndefined();
     expect(readdirSync(callerDir("auth/w2"))).toEqual([]);
   });
@@ -120,7 +123,7 @@ describe("live wait marks", () => {
 describe("an --as hold marks first, then checks", () => {
   it("refused: another live holder is named, and this process's own mark is gone", () => {
     const parent = process.ppid;
-    plantHolder("auth/orch", parent, startOf(parent));
+    plantHolder("auth/orch", parent, parentStartedAt());
     let caught: unknown;
     try {
       holdCallers(["auth/orch"], { refuse: ["auth/orch"] });
@@ -136,7 +139,7 @@ describe("an --as hold marks first, then checks", () => {
     // The first --as wait has marked and checked (nobody else held then).
     const first = holdCallers(["auth/orch"], { refuse: ["auth/orch"] });
     // A second process marks before the first's check could see it: its own check sees the first.
-    const theirs = plantHolder("auth/orch", process.ppid, startOf(process.ppid));
+    const theirs = plantHolder("auth/orch", process.ppid, parentStartedAt());
     expect(liveHolder("auth/orch")?.pid).toBe(process.ppid);
     expect(() => holdCallers(["auth/orch"], { refuse: ["auth/orch"] })).toThrow(CallerBusyError);
     first();
@@ -178,7 +181,7 @@ describe("a real wait marks its callers while it runs", () => {
 
 describe("--as on the verbs", () => {
   it("mu wait --as is refused (exit 4) while another live process waits as that caller", async () => {
-    plantHolder("auth/orch", process.ppid, startOf(process.ppid));
+    plantHolder("auth/orch", process.ppid, parentStartedAt());
     const r = await runCliWire(
       ["wait", "--as", "auth/orch", "--timeout", "0.05", "--json"],
       dbPath,
@@ -208,7 +211,7 @@ describe("--as on the verbs", () => {
   });
 
   it("mu next --as: a hold waits, so it is refused; a plain pass is not", async () => {
-    plantHolder("auth/orch", process.ppid, startOf(process.ppid));
+    plantHolder("auth/orch", process.ppid, parentStartedAt());
     const held = await runCliWire(
       ["next", "-w", "auth", "--as", "auth/orch", "--hold", "--json"],
       dbPath,

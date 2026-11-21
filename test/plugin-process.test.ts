@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { classifyError } from "../src/cli/handle.js";
 import { HOST_GRACE_MS } from "../src/hosts.js";
 import { type PluginSession, startPlugin } from "../src/plugins/client.js";
@@ -26,12 +26,14 @@ let dir: string;
 let f: FakePlugin;
 let s: PluginSession | undefined;
 let tapped: Array<{ stream: string; text: string }>;
+let shared: { dir: string; fake: FakePlugin; session: PluginSession } | undefined;
 
 const GRACE = 150;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "mppr-"));
-  f = fakePlugin(dir);
+  dir = shared?.dir ?? mkdtempSync(join(tmpdir(), "mppr-"));
+  f = shared?.fake ?? fakePlugin(dir);
+  if (shared !== undefined) f.reset();
   tapped = [];
   setPluginTapForTests((stream, text) => tapped.push({ stream, text }));
 });
@@ -40,7 +42,7 @@ afterEach(async () => {
   setPluginTapForTests(undefined);
   await s?.shutdown();
   s = undefined;
-  rmFixtureDir(dir);
+  if (shared === undefined) rmFixtureDir(dir);
 });
 
 async function start(config: Record<string, unknown> = {}): Promise<PluginSession> {
@@ -147,8 +149,40 @@ describe("calls and framing", () => {
 });
 
 describe("typed errors and retries", () => {
+  // A typed error never stops the transport. Exercise every reply on one
+  // real child; only its per-request config, fault counters and log reset.
+  beforeAll(async () => {
+    const root = mkdtempSync(join(tmpdir(), "mppr-"));
+    try {
+      const fake = fakePlugin(root);
+      shared = {
+        dir: root,
+        fake,
+        session: await startPlugin("fake", fake.argv, { graceMs: GRACE }),
+      };
+    } catch (e) {
+      rmFixtureDir(root);
+      throw e;
+    }
+  });
+  afterAll(async () => {
+    if (shared === undefined) return;
+    const { session, dir: root } = shared;
+    shared = undefined;
+    try {
+      await session.shutdown();
+    } finally {
+      rmFixtureDir(root);
+    }
+  });
+  const withFaults = (...faults: string[]) => {
+    if (shared === undefined) throw new Error("typed error fixture did not start");
+    f.set({ faults: { "link.exec": faults } });
+    return shared.session;
+  };
+
   it("retryable twice, then success: three sends of the identical params", async () => {
-    const p = await start({ faults: { "link.exec": ["retryable", "retryable"] } });
+    const p = withFaults("retryable", "retryable");
     expect((await exec(p)).exitCode).toBe(0);
     const calls = execCalls();
     expect(calls).toHaveLength(3);
@@ -161,9 +195,7 @@ describe("typed errors and retries", () => {
   });
 
   it("retryable four times: three retries, then exit 5", async () => {
-    const p = await start({
-      faults: { "link.exec": ["retryable", "retryable", "retryable", "retryable"] },
-    });
+    const p = withFaults("retryable", "retryable", "retryable", "retryable");
     const err = await exec(p).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PluginCallError);
     expect((err as PluginCallError).kind).toBe("retryable");
@@ -175,7 +207,7 @@ describe("typed errors and retries", () => {
     ["permanent", 5],
     ["human", 5],
   ] as const)("%s is never retried (exit %i)", async (kind, code) => {
-    const p = await start({ faults: { "link.exec": [kind] } });
+    const p = withFaults(kind);
     const err = await exec(p).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(PluginCallError);
     expect((err as PluginCallError).kind).toBe(kind);
@@ -185,7 +217,7 @@ describe("typed errors and retries", () => {
   });
 
   it("unknown-outcome is an unknown effect (exit 1) and a read's unknown answer, never retried", async () => {
-    const p = await start({ faults: { "link.exec": ["unknown-outcome", "unknown-outcome"] } });
+    const p = withFaults("unknown-outcome", "unknown-outcome");
     await expect(exec(p)).rejects.toBeInstanceOf(EffectOutcomeUnknownError);
     await expect(read(p)).rejects.toBeInstanceOf(PluginAnswerUnknownError);
     expect(execCalls()).toHaveLength(2);

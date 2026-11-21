@@ -20,7 +20,7 @@ import { type Db, openDb } from "../src/db.js";
 import { addHost, listHostChannels, reserveHostChannel, runHostTemplate } from "../src/hosts.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { rmFixtureDir } from "./_fs.js";
-import { initGitRepo } from "./_git.js";
+import { copyGitFixture } from "./_git.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
@@ -42,8 +42,8 @@ beforeEach(() => {
   dbPath = join(dir, "mu.db");
   bin = join(dir, "bin");
   calls = join(dir, "calls");
+  copyGitFixture(dir);
   mkdirSync(bin);
-  initGitRepo(dir);
   db = openDb({ path: dbPath });
   servers = [];
   shim(

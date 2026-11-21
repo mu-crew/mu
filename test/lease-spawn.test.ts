@@ -6,7 +6,6 @@
 // host, no real git, no mule: test/lease-spawn.integration.test.ts runs a real
 // fake-carrier script on real tmux.
 
-import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -72,6 +71,7 @@ import { listRemoteRecoveries, RemoteRecoveryRefusedError } from "../src/remote-
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { helloReply, withHello } from "./_ctl-ext.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
@@ -265,7 +265,7 @@ const launched = (paneId?: string, name = "worker-1"): CarrierJob => {
   return r;
 };
 /** A pid that is certainly gone: a child that already exited. */
-const deadPid = (): number => spawnSync("true").pid ?? 999_999;
+const deadPid = cachedDeadPid();
 
 describe("a lease spawn records its job and holds no channel", () => {
   it("the handshake fills the reservation (id + pane, admitted stop); no host_channels row at the pane or after", async () => {

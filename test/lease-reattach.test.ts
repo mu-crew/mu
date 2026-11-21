@@ -58,6 +58,7 @@ import {
   workstreamRevision,
 } from "../src/workstream.js";
 import { helloReply, withHello } from "./_ctl-ext.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
@@ -97,7 +98,7 @@ const failure = (p: Promise<unknown>): Promise<unknown> =>
     (e: unknown) => e,
   );
 /** A pid that is certainly gone: a child that already exited. */
-const deadPid = (): number => spawnSync("true").pid ?? 999_999;
+const deadPid = cachedDeadPid();
 const isPaneCall = (a: readonly string[]): boolean =>
   ["new-session", "new-window", "split-window"].includes(a[0] ?? "");
 

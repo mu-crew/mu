@@ -25,7 +25,7 @@ import {
 } from "../src/channels/index.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
 
-const h = pluginHostFixture();
+const h = pluginHostFixture({ handshakeInProcess: true });
 
 const live = async (config: Record<string, unknown> = {}) => {
   await h.setup({}, config);

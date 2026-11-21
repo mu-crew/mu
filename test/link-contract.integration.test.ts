@@ -13,7 +13,7 @@ import { resolveHost } from "../src/host-provider.js";
 import { addHost } from "../src/hosts.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
-import { gitIn, initGitRepo } from "./_git.js";
+import { copyGitFixture, gitIn } from "./_git.js";
 import { fakePlugin, linkSeam, sshExample } from "./_plugin.js";
 
 const FETCH = "git fetch --quiet {cwd} HEAD";
@@ -67,8 +67,8 @@ describe.each(IMPLS)("the link contract's fetch: %s", (_name, setup) => {
     local = join(dir, "local");
     mkdirSync(remote);
     mkdirSync(local);
-    initGitRepo(remote);
-    initGitRepo(local);
+    copyGitFixture(remote);
+    copyGitFixture(local);
     db = openDb({ path: join(dir, "mu.db") });
     await setup(db, dir);
   });

@@ -22,7 +22,7 @@ import { addTask } from "../src/tasks/edit.js";
 import { getTask, taskIdFor } from "../src/tasks.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
-const h = pluginHostFixture();
+const h = pluginHostFixture({ handshakeInProcess: true });
 const BRIEF = "do the t1 work";
 
 const spawnT1 = () =>

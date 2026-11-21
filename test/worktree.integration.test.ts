@@ -35,7 +35,7 @@ import {
   worktreePath,
   worktreeState,
 } from "../src/worktree.js";
-import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
+import { commitFileIn, copyGitFixture, gitIn } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { softTeardown } from "./_teardown.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -63,8 +63,8 @@ beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-wt-")));
   stateDir = join(tmp, "state");
   root = join(tmp, "repo");
-  execFileSync("mkdir", ["-p", root]);
-  initGitRepo(root);
+  mkdirSync(root);
+  copyGitFixture(root);
   process.env.MU_STATE_DIR = stateDir;
   process.env.MU_SPAWN_CTL_MS = "0";
   process.env.MU_SPAWN_LIVENESS_MS = "0";

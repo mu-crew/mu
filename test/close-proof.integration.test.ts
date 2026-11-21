@@ -8,6 +8,7 @@ import {
   chmodSync,
   closeSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -29,6 +30,7 @@ import {
   spawnAgent,
 } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
+import { pidProvenGone } from "../src/hosts.js";
 import { listLogs } from "../src/logs.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import {
@@ -42,7 +44,7 @@ import {
   WorktreePathNotEmptyError,
   worktreePath,
 } from "../src/worktree.js";
-import { commitFileIn, gitIn, initGitRepo } from "./_git.js";
+import { commitFileIn, copyGitFixture, gitIn } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 import { seedWorktree } from "./_worktree.js";
@@ -57,8 +59,8 @@ const envKeys = ["MU_STATE_DIR", "MU_SPAWN_CTL_MS", "MU_SPAWN_LIVENESS_MS"] as c
 beforeEach(() => {
   tmp = realpathSync(mkdtempSync(join(tmpdir(), "mu-cp-")));
   root = join(tmp, "repo");
-  execFileSync("mkdir", ["-p", root]);
-  initGitRepo(root);
+  mkdirSync(root);
+  copyGitFixture(root);
   process.env.MU_STATE_DIR = join(tmp, "state");
   process.env.MU_SPAWN_CTL_MS = "0";
   process.env.MU_SPAWN_LIVENESS_MS = "0";
@@ -336,9 +338,18 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     }
     return out;
   };
-  const until = async (ok: () => boolean): Promise<void> => {
-    for (let i = 0; i < 60 && !ok(); i++) await new Promise((r) => setTimeout(r, 50));
-    expect(ok()).toBe(true);
+  const until = async <T>(read: () => T | undefined): Promise<T> => {
+    for (let i = 0; i <= 60; i++) {
+      const found = read();
+      if (found !== undefined) return found;
+      if (i < 60) await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error("fixture process did not become ready");
+  };
+  const livePidFrom = (file: string): number | undefined => {
+    if (!existsSync(file)) return;
+    const pid = Number(readFileSync(file, "utf8"));
+    return pid > 0 && !pidProvenGone(pid, null) ? pid : undefined;
   };
   /**
    * The mock pane's pid runs `script`; `onKill(pane)` is what the kill-pane
@@ -361,8 +372,7 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     procs.push(sh.pid ?? 0);
     let pid = sh.pid ?? 0;
     if (viaScript) {
-      await until(() => descendants(sh.pid ?? 0).length > 0);
-      pid = descendants(sh.pid ?? 0)[0]?.[0] ?? 0;
+      pid = await until(() => descendants(sh.pid ?? 0)[0]?.[0]);
       procs.push(pid);
     }
     tmuxState.panes.set("%1", { windowId: "@1", paneId: "%1", command: "pi", pid });
@@ -388,10 +398,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     resetSleep(); // a real clock: the processes exit 1.5 s after the kill
     const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
     // pane sh (cwd outside the tree) -> subshell -> sleep with its cwd in the tree.
-    const pane = await paneRunning(`(cd "${wt.path}" && sleep 30; true) & wait`, (p) => {
-      setTimeout(() => kill(-p), 1500);
-    });
-    await until(() => descendants(pane).length >= 2);
+    const ready = join(tmp, "child.pid");
+    await paneRunning(
+      `(cd "${wt.path}" || exit; sleep 30 & printf '%s' "$!" > "${ready}"; wait) & wait`,
+      (p) => setTimeout(() => kill(-p), 1500),
+    );
+    await until(() => livePidFrom(ready));
     const p = await previewClose(db, "worker-1", { workstream: "auth" });
     expect(p.worktree?.holders ?? []).toEqual([]); // the pane's own: the kill ends it
     const r = await closeAgent(db, "worker-1", { workstream: "auth" });
@@ -412,10 +424,9 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
         setTimeout(() => kill(-helper), 1500);
       },
     );
-    await until(() => descendants(pane).some((r) => r[0] === r[2] && r[0] !== pane));
-    helper = descendants(pane).find((r) => r[0] === r[2])?.[0] ?? 0; // its group's leader
+    helper = await until(() => descendants(pane).find((r) => r[0] === r[2])?.[0]);
     procs.push(helper);
-    await until(() => descendants(helper).length > 0);
+    await until(() => descendants(helper)[0]?.[0]);
     const r = await closeAgent(db, "worker-1", { workstream: "auth" });
     expect(r.worktree?.action).toBe("removed");
     expect(ours(r.worktree?.warnings)).toEqual([]);
@@ -433,10 +444,10 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
       (p) => kill(-p),
       true,
     );
-    await until(() => existsSync(pidFile) && readFileSync(pidFile, "utf8") !== "");
-    const plugin = Number(readFileSync(pidFile, "utf8"));
+    const plugin = await until(() => livePidFrom(pidFile));
     procs.push(plugin);
-    await until(() => descendants(pane).every((r) => r[0] !== plugin)); // not the pane's child
+    // Still need a topology check: it is not the pane's child.
+    await until(() => descendants(pane).every((r) => r[0] !== plugin) || undefined);
     setTimeout(() => kill(plugin), 1500);
     const r = await closeAgent(db, "worker-1", { workstream: "auth" });
     expect(r.worktree?.action).toBe("removed");
@@ -451,8 +462,7 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
       `cd "${wt.path}" && perl -MPOSIX -e 'POSIX::setsid(); exec "sleep", "60"' & sleep 30`,
       (p) => kill(-p),
     );
-    await until(() => descendants(pane).some((r) => r[0] === r[2] && r[0] !== pane));
-    const helper = descendants(pane).find((r) => r[0] === r[2])?.[0] ?? 0;
+    const helper = await until(() => descendants(pane).find((r) => r[0] === r[2])?.[0]);
     procs.push(helper);
     const t0 = Date.now();
     const r = await closeAgent(db, "worker-1", { workstream: "auth" });

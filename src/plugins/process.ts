@@ -230,7 +230,11 @@ type Unrefable = { ref?: () => void; unref?: () => void };
 export type WatchNote = { method: string; params: unknown };
 
 export class PluginProcess {
-  readonly pgid: number;
+  get pgid(): number {
+    const pid = this.child.pid;
+    if (pid === undefined) throw new Error("an in-process test transport has no process group");
+    return pid;
+  }
   /** The group leader's start time, where the platform tells it (Linux), for D4's group proof. */
   readonly pgidStart: string | null;
   state: PluginState = "starting";
@@ -254,12 +258,11 @@ export class PluginProcess {
   private stopping: Promise<void> | undefined;
 
   private constructor(
-    private readonly child: ChildProcess & { pid: number },
+    private readonly child: ChildProcess,
     /** The one grace: a stop's wait for the group to empty, and a run's reply allowance (link.ts). */
     readonly graceMs: number,
   ) {
-    this.pgid = child.pid;
-    this.pgidStart = pidStart(child.pid);
+    this.pgidStart = child.pid === undefined ? null : pidStart(child.pid);
     this.leaderGone = new Promise((resolve) => {
       child.once("exit", (code, signal) => {
         this.leaderExitAt = Date.now();
@@ -297,6 +300,12 @@ export class PluginProcess {
     this.refStreams(false);
   }
 
+  /** Test-only pipe peer. It owns no OS process, group or signal handler. */
+  static fromTestPipes(child: ChildProcess, graceMs = defaultGraceMs): PluginProcess {
+    if (child.pid !== undefined) throw new Error("test pipes must not own a process");
+    return new PluginProcess(child, graceMs);
+  }
+
   /**
    * Start `argv` in its own process group, tracked from the moment spawn() returns. Refused
    * once mu is terminating. A spawn failure (ENOENT, EACCES) rejects.
@@ -316,7 +325,7 @@ export class PluginProcess {
       // Not started (ENOENT, EACCES): nothing to track; the error event says why.
       return new Promise((_, reject) => child.once("error", reject));
     }
-    const p = new PluginProcess(child as ChildProcess & { pid: number }, graceMs);
+    const p = new PluginProcess(child, graceMs);
     live.add(p);
     installSignals();
     return new Promise((resolve, reject) => {
@@ -454,7 +463,10 @@ export class PluginProcess {
         sleep(this.graceMs).then(() => "grace" as const),
       ]);
       const graceTo = Date.now();
-      for (let i = 0; i < 500 && signalGroup(this.pgid, "SIGKILL"); i++) await sleep(10);
+      const pid = this.child.pid;
+      if (pid !== undefined) {
+        for (let i = 0; i < 500 && signalGroup(pid, "SIGKILL"); i++) await sleep(10);
+      }
       await this.leaderGone;
       // With the group gone the pipe drains and closes; a helper that left the group may
       // still hold it, so mu stops reading after a moment.
@@ -468,18 +480,20 @@ export class PluginProcess {
       this.watches.clear();
       this.state = "gone";
       this.refStreams(false);
-      live.delete(this);
-      if (live.size === 0 && terminating === undefined) removeSignals();
-      stopTrace?.({
-        pgid: this.pgid,
-        why,
-        began,
-        graceFrom,
-        graceTo,
-        by,
-        leaderAt: this.leaderExitAt,
-        gone: Date.now(),
-      });
+      if (pid !== undefined) {
+        live.delete(this);
+        if (live.size === 0 && terminating === undefined) removeSignals();
+        stopTrace?.({
+          pgid: pid,
+          why,
+          began,
+          graceFrom,
+          graceTo,
+          by,
+          leaderAt: this.leaderExitAt,
+          gone: Date.now(),
+        });
+      }
     });
     if (this.leaderExit === undefined) {
       for (const id of this.pending.keys()) {

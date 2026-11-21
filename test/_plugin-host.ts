@@ -16,6 +16,7 @@ import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, providerSeams } from "./_plugin.js";
+import { registerFixturePlugin } from "./_plugin-handshake.js";
 
 export const CLOUD = {
   name: "cloud",
@@ -54,7 +55,7 @@ export interface PluginHost {
   ended(): void;
 }
 
-export function pluginHostFixture(): PluginHost {
+export function pluginHostFixture(opts: { handshakeInProcess?: boolean } = {}): PluginHost {
   const h = {} as PluginHost;
   h.stubMux = (over = {}) => {
     let n = 0;
@@ -84,7 +85,8 @@ export function pluginHostFixture(): PluginHost {
   h.setup = async (job = {}, config = {}, link = {}) => {
     const seams = { ...providerSeams({ channel: "cloud", ...job }, link), channel: CLOUD };
     h.f = fakePlugin(h.dir, { seams, turnMs: 30, ...config });
-    await addPlugin(h.db, "fake", h.f.argv);
+    if (opts.handshakeInProcess) await registerFixturePlugin(h.db, h.f);
+    else await addPlugin(h.db, "fake", h.f.argv);
     await acquireHost(h.db, { name: "box", provider: "fake", params: {}, repo: "/work" });
   };
   h.spawn = (o = {}) =>

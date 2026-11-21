@@ -15,6 +15,14 @@ is true whenever that is set. They skip only if that server failed to start
 (the setup prints a warning). Tests scratch under the per-run dir
 globalSetup `provide`s (`test/_run-root.ts`), removed at the end of the run.
 
+Both tiers use the same `pure` Vitest project for the allowlist in
+`vitest.config.ts`. Its files share a fork and run without fixture setup:
+keep module mocks, DBs, subprocesses and env/cwd mutations in `isolated`.
+
+`registerFixturePlugin` runs setup-only handshakes over pipes in process.
+`withPluginPipes` can also supply a scripted read reply with no process group.
+Keep real children for effect dispatch, child I/O, startup and shutdown.
+
 ## Mux tests
 
 mu drives three multiplexers (`tmux`, `herdr`, `rex`) behind the `MuxBackend`

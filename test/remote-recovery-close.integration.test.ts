@@ -30,7 +30,7 @@ import { listRemoteRecoveries, RemoteRecoveryRefusedError } from "../src/remote-
 import { agentRevision } from "../src/revision.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { commitFileIn, gitIn, gitSupportsReftable, initGitRepo } from "./_git.js";
+import { commitFileIn, copyGitFixture, gitIn, gitSupportsReftable } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";
@@ -96,7 +96,7 @@ describe.each([
     remote = join(dir, "remote");
     local = join(dir, "local");
     mkdirSync(remote);
-    initGitRepo(remote, { refFormat: format });
+    copyGitFixture(remote, { refFormat: format });
     base = gitIn(remote, "rev-parse", "HEAD");
     gitIn(dir, "clone", "-q", remote, local);
     mkdirSync(join(dir, "wts"));
@@ -262,7 +262,7 @@ describe.each([
       gitIn(remote, "worktree", "remove", "--force", wt("w1"));
       const stranger = join(dir, "stranger");
       mkdirSync(stranger);
-      initGitRepo(stranger);
+      copyGitFixture(stranger);
       rmSync(wt("w1"), { recursive: true, force: true });
       execFileSync("mv", [stranger, wt("w1")]);
       await expect(close("w1")).rejects.toMatchObject({

@@ -35,7 +35,7 @@ import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { killSession, tmux } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { initGitRepo } from "./_git.js";
+import { copyGitFixture } from "./_git.js";
 import { tmuxIntegrationAvailable } from "./_mux.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
@@ -120,8 +120,8 @@ beforeEach(() => {
   local = join(dir, "local");
   remote = join(dir, "remote");
   for (const d of [modes, local, remote]) mkdirSync(d);
-  initGitRepo(local);
-  initGitRepo(remote);
+  copyGitFixture(local);
+  copyGitFixture(remote);
   writeFileSync(join(dir, "carrier.js"), CARRIER);
   saved = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
   process.env.MU_SPAWN_CTL_MS = "3000";

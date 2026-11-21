@@ -38,7 +38,7 @@ import { EffectOutcomeUnknownError } from "../src/plugins/errors.js";
 import { reconcile } from "../src/reconcile.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
-const h = pluginHostFixture();
+const h = pluginHostFixture({ handshakeInProcess: true });
 const { setup, spawn, calls, ended } = {
   setup: (...a: Parameters<typeof h.setup>) => h.setup(...a),
   spawn: (...a: Parameters<typeof h.spawn>) => h.spawn(...a),
