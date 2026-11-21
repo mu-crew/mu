@@ -108,6 +108,7 @@ import {
   spawnAgent,
 } from "./spawn.js";
 import { FirstPromptUnknownError, resolveFirstTurn } from "./spawn-plugin.js";
+import { refuseRemoteSpawnMux } from "./spawn-remote.js";
 import { recordSend } from "./transport.js";
 
 export interface TaskSpawnRequest {
@@ -289,6 +290,7 @@ export async function spawnForTask(db: Db, req: TaskSpawnRequest): Promise<TaskS
     throw new AgentSlashCommandUnsupportedError(req.spawn.name, ws, req.text, []);
   }
   assertBriefFitsSpawn(req);
+  if (req.spawn.host !== undefined) await refuseRemoteSpawnMux(db, req.spawn);
   const key = manualKey(req);
   return withSpawnAttemptLock(
     db,
@@ -310,6 +312,7 @@ export async function spawnAutoAttempt(db: Db, req: AutoAttemptRequest): Promise
   if (parseSessionCommand(req.text) !== undefined || isSlashCommand(req.text)) {
     throw new AgentSlashCommandUnsupportedError(req.spawn.name, ws, req.text, []);
   }
+  if (req.spawn.host !== undefined) await refuseRemoteSpawnMux(db, req.spawn);
   // No brief cap before the lock: the attempt is reserved and charged, so an oversized remote
   // brief fails inside it, before the spawn (the receipt `failed`), never left `reserved`.
   return withSpawnAttemptLock(

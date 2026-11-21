@@ -117,6 +117,13 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
     return no("reservation", "its reservation holds no job handle bound to a spawned agent");
   }
   if (r.reason !== null || r.treePath !== null) return no("reservation", `kept: ${r.reason}`);
+  const mux = await activeMux();
+  if (!mux.runsShellCommand) {
+    return no(
+      "carrier",
+      `${mux.name} cannot run the lease attach command in a pane; use tmux or Rex`,
+    );
+  }
   // A carrier an earlier apply could neither install, fence nor prove gone (or died with).
   const marker = await readMarker(db, ws, name);
   if (marker !== "none" && marker !== "stale") return no("carrier", marker);
@@ -139,8 +146,6 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   if (read.kind !== "none" && !(read.kind === "handle" && read.job === job)) {
     return no("job-file", `the job file ${jobFile} is ${describeRead(read)}`);
   }
-  const mux = await activeMux();
-  if (!mux.runsShellCommand) return no("carrier", `${mux.name} cannot run the attach template`);
   const staleMarker = marker === "stale";
   return { r: { ...r, job, agentId, paneId }, profile, rec, wsId: w.id, jobFile, staleMarker };
 }

@@ -86,7 +86,7 @@ import {
 } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
 import { withSpawnLock } from "./spawn-lock.js";
-import { pluginKindOf, spawnPluginAgent } from "./spawn-plugin.js";
+import { spawnPluginAgent } from "./spawn-plugin.js";
 import { launchCommand } from "./spawn-presets.js";
 import {
   awaitCtlHandshake,
@@ -96,7 +96,13 @@ import {
   defaultSpawnLivenessMs,
   type SpawnCtl,
 } from "./spawn-ready.js";
-import { admitRemoteSpawn, isCommandGate, requireHostSpawn } from "./spawn-remote.js";
+import {
+  admitRemoteSpawn,
+  isCommandGate,
+  pluginKindOf,
+  refuseRemoteSpawnMux,
+  requireHostSpawn,
+} from "./spawn-remote.js";
 import { rollbackSpawn } from "./spawn-rollback.js";
 import { reclaimDeadStagings } from "./staging.js";
 
@@ -452,6 +458,7 @@ export function piHooksRequested(env: NodeJS.ProcessEnv = process.env): boolean 
  * pane + row + worktree. The caller-visible error is preserved.
  */
 export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
+  if (opts.host !== undefined) await refuseRemoteSpawnMux(db, opts);
   // A --worktree spawn that died before its pane (SIGKILL) frees its name here.
   await reclaimDeadStagings(db, opts.workstream);
   if (opts.nextFree === true) {

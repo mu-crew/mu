@@ -57,6 +57,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 - The host-profile race test verifies that neither a template nor a plugin
   profile lets a provider claim the name between the conflict check and insert.
+- **herdr refuses remote spawns and reattaches before changing anything.**
+  The refusal names what the pane cannot run (managed argv, command gate,
+  job view, or lease attach command) and says to use tmux or Rex. Local
+  agents that herdr starts natively and pane-free `mu host exec` still work.
 - The fast test tier honours `MUZZLE_SLOTS`. On macOS test processes use
   the toolchain Git directly, and plugin and eval fixtures launch fewer
   processes. Production command resolution is unchanged.

@@ -418,8 +418,8 @@ export const MESSAGES = {
     `host profile ${host} already exists: remove it first (mu host rm ${host})`,
   "host.in_use": (host: string, holders: readonly string[]) =>
     `host ${host} still holds channels (${holders.join(", ")}): close those agents first`,
-  "host.spawn_unsupported": (host: string, mux: string) =>
-    `--host ${host} needs a multiplexer that runs a shell command in its pane; ${mux} starts agents itself and cannot run the profile's shell template (use tmux)`,
+  "host.spawn_unsupported": (host: string, mux: string, part: string) =>
+    `host ${host}: ${mux} starts agents itself and cannot run the ${part} in a pane; use tmux or Rex`,
   "host.harness_missing": (host: string, harness: string, probedAt: string) =>
     `host ${host} has no ${harness}: mu host check ${host} (${probedAt}) found no ${harness} command in the profile's shell, where a spawn's command runs; nothing was spawned. Install ${harness} there (and log it in), run mu host check ${host} again, or spawn another harness`,
   "host.check_failed": (host: string, failed: readonly string[]) =>

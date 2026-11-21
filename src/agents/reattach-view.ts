@@ -41,6 +41,14 @@ export function detachedJob(
   return { r, kind, agentId: row.incarnation, paneId: row.paneId };
 }
 
+async function detachedViewMux(host: string) {
+  const mux = await activeMux();
+  if (!mux.runsShellCommand) {
+    throw new HostSpawnUnsupportedError(host, mux.name, "detached job view command");
+  }
+  return mux;
+}
+
 const facts = (ws: string, d: NonNullable<ReturnType<typeof detachedJob>>) => ({
   name: d.r.name,
   workstream: ws,
@@ -57,7 +65,8 @@ const facts = (ws: string, d: NonNullable<ReturnType<typeof detachedJob>>) => ({
 export async function previewViewReattach(db: Db, ws: string, name: string) {
   const d = detachedJob(db, ws, name);
   if (d === undefined) return undefined;
-  if (await viewPresent(d.paneId)) refuseOpen(db, ws, name, d.paneId);
+  const mux = await detachedViewMux(d.r.host);
+  if (await viewPresent(d.paneId, mux)) refuseOpen(db, ws, name, d.paneId);
   return { ...facts(ws, d), revision: agentRevision(db, ws, name) };
 }
 
@@ -79,6 +88,9 @@ export async function reattachView(
   name: string,
   opts: { ifRevision: number; signal?: AbortSignal },
 ) {
+  const prior = detachedJob(db, ws, name);
+  if (prior === undefined) throw new AgentReplacedError(name, ws);
+  const mux = await detachedViewMux(prior.r.host);
   const session = `mu-${ws}`;
   const sock = ctlSocketPath(ws, name, dirname(db.name));
   const row = getAgent(db, name, ws);
@@ -91,7 +103,7 @@ export async function reattachView(
         subject: `agent ${name}`,
         previewCommand: `mu agent reattach ${shellWord(name)} -w ${shellWord(ws)}`,
       });
-      if (await viewPresent(d.paneId)) refuseOpen(db, ws, name, d.paneId);
+      if (await viewPresent(d.paneId, mux)) refuseOpen(db, ws, name, d.paneId);
       // Owner-only (D8): while its spawn runs, the spawn's receipts are its own to move.
       const actor = jobRecordActor(d.r);
       if (actor === "other-alive") {
@@ -106,9 +118,6 @@ export async function reattachView(
       if (onCtl) rmSync(sock, { force: true });
       const ref = pluginJobRef(db, d.r.token);
       if (ref === undefined) throw new AgentReplacedError(name, ws);
-      const mux = await activeMux();
-      // A view runs a command line: refused before any call where the backend cannot (D3).
-      if (!mux.runsShellCommand) throw new HostSpawnUnsupportedError(d.r.host, mux.name);
       const view = await d.kind.attach(db, ref);
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
@@ -154,7 +163,6 @@ export async function reattachView(
   );
   let ctl: "skipped" | "ok" | "missing" | "refused" | "unknown" = "skipped";
   if (onCtl) {
-    const mux = await activeMux();
     let scrollback: string | undefined;
     const alive = async (): Promise<void> => {
       scrollback = (await mux.capture(pid, { lines: 50 }).catch(() => undefined)) ?? scrollback;

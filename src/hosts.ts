@@ -142,14 +142,19 @@ export class HostInUseError extends Error {
   }
 }
 
-/** The active multiplexer cannot run a host profile's shell template. One line, exit 2. */
+/** The multiplexer cannot run the remote worker's launch or view. One line, exit 2. */
 export class HostSpawnUnsupportedError extends Error {
   override readonly name = "HostSpawnUnsupportedError";
   constructor(
     public readonly host: string,
     public readonly mux: string,
+    part:
+      | "managed argv"
+      | "command gate"
+      | "job view command"
+      | "detached job view command" = "managed argv",
   ) {
-    super(say("host.spawn_unsupported", host, mux));
+    super(say("host.spawn_unsupported", host, mux, part));
   }
 }
 

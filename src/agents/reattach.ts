@@ -27,6 +27,7 @@ import {
   closeCommand,
   factsOf,
   type Plan,
+  plan,
   planSnapshot,
   ReattachFailedError,
   ReattachRefusedError,
@@ -67,8 +68,10 @@ export async function reattachAgent(
 ) {
   // A detached plugin job's row whose view is gone: a new view, the row kept (plugins spec D3).
   if (detachedJob(db, ws, name) !== undefined) return reattachView(db, ws, name, opts);
-  const sock = ctlSocketPath(ws, name, dirname(db.name));
   const mux = await activeMux();
+  // Reuse the preview's typed refusal before taking either file lock.
+  if (!mux.runsShellCommand) await plan(db, ws, name);
+  const sock = ctlSocketPath(ws, name, dirname(db.name));
   const session = `mu-${ws}`;
   const { p, pid, row } = await withAgentLock(db, ws, name, () =>
     withSpawnLock(session, async () => {

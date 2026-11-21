@@ -49,12 +49,7 @@ import { effectOwner } from "../effects.js";
 import { harnessOfCli } from "../harnesses.js";
 import { type HostView, resolveHost } from "../host-provider.js";
 import { reserveProviderJob } from "../host-records.js";
-import {
-  HostProfileError,
-  HostSpawnUnsupportedError,
-  pidProvenGone,
-  releaseHostChannel,
-} from "../hosts.js";
+import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
 import { defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
 import { emitEvent } from "../logs.js";
@@ -95,12 +90,6 @@ import {
 } from "./spawn-remote.js";
 import { rollbackSpawn } from "./spawn-rollback.js";
 
-/** The host's job kind when it is a plugin's: then spawn takes this path. */
-export function pluginKindOf(host: HostView): PluginJobKind | undefined {
-  const k = host.jobKind as Partial<PluginJobKind> | undefined;
-  return typeof k?.plugin === "string" ? (host.jobKind as PluginJobKind) : undefined;
-}
-
 /**
  * The built-in channel an agent of a kind without a channel of its own is on (ladder placement
  * spec §A): its harness's, as on a template host. pi is on `ctl` (the kind forwards the socket
@@ -116,7 +105,7 @@ export interface BuiltInChannel {
 }
 
 /**
- * Refused before any effect (D8 honour or refuse, D3 where a view can run). A `--plugin`
+ * Refused before any effect (D8 honour or refuse). A `--plugin`
  * profile also takes the remote spawn's refusals (`requireHostSpawn`: the harness probe, a
  * repo for `--worktree`, a recovered tree at the name). Returns the built-in channel of a kind
  * without its own.
@@ -144,9 +133,8 @@ async function refuse(
       "a spawn without a first prompt (its jobs start with one: pass --send)",
     );
   }
-  const mux = await activeMux();
-  if (!mux.runsShellCommand) throw new HostSpawnUnsupportedError(host.name, mux.name);
   if (caps.channel !== undefined) return undefined;
+  const mux = await activeMux();
   if (isCommandGate(opts)) {
     throw new HostProfileError(
       `host ${host.name}'s job kind ${kind.name} runs agents, not command gates: a --command that runs no harness needs a session profile`,

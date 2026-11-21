@@ -23,6 +23,7 @@ import { addHost, checkHost, HostHandbackError, removeHost } from "../src/hosts.
 import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { addPlugin, closePluginSessions, removePlugin } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
+import { installMux } from "./_mux.js";
 import { type FakePlugin, fakePlugin, linkSeam, providerSeams } from "./_plugin.js";
 import { registerFixturePlugin } from "./_plugin-handshake.js";
 
@@ -91,6 +92,22 @@ describe("host exec: the outcome table", () => {
       stderr: "err",
     });
     expect(r.remote).toBeUndefined();
+  });
+
+  it("herdr allows pane-free exec through the host's link", async () => {
+    await plugin();
+    const mux = installMux("herdr", []);
+    try {
+      expect(await hostExec(db, "p", { script: "printf pane-free" })).toMatchObject({
+        exit: 0,
+        stdout: "pane-free",
+      });
+      expect(mux.calls).toEqual([]);
+      expect(db.prepare("SELECT * FROM carrier_jobs").all()).toEqual([]);
+      expect(db.prepare("SELECT * FROM agents").all()).toEqual([]);
+    } finally {
+      mux.restore();
+    }
   });
 
   it("runs in --cwd", async () => {

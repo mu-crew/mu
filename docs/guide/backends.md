@@ -57,6 +57,9 @@ Where each agent's state comes from, per backend:
   <cli>`), so spawn refuses `--command` and `MU_<CLI>_COMMAND` with
   exit 2 instead of running a different binary. Unset the variable, or
   spawn with `MU_MUX=tmux`.
+- For remote spawns and reattaches, use tmux or Rex: herdr cannot run
+  the managed argv, carrier command, or job view in a pane. `mu host exec`
+  still works because it calls the host's link without opening a pane.
 - herdr creates every workspace detached. Run `herdr workspace focus`
   yourself.
 

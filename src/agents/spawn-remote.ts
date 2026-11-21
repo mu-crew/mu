@@ -24,6 +24,7 @@ import { HONOURS_ALL, type JobKind } from "../jobs/types.js";
 import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
+import type { PluginJobKind } from "../plugins/job.js";
 import { refuseRecoveredWorktree } from "../remote-recovery.js";
 import { prepareRemote, type RemoteSite, removeRemoteWorktree } from "../remote-worktree.js";
 import { git, gitToplevel } from "../vcs/git.js";
@@ -56,11 +57,32 @@ export function isCommandGate(opts: { host?: string; cli?: string; command?: str
   return harness === undefined || harness === "pi";
 }
 
-/**
- * The profile `--host` names, once the spawn is known to be runnable on it. Nothing is touched.
- * A spawn of a harness whose launcher the host's recorded probe did not find is refused here
- * (`HostHarnessMissingError`, spec D17).
- */
+/** The host's plugin job kind (as opposed to a built-in pane or lease job kind). */
+export function pluginKindOf(host: HostView): PluginJobKind | undefined {
+  const k = host.jobKind as Partial<PluginJobKind> | undefined;
+  return typeof k?.plugin === "string" ? (host.jobKind as PluginJobKind) : undefined;
+}
+
+/** Refuse before staging cleanup or a task receipt; only pane-backed host paths need this. */
+export async function refuseRemoteSpawnMux(db: Db, opts: SpawnAgentOptions): Promise<void> {
+  if (opts.host === undefined) return;
+  const mux = await activeMux();
+  if (mux.runsShellCommand) return;
+  const host = resolveHost(db, opts.host);
+  // Switching multiplexers cannot make a link-only host spawnable.
+  requireHostJobKind(host);
+  throw unsupportedSpawnMux(host, opts, mux.name);
+}
+
+function unsupportedSpawnMux(host: HostView, opts: SpawnAgentOptions, mux: string) {
+  const part = pluginKindOf(host)
+    ? "job view command"
+    : isCommandGate(opts)
+      ? "command gate"
+      : "managed argv";
+  return new HostSpawnUnsupportedError(host.name, mux, part);
+}
+
 /**
  * A spawn requests a `JobSpec` field its host's job kind does not enforce (plugins spec D8,
  * honour or refuse): refused before any effect, never run with the field dropped. Exit 2.
@@ -98,24 +120,28 @@ export function refuseUnhonoured(host: HostView, kind: JobKind, opts: SpawnAgent
   if (onCtl && !h.sockets) refuse("sockets", "the control sockets a pi agent needs");
 }
 
+function requireHostJobKind(view: HostView): JobKind {
+  if (view.jobKind === undefined) {
+    throw new HostProfileError(
+      `host ${view.name}'s provider ${view.provider.name} runs no jobs: its plugin declares no job seam`,
+    );
+  }
+  // A link-only plugin has neither a job kind nor a shell template to run in a pane.
+  if (view.profile?.plugin != null && pluginKindOf(view) === undefined) {
+    throw new HostProfileError(
+      `host ${view.name}'s link is plugin ${view.profile.plugin}, which declares no job seam: spawning on a link-only plugin is not supported yet`,
+    );
+  }
+  return view.jobKind;
+}
+
+/** The profile `--host` names, with the D17 harness and worktree checks. Read only. */
 export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise<HostProfile> {
   const host = opts.host ?? "";
   const view = resolveHost(db, host);
-  if (view.jobKind === undefined) {
-    throw new HostProfileError(
-      `host ${host}'s provider ${view.provider.name} runs no jobs: its plugin declares no job seam`,
-    );
-  }
+  const kind = requireHostJobKind(view);
   const profile = requireProfile(view);
-  refuseUnhonoured(view, view.jobKind, opts);
-  // A plugin that declares a job seam spawns through its job kind (spawn-plugin.ts), which runs
-  // these checks too. A link-only plugin's jobs would be panes running a `shell` template its
-  // profile does not have: refused until a pane job over a plugin link exists.
-  if (profile.plugin != null && typeof (view.jobKind as { plugin?: unknown }).plugin !== "string") {
-    throw new HostProfileError(
-      `host ${host}'s link is plugin ${profile.plugin}, which declares no job seam: spawning on a link-only plugin is not supported yet`,
-    );
-  }
+  refuseUnhonoured(view, kind, opts);
   if (!isCommandGate(opts)) {
     // The literal command a remote spawn runs: never the local MU_<KEY>_COMMAND.
     const cli = opts.cli ?? "pi";
@@ -131,7 +157,7 @@ export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise
   // it: a new tree there could strand that record. Refused before any effect.
   if (opts.worktree) refuseRecoveredWorktree(db, opts.workstream, opts.name, host);
   const mux = await activeMux();
-  if (!mux.runsShellCommand) throw new HostSpawnUnsupportedError(host, mux.name);
+  if (!mux.runsShellCommand) throw unsupportedSpawnMux(view, opts, mux.name);
   return profile;
 }
 

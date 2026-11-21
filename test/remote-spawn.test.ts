@@ -36,7 +36,9 @@ import {
   spawnAgent,
   spawnForTask,
 } from "../src/agents.js";
+import { listCarrierJobs } from "../src/carrier-jobs.js";
 import { respawnCommand } from "../src/channels/index.js";
+import { classifyError } from "../src/cli/handle.js";
 import { ctlProbe } from "../src/ctl/client.js";
 import { ctlSocketPath, MAX_SOCK_PATH, remoteCtlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
@@ -249,17 +251,46 @@ const spawn = (over: Partial<Parameters<typeof spawnAgent>[1]> = {}) =>
   spawnAgent(db, { name: "worker-1", workstream: "auth", host: "dev", ...over });
 
 describe("refusals before any effect", () => {
-  it("herdr cannot run a host's shell template: one line naming the gap, nothing touched", async () => {
+  it.each([
+    { path: "worker", opts: { worktree: true }, gap: "managed argv" },
+    { path: "command gate", opts: { command: "echo SENTINEL_COMMAND" }, gap: "command gate" },
+  ])("herdr refuses a template $path before effects", async ({ opts, gap }) => {
     mux.restore();
     mux = installMux("herdr", []);
-    const err = await spawn().catch((e: unknown) => e);
+    // The next supported spawn would reclaim this unrelated dead staging.
+    insertAgent(db, { name: "stale", workstream: "auth", paneId: "%pending-stale", cwd: null });
+    db.prepare("UPDATE agents SET updated_at = '2000-01-01T00:00:00Z'").run();
+    const ops = db.prepare("SELECT * FROM ops").all();
+    const err = await spawn(opts).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(HostSpawnUnsupportedError);
-    expect((err as Error).message).toMatch(/herdr/);
-    expect((err as Error).message).not.toContain("\n");
+    expect(classifyError(err).exitCode).toBe(2);
+    expect((err as Error).message).toMatch(new RegExp(`herdr.*${gap}.*use tmux or Rex`));
+    expect((err as Error).message).not.toMatch(/SENTINEL_COMMAND|\n/);
     expect(mux.calls).toEqual([]);
     expect(execCalls()).toEqual([]);
+    expect(getAgent(db, "stale", "auth")).toBeDefined();
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(listCarrierJobs(db)).toEqual([]);
     expect(channels()).toEqual([]);
+    expect(db.prepare("SELECT * FROM ops").all()).toEqual(ops);
+  });
+
+  it("herdr refuses a task-bound spawn before it journals an attempt", async () => {
+    mux.restore();
+    mux = installMux("herdr", []);
+    const ops = db.prepare("SELECT * FROM ops").all();
+    await expect(
+      spawnForTask(db, {
+        spawn: { name: "worker-1", workstream: "auth", host: "dev", worktree: true },
+        task: "t1",
+        text: "begin",
+      }),
+    ).rejects.toBeInstanceOf(HostSpawnUnsupportedError);
+    expect(db.prepare("SELECT * FROM spawn_receipts").all()).toEqual([]);
+    expect(db.prepare("SELECT * FROM ops").all()).toEqual(ops);
+    expect(existsSync(join(dir, "locks"))).toBe(false);
+    expect(mux.calls).toEqual([]);
+    expect(execCalls()).toEqual([]);
   });
 
   it("an unknown host profile is a not-found, with nothing created", async () => {
