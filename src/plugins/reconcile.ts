@@ -93,6 +93,8 @@ export interface CallOpts {
   plusGrace?: boolean;
   /** Send once: a `retryable` refusal is an error, not a resend. */
   once?: boolean;
+  /** Runs after the session is up, immediately before the request is sent: a throw sends nothing. */
+  beforeSend?: () => void;
   /** The caller's `Call` (D6): its deadline caps the budget, its signal cancels. */
   call?: Call;
 }
@@ -114,6 +116,7 @@ export async function pluginCall<M extends PluginMethod>(
   if (f !== undefined && f.instance !== s.init.instance) {
     throw new EffectFencedError(plugin, f.subject, f.instance, s.init.instance, f.why);
   }
+  opts.beforeSend?.();
   let timeoutMs =
     (opts.timeoutMs ??
       (opts.kind === "effect" ? effectTimeoutMs(method) : PLUGIN_READ_TIMEOUT_MS)) +

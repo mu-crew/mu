@@ -214,13 +214,28 @@ export async function withHostView<T>(
   // mu row for it, so the view is the resolved one and there is no lease.
   const resolved = resolveHost(db, name);
   if (resolved.link.caps.slots === "self") return fn(resolved, undefined);
-  return withHostChannel(
-    db,
-    name,
-    holder,
-    (profile, lease) => fn(admittedView(db, profile), lease),
-    opts,
-  );
+  // The profile may be replaced by a self-managed one while the admission probes panes: the
+  // fence sees the admitted profile inside the transaction and, if it is now `self`, counts
+  // nothing and runs `fn` uncounted on that view, as for a stable self-managed profile.
+  const now = new Error("slots-self");
+  try {
+    return await withHostChannel(
+      db,
+      name,
+      holder,
+      (profile, lease) => fn(admittedView(db, profile), lease),
+      {
+        ...opts,
+        fence: (profile) => {
+          opts?.fence?.(profile);
+          if (admittedView(db, profile).link.caps.slots === "self") throw now;
+        },
+      },
+    );
+  } catch (e) {
+    if (e !== now) throw e;
+    return fn(resolveHost(db, name), undefined);
+  }
 }
 
 /** `resolveHost`, or undefined when nothing holds the name (any other error propagates). */

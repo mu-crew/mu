@@ -101,11 +101,15 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     host: HostView,
     call: LinkCall,
     admitted: ((h: HostView) => void) | undefined,
-    body: (h: HostView) => Promise<T>,
+    body: (h: HostView, beforeSend?: () => void) => Promise<T>,
   ): Promise<T> => {
     if (declared.slots === "self" || "lease" in call || host.record !== undefined) {
       admitted?.(host);
-      return body(host);
+      // A self-managed link takes no row, but the caller's fence still runs right before the
+      // send (after the plugin's handshake), so a replaced profile is never dispatched to.
+      const f = "lease" in call ? undefined : call.fence;
+      const profile = host.profile;
+      return body(host, f && profile ? () => f(profile) : undefined);
     }
     const { holder, ...opts } = call;
     return withHostChannel(
@@ -128,6 +132,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     params: Record<string, unknown>,
     timeoutMs: number,
     once = false,
+    beforeSend?: () => void,
   ): Promise<LinkRun> => {
     try {
       // The plugin enforces `timeoutMs` and answers. mu's timer allows one grace on top, so
@@ -144,6 +149,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
           timeoutMs,
           plusGrace: true,
           ...(once ? { once } : {}),
+          ...(beforeSend ? { beforeSend } : {}),
           ...fence(host, method),
         },
       );
@@ -187,8 +193,15 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
       return { ok: bytes <= declared.maxScriptBytes, bytes, limit: declared.maxScriptBytes };
     },
     exec: (host, req, call, admitted) =>
-      admit(host, call, admitted, (h) =>
-        run(h, "link.exec", { script: req.script, cwd: req.cwd }, req.timeoutMs, req.once === true),
+      admit(host, call, admitted, (h, beforeSend) =>
+        run(
+          h,
+          "link.exec",
+          { script: req.script, cwd: req.cwd },
+          req.timeoutMs,
+          req.once === true,
+          beforeSend,
+        ),
       ),
     ...(caps.fetch
       ? {

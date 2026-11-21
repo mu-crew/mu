@@ -18,6 +18,7 @@ import {
   hostExec,
 } from "../src/host-exec.js";
 import { acquireHost } from "../src/host-lifecycle.js";
+import { withHostView } from "../src/host-provider.js";
 import { addHost, checkHost, HostHandbackError, removeHost } from "../src/hosts.js";
 import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
@@ -399,5 +400,58 @@ describe("host exec round 2: review findings", () => {
     await plugin({ faults: { "link.exec": ["unknown-outcome"] } });
     await hostExec(db, "p", { script: "true" });
     expect(ops()[0]).toMatch(/outcome=no-answer /);
+  });
+});
+
+describe("host exec follow-ups", () => {
+  const execCalls = (f: FakePlugin): number =>
+    f.calls().filter((c) => c.method === "link.exec").length;
+
+  it("self dispatch: a profile replaced during the plugin's handshake is never dispatched to", async () => {
+    const a = await plugin({ initDelayMs: 400 }, { slots: "self" });
+    const b = fakePlugin(dir, { home, seams: linkSeam({ slots: "self" }) }, "fake2");
+    await addPlugin(db, "fake2", b.argv);
+    const call = hostExec(db, "p", { script: "echo old" });
+    const settled = call.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    for (let i = 0; i < 100 && a.calls().length === 0; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(a.calls().length).toBeGreaterThan(0); // the old link is mid-handshake
+    removeHost(db, "p");
+    addHost(db, { name: "p", plugin: "fake2", fetch: "true", repo: null, max_sessions: null });
+    expect(await settled).toBeInstanceOf(HostExecChangedError);
+    expect(execCalls(a)).toBe(0);
+    expect(execCalls(b)).toBe(0);
+    expect(admissions()).toBe(0);
+  });
+
+  it("host check counting: a template name re-added as slots:self during admission is not counted", async () => {
+    template(1);
+    const f = fakePlugin(dir, { home, seams: linkSeam({ slots: "self" }) });
+    await addPlugin(db, "fake", f.argv);
+    const call = withHostView(db, "t", "chk", async (h, lease) => ({
+      slots: h.link.caps.slots,
+      lease,
+    }));
+    removeHost(db, "t");
+    addHost(db, { name: "t", plugin: "fake", fetch: "true", repo: null, max_sessions: 1 });
+    const r = await call;
+    expect(r.slots).toBe("self");
+    expect(r.lease).toBeUndefined();
+    expect(admissions()).toBe(0);
+  });
+
+  it("utf8 capture: the byte bound never splits a multibyte character", async () => {
+    template();
+    const r = await hostExec(db, "t", {
+      script:
+        "{ printf a; yes | while read -r _; do printf '\\360\\237\\230\\200'; done; } | head -c 2000000",
+    });
+    expect(r.clipped).toBe(true);
+    expect(r.stdout).not.toContain("\uFFFD");
+    expect(Buffer.byteLength(r.stdout)).toBeLessThanOrEqual(HOST_EXEC_OUTPUT_MAX_BYTES);
+    expect(Buffer.byteLength(r.stdout)).toBeGreaterThan(HOST_EXEC_OUTPUT_MAX_BYTES - 4);
   });
 });

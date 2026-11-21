@@ -129,6 +129,17 @@ export function execFileCapture(
   });
 }
 
+/** Length of `b` without a trailing incomplete UTF-8 sequence (a cut multibyte character). */
+function validUtf8Prefix(b: Buffer): number {
+  for (let i = 1; i <= Math.min(3, b.length); i++) {
+    const c = b[b.length - i] as number;
+    if ((c & 0xc0) === 0x80) continue;
+    const need = c >= 0xf0 ? 4 : c >= 0xe0 ? 3 : c >= 0xc0 ? 2 : 1;
+    return need > i ? b.length - i : b.length;
+  }
+  return b.length;
+}
+
 /**
  * Like execFileCapture, but the command owns a process group and everything it
  * started: on timeout, when the command exits (a leftover background job
@@ -173,11 +184,15 @@ export function execGroupCapture(
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let truncated = false;
+    const cut = new Set<Buffer[]>();
     const keep = (into: Buffer[]) => {
       let held = 0;
       return (d: Buffer): void => {
         const room = (opts.maxStreamBytes ?? Number.POSITIVE_INFINITY) - held;
-        if (d.length > room) truncated = true;
+        if (d.length > room) {
+          truncated = true;
+          cut.add(into);
+        }
         if (room <= 0) return;
         const part = d.length > room ? d.subarray(0, room) : d;
         held += part.length;
@@ -191,6 +206,11 @@ export function execGroupCapture(
     const release = track(child, true);
     let timedOut = false;
     let settled = false;
+    // A stream cut at the byte bound drops a trailing partial UTF-8 sequence, never decodes it to U+FFFD.
+    const decode = (chunks: Buffer[]): string => {
+      const b = Buffer.concat(chunks);
+      return (cut.has(chunks) ? b.subarray(0, validUtf8Prefix(b)) : b).toString("utf8");
+    };
     const finish = (code: number | null): void => {
       if (settled) return;
       settled = true;
@@ -200,8 +220,8 @@ export function execGroupCapture(
         child.stdout?.destroy();
         child.stderr?.destroy();
         resolve({
-          stdout: stripFinalNewline(Buffer.concat(out).toString("utf8")),
-          stderr: stripFinalNewline(Buffer.concat(err).toString("utf8")),
+          stdout: stripFinalNewline(decode(out)),
+          stderr: stripFinalNewline(decode(err)),
           exitCode: timedOut ? null : code,
           ...(truncated ? { truncated: true as const } : {}),
         });
