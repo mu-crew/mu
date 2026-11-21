@@ -10,16 +10,20 @@ import type { Server } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
-import { getAgent } from "../src/agents.js";
+import { getAgent, sendToAgent } from "../src/agents.js";
 import { getCarrierJobByName, listCarrierJobs } from "../src/carrier-jobs.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../src/ctl/path.js";
 import { addHost } from "../src/hosts.js";
 import { addPlugin } from "../src/plugins/registry.js";
+import { waitForEvents } from "../src/wait.js";
+import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { SSH_EXAMPLE } from "./_plugin.js";
 import { pluginHostFixture } from "./_plugin-host.js";
-import { type FakeSsh, fakeSsh, PluginWire, serveCtl } from "./_ssh-pane.js";
+import { type CtlServed, type FakeSsh, fakeSsh, PluginWire, serveCtl } from "./_ssh-pane.js";
+import { agentRef } from "./_wait-fixtures.js";
 
 const h = pluginHostFixture();
+const idOf = (handle: string) => handle.split("@")[0] ?? "";
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
     cwd,
@@ -79,7 +83,7 @@ describe("the pane kind's declaration and its view", () => {
     expect(cmd.indexOf("'-J' 'jump'")).toBeGreaterThan(cmd.indexOf("'-L'"));
     expect(cmd).toMatch(/'box' '-t' 'exec \/bin\/sh -c /);
     expect(view).not.toHaveProperty("stdin");
-    expect(handle).toMatch(/^ssh-[0-9a-f]{32}$/);
+    expect(handle).toMatch(/^ssh-[0-9a-f]{32}@h(:[\w.-]+)+$/);
     // A pure function of the key: a repeat is the same reply, another key another handle.
     expect(
       result(await start("key-1", { sockets: { local: "/l/ctl.sock", remote: "/r/ctl.sock" } })),
@@ -123,7 +127,7 @@ describe("job.stop answers only on proof", () => {
     const { view, handle } = result(await start("k"));
     expect((await stop(handle)).result).toBeNull();
     expect((await stop(handle)).result).toBeNull();
-    expect(existsSync(join(ssh.xdg, "mu-plugin-ssh", handle, "stopped"))).toBe(true);
+    expect(existsSync(join(ssh.xdg, "mu-plugin-ssh", idOf(handle), "stopped"))).toBe(true);
     // The late view finds the job claimed and runs nothing.
     let status = 0;
     try {
@@ -141,13 +145,13 @@ describe("job.stop answers only on proof", () => {
     const m = await stop(handle);
     expect(m.result).toBeUndefined();
     expect(m.error).toMatchObject({ data: { kind: "retryable" } });
-    expect(existsSync(join(ssh.xdg, "mu-plugin-ssh", handle))).toBe(false);
+    expect(existsSync(join(ssh.xdg, "mu-plugin-ssh", idOf(handle)))).toBe(false);
   });
 
   it("a claimed job whose pid was never recorded is no proof", async () => {
     wire = new PluginWire(ssh.argv);
     const { handle } = result(await start("k"));
-    mkdirSync(join(ssh.xdg, "mu-plugin-ssh", handle), { recursive: true });
+    mkdirSync(join(ssh.xdg, "mu-plugin-ssh", idOf(handle)), { recursive: true });
     const m = await stop(handle);
     expect(m.error).toMatchObject({
       data: { kind: "retryable" },
@@ -156,11 +160,13 @@ describe("job.stop answers only on proof", () => {
   }, 15_000);
 
   it("an ssh that exits 0 without running the stop script is no proof: no receipt, an error", async () => {
+    wire = new PluginWire(ssh.argv);
     const noop = join(h.dir, "bin", "noop-ssh");
     writeFileSync(noop, "#!/bin/sh\nexit 0\n");
     chmodSync(noop, 0o755);
-    wire = new PluginWire([SSH_EXAMPLE, noop]);
     const { handle } = result(await start("k"));
+    wire.close();
+    wire = new PluginWire([SSH_EXAMPLE, noop]);
     const m = await stop(handle);
     expect(m.result).toBeUndefined();
     expect(m.error).toMatchObject({ data: { kind: "retryable" } });
@@ -194,6 +200,49 @@ describe("job.stop answers only on proof", () => {
     expect(existsSync(join(h.dir, "xdg-b"))).toBe(false);
   });
 
+  const lateView = (view: string) => {
+    try {
+      execFileSync("/bin/sh", ["-c", view], { stdio: "pipe" });
+      return 0;
+    } catch (e) {
+      return (e as { status: number }).status;
+    }
+  };
+
+  it("the handle binds the namespace of the start: a stop through a session with another HOME fences it there", async () => {
+    wire = new PluginWire(ssh.argv);
+    const { view, handle } = result(await start("k"));
+    // Another account home for every later session (a startup file that sets HOME on a tty).
+    const other = join(h.dir, "other-home");
+    mkdirSync(other);
+    const sshB = fakeSsh(join(h.dir, "b"), other);
+    wire.close();
+    wire = new PluginWire(sshB.argv);
+    expect((await stop(handle)).result).toBeNull();
+    expect(existsSync(join(ssh.xdg, "mu-plugin-ssh", idOf(handle), "stopped"))).toBe(true);
+    expect(existsSync(join(other, ".local"))).toBe(false);
+    expect(lateView(view.command)).toBe(1);
+  });
+
+  it("the handle binds the namespace of the start: a plugin process with another MU_SSH_STATE_DIR still fences it there", async () => {
+    const dirA = join(realpathSync(h.dir), "state-a");
+    const dirB = join(realpathSync(h.dir), "state-b");
+    process.env.MU_SSH_STATE_DIR = dirA;
+    try {
+      wire = new PluginWire(ssh.argv);
+      const { view, handle } = result(await start("k"));
+      wire.close();
+      process.env.MU_SSH_STATE_DIR = dirB;
+      wire = new PluginWire(ssh.argv);
+      expect((await stop(handle)).result).toBeNull();
+      expect(existsSync(join(dirA, idOf(handle), "stopped"))).toBe(true);
+      expect(existsSync(dirB)).toBe(false);
+      expect(lateView(view.command)).toBe(1);
+    } finally {
+      delete process.env.MU_SSH_STATE_DIR;
+    }
+  });
+
   it("refuses a handle that is not ours before any ssh", async () => {
     wire = new PluginWire(ssh.argv);
     const m = await stop("x; rm -rf /");
@@ -205,7 +254,9 @@ describe("job.stop answers only on proof", () => {
 describe("through mu: spawn, close, and the proof a close waits for", () => {
   let remote: string;
   let cwd: string;
+  let served: CtlServed | undefined;
   beforeEach(async () => {
+    served = undefined;
     remote = join(h.dir, "remote");
     mkdirSync(remote);
     remote = realpathSync(remote);
@@ -222,7 +273,13 @@ describe("through mu: spawn, close, and the proof a close waits for", () => {
       spawnAgent: async (o) => {
         const id = `%${++n}`;
         h.panes.set(id, { command: o.command });
-        if (o.cli === "pi") await serveCtl(ctlSocketPath("ws", o.name, h.dir), servers);
+        if (o.cli === "pi") {
+          served = await serveCtl(
+            o.command,
+            remoteCtlSocketPath("ws", o.name, process.getuid?.() ?? 0),
+            servers,
+          );
+        }
         o.onPaneCreated?.(id);
         return id;
       },
@@ -247,14 +304,30 @@ describe("through mu: spawn, close, and the proof a close waits for", () => {
     expect(view).toContain(`${ctlSocketPath("ws", "w1", h.dir)}:${remoteSock}`);
     expect(existsSync(row.cwd ?? "")).toBe(true);
     const job = getCarrierJobByName(h.db, "ws", "w1") ?? expect.fail("no job record");
-    expect(job.job).toMatch(/^ssh-[0-9a-f]{32}$/);
+    expect(job.job).toMatch(/^ssh-[0-9a-f]{32}@h(:[\w.-]+)+$/);
+
+    // Send and wait go over the view's forwarded ctl socket, through the channel the row recorded.
+    expect(row.cli).toBe("pi");
+    const before = served?.forwarded() ?? 0;
+    const sent = await sendToAgent(h.db, "w1", "do it", { workstream: "ws" });
+    expect(sent).toMatchObject({ transport: "ctl", runs: 1 });
+    const waited = await waitForEvents(h.db, [{ ...agentRef("w1", "ws"), afterRuns: 0 }], {
+      ...ctlAgentHooks(h.db),
+      sync: false,
+      pollMs: 20,
+      timeoutMs: 5000,
+      callers: [],
+    });
+    expect(waited.event).toMatchObject({ kind: "settled", runs: 1 });
+    expect(served?.ops).toEqual(expect.arrayContaining(["send", "wait"]));
+    expect(served?.forwarded()).toBeGreaterThan(before);
 
     const closed = await closeAgent(h.db, "w1", { workstream: "ws" });
     expect(closed).toMatchObject({ killedPane: true, deletedRow: true });
     expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
     expect(listCarrierJobs(h.db)).toEqual([]);
     expect(existsSync(row.cwd ?? "")).toBe(false);
-    expect(existsSync(join(ssh.xdg, "mu-plugin-ssh", job.job ?? "?", "stopped"))).toBe(true);
+    expect(existsSync(join(ssh.xdg, "mu-plugin-ssh", idOf(job.job ?? "?"), "stopped"))).toBe(true);
   });
 
   it("no proof, no cleanup: an unreachable host keeps the tree and the record; the retry with proof finishes", async () => {

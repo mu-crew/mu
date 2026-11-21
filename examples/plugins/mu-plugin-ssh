@@ -26,9 +26,10 @@
 // MaxSessions 1 does not block it, a host with one practical connection does.
 //
 // Lifetime: the view is bound, so mu kills the view, then asks job.stop. The
-// remote side keeps `$HOME/.local/state/mu-plugin-ssh/<handle>/` (or the plugin's
-// MU_SSH_STATE_DIR; never the host's XDG_STATE_HOME, which two ssh sessions can disagree
-// on): the launch claims
+// remote side keeps `<root>/<id>/`. The root is fixed at job.start (the plugin's MU_SSH_STATE_DIR,
+// else the host's canonical `$HOME/.local/state/mu-plugin-ssh`, asked of the host once) and carried
+// in the handle, so launch, status and stop all use it whatever their session's HOME or
+// XDG_STATE_HOME, and whichever plugin process asks: the launch claims
 // it with an atomic mkdir and records its pid and start time; job.stop answers
 // null only on proof: the script's exit 0 and its receipt line for this handle. Proof is: the launch never claimed (the stop claims it
 // first, so it never can), or the recorded leader is gone and its process group
@@ -140,20 +141,38 @@ function exec(id, host, script, cwd, timeoutMs) {
 // ─── The pane job kind ──────────────────────────────────────────────────
 
 /**
- * The host's state directory, one namespace for every call of this plugin process: start and stop
- * run in different ssh sessions, whose XDG_STATE_HOME can differ (a startup file that sets it only
- * on a tty), so it is never read from the host's environment. $HOME is the account's, or the
- * plugin's own MU_SSH_STATE_DIR (an absolute path on the host).
+ * The host's state root, bound to the job at job.start and carried in its handle
+ * (`ssh-<32 hex>@<root, "/" written ":">`): launch, status and stop all use that one absolute
+ * path, never the HOME or MU_SSH_STATE_DIR of whichever ssh session or plugin process makes the
+ * call. The root is the plugin's MU_SSH_STATE_DIR (an absolute path on the host), else the
+ * account's canonical `$HOME/.local/state/mu-plugin-ssh`, asked of the host once at job.start.
  */
-const STATE_DIR = process.env.MU_SSH_STATE_DIR
-  ? q(process.env.MU_SSH_STATE_DIR)
-  : '"$HOME/.local/state/mu-plugin-ssh"';
-const NEED_HOME = process.env.MU_SSH_STATE_DIR ? "true" : '[ -n "$HOME" ] || { echo "no HOME" >&2; exit 5; }';
+const ROOT_PART = /^[A-Za-z0-9._-]+$/;
+const DEFAULT_TAIL = "/.local/state/mu-plugin-ssh";
+/**
+ * The handle for a job key and a state root: `{ home }` (the canonical home; the root is
+ * `<home>/.local/state/mu-plugin-ssh`, `@h`) or `{ dir }` (an absolute override, `@o`), or null
+ * if the path cannot be carried in a handle.
+ */
+function handleWith(key, { home, dir }) {
+  const path = home ?? dir;
+  const parts = path.split("/").slice(1);
+  if (!path.startsWith("/") || (path === "/" ? false : parts.length === 0)) return null;
+  if (path === "/" ? dir !== undefined : !parts.every((p) => ROOT_PART.test(p) && p !== "." && p !== "..")) return null;
+  const id = createHash("sha256").update(String(key)).digest("hex").slice(0, 32);
+  const h = `ssh-${id}@${home !== undefined ? "h" : "o"}${path === "/" ? "" : `:${parts.join(":")}`}`;
+  return h.length <= 128 ? h : null;
+}
+const HANDLE = /^ssh-[0-9a-f]{32}@[ho](:[A-Za-z0-9._-]+)*$/;
+const idOf = (handle) => handle.slice(0, handle.indexOf("@"));
+const rootOf = (handle) => {
+  const path = handle.slice(handle.indexOf("@") + 2).replaceAll(":", "/");
+  return handle[handle.indexOf("@") + 1] === "h" ? (path === "/" ? "" : path) + DEFAULT_TAIL : path;
+};
 /** The line a stop prints last when (and only when) it proved the job gone: scoped to its handle. */
 const receiptOf = (handle) => `mu-plugin-ssh-receipt ${handle}`;
-/** The job's handle: a pure function of mu's job key, so job.stop always has it. */
-const handleOf = (key) => `ssh-${createHash("sha256").update(String(key)).digest("hex").slice(0, 32)}`;
-const HANDLE = /^ssh-[0-9a-f]{32}$/;
+/** Refuse a root that is not the host's canonical path: it could name another directory elsewhere. */
+const CANON = `[ "$(cd "$D" && pwd -P)" = "$D" ] || { echo "state root $D is not canonical on this host" >&2; exit 7; }`;
 /** The leader's start time, normalised: with its pid, the identity a recycled pid cannot fake. */
 const STARTED = String.raw`ps -o lstart= -p "$P" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'`;
 
@@ -161,9 +180,9 @@ const STARTED = String.raw`ps -o lstart= -p "$P" 2>/dev/null | tr -s ' ' | sed '
 function launchScript(handle, cwd, env, cmd) {
   const envWords = Object.entries(env).map(([k, v]) => `${k}=${q(v)}`);
   return [
-    `${NEED_HOME}; D=${STATE_DIR}; H=${handle}`,
+    `D=${q(rootOf(handle))}; H=${idOf(handle)}`,
     // The atomic claim: a stop that got here first wins, and then nothing ever runs.
-    `mkdir -p "$D" && mkdir "$D/$H" 2>/dev/null || { echo "mu-plugin-ssh: job $H is stopped or already started" >&2; exit 1; }`,
+    `mkdir -p "$D" && ${CANON} && mkdir "$D/$H" 2>/dev/null || { echo "mu-plugin-ssh: job $H is stopped or already started" >&2; exit 1; }`,
     `P=$$; printf '%s %s\\n' "$P" "$(${STARTED})" > "$D/$H/pid.tmp" && mv "$D/$H/pid.tmp" "$D/$H/pid"`,
     `cd ${q(cwd)} && exec env ${envWords.join(" ")} "\${SHELL:-/bin/sh}" -ilc ${q(`set +m; ${cmd}`)}`,
   ].join("\n");
@@ -174,16 +193,19 @@ function launchScript(handle, cwd, env, cmd) {
 // each foreground command in its own process group, out of the one this script checks.
 // Group members are listed with ps and signalled by pid: dash's kill rejects `-- -PGID`, and a
 // failed probe must never read as an empty group.
-const READ_STATE = `${NEED_HOME}; D=${STATE_DIR}; H=%H
+const READ_STATE = `D=%D; H=%H
 # A zombie leader is dead: it is only waiting for its parent to reap it.
 leader() { P=$1; [ "$(${STARTED})" = "$2" ] && case "$(ps -o stat= -p "$P" 2>/dev/null)" in Z*) false ;; *) true ;; esac; }
 members() { t=$(ps -A -o pid= -o pgid= -o stat= 2>/dev/null) || return 2; printf '%s\\n' "$t" | awk -v g="$1" '$2==g && $3 !~ /^Z/ {print $1}'; }
 group() { m=$(members "$1") || return 0; [ -n "$m" ]; }`;
 
+const readState = (handle) => READ_STATE.replace("%D", q(rootOf(handle))).replace("%H", idOf(handle));
+
 /** job.stop's remote script: exit 0 only on proof (see the header). */
 function stopScript(handle) {
-  return `${READ_STATE.replace("%H", handle)}; RECEIPT=${q(receiptOf(handle))}
+  return `${readState(handle)}; RECEIPT=${q(receiptOf(handle))}
 mkdir -p "$D" || exit 5
+${CANON}
 if mkdir "$D/$H" 2>/dev/null; then echo stopped > "$D/$H/stopped"; echo "$RECEIPT never-started"; exit 0; fi
 [ -f "$D/$H/stopped" ] && { echo "already stopped"; echo "$RECEIPT already-stopped"; exit 0; }
 n=0; while [ ! -f "$D/$H/pid" ] && [ $n -lt 5 ]; do sleep 1; n=$((n+1)); done
@@ -205,7 +227,7 @@ echo stopped > "$D/$H/stopped"; echo "$RECEIPT gone"`;
 
 /** job.status's remote script: one line, `running`, `ended` or `unknown <why>`. */
 function statusScript(handle) {
-  return `${READ_STATE.replace("%H", handle)}
+  return `${readState(handle)}
 [ -d "$D/$H" ] || { echo "unknown not started on the host yet"; exit 0; }
 [ -f "$D/$H/stopped" ] && { echo ended; exit 0; }
 [ -f "$D/$H/pid" ] || { echo "unknown starting"; exit 0; }
@@ -215,11 +237,33 @@ elif group "$P"; then echo "unknown leader gone, its group remains"
 else echo ended; fi`;
 }
 
-/** The handle a job call is about: the recorded one if well-formed, else derived from the key. */
-function handleFor(params) {
+/** Resolve the state root for a new job: the override, else the host's canonical $HOME. */
+function resolveRoot(id, params, then) {
+  const over = process.env.MU_SSH_STATE_DIR;
+  if (over) {
+    then({ dir: over });
+    return;
+  }
+  const script = '[ -n "$HOME" ] && cd "$HOME" && pwd -P';
+  remote(id, params, script, (r) => {
+    const home = r.stdout.trim().split("\n")[0] ?? "";
+    if (r.exitCode === 0 && home.startsWith("/")) then({ home });
+    else
+      fail(id, "retryable", `mu-plugin-ssh: cannot resolve the host's state root (${r.exitCode ?? "timed out"})`, "check the host, then retry");
+  });
+}
+
+/** The handle a job call is about: the recorded one if well-formed, else derived like job.start. */
+function withHandle(id, params, then) {
   const given = params.target?.job?.handle;
-  if (typeof given === "string") return HANDLE.test(given) ? given : null;
-  return typeof params.key === "string" ? handleOf(params.key) : null;
+  const bad = () => fail(id, "permanent", "mu-plugin-ssh: malformed job handle");
+  if (typeof given === "string") return HANDLE.test(given) ? then(given) : bad();
+  if (typeof params.key !== "string") return bad();
+  resolveRoot(id, params, (where) => {
+    const h = handleWith(params.key, where);
+    if (h === null) bad();
+    else then(h);
+  });
 }
 
 function jobStart(id, params) {
@@ -247,10 +291,15 @@ function jobStart(id, params) {
     }
     forward.push("-L", `${local}:${remote}`);
   }
-  const handle = handleOf(params.key);
-  const remote = `exec /bin/sh -c ${q(launchScript(handle, spec.cwd, env, spec.cmd))}`;
-  const argv = [
-    SSH[0],
+  resolveRoot(id, params, (where) => {
+    const handle = handleWith(params.key, where);
+    if (handle === null) {
+      bad(`state root ${JSON.stringify(where.home ?? where.dir)} cannot be carried in a job handle`);
+      return;
+    }
+    const remote = `exec /bin/sh -c ${q(launchScript(handle, spec.cwd, env, spec.cmd))}`;
+    const argv = [
+      SSH[0],
     // Ours come first: ssh keeps the first value of an option.
     "-o", "ControlMaster=no",
     "-o", "ControlPath=none",
@@ -261,8 +310,9 @@ function jobStart(id, params) {
     host,
     "-t",
     remote,
-  ];
-  reply(id, { view: { command: argv.map(q).join(" "), env: {} }, handle });
+    ];
+    reply(id, { view: { command: argv.map(q).join(" "), env: {} }, handle });
+  });
 }
 
 /** Run `script` on the host over its own ssh connection and hand its result on. */
@@ -274,16 +324,17 @@ function remote(id, params, script, then) {
 }
 
 function jobStop(id, params) {
-  const handle = handleFor(params);
-  if (handle === null) {
-    fail(id, "permanent", "mu-plugin-ssh: malformed job handle");
-    return;
-  }
+  withHandle(id, params, (handle) => stopWith(id, params, handle));
+}
+
+function stopWith(id, params, handle) {
   remote(id, params, stopScript(handle), (r) => {
     // Proof is the script's exit 0 and its receipt for this handle: a login shell, a forced
     // command or a wrapper can exit 0 without running it. Anything else leaves the job as it is.
-    const receipt = new RegExp(`^${receiptOf(handle)} (never-started|already-stopped|gone)$`, "m");
-    if (r.exitCode === 0 && receipt.test(r.stdout)) reply(id, null);
+    const proved = r.stdout
+      .split("\n")
+      .some((l) => ["never-started", "already-stopped", "gone"].some((w) => l === `${receiptOf(handle)} ${w}`));
+    if (r.exitCode === 0 && proved) reply(id, null);
     else {
       const why = r.exitCode === null ? "timed out" : r.exitCode === 0 ? "no receipt" : `exit ${r.exitCode}`;
       fail(
@@ -297,11 +348,10 @@ function jobStop(id, params) {
 }
 
 function jobStatus(id, params) {
-  const handle = handleFor(params);
-  if (handle === null) {
-    fail(id, "permanent", "mu-plugin-ssh: malformed job handle");
-    return;
-  }
+  withHandle(id, params, (handle) => statusWith(id, params, handle));
+}
+
+function statusWith(id, params, handle) {
   remote(id, params, statusScript(handle), (r) => {
     const line = r.stdout.trim().split("\n")[0] ?? "";
     if (r.exitCode === 0 && line === "running") reply(id, { state: "running" });

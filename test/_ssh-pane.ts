@@ -3,7 +3,7 @@
 
 import { type ChildProcessByStdio, spawn } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { createServer, type Server } from "node:net";
+import { connect, createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
@@ -121,12 +121,38 @@ export class PluginWire {
   }
 }
 
-/** A fake pi extension at `path` (the view's "forward"): idle, a send settles a run at once. */
-export async function serveCtl(path: string, servers: Server[]): Promise<void> {
+/** What a fake pi extension has been asked, and by how many connections through the forward. */
+export interface CtlServed {
+  ops: string[];
+  forwarded(): number;
+}
+
+/**
+ * A fake pi extension listening at the HOST's `remote` socket, reached only through the view's
+ * own `-L local:remote` (read from `viewCommand`, as ssh would bind it): idle, a send settles a
+ * run at once, a wait returns once a run past `afterRuns` settled.
+ */
+export async function serveCtl(
+  viewCommand: string,
+  remote: string,
+  servers: Server[],
+): Promise<CtlServed> {
+  // The view is quoted for its shell, and again inside `exec /bin/sh -c`: find the pair by its end.
+  const forward = new RegExp(
+    `'-L'[\\s'"]+([^\\s'"]+):${remote.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+  ).exec(viewCommand);
+  if (forward?.[1] === undefined) {
+    throw new Error(`the view forwards no ctl socket to ${remote}: ${viewCommand}`);
+  }
+  const local = forward[1];
+  const ops: string[] = [];
   let runs = 0;
+  let forwarded = 0;
   const accepted = new Set<string>();
-  mkdirSync(dirname(path), { recursive: true });
-  rmSync(path, { force: true });
+  for (const p of [local, remote]) {
+    mkdirSync(dirname(p), { recursive: true });
+    rmSync(p, { force: true });
+  }
   const server = createServer((sock) => {
     const dec = new LineDecoder();
     sock.setEncoding("utf8");
@@ -134,6 +160,7 @@ export async function serveCtl(path: string, servers: Server[]): Promise<void> {
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
         const req = JSON.parse(line) as Record<string, unknown>;
+        ops.push(String(req.op));
         if (req.op === "send") {
           runs += 1;
           accepted.add(String(req.msgId));
@@ -142,11 +169,24 @@ export async function serveCtl(path: string, servers: Server[]): Promise<void> {
         const reply =
           req.op === "status" && typeof req.msgId === "string"
             ? { ...idle, msg: { id: req.msgId, accepted: accepted.has(req.msgId), runs, at: 1 } }
-            : idle;
+            : req.op === "wait"
+              ? { ...idle, lastText: "done", ended: "settled" }
+              : idle;
         sock.end(encode(withHello(req, reply)));
       }
     });
   });
-  servers.push(server);
-  await new Promise<void>((r) => server.listen(path, () => r()));
+  // The -L: every connection to `local` is carried to `remote`.
+  const tunnel = createServer((c) => {
+    forwarded += 1;
+    const up = connect(remote);
+    c.on("error", () => up.destroy());
+    up.on("error", () => c.destroy());
+    c.pipe(up);
+    up.pipe(c);
+  });
+  servers.push(server, tunnel);
+  await new Promise<void>((r) => server.listen(remote, () => r()));
+  await new Promise<void>((r) => tunnel.listen(local, () => r()));
+  return { ops, forwarded: () => forwarded };
 }

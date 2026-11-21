@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import { connect, createServer } from "node:net";
@@ -92,7 +93,7 @@ async function launch(
       )
     : spawn("/bin/sh", ["-c", view.command], { detached: true, stdio: "ignore" });
   views.push(child);
-  const pidFile = join(xdg, "mu-plugin-ssh", handle, "pid");
+  const pidFile = join(xdg, "mu-plugin-ssh", handle.split("@")[0] ?? "", "pid");
   await until(() => existsSync(pidFile), "the launch to record its pid");
   const pid = Number(readFileSync(pidFile, "utf8").split(" ")[0]);
   pids.push(pid);
@@ -197,12 +198,10 @@ describe("a running remote job and its stop proof (stand-in ssh)", () => {
       const [member, leader] = out.trim().split("\n").map(Number);
       pids.push(member ?? 0);
       expect(alive(leader ?? 0)).toBe(false);
-      const handle = `ssh-${"a".repeat(32)}`;
-      mkdirSync(join(d.xdg, "mu-plugin-ssh", handle), { recursive: true });
-      writeFileSync(
-        join(d.xdg, "mu-plugin-ssh", handle, "pid"),
-        `${leader} Thu Jan 1 00:00:00 2000\n`,
-      );
+      const id = `ssh-${"a".repeat(32)}`;
+      const handle = `${id}@h:${realpathSync(dir).split("/").slice(1).join(":")}`;
+      mkdirSync(join(d.xdg, "mu-plugin-ssh", id), { recursive: true });
+      writeFileSync(join(d.xdg, "mu-plugin-ssh", id, "pid"), `${leader} Thu Jan 1 00:00:00 2000\n`);
       const m = await stop(w, "k6", handle);
       expect(m.result).toBeUndefined();
       expect(m.error).toMatchObject({ data: { kind: "retryable" } });
@@ -342,7 +341,7 @@ describe.skipIf(!haveSshd())("over a real sshd on loopback", () => {
     writeFileSync(
       server,
       `import { connect, createServer } from "node:net";
-createServer((s) => s.on("data", () => s.end("pong\\n"))).listen(${JSON.stringify(remoteSock)});
+createServer((s) => s.on("data", () => s.end(process.stdin.isTTY ? "pong tty\\n" : "pong\\n"))).listen(${JSON.stringify(remoteSock)});
 `,
     );
     const { handle, view, pid } = await launch(
@@ -366,7 +365,8 @@ createServer((s) => s.on("data", () => s.end("pong\\n"))).listen(${JSON.stringif
       c.on("close", () => resolve(got));
       c.write("ping\n");
     });
-    expect(reply).toBe("pong\n");
+    // The host side asserts its own terminal: the view ran the harness on a pty.
+    expect(reply).toBe("pong tty\n");
     // Only the view has connected so far, and it asked for no shared master.
     expect(readdirSync(cm)).toEqual([]);
     // The status and stop calls use the user's ssh config (ControlMaster auto): they may open a

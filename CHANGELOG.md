@@ -23,7 +23,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   `ExitOnForwardFailure=yes`: a `-L` through a shared master outlives the
   pane. The job is bound with a `reply` handle derived from mu's job key.
   `job.stop` answers only on proof: the host-side claim (`mkdir` under
-  `$HOME/.local/state/mu-plugin-ssh/`, never the host's XDG_STATE_HOME; a stop needs its receipt line too) was never made, so the stop makes it
+  `<root>/`, the root fixed at `job.start` (the plugin's `MU_SSH_STATE_DIR`, else the host's canonical `$HOME/.local/state/mu-plugin-ssh`) and carried in the handle, so a stop in another HOME, XDG_STATE_HOME or plugin process proves absence in the launch's root only; a stop needs its receipt line too) was never made, so the stop makes it
   first, or the recorded leader (pid and start time) and its process group
   are gone after HUP, TERM, KILL. An unreachable host or any doubt is an
   error, so a close keeps the tree and the job record. Tests:
