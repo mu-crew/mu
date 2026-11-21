@@ -136,20 +136,24 @@ export async function serveCtl(
   viewCommand: string,
   remote: string,
   servers: Server[],
+  scratch: string,
 ): Promise<CtlServed> {
-  // The view is quoted for its shell, and again inside `exec /bin/sh -c`: find the pair by its end.
-  const forward = new RegExp(
-    `'-L'[\\s'"]+([^\\s'"]+):${remote.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-  ).exec(viewCommand);
-  if (forward?.[1] === undefined) {
+  // The view is quoted for its shell, and again inside `exec /bin/sh -c`: take the whole -L argument.
+  const forward = /'-L'[\s'"]+([^\s'"]+)/.exec(viewCommand);
+  const spec = forward?.[1];
+  // The whole argument must be `<local>:<expected remote>`: a wrong suffix would forward elsewhere.
+  if (spec === undefined || !spec.endsWith(`:${remote}`)) {
     throw new Error(`the view forwards no ctl socket to ${remote}: ${viewCommand}`);
   }
-  const local = forward[1];
+  const local = spec.slice(0, -(remote.length + 1));
   const ops: string[] = [];
   let runs = 0;
   let forwarded = 0;
   const accepted = new Set<string>();
-  for (const p of [local, remote]) {
+  // The listener lives at a private path (never the shared /tmp/mu-<uid> address): the tunnel
+  // carries the forwarded connection there, standing in for the host's socket at `remote`.
+  const listen = join(scratch, "ctl.sock");
+  for (const p of [local, listen]) {
     mkdirSync(dirname(p), { recursive: true });
     rmSync(p, { force: true });
   }
@@ -179,14 +183,14 @@ export async function serveCtl(
   // The -L: every connection to `local` is carried to `remote`.
   const tunnel = createServer((c) => {
     forwarded += 1;
-    const up = connect(remote);
+    const up = connect(listen);
     c.on("error", () => up.destroy());
     up.on("error", () => c.destroy());
     c.pipe(up);
     up.pipe(c);
   });
   servers.push(server, tunnel);
-  await new Promise<void>((r) => server.listen(remote, () => r()));
+  await new Promise<void>((r) => server.listen(listen, () => r()));
   await new Promise<void>((r) => tunnel.listen(local, () => r()));
   return { ops, forwarded: () => forwarded };
 }

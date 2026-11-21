@@ -5,7 +5,16 @@
 // with a stub multiplexer and a stand-in ssh (test/_ssh-pane.ts). Nothing reaches a real host.
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import type { Server } from "node:net";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -243,6 +252,62 @@ describe("job.stop answers only on proof", () => {
     }
   });
 
+  describe("the state root is resolved on the host at start", () => {
+    // A handle carries at most 128 bytes: the real root must be short.
+    const shortDir = () => {
+      const d = mkdtempSync(join(realpathSync("/tmp"), "sp-"));
+      cleanup.push(d);
+      return d;
+    };
+    const cleanup: string[] = [];
+    afterEach(() => {
+      for (const d of cleanup.splice(0)) rmSync(d, { recursive: true, force: true });
+    });
+    const stopOk = async (handle: string) => (await stop(handle)).result;
+
+    it("a symlink at ~/.local/state: the handle names the real root; launch and stop both work", async () => {
+      const real = shortDir();
+      mkdirSync(join(h.dir, ".local"), { recursive: true });
+      symlinkSync(real, join(h.dir, ".local", "state"));
+      wire = new PluginWire(ssh.argv);
+      const { view, handle } = result(await start("k", { cmd: "true", cwd: h.dir }));
+      expect(handle).toContain(`@o:${real.slice(1).replaceAll("/", ":")}`);
+      expect(lateView(view.command)).toBe(0);
+      expect(existsSync(join(real, "mu-plugin-ssh", idOf(handle), "pid"))).toBe(true);
+      expect(await stopOk(handle)).toBeNull();
+    });
+
+    it("a symlinked MU_SSH_STATE_DIR: the handle names its target", async () => {
+      const real = shortDir();
+      const link = join(realpathSync(h.dir), "link-over");
+      symlinkSync(real, link);
+      process.env.MU_SSH_STATE_DIR = link;
+      try {
+        wire = new PluginWire(ssh.argv);
+        const { view, handle } = result(await start("k", { cmd: "true", cwd: h.dir }));
+        expect(handle).toContain(`@o:${real.slice(1).replaceAll("/", ":")}`);
+        expect(lateView(view.command)).toBe(0);
+        expect(await stopOk(handle)).toBeNull();
+      } finally {
+        delete process.env.MU_SSH_STATE_DIR;
+      }
+    });
+
+    it("a root that cannot be resolved is refused: no handle", async () => {
+      const file = join(realpathSync(h.dir), "a-file");
+      writeFileSync(file, "");
+      process.env.MU_SSH_STATE_DIR = join(file, "sub");
+      try {
+        wire = new PluginWire(ssh.argv);
+        const m = await start("k");
+        expect(m.result).toBeUndefined();
+        expect(m.error).toMatchObject({ data: { kind: "retryable" } });
+      } finally {
+        delete process.env.MU_SSH_STATE_DIR;
+      }
+    });
+  });
+
   it("refuses a handle that is not ours before any ssh", async () => {
     wire = new PluginWire(ssh.argv);
     const m = await stop("x; rm -rf /");
@@ -278,6 +343,7 @@ describe("through mu: spawn, close, and the proof a close waits for", () => {
             o.command,
             remoteCtlSocketPath("ws", o.name, process.getuid?.() ?? 0),
             servers,
+            h.dir,
           );
         }
         o.onPaneCreated?.(id);
@@ -292,6 +358,20 @@ describe("through mu: spawn, close, and the proof a close waits for", () => {
   afterEach(() => {
     process.chdir(cwd);
     process.env.MU_SPAWN_CTL_MS = "0";
+  });
+
+  it("the fixture listens privately and checks the whole -L argument", async () => {
+    const view = (spec: string) => `exec ssh '-L' '${spec}' 'box'`;
+    const rem = "/tmp/mu-fixture-never-bound/x.sock";
+    const a = join(h.dir, "a");
+    const b = join(h.dir, "b");
+    await expect(
+      serveCtl(view(`${join(a, "l.sock")}:${rem}.wrong`), rem, servers, a),
+    ).rejects.toThrow();
+    await serveCtl(view(`${join(a, "l.sock")}:${rem}`), rem, servers, a);
+    await serveCtl(view(`${join(b, "l.sock")}:${rem}`), rem, servers, b);
+    // Two fixtures with one remote address stay apart, and neither binds that address.
+    expect(existsSync(rem)).toBe(false);
   });
 
   it("spawn hands the ssh view the ctl forward, then close with proof leaves no row, record, tree or socket", async () => {

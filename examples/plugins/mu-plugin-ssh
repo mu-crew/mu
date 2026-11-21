@@ -237,19 +237,22 @@ elif group "$P"; then echo "unknown leader gone, its group remains"
 else echo ended; fi`;
 }
 
-/** Resolve the state root for a new job: the override, else the host's canonical $HOME. */
+/**
+ * Resolve the state root for a new job ON THE HOST: the override, else `$HOME/.local/state/...`,
+ * created and made real (`pwd -P`, symlinks included). That path is what the handle records, so
+ * the launch's and the stop's canonical-root check holds. An unresolvable root is refused.
+ */
 function resolveRoot(id, params, then) {
   const over = process.env.MU_SSH_STATE_DIR;
-  if (over) {
-    then({ dir: over });
-    return;
-  }
-  const script = '[ -n "$HOME" ] && cd "$HOME" && pwd -P';
+  const root = over ? q(over) : `"$HOME"${q(DEFAULT_TAIL)}`;
+  const script = `${over ? "" : '[ -n "$HOME" ] && '}mkdir -p ${root} && cd ${root} && pwd -P`;
   remote(id, params, script, (r) => {
-    const home = r.stdout.trim().split("\n")[0] ?? "";
-    if (r.exitCode === 0 && home.startsWith("/")) then({ home });
-    else
+    const real = r.stdout.trim().split("\n")[0] ?? "";
+    if (r.exitCode !== 0 || !real.startsWith("/")) {
       fail(id, "retryable", `mu-plugin-ssh: cannot resolve the host's state root (${r.exitCode ?? "timed out"})`, "check the host, then retry");
+    } else if (!over && real.endsWith(DEFAULT_TAIL)) {
+      then({ home: real.slice(0, -DEFAULT_TAIL.length) || "/" });
+    } else then({ dir: real });
   });
 }
 
