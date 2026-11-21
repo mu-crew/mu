@@ -21,7 +21,7 @@ import { acquireHost } from "../src/host-lifecycle.js";
 import { withHostView } from "../src/host-provider.js";
 import { addHost, checkHost, HostHandbackError, removeHost } from "../src/hosts.js";
 import { setPluginGraceForTests } from "../src/plugins/process.js";
-import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
+import { addPlugin, closePluginSessions, removePlugin } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, linkSeam, providerSeams } from "./_plugin.js";
 
@@ -425,6 +425,49 @@ describe("host exec follow-ups", () => {
     expect(execCalls(a)).toBe(0);
     expect(execCalls(b)).toBe(0);
     expect(admissions()).toBe(0);
+  });
+
+  it("same-name replacement: a plugin removed and re-added under its name during the handshake is never dispatched to", async () => {
+    const a = await plugin({ initDelayMs: 400, instance: "fake-old" }, { slots: "self" });
+    const newDir = join(dir, "new");
+    mkdirSync(newDir);
+    const b = fakePlugin(
+      newDir,
+      { home, instance: "fake-new", seams: linkSeam({ slots: "self" }) },
+      "fake",
+    );
+    const call = hostExec(db, "p", { script: "echo old" });
+    const settled = call.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    for (let i = 0; i < 100 && a.calls().length === 0; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    expect(a.calls().length).toBeGreaterThan(0);
+    removeHost(db, "p");
+    removePlugin(db, "fake");
+    await addPlugin(db, "fake", b.argv);
+    addHost(db, { name: "p", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
+    expect(await settled).toBeInstanceOf(HostExecChangedError);
+    expect(execCalls(a)).toBe(0);
+    expect(execCalls(b)).toBe(0);
+    expect(ops()).toEqual([]); // refused before send: not a dispatch
+  });
+
+  it("a fence refusal before send records no host.exec op", async () => {
+    const a = await plugin({ initDelayMs: 300 }, { slots: "self" });
+    const b = fakePlugin(dir, { home, seams: linkSeam({ slots: "self" }) }, "fake2");
+    await addPlugin(db, "fake2", b.argv);
+    const settled = hostExec(db, "p", { script: "echo old" }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    for (let i = 0; i < 100 && a.calls().length === 0; i++)
+      await new Promise((r) => setTimeout(r, 20));
+    removeHost(db, "p");
+    addHost(db, { name: "p", plugin: "fake2", fetch: "true", repo: null, max_sessions: null });
+    expect(await settled).toBeInstanceOf(HostExecChangedError);
+    expect(ops()).toEqual([]);
   });
 
   it("host check counting: a template name re-added as slots:self during admission is not counted", async () => {

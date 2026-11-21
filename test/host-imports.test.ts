@@ -119,7 +119,7 @@ describe("the host provider seam", () => {
     // resolveHost views the profile it just read; withHostView the one its channel admitted.
     expect(
       callersOf(text("host-provider.ts"), /\badmittedView\(/, /function admittedView\(/),
-    ).toEqual(["resolveHost", "withHostView"]);
+    ).toEqual(["resolveHost", "withHostView", "withHostView"]);
   });
 
   it("each form is caught, one planted file per form", () => {

@@ -36,7 +36,13 @@ import {
 } from "../host-link.js";
 import { type HostView, providerIdentity } from "../host-provider.js";
 import { getHostRecord } from "../host-records.js";
-import { HANDED_BACK, type HostCheckStep, HostHandbackError, withHostChannel } from "../hosts.js";
+import {
+  HANDED_BACK,
+  type HostCheckStep,
+  HostExecChangedError,
+  HostHandbackError,
+  withHostChannel,
+} from "../hosts.js";
 import { git } from "../vcs/git.js";
 import { PLUGIN_READ_TIMEOUT_MS } from "./client.js";
 import {
@@ -101,15 +107,33 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     host: HostView,
     call: LinkCall,
     admitted: ((h: HostView) => void) | undefined,
-    body: (h: HostView, beforeSend?: () => void) => Promise<T>,
+    body: (h: HostView, beforeSend?: (init: { instance: string }) => void) => Promise<T>,
   ): Promise<T> => {
     if (declared.slots === "self" || "lease" in call || host.record !== undefined) {
-      admitted?.(host);
       // A self-managed link takes no row, but the caller's fence still runs right before the
-      // send (after the plugin's handshake), so a replaced profile is never dispatched to.
+      // send (after the plugin's handshake). It checks the identity captured here: the
+      // registration (argv, added_at) and the instance the session reports must still be the
+      // registered ones, so a plugin replaced under the same name is never dispatched to.
+      // `admitted` then runs last: a refusal before the send is not a dispatch.
       const f = "lease" in call ? undefined : call.fence;
       const profile = host.profile;
-      return body(host, f && profile ? () => f(profile) : undefined);
+      if (!(f && profile)) {
+        admitted?.(host);
+        return body(host);
+      }
+      const at = getPlugin(db, name);
+      return body(host, (init) => {
+        const now = getPlugin(db, name);
+        if (
+          now.argv_json !== at.argv_json ||
+          now.added_at !== at.added_at ||
+          now.instance !== init.instance
+        ) {
+          throw new HostExecChangedError(host.name);
+        }
+        f(profile);
+        admitted?.(host);
+      });
     }
     const { holder, ...opts } = call;
     return withHostChannel(
@@ -132,7 +156,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     params: Record<string, unknown>,
     timeoutMs: number,
     once = false,
-    beforeSend?: () => void,
+    beforeSend?: (init: { instance: string }) => void,
   ): Promise<LinkRun> => {
     try {
       // The plugin enforces `timeoutMs` and answers. mu's timer allows one grace on top, so

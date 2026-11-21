@@ -92,6 +92,14 @@ export class HostProfileError extends Error {
   override readonly name: string = "HostProfileError";
 }
 
+/** The refusal of a profile edited between the call's resolution and its admission: nothing ran. */
+export class HostExecChangedError extends HostProfileError {
+  override readonly name: string = "HostExecChangedError";
+  constructor(host: string) {
+    super(`host ${host}: its profile or link changed while the call was admitted; nothing ran`);
+  }
+}
+
 /** A template mu refuses to expand. Exit 2. */
 export class HostTemplateError extends HostProfileError {
   override readonly name: string = "HostTemplateError";

@@ -15,7 +15,10 @@
 
 import type { Db } from "./db.js";
 import { resolveHost } from "./host-provider.js";
-import { HostHandbackError, HostProfileError } from "./hosts.js";
+import { HostExecChangedError, HostHandbackError, HostProfileError } from "./hosts.js";
+
+export { HostExecChangedError };
+
 import { emitEvent } from "./logs.js";
 
 /** Default deadline (§6.4), seconds. */
@@ -89,12 +92,10 @@ export function clipOutput(
   return { stdout: cutUtf8(stdout, outKeep), stderr: cutUtf8(stderr, errKeep), clipped: true };
 }
 
-/** The refusal of a profile edited between the call's resolution and its admission: nothing ran. */
-export class HostExecChangedError extends HostProfileError {
-  override readonly name: string = "HostExecChangedError";
-  constructor(host: string) {
-    super(`host ${host}: its profile changed while the call was admitted; nothing ran`);
-  }
+/** The profile as admitted, less the probe cache a concurrent `host check` rewrites. */
+function profileIdentity(h: { profile?: object }): string {
+  const { capabilities: _c, ...rest } = (h.profile ?? {}) as Record<string, unknown>;
+  return JSON.stringify(rest);
 }
 
 /** An error's category for the record: never its text. */
@@ -131,7 +132,8 @@ export async function hostExec(
     if (
       now.link.name !== view.link.name ||
       now.link.caps.slots !== view.link.caps.slots ||
-      now.link.fingerprint(now) !== view.link.fingerprint(view)
+      now.link.fingerprint(now) !== view.link.fingerprint(view) ||
+      profileIdentity(now) !== profileIdentity(view)
     ) {
       throw new HostExecChangedError(host);
     }
