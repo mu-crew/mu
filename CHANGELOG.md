@@ -14,6 +14,22 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Added
 
+- **`examples/plugins/mu-plugin-ssh` gains a `pane` job kind** (rung 3 over
+  plain ssh, no hand-written templates). It has no channel of its own: pi
+  rides mu's built-in `ctl` (the view forwards the socket pair with `-L`),
+  hook harnesses remote `hooks`, others `mux`. The view always runs
+  `ControlMaster=no ControlPath=none` ahead of the words after the plugin
+  path (ssh keeps the first value), with `StreamLocalBindUnlink=yes` and
+  `ExitOnForwardFailure=yes`: a `-L` through a shared master outlives the
+  pane. The job is bound with a `reply` handle derived from mu's job key.
+  `job.stop` answers only on proof: the host-side claim (`mkdir` under
+  `$XDG_STATE_HOME/mu-plugin-ssh/`) was never made, so the stop makes it
+  first, or the recorded leader (pid and start time) and its process group
+  are gone after HUP, TERM, KILL. An unreachable host or any doubt is an
+  error, so a close keeps the tree and the job record. Tests:
+  `test/plugin-ssh-pane.test.ts`, `.integration.test.ts` (a real sshd on
+  loopback with `REAL_SSHD_TEST=1`, for Linux).
+
 - **`mu host exec <host> [--cwd <dir>] [--timeout <s>] [--json] -- <cmd>`**
   runs one command through the host's link (no row, task, pane or job).
   Exits with the link's code; exit 5 for a hand-back or when no exit code

@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// mu-plugin-ssh: a minimal example mu plugin. It provides one seam, the host
-// link, over plain ssh. Read it next to docs/reference/plugin-protocol.md.
+// mu-plugin-ssh: an example mu plugin over plain ssh. It provides two seams:
+// the host link (exec and fetch) and a `pane` job kind, rung 3 of the placement
+// ladder with no hand-written templates. Read it next to
+// docs/reference/plugin-protocol.md.
 //
 //   mu plugin add ssh -- /abs/path/mu-plugin-ssh [ssh command…]
 //   mu host add devbox --plugin ssh
@@ -11,8 +13,29 @@
 // `-- /abs/mu-plugin-ssh ssh -o BatchMode=yes -J jump`. The remote login
 // shell must be POSIX-like: the plugin sends it `cd <cwd> && exec /bin/sh -c`.
 //
-// The plugin declares no job seam, so mu spawns no agents through it. See
-// test/_fake-plugin.mjs for the job, channel and host seams.
+//   mu agent spawn w1 --host devbox --worktree      # a pane over ssh
+//
+// The pane kind has no channel of its own: mu's built-in ctl (pi) , hooks or mux
+// carry the agents. job.start only builds the view, an interactive ssh that
+// forwards mu's ctl socket (-L) and runs the harness in a remote shell. The
+// view's ssh always runs with ControlMaster=no ControlPath=none: a -L through a
+// shared control master is bound by the master, so the listener outlives the
+// pane and a later ssh asking for the same forward exits 0 with no socket. Our
+// options come first (ssh keeps the first value), so the words after the path
+// cannot undo them. Each pane keeps its own connection; per-connection
+// MaxSessions 1 does not block it, a host with one practical connection does.
+//
+// Lifetime: the view is bound, so mu kills the view, then asks job.stop. The
+// remote side keeps `$XDG_STATE_HOME/mu-plugin-ssh/<handle>/`: the launch claims
+// it with an atomic mkdir and records its pid and start time; job.stop answers
+// null only on proof. Proof is: the launch never claimed (the stop claims it
+// first, so it never can), or the recorded leader is gone and its process group
+// is empty (the group is signalled HUP, TERM, KILL while the leader matches).
+// Any doubt (ssh fails, no pid recorded, a process remains) is an error, so mu
+// keeps the tree and the job record. Descendants that left the process group
+// are not covered by the proof.
+//
+// See test/_fake-plugin.mjs for the channel and host seams.
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -36,6 +59,15 @@ const SSH = process.argv.length > 2 ? process.argv.slice(2) : ["ssh"];
 /** Each stream is cut here, so a reply stays under the protocol's 1 MiB line limit. */
 const MAX_OUTPUT = 256 * 1024;
 const SEAMS = {
+  job: {
+    kind: "pane",
+    view: "bound", // the ssh view's death ends the job
+    handle: "reply", // the handle is derived from the job key: always known to job.stop
+    // job.start only builds a command line (no remote effect), so a repeat of a key is the same
+    // reply and job.lookup has nothing to find: none proves nothing started.
+    start: { lookup: true, dedupe: { exact: true, windowMs: 24 * 60 * 60 * 1000 }, fenceKey: true },
+    honours: { command: true, env: true, sockets: true, roles: ["full-access"] },
+  },
   link: {
     fetch: true, // link.fetch brings a remote HEAD home, so a host needs no --fetch
     slots: "mu", // every call is one ssh connection: mu counts them against --max-sessions
@@ -58,7 +90,7 @@ const q = (s) => `'${String(s).replaceAll("'", `'\\''`)}'`;
 const running = new Map();
 
 /** Run argv locally; answer `{exitCode, stdout, stderr, partial}`, or null exit on timeout. */
-function run(id, argv, { timeoutMs, env, cwd, host }) {
+function run(id, argv, { timeoutMs, env, cwd, host, then }) {
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
     env: env ?? process.env,
@@ -86,7 +118,9 @@ function run(id, argv, { timeoutMs, env, cwd, host }) {
       fail(id, "human", out.stderr.split("\n")[0], `fix ssh access to ${host}`);
       return;
     }
-    reply(id, { exitCode: timedOut ? null : exitCode, ...out });
+    const result = { exitCode: timedOut ? null : exitCode, ...out };
+    if (then) then(result);
+    else reply(id, result);
   };
   child.on("error", (e) => {
     out.stderr = e.message;
@@ -98,6 +132,162 @@ function run(id, argv, { timeoutMs, env, cwd, host }) {
 /** ssh to the mu host and run `script` with /bin/sh in `cwd` (`.` is the login directory). */
 function exec(id, host, script, cwd, timeoutMs) {
   run(id, [...SSH, host, `cd ${q(cwd)} && exec /bin/sh -c ${q(script)}`], { timeoutMs, host });
+}
+
+// ─── The pane job kind ──────────────────────────────────────────────────
+
+const STATE_DIR = '"${XDG_STATE_HOME:-$HOME/.local/state}/mu-plugin-ssh"';
+/** The job's handle: a pure function of mu's job key, so job.stop always has it. */
+const handleOf = (key) => `ssh-${createHash("sha256").update(String(key)).digest("hex").slice(0, 32)}`;
+const HANDLE = /^ssh-[0-9a-f]{32}$/;
+/** The leader's start time, normalised: with its pid, the identity a recycled pid cannot fake. */
+const STARTED = String.raw`ps -o lstart= -p "$P" 2>/dev/null | tr -s ' ' | sed 's/^ //;s/ $//'`;
+
+/** What the view's ssh runs on the host: claim the job, record the leader, run the harness. */
+function launchScript(handle, cwd, env, cmd) {
+  const envWords = Object.entries(env).map(([k, v]) => `${k}=${q(v)}`);
+  return [
+    `D=${STATE_DIR}; H=${handle}`,
+    // The atomic claim: a stop that got here first wins, and then nothing ever runs.
+    `mkdir -p "$D" && mkdir "$D/$H" 2>/dev/null || { echo "mu-plugin-ssh: job $H is stopped or already started" >&2; exit 1; }`,
+    `P=$$; printf '%s %s\\n' "$P" "$(${STARTED})" > "$D/$H/pid.tmp" && mv "$D/$H/pid.tmp" "$D/$H/pid"`,
+    `cd ${q(cwd)} && exec env ${envWords.join(" ")} "\${SHELL:-/bin/sh}" -ilc ${q(cmd)}`,
+  ].join("\n");
+}
+
+/** The shell prelude of a stop or status: read the recorded leader. */
+const READ_STATE = `D=${STATE_DIR}; H=%H
+leader() { P=$1; [ "$(${STARTED})" = "$2" ]; }
+group() { kill -0 -- "-$1" 2>/dev/null; }`;
+
+/** job.stop's remote script: exit 0 only on proof (see the header). */
+function stopScript(handle) {
+  return `${READ_STATE.replace("%H", handle)}
+mkdir -p "$D" || exit 5
+if mkdir "$D/$H" 2>/dev/null; then echo stopped > "$D/$H/stopped"; echo "never started"; exit 0; fi
+[ -f "$D/$H/stopped" ] && { echo "already stopped"; exit 0; }
+n=0; while [ ! -f "$D/$H/pid" ] && [ $n -lt 5 ]; do sleep 1; n=$((n+1)); done
+[ -f "$D/$H/pid" ] || { echo "claimed but no pid recorded" >&2; exit 3; }
+read -r P L < "$D/$H/pid"
+mine=0; leader "$P" "$L" && mine=1
+gone() { ! leader "$P" "$L" && ! group "$P"; }
+if [ $mine = 1 ]; then
+  for s in HUP TERM KILL; do
+    gone && break
+    kill -$s -- "-$P" 2>/dev/null; kill -$s "$P" 2>/dev/null
+    n=0; while ! gone && [ $n -lt 3 ]; do sleep 1; n=$((n+1)); done
+  done
+fi
+gone || { echo "process $P or its group still runs" >&2; exit 4; }
+echo stopped > "$D/$H/stopped"; echo gone`;
+}
+
+/** job.status's remote script: one line, `running`, `ended` or `unknown <why>`. */
+function statusScript(handle) {
+  return `${READ_STATE.replace("%H", handle)}
+[ -d "$D/$H" ] || { echo "unknown not started on the host yet"; exit 0; }
+[ -f "$D/$H/stopped" ] && { echo ended; exit 0; }
+[ -f "$D/$H/pid" ] || { echo "unknown starting"; exit 0; }
+read -r P L < "$D/$H/pid"
+if leader "$P" "$L"; then echo running
+elif group "$P"; then echo "unknown leader gone, its group remains"
+else echo ended; fi`;
+}
+
+/** The handle a job call is about: the recorded one if well-formed, else derived from the key. */
+function handleFor(params) {
+  const given = params.target?.job?.handle;
+  if (typeof given === "string") return HANDLE.test(given) ? given : null;
+  return typeof params.key === "string" ? handleOf(params.key) : null;
+}
+
+function jobStart(id, params) {
+  const host = params.target?.host?.name;
+  const spec = params.spec ?? {};
+  const bad = (why) => fail(id, "permanent", `mu-plugin-ssh: ${why}`);
+  if (typeof host !== "string" || typeof spec.cmd !== "string" || typeof spec.cwd !== "string") {
+    bad("job.start needs a host, cmd and cwd");
+    return;
+  }
+  const env = spec.env ?? {};
+  for (const k of Object.keys(env)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) {
+      bad(`environment name ${JSON.stringify(k)} is not a shell identifier`);
+      return;
+    }
+  }
+  const forward = [];
+  if (spec.sockets) {
+    const { local, remote } = spec.sockets;
+    // ssh splits -L on ':' with no escape.
+    if (/:/.test(local) || /:/.test(remote)) {
+      bad("a ctl socket path with ':' cannot be an ssh -L forward");
+      return;
+    }
+    forward.push("-L", `${local}:${remote}`);
+  }
+  const handle = handleOf(params.key);
+  const remote = `exec /bin/sh -c ${q(launchScript(handle, spec.cwd, env, spec.cmd))}`;
+  const argv = [
+    SSH[0],
+    // Ours come first: ssh keeps the first value of an option.
+    "-o", "ControlMaster=no",
+    "-o", "ControlPath=none",
+    "-o", "StreamLocalBindUnlink=yes",
+    "-o", "ExitOnForwardFailure=yes",
+    ...forward,
+    ...SSH.slice(1),
+    host,
+    "-t",
+    remote,
+  ];
+  reply(id, { view: { command: argv.map(q).join(" "), env: {} }, handle });
+}
+
+/** Run `script` on the host over its own ssh connection and hand its result on. */
+function remote(id, params, script, then) {
+  const host = params.target?.host?.name;
+  const left = typeof params.deadline === "number" ? params.deadline - Date.now() : 30_000;
+  const timeoutMs = Math.min(Math.max(left - 500, 5_000), 120_000);
+  run(id, [...SSH, host, `exec /bin/sh -c ${q(script)}`], { timeoutMs, host, then });
+}
+
+function jobStop(id, params) {
+  const handle = handleFor(params);
+  if (handle === null) {
+    fail(id, "permanent", "mu-plugin-ssh: malformed job handle");
+    return;
+  }
+  remote(id, params, stopScript(handle), (r) => {
+    // Only the script's own exit 0 is proof. Everything else leaves the job as it is.
+    if (r.exitCode === 0) reply(id, null);
+    else {
+      const why = r.exitCode === null ? "timed out" : `exit ${r.exitCode}`;
+      fail(
+        id,
+        "retryable",
+        `no proof the ssh job is gone (${why}): ${r.stderr.trim().split("\n")[0] || "no output"}`,
+        "check the host, then close again",
+      );
+    }
+  });
+}
+
+function jobStatus(id, params) {
+  const handle = handleFor(params);
+  if (handle === null) {
+    fail(id, "permanent", "mu-plugin-ssh: malformed job handle");
+    return;
+  }
+  remote(id, params, statusScript(handle), (r) => {
+    const line = r.stdout.trim().split("\n")[0] ?? "";
+    if (r.exitCode === 0 && line === "running") reply(id, { state: "running" });
+    else if (r.exitCode === 0 && line === "ended") reply(id, { state: "ended", exit: null });
+    else {
+      const why = r.exitCode === 0 ? line.replace(/^unknown /, "") : `ssh ${r.exitCode ?? "timed out"}`;
+      reply(id, { state: "unknown", reason: why || "no answer" });
+    }
+  });
 }
 
 function answer(id, method, params) {
@@ -146,6 +336,19 @@ function answer(id, method, params) {
       );
       return;
     }
+    case "job.start":
+      jobStart(id, params);
+      return;
+    case "job.lookup":
+      // job.start has no remote effect, so nothing is ever found: a none is true.
+      reply(id, { none: true });
+      return;
+    case "job.status":
+      jobStatus(id, params);
+      return;
+    case "job.stop":
+      jobStop(id, params);
+      return;
     case "shutdown":
       reply(id, null);
       return;
