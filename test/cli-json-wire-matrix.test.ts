@@ -93,6 +93,7 @@ const ARGS: Record<string, string[]> = {
   "host rm": ["dev"],
   "host init": ["dev", "--ssh"],
   "host check": ["dev"],
+  "host exec": ["dev", "true"],
   "host acquire": ["box", "--provider", "fake"],
   "host drain": ["box"],
   "host release": ["box"],

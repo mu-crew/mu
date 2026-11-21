@@ -210,6 +210,10 @@ export async function withHostView<T>(
 ): Promise<T> {
   const record = getHostRecord(db, name);
   if (record !== undefined) return fn(resolveHost(db, name), undefined);
+  // A `slots: "self"` link arbitrates its own connection (spec A §4.2): no caller takes a
+  // mu row for it, so the view is the resolved one and there is no lease.
+  const resolved = resolveHost(db, name);
+  if (resolved.link.caps.slots === "self") return fn(resolved, undefined);
   return withHostChannel(
     db,
     name,

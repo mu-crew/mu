@@ -16,6 +16,7 @@ import {
   WORKSTREAM_OPT,
 } from "../cli.js";
 import type { Db } from "../db.js";
+import { HOST_EXEC_DEFAULT_TIMEOUT_S, hostExec } from "../host-exec.js";
 import { advertised, hostCapabilities } from "../host-harnesses.js";
 import {
   abandonHost,
@@ -45,7 +46,7 @@ import {
 import { isJsonMode, muTable, pc } from "../output.js";
 import { shellQuote } from "../shell-quote.js";
 import { relTimeAgo, truncateFront } from "./format.js";
-import { failureWithData } from "./handle.js";
+import { CliExitError, failureWithData } from "./handle.js";
 
 /** Width of `host list`'s repo cell: front-truncated so the repo's own name survives. */
 const REPO_BUDGET = 28;
@@ -379,6 +380,58 @@ export async function cmdHostCheck(
   if (!report.ok) throw failedError(report);
 }
 
+/** `text` with its final newline (a template link strips it, a plugin keeps it). */
+const endLine = (text: string): string => (text === "" || text.endsWith("\n") ? text : `${text}\n`);
+
+/** The command line `host exec` sends: one word is the script verbatim, several are quoted words. */
+export function execScript(words: string[]): string {
+  return words.length === 1 ? (words[0] as string) : words.map(shellQuote).join(" ");
+}
+
+/**
+ * `host exec`: the link's reply. Plain mode writes the streams and exits with the link's code
+ * (a hand-back is exit 5, `HostHandbackError`); `--json` prints one document and exits the same.
+ * No exit code (deadline, no answer): exit 5.
+ */
+export async function cmdHostExec(
+  db: Db,
+  name: string,
+  words: string[],
+  opts: { cwd?: string; timeout?: string },
+): Promise<void> {
+  const timeoutS = opts.timeout === undefined ? undefined : Number(opts.timeout);
+  if (timeoutS !== undefined && !(Number.isInteger(timeoutS) && timeoutS > 0)) {
+    throw new UsageError(
+      `--timeout wants whole seconds above 0, got ${JSON.stringify(opts.timeout)}`,
+    );
+  }
+  const r = await hostExec(db, name, {
+    script: execScript(words),
+    ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+    ...(timeoutS !== undefined ? { timeoutS } : {}),
+  });
+  const { host: _host, ...data } = r;
+  if (r.exit === null) {
+    const msg = `host ${name}: no exit code (deadline or no answer); the remote command ${r.remote === "stopped" ? "was stopped" : "may still run"}`;
+    if (isJsonMode()) {
+      throw new CliExitError(5, {
+        error: "HostExecNoExit",
+        message: msg,
+        data: { exit: null, remote: r.remote },
+      });
+    }
+    process.stdout.write(r.stdout);
+    process.stderr.write(r.stderr);
+    throw new CliExitError(5);
+  }
+  if (isJsonMode()) emitJson(data);
+  else {
+    process.stdout.write(endLine(r.stdout));
+    process.stderr.write(endLine(r.stderr));
+  }
+  if (r.exit !== 0) throw new CliExitError(r.exit);
+}
+
 function failedError(report: { host: string; steps: { step: string; ok: boolean | null }[] }) {
   return new HostCheckFailedError(
     report.host,
@@ -525,6 +578,18 @@ export function wireHostCommands(program: Command): void {
     .action(function (name: string) {
       const opts = (this as Command).opts() as { ssh?: boolean; mule?: boolean };
       return handle(async () => cmdHostInit(name, opts), this as Command)();
+    });
+  host
+    .command("exec <name> <cmd...>")
+    .description(
+      `Run one command on the host through its link (after --); no row or job. Exits with the link's code; 5 for a hand-back (a template's own exit 3 too) or no exit code. Output clipped at 1 MiB; deadline ${HOST_EXEC_DEFAULT_TIMEOUT_S} s.`,
+    )
+    .option("--cwd <dir>", "the remote working directory (default: the login directory)")
+    .option("--timeout <s>", "deadline in seconds")
+    .option(...JSON_OPT)
+    .action(function (name: string, cmd: string[]) {
+      const opts = (this as Command).opts() as { cwd?: string; timeout?: string };
+      return handle((db) => cmdHostExec(db, name, cmd, opts), this as Command)();
     });
   host
     .command("check <name>")

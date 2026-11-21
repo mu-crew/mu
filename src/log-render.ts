@@ -192,6 +192,7 @@ const VERBS: Record<KnownIntent, string> = {
   "agent.stall": "agent stalled",
   "host.acquire": "host acquire",
   "host.release": "host release",
+  "host.exec": "host exec",
 };
 
 /** Every intent this formatter knows, derived from the verb table so
@@ -390,7 +391,8 @@ function renderKnown(row: RenderableOp, intent: KnownIntent): RenderedOp {
     case "agent.abort":
     case "agent.stall":
     case "host.acquire":
-    case "host.release": {
+    case "host.release":
+    case "host.exec": {
       const verb = VERBS[intent];
       // These payloads are prose by construction (emitEvent writes them).
       // Guard anyway: a JSON payload here would otherwise be dumped raw

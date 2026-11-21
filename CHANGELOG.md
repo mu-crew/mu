@@ -12,6 +12,22 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Added
+
+- **`mu host exec <host> [--cwd <dir>] [--timeout <s>] [--json] -- <cmd>`**
+  runs one command through the host's link (no row, task, pane or job).
+  Exits with the link's code; exit 5 for a hand-back or when no exit code
+  came back (deadline, no answer). Default deadline 600 s; stdout plus
+  stderr are clipped at 1 MiB (`clipped`). A legacy template link reads
+  its own exit 3 as a hand-back (the documented exception). One `host exec`
+  log op records host, link, outcome, duration and the command's byte
+  length, never the command or its output.
+
+### Changed
+
+- `host check` and close take no `host_channels` row for a `slots: "self"`
+  link (the link arbitrates its own connection).
+
 ## [5.2.2] — 2026-11-19
 
 ### Changed
