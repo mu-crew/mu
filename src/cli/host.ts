@@ -1,8 +1,5 @@
-// mu — `mu host add | list | show | rm | init | check`: host profiles.
-//
-// mu stays ssh-free. These verbs store and print the user's own templates
-// (src/hosts.ts); `init --ssh` PRINTS a starter and runs nothing, and
-// `check` runs only the stored `exec` template.
+// mu — host profiles, provider hosts and commands through a host's link.
+// `host init` prints a plugin or template starter and runs nothing.
 
 import type { Command } from "commander";
 import {
@@ -36,6 +33,7 @@ import {
   HostCheckFailedError,
   type HostProfile,
   type HostTransport,
+  hostFetchStarter,
   hostMuleStarter,
   hostStarter,
   isValidHostName,
@@ -308,8 +306,10 @@ export async function cmdHostRelease(
   console.log(`released host ${name}`);
 }
 
+type HostInitOptions = { ssh?: boolean; mule?: boolean; template?: boolean };
+
 /** Print a starter. Never executes it: the user reviews, edits and pastes. */
-export function cmdHostInit(name: string, opts: { ssh?: boolean; mule?: boolean }): void {
+export function cmdHostInit(name: string, opts: HostInitOptions): void {
   if (opts.ssh === true && opts.mule === true) {
     throw new UsageError("host init takes one starter kind: --ssh or --mule");
   }
@@ -323,6 +323,23 @@ export function cmdHostInit(name: string, opts: { ssh?: boolean; mule?: boolean 
     );
   }
   const lease = opts.mule === true;
+  if (opts.template !== true) {
+    const plugin = lease ? "mule" : "ssh";
+    const register = `mu plugin add ${plugin} -- /path/to/mu-plugin-${plugin}`;
+    const fetch = hostFetchStarter(name);
+    const command = `mu host add ${name} --plugin ${plugin} --fetch ${shellQuote(fetch)}${lease ? "" : " --max-sessions 1"}`;
+    if (isJsonMode()) {
+      emitJson({ host: name, plugin, register, fetch, command });
+      return;
+    }
+    console.log(
+      `# Starter for ${name}. Replace the plugin path before running; mu runs none of this.`,
+    );
+    console.log(lease ? `# ${name} must be configured in mule.` : `# ${name} is the ssh target.`);
+    console.log(register);
+    console.log(command);
+    return;
+  }
   const s: { shell: string; exec: string; fetch: string; stop?: string; attach?: string } = lease
     ? hostMuleStarter(name)
     : hostStarter(name);
@@ -455,7 +472,7 @@ export function wireHostCommands(program: Command): void {
   const host = program
     .command("host")
     .description(
-      "Host profiles: command templates for a remote host. mu never connects and knows no ssh flags; it fills your templates and runs them with /bin/sh -c",
+      "Manage host profiles and provider hosts. A profile runs remote commands through a registered plugin or through your command templates.",
     );
   host
     .command("add <name>")
@@ -472,7 +489,7 @@ export function wireHostCommands(program: Command): void {
     )
     .option(
       "--plugin <name>",
-      "a registered plugin (mu plugin add) runs this host's commands instead of --shell and --exec; --fetch runs where the plugin does not fetch",
+      "a registered plugin runs this host's commands; collect and close existing work before switching a template profile to a plugin",
     )
     .option(
       "--fetch <template>",
@@ -570,13 +587,14 @@ export function wireHostCommands(program: Command): void {
   host
     .command("init <name>")
     .description(
-      "Print a starter `mu host add` for you to edit: --ssh (the socket forward, `$SHELL -ilc`, identity env inside the command) or --mule (a lease profile for a session-capped host). Prints only: mu never runs it and never connects.",
+      "Print plugin registration and host profile commands for you to edit. Prints only: mu never runs them or connects.",
     )
-    .option("--ssh", "print the ssh starter")
-    .option("--mule", "print the lease starter for a session-capped host (a mule carrier)")
+    .option("--ssh", "print the mu-plugin-ssh starter (see docs/guide/plugins.md)")
+    .option("--mule", "print the mu-plugin-mule starter for a host configured in mule")
+    .option("--template", "print the template profile instead: ssh session or mule lease")
     .option(...JSON_OPT)
     .action(function (name: string) {
-      const opts = (this as Command).opts() as { ssh?: boolean; mule?: boolean };
+      const opts = (this as Command).opts() as HostInitOptions;
       return handle(async () => cmdHostInit(name, opts), this as Command)();
     });
   host

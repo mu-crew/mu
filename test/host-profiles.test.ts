@@ -341,7 +341,17 @@ describe("mu host (CLI)", () => {
 });
 
 describe("host init --ssh prints a starter and never runs it", () => {
-  it("prints templates that validate, and executes nothing (an ssh on PATH is never called)", async () => {
+  it("prints a plugin registration and profile without executing or storing either", async () => {
+    const r = await runCli(["host", "init", "dev", "--ssh"], dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(r.stdout).toContain("mu plugin add ssh -- /path/to/mu-plugin-ssh");
+    expect(r.stdout).toContain("mu host add dev --plugin ssh");
+    expect(r.stdout).not.toMatch(/--shell|--exec|--repo/);
+    expect(listHosts(db)).toEqual([]);
+    expect(db.prepare("SELECT name FROM plugins").all()).toEqual([]);
+  });
+
+  it("--template prints templates and never calls ssh on PATH", async () => {
     const bin = join(dir, "bin");
     const marker = join(dir, "ssh-ran");
     execFileSync("mkdir", ["-p", bin]);
@@ -350,7 +360,7 @@ describe("host init --ssh prints a starter and never runs it", () => {
     const oldPath = process.env.PATH;
     process.env.PATH = `${bin}:${oldPath}`;
     try {
-      const r = await runCli(["host", "init", "dev", "--ssh"], dbPath);
+      const r = await runCli(["host", "init", "dev", "--ssh", "--template"], dbPath);
       expect(r.exitCode).toBeNull();
       expect(r.stdout).toContain("mu host add dev");
       expect(r.stdout).toContain("{local_sock}:{remote_sock}");
@@ -400,7 +410,7 @@ describe("host init --ssh prints a starter and never runs it", () => {
     expect(out).toBe(`${work}|w-1|none`);
   });
 
-  it("needs --ssh (it is the only starter) and a safe host name", async () => {
+  it("needs a starter kind and a safe host name", async () => {
     expect((await runCli(["host", "init", "dev"], dbPath)).exitCode).toBe(2);
     expect((await runCli(["host", "init", "dev;rm", "--ssh"], dbPath)).exitCode).toBe(2);
   });

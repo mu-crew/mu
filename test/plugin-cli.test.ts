@@ -10,6 +10,8 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { requireHostSpawn } from "../src/agents/spawn-remote.js";
+import { insertAgent } from "../src/agents.js";
+import { reserveCarrierJob } from "../src/carrier-jobs.js";
 import { type Db, openDb } from "../src/db.js";
 import { hostIdentity, resolveHost } from "../src/host-provider.js";
 import { addHost, checkHost, getHost, HostProfileError } from "../src/hosts.js";
@@ -17,6 +19,7 @@ import { PluginNotFoundError, PluginRefusedError } from "../src/plugins/errors.j
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, linkSeam } from "./_plugin.js";
+import { registerFixturePlugin } from "./_plugin-handshake.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
@@ -149,6 +152,58 @@ describe("mu host add --plugin", () => {
     expect("plugin" in p).toBe(false);
     expect("plugin" in getHost(db, "dev")).toBe(false);
     expect(hostIdentity(db, "dev")).toBe("sh -c {cmd}");
+  });
+
+  it("fences plugin migration on each kind of record and lets the old profile be restored", async () => {
+    await registerFixturePlugin(db, f);
+    const old = {
+      name: "box",
+      shell: "carrier {job_file} {local_sock}:{remote_sock} {cmd}",
+      exec: "sh -c {cmd}",
+      stop: "stop {job}",
+      fetch: "true",
+      repo: "/repo",
+      max_sessions: null,
+      transport: "lease" as const,
+    };
+    const migrate = ["host", "add", "box", "--plugin", "fake", "--fetch", "true"];
+    const refuse = async (record: string) => {
+      const r = await runCli([...migrate, "--json"], dbPath);
+      expect(r.exitCode).toBe(2);
+      expect(r.stdout + r.stderr).toContain(record);
+      expect(r.stdout + r.stderr).toMatch(/re-add the previous profile.*byte-for-byte/);
+      expect(db.prepare("SELECT name FROM host_profiles WHERE name = 'box'").get()).toBeUndefined();
+    };
+    addHost(db, old);
+    const agent = insertAgent(db, {
+      workstream: "crew",
+      name: "worker",
+      paneId: "%1",
+      host: "box",
+      cwd: "/tree",
+      base: "base",
+      repo: "/repo",
+    });
+    expect((await runCli(["host", "rm", "box"], dbPath)).exitCode).toBeNull();
+    await refuse("agent crew/worker");
+    expect(addHost(db, old)).toMatchObject(old);
+    db.prepare("DELETE FROM agents WHERE id = ?").run(agent.incarnation);
+    expect((await runCli(["host", "rm", "box"], dbPath)).exitCode).toBeNull();
+    await refuse("recovery record crew/worker");
+    db.prepare("DELETE FROM remote_recovery WHERE agent_id = ?").run(agent.incarnation);
+
+    expect(
+      reserveCarrierJob(db, {
+        workstream: "crew",
+        name: "pending",
+        host: "box",
+        hostStop: old.stop,
+      }),
+    ).toBeDefined();
+    await refuse("job record crew/pending");
+    db.prepare("UPDATE carrier_jobs SET host = 'other' WHERE host = 'box'").run();
+    expect((await runCli(migrate, dbPath)).exitCode).toBeNull();
+    expect(getHost(db, "box").plugin).toBe("fake");
   });
 
   it("refuses an unregistered plugin (exit 3), template fields, a lease transport, and a missing --shell", async () => {

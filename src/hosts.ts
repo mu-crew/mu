@@ -3,7 +3,7 @@
 // mu never connects to a host and knows no ssh flags. A profile is three
 // templates the user wrote (`shell`, `exec`, `fetch`), a `repo` path and an
 // optional `max_sessions`. mu fills the documented placeholders and runs the
-// result with `/bin/sh -c`; `host init --ssh` only PRINTS a starter to edit.
+// result with `/bin/sh -c`; `host init` only PRINTS a starter to edit.
 //
 // A profile has a TRANSPORT. `session` (the default): the pane runs the `shell`
 // template, a held ssh. `lease`: the pane runs a local CARRIER that owns a
@@ -331,24 +331,42 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
   // inserted in ONE immediate transaction, as an acquire's record is. Read here, not through
   // src/host-records.ts: that module needs this one loaded first.
   db.transaction(() => {
-    if (db.prepare("SELECT 1 FROM hosts WHERE name = ?").get(p.name) !== undefined) {
-      throw new HostExistsError(p.name);
-    }
-    try {
-      // A template profile's row is the one it always was: `plugin` is written only when given.
-      db.prepare(
-        p.plugin === null
-          ? "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach)"
-          : "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach, plugin) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach, @plugin)",
-      ).run(p);
-    } catch (e) {
-      if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
-        throw new HostExistsError(p.name);
-      }
-      throw e;
-    }
+    const taken = db
+      .prepare(
+        "SELECT 1 FROM hosts WHERE name = @name UNION ALL SELECT 1 FROM host_profiles WHERE name = @name LIMIT 1",
+      )
+      .get({ name: p.name });
+    if (taken !== undefined) throw new HostExistsError(p.name);
+    if (p.plugin !== null) refuseHostProfileMigration(db, p.name);
+    // A template profile's row is the one it always was: `plugin` is written only when given.
+    db.prepare(
+      p.plugin === null
+        ? "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach)"
+        : "INSERT INTO host_profiles (name, shell, exec, fetch, repo, max_sessions, transport, stop, attach, plugin) VALUES (@name, @shell, @exec, @fetch, @repo, @max_sessions, @transport, @stop, @attach, @plugin)",
+    ).run(p);
   }).immediate();
   return getHost(db, p.name);
+}
+
+/** Ladder placement §7.3: match by name, even if a previous profile is already gone. */
+function refuseHostProfileMigration(db: Db, host: string): void {
+  const refs = db
+    .prepare(
+      `SELECT 'agent ' || ws.name || '/' || a.name AS label
+       FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.host = @host
+     UNION ALL
+     SELECT 'job record ' || workstream || '/' || name || ' (id ' || id || ')'
+       FROM carrier_jobs WHERE host = @host
+     UNION ALL
+     SELECT 'recovery record ' || workstream || '/' || name || ' (agent id ' || agent_id || ')'
+       FROM remote_recovery WHERE host = @host
+     ORDER BY label`,
+    )
+    .all({ host }) as { label: string }[];
+  if (refs.length === 0) return;
+  throw new HostProfileError(
+    `host ${host}: cannot add a plugin profile while these records name it: ${refs.map((r) => r.label).join(", ")}. Use the original mu host add command to re-add the previous profile byte-for-byte, collect and close the remaining work, then remove the old profile and retry.`,
+  );
 }
 
 /**
@@ -396,8 +414,13 @@ export function removeHost(db: Db, name: string): boolean {
     .immediate();
 }
 
+/** The local fetch template for a host reachable by ssh. */
+export function hostFetchStarter(host: string): string {
+  return `git fetch ssh://${host}{cwd} HEAD`;
+}
+
 /**
- * The starter for `host init <name> --ssh`: printed for the user to edit,
+ * The starter for `host init <name> --ssh --template`: printed for the user to edit,
  * never run. The shell template is a command for the remote login shell
  * (inside quotes, so each value asks for `:sh`, quoting for that shell): cd, env, `$SHELL -ilc`.
  */
@@ -410,12 +433,12 @@ export function hostStarter(host: string): { shell: string; exec: string; fetch:
     // keeps its own connection, so its forward dies with it.
     shell: `${ssh} -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L {local_sock}:{remote_sock} ${host} -t 'cd {cwd:sh} && {env} "$SHELL" -ilc {cmd:sh}'`,
     exec: `${ssh} -o BatchMode=yes ${host} {cmd}`,
-    fetch: `git fetch ssh://${host}{cwd} HEAD`,
+    fetch: hostFetchStarter(host),
   };
 }
 
 /**
- * The starter for `host init <name> --mule`: a lease profile for a session-capped host,
+ * The starter for `host init <name> --mule --template`: a lease profile for a session-capped host,
  * printed for the user to edit, never run. `env {env} sh -c {cmd}`, not `{env} {cmd}`:
  * mule quotes each argv word, so a bare `K='v'` word would run as a program name.
  */
@@ -429,7 +452,7 @@ export function hostMuleStarter(host: string): {
   return {
     shell: `mule run --host ${host} --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}`,
     exec: `mule exec --host ${host} -- sh -c {cmd}`,
-    fetch: `git fetch ssh://${host}{cwd} HEAD`,
+    fetch: hostFetchStarter(host),
     stop: `mule rm --host ${host} {job}`,
     attach: `mule run --host ${host} --lease --attach {job} --job-file {job_file} --forward-unix {local_sock}:{remote_sock}`,
   };
@@ -1375,6 +1398,6 @@ function sessionShellWarnings(profile: HostProfile): string[] {
     ...(noPath ? [] : ["ControlPath=none"]),
   ];
   return [
-    `shell template lacks ${lacks.join(" and ")}: a forward that rides a shared ssh master is bound by the master and outlives the pane (heuristic; see mu host init --ssh)`,
+    `shell template lacks ${lacks.join(" and ")}: a forward that rides a shared ssh master is bound by the master and outlives the pane (heuristic; see mu host init <name> --ssh --template)`,
   ];
 }

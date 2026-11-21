@@ -259,6 +259,7 @@ describe("template grammar: the lexer decides, never a substring", () => {
 
 describe("host init --mule", () => {
   const ARGS = ["host", "init", "dev", "--mule"];
+  const TEMPLATE_ARGS = [...ARGS, "--template"];
   const EXPECTED = [
     "mu host add dev --transport lease",
     "--shell 'mule run --host dev --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}'",
@@ -268,8 +269,30 @@ describe("host init --mule", () => {
     "--fetch 'git fetch ssh://dev{cwd} HEAD'",
   ].join(" \\\n  ");
 
-  it("prints the spec's starter verbatim and runs nothing", async () => {
+  it("prints a plugin starter with its required fetch template and runs nothing", async () => {
     const r = await runCli(ARGS, dbPath);
+    expect(r.exitCode).toBeNull();
+    expect(r.stdout).toContain("mu plugin add mule -- /path/to/mu-plugin-mule");
+    expect(r.stdout).toContain("mu host add dev --plugin mule");
+    expect(r.stdout).toContain("--fetch 'git fetch ssh://dev{cwd} HEAD'");
+    expect(r.stdout).not.toMatch(/--transport|--shell|--exec|--stop|--attach|--max-sessions/);
+    expect(listHosts(db)).toEqual([]);
+    expect(db.prepare("SELECT name FROM plugins").all()).toEqual([]);
+  });
+
+  it("--json carries the plugin registration and profile commands", async () => {
+    const r = await runCliJson([...ARGS, "--json"], dbPath);
+    expect(r.data).toMatchObject({
+      host: "dev",
+      plugin: "mule",
+      register: "mu plugin add mule -- /path/to/mu-plugin-mule",
+      fetch: "git fetch ssh://dev{cwd} HEAD",
+      command: expect.stringContaining("mu host add dev --plugin mule"),
+    });
+  });
+
+  it("--template prints the original lease starter verbatim and runs nothing", async () => {
+    const r = await runCli(TEMPLATE_ARGS, dbPath);
     expect(r.exitCode).toBeNull();
     expect(r.stdout).toContain(EXPECTED);
     expect(r.stdout).not.toContain("--max-sessions");
@@ -286,8 +309,8 @@ describe("host init --mule", () => {
     expect(getHost(db, "dev").attach).toBe(s.attach);
   });
 
-  it("--json carries the starter fields and the command", async () => {
-    const r = await runCliJson([...ARGS, "--json"], dbPath);
+  it("--template --json carries the original starter fields and command", async () => {
+    const r = await runCliJson([...TEMPLATE_ARGS, "--json"], dbPath);
     expect(r.data).toMatchObject({
       host: "dev",
       transport: "lease",
@@ -296,10 +319,7 @@ describe("host init --mule", () => {
     });
   });
 
-  it("--ssh is unchanged, and the two kinds exclude each other", async () => {
-    expect((await runCli(["host", "init", "dev", "--ssh"], dbPath)).stdout).not.toContain(
-      "--transport",
-    );
+  it("refuses both kinds, neither kind, and invalid host names", async () => {
     expect((await runCli([...ARGS, "--ssh"], dbPath)).exitCode).toBe(2);
     expect((await runCli(["host", "init", "dev"], dbPath)).exitCode).toBe(2);
     expect((await runCli(["host", "init", "dev;rm", "--mule"], dbPath)).exitCode).toBe(2);
