@@ -24,12 +24,12 @@ import { HONOURS_ALL, type JobKind } from "../jobs/types.js";
 import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
-import type { PluginJobKind } from "../plugins/job.js";
 import { refuseRecoveredWorktree } from "../remote-recovery.js";
 import { prepareRemote, type RemoteSite, removeRemoteWorktree } from "../remote-worktree.js";
 import { git, gitToplevel } from "../vcs/git.js";
 import { withAgentLock } from "./lock.js";
 import type { SpawnAgentOptions, StagedWorktree } from "./spawn.js";
+import type { PluginJobKind } from "./spawn-plugin.js";
 
 /** The remote repo of a `--host` spawn: `--root`, else the profile's default. */
 function remoteRoot(opts: SpawnAgentOptions, profile: HostProfile): { root?: string } {

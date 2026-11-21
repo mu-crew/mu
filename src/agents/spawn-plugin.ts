@@ -812,3 +812,5 @@ async function builtInReadiness(
     trustDialog,
   };
 }
+
+export type { PluginJobKind };
