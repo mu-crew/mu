@@ -55,6 +55,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- The fast test tier honours `MUZZLE_SLOTS`. On macOS test processes use
+  the toolchain Git directly, and plugin and eval fixtures launch fewer
+  processes. Production command resolution is unchanged.
 - `host check` and close take no `host_channels` row for a `slots: "self"`
   link (the link arbitrates its own connection).
 - **A `--worktree` spawn on a static host resolves `--from` locally** (ladder

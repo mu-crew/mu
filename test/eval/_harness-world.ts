@@ -64,9 +64,9 @@ const iso = (ms: number): string => new Date(ms).toISOString();
 
 /**
  * The world's repo, built in one `git fast-import` (then a `reset --hard` for the work tree
- * and one patch-id pipe for every worker commit) instead of a git process per step: on an
- * endpoint-security host each start costs 14 ms to 1 s, and these worlds were the fast
- * tier's largest source of git starts. Same end state as the step-by-step build: an empty
+ * and one patch-id operation for all worker commits) instead of a git process per step.
+ * These worlds were the fast tier's largest direct source of Git launches. The same
+ * history shape as the step-by-step build: an empty
  * `init` on main; per worker, its task file committed on `wk-<agent>` off init, authored
  * <agent>@worker.eval.invalid; a merged worker's commit re-made on main (the cherry-pick:
  * same author and message, committer eval); then the AUT's commits on main; main checked out.
@@ -77,7 +77,7 @@ function buildRepo(
   now: number,
 ): { head: string; built: Map<string, { sha: string; pid: string }> } {
   const git = (args: string[], input?: string): string =>
-    execFileSync("git", args, { cwd: repoDir, encoding: "utf8", input }).trim();
+    execFileSync("git", args, { cwd: repoDir, encoding: "utf8", input });
   const ident = (name: string, email: string): string =>
     `${name} <${email}> ${Math.floor(now / 1000)} +0000`;
   const evalId = ident("eval", "eval@example.invalid");
@@ -117,24 +117,28 @@ function buildRepo(
     if (m !== undefined && sha !== undefined) shaOf.set(Number(m.slice(1)), sha);
   }
   rmSync(marksFile, { force: true });
-  const shas = [...marks.values()].map((m) => shaOf.get(m) ?? "");
+  const shaForMark = (m: number): string => {
+    const sha = shaOf.get(m);
+    if (sha === undefined) throw new Error(`git fast-import did not export mark :${m}`);
+    return sha;
+  };
+  const shas = [...marks.values()].map(shaForMark);
   const pidOf = new Map<string, string>();
   if (shas.length > 0) {
-    const out = execFileSync("sh", ["-c", 'git show "$@" | git patch-id --stable', "sh", ...shas], {
-      cwd: repoDir,
-      encoding: "utf8",
-    });
-    for (const line of out.trim().split("\n")) {
+    const patches = git(["show", "--format=medium", "--no-color", ...shas]);
+    for (const line of git(["patch-id", "--stable"], patches).split("\n")) {
       const [pid, sha] = line.split(" ");
       if (pid !== undefined && sha !== undefined) pidOf.set(sha, pid);
     }
   }
   const built = new Map<string, { sha: string; pid: string }>();
   for (const [agent, m] of marks) {
-    const sha = shaOf.get(m) ?? "";
-    built.set(agent, { sha, pid: pidOf.get(sha) ?? "" });
+    const sha = shaForMark(m);
+    const pid = pidOf.get(sha);
+    if (pid === undefined) throw new Error(`git patch-id did not report a patch for ${sha}`);
+    built.set(agent, { sha, pid });
   }
-  return { head: shaOf.get(init) ?? "", built };
+  return { head: shaForMark(init), built };
 }
 
 export function makeHarnessWorld(spec: WorldSpec): Sandbox {
@@ -217,7 +221,9 @@ export function makeHarnessWorld(spec: WorldSpec): Sandbox {
       payload: `{"status":"IN_PROGRESS","owner_id":${pane}}`,
       at: reportAt - 9000,
     });
-    const { sha, pid } = built.get(w.agent) ?? { sha: "", pid: "" };
+    const commit = built.get(w.agent);
+    if (commit === undefined) throw new Error(`missing fixture commit for ${w.agent}`);
+    const { sha, pid } = commit;
     if (w.merged !== false) {
       mainLog.push(`${now + (w.mergeAt ?? reportAt + 2000)} main ${w.task}`);
     }

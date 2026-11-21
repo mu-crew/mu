@@ -151,10 +151,9 @@ const kill = (pid) => {
   } catch {}
 };
 
-/** A run and everything it started that still descends from it. */
-const killTree = (root) => {
-  const table = processes();
-  const tree = new Set([root]);
+/** Runs and everything that still descends from them, from one snapshot. */
+const killTrees = (roots, table = processes()) => {
+  const tree = new Set(roots);
   for (let grew = true; grew; ) {
     grew = false;
     for (const [pid, ppid] of table) {
@@ -167,32 +166,21 @@ const killTree = (root) => {
   for (const pid of tree) kill(pid);
 };
 
-/**
- * Whether a run ever started in the fake's group. Only runs put children there
- * (the `detach` helper leaves it), so with none the group is the fake alone and
- * the EOF sweep skips its `ps`: most fakes never run anything, and a process
- * start per plugin exit was a tenth of the fast tier's launches.
- */
+// Remember in-group runs even after their leaders exit: they can leave orphans.
+// Reply-only fakes never need a process table at EOF.
 let ranInGroup = false;
-
-/** Everything left in the fake's own group but the fake (a run's orphans included). */
-const killGroupButMe = () => {
-  if (!ranInGroup) return;
-  for (const [pid, , pgid] of processes())
-    if (pgid === process.pid && pid !== process.pid) kill(pid);
-};
 
 // Runs stay in the fake's process group, so nothing they start can outlive it (D13
 // no-detach). `detachExec` is the hostile variant: each run in its own session.
 function run(id, argv, cwd, timeoutMs, done) {
-  const pathPrefix = config().pathPrefix;
-  if (config().detachExec !== true) ranInGroup = true;
+  const { pathPrefix, detachExec } = config();
+  if (detachExec !== true) ranInGroup = true;
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
     ...(typeof pathPrefix === "string"
       ? { env: { ...process.env, PATH: `${pathPrefix}:${process.env.PATH ?? ""}` } }
       : {}),
-    detached: config().detachExec === true,
+    detached: detachExec === true,
     stdio: ["ignore", "pipe", "pipe"],
   });
   running.set(id, child.pid);
@@ -217,11 +205,13 @@ function run(id, argv, cwd, timeoutMs, done) {
     // remote stops asynchronously: `remoteOnTimeout: "stopping"`).
     const late = config().stopLateMs;
     if (late === undefined) {
-      killTree(child.pid);
+      if (child.pid !== undefined) killTrees([child.pid]);
       return;
     }
     finish({ exitCode: null, stdout, stderr, partial: false });
-    setTimeout(() => killTree(child.pid), late);
+    setTimeout(() => {
+      if (child.pid !== undefined) killTrees([child.pid]);
+    }, late);
   }, timeoutMs);
   child.on("error", (e) => {
     clearTimeout(timer);
@@ -589,7 +579,7 @@ function onMessage(msg) {
     }
     if (deaf.has(id)) return;
     const pid = running.get(id);
-    if (pid !== undefined) killTree(pid);
+    if (pid !== undefined) killTrees([pid]);
     return;
   }
   appendFileSync(
@@ -685,8 +675,16 @@ process.stdin.on("end", () => {
     return;
   }
   const finish = () => {
-    for (const pid of running.values()) killTree(pid);
-    if (!c.detachExec) killGroupButMe();
+    if (ranInGroup || running.size > 0) {
+      const table = processes();
+      const roots = [...running.values()];
+      if (ranInGroup) {
+        for (const [pid, , pgid] of table) {
+          if (pgid === process.pid && pid !== process.pid) roots.push(pid);
+        }
+      }
+      killTrees(roots, table);
+    }
     appendFileSync(`${configPath}.log`, `${JSON.stringify({ method: "(clean exit)" })}\n`);
     process.exit(0);
   };

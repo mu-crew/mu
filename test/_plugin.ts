@@ -1,12 +1,12 @@
 // The fake plugin (test/_fake-plugin.mjs) installed as a real executable for a
-// test: `<dir>/bin/mu-plugin-<name>`, a 0755 shell script that runs the fake
-// under this node with its JSON config. `calls()` reads the requests it got.
+// test: `<dir>/bin/mu-plugin-<name>` runs the fake under this node with its
+// JSON config. `calls()` reads the requests it got.
 
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const FAKE = join(dirname(fileURLToPath(import.meta.url)), "_fake-plugin.mjs");
+const FAKE = new URL("./_fake-plugin.mjs", import.meta.url);
 
 export interface FakePlugin {
   readonly name: string;
@@ -48,7 +48,12 @@ export function fakePlugin(
   mkdirSync(bin, { recursive: true });
   const path = join(bin, `mu-plugin-${name}`);
   const configPath = join(dir, `${name}-config.json`);
-  writeFileSync(path, `#!/bin/sh\nexec '${process.execPath}' '${FAKE}' "$@"\n`);
+  // Keep a real executable and transport without exec'ing a shell first. A
+  // shebang cannot quote a Node path with whitespace; keep the shell fallback.
+  const launcher = /\s/.test(process.execPath)
+    ? `#!/bin/sh\nexec '${process.execPath}' '${fileURLToPath(FAKE)}' "$@"\n`
+    : `#!${process.execPath}\nimport(${JSON.stringify(FAKE.href)});\n`;
+  writeFileSync(path, launcher);
   chmodSync(path, 0o755);
   let current: Record<string, unknown> = { name, home: dir, ...config };
   const log = (): Array<{ method: string; params: Record<string, unknown> }> => {

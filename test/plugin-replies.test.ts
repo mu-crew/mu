@@ -94,12 +94,13 @@ async function setup(job: Record<string, unknown> = {}) {
 
 /** A row a crashed mu left (gone creator, gone plugin group): claimable at once. */
 function seed(over: Partial<EffectIntent> & Pick<EffectIntent, "key" | "method" | "subject">) {
-  setEffectOwnerForTests({ pid: deadPid(), start: null });
+  const pid = deadPid();
+  setEffectOwnerForTests({ pid, start: null });
   writeEffect(db, {
     plugin: "fake",
     params: { target: { agent, host: { name: "dev" } } },
     instance: "fake-1",
-    pgid: deadPid(),
+    pgid: pid,
     pgidStart: null,
     ...over,
   });

@@ -88,8 +88,9 @@ const startParams = () => ({
 const jobCalls = (m: string) => f.calls().filter((c) => c.method === m);
 
 /** The intent a crashed mu left: written by a gone creator to a gone plugin group. */
-function crashedIntent(pgid = deadPid()) {
-  setEffectOwnerForTests({ pid: deadPid(), start: null });
+function crashedIntent(pgid?: number) {
+  const pid = deadPid();
+  setEffectOwnerForTests({ pid, start: null });
   writeEffect(
     db,
     {
@@ -99,7 +100,7 @@ function crashedIntent(pgid = deadPid()) {
       method: "job.start",
       params: startParams(),
       instance: "fake-1",
-      pgid,
+      pgid: pgid ?? pid,
       pgidStart: null,
     },
     () =>
