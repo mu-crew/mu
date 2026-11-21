@@ -116,6 +116,21 @@ version, an `instance`, the schema digest and its seams:
 - `schema` is `sha256:` and the hex sha256 of the exact bytes of the
   `schemas/plugin-protocol-v<n>.json` the plugin was built against.
 
+### Schema compatibility
+
+mu accepts the published digest and any older v1 digest explicitly approved
+for it in `src/plugins/schema-compat.ts`. An approval does not carry over to
+a new digest. On an additive change, approve an older digest only if the
+older plugin can still run with the new mu: existing fields, defaults and
+semantics must still work, and any new field in a plugin reply must be
+optional for mu. An incompatible change must not preserve an approval.
+
+Plugins should ignore unfamiliar optional fields in request payloads for
+methods they implement. Do not send a new field to an older plugin that
+rejects it, or rely on an older plugin honouring it; gate that use on support
+instead. This rule does not relax mu's validation of replies, notifications,
+or seam declarations, or its protocol-version and instance checks.
+
 ### Seams
 
 | Seam | Object | Notes |
@@ -135,8 +150,9 @@ mu refuses the plugin (exit 4) when:
 
 - the protocol version is outside mu's range, or the plugin answered the
   handshake with an error;
-- its name is not the registered name, or its schema digest is not the
-  published file's;
+- its name is not the registered name, or its schema digest is neither
+  the published file's nor approved for it. The digest refusal says
+  `rebuild the plugin against schema` and names the file and current digest;
 - the declaration does not match the schema: a missing or unknown field,
   an unknown seam or value;
 - a seam the registration or a host needs is missing, or no seam is

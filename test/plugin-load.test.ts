@@ -10,6 +10,7 @@ import { classifyError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
 import { startPlugin } from "../src/plugins/client.js";
 import { PluginRefusedError } from "../src/plugins/errors.js";
+import { PLUGIN_SCHEMA_DIGEST, PLUGIN_SCHEMA_FILE } from "../src/plugins/protocol.js";
 import {
   addPlugin,
   closePluginSessions,
@@ -80,9 +81,10 @@ describe("load rules", () => {
     await s.shutdown();
   });
 
-  it("a schema digest that is not the published file's", async () => {
-    expect(await refusal({ schema: `sha256:${"0".repeat(64)}` })).toMatch(
-      /schema digest .* is not/,
+  it("an incompatible schema digest names the schema to rebuild against", async () => {
+    const schema = `sha256:${"0".repeat(64)}`;
+    expect(await refusal({ schema })).toContain(
+      `rebuild the plugin against schema ${PLUGIN_SCHEMA_FILE} (${PLUGIN_SCHEMA_DIGEST})`,
     );
   });
 

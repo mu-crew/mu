@@ -55,6 +55,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- mu can accept older plugin schema digests explicitly approved for the
+  current schema. Incompatible digests name the schema and digest to rebuild
+  against. The published schema is unchanged.
 - The host-profile race test verifies that neither a template nor a plugin
   profile lets a provider claim the name between the conflict check and insert.
 - **herdr refuses remote spawns and reattaches before changing anything.**

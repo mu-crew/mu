@@ -23,6 +23,13 @@ import type {
   JobStart,
   PaneCommand,
 } from "../jobs/types.js";
+import {
+  COMPATIBLE_OLDER_SCHEMA_DIGESTS,
+  PLUGIN_SCHEMA_DIGEST,
+  PLUGIN_SCHEMA_FILE,
+} from "./schema-compat.js";
+
+export { PLUGIN_SCHEMA_DIGEST, PLUGIN_SCHEMA_FILE } from "./schema-compat.js";
 
 /** The protocol versions this build speaks. */
 export const PROTOCOL_MIN = 1;
@@ -30,13 +37,6 @@ export const PROTOCOL_MAX = 1;
 
 /** One message, its newline excluded. */
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
-
-/** The published schema, relative to the package root. Ships in the package. */
-export const PLUGIN_SCHEMA_FILE = "schemas/plugin-protocol-v1.json";
-
-/** sha256 of the exact bytes of PLUGIN_SCHEMA_FILE (pinned by test/plugin-schema.test.ts). */
-export const PLUGIN_SCHEMA_DIGEST =
-  "sha256:6ea6e13cabf6baebe44e961e21370a66ddf523082bfd73bcf169ec627fc71a25";
 
 /** Error text mu keeps from a plugin: the first line, at most this many characters (D14). */
 export const ERROR_TEXT_MAX = 400;
@@ -1024,9 +1024,12 @@ export function loadRefusals(
       `it names itself ${JSON.stringify(r.plugin.name)}, registered as ${JSON.stringify(expect.name)}`,
     );
   }
-  if (r.schema !== PLUGIN_SCHEMA_DIGEST) {
+  if (
+    r.schema !== PLUGIN_SCHEMA_DIGEST &&
+    !COMPATIBLE_OLDER_SCHEMA_DIGESTS.get(PLUGIN_SCHEMA_DIGEST)?.includes(r.schema)
+  ) {
     out.push(
-      `its schema digest ${r.schema} is not ${PLUGIN_SCHEMA_FILE}'s (${PLUGIN_SCHEMA_DIGEST})`,
+      `its schema digest ${JSON.stringify(r.schema)} is not supported; rebuild the plugin against schema ${PLUGIN_SCHEMA_FILE} (${PLUGIN_SCHEMA_DIGEST})`,
     );
   }
   const s = r.seams;
