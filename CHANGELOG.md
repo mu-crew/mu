@@ -55,6 +55,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- The host-profile race test verifies that neither a template nor a plugin
+  profile lets a provider claim the name between the conflict check and insert.
 - The fast test tier honours `MUZZLE_SLOTS`. On macOS test processes use
   the toolchain Git directly, and plugin and eval fixtures launch fewer
   processes. Production command resolution is unchanged.

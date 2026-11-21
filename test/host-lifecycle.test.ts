@@ -31,7 +31,7 @@ import {
   insertHostRecord,
   reserveProviderJob,
 } from "../src/host-records.js";
-import { addHost, checkHost, HostExistsError } from "../src/hosts.js";
+import { addHost, checkHost, getHost, HostExistsError } from "../src/hosts.js";
 import { listLogs } from "../src/logs.js";
 import { EffectFencedError, EffectOutcomeUnknownError } from "../src/plugins/errors.js";
 import { type PluginJobKind, pluginJobRef } from "../src/plugins/job.js";
@@ -652,48 +652,54 @@ describe("review fixes (p6d_fix)", () => {
     expect(st.state).toBe("unknown");
   });
 
-  it("ruling 5: a profile's name check and insert are one immediate transaction", async () => {
-    await setup();
-    const real = db.prepare.bind(db);
-    let racer: unknown;
-    db.prepare = ((sql: string) => {
-      const st = real(sql);
-      if (sql !== "SELECT 1 FROM hosts WHERE name = ?") return st;
-      return {
-        get: (n: string) => {
-          // Another process acquiring the name meanwhile cannot get the write lock.
-          const other = openDb({ path: db.name });
-          other.pragma("busy_timeout = 0");
-          try {
-            insertHostRecord(
-              other,
-              { name: "race", provider: "fake", params: {}, repo: null },
-              "fake-1",
-            );
-          } catch (e) {
-            racer = e;
-          } finally {
-            other.close();
-          }
-          return st.get(n);
-        },
-      };
-    }) as unknown as typeof db.prepare;
-    try {
-      addHost(db, {
-        name: "race",
-        shell: "s",
-        exec: "e {cmd}",
-        fetch: "f",
-        repo: null,
-        max_sessions: null,
-      });
-    } finally {
-      db.prepare = real;
-    }
-    expect(String(racer)).toMatch(/SQLITE_BUSY|database is locked/);
-    expect(getHostRecord(db, "race")).toBeUndefined();
-  });
+  it.each([
+    { type: "template", launch: { shell: "s", exec: "e {cmd}" } },
+    { type: "plugin", launch: { plugin: "fake" } },
+  ])(
+    "ruling 5: a $type profile's name check and insert are one immediate transaction",
+    async ({ launch }) => {
+      await setup();
+      const real = db.prepare.bind(db);
+      const other = openDb({ path: db.name });
+      other.pragma("busy_timeout = 0");
+      let racer: unknown;
+      db.prepare = ((sql: string) => {
+        const st = real(sql);
+        if (!/\bFROM\s+hosts\s+WHERE\s+name\b/i.test(sql)) return st;
+        return {
+          get: (...params: unknown[]) => {
+            const taken = st.get(...params);
+            // The name check has read; the profile has not been inserted yet.
+            try {
+              insertHostRecord(
+                other,
+                { name: "race", provider: "fake", params: {}, repo: null },
+                "fake-1",
+              );
+            } catch (e) {
+              racer = e;
+            }
+            return taken;
+          },
+        };
+      }) as unknown as typeof db.prepare;
+      try {
+        addHost(db, {
+          name: "race",
+          ...launch,
+          fetch: "f",
+          repo: null,
+          max_sessions: null,
+        });
+      } finally {
+        db.prepare = real;
+        other.close();
+      }
+      expect(String(racer)).toMatch(/SQLITE_BUSY|database is locked/);
+      expect(getHostRecord(db, "race")).toBeUndefined();
+      expect(getHost(db, "race")).toMatchObject(launch);
+    },
+  );
 
   it("ruling 6: a push that reported success but left no commit says so", async () => {
     const home = process.env.HOME;
