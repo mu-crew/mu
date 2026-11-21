@@ -9,14 +9,16 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execScript } from "../src/cli/host.js";
 import { type Db, openDb } from "../src/db.js";
+import { execGroupCapture } from "../src/exec-file.js";
 import {
   clipOutput,
   HOST_EXEC_OUTPUT_MAX_BYTES,
+  HostExecChangedError,
   HostExecTooLargeError,
   hostExec,
 } from "../src/host-exec.js";
 import { acquireHost } from "../src/host-lifecycle.js";
-import { addHost, checkHost, HostHandbackError } from "../src/hosts.js";
+import { addHost, checkHost, HostHandbackError, removeHost } from "../src/hosts.js";
 import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -111,7 +113,7 @@ describe("host exec: the outcome table", () => {
   });
 
   it("no exit code: a deadline answers null, remote stopped (plugin) and exit stays null", async () => {
-    setPluginGraceForTests(300);
+    setPluginGraceForTests(3000);
     await plugin();
     const r = await hostExec(db, "p", { script: "exec sleep 30", timeoutS: 1 });
     expect(r).toMatchObject({ exit: null, remote: "stopped" });
@@ -251,7 +253,7 @@ describe("host exec: the log op", () => {
   });
 
   it("records a no-exit outcome", async () => {
-    setPluginGraceForTests(300);
+    setPluginGraceForTests(3000);
     await plugin();
     await hostExec(db, "p", { script: "exec sleep 30", timeoutS: 1 });
     expect(ops()[0]).toMatch(/link=fake outcome=no-exit /);
@@ -286,5 +288,116 @@ describe("host exec: a provider host (spec A review G3)", () => {
     await expect(hostExec(db, "box", { script: "true" })).rejects.toBeInstanceOf(HostHandbackError);
     expect((await hostExec(db, "box", { script: "exit 3" })).exit).toBe(3);
     expect(admissions()).toBe(0);
+  });
+});
+
+describe("host exec round 2: review findings", () => {
+  const execCalls = (f: FakePlugin): number =>
+    f.calls().filter((c) => c.method === "link.exec").length;
+
+  it("admission: a profile re-added as another link before admission runs on neither (slots:mu -> slots:self)", async () => {
+    const a = await plugin({}, { slots: "mu" });
+    const b = fakePlugin(dir, { home, seams: linkSeam({ slots: "self" }) }, "fake2");
+    await addPlugin(db, "fake2", b.argv);
+    const call = hostExec(db, "p", { script: "echo old" });
+    // hostExec resolved its link and is awaiting admission: edit the profile now.
+    removeHost(db, "p");
+    addHost(db, { name: "p", plugin: "fake2", fetch: "true", repo: null, max_sessions: null });
+    await expect(call).rejects.toBeInstanceOf(HostExecChangedError);
+    expect(execCalls(a)).toBe(0);
+    expect(execCalls(b)).toBe(0);
+    expect(admissions()).toBe(0);
+    expect(ops()).toEqual([]);
+  });
+
+  it("admission: a plugin profile re-added as a template runs nothing", async () => {
+    const a = await plugin({}, { slots: "mu" });
+    template();
+    const call = hostExec(db, "p", { script: "touch ran" });
+    removeHost(db, "p");
+    db.prepare("UPDATE host_profiles SET name = 'p' WHERE name = 't'").run();
+    await expect(call).rejects.toBeInstanceOf(HostExecChangedError);
+    expect(execCalls(a)).toBe(0);
+    expect(existsSync(join(home, "ran"))).toBe(false);
+    expect(admissions()).toBe(0);
+  });
+
+  it("cwd counts toward the plugin's fit: refused, no request", async () => {
+    const f = await plugin({}, { maxScriptBytes: 256 });
+    await expect(
+      hostExec(db, "p", { script: "true", cwd: "d".repeat(500) }),
+    ).rejects.toBeInstanceOf(HostExecTooLargeError);
+    expect(execCalls(f)).toBe(0);
+    expect(ops()).toEqual([]);
+  });
+
+  it("the capture itself is bounded: the child is drained and the rest dropped", async () => {
+    const r = await execGroupCapture(
+      "/bin/sh",
+      [
+        "-c",
+        "head -c 3000000 /dev/zero | tr '\\0' x; head -c 3000000 /dev/zero | tr '\\0' y >&2; exit 4",
+      ],
+      { maxStreamBytes: 1000 },
+    );
+    expect(r.exitCode).toBe(4);
+    expect(r.truncated).toBe(true);
+    expect(r.stdout.length).toBe(1000);
+    expect(r.stderr.length).toBe(1000);
+  });
+
+  it("a template command's loud output is clipped and flagged, exit kept", async () => {
+    template();
+    const r = await hostExec(db, "t", { script: "head -c 5000000 /dev/zero | tr '\\0' x; exit 6" });
+    expect(r).toMatchObject({ exit: 6, clipped: true });
+    expect(Buffer.byteLength(r.stdout)).toBe(HOST_EXEC_OUTPUT_MAX_BYTES);
+  });
+
+  it("the clip cuts at code points and never exceeds the bound", () => {
+    const cap = HOST_EXEC_OUTPUT_MAX_BYTES;
+    for (const prefix of ["", "a", "ab", "abc"]) {
+      const r = clipOutput(prefix + "\u{1F600}".repeat(cap), "");
+      expect(r.clipped).toBe(true);
+      expect(Buffer.byteLength(r.stdout) + Buffer.byteLength(r.stderr)).toBeLessThanOrEqual(cap);
+      expect(r.stdout).not.toContain("\uFFFD");
+    }
+  });
+
+  it.each(["unknown-outcome", "big"])(
+    "no answer proves nothing: %s says `unknown` though the link declares stopped",
+    async (fault) => {
+      const f = await plugin({ faults: { "link.exec": [fault] } }, { remoteOnTimeout: "stopped" });
+      const r = await hostExec(db, "p", { script: "true" });
+      expect(r).toMatchObject({ exit: null, remote: "unknown" });
+      expect(execCalls(f)).toBe(1);
+    },
+  );
+
+  it("retry: a retryable refusal is an error after one request, never a resend", async () => {
+    const f = await plugin({
+      faults: { "link.exec": ["retryable", "retryable", "retryable", "retryable"] },
+    });
+    await expect(hostExec(db, "p", { script: "true" })).rejects.toThrow();
+    expect(execCalls(f)).toBe(1);
+  });
+
+  it("retry: one retryable then a reply is not turned into a success", async () => {
+    const f = await plugin({ faults: { "link.exec": ["retryable", "ok"] } });
+    await expect(hostExec(db, "p", { script: "true" })).rejects.toThrow();
+    expect(execCalls(f)).toBe(1);
+  });
+
+  it("the op: a dispatched failure is recorded by category, never its detail", async () => {
+    await plugin({ faults: { "link.exec": ["permanent"] } });
+    await expect(hostExec(db, "p", { script: "echo SECRET-SENTINEL" })).rejects.toThrow();
+    const o = ops();
+    expect(o).toHaveLength(1);
+    expect(o[0]).toMatch(/^host exec p link=fake outcome=error:permanent duration=\d+ms cmd=\d+B$/);
+  });
+
+  it("the op: no-answer is recorded as such", async () => {
+    await plugin({ faults: { "link.exec": ["unknown-outcome"] } });
+    await hostExec(db, "p", { script: "true" });
+    expect(ops()[0]).toMatch(/outcome=no-answer /);
   });
 });

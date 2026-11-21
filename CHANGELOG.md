@@ -21,7 +21,13 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   stderr are clipped at 1 MiB (`clipped`). A legacy template link reads
   its own exit 3 as a hand-back (the documented exception). One `host exec`
   log op records host, link, outcome, duration and the command's byte
-  length, never the command or its output.
+  length, never the command or its output. The record is written for every
+  dispatched outcome, an error included (by category). The link is the one
+  resolved and admitted for the call (a profile edited since is refused,
+  `HostExecChangedError`); the plugin fit counts script plus cwd; the capture
+  is bounded while the command runs; words after `--` are never mu's flags
+  (`--json` included); a nonzero exit keeps all piped stderr; no answer says
+  the remote command "may still run"; nothing is retried.
 
 ### Changed
 

@@ -91,6 +91,8 @@ export interface CallOpts {
   timeoutMs?: number;
   /** Add the plugin's grace to the budget (a link run: the plugin answers at its timeout). */
   plusGrace?: boolean;
+  /** Send once: a `retryable` refusal is an error, not a resend. */
+  once?: boolean;
   /** The caller's `Call` (D6): its deadline caps the budget, its signal cancels. */
   call?: Call;
 }
@@ -124,6 +126,7 @@ export async function pluginCall<M extends PluginMethod>(
     {
       kind: opts.kind,
       timeoutMs,
+      ...(opts.once === true ? { once: true } : {}),
       ...(opts.call !== undefined ? { signal: opts.call.signal } : {}),
     },
     replyNarrower(method, params, s.init.seams),

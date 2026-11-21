@@ -62,29 +62,52 @@ export interface HostExecResult {
   durationMs: number;
 }
 
-/** Keep `max` bytes in all: each stream gets half, and what one leaves unused goes to the other. */
+/** `s` cut to at most `n` UTF-8 bytes, at a code point boundary. */
+function cutUtf8(s: string, n: number): string {
+  const b = Buffer.from(s);
+  if (b.length <= n) return s;
+  let end = n;
+  while (end > 0 && ((b[end] as number) & 0xc0) === 0x80) end--;
+  return b.subarray(0, end).toString("utf8");
+}
+
+/**
+ * Keep `max` bytes in all: each stream gets half, and what one leaves unused goes to the other.
+ * Counted on the strings as returned (UTF-8) and cut at code points, so the result never exceeds it.
+ */
 export function clipOutput(
   stdout: string,
   stderr: string,
   max = HOST_EXEC_OUTPUT_MAX_BYTES,
 ): { stdout: string; stderr: string; clipped: boolean } {
-  const out = Buffer.from(stdout);
-  const err = Buffer.from(stderr);
-  if (out.length + err.length <= max) return { stdout, stderr, clipped: false };
+  const outLen = Buffer.byteLength(stdout);
+  const errLen = Buffer.byteLength(stderr);
+  if (outLen + errLen <= max) return { stdout, stderr, clipped: false };
   const half = Math.floor(max / 2);
-  const outKeep = Math.min(out.length, Math.max(half, max - err.length));
-  const errKeep = Math.min(err.length, max - outKeep);
-  return {
-    stdout: out.subarray(0, outKeep).toString("utf8"),
-    stderr: err.subarray(0, errKeep).toString("utf8"),
-    clipped: true,
-  };
+  const outKeep = Math.min(outLen, Math.max(half, max - errLen));
+  const errKeep = Math.min(errLen, max - outKeep);
+  return { stdout: cutUtf8(stdout, outKeep), stderr: cutUtf8(stderr, errKeep), clipped: true };
+}
+
+/** The refusal of a profile edited between the call's resolution and its admission: nothing ran. */
+export class HostExecChangedError extends HostProfileError {
+  override readonly name: string = "HostExecChangedError";
+  constructor(host: string) {
+    super(`host ${host}: its profile changed while the call was admitted; nothing ran`);
+  }
+}
+
+/** An error's category for the record: never its text. */
+function errorCategory(e: unknown): string {
+  const kind = (e as { kind?: unknown } | null)?.kind;
+  return typeof kind === "string" && e instanceof Error ? kind : "error";
 }
 
 /**
  * Run `opts.script` on `host` through its link. Returns the link's reply (an exit code, or none);
  * throws `HostHandbackError` for a hand-back, and a typed refusal (host unknown, too large,
- * admission) before anything ran. Once the link was called, one `host.exec` op is recorded.
+ * admission) before anything ran. Once the link was called, one `host.exec` op is recorded:
+ * for a reply, a no-exit and a failure alike.
  */
 export async function hostExec(
   db: Db,
@@ -95,11 +118,25 @@ export async function hostExec(
   const cwd = opts.cwd ?? ".";
   const timeoutMs = (opts.timeoutS ?? HOST_EXEC_DEFAULT_TIMEOUT_S) * 1000;
   const bytes = Buffer.byteLength(opts.script);
-  const fit = (h: typeof view): void => {
+  const checkFit = (h: typeof view): void => {
     const f = h.link.fits(h, opts.script, cwd);
     if (!f.ok) throw new HostExecTooLargeError(host, f.bytes, f.limit);
   };
-  fit(view);
+  checkFit(view);
+  // The link was chosen above and admission re-reads the profile after an await: inside the
+  // admission transaction, refuse a profile that is now another link, another transport or
+  // self-managed (it is never counted), and fit the command to what is admitted.
+  const fence = (): void => {
+    const now = resolveHost(db, host);
+    if (
+      now.link.name !== view.link.name ||
+      now.link.caps.slots !== view.link.caps.slots ||
+      now.link.fingerprint(now) !== view.link.fingerprint(view)
+    ) {
+      throw new HostExecChangedError(host);
+    }
+    checkFit(now);
+  };
   const started = Date.now();
   let called = false;
   const record = (outcome: string): void => {
@@ -118,28 +155,43 @@ export async function hostExec(
   try {
     const r = await view.link.exec(
       view,
-      { script: opts.script, cwd, timeoutMs },
-      { holder: `exec:${process.pid}` },
+      {
+        script: opts.script,
+        cwd,
+        timeoutMs,
+        once: true,
+        maxStreamBytes: HOST_EXEC_OUTPUT_MAX_BYTES,
+      },
+      { holder: `exec:${process.pid}`, fence },
       (admitted) => {
-        fit(admitted);
+        checkFit(admitted);
         called = true;
       },
     );
-    record(r.exitCode === null ? "outcome=no-exit" : `exit=${r.exitCode}`);
+    record(
+      r.exitCode === null
+        ? `outcome=${r.unanswered === true ? "no-answer" : "no-exit"}`
+        : `exit=${r.exitCode}`,
+    );
     const kept = clipOutput(r.stdout, r.stderr);
     return {
       host,
       link: view.link.name,
       exit: r.exitCode,
-      ...(r.exitCode === null ? { remote: view.link.caps.remoteOnTimeout } : {}),
+      // The link's word only for a run it answered; no answer proves nothing about the remote.
+      ...(r.exitCode === null
+        ? { remote: r.unanswered === true ? "unknown" : view.link.caps.remoteOnTimeout }
+        : {}),
       partial: r.partial,
-      clipped: kept.clipped,
+      clipped: kept.clipped || r.truncated === true,
       stdout: kept.stdout,
       stderr: kept.stderr,
       durationMs: Date.now() - started,
     };
   } catch (e) {
-    if (e instanceof HostHandbackError) record("outcome=handback");
+    record(
+      e instanceof HostHandbackError ? "outcome=handback" : `outcome=error:${errorCategory(e)}`,
+    );
     throw e;
   }
 }

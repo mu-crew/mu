@@ -42,6 +42,8 @@ export const EXEC_ARG_MAX_BYTES = 128 * 1024;
 export interface LinkRun extends HostRun {
   /** The output was cut (mule's exit 7): never parsed. The template link never cuts. */
   partial: boolean;
+  /** `exitCode` null with no answer from the link (a plugin's `unknown-outcome`, EOF, an invalid reply): nothing is known of the remote run. */
+  unanswered?: true;
 }
 
 /**
@@ -109,7 +111,15 @@ export interface HostLink {
    */
   exec(
     host: HostView,
-    req: { script: string; cwd: string; timeoutMs: number },
+    req: {
+      script: string;
+      cwd: string;
+      timeoutMs: number;
+      /** Dispatch once: no retry of a refusal (a plugin's `retryable`). */
+      once?: true;
+      /** Keep at most this many bytes of each stream while the command runs (template link). */
+      maxStreamBytes?: number;
+    },
     call: LinkCall,
     admitted?: (h: HostView) => void,
   ): Promise<LinkRun>;
@@ -200,6 +210,8 @@ export function templateLink(db: Db): HostLink {
           "exec",
           { cmd: req.script, cwd: req.cwd },
           req.timeoutMs,
+          undefined,
+          req.maxStreamBytes,
         ),
       ),
     fetch: (host, req, call, admitted) =>

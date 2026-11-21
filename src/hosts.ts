@@ -751,6 +751,12 @@ export interface HostLease {
 export interface ChannelOpts {
   /** Is this pane alive? Throwing or absent means unknown, which keeps the channel. */
   paneAlive?: (paneId: string) => Promise<boolean>;
+  /**
+   * Runs inside the admission transaction on the profile it admits, before a row is counted:
+   * a throw admits nothing. A caller that chose a link before admission uses it to refuse a
+   * profile edited since.
+   */
+  fence?: (profile: HostProfile) => void;
 }
 
 export function listHostChannels(db: Db, host?: string): HostChannel[] {
@@ -888,6 +894,7 @@ async function admit(
   const profile = db
     .transaction(() => {
       const profile = getHost(db, host);
+      opts.fence?.(profile);
       reclaim(db, host, dead);
       const rows = listHostChannels(db, host);
       if (rows.some((r) => r.holder === holder)) {
@@ -990,6 +997,8 @@ export interface HostRun {
   exitCode: number | null;
   stdout: string;
   stderr: string;
+  /** The capture dropped output past `maxStreamBytes`. */
+  truncated?: true;
 }
 
 /**
@@ -1009,6 +1018,8 @@ export async function runLeasedTemplate(
   timeoutMs: number,
   /** The template's LOCAL working directory (a `--fetch` runs in the repo it fetches into). */
   localCwd?: string,
+  /** Keep at most this many bytes of each stream (the rest is drained and dropped). */
+  maxStreamBytes?: number,
 ): Promise<HostRun> {
   const template = profile[field];
   if (template === null || template === "")
@@ -1019,6 +1030,7 @@ export async function runLeasedTemplate(
     // A carrier interrupted by the timeout needs time to stop what it dispatched.
     graceMs: HOST_GRACE_MS,
     ...(localCwd !== undefined ? { cwd: localCwd } : {}),
+    ...(maxStreamBytes !== undefined ? { maxStreamBytes } : {}),
     onSpawn: (pgid) => recordGroup(db, lease, pgid),
   });
   if (run.exitCode === 3) {

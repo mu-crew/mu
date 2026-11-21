@@ -14,6 +14,8 @@ export interface ExecFileResult {
   exitCode: number | null;
   /** Set when `execFileCapture` killed the child at its `timeoutMs`. */
   timedOut?: true;
+  /** `execGroupCapture` with `maxStreamBytes`: a stream had more output, which was dropped. */
+  truncated?: true;
 }
 
 /** execa's default `maxBuffer` (100 MiB); execFile's own default is 1 MiB. */
@@ -154,6 +156,8 @@ export function execGroupCapture(
     cwd?: string;
     /** Abort: the group is reaped (TERM, then KILL) and the result is a failure. */
     signal?: AbortSignal;
+    /** Keep at most this many bytes of EACH stream (the child is still drained); sets `truncated`. */
+    maxStreamBytes?: number;
   } = {},
 ): Promise<ExecFileResult> {
   return new Promise((resolve) => {
@@ -168,8 +172,20 @@ export function execGroupCapture(
       : spawn(cmd, [...args], spawnOpts);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
-    child.stdout?.on("data", (d: Buffer) => out.push(d));
-    child.stderr?.on("data", (d: Buffer) => err.push(d));
+    let truncated = false;
+    const keep = (into: Buffer[]) => {
+      let held = 0;
+      return (d: Buffer): void => {
+        const room = (opts.maxStreamBytes ?? Number.POSITIVE_INFINITY) - held;
+        if (d.length > room) truncated = true;
+        if (room <= 0) return;
+        const part = d.length > room ? d.subarray(0, room) : d;
+        held += part.length;
+        into.push(part);
+      };
+    };
+    child.stdout?.on("data", keep(out));
+    child.stderr?.on("data", keep(err));
     child.stdin?.on("error", () => {});
     groups.add(child);
     const release = track(child, true);
@@ -187,6 +203,7 @@ export function execGroupCapture(
           stdout: stripFinalNewline(Buffer.concat(out).toString("utf8")),
           stderr: stripFinalNewline(Buffer.concat(err).toString("utf8")),
           exitCode: timedOut ? null : code,
+          ...(truncated ? { truncated: true as const } : {}),
         });
       };
       if (child.pid === undefined) done();

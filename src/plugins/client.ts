@@ -59,6 +59,8 @@ export interface CallOptions {
   kind: "read" | "effect";
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Never resend after a `retryable` refusal. */
+  once?: boolean;
 }
 
 /** One started, handshaken plugin. */
@@ -146,7 +148,7 @@ function session(name: string, init: InitializeResult, proc: PluginProcess): Plu
         } catch (e) {
           if (e instanceof RpcFailure) {
             if (e.kind === "unknown-outcome") throw unknown(e.message);
-            if (e.kind === "retryable" && attempt < PLUGIN_RETRIES) continue;
+            if (e.kind === "retryable" && opts.once !== true && attempt < PLUGIN_RETRIES) continue;
             throw new PluginCallError(name, method, e.kind, e.message, e.remedy);
           }
           if (e instanceof RpcUnanswered) {

@@ -182,6 +182,17 @@ export function muTable(opts: {
   });
 }
 
+/** The arguments mu's own parser reads: those before a `--`, after which a verb's words are a remote command's. */
+export function ownArgv(argv: readonly string[]): string[] {
+  const sep = argv.indexOf("--", 2);
+  return sep === -1 ? [...argv] : argv.slice(0, sep);
+}
+
+/** Whether mu's own options (before any `--`) carry `--json` or `--json=...`. */
+export function hasJsonFlag(argv: readonly string[]): boolean {
+  return ownArgv(argv).some((a) => a === "--json" || a.startsWith("--json="));
+}
+
 /**
  * Detect whether the current invocation requested `--json`. Used by the
  * error handler to decide between human prose on stderr and one JSON
@@ -193,9 +204,9 @@ export function muTable(opts: {
  * only use the bare `--json` flag.
  */
 export function isJsonMode(): boolean {
-  const argv = process.argv;
+  const argv = ownArgv(process.argv);
   return (
-    argv.some((a) => a === "--json" || a.startsWith("--json=")) ||
+    hasJsonFlag(process.argv) ||
     ((isSqlVerbArgv(argv) || isAgentListArgv(argv)) && !argv.includes("--table")) ||
     isStateVerbArgv(argv) ||
     isWaitVerbArgv(argv) ||

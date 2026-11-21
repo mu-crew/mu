@@ -118,6 +118,7 @@ import {
 import { NextArgError } from "../next.js";
 import { capPlan, computeNext, NEXT_BYTES, type NextOutcome } from "../next-hints.js";
 import {
+  hasJsonFlag,
   isAgentListArgv,
   isJsonMode,
   isStateVerbArgv,
@@ -936,7 +937,7 @@ function emitError(err: unknown): number {
   const humanNoMux =
     err instanceof NoMultiplexerError &&
     (isStateVerbArgv(process.argv) || isAgentListArgv(process.argv)) &&
-    !process.argv.some((a) => a === "--json" || a.startsWith("--json="));
+    !hasJsonFlag(process.argv);
   if (isJsonMode() && !humanNoMux) {
     // ONE failure document on STDOUT, the real exit code beside it: a caller
     // that pipes `2>/dev/null` loses nothing.
@@ -1088,8 +1089,11 @@ export function handle(
     if (exitCode !== undefined) {
       // A document piped to a slow reader is still in the stream's buffer: drain it,
       // or process.exit truncates the one result a caller is waiting for.
-      if (process.stdout.writableLength > 0) {
-        await new Promise<void>((resolve) => process.stdout.write("", () => resolve()));
+      // stderr too: a remote command's failure output is the one thing its caller reads.
+      for (const stream of [process.stdout, process.stderr]) {
+        if (stream.writableLength > 0) {
+          await new Promise<void>((resolve) => stream.write("", () => resolve()));
+        }
       }
       process.exit(exitCode);
     }

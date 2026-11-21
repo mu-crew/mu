@@ -127,6 +127,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     method: "link.exec" | "link.fetch" | "link.push",
     params: Record<string, unknown>,
     timeoutMs: number,
+    once = false,
   ): Promise<LinkRun> => {
     try {
       // The plugin enforces `timeoutMs` and answers. mu's timer allows one grace on top, so
@@ -137,7 +138,14 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
         name,
         method,
         { target: hostTarget(db, host.name), ...params, timeoutMs },
-        { kind: "effect", needs: ["link"], timeoutMs, plusGrace: true, ...fence(host, method) },
+        {
+          kind: "effect",
+          needs: ["link"],
+          timeoutMs,
+          plusGrace: true,
+          ...(once ? { once } : {}),
+          ...fence(host, method),
+        },
       );
       // `stopping`: the remote run stops within one grace after the reply. Wait it out, still
       // under the call's admission, so a timed-out run returns stopped.
@@ -159,6 +167,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
           stdout: "",
           stderr: `plugin ${name}: ${e.reason}`,
           partial: false,
+          unanswered: true,
         };
       }
       throw e;
@@ -173,13 +182,13 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
       host.record !== undefined
         ? providerIdentity(host.record)
         : `plugin:${name}:${getPlugin(db, name).instance}`,
-    fits: (_host, script) => {
-      const bytes = Buffer.byteLength(script);
+    fits: (_host, script, cwd) => {
+      const bytes = Buffer.byteLength(script) + Buffer.byteLength(cwd);
       return { ok: bytes <= declared.maxScriptBytes, bytes, limit: declared.maxScriptBytes };
     },
     exec: (host, req, call, admitted) =>
       admit(host, call, admitted, (h) =>
-        run(h, "link.exec", { script: req.script, cwd: req.cwd }, req.timeoutMs),
+        run(h, "link.exec", { script: req.script, cwd: req.cwd }, req.timeoutMs, req.once === true),
       ),
     ...(caps.fetch
       ? {
