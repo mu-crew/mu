@@ -5,8 +5,12 @@
 // old view follow it (`repoint`), refused while the spawn that made it runs. A no-row leftover of a plugin
 // kind is never reattached: `agent close` stops it.
 
+import { rmSync } from "node:fs";
+import { dirname } from "node:path";
 import { getAgent } from "../agents.js";
 import { type CarrierJob, getCarrierJobByAgent } from "../carrier-jobs.js";
+import { expectsCtl } from "../channels/select.js";
+import { ctlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
@@ -18,10 +22,11 @@ import { agentRevision, assertRevision } from "../revision.js";
 import { shellWord } from "../shell-quote.js";
 import { AgentReplacedError } from "./errors.js";
 import { withAgentLock } from "./lock.js";
-import { closeCommand, ReattachRefusedError } from "./reattach-check.js";
+import { closeCommand, ReattachFailedError, ReattachRefusedError } from "./reattach-check.js";
 import { repointReceipts } from "./receipts.js";
 import { withSpawnLock } from "./spawn-lock.js";
 import { jobRecordActor, viewLine } from "./spawn-plugin.js";
+import { awaitCtlHandshake } from "./spawn-ready.js";
 
 /** The agent's detached plugin job: its record and kind; undefined for any other agent. */
 export function detachedJob(
@@ -64,10 +69,21 @@ function refuseOpen(db: Db, ws: string, name: string, paneId: string): never {
   );
 }
 
-/** The new view by `job.attach`, then the row's pane by compare-and-set. */
-export async function reattachView(db: Db, ws: string, name: string, opts: { ifRevision: number }) {
+/**
+ * The new view by `job.attach`, then the row's pane by compare-and-set. A view on the built-in
+ * ctl is ready only once its forward answers the handshake on the local socket.
+ */
+export async function reattachView(
+  db: Db,
+  ws: string,
+  name: string,
+  opts: { ifRevision: number; signal?: AbortSignal },
+) {
   const session = `mu-${ws}`;
-  return withAgentLock(db, ws, name, () =>
+  const sock = ctlSocketPath(ws, name, dirname(db.name));
+  const row = getAgent(db, name, ws);
+  const onCtl = row !== undefined && expectsCtl(row, sock);
+  const { d, pid } = await withAgentLock(db, ws, name, () =>
     withSpawnLock(session, async () => {
       const d = detachedJob(db, ws, name);
       if (d === undefined) throw new AgentReplacedError(name, ws);
@@ -85,6 +101,9 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
           closeCommand(db, ws, name),
         );
       }
+      // The old view is proved gone: a socket file it left (a SIGKILLed forward) is stale, and
+      // would refuse the new forward's bind.
+      if (onCtl) rmSync(sock, { force: true });
       const ref = pluginJobRef(db, d.r.token);
       if (ref === undefined) throw new AgentReplacedError(name, ws);
       const mux = await activeMux();
@@ -130,20 +149,45 @@ export async function reattachView(db: Db, ws: string, name: string, opts: { ifR
         await mux.killPane(pid).catch(() => {});
         throw e;
       }
-      emitEvent(
-        db,
-        ws,
-        "agent.reattach",
-        `agent reattach ${name} (host=${d.r.host}, job=${d.r.job}, pane=${pid}, view)`,
-      );
-      return {
-        ...facts(ws, d),
-        agent_id: d.agentId,
-        pane_id: pid,
-        ready: true,
-        ctl: "skipped" as const,
-        claims: [],
-      };
+      return { d, pid };
     }),
   );
+  let ctl: "skipped" | "ok" | "missing" | "refused" | "unknown" = "skipped";
+  if (onCtl) {
+    const mux = await activeMux();
+    let scrollback: string | undefined;
+    const alive = async (): Promise<void> => {
+      scrollback = (await mux.capture(pid, { lines: 50 }).catch(() => undefined)) ?? scrollback;
+      if (!(await viewPresent(pid, mux))) throw new ViewGone();
+    };
+    try {
+      ctl = (await awaitCtlHandshake(sock, alive, opts.signal)).ctl;
+      if (ctl === "ok") await alive(); // the final check: a handshake ok on a dying view
+    } catch (e) {
+      if (opts.signal?.aborted === true) throw e;
+      if (!(e instanceof ViewGone))
+        ctl = "unknown"; // the mux probe threw: kept
+      else {
+        // The row names a gone view again, as before: its job runs, a reattach may retry.
+        const why = `its new view ${pid} exited during the ctl handshake; job ${d.r.job} on ${d.r.host} still runs`;
+        throw new ReattachFailedError(
+          name,
+          "view-gone",
+          why,
+          closeCommand(db, ws, name),
+          scrollback,
+        );
+      }
+    }
+  }
+  const ready = ctl === "ok" || ctl === "skipped";
+  emitEvent(
+    db,
+    ws,
+    "agent.reattach",
+    `agent reattach ${name} (host=${d.r.host}, job=${d.r.job}, pane=${pid}, view, ctl=${ctl})`,
+  );
+  return { ...facts(ws, d), agent_id: d.agentId, pane_id: pid, ready, ctl, claims: [] };
 }
+
+class ViewGone extends Error {}

@@ -13,7 +13,6 @@ import { jobRunning } from "../jobs/kinds.js";
 import { leaseJobRef, leaseKind } from "../jobs/lease.js";
 import type { JobRef } from "../jobs/types.js";
 import { emitEvent } from "../logs.js";
-import { say } from "../messages.js";
 import { markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { deleteRemoteRecovery, restoreRemoteRecovery } from "../remote-recovery.js";
@@ -29,7 +28,9 @@ import {
   factsOf,
   type Plan,
   planSnapshot,
+  ReattachFailedError,
   ReattachRefusedError,
+  type Rollback,
   recoveryBlocker,
 } from "./reattach-check.js";
 import { clearMarker, markerPane, markerPath, publishMarker } from "./reattach-marker.js";
@@ -39,23 +40,6 @@ import { withSpawnLock } from "./spawn-lock.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
 
 export * from "./reattach-check.js";
-
-type Rollback = "pane-killed" | "pane-unknown" | "restored" | "already-handled" | "left-for-reap";
-
-/** The new carrier did not take; `rollback` says what mu did about it. Exit 4. */
-export class ReattachFailedError extends Error {
-  override readonly name = "ReattachFailedError";
-  constructor(
-    public readonly agentName: string,
-    public readonly rollback: Rollback,
-    why: string,
-    close: string,
-    scrollback = "",
-  ) {
-    const tail = scrollback.trim() === "" ? "" : say("agent.scrollback", scrollback.trim());
-    super(say("agent.reattach_failed", agentName, rollback, why, close, tail));
-  }
-}
 
 class PaneGone extends Error {}
 

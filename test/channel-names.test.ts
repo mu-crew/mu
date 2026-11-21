@@ -57,6 +57,8 @@ const PINNED: Readonly<Record<string, number>> = {
   // 8. The dispatch hint's send form: ctl's `--fresh`, mux's backend send.
   "src/next-hints.ts#outcomeMove expectsCtl()": 1,
   'src/next-hints.ts#outcomeMove !== "hooks"': 1,
+  // 9. A detached plugin view's reattach on ctl: its stale socket removed, the handshake run.
+  "src/agents/reattach-view.ts#reattachView expectsCtl()": 1,
 };
 
 describe("channel names outside src/channels/", () => {

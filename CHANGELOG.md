@@ -39,7 +39,14 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   `mu agent reattach`. `ctl` follows the same rule as a template spawn
   (`--cli pi --command claude` is on ctl), so a kind that does not honour
   sockets refuses it before any effect. `--no-ctl` and `MU_SPAWN_CTL_MS=0`
-  skip only the handshake: the view still passes the liveness window. A link
+  skip only the handshake: the view still passes the liveness window. The
+  handshake ends at once on a known fatal startup error in the view (an auth
+  failure) and rolls back, and an ok handshake still gets the startup-health
+  check; a live, clean view without a socket is only `ctl: missing`. Reattaching
+  a detached ctl view removes the gone view's stale socket first and reports
+  `ready` only once the new forward answers the handshake (`ctl: missing`,
+  `ready: false` otherwise; a view that exits meanwhile is
+  `ReattachFailedError`, rollback `view-gone`). A link
   with `slots: "self"` takes no mu host channel, not even during the
   prepare. An `at-start` kind still
   needs its own channel. A `--plugin` profile whose plugin declares a job

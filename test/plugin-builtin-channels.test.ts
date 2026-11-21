@@ -11,7 +11,7 @@
 // the derived local socket when the view opens. Nothing reaches a real host or sshd.
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -41,6 +41,7 @@ import {
 import { HONOURS_ALL } from "../src/jobs/types.js";
 import { addPlugin } from "../src/plugins/registry.js";
 import { RemoteBaseMissingError } from "../src/remote-worktree.js";
+import { agentRevision } from "../src/revision.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask, taskIdFor } from "../src/tasks.js";
 import { INC, withHello } from "./_ctl-ext.js";
@@ -120,6 +121,18 @@ async function serveExtension(path: string): Promise<void> {
   });
   servers.push(server);
   await new Promise<void>((r) => server.listen(path, () => r()));
+}
+
+/** Run `fn` with MU_SPAWN_LIVENESS_MS set (the shared setup turns the checks off). */
+async function withLiveness<T>(ms: string, fn: () => Promise<T>): Promise<T> {
+  const saved = process.env.MU_SPAWN_LIVENESS_MS;
+  process.env.MU_SPAWN_LIVENESS_MS = ms;
+  try {
+    return await fn();
+  } finally {
+    if (saved === undefined) delete process.env.MU_SPAWN_LIVENESS_MS;
+    else process.env.MU_SPAWN_LIVENESS_MS = saved;
+  }
 }
 
 /** The stub mux, with the view's "forward": a fake extension at the agent's local socket. */
@@ -297,6 +310,126 @@ describe("pi on the built-in ctl (ladder placement §A, R5)", () => {
       if (saved === undefined) delete process.env.MU_SPAWN_LIVENESS_MS;
       else process.env.MU_SPAWN_LIVENESS_MS = saved;
     }
+  });
+});
+
+describe("the ctl handshake fails fast on a known fatal startup error (review_plugin_ctl_skips_startup_health)", () => {
+  it("a live view parked at an auth error with no forward: AgentSpawnStartupError at once, rolled back", async () => {
+    await staticPlugin();
+    process.env.MU_SPAWN_CTL_MS = "20000";
+    h.stubMux({ capture: async () => "pi\nAuthentication failed\n" });
+    const t0 = Date.now();
+    const err = await withLiveness("1", () =>
+      h.spawn({ cli: "pi", cwd: remote }).catch((e: unknown) => e),
+    );
+    expect((err as Error).name).toBe("AgentSpawnStartupError");
+    expect((err as Error).message).toContain("Authentication failed");
+    // Not waited out: the budget is 20s.
+    expect(Date.now() - t0).toBeLessThan(15000);
+    expect(h.f.backend().stops).toBe(1);
+    expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
+    expect(listCarrierJobs(h.db)).toEqual([]);
+  });
+
+  it("an ok handshake on a view showing an auth error still fails the final health check", async () => {
+    await staticPlugin();
+    forwardOnView({ capture: async () => "Authentication failed" });
+    const err = await withLiveness("1", () =>
+      h.spawn({ cli: "pi", cwd: remote }).catch((e: unknown) => e),
+    );
+    expect((err as Error).name).toBe("AgentSpawnStartupError");
+    expect(h.f.backend().stops).toBe(1);
+    expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
+  });
+
+  it("a live, clean view with no forward is only control missing: the job runs", async () => {
+    await staticPlugin();
+    process.env.MU_SPAWN_CTL_MS = "300";
+    const a = await withLiveness("1", () => h.spawn({ cli: "pi", cwd: remote }));
+    expect(a).toMatchObject({ ctl: "missing" });
+    expect(h.f.backend().stops).toBe(0);
+    expect(getAgent(h.db, "w1", "ws")).toBeDefined();
+  });
+});
+
+describe("reattaching a detached ctl view (review_plugin_reattach_stale_ctl)", () => {
+  /** A forward stand-in that binds the local socket as a real one does: a stale file refuses it. */
+  function strictForward(bind: { on: boolean }): void {
+    let n = 0;
+    h.stubMux({
+      spawnAgent: async (o) => {
+        const id = `%${++n}`;
+        h.panes.set(id, { command: o.command });
+        if (bind.on) {
+          const sock = ctlSocketPath("ws", o.name, h.dir);
+          const server = createServer((s) => {
+            s.setEncoding("utf8");
+            s.on("error", () => {});
+            const dec = new LineDecoder();
+            s.on("data", (c: string) => {
+              for (const line of dec.push(c)) {
+                const req = JSON.parse(line) as Record<string, unknown>;
+                const idle = { v: 1, ok: true, state: "idle", since: 1, runs: 0, pending: false };
+                s.end(encode(withHello(req, idle)));
+              }
+            });
+          });
+          // EADDRINUSE on a stale path: the view stays, its forward never listens.
+          await new Promise<void>((r) => {
+            server.once("error", () => r());
+            server.listen(sock, () => {
+              servers.push(server);
+              r();
+            });
+          });
+        }
+        o.onPaneCreated?.(id);
+        return id;
+      },
+    });
+  }
+
+  /** Spawn a detached pi view, then kill it as SIGKILL would: its socket file stays. */
+  async function spawnThenKillView(bind: { on: boolean }) {
+    await staticPlugin({ view: "detached" });
+    strictForward(bind);
+    const a = await h.spawn({ cli: "pi", cwd: remote });
+    expect(a).toMatchObject({ ctl: "ok" });
+    for (const s of servers.splice(0)) await new Promise<void>((r) => s.close(() => r()));
+    const sock = ctlSocketPath("ws", "w1", h.dir);
+    if (!existsSync(sock)) writeFileSync(sock, "");
+    h.panes.delete(a.paneId);
+    return sock;
+  }
+
+  it("the stale socket is removed and the new forward is proved live: ready, ctl ok", async () => {
+    await spawnThenKillView({ on: true });
+    const p = await previewReattach(h.db, "ws", "w1");
+    const r = await reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision });
+    expect(r).toMatchObject({ ready: true, ctl: "ok" });
+    expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(r.pane_id);
+  });
+
+  it("a live view whose forward never binds is not ready: ctl missing, the view kept", async () => {
+    const bind = { on: true };
+    await spawnThenKillView(bind);
+    bind.on = false;
+    process.env.MU_SPAWN_CTL_MS = "300";
+    const p = await previewReattach(h.db, "ws", "w1");
+    const r = await reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision });
+    expect(r).toMatchObject({ ready: false, ctl: "missing" });
+    expect(h.panes.has(r.pane_id)).toBe(true);
+  });
+
+  it("the stale socket stays while the old view is still open (the refusal comes first)", async () => {
+    await staticPlugin({ view: "detached" });
+    strictForward({ on: true });
+    const a = await h.spawn({ cli: "pi", cwd: remote });
+    const ifRevision = agentRevision(h.db, "ws", "w1");
+    const err = await reattachAgent(h.db, "ws", "w1", { ifRevision }).catch((e) => e);
+    expect(String(err)).toMatch(/still open/);
+    expect(existsSync(ctlSocketPath("ws", "w1", h.dir))).toBe(true);
+    expect(h.panes.has(a.paneId)).toBe(true);
   });
 });
 

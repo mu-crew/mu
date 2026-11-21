@@ -57,7 +57,6 @@ import {
 } from "../hosts.js";
 import { defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
-import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -67,7 +66,7 @@ import { LOCAL_ONLY_ENV } from "../remote-agent.js";
 import { prepareProviderWorktree } from "../remote-worktree.js";
 import { shellQuote } from "../shell-quote.js";
 import { gitToplevel } from "../vcs/git.js";
-import { AgentDiedOnSpawnError, AgentExistsError } from "./errors.js";
+import { AgentExistsError } from "./errors.js";
 import { withAgentLock } from "./lock.js";
 import { type ReceiptActor, repointReceipts } from "./receipts.js";
 import {
@@ -82,6 +81,7 @@ import { launchCommand } from "./spawn-presets.js";
 import {
   awaitCtlHandshake,
   awaitSpawnLiveness,
+  checkSpawnHealth,
   defaultSpawnCtlMs,
   defaultSpawnLivenessMs,
   type SpawnCtl,
@@ -791,8 +791,9 @@ async function readiness(db: Db, row: AgentRow): Promise<RunBaseline> {
 
 /**
  * Readiness on a built-in channel, as on a template host: pi's ctl handshake on the local socket
- * (its view's death meanwhile rolls back; a timeout is only control missing, the job runs), else
- * the view's liveness window (also when the handshake is skipped).
+ * (its view's death or a known fatal startup error meanwhile rolls back at once; a timeout with
+ * a live, clean view is only control missing, the job runs), then the startup-health check;
+ * else the view's liveness window (also when the handshake is skipped).
  */
 async function builtInReadiness(
   row: AgentRow,
@@ -808,14 +809,18 @@ async function builtInReadiness(
   }
   const check = defaultSpawnLivenessMs() !== 0;
   const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
-  const alive = async (): Promise<void> => {
-    if (await viewPresent(row.paneId, await activeMux())) return;
-    throw new AgentDiedOnSpawnError(row.name, row.paneId, undefined, command, when, host);
+  // Each tick: the view gone, or parked at a fatal startup error, ends the wait.
+  const health = async (): Promise<void> => {
+    await checkSpawnHealth(row.paneId, row.name, command, when, false, host);
   };
-  const hs = await awaitCtlHandshake(localSock, check ? alive : undefined, opts.signal);
+  const hs = await awaitCtlHandshake(localSock, check ? health : undefined, opts.signal);
+  // The final check: an ok handshake proves pi ran, so only provider/auth patterns apply.
+  const trustDialog = check
+    ? await checkSpawnHealth(row.paneId, row.name, command, when, hs.ctl === "ok", host)
+    : false;
   return {
     ctl: hs.ctl,
     ...(hs.incarnation !== undefined ? { incarnation: hs.incarnation } : {}),
-    trustDialog: false,
+    trustDialog,
   };
 }

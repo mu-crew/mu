@@ -38,6 +38,30 @@ export class ReattachRefusedError extends Error {
   }
 }
 
+/** What a failed reattach did about its new pane or view. */
+export type Rollback =
+  | "pane-killed"
+  | "pane-unknown"
+  | "restored"
+  | "already-handled"
+  | "left-for-reap"
+  | "view-gone";
+
+/** The new carrier did not take; `rollback` says what mu did about it. Exit 4. */
+export class ReattachFailedError extends Error {
+  override readonly name = "ReattachFailedError";
+  constructor(
+    public readonly agentName: string,
+    public readonly rollback: Rollback,
+    why: string,
+    close: string,
+    scrollback = "",
+  ) {
+    const tail = scrollback.trim() === "" ? "" : say("agent.scrollback", scrollback.trim());
+    super(say("agent.reattach_failed", agentName, rollback, why, close, tail));
+  }
+}
+
 export interface Plan {
   r: CarrierJob & { job: string; agentId: number; paneId: string };
   profile: HostProfile;
