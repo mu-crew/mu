@@ -750,9 +750,10 @@ written to be re-run (reclaim, marks, the aside).
 
 ### D8. Seam: job kind
 
-On a dropped master, [ladder placement
+D8 on a dropped master or any other provider hand-back: [ladder placement
 §5](2026-11-20-ladder-placement.md#5-a-dropped-master-is-not-host-loss-decided-q13)
-supersedes this section (D1).
+supersedes this section. In particular §5.5 and its Open item 5a: mu does
+not ask the provider for `host.status` after a hand-back.
 
 ```ts
 // src/jobs/types.ts (new cluster: types, view, pane, lease, gate; an ARCHITECTURE row)

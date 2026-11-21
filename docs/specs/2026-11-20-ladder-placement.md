@@ -9,8 +9,9 @@ The human approved Part 1 and decided each Open item as recommended
 (recorded in place below). Part 1 is **normative**: the core contract the
 D15 path builds on (`job_plugin_builtin_channels`, `plugin_mule_link`,
 `plugin_mule_lease`, `host_exec`, `plugin_ssh_pane`). Part 2 is
-**informative** and not approved, except §I, which binds each owning unit
-to its tests.
+**informative** and not approved. §I binds each owning unit to its tests
+as an execution gate, not as a human approval. The serve scope decision
+stays recorded as its own human decision.
 
 Builds on the [plugins spec](2026-11-09-mu-plugins.md) (D1, D3, D4, D7, D8,
 D15), the [lease transport spec](2026-10-28-lease-transport.md), mule's
@@ -38,8 +39,9 @@ recorded after the item.
    mule `SPEC.md:347-353`) don't count.
    **Decided:** as stated. The base commit must already be in the host's
    repo, refused before any effect; no automatic fetch or push. The
-   missing-base refusal names the exact fix, since an orchestrator acts
-   on it: guardrails with actionable messages.
+   missing-base refusal names the fix (see §3.3), since an orchestrator
+   acts on it and will push when mu says something is missing:
+   guardrails with actionable messages.
 2. **`mu host exec`'s surface** (§6): flags, the 600 s default, the 1 MiB
    bound, the outcome table and metadata-only log fields are proposed (Q6
    set behaviour). Logging command text needs its own decision.
@@ -120,9 +122,16 @@ the agent's row, tasks, worktree owner and recovery.
    the host's repo inside the prepare exec (`src/remote-worktree.ts:209`;
    plugins `:733`), and the static path never pushes, whatever the link
    advertises. A `from` naming no commit exits a dedicated code mapped to
-   `RemoteBaseMissingError` (exit 5, `:44-61`), naming rev, host and repo
-   with the fix `mu host exec <h> -- git -C <repo> fetch <remote> <rev>`,
-   never "push". The check precedes `git worktree add`, so the rollbacks
+   `RemoteBaseMissingError` (exit 5, `:44-61`), naming rev, host,
+   repo and SHA. The guard and the remedy are separate: mu never fetches
+   or pushes itself, and the caller does the remedy the message names.
+   The message gives an actionable fix for both cases. A published commit
+   (a remote the host can fetch has it): `mu host exec <h> -- git -C
+   <repo> fetch <remote> <rev>`. A local-only commit (only the
+   orchestrator checkout has the object, so a host-side fetch cannot get
+   it): push it to a remote the host can fetch, then run that fetch on
+   the host, or spawn from a published commit. The missing-base
+   acceptance test (§I) checks this message. The check precedes `git worktree add`, so the rollbacks
    leave no tree, job, pane, placeholder or reservation. A timeout is not
    a definite refusal.
 4. **Cross-rung review.** Local to remote: fetch the commit on the host,
@@ -175,7 +184,10 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
    record, recovery record and waiting tasks survive. With the master
    back, `mu agent close <name> -w <ws>` stops by handle and closes the tree.
 5. **Status asks** (Open 5). A static host has no `lost` state. Only the
-   provider's answer moves a provider host. The rest of D1/D8 (process
+   provider's answer moves a provider host, and mu does not ask the
+   provider after a hand-back (Open 5a): a hand-back, dropped master or
+   otherwise, is not host loss and triggers no `host.status` ask, whatever
+   D1's ask-after-failed-call row says. The rest of D1/D8 (process
    host versus workspace host) waits for rung 2.
 
 ### §6. `mu host exec` (rung 1; *decided*, Q6, Q7; surface: Open 2)
@@ -536,7 +548,7 @@ edits. Work outside the five D15 units does not block them.
 | Rule | Owner | Required tests |
 | --- | --- | --- |
 | R5, env | `job_plugin_builtin_channels` | template and plugin spawns hand over only `HOST_ENV_KEYS`; CLOSE is applied per channel (`ctl` at wait, remote `hooks` at collect) |
-| §3.3 | `job_plugin_builtin_channels` | the caller's ref differs from the host's; a missing sha; a link that advertises `push`. Assert no push, tree, `job.start`, pane or kept reservation |
+| §3.3 | `job_plugin_builtin_channels` | the caller's ref differs from the host's; a missing sha; a link that advertises `push`. Assert no push, tree, `job.start`, pane or kept reservation; the missing-base case also asserts the refusal names host, repo and SHA and both fixes (published: fetch on the host; local-only: push, then fetch, or spawn from a published commit) |
 | §4.2 spawn prepare | `job_plugin_builtin_channels` | zero `host_channels` rows across a mule prepare |
 | §4.2 host check | `host_exec` | zero rows across mule check and exec; one counted row for a template fetch |
 | §4.4 | `plugin_mule_link` (mule's tmux signal, the link's `checkSteps`) | missing master and missing tmux are separate outcomes, with no unlocked ssh |
