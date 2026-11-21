@@ -26,8 +26,19 @@ import baseConfig from "./vitest.config.js";
  * mergeConfig keeps the inherited value, so the cap survived and the suite still
  * took 188s. The override has to be a real number. (vitest 4+ has no
  * `minWorkers`; only `maxWorkers` sizes the pool.)
+ *
+ * Under muzzle the admitted slot count wins: `MUZZLE_SLOTS` (min 1) is the
+ * share of the host muzzle granted this run, and each fork is a process
+ * tree (a node, plus the git, sh and node children its tests start). On a
+ * host where every exec goes through endpoint-security agents the
+ * bottleneck is process starts, not CPU: eight forks under a two-slot
+ * admission starved the machine while muzzle reported it mostly idle. It
+ * is still a real number, for the reason above.
  */
-const workers = Math.max(2, Math.min(8, Math.floor((cpus().length || 4) / 2)));
+const slots = Number(process.env.MUZZLE_SLOTS || Number.NaN);
+const workers = Number.isFinite(slots)
+  ? Math.max(1, Math.floor(slots))
+  : Math.max(2, Math.min(8, Math.floor((cpus().length || 4) / 2)));
 
 export default mergeConfig(baseConfig, {
   test: {

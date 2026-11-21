@@ -57,6 +57,7 @@ import Database from "better-sqlite3";
 import { execa } from "execa";
 import { openDb } from "../src/db.js";
 import { DB_TEMPLATE_KEY } from "./_db-template.js";
+import { pinRealGit } from "./_real-git.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
 
 // ─── Layer 3: dedicated tmux socket ────────────────────────────────
@@ -87,6 +88,11 @@ const TEST_SOCKET = `mu-test-${process.pid.toString(36)}-${Date.now().toString(3
 // (otherwise forks would route through `-L <socket>` to a non-existent
 // server and every tmux call would error).
 process.env.MU_TMUX_SOCKET = TEST_SOCKET;
+
+// The real git first on PATH (test/_real-git.ts), at module load for the
+// same reason: every fork inherits PATH as it is when the pool starts. A
+// fork importing this file (its unit test) already has it.
+const realGitDir = process.env.VITEST_WORKER_ID === undefined ? pinRealGit() : undefined;
 
 async function bootstrapPrivateTmuxServer(): Promise<void> {
   // tmux lazily starts the server on the first command; an explicit
@@ -455,6 +461,7 @@ export async function teardown(): Promise<void> {
   if (vitestTmpDir) rmSync(vitestTmpDir, { recursive: true, force: true });
   if (dbTemplateDir) rmSync(dbTemplateDir, { recursive: true, force: true });
   if (runRoot) rmSync(runRoot, { recursive: true, force: true });
+  if (realGitDir) rmSync(realGitDir, { recursive: true, force: true });
   // Layer 3: nuke the entire private server in one call. After this,
   // every session/window/pane the suite ever touched is gone.
   await killPrivateTmuxServer();

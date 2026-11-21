@@ -16,6 +16,8 @@ export default defineConfig({
     // parallel. `--maxWorkers=2` was measured green
     // (docs/test-health/2026-10-23-surface.md §3); serial is kept for
     // determinism, and it is why the slow tier is near its budget.
+    // MUZZLE_SLOTS is not read here: one worker already fits any admission
+    // (muzzle grants at least one slot).
     maxWorkers: 1,
     // globalSetup (test/_global-teardown.ts) starts the run's private
     // `tmux -L <socket>` server, builds the DB template, makes the per-run

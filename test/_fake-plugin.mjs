@@ -167,8 +167,17 @@ const killTree = (root) => {
   for (const pid of tree) kill(pid);
 };
 
+/**
+ * Whether a run ever started in the fake's group. Only runs put children there
+ * (the `detach` helper leaves it), so with none the group is the fake alone and
+ * the EOF sweep skips its `ps`: most fakes never run anything, and a process
+ * start per plugin exit was a tenth of the fast tier's launches.
+ */
+let ranInGroup = false;
+
 /** Everything left in the fake's own group but the fake (a run's orphans included). */
 const killGroupButMe = () => {
+  if (!ranInGroup) return;
   for (const [pid, , pgid] of processes())
     if (pgid === process.pid && pid !== process.pid) kill(pid);
 };
@@ -177,6 +186,7 @@ const killGroupButMe = () => {
 // no-detach). `detachExec` is the hostile variant: each run in its own session.
 function run(id, argv, cwd, timeoutMs, done) {
   const pathPrefix = config().pathPrefix;
+  if (config().detachExec !== true) ranInGroup = true;
   const child = spawn(argv[0], argv.slice(1), {
     cwd,
     ...(typeof pathPrefix === "string"

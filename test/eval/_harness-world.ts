@@ -5,7 +5,7 @@
 // and the AUT's mu-call record. Times are offsets (ms) from the moment the world is built; a test
 // moves one event across another to make a bad world.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { issueCheck, recordCheckVerdict } from "../../src/checks.ts";
@@ -62,6 +62,81 @@ export interface WorldSpec {
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
+/**
+ * The world's repo, built in one `git fast-import` (then a `reset --hard` for the work tree
+ * and one patch-id pipe for every worker commit) instead of a git process per step: on an
+ * endpoint-security host each start costs 14 ms to 1 s, and these worlds were the fast
+ * tier's largest source of git starts. Same end state as the step-by-step build: an empty
+ * `init` on main; per worker, its task file committed on `wk-<agent>` off init, authored
+ * <agent>@worker.eval.invalid; a merged worker's commit re-made on main (the cherry-pick:
+ * same author and message, committer eval); then the AUT's commits on main; main checked out.
+ */
+function buildRepo(
+  repoDir: string,
+  spec: WorldSpec,
+  now: number,
+): { head: string; built: Map<string, { sha: string; pid: string }> } {
+  const git = (args: string[], input?: string): string =>
+    execFileSync("git", args, { cwd: repoDir, encoding: "utf8", input }).trim();
+  const ident = (name: string, email: string): string =>
+    `${name} <${email}> ${Math.floor(now / 1000)} +0000`;
+  const evalId = ident("eval", "eval@example.invalid");
+  const data = (text: string): string => `data ${Buffer.byteLength(text)}\n${text}\n`;
+  const stream: string[] = [];
+  let mark = 0;
+  const commit = (
+    ref: string,
+    from: number | undefined,
+    author: string,
+    msg: string,
+    file?: string,
+  ): number => {
+    stream.push(
+      `commit ${ref}\nmark :${++mark}\nauthor ${author}\ncommitter ${evalId}\n${data(`${msg}\n`)}`,
+      ...(from === undefined ? [] : [`from :${from}\n`]),
+      ...(file === undefined ? [] : [`M 100644 inline ${file}.txt\n${data(`${file}\n`)}`]),
+    );
+    return mark;
+  };
+  const init = commit("refs/heads/main", undefined, evalId, "init");
+  let main = init;
+  const marks = new Map<string, number>();
+  for (const w of spec.workers) {
+    const author = ident(w.agent, `${w.agent}@worker.eval.invalid`);
+    marks.set(w.agent, commit(`refs/heads/wk-${w.agent}`, init, author, w.task, w.task));
+    if (w.merged !== false) main = commit("refs/heads/main", main, author, w.task, w.task);
+  }
+  for (const s of spec.autCommits ?? []) main = commit("refs/heads/main", main, evalId, s, s);
+  const marksFile = join(repoDir, "..", "fast-import.marks");
+  git(["init", "-q", "-b", "main"]);
+  git(["fast-import", "--quiet", `--export-marks=${marksFile}`], stream.join(""));
+  git(["reset", "-q", "--hard", "main"]);
+  const shaOf = new Map<number, string>();
+  for (const line of readFileSync(marksFile, "utf8").split("\n")) {
+    const [m, sha] = line.split(" ");
+    if (m !== undefined && sha !== undefined) shaOf.set(Number(m.slice(1)), sha);
+  }
+  rmSync(marksFile, { force: true });
+  const shas = [...marks.values()].map((m) => shaOf.get(m) ?? "");
+  const pidOf = new Map<string, string>();
+  if (shas.length > 0) {
+    const out = execFileSync("sh", ["-c", 'git show "$@" | git patch-id --stable', "sh", ...shas], {
+      cwd: repoDir,
+      encoding: "utf8",
+    });
+    for (const line of out.trim().split("\n")) {
+      const [pid, sha] = line.split(" ");
+      if (pid !== undefined && sha !== undefined) pidOf.set(sha, pid);
+    }
+  }
+  const built = new Map<string, { sha: string; pid: string }>();
+  for (const [agent, m] of marks) {
+    const sha = shaOf.get(m) ?? "";
+    built.set(agent, { sha, pid: pidOf.get(sha) ?? "" });
+  }
+  return { head: shaOf.get(init) ?? "", built };
+}
+
 export function makeHarnessWorld(spec: WorldSpec): Sandbox {
   const now = Date.now();
   const dir = mkdtempSync(join(tmpdir(), "harness-world-"));
@@ -69,18 +144,7 @@ export function makeHarnessWorld(spec: WorldSpec): Sandbox {
   const workerDir = join(dir, "workers");
   mkdirSync(join(workerDir, "mu-out"), { recursive: true });
   mkdirSync(repoDir);
-  const gitEnv = {
-    ...process.env,
-    GIT_AUTHOR_NAME: "eval",
-    GIT_AUTHOR_EMAIL: "eval@example.invalid",
-    GIT_COMMITTER_NAME: "eval",
-    GIT_COMMITTER_EMAIL: "eval@example.invalid",
-  } as Record<string, string>;
-  const git = (args: string[], env: Record<string, string> = gitEnv): string =>
-    execFileSync("git", args, { cwd: repoDir, env, encoding: "utf8" }).trim();
-  git(["init", "-q", "-b", "main"]);
-  git(["commit", "-q", "--allow-empty", "-m", "init"]);
-  const head = git(["rev-parse", "HEAD"]);
+  const { head, built } = buildRepo(repoDir, spec, now);
   writeFileSync(join(dir, "setup-head"), head);
 
   const dbPath = join(dir, "mu.db");
@@ -153,27 +217,8 @@ export function makeHarnessWorld(spec: WorldSpec): Sandbox {
       payload: `{"status":"IN_PROGRESS","owner_id":${pane}}`,
       at: reportAt - 9000,
     });
-    // the worker's commit on its own branch, as <agent>@worker.eval.invalid
-    git(["checkout", "-q", "-b", `wk-${w.agent}`, head]);
-    writeFileSync(join(repoDir, `${w.task}.txt`), `${w.task}\n`);
-    git(["add", `${w.task}.txt`]);
-    git(["commit", "-q", "-m", w.task], {
-      ...gitEnv,
-      GIT_AUTHOR_NAME: w.agent,
-      GIT_AUTHOR_EMAIL: `${w.agent}@worker.eval.invalid`,
-    });
-    const sha = git(["rev-parse", "HEAD"]);
-    const pid = execFileSync(
-      "sh",
-      ["-c", `git show --format= ${sha} | git patch-id --stable | cut -d' ' -f1`],
-      {
-        cwd: repoDir,
-        encoding: "utf8",
-      },
-    ).trim();
-    git(["checkout", "-q", "main"]);
+    const { sha, pid } = built.get(w.agent) ?? { sha: "", pid: "" };
     if (w.merged !== false) {
-      git(["cherry-pick", sha]);
       mainLog.push(`${now + (w.mergeAt ?? reportAt + 2000)} main ${w.task}`);
     }
     const cwd =
@@ -222,9 +267,6 @@ export function makeHarnessWorld(spec: WorldSpec): Sandbox {
       });
   }
   for (const s of spec.autCommits ?? []) {
-    writeFileSync(join(repoDir, `${s}.txt`), `${s}\n`);
-    git(["add", `${s}.txt`]);
-    git(["commit", "-q", "-m", s]);
     mainLog.push(`${now - 15000} main ${s}`);
   }
   for (const [task, actor, intent, at] of spec.closes ?? []) close(task, actor, intent, at);
