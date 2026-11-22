@@ -18,7 +18,7 @@ vi.mock("../src/channels/ctl.js", async (importOriginal) =>
 );
 
 import { getReceipt } from "../src/agents/receipts.js";
-import { getAgent } from "../src/agents.js";
+import { getAgent, insertAgent } from "../src/agents.js";
 import { pendingAttempts, planAttempt, readAttempt, reserveAttempt } from "../src/auto-attempt.js";
 import { type Db, openDb } from "../src/db.js";
 import { openHumanNeeds, recordHumanNeeded } from "../src/human-needed.js";
@@ -98,6 +98,18 @@ const kinds = (r: NextResult) => r.moves.map((m) => `${m.kind}:${m.task}`);
 const receiptOf = (id: string, key: string) => getReceipt(db, tid(id), key);
 
 describe("dispatch of an authorised task", () => {
+  it("does not charge or reserve a new attempt on a foreign backend", async () => {
+    task("a");
+    insertAgent(db, { name: "old", workstream: "d", paneId: "w1:p2" });
+
+    const attempt = await run().catch((err) => err);
+    expect({ runs: runsOf("a"), receipt: receiptOf("a", "auto:1") }).toEqual({
+      runs: 0,
+      receipt: undefined,
+    });
+    expect(attempt).toMatchObject({ name: "MuxBackendMismatchError", existing: "herdr" });
+  });
+
   it("spawns, claims, sends the brief once, charges one run; never touches auth config", async () => {
     task("a");
     task("plain", { auth: false });

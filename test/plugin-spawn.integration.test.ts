@@ -13,7 +13,8 @@ import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
-import { getAgent } from "../src/agents.js";
+import { MuxBackendMismatchError } from "../src/agents/errors.js";
+import { getAgent, insertAgent } from "../src/agents.js";
 import { getCarrierJobByAgent, listCarrierJobs } from "../src/carrier-jobs.js";
 import { drainHost, releaseHost } from "../src/host-lifecycle.js";
 import { getHostRecord } from "../src/host-records.js";
@@ -50,6 +51,24 @@ afterEach(() => {
 });
 
 describe("a --worktree agent on a provider host, spawned and closed", () => {
+  it("refuses a foreign backend before any plugin call, reservation or view", async () => {
+    await h.setup({}, {}, { push: true });
+    insertAgent(h.db, {
+      name: "old",
+      workstream: "ws",
+      paneId: "block:12345678-1234-1234-1234-123456789abc",
+    });
+    const callsBefore = h.f.calls();
+
+    await expect(h.spawn({ worktree: true, root: remote })).rejects.toBeInstanceOf(
+      MuxBackendMismatchError,
+    );
+    expect(h.f.calls()).toEqual(callsBefore);
+    expect(listCarrierJobs(h.db)).toEqual([]);
+    expect(h.panes.size).toBe(0);
+    expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
+  });
+
   it("pushes the caller's HEAD, starts the job in the tree, and closes with the final collect", async () => {
     await h.setup({}, {}, { push: true });
     const sha = git(local, "rev-parse", "HEAD");

@@ -100,11 +100,13 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
-- A spawn refuses (`MuxBackendMismatchError`, exit 4) while its workstream has a
-  live agent on another managed backend (tmux, herdr, Rex), naming the backend and
-  the fix. Advisory: two first spawns can race. `mu state` reconcile keeps and
-  reports (`foreign`) those rows instead of pruning them. A Rex terminal driving
-  tmux workers is unaffected (ladder placement spec §8.2).
+- Every spawn, including a task-bound or plugin spawn, refuses before any
+  effects (`MuxBackendMismatchError`, exit 4) if its workstream has an agent
+  registered on another managed backend (tmux, herdr, Rex). The error names
+  that backend and suggests switching to it or using a new workstream.
+  Reconcile keeps foreign rows; `mu state` shows them as `unknown` and names
+  their backend. The guard is advisory: two first spawns can race, and a Rex
+  terminal can still drive tmux workers (ladder placement spec §8.2).
 
 - mu resolves local helpers such as tmux, git and ps to absolute paths before
   spawning, so a long PATH no longer costs a spawn attempt per entry on macOS.

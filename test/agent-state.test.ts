@@ -346,7 +346,7 @@ describe("readAgentStates", () => {
     };
     setMuxForTests(backend);
 
-    expect((await reading()).get(agentKey(agent))).toEqual({
+    expect((await readAgentStates([{ ...agent, paneId: "w1:p1" }])).get(agentKey(agent))).toEqual({
       state: "needs_permission",
       source: "herdr",
       since: null,
@@ -363,7 +363,7 @@ describe("readAgentStates", () => {
     };
     setMuxForTests(backend);
 
-    expect((await reading()).get(agentKey(agent))).toEqual({
+    expect((await readAgentStates([{ ...agent, paneId: "w1:p1" }])).get(agentKey(agent))).toEqual({
       state: "unknown",
       source: "none",
       since: null,

@@ -47,8 +47,10 @@ claim keyed on `$MU_AGENT_NAME` coordinate the crew:
 **Multiplexer and reconciliation.** One workstream is one mux session
 (a tmux session, a herdr workspace or a Rex session). Call sites reach the backend
 only through `activeMux()` and branch on capabilities, never on the
-backend name. `mu agent list` prunes ghost rows and surfaces orphan
-panes against mux reality. Runtime agent state is read on demand, never
+backend name. Spawn checks the backend named by registered pane ids before
+staging, reserving or dispatching. `mu agent list` prunes ghost rows and
+surfaces orphan panes, but keeps rows from other backends; `mu state`
+reports those panes as unknown. Runtime agent state is read on demand, never
 stored: the control socket for pi agents on `ctl`, herdr's native status on
 herdr, the program's OSC 7501 report on Rex, and murmur for other CLIs on tmux
 and a pi on the `hooks` fallback:

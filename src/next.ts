@@ -43,8 +43,10 @@
 // the shared read-only planner: no ingest, lock, mux call, receipt probe or
 // write.
 
+import { assertBackendBinding } from "./agents/backend-binding.js";
 import {
   AgentRestartedError,
+  MuxBackendMismatchError,
   SpawnAttemptBusyError,
   SpawnAttemptGuardError,
 } from "./agents/errors.js";
@@ -710,7 +712,7 @@ async function drive(
     }
     return move;
   } catch (err) {
-    if (err instanceof NoMultiplexerError) throw err;
+    if (err instanceof NoMultiplexerError || err instanceof MuxBackendMismatchError) throw err;
     const base = { task, attempt: rec.attempt, key: rec.key, cli: rec.cli };
     if (err instanceof SpawnAttemptBusyError) {
       // Another mu holds this attempt: nothing was done here.
@@ -749,6 +751,8 @@ async function resume(ctx: Ctx, task: string): Promise<NextMove> {
 }
 
 async function allocate(ctx: Ctx, task: string): Promise<NextMove> {
+  // Refuse before a new auto attempt consumes a run or writes a receipt.
+  await assertBackendBinding(ctx.db, ctx.ws);
   const reserved = reserveAttempt(ctx.db, ctx.ws, task);
   if (!reserved.ok) {
     return {

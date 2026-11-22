@@ -86,6 +86,7 @@ export {
   type LiveAgentsView,
   listAgents,
   listLiveAgents,
+  MuxBackendMismatchError,
   type ObservedAgent,
   type ObservedWatch,
   observationFromReading,

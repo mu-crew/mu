@@ -17,6 +17,8 @@ import { getCarrierJobByAgent } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
 import { agentJobRef, readingWithLiveness } from "../jobs/kinds.js";
+import { foreignBackend } from "../mux/binding.js";
+import { activeMux } from "../mux/detect.js";
 import { queuedPanes } from "../muzzle-queue.js";
 import { pluginJobRef } from "../plugins/job.js";
 import { composedStates } from "./compose.js";
@@ -116,13 +118,26 @@ export async function readAgentStates(
   agents: readonly StateAgentRef[],
   opts: { now?: number; stateDir?: string; db?: Db } = {},
 ): Promise<Map<string, StateReading>> {
-  const gates = agents.filter((a) => a.gateToken !== undefined && a.gateToken !== null);
+  if (agents.length === 0) return new Map();
+  const active = (await activeMux().catch(() => undefined))?.name;
+  const foreign = new Map<string, StateReading>();
+  const local = agents.filter((a) => {
+    const backend = active === undefined ? undefined : foreignBackend(a.paneId, active);
+    if (backend === undefined) return true;
+    // The active backend cannot prove anything about this pane, including its absence.
+    const reason = `foreign backend: ${backend} (active: ${active})`;
+    const turn = { state: "unknown", source: "none", since: null, reason } as const;
+    foreign.set(agentKey(a), readingWithLiveness(turn, { state: "unknown", reason }));
+    return false;
+  });
+  const gates = local.filter((a) => a.gateToken !== undefined && a.gateToken !== null);
   // A row on a channel nothing provides reads unknown (a verb on it refuses, typed).
   const known = (a: StateAgentRef) =>
     channelNamed(channelOf(a, opts.stateDir), opts.db, a.channelPlugin);
-  const unregistered = agents.filter((a) => !gates.includes(a) && known(a) === undefined);
-  const rest = agents.filter((a) => !gates.includes(a) && !unregistered.includes(a));
+  const unregistered = local.filter((a) => !gates.includes(a) && known(a) === undefined);
+  const rest = local.filter((a) => !gates.includes(a) && !unregistered.includes(a));
   const readings = await readChannelStates(rest, opts);
+  for (const [key, reading] of foreign) readings.set(key, reading);
   for (const a of unregistered) {
     const reason = `channel ${channelOf(a, opts.stateDir)} is not registered`;
     const turn = { state: "unknown", source: "none", since: null, reason } as const;

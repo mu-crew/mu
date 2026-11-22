@@ -101,11 +101,11 @@ import {
 } from "./receipts.js";
 import {
   isCommandGate,
+  prepareAgentSpawn,
   rollbackSpawn,
   type SpawnAgentOptions,
   type SpawnedAgent,
   type StagedWorktree,
-  spawnAgent,
 } from "./spawn.js";
 import { FirstPromptUnknownError, resolveFirstTurn } from "./spawn-plugin.js";
 import { refuseRemoteSpawnMux } from "./spawn-remote.js";
@@ -392,23 +392,24 @@ async function run(
 
   if (saved.state === "reserved" && auto) {
     // Nothing happened yet (the executor spawns `nextFree`, so a taken name is skipped).
-    return drive(db, req, taskId, key, saved, undefined, guard, keep);
+    return drive(db, req, taskId, key, saved, await prepareAgentSpawn(db, req.spawn), guard, keep);
   }
   if (saved.state === "reserved") {
     // No identity journaled: a name that exists now is not provably ours.
     if (req.spawn.nextFree !== true && getAgentForCleanup(db, saved.name, ws) !== undefined) {
       throw new AgentExistsError(saved.name);
     }
-    transitionReceipt(db, taskId, key, "unsent", { detail: "reservation never reached a pane" });
-    return fresh(db, req, taskId, key, sha, true);
+    return fresh(db, req, taskId, key, sha, true, "reservation never reached a pane");
   }
 
   // pane | claimed: resume at the next step on the saved identity, or start over.
   if (id.agent === undefined) {
     const why = `saved agent ${saved.agentId ?? "?"} is ${id.stale ?? "gone"}; nothing was sent`;
-    transitionReceipt(db, taskId, key, "unsent", { detail: why });
-    if (auto) return failedAttempt(why);
-    return fresh(db, req, taskId, key, sha, true);
+    if (auto) {
+      transitionReceipt(db, taskId, key, "unsent", { detail: why });
+      return failedAttempt(why);
+    }
+    return fresh(db, req, taskId, key, sha, true, why);
   }
   return drive(db, req, taskId, key, saved, id.agent, guard, keep);
 }
@@ -421,8 +422,11 @@ async function fresh(
   key: string,
   sha: string,
   reuse = false,
+  unsent?: string,
 ): Promise<TaskSpawnOutcome> {
   const ws = req.spawn.workstream;
+  const spawn = await prepareAgentSpawn(db, req.spawn);
+  if (unsent !== undefined) transitionReceipt(db, taskId, key, "unsent", { detail: unsent });
   // Cheap refusals before any effect: someone else already owns the task.
   const task = getTask(db, req.task, ws);
   if (task === undefined) throw new TaskNotFoundError(req.task, ws);
@@ -434,7 +438,7 @@ async function fresh(
   const rec = reuse
     ? resetReceipt(db, taskId, key, base)
     : reserveReceipt(db, { taskId, attemptKey: key, workstream: ws, ...base });
-  return drive(db, req, taskId, key, rec, undefined, undefined);
+  return drive(db, req, taskId, key, rec, spawn, undefined);
 }
 
 /** A delegate task's pi spawn keeps its session in {@link delegateSessionDir}. */
@@ -457,15 +461,16 @@ async function drive(
   taskId: number,
   key: string,
   start: SpawnReceipt,
-  resumed: AgentRow | undefined,
+  startAgent: AgentRow | Awaited<ReturnType<typeof prepareAgentSpawn>>,
   guard: AutoAttemptRequest["guard"] | undefined,
   keep = false,
 ): Promise<TaskSpawnOutcome> {
+  const resumed = typeof startAgent === "function" ? undefined : startAgent;
   const ws = req.spawn.workstream;
   // Before any effect: a refusal leaves the reservation as it is (resumable).
   if (resumed === undefined) guard?.("spawn");
   let rec = start;
-  let agent: SpawnedAgent | AgentRow | undefined = resumed;
+  let agent: SpawnedAgent | AgentRow | undefined;
   let claimed = rec.state === "claimed";
   let staged: StagedWorktree | undefined =
     resumed !== undefined && req.spawn.worktree === true ? stagedOf(db, resumed) : undefined;
@@ -592,12 +597,11 @@ async function drive(
 
   let row: AgentRow;
   try {
-    if (agent === undefined) {
+    if (typeof startAgent === "function") {
       // An executor attempt's oversized remote brief: nothing is spawned for it.
       assertBriefFitsSpawn(req);
       spawnThrew = true;
-      const spawned = await spawnAgent(db, {
-        ...req.spawn,
+      const spawned = await startAgent({
         ...delegateSession(db, req.task, ws),
         firstPrompt: req.text,
         firstTurn,
@@ -630,6 +634,8 @@ async function drive(
         );
       }
       if (spawned.trustDialog === true) throw new SpawnTrustDialogError(spawned.name);
+    } else {
+      agent = startAgent;
     }
     const target = agent;
     if (firstSent !== undefined) row = target;

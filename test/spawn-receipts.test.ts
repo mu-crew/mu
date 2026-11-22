@@ -294,6 +294,19 @@ describe("replay: never a second prompt", () => {
     expect({ panes: panes(), sends: sends().length }).toEqual(before);
   });
 
+  it("returns a saved delivery even if the workstream now has a foreign pane", async () => {
+    const out = await spawnForTask(db, req());
+    insertAgent(db, { name: "foreign", workstream: "auth", paneId: "w1:p2" });
+
+    await expect(spawnForTask(db, req())).resolves.toMatchObject({
+      state: "sent",
+      replay: true,
+      receipt: { msgId: out.receipt.msgId },
+    });
+    expect(sends()).toHaveLength(1);
+    expect(panes()).toBe(1);
+  });
+
   it("two in-process callers of one attempt: one pane, one send (the attempt lock)", async () => {
     const [a, b] = await Promise.all([spawnForTask(db, req()), spawnForTask(db, req())]);
     expect(sends()).toHaveLength(1);

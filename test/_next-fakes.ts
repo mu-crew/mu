@@ -1,6 +1,6 @@
 // Shared fakes for the `executeNext` suites (next-executor, next-refute, next-recover):
-// spawnAgent, the channel delivery and the ctl receipt are the only things faked; the
-// journal, claim and replay are real. A suite installs them with
+// Pane creation, channel delivery and the ctl receipt are the only things faked;
+// spawn preflight, the journal, claim and replay are real. A suite installs them with
 //
 //   vi.mock("../src/agents/spawn.js", async (orig) =>
 //     (await import("./_next-fakes.js")).spawnFake(await orig()));
@@ -15,8 +15,6 @@
 // at the top level: the factories run during collection, and awaiting a module that
 // imports a module being mocked deadlocks it (0% CPU, no test timeout can fire because
 // no test has started). `spawnFake` imports agents.js lazily, inside the fake.
-
-import type { Db } from "../src/db.js";
 
 interface Sent {
   agent: string;
@@ -51,13 +49,12 @@ export function resetHook(): void {
   hook.checkState = "unreachable";
 }
 
-export function spawnFake<T extends object>(actual: T): T {
-  return {
-    ...actual,
-    spawnAgent: async (
-      db: Db,
-      opts: { name: string; workstream: string; onIdentity?: (a: unknown) => void },
-    ) => {
+type SpawnModule = typeof import("../src/agents/spawn.js");
+
+export function spawnFake(actual: SpawnModule): SpawnModule {
+  const prepareAgentSpawn: SpawnModule["prepareAgentSpawn"] = async (db, opts) => {
+    await actual.prepareAgentSpawn(db, opts);
+    return async (journal) => {
       const { insertAgent } = await import("../src/agents.js");
       hook.spawns.push(opts.name);
       if (hook.spawnFails !== undefined) throw hook.spawnFails();
@@ -66,11 +63,12 @@ export function spawnFake<T extends object>(actual: T): T {
         workstream: opts.workstream,
         paneId: `%${++hook.panes}`,
       });
-      opts.onIdentity?.(row);
+      journal?.onIdentity?.(row);
       hook.afterSpawn?.();
       return { ...row, ctl: "ok", ctlSocket: "/fake.sock", ctlIncarnation: "pi-inc" };
-    },
+    };
   };
+  return { ...actual, prepareAgentSpawn };
 }
 
 export function deliverFake<T extends object>(actual: T): T {

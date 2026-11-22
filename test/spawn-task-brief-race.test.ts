@@ -17,22 +17,20 @@ import { installMux, type MuxHarness } from "./_mux.js";
 const hits = vi.hoisted(() => ({ spawns: 0, sends: [] as string[] }));
 vi.mock("../src/agents/spawn.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/agents/spawn.js")>();
-  return {
-    ...actual,
-    spawnAgent: async (
-      db: Db,
-      opts: { name: string; workstream: string; onIdentity?: (a: unknown) => void },
-    ) => {
+  const prepareAgentSpawn: typeof actual.prepareAgentSpawn = async (db, opts) => {
+    await actual.prepareAgentSpawn(db, opts);
+    return async (journal) => {
       hits.spawns++;
       const row = insertAgent(db, {
         name: opts.name,
         workstream: opts.workstream,
         paneId: "%1",
       });
-      opts.onIdentity?.(row);
+      journal?.onIdentity?.(row);
       return { ...row, ctl: "ok", ctlSocket: "/fake.sock" };
-    },
+    };
   };
+  return { ...actual, prepareAgentSpawn };
 });
 vi.mock("../src/channels/deliver.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/channels/deliver.js")>();

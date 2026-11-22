@@ -56,7 +56,11 @@ it("ctl readings, their probes and CLOSE eligibility are exactly b577dfd8's", as
     const socket = ctlSocketPath("w", "a", dir);
     mkdirSync(dirname(socket), { recursive: true });
     setMurmurRunnerForTests(async () => null);
-    for (const backend of ["tmux", "herdr", "rex"] as const)
+    for (const [backend, paneId] of [
+      ["tmux", "%1"],
+      ["herdr", "w1:p1"],
+      ["rex", "block:12345678-1234-1234-1234-123456789abc"],
+    ] as const)
       for (const kind of ["pane", "lease"] as const)
         for (const ctl of ["ok", "missing", "refused"] as const)
           for (const pane of ["running", "ended", "absent", "unknown"] as const) {
@@ -133,13 +137,16 @@ it("ctl readings, their probes and CLOSE eligibility are exactly b577dfd8's", as
             }
             const job = {
               kind,
-              viewPaneId: "%1",
+              viewPaneId: paneId,
               agentId: a.incarnation,
               agent: { workstream: "w", name: "a" },
               host: { name: "box" },
             };
-            const withoutJob = (await readAgentStates([a], { stateDir: dir })).get("w/a");
-            const withJob = (await readAgentStates([{ ...a, job }], { stateDir: dir })).get("w/a");
+            const worker = { ...a, paneId };
+            const withoutJob = (await readAgentStates([worker], { stateDir: dir })).get("w/a");
+            const withJob = (await readAgentStates([{ ...worker, job }], { stateDir: dir })).get(
+              "w/a",
+            );
             const liveness = await jobLiveness(db, job);
             out.push({ backend, kind, ctl, pane, withoutJob, withJob, liveness, calls });
             const s = server;

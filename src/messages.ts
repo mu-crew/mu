@@ -512,7 +512,7 @@ export const MESSAGES = {
   "remote.collect_failed": (host: string, detail: string) =>
     `host ${host}: collect failed: ${detail}`,
   "agent.backend_mismatch": (ws: string, active: string, existing: string, agent: string) =>
-    `workstream ${ws} already has agent ${agent} on ${existing}, and this run uses ${active}; nothing was spawned. Set MU_MUX=${existing} to join it, or close its agents first (mu agent close ${agent} -w ${ws}). A Rex terminal may drive a tmux workstream with MU_MUX=tmux.`,
+    `workstream ${ws} already has agent ${agent} on ${existing}, and this run uses ${active}; nothing was spawned. Set MU_MUX=${existing} to join it, or use a new workstream on ${active}.`,
   "agent.reattach_refused": (name: string, why: string, close: string) =>
     `agent ${name} cannot be reattached: ${why}; nothing was changed. Preview its close: ${close}`,
   "agent.reattach_failed": (

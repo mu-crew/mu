@@ -61,19 +61,23 @@ afterEach(() => {
 });
 
 describe("an agent's mux reading decides presence through a job read", () => {
-  for (const name of ["herdr", "rex"] as const) {
+  for (const [name, paneId] of [
+    ["herdr", "w1:p1"],
+    ["rex", "block:12345678-1234-1234-1234-123456789abc"],
+  ] as const) {
+    const worker = { ...agent, paneId };
     it(`${name}: a reported state is a present pane, read through viewStatus`, async () => {
       classifying(name, "busy", false);
-      const r = (await readAgentStates([agent])).get(key);
+      const r = (await readAgentStates([worker])).get(key);
       expect(r).toEqual({ state: "busy", source: name, since: null, alive: true });
       expect(view.viewStatus).toHaveBeenCalledTimes(1);
-      expect(view.viewStatus).toHaveBeenCalledWith(agent.paneId, expect.anything());
+      expect(view.viewStatus).toHaveBeenCalledWith(paneId, expect.anything());
       expect(probes).toEqual(["paneStatus"]);
     });
 
     it(`${name}: no reported state, then view presence decides, through viewStatus`, async () => {
       classifying(name, undefined, false);
-      expect((await readAgentStates([agent])).get(key)).toEqual({
+      expect((await readAgentStates([worker])).get(key)).toEqual({
         state: "unknown",
         source: "none",
         since: null,
@@ -81,7 +85,7 @@ describe("an agent's mux reading decides presence through a job read", () => {
         reason: UNKNOWN_REASON.paneGone,
       });
       classifying(name, undefined, true);
-      expect((await readAgentStates([agent])).get(key)).toMatchObject({
+      expect((await readAgentStates([worker])).get(key)).toMatchObject({
         state: "unknown",
         source: name,
         alive: true,

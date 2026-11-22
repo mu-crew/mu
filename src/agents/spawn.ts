@@ -459,16 +459,31 @@ export function piHooksRequested(env: NodeJS.ProcessEnv = process.env): boolean 
  * pane + row + worktree. The caller-visible error is preserved.
  */
 export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
+  return (await prepareAgentSpawn(db, opts))();
+}
+
+/** Check before any effects, including a task spawn's receipt. The prepared spawn
+ *  keeps that one advisory decision through name retries and plugin dispatch. */
+export async function prepareAgentSpawn(db: Db, opts: SpawnAgentOptions) {
+  await assertBackendBinding(db, opts.workstream);
   if (opts.host !== undefined) await refuseRemoteSpawnMux(db, opts);
-  // A --worktree spawn that died before its pane (SIGKILL) frees its name here.
-  await reclaimDeadStagings(db, opts.workstream);
+  return async (
+    journal?: Pick<SpawnAgentOptions, "firstPrompt" | "firstTurn" | "onIdentity" | "piSessionDir">,
+  ): Promise<SpawnedAgent> => {
+    // A --worktree spawn that died before its pane (SIGKILL) frees its name here.
+    await reclaimDeadStagings(db, opts.workstream);
+    return spawnPreparedAgent(db, { ...opts, ...journal });
+  };
+}
+
+async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
   if (opts.nextFree === true) {
     // A parallel spawn can take the picked name between the pick and the
     // insert (the in-lock re-check throws before any side effect): pick again.
     for (let attempt = 1; ; attempt++) {
       const name = nextFreeAgentName(db, opts.name, opts.workstream);
       try {
-        return await spawnAgent(db, { ...opts, name, nextFree: false });
+        return await spawnPreparedAgent(db, { ...opts, name, nextFree: false });
       } catch (err) {
         if (!(err instanceof AgentExistsError) || attempt >= NEXT_FREE_ATTEMPTS) throw err;
       }
@@ -522,7 +537,6 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     );
   }
   if (profile) assertLeaseSpawnable(profile, gateToken !== undefined);
-  await assertBackendBinding(db, opts.workstream);
   // A lease spawn reserves the name in carrier_jobs BEFORE any effect: from here until a
   // stop (or an abandon) the reservation is the durable pointer to whatever job its
   // carrier may dispatch, and every other spawn of the name refuses.
