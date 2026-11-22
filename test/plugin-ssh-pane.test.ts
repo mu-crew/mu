@@ -293,6 +293,60 @@ describe("job.stop answers only on proof", () => {
       }
     });
 
+    it("a root ending in whitespace is refused, not trimmed into another directory", async () => {
+      const odd = join(realpathSync(h.dir), "sp ");
+      process.env.MU_SSH_STATE_DIR = odd;
+      try {
+        wire = new PluginWire(ssh.argv);
+        const m = await start("k");
+        expect(m.result).toBeUndefined();
+        expect(m.error).toBeDefined();
+      } finally {
+        delete process.env.MU_SSH_STATE_DIR;
+      }
+    });
+
+    it("a path a startup banner prints before the reply is not the root", async () => {
+      const banner = join(realpathSync(h.dir), "banner-sh");
+      writeFileSync(banner, '#!/bin/sh\necho /banner\nexec /bin/sh "$@"\n');
+      chmodSync(banner, 0o755);
+      const want = shortDir();
+      process.env.MU_SSH_STATE_DIR = want;
+      try {
+        ssh = fakeSsh(h.dir, h.dir, { sh: banner });
+        wire = new PluginWire(ssh.argv);
+        const { handle } = result(await start("k"));
+        expect(handle).toContain(`@o:${want.slice(1).replaceAll("/", ":")}`);
+      } finally {
+        delete process.env.MU_SSH_STATE_DIR;
+      }
+    });
+
+    it("a truncated root reply is refused", async () => {
+      const cut = join(realpathSync(h.dir), "cut-sh");
+      writeFileSync(cut, '#!/bin/sh\necho "mu-plugin-ssh-root 99 /tmp/x"\n');
+      chmodSync(cut, 0o755);
+      ssh = fakeSsh(h.dir, h.dir, { sh: cut });
+      wire = new PluginWire(ssh.argv);
+      expect((await start("k")).error).toMatchObject({ data: { kind: "retryable" } });
+    });
+
+    it("a stop whose state root is gone is no proof and creates nothing", async () => {
+      const root = shortDir();
+      process.env.MU_SSH_STATE_DIR = join(root, "r");
+      try {
+        wire = new PluginWire(ssh.argv);
+        const { handle } = result(await start("k"));
+        rmSync(join(root, "r"), { recursive: true });
+        const m = await stop(handle);
+        expect(m.result).toBeUndefined();
+        expect(m.error).toMatchObject({ data: { kind: "retryable" } });
+        expect(existsSync(join(root, "r"))).toBe(false);
+      } finally {
+        delete process.env.MU_SSH_STATE_DIR;
+      }
+    });
+
     it("a root that cannot be resolved is refused: no handle", async () => {
       const file = join(realpathSync(h.dir), "a-file");
       writeFileSync(file, "");

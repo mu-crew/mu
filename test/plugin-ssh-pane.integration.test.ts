@@ -74,13 +74,15 @@ async function launch(
   xdg: string,
   key: string,
   spec: Record<string, unknown>,
-  opts: { pty?: boolean } = {},
+  opts: { pty?: boolean; afterStart?: () => void } = {},
 ): Promise<{ handle: string; view: ChildProcess; pid: number }> {
   const m = await w.call(
     "job.start",
     PluginWire.params({ key, spec: { cwd: dir, env: {}, ...spec } }),
   );
   const { view, handle } = m.result as { view: { command: string }; handle: string };
+  // The start's own root probe may have left a persistent master: the caller clears it here.
+  opts.afterStart?.();
   const child = opts.pty
     ? // The view on a real terminal, as in a pane: the command's session gets a controlling tty.
       spawn(
@@ -344,42 +346,45 @@ describe.skipIf(!haveSshd())("over a real sshd on loopback", () => {
 createServer((s) => s.on("data", () => s.end(process.stdin.isTTY ? "pong tty\\n" : "pong\\n"))).listen(${JSON.stringify(remoteSock)});
 `,
     );
-    const { handle, view, pid } = await launch(
-      wire,
-      xdg,
-      "real-1",
-      { cmd: `${q(process.execPath)} ${q(server)}`, sockets: { local, remote: remoteSock } },
-      { pty: true },
-    );
-    // The view's own connection carries the forward: a client through it reaches the listener.
-    await until(() => existsSync(local), "the -L forward to bind");
-    await until(() => existsSync(remoteSock), "the host listener to bind");
-    const reply = await new Promise<string>((resolve, reject) => {
-      const c = connect(local);
-      let got = "";
-      c.setEncoding("utf8");
-      c.on("data", (d) => {
-        got += d;
-      });
-      c.on("error", reject);
-      c.on("close", () => resolve(got));
-      c.write("ping\n");
-    });
-    // The host side asserts its own terminal: the view ran the harness on a pty.
-    expect(reply).toBe("pong tty\n");
-    // Only the view has connected so far, and it asked for no shared master.
-    expect(readdirSync(cm)).toEqual([]);
-    // The status and stop calls use the user's ssh config (ControlMaster auto): they may open a
-    // master of their own, which is cleaned up below, not asserted away.
+    const exitMaster = () => {
+      try {
+        execFileSync("ssh", ["-F", clientConfig, "-O", "exit", "box"], { stdio: "ignore" });
+      } catch {}
+    };
     try {
+      const { handle, view, pid } = await launch(
+        wire,
+        xdg,
+        "real-1",
+        { cmd: `${q(process.execPath)} ${q(server)}`, sockets: { local, remote: remoteSock } },
+        { pty: true, afterStart: exitMaster },
+      );
+      // The view's own connection carries the forward: a client through it reaches the listener.
+      await until(() => existsSync(local), "the -L forward to bind");
+      await until(() => existsSync(remoteSock), "the host listener to bind");
+      const reply = await new Promise<string>((resolve, reject) => {
+        const c = connect(local);
+        let got = "";
+        c.setEncoding("utf8");
+        c.on("data", (d) => {
+          got += d;
+        });
+        c.on("error", reject);
+        c.on("close", () => resolve(got));
+        c.write("ping\n");
+      });
+      // The host side asserts its own terminal: the view ran the harness on a pty.
+      expect(reply).toBe("pong tty\n");
+      // Only the view has connected so far, and it asked for no shared master.
+      expect(readdirSync(cm)).toEqual([]);
+      // The status and stop calls use the user's ssh config (ControlMaster auto): they may open a
+      // master of their own, which is cleaned up below, not asserted away.
       expect(await status(wire, "real-1", handle)).toEqual({ state: "running" });
       killGroup(view.pid);
       expect((await stop(wire, "real-1", handle)).result).toBeNull();
       expect(alive(pid)).toBe(false);
     } finally {
-      try {
-        execFileSync("ssh", ["-F", clientConfig, "-O", "exit", "box"], { stdio: "ignore" });
-      } catch {}
+      exitMaster();
       delete process.env.MU_SSH_STATE_DIR;
     }
   }, 60_000);

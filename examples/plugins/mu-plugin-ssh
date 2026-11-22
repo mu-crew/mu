@@ -204,7 +204,8 @@ const readState = (handle) => READ_STATE.replace("%D", q(rootOf(handle))).replac
 /** job.stop's remote script: exit 0 only on proof (see the header). */
 function stopScript(handle) {
   return `${readState(handle)}; RECEIPT=${q(receiptOf(handle))}
-mkdir -p "$D" || exit 5
+# The root is the one start made: a missing one is unknown, never absence (no mkdir here).
+[ -d "$D" ] || { echo "state root $D is missing on this host: cannot prove the job gone" >&2; exit 8; }
 ${CANON}
 if mkdir "$D/$H" 2>/dev/null; then echo stopped > "$D/$H/stopped"; echo "$RECEIPT never-started"; exit 0; fi
 [ -f "$D/$H/stopped" ] && { echo "already stopped"; echo "$RECEIPT already-stopped"; exit 0; }
@@ -238,6 +239,21 @@ else echo ended; fi`;
 }
 
 /**
+ * The root from a reply framed `mu-plugin-ssh-root <bytes> <path>`: exactly that many bytes, bytes
+ * preserved, then end of line. A banner's paths, a short or long read, or no frame is null.
+ */
+function framedRoot(stdout) {
+  const buf = Buffer.from(stdout, "utf8");
+  const m = /(?:^|\n)mu-plugin-ssh-root (\d+) /.exec(stdout);
+  if (m === null) return null;
+  const start = Buffer.byteLength(stdout.slice(0, m.index + m[0].length), "utf8");
+  const n = Number(m[1]);
+  const end = start + n;
+  if (n === 0 || end > buf.length || (end < buf.length && buf[end] !== 10)) return null;
+  return buf.subarray(start, end).toString("utf8");
+}
+
+/**
  * Resolve the state root for a new job ON THE HOST: the override, else `$HOME/.local/state/...`,
  * created and made real (`pwd -P`, symlinks included). That path is what the handle records, so
  * the launch's and the stop's canonical-root check holds. An unresolvable root is refused.
@@ -245,10 +261,10 @@ else echo ended; fi`;
 function resolveRoot(id, params, then) {
   const over = process.env.MU_SSH_STATE_DIR;
   const root = over ? q(over) : `"$HOME"${q(DEFAULT_TAIL)}`;
-  const script = `${over ? "" : '[ -n "$HOME" ] && '}mkdir -p ${root} && cd ${root} && pwd -P`;
+  const script = `${over ? "" : '[ -n "$HOME" ] && '}mkdir -p ${root} && cd ${root} && p=$(pwd -P) && printf 'mu-plugin-ssh-root %s %s\\n' "$(printf %s "$p" | wc -c | tr -d ' ')" "$p"`;
   remote(id, params, script, (r) => {
-    const real = r.stdout.trim().split("\n")[0] ?? "";
-    if (r.exitCode !== 0 || !real.startsWith("/")) {
+    const real = r.exitCode === 0 ? framedRoot(r.stdout) : null;
+    if (real === null || !real.startsWith("/")) {
       fail(id, "retryable", `mu-plugin-ssh: cannot resolve the host's state root (${r.exitCode ?? "timed out"})`, "check the host, then retry");
     } else if (!over && real.endsWith(DEFAULT_TAIL)) {
       then({ home: real.slice(0, -DEFAULT_TAIL.length) || "/" });
