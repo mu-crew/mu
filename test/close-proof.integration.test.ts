@@ -46,7 +46,7 @@ import {
 } from "../src/worktree.js";
 import { commitFileIn, copyGitFixture, gitIn } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
+import { FAKE_SERVER_IDENTITY, freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 import { seedWorktree } from "./_worktree.js";
 
 let tmp: string;
@@ -82,7 +82,12 @@ afterEach(() => {
 
 describe("rr_r3_branch_retry_collision: a retried unmerged close reuses its own branch", () => {
   it("a removal that failed after the branch was made succeeds on retry", async () => {
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     const head = commitFileIn(wt.path, "w.txt", "own work");
     const branch = `mu/auth/worker-1-${head.slice(0, 12)}`;
     gitIn(root, "branch", branch, head); // what the first attempt left before its removal failed
@@ -94,7 +99,12 @@ describe("rr_r3_branch_retry_collision: a retried unmerged close reuses its own 
   });
 
   it("a branch of that name at ANOTHER commit refuses and is never moved", async () => {
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     const head = commitFileIn(wt.path, "w.txt", "own work");
     const branch = `mu/auth/worker-1-${head.slice(0, 12)}`;
     const main = gitIn(root, "rev-parse", "HEAD");
@@ -212,7 +222,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   it.runIf(procOk)(
     "a process with its cwd in a clean merged tree: a warning naming it, and the close goes on",
     async () => {
-      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const wt = await seedWorktree(db, {
+        paneIdentity: FAKE_SERVER_IDENTITY,
+        root,
+        workstream: "auth",
+        agent: "worker-1",
+      });
       hold(wt.path);
       const r = await closeAgent(db, "worker-1", { workstream: "auth" });
       expect(r.worktree?.action).toBe("removed");
@@ -224,7 +239,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   );
 
   it.runIf(procOk)("a read-only open file: a warning, not a refusal", async () => {
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     const fd = openSync(join(wt.path, "README"), "r");
     holder = spawnChild("sleep", ["30"], {
       cwd: tmp,
@@ -240,7 +260,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   it.runIf(procOk)(
     "a cwd holder in an unmerged tree: the branch is kept, the tree removed, the holder warned of",
     async () => {
-      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const wt = await seedWorktree(db, {
+        paneIdentity: FAKE_SERVER_IDENTITY,
+        root,
+        workstream: "auth",
+        agent: "worker-1",
+      });
       const head = commitFileIn(wt.path, "w.txt", "own work");
       hold(wt.path);
       const r = await releaseWorktree(db, wt);
@@ -256,7 +281,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   it.runIf(procOk)(
     "a file open for writing (cwd elsewhere), on the orphan path too: refused naming --force, which closes it",
     async () => {
-      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const wt = await seedWorktree(db, {
+        paneIdentity: FAKE_SERVER_IDENTITY,
+        root,
+        workstream: "auth",
+        agent: "worker-1",
+      });
       const head = commitFileIn(wt.path, "w.txt", "own work");
       writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
       hold(tmp, join(wt.path, "log.txt"));
@@ -281,7 +311,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   it.runIf(procOk)(
     "the preview names a process inside the tree, but not the agent's own pane processes",
     async () => {
-      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const wt = await seedWorktree(db, {
+        paneIdentity: FAKE_SERVER_IDENTITY,
+        root,
+        workstream: "auth",
+        agent: "worker-1",
+      });
       hold(wt.path);
       tmuxState.panes.set("%1", { windowId: "@1", paneId: "%1", command: "pi" });
       const p = await previewClose(db, "worker-1", { workstream: "auth" });
@@ -302,7 +337,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
 
   it("the close waits for the killed pane's own process to exit, then removes the tree with no warning", async () => {
     resetSleep(); // a real clock: the holder exits 1.5 s after the kill (past the holder scan)
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     hold(wt.path); // the pane's pi, inside its tree
     const pid = holder?.pid ?? 0;
     tmuxState.panes.set("%1", { windowId: "@1", paneId: "%1", command: "pi", pid });
@@ -396,7 +436,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
 
   it("the close waits for a grandchild of the pane (a tool of its pi) inside the tree: no warning", async () => {
     resetSleep(); // a real clock: the processes exit 1.5 s after the kill
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     // pane sh (cwd outside the tree) -> subshell -> sleep with its cwd in the tree.
     const ready = join(tmp, "child.pid");
     await paneRunning(
@@ -414,7 +459,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
 
   it("the close waits for a setsid'd helper of the pane (and its child) inside the tree: no warning", async () => {
     resetSleep();
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     // As a detached drain of pi's: setsid, cwd in the tree, a child of its own.
     let helper = 0;
     const pane = await paneRunning(
@@ -435,7 +485,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
 
   it("the close waits for a pane helper in its own group in the pane's session, reparented before the close: no warning", async () => {
     resetSleep();
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     // As pi's guardrails plugin: a hook forks it into its own group (no hangup
     // reaches it) and exits, so it is reparented away from pi.
     const pidFile = join(tmp, "plugin.pid");
@@ -457,7 +512,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
 
   it("a setsid'd helper that never exits: the close gives up within the 5 s bound and names it", async () => {
     resetSleep();
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     const pane = await paneRunning(
       `cd "${wt.path}" && perl -MPOSIX -e 'POSIX::setsid(); exec "sleep", "60"' & sleep 30`,
       (p) => kill(-p),
@@ -480,7 +540,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
 
   it("awaitHelpers counts its own holder scan against its bound", async () => {
     resetSleep();
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     hold(wt.path); // detached: its own group, never exits
     const pid = holder?.pid ?? 0;
     const t0 = Date.now();
@@ -493,7 +558,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
 
   it("a foreign holder is still named once the pane's own are gone", async () => {
     resetSleep();
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     hold(wt.path); // detached: another session, never the pane's
     await paneRunning(`cd "${wt.path}" && sleep 30`, (p) => kill(-p), true);
     const r = await closeAgent(db, "worker-1", { workstream: "auth" });
@@ -502,7 +572,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   });
 
   it("two previews give the same --if revision while the processes in the tree churn", async () => {
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     // The pane's tools come and go, and so do a foreign process's.
     await paneRunning(`cd "${wt.path}" && while :; do sleep 0.05; done`, () => {});
     holder = spawnChild("sh", ["-c", "while :; do sleep 0.05; done"], {
@@ -572,7 +647,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   it.runIf(procOk)(
     "the preview names a setsid writer under the pane (it survives the kill)",
     async () => {
-      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const wt = await seedWorktree(db, {
+        paneIdentity: FAKE_SERVER_IDENTITY,
+        root,
+        workstream: "auth",
+        agent: "worker-1",
+      });
       writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
       // The pane's process, and a writer it started in a new session.
       const pane = spawnChild(
@@ -621,7 +701,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   it.runIf(lsofOk)(
     "with no /proc, lsof tells a cwd holder (warned) from a writer (refused)",
     async () => {
-      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const wt = await seedWorktree(db, {
+        paneIdentity: FAKE_SERVER_IDENTITY,
+        root,
+        workstream: "auth",
+        agent: "worker-1",
+      });
       const probe = { proc: join(tmp, "no-proc"), lsof: "lsof" };
       writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
       hold(tmp, join(wt.path, "log.txt"));
@@ -637,7 +722,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   );
 
   it("a process of yours /proc will not show (EACCES) is unknown: a warning, never silently skipped", async () => {
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     const proc = join(tmp, "proc");
     execFileSync("mkdir", [
       "-p",
@@ -665,7 +755,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   it.runIf(procOk)(
     "name reuse scans the leftover too: a writer refuses naming the --force close, a cwd holder is logged",
     async () => {
-      const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+      const wt = await seedWorktree(db, {
+        paneIdentity: FAKE_SERVER_IDENTITY,
+        root,
+        workstream: "auth",
+        agent: "worker-1",
+      });
       deleteAgent(db, "worker-1", "auth"); // mu's own clean leftover, registered
       writeFileSync(join(root, ".git", "info", "exclude"), "log.txt\n");
       hold(tmp, join(wt.path, "log.txt"));
@@ -693,7 +788,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   );
 
   it("no /proc and no lsof: unproven refuses and keeps the tree; force closes it", async () => {
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     const probe = { proc: join(tmp, "no-proc"), lsof: join(tmp, "no-lsof") };
     const err = await releaseWorktree(db, wt, { probe }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(WorktreeHeldError);
@@ -706,7 +806,12 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
   });
 
   it("a crash after the park is resumed: the parked tree is moved back and closed", async () => {
-    const wt = await seedWorktree(db, { root, workstream: "auth", agent: "worker-1" });
+    const wt = await seedWorktree(db, {
+      paneIdentity: FAKE_SERVER_IDENTITY,
+      root,
+      workstream: "auth",
+      agent: "worker-1",
+    });
     gitIn(root, "worktree", "move", wt.path, `${wt.path}.mu-removing`);
     const r = await closeAgent(db, "worker-1", { workstream: "auth" });
     expect(r.worktree?.action).toBe("removed");
