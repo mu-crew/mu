@@ -107,19 +107,11 @@ the master back, take a fresh preview with `mu agent close <name> -w <ws>`
 and repeat with `--if <rev>` (the revision may have changed after
 the interrupted close or a reap); that stops the job by its handle.
 
-<!-- TODO(guide_recipe): ship-time details for the two units below. -->
+<!-- TODO(guide_lease_section): profile migration, after `migrate_profiles`. -->
 
 ## TODO: profile migration
 
-<!-- TODO: fill in once `migrate_profiles` merges. Spec: ladder placement §7.
-Cover: drain, collect and close before switching a profile to a plugin; the
-fence that makes `host add <h> --plugin` refuse while an agent, job or
-recovery record names the host; the restore path; `doctor` detection. -->
-
-Today a template, session or lease profile keeps its behaviour. Moving a
-host to a plugin link is drain-first: collect and close everything on it,
-`mu host rm`, then `mu host add --plugin` with the old limits. The fence and
-its refusal text are not on main yet.
+Not written yet. Keep a profile's current behaviour until it lands.
 
 ## TODO: the mule lease plugin
 

@@ -128,10 +128,15 @@ EOF
 - A non-pi `--command` (`--host dev --command 'npm test'`, no `--cli pi`) is a
   **command gate**, not a worker: its pane is kept after the command ends, and
   `mu wait agent:auth/gate-1` returns the command's own exit status (the
-  `exit` of the result and of the process; 23 stays 23). Never a held
+  `exit` of the result and of the process; 23 stays 23) when the gate's event
+  fires. Never a held
   `ssh dev …`. The remote command writes a token-bound completion record that
   mu reads once the pane has exited; no record, a signal or a lost transport is
-  exit 6, never 0. Preview with `mu agent close gate-1 -w auth`, then run
+  exit 6, never 0. Known issue (task `wait_named_ref_other_events`): the
+  wait also ends, exit 0, on any other event this caller owns (a settled worker,
+  a closed task). Trust it only if `data.firing.kind` is `exited` for
+  `agent:auth/gate-1`; otherwise run `data.resume` and check again. Close the
+  gate only after that, since the close removes the record. Preview with `mu agent close gate-1 -w auth`, then run
   `mu agent close gate-1 -w auth --if <rev>` to free the pane and remove
   the record. No `--worktree`, no `--task`.
 - If the spawn reports `ctl refused` or `missing`, run
@@ -328,7 +333,7 @@ and the host drains, `mu wait` fires `deadline` (exit 7) for its agents,
 and `mu state` lists their collect and close.
 
 ```bash
-mu agent spawn w1 -w auth --host box1 --worktree --cli claude --task t1
+mu agent spawn w1 -w auth --host box1 --worktree --cli claude --task t1 --send "$BRIEF"
 mu wait agent:auth/w1@0      # first settle runs an in-life collect
 mu agent close w1 -w auth   # preview; copy its revision
 mu agent close w1 -w auth --if <rev>   # stop, final collect, close the tree

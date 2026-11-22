@@ -25,6 +25,13 @@ mu plugin rm box
 - `rm` refuses while a host, job record or unresolved effect names the
   plugin.
 
+A spawn with `--task` and no `--send` sends the task's brief note, or for a
+task with none, a title line ending in `Read: mu task notes <id> -w <ws>`.
+The host has no mu DB, so it cannot follow that line. The examples below
+pass the whole brief as `--send "$BRIEF"` (or `--send -` on stdin), and the
+spawn still reports the prompt delivered either way. Known issue: mu does
+not drop that line for a remote spawn (task `remote_brief_fallback`).
+
 ## Use it as a host's link
 
 A plugin can replace a profile's `--shell` and `--exec` templates:
@@ -32,7 +39,7 @@ A plugin can replace a profile's `--shell` and `--exec` templates:
 ```bash
 mu host add dev --plugin box [--fetch '<fetch cmd>'] [--repo <remote repo>]
 mu host check dev
-mu agent spawn w1 -w <ws> --host dev --worktree --task t1
+mu agent spawn w1 -w <ws> --host dev --worktree --task t1 --send "$BRIEF"
 ```
 
 `--fetch` is needed only when the plugin's link does not fetch. A spawn with
@@ -48,7 +55,7 @@ A provider plugin provisions machines on demand:
 
 ```bash
 mu host acquire box1 --provider box --param size=large --repo /work/repo
-mu agent spawn w1 -w <ws> --host box1 --worktree --task t1
+mu agent spawn w1 -w <ws> --host box1 --worktree --task t1 --send "$BRIEF"
 mu host drain box1      # no new spawns
 mu host release box1    # once nothing names it
 ```
@@ -74,7 +81,7 @@ an example plugin over plain ssh. The mu host's name is the ssh destination:
 mu plugin add ssh -- "$(npm root -g)/@mu-crew/mu/examples/plugins/mu-plugin-ssh"
 mu host add devbox --plugin ssh --repo /work/repo
 mu host check devbox
-mu agent spawn w1 -w <ws> --host devbox --worktree --task t1   # a pane over ssh
+mu agent spawn w1 -w <ws> --host devbox --worktree --task t1 --send "$BRIEF"   # a pane over ssh
 ```
 
 It gives the host a link (exec, fetch) and an example `pane` job kind. If
