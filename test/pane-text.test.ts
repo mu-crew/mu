@@ -6,10 +6,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { paneText, tailText } from "../src/pane-text.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCli, runCliJson } from "./_runCli.js";
 

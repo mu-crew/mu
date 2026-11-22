@@ -40,9 +40,10 @@ describe("the fake plugin's channel: the contract", () => {
     expect(ch.name).toBe("cloud");
     expect(ch.caps).toEqual(CLOUD.caps);
     expect(ch.fence).toBe(false);
-    expect(channelNamed("cloud", h.db)).toBe(ch);
-    expect(channelNamed("plugin:fake", h.db)).toBe(ch);
-    expect(channelNamed("cloud", h.db, "fake")).toBe(ch);
+    const registered = channelNamed("cloud", h.db);
+    expect(registered).toMatchObject({ name: ch.name, caps: ch.caps });
+    expect(channelNamed("plugin:fake", h.db)).toBe(registered);
+    expect(channelNamed("cloud", h.db, "fake")).toBe(registered);
     // Every plugin lookup is scoped by its DB: unscoped, only a built-in resolves.
     expect(channelNamed("cloud")).toBeUndefined();
   });

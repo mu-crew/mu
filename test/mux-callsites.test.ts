@@ -19,14 +19,16 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getAgent, insertAgent, readAgent, sendToAgent, spawnAgent } from "../src/agents.js";
+import { getAgent, readAgent, sendToAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { activeMux, NoMultiplexerError, resetMux, setMuxForTests } from "../src/mux.js";
 import { reconcile } from "../src/reconcile.js";
 import { resolveWorkerIdentity } from "../src/tasks/claim.js";
 import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream, listWorkstreams, summarizeWorkstream } from "../src/workstream.js";
-import { installUnreachableMux } from "./_mux.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
+import { fakePane, installUnreachableMux } from "./_mux.js";
+import { withServerIdentity } from "./_verbs-mock.js";
 
 let tempDir: string;
 let db: Db;
@@ -100,13 +102,15 @@ describe("load-bearing call sites propagate NoMultiplexerError", () => {
   it("ensureSession and killSession propagate it", async () => {
     const mux = await activeMux();
     await expect(mux.ensureSession("mu-alpha")).rejects.toBeInstanceOf(NoMultiplexerError);
-    await expect(mux.killSession("mu-alpha")).rejects.toBeInstanceOf(NoMultiplexerError);
+    await expect(
+      mux.killSession({ backend: "tmux", session: "mu-alpha", pane: fakePane("%1") }),
+    ).rejects.toBeInstanceOf(NoMultiplexerError);
   });
 
   it("killPane and capture propagate it", async () => {
     const mux = await activeMux();
-    await expect(mux.killPane("%1")).rejects.toBeInstanceOf(NoMultiplexerError);
-    await expect(mux.capture("%1")).rejects.toBeInstanceOf(NoMultiplexerError);
+    await expect(mux.killPane(fakePane("%1"))).rejects.toBeInstanceOf(NoMultiplexerError);
+    await expect(mux.capture(fakePane("%1"))).rejects.toBeInstanceOf(NoMultiplexerError);
   });
 
   it("sendToAgent throws — a send that reaches no pane is a failed send", async () => {
@@ -165,10 +169,12 @@ describe("MU_MUX is load-bearing now that call sites route through activeMux()",
     const key = "MU_MUX";
     process.env[key] = "tmux";
     const seen: string[][] = [];
-    setTmuxExecutor(async (args) => {
-      seen.push([...args]);
-      return { stdout: "scrollback", stderr: "", exitCode: 0 };
-    });
+    setTmuxExecutor(
+      withServerIdentity(async (args) => {
+        seen.push([...args]);
+        return { stdout: "scrollback", stderr: "", exitCode: 0 };
+      }),
+    );
     try {
       seedAgent("alpha");
       const text = await readAgent(db, "worker-1", { workstream: "alpha" });

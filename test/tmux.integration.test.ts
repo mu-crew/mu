@@ -18,7 +18,7 @@ import {
 } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { killPrivateSession, privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 
 const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 
@@ -50,7 +50,7 @@ describeIfTmux("tmux integration (real tmux server)", () => {
   });
 
   afterEach(async () => {
-    await killSession(session); // idempotent
+    await killPrivateSession(session);
   });
 
   it("ensureSession creates the session with `_mu`, is idempotent, and repairs a missing `_mu`", async () => {
@@ -63,10 +63,10 @@ describeIfTmux("tmux integration (real tmux server)", () => {
   });
 
   it("killSession is idempotent", async () => {
-    await ensureSession(session);
-    await killSession(session);
+    const proof = await privatePane(await spawn("cleanup-anchor"));
+    expect(await killSession(session, proof)).toBe(true);
     expect(await listPanes(session)).toEqual([]);
-    await expect(killSession(session)).resolves.toBeUndefined();
+    await expect(killSession(session, proof)).resolves.toBe(false);
   });
 
   it("spawnAgent into a missing session creates it and returns a live pane id", async () => {
@@ -111,7 +111,8 @@ describeIfTmux("tmux integration (real tmux server)", () => {
       "sh -c 'echo MU_ENV=$MU_AGENT_NAME; while true; do sleep 60; done'",
       { MU_AGENT_NAME: "envy" },
     );
-    await pollUntil(() => capture(paneId).then((c) => c.includes("MU_ENV=envy")), {
+    const ref = await privatePane(paneId);
+    await pollUntil(() => capture(ref).then((c) => c.includes("MU_ENV=envy")), {
       description: "env var visible in the pane",
     });
   });
@@ -123,7 +124,7 @@ describeIfTmux("tmux integration (real tmux server)", () => {
   it("paneAlive transitions true → false after killPane", async () => {
     const paneId = await spawn("ephemeral");
     expect(await paneAlive(paneId)).toBe(true);
-    await killPane(paneId);
+    await killPane(await privatePane(paneId));
     await pollUntil(async () => !(await paneAlive(paneId)), {
       description: "killed pane disappears",
     });
@@ -136,11 +137,12 @@ describeIfTmux("tmux integration (real tmux server)", () => {
       // Print known text and stay alive.
       "sh -c 'echo MU_INTEGRATION_MARKER; while true; do sleep 60; done'",
     );
+    const ref = await privatePane(paneId);
     await pollUntil(
-      () => capture(paneId).then((content) => content.includes("MU_INTEGRATION_MARKER")),
+      () => capture(ref).then((content) => content.includes("MU_INTEGRATION_MARKER")),
       { description: "echo marker lands in pane scrollback" },
     );
-    const content = await capture(paneId);
+    const content = await capture(ref);
     expect(content).toContain("MU_INTEGRATION_MARKER");
   });
 });

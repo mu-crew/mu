@@ -342,20 +342,16 @@ describe("attachCommands + attachShellLine", () => {
   // Both come from the BACKEND: a herdr user handed `tmux attach` is
   // worse off than one handed nothing.
   it("inside a client, switches rather than attaching a second one", async () => {
-    const target = { session: "mu-auth", window: "worker-1", inside: true };
+    const target = { session: "mu-auth", inside: true };
     const steps = await tmuxBackend.attachCommands(target);
-    expect(steps).toEqual([{ command: "tmux", args: ["switch-client", "-t", "mu-auth:worker-1"] }]);
-    expect(attachShellLine(steps)).toBe("tmux switch-client -t mu-auth:worker-1");
+    expect(steps).toEqual([{ command: "tmux", args: ["switch-client", "-t", "=mu-auth:"] }]);
+    expect(attachShellLine(steps)).toBe("tmux switch-client -t =mu-auth:");
   });
 
-  it("outside a client, ONE attach whose target names the window", async () => {
-    // The blocking attach is the last thing that runs, so the window must
-    // ride in its target: a select-window after it runs only on detach.
-    const steps = await tmuxBackend.attachCommands({ session: "mu-auth", window: "worker-1" });
-    expect(steps).toEqual([
-      { command: "tmux", args: ["attach-session", "-t", "mu-auth:worker-1"] },
-    ]);
-    expect(attachShellLine(steps)).toBe("tmux attach-session -t mu-auth:worker-1");
+  it("refuses an agent window without a verified pane", async () => {
+    await expect(
+      tmuxBackend.attachCommands({ session: "mu-auth", window: "worker-1" }),
+    ).rejects.toThrow(/verified pane/);
   });
 
   it("a session-only target attaches to the session", async () => {

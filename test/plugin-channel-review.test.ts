@@ -39,6 +39,7 @@ import { type AgentTrack, rewatchOnPoll } from "../src/wait-latch.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { fakePlugin, providerSeams } from "./_plugin.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
+import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
 
 const h = pluginHostFixture({ handshakeInProcess: true });
 
@@ -87,10 +88,10 @@ describe("ruling 2: a failed view never passes for a spawned or reattached one",
     await h.setup();
     h.stubMux({
       spawnAgent: async (o) => {
-        h.panes.set("%failed-view", { command: o.command });
-        o.onPaneCreated?.("%failed-view");
+        h.panes.set("%90", { command: o.command });
+        o.onPaneCreated?.("%90", FAKE_SERVER_IDENTITY);
         await new Promise((r) => setTimeout(r, 25));
-        h.panes.delete("%failed-view");
+        h.panes.delete("%90");
         throw new Error("view failed after creation");
       },
     });
@@ -107,7 +108,7 @@ describe("ruling 2: a failed view never passes for a spawned or reattached one",
     const p = await previewReattach(h.db, "ws", "w1");
     h.stubMux({
       spawnAgent: async (o) => {
-        o.onPaneCreated?.("%failed-reattach");
+        o.onPaneCreated?.("%91", FAKE_SERVER_IDENTITY);
         await new Promise((r) => setTimeout(r, 25));
         throw new Error("reattach failed after creation");
       },
@@ -130,11 +131,14 @@ describe("ruling 2: a failed view never passes for a spawned or reattached one",
       reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision }),
     ).rejects.toBeInstanceOf(HostSpawnUnsupportedError);
     expect(h.calls("job.attach")).toHaveLength(0);
-    const record = (o: { commandSource: string; onPaneCreated?: (id: string) => void }) => {
+    const record = (o: {
+      commandSource: string;
+      onPaneCreated?: (id: string, identity?: string) => void;
+    }) => {
       sources.push(o.commandSource);
-      o.onPaneCreated?.("%v");
-      h.panes.set("%v", { command: "" });
-      return Promise.resolve("%v");
+      o.onPaneCreated?.("%92", FAKE_SERVER_IDENTITY);
+      h.panes.set("%92", { command: "" });
+      return Promise.resolve("%92");
     };
     h.stubMux({ spawnAgent: record as never });
     await reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision });

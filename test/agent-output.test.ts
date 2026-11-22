@@ -7,9 +7,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { agentToOutput, closePreviewToOutput } from "../src/agent-output.js";
-import { getAgent, insertAgent } from "../src/agents.js";
+import { getAgent } from "../src/agents.js";
 import { type Db, openDb, resolveWorkstreamId } from "../src/db.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson, runCliWire } from "./_runCli.js";
 
@@ -46,6 +47,7 @@ const SQL_KEYS = [
   "workstream",
   "cli",
   "pane_id",
+  "pane_identity",
   "role",
   "tab",
   "cwd",

@@ -8,7 +8,6 @@ import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { insertAgent } from "../src/agents.js";
 import {
   parseHooksPane,
   setMurmurHookRunnerForTests,
@@ -21,6 +20,7 @@ import { addTask } from "../src/tasks/edit.js";
 import { getTask, listNotes } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { withEnv } from "./_env.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { rmFixtureDir } from "./_fs.js";

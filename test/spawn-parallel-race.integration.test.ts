@@ -27,8 +27,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { killSession } from "../src/tmux.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+
+import { killPrivateSession, tmuxIntegrationAvailable } from "./_mux.js";
 
 const execFileP = promisify(execFile);
 
@@ -56,7 +56,7 @@ describeIfReady("parallel spawn race (real cross-process)", () => {
 
   afterEach(async () => {
     try {
-      await killSession(session);
+      await killPrivateSession(session);
     } catch {}
     rmSync(tempDir, { recursive: true, force: true });
   });

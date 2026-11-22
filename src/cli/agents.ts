@@ -51,7 +51,7 @@ import {
 } from "../cli.js";
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
-import { viewCapture } from "../jobs/view.js";
+import { agentAttachTarget, viewCapture } from "../jobs/view.js";
 import { leftoverLines, listLeftovers } from "../leftovers.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
@@ -309,8 +309,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
     const mux = await activeMux();
     attach = attachShellLine(
       await mux.attachCommands({
-        session: `mu-${workstream}`,
-        window: agent.tab ?? name,
+        ...agentAttachTarget(mux, agent, workstream),
         inside: Boolean(process.env.TMUX),
       }),
     );

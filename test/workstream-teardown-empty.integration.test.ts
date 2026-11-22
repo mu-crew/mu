@@ -5,7 +5,7 @@
 //
 //   1. dry-run: 2 empty + 2 non-empty seeded; only the empties show.
 //   2. --if <rev>: both empties torn down; non-empties untouched.
-//   3. one empty has a live tmux session; --if kills it.
+//   3. one empty has a live tmux session; --if leaves it alone.
 //   4. --empty + -w → mutually exclusive (UsageError; exit 2).
 //   5. mid-sweep failure (kill-session throws on one ws) → others
 //      still run; failure surfaced in summary.
@@ -54,7 +54,7 @@ function fail(stderr = ""): TmuxExecResult {
   return { exitCode: 1, stdout: "", stderr };
 }
 
-function mockTmux(state: MockState): TmuxExecutor {
+function mockTmux(state: MockState, failedProbe?: string): TmuxExecutor {
   return async (args) => {
     const verb = args[0];
     if (verb === "has-session") {
@@ -77,6 +77,7 @@ function mockTmux(state: MockState): TmuxExecutor {
     }
     if (verb === "list-panes") {
       const target = (args[args.indexOf("-t") + 1] ?? "").replace(/^=(.*):$/, "$1");
+      if (target === failedProbe) return fail("permission denied (mock)");
       return state.sessions.has(target) ? ok("@1|%1|_mu\n") : fail(`can't find session: ${target}`);
     }
     if (verb === "list-sessions") {
@@ -222,8 +223,8 @@ describe("mu workstream teardown --empty", () => {
     expect(env.failed).toEqual([]);
     expect(env.results.map((x) => x.workstreamName).sort()).toEqual(["empty-a", "empty-b"]);
 
-    // The empty-a tmux session is killed; empty-b never had one.
-    expect(state.killed).toEqual(["mu-empty-a"]);
+    // A session name without a verified pane is not enough to kill it.
+    expect(state.killed).toEqual([]);
 
     // Non-empties untouched in the DB; the empties are marked, not deleted.
     db = openDb({ path: dbPath });
@@ -235,7 +236,7 @@ describe("mu workstream teardown --empty", () => {
     expect(live).toEqual(["with-agent", "with-tasks"]);
   });
 
-  it("--if kills the live tmux session on an empty workstream", async () => {
+  it("--if leaves the unverified live tmux session on an empty workstream", async () => {
     // Same as the --if test but pinned: this is the assertion that
     // the kill happens for an empty-but-tmux-alive workstream
     // (regression-locks the "tmux session presence does NOT
@@ -256,8 +257,8 @@ describe("mu workstream teardown --empty", () => {
     };
     expect(env.results).toHaveLength(1);
     expect(env.results[0]?.workstreamName).toBe("empty-a");
-    expect(env.results[0]?.killedMux).toBe(true);
-    expect(state.killed).toEqual(["mu-empty-a"]);
+    expect(env.results[0]?.killedMux).toBe(false);
+    expect(state.killed).toEqual([]);
   });
 
   it("ignores agent_logs (audit, not state) — a workstream with only init events is still empty", async () => {
@@ -300,16 +301,16 @@ describe("mu workstream teardown --empty", () => {
     expect(remaining).toBe(1);
   });
 
-  it("mid-sweep failure: bad kill-session on one ws does NOT abort the others", async () => {
-    // empty-a's kill-session throws an unrecognized error → teardownWorkstream
+  it("mid-sweep failure: a failed session probe on one ws does NOT abort the others", async () => {
+    // empty-a's session probe throws an unrecognized error → teardownWorkstream
     // raises TmuxError → the cmd captures it into `failed` and keeps
     // going. empty-b still gets torn down.
     const state: MockState = {
       sessions: new Set(["mu-empty-a", "mu-empty-b"]),
       killed: [],
-      killShouldFail: new Set(["mu-empty-a"]),
+      killShouldFail: new Set(),
     };
-    setTmuxExecutor(mockTmux(state));
+    setTmuxExecutor(mockTmux(state, "mu-empty-a"));
     ensureWorkstream(db, "empty-a");
     ensureWorkstream(db, "empty-b");
     db.close();
@@ -328,8 +329,7 @@ describe("mu workstream teardown --empty", () => {
     expect(env.failed[0]?.workstreamName).toBe("empty-a");
     expect(env.failed[0]?.error).toMatch(/permission denied|tmux/i);
 
-    // empty-b actually destroyed; empty-a still around because the
-    // kill threw before the DB row delete.
+    // The probe threw before any DB change to empty-a.
     db = openDb({ path: dbPath });
     const remaining = (
       db.prepare("SELECT name FROM workstreams WHERE torn_down_at IS NULL ORDER BY name").all() as {
@@ -337,8 +337,7 @@ describe("mu workstream teardown --empty", () => {
       }[]
     ).map((r) => r.name);
     expect(remaining).toEqual(["empty-a"]);
-    // empty-b's tmux was killed; empty-a's was attempted-and-failed.
-    expect(state.killed).toEqual(["mu-empty-b"]);
+    expect(state.killed).toEqual([]);
   });
 
   it("never surfaces unregistered mu-* tmux sessions in dry-run", async () => {
@@ -399,7 +398,7 @@ describe("mu workstream teardown --empty", () => {
     };
     expect(env.tornDown).toBe(1);
     expect(env.results.map((x) => x.workstreamName)).toEqual(["empty-a"]);
-    expect(state.killed).toEqual(["mu-empty-a"]);
+    expect(state.killed).toEqual([]);
     expect(state.sessions.has("mu-foo")).toBe(true);
 
     db = openDb({ path: dbPath });

@@ -19,7 +19,7 @@ import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { proveViewGone } from "../host-policy.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
-import { birthIdentity, viewPresent, viewRef } from "../jobs/view.js";
+import { birthIdentity, killView, viewPresent, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -189,6 +189,7 @@ export async function reattachView(
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
+      const identity = birthIdentity(mux, pid, born);
       // The attempted view is the record's from here (a file kind): its pane is what a close
       // or the next reattach must prove gone, whatever becomes of the row's pane below.
       if (file) recordViewPane(db, d.r.token, pid);
@@ -196,7 +197,6 @@ export async function reattachView(
       try {
         // The backend's own completion: a view that failed is never the row's pane.
         await done;
-        const identity = birthIdentity(mux, pid, born);
         db.transaction(() => {
           const row = db
             .prepare(
@@ -214,7 +214,7 @@ export async function reattachView(
           repointReceipts(db, d.agentId, { pane: d.paneId }, pid, actor);
         }).immediate();
       } catch (e) {
-        await mux.killPane(viewRef(mux, pid, born)).catch(() => {});
+        await killView(mux, pid, identity).catch(() => {});
         throw e;
       }
       return { d, pid, born };

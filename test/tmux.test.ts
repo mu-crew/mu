@@ -4,6 +4,7 @@
 // test/tmux.integration.test.ts.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { TmuxPaneBirthError } from "../src/mux/pane-ref.js";
 import { attachShellLine } from "../src/mux.js";
 import {
   assertValidPaneId,
@@ -28,6 +29,8 @@ import {
   tmux,
   tmuxAttachMode,
 } from "../src/tmux.js";
+import { fakePane } from "./_mux.js";
+import { withServerIdentity } from "./_verbs-mock.js";
 
 // ─── Mock executor harness ────────────────────────────────────────────
 
@@ -44,7 +47,7 @@ function harness(responder: (args: string[]) => TmuxExecResult): {
     calls.push({ args: [...args] });
     return responder([...args]);
   };
-  return { calls, executor };
+  return { calls, executor: withServerIdentity(executor) };
 }
 
 const ok = (stdout = ""): TmuxExecResult => ({ stdout, stderr: "", exitCode: 0 });
@@ -155,13 +158,13 @@ describe("killSession", () => {
   it("succeeds on normal kill", async () => {
     const { executor } = harness(() => ok());
     setTmuxExecutor(executor);
-    await expect(killSession("foo")).resolves.toBeUndefined();
+    await expect(killSession("foo", fakePane("%15"))).resolves.toBe(true);
   });
 
   it("succeeds idempotently when session is already gone", async () => {
     const { executor } = harness(() => fail("can't find session: foo"));
     setTmuxExecutor(executor);
-    await expect(killSession("foo")).resolves.toBeUndefined();
+    await expect(killSession("foo", fakePane("%15"))).resolves.toBe(false);
   });
 
   it("succeeds idempotently when the server is up with zero sessions", async () => {
@@ -173,7 +176,7 @@ describe("killSession", () => {
     // that sets `exit-empty off`.
     const { executor } = harness(() => fail("no current target"));
     setTmuxExecutor(executor);
-    await expect(killSession("foo")).resolves.toBeUndefined();
+    await expect(killSession("foo", fakePane("%15"))).resolves.toBe(false);
   });
 
   it("succeeds idempotently when the socket file does not exist", async () => {
@@ -181,20 +184,20 @@ describe("killSession", () => {
       fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
     );
     setTmuxExecutor(executor);
-    await expect(killSession("foo")).resolves.toBeUndefined();
+    await expect(killSession("foo", fakePane("%15"))).resolves.toBe(false);
   });
 
   it("targets the session exactly (=<name>:), never by prefix", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
-    await killSession("mu-auth");
+    await killSession("mu-auth", fakePane("%15"));
     expect(calls).toEqual([{ args: ["kill-session", "-t", "=mu-auth:"] }]);
   });
 
   it("propagates other errors", async () => {
     const { executor } = harness(() => fail("server unreachable"));
     setTmuxExecutor(executor);
-    await expect(killSession("foo")).rejects.toBeInstanceOf(TmuxError);
+    await expect(killSession("foo", fakePane("%15"))).rejects.toBeInstanceOf(TmuxError);
   });
 });
 
@@ -258,20 +261,20 @@ describe("killPane", () => {
   it("invokes kill-pane -t <pane>", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
-    await killPane("%15");
+    await killPane(fakePane("%15"));
     expect(calls[0]?.args).toEqual(["kill-pane", "-t", "%15"]);
   });
 
   it("idempotent on already-gone pane", async () => {
     const { executor } = harness(() => fail("can't find pane: %15"));
     setTmuxExecutor(executor);
-    await expect(killPane("%15")).resolves.toBeUndefined();
+    await expect(killPane(fakePane("%15"))).resolves.toBeUndefined();
   });
 
   it("propagates other errors", async () => {
     const { executor } = harness(() => fail("server gone"));
     setTmuxExecutor(executor);
-    await expect(killPane("%15")).rejects.toBeInstanceOf(TmuxError);
+    await expect(killPane(fakePane("%15"))).rejects.toBeInstanceOf(TmuxError);
   });
 
   it("idempotent when the tmux socket does not exist", async () => {
@@ -279,13 +282,13 @@ describe("killPane", () => {
       fail("error connecting to /tmp/tmux-1000/default (No such file or directory)"),
     );
     setTmuxExecutor(executor);
-    await expect(killPane("%15")).resolves.toBeUndefined();
+    await expect(killPane(fakePane("%15"))).resolves.toBeUndefined();
   });
 
   it("rejects invalid pane ids before calling tmux", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
-    await expect(killPane("0")).rejects.toThrow(/invalid tmux pane id/);
+    expect(() => fakePane("0")).toThrow(/invalid tmux pane identity/);
     expect(calls).toEqual([]);
   });
 });
@@ -453,14 +456,14 @@ describe("capture", () => {
   it("captures full scrollback by default (-S - -E -)", async () => {
     const { executor, calls } = harness(() => ok("scrollback contents"));
     setTmuxExecutor(executor);
-    expect(await capture("%15")).toBe("scrollback contents");
+    expect(await capture(fakePane("%15"))).toBe("scrollback contents");
     expect(calls[0]?.args).toEqual(["capture-pane", "-t", "%15", "-p", "-S", "-", "-E", "-"]);
   });
 
   it("captures last N lines when lines provided", async () => {
     const { executor, calls } = harness(() => ok("last 50"));
     setTmuxExecutor(executor);
-    await capture("%15", { lines: 50 });
+    await capture(fakePane("%15"), { lines: 50 });
     expect(calls[0]?.args).toEqual(["capture-pane", "-t", "%15", "-p", "-S", "-50"]);
   });
 
@@ -471,26 +474,26 @@ describe("capture", () => {
     const tmuxOut = "line1\nline2\nline3\nline4\nline5\nline6\n$ \n\n\n";
     const { executor } = harness(() => ok(tmuxOut));
     setTmuxExecutor(executor);
-    expect(await capture("%15", { lines: 3 })).toBe("line5\nline6\n$ \n");
+    expect(await capture(fakePane("%15"), { lines: 3 })).toBe("line5\nline6\n$ \n");
   });
 
   it("returns '' when the last N lines are all blank", async () => {
     const { executor } = harness(() => ok("\n\n\n"));
     setTmuxExecutor(executor);
-    expect(await capture("%15", { lines: 3 })).toBe("");
+    expect(await capture(fakePane("%15"), { lines: 3 })).toBe("");
   });
 
   it("captures only visible pane when lines is 0", async () => {
     const { executor, calls } = harness(() => ok("visible"));
     setTmuxExecutor(executor);
-    await capture("%15", { lines: 0 });
+    await capture(fakePane("%15"), { lines: 0 });
     expect(calls[0]?.args).toEqual(["capture-pane", "-t", "%15", "-p"]);
   });
 
   it("rejects invalid pane id before tmux call", async () => {
     const { executor, calls } = harness(() => ok());
     setTmuxExecutor(executor);
-    await expect(capture("garbage")).rejects.toThrow(/invalid tmux pane id/);
+    expect(() => fakePane("garbage")).toThrow(/invalid tmux pane identity/);
     expect(calls).toEqual([]);
   });
 });
@@ -663,7 +666,7 @@ describe("spawnAgent", () => {
     setTmuxExecutor(executor);
     const seen: string[] = [];
     await expect(spawnAgent({ ...SPAWN, onPaneCreated: (p) => seen.push(p) })).rejects.toThrow(
-      TypeError,
+      TmuxPaneBirthError,
     );
     expect(seen).toEqual([]);
   });
@@ -699,8 +702,8 @@ describe("attachCommands", () => {
   it("inside a client of mu's server: one switch-client step", async () => {
     process.env.TMUX = "/tmp/tmux-1000/default,123,0";
     expect(tmuxAttachMode()).toBe("switch");
-    expect(await attachCommands({ session: "mu-a", window: "w", inside: true })).toEqual([
-      { command: "tmux", args: ["switch-client", "-t", "mu-a:w"] },
+    expect(await attachCommands({ session: "mu-a", inside: true })).toEqual([
+      { command: "tmux", args: ["switch-client", "-t", "=mu-a:"] },
     ]);
   });
 
@@ -708,18 +711,18 @@ describe("attachCommands", () => {
     process.env.TMUX = "/tmp/tmux-1000/default,123,0";
     process.env.MU_TMUX_SOCKET = "mu-private";
     expect(tmuxAttachMode()).toBe("nested");
-    const steps = await attachCommands({ session: "mu-a", window: "w", inside: true });
+    const steps = await attachCommands({ session: "mu-a", inside: true });
     expect(steps).toEqual([
       {
         command: "tmux",
-        args: ["-L", "mu-private", "attach-session", "-t", "mu-a:w"],
+        args: ["-L", "mu-private", "attach-session", "-t", "=mu-a:"],
         nested: true,
       },
     ]);
-    expect(attachShellLine(steps)).toBe("env -u TMUX tmux -L mu-private attach-session -t mu-a:w");
+    expect(attachShellLine(steps)).toBe("env -u TMUX tmux -L mu-private attach-session -t =mu-a:");
     // The line for a shell outside any client stays plain.
-    expect(await attachCommands({ session: "mu-a", window: "w", outside: true })).toEqual([
-      { command: "tmux", args: ["-L", "mu-private", "attach-session", "-t", "mu-a:w"] },
+    expect(await attachCommands({ session: "mu-a", outside: true })).toEqual([
+      { command: "tmux", args: ["-L", "mu-private", "attach-session", "-t", "=mu-a:"] },
     ]);
   });
 
@@ -727,9 +730,9 @@ describe("attachCommands", () => {
     expect(tmuxAttachMode()).toBe("plain");
   });
 
-  it("outside: ONE attach-session whose target names the window (nothing after the blocking attach)", async () => {
-    expect(await attachCommands({ session: "mu-a", window: "w" })).toEqual([
-      { command: "tmux", args: ["attach-session", "-t", "mu-a:w"] },
+  it("outside: ONE attach-session whose target names the exact session", async () => {
+    expect(await attachCommands({ session: "mu-a" })).toEqual([
+      { command: "tmux", args: ["attach-session", "-t", "=mu-a:"] },
     ]);
   });
 
@@ -740,19 +743,19 @@ describe("attachCommands", () => {
 
     it("every step is routed with -L, outside and inside", async () => {
       process.env.TMUX = "/tmp/tmux-1000/mu-private,123,0";
-      const outside = await attachCommands({ session: "mu-a", window: "w" });
+      const outside = await attachCommands({ session: "mu-a" });
       expect(outside.map((s) => s.args)).toEqual([
-        ["-L", "mu-private", "attach-session", "-t", "mu-a:w"],
+        ["-L", "mu-private", "attach-session", "-t", "=mu-a:"],
       ]);
-      expect(await attachCommands({ session: "mu-a", window: "w", inside: true })).toEqual([
-        { command: "tmux", args: ["-L", "mu-private", "switch-client", "-t", "mu-a:w"] },
+      expect(await attachCommands({ session: "mu-a", inside: true })).toEqual([
+        { command: "tmux", args: ["-L", "mu-private", "switch-client", "-t", "=mu-a:"] },
       ]);
     });
   });
 
   it("outside with no window: the session alone", async () => {
     expect(await attachCommands({ session: "mu-a" })).toEqual([
-      { command: "tmux", args: ["attach-session", "-t", "mu-a"] },
+      { command: "tmux", args: ["attach-session", "-t", "=mu-a:"] },
     ]);
   });
 });

@@ -15,6 +15,16 @@ import { basename } from "node:path";
 import { execFileCapture } from "../exec-file.js";
 import { insideAgent } from "../harnesses.js";
 import { say } from "../messages.js";
+import { shellWord } from "../shell-quote.js";
+import {
+  type ActionPaneRef,
+  PANE_ID_RE,
+  paneRef,
+  requireVerifiedPane,
+  SERVER_IDENTITY_RE,
+  TmuxPaneBirthError,
+  type VerifiedPaneRef,
+} from "./pane-ref.js";
 import {
   type AttachTarget,
   type CaptureOptions,
@@ -27,6 +37,7 @@ import {
   type MuxPane,
   PaneNotFoundError,
   type PaneResult,
+  type SessionKillTarget,
   type SpawnAgentPaneOptions,
 } from "./types.js";
 
@@ -38,7 +49,9 @@ export {
   type MuxCommand,
   MuxError,
   type MuxHealth,
+  PANE_ID_RE,
   PaneNotFoundError,
+  paneRef,
 };
 
 /** Back-compat alias: tmux-specific name predating the MuxBackend extraction. */
@@ -80,8 +93,6 @@ export class TmuxServerInAgentError extends MuxError {
  * for the lifetime of the pane. **Pane indexes** (0, 1, 2…) are volatile and
  * shift when other panes close — never store or pass them.
  */
-export const PANE_ID_RE = /^%\d+$/;
-
 export function isValidPaneId(s: string): boolean {
   return PANE_ID_RE.test(s);
 }
@@ -171,45 +182,22 @@ export async function tmux(args: readonly string[]): Promise<string> {
 
 // ─── Pane refs: one identity check, in the tmux call that acts ──────────
 
-/**
- * A pane addressed with the server it must be on: `%15@<pid>|<start time>` (`paneRef`). tmux pane
- * ids restart at `%0` per server, so a bare id after a restart names someone else's pane. Every
- * pane-addressed function here takes either form. With an identity, the action runs inside ONE
- * tmux invocation guarded on that server's `#{pid}|#{start_time}` (`if-shell -F`), so no restart
- * can land between the check and the effect; on another server nothing runs (`foreign`).
- */
-export function paneRef(paneId: string, identity?: string | null): string {
-  return identity === undefined || identity === null || identity === ""
-    ? paneId
-    : `${paneId}@${identity}`;
-}
-
-function splitPaneRef(ref: string): { paneId: string; identity?: string } {
-  const at = ref.indexOf("@");
-  if (at < 0) return { paneId: ref };
-  const identity = ref.slice(at + 1);
-  if (!/^\d+\|\d+$/.test(identity))
-    throw new TypeError(`invalid tmux pane ref: ${JSON.stringify(ref)}`);
-  return { paneId: ref.slice(0, at), identity };
-}
-
+// Legacy bare IDs are only allowed on probes. Every action runs on the
+// recorded server, inside the same tmux invocation as the identity check.
 /** Exit status of the guard's else branch: the server answering is not the recorded one. */
 const FOREIGN_SERVER_EXIT = 97;
 
-/** One tmux word, quoted for a command string that tmux parses itself. */
-function quoteWord(word: string): string {
-  return `'${word.replace(/'/g, `'"'"'`)}'`;
-}
-
-/** `args` run only on the server `identity` names; any other server exits `FOREIGN_SERVER_EXIT`. */
-function guardedArgs(identity: string | undefined, args: readonly string[]): string[] {
-  if (identity === undefined) return [...args];
+/** `args` run only on the server `ref` names; optionally require its pane still in `session`. */
+function guardedArgs(ref: VerifiedPaneRef, args: readonly string[], session?: string): string[] {
+  const server = `#{==:#{pid}|#{start_time},${ref.identity}}`;
+  const inSession = `#{&&:#{==:#{pane_id},${ref.paneId}},#{==:#{session_name},${session}}}`;
   return [
     "if-shell",
     "-F",
-    `#{==:#{pid}|#{start_time},${identity}}`,
-    args.map(quoteWord).join(" "),
-    `run-shell 'exit ${FOREIGN_SERVER_EXIT}'`,
+    ...(session === undefined ? [] : ["-t", ref.paneId]),
+    session === undefined ? server : `#{&&:${server},${inSession}}`,
+    args.map(shellWord).join(" "),
+    `run-shell "exit ${FOREIGN_SERVER_EXIT}"`,
   ];
 }
 
@@ -222,22 +210,23 @@ interface PaneExec extends TmuxExecResult {
 
 /** Run `build(paneId)` against a pane ref, guarded on its identity when it has one. */
 async function execOnPane(
-  ref: string,
+  ref: string | VerifiedPaneRef,
   build: (paneId: string) => readonly string[],
 ): Promise<PaneExec> {
-  const { paneId, identity } = splitPaneRef(ref);
-  const args = guardedArgs(identity, build(paneId));
+  const paneId = typeof ref === "string" ? ref : ref.paneId;
+  const command = build(paneId);
+  const args = typeof ref === "string" ? [...command] : guardedArgs(ref, command);
   const result = await currentExecutor(args);
-  const foreign = identity !== undefined && result.exitCode === FOREIGN_SERVER_EXIT;
+  const foreign = typeof ref !== "string" && result.exitCode === FOREIGN_SERVER_EXIT;
   return { ...result, foreign, args, paneId };
 }
 
 /** `execOnPane` that throws like `tmux()` on failure, and `PaneNotFoundError` on another server. */
 async function paneTmux(
-  ref: string,
+  ref: VerifiedPaneRef,
   build: (paneId: string) => readonly string[],
 ): Promise<string> {
-  const r = await execOnPane(ref, build);
+  const r = await execOnPane(requireVerifiedPane(ref), build);
   if (r.foreign) throw new PaneNotFoundError(r.paneId);
   if (r.exitCode !== 0) throw new TmuxError(r.args, r.stderr, r.stdout, r.exitCode);
   return r.stdout;
@@ -368,9 +357,10 @@ export async function ensureSession(session: string): Promise<EnsureSessionResul
 }
 
 /**
- * Idempotent: succeeds even if the session is already gone.
+ * Kill the named session if the verified pane is still in it. Returns false
+ * rather than acting on an unproved session, including one already gone.
  *
- * Four swallowed shapes:
+ * Four absent-session errors:
  *   - "can't find session: <name>"  — session never existed.
  *   - "session not found"           — alternate phrasing on some tmux builds.
  *   - "no server running on <path>" (or "error connecting to <path> (No
@@ -389,11 +379,14 @@ export async function ensureSession(session: string): Promise<EnsureSessionResul
  *     meaning as "can't find session" for our purposes — the session
  *     we were asked to kill is gone.
  */
-export async function killSession(name: string, identity?: string | null): Promise<void> {
-  const args = guardedArgs(identity || undefined, ["kill-session", "-t", exactSessionTarget(name)]);
+export async function killSession(name: string, pane: VerifiedPaneRef): Promise<boolean> {
+  const ref = requireVerifiedPane(pane);
+  // The name is inserted into a tmux format expression. Refuse names that could change it.
+  if (!/^[\w.-]+$/.test(name)) throw new MuxError(`cannot verify tmux session name: ${name}`);
+  const args = guardedArgs(ref, ["kill-session", "-t", exactSessionTarget(name)], name);
   const result = await currentExecutor(args);
-  // Another server: its session of this name is not the workstream's. Nothing was killed.
-  if (identity && result.exitCode === FOREIGN_SERVER_EXIT) return;
+  // Wrong server, missing or moved pane: no proof the named session is ours.
+  if (result.exitCode === FOREIGN_SERVER_EXIT) return false;
   if (
     result.exitCode !== 0 &&
     !/can't find session|session not found|no current target/i.test(result.stderr) &&
@@ -401,6 +394,7 @@ export async function killSession(name: string, identity?: string | null): Promi
   ) {
     throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
   }
+  return result.exitCode === 0;
 }
 
 // ─── Panes ─────────────────────────────────────────────────────────────
@@ -413,7 +407,7 @@ const RETAIN_PLACEHOLDER = "exec sleep 60";
  *   - session doesn't exist          → new session+window+pane
  *   - session exists, no such window → new window for this agent
  *   - session and window both exist  → split the window to add a pane
- * Returns the pane's stable id (`%15`).
+ * Returns the pane's stable id (`%15`) only after its server identity is known.
  */
 export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
   const retain = opts.retainOnExit === true;
@@ -437,9 +431,11 @@ export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
   const created = async (args: string[]): Promise<string> => {
     // Exactly one line: `%N|<pid>|<start time>`. Anything else (a hook's extra output) is no pane id.
     const made = (await tmux(args)).trim();
-    const [, paneId = made, identity] = /^(%\d+)(?:\|(\d+\|\d+))?$/.exec(made) ?? [];
-    assertValidPaneId(paneId);
-    const ref = paneRef(paneId, identity);
+    const [, paneId, identity] = /^(%\d+)\|(\d+\|\d+)$/.exec(made) ?? [];
+    if (paneId === undefined || identity === undefined) {
+      throw new TmuxPaneBirthError(/^(%\d+)(?:\||$)/.exec(made)?.[1]);
+    }
+    const ref = requireVerifiedPane(paneRef(paneId, identity));
     if (retain) {
       // The pane option is set while only the placeholder runs, so the real
       // command can never end before retention is armed (no set-after-spawn
@@ -551,19 +547,18 @@ function appendEnvFlags(args: string[], env: Record<string, string> | undefined)
 }
 
 /** Idempotent: succeeds even if the pane is already gone. */
-export function killPaneCommand(ref: string): MuxCommand {
-  const { paneId, identity } = splitPaneRef(ref);
+export function killPaneCommand(ref: VerifiedPaneRef): MuxCommand {
   return {
     command: "tmux",
-    args: [...tmuxGlobalFlags(), ...guardedArgs(identity, ["kill-pane", "-t", paneId])],
+    args: [
+      ...tmuxGlobalFlags(),
+      ...guardedArgs(requireVerifiedPane(ref), ["kill-pane", "-t", ref.paneId]),
+    ],
   };
 }
 
-export async function killPane(ref: string): Promise<void> {
-  const r = await execOnPane(ref, (id) => {
-    assertValidPaneId(id);
-    return ["kill-pane", "-t", id];
-  });
+export async function killPane(ref: VerifiedPaneRef): Promise<void> {
+  const r = await execOnPane(requireVerifiedPane(ref), (id) => ["kill-pane", "-t", id]);
   // Another server holds the id: that pane is not the caller's, and is left alone.
   if (r.foreign) return;
   if (r.exitCode !== 0 && !/can't find pane/i.test(r.stderr) && !NO_SERVER_RE.test(r.stderr)) {
@@ -571,8 +566,8 @@ export async function killPane(ref: string): Promise<void> {
   }
 }
 
-export async function paneAlive(ref: string): Promise<boolean> {
-  if (!isValidPaneRef(ref)) return false;
+export async function paneAlive(ref: string | VerifiedPaneRef): Promise<boolean> {
+  if (typeof ref === "string" && !isValidPaneId(ref)) return false;
   // tmux's `display-message -t <bogus>` exits 0 but emits empty output; we
   // must check that the echoed pane id matches what we asked for.
   const result = await execOnPane(ref, (id) => ["display-message", "-t", id, "-p", "#{pane_id}"]);
@@ -589,22 +584,13 @@ export async function paneAlive(ref: string): Promise<boolean> {
   return result.stdout.trim() === paneId;
 }
 
-/** A bare `%N` id, or one with an identity (`paneRef`). */
-function isValidPaneRef(ref: string): boolean {
-  try {
-    return isValidPaneId(splitPaneRef(ref).paneId);
-  } catch {
-    return false;
-  }
-}
-
 /**
  * The pane's run state: running, exited (a retained pane keeps its row, with
  * `#{pane_dead_status}` / `#{pane_dead_signal}`) or absent. Only "the pane or
  * server is gone" is absent; any other failure throws, as `paneAlive` does.
  */
-export async function paneResult(ref: string): Promise<PaneResult> {
-  if (!isValidPaneRef(ref)) return { state: "absent" };
+export async function paneResult(ref: string | VerifiedPaneRef): Promise<PaneResult> {
+  if (typeof ref === "string" && !isValidPaneId(ref)) return { state: "absent" };
   const result = await execOnPane(ref, (id) => [
     "display-message",
     "-t",
@@ -630,8 +616,8 @@ export async function paneResult(ref: string): Promise<PaneResult> {
 }
 
 /** The pid of the pane's first process; undefined when the pane or server is gone. */
-export async function panePid(ref: string): Promise<number | undefined> {
-  if (!isValidPaneRef(ref)) return undefined;
+export async function panePid(ref: string | VerifiedPaneRef): Promise<number | undefined> {
+  if (typeof ref === "string" && !isValidPaneId(ref)) return undefined;
   const result = await execOnPane(ref, (id) => [
     "display-message",
     "-t",
@@ -664,7 +650,7 @@ export async function serverIdentity(): Promise<string | undefined> {
     throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
   }
   const first = result.stdout.split("\n")[0]?.trim();
-  return first !== undefined && /^\d+\|\d+$/.test(first) ? first : undefined;
+  return first !== undefined && SERVER_IDENTITY_RE.test(first) ? first : undefined;
 }
 
 /**
@@ -696,8 +682,7 @@ export async function currentSessionName(): Promise<string | undefined> {
  * cursor included. That range always holds the last N non-blank-ended
  * lines, so drop the trailing blank rows and keep the last N.
  */
-export async function capture(ref: string, opts: CaptureOptions = {}): Promise<string> {
-  assertValidPaneId(splitPaneRef(ref).paneId);
+export async function capture(ref: VerifiedPaneRef, opts: CaptureOptions = {}): Promise<string> {
   const build = (id: string): string[] => {
     const args = ["capture-pane", "-t", id, "-p"];
     if (opts.lines === undefined) args.push("-S", "-", "-E", "-");
@@ -733,17 +718,6 @@ const PASTE_SETTLE_MS = 500;
 const BUFFER_CHUNK = 2048;
 
 /**
- * One argv word that tmux keeps as written. tmux splits its argv into
- * commands before it parses any of them: a word ending in `;` is a command
- * separator (the `;` is dropped), and one ending in `\;` loses the backslash.
- * `--` does not stop it. So a final `;` goes out as `\;`, which tmux reads
- * back as `;`: `fix;` stays `fix;`, `a\;` stays `a\;`, and `;` is not empty.
- */
-export function tmuxWord(word: string): string {
-  return word.endsWith(";") ? `${word.slice(0, -1)}\\;` : word;
-}
-
-/**
  * Clear the input line with `clearKey`, paste `text` as ONE bracketed paste
  * (`paste-buffer -p`: tmux brackets it when the program asked for that, as
  * every hook harness does, so a multi-line text never submits early), then
@@ -752,11 +726,11 @@ export function tmuxWord(word: string): string {
  * caller confirms it from the agent's own report.
  */
 export async function pasteToPane(
-  ref: string,
+  ref: VerifiedPaneRef,
   text: string,
   opts: { clearKey?: string | null } = {},
 ): Promise<void> {
-  assertValidPaneId(splitPaneRef(ref).paneId);
+  requireVerifiedPane(ref);
   if (opts.clearKey) {
     const key = opts.clearKey;
     await paneTmux(ref, (id) => ["send-keys", "-t", id, key]);
@@ -768,12 +742,19 @@ export async function pasteToPane(
     try {
       for (let at = 0; at < points.length; at += BUFFER_CHUNK) {
         const chunk = points.slice(at, at + BUFFER_CHUNK).join("");
-        await tmux(["set-buffer", ...(at > 0 ? ["-a"] : []), "-b", buffer, "--", tmuxWord(chunk)]);
+        await paneTmux(ref, () => [
+          "set-buffer",
+          ...(at > 0 ? ["-a"] : []),
+          "-b",
+          buffer,
+          "--",
+          chunk,
+        ]);
       }
       await paneTmux(ref, (id) => ["paste-buffer", "-p", "-d", "-b", buffer, "-t", id]);
     } catch (error) {
       try {
-        await tmux(["delete-buffer", "-b", buffer]);
+        await paneTmux(ref, () => ["delete-buffer", "-b", buffer]);
       } catch {
         // already gone, or tmux is: the paste's own error matters more
       }
@@ -785,28 +766,29 @@ export async function pasteToPane(
 }
 
 /** Set the user option `name` (`@…`) on this pane only. */
-export async function setPaneOption(ref: string, name: string, value: string): Promise<void> {
-  assertValidPaneId(splitPaneRef(ref).paneId);
+export async function setPaneOption(
+  ref: VerifiedPaneRef,
+  name: string,
+  value: string,
+): Promise<void> {
   await paneTmux(ref, (id) => ["set-option", "-p", "-t", id, name, value]);
 }
 
 /** Type `keys` into the pane: tmux key names, or text with `literal`. */
 export async function sendKeys(
-  ref: string,
+  ref: VerifiedPaneRef,
   keys: readonly string[],
   opts: { literal?: boolean } = {},
 ): Promise<void> {
-  assertValidPaneId(splitPaneRef(ref).paneId);
+  requireVerifiedPane(ref);
   if (keys.length === 0) return;
-  // Guarded, the words sit inside a quoted command string: tmux's `;` rewrite does not apply.
-  const guarded = splitPaneRef(ref).identity !== undefined;
   await paneTmux(ref, (id) => [
     "send-keys",
     "-t",
     id,
     ...(opts.literal ? ["-l"] : []),
     "--",
-    ...(guarded ? keys : keys.map(tmuxWord)),
+    ...keys,
   ]);
 }
 
@@ -843,9 +825,8 @@ async function tmuxAvailable(): Promise<boolean> {
 // does, so the line printed for a private `MU_TMUX_SOCKET` reaches the
 // server that holds the session, not the user's default one.
 
-function attachTargetSpec(target: AttachTarget): string {
-  return target.window === undefined ? target.session : `${target.session}:${target.window}`;
-}
+type TmuxAttachTarget = Omit<AttachTarget, "window" | "pane"> &
+  ({ pane: VerifiedPaneRef } | { pane?: never; window?: never });
 
 /**
  * Is `$TMUX` a client of the server mu drives? With no `MU_TMUX_SOCKET`, tmux itself follows
@@ -870,12 +851,18 @@ export function tmuxAttachMode(): "switch" | "nested" | "plain" {
   return inAnotherTmux() ? "nested" : "switch";
 }
 
-export async function attachCommands(target: AttachTarget): Promise<readonly MuxCommand[]> {
-  const spec = attachTargetSpec(target);
+export async function attachCommands(target: TmuxAttachTarget): Promise<readonly MuxCommand[]> {
+  const pane = target.pane === undefined ? undefined : requireVerifiedPane(target.pane);
+  if (pane === undefined && "window" in target) {
+    throw new MuxError("tmux agent attach needs a verified pane");
+  }
+  const spec = pane?.paneId ?? exactSessionTarget(target.session);
   const socket = process.env.MU_TMUX_SOCKET;
   const route = socket === undefined || socket.length === 0 ? [] : ["-L", socket];
-  // On the recorded server only: another one's same-named session is not the workstream's.
-  const on = (verb: string) => guardedArgs(target.identity || undefined, [verb, "-t", spec]);
+  const on = (verb: string) => {
+    const args = [verb, "-t", spec];
+    return pane === undefined ? args : guardedArgs(pane, args);
+  };
   const attach = { command: "tmux", args: [...route, ...on("attach-session")] };
   if (target.outside === true) return [attach];
   // A client of ANOTHER server (an outer tmux around mu's private one) cannot be switched,
@@ -925,7 +912,10 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   assertValidPaneId,
 
   ensureSession,
-  killSession,
+  killSession: async (target: SessionKillTarget) => {
+    if (target.backend !== "tmux") throw new MuxError("tmux session kill needs a verified pane");
+    return killSession(target.session, target.pane);
+  },
 
   spawnAgent,
   listPanes,
@@ -933,14 +923,27 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   paneResult,
   panePid,
   serverIdentity,
-  killPane,
-  killPaneCommand,
-  capture,
-  pasteToPane,
-  sendKeys,
-  setPaneOption,
+  killPane: async (pane: ActionPaneRef) => killPane(requireVerifiedPane(pane)),
+  killPaneCommand: (pane: ActionPaneRef) => killPaneCommand(requireVerifiedPane(pane)),
+  capture: async (pane: ActionPaneRef, opts?: CaptureOptions) =>
+    capture(requireVerifiedPane(pane), opts),
+  pasteToPane: async (pane: ActionPaneRef, text: string, opts?: { clearKey?: string | null }) =>
+    pasteToPane(requireVerifiedPane(pane), text, opts),
+  sendKeys: async (pane: ActionPaneRef, keys: readonly string[], opts?: { literal?: boolean }) =>
+    sendKeys(requireVerifiedPane(pane), keys, opts),
+  setPaneOption: async (pane: ActionPaneRef, name: string, value: string) =>
+    setPaneOption(requireVerifiedPane(pane), name, value),
 
-  attachCommands,
+  attachCommands: async (target: AttachTarget) => {
+    if (target.pane !== undefined) return attachCommands({ ...target, pane: target.pane });
+    if (target.window !== undefined) throw new MuxError("tmux agent attach needs a verified pane");
+    const { session, inside, outside } = target;
+    return attachCommands({
+      session,
+      ...(inside === undefined ? {} : { inside }),
+      ...(outside === undefined ? {} : { outside }),
+    });
+  },
 
   currentSessionName,
   healthCheck,

@@ -9,7 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { insertAgent, listAgents } from "../src/agents.js";
+import { listAgents } from "../src/agents.js";
 import { type Db, openDb, WorkstreamTornDownError } from "../src/db.js";
 import { addNote, addTask, getTask, listTasks } from "../src/tasks.js";
 import {
@@ -25,7 +25,9 @@ import {
   summarizeWorkstream,
   WorkstreamNameInvalidError,
 } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { softTeardown } from "./_teardown.js";
+import { withServerIdentity } from "./_verbs-mock.js";
 
 // ─── Mock tmux harness ─────────────────────────────────────────────────
 
@@ -72,7 +74,7 @@ function mockTmux(state: MockState): { calls: string[][]; executor: TmuxExecutor
     }
     return fail(`unmocked tmux call: ${args.join(" ")}`);
   };
-  return { calls, executor };
+  return { calls, executor: withServerIdentity(executor) };
 }
 
 // ─── Fixture setup ─────────────────────────────────────────────────────
@@ -400,13 +402,13 @@ describe("teardownWorkstream (soft)", () => {
     expect(state.killed).toEqual([]);
   });
 
-  it("succeeds when tmux session exists but DB has no rows", async () => {
+  it("leaves the tmux session alone when the DB has no proof of ownership", async () => {
     state.sessions.add("mu-empty");
     setTmuxExecutor(mockTmux(state).executor);
 
     const result = await softTeardown(db, "empty");
     expect(result).toEqual({
-      killedMux: true,
+      killedMux: false,
       deletedAgents: 0,
       tasks: 0,
       notes: 0,
@@ -414,7 +416,8 @@ describe("teardownWorkstream (soft)", () => {
       keptWorktrees: [],
       orphanedAgents: [],
     });
-    expect(state.killed).toEqual(["mu-empty"]);
+    expect(state.killed).toEqual([]);
+    expect(state.sessions.has("mu-empty")).toBe(true);
   });
 
   it("repeated destroy is a clean no-op the second time", async () => {

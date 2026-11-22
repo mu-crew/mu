@@ -302,17 +302,22 @@ export function withServerIdentity(
 ): TmuxExecutor {
   return async (args) => {
     if (args[0] === "if-shell" && args[1] === "-F") {
-      const want = /^#\{==:#\{pid\}\|#\{start_time\},(.*)\}$/.exec(args[2] ?? "")?.[1];
+      const format = args[2] === "-t" ? 4 : 2;
+      const want = /#\{==:#\{pid\}\|#\{start_time\},(\d+\|\d+)\}/.exec(args[format] ?? "")?.[1];
       if (want !== identity) {
         return { stdout: "", stderr: "'exit 97' returned 97", exitCode: 97 };
       }
-      return withServerIdentity(inner, identity)(tmuxWords(args[3] ?? ""));
+      return withServerIdentity(inner, identity)(tmuxWords(args[format + 1] ?? ""));
     }
     if (args[0] === "list-sessions" && args.some((a) => a.includes("#{pid}"))) {
       const result = await inner(args);
-      return result.exitCode === 0 || !/unmocked|unrouted/.test(result.stderr)
-        ? result
-        : ok(`${identity}\n`);
+      if (
+        (result.exitCode === 0 && result.stdout === "") ||
+        /unmocked|unrouted/.test(result.stderr)
+      ) {
+        return ok(`${identity}\n`);
+      }
+      return result;
     }
     const result = await inner(args);
     const born = ["new-session", "new-window", "split-window"].includes(args[0] ?? "");

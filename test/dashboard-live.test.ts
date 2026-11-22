@@ -31,7 +31,8 @@ vi.mock("../src/channels/dispatch.js", async (orig) => {
   };
 });
 
-const { insertAgent } = await import("../src/agents.js");
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
+
 const { App } = await import("../src/cli/tui/app.js");
 const { createRuntime } = await import("../src/cli/tui/runtime.js");
 const { clampTick, fasterTick, slowerTick, snapshotKey } = await import(

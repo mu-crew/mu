@@ -15,7 +15,6 @@ import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { insertAgent } from "../src/agents.js";
 import { applyOp, type Op } from "../src/apply.js";
 import { type Db, openDb, WorkstreamTornDownError } from "../src/db.js";
 import { finishDelegate, registerDelegateCall } from "../src/delegates.js";
@@ -39,6 +38,7 @@ import {
   workstreamRevision,
 } from "../src/workstream.js";
 import { registerWorktree } from "../src/worktree.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { asJson, runCli } from "./_runCli.js";
@@ -279,10 +279,13 @@ describe("order: the session dies before any DB change", () => {
 
   it("an agent that appears while the session is being killed aborts the commit", async () => {
     seed("ws");
+    insertAgent(db, { name: "anchor", workstream: "ws", paneId: "%1" });
     const rev = workstreamRevision(db, "ws");
     mux?.restore();
     mux = installMux("tmux", async (args) => {
       if (args[0] === "list-panes") return { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 };
+      if (args[0] === "display-message")
+        return { stdout: "", stderr: "can't find pane", exitCode: 1 };
       if (args[0] === "kill-session") {
         insertAgent(db, { name: "racer", workstream: "ws", paneId: "%7" });
         return { stdout: "", stderr: "", exitCode: 0 };
@@ -294,7 +297,10 @@ describe("order: the session dies before any DB change", () => {
     ).rejects.toBeInstanceOf(WorkstreamRevisionMismatchError);
     expect(tornDownAt("ws")).toBeNull();
     // The unseen agent row is NOT deleted by the failed commit.
-    expect(db.prepare("SELECT name FROM agents").all()).toEqual([{ name: "racer" }]);
+    expect(db.prepare("SELECT name FROM agents").all()).toEqual([
+      { name: "anchor" },
+      { name: "racer" },
+    ]);
   });
 });
 

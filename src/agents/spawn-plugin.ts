@@ -53,8 +53,9 @@ import { reserveProviderJob } from "../host-records.js";
 import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
 import { awaitLeaseJob, defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
-import { birthIdentity, viewPresent, viewRef } from "../jobs/view.js";
+import { birthIdentity, killView, viewPresent, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
+import { TmuxPaneBirthError } from "../mux/pane-ref.js";
 import { type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { EffectOutcomeUnknownError } from "../plugins/errors.js";
@@ -459,7 +460,18 @@ export async function spawnPluginAgent(
     if (kept) throw err;
     try {
       if (begun !== undefined) opts.firstTurn?.undo(begun);
-      await rollbackSpawn(db, name, paneId, staged, owned, ws, undefined, carrier, paneBorn);
+      await rollbackSpawn(
+        db,
+        name,
+        paneId,
+        staged,
+        owned,
+        ws,
+        undefined,
+        carrier,
+        paneBorn,
+        err instanceof TmuxPaneBirthError,
+      );
     } catch {
       // best-effort: never mask the spawn's error
     }
@@ -575,11 +587,11 @@ async function openView(
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
-      onPane(pid, born);
+      const paneIdentity = birthIdentity(mux, pid, born);
+      onPane(pid, paneIdentity);
       viewDone = done;
       recordCarrierPane(db, v.token, pid);
       await markPaneHost(mux, viewRef(mux, pid, born), v.host.name);
-      const paneIdentity = birthIdentity(mux, pid, born);
       const r: AgentRow = finalizeAgentRow(db, {
         opts: opts as SpawnAgentOptions,
         cli: v.cli,
@@ -773,7 +785,7 @@ export async function resolveFirstTurn(
         // and the receipt stays as it was (D8, review 2 of P6e2).
         if (opened !== undefined) {
           const mux = await activeMux();
-          await mux.killPane(viewRef(mux, opened, openedBorn)).catch(() => {});
+          await killView(mux, opened, openedBorn).catch(() => {});
           const gone = (await viewPresent(opened, mux, openedBorn).catch(() => true)) === false;
           unfinalize(db, agent, opened, now.token, gone);
         }
