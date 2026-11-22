@@ -59,6 +59,16 @@ describeIfTmux("tmux pasteToPane on a real pane", () => {
     { method: "paste", text: MULTILINE },
     { method: "long paste", text: MULTILINE.repeat(400) },
     { method: "literal keys", text: MULTILINE },
+    {
+      method: "literal keys (long shell snippet)",
+      text: Array.from(
+        { length: 210 },
+        (_, i) => `\tprintf '%s\\n' 'row ${i}: the file is café.ts'; # row ${i}\n`,
+      ).join(""),
+    },
+    // Both fit in a raw send-keys request but exceed tmux 3.6b's 16 KiB
+    // limit once quoted for if-shell. The second also exercises astral Unicode.
+    { method: "literal keys (long Unicode)", text: "'🧪';\t\n".repeat(1500) },
   ])("$method preserves the original bytes on a guarded send", async ({ method, text }) => {
     const dir = mkdtempSync(join(tmpdir(), "mu-tmux-bytes-"));
     try {
@@ -72,24 +82,36 @@ describeIfTmux("tmux pasteToPane on a real pane", () => {
       ]);
       await pollUntil(() => existsSync(output), { description: "raw input reader ready" });
       const ref = await privatePane(pane);
-      const literal = method === "literal keys";
-      if (literal) await sendKeys(ref, [text], { literal: true });
-      else await pasteToPane(ref, text);
+      const literal = method.startsWith("literal keys");
       const end = Buffer.from("[end of send]");
-      await tmux(["send-keys", "-t", pane, "-l", "--", end.toString()]);
-      let received = Buffer.alloc(0);
-      await pollUntil(
-        () => {
-          received = readFileSync(output);
-          return received.subarray(-end.length).equals(end);
-        },
-        { description: "end marker received" },
-      );
-      // The unguarded path on main used tmux's default paste separator (CR)
-      // and submitted Enter. Literal send-keys neither translates nor submits.
+      const receive = async (offset: number): Promise<Buffer> => {
+        await tmux(["send-keys", "-t", pane, "-l", "--", end.toString()]);
+        let received = Buffer.alloc(0);
+        await pollUntil(
+          () => {
+            received = readFileSync(output).subarray(offset);
+            return received.subarray(-end.length).equals(end);
+          },
+          { description: "end marker received" },
+        );
+        return received.subarray(0, -end.length);
+      };
+      let offset = 0;
       const expected = Buffer.from(literal ? text : `${text.replaceAll("\n", "\r")}\r`);
-      expect(received.length - end.length).toBe(expected.length);
-      expect(received.subarray(0, -end.length).equals(expected)).toBe(true);
+      if (literal) {
+        // Main sent literal keys directly in argv, with no newline translation
+        // or submission. Exercise that path as the baseline on this binary.
+        await tmux(["send-keys", "-t", pane, "-l", "--", text]);
+        const baseline = await receive(0);
+        expect(baseline.equals(expected)).toBe(true);
+        offset = baseline.length + end.length;
+        await sendKeys(ref, [text], { literal: true });
+      } else {
+        await pasteToPane(ref, text);
+      }
+      const received = await receive(offset);
+      expect(received.length).toBe(expected.length);
+      expect(received.equals(expected)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

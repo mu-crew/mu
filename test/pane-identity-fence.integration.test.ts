@@ -249,6 +249,28 @@ describeIfTmux(
       30_000,
     );
 
+    it("a restart between literal key chunks never sends the remainder to a recycled pane", async () => {
+      const { pane, identity } = await agentOn("worker");
+      const ref = requireVerifiedPane(paneRef(pane, identity));
+      let sends = 0;
+      let foreign: string | undefined;
+      setTmuxExecutor(async (args) => {
+        if (args.some((a) => a.includes("send-keys")) && ++sends === 2) {
+          foreign = await restartServer();
+        }
+        return real(args);
+      });
+      const text = "\t'🧪 DO NOT DELIVER'\n".repeat(550);
+      await expect(sendKeys(ref, [text], { literal: true })).rejects.toBeInstanceOf(
+        PaneNotFoundError,
+      );
+      resetTmuxExecutor();
+      expect(sends).toBe(2);
+      expect(foreign).toBe(pane);
+      await foreignOutput(pane);
+      expect(await capture(await privatePane(pane))).not.toContain("DO NOT DELIVER");
+    }, 30_000);
+
     it("a guarded retained spawn preserves multiline command and environment arguments", async () => {
       await ensureSession(session);
       const text = "first\n\tsecond 'é😀'\n  # third";
