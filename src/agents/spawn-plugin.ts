@@ -22,7 +22,7 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import {
   type AgentRow,
   getAgent,
@@ -182,7 +182,8 @@ export async function spawnPluginAgent(
   const sockets =
     builtIn?.ctl === true
       ? {
-          local: ctlSocketPath(ws, name, dirname(db.name)),
+          // Absolute on the wire: a relative DB path's socket is the same file, from here.
+          local: resolve(ctlSocketPath(ws, name, dirname(db.name))),
           remote: remoteCtlSocketPath(ws, name, process.getuid?.() ?? 0),
         }
       : undefined;
@@ -220,7 +221,7 @@ export async function spawnPluginAgent(
   );
   if (job === undefined) throw new AgentExistsError(name);
   const token = job.token;
-  const carrier = { token };
+  const carrier: { token: string; viewUnproven?: boolean } = { token };
   let staged: StagedWorktree | undefined;
   let cwd = opts.cwd ?? host.record?.repo ?? host.profile?.repo ?? ".";
   let paneId: string | undefined;
@@ -383,6 +384,8 @@ export async function spawnPluginAgent(
     if (prompt !== undefined && started.baseline !== undefined) {
       opts.firstTurn?.delivered(started.baseline);
     }
+    // A file kind's view is its dispatcher: once its open is attempted, no pane id is no proof.
+    if (jobFile !== undefined) carrier.viewUnproven = true;
     const row = await openView(
       db,
       {

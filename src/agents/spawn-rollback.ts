@@ -27,7 +27,8 @@ function reservationOf(db: Db, incarnation: number | undefined): { token: string
  * pane, no agent row) never masks the original failure.
  *
  * `paneId` is `undefined` when spawnAgent itself threw before returning a
- * pane id — there's nothing to kill. `staged` is set when prestageWorktree
+ * pane id — there's nothing to kill. With `carrier.viewUnproven` a view open was
+ * attempted: that pane is not proven gone (row, tree and reservation kept). `staged` is set when prestageWorktree
  * succeeded: once the pane is proven gone, the worktree this spawn made goes
  * through the close rule (`releaseWorktree`; its pane may have worked in it):
  * clean and merged is removed, commits are kept on `mu/<ws>/<name>-<sha12>`
@@ -54,10 +55,12 @@ export async function rollbackSpawn(
   /** The spawn's host channel lease, while it is still the reservation (before or after its bind). */
   lease?: HostLease,
   /** A lease spawn's carrier_jobs reservation: the only job this rollback may stop or release. */
-  carrier?: { token: string },
+  carrier?: { token: string; viewUnproven?: boolean },
 ): Promise<{ gone: boolean; heldBy?: string }> {
   // Is the pane (the host transport) proven gone? A channel is freed only on that proof.
-  let paneGone = paneId === undefined;
+  // No pane id is that proof only when no view open was attempted: a backend may open the
+  // window and then fail before reporting its id (`viewUnproven`).
+  let paneGone = paneId === undefined && carrier?.viewUnproven !== true;
   let heldBy: string | undefined;
   if (paneId !== undefined) {
     // Best-effort: rollback runs on an already-failing path and must not
@@ -165,7 +168,7 @@ export async function rollbackSpawn(
         db,
         workstream,
         "agent.spawn_failed",
-        `agent spawn rollback ${name}: pane ${paneId} not proven gone, row${staged === undefined ? "" : " and worktree"}${getAgent(db, name, workstream)?.host ? " and host channel" : ""} kept; once it is gone: mu agent close ${name} -w ${workstream}`,
+        `agent spawn rollback ${name}: ${paneId === undefined ? "a view whose pane id was never reported is" : `pane ${paneId}`} not proven gone, row${staged === undefined ? "" : " and worktree"}${getAgent(db, name, workstream)?.host ? " and host channel" : ""} kept; once it is gone: mu agent close ${name} -w ${workstream}`,
       );
     } catch {
       // best-effort

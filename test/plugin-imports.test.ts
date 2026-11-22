@@ -35,6 +35,8 @@ describe("the plugin adapter's boundary", () => {
         "src/host-lifecycle.ts",
         // P6e2: an at-start start's unknown outcome (FirstPromptUnknownError).
         "src/agents/spawn-plugin.ts",
+        // A file kind's recovery keeps a lookup's hand-back (PluginCallError human) a hand-back.
+        "src/host-policy.ts",
       ],
       "src/plugins/registry.ts": ["src/cli/handle.ts", "src/cli/plugin.ts"],
       "src/plugins/link.ts": ["src/host-provider.ts"],

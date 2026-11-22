@@ -6,7 +6,7 @@
 // kind is never reattached: `agent close` stops it.
 
 import { rmSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import { getAgent } from "../agents.js";
 import { type CarrierJob, getCarrierJobByAgent } from "../carrier-jobs.js";
 import { expectsCtl } from "../channels/select.js";
@@ -125,7 +125,7 @@ export async function reattachView(
         ...(onCtl
           ? {
               sockets: {
-                local: sock,
+                local: resolve(sock),
                 remote: remoteCtlSocketPath(ws, name, process.getuid?.() ?? 0),
               },
             }

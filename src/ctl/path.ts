@@ -5,7 +5,7 @@
  */
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { type Db, defaultStateDir } from "../db.js";
 
 /** Env var spawn injects so the pi extension knows where to listen. */
@@ -38,11 +38,13 @@ export function ctlSocketPath(workstream: string, agent: string, stateDir?: stri
 /**
  * The file a lease carrier writes its job handle to: `<state dir>/carrier/<ws>/<agent>.job`,
  * hashed past the same bound as a ctl socket (`carrier/_h/<hash>.job`). Derived, never stored.
+ * Always absolute (the wire's `jobFile`, ladder placement §10): a relative MU_DB_PATH or SDK
+ * `openDb` path leaves the state dir relative, and spawn, reattach and recovery derive one path.
  */
 export function carrierJobFilePath(workstream: string, agent: string, stateDir?: string): string {
   const dbPath = process.env.MU_DB_PATH;
   const base = stateDir ?? (dbPath ? dirname(dbPath) : defaultStateDir());
-  return sockPathUnder(join(base, "carrier"), workstream, agent, "job");
+  return sockPathUnder(join(resolve(base), "carrier"), workstream, agent, "job");
 }
 
 /**

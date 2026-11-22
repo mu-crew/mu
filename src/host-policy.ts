@@ -29,6 +29,7 @@ import { findHost, type HostRecord } from "./host-provider.js";
 import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-records.js";
 import { describeRead, readJobFile } from "./jobs/lease.js";
 import { emitEvent } from "./logs.js";
+import { PluginCallError } from "./plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "./plugins/job.js";
 import { collectInLifeLocked, collectRemoteAgentLocked } from "./remote-collect.js";
 import { recoveriesFor } from "./remote-recovery.js";
@@ -264,7 +265,8 @@ export async function closePluginJob(
  * before it published the file. A found handle fills the record, token-guarded. An absent file
  * and a lookup's `none`, `pending` or `unknown` never act: the view is the dispatcher, and it
  * may still claim and publish (plugins spec D4). An invalid or unreadable file is noted on the
- * record and still asks the lookup. Errors of the lookup are reasons, never thrown.
+ * record and still asks the lookup. Errors of the lookup are reasons, except a `human` answer
+ * (the master's hand-back), which is thrown as is: the record stays, and a close is human needed.
  */
 export async function recoverFileHandle(
   db: Db,
@@ -300,6 +302,8 @@ export async function recoverFileHandle(
       else why = `${file}; lookup by key: ${"unknown" in l ? l.unknown : "still in flight"}`;
     }
   } catch (e) {
+    // A hand-back (the master asks for a person) stays one: the caller's exit-5 lane (§5.1).
+    if (e instanceof PluginCallError && e.kind === "human") throw e;
     why = `${file}; lookup by key failed: ${e instanceof Error ? e.message : String(e)}`;
   }
   const filled = now()?.job;

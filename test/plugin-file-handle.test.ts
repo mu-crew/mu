@@ -8,6 +8,7 @@
 // handle into the job file when the pane opens (or not, per test). Nothing reaches a host.
 
 import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
 import { CarrierJobUnresolvedError } from "../src/agents/errors.js";
@@ -15,8 +16,11 @@ import { leaseJobFile } from "../src/agents/lease-carrier.js";
 import { previewReattach, reattachAgent } from "../src/agents/reattach.js";
 import { getAgent } from "../src/agents.js";
 import { getCarrierJobByName } from "../src/carrier-jobs.js";
+import { openDb } from "../src/db.js";
+import { PluginCallError } from "../src/plugins/errors.js";
 import { reconcile } from "../src/reconcile.js";
 import { addTask, claimTask, getTask, listNotes } from "../src/tasks.js";
+import { ensureWorkstream } from "../src/workstream.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
 const h = pluginHostFixture({ handshakeInProcess: true });
@@ -78,6 +82,37 @@ describe("spawn", () => {
     expect(h.calls("job.lookup")).toHaveLength(1);
     expect(h.f.backend().stops).toBe(1);
     expect(record()).toBeUndefined();
+  });
+
+  it("a relative DB path still sends an absolute jobFile, the path every later read derives", async () => {
+    h.db.close();
+    h.db = openDb({ path: relative(process.cwd(), join(h.dir, "mu.db")) });
+    ensureWorkstream(h.db, "ws");
+    await h.setup(FILE);
+    views({ handle: "file-job-1" });
+    await h.spawn();
+    const spec = h.calls("job.start")[0]?.params.spec as { jobFile?: string } | undefined;
+    expect(isAbsolute(spec?.jobFile ?? "")).toBe(true);
+    expect(spec?.jobFile).toBe(resolve(h.dir, "carrier", "ws", "w1.job"));
+    expect(jobFile()).toBe(spec?.jobFile);
+    expect(record()?.job).toBe("file-job-1");
+  });
+
+  it("a view opened with no pane id reported is not proven gone: nothing stopped, all kept", async () => {
+    await h.setup(FILE);
+    h.stubMux({
+      spawnAgent: async (s) => {
+        // The window opens and its view publishes, then the backend fails before the id.
+        h.panes.set("%9", { command: s.command });
+        writeFileSync(jobFile(), "file-job-1\n");
+        throw new Error("injected: no pane id");
+      },
+    });
+    await expect(h.spawn()).rejects.toThrow(/no pane id/);
+    expect(h.panes.has("%9")).toBe(true);
+    expect(h.f.backend().stops).toBe(0);
+    expect(existsSync(jobFile())).toBe(true);
+    expect(record()).toMatchObject({ launch: "intent", job: "file-job-1" });
   });
 
   it("a lookup's none is no proof: the record and its reason are kept, nothing stopped", async () => {
@@ -150,13 +185,27 @@ describe("recovery", () => {
     expect(record()).toBeUndefined();
   });
 
-  it("a lost start answer with the master down: close refuses, never calling the job absent", async () => {
+  it("a lost start answer with the master down: close hands back, never calling the job absent", async () => {
     await h.setup(FILE);
     h.f.set({ faults: { "job.start": ["effectThenExit"], "job.lookup": ["human", "human"] } });
     await expect(h.spawn()).rejects.toThrow(/outcome unknown/);
-    await expect(closeAgent(h.db, "w1", { workstream: "ws" })).rejects.toBeInstanceOf(
-      CarrierJobUnresolvedError,
-    );
+    await expect(closeAgent(h.db, "w1", { workstream: "ws" })).rejects.toMatchObject({
+      name: "PluginCallError",
+      kind: "human",
+    });
+    expect(h.f.backend().stops).toBe(0);
+    expect(record()).toMatchObject({ launch: "intent", job: null });
+  });
+  it("no file and a lookup that hands back (the master dropped): close is human needed, record kept", async () => {
+    await h.setup(FILE);
+    h.f.set({ faults: { "job.lookup": ["human", "human"] } });
+    views({ dies: true });
+    await expect(h.spawn()).rejects.toThrow(/before writing its job handle/);
+    expect(record()).toMatchObject({ launch: "intent", job: null });
+    const e = await closeAgent(h.db, "w1", { workstream: "ws" }).catch((x: unknown) => x);
+    expect(e).toBeInstanceOf(PluginCallError);
+    expect(e).not.toBeInstanceOf(CarrierJobUnresolvedError);
+    expect(e).toMatchObject({ kind: "human", remedy: "touch your security key" });
     expect(h.f.backend().stops).toBe(0);
     expect(record()).toMatchObject({ launch: "intent", job: null });
   });

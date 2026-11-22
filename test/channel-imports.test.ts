@@ -113,7 +113,9 @@ const CTL_IMPORTS: Record<string, readonly string[]> = {
   "src/agents/spawn-ready.ts": ["CtlProbe", "ctlProbe"],
   "src/agents/lease-carrier.ts": ["carrierJobFilePath"],
   // reattach: a new lease carrier forwards the reaped pi's control socket
-  "src/agents/reattach-view.ts": ["ctlSocketPath"],
+  "src/agents/reattach-view.ts": ["ctlSocketPath", "remoteCtlSocketPath"],
+  // a file kind's recovery reads its job file (ladder placement §10)
+  "src/host-policy.ts": ["carrierJobFilePath"],
   "src/agents/reattach.ts": ["ctlSocketPath", "remoteCtlSocketPath"],
   // a plugin job kind on the built-in ctl: the socket pair its JobSpec carries
   "src/agents/spawn-plugin.ts": ["ctlSocketPath", "remoteCtlSocketPath"],

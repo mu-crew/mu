@@ -82,6 +82,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   absent file and a lookup's `none` never count as "no job", so the record
   is kept with the reason. The reaper parks the tasks of a plugin job
   record launched with no handle yet, as it does for a lease with one.
+  `jobFile` and `sockets.local` are absolute even under a relative
+  `MU_DB_PATH`. A rollback whose view open never reported a pane id keeps
+  the record, the job file and the tree (that view may be dispatching). A
+  lookup that hands back (`human`) during recovery stays a hand-back: the
+  close exits 5, human needed, the record kept.
 
 ### Changed
 
