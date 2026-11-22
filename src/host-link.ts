@@ -193,7 +193,7 @@ function inCwd(template: string, script: string, cwd: string): string {
   if (cwd === "." || placeholderUses(template, "exec").cwd > 0) return script;
   if (cwd === "") throw new HostProfileError("host exec --cwd must name a directory");
   const path = cwd.startsWith("/") ? cwd : `./${cwd}`;
-  return `unset CDPATH && cd -- ${shellQuote(path)} || exit $?\n${script}`;
+  return `unset CDPATH && cd -P -- ${shellQuote(path)} || exit $?\n${script}`;
 }
 
 /** The built-in link over `db`'s profiles: today's `exec` and `fetch` templates. */

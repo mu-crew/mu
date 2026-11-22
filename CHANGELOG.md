@@ -149,10 +149,12 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
-- `mu host exec --cwd` now honours a literal directory on template links
-  without `{cwd}` (including the SSH and mule starters). It ignores `CDPATH`
-  and exits with the `cd` failure before running any of the script. Relative
-  repo paths in `mu host check` and remote worktree preparation are unchanged.
+- Exec templates start without inherited `CDPATH`, including templates that
+  use `{cwd}`. For templates without `{cwd}` (including the SSH and mule
+  starters), `mu host exec --cwd` treats the directory as a literal path,
+  follows symlinks before resolving `..`, and exits with the `cd` failure
+  before running any of the script. Relative repo path handling in
+  `mu host check` and remote worktree preparation is unchanged.
 - tmux 3.8 no longer makes mu mistake live panes for missing ones. Pane,
   window, and Murmur state queries use a separator tmux preserves.
 - Remote worktree prepare claims the path with an atomic `mkdir` and records

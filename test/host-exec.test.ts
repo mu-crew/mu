@@ -4,7 +4,7 @@
 // a real sshd are the orchestrator's (Linux) checks, not this file's.
 
 import { EventEmitter, once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +30,7 @@ import {
   PluginRegistrationChangedError,
   removePlugin,
 } from "../src/plugins/registry.js";
+import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux } from "./_mux.js";
 import { type FakePlugin, fakePlugin, linkSeam, providerSeams } from "./_plugin.js";
@@ -125,6 +126,39 @@ describe("host exec: the outcome table", () => {
     );
   });
 
+  it("ignores inherited CDPATH before a template's explicit {cwd} cd", async () => {
+    template();
+    const search = join(dir, "search");
+    mkdirSync(join(search, "repo"), { recursive: true });
+    mkdirSync(join(home, "repo"));
+    await withEnv("CDPATH", search, async () => {
+      expect(await hostExec(db, "t", { script: "pwd -P", cwd: "repo" })).toMatchObject({
+        exit: 0,
+        stdout: join(realpathSync(home), "repo"),
+      });
+    });
+  });
+
+  it("follows a symlink before resolving its parent in a fallback cwd", async () => {
+    const actual = join(realpathSync(dir), "actual");
+    mkdirSync(join(actual, "child"), { recursive: true });
+    mkdirSync(join(actual, "dest"));
+    mkdirSync(join(home, "dest"));
+    symlinkSync(join(actual, "child"), join(home, "hop"));
+    addHost(db, {
+      name: "t",
+      shell: "true",
+      exec: `cd '${home}' && /bin/sh -c {cmd}`,
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    expect(await hostExec(db, "t", { script: "pwd -P", cwd: "hop/../dest" })).toMatchObject({
+      exit: 0,
+      stdout: join(actual, "dest"),
+    });
+  });
+
   it("distinguishes absolute, omitted, and empty --cwd on a template without {cwd}", async () => {
     addHost(db, {
       name: "t",
@@ -176,7 +210,7 @@ describe("host exec: the outcome table", () => {
         max_sessions: null,
       });
       const r = await hostExec(db, "t", { script: `printf "%s:%s" "\${CDPATH+x}" "$PWD"`, cwd });
-      expect(r).toMatchObject({ exit: 0, stdout: `:${join(home, cwd)}` });
+      expect(r).toMatchObject({ exit: 0, stdout: `:${join(realpathSync(home), cwd)}` });
     },
   );
 
