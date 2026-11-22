@@ -277,7 +277,7 @@ describe("the snapshot is read-only: no reconcile, no reap", () => {
     ensureWorkstream(db, "ws");
     insertAgent(db, { name: "ghost", workstream: "ws", paneId: "%999" });
     mux.restore();
-    mux = installMux("tmux", [["list-panes", "@1\t%7\tpi\n"]]);
+    mux = installMux("tmux", [["list-panes", "@1|%7|pi\n"]]);
     const r = await runCliJson(["state", "-w", "ws"], dbPath);
     expect(r.data.workstreams[0].agents).toEqual([]);
     expect(r.data.workstreams[0].orphans).toEqual([{ pane_id: "%7", command: "pi" }]);

@@ -202,7 +202,7 @@ describe("killSession", () => {
 
 describe("listPanes", () => {
   it("calls list-panes -s -t <session> with the session-scoped format", async () => {
-    const { executor, calls } = harness(() => ok("@1\t%5\tpi\n@2\t%6\tclaude\n"));
+    const { executor, calls } = harness(() => ok("@1|%5|pi\n@2|%6|tool|variant\n"));
     setTmuxExecutor(executor);
     const panes = await listPanes("mu-auth");
     // `=mu-auth:`, not `mu-auth` or `=mu-auth`: both of those still
@@ -210,7 +210,7 @@ describe("listPanes", () => {
     expect(calls[0]?.args.slice(0, 4)).toEqual(["list-panes", "-s", "-t", "=mu-auth:"]);
     expect(panes).toEqual([
       { paneId: "%5", command: "pi", windowId: "@1" },
-      { paneId: "%6", command: "claude", windowId: "@2" },
+      { paneId: "%6", command: "tool|variant", windowId: "@2" },
     ]);
   });
 
@@ -350,12 +350,12 @@ describe("spawnAgent with retainOnExit", () => {
     [
       "new-window",
       (a: string[]) =>
-        a[0] === "has-session" ? ok() : a[0] === "list-windows" ? ok("@1\t_mu\n") : ok("%7\n"),
+        a[0] === "has-session" ? ok() : a[0] === "list-windows" ? ok("@1|_mu\n") : ok("%7\n"),
     ],
     [
       "split-window",
       (a: string[]) =>
-        a[0] === "has-session" ? ok() : a[0] === "list-windows" ? ok("@1\tworker-1\n") : ok("%7\n"),
+        a[0] === "has-session" ? ok() : a[0] === "list-windows" ? ok("@1|worker-1\n") : ok("%7\n"),
     ],
   ])(
     "%s: a placeholder, remain-on-exit on THAT pane, then the real command (never before)",
@@ -522,7 +522,7 @@ describe("ensureSession", () => {
 
   it("does nothing when the session already holds _mu", async () => {
     const { executor, calls } = harness((args) =>
-      args[0] === "list-windows" ? ok("@1\t_mu\n@2\tworker-1\n") : ok(),
+      args[0] === "list-windows" ? ok("@1|_mu\n@2|worker-1\n") : ok(),
     );
     setTmuxExecutor(executor);
     expect(await ensureSession("mu-auth")).toEqual({ created: false, repaired: false });
@@ -531,7 +531,7 @@ describe("ensureSession", () => {
 
   it("re-adds a missing _mu window to an existing session", async () => {
     const { executor, calls } = harness((args) =>
-      args[0] === "list-windows" ? ok("@2\tworker-1\n") : ok(),
+      args[0] === "list-windows" ? ok("@2|worker-1\n") : ok(),
     );
     setTmuxExecutor(executor);
     expect(await ensureSession("mu-auth")).toEqual({ created: false, repaired: true });
@@ -540,7 +540,7 @@ describe("ensureSession", () => {
   });
 
   it("targets the session exactly (=<name>:), never by prefix", async () => {
-    const { executor, calls } = harness(() => ok("@1\t_mu\n"));
+    const { executor, calls } = harness(() => ok("@1|_mu\n"));
     setTmuxExecutor(executor);
     await ensureSession("mu-auth");
     expect(calls[0]).toEqual({ args: ["has-session", "-t", "=mu-auth:"] });
@@ -599,7 +599,7 @@ describe("spawnAgent", () => {
 
   it("adds a new window when the session exists without that window", async () => {
     const { executor, calls } = harness((args) =>
-      args[0] === "list-windows" ? ok("@1\t_mu\n") : args[0] === "new-window" ? ok("%8\n") : ok(),
+      args[0] === "list-windows" ? ok("@1|_mu\n") : args[0] === "new-window" ? ok("%8\n") : ok(),
     );
     setTmuxExecutor(executor);
     expect(await spawnAgent({ ...SPAWN, env: { FOO: "bar" } })).toBe("%8");
@@ -622,7 +622,7 @@ describe("spawnAgent", () => {
   it("splits the existing window, targeting its id inside the exact session", async () => {
     const { executor, calls } = harness((args) =>
       args[0] === "list-windows"
-        ? ok("@1\t_mu\n@4\tworker-1\n")
+        ? ok("@1|_mu\n@4|worker-1\n")
         : args[0] === "split-window"
           ? ok("%9\n")
           : ok(),

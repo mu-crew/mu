@@ -36,7 +36,7 @@ describe("listWorkstreams liveness", () => {
       const alive = args.join(" ").includes("=mu-alive:");
       return Promise.resolve(
         args[0] === "list-panes" && alive
-          ? { stdout: "@1\t%1\t_mu\n", stderr: "", exitCode: 0 }
+          ? { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 }
           : { stdout: "", stderr: "can't find session", exitCode: 1 },
       );
     });
@@ -49,7 +49,7 @@ describe("listWorkstreams liveness", () => {
   });
 
   it("an unregistered mu-* session is not discovered: the DB owns the list", async () => {
-    mux = installMux("tmux", [["list-panes", "@1\t%1\t_mu\n"]]);
+    mux = installMux("tmux", [["list-panes", "@1|%1|_mu\n"]]);
     const rows = await listWorkstreams(db);
     expect(rows.map((r) => r.name)).toEqual(["alive", "dead"]);
   });

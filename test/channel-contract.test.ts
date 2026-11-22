@@ -297,7 +297,7 @@ beforeEach(() => {
       fake.tmux(args) ??
       (args[0] === "list-panes"
         ? {
-            stdout: `%1\t\t\n%2\tworking\t1000\n%3\t${fake.option()}\t2000\n`,
+            stdout: `%1||\n%2|working|1000\n%3|${fake.option()}|2000\n`,
             stderr: "",
             exitCode: 0,
           }
@@ -1065,7 +1065,7 @@ describe("the agents row decides the channel", () => {
   beforeEach(() => {
     setTmuxExecutor(async (args) =>
       args[0] === "list-panes"
-        ? { stdout: "%1\t\t\n%2\tworking\t1000\n", stderr: "", exitCode: 0 }
+        ? { stdout: "%1||\n%2|working|1000\n", stderr: "", exitCode: 0 }
         : args[0] === "display-message"
           ? { stdout: `${args[2] ?? ""}\n`, stderr: "", exitCode: 0 }
           : { stdout: "", stderr: "", exitCode: 0 },

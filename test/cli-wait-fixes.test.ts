@@ -52,11 +52,11 @@ beforeEach(() => {
   resetAgentStateCacheForTests();
   mux = installMux("tmux", async (args) => {
     if (args[0] === "list-panes" && args.includes("-s")) {
-      const out = [...panes.keys()].map((id) => `@1\t${id}\tt\tsh\n`).join("");
+      const out = [...panes.keys()].map((id) => `@1|${id}|sh\n`).join("");
       return { stdout: out, stderr: "", exitCode: 0 };
     }
     if (args[0] === "list-panes") {
-      const out = [...panes].map(([id, token]) => `${id}\t${token}\t1000\n`).join("");
+      const out = [...panes].map(([id, token]) => `${id}|${token}|1000\n`).join("");
       return { stdout: out, stderr: "", exitCode: 0 };
     }
     return { stdout: "", stderr: "", exitCode: 0 };

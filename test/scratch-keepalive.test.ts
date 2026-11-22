@@ -163,7 +163,7 @@ describe("teardown --empty leaves the kept-alive scratch session", () => {
         case "has-session":
           return sessions.has(target) ? ok() : fail(`can't find session: ${target}`);
         case "list-panes":
-          return sessions.has(target) ? ok("@1\t%1\t\tzsh") : fail(`can't find session: ${target}`);
+          return sessions.has(target) ? ok("@1|%1|zsh") : fail(`can't find session: ${target}`);
         case "kill-session":
           sessions.delete(target);
           killed.push(target);

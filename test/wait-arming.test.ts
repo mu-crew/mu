@@ -450,7 +450,7 @@ function liveMux(): void {
     if (args[0] === "list-panes") {
       const rows = db.prepare("SELECT pane_id FROM agents").all() as { pane_id: string }[];
       return {
-        stdout: rows.map((r) => `${r.pane_id}\tworking\t1000`).join("\n"),
+        stdout: rows.map((r) => `${r.pane_id}|working|1000`).join("\n"),
         stderr: "",
         exitCode: 0,
       };

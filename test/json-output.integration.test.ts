@@ -58,7 +58,7 @@ describe("--json output on read verbs", () => {
         return { stdout: "", stderr: "can't find session", exitCode: 1 };
       }
       if (args[0] === "list-panes" && args[1] === "-s") {
-        return { stdout: "@1\t%42\tworker-1\tpi", stderr: "", exitCode: 0 };
+        return { stdout: "@1|%42|pi", stderr: "", exitCode: 0 };
       }
       if (args[0] === "capture-pane") {
         return { stdout: "ready\n> ", stderr: "", exitCode: 0 };

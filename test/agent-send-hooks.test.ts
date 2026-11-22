@@ -73,8 +73,8 @@ beforeEach(() => {
               ? ""
               : args.includes("-s")
                 ? // The session's panes, as the reconcile before a wait lists them.
-                  "@1\t%1\tpi\n@1\t%3\tcodex\n"
-                : `%1\t\t\n%3\t${fake.option()}\t1\n`,
+                  "@1|%1|pi\n@1|%3|codex\n"
+                : `%1||\n%3|${fake.option()}|1\n`,
         stderr: "",
         exitCode: 0,
       },

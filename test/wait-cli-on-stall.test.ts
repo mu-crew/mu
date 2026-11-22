@@ -52,8 +52,8 @@ beforeEach(() => {
     stdout:
       args[0] === "list-panes"
         ? args[1] === "-a"
-          ? `%w1\tidle\t${Date.now() - 600_000}\n`
-          : "@1\t%w1\tagent\tsh\n"
+          ? `%w1|idle|${Date.now() - 600_000}\n`
+          : "@1|%w1|sh\n"
         : "",
     stderr: "",
     exitCode: 0,

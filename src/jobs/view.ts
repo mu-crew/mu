@@ -91,12 +91,14 @@ export async function readTmuxViews(): Promise<(paneId: string) => TmuxView> {
     "list-panes",
     "-a",
     "-F",
-    "#{pane_id}\t#{@murmur_pane_state}\t#{@murmur_pane_since}",
+    // tmux 3.8 turns literal tabs into `_`. Pane IDs, Murmur state tokens
+    // and timestamps contain no `|`.
+    "#{pane_id}|#{@murmur_pane_state}|#{@murmur_pane_since}",
   ]);
   const present = new Map<string, TmuxView>();
   for (const line of stdout.split("\n")) {
     if (line.length === 0) continue;
-    const [paneId, murmurState = "", murmurSince] = line.split("\t");
+    const [paneId, murmurState = "", murmurSince] = line.split("|");
     if (paneId !== undefined) present.set(paneId, { state: "present", murmurState, murmurSince });
   }
   return (paneId) => present.get(paneId) ?? { state: "absent" };

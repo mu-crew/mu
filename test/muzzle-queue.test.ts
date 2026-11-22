@@ -72,7 +72,7 @@ function scriptTmux(state: string, since: number): void {
   mux = installMux("tmux", async (args) => {
     const key = args.join(" ");
     if (key.startsWith("list-panes -a -F")) {
-      const rows = Object.keys(PANE_PIDS).map((p) => `${p}\t${state}\t${since}`);
+      const rows = Object.keys(PANE_PIDS).map((p) => `${p}|${state}|${since}`);
       return { stdout: rows.join("\n"), stderr: "", exitCode: 0 };
     }
     const m = /^display-message -t (\S+) -p/.exec(key);

@@ -215,7 +215,7 @@ describe("teardown", () => {
     remote();
     mux?.restore();
     mux = installMux("tmux", [
-      ["list-panes", "@1\t%1\t_mu\n"],
+      ["list-panes", "@1|%1|_mu\n"],
       ["kill-session", ""],
       ["display-message", "%1\n"],
     ]);
@@ -230,7 +230,7 @@ describe("teardown", () => {
     const rev = workstreamRevision(db, "auth");
     mux?.restore();
     mux = installMux("tmux", async (args) => {
-      if (args[0] === "list-panes") return { stdout: "@1\t%1\t_mu\n", stderr: "", exitCode: 0 };
+      if (args[0] === "list-panes") return { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 };
       if (args[0] === "kill-session") {
         insertAgent(db, { name: "racer", workstream: "auth", paneId: "%7" });
         return { stdout: "", stderr: "", exitCode: 0 };

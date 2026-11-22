@@ -265,7 +265,7 @@ describe("order: the session dies before any DB change", () => {
     insertAgent(db, { name: "w1", workstream: "ws", paneId: "%1" });
     mux?.restore();
     mux = installMux("tmux", async (args) => {
-      if (args[0] === "list-panes") return { stdout: "@1\t%1\t_mu\n", stderr: "", exitCode: 0 };
+      if (args[0] === "list-panes") return { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 };
       if (args[0] === "kill-session")
         return { stdout: "", stderr: "permission denied", exitCode: 1 };
       return { stdout: "", stderr: "unmocked", exitCode: 1 };
@@ -282,7 +282,7 @@ describe("order: the session dies before any DB change", () => {
     const rev = workstreamRevision(db, "ws");
     mux?.restore();
     mux = installMux("tmux", async (args) => {
-      if (args[0] === "list-panes") return { stdout: "@1\t%1\t_mu\n", stderr: "", exitCode: 0 };
+      if (args[0] === "list-panes") return { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 };
       if (args[0] === "kill-session") {
         insertAgent(db, { name: "racer", workstream: "ws", paneId: "%7" });
         return { stdout: "", stderr: "", exitCode: 0 };
@@ -531,7 +531,7 @@ describe("init over a torn-down name", () => {
     mux?.restore();
     mux = installMux("tmux", async (args) =>
       args[0] === "list-panes"
-        ? { stdout: "@1\t%1\t_mu\n", stderr: "", exitCode: 0 }
+        ? { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 }
         : { stdout: "", stderr: "", exitCode: 0 },
     );
     const r = await run("workstream", "init", "fresh");

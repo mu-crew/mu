@@ -45,7 +45,7 @@ const OK = { stdout: "", stderr: "", exitCode: 0 };
 const GONE_SESSION = { stdout: "", stderr: "can't find session", exitCode: 1 };
 const GONE_PANE = { stdout: "", stderr: "can't find pane", exitCode: 1 };
 const DENIED = { stdout: "", stderr: "permission denied", exitCode: 1 };
-const LIVE_SESSION = { stdout: "@1\t%1\t_mu\n", stderr: "", exitCode: 0 };
+const LIVE_SESSION = { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 };
 
 /** tmux where `list-panes` answers `session` and each pane id answers `alive`. */
 function tmux(opts: {
@@ -175,7 +175,7 @@ describe("moved_panes: liveness is the registered pane id, not session membershi
   });
 
   it("a pane inside the session is probed AFTER the kill; dead means its row goes", async () => {
-    use(tmux({ session: { ...OK, stdout: "@1\t%3\tpi\n" }, alive: [] }));
+    use(tmux({ session: { ...OK, stdout: "@1|%3|pi\n" }, alive: [] }));
     const r = await softTeardown(db, "ws");
     expect(r.killedMux).toBe(true);
     expect(r.orphanedAgents).toEqual([]);
@@ -393,7 +393,7 @@ describe("error_lines: each refusal is one stderr line", () => {
 //   `agent close` acts on rows of torn-down workstreams, or refuses loudly.
 
 /** tmux where `%pane` is alive only AFTER the session kill (moved during it). */
-function movedDuringKill(pane: string, sessionPanes = "@1\t%1\t_mu\n"): MuxExecutor {
+function movedDuringKill(pane: string, sessionPanes = "@1|%1|_mu\n"): MuxExecutor {
   let killed = false;
   return async (args) => {
     if (args[0] === "list-panes") return { ...OK, stdout: sessionPanes };

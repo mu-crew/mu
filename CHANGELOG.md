@@ -131,6 +131,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- tmux 3.8 no longer makes mu mistake live panes for missing ones. Pane,
+  window, and Murmur state queries use a separator tmux preserves.
 - Remote worktree prepare claims the path with an atomic `mkdir` and records
   its DB in `mu-prepared`. A competing spawn cannot remove the winner’s
   tree. Reclaim refuses with exit 4 if a different DB or an unknown owner

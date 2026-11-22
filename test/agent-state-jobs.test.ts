@@ -94,7 +94,7 @@ describe("an agent's mux reading decides presence through a job read", () => {
 
   it("tmux: a pane missing from the one list-panes read is gone, through readTmuxViews", async () => {
     setMuxForTests(tmuxBackend);
-    setTmuxExecutor(async () => ({ stdout: "%9\t\t\n", stderr: "", exitCode: 0 }));
+    setTmuxExecutor(async () => ({ stdout: "%9||\n", stderr: "", exitCode: 0 }));
     const r = (await readAgentStates([{ ...agent, paneId: "%1" }])).get(key);
     expect(r).toMatchObject({ state: "unknown", alive: false, reason: UNKNOWN_REASON.paneGone });
     expect(view.readTmuxViews).toHaveBeenCalledTimes(1);

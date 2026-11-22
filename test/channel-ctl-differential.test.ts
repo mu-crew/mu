@@ -96,7 +96,7 @@ it("ctl readings, their probes and CLOSE eligibility are exactly b577dfd8's", as
               calls.push(args[0] ?? "?");
               cannotTell();
               return {
-                stdout: pane === "absent" ? "" : "%1\tworking\t1\n",
+                stdout: pane === "absent" ? "" : "%1|working|1\n",
                 stderr: "",
                 exitCode: 0,
               };

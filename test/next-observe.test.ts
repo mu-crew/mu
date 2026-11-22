@@ -35,7 +35,7 @@ beforeEach(() => {
   setMuxForTests(tmuxBackend);
   setTmuxExecutor(async (args) =>
     args[0] === "list-panes"
-      ? { stdout: "%1\t\t\n", stderr: "", exitCode: 0 }
+      ? { stdout: "%1||\n", stderr: "", exitCode: 0 }
       : { stdout: "", stderr: "", exitCode: 0 },
   );
   setMurmurRunnerForTests(async () => null);

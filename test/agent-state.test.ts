@@ -160,7 +160,7 @@ describe("readMurmurRuntimes", () => {
   });
 
   it("shares one murmur call with the state read inside the cache window", async () => {
-    tmuxOutput("%1\t\t"); // no local option: the state read asks murmur too
+    tmuxOutput("%1||"); // no local option: the state read asks murmur too
     let calls = 0;
     setMurmurRunnerForTests(async () => {
       calls += 1;
@@ -172,7 +172,7 @@ describe("readMurmurRuntimes", () => {
   });
 
   it("stamps the cache when the answer came: a call that used the window is not stale at once", async () => {
-    tmuxOutput("%1\t\t");
+    tmuxOutput("%1||");
     let calls = 0;
     let clock = 1_000_000;
     const realNow = Date.now;
@@ -194,7 +194,7 @@ describe("readMurmurRuntimes", () => {
 
 describe("readAgentStates", () => {
   it("maps a local working state and its since time", async () => {
-    tmuxOutput("%1\tworking\t1790000000000");
+    tmuxOutput("%1|working|1790000000000");
 
     expect((await reading()).get(agentKey(agent))).toEqual({
       state: "busy",
@@ -211,7 +211,7 @@ describe("readAgentStates", () => {
     ["crashed", "needs_input"],
     ["error", "needs_input"],
   ] as const)("maps local %s to %s", async (token, state) => {
-    tmuxOutput(`%1\t${token}\tbad-time`);
+    tmuxOutput(`%1|${token}|bad-time`);
 
     expect((await reading()).get(agentKey(agent))).toEqual({
       state,
@@ -222,7 +222,7 @@ describe("readAgentStates", () => {
   });
 
   it("reports a pane absent from the one tmux listing as gone", async () => {
-    tmuxOutput("%2\tworking\t1790000000000");
+    tmuxOutput("%2|working|1790000000000");
 
     expect((await reading()).get(agentKey(agent))).toEqual({
       state: "unknown",
@@ -234,7 +234,7 @@ describe("readAgentStates", () => {
   });
 
   it("uses one fresh matching remote row when the local option is empty", async () => {
-    tmuxOutput("%1\t\t");
+    tmuxOutput("%1||");
     setMurmurRunnerForTests(async () => remoteRow());
 
     expect((await reading()).get(agentKey(agent))).toEqual({
@@ -246,7 +246,7 @@ describe("readAgentStates", () => {
   });
 
   it("rejects ambiguous remote rows", async () => {
-    tmuxOutput("%1\t\t");
+    tmuxOutput("%1||");
     const row = JSON.parse(remoteRow()).panes[0];
     setMurmurRunnerForTests(async () => JSON.stringify({ panes: [row, row] }));
 
@@ -260,7 +260,7 @@ describe("readAgentStates", () => {
   });
 
   it("rejects a stale remote row", async () => {
-    tmuxOutput("%1\t\t");
+    tmuxOutput("%1||");
     setMurmurRunnerForTests(async () => remoteRow({ freshness: "stale" }));
 
     expect((await reading()).get(agentKey(agent))).toEqual({
@@ -273,7 +273,7 @@ describe("readAgentStates", () => {
   });
 
   it("distinguishes a missing executable from a missing extension", async () => {
-    tmuxOutput("%1\t\t");
+    tmuxOutput("%1||");
     setMurmurRunnerForTests(async () => null);
 
     expect((await reading()).get(agentKey(agent))).toEqual({
@@ -296,7 +296,7 @@ describe("readAgentStates", () => {
   });
 
   it("a murmur status that timed out reads as its own explained unknown, never no row or missing", async () => {
-    tmuxOutput("%1\t\t");
+    tmuxOutput("%1||");
     installMurmur();
     setMurmurRunnerForTests(async () => ({ timedOut: true }));
 
@@ -311,7 +311,7 @@ describe("readAgentStates", () => {
   });
 
   it("does not run murmur when every agent has a local state", async () => {
-    tmuxOutput("%1\tworking\t1790000000000");
+    tmuxOutput("%1|working|1790000000000");
     let calls = 0;
     setMurmurRunnerForTests(async () => {
       calls += 1;
@@ -323,7 +323,7 @@ describe("readAgentStates", () => {
   });
 
   it("caches the remote read for 10 seconds", async () => {
-    tmuxOutput("%1\t\t");
+    tmuxOutput("%1||");
     let calls = 0;
     setMurmurRunnerForTests(async () => {
       calls += 1;
@@ -464,7 +464,7 @@ describe("murmurAvailable(cli): per harness (spec D13)", () => {
 
   it("an unreported claude agent reads `hooks not installed`, a pi agent `no row`", async () => {
     installMurmur();
-    tmuxOutput("%1\t\t\n%2\t\t");
+    tmuxOutput("%1||\n%2||");
     setMurmurRunnerForTests(async () => null);
     const claude: StateAgentRef = {
       name: "w2",
@@ -479,7 +479,7 @@ describe("murmurAvailable(cli): per harness (spec D13)", () => {
 
   it("murmur answering with no row still names the harness's missing wiring", async () => {
     installMurmur();
-    tmuxOutput("%1\t\t\n%2\t\t");
+    tmuxOutput("%1||\n%2||");
     setMurmurRunnerForTests(async () => JSON.stringify({ panes: [] }));
     const claude: StateAgentRef = {
       name: "w2",

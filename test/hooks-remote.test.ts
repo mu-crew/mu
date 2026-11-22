@@ -100,8 +100,8 @@ beforeEach(() => {
             : args[0] !== "list-panes"
               ? ""
               : args.includes("-s")
-                ? "@1\t%3\tssh\n"
-                : `%3\t${fake.option()}\t1\n`,
+                ? "@1|%3|ssh\n"
+                : `%3|${fake.option()}|1\n`,
         stderr: "",
         exitCode: 0,
       },

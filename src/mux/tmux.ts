@@ -245,6 +245,8 @@ async function sessionExistsOrMayStart(name: string): Promise<boolean> {
  */
 const DETACHED_SIZE = ["-x", "200", "-y", "50"];
 
+// In tmux 3.8 a literal tab in a format becomes `_`. Use `|` after fixed
+// fields; for free-form names and commands keep the entire final field.
 /** `[id, name]` of every window in `session`. */
 async function listWindows(session: string): Promise<{ id: string; name: string }[]> {
   const out = await tmux([
@@ -252,14 +254,14 @@ async function listWindows(session: string): Promise<{ id: string; name: string 
     "-t",
     exactSessionTarget(session),
     "-F",
-    "#{window_id}\t#{window_name}",
+    "#{window_id}|#{window_name}",
   ]);
   const windows: { id: string; name: string }[] = [];
   for (const line of out.split("\n")) {
     if (line.length === 0) continue;
-    const [id, name] = line.split("\t");
-    if (!id || name === undefined) continue;
-    windows.push({ id, name });
+    const [id, ...name] = line.split("|");
+    if (!id || name.length === 0) continue;
+    windows.push({ id, name: name.join("|") });
   }
   return windows;
 }
@@ -415,7 +417,7 @@ export async function listPanes(session: string): Promise<MuxPane[]> {
     "-t",
     exactSessionTarget(session),
     "-F",
-    "#{window_id}\t#{pane_id}\t#{pane_current_command}",
+    "#{window_id}|#{pane_id}|#{pane_current_command}",
   ];
   const result = await currentExecutor(args);
   if (result.exitCode !== 0) {
@@ -430,9 +432,9 @@ export async function listPanes(session: string): Promise<MuxPane[]> {
   const panes: MuxPane[] = [];
   for (const line of result.stdout.split("\n")) {
     if (line.length === 0) continue;
-    const [windowId, paneId, command] = line.split("\t");
-    if (!windowId || !paneId || command === undefined) continue;
-    panes.push({ paneId, command, windowId });
+    const [windowId, paneId, ...command] = line.split("|");
+    if (!windowId || !paneId || command.length === 0) continue;
+    panes.push({ paneId, command: command.join("|"), windowId });
   }
   return panes;
 }

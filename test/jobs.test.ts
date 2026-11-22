@@ -97,7 +97,7 @@ describe("view reads", () => {
   });
 
   it("readTmuxViews: one list-panes -a; a pane it did not list is absent", async () => {
-    const mux = installMux("tmux", [["list-panes -a", "%1\tworking\t1700000000\n%2\t\t\n"]]);
+    const mux = installMux("tmux", [["list-panes -a", "%1|working|1700000000\n%2||\n"]]);
     try {
       const view = await readTmuxViews();
       expect(view("%1")).toEqual({

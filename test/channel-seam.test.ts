@@ -102,7 +102,7 @@ describe("at run time, `alive` is the job's alone", () => {
     });
     // The batched view read: %1 present while it runs, else gone.
     setTmuxExecutor(async () => ({
-      stdout: paneRuns ? "%1\t\t\n" : "",
+      stdout: paneRuns ? "%1||\n" : "",
       stderr: "",
       exitCode: 0,
     }));

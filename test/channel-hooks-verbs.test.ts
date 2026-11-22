@@ -68,7 +68,7 @@ beforeEach(() => {
       (args[0] === "display-message"
         ? displayMessage(args)
         : {
-            stdout: args[0] === "list-panes" ? `%3\t${fake.option()}\t2000\n` : "",
+            stdout: args[0] === "list-panes" ? `%3|${fake.option()}|2000\n` : "",
             stderr: "",
             exitCode: 0,
           }),

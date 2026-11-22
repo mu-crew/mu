@@ -37,7 +37,7 @@ function tmuxFake(sessions: Sessions, killed: string[]) {
       case "list-panes": {
         const panes = sessions[target];
         if (panes === undefined) return missing(target);
-        return ok(panes.map((cmd, i) => `@1\t%${i}\t${cmd}`).join("\n"));
+        return ok(panes.map((cmd, i) => `@1|%${i}|${cmd}`).join("\n"));
       }
       case "kill-session":
         if (!(target in sessions)) return missing(target);

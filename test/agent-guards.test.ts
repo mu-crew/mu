@@ -392,7 +392,7 @@ describe("the other agent-row writers carry the identity", () => {
     insertAgent(db, { name: "mw", workstream: "auth", paneId: "%1" });
     touchSock("mw");
     use(async (args) => {
-      if (args[0] === "list-panes") return { stdout: "@1\t%1\t_mu\n", stderr: "", exitCode: 0 };
+      if (args[0] === "list-panes") return { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 };
       if (args[0] === "kill-session") {
         deleteAgent(db, "mw", "auth");
         insertAgent(db, { name: "mw", workstream: "auth", paneId: "%2" });
@@ -419,7 +419,7 @@ describe("teardown: the same pane id re-registered during the kill", () => {
     task("t1");
     insertAgent(db, { name: "mw", workstream: "auth", paneId: "%1" });
     use(async (args) => {
-      if (args[0] === "list-panes") return { stdout: "@1\t%1\t_mu\n", stderr: "", exitCode: 0 };
+      if (args[0] === "list-panes") return { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 };
       if (args[0] === "kill-session") {
         deleteAgent(db, "mw", "auth");
         insertAgent(db, { name: "mw", workstream: "auth", paneId: "%1" });

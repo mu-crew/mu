@@ -34,7 +34,7 @@ afterEach(() => {
 
 /** The mux answers a pane listing with worker-1's pane alive. */
 const paneList = async (args: readonly string[]) => ({
-  stdout: args[0] === "list-panes" ? "@1\t%7\tworker-1\tclaude" : "",
+  stdout: args[0] === "list-panes" ? "@1|%7|claude" : "",
   stderr: "",
   exitCode: 0,
 });

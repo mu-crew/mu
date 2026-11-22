@@ -62,9 +62,7 @@ function mockTmux(state: MockState): { calls: string[][]; executor: TmuxExecutor
     }
     if (verb === "list-panes") {
       const target = (args[args.indexOf("-t") + 1] ?? "").replace(/^=(.*):$/, "$1");
-      return state.sessions.has(target)
-        ? ok("@1\t%1\t_mu\n")
-        : fail(`can't find session: ${target}`);
+      return state.sessions.has(target) ? ok("@1|%1|_mu\n") : fail(`can't find session: ${target}`);
     }
     // A registered pane outside the session is asked about by id: none lives here.
     if (verb === "display-message") return fail("can't find pane");

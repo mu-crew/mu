@@ -255,7 +255,7 @@ describe("--until-text reads a pane only where no ctl text exists", () => {
 
   it("a pi agent whose socket answers is NEVER read from its pane (its lastText is authoritative)", async () => {
     mux = installMux("tmux", [
-      ["list-panes", "%7\t\t\n%8\t\t\n"],
+      ["list-panes", "%7||\n%8||\n"],
       ["capture-pane", PANE],
     ]);
     insertAgent(env.db, { name: "w1", workstream: "w", paneId: "%8", cli: "pi" });
@@ -272,7 +272,7 @@ describe("--until-text reads a pane only where no ctl text exists", () => {
 
   it("an agent with no answering socket is read from its pane, and the reading says so", async () => {
     mux = installMux("tmux", [
-      ["list-panes", "%7\t\t\n%8\t\t\n"],
+      ["list-panes", "%7||\n%8||\n"],
       ["capture-pane", PANE],
     ]);
     insertAgent(env.db, { name: "gate", workstream: "w", paneId: "%7", cli: "sh" });

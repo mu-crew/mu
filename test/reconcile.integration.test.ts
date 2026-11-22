@@ -37,7 +37,7 @@ function mockTmux(panes: FakePane[]): { calls: string[][]; executor: TmuxExecuto
     const verb = args[0];
 
     if (verb === "list-panes" && args[1] === "-s") {
-      const stdout = panes.map((p) => `${p.windowId}\t${p.paneId}\t${p.command}`).join("\n");
+      const stdout = panes.map((p) => `${p.windowId}|${p.paneId}|${p.command}`).join("\n");
       return ok(stdout);
     }
 

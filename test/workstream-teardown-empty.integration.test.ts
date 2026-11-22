@@ -77,9 +77,7 @@ function mockTmux(state: MockState): TmuxExecutor {
     }
     if (verb === "list-panes") {
       const target = (args[args.indexOf("-t") + 1] ?? "").replace(/^=(.*):$/, "$1");
-      return state.sessions.has(target)
-        ? ok("@1\t%1\t_mu\n")
-        : fail(`can't find session: ${target}`);
+      return state.sessions.has(target) ? ok("@1|%1|_mu\n") : fail(`can't find session: ${target}`);
     }
     if (verb === "list-sessions") {
       if (state.sessions.size === 0) return fail("no server running");

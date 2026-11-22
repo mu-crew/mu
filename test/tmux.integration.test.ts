@@ -4,6 +4,7 @@
 // throwaway session so we never disturb the user's panes.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { readTmuxViews } from "../src/jobs/view.js";
 import {
   capture,
   ensureSession,
@@ -76,8 +77,8 @@ describeIfTmux("tmux integration (real tmux server)", () => {
 
   it("spawnAgent into an existing window splits it; a new window name adds a window", async () => {
     await ensureSession(session);
-    const first = await spawn("Backend");
-    const split = await spawn("Backend");
+    const first = await spawn("Backend|API");
+    const split = await spawn("Backend|API");
     const other = await spawn("Frontend");
     expect(new Set([first, split, other]).size).toBe(3);
     const panes = await listPanes(session);
@@ -87,6 +88,21 @@ describeIfTmux("tmux integration (real tmux server)", () => {
     // `_mu` pane + Backend's two + Frontend's one, each carrying a window id.
     expect(panes).toHaveLength(4);
     for (const p of panes) expect(p.windowId).toMatch(/^@\d+$/);
+  });
+
+  it("reads pane IDs and Murmur options from real tmux formats, including unset options", async () => {
+    const pane = await spawn("worker");
+    await tmux(["set-option", "-p", "-t", pane, "@murmur_pane_state", "working"]);
+    await tmux(["set-option", "-p", "-t", pane, "@murmur_pane_since", "1700000000000"]);
+    const other = await spawn("other");
+
+    const lookup = await readTmuxViews();
+    expect(lookup(pane)).toEqual({
+      state: "present",
+      murmurState: "working",
+      murmurSince: "1700000000000",
+    });
+    expect(lookup(other)).toEqual({ state: "present", murmurState: "", murmurSince: "" });
   });
 
   it("spawnAgent passes env to the pane", async () => {

@@ -89,7 +89,7 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       const targetFlag = args.indexOf("-t");
       const target = sessionFromTarget(targetFlag >= 0 ? args[targetFlag + 1] : undefined);
       const wins = state.windows.get(target) ?? [];
-      return ok(wins.map((w) => `${w.id}\t${w.name}`).join("\n") + (wins.length ? "\n" : ""));
+      return ok(wins.map((w) => `${w.id}|${w.name}`).join("\n") + (wins.length ? "\n" : ""));
     }
 
     if (verb === "new-window") {
@@ -154,9 +154,7 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
     }
 
     if (verb === "list-panes" && args[1] === "-a") {
-      return ok(
-        [...state.panes.values()].map((pane) => `${pane.paneId}\tworking\t1000`).join("\n"),
-      );
+      return ok([...state.panes.values()].map((pane) => `${pane.paneId}|working|1000`).join("\n"));
     }
 
     if (verb === "list-panes" && args[1] === "-s") {
@@ -166,7 +164,7 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
       const lines: string[] = [];
       for (const pane of state.panes.values()) {
         if (sessionWindowIds.has(pane.windowId)) {
-          lines.push(`${pane.windowId}\t${pane.paneId}\t${pane.command}`);
+          lines.push(`${pane.windowId}|${pane.paneId}|${pane.command}`);
         }
       }
       return ok(lines.join("\n"));

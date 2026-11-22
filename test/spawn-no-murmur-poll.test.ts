@@ -64,7 +64,7 @@ describe("spawn does not poll murmur", () => {
       // murmur's pane options are read through `list-panes -a`.
       if (args[0] === "list-panes" && args[1] === "-a") {
         listCalls += 1;
-        return { stdout: "%1\t\t", stderr: "", exitCode: 0 };
+        return { stdout: "%1||", stderr: "", exitCode: 0 };
       }
       return await fake.executor(args);
     });

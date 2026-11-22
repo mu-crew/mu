@@ -91,12 +91,12 @@ describe("mu task wait --on-stall warn|exit", () => {
     const executor: TmuxExecutor = async (args) => {
       if (args[0] === "list-panes" && args[1] === "-a") {
         const since = Date.now() - 10 * 60_000;
-        const lines = [...liveAgentPaneIds].map((paneId) => `${paneId}\tidle\t${since}`).join("\n");
+        const lines = [...liveAgentPaneIds].map((paneId) => `${paneId}|idle|${since}`).join("\n");
         return { stdout: lines, stderr: "", exitCode: 0 };
       }
       // list-panes for `mu-<ws>`: synthesize one row per live pane id.
       if (args[0] === "list-panes") {
-        const lines = [...liveAgentPaneIds].map((paneId) => `@1\t${paneId}\tagent\tsh`).join("\n");
+        const lines = [...liveAgentPaneIds].map((paneId) => `@1|${paneId}|sh`).join("\n");
         return { stdout: `${lines}\n`, stderr: "", exitCode: 0 };
       }
       // capture-pane: empty scrollback → detector falls through to

@@ -642,7 +642,7 @@ describe("attention: trouble across every workstream, filters ignored", () => {
 
   it("flags a dead agent (pane gone) but not one whose state source merely cannot say", async () => {
     mux.restore();
-    mux = installMux("tmux", [["list-panes", "%2\t\t\n"]]);
+    mux = installMux("tmux", [["list-panes", "%2||\n"]]);
     insertAgent(db, { name: "dead", workstream: "ws", paneId: "%1" });
     insertAgent(db, { name: "mute", workstream: "ws", paneId: "%2" });
     const snap = await loadDashboard(db, { caller: null });
