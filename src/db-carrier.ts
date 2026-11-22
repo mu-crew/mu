@@ -25,11 +25,13 @@ export const CARRIER_JOBS_DDL = `
 -- provider host's record), 'tree_base' and 'collect_repo' (its tree's base, the local
 -- repo collects fetch into), the final-collect flag and its generation (D10), and an
 -- at-start kind's first delivery ('first_msg_id', 'first_inc': D8). 'collect_delay_ms': the
--- in-life collect's backoff behind 'collect_next_at'. 'view_state': a file kind's view (its
--- dispatcher, ladder placement §10): 'none' (never asked for), 'opening' (asked for, its
--- pane id not recorded), 'open' (its pane is 'pane_id'); NULL is a record older than the
--- column, whose view is unknown. Only an 'open' pane proven gone, or 'none', lets a close
--- stop the job and drop the record and its job file (src/host-policy.ts proveViewGone).
+-- in-life collect's backoff behind 'collect_next_at'. 'wire_state', 'wire_rev', 'view_server':
+-- a file kind's record as ONE state machine (ladder placement §10, src/carrier-wire.ts):
+-- 'claimed' (no view: never asked for, or proven gone), 'dispatching' (a view asked for, its
+-- pane id not recorded), 'bound' (its view is 'pane_id' on mux server 'view_server'),
+-- 'released' (its view proven gone and its stop begun: no view opens again). Every
+-- transition is a compare-and-swap on 'wire_rev'. NULL is a record older than the column:
+-- unknown, never 'claimed'. Release and abandon delete the row.
 CREATE TABLE IF NOT EXISTS carrier_jobs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   token         TEXT NOT NULL UNIQUE,
@@ -62,7 +64,9 @@ CREATE TABLE IF NOT EXISTS carrier_jobs (
   first_msg_id  TEXT,
   first_inc     TEXT,
   collect_delay_ms INTEGER,
-  view_state    TEXT CHECK (view_state IN ('none', 'opening', 'open'))
+  wire_state    TEXT CHECK (wire_state IN ('claimed', 'dispatching', 'bound', 'released')),
+  wire_rev      INTEGER NOT NULL DEFAULT 0,
+  view_server   TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_jobs_name ON carrier_jobs (workstream, name, ordinal);
 `;

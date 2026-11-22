@@ -79,6 +79,8 @@ export function pluginHostFixture(opts: { handshakeInProcess?: boolean } = {}): 
       },
       listPanes: async () => [...h.panes.keys()].map((paneId) => ({ paneId, command: "sh" })),
       capture: async () => "",
+      // One stub server: a file view's proof asks only the server it was bound on.
+      serverIdentity: async () => "1|1",
       ...over,
     });
   };

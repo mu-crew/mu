@@ -8,18 +8,14 @@
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { getAgent } from "../agents.js";
-import {
-  type CarrierJob,
-  getCarrierJobByAgent,
-  markViewOpening,
-  recordViewPane,
-} from "../carrier-jobs.js";
+import { type CarrierJob, getCarrierJobByAgent } from "../carrier-jobs.js";
+import { bindView, dispatchView } from "../carrier-wire.js";
 import { expectsCtl } from "../channels/select.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { proveViewGone } from "../host-policy.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
-import { viewPresent } from "../jobs/view.js";
+import { viewPresent, viewServer } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -32,7 +28,7 @@ import { withAgentLock } from "./lock.js";
 import { closeCommand, ReattachFailedError, ReattachRefusedError } from "./reattach-check.js";
 import { repointReceipts } from "./receipts.js";
 import { withSpawnLock } from "./spawn-lock.js";
-import { jobRecordActor, viewLine } from "./spawn-plugin.js";
+import { birthServer, jobRecordActor, viewLine } from "./spawn-plugin.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
 
 /** The agent's detached plugin job: its record and kind; undefined for any other agent. */
@@ -161,9 +157,24 @@ export async function reattachView(
             }
           : {}),
       });
-      // Recorded before the mux is asked, in this locked section: a backend may open the view
-      // and fail before reporting its id, and until a pane is recorded the view is unknown.
-      if (file && !markViewOpening(db, d.r.token)) throw new AgentReplacedError(name, ws);
+      // `dispatching` before the mux is asked, in this locked section, on the revision the proof
+      // above read: a backend may open the view and fail before reporting its id (unknown until
+      // bound), and a rollback that began releasing the record since (it runs unlocked) wins.
+      const rev = file ? dispatchView(db, d.r, ["claimed", "bound"]) : undefined;
+      if (file && rev === undefined) {
+        throw new ReattachRefusedError(
+          name,
+          [
+            {
+              code: "carrier",
+              detail:
+                "its job record moved during the reattach (a close or rollback is releasing it)",
+            },
+          ],
+          closeCommand(db, ws, name),
+        );
+      }
+      const before = rev === undefined ? undefined : await viewServer(mux).catch(() => undefined);
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
         onCreated = res;
@@ -183,9 +194,15 @@ export async function reattachView(
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
-      // The attempted view is the record's from here (a file kind): its pane is what a close
-      // or the next reattach must prove gone, whatever becomes of the row's pane below.
-      if (file) recordViewPane(db, d.r.token, pid);
+      // The attempted view is the record's from here (a file kind), with the server it opened
+      // on: what a close or the next reattach must prove gone, whatever becomes of the row below.
+      if (rev !== undefined) {
+        const server = await birthServer(mux, before);
+        if (bindView(db, { token: d.r.token, wireRev: rev }, pid, server) === undefined) {
+          await mux.killPane(pid).catch(() => {});
+          throw new AgentReplacedError(name, ws);
+        }
+      }
       await markPaneHost(mux, pid, d.r.host);
       try {
         // The backend's own completion: a view that failed is never the row's pane.
@@ -195,9 +212,7 @@ export async function reattachView(
             .prepare("UPDATE agents SET pane_id = ?, updated_at = ? WHERE id = ? AND pane_id = ?")
             .run(pid, new Date().toISOString(), d.agentId, d.paneId);
           const job = db
-            .prepare(
-              `UPDATE carrier_jobs SET pane_id = ?${file ? ", view_state = 'open'" : ""} WHERE token = ? AND agent_id = ?`,
-            )
+            .prepare("UPDATE carrier_jobs SET pane_id = ? WHERE token = ? AND agent_id = ?")
             .run(pid, d.r.token, d.agentId);
           if (row.changes !== 1 || job.changes !== 1) throw new AgentReplacedError(name, ws);
           // The spawn receipts follow the view, as a lookup recovery's do: a replay still

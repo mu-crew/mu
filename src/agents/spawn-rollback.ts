@@ -24,7 +24,7 @@ import { rollbackRemoteWorktree } from "./spawn-remote.js";
 function viewOpening(db: Db, carrier: { token: string } | undefined): boolean {
   if (carrier === undefined) return false;
   try {
-    return getCarrierJob(db, carrier.token)?.viewState === "opening";
+    return getCarrierJob(db, carrier.token)?.wireState === "dispatching";
   } catch {
     return true;
   }
@@ -42,7 +42,7 @@ function reservationOf(db: Db, incarnation: number | undefined): { token: string
  * pane, no agent row) never masks the original failure.
  *
  * `paneId` is `undefined` when spawnAgent itself threw before returning a
- * pane id — there's nothing to kill. A carrier record whose view is `opening` (a file
+ * pane id — there's nothing to kill. A carrier record whose view is `dispatching` (a file
  * kind's view asked for, no pane id recorded) is not proven gone (row, tree and reservation kept). `staged` is set when prestageWorktree
  * succeeded: once the pane is proven gone, the worktree this spawn made goes
  * through the close rule (`releaseWorktree`; its pane may have worked in it):
@@ -74,7 +74,7 @@ export async function rollbackSpawn(
 ): Promise<{ gone: boolean; heldBy?: string }> {
   // Is the pane (the host transport) proven gone? A channel is freed only on that proof.
   // No pane id is that proof only when no view open was attempted: a backend may open the
-  // window and then fail before reporting its id (the record's view is then `opening`).
+  // window and then fail before reporting its id (the record's view is then `dispatching`).
   let paneGone = paneId === undefined && !viewOpening(db, carrier);
   let heldBy: string | undefined;
   if (paneId !== undefined) {

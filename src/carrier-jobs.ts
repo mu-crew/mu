@@ -24,8 +24,8 @@
 import { randomUUID } from "node:crypto";
 import type { Db } from "./db.js";
 
-/** A file kind's view on its record: see `CarrierJob.viewState`. */
-export type ViewState = "none" | "opening" | "open";
+/** A file kind's record in its wire state machine (src/carrier-wire.ts): see `CarrierJob.wireState`. */
+export type WireState = "claimed" | "dispatching" | "bound" | "released";
 
 /** Whether a carrier may have been launched: 'none' until just before the mux is asked for the pane. */
 export type CarrierLaunch = "none" | "intent";
@@ -83,11 +83,17 @@ export interface CarrierJob {
   firstMsgId: string | null;
   firstInc: string | null;
   /**
-   * A file kind's view, its job's dispatcher (ladder placement §10): never asked for, asked for
-   * with no pane id recorded yet, or open as `paneId`; null on a record older than the column
-   * (unknown). Read through `proveViewGone` (src/host-policy.ts), never directly.
+   * A file kind's record in its wire state machine (ladder placement §10, src/carrier-wire.ts):
+   * `claimed` (no view), `dispatching` (a view asked for, no pane id recorded), `bound` (its
+   * view is `paneId` on `viewServer`), `released` (proven gone, its stop begun); null on a record
+   * older than the column (unknown). Moved only by src/carrier-wire.ts; its view is read
+   * through `proveViewGone` (src/host-policy.ts).
    */
-  viewState: ViewState | null;
+  wireState: WireState | null;
+  /** The revision every wire transition compares and bumps. */
+  wireRev: number;
+  /** The mux server a bound view was opened on (`viewServer`, src/jobs/view.ts); null: unknown. */
+  viewServer: string | null;
 }
 
 interface Raw {
@@ -120,7 +126,9 @@ interface Raw {
   collect_delay_ms: number | null;
   first_msg_id: string | null;
   first_inc: string | null;
-  view_state: ViewState | null;
+  wire_state: WireState | null;
+  wire_rev: number;
+  view_server: string | null;
 }
 
 const toJob = (r: Raw): CarrierJob => ({
@@ -153,7 +161,9 @@ const toJob = (r: Raw): CarrierJob => ({
   collectDelayMs: r.collect_delay_ms,
   firstMsgId: r.first_msg_id,
   firstInc: r.first_inc,
-  viewState: r.view_state,
+  wireState: r.wire_state,
+  wireRev: r.wire_rev,
+  viewServer: r.view_server,
 });
 
 const now = (): string => new Date().toISOString();
@@ -181,8 +191,8 @@ export function reserveCarrierJob(
   try {
     const r = db
       .prepare(
-        `INSERT INTO carrier_jobs (token, workstream, name, host, host_stop, kind, plugin, launch, creator_pid, creator_start, created_at, view_state)
-         SELECT ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, 'none'
+        `INSERT INTO carrier_jobs (token, workstream, name, host, host_stop, kind, plugin, launch, creator_pid, creator_start, created_at, wire_state)
+         SELECT ?, ?, ?, ?, ?, ?, ?, 'none', ?, ?, ?, 'claimed'
          WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs WHERE workstream = ? AND name = ?)`,
       )
       .run(
@@ -366,34 +376,14 @@ export function carrierJobsOfPlugin(db: Db, name: string): CarrierJob[] {
 }
 
 /**
- * Written under the agent lock, in the same section as the mux call that opens a file kind's
- * view (ladder placement §10): the view is its job's dispatcher, and a backend may open it and
- * fail before reporting its id. False when the record is gone (a close released it): no view
- * may be opened for it then. Cleared only by a recorded pane (`recordCarrierPane`,
- * `recordViewPane`); until then `proveViewGone` answers unknown.
+ * The carrier's pane, the moment the mux reports it. Never overwrites another pane. A file
+ * kind's view is recorded by its wire transition instead (`bindView`, src/carrier-wire.ts).
  */
-export function markViewOpening(db: Db, token: string): boolean {
-  return (
-    db.prepare("UPDATE carrier_jobs SET view_state = 'opening' WHERE token = ?").run(token)
-      .changes === 1
-  );
-}
-
-/** A reattach's replacement view reported `paneId`: the record's view is that pane now. */
-export function recordViewPane(db: Db, token: string, paneId: string): boolean {
-  return (
-    db
-      .prepare("UPDATE carrier_jobs SET pane_id = ?, view_state = 'open' WHERE token = ?")
-      .run(paneId, token).changes === 1
-  );
-}
-
-/** The carrier's pane, the moment the mux reports it. Never overwrites another pane. */
 export function recordCarrierPane(db: Db, token: string, paneId: string): boolean {
   return (
     db
       .prepare(
-        "UPDATE carrier_jobs SET pane_id = ?, view_state = 'open' WHERE token = ? AND (pane_id IS NULL OR pane_id = ?)",
+        "UPDATE carrier_jobs SET pane_id = ? WHERE token = ? AND (pane_id IS NULL OR pane_id = ?)",
       )
       .run(paneId, token, paneId).changes === 1
   );
@@ -472,23 +462,30 @@ export function keepCarrierJobForTree(
 }
 
 /**
- * Release exactly this reservation, compare-and-set on its token and handle (null
- * included): only after its stop succeeded and its job file and tree are cleaned up, or
- * by its creator when nothing was launched. False when it is gone or holds another
- * handle now.
+ * Release exactly this reservation, compare-and-set on its token, handle (null included) and
+ * wire revision: only after its stop succeeded and its job file and tree are cleaned up, or
+ * by its creator when nothing was launched. A file kind's record goes only from `claimed` (no
+ * view) or `released` (src/carrier-wire.ts), never with a view dispatching or bound. False
+ * when it is gone, holds another handle, or moved on since `job` was read.
  */
 export function releaseCarrierJob(db: Db, job: CarrierJob): boolean {
   return (
-    db.prepare("DELETE FROM carrier_jobs WHERE token = ? AND job IS ?").run(job.token, job.job)
-      .changes === 1
+    db
+      .prepare(
+        "DELETE FROM carrier_jobs WHERE token = ? AND job IS ? AND wire_rev = ? AND (wire_state IS NULL OR wire_state IN ('claimed', 'released'))",
+      )
+      .run(job.token, job.job, job.wireRev).changes === 1
   );
 }
 
 /**
  * Drop a reservation WITHOUT stopping its job (`agent close --abandon-job`): the only way
- * a launched one leaves without a stop. The caller emits the event naming host, handle
- * and job file, and leaves the file in place.
+ * a launched one leaves without a stop, from any wire state (the operator's override). The
+ * caller emits the event naming host, handle and job file, and leaves the file in place.
  */
 export function abandonCarrierJob(db: Db, job: CarrierJob): boolean {
-  return releaseCarrierJob(db, job);
+  return (
+    db.prepare("DELETE FROM carrier_jobs WHERE token = ? AND job IS ?").run(job.token, job.job)
+      .changes === 1
+  );
 }

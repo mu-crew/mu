@@ -119,9 +119,12 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
       ["first_inc", "TEXT"],
       // P6d: the in-life collect's current backoff, doubled per failure (D10).
       ["collect_delay_ms", "INTEGER"],
-      // Ladder placement §10: a file kind's view (src/carrier-jobs.ts). No default on purpose:
-      // an older record's view is unknown (NULL), never "none".
-      ["view_state", "TEXT CHECK (view_state IN ('none', 'opening', 'open'))"],
+      // Ladder placement §10: a file kind's wire state, its revision and its bound view's mux
+      // server (src/carrier-wire.ts). No default state on purpose: an older record is unknown
+      // (NULL), never "claimed".
+      ["wire_state", "TEXT CHECK (wire_state IN ('claimed', 'dispatching', 'bound', 'released'))"],
+      ["wire_rev", "INTEGER NOT NULL DEFAULT 0"],
+      ["view_server", "TEXT"],
     ] as const
   ).map(([c, ddl]) => ["carrier_jobs", c, ddl] as const),
   // Plugins spec D5: the host identity a recovery pins (src/db-recovery.ts); backfilled from

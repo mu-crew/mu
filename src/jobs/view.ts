@@ -15,6 +15,10 @@
 //                Never throws: a probe that fails is `unknown`.
 //   viewRunning  does the pane's command still run? Channel admission and a
 //                job's liveness. Throws when the probe fails.
+//
+// A view a record keeps for later proof (a file kind's dispatcher) also records
+// the mux server it opened on (`viewServer`), and is asked about only there
+// (`viewOnServer`): another server's answer is no proof.
 
 import { activeMux } from "../mux/detect.js";
 import type { MuxBackend, MuxPane, MuxPaneStatus, PaneResult } from "../mux/types.js";
@@ -32,6 +36,50 @@ const message = (e: unknown): string => (e instanceof Error ? e.message : String
  */
 export async function viewPresent(paneId: string, mux?: MuxBackend): Promise<boolean> {
   return (mux ?? (await activeMux())).paneAlive(paneId);
+}
+
+/**
+ * The mux server a view opened now is on: the backend's name, and where the backend names its
+ * server (tmux: `<pid>|<start time>`) that identity after a `:`. Undefined when such a backend
+ * names none (no server answers): a view recorded so is unknown. Throws when the probe fails.
+ */
+export async function viewServer(mux?: MuxBackend): Promise<string | undefined> {
+  const m = mux ?? (await activeMux());
+  if (m.serverIdentity === undefined) return m.name;
+  const id = await m.serverIdentity();
+  return id === undefined ? undefined : `${m.name}:${id}`;
+}
+
+/** A recorded view as seen from here: present, absent, or on a server this invocation cannot ask. */
+export type ViewOnServer = "present" | "absent" | "elsewhere";
+
+/**
+ * View presence, asked only of the server the view was recorded on (`viewServer`). The backend
+ * or server mu drives now being another (another `MU_TMUX_SOCKET`, a restarted server, another
+ * backend) is `elsewhere`, never absence: except that a recorded server whose process is gone
+ * took its panes with it (`absent`). Throws when a probe fails.
+ */
+export async function viewOnServer(
+  paneId: string,
+  server: string,
+  mux?: MuxBackend,
+): Promise<ViewOnServer> {
+  const m = mux ?? (await activeMux());
+  const now = await viewServer(m);
+  if (now === server) return (await m.paneAlive(paneId)) ? "present" : "absent";
+  return serverProcessGone(server) ? "absent" : "elsewhere";
+}
+
+/** A server identity leads with its process id (`tmux:<pid>|…`): ESRCH proves it gone. */
+function serverProcessGone(server: string): boolean {
+  const pid = Number(/^[^:]+:(\d+)\|/.exec(server)?.[1]);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "ESRCH";
+  }
 }
 
 /**

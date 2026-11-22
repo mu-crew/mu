@@ -21,6 +21,7 @@ import {
   noteCarrierJob,
   setCollectNextAt,
 } from "./carrier-jobs.js";
+import { beginRelease } from "./carrier-wire.js";
 import { carrierJobFilePath } from "./ctl/path.js";
 import type { Db } from "./db.js";
 import { deleteEffect, effectsOf, refuseLiveOwner } from "./effects.js";
@@ -28,7 +29,7 @@ import { observeHost } from "./host-lifecycle.js";
 import { findHost, type HostRecord } from "./host-provider.js";
 import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-records.js";
 import { describeRead, readJobFile } from "./jobs/lease.js";
-import { viewPresent } from "./jobs/view.js";
+import { viewOnServer } from "./jobs/view.js";
 import { emitEvent } from "./logs.js";
 import type { MuxBackend } from "./mux/types.js";
 import { PluginCallError } from "./plugins/errors.js";
@@ -222,20 +223,37 @@ export async function closePluginJob(
       `plugin ${reservation.plugin} has no job seam to stop it with`,
     );
   }
-  if (kind.caps.handle === "file") {
-    // Proved on the record as it is now, under the caller's agent lock: the snapshot predates
-    // the awaited observation, and a view is only ever opened under that lock.
+  const file = kind.caps.handle === "file";
+  if (file) {
+    // Proved on the record as it is now: the snapshot predates the awaited observation. The
+    // proof's revision is what the release below compares (a rollback runs unlocked).
     const now = getCarrierJob(db, reservation.token);
     if (now === undefined) return undefined;
     await assertViewGone(now);
     reservation = now;
   }
+  const proved = reservation;
+  /** A file kind's record enters `released` on the proof's revision, or the close retains it. */
+  const release = (r: CarrierJob): CarrierJob => {
+    if (!file) return r;
+    const rev = beginRelease(db, proved);
+    const now = getCarrierJob(db, r.token);
+    if (rev === undefined || now === undefined || now.wireRev !== rev) {
+      throw new CarrierJobKeptError(
+        r.name,
+        r.workstream,
+        r.host,
+        "its view changed during the close (another view was dispatched)",
+      );
+    }
+    return now;
+  };
   // A lost host's job went with the machine, unless its kind outlives it: then only a stop proves it gone.
   if (hostLost(db, reservation.host) && kind.caps.outlivesHost !== true) {
     if (reservation.launch === "none" && reservation.job === null) {
       return { reservation, action: "unlaunched", facts: "never started" };
     }
-    return settleLostJob(db, reservation);
+    return settleLostJob(db, release(reservation));
   }
   let unresolved = "its job.start is unresolved";
   if (reservation.job === null && reservation.launch === "intent") {
@@ -244,9 +262,10 @@ export async function closePluginJob(
       if ("why" in got) unresolved = got.why;
     } else await kind.resolve(reservation.token);
   }
-  const r = getCarrierJob(db, reservation.token);
-  if (r === undefined) return undefined;
-  if (r.job === null) {
+  const cur = getCarrierJob(db, reservation.token);
+  if (cur === undefined) return undefined;
+  if (cur.job === null) {
+    const r = cur;
     if (r.launch === "none")
       return { reservation: r, action: "unlaunched", facts: "never started" };
     throw new CarrierJobUnresolvedError(
@@ -256,6 +275,7 @@ export async function closePluginJob(
       `${unresolved} (mu agent close --abandon-job drops it)`,
     );
   }
+  const r = release(cur);
   const ref = pluginJobRef(db, r.token);
   if (ref !== undefined) await kind.stop(db, ref);
   bumpStopGen(db, r.token);
@@ -274,28 +294,46 @@ export type ViewProof = { state: "gone" } | { state: "alive" | "unknown"; why: s
 /**
  * THE rule of a `handle: "file"` kind's view (ladder placement §10): the view is its job's
  * dispatcher, so its record and job file are retained until the view's absence is PROVEN.
- * Every path that would stop the job, drop the record or remove the file asks this, on a
- * record read under the agent lock: close, the spawn's rollback, a reattach (before and after
- * its view), and a recovery's close. `unknown` always retains, like `alive`.
- * - `none`: no view was ever asked for: gone.
- * - `opening`: a view was asked for and its pane id never recorded: unknown.
- * - `open`: gone only when its pane is proven gone; a failing probe is unknown.
+ * Every path that would stop the job, drop the record or remove the file asks this, and acts
+ * only through a wire transition on the revision the proof read (src/carrier-wire.ts): close,
+ * the spawn's rollback, a reattach (before its view), and a recovery's close. `unknown` always
+ * retains, like `alive`. By the record's wire state:
+ * - `claimed`: no view: gone. `released`: proven gone on entering, and none opens again.
+ * - `dispatching`: a view asked for, its pane id never recorded: unknown.
+ * - `bound`: its pane asked of the mux server recorded with it, and only that one
+ *   (`viewOnServer`): another server's answer, no recorded server, or a failing probe is
+ *   unknown. The pane and server are written together by the bind, never inferred from an
+ *   equal pane id (another server, or a restarted one, reuses `%N`).
  * - null: a record older than the column (an upgrade): unknown.
  */
 export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<ViewProof> {
   const dispatcher = "(the job's dispatcher)";
-  switch (r.viewState) {
-    case "none":
+  switch (r.wireState) {
+    case "claimed":
+    case "released":
       return { state: "gone" };
-    case "opening":
+    case "dispatching":
       return { state: "unknown", why: `its view ${dispatcher} opened with no pane id recorded` };
-    case "open": {
+    case "bound": {
       if (r.paneId === null) return { state: "unknown", why: `its view ${dispatcher} has no pane` };
-      const alive = await viewPresent(r.paneId, mux).catch(() => undefined);
-      if (alive === false) return { state: "gone" };
-      return alive === true
-        ? { state: "alive", why: `its view ${r.paneId} ${dispatcher} is alive` }
-        : { state: "unknown", why: `its view ${r.paneId} ${dispatcher} is not proven gone` };
+      if (r.viewServer === null) {
+        return {
+          state: "unknown",
+          why: `its view ${r.paneId} ${dispatcher} has no recorded mux server`,
+        };
+      }
+      const seen = await viewOnServer(r.paneId, r.viewServer, mux).catch(() => undefined);
+      if (seen === "absent") return { state: "gone" };
+      if (seen === "present") {
+        return { state: "alive", why: `its view ${r.paneId} ${dispatcher} is alive` };
+      }
+      return {
+        state: "unknown",
+        why:
+          seen === "elsewhere"
+            ? `its view ${r.paneId} ${dispatcher} is on mux server ${r.viewServer}, which this mu does not drive (MU_TMUX_SOCKET, MU_MUX): close it from there`
+            : `its view ${r.paneId} ${dispatcher} is not proven gone`,
+      };
     }
     default:
       return {
