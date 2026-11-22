@@ -592,7 +592,7 @@ describe("spawnAgent", () => {
       "MU_AGENT_NAME=worker-1",
       "-P",
       "-F",
-      "#{pane_id}",
+      "#{pane_id}|#{pid}|#{start_time}",
       "pi",
     ]);
   });
@@ -614,7 +614,7 @@ describe("spawnAgent", () => {
       "FOO=bar",
       "-P",
       "-F",
-      "#{pane_id}",
+      "#{pane_id}|#{pid}|#{start_time}",
       "pi",
     ]);
   });

@@ -53,7 +53,7 @@ import { reserveProviderJob } from "../host-records.js";
 import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
 import { awaitLeaseJob, defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
-import { viewIdentity, viewPresent } from "../jobs/view.js";
+import { birthIdentity, viewPresent, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -226,6 +226,7 @@ export async function spawnPluginAgent(
   let staged: StagedWorktree | undefined;
   let cwd = opts.cwd ?? host.record?.repo ?? host.profile?.repo ?? ".";
   let paneId: string | undefined;
+  let paneBorn: string | undefined;
   let owned: number | undefined;
   /** An at-start spawn's placeholder, once `firstTurn.begin` runs on it. */
   let begun: AgentRow | undefined;
@@ -405,8 +406,9 @@ export async function spawnPluginAgent(
         fileView: jobFile !== undefined,
       },
       started.view,
-      (pid) => {
+      (pid, born) => {
         paneId = pid;
+        paneBorn = born;
       },
       (r) => {
         owned = r.incarnation;
@@ -419,6 +421,7 @@ export async function spawnPluginAgent(
         name,
         token,
         paneId: row.paneId,
+        paneIdentity: row.paneIdentity ?? null,
         profile: host,
         jobFile,
         command,
@@ -456,7 +459,7 @@ export async function spawnPluginAgent(
     if (kept) throw err;
     try {
       if (begun !== undefined) opts.firstTurn?.undo(begun);
-      await rollbackSpawn(db, name, paneId, staged, owned, ws, undefined, carrier);
+      await rollbackSpawn(db, name, paneId, staged, owned, ws, undefined, carrier, paneBorn);
     } catch {
       // best-effort: never mask the spawn's error
     }
@@ -531,7 +534,7 @@ async function openView(
   db: Db,
   v: ViewOf,
   view: PaneCommand,
-  onPane: (paneId: string) => void,
+  onPane: (paneId: string, identity?: string) => void,
   onRow: (row: AgentRow) => void,
   placeholder?: number,
 ): Promise<AgentRow> {
@@ -550,6 +553,7 @@ async function openView(
       }
       // The name is ours: no live agent owns a socket at this path; the view's forward binds it.
       if (v.localSock !== undefined) rmSync(v.localSock, { force: true });
+      let born: string | undefined;
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
         onCreated = res;
@@ -564,14 +568,18 @@ async function openView(
         commandSource: "explicit",
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
         env: view.env,
-        onPaneCreated: onCreated,
+        onPaneCreated: (pid, identity) => {
+          born = identity;
+          onCreated(pid);
+        },
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
-      onPane(pid);
+      onPane(pid, born);
       viewDone = done;
       recordCarrierPane(db, v.token, pid);
-      await markPaneHost(mux, pid, v.host.name);
+      await markPaneHost(mux, viewRef(mux, pid, born), v.host.name);
+      const paneIdentity = birthIdentity(mux, pid, born);
       const r: AgentRow = finalizeAgentRow(db, {
         opts: opts as SpawnAgentOptions,
         cli: v.cli,
@@ -587,10 +595,7 @@ async function openView(
         reservation: v.token,
         hooks: v.builtIn?.hooks === true,
         piHooks: false,
-        ...(await viewIdentity(mux).then(
-          (paneIdentity) => (paneIdentity !== undefined ? { paneIdentity } : {}),
-          () => ({}),
-        )),
+        ...(paneIdentity !== undefined ? { paneIdentity } : {}),
         channel: v.channel,
         ...(v.builtIn === undefined ? { channelPlugin: kind.plugin } : {}),
         ...(v.remoteKey !== undefined ? { remoteKey: v.remoteKey } : {}),
@@ -732,6 +737,7 @@ export async function resolveFirstTurn(
             }
           : undefined;
       let opened: string | undefined;
+      let openedBorn: string | undefined;
       try {
         agent = await openView(
           db,
@@ -755,8 +761,9 @@ export async function resolveFirstTurn(
             fileView: kind.caps.handle === "file",
           },
           view,
-          (pid) => {
+          (pid, born) => {
             opened = pid;
+            openedBorn = born;
           },
           () => {},
           agent.incarnation,
@@ -766,8 +773,8 @@ export async function resolveFirstTurn(
         // and the receipt stays as it was (D8, review 2 of P6e2).
         if (opened !== undefined) {
           const mux = await activeMux();
-          await mux.killPane(opened).catch(() => {});
-          const gone = (await viewPresent(opened, mux).catch(() => true)) === false;
+          await mux.killPane(viewRef(mux, opened, openedBorn)).catch(() => {});
+          const gone = (await viewPresent(opened, mux, openedBorn).catch(() => true)) === false;
           unfinalize(db, agent, opened, now.token, gone);
         }
         throw e;
@@ -835,19 +842,33 @@ async function builtInReadiness(
 ): Promise<{ ctl: SpawnCtl; incarnation?: string; trustDialog: boolean }> {
   // No handshake (no socket, --no-ctl, MU_SPAWN_CTL_MS=0) still proves the view alive.
   if (localSock === undefined || opts.ctl === false || defaultSpawnCtlMs() === 0) {
-    const trustDialog = await awaitSpawnLiveness(row.paneId, row.name, command, host);
+    const trustDialog = await awaitSpawnLiveness(
+      row.paneId,
+      row.name,
+      command,
+      host,
+      row.paneIdentity,
+    );
     return { ctl: "skipped", trustDialog };
   }
   const check = defaultSpawnLivenessMs() !== 0;
   const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
   // Each tick: the view gone, or parked at a fatal startup error, ends the wait.
   const health = async (): Promise<void> => {
-    await checkSpawnHealth(row.paneId, row.name, command, when, false, host);
+    await checkSpawnHealth(row.paneId, row.name, command, when, false, host, row.paneIdentity);
   };
   const hs = await awaitCtlHandshake(localSock, check ? health : undefined, opts.signal);
   // The final check: an ok handshake proves pi ran, so only provider/auth patterns apply.
   const trustDialog = check
-    ? await checkSpawnHealth(row.paneId, row.name, command, when, hs.ctl === "ok", host)
+    ? await checkSpawnHealth(
+        row.paneId,
+        row.name,
+        command,
+        when,
+        hs.ctl === "ok",
+        host,
+        row.paneIdentity,
+      )
     : false;
   return {
     ctl: hs.ctl,

@@ -326,7 +326,10 @@ describe("stage b: an owner landing while the pane opens is refused at the inser
     // The exact argv the backend's own kill sends (the executor's), behind tmux's global flags.
     const kill = mux.calls.find((c) => c[0] === "kill-pane");
     expect(kill).toEqual(["kill-pane", "-t", pane]);
-    expect(msg).toMatch(new RegExp(`Kill it: tmux (-L \\S+ -f /dev/null )?kill-pane -t ${pane}$`));
+    // The printed line carries the guard: run by hand later, it kills only on the recorded server.
+    expect(msg).toMatch(
+      /Kill it: tmux (-L \S+ -f \/dev\/null )?if-shell -F .*kill-pane.*%1.*exit 97/,
+    );
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
     expect(getAgent(db, "w-9", "other")).toMatchObject({ cwd: P, base: SHA });
     // The pane is not proven gone: the spawn's channel is not released early.

@@ -12,7 +12,7 @@ import type { Db } from "../db.js";
 import { jobRunning } from "../jobs/kinds.js";
 import { leaseJobRef, leaseKind } from "../jobs/lease.js";
 import type { JobRef } from "../jobs/types.js";
-import { viewIdentity } from "../jobs/view.js";
+import { birthIdentity, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -46,7 +46,10 @@ export * from "./reattach-check.js";
 class PaneGone extends Error {}
 
 /** The new carrier's job: the reservation's handle, viewed in the new pane. */
-const carrierRef = (p: Plan, pid: string): JobRef => leaseJobRef({ ...p.r, paneId: pid });
+const carrierRef = (p: Plan, pid: string, identity?: string): JobRef => ({
+  ...leaseJobRef({ ...p.r, paneId: pid }),
+  ...(identity !== undefined ? { paneIdentity: identity } : {}),
+});
 
 /** Install found the recovery's path owned or claimed: the preflight's blocker, found late. */
 class InstallBlocked extends Error {
@@ -74,7 +77,7 @@ export async function reattachAgent(
   if (!mux.runsShellCommand) await plan(db, ws, name);
   const sock = ctlSocketPath(ws, name, dirname(db.name));
   const session = `mu-${ws}`;
-  const { p, pid, row } = await withAgentLock(db, ws, name, () =>
+  const { p, pid, row, born } = await withAgentLock(db, ws, name, () =>
     withSpawnLock(session, async () => {
       const { p, revision } = await planSnapshot(db, ws, name);
       assertRevision(opts.ifRevision, revision, {
@@ -102,9 +105,11 @@ export async function reattachAgent(
           closeCommand(db, ws, name),
         );
       }
-      let onPaneCreated: (id: string) => void = () => {};
+      let born: string | undefined;
+      let onPaneCreated: (id: string, identity?: string) => void = () => {};
       const created = new Promise<string>((res) => {
-        onPaneCreated = (id) => {
+        onPaneCreated = (id, identity) => {
+          born = identity;
           markerPane(db, ws, name, p.r.job, id);
           res(id);
         };
@@ -115,12 +120,11 @@ export async function reattachAgent(
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
-      await markPaneHost(mux, pid, p.r.host);
+      await markPaneHost(mux, viewRef(mux, pid, born), p.r.host);
       try {
-        const identity = await viewIdentity(mux).catch(() => undefined);
-        const row = install(db, ws, p, pid, identity);
+        const row = install(db, ws, p, pid, birthIdentity(mux, pid, born));
         clearMarker(db, ws, name); // the row and the reservation name the pane now
-        return { p, pid, row };
+        return { p, pid, row, born };
       } catch (e) {
         // A carrier must not hold a job with no row: its death stops the job (its signal path).
         // The reservation names the new pane first (the old one is proven dead), so while the
@@ -135,8 +139,9 @@ export async function reattachAgent(
           }
         };
         let fenced = fence();
-        await mux.killPane(pid).catch(() => {});
-        const gone = (await jobRunning(db, carrierRef(p, pid)).catch(() => undefined)) === false;
+        await mux.killPane(viewRef(mux, pid, born)).catch(() => {});
+        const gone =
+          (await jobRunning(db, carrierRef(p, pid, born)).catch(() => undefined)) === false;
         if (!gone && !fenced) fenced = fence();
         // Named on the reservation or proven gone: the next preflight sees it without the marker.
         if (gone || fenced) clearMarker(db, ws, name);
@@ -159,8 +164,10 @@ export async function reattachAgent(
   );
   let scrollback: string | undefined;
   const assertAlive = async (): Promise<void> => {
-    scrollback = (await mux.capture(pid, { lines: 50 }).catch(() => undefined)) ?? scrollback;
-    if (!(await jobRunning(db, carrierRef(p, pid)))) throw new PaneGone();
+    scrollback =
+      (await mux.capture(viewRef(mux, pid, born), { lines: 50 }).catch(() => undefined)) ??
+      scrollback;
+    if (!(await jobRunning(db, carrierRef(p, pid, born)))) throw new PaneGone();
   };
   let ctl: "ok" | "missing" | "refused" | "unknown";
   try {

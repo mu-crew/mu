@@ -44,6 +44,8 @@ export interface AgentOutput {
   workstream: string;
   cli: string;
   pane_id: string;
+  /** The tmux server the pane was spawned on (`agents.pane_identity`); absent: unverified. */
+  pane_identity?: string;
   role: string;
   tab: string | null;
   cwd: string | null;
@@ -102,6 +104,7 @@ export function agentToOutput(
     workstream: row.workstreamName,
     cli: row.cli,
     pane_id: row.paneId,
+    ...(row.paneIdentity !== undefined ? { pane_identity: row.paneIdentity } : {}),
     role: row.role,
     tab: row.tab,
     cwd: row.cwd,

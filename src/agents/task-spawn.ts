@@ -494,7 +494,17 @@ async function drive(
         // best-effort: a held task is left for `mu task release`
       }
       try {
-        await rollbackSpawn(db, agent.name, agent.paneId, staged, owned, ws);
+        await rollbackSpawn(
+          db,
+          agent.name,
+          agent.paneId,
+          staged,
+          owned,
+          ws,
+          undefined,
+          undefined,
+          agent.paneIdentity,
+        );
       } catch {
         // best-effort, as in spawnAgent's own rollback
       }

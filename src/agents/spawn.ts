@@ -50,7 +50,7 @@ import {
   releaseHostChannel,
 } from "../hosts.js";
 import { awaitLeaseJob } from "../jobs/lease.js";
-import { viewIdentity, viewPresent } from "../jobs/view.js";
+import { birthIdentity, viewPresent, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
 import { attachShellLine, type CommandSource, markPaneHost } from "../mux/types.js";
@@ -753,6 +753,8 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
   // (clarity > belt-and-suspenders; rollbackSpawn is idempotent and
   // best-effort regardless).
   let paneId: string | undefined;
+  // The server the pane was created on, from the call that created it (`onPaneCreated`).
+  let paneBorn: string | undefined;
   let agent: AgentRow;
   // Whether the agent row is this spawn's to delete on rollback. A
   // spawn that lost a same-name race must not delete the winner's row.
@@ -874,6 +876,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
           : anchored(launch, mux.anchorsPanes);
         // Resolves with the pane id at creation; `done` settles when the
         // backend considers the agent started.
+        let born: string | undefined;
         let onCreated: (pid: string) => void = () => {};
         const createdPane = new Promise<string>((res) => {
           onCreated = res;
@@ -893,7 +896,10 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
           commandSource,
           ...(profile ? {} : { cwd: paneCwd }),
           env: paneEnv,
-          onPaneCreated: onCreated,
+          onPaneCreated: (pid, identity) => {
+            born = identity;
+            onCreated(pid);
+          },
           // A gate's pane outlives its command: the result is read after it ends.
           ...(gateToken !== undefined ? { retainOnExit: true } : {}),
         });
@@ -906,12 +912,13 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         // returned object meant a finalize failure left paneId undefined
         // and rollbackSpawn skipped killPane, leaking the pane.
         paneId = pid;
+        paneBorn = born;
         if (carrier) recordCarrierPane(db, carrier.token, pid);
         // The pane here holds only the ssh client: name where the worker runs.
-        if (profile) await markPaneHost(mux, pid, profile.name);
+        if (profile) await markPaneHost(mux, viewRef(mux, pid, born), profile.name);
         readiness = done;
         phase = "finalize";
-        const paneIdentity = await viewIdentity(mux).catch(() => undefined);
+        const paneIdentity = birthIdentity(mux, pid, born);
         const row = finalizeAgentRow(db, {
           opts,
           cli,
@@ -963,6 +970,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         name: opts.name,
         token: carrier.token,
         paneId: created.pid,
+        paneIdentity: paneBorn,
         profile,
         jobFile: created.jobFile,
         command,
@@ -1001,9 +1009,11 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
       let lastScrollback: string | undefined;
       const assertPaneAlive = async (): Promise<void> => {
         const mux = await activeMux();
-        const sb = await mux.capture(pid, { lines: 50 }).catch(() => undefined);
+        const sb = await mux
+          .capture(viewRef(mux, pid, paneBorn), { lines: 50 })
+          .catch(() => undefined);
         lastScrollback = sb ?? lastScrollback;
-        if (await viewPresent(pid, mux)) return;
+        if (await viewPresent(pid, mux, paneBorn)) return;
         throw new AgentDiedOnSpawnError(
           opts.name,
           pid,
@@ -1036,10 +1046,11 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
           when,
           ctl === "ok",
           profile?.name,
+          paneBorn,
         );
       }
     } else if (gateToken === undefined) {
-      trustDialog = await awaitSpawnLiveness(paneId, opts.name, command, profile?.name);
+      trustDialog = await awaitSpawnLiveness(paneId, opts.name, command, profile?.name, paneBorn);
     }
     opts.signal?.throwIfAborted();
     // A gate is not scanned for startup errors or liveness: a command that ends at
@@ -1059,6 +1070,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         opts.workstream,
         lease,
         carrier,
+        paneBorn,
       );
     } catch (cleanupErr) {
       if (err instanceof Error && err.cause === undefined) {
@@ -1072,7 +1084,10 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
     // An owner found at the insert (it landed while the pane opened): name that pane.
     if (err instanceof RemotePathOwnedError && err.pane === undefined && paneId !== undefined) {
       const mux = await activeMux().catch(() => undefined);
-      const kill = mux === undefined ? "" : attachShellLine([mux.killPaneCommand(paneId)]);
+      const kill =
+        mux === undefined
+          ? ""
+          : attachShellLine([mux.killPaneCommand(viewRef(mux, paneId, paneBorn))]);
       const pane = { id: paneId, backend: mux?.name ?? "mux", ...rolled, kill };
       const { workstream, agentName, host, cwd, owner, gate } = err;
       throw new RemotePathOwnedError(workstream, agentName, host, cwd, owner, gate, pane);

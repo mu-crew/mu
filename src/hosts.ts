@@ -786,7 +786,7 @@ export interface HostLease {
 
 export interface ChannelOpts {
   /** Is this pane alive? Throwing or absent means unknown, which keeps the channel. */
-  paneAlive?: (paneId: string) => Promise<boolean>;
+  paneAlive?: (paneId: string, opts?: { identity?: string | null }) => Promise<boolean>;
   /**
    * Runs inside the admission transaction on the profile it admits, before a row is counted:
    * a throw admits nothing. A caller that chose a link before admission uses it to refuse a
@@ -842,6 +842,25 @@ export function groupAlive(pgid: number, start: string | null): boolean {
   return now === null || now === start;
 }
 
+/**
+ * The server a recorded pane id belongs to, from its agent row (`agents.pane_identity`): the row
+ * that names this pane. `identity` null: none recorded (a row older than the column, or no row:
+ * the unverified check). `unknown`: the row has an identity but names another pane, so this
+ * record's pane (a view opened since) has no dependable provenance: never read as gone.
+ */
+export function paneProvenance(
+  db: Db,
+  agentId: number | null,
+  paneId: string,
+): { identity: string | null } | "unknown" {
+  if (agentId === null) return { identity: null };
+  const row = db.prepare("SELECT pane_id, pane_identity FROM agents WHERE id = ?").get(agentId) as
+    | { pane_id: string; pane_identity: string | null }
+    | undefined;
+  if (row === undefined || row.pane_identity === null) return { identity: null };
+  return row.pane_id === paneId ? { identity: row.pane_identity } : "unknown";
+}
+
 /** Attached channels whose pane is proven dead. Runs OUTSIDE any transaction. */
 async function probeAttached(
   db: Db,
@@ -852,8 +871,11 @@ async function probeAttached(
   const dead: HostChannel[] = [];
   for (const c of listHostChannels(db, host)) {
     if (c.kind !== "attached" || c.pane_id === null) continue;
+    // The pane's server, from the agent row that owns it: a bare id reads another server's pane.
+    const prov = paneProvenance(db, c.agent_id, c.pane_id);
+    if (prov === "unknown") continue;
     try {
-      if (!(await paneAlive(c.pane_id))) dead.push(c);
+      if (!(await paneAlive(c.pane_id, { identity: prov.identity }))) dead.push(c);
     } catch {
       /* unknown: keep */
     }

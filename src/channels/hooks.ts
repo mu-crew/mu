@@ -65,6 +65,7 @@ import { speaksMuCtl } from "../agents/spawn.js";
 import { HARNESS_TABLE, type HarnessRow, harnessOfCli, type ReadyMarks } from "../harnesses.js";
 import { isJobGone, type JobGone, jobUp } from "../jobs/kinds.js";
 import { paneUp } from "../jobs/pane.js";
+import { viewRef } from "../jobs/view.js";
 import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { sleep } from "../tmux.js";
@@ -193,7 +194,8 @@ async function gateAndPaste(
   }
   await beforePaste?.(before);
   const mux = await activeMux();
-  if (mux.pasteToPane) await mux.pasteToPane(paneId, text, { clearKey: clearKeyOf(t) });
+  const ref = viewRef(mux, paneId, t.agent.paneIdentity);
+  if (mux.pasteToPane) await mux.pasteToPane(ref, text, { clearKey: clearKeyOf(t) });
   else if (mux.sendToPane) await mux.sendToPane(paneId, text, {});
   else throw new AgentSendUnsupportedError(name, workstreamName, cli);
   return before;
@@ -284,7 +286,7 @@ async function send(
     async (gated) => {
       const marks = readyMarksBeforeFirst(t, gated, first);
       if (marks !== undefined)
-        readyScreen = await awaitReadyScreen(paneId, marks, firstSendAckMs());
+        readyScreen = await awaitReadyScreen(paneId, marks, firstSendAckMs(), t.agent.paneIdentity);
     },
   );
   const waited = readyScreen === undefined ? {} : { readyScreen };
@@ -308,10 +310,13 @@ async function send(
     // Press the submit key once more, at most once; never paste again.
     const grace = Math.min(SUBMIT_GRACE_MS, ms);
     acked = await pollPane(paneId, grace, done);
-    if (acked === undefined && (await pasteUnsubmitted(paneId, marks, text))) {
+    if (
+      acked === undefined &&
+      (await pasteUnsubmitted(paneId, marks, text, t.agent.paneIdentity))
+    ) {
       const mux = await activeMux();
       try {
-        await mux.sendKeys?.(paneId, [SUBMIT_KEY]);
+        await mux.sendKeys?.(viewRef(mux, paneId, t.agent.paneIdentity), [SUBMIT_KEY]);
         submitRetry = mux.sendKeys !== undefined;
       } catch {
         // best effort: the paste stands, and the ack poll below says what came of it
@@ -382,7 +387,7 @@ async function stopTurn(
   const mux = await activeMux();
   if (!mux.sendKeys) throw new AgentAbortNeedsCtlError(name, workstreamName, cli);
   const row = rowOf(t.agent);
-  await mux.sendKeys(paneId, [row?.interruptKey ?? "Escape"]);
+  await mux.sendKeys(viewRef(mux, paneId, t.agent.paneIdentity), [row?.interruptKey ?? "Escape"]);
   await onKey?.();
   const reports = row !== undefined && row.events.interrupted.length > 0;
   if (t.remote !== undefined) return remoteStopped(t, t.remote, before, reports);
@@ -1064,7 +1069,7 @@ const hooksImpl: ChannelImpl = {
         if (!w.ok) throw new AgentSendGateError(name, workstreamName, "unknown", unread(w));
       }
       try {
-        await typeKeys(mux.sendKeys, paneId, keys);
+        await typeKeys(mux.sendKeys, viewRef(mux, paneId, t.agent.paneIdentity), keys);
       } catch (e) {
         if (blocked) {
           await t.remote.read({
@@ -1075,7 +1080,7 @@ const hooksImpl: ChannelImpl = {
       }
       return { transport: "hooks", keys, ack: "unknown" };
     }
-    await typeKeys(mux.sendKeys, paneId, keys);
+    await typeKeys(mux.sendKeys, viewRef(mux, paneId, t.agent.paneIdentity), keys);
     // D4: confirmed by the next event (the dialog closing, or the turn moving on).
     const next = await pollPane(paneId, sendAckMs(), (now) => eventArrived(before, now));
     // The vocabulary: `blocked` clears on the next event or on `mu agent answer`.

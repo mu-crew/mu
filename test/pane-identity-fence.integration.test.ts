@@ -1,0 +1,247 @@
+// One identity check, at the action boundary (round 2 of pane_identity_liveness). A tmux pane id is
+// unique only within one server's lifetime; every path that acts on a pane must reach the
+// recorded server inside the SAME tmux call that acts, so a restart between a check and the
+// effect cannot land the effect on a recycled id.
+//
+// Real tmux on a PRIVATE socket (never the suite's shared server). Each test kills only its own.
+
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { closeAgent } from "../src/agents/close.js";
+import { getAgent, insertAgent, readAgent } from "../src/agents.js";
+import type { CarrierJob } from "../src/carrier-jobs.js";
+import { planAttach, spawnStep } from "../src/cli/tui/commands.js";
+import { type Db, openDb } from "../src/db.js";
+import { proveViewGone } from "../src/host-policy.js";
+import { addHost, bindHostChannel, type HostLease, reserveHostChannel } from "../src/hosts.js";
+import { viewRunning } from "../src/jobs/view.js";
+import {
+  capture,
+  ensureSession,
+  paneAlive,
+  paneRef,
+  pasteToPane,
+  resetTmuxExecutor,
+  sendKeys,
+  serverIdentity,
+  setTmuxExecutor,
+  spawnAgent,
+  type TmuxExecutor,
+  tmux,
+} from "../src/tmux.js";
+import { ensureWorkstream, teardownWorkstream, workstreamRevision } from "../src/workstream.js";
+import { pollUntil } from "./_env.js";
+import { tmuxIntegrationAvailable } from "./_mux.js";
+
+const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
+const SLEEP = "sh -c 'echo FOREIGN-PANE; while true; do sleep 60; done'";
+
+describeIfTmux(
+  "pane identity is checked in the acting tmux call (real tmux, private socket)",
+  () => {
+    let dir: string;
+    let db: Db;
+    let outer: string | undefined;
+    let real: TmuxExecutor;
+    const ws = "fencews";
+    const session = `mu-${ws}`;
+
+    const spawn = (name: string, onPaneCreated?: (id: string, identity?: string) => void) =>
+      spawnAgent({
+        session,
+        window: name,
+        name,
+        cli: "pi",
+        command: SLEEP,
+        commandSource: "cli-key",
+        env: {},
+        ...(onPaneCreated ? { onPaneCreated } : {}),
+      });
+
+    /** Kill the private server; a new one's first agent pane recycles the old id. */
+    const restartServer = async (): Promise<string> => {
+      await real(["kill-server"]).catch(() => {});
+      await pollUntil(async () => (await serverIdentity()) === undefined, {
+        description: "old server gone",
+      });
+      await ensureSession(session);
+      return spawn("someone-else");
+    };
+
+    /** Run `restart` once, right before the first tmux call whose argv contains `verb`. */
+    const restartBefore = (verb: string, restart: () => Promise<unknown>): void => {
+      let done = false;
+      setTmuxExecutor(async (args) => {
+        if (!done && args.some((a) => a.includes(verb))) {
+          done = true;
+          await restart();
+        }
+        return real(args);
+      });
+    };
+
+    /** The recycled pane still prints its marker: it was neither read into the row nor killed. */
+    const foreignOutput = (pane: string): Promise<void> =>
+      pollUntil(async () => (await capture(pane)).includes("FOREIGN-PANE"), {
+        description: "foreign pane output",
+      });
+
+    const agentOn = async (name: string): Promise<{ pane: string; identity: string }> => {
+      await ensureSession(session);
+      const pane = await spawn(name);
+      const identity = await serverIdentity(); // no restart in flight yet: the plain lookup is right here
+      if (identity === undefined) throw new Error("no server identity");
+      insertAgent(db, { name, workstream: ws, paneId: pane, paneIdentity: identity });
+      return { pane, identity };
+    };
+
+    beforeEach(() => {
+      outer = process.env.MU_TMUX_SOCKET;
+      process.env.MU_TMUX_SOCKET = `mu-test-pid-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      resetTmuxExecutor();
+      real = setTmuxExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+      resetTmuxExecutor();
+      dir = mkdtempSync(join(tmpdir(), "mu-pane-fence-"));
+      db = openDb({ path: join(dir, "mu.db") });
+      ensureWorkstream(db, ws);
+    });
+
+    afterEach(async () => {
+      resetTmuxExecutor();
+      try {
+        await tmux(["kill-server"]);
+      } catch {}
+      if (outer === undefined) delete process.env.MU_TMUX_SOCKET;
+      else process.env.MU_TMUX_SOCKET = outer;
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    it("pane_birth_identity_race: the identity is the server that created the pane", async () => {
+      await ensureSession(session);
+      const before = await serverIdentity();
+      let born: string | undefined;
+      // The server restarts right after the creating call returned: a later lookup would sample B.
+      let restarted: Promise<unknown> | undefined;
+      setTmuxExecutor(async (args) => {
+        const result = await real(args);
+        if (restarted === undefined && args.includes("-P")) {
+          restarted = (async () => {
+            await real(["kill-server"]);
+            await pollUntil(async () => (await serverIdentity()) === undefined, {
+              description: "server gone",
+            });
+            await real(["new-session", "-d", "-s", "later", "sh -c 'sleep 60'"]);
+          })();
+          await restarted;
+        }
+        return result;
+      });
+      await spawn("worker", (_id, identity) => {
+        born = identity;
+      });
+      resetTmuxExecutor();
+      expect(born).toBe(before);
+      expect(born).not.toBe(await serverIdentity());
+    }, 30_000);
+
+    it("pane_action_identity_race: a restart before capture-pane never reads the recycled pane", async () => {
+      const { pane } = await agentOn("worker");
+      let foreign: string | undefined;
+      restartBefore("capture-pane", async () => {
+        foreign = await restartServer();
+      });
+      await expect(readAgent(db, "worker", { workstream: ws })).rejects.toThrow();
+      resetTmuxExecutor();
+      expect(foreign).toBe(pane); // the id was recycled
+      await foreignOutput(pane);
+    }, 30_000);
+
+    it("pane_action_identity_race: a restart before kill-pane never kills the recycled pane", async () => {
+      const { pane } = await agentOn("worker");
+      let foreign: string | undefined;
+      restartBefore("kill-pane", async () => {
+        foreign = await restartServer();
+      });
+      await closeAgent(db, "worker", { workstream: ws }).catch(() => {});
+      resetTmuxExecutor();
+      expect(foreign).toBe(pane);
+      expect(await paneAlive(pane)).toBe(true);
+      expect(getAgent(db, "worker", ws)).toBeUndefined();
+    }, 30_000);
+
+    it("pane_teardown_identity_bypass: teardown after a restart leaves the new server's session", async () => {
+      const { pane } = await agentOn("worker");
+      const foreign = await restartServer();
+      expect(foreign).toBe(pane);
+      const result = await teardownWorkstream(db, {
+        workstream: ws,
+        ifRevision: workstreamRevision(db, ws),
+      });
+      // The old row is dead for good; the session on the new server is not the workstream's.
+      expect(result.killedMux).toBe(false);
+      expect(await paneAlive(foreign)).toBe(true);
+      await foreignOutput(foreign);
+      expect(getAgent(db, "worker", ws)).toBeUndefined();
+    }, 30_000);
+
+    it("guarded keys and pastes keep their words, and never reach another server", async () => {
+      await ensureSession(session);
+      const pane = await spawnAgent({
+        session,
+        window: "cat",
+        name: "cat",
+        cli: "pi",
+        command: "cat",
+        commandSource: "cli-key",
+        env: {},
+      });
+      const identity = await serverIdentity();
+      const ref = paneRef(pane, identity);
+      await sendKeys(ref, ["it's; a\\;"], { literal: true });
+      await pasteToPane(ref, "pasted 'text'; done", {});
+      await pollUntil(async () => (await capture(pane)).includes("pasted 'text'; done"), {
+        description: "paste shown",
+      });
+      expect(await capture(pane)).toContain("it's; a\\;");
+      await restartServer();
+      await expect(sendKeys(ref, ["x"])).rejects.toThrow();
+      await expect(pasteToPane(ref, "x")).rejects.toThrow();
+    }, 30_000);
+
+    it("pane_dashboard_identity_bypass: an attach plan runs only on the recorded server", async () => {
+      const { identity } = await agentOn("worker");
+      const subject = { workstream: ws, name: "worker", tab: null, paneIdentity: identity };
+      await restartServer();
+      const plan = await planAttach(subject);
+      if (!plan.ok) throw new Error(plan.reason);
+      const step = plan.steps.at(-1);
+      if (step === undefined) throw new Error("no step");
+      // No terminal here: on the recorded server tmux would fail "not a terminal" (exit 1); the
+      // guard refuses first on any other (exit 97).
+      const ran = await spawnStep(step);
+      expect(ran.code).toBe(97);
+      expect(plan.line).toContain("if-shell");
+    }, 30_000);
+
+    it("pane_carrier_liveness_bypass: a dead carrier no longer holds a host slot or proves a view alive", async () => {
+      const { pane, identity } = await agentOn("worker");
+      const agent = getAgent(db, "worker", ws);
+      if (agent === undefined) throw new Error("row missing");
+      addHost(db, { name: "dev", shell: "s", exec: "e", fetch: "f", repo: "/r", max_sessions: 1 });
+      const lease: HostLease = await reserveHostChannel(db, "dev", "worker");
+      expect(bindHostChannel(db, lease, { agentId: agent.incarnation, paneId: pane })).toBe(true);
+      const view = { viewState: "open", paneId: pane, agentId: agent.incarnation } as CarrierJob;
+      expect((await proveViewGone(db, view)).state).toBe("alive");
+
+      await restartServer(); // the carrier's server is gone; its id lives on, recycled
+      expect(identity).not.toBe(await serverIdentity());
+      expect(await proveViewGone(db, view)).toEqual({ state: "gone" });
+      await expect(
+        reserveHostChannel(db, "dev", "other", { paneAlive: viewRunning }),
+      ).resolves.toBeDefined();
+    }, 30_000);
+  },
+);

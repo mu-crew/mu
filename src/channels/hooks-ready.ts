@@ -10,7 +10,7 @@
 // pressed once more. Never a second paste.
 
 import type { ReadyMarks } from "../harnesses.js";
-import { activeMux } from "../mux.js";
+import { viewCapture } from "../jobs/view.js";
 import { sleep } from "../tmux.js";
 
 /** How often the ready wait reads the pane. */
@@ -77,9 +77,9 @@ export function inputHolds(marks: ReadyMarks, screen: string, text: string): boo
 }
 
 /** The visible pane, or undefined when it cannot be read (gone, or no tmux). */
-async function readScreen(paneId: string): Promise<string | undefined> {
+async function readScreen(paneId: string, identity?: string | null): Promise<string | undefined> {
   try {
-    return await (await activeMux()).capture(paneId, { lines: 0 });
+    return await viewCapture(paneId, identity, { lines: 0 });
   } catch {
     return undefined;
   }
@@ -96,12 +96,13 @@ export async function awaitReadyScreen(
   paneId: string,
   marks: ReadyMarks,
   ms: number,
+  identity?: string | null,
 ): Promise<ReadyWait> {
   const deadline = Date.now() + ms;
   const polls = Math.ceil(ms / READY_POLL_MS) + 1;
   for (let i = 0; i < polls; i++) {
     if (i > 0) await sleep(READY_POLL_MS);
-    const screen = await readScreen(paneId);
+    const screen = await readScreen(paneId, identity);
     if (screen === undefined) return "unread";
     if (screenReady(marks, screen)) return "ready";
     if (Date.now() >= deadline) break;
@@ -114,7 +115,8 @@ export async function pasteUnsubmitted(
   paneId: string,
   marks: ReadyMarks,
   text: string,
+  identity?: string | null,
 ): Promise<boolean> {
-  const screen = await readScreen(paneId);
+  const screen = await readScreen(paneId, identity);
   return screen !== undefined && inputHolds(marks, screen, text);
 }

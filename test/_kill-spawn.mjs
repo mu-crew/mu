@@ -5,8 +5,10 @@ import { openDb, setMuxForTests, spawnForTask, tmuxBackend } from "../dist/index
 
 setInterval(() => {}, 1000);
 const db = openDb({ path: process.argv[2] });
+// An in-memory fake: no tmux server behind it, so no server identity (bare pane ids).
+const { serverIdentity: _none, ...fake } = tmuxBackend;
 setMuxForTests({
-  ...tmuxBackend,
+  ...fake,
   runsShellCommand: true,
   spawnAgentWaitsReady: false,
   anchorsPanes: false,

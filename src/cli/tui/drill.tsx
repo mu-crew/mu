@@ -18,8 +18,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import stringWidth from "string-width";
 import type { AgentRuntimeInfo } from "../../agent-state.js";
 import { verdictLineLabel } from "../../delegate-verdict.js";
+import { viewCapture } from "../../jobs/view.js";
 import { parseOpKey } from "../../log-render.js";
-import { activeMux } from "../../mux.js";
 import { formatPair } from "../../tasks/status.js";
 import type { SelectedNotes, TaskRow } from "../../tasks.js";
 import { copyCommand, planAttach, yankSequence } from "./commands.js";
@@ -330,8 +330,9 @@ export function Drill({
       } else {
         void (async () => {
           try {
-            const mux = await activeMux();
-            const text = await mux.capture(target.paneId, { lines: SCROLLBACK_LINES });
+            const text = await viewCapture(target.paneId, target.paneIdentity, {
+              lines: SCROLLBACK_LINES,
+            });
             done({ state: "ready", text: text.replace(/\s+$/, ""), notices: [] });
           } catch (e) {
             done({ state: "error", message: e instanceof Error ? e.message : String(e) });

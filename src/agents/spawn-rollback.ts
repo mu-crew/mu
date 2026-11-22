@@ -11,7 +11,7 @@ import {
 } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { type HostLease, releaseHostChannel, releaseHostChannelsForAgent } from "../hosts.js";
-import { viewPresent } from "../jobs/view.js";
+import { viewPresent, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { getWorktreeAt, releaseWorktree } from "../worktree.js";
@@ -71,6 +71,8 @@ export async function rollbackSpawn(
   lease?: HostLease,
   /** A lease spawn's carrier_jobs reservation: the only job this rollback may stop or release. */
   carrier?: { token: string },
+  /** The tmux server the pane was created on: the kill and the proof run only on it. */
+  paneIdentity?: string | null,
 ): Promise<{ gone: boolean; heldBy?: string }> {
   // Is the pane (the host transport) proven gone? A channel is freed only on that proof.
   // No pane id is that proof only when no view open was attempted: a backend may open the
@@ -93,8 +95,12 @@ export async function rollbackSpawn(
       .get(paneId, ownedIncarnation ?? null) as { who: string } | undefined;
     heldBy = foreign?.who;
     if (foreign === undefined) {
-      await mux?.killPane(paneId).catch(() => {});
-      paneGone = mux !== undefined && (await viewPresent(paneId, mux).catch(() => true)) === false;
+      await mux
+        ?.killPane(mux === undefined ? paneId : viewRef(mux, paneId, paneIdentity))
+        .catch(() => {});
+      paneGone =
+        mux !== undefined &&
+        (await viewPresent(paneId, mux, paneIdentity).catch(() => true)) === false;
     } else {
       paneGone = true; // another agent holds the id: ours is not that pane
 

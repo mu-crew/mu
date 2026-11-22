@@ -155,7 +155,15 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   server, so the pane's own pid adds nothing); liveness, `mu wait`, reconcile,
   sends, capture and close treat another server as a dead pane for that row and
   never touch the foreign pane. Rows from before the column stay on today's
-  unverified check.
+  unverified check. The check is one rule at the action boundary: spawn reads
+  the server from the tmux call that created the pane (a spawn that cannot get
+  it fails, never a row that looks pre-column); every pane-addressed tmux action
+  (capture, kill, keys, paste, probes, rollback) and a workstream's session kill
+  carry the recorded server in the same tmux call (`if-shell -F` on
+  `#{pid}|#{start_time}`), so a restart between check and effect cannot reach a
+  recycled id; the dashboard's capture and attach, host-channel admission and
+  file-view proof use it too. A view whose server cannot be vouched for is
+  unknown, never gone.
 - tmux 3.8 no longer makes mu mistake live panes for missing ones. Pane,
   window, and Murmur state queries use a separator tmux preserves.
 - Remote worktree prepare claims the path with an atomic `mkdir` and records

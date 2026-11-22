@@ -32,6 +32,7 @@ import {
   setRexExecutor,
 } from "../src/mux.js";
 import { setTmuxExecutor } from "../src/tmux.js";
+import { withServerIdentity } from "./_verbs-mock.js";
 
 // ─── Shared executor shape ─────────────────────────────────────────────
 //
@@ -119,10 +120,12 @@ export function installMux(
           return { stdout: "", stderr: `unrouted: ${key}`, exitCode: 1 };
         };
 
-  const executor: MuxExecutor = async (args) => {
+  const recording: MuxExecutor = async (args) => {
     calls.push([...args]);
     return await impl(args);
   };
+  // A tmux row carries its server's identity: the fake answers for it, as tmux does.
+  const executor: MuxExecutor = backend === "tmux" ? withServerIdentity(recording) : recording;
 
   const previousBackend = setMuxForTests(muxByName(backend));
   const setExecutor = { herdr: setHerdrExecutor, rex: setRexExecutor, tmux: setTmuxExecutor }[
