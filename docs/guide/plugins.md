@@ -48,7 +48,7 @@ A provider plugin provisions machines on demand:
 
 ```bash
 mu host acquire box1 --provider box --param size=large --repo /work/repo
-mu agent spawn w1 --host box1 --worktree --task t1
+mu agent spawn w1 -w <ws> --host box1 --worktree --task t1
 mu host drain box1      # no new spawns
 mu host release box1    # once nothing names it
 ```
@@ -61,8 +61,9 @@ a second host. Deadlines, lost hosts and `--abandon` are covered in
 
 If a plugin call that starts a job or delivers a prompt gets no answer, mu
 reports `EffectOutcomeUnknownError` (exit 1) and never resends.
-`mu agent check <agent> <msgId>` asks the plugin and settles it. Closing the
-agent drops whatever is still unresolved.
+`mu agent check <agent> <msgId> -w <ws>` asks the plugin to settle it.
+To close the agent instead, preview with `mu agent close <agent> -w <ws>`,
+then repeat with `--if <rev>`; applying the close drops unresolved delivery.
 
 ## Try the example
 
@@ -71,7 +72,7 @@ an example plugin over plain ssh. The mu host's name is the ssh destination:
 
 ```bash
 mu plugin add ssh -- "$(npm root -g)/@mu-crew/mu/examples/plugins/mu-plugin-ssh"
-mu host add devbox --plugin ssh --repo /home/you/repo
+mu host add devbox --plugin ssh --repo /work/repo
 mu host check devbox
 mu agent spawn w1 -w <ws> --host devbox --worktree --task t1   # a pane over ssh
 ```

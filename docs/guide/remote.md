@@ -1,8 +1,11 @@
 # How to run a worker on another machine
 
-The pane is local and the agent is remote: pi on its forwarded control
-socket, claude, codex, cursor-agent or muse on the `hooks` channel
-([below](#a-claude-codex-cursor-agent-or-muse-worker)). mu never connects and
+The pane is local and the agent is remote. A pi session worker uses a
+forwarded control socket. On tmux, session workers running claude, codex,
+cursor-agent or muse use remote [`hooks`](#a-claude-codex-cursor-agent-or-muse-worker).
+On Rex they use `mux`: no hook receipt or hook-based `CLOSE:` processing.
+For plugin jobs, check `mu agent list`: a plugin can declare its own channel.
+mu never connects and
 knows no ssh flags: a host profile holds your own command templates, and
 `mu agent spawn --host` fills them. The full recipe, with collecting and
 the traps, is in
@@ -18,9 +21,10 @@ shared profile grammar.
    package: `pi install npm:@mu-crew/mu`. For claude, codex, cursor-agent or
    muse, add murmur and its hook entries (`murmur init`). Log each harness in
    there yourself. The host needs no mu DB: a remote worker
-   cannot run `mu task` verbs. It ends with a `CLOSE:` block. `mu wait`
-   applies it when it sees the run settle; `mu agent wait` does not. Re-run
-   the evidence first, or close the task yourself.
+   cannot run `mu task` verbs. Ask it to end with a `CLOSE:` block. For
+   `ctl` and `hooks` workers, `mu wait` applies it on settle; `mu agent wait`
+   does not. Without that channel support, read the report, re-run the
+   evidence and close the task yourself.
 2. For pi workers, allow unix-socket forwards in the host's sshd:
    `AllowStreamLocalForwarding yes`.
 3. Have a git repo there for `--worktree` to branch from. One profile serves
@@ -41,10 +45,13 @@ too. Details and limits: [rung 1](remote-ladder.md#rung-1-mu-host-exec).
 
 ```bash
 mu host init dev --ssh --template   # prints a starter `mu host add`; runs nothing
-# edit the printed command and run it, then check
-mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
-mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
+# change the printed --max-sessions 1 to 2 for one live worker, then run it
+mu host check dev --root '~/repo'
 ```
+
+A live session pane uses a slot. Set mu's `--max-sessions` to the number of
+live panes plus at least one for collect, hook brief writes and hook reads.
+This is mu's cap across connections, not sshd's per-connection `MaxSessions`.
 
 ## Spawn the agent
 
@@ -124,8 +131,9 @@ EOF
   `exit` of the result and of the process; 23 stays 23). Never a held
   `ssh dev …`. The remote command writes a token-bound completion record that
   mu reads once the pane has exited; no record, a signal or a lost transport is
-  exit 6, never 0. `mu agent close gate-1` frees the pane and removes that
-  record. No `--worktree`, no `--task`.
+  exit 6, never 0. Preview with `mu agent close gate-1 -w auth`, then run
+  `mu agent close gate-1 -w auth --if <rev>` to free the pane and remove
+  the record. No `--worktree`, no `--task`.
 - If the spawn reports `ctl refused` or `missing`, run
   `mu host check dev --agent worker-1 -w auth`, then check
   `AllowStreamLocalForwarding` on the host.
@@ -138,10 +146,9 @@ as agent records with `host`, `cwd`, `base` and `collected_head`.
 
 ## A claude, codex, cursor-agent or muse worker
 
-`--cli claude` (or `codex`, `cursor-agent`, `muse`) on a host runs that
-harness behind the pane and reaches it on the `hooks` channel, as a local
-one on tmux. Its hooks on the host must be installed (`murmur init` there),
-and `murmur` must be on the PATH the profile's `--exec` sees.
+With a session template on tmux, `--cli claude` (or `codex`, `cursor-agent`,
+`muse`) uses `hooks`. Install the hooks on the host (`murmur init` there),
+and put `murmur` on the PATH the profile's `--exec` sees.
 
 - The worker gets its row's auto-approve preset in its remote command, as
   a local worker does.
@@ -211,7 +218,8 @@ remote spawn runs its literal command and never reads your local
 cd ~/repo                              # the local repo the commits come home to
 mu agent collect worker-1 -w auth      # runs the profile's --fetch, prints the merge
 git merge <sha>                        # mu prints the exact sha; it never merges
-mu agent close worker-1 -w auth        # preview, then --if <rev>
+mu agent close worker-1 -w auth        # preview; copy its revision
+mu agent close worker-1 -w auth --if <rev>
 ```
 
 - `collect` runs the `--fetch` template locally, in the current directory's
@@ -230,7 +238,8 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   remove` never uses git's `--force`. A process inside it, or a host with
   neither /proc nor lsof to check, refuses naming `close --force`, which
   removes past either with a warning. A newer HEAD refuses with one line:
-  `collect` again, or `close --keep-branch` to keep the commits on the remote
+  `collect` again, or preview with `--keep-branch` and apply with
+  `--keep-branch --if <rev>` to keep the commits on the remote
   branch `mu/<ws>/<agent>-<sha12>` and remove the worktree. Uncommitted files
   always refuse (`--discard` and `--keep-branch` do not override that).
 - A `--cwd` agent has no remote worktree of its own: close never touches the
@@ -240,10 +249,12 @@ mu agent close worker-1 -w auth        # preview, then --if <rev>
   machine-local `remote_recovery` record of the host, path and base (`mu sql
   "select * from remote_recovery"`; `mu rebuild` loses it). A failed spawn whose
   own rollback removed the tree (or found it gone) leaves none. With no agent row left,
-  `mu agent close <name> -w <ws>` (or `<ws>/<name>`) previews and closes THAT
-  worktree under the rule above (no pane, no task; the recorded host profile only), and
-  `mu agent collect <name>` fetches from it. Several records of one name need
-  `--recovery <id>`; a current agent of the name or path, a newer record of the same path, or a changed `--exec`, refuses (a changed default repo does not).
+  `mu agent close <name> -w <ws>` (or a qualified name) previews that
+  worktree; repeat with `--if <rev>` to close it (no pane, no task; the
+  recorded host profile only). `mu agent collect <name> -w <ws>` fetches from
+  it. Several records of one name need `--recovery <id>` (on preview and
+  apply). A current agent of the name or path, a newer record of the same
+  path, or a changed `--exec` refuses (a changed default repo does not).
   While a record exists, a `--worktree` spawn of that name on that host
   refuses (exit 4): collect, then close the record first.
 
@@ -255,11 +266,7 @@ runs them with `/bin/sh -c`. `spawn --host` uses them (above); `agent
 collect` runs the `--fetch` template.
 
 ```bash
-mu host init dev --ssh --template   # prints a starter `mu host add`; runs nothing
-# edit the printed command and run it, then check
-mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
-mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
-mu host show dev              # templates and the holders of its channels
+mu host show dev                   # templates and the holders of its channels
 ```
 
 - Placeholders: `{env}` (the five `MU_*` identity variables only), `{cmd}`,
@@ -312,7 +319,8 @@ A crashed or unanswered acquire stays `acquiring`: run the same
 `mu host acquire` again and it resolves that request, never acquiring a
 second host. A host the provider reports gone is `lost`: closing its
 agents records their trees gone, and a final collect still owed there is
-kept as uncollected work until `mu agent close <name> --abandon-job`.
+kept as uncollected work. To drop it, preview with
+`mu agent close <name> -w <ws> --abandon-job`, then repeat with `--if <rev>`.
 `mu host release <name> --abandon` drops the host and every record of
 it without asking the provider, and logs what was lost. Inside
 `MU_HOST_DEADLINE_MARGIN_MS` of the provider's deadline, spawns refuse
@@ -320,23 +328,23 @@ and the host drains, `mu wait` fires `deadline` (exit 7) for its agents,
 and `mu state` lists their collect and close.
 
 ```bash
-mu agent spawn w1 --host box1 --worktree --cli claude --task t1   # HEAD pushed, brief in the start
-mu wait agent:w1@0           # the first turn; its settle runs an in-life collect
-mu agent close w1            # stops the job, runs the final collect, closes the tree
+mu agent spawn w1 -w auth --host box1 --worktree --cli claude --task t1
+mu wait agent:auth/w1@0      # first settle runs an in-life collect
+mu agent close w1 -w auth   # preview; copy its revision
+mu agent close w1 -w auth --if <rev>   # stop, final collect, close the tree
 ```
 
-`--worktree` there starts from your checkout's commit and must run inside
-it. A start with no answer is never resent: `mu agent check w1 <msgId>`
-resolves it.
+This example assumes an at-start job kind and a provider that can fetch
+HEAD. Run the spawn from your checkout. A start with no answer is never
+resent: `mu agent check w1 <msgId> -w auth` resolves it.
 
 ## Session-capped hosts
 
-Some hosts allow one ssh session per connection (`MaxSessions 1`). A
-`session` worker's pane holds it for the worker's whole life, so every other
-`ssh` to the host (the murmur collector, `git fetch`, you) is refused, as a
-misleading `Permission denied`. A `lease` profile fixes that: the pane runs a
-local **carrier** that owns a detached remote job on its own connection, so
-no session is held.
+sshd's `MaxSessions 1` allows one session per connection. The SSH session
+starter opens an independent connection per pane, so that limit alone does
+not require a lease. If only one connection is practical and it has one
+session, use a `lease` profile: the local **carrier** owns a detached remote
+job without holding a session open for its lifetime.
 
 ```bash
 mu host init dev --mule --template   # prints the starter below; runs nothing
@@ -354,8 +362,8 @@ mu host check dev --root '~/repo'
   it in the name's `carrier_jobs` reservation (machine-local; `mu sql "SELECT *
   FROM carrier_jobs"`). The reservation is taken before the pane opens. While
   it exists, every spawn of that name refuses. Once a carrier may have launched,
-  a failed spawn that never got a handle keeps the reservation and the tree for
-  `mu agent close <name>`.
+  a failed spawn that never got a handle keeps the reservation and the tree
+  for `mu agent close <name> -w <ws>` (preview, then `--if <rev>`).
   `--stop` must contain `{job}`, and must be idempotent: exit 0 for a job that
   already ended. `{env}` is refused there, `{cwd}` is always `.`.
 - `--attach` is optional: it opens a new carrier for a job that still runs
@@ -389,10 +397,11 @@ mu host check dev --root '~/repo'
   (`MU_SPAWN_JOB_MS`, default 30 s) even under `--no-ctl`. A spawn that fails
   after the handle runs `stop` before it removes the worktree. A failed stop
   keeps both the handle and the worktree, and a respawn of that name refuses
-  until `mu agent close <name>` stops the job. A lease profile runs no command
-  gates.
+  until you preview `mu agent close <name> -w <ws>` and apply it with
+  `--if <rev>` to stop the job. A lease profile runs no command gates.
 
-- `agent close` on a lease agent kills the pane and proves it gone as usual,
+- After the preview, `agent close --if <rev>` on a lease agent kills the
+  pane and proves it gone as usual,
   then runs `stop` for the job, and only then removes the worktree. A stop that
   fails (the template's first stderr line is named), hands back (exit 3) or
   finds the `stop` template changed keeps the agent and its handle: fix that,
@@ -400,8 +409,9 @@ mu host check dev --root '~/repo'
   recorded yet is read from the job file; with neither, close refuses (`spawn in
   progress`).
 - With no agent row left (the carrier was `kill -9`ed and reconcile reaped it,
-  a teardown, a raw delete), `mu agent close <name> -w <ws>` stops the job
-  and drops its handle first, then closes the recovery worktree, if any. A
+  a teardown, a raw delete), preview with `mu agent close <name> -w <ws>`,
+  then repeat with `--if <rev>` to stop the job and drop its handle first,
+  then close the recovery worktree, if any. A
   tree that refuses (dirty, uncollected) no longer keeps the name fenced: the
   retry only closes the tree. `agent collect` never stops a job.
 - A reaped lease agent whose job still runs (a tmux restart, a `kill -9`)
@@ -412,9 +422,10 @@ mu host check dev --root '~/repo'
   Reattach is pi only: close a reaped non-pi lease agent instead. The reaper
   parked the agent's tasks (the job may still write); `--task <id>` claims
   each back once ctl answers. After a close instead, `mu task unpark <id>`.
-- A host that is gone for good: `mu agent close <name> --abandon-job` drops the
-  handle without a stop and logs the host and handle; the job may still run
-  there. It is the only way past an unreachable host.
+- A host that is gone for good: preview with
+  `mu agent close <name> -w <ws> --abandon-job`, then repeat with `--if <rev>`.
+  This drops the handle without a stop and logs the host and handle; the job
+  may still run there. It is the only way past an unreachable host.
 
 ### Smoke-test a lease end to end
 

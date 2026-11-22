@@ -57,17 +57,15 @@ or a git identity.
 ## Rung 1: `mu host exec`
 
 ```bash
-mu host exec dev -- sh -c 'cd "$HOME/repo" && make test'
-mu host exec dev --json --timeout 60 -- git rev-parse HEAD
+mu host exec dev --cwd /path/to/repo -- make test
+mu host exec dev --cwd /path/to/repo --json --timeout 60 -- git rev-parse HEAD
 ```
 
 One synchronous command through the host's link: no agent row, task, pane or
 job. It runs on every backend, herdr included.
 
-- `--cwd` reaches the host only when the exec template uses `{cwd}`; the
-  shipped starters do not, so the command runs in the login directory (or
-  here). `cd` inside one script argument instead. Known issue: `host exec
-  --cwd` is silently dropped by such a template.
+- `--cwd` sets the working directory on the host, including with a template
+  that has no `{cwd}` placeholder. Without it, the link uses `.`.
 - Deadline 600 s unless `--timeout`; mu keeps 1 MiB of output and reports
   `clipped` when it cut.
 - The exit is the link's. A hand-back (a template's own exit 3, a hardware
@@ -105,8 +103,8 @@ A hand-back (exit 3, a dropped ssh master) asks for a human. It records no
 lost host, job or tree. A lease keeps its carrier and row; sends fail as
 unreachable and are not resent; the forward returns with the master. A close
 during the loss kills the pane and hands back, keeping row and handle. With
-the master back, a bare `mu agent close <name>` only previews. Take a fresh
-preview and apply it with `--if <rev>` (the revision may have changed after
+the master back, take a fresh preview with `mu agent close <name> -w <ws>`
+and repeat with `--if <rev>` (the revision may have changed after
 the interrupted close or a reap); that stops the job by its handle.
 
 <!-- TODO(guide_recipe): ship-time details for the two units below. -->
