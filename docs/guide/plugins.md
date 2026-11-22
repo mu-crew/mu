@@ -30,12 +30,14 @@ mu plugin rm box
 A plugin can replace a profile's `--shell` and `--exec` templates:
 
 ```bash
-mu host add dev --plugin box [--fetch '<fetch cmd>']
+mu host add dev --plugin box [--fetch '<fetch cmd>'] [--repo <remote repo>]
 mu host check dev
-mu agent spawn w1 --host dev --worktree --task t1
+mu agent spawn w1 -w <ws> --host dev --worktree --task t1
 ```
 
-`--fetch` is needed only when the plugin's link does not fetch. Agents spawn
+`--fetch` is needed only when the plugin's link does not fetch. A spawn with
+`--worktree` needs the host's remote repo: `--repo` on `host add`, or `--root
+<remote repo>` on each spawn (without either it refuses: no default repo). Agents spawn
 there only if the plugin declares a job seam. Otherwise the host is
 link-only. Everything else works as for any remote host:
 [Run a worker on another machine](remote.md).
@@ -69,9 +71,9 @@ an example plugin over plain ssh. The mu host's name is the ssh destination:
 
 ```bash
 mu plugin add ssh -- "$(npm root -g)/@mu-crew/mu/examples/plugins/mu-plugin-ssh"
-mu host add devbox --plugin ssh
+mu host add devbox --plugin ssh --repo /home/you/repo
 mu host check devbox
-mu agent spawn w1 --host devbox --worktree      # a pane over ssh
+mu agent spawn w1 -w <ws> --host devbox --worktree --task t1   # a pane over ssh
 ```
 
 It gives the host a link (exec, fetch) and an example `pane` job kind. If

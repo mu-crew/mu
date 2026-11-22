@@ -40,7 +40,8 @@ too. Details and limits: [rung 1](remote-ladder.md#rung-1-mu-host-exec).
 ## Add a profile and check it
 
 ```bash
-mu host init dev --ssh   # prints a starter `mu host add`; runs nothing
+mu host init dev --ssh --template   # prints a starter `mu host add`; runs nothing
+# edit the printed command and run it, then check
 mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
 mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
 ```
@@ -254,7 +255,8 @@ runs them with `/bin/sh -c`. `spawn --host` uses them (above); `agent
 collect` runs the `--fetch` template.
 
 ```bash
-mu host init dev --ssh        # prints a starter `mu host add`; runs nothing
+mu host init dev --ssh --template   # prints a starter `mu host add`; runs nothing
+# edit the printed command and run it, then check
 mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
 mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
 mu host show dev              # templates and the holders of its channels
@@ -277,7 +279,7 @@ mu host show dev              # templates and the holders of its channels
   prompt): mu stops with exit 5, `human needed`, and the template's first line.
   Never retried; `host check` reports a `handback` step.
 - A `shell` template must not ride a shared ssh master (keep `-o
-  ControlMaster=no -o ControlPath=none`, as `host init --ssh` prints): a `-L`
+  ControlMaster=no -o ControlPath=none`, as `host init --ssh --template` prints): a `-L`
   through a master is bound by the master, outlives the pane, and is never
   re-bound, so the next spawn of that name gets no socket. `host check` warns
   when the template lacks either option. On a session-capped host use a
@@ -337,7 +339,7 @@ local **carrier** that owns a detached remote job on its own connection, so
 no session is held.
 
 ```bash
-mu host init dev --mule   # prints the starter below; runs nothing
+mu host init dev --mule --template   # prints the starter below; runs nothing
 mu host add dev --transport lease \
   --shell 'mule run --host dev --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}' \
   --exec  'mule exec --host dev -- sh -c {cmd}' \

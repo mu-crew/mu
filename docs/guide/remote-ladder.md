@@ -25,15 +25,15 @@ Rung 2 is approved but not built; nothing below depends on it.
 
 | Rung | tmux | Rex | herdr | One session per connection |
 | --- | --- | --- | --- | --- |
-| 0 | pi `ctl`, others `hooks` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a |
+| 0 | pi `ctl`, hook harnesses (claude, codex, cursor-agent, muse) `hooks`, others `mux` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a |
 | 1 | runs (no pane) | runs | runs | fine over a link that serialises itself |
-| 3 | pi `ctl` forwarded, others remote `hooks` | pi `ctl`, others `mux` | refused | fine: each pane opens its own connection |
+| 3 | pi `ctl` forwarded, hook harnesses remote `hooks` | pi `ctl`, others `mux` | refused | fine: each pane opens its own connection |
 | 4 | pi `ctl` via the carrier | same | refused | fine: one master |
-| 5 | the plugin's channel | same | refused | the provider's |
+| 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | same | refused | the provider's |
 | command gate | `mux` | `mux` | refused | as rung 3; lease profiles run no gates |
 
 - Remote `hooks` needs a backend that anchors and pastes: tmux only.
-  Elsewhere a non-pi worker is on `mux`.
+  Elsewhere a non-pi worker is on `mux`; tmux has no `mux` send and refuses.
 - A lease carrier forwards no stdin, so a non-pi worker has no input path on
   a lease: use pi.
 - The Rex cells for rungs 3 and 4 are read from source, not smoke-tested.
@@ -57,18 +57,23 @@ or a git identity.
 ## Rung 1: `mu host exec`
 
 ```bash
-mu host exec dev --cwd '~/repo' -- make test
+mu host exec dev -- sh -c 'cd "$HOME/repo" && make test'
 mu host exec dev --json --timeout 60 -- git rev-parse HEAD
 ```
 
 One synchronous command through the host's link: no agent row, task, pane or
 job. It runs on every backend, herdr included.
 
+- `--cwd` reaches the host only when the exec template uses `{cwd}`; the
+  shipped starters do not, so the command runs in the login directory (or
+  here). `cd` inside one script argument instead. Known issue: `host exec
+  --cwd` is silently dropped by such a template.
 - Deadline 600 s unless `--timeout`; mu keeps 1 MiB of output and reports
   `clipped` when it cut.
 - The exit is the link's. A hand-back (a template's own exit 3, a hardware
   key) exits 5 with `human needed`; a timeout or no answer also exits 5, and
-  the command may still run. Only `--json` tells a command's 5 from mu's.
+  the command may still run; so does a command's own 5. Only `--json` tells
+  them apart.
   Nothing is retried.
 - The log keeps metadata only (host, outcome, duration, command length),
   never the command text or output.
@@ -100,7 +105,9 @@ A hand-back (exit 3, a dropped ssh master) asks for a human. It records no
 lost host, job or tree. A lease keeps its carrier and row; sends fail as
 unreachable and are not resent; the forward returns with the master. A close
 during the loss kills the pane and hands back, keeping row and handle. With
-the master back, `mu agent close <name>` stops the job by its handle.
+the master back, a bare `mu agent close <name>` only previews. Take a fresh
+preview and apply it with `--if <rev>` (the revision may have changed after
+the interrupted close or a reap); that stops the job by its handle.
 
 <!-- TODO(guide_recipe): ship-time details for the two units below. -->
 
