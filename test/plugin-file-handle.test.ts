@@ -402,7 +402,7 @@ describe("the view rule", () => {
         await detachedWithGoneView();
         survivingView();
         await reattach().catch(() => {});
-        await expect(close()).rejects.toThrow(/%9 \(the job's dispatcher\) has no provenance/);
+        await expect(close()).rejects.toThrow(/%9 \(the job's dispatcher\) is alive/);
       },
     },
     {

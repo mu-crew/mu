@@ -15,7 +15,14 @@ import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { proveViewGone } from "../host-policy.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
-import { birthIdentity, killView, viewPresent, viewRef, viewServer } from "../jobs/view.js";
+import {
+  birthIdentity,
+  birthServer,
+  killView,
+  serverBeforeBirth,
+  viewPresent,
+  viewRef,
+} from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -28,7 +35,7 @@ import { withAgentLock } from "./lock.js";
 import { closeCommand, ReattachFailedError, ReattachRefusedError } from "./reattach-check.js";
 import { repointReceipts } from "./receipts.js";
 import { withSpawnLock } from "./spawn-lock.js";
-import { birthServer, jobRecordActor, viewLine } from "./spawn-plugin.js";
+import { jobRecordActor, viewLine } from "./spawn-plugin.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
 
 /** The agent's detached plugin job: its record and kind; undefined for any other agent. */
@@ -176,7 +183,7 @@ export async function reattachView(
           closeCommand(db, ws, name),
         );
       }
-      const before = rev === undefined ? undefined : await viewServer(mux).catch(() => undefined);
+      const before = rev === undefined ? undefined : await serverBeforeBirth(mux);
       let born: string | undefined;
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
@@ -201,10 +208,10 @@ export async function reattachView(
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
       const identity = birthIdentity(mux, pid, born);
-      // The attempted view is the record's from here (a file kind), with the server it opened
-      // on: what a close or the next reattach must prove gone, whatever becomes of the row below.
+      // The attempted view is the record's from here (a file kind), with the server its creation
+      // reported: what a close or the next reattach must prove gone, whatever becomes of the row.
       if (rev !== undefined) {
-        const server = await birthServer(mux, before);
+        const server = await birthServer(mux, born, before);
         if (bindView(db, { token: d.r.token, wireRev: rev }, pid, server) === undefined) {
           await killView(mux, pid, identity).catch(() => {});
           throw new AgentReplacedError(name, ws);

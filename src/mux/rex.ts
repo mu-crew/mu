@@ -463,6 +463,27 @@ export async function paneAlive(paneId: string): Promise<boolean> {
   return (await blockSession(paneId)) !== undefined;
 }
 
+/** The server's `instance_id`: a new one per server run, whichever address reached it. */
+export async function serverIdentity(): Promise<string | undefined> {
+  const id = asString((await api("server.status", {})).instance_id);
+  return id === undefined || id.length === 0 ? undefined : id;
+}
+
+/**
+ * The block asked of the server whose instance is `identity`, and only of it. A block id is a
+ * UUID, so a found block is that block; a miss proves absence only from that server, read
+ * before and after the lookup (Rex answers no instance in the lookup itself). Another
+ * instance answering is `foreign`.
+ */
+export async function paneOnServer(
+  paneId: string,
+  identity: string,
+): Promise<"present" | "absent" | "foreign"> {
+  if ((await serverIdentity()) !== identity) return "foreign";
+  if (await paneAlive(paneId)) return "present";
+  return (await serverIdentity()) === identity ? "absent" : "foreign";
+}
+
 export function killPaneCommand(paneId: string): MuxCommand {
   return { command: rexBinary(), args: [...rexGlobalFlags(), "block", "close", paneId] };
 }
@@ -708,6 +729,8 @@ export const rexBackend: MuxBackend = Object.freeze({
   paneAlive,
   paneResult,
   panePid,
+  serverIdentity,
+  paneOnServer,
   killPane: async (pane: ActionPaneRef) => killPane(nativePaneId(pane)),
   killPaneCommand: (pane: ActionPaneRef) => killPaneCommand(nativePaneId(pane)),
   capture: async (pane: ActionPaneRef, opts?: CaptureOptions) => capture(nativePaneId(pane), opts),

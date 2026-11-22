@@ -591,6 +591,27 @@ export async function paneAlive(ref: string | VerifiedPaneRef): Promise<boolean>
 }
 
 /**
+ * The pane on the server `identity` names, asked in ONE guarded tmux call: the server check and
+ * the pane lookup run in the same invocation, so a socket that starts answering for another
+ * server between two calls cannot turn that server's miss into this pane's absence. Another
+ * server or no server answering is `foreign`; any other failure throws.
+ */
+export async function paneOnServer(
+  paneId: string,
+  identity: string,
+): Promise<"present" | "absent" | "foreign"> {
+  const ref = requireVerifiedPane(paneRef(paneId, identity));
+  const r = await execOnPane(ref, (id) => ["display-message", "-t", id, "-p", "#{pane_id}"]);
+  if (r.foreign) return "foreign";
+  if (r.exitCode !== 0) {
+    if (NO_SERVER_RE.test(r.stderr)) return "foreign";
+    if (/can't find pane|pane not found|no current target/i.test(r.stderr)) return "absent";
+    throw new TmuxError(r.args, r.stderr, r.stdout, r.exitCode);
+  }
+  return r.stdout.trim() === paneId ? "present" : "absent";
+}
+
+/**
  * The pane's run state: running, exited (a retained pane keeps its row, with
  * `#{pane_dead_status}` / `#{pane_dead_signal}`) or absent. Only "the pane or
  * server is gone" is absent; any other failure throws, as `paneAlive` does.
@@ -949,6 +970,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   paneResult,
   panePid,
   serverIdentity,
+  paneOnServer,
   killPane: async (pane: ActionPaneRef) => killPane(requireVerifiedPane(pane)),
   killPaneCommand: (pane: ActionPaneRef) => killPaneCommand(requireVerifiedPane(pane)),
   capture: async (pane: ActionPaneRef, opts?: CaptureOptions) =>

@@ -85,6 +85,14 @@ export function pluginHostFixture(opts: { handshakeInProcess?: boolean } = {}): 
       },
       listPanes: async () => [...h.panes.keys()].map((paneId) => ({ paneId, command: "sh" })),
       capture: async () => "",
+      // The stub server answering now (`serverIdentity`, overridable) is the only one whose
+      // panes the fenced probe sees; another identity is foreign, as tmux's guard reports it.
+      paneOnServer: async (p, identity) =>
+        (await (over.serverIdentity ?? (async () => FAKE_SERVER_IDENTITY))()) !== identity
+          ? "foreign"
+          : h.panes.has(p)
+            ? "present"
+            : "absent",
       ...over,
     });
   };

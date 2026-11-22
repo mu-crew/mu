@@ -391,10 +391,16 @@ export interface MuxBackend {
    *  caller can tell the agent's own processes from others; undefined when
    *  the pane is gone. Throws when the probe itself fails. */
   panePid?(pane: string | VerifiedPaneRef): Promise<number | undefined>;
-  /** tmux only: the identity of the server mu drives (`<pid>|<start time>`), or undefined when
+  /** tmux: the identity of the server mu drives (`<pid>|<start time>`), or undefined when
    *  no server runs. Pane ids restart at `%0` per server, so a recorded pane is the agent's
-   *  only while this equals the identity recorded at spawn. Throws when the probe fails. */
+   *  only while this equals the identity recorded at spawn. Rex: the server's `instance_id`
+   *  (a new one per server run). Throws when the probe fails. */
   serverIdentity?(): Promise<string | undefined>;
+  /** tmux and Rex: the pane asked of the server `identity` names (`serverIdentity`), and only
+   *  of it. `foreign`: another server, or none, answered, so the answer proves nothing about
+   *  the pane. tmux checks the server in the same call that looks for the pane; Rex reads its
+   *  instance before and after the lookup. Throws when the probe fails. */
+  paneOnServer?(paneId: string, identity: string): Promise<"present" | "absent" | "foreign">;
   /** herdr: atomic `agent prompt`; Rex: a paste event, then Enter. The `mux`
    *  channel's send. tmux has none: its paste is `pasteToPane`, which only the
    *  `hooks` channel uses, because only there does a hook event confirm it.

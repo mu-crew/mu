@@ -15,6 +15,7 @@ import { addHost } from "../src/hosts.js";
 import { fakePlugin, jobSeams } from "./_plugin.js";
 import { registerFixturePlugin } from "./_plugin-handshake.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
+import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
 
 const h = pluginHostFixture({ handshakeInProcess: true });
 const FILE = { handle: "file", start: { lookup: true, fenceKey: false } };
@@ -53,7 +54,7 @@ it("a spawn released during its prepare never moves its replacement's job file",
     spawnAgent: async (s) => {
       h.panes.set("%9", { command: s.command });
       writeFileSync(jobFile(), "file-job-1\n");
-      s.onPaneCreated?.("%9");
+      s.onPaneCreated?.("%9", FAKE_SERVER_IDENTITY);
       return "%9";
     },
   });
@@ -87,7 +88,7 @@ it("a rollback and a concurrent reattach: never a live view without its record a
       const id = `%${++n}`;
       h.panes.set(id, { command: s.command });
       writeFileSync(jobFile(), "file-job-1\n");
-      s.onPaneCreated?.(id);
+      s.onPaneCreated?.(id, FAKE_SERVER_IDENTITY);
       if (n === 1) throw new Error("injected: the view failed after its id");
       return id;
     },
@@ -124,7 +125,7 @@ it("a close from another mux server proves nothing: the job, record and file sta
     spawnAgent: async (s) => {
       h.panes.set("%1", { command: s.command });
       writeFileSync(jobFile(), "file-job-1\n");
-      s.onPaneCreated?.("%1");
+      s.onPaneCreated?.("%1", a);
       return "%1";
     },
     serverIdentity: async () => a,
@@ -142,24 +143,26 @@ it("a close from another mux server proves nothing: the job, record and file sta
   expect(onA.has("%1")).toBe(true);
 });
 
-// pane_file_view_provenance_aba: the server answering changed while the view was being born
-// (a restart reusing %N): its pane is never bound to the new server's identity by inference.
-it("a view born across a server change is bound with no server: unknown, close refuses", async () => {
+// wire_tmux_identity_not_atomic (fast tier; the real-tmux twin is
+// plugin-file-view-server.integration.test.ts): the server that answers after a view's birth is
+// not the one the pane was created on. The record binds the creation call's own answer, never
+// a later sample, and a close routed to the later server proves nothing.
+it("a view is bound to the server its creation call reported, not one sampled after", async () => {
   await h.setup({ ...FILE, view: "detached" });
-  let calls = 0;
+  const born = `${process.pid}|1`; // a live server process: it cannot be proven gone
   h.stubMux({
     spawnAgent: async (s) => {
       h.panes.set("%1", { command: s.command });
       writeFileSync(jobFile(), "file-job-1\n");
-      s.onPaneCreated?.("%1");
+      s.onPaneCreated?.("%1", born);
       return "%1";
     },
-    serverIdentity: async () => (++calls === 1 ? "11|1" : "22|2"),
+    serverIdentity: async () => "22|2", // the server answering any later call
   });
   await h.spawn();
-  expect(record()).toMatchObject({ wireState: "bound", paneId: "%1", viewServer: null });
-  h.panes.clear();
-  await expect(close()).rejects.toThrow(/no recorded mux server/);
+  expect(record()).toMatchObject({ wireState: "bound", paneId: "%1", viewServer: `tmux:${born}` });
+  h.panes.clear(); // the later server has no such pane
+  await expect(close()).rejects.toThrow(/which this mu does not drive/);
   expect(h.f.backend().stops).toBe(0);
   expect(existsSync(jobFile())).toBe(true);
 });
@@ -175,7 +178,7 @@ it("a reattach on a restarted server reusing %1: the record binds the new view, 
       n++;
       h.panes.set("%1", { command: s.command });
       writeFileSync(jobFile(), "file-job-1\n");
-      s.onPaneCreated?.("%1");
+      s.onPaneCreated?.("%1", server);
       if (n === 2) throw new Error("injected: interrupted after its id");
       return "%1";
     },

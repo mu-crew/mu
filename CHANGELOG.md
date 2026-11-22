@@ -99,10 +99,15 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   removed only inside the transition that owns the current revision, so a
   spawn released during its prepare never moves its replacement's file. A
   bound view is asked about only on the mux server recorded with it
-  (`carrier_jobs.view_server`; tmux: its server's `<pid>|<start time>`): a
-  close from another `MU_TMUX_SOCKET` or a restarted server proves
-  nothing, unless the recorded server's process is gone, and a pane id
-  equal to the record's on another server is never its view. A view asked
+  (`carrier_jobs.view_server`; tmux: `<pid>|<start time>` as the call that
+  created the pane reported it; Rex: its server's `instance_id`, the same
+  before and after the birth; herdr names no server, so its view is
+  unknown): a close from another `MU_TMUX_SOCKET` or `MU_REX_SERVER`, or a
+  restarted server, proves nothing, unless the recorded tmux server's
+  process is gone, and a pane id equal to the record's on another server is
+  never its view. On tmux the proof checks the server in the same tmux call
+  that looks for the pane, so a socket retargeted between two calls cannot
+  pair one server's identity with another's miss. A view asked
   for with no pane id, a pane not proven gone, a view with no recorded
   server, another server, and a record older than the columns (an
   upgrade) are unknown, and `mu agent close` and `agent reattach` refuse

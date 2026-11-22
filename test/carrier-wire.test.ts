@@ -189,6 +189,9 @@ describe("the view proof", () => {
     ...tmuxBackend,
     serverIdentity: async () => id,
     paneAlive: async (p) => panes.includes(typeof p === "string" ? p : p.paneId),
+    // The server-fenced probe: another identity (or none) answering is foreign.
+    paneOnServer: async (p, identity) =>
+      identity !== id ? "foreign" : panes.includes(p) ? "present" : "absent",
   });
   const bound = (server: string | null) => {
     const r = recordIn("dispatching");
@@ -230,9 +233,16 @@ describe("the view proof", () => {
     expect(p).toMatchObject({ state: "unknown", why: expect.stringMatching(/no recorded mux/) });
   });
 
-  it("a backend with no server identity is matched by name", async () => {
-    const herdr = { ...mux(undefined, []), name: "herdr", serverIdentity: undefined } as never;
-    expect((await proveViewGone(bound("herdr"), herdr)).state).toBe("gone");
+  // wire_view_backend_name_is_not_server: a backend name is no server identity.
+  it("a server recorded by backend name alone, or on another backend, is unknown", async () => {
+    const herdr = {
+      ...mux(undefined, []),
+      name: "herdr",
+      serverIdentity: undefined,
+      paneOnServer: undefined,
+    } as never;
+    expect((await proveViewGone(bound("herdr"), herdr)).state).toBe("unknown");
     expect((await proveViewGone(bound("rex"), herdr)).state).toBe("unknown");
+    expect((await proveViewGone(bound("rex:i-1"), mux("i-1", []))).state).toBe("unknown");
   });
 });

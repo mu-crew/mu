@@ -53,10 +53,17 @@ import { reserveProviderJob } from "../host-records.js";
 import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
 import { awaitLeaseJob, defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
-import { birthIdentity, killView, viewPresent, viewRef, viewServer } from "../jobs/view.js";
+import {
+  birthIdentity,
+  birthServer,
+  killView,
+  serverBeforeBirth,
+  viewPresent,
+  viewRef,
+} from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { TmuxPaneBirthError } from "../mux/pane-ref.js";
-import { type CommandSource, type MuxBackend, markPaneHost } from "../mux/types.js";
+import { type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { EffectOutcomeUnknownError } from "../plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.js";
@@ -572,7 +579,7 @@ async function openView(
           `carrier_jobs: the job record of ${opts.workstream}/${opts.name} was released or moved: no view opens for it`,
         );
       }
-      const before = rev === undefined ? undefined : await viewServer(mux).catch(() => undefined);
+      const before = rev === undefined ? undefined : await serverBeforeBirth(mux);
       // The name is ours: no live agent owns a socket at this path; the view's forward binds it.
       if (v.localSock !== undefined) rmSync(v.localSock, { force: true });
       let born: string | undefined;
@@ -600,10 +607,16 @@ async function openView(
       const paneIdentity = birthIdentity(mux, pid, born);
       onPane(pid, paneIdentity);
       viewDone = done;
+      // A file kind's view is bound with the server its creation reported (tmux: that very
+      // call's answer), never one sampled separately (src/jobs/view.ts `birthServer`).
       if (rev === undefined) recordCarrierPane(db, v.token, pid);
       else if (
-        bindView(db, { token: v.token, wireRev: rev }, pid, await birthServer(mux, before)) ===
-        undefined
+        bindView(
+          db,
+          { token: v.token, wireRev: rev },
+          pid,
+          await birthServer(mux, born, before),
+        ) === undefined
       ) {
         throw new Error(
           `carrier_jobs: the view of ${opts.workstream}/${opts.name} could not be bound`,
@@ -642,20 +655,6 @@ async function openView(
   // The backend's own completion: a view that failed after it reported its pane rolls back.
   await viewDone;
   return row;
-}
-
-/**
- * The mux server a view just reported its pane on: the server answering now, provided it is
- * the one that answered before the mux was asked (none before: the spawn started it). A server
- * that changed in between, or no answer, is null: the bound view is unknown, never inferred.
- */
-export async function birthServer(
-  mux: MuxBackend,
-  before: string | undefined,
-): Promise<string | null> {
-  const after = await viewServer(mux).catch(() => undefined);
-  if (after === undefined) return null;
-  return before === undefined || before === after ? after : null;
 }
 
 /** An at-start kind's job.start whose outcome is unknown: its first prompt may be running. Exit 1. */

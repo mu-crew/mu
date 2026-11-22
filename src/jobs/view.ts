@@ -17,7 +17,7 @@
 //                job's liveness. Throws when the probe fails.
 //
 // A view a record keeps for later proof (a file kind's dispatcher) also records
-// the mux server it opened on (`viewServer`), and is asked about only there
+// the mux server it was born on (`birthServer`), and is asked about only there
 // (`viewOnServer`): another server's answer is no proof.
 
 import { foreignBackend } from "../mux/binding.js";
@@ -159,25 +159,43 @@ export async function viewIdentity(mux?: MuxBackend): Promise<string | undefined
 }
 
 /**
- * The mux server a view opened now is on: the backend's name, and where the backend names its
- * server (tmux: `<pid>|<start time>`) that identity after a `:`. Undefined when such a backend
- * names none (no server answers): a view recorded so is unknown. Throws when the probe fails.
+ * What a dispatcher view's birth is compared against (`birthServer`), read before the mux is
+ * asked: Rex's server instance answering now. tmux needs none (its creation call reports its
+ * server) and herdr has none to give: undefined. Never throws: no answer is an unknown birth.
  */
-export async function viewServer(mux?: MuxBackend): Promise<string | undefined> {
-  const m = mux ?? (await activeMux());
-  if (m.serverIdentity === undefined) return m.name;
-  const id = await m.serverIdentity();
-  return id === undefined ? undefined : `${m.name}:${id}`;
+export async function serverBeforeBirth(mux: MuxBackend): Promise<string | undefined> {
+  if (mux.name === "tmux" || mux.paneOnServer === undefined) return undefined;
+  return mux.serverIdentity?.().catch(() => undefined);
+}
+
+/**
+ * The mux server a view was born on, recorded with its pane (`carrier_jobs.view_server`): the
+ * backend's name and the server's own identity after a `:`, never a backend name alone.
+ * tmux: `born`, the identity the creation call itself reported (`onPaneCreated`). Rex: its
+ * server instance, the same before (`serverBeforeBirth`) and after the birth. A backend with no
+ * server identity (herdr), a birth that reported none, or a server that changed is null: the
+ * view is unknown and its record retains, never inferred.
+ */
+export async function birthServer(
+  mux: MuxBackend,
+  born: string | undefined,
+  before: string | undefined,
+): Promise<string | null> {
+  if (mux.paneOnServer === undefined) return null;
+  if (mux.name === "tmux") return born === undefined ? null : `tmux:${born}`;
+  const after = await mux.serverIdentity?.().catch(() => undefined);
+  return before !== undefined && after === before ? `${mux.name}:${after}` : null;
 }
 
 /** A recorded view as seen from here: present, absent, or on a server this invocation cannot ask. */
 export type ViewOnServer = "present" | "absent" | "elsewhere";
 
 /**
- * View presence, asked only of the server the view was recorded on (`viewServer`). The backend
- * or server mu drives now being another (another `MU_TMUX_SOCKET`, a restarted server, another
- * backend) is `elsewhere`, never absence: except that a recorded server whose process is gone
- * took its panes with it (`absent`). Throws when a probe fails.
+ * View presence, asked only of the server the view was recorded on (`birthServer`), in the
+ * backend's server-fenced probe (`paneOnServer`: tmux checks the server in the very call that
+ * looks for the pane). Another backend, another server or none answering is `elsewhere`, never
+ * absence: except that a tmux server whose process is gone took its panes with it (`absent`).
+ * Throws when a probe fails.
  */
 export async function viewOnServer(
   paneId: string,
@@ -185,14 +203,18 @@ export async function viewOnServer(
   mux?: MuxBackend,
 ): Promise<ViewOnServer> {
   const m = mux ?? (await activeMux());
-  const now = await viewServer(m);
-  if (now === server) return (await m.paneAlive(paneId)) ? "present" : "absent";
-  return serverProcessGone(server) ? "absent" : "elsewhere";
+  const [, backend, identity] = /^(tmux|rex|herdr):(.+)$/.exec(server) ?? [];
+  if (backend === undefined || identity === undefined) return "elsewhere";
+  if (backend === m.name && m.paneOnServer !== undefined) {
+    const seen = await m.paneOnServer(paneId, identity);
+    if (seen !== "foreign") return seen;
+  }
+  return backend === "tmux" && tmuxServerGone(identity) ? "absent" : "elsewhere";
 }
 
-/** A server identity leads with its process id (`tmux:<pid>|…`): ESRCH proves it gone. */
-function serverProcessGone(server: string): boolean {
-  const pid = Number(/^[^:]+:(\d+)\|/.exec(server)?.[1]);
+/** A tmux server identity leads with its process id (`<pid>|<start time>`): ESRCH proves it gone. */
+function tmuxServerGone(identity: string): boolean {
+  const pid = Number(/^(\d+)\|\d+$/.exec(identity)?.[1]);
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
