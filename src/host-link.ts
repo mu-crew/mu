@@ -35,6 +35,7 @@ import {
   runLeasedTemplate,
   withHostChannel,
 } from "./hosts.js";
+import { shellQuote } from "./shell-quote.js";
 import { git } from "./vcs/git.js";
 
 /** Linux's cap on one exec argument (MAX_ARG_STRLEN), its terminating NUL included. */
@@ -115,6 +116,8 @@ export interface HostLink {
       script: string;
       cwd: string;
       timeoutMs: number;
+      /** Host exec only: enter cwd even if the exec template has no {cwd}. */
+      cwdFallback?: true;
       /** Dispatch once: no retry of a refusal (a plugin's `retryable`). */
       once?: true;
       /** Keep at most this many bytes of each stream while the command runs (template link). */
@@ -183,13 +186,14 @@ function execTemplate(host: HostView): string {
 }
 
 /**
- * The script a template link sends for `cwd`. A template without `{cwd}` cannot place the
- * command (both shipped exec starters lack it), so the script enters `cwd` itself; `.` is
- * the login directory and adds nothing.
+ * Host exec can use an exec template without `{cwd}` (both shipped starters).
+ * `.` is already the login directory; other paths are literal, including `-`.
  */
 function inCwd(template: string, script: string, cwd: string): string {
   if (cwd === "." || placeholderUses(template, "exec").cwd > 0) return script;
-  return `cd ${remotePathWord(cwd)} && ${script}`;
+  if (cwd === "") throw new HostProfileError("host exec --cwd must name a directory");
+  const path = cwd.startsWith("/") ? cwd : `./${cwd}`;
+  return `unset CDPATH && cd -- ${shellQuote(path)} || exit $?\n${script}`;
 }
 
 /** The built-in link over `db`'s profiles: today's `exec` and `fetch` templates. */
@@ -217,12 +221,14 @@ export function templateLink(db: Db): HostLink {
     exec: (host, req, call, admitted) =>
       underChannel(db, host, call, admitted, (h, lease) => {
         req.dispatch?.check();
+        // Other callers already resolve their own paths in templates without {cwd}.
+        const cmd = req.cwdFallback ? inCwd(execTemplate(h), req.script, req.cwd) : req.script;
         return runLeasedTemplate(
           db,
           lease,
           requireProfile(h),
           "exec",
-          { cmd: inCwd(requireProfile(h).exec ?? "", req.script, req.cwd), cwd: req.cwd },
+          { cmd, cwd: req.cwd },
           req.timeoutMs,
           undefined,
           req.maxStreamBytes,

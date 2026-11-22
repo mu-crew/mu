@@ -136,6 +136,22 @@ describe("mu host check", () => {
     expect(human.stdout).toContain("pi");
   });
 
+  it("resolves a home-relative repo once on an exec template without {cwd}", async () => {
+    mkdirSync(join(dir, "repo"));
+    copyGitFixture(join(dir, "repo"));
+    addHost(db, {
+      name: "relative",
+      shell: "sh -c {cmd}",
+      exec: `cd '${dir}' && sh -c {cmd}`,
+      fetch: "true",
+      repo: "repo",
+      max_sessions: null,
+    });
+    const r = await runCliJson(["host", "check", "relative", "--json"], dbPath);
+    expect(r.data.steps).toContainEqual({ step: "repo", ok: true, detail: "repo" });
+    expect(r.exitCode).toBeNull();
+  });
+
   it("with --agent: the socket answers through the forward (extension version, features)", async () => {
     await serveExtension("auth", "worker-1");
     const r = await runCliJson(

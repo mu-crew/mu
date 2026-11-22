@@ -3,12 +3,12 @@
 // the whole of a command's piped stderr. Needs `dist/` (`npm run build`).
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { openDb } from "../src/db.js";
-import { addHost } from "../src/hosts.js";
+import { addHost, hostMuleStarter, hostStarter } from "../src/hosts.js";
 import { rmFixtureDir } from "./_fs.js";
 
 const CLI = join(process.cwd(), "dist", "cli.js");
@@ -68,6 +68,57 @@ describeIfBuilt("mu host exec (built CLI)", () => {
     expect(r.stdout).toBe("");
     expect(r.stderr).toMatch(/nope/);
   });
+
+  it.each([
+    [
+      "ssh",
+      hostStarter("fixture").exec,
+      `while [ "$1" = -o ]; do shift 2; done
+[ "$#" = 2 ] && [ "$1" = fixture ] || exit 94
+exec /bin/sh -c "$2"`,
+    ],
+    [
+      "mule",
+      hostMuleStarter("fixture").exec,
+      `[ "$#" = 7 ] && [ "$1 $2 $3 $4 $5 $6" = 'exec --host fixture -- sh -c' ] || exit 94
+shift 4
+exec "$@"`,
+    ],
+  ])(
+    "the %s starter carries a literal cwd through its transport arguments",
+    (transport, exec, shim) => {
+      const cwd = "~/sub dir '$x;[a]";
+      const home = join(realpathSync(dir), "home");
+      const bin = join(dir, "bin");
+      mkdirSync(join(home, cwd), { recursive: true });
+      mkdirSync(bin);
+      // Use the actual starter and assert its argv boundary, without a live SSH connection.
+      writeFileSync(join(bin, transport), `#!/bin/sh\ncd "$HOME" || exit 95\n${shim}\n`, {
+        mode: 0o755,
+      });
+      env.HOME = home;
+      env.PATH = `${bin}:${env.PATH}`;
+      const db = openDb({ path: env.MU_DB_PATH });
+      try {
+        addHost(db, {
+          name: "starter",
+          shell: "true",
+          exec,
+          fetch: "true",
+          repo: null,
+          max_sessions: null,
+        });
+      } finally {
+        db.close();
+      }
+      const r = mu("host", "exec", "starter", "--cwd", cwd, "--", "pwd -P; printf '%s\\n' done");
+      expect({ exit: r.status, stdout: r.stdout, stderr: r.stderr }).toEqual({
+        exit: 0,
+        stdout: `${join(home, cwd)}\ndone\n`,
+        stderr: "",
+      });
+    },
+  );
 
   it("a nonzero exit keeps all of a command's piped stderr", () => {
     const r = mu("host", "exec", "box", "--", "head -c 500000 /dev/zero | tr '\\0' e >&2; exit 7");

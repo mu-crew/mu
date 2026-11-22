@@ -125,19 +125,60 @@ describe("host exec: the outcome table", () => {
     );
   });
 
-  it("runs in --cwd on a template without {cwd} (the ssh and mule starter shapes)", async () => {
-    mkdirSync(join(home, "sub dir"), { recursive: true });
-    for (const [name, exec] of [
-      ["ssh", `cd '${home}' && /bin/sh -c {cmd}`],
-      ["mule", `cd '${home}' && env sh -c {cmd}`],
-    ] as const) {
-      addHost(db, { name, shell: "true", exec, fetch: "true", repo: null, max_sessions: null });
-      const r = await hostExec(db, name, { script: "pwd", cwd: "sub dir" });
-      expect(r.stdout).toMatch(/home\/sub dir$/);
-      expect((await hostExec(db, name, { script: "pwd", cwd: "/" })).stdout.trim()).toBe("/");
-      expect((await hostExec(db, name, { script: "pwd" })).stdout.trim()).toBe(home);
-    }
+  it("distinguishes absolute, omitted, and empty --cwd on a template without {cwd}", async () => {
+    addHost(db, {
+      name: "t",
+      shell: "true",
+      exec: `cd '${home}' && /bin/sh -c {cmd}`,
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    expect(await hostExec(db, "t", { script: "pwd", cwd: "/" })).toMatchObject({
+      exit: 0,
+      stdout: "/",
+    });
+    expect(await hostExec(db, "t", { script: "pwd" })).toMatchObject({
+      exit: 0,
+      stdout: home,
+    });
+    await expect(hostExec(db, "t", { script: "pwd", cwd: "" })).rejects.toThrow(/--cwd/);
   });
+
+  it("a failed cd aborts the whole script, including later command lists", async () => {
+    addHost(db, {
+      name: "t",
+      shell: "true",
+      exec: `cd '${home}' && /bin/sh -c {cmd}`,
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    const r = await hostExec(db, "t", { script: "true; touch ran; printf ran", cwd: "missing" });
+    expect(r).toMatchObject({ exit: expect.any(Number), stdout: "" });
+    expect(r.exit).toBeGreaterThan(0);
+    expect(r.stderr).toContain("missing");
+    expect(existsSync(join(home, "ran"))).toBe(false);
+  });
+
+  it.each(["repo", "-"])(
+    "treats --cwd %s as a literal path, not a cd search operand",
+    async (cwd) => {
+      const elsewhere = join(dir, "elsewhere");
+      mkdirSync(join(elsewhere, cwd), { recursive: true });
+      mkdirSync(join(home, cwd));
+      addHost(db, {
+        name: "t",
+        shell: "true",
+        exec: `cd '${home}' && CDPATH='${elsewhere}' OLDPWD='${elsewhere}' /bin/sh -c {cmd}`,
+        fetch: "true",
+        repo: null,
+        max_sessions: null,
+      });
+      const r = await hostExec(db, "t", { script: `printf "%s:%s" "\${CDPATH+x}" "$PWD"`, cwd });
+      expect(r).toMatchObject({ exit: 0, stdout: `:${join(home, cwd)}` });
+    },
+  );
 
   it("a link reply through a plugin link", async () => {
     await plugin();
@@ -145,7 +186,7 @@ describe("host exec: the outcome table", () => {
     expect(r).toMatchObject({ link: "fake", exit: 4, stdout: expect.stringMatching(/^hi\n?$/) });
   });
 
-  it("runs in --cwd through a plugin link (the mule link's seat)", async () => {
+  it("forwards --cwd to a plugin link", async () => {
     await plugin();
     mkdirSync(join(home, "sub"));
     expect((await hostExec(db, "p", { script: "pwd", cwd: "sub" })).stdout.trim()).toMatch(
