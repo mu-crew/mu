@@ -511,7 +511,7 @@ export function releaseLeaseClose(db: Db, close: LeaseClose): void {
       r.name,
       r.workstream,
       r.host,
-      "the reservation changed during the close (a job handle landed)",
+      "the reservation changed during the close (a job handle landed, or its start began)",
     );
   }
 }

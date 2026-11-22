@@ -6,6 +6,7 @@
 // transition that acts on it is ONE compare-and-swap on that revision (`wire_rev`). A path
 // whose revision moved lost the race and retains everything.
 //
+//   claimed ──start intent──▶ claimed (the job.start effect's intent, `markFileJobLaunch`)
 //   claimed ──dispatch──▶ dispatching ──bind──▶ bound(view, mux server)
 //      ▲  ▲                                       │  │
 //      │  └────────────── dispatch (reattach) ────┘  │ unbind (its view proven gone)
@@ -80,6 +81,30 @@ export function claimJobFile(
       return { rev, moved: { read, aside } };
     })
     .immediate();
+}
+
+/**
+ * A file kind's `job.start` intent (`launch = 'intent'`, the instance the start goes to, an
+ * at-start kind's first msgId), written in the effect's transaction as a transition of the
+ * record, from `claimed` at the revision the spawn's file claim returned. A close that decided
+ * "unlaunched" on the earlier revision then cannot delete the record (its release compares
+ * the revision it read), and a close that released it first makes this refuse before any
+ * call is sent. Returns the new revision, the one the spawn dispatches its view from.
+ */
+export function markFileJobLaunch(
+  db: Db,
+  r: WireRef,
+  instance: string,
+  firstMsgId?: string,
+): number | undefined {
+  return step(
+    db,
+    r,
+    ["claimed"],
+    "claimed",
+    ", launch = 'intent', instance = ?, first_msg_id = COALESCE(?, first_msg_id)",
+    [instance, firstMsgId ?? null],
+  );
 }
 
 /**

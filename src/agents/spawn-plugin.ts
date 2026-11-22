@@ -381,9 +381,15 @@ export async function spawnPluginAgent(
       ...(prompt !== undefined ? { firstPrompt: prompt } : {}),
     };
     opts.signal?.throwIfAborted();
-    let started: JobStart;
+    let started: JobStart & { wireRev?: number };
     try {
-      started = await kind.start(host, spec, token);
+      // A file kind's start intent is a wire transition from the claim's revision.
+      started = await kind.start(
+        host,
+        spec,
+        token,
+        claim === undefined ? undefined : { token, wireRev: claim.rev },
+      );
     } catch (e) {
       const r = getCarrierJob(db, token);
       // The first prompt may be running (or, resolved meanwhile, ran): never rolled back or
@@ -414,7 +420,7 @@ export async function spawnPluginAgent(
         ...(builtIn !== undefined ? { builtIn } : {}),
         ...(sockets !== undefined ? { localSock: sockets.local } : {}),
         ...(remoteKey !== undefined ? { remoteKey } : {}),
-        ...(claim !== undefined ? { wire: { token, wireRev: claim.rev } } : {}),
+        ...(claim !== undefined ? { wire: { token, wireRev: startedRev(started, token) } } : {}),
       },
       started.view,
       (pid, born) => {
@@ -655,6 +661,14 @@ async function openView(
   // The backend's own completion: a view that failed after it reported its pane rolls back.
   await viewDone;
   return row;
+}
+
+/** The revision a file kind's start intent moved its record to: its view dispatches from it. */
+function startedRev(started: { wireRev?: number }, token: string): number {
+  if (started.wireRev === undefined) {
+    throw new Error(`carrier_jobs: job record ${token} started outside its wire revision`);
+  }
+  return started.wireRev;
 }
 
 /** An at-start kind's job.start whose outcome is unknown: its first prompt may be running. Exit 1. */

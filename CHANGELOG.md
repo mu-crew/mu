@@ -107,7 +107,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   process is gone, and a pane id equal to the record's on another server is
   never its view. On tmux the proof checks the server in the same tmux call
   that looks for the pane, so a socket retargeted between two calls cannot
-  pair one server's identity with another's miss. A view asked
+  pair one server's identity with another's miss. A file kind's
+  `job.start` intent is a transition too: a close that decided
+  "unlaunched" before it refuses instead of dropping the record of a start
+  in flight. A view asked
   for with no pane id, a pane not proven gone, a view with no recorded
   server, another server, and a record older than the columns (an
   upgrade) are unknown, and `mu agent close` and `agent reattach` refuse

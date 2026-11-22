@@ -18,6 +18,7 @@ import {
   recordFirstInc,
   unlaunchPluginJob,
 } from "../carrier-jobs.js";
+import { markFileJobLaunch, type WireRef } from "../carrier-wire.js";
 import type { Db } from "../db.js";
 import { effectsOf, getEffect } from "../effects.js";
 import type { CheckContext } from "../host-link.js";
@@ -53,7 +54,14 @@ export interface PluginJobKind extends JobKind {
    * launch (`launching`, the instance recorded). A reply's handle fills the record; an error
    * that says nothing happened puts it back to unlaunched; no answer leaves it to `resolve`.
    */
-  start(host: HostView, spec: JobSpec, key: string): Promise<JobStart>;
+  start(
+    host: HostView,
+    spec: JobSpec,
+    key: string,
+    /** A `handle: "file"` kind's record, at the revision of its file claim: the intent is a
+     *  wire transition (`markFileJobLaunch`), and the reply carries the new revision. */
+    wire?: WireRef,
+  ): Promise<JobStart & { wireRev?: number }>;
   lookup(host: HostView, key: string, opts: { fence: boolean }): Promise<KeyLookup<JobFound>>;
   /** Idempotent; resolves only on proof the job is gone. Refuses a changed instance. */
   stop(db: Db, job: JobRef, call?: Call): Promise<void>;
@@ -120,7 +128,11 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
     caps,
     identity: instance,
 
-    async start(host, spec, key) {
+    async start(host, spec, key, wire) {
+      if (caps.handle === "file" && wire === undefined) {
+        throw new Error(`job record ${key}: a file kind's start needs its wire revision`);
+      }
+      let wireRev: number | undefined;
       const params = { target: target(key, host.name), key, spec };
       const firstAgent = (): number => {
         const a = getAgent(db, spec.name, spec.workstream);
@@ -128,7 +140,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
         return a.incarnation;
       };
       try {
-        return await runEffect(db, {
+        const started = await runEffect(db, {
           key,
           subject: {
             kind: "job",
@@ -140,7 +152,15 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
           method: "job.start",
           params,
           alongside: (inst) => {
-            if (!markPluginJobLaunch(db, key, inst, spec.firstPrompt?.msgId)) {
+            const msgId = spec.firstPrompt?.msgId;
+            if (wire !== undefined) {
+              wireRev = markFileJobLaunch(db, wire, inst, msgId);
+              if (wireRev === undefined) {
+                throw new Error(
+                  `job record ${key} moved since its file claim (a close released it): not started`,
+                );
+              }
+            } else if (!markPluginJobLaunch(db, key, inst, msgId)) {
               throw new Error(`job record ${key} is not an unlaunched ${name} job`);
             }
           },
@@ -151,6 +171,7 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
           },
           refused: () => unlaunchPluginJob(db, key, "the plugin refused the start"),
         });
+        return wireRev === undefined ? started : { ...started, wireRev };
       } catch (e) {
         return handBack(host.name, "exec", e);
       }
