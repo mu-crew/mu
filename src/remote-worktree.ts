@@ -245,10 +245,7 @@ async function prepareOn(
   // The root as an absolute physical path (bare repos too: no --show-toplevel), hex-encoded so
   // no byte of it (a trailing space, a newline) is lost to the line parse. The row records it,
   // and close, rollback and recovery run against it.
-  const answer = [
-    `r=$(cd "$root" && pwd -P) || exit 5`,
-    `printf 'MU_REPO %s\\nMU_WT %s %s\\n' "$(printf '%s' "$r" | od -An -v -tx1 | tr -d ' \\n')" "$base" "$(cd "$wt" && pwd -P)"`,
-  ].join("\n");
+  const answer = `printf 'MU_REPO %s\\nMU_WT %s %s\\n' "$(printf '%s' "$r" | od -An -v -tx1 | tr -d ' \\n')" "$base" "$(cd "$wt" && pwd -P)"`;
   const body = opts.worktree
     ? [
         `root=${root}`,
@@ -278,14 +275,23 @@ async function prepareOn(
         rev === undefined
           ? `base=$(git -C "$root" rev-parse --verify ${shellQuote(`${opts.from ?? "HEAD"}^{commit}`)}) || exit 5`
           : `base=${rev}; git -C "$root" rev-parse -q --verify "$base^{commit}" >/dev/null || exit 8`,
+        // Keep even a trailing newline in the absolute repo path.
+        `r=$(CDPATH= cd "$root" && pwd -P && printf '.') || exit 5`,
+        `r=\${r%??}`,
         ...(opts.reclaim === true
           ? [`if "$existing"; then`, ...reclaimLines(), answer, `exit 0`, `fi`]
           : []),
         `mkdir -p "$(dirname "$wt")" || exit 6`,
         `mkdir "$wt" || { read_owner; fail "could not claim the path"; }`,
-        // Git may already have removed its directory after a failed add. A second
-        // removal could touch a path another DB claimed in the meantime.
-        `git -C "$root" worktree add --detach "$wt" "$base" >&2 || exit 7`,
+        // Pin our mkdir's inode as the subshell's cwd. Git may remove the path on
+        // failure and another DB may claim it before Git returns. Only rmdir our
+        // original directory, and only if it is still empty.
+        `(`,
+        `  cd "$wt" || exit 7`,
+        `  git -C "$r" worktree add --detach "$wt" "$base" >&2 && exit 0`,
+        `  if [ "$wt" -ef . ]; then rmdir "$wt" 2>/dev/null; fi`,
+        `  exit 7`,
+        `) || exit 7`,
         `undo() { git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1; exit 7; }`,
         `gd=$(git -C "$wt" rev-parse --absolute-git-dir) && printf '%s\\n' "$db_id" > "$gd/${PREPARED_MARK}" || undo`,
         answer,

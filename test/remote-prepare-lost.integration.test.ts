@@ -12,6 +12,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -150,6 +151,44 @@ describe("a lost prepare answer", () => {
       await expect(prepare()).rejects.toThrow(/\(held \d+( [^)]*)?\)/);
     } finally {
       holder.kill("SIGKILL");
+    }
+  });
+});
+
+describe("a failed worktree add", () => {
+  it("releases its empty claim so prepare can retry", async () => {
+    // Git cannot create its worktree metadata when `worktrees` is a file.
+    const metadata = join(repo, ".git", "worktrees");
+    writeFileSync(metadata, "block worktree registration");
+    await expect(prepare()).rejects.toThrow(/exit 7/);
+    unlinkSync(metadata);
+    await expect(prepare()).resolves.toEqual({ cwd: wt(), base: head(), repo });
+  });
+
+  it.each(["non-empty claim", "empty replacement"])("leaves a %s alone", async (kind) => {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const data = join(wt(), ".keep");
+    writeFileSync(
+      join(bin, "git"),
+      `#!/bin/sh
+if [ "$3" = worktree ] && [ "$4" = add ]; then
+  ${kind === "non-empty claim" ? `printf 'keep' > "$6/.keep"` : `mv "$6" "$6.original" && mkdir "$6"`} || exit 8
+  exit 1
+fi
+PATH=\${PATH#*:} exec git "$@"
+`,
+      { mode: 0o755 },
+    );
+    const peer = addPeer(`PATH='${bin}':"$PATH" sh -c {cmd}`);
+    try {
+      await expect(prepare(true, peer)).rejects.toThrow(/exit 7/);
+      expect(existsSync(wt())).toBe(true);
+      if (kind === "non-empty claim") expect(readFileSync(data, "utf8")).toBe("keep");
+      else expect(existsSync(`${wt()}.original`)).toBe(true);
+      await expect(prepare()).rejects.toThrow(/owner unknown/);
+    } finally {
+      peer.close();
     }
   });
 });
