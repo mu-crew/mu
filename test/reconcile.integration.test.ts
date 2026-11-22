@@ -98,6 +98,7 @@ describe("reconcile — empty cases", () => {
     expect(report).toEqual({
       prunedGhosts: 0,
       orphans: [],
+      foreign: [],
       mode: "full",
     });
   });
@@ -313,8 +314,8 @@ describe("reconcile — combined scenarios", () => {
     const second = await reconcile(db, { workstream: "auth" });
 
     // First pass detects nothing (status already busy, matches BUSY_SCROLLBACK).
-    expect(first).toEqual({ prunedGhosts: 0, orphans: [], mode: "full" });
-    expect(second).toEqual({ prunedGhosts: 0, orphans: [], mode: "full" });
+    expect(first).toEqual({ prunedGhosts: 0, orphans: [], foreign: [], mode: "full" });
+    expect(second).toEqual({ prunedGhosts: 0, orphans: [], foreign: [], mode: "full" });
   });
 });
 

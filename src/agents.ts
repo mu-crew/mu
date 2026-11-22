@@ -84,6 +84,7 @@ export {
   CarrierJobKeptError,
   CarrierJobUnresolvedError,
   CarrierJobUnstoppedError,
+  MuxBackendMismatchError,
   RemoteBriefTooLargeError,
   SpawnAttemptBusyError,
   SpawnAttemptEndedError,

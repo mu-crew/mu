@@ -14,6 +14,7 @@
 import * as agentSdk from "./agents.js";
 import type { Db } from "./db.js";
 import { detachedJobLives } from "./jobs/kinds.js";
+import { foreignBackend } from "./mux/binding.js";
 import { activeMux, type MuxPane } from "./mux.js";
 
 /**
@@ -64,6 +65,9 @@ export interface ReconcileReport {
   /** Panes in the workstream's tmux session that look like agents but
    *  aren't in the registry. Never auto-registered. */
   orphans: MuxPane[];
+  /** Rows whose pane id belongs to another managed backend (tmux, herdr, Rex).
+   *  Kept, never pruned: the active backend cannot see them. */
+  foreign: agentSdk.AgentRow[];
   /** Which mode this report was generated in. Lets callers switch their
    *  output text ("agents pruned" vs "would-be-pruned (suppressed)")
    *  without re-deriving from options. */
@@ -126,9 +130,13 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
   //    orphan exclusion only reasons about real panes.
   const survivors: agentSdk.AgentRow[] = [];
   const pendingSurvivors: agentSdk.AgentRow[] = [];
+  const foreign: agentSdk.AgentRow[] = [];
   for (const agent of dbAgents) {
     if (agentSdk.isPendingPaneId(agent.paneId)) {
       pendingSurvivors.push(agent);
+    } else if (foreignBackend(agent.paneId, mux.name) !== undefined) {
+      // Another managed backend's pane: this backend cannot list it, so it is not a ghost (spec A §8.2).
+      foreign.push(agent);
     } else if (paneById.has(agent.paneId)) {
       survivors.push(agent);
     } else if (await detachedJobLives(db, agent.incarnation)) {
@@ -159,5 +167,5 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
     if (looksLikeAgentPane(pane)) orphans.push(pane);
   }
 
-  return { prunedGhosts, orphans, mode };
+  return { prunedGhosts, orphans, foreign, mode };
 }

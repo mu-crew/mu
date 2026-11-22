@@ -9,7 +9,8 @@
 //   conflict   → 4   (AgentExistsError, AgentNameExhaustedError,
 //                     AgentNotInWorkstreamError,
 //                     AgentSendUnsupportedError,
-//                     AgentExtensionOutdatedError, AgentBusyError)
+//                     AgentExtensionOutdatedError, AgentBusyError,
+//                     MuxBackendMismatchError)
 //   timeout    → 5   (AgentAbortTimeoutError: abort/interrupt only; a wait
 //                     that hits its cap is exit 0 with timedOut, not an error)
 //   failure    → 1   (AgentSpawnCliNotFoundError, AgentDiedOnSpawnError,
@@ -68,6 +69,19 @@ export class AgentSpawnCliNotFoundError extends Error {
     public readonly envVarChecked: string,
   ) {
     super(say("agent.cli_not_found", cli, binary, envVarChecked));
+  }
+}
+
+/** Spec A §8.2: the workstream already has live agents on another managed backend. */
+export class MuxBackendMismatchError extends Error {
+  override readonly name = "MuxBackendMismatchError";
+  constructor(
+    public readonly workstream: string,
+    public readonly active: string,
+    public readonly existing: string,
+    public readonly agentName: string,
+  ) {
+    super(say("agent.backend_mismatch", workstream, active, existing, agentName));
   }
 }
 

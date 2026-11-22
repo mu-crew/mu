@@ -57,6 +57,7 @@ import {
   AgentSpawnCliNotFoundError,
   AgentSpawnStartupError,
   AgentSteerUnsupportedError,
+  MuxBackendMismatchError,
   RemoteBriefTooLargeError,
   SpawnAttemptBusyError,
   SpawnAttemptEndedError,
@@ -576,6 +577,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // An agent's row names a channel no built-in or registered plugin provides (D9).
     err instanceof ChannelUnknownError ||
     err instanceof AgentExistsError ||
+    err instanceof MuxBackendMismatchError ||
     err instanceof AgentNameExhaustedError ||
     err instanceof TaskExistsError ||
     err instanceof BackupTargetExistsError ||

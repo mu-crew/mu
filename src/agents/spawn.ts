@@ -69,6 +69,7 @@ import {
   WorktreeVcsRequiredError,
   worktreePath,
 } from "../worktree.js";
+import { assertBackendBinding } from "./backend-binding.js";
 import {
   AgentDiedOnSpawnError,
   AgentExistsError,
@@ -521,6 +522,7 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
     );
   }
   if (profile) assertLeaseSpawnable(profile, gateToken !== undefined);
+  await assertBackendBinding(db, opts.workstream);
   // A lease spawn reserves the name in carrier_jobs BEFORE any effect: from here until a
   // stop (or an abandon) the reservation is the durable pointer to whatever job its
   // carrier may dispatch, and every other spawn of the name refuses.
