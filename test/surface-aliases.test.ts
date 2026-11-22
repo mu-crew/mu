@@ -96,6 +96,20 @@ describe("t_surface round 1", () => {
     expect(briefs.map((n) => n.content)).toEqual([line]);
   });
 
+  it("spawn --host --task on a task with no brief refuses and asks for --send, spawning nothing", async () => {
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-3", "-w", "auth", "--host", "box1", "--task", "t2", "--json"],
+      path,
+    );
+    expect(r.exitCode).toBe(2);
+    expect(JSON.stringify(r.doc)).toMatch(/--send/);
+    expect(JSON.stringify(r.doc)).not.toMatch(/Read: mu task notes/);
+    expect(hook.texts).toEqual([]);
+    expect(
+      selectTaskNotes(db, "t2", { workstream: "auth" }).notes.filter((n) => n.kind === "brief"),
+    ).toEqual([]);
+  });
+
   it.each([
     [["tasks"], "unknown command 'tasks' (closest: mu task list); see mu --help"],
     [["show"], "unknown command 'show' (closest: mu task show); see mu --help"],

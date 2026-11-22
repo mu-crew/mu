@@ -156,6 +156,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   Waiting on a named `--command` gate returns the command's exit status,
   even if an unrelated task has closed. A wait without refs still sees
   owned events.
+- **`mu agent spawn --host … --task` with no brief note and no `--send` refuses** (exit 2) instead of
+  delivering `Read: mu task notes …`, which a remote worker cannot run (it has no mu DB; spec A, rungs 3/4).
+  A task with a brief note still sends it in full. Local spawns are unchanged.
 - `mu host init --ssh --template` now prints `--max-sessions 2`, so a collect
   or a remote task brief write fits beside one live pane. Existing profiles
   and the mule lease starter are unchanged.

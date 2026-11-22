@@ -162,12 +162,15 @@ export async function cmdSpawn(
 }
 
 /** What `--task` sends when `--send` is absent: the task's brief (as `mu task auto` builds it), or,
- *  with no brief note, one line from its title. That line carries no footer: it is pinned as the brief. */
-function taskBriefText(db: Db, workstream: string, task: string): string {
+ *  with no brief note, one line from its title (a `--host` spawn refuses instead: see below). That line carries no footer: it is pinned as the brief. */
+function taskBriefText(db: Db, workstream: string, task: string, host?: string): string {
   try {
     return buildTaskBrief(db, workstream, task).text;
   } catch (err) {
     if (!(err instanceof TaskBriefMissingError)) throw err;
+    // A --host worker has no mu DB: the one-line pointer to `mu task notes` cannot be run there.
+    if (host !== undefined)
+      throw new UsageError(say("agent.spawn_task_remote_nobrief", task, host));
     const title = getTask(db, task, workstream)?.title ?? task;
     return say("agent.spawn_task_default", task, workstream, title);
   }
@@ -185,7 +188,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
     opts.send === undefined
       ? opts.task === undefined
         ? undefined
-        : taskBriefText(db, workstream, opts.task)
+        : taskBriefText(db, workstream, opts.task, opts.host)
       : opts.send === STDIN_ARG
         ? await readStdinText("send text")
         : opts.send;

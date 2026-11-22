@@ -285,6 +285,8 @@ export const MESSAGES = {
   "agent.spawn_attempt_task": () => "--attempt needs --task",
   "agent.spawn_task_default": (task: string, ws: string, title: string) =>
     `Task ${task} (workstream ${ws}): ${title}. Read: mu task notes ${task} -w ${ws}`,
+  "agent.spawn_task_remote_nobrief": (task: string, host: string) =>
+    `task ${task} has no brief note, and ${host} has no mu DB to read \`mu task notes\` from: pass the text with --send (--send - reads stdin)`,
   "agent.spawn_name_hint": (name: string) =>
     `hint: agent name "${name}" does not match the smallest-unused-suffix convention (<role>-<n>; e.g. worker-1, reviewer-2). Accepted; consider renaming if you spawn additional workers.\n`,
   "agent.spawn_trust_warning": (name: string, skipped: boolean) =>

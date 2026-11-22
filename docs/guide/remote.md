@@ -92,6 +92,10 @@ EOF
   agent starts in `--root` (default the profile's repo), else the login
   directory. Without a repo, templates get `.` for `{cwd}`. `--root` is part
   of a `--task` attempt's identity: the same attempt in another repo conflicts.
+- `--task` without `--send` sends the task's brief note in full (the host has
+  no mu DB, so never a `Read: mu task notes` pointer). A task with no brief
+  note is refused (exit 2) before anything is spawned: pass `--send`, as above.
+  Local spawns still fall back to a one-line title pointer.
 - `--task` is the same one journaled attempt as for a local agent: claim
   for the new agent, then the brief, never sent twice.
 - mu reserves the host's channel before its first remote command and
