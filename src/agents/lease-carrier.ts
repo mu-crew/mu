@@ -31,7 +31,7 @@ import {
 } from "../carrier-jobs.js";
 import { carrierJobFilePath } from "../ctl/path.js";
 import type { Db } from "../db.js";
-import { closePluginJob } from "../host-policy.js";
+import { closePluginJob, recoverFileHandle } from "../host-policy.js";
 import { type HostProfile, HostProfileError, pidProvenGone, pidStart } from "../hosts.js";
 import { describeRead, type JobFile, leaseJobRef, leaseKind, readJobFile } from "../jobs/lease.js";
 import { viewPresent } from "../jobs/view.js";
@@ -191,20 +191,40 @@ export async function rollbackLeaseJob(
     let job = getCarrierJob(db, a.token);
     if (job === undefined) return kept("?", null, "its reservation is gone");
     // A plugin job (D8): started by its reply, stopped by its kind; an unresolved start stays.
+    // A file kind (ladder placement §10) reads its job file first, then looks up by key, and
+    // like a lease stops only once its view, the dispatcher, is proven gone.
     if (job.plugin !== null) {
-      if (job.job === null) {
-        return job.launch === "none" ? "none" : kept(job.host, null, "its job.start is unresolved");
-      }
-      const ref = pluginJobRef(db, job.token);
       const kind = pluginJobKind(db, job.plugin);
-      if (ref === undefined || kind === undefined) return kept(job.host, job.job, "no job seam");
+      const file = kind?.caps.handle === "file";
+      if (job.job === null) {
+        if (job.launch === "none") return "none";
+        if (kind === undefined || !file) {
+          return kept(job.host, null, "its job.start is unresolved");
+        }
+        const got = await recoverFileHandle(db, job, kind);
+        if ("why" in got) return kept(job.host, null, got.why);
+        job = getCarrierJob(db, a.token);
+        if (job?.job == null) return kept("?", null, "its reservation is gone");
+      }
+      const handle = job.job;
+      const ref = pluginJobRef(db, job.token);
+      if (ref === undefined || kind === undefined) return kept(job.host, handle, "no job seam");
+      if (file && !paneGone) {
+        return kept(job.host, handle, "its view is not proven gone");
+      }
       try {
         await kind.stop(db, ref);
       } catch (e) {
+        return kept(job.host, handle, `stop failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      if (!file) return "stopped";
+      const now = readJobFile(jobFile);
+      if (now.kind === "handle" && now.job === handle) rmSync(jobFile, { force: true });
+      else if (now.kind !== "none") {
         return kept(
           job.host,
-          job.job,
-          `stop failed: ${e instanceof Error ? e.message : String(e)}`,
+          handle,
+          `stopped, but the job file ${jobFile} is ${describeRead(now)}`,
         );
       }
       return "stopped";

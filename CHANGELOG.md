@@ -69,6 +69,20 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   seam now takes the remote spawn's refusals (harness probe, repo, recovered
   tree); a link-only plugin still refuses. No protocol schema change.
 
+- **The D15 job file for a `handle: "file"` plugin kind** (ladder placement
+  spec §10). An additive protocol change: `JobSpec.jobFile` (the local path
+  mu claims before `job.start`, where the view writes the handle before
+  dispatch), and `job.attach` params `jobFile` and `sockets` (the pair
+  rebuilt for the new view on `ctl`), sent only to a file kind. Schema digest
+  `sha256:54d56d9a865c4e9302f2b63158cb595010ecbb0b59037550609a54d79392ac36`;
+  the previous digest stays approved. Spawn reads the handle from the local
+  file before it returns (no master needed). A launched record with no
+  handle (spawn rollback, a close after a restart, a no-row close) reads the
+  file first, then the unresolved `job.start` or `job.lookup` by key; an
+  absent file and a lookup's `none` never count as "no job", so the record
+  is kept with the reason. The reaper parks the tasks of a plugin job
+  record launched with no handle yet, as it does for a lease with one.
+
 ### Changed
 
 - mu resolves local helpers such as tmux, git and ps to absolute paths before

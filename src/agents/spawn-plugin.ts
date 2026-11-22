@@ -50,7 +50,7 @@ import { harnessOfCli } from "../harnesses.js";
 import { type HostView, resolveHost } from "../host-provider.js";
 import { reserveProviderJob } from "../host-records.js";
 import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
-import { defaultSpawnJobMs } from "../jobs/lease.js";
+import { awaitLeaseJob, defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
 import { emitEvent } from "../logs.js";
 import { type CommandSource, markPaneHost } from "../mux/types.js";
@@ -62,6 +62,7 @@ import { prepareProviderWorktree } from "../remote-worktree.js";
 import { shellQuote } from "../shell-quote.js";
 import { gitToplevel } from "../vcs/git.js";
 import { AgentExistsError } from "./errors.js";
+import { claimLeaseJobFile } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
 import { type ReceiptActor, repointReceipts } from "./receipts.js";
 import {
@@ -329,6 +330,12 @@ export async function spawnPluginAgent(
             orchestrator: false,
             remote_key: remoteKey,
           });
+    // A file kind's view writes the handle to the job file (ladder placement §10): claimed
+    // before job.start, holding the reservation, so any handle seen there is this job's.
+    const jobFile =
+      kind.caps.handle === "file"
+        ? await withAgentLock(db, ws, name, async () => claimLeaseJobFile(db, ws, name))
+        : undefined;
     const prompt =
       atStart && opts.firstPrompt !== undefined
         ? { text: opts.firstPrompt, msgId: opts.firstTurn?.msgId ?? randomUUID() }
@@ -356,6 +363,7 @@ export async function spawnPluginAgent(
               ...(remoteKey !== undefined ? { MU_REMOTE_KEY: remoteKey } : {}),
             },
       ...(sockets !== undefined ? { sockets } : {}),
+      ...(jobFile !== undefined ? { jobFile } : {}),
       ...(prompt !== undefined ? { firstPrompt: prompt } : {}),
     };
     opts.signal?.throwIfAborted();
@@ -402,6 +410,18 @@ export async function spawnPluginAgent(
       },
       atStart ? owned : undefined,
     );
+    if (jobFile !== undefined) {
+      // From the local file, no master needed, before spawn returns (§10.3).
+      await awaitLeaseJob(db, {
+        name,
+        token,
+        paneId: row.paneId,
+        profile: host,
+        jobFile,
+        command,
+        ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
+      });
+    }
     if (builtIn !== undefined) {
       const ready = await builtInReadiness(row, command, host.name, sockets?.local, opts);
       emitEvent(

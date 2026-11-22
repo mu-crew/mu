@@ -227,12 +227,20 @@ wire calls.
 
 | Method | Params beyond `target`, `deadline` | Result |
 | --- | --- | --- |
-| `job.start` (effect) | `key` (the job record's token), `spec` (the whole `JobSpec`: workstream, name, harness, role, cmd, `commandSource`, cwd, env, sockets?, firstPrompt?) | `{view: {command, env, cwd?}, handle?, baseline?}`; `handle` when the kind's handle is `reply` |
+| `job.start` (effect) | `key` (the job record's token), `spec` (the whole `JobSpec`: workstream, name, harness, role, cmd, `commandSource`, cwd, env, sockets?, jobFile?, firstPrompt?) | `{view: {command, env, cwd?}, handle?, baseline?}`; `handle` when the kind's handle is `reply` |
 | `job.lookup` | `key`, `fence` | exactly one of `{found: {handle, view?, baseline?}}` (a `reply` kind's is its whole start reply; a `file` kind's may be the handle alone), `{pending: true}`, `{none: true}`, `{unknown: reason}` |
 | `job.status` | — | `{state: "running"}`, `{state: "ended", exit}`, `{state: "lost" \| "unknown", reason}` |
 | `job.stop` (effect, idempotent) | `key` | `null`, only on proof the job is gone |
-| `job.attach` | — | a view `{command, env, cwd?}` |
+| `job.attach` | `jobFile?`, `sockets?` (a `file` kind only) | a view `{command, env, cwd?}` |
 | `job.checkSteps` | `phase`, `agent?` | steps, as `link.checkSteps` |
+
+A `handle: "file"` kind's `spec.jobFile` is the absolute local path mu
+claimed for the job before `job.start`: the view writes the handle there,
+one line, renamed in whole, before it dispatches. mu reads it before the
+spawn returns, and a record left with no handle (a rollback, a close after
+a restart) reads the file first, then the unresolved start or `job.lookup`
+by key; `none` never counts as no job. `job.attach` gets the same path, and
+the socket pair rebuilt for the new view when the agent is on `ctl`.
 
 A spawn that requests a `JobSpec` field the kind does not `honours` (a
 `read-only` role, a `--command`, the sockets of an agent on ctl) is refused

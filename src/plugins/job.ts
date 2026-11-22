@@ -57,9 +57,19 @@ export interface PluginJobKind extends JobKind {
   lookup(host: HostView, key: string, opts: { fence: boolean }): Promise<KeyLookup<JobFound>>;
   /** Idempotent; resolves only on proof the job is gone. Refuses a changed instance. */
   stop(db: Db, job: JobRef, call?: Call): Promise<void>;
-  attach(db: Db, job: JobRef): Promise<PaneCommand>;
+  /**
+   * A new view of a running job. `extra` goes on the wire only to a `handle: "file"` kind
+   * (ladder placement §10): the job file again, and the socket pair rebuilt for the new view.
+   */
+  attach(db: Db, job: JobRef, extra?: AttachExtra): Promise<PaneCommand>;
   /** Every unresolved effect of job record `token`, by the rule table (D4). */
   resolve(token: string, call?: Call): Promise<Resolution[]>;
+}
+
+/** What `job.attach` carries for a `handle: "file"` kind (`jobAttachParams`). */
+export interface AttachExtra {
+  jobFile?: string;
+  sockets?: { local: string; remote: string };
 }
 
 /** The key of a job's stop effect: one per job, so a re-run reissues the same request. */
@@ -207,8 +217,15 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
       }
     },
 
-    async attach(_db, job) {
-      return ask("job.attach", { target: jobTarget(job) }, job.key ?? "", job.identity ?? null);
+    async attach(_db, job, extra = {}) {
+      // Only a file kind gets the new fields: an older plugin of another kind may reject them.
+      const more = declared.handle === "file" ? extra : {};
+      return ask(
+        "job.attach",
+        { target: jobTarget(job), ...more },
+        job.key ?? "",
+        job.identity ?? null,
+      );
     },
 
     async resolve(token, call) {

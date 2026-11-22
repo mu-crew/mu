@@ -3,8 +3,10 @@
 // that read `stop_gen` before its fetch (src/remote-collect.ts); in-life collects
 // back off and never touch it. `closePluginJob` closes a plugin job record with
 // no agent row: on a lost host the job went with the machine (unless
-// `outlivesHost`) and an owed collect is kept as uncollected work.
+// `outlivesHost`) and an owed collect is kept as uncollected work. A `handle: "file"`
+// kind's record with no handle reads its job file first (`recoverFileHandle`).
 
+import { dirname } from "node:path";
 import { CarrierJobKeptError, CarrierJobUnresolvedError } from "./agents/errors.js";
 import type { LeaseClose } from "./agents/lease-carrier.js";
 import { withAgentLock } from "./agents/lock.js";
@@ -13,18 +15,21 @@ import {
   abandonCarrierJob,
   bumpStopGen,
   type CarrierJob,
+  fillCarrierJob,
   getCarrierJob,
   getCarrierJobByAgent,
   noteCarrierJob,
   setCollectNextAt,
 } from "./carrier-jobs.js";
+import { carrierJobFilePath } from "./ctl/path.js";
 import type { Db } from "./db.js";
 import { deleteEffect, effectsOf, refuseLiveOwner } from "./effects.js";
 import { observeHost } from "./host-lifecycle.js";
-import type { HostRecord } from "./host-provider.js";
+import { findHost, type HostRecord } from "./host-provider.js";
 import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-records.js";
+import { describeRead, readJobFile } from "./jobs/lease.js";
 import { emitEvent } from "./logs.js";
-import { pluginJobKind, pluginJobRef } from "./plugins/job.js";
+import { type PluginJobKind, pluginJobKind, pluginJobRef } from "./plugins/job.js";
 import { collectInLifeLocked, collectRemoteAgentLocked } from "./remote-collect.js";
 import { recoveriesFor } from "./remote-recovery.js";
 import type { WaitResult } from "./wait-types.js";
@@ -221,8 +226,13 @@ export async function closePluginJob(
     }
     return settleLostJob(db, reservation);
   }
-  if (reservation.job === null && reservation.launch === "intent")
-    await kind.resolve(reservation.token);
+  let unresolved = "its job.start is unresolved";
+  if (reservation.job === null && reservation.launch === "intent") {
+    if (kind.caps.handle === "file") {
+      const got = await recoverFileHandle(db, reservation, kind);
+      if ("why" in got) unresolved = got.why;
+    } else await kind.resolve(reservation.token);
+  }
   const r = getCarrierJob(db, reservation.token);
   if (r === undefined) return undefined;
   if (r.job === null) {
@@ -232,7 +242,7 @@ export async function closePluginJob(
       r.name,
       r.workstream,
       r.host,
-      `its job.start is unresolved (mu agent close --abandon-job drops it)`,
+      `${unresolved} (mu agent close --abandon-job drops it)`,
     );
   }
   const ref = pluginJobRef(db, r.token);
@@ -245,6 +255,55 @@ export async function closePluginJob(
     await finalCollect(db, r);
   }
   return { reservation: getCarrierJob(db, r.token) ?? r, action: "stopped", facts };
+}
+
+/**
+ * The handle of a `handle: "file"` plugin job record that may have launched and holds none
+ * (ladder placement §10). The local job file first, which needs no master; then the unresolved
+ * `job.start` by the rule table; then `job.lookup` by key, which finds a claim the view made
+ * before it published the file. A found handle fills the record, token-guarded. An absent file
+ * and a lookup's `none`, `pending` or `unknown` never act: the view is the dispatcher, and it
+ * may still claim and publish (plugins spec D4). An invalid or unreadable file is noted on the
+ * record and still asks the lookup. Errors of the lookup are reasons, never thrown.
+ */
+export async function recoverFileHandle(
+  db: Db,
+  rec: CarrierJob,
+  kind: PluginJobKind,
+): Promise<{ handle: string } | { why: string }> {
+  const now = () => getCarrierJob(db, rec.token);
+  const r = now();
+  if (r === undefined) return { why: "its job record is gone" };
+  if (r.job !== null) return { handle: r.job };
+  if (r.launch !== "intent") return { why: "its job was never started" };
+  const path = carrierJobFilePath(r.workstream, r.name, dirname(db.name));
+  const read = readJobFile(path);
+  if (read.kind === "handle") {
+    if (fillCarrierJob(db, r.token, read.job)) return { handle: read.job };
+    const other = now()?.job;
+    return other == null ? { why: "its job record changed" } : { handle: other };
+  }
+  const file = `the job file ${path} is ${describeRead(read)}`;
+  if (read.kind !== "none") noteCarrierJob(db, r.token, file);
+  let why = `${file}, and the view may still write one`;
+  try {
+    if (effectsOf(db, "job", r.token).length > 0) {
+      for (const x of await kind.resolve(r.token)) {
+        if (x.state === "unknown") why = `${file}; its job.start is unresolved: ${x.reason}`;
+      }
+    } else if (kind.caps.start.lookup) {
+      const host = findHost(db, r.host);
+      if (host === undefined) return { why: `${file}, and host ${r.host} is gone` };
+      const l = await kind.lookup(host, r.token, { fence: false });
+      if ("found" in l) fillCarrierJob(db, r.token, l.found.handle);
+      else if ("none" in l) why = `${file}, and lookup by key found no claim yet`;
+      else why = `${file}; lookup by key: ${"unknown" in l ? l.unknown : "still in flight"}`;
+    }
+  } catch (e) {
+    why = `${file}; lookup by key failed: ${e instanceof Error ? e.message : String(e)}`;
+  }
+  const filled = now()?.job;
+  return filled == null ? { why } : { handle: filled };
 }
 
 /** The final collect of a stopped job record, from its `collect_repo` (D10); refuses, record kept, when it cannot run. */

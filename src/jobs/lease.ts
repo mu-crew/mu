@@ -142,7 +142,8 @@ export async function awaitLeaseJob(
     name: string;
     token: string;
     paneId: string;
-    profile: HostProfile;
+    /** The host the job runs on (a lease profile, or a file-handle plugin kind's host). */
+    profile: Pick<HostProfile, "name">;
     jobFile: string;
     command: string;
     signal?: AbortSignal;

@@ -16,6 +16,7 @@ import { createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
+import { leaseJobFile } from "../src/agents/lease-carrier.js";
 import { previewReattach, reattachAgent } from "../src/agents/reattach.js";
 import { getReceipt } from "../src/agents/receipts.js";
 import { JobSpecUnsupportedError, RemoteBaseRefError } from "../src/agents/spawn-remote.js";
@@ -42,6 +43,7 @@ import {
 } from "../src/hosts.js";
 import { HONOURS_ALL } from "../src/jobs/types.js";
 import { addPlugin } from "../src/plugins/registry.js";
+import { reconcile } from "../src/reconcile.js";
 import { RemoteBaseMissingError } from "../src/remote-worktree.js";
 import { agentRevision } from "../src/revision.js";
 import { addTask } from "../src/tasks/edit.js";
@@ -505,6 +507,42 @@ describe("admission follows the link's slots (§4.2, §I)", () => {
     try {
       const a = await h.spawn({ cli: "pi", worktree: true });
       expect(a).toMatchObject({ ctl: "ok" });
+      expect(listHostChannels(h.db, "box").map((r) => r.holder)).toEqual(["other"]);
+    } finally {
+      releaseHostChannel(h.db, other.lease);
+    }
+  });
+
+  it('slots "self", a file kind: the close after a reap takes no channel either, and stops by the job file', async () => {
+    await staticPlugin(
+      { handle: "file", start: { lookup: true, fenceKey: false } },
+      { slots: "self" },
+      {},
+      1,
+    );
+    const file = leaseJobFile(h.db, "ws", "w1");
+    forwardOnView({
+      spawnAgent: async (o) => {
+        h.panes.set("%1", { command: o.command });
+        await serveExtension(ctlSocketPath("ws", o.name, h.dir));
+        writeFileSync(file, "file-job-1\n"); // the view publishes before it dispatches
+        o.onPaneCreated?.("%1");
+        return "%1";
+      },
+    });
+    const other = await admitHostChannel(h.db, "box", "other");
+    try {
+      const a = await h.spawn({ cli: "pi", worktree: true });
+      expect(startSpec()).toHaveProperty("jobFile", file);
+      expect(getCarrierJobByName(h.db, "ws", "w1")).toMatchObject({ job: "file-job-1" });
+      expect(getCarrierJobByName(h.db, "ws", "w1")?.treePath).toBe(a.cwd);
+      h.panes.delete(a.paneId);
+      await reconcile(h.db, { workstream: "ws" });
+      expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
+      await closeAgent(h.db, "w1", { workstream: "ws" });
+      expect(h.f.backend().stops).toBe(1);
+      expect(listCarrierJobs(h.db)).toEqual([]);
+      expect(existsSync(a.cwd ?? "")).toBe(false);
       expect(listHostChannels(h.db, "box").map((r) => r.holder)).toEqual(["other"]);
     } finally {
       releaseHostChannel(h.db, other.lease);

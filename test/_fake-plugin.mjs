@@ -224,7 +224,9 @@ const hostsOf = (b) => {
 const hostByHandle = (b, handle) =>
   Object.values(hostsOf(b)).find((h) => h.facts.handle === handle);
 const save = (b) => writeFileSync(jobsPath, JSON.stringify(b));
-const byHandle = (b, handle) => Object.values(b.jobs).find((j) => j.start.handle === handle);
+// A file-handle kind's job is found by the handle its view publishes.
+const handleOf = (j) => j.start.handle ?? j.fileHandle;
+const byHandle = (b, handle) => Object.values(b.jobs).find((j) => handleOf(j) === handle);
 
 /**
  * The channel's agents, by `<workstream>/<name>`: a dense turn count, an incarnation and the
@@ -330,9 +332,7 @@ function backendAnswer(method, params, c) {
       return j.stopped ? { state: "ended", exit: 0 } : { state: "running" };
     }
     case "job.stop": {
-      const j = Object.entries(b.jobs).find(
-        ([, v]) => v.start.handle === params.target?.job?.handle,
-      );
+      const j = Object.entries(b.jobs).find(([, v]) => handleOf(v) === params.target?.job?.handle);
       if (j !== undefined && !j[1].stopped) {
         j[1].stopped = true;
         b.stops += 1;

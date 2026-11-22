@@ -379,6 +379,7 @@
           "additionalProperties": false,
           "properties": { "local": { "type": "string" }, "remote": { "type": "string" } }
         },
+        "jobFile": { "description": "A handle \"file\" kind only: the absolute local path, claimed by mu, where the view writes the job's handle before dispatch.", "type": "string", "minLength": 1, "maxLength": 4096 },
         "firstPrompt": {
           "type": "object",
           "required": ["text", "msgId"],
@@ -423,11 +424,28 @@
       }
     },
     "targetParams": {
-      "description": "job.status and job.attach, reads.",
+      "description": "job.status, a read.",
       "type": "object",
       "required": ["target", "deadline"],
       "additionalProperties": false,
       "properties": { "target": { "$ref": "#/$defs/target" }, "deadline": { "$ref": "#/$defs/deadline" } }
+    },
+    "jobAttachParams": {
+      "description": "job.attach, a read. A handle \"file\" kind gets its jobFile again, and the socket pair rebuilt for the new view when its agent is on mu's built-in ctl.",
+      "type": "object",
+      "required": ["target", "deadline"],
+      "additionalProperties": false,
+      "properties": {
+        "target": { "$ref": "#/$defs/target" },
+        "deadline": { "$ref": "#/$defs/deadline" },
+        "jobFile": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "sockets": {
+          "type": "object",
+          "required": ["local", "remote"],
+          "additionalProperties": false,
+          "properties": { "local": { "type": "string" }, "remote": { "type": "string" } }
+        }
+      }
     },
     "jobStart": {
       "description": "job.start's result, and job.lookup's found.",

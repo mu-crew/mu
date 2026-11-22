@@ -10,7 +10,9 @@
 //
 // A lease row whose reservation holds a job is the exception: pane loss proves its carrier
 // gone, not the job, so its tasks reopen OPEN/parked (out of `ready`) unless the caller
-// settled the job itself (`leaseSettled`, a close that stopped or abandoned it).
+// settled the job itself (`leaseSettled`, a close that stopped or abandoned it). So is a
+// plugin job record launched with no handle recorded yet (a `handle: "file"` view that died
+// before mu read its job file, or an unresolved `job.start`): its view may have dispatched.
 //
 // The op context is the CALLER's: `deleteAgent` opens `task.reap`, teardown
 // its own `workstream.teardown` group, and the reaper adds no group of its
@@ -59,9 +61,9 @@ export function reapAgentRow(
       ? undefined
       : (db
           .prepare(
-            "SELECT job, host FROM carrier_jobs WHERE agent_id = ? AND job IS NOT NULL ORDER BY id LIMIT 1",
+            "SELECT job, host FROM carrier_jobs WHERE agent_id = ? AND (job IS NOT NULL OR (plugin IS NOT NULL AND launch = 'intent')) ORDER BY id LIMIT 1",
           )
-          .get(agentId) as { job: string; host: string } | undefined);
+          .get(agentId) as { job: string | null; host: string } | undefined);
   // The row's AFTER DELETE trigger writes its remote recovery record (src/db-recovery.ts).
   if (db.prepare("DELETE FROM agents WHERE id = ?").run(agentId).changes === 0) return false;
   // A close that has itself removed (or found gone) the tree owes no record.
@@ -93,7 +95,7 @@ export function reapAgentRow(
     const content =
       lease === undefined
         ? `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`
-        : `[reaper] previous owner ${name} gone (pane died); its lease job ${lease.job} on ${lease.host} may still run, so the task is parked: resume with ${resumeHint(name, pane.ws, t.localId, t.ws)}`;
+        : `[reaper] previous owner ${name} gone (pane died); its ${lease.job === null ? "job (no handle recorded yet)" : `lease job ${lease.job}`} on ${lease.host} may still run, so the task is parked: resume with ${resumeHint(name, pane.ws, t.localId, t.ws)}`;
     // The note keeps its own intent (as `addNote` gave it) inside the caller's group.
     withOpContext(db, { intent: "task.note", actor: "reaper" }, () =>
       note.run(t.taskId, content, now),

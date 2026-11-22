@@ -88,6 +88,15 @@ describe("load rules", () => {
     );
   });
 
+  it("a plugin built before the D15 job file (ladder placement §10) still loads", async () => {
+    const f = fakePlugin(dir, {
+      schema: "sha256:6ea6e13cabf6baebe44e961e21370a66ddf523082bfd73bcf169ec627fc71a25",
+    });
+    const s = await startPlugin("fake", f.argv, { graceMs: 200 });
+    expect(Object.keys(s.init.seams)).toEqual(["link"]);
+    await s.shutdown();
+  });
+
   it("a plugin that names itself otherwise than its registration", async () => {
     expect(await refusal({ name: "other" })).toMatch(/names itself "other", registered as "fake"/);
   });

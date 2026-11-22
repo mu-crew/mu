@@ -10,7 +10,7 @@ import { dirname } from "node:path";
 import { getAgent } from "../agents.js";
 import { type CarrierJob, getCarrierJobByAgent } from "../carrier-jobs.js";
 import { expectsCtl } from "../channels/select.js";
-import { ctlSocketPath } from "../ctl/path.js";
+import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
@@ -21,6 +21,7 @@ import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.
 import { agentRevision, assertRevision } from "../revision.js";
 import { shellWord } from "../shell-quote.js";
 import { AgentReplacedError } from "./errors.js";
+import { leaseJobFile } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
 import { closeCommand, ReattachFailedError, ReattachRefusedError } from "./reattach-check.js";
 import { repointReceipts } from "./receipts.js";
@@ -118,7 +119,18 @@ export async function reattachView(
       if (onCtl) rmSync(sock, { force: true });
       const ref = pluginJobRef(db, d.r.token);
       if (ref === undefined) throw new AgentReplacedError(name, ws);
-      const view = await d.kind.attach(db, ref);
+      // A file kind gets its job file again and, on ctl, the socket pair for this view (§10).
+      const view = await d.kind.attach(db, ref, {
+        jobFile: leaseJobFile(db, ws, name),
+        ...(onCtl
+          ? {
+              sockets: {
+                local: sock,
+                remote: remoteCtlSocketPath(ws, name, process.getuid?.() ?? 0),
+              },
+            }
+          : {}),
+      });
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
         onCreated = res;

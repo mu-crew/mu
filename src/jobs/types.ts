@@ -71,6 +71,11 @@ export interface JobSpec {
   /** mu's identity map (HOST_ENV_KEYS); `{}` for a kind without `honours.env`. */
   env: Record<string, string>;
   sockets?: { local: string; remote: string };
+  /**
+   * Exactly for a `handle: "file"` kind (ladder placement §10): the local path mu claimed
+   * before `job.start`, where the view writes the job's handle before dispatch.
+   */
+  jobFile?: string;
   /** Exactly for a `firstTurn: "at-start"` kind: the prompt whose turn the start begins. */
   firstPrompt?: { text: string; msgId: string };
 }

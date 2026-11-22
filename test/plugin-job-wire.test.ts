@@ -240,6 +240,22 @@ describe("the job seam on the wire", () => {
       validates(schema, "lookupParams", { target, deadline: 1, key: "tok", fence: true }),
     ).toBe(true);
     expect(validates(schema, "targetParams", { target, deadline: 1 })).toBe(true);
+    // A file kind's job file (ladder placement §10): on the spec, and again with job.attach.
+    expect(
+      validates(schema, "jobStartParams", {
+        target,
+        deadline: 1,
+        key: "tok",
+        spec: { ...spec, jobFile: "/state/ws/w1.job" },
+      }),
+    ).toBe(true);
+    const sockets = { local: "/l.sock", remote: "/r.sock" };
+    expect(
+      validates(schema, "jobAttachParams", { target, deadline: 1, jobFile: "/j", sockets }),
+    ).toBe(true);
+    expect(validates(schema, "jobAttachParams", { target, deadline: 1 })).toBe(true);
+    expect(validates(schema, "jobAttachParams", { target, deadline: 1, jobFile: "" })).toBe(false);
+    expect(validates(schema, "targetParams", { target, deadline: 1, jobFile: "/j" })).toBe(false);
     const push = {
       target,
       deadline: 1,
