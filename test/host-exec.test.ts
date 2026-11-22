@@ -4,7 +4,7 @@
 // a real sshd are the orchestrator's (Linux) checks, not this file's.
 
 import { EventEmitter, once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -30,6 +30,7 @@ import {
   PluginRegistrationChangedError,
   removePlugin,
 } from "../src/plugins/registry.js";
+import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux } from "./_mux.js";
 import { type FakePlugin, fakePlugin, linkSeam, providerSeams } from "./_plugin.js";
@@ -120,13 +121,112 @@ describe("host exec: the outcome table", () => {
   it("runs in --cwd", async () => {
     template();
     mkdirSync(join(home, "sub"));
-    expect((await hostExec(db, "t", { script: "pwd", cwd: "sub" })).stdout).toMatch(/home\/sub$/);
+    expect((await hostExec(db, "t", { script: "pwd", cwd: "sub" })).stdout.trim()).toMatch(
+      /home\/sub$/,
+    );
   });
+
+  it("ignores inherited CDPATH before a template's explicit {cwd} cd", async () => {
+    template();
+    const search = join(dir, "search");
+    mkdirSync(join(search, "repo"), { recursive: true });
+    mkdirSync(join(home, "repo"));
+    await withEnv("CDPATH", search, async () => {
+      expect(await hostExec(db, "t", { script: "pwd -P", cwd: "repo" })).toMatchObject({
+        exit: 0,
+        stdout: join(realpathSync(home), "repo"),
+      });
+    });
+  });
+
+  it("follows a symlink before resolving its parent in a fallback cwd", async () => {
+    const actual = join(realpathSync(dir), "actual");
+    mkdirSync(join(actual, "child"), { recursive: true });
+    mkdirSync(join(actual, "dest"));
+    mkdirSync(join(home, "dest"));
+    symlinkSync(join(actual, "child"), join(home, "hop"));
+    addHost(db, {
+      name: "t",
+      shell: "true",
+      exec: `cd '${home}' && /bin/sh -c {cmd}`,
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    expect(await hostExec(db, "t", { script: "pwd -P", cwd: "hop/../dest" })).toMatchObject({
+      exit: 0,
+      stdout: join(actual, "dest"),
+    });
+  });
+
+  it("distinguishes absolute, omitted, and empty --cwd on a template without {cwd}", async () => {
+    addHost(db, {
+      name: "t",
+      shell: "true",
+      exec: `cd '${home}' && /bin/sh -c {cmd}`,
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    expect(await hostExec(db, "t", { script: "pwd", cwd: "/" })).toMatchObject({
+      exit: 0,
+      stdout: "/",
+    });
+    expect(await hostExec(db, "t", { script: "pwd" })).toMatchObject({
+      exit: 0,
+      stdout: home,
+    });
+    await expect(hostExec(db, "t", { script: "pwd", cwd: "" })).rejects.toThrow(/--cwd/);
+  });
+
+  it("a failed cd aborts the whole script, including later command lists", async () => {
+    addHost(db, {
+      name: "t",
+      shell: "true",
+      exec: `cd '${home}' && /bin/sh -c {cmd}`,
+      fetch: "true",
+      repo: null,
+      max_sessions: null,
+    });
+    const r = await hostExec(db, "t", { script: "true; touch ran; printf ran", cwd: "missing" });
+    expect(r).toMatchObject({ exit: expect.any(Number), stdout: "" });
+    expect(r.exit).toBeGreaterThan(0);
+    expect(r.stderr).toContain("missing");
+    expect(existsSync(join(home, "ran"))).toBe(false);
+  });
+
+  it.each(["repo", "-"])(
+    "treats --cwd %s as a literal path, not a cd search operand",
+    async (cwd) => {
+      const elsewhere = join(dir, "elsewhere");
+      mkdirSync(join(elsewhere, cwd), { recursive: true });
+      mkdirSync(join(home, cwd));
+      addHost(db, {
+        name: "t",
+        shell: "true",
+        exec: `cd '${home}' && CDPATH='${elsewhere}' OLDPWD='${elsewhere}' /bin/sh -c {cmd}`,
+        fetch: "true",
+        repo: null,
+        max_sessions: null,
+      });
+      const r = await hostExec(db, "t", { script: `printf "%s:%s" "\${CDPATH+x}" "$PWD"`, cwd });
+      expect(r).toMatchObject({ exit: 0, stdout: `:${join(realpathSync(home), cwd)}` });
+    },
+  );
 
   it("a link reply through a plugin link", async () => {
     await plugin();
     const r = await hostExec(db, "p", { script: "echo hi; exit 4" });
     expect(r).toMatchObject({ link: "fake", exit: 4, stdout: expect.stringMatching(/^hi\n?$/) });
+  });
+
+  it("forwards --cwd to a plugin link", async () => {
+    await plugin();
+    mkdirSync(join(home, "sub"));
+    expect((await hostExec(db, "p", { script: "pwd", cwd: "sub" })).stdout.trim()).toMatch(
+      /home\/sub$/,
+    );
+    expect((await hostExec(db, "p", { script: "pwd", cwd: "/" })).stdout.trim()).toBe("/");
   });
 
   it("a hand-back throws HostHandbackError and runs nothing (plugin `human`)", async () => {
@@ -308,6 +408,14 @@ describe("host exec: a provider host (spec A review G3)", () => {
     expect(r).toMatchObject({ host: "box", link: "fake", exit: 4 });
     expect(admissions()).toBe(0);
     expect(ops().at(-1)).toMatch(/^host exec box link=fake exit=4 /);
+  });
+
+  it("runs in --cwd", async () => {
+    await provider();
+    mkdirSync(join(home, "sub"));
+    expect((await hostExec(db, "box", { script: "pwd", cwd: "sub" })).stdout.trim()).toMatch(
+      /home\/sub$/,
+    );
   });
 
   it("a plugin `human` error is the hand-back; the command's own 3 stays a result", async () => {
