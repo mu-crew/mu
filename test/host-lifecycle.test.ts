@@ -4,7 +4,7 @@
 // base rule (`link.push`, `RemoteBaseMissingError`).
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -497,7 +497,7 @@ describe("the provider-host base (D7 G3)", () => {
       "two",
     );
     const sha = git(local, "rev-parse", "HEAD");
-    const site = await prepareProviderWorktree(resolveHost(db, "box"), {
+    const site = await prepareProviderWorktree(db, resolveHost(db, "box"), {
       workstream: "ws",
       name: "w",
       localRepo: local,
@@ -505,6 +505,11 @@ describe("the provider-host base (D7 G3)", () => {
     });
     expect(site.base).toBe(sha);
     expect(git(site.cwd, "rev-parse", "HEAD")).toBe(sha);
+    const marker = join(git(site.cwd, "rev-parse", "--absolute-git-dir"), "mu-prepared");
+    const { machine_id } = db.prepare("SELECT machine_id FROM machine_identity").get() as {
+      machine_id: string;
+    };
+    expect(readFileSync(marker, "utf8").trim()).toBe(machine_id);
     expect(f.calls().find((c) => c.method === "link.push")?.params).toMatchObject({
       localRepo: local,
       remoteRepo: remote,
@@ -516,7 +521,7 @@ describe("the provider-host base (D7 G3)", () => {
     await setup();
     await acquire();
     const sha = git(local, "rev-parse", "HEAD");
-    const err = await prepareProviderWorktree(resolveHost(db, "box"), {
+    const err = await prepareProviderWorktree(db, resolveHost(db, "box"), {
       workstream: "ws",
       name: "w",
       localRepo: local,
@@ -715,7 +720,7 @@ describe("review fixes (p6d_fix)", () => {
         ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
         { cwd: local },
       );
-      const err = await prepareProviderWorktree(resolveHost(db, "box"), {
+      const err = await prepareProviderWorktree(db, resolveHost(db, "box"), {
         workstream: "ws",
         name: "w",
         localRepo: local,

@@ -73,8 +73,12 @@ EOF
   refuses the spawn up front and names the holder. A failed spawn removes
   only the worktree it made (still clean, still at its base) and frees
   the slot. If the host's answer was lost after it made the worktree (a
-  timeout), spawning the same name again takes that tree over while it is
-  clean, at its base and unused; anything else at the path refuses.
+  timeout), spawning the same name again takes that tree over only if its
+  prepare marker names this DB and the tree is clean, at its base and unused.
+  A different DB or an unknown owner (empty or missing marker) refuses with
+  exit 4. Close the tree from its owning DB, or verify it is unused and
+  remove it by hand. All DBs sharing the host must run a version that
+  checks the marker; older versions ignore its contents.
 - The pane is the transport: closing it, or its death, ends the agent
   and frees the slot. tmux and Rex; herdr refuses `--host` in one line.
 - A spawn without `--worktree` refuses (exit 4, `RemotePathOwnedError`) when

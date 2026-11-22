@@ -6,10 +6,18 @@
 // real `sh` exec template; the "remote" HOME is a temp dir. No pane.
 
 import { spawn as spawnChild } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { classifyError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
 import {
   addHost,
@@ -60,17 +68,36 @@ afterEach(() => {
 });
 
 const wt = () => join(home, ".local", "state", "mu-next", "remote-worktrees", "ws", "worker-1");
-const prepare = async (reclaim = true) => {
-  const lease = await reserveHostChannel(db, "dev", `t:${leases.length}`);
-  leases.push(lease);
-  return prepareRemote(db, { lease }, getHost(db, "dev"), {
-    workstream: "ws",
-    name: "worker-1",
-    worktree: true,
-    reclaim,
-    root: repo,
-  });
+const prepare = async (reclaim = true, ownerDb = db) => {
+  const lease = await reserveHostChannel(ownerDb, "dev", `t:${leases.length}`);
+  try {
+    return await prepareRemote(ownerDb, { lease }, getHost(ownerDb, "dev"), {
+      workstream: "ws",
+      name: "worker-1",
+      worktree: true,
+      reclaim,
+      root: repo,
+    });
+  } finally {
+    releaseHostChannel(ownerDb, lease);
+  }
 };
+const marker = () => join(gitIn(wt(), "rev-parse", "--absolute-git-dir"), "mu-prepared");
+const machineId = (ownerDb: Db) =>
+  (ownerDb.prepare("SELECT machine_id FROM machine_identity").get() as { machine_id: string })
+    .machine_id;
+function addPeer(exec = "sh -c {cmd}"): Db {
+  const peer = openDb({ path: join(dir, "peer.db") });
+  addHost(peer, {
+    name: "dev",
+    shell: "true {cmd}",
+    exec,
+    fetch: "true",
+    repo,
+    max_sessions: null,
+  });
+  return peer;
+}
 const lose = () => writeFileSync(join(dir, "mode"), "lost");
 const answer = () => writeFileSync(join(dir, "mode"), "ok");
 const head = () => gitIn(repo, "rev-parse", "HEAD");
@@ -124,6 +151,70 @@ describe("a lost prepare answer", () => {
     } finally {
       holder.kill("SIGKILL");
     }
+  });
+});
+
+describe("remote worktree ownership across DBs", () => {
+  it("refuses another DB's tree, with or without reclaim", async () => {
+    const peer = addPeer();
+    try {
+      await prepare();
+      const owner = machineId(db);
+      expect(machineId(peer)).not.toBe(owner);
+      for (const reclaim of [true, false]) {
+        const err = await prepare(reclaim, peer).catch((e: unknown) => e);
+        expect(classifyError(err).exitCode).toBe(4);
+        expect(String(err)).toContain(wt());
+        expect(String(err)).toContain(owner);
+        expect(String(err)).toMatch(/close.*owning DB.*remove.*by hand/);
+      }
+      expect(readFileSync(marker(), "utf8").trim()).toBe(owner);
+      expect(gitIn(wt(), "rev-parse", "HEAD")).toBe(head());
+    } finally {
+      peer.close();
+    }
+  });
+
+  it.each(["empty", "missing"])("refuses a marker that is %s as an unknown owner", async (kind) => {
+    mkdirSync(join(wt(), ".."), { recursive: true });
+    gitIn(repo, "worktree", "add", "--detach", wt());
+    if (kind === "empty") writeFileSync(marker(), "");
+    const err = await prepare().catch((e: unknown) => e);
+    expect(classifyError(err).exitCode).toBe(4);
+    expect(String(err)).toContain("owner unknown");
+    expect(gitIn(wt(), "rev-parse", "HEAD")).toBe(head());
+  });
+
+  it("the racing DB that saw an absent path cannot remove the winner's tree", async () => {
+    const bin = join(dir, "bin");
+    const entered = join(dir, "entered");
+    const resume = join(dir, "resume");
+    mkdirSync(bin);
+    writeFileSync(
+      join(bin, "mkdir"),
+      `#!/bin/sh
+if [ "$1" = -p ]; then
+  touch '${entered}'; while [ ! -e '${resume}' ]; do sleep 0.02; done
+fi
+exec /bin/mkdir "$@"
+`,
+      { mode: 0o755 },
+    );
+    const peer = addPeer(`PATH='${bin}':"$PATH" sh -c {cmd}`);
+    const racing = prepare(true, peer).catch((e: unknown) => e);
+    try {
+      await vi.waitFor(() => expect(existsSync(entered)).toBe(true));
+      expect(await prepare()).toEqual({ cwd: wt(), base: head(), repo });
+    } finally {
+      writeFileSync(resume, "");
+      await racing;
+      peer.close();
+    }
+    const loser = await racing;
+    expect(classifyError(loser).exitCode).toBe(4);
+    expect(String(loser)).toContain(machineId(db));
+    expect(gitIn(wt(), "rev-parse", "HEAD")).toBe(head());
+    expect(gitIn(repo, "worktree", "list")).toContain(wt());
   });
 });
 

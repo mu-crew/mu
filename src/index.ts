@@ -522,6 +522,7 @@ export {
   closeRemoteWorktree,
   RemoteCloseRefusedError,
   RemotePrepareError,
+  RemoteWorktreeConflictError,
 } from "./remote-worktree.js";
 export {
   agentRevision,

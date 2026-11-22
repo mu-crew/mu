@@ -131,6 +131,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- Remote worktree prepare claims the path with an atomic `mkdir` and records
+  its DB in `mu-prepared`. A competing spawn cannot remove the winner’s
+  tree. Reclaim refuses with exit 4 if a different DB or an unknown owner
+  holds the path, and names the remedy. All DBs sharing the host must run
+  the new rule; older versions ignore the marker’s contents.
 - A late plugin handshake cannot overwrite a newer registration.
 
 ## [5.2.2] — 2026-11-19

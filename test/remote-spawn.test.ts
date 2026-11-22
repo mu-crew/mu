@@ -139,7 +139,8 @@ case "$1" in
     echo "MU_RM removed" ;;
   *'worktree add'*)
     [ "$mode" = handback ] && { echo "touch your key" >&2; exit 3; }
-    [ "$mode" = addfail ] && { echo boom >&2; exit 4; }
+    [ "$mode" = addfail ] && { echo boom >&2; exit 7; }
+    [ "$mode" = conflict ] && { echo "MU_WT_CONFLICT ${WT} already exists (belongs to another DB); owner 9f1c8a2e-0000-4000-8000-0000000000aa" >&2; exit 4; }
     [ "$mode" = noise ] && { echo garbage; exit 0; }
     # The root the script names: run its own lines up to wt= (the root assignment, which may
     # span lines) under a fake HOME, then print it.
@@ -666,7 +667,7 @@ describe("failure rolls back only what this spawn made", () => {
     setMode("addfail");
     const err = await spawn({ worktree: true }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(RemotePrepareError);
-    expect((err as Error).message).toContain("exit 4");
+    expect((err as Error).message).toContain("exit 7");
     expect((err as Error).message).toContain("boom");
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
     expect(mux.calls.filter(isPaneCall)).toEqual([]);
@@ -958,11 +959,6 @@ describe("task-bound remote spawn goes through spawnForTask", () => {
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
   });
 
-  it("with no record for the name, prepare may reclaim its own lost-answer leftover", async () => {
-    await spawn({ worktree: true });
-    expect(execCalls()[0]).toContain("not an unused mu leftover");
-  });
-
   it("without --worktree an unsent failure still frees the lease", async () => {
     extensionOn = false;
     await expect(
@@ -1112,6 +1108,21 @@ describe("the CLI", () => {
       dbPath(),
     );
     expect(r.exitCode).toBe(3);
+  });
+
+  it("a remote path conflict is exit 4 and does not spawn or roll back a tree", async () => {
+    setMode("conflict");
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--worktree", "--json"],
+      dbPath(),
+    );
+    expect(r.exitCode).toBe(4);
+    expect(r.doc).toMatchObject({ error: "RemoteWorktreeConflictError" });
+    expect(JSON.stringify(r.doc)).toContain("9f1c8a2e-0000-4000-8000-0000000000aa");
+    expect(execCalls()).toHaveLength(1);
+    expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
+    expect(channels()).toEqual([]);
+    expect(listRemoteRecoveries(db)).toEqual([]);
   });
 
   it("a failing remote exec is exit 5 (substrate), not a generic 1", async () => {

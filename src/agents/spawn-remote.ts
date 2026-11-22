@@ -198,8 +198,8 @@ async function prestageRemote(
         worktree: true,
         ...(opts.from !== undefined ? { from: opts.from } : {}),
         ...remoteRoot(opts, profile),
-        // An unused leftover of a prepare whose answer was lost is taken over: no
-        // removed agent's recovery record names a tree there (checked above, under the lock).
+        // Only this DB's unused lost-answer leftover can be taken over. No recovery
+        // record names a tree there (checked above, under the lock).
         reclaim: true,
         ...(rev !== undefined ? { rev } : {}),
       });

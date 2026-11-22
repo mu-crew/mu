@@ -249,7 +249,7 @@ export async function spawnPluginAgent(
     if (opts.worktree && provider && localRepo !== undefined) {
       const row = await placeholder();
       owned = row.incarnation;
-      const site = await prepareProviderWorktree(host, {
+      const site = await prepareProviderWorktree(db, host, {
         workstream: ws,
         name,
         ...(opts.from !== undefined ? { from: opts.from } : {}),

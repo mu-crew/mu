@@ -6,8 +6,8 @@
 //   prepare   ONE exec under the spawn's held channel (spawn.ts admits it; at
 //             cap 1 it is never released between steps, and the exec is
 //             reaped before the shell opens): resolve the cwd, or make a
-//             detached worktree marked as prepare's own (a lost answer's
-//             leftover is reclaimed only while unused).
+//             detached worktree claimed by mkdir and marked with the DB's id
+//             (a lost answer's leftover is reclaimed only by that DB, while unused).
 //   rollback  ONE exec under its own channel: remove only what this spawn
 //             made, while it is still clean and still at the recorded base.
 //   close     TWO execs under ONE channel: observe, then aside + quiescence
@@ -20,6 +20,7 @@ import type { LinkCall } from "./host-link.js";
 import { admittedView, type HostView, resolveHost, withHostView } from "./host-provider.js";
 import { HOST_COMMAND_TIMEOUT_MS, type HostProfile, remotePathWord } from "./hosts.js";
 import { say } from "./messages.js";
+import { localMachineId } from "./segments.js";
 import { shellQuote, shellWord } from "./shell-quote.js";
 import { git } from "./vcs/git.js";
 import type { ReleasedWorktree } from "./worktree.js";
@@ -33,6 +34,24 @@ export class RemotePrepareError extends Error {
     detail: string,
   ) {
     super(say("remote.prepare", host, what, detail));
+  }
+}
+
+/** Prepare refused an existing remote path without changing it. Exit 4. */
+export class RemoteWorktreeConflictError extends Error {
+  override readonly name: string = "RemoteWorktreeConflictError";
+  constructor(
+    public readonly host: string,
+    detail: string,
+  ) {
+    super(
+      say(
+        "remote.prepare",
+        host,
+        "creating the remote worktree refused",
+        `${detail}; close it from the owning DB, or verify it is unused and remove it by hand`,
+      ),
+    );
   }
 }
 
@@ -107,20 +126,17 @@ export interface RemoteSite {
   repo: string | null;
 }
 
-/** The file in a remote worktree's own git dir that says mu's prepare made it (`git worktree remove` takes it along). */
+/** In the worktree's own Git directory, so `git worktree remove` takes it along. */
 const PREPARED_MARK = "mu-prepared";
+const PREPARE_CONFLICT_RE = /^MU_WT_CONFLICT (.+)$/;
 
 /**
- * Remote lines reclaiming the tree at `$wt` (exit 4 with the reason, else fall
- * through): only mu's own unused leftover, the one a lost answer leaves. It
- * carries the prepare mark, is a worktree of `$root`, is clean and at `$base`,
- * and nothing has its cwd or an open file in it (the close rule's scan).
+ * Only this DB's unused leftover is reclaimable. After the ownership check,
+ * prove it is a worktree of `$root`, is clean and at `$base`, and nothing has
+ * its cwd or an open file in it (the close rule's scan).
  */
 function reclaimLines(): string[] {
   return [
-    `fail() { echo "$wt already exists and is not an unused mu leftover ($*)" >&2; exit 4; }`,
-    `gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || fail "not a git worktree"`,
-    `[ -f "$gd/${PREPARED_MARK}" ] || fail "not made by mu"`,
     `[ "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)" = "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)" ] || fail "not a worktree of $root"`,
     `[ "$(git -C "$wt" rev-parse --verify HEAD)" = "$base" ] || fail "HEAD is not $base"`,
     `st=$(git -C "$wt" status --porcelain) || fail "git status failed"`,
@@ -162,7 +178,7 @@ export async function prepareRemote(
   profile: HostProfile,
   opts: PrepareOpts,
 ): Promise<RemoteSite> {
-  return prepareOn(admittedView(db, profile), call, opts, opts.rev, "static");
+  return prepareOn(db, admittedView(db, profile), call, opts, opts.rev, "static");
 }
 
 /**
@@ -170,6 +186,7 @@ export async function prepareRemote(
  * with `push` seeds the host's repo with it, and the worktree is made from that sha.
  */
 export async function prepareProviderWorktree(
+  db: Db,
   h: HostView,
   opts: Omit<PrepareOpts, "worktree" | "cwd"> & { localRepo: string },
 ): Promise<RemoteSite> {
@@ -199,6 +216,7 @@ export async function prepareProviderWorktree(
     }
   }
   return prepareOn(
+    db,
     h,
     call,
     { ...opts, worktree: true, root },
@@ -209,6 +227,7 @@ export async function prepareProviderWorktree(
 
 /** The prepare exec on view `h` under `call`; `rev`, a provider host's base sha (no `from` lookup remotely). */
 async function prepareOn(
+  db: Db,
   h: HostView,
   call: LinkCall,
   opts: PrepareOpts,
@@ -234,16 +253,41 @@ async function prepareOn(
     ? [
         `root=${root}`,
         `wt=${remoteWorktreeWord(opts.workstream, opts.name)}`,
+        `db_id=${shellQuote(localMachineId(db))}`,
+        `fail() { printf 'MU_WT_CONFLICT %s already exists (%s); owner %s\\n' "$wt" "$*" "$owner" >&2; exit 4; }`,
+        `read_owner() {`,
+        `  owner=unknown`,
+        `  [ ! -L "$wt" ] && [ -f "$wt/.git" ] && [ ! -L "$wt/.git" ] || return`,
+        `  gd=$(git -C "$wt" rev-parse --absolute-git-dir 2>/dev/null) || return`,
+        `  mark="$gd/${PREPARED_MARK}"`,
+        `  [ -f "$mark" ] && [ ! -L "$mark" ] || return`,
+        `  id=$(cat "$mark" 2>/dev/null) || return`,
+        `  case "$id" in ''|*[!a-zA-Z0-9-]*) ;; *) owner="$id" ;; esac`,
+        `}`,
+        `existing=false`,
+        `if [ -e "$wt" ] || [ -L "$wt" ]; then`,
+        `  read_owner`,
+        ...(opts.reclaim === true
+          ? [
+              `  [ "$owner" != unknown ] || fail "not made by mu or missing its DB marker"`,
+              `  [ "$owner" = "$db_id" ] || fail "belongs to another DB"`,
+              `  existing=true`,
+            ]
+          : [`  fail "reclaim not allowed"`]),
+        `fi`,
         rev === undefined
           ? `base=$(git -C "$root" rev-parse --verify ${shellQuote(`${opts.from ?? "HEAD"}^{commit}`)}) || exit 5`
           : `base=${rev}; git -C "$root" rev-parse -q --verify "$base^{commit}" >/dev/null || exit 8`,
-        opts.reclaim === true
-          ? `if [ -e "$wt" ]; then\n${reclaimLines().join("\n")}\n${answer}\nexit 0\nfi`
-          : `[ ! -e "$wt" ] || { echo "$wt already exists" >&2; exit 4; }`,
+        ...(opts.reclaim === true
+          ? [`if "$existing"; then`, ...reclaimLines(), answer, `exit 0`, `fi`]
+          : []),
         `mkdir -p "$(dirname "$wt")" || exit 6`,
-        `undo() { git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1; rm -rf "$wt"; exit 7; }`,
-        `git -C "$root" worktree add --detach "$wt" "$base" >&2 || undo`,
-        `gd=$(git -C "$wt" rev-parse --absolute-git-dir) && : > "$gd/${PREPARED_MARK}" || undo`,
+        `mkdir "$wt" || { read_owner; fail "could not claim the path"; }`,
+        // Git may already have removed its directory after a failed add. A second
+        // removal could touch a path another DB claimed in the meantime.
+        `git -C "$root" worktree add --detach "$wt" "$base" >&2 || exit 7`,
+        `undo() { git -C "$root" worktree remove --force "$wt" >/dev/null 2>&1; exit 7; }`,
+        `gd=$(git -C "$wt" rev-parse --absolute-git-dir) && printf '%s\\n' "$db_id" > "$gd/${PREPARED_MARK}" || undo`,
         answer,
       ].join("\n")
     : `cd ${remotePathWord(opts.cwd ?? opts.root ?? "~")} && printf 'MU_CWD %s\\n' "$(pwd -P)"`;
@@ -263,7 +307,7 @@ async function prepareOn(
     : "the remote cwd is unreachable";
   // No answer after the exec may have made the tree: say how a retry takes it over.
   const lost = opts.worktree
-    ? `; if it made the worktree, spawning ${opts.name} again reclaims it while it is unused`
+    ? `; if it made the worktree, spawning ${opts.name} again reclaims it while it is unused and marked by this DB`
     : "";
   if (r.exitCode === null) {
     throw new RemotePrepareError(
@@ -274,6 +318,13 @@ async function prepareOn(
   }
   if (rev !== undefined && r.exitCode === 8)
     throw new RemoteBaseMissingError(h.name, rev, opts.root ?? "", how, opts.from ?? "HEAD");
+  if (opts.worktree && r.exitCode === 4) {
+    const detail =
+      lastMatch(r.stderr, PREPARE_CONFLICT_RE)?.[1] ??
+      lastMatch(r.stdout, PREPARE_CONFLICT_RE)?.[1] ??
+      `remote worktree ${opts.workstream}/${opts.name} already exists; owner unknown`;
+    throw new RemoteWorktreeConflictError(h.name, detail);
+  }
   if (r.exitCode !== 0) {
     const why = firstLine(r.stderr) || firstLine(r.stdout);
     throw new RemotePrepareError(h.name, what, `exit ${r.exitCode}${why === "" ? "" : `: ${why}`}`);
