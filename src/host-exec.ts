@@ -14,7 +14,7 @@
 // command's byte length. Never the command text or any output.
 
 import type { Db } from "./db.js";
-import { resolveHost } from "./host-provider.js";
+import { hostExecFence, resolveHost } from "./host-provider.js";
 import { HostExecChangedError, HostHandbackError, HostProfileError } from "./hosts.js";
 
 export { HostExecChangedError };
@@ -92,12 +92,6 @@ export function clipOutput(
   return { stdout: cutUtf8(stdout, outKeep), stderr: cutUtf8(stderr, errKeep), clipped: true };
 }
 
-/** The profile as admitted, less the probe cache a concurrent `host check` rewrites. */
-function profileIdentity(h: { profile?: object }): string {
-  const { capabilities: _c, ...rest } = (h.profile ?? {}) as Record<string, unknown>;
-  return JSON.stringify(rest);
-}
-
 /** An error's category for the record: never its text. */
 function errorCategory(e: unknown): string {
   const kind = (e as { kind?: unknown } | null)?.kind;
@@ -107,7 +101,7 @@ function errorCategory(e: unknown): string {
 /**
  * Run `opts.script` on `host` through its link. Returns the link's reply (an exit code, or none);
  * throws `HostHandbackError` for a hand-back, and a typed refusal (host unknown, too large,
- * admission) before anything ran. Once the link was called, one `host.exec` op is recorded:
+ * admission) before anything ran. Once the link dispatches, one `host.exec` op is recorded:
  * for a reply, a no-exit and a failure alike.
  */
 export async function hostExec(
@@ -124,25 +118,12 @@ export async function hostExec(
     if (!f.ok) throw new HostExecTooLargeError(host, f.bytes, f.limit);
   };
   checkFit(view);
-  // The link was chosen above and admission re-reads the profile after an await: inside the
-  // admission transaction, refuse a profile that is now another link, another transport or
-  // self-managed (it is never counted), and fit the command to what is admitted.
-  const fence = (): void => {
-    const now = resolveHost(db, host);
-    if (
-      now.link.name !== view.link.name ||
-      now.link.caps.slots !== view.link.caps.slots ||
-      now.link.fingerprint(now) !== view.link.fingerprint(view) ||
-      profileIdentity(now) !== profileIdentity(view)
-    ) {
-      throw new HostExecChangedError(host);
-    }
-    checkFit(now);
-  };
+  // Reject a different profile before counting it, and re-check the same target at dispatch.
+  const fence = hostExecFence(db, view);
   const started = Date.now();
-  let called = false;
+  let dispatched = false;
   const record = (outcome: string): void => {
-    if (!called) return;
+    if (!dispatched) return;
     try {
       emitEvent(
         db,
@@ -166,8 +147,9 @@ export async function hostExec(
       },
       { holder: `exec:${process.pid}`, fence },
       (admitted) => {
+        fence();
         checkFit(admitted);
-        called = true;
+        dispatched = true;
       },
     );
     record(

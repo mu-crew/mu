@@ -21,6 +21,7 @@ import { type HostLink, templateLink } from "./host-link.js";
 import { getHostRecord } from "./host-records.js";
 import {
   getHost,
+  HostExecChangedError,
   type HostLease,
   HostNotFoundError,
   type HostProfile,
@@ -273,6 +274,35 @@ export function hostIdentity(db: Db, name: string): string | undefined {
 /** A provider host's identity (D5): its record's id and the instance it was acquired from. */
 export const providerIdentity = (rec: HostRecord): string =>
   `provider:${rec.id}:${rec.instance ?? ""}`;
+
+/** Pin the dispatch target, not mutable probe data or provider capacity facts. */
+export function hostExecFence(db: Db, at: HostView): () => void {
+  function profileIdentity(profile: HostProfile): string {
+    const { capabilities: _cache, ...config } = profile;
+    return JSON.stringify(config);
+  }
+  function recordIdentity(record: HostRecord): string {
+    return JSON.stringify([
+      record.id,
+      record.provider,
+      record.handle,
+      record.instance,
+      record.state,
+    ]);
+  }
+  const expectedProfile = at.profile === undefined ? undefined : profileIdentity(at.profile);
+  const expectedRecord = at.record === undefined ? undefined : recordIdentity(at.record);
+  return () => {
+    const now = findHost(db, at.name);
+    if (
+      now === undefined ||
+      expectedProfile !== (now.profile === undefined ? undefined : profileIdentity(now.profile)) ||
+      expectedRecord !== (now.record === undefined ? undefined : recordIdentity(now.record))
+    ) {
+      throw new HostExecChangedError(at.name);
+    }
+  };
+}
 
 /** The view's profile, for what only a static host has (its templates, its transport). */
 export function requireProfile(host: HostView): HostProfile {

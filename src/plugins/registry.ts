@@ -56,8 +56,12 @@ export function isValidPluginName(name: string): boolean {
   return PLUGIN_NAME_RE.test(name);
 }
 
+function readPlugin(db: Db, name: string): PluginRow | undefined {
+  return db.prepare("SELECT * FROM plugins WHERE name = ?").get(name) as PluginRow | undefined;
+}
+
 export function getPlugin(db: Db, name: string): PluginRow {
-  const row = db.prepare("SELECT * FROM plugins WHERE name = ?").get(name) as PluginRow | undefined;
+  const row = readPlugin(db, name);
   if (row === undefined) throw new PluginNotFoundError(name);
   return row;
 }
@@ -147,7 +151,6 @@ export async function addPlugin(
   if (trust.length > 0) throw new PluginRefusedError(name, trust);
   const s = await startPlugin(name, argv);
   await s.shutdown();
-  const now = new Date().toISOString();
   const init = s.init;
   // A channel's identity is (plugin, name): a name another plugin's channel holds in this DB
   // refuses, in the insert's own transaction (plugins spec D9; P6e1 review round 2).
@@ -162,6 +165,7 @@ export async function addPlugin(
         `its channel ${channel} is already plugin ${taken.name}'s in this DB: a channel name is one plugin's`,
       ]);
     }
+    const now = nextCheckTime(readPlugin(db, name));
     db.prepare(
       `INSERT INTO plugins (name, argv_json, protocol, version, instance, seams_json, caps_json, schema_digest, added_at, checked_at)
      VALUES (@name, @argv_json, @protocol, @version, @instance, @seams_json, @caps_json, @schema_digest, @now, @now)
@@ -202,6 +206,48 @@ export function removePlugin(db: Db, name: string): boolean {
 const sessions = new Map<string, Promise<PluginSession>>();
 /** The sessions that started, by the same key: to tell one that has since ended. */
 const started = new Map<string, PluginSession>();
+/** Which registration the session actually loaded, not just its self-reported instance. */
+const sessionRegistrations = new WeakMap<object, PluginRow>();
+
+function nextCheckTime(previous?: PluginRow): string {
+  const last = Date.parse(previous?.checked_at ?? "");
+  // A refresh is a revision even when it reports the same capabilities and instance.
+  return new Date(Math.max(Date.now(), Number.isNaN(last) ? 0 : last + 1)).toISOString();
+}
+
+function sameRegistration(at: PluginRow, now: PluginRow | undefined): boolean {
+  return (
+    now !== undefined &&
+    at.name === now.name &&
+    at.argv_json === now.argv_json &&
+    at.added_at === now.added_at &&
+    at.checked_at === now.checked_at &&
+    at.instance === now.instance
+  );
+}
+
+export function pluginRegistrationMatches(db: Db, admitted: PluginRow): boolean {
+  return sameRegistration(admitted, readPlugin(db, admitted.name));
+}
+
+/** Both the current registry and the handshaken peer must still be the admitted registration. */
+export function pluginSessionMatches(
+  db: Db,
+  admitted: PluginRow,
+  init: { instance: string },
+): boolean {
+  return (
+    init.instance === admitted.instance &&
+    sameRegistration(admitted, sessionRegistrations.get(init)) &&
+    pluginRegistrationMatches(db, admitted)
+  );
+}
+
+export class PluginRegistrationChangedError extends PluginRefusedError {
+  constructor(name: string) {
+    super(name, ["its registration changed during initialize"]);
+  }
+}
 
 /**
  * The plugin's session for this invocation, started on first need. `needs`: the seams the
@@ -263,10 +309,27 @@ async function openSession(db: Db, name: string): Promise<PluginSession> {
   }
   const { protocol, instance } = s.init;
   const version = s.init.plugin.version;
-  if (protocol !== row.protocol || version !== row.version || instance !== row.instance) {
-    db.prepare(
-      "UPDATE plugins SET protocol = ?, version = ?, instance = ?, checked_at = ? WHERE name = ? AND argv_json = ?",
-    ).run(protocol, version, instance, new Date().toISOString(), name, row.argv_json);
+  try {
+    // Verify and write in one transaction: a pending handshake cannot refresh a newer row.
+    const checked = db
+      .transaction(() => {
+        if (!pluginRegistrationMatches(db, row)) {
+          throw new PluginRegistrationChangedError(name);
+        }
+        if (protocol !== row.protocol || version !== row.version || instance !== row.instance) {
+          const checked_at = nextCheckTime(row);
+          db.prepare(
+            "UPDATE plugins SET protocol = ?, version = ?, instance = ?, checked_at = ? WHERE name = ?",
+          ).run(protocol, version, instance, checked_at, name);
+          return { ...row, protocol, version, instance, checked_at };
+        }
+        return row;
+      })
+      .immediate();
+    sessionRegistrations.set(s.init, checked);
+  } catch (e) {
+    await s.shutdown();
+    throw e;
   }
   return s;
 }

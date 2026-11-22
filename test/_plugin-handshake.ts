@@ -13,6 +13,7 @@ export async function withPluginPipes<T>(
   fake: FakePlugin,
   run: () => Promise<T>,
   read?: { method: string; result: unknown },
+  beforeInitializeReply?: () => Promise<void>,
 ): Promise<T> {
   const start = vi.spyOn(PluginProcess, "start").mockImplementationOnce(async (argv, _, grace) => {
     const { path, configPath } = fake;
@@ -40,9 +41,14 @@ export async function withPluginPipes<T>(
       else if (method === "shutdown" || method === read?.method) {
         reply = { jsonrpc: "2.0", id, result: method === "shutdown" ? null : read?.result };
       } else throw new Error(`pipe fixture cannot answer ${method}`);
-      queueMicrotask(() => {
+      const send = () => {
         if (!stdout.destroyed) stdout.write(`${JSON.stringify(reply)}\n`);
-      });
+      };
+      if (method === "initialize" && beforeInitializeReply !== undefined) {
+        void beforeInitializeReply().then(send);
+      } else {
+        queueMicrotask(send);
+      }
     });
     stdin.once("end", () => {
       stdout.end();

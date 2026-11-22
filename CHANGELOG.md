@@ -106,6 +106,12 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   writes its `remote_recovery` record. A static plugin job record names its
   tree too. Before, the placeholder named no path and the tree had no record.
 
+### Fixed
+
+- `mu host exec` checks the admitted host and plugin identities again before
+  dispatch. A late handshake cannot overwrite a newer registration, and a
+  refusal before dispatch leaves no `host.exec` audit entry.
+
 ## [5.2.2] — 2026-11-19
 
 ### Changed

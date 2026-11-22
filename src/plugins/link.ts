@@ -34,7 +34,7 @@ import {
   type LinkRun,
   templateLink,
 } from "../host-link.js";
-import { type HostView, providerIdentity } from "../host-provider.js";
+import { type HostRecord, type HostView, providerIdentity } from "../host-provider.js";
 import { getHostRecord } from "../host-records.js";
 import {
   HANDED_BACK,
@@ -53,7 +53,13 @@ import {
 } from "./errors.js";
 import type { WireCheckStep } from "./protocol.js";
 import { pluginCall, pluginGraceMs } from "./reconcile.js";
-import { getPlugin, pluginSeams } from "./registry.js";
+import {
+  getPlugin,
+  PluginRegistrationChangedError,
+  pluginRegistrationMatches,
+  pluginSeams,
+  pluginSessionMatches,
+} from "./registry.js";
 
 /**
  * The wire `target.host` of every call naming a host (D13): its name, and a provider host's
@@ -63,12 +69,15 @@ export function hostTarget(
   db: Db,
   name: string,
 ): { host: { name: string; handle?: string; instance?: string } } {
-  const r = getHostRecord(db, name);
+  return targetOf(name, getHostRecord(db, name));
+}
+
+function targetOf(name: string, record?: HostRecord) {
   return {
     host: {
       name,
-      ...(r?.handle != null ? { handle: r.handle } : {}),
-      ...(r?.instance != null ? { instance: r.instance } : {}),
+      ...(record?.handle != null ? { handle: record.handle } : {}),
+      ...(record?.instance != null ? { instance: record.instance } : {}),
     },
   };
 }
@@ -107,33 +116,11 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     host: HostView,
     call: LinkCall,
     admitted: ((h: HostView) => void) | undefined,
-    body: (h: HostView, beforeSend?: (init: { instance: string }) => void) => Promise<T>,
+    body: (h: HostView) => Promise<T>,
   ): Promise<T> => {
     if (declared.slots === "self" || "lease" in call || host.record !== undefined) {
-      // A self-managed link takes no row, but the caller's fence still runs right before the
-      // send (after the plugin's handshake). It checks the identity captured here: the
-      // registration (argv, added_at) and the instance the session reports must still be the
-      // registered ones, so a plugin replaced under the same name is never dispatched to.
-      // `admitted` then runs last: a refusal before the send is not a dispatch.
-      const f = "lease" in call ? undefined : call.fence;
-      const profile = host.profile;
-      if (!(f && profile)) {
-        admitted?.(host);
-        return body(host);
-      }
-      const at = getPlugin(db, name);
-      return body(host, (init) => {
-        const now = getPlugin(db, name);
-        if (
-          now.argv_json !== at.argv_json ||
-          now.added_at !== at.added_at ||
-          now.instance !== init.instance
-        ) {
-          throw new HostExecChangedError(host.name);
-        }
-        f(profile);
-        admitted?.(host);
-      });
+      admitted?.(host);
+      return body(host);
     }
     const { holder, ...opts } = call;
     return withHostChannel(
@@ -166,7 +153,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
         db,
         name,
         method,
-        { target: hostTarget(db, host.name), ...params, timeoutMs },
+        { target: targetOf(host.name, host.record), ...params, timeoutMs },
         {
           kind: "effect",
           needs: ["link"],
@@ -184,6 +171,9 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
       }
       return r;
     } catch (e) {
+      if (beforeSend !== undefined && e instanceof PluginRegistrationChangedError) {
+        throw new HostExecChangedError(host.name);
+      }
       if (e instanceof PluginCallError && e.kind === "human") {
         throw new HostHandbackError(
           host.name,
@@ -216,17 +206,36 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
       const bytes = Buffer.byteLength(script) + Buffer.byteLength(cwd);
       return { ok: bytes <= declared.maxScriptBytes, bytes, limit: declared.maxScriptBytes };
     },
-    exec: (host, req, call, admitted) =>
-      admit(host, call, admitted, (h, beforeSend) =>
+    exec: (host, req, call, admitted) => {
+      // Host exec's dispatch callback belongs after initialize and the instance fences,
+      // whether this call took a channel, was self-managed, or used a provider record.
+      const check = "lease" in call ? undefined : call.fence;
+      const admission =
+        check === undefined
+          ? call
+          : {
+              ...call,
+              fence: (profile: NonNullable<HostView["profile"]>) => {
+                check(profile);
+                if (!pluginRegistrationMatches(db, row)) throw new HostExecChangedError(host.name);
+              },
+            };
+      return admit(host, admission, check === undefined ? admitted : undefined, (h) =>
         run(
           h,
           "link.exec",
           { script: req.script, cwd: req.cwd },
           req.timeoutMs,
           req.once === true,
-          beforeSend,
+          check !== undefined
+            ? (init) => {
+                if (!pluginSessionMatches(db, row, init)) throw new HostExecChangedError(host.name);
+                admitted?.(h);
+              }
+            : undefined,
         ),
-      ),
+      );
+    },
     ...(caps.fetch
       ? {
           fetch: (host, req, call, admitted) => {

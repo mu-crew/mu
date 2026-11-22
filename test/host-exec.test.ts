@@ -3,7 +3,8 @@
 // against the template link and the fake plugin's `slots: "self"` link. A real mule link and
 // a real sshd are the orchestrator's (Linux) checks, not this file's.
 
-import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
+import { EventEmitter, once } from "node:events";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,15 +18,21 @@ import {
   HostExecTooLargeError,
   hostExec,
 } from "../src/host-exec.js";
-import { acquireHost } from "../src/host-lifecycle.js";
+import { abandonHost, acquireHost } from "../src/host-lifecycle.js";
 import { withHostView } from "../src/host-provider.js";
 import { addHost, checkHost, HostHandbackError, removeHost } from "../src/hosts.js";
+import { PluginRefusedError } from "../src/plugins/errors.js";
 import { setPluginGraceForTests } from "../src/plugins/process.js";
-import { addPlugin, closePluginSessions, removePlugin } from "../src/plugins/registry.js";
+import {
+  addPlugin,
+  closePluginSessions,
+  getPlugin,
+  removePlugin,
+} from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux } from "./_mux.js";
 import { type FakePlugin, fakePlugin, linkSeam, providerSeams } from "./_plugin.js";
-import { registerFixturePlugin } from "./_plugin-handshake.js";
+import { registerFixturePlugin, withPluginPipes } from "./_plugin-handshake.js";
 
 let dir: string;
 let home: string;
@@ -72,8 +79,7 @@ async function plugin(
   max_sessions: number | null = null,
 ): Promise<FakePlugin> {
   const f = fakePlugin(dir, { home, seams: linkSeam(seam), ...config });
-  if (config.initDelayMs === undefined) await registerFixturePlugin(db, f);
-  else await addPlugin(db, "fake", f.argv);
+  await registerFixturePlugin(db, f);
   addHost(db, { name: "p", plugin: "fake", fetch: "true", repo: null, max_sessions });
   return f;
 }
@@ -426,28 +432,54 @@ describe("host exec follow-ups", () => {
   const execCalls = (f: FakePlugin): number =>
     f.calls().filter((c) => c.method === "link.exec").length;
 
-  it("self dispatch: a profile replaced during the plugin's handshake is never dispatched to", async () => {
-    const a = await plugin({ initDelayMs: 400 }, { slots: "self" });
-    const b = fakePlugin(dir, { home, seams: linkSeam({ slots: "self" }) }, "fake2");
-    await addPlugin(db, "fake2", b.argv);
-    const call = hostExec(db, "p", { script: "echo old" });
-    const settled = call.then(
-      () => undefined,
-      (e: unknown) => e,
+  // Pause only the old peer's real wire handshake, after it has captured its reply. No sleeps.
+  async function duringInitialize(f: FakePlugin, host: string, change: () => void | Promise<void>) {
+    const gate = new EventEmitter();
+    const entered = once(gate, "entered");
+    const release = once(gate, "release");
+    return withPluginPipes(
+      f,
+      async () => {
+        const outcome = hostExec(db, host, { script: "echo old" }).catch((e: unknown) => e);
+        try {
+          await Promise.race([
+            entered,
+            outcome.then(() => {
+              throw new Error("host exec settled before initialize");
+            }),
+          ]);
+          await change();
+        } finally {
+          gate.emit("release");
+          await outcome;
+        }
+        return outcome;
+      },
+      { method: "link.exec", result: { exitCode: 0, stdout: "old", stderr: "", partial: false } },
+      async () => {
+        gate.emit("entered");
+        await release;
+      },
     );
-    for (let i = 0; i < 100 && a.calls().length === 0; i++)
-      await new Promise((r) => setTimeout(r, 20));
-    expect(a.calls().length).toBeGreaterThan(0); // the old link is mid-handshake
-    removeHost(db, "p");
-    addHost(db, { name: "p", plugin: "fake2", fetch: "true", repo: null, max_sessions: null });
-    expect(await settled).toBeInstanceOf(HostExecChangedError);
+  }
+
+  it("self dispatch: a profile replaced during the plugin's handshake is never dispatched to", async () => {
+    const a = await plugin();
+    const b = fakePlugin(dir, { home, seams: linkSeam() }, "fake2");
+    await registerFixturePlugin(db, b);
+    const outcome = await duringInitialize(a, "p", () => {
+      removeHost(db, "p");
+      addHost(db, { name: "p", plugin: "fake2", fetch: "true", repo: null, max_sessions: null });
+    });
+    expect(outcome).toBeInstanceOf(HostExecChangedError);
     expect(execCalls(a)).toBe(0);
     expect(execCalls(b)).toBe(0);
     expect(admissions()).toBe(0);
+    expect(ops()).toEqual([]);
   });
 
   it("same-name replacement: a plugin removed and re-added under its name during the handshake is never dispatched to", async () => {
-    const a = await plugin({ initDelayMs: 400, instance: "fake-old" }, { slots: "self" });
+    const a = await plugin({ instance: "fake-old" });
     const newDir = join(dir, "new");
     mkdirSync(newDir);
     const b = fakePlugin(
@@ -455,38 +487,90 @@ describe("host exec follow-ups", () => {
       { home, instance: "fake-new", seams: linkSeam({ slots: "self" }) },
       "fake",
     );
-    const call = hostExec(db, "p", { script: "echo old" });
-    const settled = call.then(
-      () => undefined,
-      (e: unknown) => e,
-    );
-    for (let i = 0; i < 100 && a.calls().length === 0; i++)
-      await new Promise((r) => setTimeout(r, 20));
-    expect(a.calls().length).toBeGreaterThan(0);
-    removeHost(db, "p");
-    removePlugin(db, "fake");
-    await addPlugin(db, "fake", b.argv);
-    addHost(db, { name: "p", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
-    expect(await settled).toBeInstanceOf(HostExecChangedError);
+    const outcome = await duringInitialize(a, "p", async () => {
+      removeHost(db, "p");
+      removePlugin(db, "fake");
+      await registerFixturePlugin(db, b);
+      addHost(db, { name: "p", plugin: "fake", fetch: "true", repo: null, max_sessions: null });
+    });
+    expect(outcome).toBeInstanceOf(HostExecChangedError);
     expect(execCalls(a)).toBe(0);
     expect(execCalls(b)).toBe(0);
     expect(ops()).toEqual([]); // refused before send: not a dispatch
   });
 
-  it("a fence refusal before send records no host.exec op", async () => {
-    const a = await plugin({ initDelayMs: 300 }, { slots: "self" });
-    const b = fakePlugin(dir, { home, seams: linkSeam({ slots: "self" }) }, "fake2");
-    await addPlugin(db, "fake2", b.argv);
-    const settled = hostExec(db, "p", { script: "echo old" }).then(
-      () => undefined,
-      (e: unknown) => e,
-    );
-    for (let i = 0; i < 100 && a.calls().length === 0; i++)
-      await new Promise((r) => setTimeout(r, 20));
-    removeHost(db, "p");
-    addHost(db, { name: "p", plugin: "fake2", fetch: "true", repo: null, max_sessions: null });
-    expect(await settled).toBeInstanceOf(HostExecChangedError);
+  it.each(["self", "mu"])(
+    "slots:%s refuses a stale handshake after a same-argv refresh",
+    async (slots) => {
+      const f = await plugin({ instance: "original" }, { slots });
+      f.set({ instance: "stale" });
+      const outcome = await duringInitialize(f, "p", async () => {
+        f.set({ instance: "current" });
+        await registerFixturePlugin(db, f);
+        expect(getPlugin(db, f.name).instance).toBe("current");
+      });
+      expect({
+        outcome,
+        instance: getPlugin(db, f.name).instance,
+        requests: execCalls(f),
+        ops: ops(),
+      }).toEqual({
+        outcome: expect.any(HostExecChangedError),
+        instance: "current",
+        requests: 0,
+        ops: [],
+      });
+    },
+  );
+
+  it("refuses an in-flight session even when a refresh reports the same instance", async () => {
+    const f = await plugin();
+    const outcome = await duringInitialize(f, "p", async () => {
+      await registerFixturePlugin(db, f);
+    });
+    expect(outcome).toBeInstanceOf(HostExecChangedError);
+    expect(execCalls(f)).toBe(0);
     expect(ops()).toEqual([]);
+  });
+
+  it("does not silently run on a different instance discovered at initialize", async () => {
+    const f = await plugin({ instance: "original" });
+    f.set({ instance: "changed" });
+    await expect(hostExec(db, "p", { script: "true" })).rejects.toBeInstanceOf(
+      HostExecChangedError,
+    );
+    expect(getPlugin(db, f.name).instance).toBe("changed");
+    expect(execCalls(f)).toBe(0);
+    expect(ops()).toEqual([]);
+    expect((await hostExec(db, "p", { script: "true" })).exit).toBe(0);
+  });
+
+  it("does not dispatch to an abandoned provider host after its name is reacquired", async () => {
+    const a = fakePlugin(dir, { home, seams: providerSeams(), instance: "old" });
+    const b = fakePlugin(dir, { home, seams: providerSeams(), instance: "new" }, "other");
+    await registerFixturePlugin(db, a);
+    await registerFixturePlugin(db, b);
+    await acquireHost(db, { name: "p", provider: a.name, params: {}, repo: null });
+    await closePluginSessions();
+    const outcome = await duringInitialize(a, "p", async () => {
+      abandonHost(db, "p");
+      await acquireHost(db, { name: "p", provider: b.name, params: {}, repo: null });
+    });
+    expect({
+      outcome,
+      old: execCalls(a),
+      current: execCalls(b),
+      audit: ops().filter((op) => op.startsWith("host exec ")),
+    }).toEqual({ outcome: expect.any(HostExecChangedError), old: 0, current: 0, audit: [] });
+  });
+
+  it("does not audit a counted plugin's executable preflight refusal as a dispatch", async () => {
+    const f = await plugin({}, { slots: "mu" });
+    chmodSync(f.path, 0o644);
+    await expect(hostExec(db, "p", { script: "true" })).rejects.toBeInstanceOf(PluginRefusedError);
+    expect(execCalls(f)).toBe(0);
+    expect(ops()).toEqual([]);
+    expect(db.prepare("SELECT 1 FROM host_channels").get()).toBeUndefined();
   });
 
   it("host check counting: a template name re-added as slots:self during admission is not counted", async () => {
