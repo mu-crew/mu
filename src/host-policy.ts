@@ -28,6 +28,7 @@ import { observeHost } from "./host-lifecycle.js";
 import { findHost, type HostRecord } from "./host-provider.js";
 import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-records.js";
 import { describeRead, readJobFile } from "./jobs/lease.js";
+import { viewPresent } from "./jobs/view.js";
 import { emitEvent } from "./logs.js";
 import { PluginCallError } from "./plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "./plugins/job.js";
@@ -220,6 +221,7 @@ export async function closePluginJob(
       `plugin ${reservation.plugin} has no job seam to stop it with`,
     );
   }
+  if (kind.caps.handle === "file") await assertViewGone(reservation);
   // A lost host's job went with the machine, unless its kind outlives it: then only a stop proves it gone.
   if (hostLost(db, reservation.host) && kind.caps.outlivesHost !== true) {
     if (reservation.launch === "none" && reservation.job === null) {
@@ -256,6 +258,26 @@ export async function closePluginJob(
     await finalCollect(db, r);
   }
   return { reservation: getCarrierJob(db, r.token) ?? r, action: "stopped", facts };
+}
+
+/**
+ * A file kind's view is its job's dispatcher (ladder placement §10): no close stops the job or
+ * drops the record while it may run. A view asked for that reported no pane id is never proof
+ * (`view_unproven`, durable past the rollback that saw it); a recorded pane must be proven
+ * gone. Otherwise `CarrierJobKeptError`, everything kept; `--abandon-job` is the way out.
+ */
+async function assertViewGone(r: CarrierJob): Promise<void> {
+  const keep = (why: string): never => {
+    throw new CarrierJobKeptError(r.name, r.workstream, r.host, why);
+  };
+  if (r.viewUnproven) {
+    keep("its view (the job's dispatcher) opened with no pane id and may still dispatch");
+  }
+  if (r.paneId === null) return;
+  const alive = await viewPresent(r.paneId).catch(() => undefined);
+  if (alive !== false) {
+    keep(`its view ${r.paneId} (the job's dispatcher) is ${alive ? "alive" : "not proven gone"}`);
+  }
 }
 
 /**

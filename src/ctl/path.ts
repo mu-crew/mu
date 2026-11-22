@@ -29,10 +29,15 @@ function sockPathUnder(dir: string, workstream: string, agent: string, ext = "so
   return join(dir, HASHED_DIR, `${h}.${ext}`);
 }
 
+/**
+ * Always absolute, shortened on the absolute spelling: a relative MU_DB_PATH or SDK `openDb`
+ * path whose relative socket name fits can overflow sun_path once resolved, and the socket
+ * is bound, forwarded and unlinked from other working directories (the wire's `sockets.local`).
+ */
 export function ctlSocketPath(workstream: string, agent: string, stateDir?: string): string {
   const dbPath = process.env.MU_DB_PATH;
   const base = stateDir ?? (dbPath ? dirname(dbPath) : defaultStateDir());
-  return sockPathUnder(join(base, "sock"), workstream, agent);
+  return sockPathUnder(join(resolve(base), "sock"), workstream, agent);
 }
 
 /**
@@ -40,11 +45,14 @@ export function ctlSocketPath(workstream: string, agent: string, stateDir?: stri
  * hashed past the same bound as a ctl socket (`carrier/_h/<hash>.job`). Derived, never stored.
  * Always absolute (the wire's `jobFile`, ladder placement §10): a relative MU_DB_PATH or SDK
  * `openDb` path leaves the state dir relative, and spawn, reattach and recovery derive one path.
+ * The hash is decided on the spelling given, then resolved: a file has no sun_path bound, and a
+ * template lease published before the wire went absolute keeps its name (deciding on the
+ * absolute spelling moved a readable name to `_h/`, and close could no longer find its handle).
  */
 export function carrierJobFilePath(workstream: string, agent: string, stateDir?: string): string {
   const dbPath = process.env.MU_DB_PATH;
   const base = stateDir ?? (dbPath ? dirname(dbPath) : defaultStateDir());
-  return sockPathUnder(join(resolve(base), "carrier"), workstream, agent, "job");
+  return resolve(sockPathUnder(join(base, "carrier"), workstream, agent, "job"));
 }
 
 /**

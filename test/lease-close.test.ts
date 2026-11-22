@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CarrierJobKeptError,
@@ -744,6 +744,49 @@ describe("close-by-name of a reservation with no handle", () => {
     expect(order()).toEqual(["stop late-1"]);
     expect(listCarrierJobs(db)).toEqual([]);
     expect(existsSync(jobFile())).toBe(false);
+  });
+});
+
+// wire_legacy_job_file_moved: a template lease on a relative DB path published at its readable
+// job-file name (the relative spelling fit); the absolute spelling does not. Close finds it.
+describe("a relative DB path's template lease, published before the wire went absolute", () => {
+  const cwd = process.cwd();
+  afterEach(() => process.chdir(cwd));
+
+  it("close-by-name reads the job file at its old readable name and stops it", async () => {
+    const deep = join(dir, "d".repeat(Math.max(1, 60 - dir.length)));
+    mkdirSync(deep, { recursive: true });
+    process.chdir(deep);
+    db.close();
+    db = openDb({ path: "mu.db" });
+    addHost(db, {
+      name: "dev",
+      transport: "lease",
+      shell: "carrier J={job_file} L={local_sock} R={remote_sock} C={cwd} {env} -- {cmd}",
+      exec: "true",
+      stop: STOP(stopScript),
+      fetch: "true",
+      repo: "/srv/repo",
+      max_sessions: 1,
+    });
+    const name = "w".repeat(32);
+    const legacy = join("carrier", "auth", `${name}.job`);
+    expect(Buffer.byteLength(join(resolve(deep), legacy))).toBeGreaterThan(103);
+    const r = reserveCarrierJob(db, {
+      workstream: "auth",
+      name,
+      host: "dev",
+      hostStop: STOP(stopScript),
+      creatorPid: process.pid,
+    });
+    if (r === undefined) throw new Error("reserved");
+    markCarrierLaunch(db, r.token);
+    mkdirSync(dirname(legacy), { recursive: true });
+    writeFileSync(legacy, "old-1\n");
+    await closeAgent(db, name, { workstream: "auth" });
+    expect(order()).toEqual(["stop old-1"]);
+    expect(listCarrierJobs(db)).toEqual([]);
+    expect(existsSync(legacy)).toBe(false);
   });
 });
 

@@ -172,6 +172,8 @@ const CARRIER_JOBS_COLUMNS = [
   "first_inc",
   // P6d.
   "collect_delay_ms",
+  // Ladder placement §10.
+  "view_unproven",
 ];
 
 /** A current v13 copy whose carrier_jobs has the pre-reservation shape, with three handles. */

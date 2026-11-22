@@ -79,6 +79,8 @@ export interface CarrierJob {
   /** An at-start kind's first delivery (D8 G1b): its msgId, and the opening incarnation once started. */
   firstMsgId: string | null;
   firstInc: string | null;
+  /** A file kind's view was asked for and reported no pane id yet: it may be dispatching. */
+  viewUnproven: boolean;
 }
 
 interface Raw {
@@ -111,6 +113,7 @@ interface Raw {
   collect_delay_ms: number | null;
   first_msg_id: string | null;
   first_inc: string | null;
+  view_unproven: number;
 }
 
 const toJob = (r: Raw): CarrierJob => ({
@@ -143,6 +146,7 @@ const toJob = (r: Raw): CarrierJob => ({
   collectDelayMs: r.collect_delay_ms,
   firstMsgId: r.first_msg_id,
   firstInc: r.first_inc,
+  viewUnproven: r.view_unproven === 1,
 });
 
 const now = (): string => new Date().toISOString();
@@ -354,12 +358,21 @@ export function carrierJobsOfPlugin(db: Db, name: string): CarrierJob[] {
   ).map(toJob);
 }
 
+/**
+ * Written immediately before a file kind's view is asked for (ladder placement §10): the view
+ * is its job's dispatcher, and a backend may open it and fail before reporting its id. Cleared
+ * when the pane is recorded; until then no close may stop the job or drop its record.
+ */
+export function markViewUnproven(db: Db, token: string): void {
+  db.prepare("UPDATE carrier_jobs SET view_unproven = 1 WHERE token = ?").run(token);
+}
+
 /** The carrier's pane, the moment the mux reports it. Never overwrites another pane. */
 export function recordCarrierPane(db: Db, token: string, paneId: string): boolean {
   return (
     db
       .prepare(
-        "UPDATE carrier_jobs SET pane_id = ? WHERE token = ? AND (pane_id IS NULL OR pane_id = ?)",
+        "UPDATE carrier_jobs SET pane_id = ?, view_unproven = 0 WHERE token = ? AND (pane_id IS NULL OR pane_id = ?)",
       )
       .run(paneId, token, paneId).changes === 1
   );

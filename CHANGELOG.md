@@ -83,8 +83,13 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   is kept with the reason. The reaper parks the tasks of a plugin job
   record launched with no handle yet, as it does for a lease with one.
   `jobFile` and `sockets.local` are absolute even under a relative
-  `MU_DB_PATH`. A rollback whose view open never reported a pane id keeps
-  the record, the job file and the tree (that view may be dispatching). A
+  `MU_DB_PATH`; a ctl socket is shortened on its absolute path, so it never
+  overflows the socket limit once resolved, and a template lease's job file
+  keeps the name it was published under. A rollback whose view open never
+  reported a pane id keeps the record, the job file and the tree (that view
+  may be dispatching); the record says so (`carrier_jobs.view_unproven`),
+  and a later `mu agent close` refuses too until `--abandon-job`. A close
+  of a file kind's job whose recorded view is alive refuses likewise. A
   lookup that hands back (`human`) during recovery stays a hand-back: the
   close exits 5, human needed, the record kept.
 

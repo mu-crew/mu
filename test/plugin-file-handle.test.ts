@@ -115,6 +115,31 @@ describe("spawn", () => {
     expect(record()).toMatchObject({ launch: "intent", job: "file-job-1" });
   });
 
+  // wire_close_unproven_view: the rollback's refusal was in memory only; a plain close after it
+  // stopped the job and dropped record and file while %9, the dispatcher, still ran.
+  it("a close after that rollback refuses too: the view is still unproven; --abandon-job drops it", async () => {
+    await h.setup(FILE);
+    h.stubMux({
+      spawnAgent: async (s) => {
+        h.panes.set("%9", { command: s.command });
+        writeFileSync(jobFile(), "file-job-1\n");
+        throw new Error("injected: no pane id");
+      },
+    });
+    await expect(h.spawn()).rejects.toThrow(/no pane id/);
+    expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
+    await expect(closeAgent(h.db, "w1", { workstream: "ws" })).rejects.toThrow(
+      /its view \(the job's dispatcher\) opened with no pane id/,
+    );
+    expect(h.panes.has("%9")).toBe(true);
+    expect(h.f.backend().stops).toBe(0);
+    expect(existsSync(jobFile())).toBe(true);
+    expect(record()).toMatchObject({ launch: "intent", job: "file-job-1" });
+    await closeAgent(h.db, "w1", { workstream: "ws", abandonJob: true });
+    expect(h.f.backend().stops).toBe(0);
+    expect(record()).toBeUndefined();
+  });
+
   it("a lookup's none is no proof: the record and its reason are kept, nothing stopped", async () => {
     await h.setup(FILE);
     h.f.set({ replies: { "job.lookup": { none: true } } });

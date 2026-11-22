@@ -4,7 +4,7 @@
 
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CarrierJobUnstoppedError } from "../src/agents/errors.js";
 import { insertAgent } from "../src/agents.js";
@@ -198,6 +198,30 @@ describe("job file path and the socket invariant", () => {
     const sock = ctlSocketPath("w".repeat(30), "a".repeat(30), long);
     expect(sock.match(/([0-9a-f]{16})\.sock$/)?.[1]).toBe(p.match(/([0-9a-f]{16})\.job$/)?.[1]);
     expect(Buffer.byteLength(p)).toBeLessThanOrEqual(MAX_SOCK_PATH);
+  });
+
+  // wire_relative_ctl_overflow: shortened on the relative spelling, then resolved, a relative
+  // state dir's socket fit as written but overflowed sun_path on the wire.
+  it("a relative state dir's ctl socket is absolute and shortened on the absolute spelling", () => {
+    const pad = 104 - Buffer.byteLength(join(resolve("x"), "sock", "ws", ".sock"));
+    const agent = "a".repeat(Math.max(1, pad));
+    expect(Buffer.byteLength(join("x", "sock", "ws", `${agent}.sock`))).toBeLessThanOrEqual(
+      MAX_SOCK_PATH,
+    );
+    const sock = ctlSocketPath("ws", agent, "x");
+    expect(isAbsolute(sock)).toBe(true);
+    expect(Buffer.byteLength(sock)).toBeLessThanOrEqual(MAX_SOCK_PATH);
+    expect(sock).toBe(ctlSocketPath("ws", agent, resolve("x")));
+  });
+
+  // wire_legacy_job_file_moved: a template lease published at its readable name under a relative
+  // state dir keeps that name once the path is resolved; it never moves to `_h/`.
+  it("a relative state dir's job file keeps the name its spelling chose, resolved", () => {
+    const pad = 104 - Buffer.byteLength(join(resolve("x"), "carrier", "ws", ".job"));
+    const agent = "a".repeat(Math.max(1, pad));
+    const legacy = join("x", "carrier", "ws", `${agent}.job`);
+    expect(Buffer.byteLength(legacy)).toBeLessThanOrEqual(MAX_SOCK_PATH);
+    expect(carrierJobFilePath("ws", agent, "x")).toBe(resolve(legacy));
   });
 
   it("distinguishes ws/agent splits", () => {

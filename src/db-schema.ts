@@ -119,6 +119,8 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
       ["first_inc", "TEXT"],
       // P6d: the in-life collect's current backoff, doubled per failure (D10).
       ["collect_delay_ms", "INTEGER"],
+      // Ladder placement §10: a file kind's view open with no pane id yet (src/carrier-jobs.ts).
+      ["view_unproven", "INTEGER NOT NULL DEFAULT 0"],
     ] as const
   ).map(([c, ddl]) => ["carrier_jobs", c, ddl] as const),
   // Plugins spec D5: the host identity a recovery pins (src/db-recovery.ts); backfilled from
