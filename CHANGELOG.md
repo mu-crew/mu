@@ -14,21 +14,20 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Added
 
-- **`examples/plugins/mu-plugin-ssh` gains a `pane` job kind** (rung 3 over
-  plain ssh, no hand-written templates). It has no channel of its own: pi
-  rides mu's built-in `ctl` (the view forwards the socket pair with `-L`),
-  hook harnesses remote `hooks`, others `mux`. The view always runs
-  `ControlMaster=no ControlPath=none` ahead of the words after the plugin
-  path (ssh keeps the first value), with `StreamLocalBindUnlink=yes` and
-  `ExitOnForwardFailure=yes`: a `-L` through a shared master outlives the
-  pane. The job is bound with a `reply` handle derived from mu's job key.
-  `job.stop` answers only on proof: the host-side claim (`mkdir` under
-  `<root>/`, the root fixed at `job.start` as the host's realpath, symlinks included, and a start whose root cannot be resolved refused (the plugin's `MU_SSH_STATE_DIR`, else the host's `$HOME/.local/state/mu-plugin-ssh`) and carried in the handle, so a stop in another HOME, XDG_STATE_HOME or plugin process proves absence in the launch's root only; a stop needs its receipt line too) was never made, so the stop makes it
-  first, or the recorded leader (pid and start time) and its process group
-  are gone after HUP, TERM, KILL. An unreachable host or any doubt is an
-  error, so a close keeps the tree and the job record. Tests:
-  `test/plugin-ssh-pane.test.ts`, `.integration.test.ts` (a real sshd on
-  loopback with `REAL_SSHD_TEST=1`, for Linux).
+- **`examples/plugins/mu-plugin-ssh` gains an example `pane` job kind** over
+  plain ssh. Session/lease templates remain the supported rung-3 path.
+  The example uses mu's built-in `ctl` (with a per-view `-L` forward),
+  remote `hooks` or `mux` channels. The view disables SSH multiplexing so
+  its forward does not outlive the pane; it needs its own connection.
+  Stop requires a receipt for the handle and checks only the recorded
+  leader and its process group, not descendants that leave it. A missing
+  recorded state root makes stop return an error, but replacing it at the
+  same path can make stop report a live job gone and let mu proceed with
+  cleanup. Don't move, replace or recreate that root while jobs or delayed
+  views may still exist. Use a short canonical path with handle-safe
+  components: a trailing newline is silently stripped and can make the
+  handle point to a different directory. See the example's file header
+  for the full limits.
 
 - **`mu host exec <host> [--cwd <dir>] [--timeout <s>] [--json] -- <cmd>`**
   runs one command through the host's link (no row, task, pane or job).

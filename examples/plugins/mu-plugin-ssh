@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// mu-plugin-ssh: an example mu plugin over plain ssh. It provides two seams:
-// the host link (exec and fetch) and a `pane` job kind, rung 3 of the placement
-// ladder with no hand-written templates. Read it next to
+// mu-plugin-ssh: an example mu plugin over plain ssh. It provides a host link
+// (exec and fetch) and an example `pane` job kind. Session/lease templates
+// remain the supported rung-3 path. Read this example next to
 // docs/reference/plugin-protocol.md.
 //
 //   mu plugin add ssh -- /abs/path/mu-plugin-ssh [ssh command…]
@@ -15,7 +15,7 @@
 //
 //   mu agent spawn w1 --host devbox --worktree      # a pane over ssh
 //
-// The pane kind has no channel of its own: mu's built-in ctl (pi) , hooks or mux
+// The pane kind has no channel of its own: mu's built-in ctl (pi), hooks or mux
 // carry the agents. job.start only builds the view, an interactive ssh that
 // forwards mu's ctl socket (-L) and runs the harness in a remote shell. The
 // view's ssh always runs with ControlMaster=no ControlPath=none: a -L through a
@@ -26,18 +26,29 @@
 // MaxSessions 1 does not block it, a host with one practical connection does.
 //
 // Lifetime: the view is bound, so mu kills the view, then asks job.stop. The
-// remote side keeps `<root>/<id>/`. The root is fixed at job.start (the plugin's MU_SSH_STATE_DIR,
-// else the host's canonical `$HOME/.local/state/mu-plugin-ssh`, asked of the host once) and carried
-// in the handle, so launch, status and stop all use it whatever their session's HOME or
-// XDG_STATE_HOME, and whichever plugin process asks: the launch claims
-// it with an atomic mkdir and records its pid and start time; job.stop answers
-// null only on proof: the script's exit 0 and its receipt line for this handle. Proof is: the launch never claimed (the stop claims it
-// first, so it never can), or the recorded leader is gone and its process group
-// is empty (members are listed with ps and signalled by pid, HUP, TERM, KILL, while the leader
-// matches; the harness runs with job control off so it stays in that group).
-// Any doubt (ssh fails, no pid recorded, a process remains) is an error, so mu
-// keeps the tree and the job record. Descendants that left the process group
-// are not covered by the proof.
+// remote side keeps `<root>/<id>/`. At job.start the plugin resolves the root
+// on the host (MU_SSH_STATE_DIR, else `$HOME/.local/state/mu-plugin-ssh`) and
+// records its path in the handle. Launch, status and stop use that path, not
+// the HOME, XDG_STATE_HOME or override of a later invocation.
+//
+// Stop requires exit 0 and a receipt for that handle. In an intact state root,
+// stop either claims the job directory before launch can, or checks that the
+// recorded leader (pid and start time) and its process group are gone. The
+// harness runs with job control off. While the leader matches, stop lists
+// group members with ps and signals them by pid (HUP, TERM, KILL). Descendants
+// that leave the group are not covered. If ssh fails, a claim has no pid
+// record, or the group remains live, mu keeps the worktree and job record.
+//
+// Do not move, replace or recreate the recorded state root while jobs or
+// delayed views may still exist. A missing root makes stop return an error,
+// but a new directory at the same path can make stop report a live job gone
+// and let mu proceed with cleanup. Another start can recreate that directory.
+//
+// Use a short, absolute root whose canonical path has only ASCII letters,
+// digits, dots, underscores and hyphens in its components (the handle is capped at
+// 128 characters). In particular, avoid a canonical path ending in a newline:
+// the shell strips trailing newlines before the plugin validates the path,
+// so the handle can silently point to a different directory.
 //
 // See test/_fake-plugin.mjs for the channel and host seams.
 
