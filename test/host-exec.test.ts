@@ -120,13 +120,38 @@ describe("host exec: the outcome table", () => {
   it("runs in --cwd", async () => {
     template();
     mkdirSync(join(home, "sub"));
-    expect((await hostExec(db, "t", { script: "pwd", cwd: "sub" })).stdout).toMatch(/home\/sub$/);
+    expect((await hostExec(db, "t", { script: "pwd", cwd: "sub" })).stdout.trim()).toMatch(
+      /home\/sub$/,
+    );
+  });
+
+  it("runs in --cwd on a template without {cwd} (the ssh and mule starter shapes)", async () => {
+    mkdirSync(join(home, "sub dir"), { recursive: true });
+    for (const [name, exec] of [
+      ["ssh", `cd '${home}' && /bin/sh -c {cmd}`],
+      ["mule", `cd '${home}' && env sh -c {cmd}`],
+    ] as const) {
+      addHost(db, { name, shell: "true", exec, fetch: "true", repo: null, max_sessions: null });
+      const r = await hostExec(db, name, { script: "pwd", cwd: "sub dir" });
+      expect(r.stdout).toMatch(/home\/sub dir$/);
+      expect((await hostExec(db, name, { script: "pwd", cwd: "/" })).stdout.trim()).toBe("/");
+      expect((await hostExec(db, name, { script: "pwd" })).stdout.trim()).toBe(home);
+    }
   });
 
   it("a link reply through a plugin link", async () => {
     await plugin();
     const r = await hostExec(db, "p", { script: "echo hi; exit 4" });
     expect(r).toMatchObject({ link: "fake", exit: 4, stdout: expect.stringMatching(/^hi\n?$/) });
+  });
+
+  it("runs in --cwd through a plugin link (the mule link's seat)", async () => {
+    await plugin();
+    mkdirSync(join(home, "sub"));
+    expect((await hostExec(db, "p", { script: "pwd", cwd: "sub" })).stdout.trim()).toMatch(
+      /home\/sub$/,
+    );
+    expect((await hostExec(db, "p", { script: "pwd", cwd: "/" })).stdout.trim()).toBe("/");
   });
 
   it("a hand-back throws HostHandbackError and runs nothing (plugin `human`)", async () => {
@@ -308,6 +333,14 @@ describe("host exec: a provider host (spec A review G3)", () => {
     expect(r).toMatchObject({ host: "box", link: "fake", exit: 4 });
     expect(admissions()).toBe(0);
     expect(ops().at(-1)).toMatch(/^host exec box link=fake exit=4 /);
+  });
+
+  it("runs in --cwd", async () => {
+    await provider();
+    mkdirSync(join(home, "sub"));
+    expect((await hostExec(db, "box", { script: "pwd", cwd: "sub" })).stdout.trim()).toMatch(
+      /home\/sub$/,
+    );
   });
 
   it("a plugin `human` error is the hand-back; the command's own 3 stays a result", async () => {

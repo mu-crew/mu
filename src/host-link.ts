@@ -30,6 +30,7 @@ import {
   type HostLease,
   HostProfileError,
   type HostRun,
+  placeholderUses,
   remotePathWord,
   runLeasedTemplate,
   withHostChannel,
@@ -181,6 +182,16 @@ function execTemplate(host: HostView): string {
   return exec;
 }
 
+/**
+ * The script a template link sends for `cwd`. A template without `{cwd}` cannot place the
+ * command (both shipped exec starters lack it), so the script enters `cwd` itself; `.` is
+ * the login directory and adds nothing.
+ */
+function inCwd(template: string, script: string, cwd: string): string {
+  if (cwd === "." || placeholderUses(template, "exec").cwd > 0) return script;
+  return `cd ${remotePathWord(cwd)} && ${script}`;
+}
+
 /** The built-in link over `db`'s profiles: today's `exec` and `fetch` templates. */
 export function templateLink(db: Db): HostLink {
   const link: HostLink = {
@@ -197,8 +208,9 @@ export function templateLink(db: Db): HostLink {
     fits: (host, script, cwd) => {
       // The filled template is ONE argument of the local `/bin/sh -c`, and holds every
       // argument the host's shells get: measured as exec'd, before anything runs.
+      const template = execTemplate(host);
       const bytes = Buffer.byteLength(
-        expandHostTemplate(execTemplate(host), { cmd: script, cwd }, "exec"),
+        expandHostTemplate(template, { cmd: inCwd(template, script, cwd), cwd }, "exec"),
       );
       return { ok: bytes < EXEC_ARG_MAX_BYTES, bytes, limit: EXEC_ARG_MAX_BYTES };
     },
@@ -210,7 +222,7 @@ export function templateLink(db: Db): HostLink {
           lease,
           requireProfile(h),
           "exec",
-          { cmd: req.script, cwd: req.cwd },
+          { cmd: inCwd(requireProfile(h).exec ?? "", req.script, req.cwd), cwd: req.cwd },
           req.timeoutMs,
           undefined,
           req.maxStreamBytes,
