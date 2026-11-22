@@ -783,6 +783,11 @@ export async function setPaneOption(
   await paneTmux(ref, (id) => ["set-option", "-p", "-t", id, name, value]);
 }
 
+// Bound the quoted command, not the raw text. A UTF-16 unit can cost up to
+// six bytes (LF escape plus quotes); 2048 units leave room under 16 KiB for
+// the command, server guard and message framing.
+const LITERAL_CHUNK = 2048;
+
 /** Type `keys` into the pane: tmux key names, or text with `literal`. */
 export async function sendKeys(
   ref: VerifiedPaneRef,
@@ -791,14 +796,26 @@ export async function sendKeys(
 ): Promise<void> {
   requireVerifiedPane(ref);
   if (keys.length === 0) return;
-  await paneTmux(ref, (id) => [
-    "send-keys",
-    "-t",
-    id,
-    ...(opts.literal ? ["-l"] : []),
-    "--",
-    ...keys,
-  ]);
+  const send = (parts: readonly string[]) =>
+    paneTmux(ref, (id) => ["send-keys", "-t", id, ...(opts.literal ? ["-l"] : []), "--", ...parts]);
+  // Count one extra unit per word for its outer quotes and separator.
+  if (!opts.literal || keys.reduce((size, key) => size + key.length + 1, 0) <= LITERAL_CHUNK) {
+    await send(keys);
+    return;
+  }
+  // Keep literal key semantics and recheck the same server in every acting
+  // call. If the server changes, stop: earlier chunks may already have landed.
+  for (const key of keys) {
+    let chunk = "";
+    for (const point of key) {
+      if (chunk.length + point.length > LITERAL_CHUNK) {
+        await send([chunk]);
+        chunk = "";
+      }
+      chunk += point;
+    }
+    if (chunk !== "") await send([chunk]);
+  }
 }
 
 // ─── Backend record ────────────────────────────────────────────────────
