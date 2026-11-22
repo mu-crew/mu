@@ -25,9 +25,11 @@ export const CARRIER_JOBS_DDL = `
 -- provider host's record), 'tree_base' and 'collect_repo' (its tree's base, the local
 -- repo collects fetch into), the final-collect flag and its generation (D10), and an
 -- at-start kind's first delivery ('first_msg_id', 'first_inc': D8). 'collect_delay_ms': the
--- in-life collect's backoff behind 'collect_next_at'. 'view_unproven': a file kind's view
--- (its dispatcher) was asked for and no pane id is recorded for it yet; a close refuses
--- until the record names a pane proven gone (ladder placement §10), or --abandon-job.
+-- in-life collect's backoff behind 'collect_next_at'. 'view_state': a file kind's view (its
+-- dispatcher, ladder placement §10): 'none' (never asked for), 'opening' (asked for, its
+-- pane id not recorded), 'open' (its pane is 'pane_id'); NULL is a record older than the
+-- column, whose view is unknown. Only an 'open' pane proven gone, or 'none', lets a close
+-- stop the job and drop the record and its job file (src/host-policy.ts proveViewGone).
 CREATE TABLE IF NOT EXISTS carrier_jobs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   token         TEXT NOT NULL UNIQUE,
@@ -60,7 +62,7 @@ CREATE TABLE IF NOT EXISTS carrier_jobs (
   first_msg_id  TEXT,
   first_inc     TEXT,
   collect_delay_ms INTEGER,
-  view_unproven INTEGER NOT NULL DEFAULT 0
+  view_state    TEXT CHECK (view_state IN ('none', 'opening', 'open'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_jobs_name ON carrier_jobs (workstream, name, ordinal);
 `;

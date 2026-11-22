@@ -11,7 +11,7 @@ import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
-import { CarrierJobUnresolvedError } from "../src/agents/errors.js";
+import { CarrierJobKeptError, CarrierJobUnresolvedError } from "../src/agents/errors.js";
 import { leaseJobFile } from "../src/agents/lease-carrier.js";
 import { previewReattach, reattachAgent } from "../src/agents/reattach.js";
 import { getAgent } from "../src/agents.js";
@@ -43,6 +43,55 @@ function views(o: { handle?: string; dies?: boolean } = {}): void {
       return id;
     },
   });
+}
+
+/** A view whose window opens and publishes, then the backend fails before reporting its id. */
+function noIdView(pane = "%9"): void {
+  h.stubMux({
+    spawnAgent: async (s) => {
+      h.panes.set(pane, { command: s.command });
+      writeFileSync(jobFile(), "file-job-1\n");
+      throw new Error("injected: no pane id");
+    },
+  });
+}
+
+/** A view that reports its id, then fails; the kill does not take (it survives). */
+function survivingView(pane = "%9"): void {
+  h.stubMux({
+    spawnAgent: async (s) => {
+      h.panes.set(pane, { command: s.command });
+      writeFileSync(jobFile(), "file-job-1\n");
+      s.onPaneCreated?.(pane);
+      throw new Error("injected: the view failed after its id");
+    },
+    killPane: async () => {},
+  });
+}
+
+/** A detached file kind's agent whose view %1 is gone (its job runs, file-job-1 published). */
+async function detachedWithGoneView(): Promise<void> {
+  await h.setup({ ...FILE, view: "detached" });
+  views({ handle: "file-job-1" });
+  const a = await h.spawn();
+  h.panes.delete(a.paneId);
+}
+
+async function reattach(): Promise<void> {
+  const p = await previewReattach(h.db, "ws", "w1");
+  await reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision });
+}
+
+const close = () => closeAgent(h.db, "w1", { workstream: "ws" });
+
+/** As if the record were written before view tracking: its view column dropped, then upgraded. */
+function legacyRecord(): void {
+  const cols = h.db
+    .prepare("SELECT name FROM pragma_table_info('carrier_jobs') WHERE name LIKE 'view%'")
+    .all() as Array<{ name: string }>;
+  for (const c of cols) h.db.exec(`ALTER TABLE carrier_jobs DROP COLUMN ${c.name}`);
+  h.db.close();
+  h.db = openDb({ path: join(h.dir, "mu.db") });
 }
 
 let log: ReturnType<typeof vi.spyOn>;
@@ -233,6 +282,164 @@ describe("recovery", () => {
     expect(e).toMatchObject({ kind: "human", remedy: "touch your security key" });
     expect(h.f.backend().stops).toBe(0);
     expect(record()).toMatchObject({ launch: "intent", job: null });
+  });
+});
+
+// The one rule (ladder placement §10): a file kind's record and job file are retained until its
+// view, the job's dispatcher, is PROVEN gone (proveViewGone); unknown always retains.
+describe("the view rule", () => {
+  // wire_close_spawn_stale_view: close snapshotted the record before its awaited host.status and
+  // proved absence from that snapshot, while the spawn marked its view outside the agent lock;
+  // the close released the record and the spawn then opened its dispatcher for nothing.
+  it("a close racing the spawn: the record is fenced before the view can open, never after", async () => {
+    await h.setup(FILE);
+    let opened = 0;
+    h.stubMux({
+      spawnAgent: async (s) => {
+        opened++;
+        h.panes.set("%9", { command: s.command });
+        writeFileSync(jobFile(), "file-job-1\n");
+        s.onPaneCreated?.("%9");
+        return "%9";
+      },
+    });
+    const lateAt = (m: string) => [...h.calls(m).map(() => "ok"), "late"];
+    h.f.set({ lateMs: 400, faults: { "job.start": lateAt("job.start") } });
+    const spawned = h.spawn().then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    for (let i = 0; i < 200 && h.calls("job.start").length === 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    // The close's observation answers after the start does: the spawn reaches its view meanwhile.
+    h.f.set({ faults: { "job.start": ["late"], "host.status": lateAt("host.status") } });
+    await close();
+    expect(await spawned).toBeInstanceOf(Error);
+    expect(opened).toBe(0);
+    expect(h.panes.size).toBe(0);
+    expect(h.f.backend().stops).toBe(1);
+    expect(record()).toBeUndefined();
+  });
+
+  // wire_reattach_unproven_view: reattach marked nothing before its mux call; a replacement view
+  // opened with no id left the record proving only the previous (gone) pane.
+  it("a reattach whose replacement opened with no pane id: a close refuses, all kept", async () => {
+    await detachedWithGoneView();
+    noIdView();
+    await expect(reattach()).rejects.toThrow(/no pane id/);
+    await expect(close()).rejects.toThrow(/opened with no pane id/);
+    expect(h.panes.has("%9")).toBe(true);
+    expect(h.f.backend().stops).toBe(0);
+    expect(existsSync(jobFile())).toBe(true);
+    expect(record()).toMatchObject({ job: "file-job-1" });
+  });
+
+  // wire_upgrade_unproven_view_default: the added column defaulted to "no view", so a record from
+  // before it (the no-id failure on the merge base) closed with its dispatcher alive.
+  it("a record from before view tracking is unknown after the upgrade: a close refuses", async () => {
+    await h.setup(FILE);
+    noIdView();
+    await expect(h.spawn()).rejects.toThrow(/no pane id/);
+    legacyRecord();
+    await expect(close()).rejects.toThrow(/predates view tracking/);
+    expect(h.f.backend().stops).toBe(0);
+    expect(existsSync(jobFile())).toBe(true);
+    expect(record()).toMatchObject({ launch: "intent", job: "file-job-1" });
+  });
+
+  const paths: Array<{ path: string; run: () => Promise<void> }> = [
+    {
+      path: "spawn rollback: view opened, no pane id",
+      run: async () => {
+        await h.setup(FILE);
+        noIdView();
+        await expect(h.spawn()).rejects.toThrow(/no pane id/);
+      },
+    },
+    {
+      path: "spawn rollback: view reported, survives its kill",
+      run: async () => {
+        await h.setup(FILE);
+        survivingView();
+        await expect(h.spawn()).rejects.toThrow(/after its id/);
+      },
+    },
+    {
+      path: "close after a rollback whose view had no pane id",
+      run: async () => {
+        await h.setup(FILE);
+        noIdView();
+        await h.spawn().catch(() => {});
+        await expect(close()).rejects.toThrow(CarrierJobKeptError);
+      },
+    },
+    {
+      path: "close after a rollback whose view survived",
+      run: async () => {
+        await h.setup(FILE);
+        survivingView();
+        await h.spawn().catch(() => {});
+        // The row keeps %9 (the row rule): its close refuses on the live pane first.
+        await expect(close()).rejects.toThrow(/pane %9 is still alive/);
+      },
+    },
+    {
+      path: "reattach failure (no pane id), then close",
+      run: async () => {
+        await detachedWithGoneView();
+        noIdView();
+        await reattach().catch(() => {});
+        await expect(close()).rejects.toThrow(CarrierJobKeptError);
+      },
+    },
+    {
+      path: "reattach failure (reported, survives its kill), then close",
+      run: async () => {
+        await detachedWithGoneView();
+        survivingView();
+        await reattach().catch(() => {});
+        await expect(close()).rejects.toThrow(/%9 \(the job's dispatcher\) is alive/);
+      },
+    },
+    {
+      path: "a second reattach while the failed attempt's view is unproven",
+      run: async () => {
+        await detachedWithGoneView();
+        noIdView();
+        await reattach().catch(() => {});
+        await expect(reattach()).rejects.toThrow(/opened with no pane id/);
+        expect(h.calls("job.attach")).toHaveLength(1);
+      },
+    },
+    {
+      path: "recovery: the row reaped, the handle lost, then a no-row close",
+      run: async () => {
+        await detachedWithGoneView();
+        noIdView();
+        await reattach().catch(() => {});
+        await reconcile(h.db, { workstream: "ws" });
+        h.db.prepare("UPDATE carrier_jobs SET job = NULL").run();
+        await expect(close()).rejects.toThrow(CarrierJobKeptError);
+      },
+    },
+    {
+      path: "upgrade: a record from before view tracking, then close",
+      run: async () => {
+        await h.setup(FILE);
+        noIdView();
+        await h.spawn().catch(() => {});
+        legacyRecord();
+        await expect(close()).rejects.toThrow(CarrierJobKeptError);
+      },
+    },
+  ];
+  it.each(paths)("$path: record, job file and view kept, nothing stopped", async ({ run }) => {
+    await run();
+    expect(h.panes.has("%9")).toBe(true);
+    expect(h.f.backend().stops).toBe(0);
+    expect(existsSync(jobFile())).toBe(true);
+    expect(record()).toBeDefined();
   });
 });
 

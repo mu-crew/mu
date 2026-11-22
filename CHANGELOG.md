@@ -85,11 +85,16 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   `jobFile` and `sockets.local` are absolute even under a relative
   `MU_DB_PATH`; a ctl socket is shortened on its absolute path, so it never
   overflows the socket limit once resolved, and a template lease's job file
-  keeps the name it was published under. A rollback whose view open never
-  reported a pane id keeps the record, the job file and the tree (that view
-  may be dispatching); the record says so (`carrier_jobs.view_unproven`),
-  and a later `mu agent close` refuses too until `--abandon-job`. A close
-  of a file kind's job whose recorded view is alive refuses likewise. A
+  keeps the name it was published under. A file kind's view is its job's
+  dispatcher: its record and job file are kept until that view is proven
+  gone, on every path (close, a spawn's rollback, `agent reattach`, a
+  close after the reaper, a recovery's view). The record tracks the view
+  (`carrier_jobs.view_state`: `none`, `opening` before the mux is asked,
+  `open` once its pane is recorded); a view asked for with no pane id, a
+  pane not proven gone, and a record older than the column (an upgrade)
+  are unknown, and `mu agent close` and `agent reattach` refuse until
+  `--abandon-job`. A close racing a spawn takes the record first: the
+  spawn then opens no view for it. A
   lookup that hands back (`human`) during recovery stays a hand-back: the
   close exits 5, human needed, the record kept.
 

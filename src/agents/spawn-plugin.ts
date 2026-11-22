@@ -36,7 +36,7 @@ import {
   type CarrierJob,
   getCarrierJob,
   getCarrierJobByName,
-  markViewUnproven,
+  markViewOpening,
   recordCarrierPane,
   recordJobTree,
   reserveCarrierJob,
@@ -53,6 +53,7 @@ import { reserveProviderJob } from "../host-records.js";
 import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
 import { awaitLeaseJob, defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
+import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -221,7 +222,7 @@ export async function spawnPluginAgent(
   );
   if (job === undefined) throw new AgentExistsError(name);
   const token = job.token;
-  const carrier: { token: string; viewUnproven?: boolean } = { token };
+  const carrier = { token };
   let staged: StagedWorktree | undefined;
   let cwd = opts.cwd ?? host.record?.repo ?? host.profile?.repo ?? ".";
   let paneId: string | undefined;
@@ -384,12 +385,6 @@ export async function spawnPluginAgent(
     if (prompt !== undefined && started.baseline !== undefined) {
       opts.firstTurn?.delivered(started.baseline);
     }
-    // A file kind's view is its dispatcher: once its open is attempted, no pane id is no proof,
-    // for this rollback and (recorded) for every later close, until the pane id lands.
-    if (jobFile !== undefined) {
-      carrier.viewUnproven = true;
-      markViewUnproven(db, token);
-    }
     const row = await openView(
       db,
       {
@@ -407,6 +402,7 @@ export async function spawnPluginAgent(
         ...(builtIn !== undefined ? { builtIn } : {}),
         ...(sockets !== undefined ? { localSock: sockets.local } : {}),
         ...(remoteKey !== undefined ? { remoteKey } : {}),
+        fileView: jobFile !== undefined,
       },
       started.view,
       (pid) => {
@@ -522,6 +518,8 @@ interface ViewOf {
   localSock?: string;
   /** A remote hook harness's key. */
   remoteKey?: string;
+  /** A `handle: "file"` kind: the view is the job's dispatcher (ladder placement §10). */
+  fileView?: boolean;
 }
 
 /**
@@ -543,6 +541,13 @@ async function openView(
   const row = await withAgentLock(db, opts.workstream, opts.name, () =>
     withSpawnLock(session, async () => {
       const mux = await activeMux();
+      // A file kind's view is its job's dispatcher (ladder placement §10): recorded as opening
+      // in this locked section, before the mux is asked, and only while the record is this
+      // spawn's. A close that released it first leaves nothing to dispatch for; a close after
+      // this waits for the lock and finds the view opening (unknown) or open.
+      if (v.fileView === true && !markViewOpening(db, v.token)) {
+        throw new Error(`carrier_jobs: the job record of ${opts.workstream}/${opts.name} is gone`);
+      }
       // The name is ours: no live agent owns a socket at this path; the view's forward binds it.
       if (v.localSock !== undefined) rmSync(v.localSock, { force: true });
       let onCreated: (pid: string) => void = () => {};
@@ -636,17 +641,21 @@ export function jobRecordActor(r: CarrierJob): ReceiptActor {
   return pidProvenGone(r.creatorPid, r.creatorStart) ? "other-gone" : "other-alive";
 }
 
-/** A recovery's view failed after the row took its pane: back to the placeholder for the next try. */
-function unfinalize(db: Db, agent: AgentRow, pane: string, token: string): void {
+/**
+ * A recovery's view failed after the row took its pane: back to the placeholder for the next
+ * try. The job record forgets the pane only once it is proven gone (`gone`; its view is then
+ * `none`, nothing dispatching): a surviving one stays its view, which `proveViewGone` asks.
+ */
+function unfinalize(db: Db, agent: AgentRow, pane: string, token: string, gone: boolean): void {
   db.prepare("UPDATE agents SET pane_id = ? WHERE id = ? AND pane_id = ?").run(
     pendingPaneIdFor(agent.name),
     agent.incarnation,
     pane,
   );
-  db.prepare("UPDATE carrier_jobs SET pane_id = NULL WHERE token = ? AND pane_id = ?").run(
-    token,
-    pane,
-  );
+  if (!gone) return;
+  db.prepare(
+    "UPDATE carrier_jobs SET pane_id = NULL, view_state = CASE WHEN view_state IS NULL THEN NULL ELSE 'none' END WHERE token = ? AND pane_id = ?",
+  ).run(token, pane);
 }
 
 /**
@@ -739,6 +748,7 @@ export async function resolveFirstTurn(
             kind,
             token: now.token,
             channel: kind.caps.channel ?? agent.channel ?? "",
+            fileView: kind.caps.handle === "file",
           },
           view,
           (pid) => {
@@ -751,8 +761,10 @@ export async function resolveFirstTurn(
         // Only the pane this call opened; the row goes back to its placeholder for the next try,
         // and the receipt stays as it was (D8, review 2 of P6e2).
         if (opened !== undefined) {
-          await (await activeMux()).killPane(opened).catch(() => {});
-          unfinalize(db, agent, opened, now.token);
+          const mux = await activeMux();
+          await mux.killPane(opened).catch(() => {});
+          const gone = (await viewPresent(opened, mux).catch(() => true)) === false;
+          unfinalize(db, agent, opened, now.token, gone);
         }
         throw e;
       }

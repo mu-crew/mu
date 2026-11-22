@@ -8,14 +8,20 @@
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { getAgent } from "../agents.js";
-import { type CarrierJob, getCarrierJobByAgent } from "../carrier-jobs.js";
+import {
+  type CarrierJob,
+  getCarrierJobByAgent,
+  markViewOpening,
+  recordViewPane,
+} from "../carrier-jobs.js";
 import { expectsCtl } from "../channels/select.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
+import { proveViewGone } from "../host-policy.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
-import { markPaneHost } from "../mux/types.js";
+import { type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.js";
 import { agentRevision, assertRevision } from "../revision.js";
@@ -68,7 +74,29 @@ export async function previewViewReattach(db: Db, ws: string, name: string) {
   if (d === undefined) return undefined;
   const mux = await detachedViewMux(d.r.host);
   if (await viewPresent(d.paneId, mux)) refuseOpen(db, ws, name, d.paneId);
+  await refuseUnprovenView(db, ws, name, d, mux);
   return { ...facts(ws, d), revision: agentRevision(db, ws, name) };
+}
+
+/**
+ * A file kind's view is its job's dispatcher (ladder placement §10): a replacement only once
+ * every view its record knows of (a failed attempt's included) is proven gone.
+ */
+async function refuseUnprovenView(
+  db: Db,
+  ws: string,
+  name: string,
+  d: NonNullable<ReturnType<typeof detachedJob>>,
+  mux: MuxBackend,
+): Promise<void> {
+  if (d.kind.caps.handle !== "file") return;
+  const p = await proveViewGone(d.r, mux);
+  if (p.state === "gone") return;
+  throw new ReattachRefusedError(
+    name,
+    [{ code: "row", detail: p.why }],
+    closeCommand(db, ws, name),
+  );
 }
 
 function refuseOpen(db: Db, ws: string, name: string, paneId: string): never {
@@ -105,6 +133,8 @@ export async function reattachView(
         previewCommand: `mu agent reattach ${shellWord(name)} -w ${shellWord(ws)}`,
       });
       if (await viewPresent(d.paneId, mux)) refuseOpen(db, ws, name, d.paneId);
+      const file = d.kind.caps.handle === "file";
+      await refuseUnprovenView(db, ws, name, d, mux);
       // Owner-only (D8): while its spawn runs, the spawn's receipts are its own to move.
       const actor = jobRecordActor(d.r);
       if (actor === "other-alive") {
@@ -131,6 +161,9 @@ export async function reattachView(
             }
           : {}),
       });
+      // Recorded before the mux is asked, in this locked section: a backend may open the view
+      // and fail before reporting its id, and until a pane is recorded the view is unknown.
+      if (file && !markViewOpening(db, d.r.token)) throw new AgentReplacedError(name, ws);
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
         onCreated = res;
@@ -150,6 +183,9 @@ export async function reattachView(
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
+      // The attempted view is the record's from here (a file kind): its pane is what a close
+      // or the next reattach must prove gone, whatever becomes of the row's pane below.
+      if (file) recordViewPane(db, d.r.token, pid);
       await markPaneHost(mux, pid, d.r.host);
       try {
         // The backend's own completion: a view that failed is never the row's pane.
@@ -159,7 +195,9 @@ export async function reattachView(
             .prepare("UPDATE agents SET pane_id = ?, updated_at = ? WHERE id = ? AND pane_id = ?")
             .run(pid, new Date().toISOString(), d.agentId, d.paneId);
           const job = db
-            .prepare("UPDATE carrier_jobs SET pane_id = ? WHERE token = ? AND agent_id = ?")
+            .prepare(
+              `UPDATE carrier_jobs SET pane_id = ?${file ? ", view_state = 'open'" : ""} WHERE token = ? AND agent_id = ?`,
+            )
             .run(pid, d.r.token, d.agentId);
           if (row.changes !== 1 || job.changes !== 1) throw new AgentReplacedError(name, ws);
           // The spawn receipts follow the view, as a lookup recovery's do: a replay still

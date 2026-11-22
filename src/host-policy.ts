@@ -30,6 +30,7 @@ import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-reco
 import { describeRead, readJobFile } from "./jobs/lease.js";
 import { viewPresent } from "./jobs/view.js";
 import { emitEvent } from "./logs.js";
+import type { MuxBackend } from "./mux/types.js";
 import { PluginCallError } from "./plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "./plugins/job.js";
 import { collectInLifeLocked, collectRemoteAgentLocked } from "./remote-collect.js";
@@ -221,7 +222,14 @@ export async function closePluginJob(
       `plugin ${reservation.plugin} has no job seam to stop it with`,
     );
   }
-  if (kind.caps.handle === "file") await assertViewGone(reservation);
+  if (kind.caps.handle === "file") {
+    // Proved on the record as it is now, under the caller's agent lock: the snapshot predates
+    // the awaited observation, and a view is only ever opened under that lock.
+    const now = getCarrierJob(db, reservation.token);
+    if (now === undefined) return undefined;
+    await assertViewGone(now);
+    reservation = now;
+  }
   // A lost host's job went with the machine, unless its kind outlives it: then only a stop proves it gone.
   if (hostLost(db, reservation.host) && kind.caps.outlivesHost !== true) {
     if (reservation.launch === "none" && reservation.job === null) {
@@ -260,24 +268,47 @@ export async function closePluginJob(
   return { reservation: getCarrierJob(db, r.token) ?? r, action: "stopped", facts };
 }
 
+/** What is known of a file kind's view: proven gone, alive, or neither. */
+export type ViewProof = { state: "gone" } | { state: "alive" | "unknown"; why: string };
+
 /**
- * A file kind's view is its job's dispatcher (ladder placement §10): no close stops the job or
- * drops the record while it may run. A view asked for that reported no pane id is never proof
- * (`view_unproven`, durable past the rollback that saw it); a recorded pane must be proven
- * gone. Otherwise `CarrierJobKeptError`, everything kept; `--abandon-job` is the way out.
+ * THE rule of a `handle: "file"` kind's view (ladder placement §10): the view is its job's
+ * dispatcher, so its record and job file are retained until the view's absence is PROVEN.
+ * Every path that would stop the job, drop the record or remove the file asks this, on a
+ * record read under the agent lock: close, the spawn's rollback, a reattach (before and after
+ * its view), and a recovery's close. `unknown` always retains, like `alive`.
+ * - `none`: no view was ever asked for: gone.
+ * - `opening`: a view was asked for and its pane id never recorded: unknown.
+ * - `open`: gone only when its pane is proven gone; a failing probe is unknown.
+ * - null: a record older than the column (an upgrade): unknown.
  */
+export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<ViewProof> {
+  const dispatcher = "(the job's dispatcher)";
+  switch (r.viewState) {
+    case "none":
+      return { state: "gone" };
+    case "opening":
+      return { state: "unknown", why: `its view ${dispatcher} opened with no pane id recorded` };
+    case "open": {
+      if (r.paneId === null) return { state: "unknown", why: `its view ${dispatcher} has no pane` };
+      const alive = await viewPresent(r.paneId, mux).catch(() => undefined);
+      if (alive === false) return { state: "gone" };
+      return alive === true
+        ? { state: "alive", why: `its view ${r.paneId} ${dispatcher} is alive` }
+        : { state: "unknown", why: `its view ${r.paneId} ${dispatcher} is not proven gone` };
+    }
+    default:
+      return {
+        state: "unknown",
+        why: `its view ${dispatcher} is unknown (the record predates view tracking)`,
+      };
+  }
+}
+
+/** `proveViewGone` or `CarrierJobKeptError`, everything kept; `--abandon-job` is the way out. */
 async function assertViewGone(r: CarrierJob): Promise<void> {
-  const keep = (why: string): never => {
-    throw new CarrierJobKeptError(r.name, r.workstream, r.host, why);
-  };
-  if (r.viewUnproven) {
-    keep("its view (the job's dispatcher) opened with no pane id and may still dispatch");
-  }
-  if (r.paneId === null) return;
-  const alive = await viewPresent(r.paneId).catch(() => undefined);
-  if (alive !== false) {
-    keep(`its view ${r.paneId} (the job's dispatcher) is ${alive ? "alive" : "not proven gone"}`);
-  }
+  const p = await proveViewGone(r);
+  if (p.state !== "gone") throw new CarrierJobKeptError(r.name, r.workstream, r.host, p.why);
 }
 
 /**

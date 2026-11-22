@@ -3,7 +3,12 @@
 // there, so imports of agents/spawn.js keep working. Imports only types from spawn.ts.
 
 import { deleteAgent, getAgent } from "../agents.js";
-import { getCarrierJobByAgent, keepCarrierJobForTree, noteCarrierJob } from "../carrier-jobs.js";
+import {
+  getCarrierJob,
+  getCarrierJobByAgent,
+  keepCarrierJobForTree,
+  noteCarrierJob,
+} from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { type HostLease, releaseHostChannel, releaseHostChannelsForAgent } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
@@ -14,6 +19,16 @@ import { type LeaseRollback, releaseLeaseReservation, rollbackLeaseJob } from ".
 import { withAgentLock } from "./lock.js";
 import type { StagedWorktree } from "./spawn.js";
 import { rollbackRemoteWorktree } from "./spawn-remote.js";
+
+/** The record's view was asked for and its pane id never recorded. True when unreadable. */
+function viewOpening(db: Db, carrier: { token: string } | undefined): boolean {
+  if (carrier === undefined) return false;
+  try {
+    return getCarrierJob(db, carrier.token)?.viewState === "opening";
+  } catch {
+    return true;
+  }
+}
 
 function reservationOf(db: Db, incarnation: number | undefined): { token: string } | undefined {
   if (incarnation === undefined) return undefined;
@@ -27,8 +42,8 @@ function reservationOf(db: Db, incarnation: number | undefined): { token: string
  * pane, no agent row) never masks the original failure.
  *
  * `paneId` is `undefined` when spawnAgent itself threw before returning a
- * pane id — there's nothing to kill. With `carrier.viewUnproven` a view open was
- * attempted: that pane is not proven gone (row, tree and reservation kept). `staged` is set when prestageWorktree
+ * pane id — there's nothing to kill. A carrier record whose view is `opening` (a file
+ * kind's view asked for, no pane id recorded) is not proven gone (row, tree and reservation kept). `staged` is set when prestageWorktree
  * succeeded: once the pane is proven gone, the worktree this spawn made goes
  * through the close rule (`releaseWorktree`; its pane may have worked in it):
  * clean and merged is removed, commits are kept on `mu/<ws>/<name>-<sha12>`
@@ -55,12 +70,12 @@ export async function rollbackSpawn(
   /** The spawn's host channel lease, while it is still the reservation (before or after its bind). */
   lease?: HostLease,
   /** A lease spawn's carrier_jobs reservation: the only job this rollback may stop or release. */
-  carrier?: { token: string; viewUnproven?: boolean },
+  carrier?: { token: string },
 ): Promise<{ gone: boolean; heldBy?: string }> {
   // Is the pane (the host transport) proven gone? A channel is freed only on that proof.
   // No pane id is that proof only when no view open was attempted: a backend may open the
-  // window and then fail before reporting its id (`viewUnproven`).
-  let paneGone = paneId === undefined && carrier?.viewUnproven !== true;
+  // window and then fail before reporting its id (the record's view is then `opening`).
+  let paneGone = paneId === undefined && !viewOpening(db, carrier);
   let heldBy: string | undefined;
   if (paneId !== undefined) {
     // Best-effort: rollback runs on an already-failing path and must not

@@ -31,7 +31,7 @@ import {
 } from "../carrier-jobs.js";
 import { carrierJobFilePath } from "../ctl/path.js";
 import type { Db } from "../db.js";
-import { closePluginJob, recoverFileHandle } from "../host-policy.js";
+import { closePluginJob, proveViewGone, recoverFileHandle } from "../host-policy.js";
 import { type HostProfile, HostProfileError, pidProvenGone, pidStart } from "../hosts.js";
 import { describeRead, type JobFile, leaseJobRef, leaseKind, readJobFile } from "../jobs/lease.js";
 import { viewPresent } from "../jobs/view.js";
@@ -211,6 +211,10 @@ export async function rollbackLeaseJob(
       if (ref === undefined || kind === undefined) return kept(job.host, handle, "no job seam");
       if (file && !paneGone) {
         return kept(job.host, handle, "its view is not proven gone");
+      }
+      if (file) {
+        const p = await proveViewGone(job);
+        if (p.state !== "gone") return kept(job.host, handle, p.why);
       }
       try {
         await kind.stop(db, ref);
