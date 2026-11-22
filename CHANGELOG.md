@@ -151,6 +151,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   to add the worktree, prepare releases only its own empty claim so a retry
   can use the same path; a replacement or non-empty directory stays put.
 - A late plugin handshake cannot overwrite a newer registration.
+- The loopback SSH smoke resolves tools before switching to its private home,
+  so mise shims no longer cause false prerequisite failures.
 
 ## [5.2.2] — 2026-11-19
 

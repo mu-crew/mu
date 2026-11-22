@@ -12,26 +12,75 @@ fail() { printf 'smoke-ssh: FAIL: %s\n' "$*" >&2; exit 1; }
 prereq() { printf 'smoke-ssh: PREREQUISITE MISSING: %s\n' "$*" >&2; exit 2; }
 trap 'fail "line $LINENO (exit $?): $BASH_COMMAND"' ERR
 
-SCRIPTS=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
-REPO=$(dirname "$SCRIPTS")
-SSHD=${SSHD:-/usr/sbin/sshd}
-for c in bash node npm git ssh ssh-keygen tmux jq pgrep pkill; do
-  command -v "$c" >/dev/null || prereq "$c is not on PATH"
+# Look up executables under the caller's HOME, not the private one. A mise
+# shim is itself executable, but won't find the selected tool under that HOME.
+resolve() {
+  local var=$1 bin=$2 path target resolved candidate
+  if [[ $# = 3 ]]; then
+    path=$3
+    [[ $path = /* ]] || prereq "$bin needs an absolute executable path ($var=$path)"
+  else
+    path=$(type -P "$bin" || :)
+    [[ -n $path ]] || prereq "$bin is not on PATH"
+  fi
+  [[ $path = /* ]] || path=$PWD/$path
+  if [[ -n $mise && $path -ef $mise ]]; then
+    target=$mise
+  elif [[ -L $path ]]; then
+    target=$("$READLINK" "$path" || exit $?) || prereq "readlink failed for $bin ($path)"
+    [[ $target = /* ]] || target=${path%/*}/$target
+    [[ ${target##*/} = mise ]] || target=
+  else
+    target=
+  fi
+  if [[ -n $target ]]; then
+    if resolved=$("$target" which "$bin" 2>/dev/null || exit $?); then
+      path=$resolved
+    else
+      # An inactive mise shim can fall through to a system tool on PATH.
+      if [[ $# = 2 ]]; then
+        while IFS= read -r candidate; do
+          [[ $candidate -ef $target ]] && continue
+          path=$candidate
+          [[ $path = /* ]] || path=$PWD/$path
+          break
+        done < <(type -aP "$bin")
+      fi
+      if [[ $path -ef $target ]]; then
+        "$target" which "$bin" >&2 || :
+        prereq "mise could not resolve $bin ($target)"
+      fi
+    fi
+  fi
+  [[ $path = /* && -f $path && -x $path ]] || prereq "$bin is not an absolute executable ($path)"
+  export "$var=$path"
+}
+
+mise=$(type -P mise || :)
+READLINK=$(type -P readlink || :)
+[[ -n $READLINK ]] || prereq 'readlink is not on PATH'
+[[ $READLINK = /* ]] || READLINK=$PWD/$READLINK
+export READLINK
+for spec in BASH_BIN:bash NODE:node NPM:npm GIT:git UPLOAD_PACK:git-upload-pack \
+    SSH:ssh SSH_KEYGEN:ssh-keygen TMUX_BIN:tmux JQ:jq PGREP:pgrep PKILL:pkill \
+    DIRNAME:dirname ID:id MKTEMP:mktemp TR:tr TAIL:tail RM:rm MKDIR:mkdir \
+    CHMOD:chmod CP:cp CAT:cat SLEEP:sleep LN:ln; do
+  resolve "${spec%%:*}" "${spec#*:}"
 done
-[[ $SSHD = /* && -x $SSHD ]] || prereq "sshd needs an absolute executable path (SSHD=$SSHD)"
+SCRIPTS=$(cd "$("$DIRNAME" "${BASH_SOURCE[0]}")" && pwd -P)
+REPO=${SCRIPTS%/*}
+resolve SSHD sshd "${SSHD:-/usr/sbin/sshd}"
 [[ -d $REPO/node_modules ]] || prereq 'run npm ci in the mu checkout'
+LSOF=
 if [[ ! -d /proc/self ]]; then
-  command -v lsof >/dev/null || prereq 'worktree close requires /proc or lsof'
+  resolve LSOF lsof
 fi
-NODE=$(command -v node)
-SSH=$(command -v ssh)
-BASH_BIN=$(command -v bash)
-LOGIN=$(id -un)
-R=$(mktemp -d /tmp/musshXXXXXX)
+LOGIN=$("$ID" -un)
+R=$("$MKTEMP" -d /tmp/musshXXXXXX)
 R=$(cd "$R" && pwd -P)
 WS=${R##*/}
-WS=$(printf '%s' "$WS" | tr '[:upper:]' '[:lower:]')-$$
-RSOCK_DIR=/tmp/mu-$(id -u)/$WS
+WS=$(printf '%s' "$WS" | "$TR" '[:upper:]' '[:lower:]')-$$
+RSOCK_DIR=/tmp/mu-$("$ID" -u)/$WS
 SSHD_PID=
 
 cleanup() {
@@ -39,21 +88,21 @@ cleanup() {
   trap - EXIT ERR INT TERM HUP
   set +e
   if [[ $rc = 1 ]]; then
-    tmux -L "$WS" capture-pane -pt "mu-$WS" -S -30 2>/dev/null
-    if [[ -s $R/sshd.log ]]; then tail -n 20 "$R/sshd.log" >&2; fi
+    "$TMUX_BIN" -L "$WS" capture-pane -pt "mu-$WS" -S -30 2>/dev/null
+    if [[ -s $R/sshd.log ]]; then "$TAIL" -n 20 "$R/sshd.log" >&2; fi
   fi
-  tmux -L "$WS" kill-server 2>/dev/null
+  "$TMUX_BIN" -L "$WS" kill-server 2>/dev/null
   # Both patterns identify only this run, even if close never got to stop.
-  pkill -TERM -f -- "$R/ssh_config" 2>/dev/null
-  pkill -TERM -f -- "$R/rbin/smoke-fake-pi.mjs" 2>/dev/null
+  "$PKILL" -TERM -f -- "$R/ssh_config" 2>/dev/null
+  "$PKILL" -TERM -f -- "$R/rbin/smoke-fake-pi.mjs" 2>/dev/null
   if [[ -n $SSHD_PID ]]; then
     kill "$SSHD_PID" 2>/dev/null
     wait "$SSHD_PID" 2>/dev/null
   fi
-  pkill -KILL -f -- "$R/ssh_config" 2>/dev/null
-  pkill -KILL -f -- "$R/rbin/smoke-fake-pi.mjs" 2>/dev/null
-  rm -rf -- "$RSOCK_DIR"
-  if [[ ${SMOKE_KEEP:-0} = 1 ]]; then printf 'smoke-ssh: kept %s\n' "$R"; else rm -rf -- "$R"; fi
+  "$PKILL" -KILL -f -- "$R/ssh_config" 2>/dev/null
+  "$PKILL" -KILL -f -- "$R/rbin/smoke-fake-pi.mjs" 2>/dev/null
+  "$RM" -rf -- "$RSOCK_DIR"
+  if [[ ${SMOKE_KEEP:-0} = 1 ]]; then printf 'smoke-ssh: kept %s\n' "$R"; else "$RM" -rf -- "$R"; fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -63,8 +112,17 @@ trap 'fail interrupted' INT TERM HUP
 while IFS= read -r v; do
   case $v in MU_*|PI_*|GIT_*|TMUX|TMUX_PANE|SSH_AUTH_SOCK|BASH_ENV|ENV|CDPATH) unset "$v" ;; esac
 done < <(compgen -e)
-mkdir -p "$R"/{bin,rbin,home,rhome,state,tmp,tmux}
-chmod 700 "$R/tmux"
+"$MKDIR" -p "$R"/{bin,rbin,home,rhome,state,tmp,tmux}
+"$CHMOD" 700 "$R/tmux"
+# Child programs (mu, npm, the plugin and remote Git) also look up tools by name.
+"$LN" -s "$BASH_BIN" "$R/bin/bash"
+"$LN" -s "$NODE" "$R/bin/node"
+"$LN" -s "$NPM" "$R/bin/npm"
+"$LN" -s "$TMUX_BIN" "$R/bin/tmux"
+"$LN" -s "$GIT" "$R/bin/git"
+"$LN" -s "$GIT" "$R/rbin/git"
+"$LN" -s "$UPLOAD_PACK" "$R/rbin/git-upload-pack"
+if [[ -n $LSOF ]]; then "$LN" -s "$LSOF" "$R/bin/lsof"; "$LN" -s "$LSOF" "$R/rbin/lsof"; fi
 export HOME="$R/home" TMPDIR="$R/tmp" TMUX_TMPDIR="$R/tmux"
 export XDG_CONFIG_HOME="$R/config" XDG_STATE_HOME="$R/xdg" XDG_CACHE_HOME="$R/cache"
 export MU_STATE_DIR="$R/state" MU_DB_PATH="$R/state/mu.db" MU_SYNC_DIR=""
@@ -75,22 +133,22 @@ export GIT_COMMITTER_NAME=$GIT_AUTHOR_NAME GIT_COMMITTER_EMAIL=$GIT_AUTHOR_EMAIL
 export GIT_SSH_COMMAND="$R/bin/ssh"
 
 # Short paths keep both forwarded sockets below the Unix socket length limit.
-PORT=$(node -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})' 2>"$R/bind.err") || {
-  tail -n 8 "$R/bind.err" >&2
-  prereq 'cannot bind a loopback TCP listener'
-}
-ssh-keygen -q -t ed25519 -N '' -f "$R/hostkey"
-ssh-keygen -q -t ed25519 -N '' -f "$R/id"
-cp "$R/id.pub" "$R/authorized_keys"
+if ! PORT=$("$NODE" -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})' 2>"$R/bind.err" || exit $?); then
+  "$TAIL" -n 8 "$R/bind.err" >&2
+  prereq "node ($NODE) failed the loopback TCP listener probe"
+fi
+"$SSH_KEYGEN" -q -t ed25519 -N '' -f "$R/hostkey"
+"$SSH_KEYGEN" -q -t ed25519 -N '' -f "$R/id"
+"$CP" "$R/id.pub" "$R/authorized_keys"
 read -r key_type key_blob _ <"$R/hostkey.pub"
 printf '[127.0.0.1]:%s %s %s\n' "$PORT" "$key_type" "$key_blob" >"$R/known_hosts"
 # Use a real login Bash for the harness probe and pane, but load no rc files
 # that could replace the private HOME/PATH (including /etc/profile).
 printf '#!/bin/sh\nexec "%s" --noprofile --norc "$@"\n' "$BASH_BIN" >"$R/rbin/shell"
-cp "$SCRIPTS/smoke-fake-pi.mjs" "$R/rbin/"
+"$CP" "$SCRIPTS/smoke-fake-pi.mjs" "$R/rbin/"
 printf '#!/bin/sh\nexec "%s" "%s/rbin/smoke-fake-pi.mjs" "$@"\n' "$NODE" "$R" >"$R/rbin/pi"
-chmod +x "$R/rbin/shell" "$R/rbin/pi"
-cat >"$R/sshd_config" <<EOF
+"$CHMOD" +x "$R/rbin/shell" "$R/rbin/pi"
+"$CAT" >"$R/sshd_config" <<EOF
 Port $PORT
 ListenAddress 127.0.0.1
 HostKey $R/hostkey
@@ -105,7 +163,7 @@ PubkeyAuthentication yes
 AllowStreamLocalForwarding yes
 SetEnv HOME=$R/rhome SHELL=$R/rbin/shell PATH=$R/rbin:/usr/bin:/bin XDG_STATE_HOME=$R/rhome/.local/state GIT_CONFIG_NOSYSTEM=1
 EOF
-cat >"$R/ssh_config" <<EOF
+"$CAT" >"$R/ssh_config" <<EOF
 Host session example
   HostName 127.0.0.1
   Port $PORT
@@ -120,37 +178,42 @@ Host session example
   UserKnownHostsFile $R/known_hosts
 EOF
 printf '#!/bin/sh\nexec "%s" -F "%s/ssh_config" "$@"\n' "$SSH" "$R" >"$R/bin/ssh"
-chmod +x "$R/bin/ssh"
+"$CHMOD" +x "$R/bin/ssh"
 export PATH="$R/bin:$PATH"
 
 "$SSHD" -D -e -f "$R/sshd_config" >"$R/sshd.log" 2>&1 &
 SSHD_PID=$!
 ready=0
 for ((i=0; i<30; i++)); do
-  if ssh session true 2>"$R/ssh.err"; then ready=1; break; fi
+  if "$R/bin/ssh" session true 2>"$R/ssh.err"; then ready=1; break; fi
   kill -0 "$SSHD_PID" 2>/dev/null || break
-  sleep 0.1
+  "$SLEEP" 0.1
 done
 if [[ $ready != 1 ]]; then
-  tail -n 20 "$R/sshd.log" >&2
-  tail -n 5 "$R/ssh.err" >&2
-  prereq 'cannot start or log in to a private loopback sshd (see diagnostics above)'
+  "$TAIL" -n 20 "$R/sshd.log" >&2
+  "$TAIL" -n 5 "$R/ssh.err" >&2
+  if ! kill -0 "$SSHD_PID" 2>/dev/null; then
+    prereq "sshd ($SSHD) did not stay running (see diagnostics above)"
+  fi
+  prereq "ssh ($SSH) could not log in to the private loopback sshd ($SSHD; see diagnostics above)"
 fi
-[[ $(ssh session 'printf "%s:%s" "$HOME" "$SHELL"') = "$R/rhome:$R/rbin/shell" ]] ||
+# Expand these variables on the remote side, not in this shell.
+# shellcheck disable=SC2016
+[[ $("$R/bin/ssh" session 'printf "%s:%s" "$HOME" "$SHELL"') = "$R/rhome:$R/rbin/shell" ]] ||
   fail 'sshd did not install the private remote environment'
 
-(cd "$REPO" && npm run build --silent) >"$R/build.log" 2>&1 || {
-  tail -n 30 "$R/build.log" >&2
-  fail 'npm run build'
+(cd "$REPO" && "$NPM" run build --silent) >"$R/build.log" 2>&1 || {
+  "$TAIL" -n 30 "$R/build.log" >&2
+  fail "npm ($NPM) run build"
 }
 mu() { "$NODE" "$REPO/dist/cli.js" "$@"; }
-sql() { mu sql "$1" | jq -er "$2"; }
+sql() { mu sql "$1" | "$JQ" -er "$2"; }
 
-git init -q "$R/local"
+"$GIT" init -q "$R/local"
 cd "$R/local"
-git commit -q --allow-empty -m 'smoke base'
+"$GIT" commit -q --allow-empty -m 'smoke base'
 RREPO="$R/rhome/repo"
-git clone -q --local . "$RREPO"
+"$GIT" clone -q --local . "$RREPO"
 mu workstream init "$WS" >/dev/null
 
 # No multiplexed SSH master: the pane owns the forward. Check and collect
@@ -160,7 +223,7 @@ mu host add session --transport session --max-sessions 2 \
   --exec 'ssh -o BatchMode=yes session {cmd}' \
   --fetch 'git fetch ssh://session{cwd} HEAD' >/dev/null
 mu host check session --root "$RREPO" --json >"$R/check.json"
-jq -e '.data.steps | any(.step == "extension" and .ok == true)' "$R/check.json" >/dev/null ||
+"$JQ" -e '.data.steps | any(.step == "extension" and .ok == true)' "$R/check.json" >/dev/null ||
   fail 'host check did not verify the fake pi extension'
 
 spawn_turn() {
@@ -169,29 +232,31 @@ spawn_turn() {
   LOCAL_SOCK="$R/state/sock/$WS/$agent.sock"
   REMOTE_SOCK="$RSOCK_DIR/$agent.sock"
   mu agent spawn "$agent" -w "$WS" --cli pi --host "$host" "$@" --json >"$R/spawn-$agent.json"
-  jq -e '.data.ctl == "ok"' "$R/spawn-$agent.json" >/dev/null || fail "$host: ctl handshake failed"
+  "$JQ" -e '.data.ctl == "ok"' "$R/spawn-$agent.json" >/dev/null || fail "$host: ctl handshake failed"
   if [[ ! -S $LOCAL_SOCK || ! -S $REMOTE_SOCK ]] || ! forward_alive; then
     fail "$host: expected a live SSH forward"
   fi
   mu agent send "$agent" -w "$WS" "$text" --json >"$R/send-$agent.json"
-  runs=$(jq -er '.data | select(.transport == "ctl" and .delivered) | .runs' "$R/send-$agent.json")
-  inc=$(jq -er '.data.incarnation' "$R/send-$agent.json")
+  runs=$("$JQ" -er '.data | select(.transport == "ctl" and .delivered) | .runs' "$R/send-$agent.json")
+  inc=$("$JQ" -er '.data.incarnation' "$R/send-$agent.json")
   mu wait "agent:$WS/$agent@$runs#$inc" --timeout 30 --json >"$R/turn-$agent.json"
-  jq -e --arg echo "smoke-echo: $text" --argjson runs "$((runs + 1))" '
+  # jq expands its own variables, not Bash.
+  # shellcheck disable=SC2016
+  "$JQ" -e --arg echo "smoke-echo: $text" --argjson runs "$((runs + 1))" '
     .data.firing.kind == "settled" and
     (.data.snapshots | any(.settled == true and .runs == $runs and .lastText == $echo))
   ' "$R/turn-$agent.json" >/dev/null || fail "$host: wait did not return the settled echo"
 }
 
-forward_alive() { pgrep -f -- "-L $LOCAL_SOCK:$REMOTE_SOCK" >/dev/null; }
+forward_alive() { "$PGREP" -f -- "-L $LOCAL_SOCK:$REMOTE_SOCK" >/dev/null; }
 closed_clean() {
   local agent=$1 rev rows
-  rev=$(mu agent close "$agent" -w "$WS" --json | jq -er '.data.revision')
+  rev=$(mu agent close "$agent" -w "$WS" --json | "$JQ" -er '.data.revision')
   mu agent close "$agent" -w "$WS" --if "$rev" --json >"$R/close-$agent.json"
   # The remote pi can receive the hangup a little after the local pane dies.
   for ((i=0; i<50; i++)); do
     if [[ ! -e $REMOTE_SOCK ]] && ! forward_alive; then break; fi
-    sleep 0.1
+    "$SLEEP" 0.1
   done
   [[ ! -e $LOCAL_SOCK && ! -e $REMOTE_SOCK ]] || fail "$agent: close left ctl sockets"
   if forward_alive; then fail "$agent: close left a live SSH forward"; fi
@@ -207,13 +272,13 @@ WT="$R/rhome/.local/state/mu-next/remote-worktrees/$WS/worker"
 mu host exec session -- git -C "$WT" -c user.name=smoke -c user.email=smoke@localhost \
   commit -q --allow-empty -m 'remote smoke result'
 head=$(mu host exec session -- git -C "$WT" rev-parse HEAD)
-if git cat-file -e "$head^{commit}" 2>/dev/null; then fail 'collect fixture is already local'; fi
+if "$GIT" cat-file -e "$head^{commit}" 2>/dev/null; then fail 'collect fixture is already local'; fi
 mu agent collect worker -w "$WS" --json >"$R/collect.json"
-[[ $(git rev-parse "refs/mu/collect/$WS/worker") = "$head" ]] || fail 'collect did not pin remote HEAD'
+[[ $("$GIT" rev-parse "refs/mu/collect/$WS/worker") = "$head" ]] || fail 'collect did not pin remote HEAD'
 [[ $(sql "SELECT collected_head FROM agents WHERE name='worker'" '.data.items[0].collected_head') = "$head" ]] ||
   fail 'collect did not record remote HEAD'
 closed_clean worker
-trees=$(git -C "$RREPO" worktree list --porcelain)
+trees=$("$GIT" -C "$RREPO" worktree list --porcelain)
 [[ ! -e $WT && $trees != *"$WT"* ]] || fail 'close left the remote worktree'
 printf 'PASS session templates: host check, forwarded ctl turn, collect, clean close\n'
 
