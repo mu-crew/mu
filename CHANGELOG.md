@@ -163,6 +163,15 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- `mu host init --ssh --template` now prints `--max-sessions 2`, so a collect
+  or a remote task brief write fits beside one live pane. Existing profiles
+  and the mule lease starter are unchanged.
+- Exec templates start without inherited `CDPATH`, including templates that
+  use `{cwd}`. For templates without `{cwd}` (including the SSH and mule
+  starters), `mu host exec --cwd` treats the directory as a literal path,
+  follows symlinks before resolving `..`, and exits with the `cd` failure
+  before running any of the script. Relative repo path handling in
+  `mu host check` and remote worktree preparation is unchanged.
 - A tmux server restart no longer hands a worker's row to an unrelated pane that
   recycled its pane id (`%1` restarts per server). Spawn records the server
   (`agents.pane_identity`, `<pid>|<start time>`; the pane id is unique within a
@@ -194,6 +203,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   so mise shims no longer cause false prerequisite failures. Failed mu calls
   print the named step, both output streams, and worker pane logs before cleanup.
   The pane path registers the example plugin under its declared name, `ssh`.
+- The loopback lease smoke spawns from a local clone of the fixture repo so
+  both sides share the same base commit. It exposes Git and tmux to the remote
+  fixture without exposing other harnesses installed beside them.
 
 ## [5.2.2] — 2026-11-19
 

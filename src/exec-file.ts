@@ -173,6 +173,8 @@ export function execGroupCapture(
     onSpawn?: (pgid: number) => void;
     /** The command's working directory (default: this process's). */
     cwd?: string;
+    /** The child environment (default: inherit from this process). */
+    env?: NodeJS.ProcessEnv;
     /** Abort: the group is reaped (TERM, then KILL) and the result is a failure. */
     signal?: AbortSignal;
     /** Keep at most this many bytes of EACH stream (the child is still drained); sets `truncated`. */
@@ -192,6 +194,7 @@ export function execGroupCapture(
       detached: true,
       stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+      ...(opts.env !== undefined ? { env: opts.env } : {}),
     };
     const child = gated
       ? spawn("/bin/sh", ["-c", 'IFS= read -r _ && exec "$0" "$@"', executable, ...args], spawnOpts)

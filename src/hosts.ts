@@ -1084,8 +1084,15 @@ export async function runLeasedTemplate(
   if (template === null || template === "")
     throw new HostTemplateError(`host ${profile.name} has no ${field} template`);
   const expanded = expandHostTemplate(template, values, field);
+  const env = field === "exec" ? { ...process.env } : undefined;
+  if (env) {
+    // The template itself may run `cd {cwd}` before it reaches {cmd}.
+    const key = "CDPATH";
+    delete env[key];
+  }
   const run = await execGroupCapture("/bin/sh", ["-c", expanded], {
     timeoutMs,
+    ...(env !== undefined ? { env } : {}),
     // A carrier interrupted by the timeout needs time to stop what it dispatched.
     graceMs: HOST_GRACE_MS,
     ...(localCwd !== undefined ? { cwd: localCwd } : {}),

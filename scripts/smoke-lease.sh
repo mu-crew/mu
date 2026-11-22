@@ -50,7 +50,7 @@ fail() {
 # ── prerequisites: every one is a failure, never a skip ─────────────────────
 missing=()
 need_cmd() { command -v "$1" >/dev/null 2>&1 || missing+=("$1 (not on PATH)"); }
-for c in ssh ssh-keygen tmux node npm cargo git lsof; do need_cmd "$c"; done
+for c in ssh ssh-keygen tmux node npm cargo git git-upload-pack lsof; do need_cmd "$c"; done
 [ -x "$SSHD" ] || missing+=("sshd at $SSHD")
 [ -n "$MULE" ] || missing+=("MULE (path to the mule checkout) is not set")
 [ -z "$MULE" ] || [ -f "$MULE/Cargo.toml" ] || missing+=("mule checkout at $MULE (no Cargo.toml)")
@@ -123,8 +123,11 @@ cp "$MULE/target/release/mule" "$R/bin/mule"
 cp "$FAKE_PI_SRC" "$R/rbin/smoke-fake-pi.mjs"
 NODE=$(command -v node)
 SSH_KEYGEN=$(command -v ssh-keygen)
-GIT_DIR_BIN=$(dirname "$(command -v git)")
-TMUX_DIR_BIN=$(dirname "$(command -v tmux)")
+# Expose the tools, not their parent bin directories: those can also contain
+# real harnesses which host check would discover without their hook configs.
+for c in tmux git git-upload-pack; do
+  ln -s "$(command -v "$c")" "$R/rbin/$c"
+done
 LSOF=$(command -v lsof)
 
 # Our own MU_*, TMUX and PI_* only: a caller inside a mu pane carries its own.
@@ -174,7 +177,7 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 AllowStreamLocalForwarding yes
-SetEnv HOME=$R/rhome XDG_STATE_HOME=$R/rhome/.local/state TMUX_TMPDIR=$R/rtmux PATH=$R/rbin:$TMUX_DIR_BIN:$GIT_DIR_BIN:/usr/bin:/bin:/usr/sbin:/sbin
+SetEnv HOME=$R/rhome XDG_STATE_HOME=$R/rhome/.local/state TMUX_TMPDIR=$R/rtmux PATH=$R/rbin:/usr/bin:/bin:/usr/sbin:/sbin
 EOF
 chmod 600 "$R/hostkey" "$R/id" "$R/authorized_keys" "$R/sshd_config"
 "$SSHD" -f "$R/sshd_config" -E "$R/sshd.log" || fail "sshd did not start (log: $R/sshd.log)"
@@ -221,11 +224,14 @@ socket = "$R/m/mule.sock"
 tmux_socket = "$MULE_TMUX"
 EOF
 
-# ── remote repo and mu profile ───────────────────────────────────────────────
+# ── fixture repos and mu profile ─────────────────────────────────────────────
 RREPO="$R/rhome/repo"
+LREPO="$R/local"
 git init -q "$RREPO"
 git -C "$RREPO" commit -q --allow-empty -m "smoke base"
 BASE=$(git -C "$RREPO" rev-parse HEAD)
+# Static-host spawn resolves --from HEAD in the local checkout, not at --root.
+git clone -q "$RREPO" "$LREPO"
 
 M="$R/bin/mule --config $R/mule.toml"
 mu workstream init "$WS" >/dev/null
@@ -274,7 +280,7 @@ carrier_pid() {
 }
 
 spawn() {
-  mu agent spawn "$AGENT" -w "$WS" --host loop --worktree --root "$RREPO" --json >"$R/spawn.json" || {
+  (cd "$LREPO" && mu agent spawn "$AGENT" -w "$WS" --host loop --worktree --root "$RREPO" --json) >"$R/spawn.json" || {
     cat "$R/spawn.json"
     TMUX_TMPDIR="$R/ltmux" tmux -L "$MU_TMUX" capture-pane -p -t "mu-$WS" 2>/dev/null | tail -n 20
     fail "mu agent spawn $AGENT"
@@ -328,8 +334,7 @@ for i in 1 2 3 4 5; do
 done
 pass "ssh -S $R/m/default.sock 127.0.0.1 true: 5/5 succeeded while the worker runs"
 # A lease pane holds no host channel: at --max-sessions 1, collect still runs.
-git init -q "$R/local"
-(cd "$R/local" && mu agent collect "$AGENT" -w "$WS" --json >"$R/collect.json") || {
+(cd "$LREPO" && mu agent collect "$AGENT" -w "$WS" --json) >"$R/collect.json" || {
   cat "$R/collect.json"
   fail "mu agent collect at --max-sessions 1 while the worker runs"
 }

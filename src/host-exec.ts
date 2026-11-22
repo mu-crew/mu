@@ -139,6 +139,7 @@ export async function hostExec(
         script: opts.script,
         cwd,
         timeoutMs,
+        cwdFallback: true,
         once: true,
         maxStreamBytes: HOST_EXEC_OUTPUT_MAX_BYTES,
         dispatch: {
