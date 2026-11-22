@@ -8,6 +8,7 @@ import type { JobRef } from "./jobs/types.js";
 import {
   readTmuxViews,
   type TmuxView,
+  viewIdentity,
   viewState,
   viewStatus,
   viewsReportStatus,
@@ -52,6 +53,8 @@ export interface StateAgentRef {
   name: string;
   workstreamName: string;
   paneId: string;
+  /** The tmux server the pane was spawned on (`agents.pane_identity`); absent: unverified. */
+  paneIdentity?: string | null;
   /** When set and it names pi, the control socket is the state source. */
   cli?: string;
   /** A remote command gate (see src/agents/gate.ts): no control socket, whatever `cli` says. */
@@ -452,7 +455,7 @@ async function readMuxStates(
   const none = `${mux.name} reports no state`;
   for (const agent of agents) {
     try {
-      const view = await viewStatus(agent.paneId, mux);
+      const view = await viewStatus(agent.paneId, mux, agent.paneIdentity);
       readings.set(
         agentKey(agent),
         view.state === "reported"
@@ -490,7 +493,7 @@ export async function readGatePanes(
   }
   for (const gate of gates) {
     const key = agentKey(gate);
-    const pane = await viewState(gate.paneId, mux);
+    const pane = await viewState(gate.paneId, mux, gate.paneIdentity);
     if (pane.state === "unknown") readings.set(key, unknownReading(pane.reason));
     else if (pane.state === "running") {
       readings.set(key, { state: "busy", source: "none", since: null, alive: true });
@@ -534,10 +537,25 @@ export async function readBaseStates(
     return readings;
   }
 
+  // Pane ids restart per tmux server: a row's pane is gone when another server answers.
+  let server: string | undefined;
+  let serverError: string | undefined;
+  if (agents.some((a) => a.paneIdentity)) {
+    try {
+      server = await viewIdentity(mux);
+    } catch (error) {
+      serverError = `tmux: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
   const remoteCandidates: StateAgentRef[] = [];
   for (const agent of agents) {
     const pane = view(agent.paneId);
-    if (pane.state === "absent") {
+    if (agent.paneIdentity && serverError !== undefined) {
+      readings.set(agentKey(agent), unknownReading(serverError));
+    } else if (agent.paneIdentity && agent.paneIdentity !== server) {
+      readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.paneGone, false));
+    } else if (pane.state === "absent") {
       readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.paneGone, false));
     } else if (livenessOnly.has(agentKey(agent))) {
       readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.noRow));

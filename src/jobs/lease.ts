@@ -310,7 +310,7 @@ export const leaseKind: LeaseJobKind = {
   /** The carrier pane still runs (a retained pane whose command ended does not). */
   async status(_db, job): Promise<JobLiveness> {
     try {
-      return (await viewRunning(job.viewPaneId))
+      return (await viewRunning(job.viewPaneId, { identity: job.paneIdentity }))
         ? { state: "running" }
         : { state: "lost", reason: "carrier pane not running" };
     } catch (e) {

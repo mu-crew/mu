@@ -19,7 +19,7 @@ import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { proveViewGone } from "../host-policy.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
-import { viewPresent } from "../jobs/view.js";
+import { viewIdentity, viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -40,12 +40,14 @@ export function detachedJob(
   db: Db,
   ws: string,
   name: string,
-): { r: CarrierJob; kind: PluginJobKind; agentId: number; paneId: string } | undefined {
+):
+  | { r: CarrierJob; kind: PluginJobKind; agentId: number; paneId: string; paneIdentity?: string }
+  | undefined {
   const row = getAgent(db, name, ws);
   const r = row === undefined ? undefined : getCarrierJobByAgent(db, row.incarnation);
   const kind = r?.plugin == null ? undefined : pluginJobKind(db, r.plugin);
   if (row === undefined || r === undefined || kind?.caps.view !== "detached") return undefined;
-  return { r, kind, agentId: row.incarnation, paneId: row.paneId };
+  return { r, kind, agentId: row.incarnation, paneId: row.paneId, paneIdentity: row.paneIdentity };
 }
 
 async function detachedViewMux(host: string) {
@@ -73,7 +75,7 @@ export async function previewViewReattach(db: Db, ws: string, name: string) {
   const d = detachedJob(db, ws, name);
   if (d === undefined) return undefined;
   const mux = await detachedViewMux(d.r.host);
-  if (await viewPresent(d.paneId, mux)) refuseOpen(db, ws, name, d.paneId);
+  if (await viewPresent(d.paneId, mux, d.paneIdentity)) refuseOpen(db, ws, name, d.paneId);
   await refuseUnprovenView(db, ws, name, d, mux);
   return { ...facts(ws, d), revision: agentRevision(db, ws, name) };
 }
@@ -132,7 +134,7 @@ export async function reattachView(
         subject: `agent ${name}`,
         previewCommand: `mu agent reattach ${shellWord(name)} -w ${shellWord(ws)}`,
       });
-      if (await viewPresent(d.paneId, mux)) refuseOpen(db, ws, name, d.paneId);
+      if (await viewPresent(d.paneId, mux, d.paneIdentity)) refuseOpen(db, ws, name, d.paneId);
       const file = d.kind.caps.handle === "file";
       await refuseUnprovenView(db, ws, name, d, mux);
       // Owner-only (D8): while its spawn runs, the spawn's receipts are its own to move.
@@ -190,10 +192,13 @@ export async function reattachView(
       try {
         // The backend's own completion: a view that failed is never the row's pane.
         await done;
+        const identity = await viewIdentity(mux).catch(() => undefined);
         db.transaction(() => {
           const row = db
-            .prepare("UPDATE agents SET pane_id = ?, updated_at = ? WHERE id = ? AND pane_id = ?")
-            .run(pid, new Date().toISOString(), d.agentId, d.paneId);
+            .prepare(
+              "UPDATE agents SET pane_id = ?, pane_identity = ?, updated_at = ? WHERE id = ? AND pane_id = ?",
+            )
+            .run(pid, identity ?? null, new Date().toISOString(), d.agentId, d.paneId);
           const job = db
             .prepare(
               `UPDATE carrier_jobs SET pane_id = ?${file ? ", view_state = 'open'" : ""} WHERE token = ? AND agent_id = ?`,

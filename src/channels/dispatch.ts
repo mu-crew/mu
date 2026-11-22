@@ -12,11 +12,13 @@
 
 import { dirname } from "node:path";
 import { agentKey, readGatePanes, type StateAgentRef, type StateReading } from "../agent-state.js";
+import { AgentPaneDeadError } from "../agents/errors.js";
 import type { ObservedAgent } from "../agents/observe.js";
 import { getCarrierJobByAgent } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
 import { agentJobRef, readingWithLiveness } from "../jobs/kinds.js";
+import { viewOwned } from "../jobs/view.js";
 import { foreignBackend } from "../mux/binding.js";
 import { activeMux } from "../mux/detect.js";
 import { queuedPanes } from "../muzzle-queue.js";
@@ -90,7 +92,40 @@ function remoteOf(
 
 /** The channel `target.agent` is on: the one its row recorded at spawn (see `expectsCtl`). */
 export function agentChannel(target: ChannelTarget): AgentChannel {
-  return channelFor(target.agent, target.stateDir, target.socket, target.db);
+  return pinnedToServer(
+    channelFor(target.agent, target.stateDir, target.socket, target.db),
+    target.agent,
+  );
+}
+
+/**
+ * The channel with every pane-addressed delivery gated on the row's recorded tmux server:
+ * pane ids restart per server, so on another server `agent.paneId` names someone else's
+ * pane, which a send, key press or abort must never reach. The agent is dead
+ * (`AgentPaneDeadError`). A row with no recorded identity is unverified: unguarded.
+ */
+function pinnedToServer(channel: AgentChannel, agent: ObservedAgent): AgentChannel {
+  if (!agent.paneIdentity) return channel;
+  const gate = async (): Promise<void> => {
+    if (!(await viewOwned(agent.paneIdentity))) {
+      throw new AgentPaneDeadError(agent.name, agent.workstreamName, agent.paneId);
+    }
+  };
+  const gated =
+    <A extends unknown[], R>(fn: (...a: A) => Promise<R>) =>
+    async (...a: A): Promise<R> => {
+      await gate();
+      return fn.apply(channel, a);
+    };
+  return {
+    ...channel,
+    send: gated(channel.send),
+    fresh: gated(channel.fresh),
+    command: gated(channel.command),
+    interrupt: gated(channel.interrupt),
+    abort: gated(channel.abort),
+    answer: gated(channel.answer),
+  };
 }
 
 /** The registered channel named by `channelOf`; a name none provides refuses (`ChannelUnknownError`). */

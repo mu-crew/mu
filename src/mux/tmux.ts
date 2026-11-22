@@ -541,6 +541,23 @@ export async function panePid(paneId: string): Promise<number | undefined> {
 }
 
 /**
+ * The tmux server's identity, `<pid>|<start time>` (`|`: tmux 3.8 turns a tab in a format into
+ * `_`); undefined when no server runs. Pane ids restart per server.
+ */
+export async function serverIdentity(): Promise<string | undefined> {
+  const args = ["list-sessions", "-F", "#{pid}|#{start_time}"];
+  const result = await currentExecutor(args);
+  if (result.exitCode !== 0) {
+    if (/no sessions|no current target/i.test(result.stderr) || NO_SERVER_RE.test(result.stderr)) {
+      return undefined;
+    }
+    throw new TmuxError(args, result.stderr, result.stdout, result.exitCode);
+  }
+  const first = result.stdout.split("\n")[0]?.trim();
+  return first !== undefined && /^\d+\|\d+$/.test(first) ? first : undefined;
+}
+
+/**
  * Name of the tmux session this process is running inside, or
  * undefined outside tmux. Gated on `$TMUX` so a call from a plain
  * shell doesn't get whatever session the server happens to consider
@@ -800,6 +817,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   paneAlive,
   paneResult,
   panePid,
+  serverIdentity,
   killPane,
   killPaneCommand,
   capture,

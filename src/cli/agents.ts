@@ -51,6 +51,7 @@ import {
 } from "../cli.js";
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
+import { viewCapture } from "../jobs/view.js";
 import { leftoverLines, listLeftovers } from "../leftovers.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
@@ -751,7 +752,7 @@ export async function cmdAgentShow(
     // Best-effort: `mu agent show` still has a registry row to print
     // when the mux is unreachable. Empty scrollback degrades the
     // status refresh below, it doesn't fail the verb.
-    scrollback = await (await activeMux()).capture(agent.paneId, { lines });
+    scrollback = await viewCapture(agent.paneId, agent.paneIdentity, { lines });
   } catch {
     scrollback = "";
   }

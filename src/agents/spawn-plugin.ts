@@ -53,7 +53,7 @@ import { reserveProviderJob } from "../host-records.js";
 import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
 import { awaitLeaseJob, defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
-import { viewPresent } from "../jobs/view.js";
+import { viewIdentity, viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -587,6 +587,10 @@ async function openView(
         reservation: v.token,
         hooks: v.builtIn?.hooks === true,
         piHooks: false,
+        ...(await viewIdentity(mux).then(
+          (paneIdentity) => (paneIdentity !== undefined ? { paneIdentity } : {}),
+          () => ({}),
+        )),
         channel: v.channel,
         ...(v.builtIn === undefined ? { channelPlugin: kind.plugin } : {}),
         ...(v.remoteKey !== undefined ? { remoteKey: v.remoteKey } : {}),

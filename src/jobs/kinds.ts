@@ -58,8 +58,16 @@ export function answerProvesRunning(job: Pick<JobRef, "kind">): boolean {
 }
 
 /** The job a state ref names: the one its caller listed, else its pane's (a gate's, by its token). */
-export function stateRefJob(a: StateAgentRef): Pick<JobRef, "kind" | "viewPaneId"> {
-  return a.job ?? { kind: a.gateToken != null ? "gate" : "pane", viewPaneId: a.paneId };
+export function stateRefJob(
+  a: StateAgentRef,
+): Pick<JobRef, "kind" | "viewPaneId" | "paneIdentity"> {
+  return (
+    a.job ?? {
+      kind: a.gateToken != null ? "gate" : "pane",
+      viewPaneId: a.paneId,
+      ...(a.paneIdentity ? { paneIdentity: a.paneIdentity } : {}),
+    }
+  );
 }
 
 /**
@@ -75,12 +83,12 @@ export function stateRefJob(a: StateAgentRef): Pick<JobRef, "kind" | "viewPaneId
  */
 export async function withJobLiveness(
   reading: ChannelReading,
-  job: Pick<JobRef, "kind" | "viewPaneId">,
+  job: Pick<JobRef, "kind" | "viewPaneId" | "paneIdentity">,
   view?: StateReading,
 ): Promise<StateReading> {
   if (reading.ctl === "ok") {
     if (answerProvesRunning(job)) return { ...reading, alive: true };
-    return { ...reading, alive: (await paneUp(job.viewPaneId)) !== false };
+    return { ...reading, alive: (await paneUp(job.viewPaneId, job.paneIdentity)) !== false };
   }
   if (view === undefined || view.alive) return { ...reading, alive: true };
   return { ...view, ...(reading.ctl !== undefined ? { ctl: reading.ctl } : {}) };
@@ -156,9 +164,9 @@ export function isJobGone(x: unknown): x is JobGone {
  * bound, so its view's command decides (`paneUp`).
  */
 export async function jobUp(
-  job: Pick<JobRef, "kind" | "viewPaneId">,
+  job: Pick<JobRef, "kind" | "viewPaneId" | "paneIdentity">,
 ): Promise<"up" | "unknown" | JobGone> {
-  const up = await paneUp(job.viewPaneId);
+  const up = await paneUp(job.viewPaneId, job.paneIdentity);
   return up === undefined ? "unknown" : up ? "up" : GONE;
 }
 
@@ -178,6 +186,7 @@ export function agentJobRef(agent: {
   name: string;
   incarnation: number;
   paneId: string;
+  paneIdentity?: string;
   gateToken: string | null;
   host: string | null;
   hostTransport: string | null;
@@ -186,6 +195,7 @@ export function agentJobRef(agent: {
   return {
     kind: agent.hostTransport === "lease" ? "lease" : "pane",
     viewPaneId: agent.paneId,
+    ...(agent.paneIdentity !== undefined ? { paneIdentity: agent.paneIdentity } : {}),
     agentId: agent.incarnation,
     agent: { workstream: agent.workstreamName, name: agent.name },
     ...(agent.host === null ? {} : { host: { name: agent.host } }),
@@ -196,12 +206,13 @@ export function agentJobRef(agent: {
 export function gateJobRef(
   agent: Pick<
     AgentRow,
-    "workstreamName" | "name" | "incarnation" | "paneId" | "gateToken" | "host"
+    "workstreamName" | "name" | "incarnation" | "paneId" | "paneIdentity" | "gateToken" | "host"
   >,
 ): JobRef {
   return {
     kind: "gate",
     viewPaneId: agent.paneId,
+    ...(agent.paneIdentity !== undefined ? { paneIdentity: agent.paneIdentity } : {}),
     agentId: agent.incarnation,
     agent: { workstream: agent.workstreamName, name: agent.name },
     ...(agent.gateToken === null ? {} : { gateToken: agent.gateToken }),

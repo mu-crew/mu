@@ -746,7 +746,11 @@ function awaitRow(
       if (signal.aborted) return lostObservation(agent);
       if (Date.now() - checkedAt >= WATCH_PANE_CHECK_MS) {
         checkedAt = Date.now();
-        const up = await jobUp({ kind: "pane", viewPaneId: agent.paneId });
+        const up = await jobUp({
+          kind: "pane",
+          viewPaneId: agent.paneId,
+          ...(agent.paneIdentity !== undefined ? { paneIdentity: agent.paneIdentity } : {}),
+        });
         if (isJobGone(up)) return lostObservation(agent, "the pane is gone", up);
       }
       polls += 1;
@@ -842,7 +846,11 @@ function follow(
       if (Date.now() - checkedAt >= WATCH_PANE_CHECK_MS) {
         checkedAt = Date.now();
         // Gone is dead; a mux that cannot say is not a death.
-        const up = await jobUp({ kind: "pane", viewPaneId: agent.paneId });
+        const up = await jobUp({
+          kind: "pane",
+          viewPaneId: agent.paneId,
+          ...(agent.paneIdentity !== undefined ? { paneIdentity: agent.paneIdentity } : {}),
+        });
         if (isJobGone(up)) return lost("the pane is gone", up);
       }
       polls += 1;

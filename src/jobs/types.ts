@@ -103,6 +103,8 @@ export interface JobRef {
   plugin?: string;
   /** The view's pane: for a pane or gate job, also the handle. */
   viewPaneId: string;
+  /** The tmux server the view was spawned on (`agents.pane_identity`): another server's pane is not it. */
+  paneIdentity?: string;
   /** The agent row (its registry incarnation), when one exists. */
   agentId?: number;
   /** The agent's (workstream, name): a gate's result read checks the row still names it. */

@@ -10,7 +10,7 @@ import { observeAgentStates } from "./agents/observe.js";
 import { getAgent } from "./agents.js";
 import { agentChannel, channelTarget } from "./channels/index.js";
 import type { Db } from "./db.js";
-import { activeMux } from "./mux.js";
+import { viewCapture } from "./jobs/view.js";
 import { WAIT_TEXT_MAX } from "./wait-regex.js";
 import type { AgentBaseline, AgentReading, WaitOptions } from "./wait-types.js";
 
@@ -41,7 +41,7 @@ export function ctlAgentHooks(
         // Only an agent with no answering socket (a non-pi command, `--no-ctl`) has none.
         if (base.ctl === "ok") continue;
         try {
-          const text = await (await activeMux()).capture(a.paneId, { lines: 200 });
+          const text = await viewCapture(a.paneId, a.paneIdentity, { lines: 200 });
           out.set(key, { ...base, lastText: text.slice(-WAIT_TEXT_MAX), textSource: "pane" });
         } catch {
           // no pane text: the agent just never matches

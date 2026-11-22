@@ -149,6 +149,13 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- A tmux server restart no longer hands a worker's row to an unrelated pane that
+  recycled its pane id (`%1` restarts per server). Spawn records the server
+  (`agents.pane_identity`, `<pid>|<start time>`; the pane id is unique within a
+  server, so the pane's own pid adds nothing); liveness, `mu wait`, reconcile,
+  sends, capture and close treat another server as a dead pane for that row and
+  never touch the foreign pane. Rows from before the column stay on today's
+  unverified check.
 - tmux 3.8 no longer makes mu mistake live panes for missing ones. Pane,
   window, and Murmur state queries use a separator tmux preserves.
 - Remote worktree prepare claims the path with an atomic `mkdir` and records
