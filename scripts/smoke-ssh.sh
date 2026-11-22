@@ -328,8 +328,8 @@ trees=$("$GIT" -C "$RREPO" worktree list --porcelain)
 [[ ! -e $WT && $trees != *"$WT"* ]] || fail 'close left the remote worktree'
 printf 'PASS session templates: host check, forwarded ctl turn, collect, clean close\n'
 
-mu 'register SSH example plugin' plugin add ssh-example -- "$REPO/examples/plugins/mu-plugin-ssh" "$R/bin/ssh" >/dev/null
-mu 'register example host' host add example --plugin ssh-example --max-sessions 2 >/dev/null
+mu 'register SSH example plugin' plugin add ssh -- "$REPO/examples/plugins/mu-plugin-ssh" "$R/bin/ssh" >/dev/null
+mu 'register example host' host add example --plugin ssh --max-sessions 2 >/dev/null
 spawn_turn example demo --cwd "$RREPO"
 handle=$(sql 'read example job handle' "SELECT job FROM carrier_jobs WHERE name='demo'" '.data.items[0].job')
 job=${handle%%@*}

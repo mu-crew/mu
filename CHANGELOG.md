@@ -154,6 +154,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - The loopback SSH smoke resolves tools before switching to its private home,
   so mise shims no longer cause false prerequisite failures. Failed mu calls
   print the named step, both output streams, and worker pane logs before cleanup.
+  The pane path registers the example plugin under its declared name, `ssh`.
 
 ## [5.2.2] — 2026-11-19
 
