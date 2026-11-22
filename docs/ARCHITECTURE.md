@@ -216,7 +216,7 @@ are re-export hubs.
 | `src/mux/types.ts` | `MuxBackend` interface (`ensureSession`, `spawnAgent`, `listPanes`, `paneAlive`, `capture`, `attachCommands`, `killPaneCommand`), `attachShellLine`; `MuxError`, `PaneNotFoundError`, `NoMultiplexerError` |
 | `src/mux/binding.ts`, `src/agents/backend-binding.ts` | a row's backend by pane-id shape; the advisory spawn refusal (spec A §8.2) |
 | `src/mux/detect.ts` | `MU_MUX` → `HERDR_ENV` → `$TMUX` → `$REX_SESSION` → `PATH` ladder; `activeMux()` |
-| `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, one-step `spawnAgent`, pane validation; no `sendToPane`, but `pasteToPane` (clear key, one bracketed paste through a named buffer, Enter) and `sendKeys` for the `hooks` channel |
+| `src/mux/tmux.ts` | tmux backend: the `tmux()` wrapper, one-step `spawnAgent` (which also reports the server it created the pane on), pane validation; a pane ref `%N@<pid>|<start>` (`paneRef`) makes any pane-addressed function guard its action on that server inside the one tmux call (`guardedArgs`: `if-shell -F`, exit 97 on another server); no `sendToPane`, but `pasteToPane` (clear key, one bracketed paste through a named buffer, Enter) and `sendKeys` for the `hooks` channel |
 | `src/mux/herdr.ts` | herdr backend: JSON socket API, atomic send, native pane status, `spawnAgent` (bare pane, `agent start`) |
 | `src/mux/rex.ts` | Rex backend: the `rex()` wrapper over the server API (`rex api call`), one-call `spawnAgent`, OSC 7501 pane status, paste send, attach as the app's `session.select` |
 | `src/tmux.ts` | tmux-only re-exports: `MU_TMUX_SOCKET` seam, `sleep` / `setSleepForTests` |

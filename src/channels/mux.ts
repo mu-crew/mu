@@ -20,6 +20,7 @@ import {
   AgentNotBlockedError,
   AgentSendUnsupportedError,
 } from "../agents/errors.js";
+import { viewRef } from "../jobs/view.js";
 import { activeMux, type SendOptions } from "../mux.js";
 import { composeChannel } from "./compose.js";
 import { typeKeys } from "./hooks.js";
@@ -115,7 +116,7 @@ const muxImpl: ChannelImpl = {
         throw new AgentNotBlockedError(name, workstreamName, reading?.state ?? "unknown");
       }
     }
-    await typeKeys(mux.sendKeys, paneId, keys);
+    await typeKeys(mux.sendKeys, viewRef(mux, paneId, t.agent.paneIdentity), keys);
     return { transport: "mux", keys, ack: "unknown" };
   },
 };

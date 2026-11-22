@@ -59,8 +59,10 @@ export function pluginHostFixture(opts: { handshakeInProcess?: boolean } = {}): 
   const h = {} as PluginHost;
   h.stubMux = (over = {}) => {
     let n = 0;
+    // An in-memory fake: no tmux server behind it, so no server identity (bare pane ids).
+    const { serverIdentity: _none, ...fake } = tmuxBackend;
     setMuxForTests({
-      ...tmuxBackend,
+      ...fake,
       runsShellCommand: true,
       spawnAgentWaitsReady: false,
       anchorsPanes: false,

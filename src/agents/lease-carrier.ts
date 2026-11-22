@@ -213,7 +213,7 @@ export async function rollbackLeaseJob(
         return kept(job.host, handle, "its view is not proven gone");
       }
       if (file) {
-        const p = await proveViewGone(job);
+        const p = await proveViewGone(db, job);
         if (p.state !== "gone") return kept(job.host, handle, p.why);
       }
       try {

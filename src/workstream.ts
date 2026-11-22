@@ -568,8 +568,22 @@ export async function teardownWorkstream(
   }
   if (strays.length > 0) throw new WorkstreamPanesLiveError(opts.workstream, strays);
   const muxAliveBefore = sessionPanes.size > 0;
+  let killedMux = muxAliveBefore;
   if (muxAliveBefore) {
-    await mux.killSession(muxSession);
+    // A session name is not an owner: after a server restart another server holds `mu-<ws>`
+    // with panes that are not the workstream's. Rows recorded on a server name the servers
+    // whose session this is; the kill runs only there (guarded inside the one tmux call),
+    // so a session on any other server, or one nobody can vouch for, is left alone.
+    // No row with an identity (older rows, other backends): the unverified kill, as before.
+    const servers = [
+      ...new Set(agentsBefore.flatMap((a) => (a.paneIdentity ? [a.paneIdentity] : []))),
+    ];
+    if (servers.length === 0) {
+      await mux.killSession(muxSession);
+    } else {
+      for (const server of servers) await mux.killSession(muxSession, server);
+      killedMux = (await sessionViews(muxSession, mux)).length === 0;
+    }
   }
 
   // Worktrees are NOT touched: teardown never removes one (the registry's
@@ -653,7 +667,7 @@ export async function teardownWorkstream(
   // intent='workstream.teardown', payload {torn_down_at}).
 
   return {
-    killedMux: muxAliveBefore,
+    killedMux,
     deletedAgents: dead.length,
     orphanedAgents: orphaned,
     tasks: tasksBefore,

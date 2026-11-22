@@ -234,7 +234,7 @@ function installCarrierTmux(): void {
     if (!isPaneCall(args)) return res;
     atPane = channels().map((c) => [c.holder, c.kind]);
     const name = args[args.indexOf("-n") + 1] ?? "";
-    const pane = res.stdout.trim();
+    const pane = res.stdout.trim().split("|")[0] ?? "";
     if (carrier.handle !== undefined) {
       mkdirSync(dirname(jobFile(name)), { recursive: true });
       writeFileSync(jobFile(name), `${carrier.handle}\n`);
@@ -371,7 +371,7 @@ describe("handshake failures roll back", () => {
     mux = installMux("tmux", async (args) => {
       const res = await fake(args);
       if (isPaneCall(args)) {
-        const p = state.panes.get(res.stdout.trim());
+        const p = state.panes.get(res.stdout.trim().split("|")[0] ?? "");
         if (p) p.scrollback = "mule: no master for dev";
       }
       if (args[0] === "capture-pane") state.panes.delete(args[args.indexOf("-t") + 1] ?? "");

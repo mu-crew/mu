@@ -94,7 +94,7 @@ export interface SpawnAgentPaneOptions {
    * go while a slow readiness wait (herdr: up to 30s) is still running.
    * The returned promise settles when the agent is started.
    */
-  onPaneCreated?: (paneId: string) => void;
+  onPaneCreated?: (paneId: string, identity?: string) => void;
   /**
    * Keep the pane (its row and scrollback) after its command ends, armed
    * BEFORE the command can run, so an immediate exit is still readable with
@@ -127,6 +127,8 @@ export interface AttachTarget {
    *  dashboard copies): they must open a client, whatever the ambient env says.
    *  Wins over `inside` and over a backend's own env detection. */
   outside?: boolean;
+  /** tmux: the server the row was spawned on; the attach runs only on it (`agents.pane_identity`). */
+  identity?: string;
 }
 
 /**
@@ -326,8 +328,9 @@ export interface MuxBackend {
   ensureSession(session: string): Promise<EnsureSessionResult>;
   /** Idempotent. herdr closes the workspace and refuses (surfacing
    *  `HerdrWorkspaceGroupCloseError`) when it has linked worktree
-   *  workspaces mu did not create. */
-  killSession(session: string): Promise<void>;
+   *  workspaces mu did not create. `identity` (tmux): kill only when the server answering is
+   *  that one (a no-op on another). */
+  killSession(session: string, identity?: string | null): Promise<void>;
 
   // — panes —
   /** Create the agent's pane (new window, or a split of the existing
@@ -383,6 +386,8 @@ export interface MuxBackend {
    *  no server runs. Pane ids restart at `%0` per server, so a recorded pane is the agent's
    *  only while this equals the identity recorded at spawn. Throws when the probe fails. */
   serverIdentity?(): Promise<string | undefined>;
+  // On tmux every pane-addressed method below (paneAlive … sendKeys) also takes a pane ref,
+  // `%N@<identity>` (`paneRef`): the identity is then checked in the same tmux call that acts.
   /** herdr: atomic `agent prompt`; Rex: a paste event, then Enter. The `mux`
    *  channel's send. tmux has none: its paste is `pasteToPane`, which only the
    *  `hooks` channel uses, because only there does a hook event confirm it.

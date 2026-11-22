@@ -24,10 +24,23 @@ import type {
   MuxPaneStatus,
   PaneResult,
 } from "../mux/types.js";
-import { tmux } from "../tmux.js";
+import { paneRef, tmux } from "../tmux.js";
 
 /** A view's state as the multiplexer reports it, or `unknown` with why. */
 export type ViewState = PaneResult | { state: "unknown"; reason: string };
+
+/**
+ * The pane as the backend must be asked for it: tmux gets the id with the server it must be on, so
+ * the identity is checked inside the tmux call that acts (`paneRef`). Another backend has no server
+ * identity: the bare id.
+ */
+export function viewRef(
+  m: MuxBackend,
+  paneId: string,
+  identity: string | null | undefined,
+): string {
+  return identity && m.serverIdentity !== undefined ? paneRef(paneId, identity) : paneId;
+}
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
@@ -42,8 +55,7 @@ export async function viewPresent(
   identity?: string | null,
 ): Promise<boolean> {
   const m = mux ?? (await activeMux());
-  if (!(await viewOwned(identity, m))) return false;
-  return m.paneAlive(paneId);
+  return m.paneAlive(viewRef(m, paneId, identity));
 }
 
 /**
@@ -72,10 +84,24 @@ export async function viewCapture(
   mux?: MuxBackend,
 ): Promise<string> {
   const m = mux ?? (await activeMux());
-  if (!(await viewOwned(identity, m))) {
-    throw new Error(`pane ${paneId} is gone: the tmux server it was spawned on is not running`);
+  return m.capture(viewRef(m, paneId, identity), opts);
+}
+
+/**
+ * The identity a pane's birth must report: the backend gave one (tmux: from the same call that
+ * created the pane), or it has none to give (herdr, Rex: undefined). A backend that has an identity
+ * and gave none is a spawn failure, never a row without one: that row would read as a pre-upgrade
+ * (unverified) row and adopt a recycled pane.
+ */
+export function birthIdentity(
+  mux: MuxBackend,
+  paneId: string,
+  born: string | undefined,
+): string | undefined {
+  if (born === undefined && mux.serverIdentity !== undefined) {
+    throw new Error(`could not establish which ${mux.name} server holds pane ${paneId}`);
   }
-  return m.capture(paneId, opts);
+  return born;
 }
 
 /** The identity to record for a pane spawned now (`agents.pane_identity`); undefined: none to give. */
@@ -116,7 +142,7 @@ export async function viewStatus(
   if (!(await viewOwned(identity, mux))) return { state: "absent" };
   const status = await mux.paneStatus?.(paneId);
   if (status !== undefined) return { state: "reported", status };
-  return (await viewPresent(paneId, mux)) ? { state: "present" } : { state: "absent" };
+  return (await viewPresent(paneId, mux, identity)) ? { state: "present" } : { state: "absent" };
 }
 
 /**
@@ -130,8 +156,7 @@ export async function viewPid(
   identity?: string | null,
 ): Promise<number | undefined> {
   const m = mux ?? (await activeMux());
-  if (!(await viewOwned(identity, m))) return undefined;
-  return m.panePid?.(paneId);
+  return m.panePid?.(viewRef(m, paneId, identity));
 }
 
 /** One tmux pane in the batched read: absent, or present with murmur's pane options. */
@@ -176,11 +201,10 @@ export async function viewState(
 ): Promise<ViewState> {
   try {
     const m = mux ?? (await activeMux());
-    if (!(await viewOwned(identity, m))) return { state: "absent" };
     if (m.paneResult === undefined) {
       return { state: "unknown", reason: "the multiplexer cannot report a pane's exit" };
     }
-    return await m.paneResult(paneId);
+    return await m.paneResult(viewRef(m, paneId, identity));
   } catch (e) {
     return { state: "unknown", reason: `mux: ${message(e)}` };
   }
@@ -198,10 +222,11 @@ export async function viewRunning(
   opts: { occupied?: boolean; identity?: string | null } = {},
 ): Promise<boolean> {
   const mux = await activeMux();
-  if (!(await viewOwned(opts.identity, mux))) return false;
-  if (mux.paneResult !== undefined) return (await mux.paneResult(paneId)).state === "running";
+  if (mux.paneResult !== undefined) {
+    return (await mux.paneResult(viewRef(mux, paneId, opts.identity))).state === "running";
+  }
   if (opts.occupied === true && mux.paneOccupied !== undefined) {
     return await mux.paneOccupied(paneId);
   }
-  return await mux.paneAlive(paneId);
+  return await mux.paneAlive(viewRef(mux, paneId, opts.identity));
 }

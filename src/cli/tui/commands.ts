@@ -20,6 +20,8 @@ export interface AttachSubject {
   workstream: string;
   name: string;
   tab: string | null;
+  /** The tmux server the pane was spawned on (`agents.pane_identity`): attach only there. */
+  paneIdentity?: string;
 }
 
 export type AttachPlan =
@@ -67,7 +69,11 @@ export async function attachKeyHint(): Promise<string> {
 export async function planAttach(t: AttachSubject): Promise<AttachPlan> {
   try {
     const mux = await activeMux();
-    const target = { session: `mu-${t.workstream}`, window: t.tab ?? t.name };
+    const target = {
+      session: `mu-${t.workstream}`,
+      window: t.tab ?? t.name,
+      ...(t.paneIdentity !== undefined ? { identity: t.paneIdentity } : {}),
+    };
     const inside = insideClient();
     const steps = await mux.attachCommands({ ...target, inside });
     // The copied line is for a shell outside any client, whatever this one is inside of.

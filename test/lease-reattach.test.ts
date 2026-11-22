@@ -167,7 +167,7 @@ esac`,
     if (args[0] === "kill-pane") writeFileSync(orderLog, `kill ${args[2]}\n`, { flag: "a" });
     const res = await fake(args);
     if (!isPaneCall(args)) return res;
-    const pane = res.stdout.trim();
+    const pane = res.stdout.trim().split("|")[0] ?? "";
     await afterPane?.(pane);
     if (carrier === "ctl" || carrier === "exit-after-ctl") {
       await serveCtl(ctlSocketPath("auth", "worker-1", dir));
