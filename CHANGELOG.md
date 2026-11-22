@@ -152,7 +152,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   can use the same path; a replacement or non-empty directory stays put.
 - A late plugin handshake cannot overwrite a newer registration.
 - The loopback SSH smoke resolves tools before switching to its private home,
-  so mise shims no longer cause false prerequisite failures.
+  so mise shims no longer cause false prerequisite failures. Failed mu calls
+  print the named step, both output streams, and worker pane logs before cleanup.
 
 ## [5.2.2] — 2026-11-19
 

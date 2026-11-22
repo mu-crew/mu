@@ -82,15 +82,36 @@ WS=${R##*/}
 WS=$(printf '%s' "$WS" | "$TR" '[:upper:]' '[:lower:]')-$$
 RSOCK_DIR=/tmp/mu-$("$ID" -u)/$WS
 SSHD_PID=
+CURRENT_AGENT=
+
+# Keep diagnostics out of command substitutions and redirected JSON output.
+report_failure() {
+  local pane log
+  while IFS= read -r pane; do
+    printf '\n--- tmux pane %s ---\n' "$pane"
+    "$TMUX_BIN" -L "$WS" capture-pane -p -t "$pane" -S -30 || :
+  done < <("$TMUX_BIN" -L "$WS" list-panes -s -t "mu-$WS" -F '#{pane_id}' 2>/dev/null)
+  # A vanished pane cannot be captured. Its pipe log outlives it.
+  for log in "$R"/pane-*.log; do
+    [[ -s $log ]] || continue
+    printf '\n--- %s (tail) ---\n' "${log##*/}"
+    "$TAIL" -n 30 "$log"
+  done
+  if [[ -n $CURRENT_AGENT ]]; then
+    printf '\n--- mu agent read %s ---\n' "$CURRENT_AGENT"
+    "$NODE" "$REPO/dist/cli.js" agent read "$CURRENT_AGENT" -w "$WS" -n 30 || :
+  fi
+  if [[ -s $R/sshd.log ]]; then
+    printf '\n--- sshd.log (tail) ---\n'
+    "$TAIL" -n 20 "$R/sshd.log"
+  fi
+}
 
 cleanup() {
   local rc=$?
   trap - EXIT ERR INT TERM HUP
   set +e
-  if [[ $rc = 1 ]]; then
-    "$TMUX_BIN" -L "$WS" capture-pane -pt "mu-$WS" -S -30 2>/dev/null
-    if [[ -s $R/sshd.log ]]; then "$TAIL" -n 20 "$R/sshd.log" >&2; fi
-  fi
+  if [[ $rc = 1 ]]; then report_failure >&2; fi
   "$TMUX_BIN" -L "$WS" kill-server 2>/dev/null
   # Both patterns identify only this run, even if close never got to stop.
   "$PKILL" -TERM -f -- "$R/ssh_config" 2>/dev/null
@@ -102,7 +123,7 @@ cleanup() {
   "$PKILL" -KILL -f -- "$R/ssh_config" 2>/dev/null
   "$PKILL" -KILL -f -- "$R/rbin/smoke-fake-pi.mjs" 2>/dev/null
   "$RM" -rf -- "$RSOCK_DIR"
-  if [[ ${SMOKE_KEEP:-0} = 1 ]]; then printf 'smoke-ssh: kept %s\n' "$R"; else "$RM" -rf -- "$R"; fi
+  if [[ ${SMOKE_KEEP:-0} = 1 ]]; then printf 'smoke-ssh: kept %s\n' "$R" >&2; else "$RM" -rf -- "$R"; fi
   exit "$rc"
 }
 trap cleanup EXIT
@@ -206,40 +227,63 @@ fi
   "$TAIL" -n 30 "$R/build.log" >&2
   fail "npm ($NPM) run build"
 }
-mu() { "$NODE" "$REPO/dist/cli.js" "$@"; }
-sql() { mu sql "$1" | "$JQ" -er "$2"; }
+mu() {
+  local step=$1 out rc
+  shift
+  out=$("$MKTEMP" "$R/mu-output.XXXXXX")
+  if "$NODE" "$REPO/dist/cli.js" "$@" >"$out" 2>"$out.err"; then
+    "$CAT" "$out"
+    "$CAT" "$out.err" >&2
+    "$RM" -f -- "$out" "$out.err"
+  else
+    rc=$?
+    {
+      printf 'smoke-ssh: FAIL: %s (mu exit %s): mu' "$step" "$rc"
+      printf ' %q' "$@"
+      printf '\n--- stdout ---\n'
+      "$CAT" "$out"
+      printf '\n--- stderr ---\n'
+      "$CAT" "$out.err"
+    } >&2
+    return "$rc"
+  fi
+}
+sql() { mu "$1" sql "$2" | "$JQ" -er "$3"; }
 
 "$GIT" init -q "$R/local"
 cd "$R/local"
 "$GIT" commit -q --allow-empty -m 'smoke base'
 RREPO="$R/rhome/repo"
 "$GIT" clone -q --local . "$RREPO"
-mu workstream init "$WS" >/dev/null
+mu 'init workstream' workstream init "$WS" >/dev/null
+"$TMUX_BIN" -L "$WS" set-hook -t "mu-$WS" after-new-window \
+  "pipe-pane -o '\"$CAT\" >>\"$R/pane-#{pane_id}.log\"'"
 
 # No multiplexed SSH master: the pane owns the forward. Check and collect
 # have a spare channel while it lives. These are the session starter templates.
-mu host add session --transport session --max-sessions 2 \
+mu 'register session host' host add session --transport session --max-sessions 2 \
   --shell "ssh -o ControlMaster=no -o ControlPath=none -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L {local_sock}:{remote_sock} session -t 'cd {cwd:sh} && {env} \"\$SHELL\" -ilc {cmd:sh}'" \
   --exec 'ssh -o BatchMode=yes session {cmd}' \
   --fetch 'git fetch ssh://session{cwd} HEAD' >/dev/null
-mu host check session --root "$RREPO" --json >"$R/check.json"
+mu 'check session host' host check session --root "$RREPO" --json >"$R/check.json"
 "$JQ" -e '.data.steps | any(.step == "extension" and .ok == true)' "$R/check.json" >/dev/null ||
   fail 'host check did not verify the fake pi extension'
 
 spawn_turn() {
   local host=$1 agent=$2 text="smoke-$2-$$-$RANDOM" runs inc
   shift 2
+  CURRENT_AGENT=$agent
   LOCAL_SOCK="$R/state/sock/$WS/$agent.sock"
   REMOTE_SOCK="$RSOCK_DIR/$agent.sock"
-  mu agent spawn "$agent" -w "$WS" --cli pi --host "$host" "$@" --json >"$R/spawn-$agent.json"
+  mu "$host: spawn $agent" agent spawn "$agent" -w "$WS" --cli pi --host "$host" "$@" --json >"$R/spawn-$agent.json"
   "$JQ" -e '.data.ctl == "ok"' "$R/spawn-$agent.json" >/dev/null || fail "$host: ctl handshake failed"
   if [[ ! -S $LOCAL_SOCK || ! -S $REMOTE_SOCK ]] || ! forward_alive; then
     fail "$host: expected a live SSH forward"
   fi
-  mu agent send "$agent" -w "$WS" "$text" --json >"$R/send-$agent.json"
+  mu "$host: send to $agent" agent send "$agent" -w "$WS" "$text" --json >"$R/send-$agent.json"
   runs=$("$JQ" -er '.data | select(.transport == "ctl" and .delivered) | .runs' "$R/send-$agent.json")
   inc=$("$JQ" -er '.data.incarnation' "$R/send-$agent.json")
-  mu wait "agent:$WS/$agent@$runs#$inc" --timeout 30 --json >"$R/turn-$agent.json"
+  mu "$host: wait for $agent turn" wait "agent:$WS/$agent@$runs#$inc" --timeout 30 --json >"$R/turn-$agent.json"
   # jq expands its own variables, not Bash.
   # shellcheck disable=SC2016
   "$JQ" -e --arg echo "smoke-echo: $text" --argjson runs "$((runs + 1))" '
@@ -251,8 +295,8 @@ spawn_turn() {
 forward_alive() { "$PGREP" -f -- "-L $LOCAL_SOCK:$REMOTE_SOCK" >/dev/null; }
 closed_clean() {
   local agent=$1 rev rows
-  rev=$(mu agent close "$agent" -w "$WS" --json | "$JQ" -er '.data.revision')
-  mu agent close "$agent" -w "$WS" --if "$rev" --json >"$R/close-$agent.json"
+  rev=$(mu "preview close of $agent" agent close "$agent" -w "$WS" --json | "$JQ" -er '.data.revision')
+  mu "close $agent" agent close "$agent" -w "$WS" --if "$rev" --json >"$R/close-$agent.json"
   # The remote pi can receive the hangup a little after the local pane dies.
   for ((i=0; i<50; i++)); do
     if [[ ! -e $REMOTE_SOCK ]] && ! forward_alive; then break; fi
@@ -260,32 +304,34 @@ closed_clean() {
   done
   [[ ! -e $LOCAL_SOCK && ! -e $REMOTE_SOCK ]] || fail "$agent: close left ctl sockets"
   if forward_alive; then fail "$agent: close left a live SSH forward"; fi
-  rows=$(sql 'SELECT (SELECT count(*) FROM agents) + (SELECT count(*) FROM carrier_jobs) +
+  rows=$(sql "check state after closing $agent" 'SELECT (SELECT count(*) FROM agents) + (SELECT count(*) FROM carrier_jobs) +
     (SELECT count(*) FROM host_channels) + (SELECT count(*) FROM worktrees) +
     (SELECT count(*) FROM remote_recovery) AS n' '.data.items[0].n')
   [[ $rows = 0 ]] || fail "$agent: close left $rows agent, job, channel, worktree or recovery rows"
+  CURRENT_AGENT=
 }
 
 spawn_turn session worker --worktree --root "$RREPO"
 WT="$R/rhome/.local/state/mu-next/remote-worktrees/$WS/worker"
 # Collect a commit that did not exist locally, not just the already shared base.
-mu host exec session -- git -C "$WT" -c user.name=smoke -c user.email=smoke@localhost \
+mu 'make remote commit' host exec session -- git -C "$WT" -c user.name=smoke -c user.email=smoke@localhost \
   commit -q --allow-empty -m 'remote smoke result'
-head=$(mu host exec session -- git -C "$WT" rev-parse HEAD)
+head=$(mu 'read remote HEAD' host exec session -- git -C "$WT" rev-parse HEAD)
 if "$GIT" cat-file -e "$head^{commit}" 2>/dev/null; then fail 'collect fixture is already local'; fi
-mu agent collect worker -w "$WS" --json >"$R/collect.json"
+mu 'collect remote commit' agent collect worker -w "$WS" --json >"$R/collect.json"
 [[ $("$GIT" rev-parse "refs/mu/collect/$WS/worker") = "$head" ]] || fail 'collect did not pin remote HEAD'
-[[ $(sql "SELECT collected_head FROM agents WHERE name='worker'" '.data.items[0].collected_head') = "$head" ]] ||
+collected=$(sql 'read collected HEAD' "SELECT collected_head FROM agents WHERE name='worker'" '.data.items[0].collected_head')
+[[ $collected = "$head" ]] ||
   fail 'collect did not record remote HEAD'
 closed_clean worker
 trees=$("$GIT" -C "$RREPO" worktree list --porcelain)
 [[ ! -e $WT && $trees != *"$WT"* ]] || fail 'close left the remote worktree'
 printf 'PASS session templates: host check, forwarded ctl turn, collect, clean close\n'
 
-mu plugin add ssh-example -- "$REPO/examples/plugins/mu-plugin-ssh" "$R/bin/ssh" >/dev/null
-mu host add example --plugin ssh-example --max-sessions 2 >/dev/null
+mu 'register SSH example plugin' plugin add ssh-example -- "$REPO/examples/plugins/mu-plugin-ssh" "$R/bin/ssh" >/dev/null
+mu 'register example host' host add example --plugin ssh-example --max-sessions 2 >/dev/null
 spawn_turn example demo --cwd "$RREPO"
-handle=$(sql "SELECT job FROM carrier_jobs WHERE name='demo'" '.data.items[0].job')
+handle=$(sql 'read example job handle' "SELECT job FROM carrier_jobs WHERE name='demo'" '.data.items[0].job')
 job=${handle%%@*}
 [[ $job =~ ^ssh-[0-9a-f]{32}$ && -s $R/jobs/$job/pid ]] || fail 'example: no started job for the recorded handle'
 # Close must get the plugin's handle-bound stop receipt before removing the row.
