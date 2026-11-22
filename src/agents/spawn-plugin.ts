@@ -36,11 +36,11 @@ import {
   type CarrierJob,
   getCarrierJob,
   getCarrierJobByName,
-  markViewOpening,
   recordCarrierPane,
   recordJobTree,
   reserveCarrierJob,
 } from "../carrier-jobs.js";
+import { bindView, dispatchView, unbindView, type WireRef } from "../carrier-wire.js";
 import { channelTarget } from "../channels/dispatch.js";
 import { agentChannel } from "../channels/index.js";
 import type { ChannelName, RunBaseline, SendResult } from "../channels/types.js";
@@ -53,10 +53,10 @@ import { reserveProviderJob } from "../host-records.js";
 import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
 import { awaitLeaseJob, defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
-import { birthIdentity, killView, viewPresent, viewRef } from "../jobs/view.js";
+import { birthIdentity, killView, viewPresent, viewRef, viewServer } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { TmuxPaneBirthError } from "../mux/pane-ref.js";
-import { type CommandSource, markPaneHost } from "../mux/types.js";
+import { type CommandSource, type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { EffectOutcomeUnknownError } from "../plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.js";
@@ -336,10 +336,13 @@ export async function spawnPluginAgent(
           });
     // A file kind's view writes the handle to the job file (ladder placement §10): claimed
     // before job.start, holding the reservation, so any handle seen there is this job's.
-    const jobFile =
+    // A reservation released meanwhile (a close of this unlaunched spawn) refuses with nothing
+    // moved: by then the file may be a replacement's (src/carrier-wire.ts).
+    const claim =
       kind.caps.handle === "file"
-        ? await withAgentLock(db, ws, name, async () => claimLeaseJobFile(db, ws, name))
+        ? await withAgentLock(db, ws, name, async () => claimLeaseJobFile(db, ws, name, job))
         : undefined;
+    const jobFile = claim?.path;
     const prompt =
       atStart && opts.firstPrompt !== undefined
         ? { text: opts.firstPrompt, msgId: opts.firstTurn?.msgId ?? randomUUID() }
@@ -404,7 +407,7 @@ export async function spawnPluginAgent(
         ...(builtIn !== undefined ? { builtIn } : {}),
         ...(sockets !== undefined ? { localSock: sockets.local } : {}),
         ...(remoteKey !== undefined ? { remoteKey } : {}),
-        fileView: jobFile !== undefined,
+        ...(claim !== undefined ? { wire: { token, wireRev: claim.rev } } : {}),
       },
       started.view,
       (pid, born) => {
@@ -533,8 +536,11 @@ interface ViewOf {
   localSock?: string;
   /** A remote hook harness's key. */
   remoteKey?: string;
-  /** A `handle: "file"` kind: the view is the job's dispatcher (ladder placement §10). */
-  fileView?: boolean;
+  /**
+   * A `handle: "file"` kind: the view is the job's dispatcher (ladder placement §10), and its
+   * record moves by wire transitions from this revision (src/carrier-wire.ts).
+   */
+  wire?: WireRef;
 }
 
 /**
@@ -556,13 +562,17 @@ async function openView(
   const row = await withAgentLock(db, opts.workstream, opts.name, () =>
     withSpawnLock(session, async () => {
       const mux = await activeMux();
-      // A file kind's view is its job's dispatcher (ladder placement §10): recorded as opening
-      // in this locked section, before the mux is asked, and only while the record is this
-      // spawn's. A close that released it first leaves nothing to dispatch for; a close after
-      // this waits for the lock and finds the view opening (unknown) or open.
-      if (v.fileView === true && !markViewOpening(db, v.token)) {
-        throw new Error(`carrier_jobs: the job record of ${opts.workstream}/${opts.name} is gone`);
+      // A file kind's view is its job's dispatcher (ladder placement §10): `dispatching` in this
+      // locked section, before the mux is asked, and only from the revision this spawn holds. A
+      // close or rollback that moved the record first leaves nothing to dispatch for; one after
+      // this finds the view dispatching (unknown) or bound.
+      const rev = v.wire === undefined ? undefined : dispatchView(db, v.wire);
+      if (v.wire !== undefined && rev === undefined) {
+        throw new Error(
+          `carrier_jobs: the job record of ${opts.workstream}/${opts.name} was released or moved: no view opens for it`,
+        );
       }
+      const before = rev === undefined ? undefined : await viewServer(mux).catch(() => undefined);
       // The name is ours: no live agent owns a socket at this path; the view's forward binds it.
       if (v.localSock !== undefined) rmSync(v.localSock, { force: true });
       let born: string | undefined;
@@ -590,7 +600,15 @@ async function openView(
       const paneIdentity = birthIdentity(mux, pid, born);
       onPane(pid, paneIdentity);
       viewDone = done;
-      recordCarrierPane(db, v.token, pid);
+      if (rev === undefined) recordCarrierPane(db, v.token, pid);
+      else if (
+        bindView(db, { token: v.token, wireRev: rev }, pid, await birthServer(mux, before)) ===
+        undefined
+      ) {
+        throw new Error(
+          `carrier_jobs: the view of ${opts.workstream}/${opts.name} could not be bound`,
+        );
+      }
       await markPaneHost(mux, viewRef(mux, pid, born), v.host.name);
       const r: AgentRow = finalizeAgentRow(db, {
         opts: opts as SpawnAgentOptions,
@@ -624,6 +642,20 @@ async function openView(
   // The backend's own completion: a view that failed after it reported its pane rolls back.
   await viewDone;
   return row;
+}
+
+/**
+ * The mux server a view just reported its pane on: the server answering now, provided it is
+ * the one that answered before the mux was asked (none before: the spawn started it). A server
+ * that changed in between, or no answer, is null: the bound view is unknown, never inferred.
+ */
+export async function birthServer(
+  mux: MuxBackend,
+  before: string | undefined,
+): Promise<string | null> {
+  const after = await viewServer(mux).catch(() => undefined);
+  if (after === undefined) return null;
+  return before === undefined || before === after ? after : null;
 }
 
 /** An at-start kind's job.start whose outcome is unknown: its first prompt may be running. Exit 1. */
@@ -674,9 +706,14 @@ function unfinalize(db: Db, agent: AgentRow, pane: string, token: string, gone: 
     pane,
   );
   if (!gone) return;
-  db.prepare(
-    "UPDATE carrier_jobs SET pane_id = NULL, view_state = CASE WHEN view_state IS NULL THEN NULL ELSE 'none' END WHERE token = ? AND pane_id = ?",
-  ).run(token, pane);
+  const r = getCarrierJob(db, token);
+  if (r?.wireState === "bound") unbindView(db, r, pane);
+  else if (r !== undefined && r.wireState !== "dispatching") {
+    db.prepare("UPDATE carrier_jobs SET pane_id = NULL WHERE token = ? AND pane_id = ?").run(
+      token,
+      pane,
+    );
+  }
 }
 
 /**
@@ -770,7 +807,7 @@ export async function resolveFirstTurn(
             kind,
             token: now.token,
             channel: kind.caps.channel ?? agent.channel ?? "",
-            fileView: kind.caps.handle === "file",
+            ...(kind.caps.handle === "file" ? { wire: now } : {}),
           },
           view,
           (pid, born) => {

@@ -88,13 +88,27 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   keeps the name it was published under. A file kind's view is its job's
   dispatcher: its record and job file are kept until that view is proven
   gone, on every path (close, a spawn's rollback, `agent reattach`, a
-  close after the reaper, a recovery's view). The record tracks the view
-  (`carrier_jobs.view_state`: `none`, `opening` before the mux is asked,
-  `open` once its pane is recorded); a view asked for with no pane id, a
-  pane not proven gone, and a record older than the column (an upgrade)
-  are unknown, and `mu agent close` and `agent reattach` refuse until
-  `--abandon-job`. A close racing a spawn takes the record first: the
-  spawn then opens no view for it. A
+  close after the reaper, a recovery's view). The record is ONE **wire
+  state** machine (`carrier_jobs.wire_state`: `claimed`, `dispatching`
+  before the mux is asked, `bound` once its pane and that pane's mux server
+  are recorded together, `released` once its view is proven gone and its
+  stop begun), and every transition (the spawn's file claim and view,
+  close, rollback, reattach, a recovery's view) is a compare-and-swap on
+  `carrier_jobs.wire_rev`: concurrent paths cannot interleave, and the one
+  whose revision moved keeps everything. The job file is moved aside or
+  removed only inside the transition that owns the current revision, so a
+  spawn released during its prepare never moves its replacement's file. A
+  bound view is asked about only on the mux server recorded with it
+  (`carrier_jobs.view_server`; tmux: its server's `<pid>|<start time>`): a
+  close from another `MU_TMUX_SOCKET` or a restarted server proves
+  nothing, unless the recorded server's process is gone, and a pane id
+  equal to the record's on another server is never its view. A view asked
+  for with no pane id, a pane not proven gone, a view with no recorded
+  server, another server, and a record older than the columns (an
+  upgrade) are unknown, and `mu agent close` and `agent reattach` refuse
+  until `--abandon-job`. A close or rollback that began releasing the
+  record wins over a reattach, which then opens no view. Additive
+  machine-local columns, no schema bump. A
   lookup that hands back (`human`) during recovery stays a hand-back: the
   close exits 5, human needed, the record kept.
 

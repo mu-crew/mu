@@ -374,12 +374,17 @@ describeIfTmux(
       addHost(db, { name: "dev", shell: "s", exec: "e", fetch: "f", repo: "/r", max_sessions: 1 });
       const lease: HostLease = await reserveHostChannel(db, "dev", "worker");
       expect(bindHostChannel(db, lease, { agentId: agent.incarnation, paneId: pane })).toBe(true);
-      const view = { viewState: "open", paneId: pane, agentId: agent.incarnation } as CarrierJob;
-      expect((await proveViewGone(db, view)).state).toBe("alive");
+      const view = {
+        wireState: "bound",
+        paneId: pane,
+        viewServer: `tmux:${identity}`,
+        agentId: agent.incarnation,
+      } as CarrierJob;
+      expect((await proveViewGone(view)).state).toBe("alive");
 
       await restartServer(); // the carrier's server is gone; its id lives on, recycled
       expect(identity).not.toBe(await serverIdentity());
-      expect(await proveViewGone(db, view)).toEqual({ state: "gone" });
+      expect(await proveViewGone(view)).toEqual({ state: "gone" });
       await expect(
         reserveHostChannel(db, "dev", "other", { paneAlive: viewRunning }),
       ).resolves.toBeDefined();

@@ -826,7 +826,9 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         // The name is ours: no live agent owns a socket at this path (nor, holding the
         // reservation, a job file: an earlier one's is moved aside, never deleted).
         rmSync(ctlSocket, { force: true });
-        const jobFile = carrier ? claimLeaseJobFile(db, opts.workstream, opts.name) : undefined;
+        const jobFile = reservation
+          ? claimLeaseJobFile(db, opts.workstream, opts.name, reservation).path
+          : undefined;
         const mux = await activeMux();
         // `scratch` is never `workstream init`-ed: ensure its session (with
         // the placeholder `_mu` window) so it outlives its last agent.

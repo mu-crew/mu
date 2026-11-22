@@ -30,6 +30,7 @@
 //   noId           an error reply with a null id
 //   hang           no reply, ever; a $/cancel is ignored
 //   late           the reply after lateMs, a $/cancel ignored
+//   gated          the reply once the file `<config>.gate` exists, a $/cancel ignored
 //   exit           the process exits mid-call
 //   exitWithHelper the process exits mid-call, leaving a helper in its group
 //                  that holds stdout (its pid in `<config>.helper`)
@@ -594,6 +595,15 @@ function onMessage(msg) {
       deaf.add(id);
       setTimeout(() => answer(id, msg.method, msg.params), config().lateMs ?? 300);
       return;
+    case "gated": {
+      deaf.add(id);
+      const check = () => {
+        if (existsSync(config().gate)) answer(id, msg.method, msg.params);
+        else setTimeout(check, 5);
+      };
+      check();
+      return;
+    }
     case "exit":
       process.exit(9);
       return;

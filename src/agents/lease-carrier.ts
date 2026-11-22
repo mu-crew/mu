@@ -16,7 +16,7 @@
 // (`launch` = 'intent') and holds no handle is never released without
 // `--abandon-job`: nothing mu can observe proves such a carrier will not publish.
 
-import { mkdirSync, renameSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { dirname } from "node:path";
 import { getAgent } from "../agents.js";
 import {
@@ -29,6 +29,7 @@ import {
   releaseCarrierJob,
   reserveCarrierJob,
 } from "../carrier-jobs.js";
+import { beginRelease, claimJobFile, removeJobFile, type WireRef } from "../carrier-wire.js";
 import { carrierJobFilePath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { closePluginJob, proveViewGone, recoverFileHandle } from "../host-policy.js";
@@ -127,29 +128,41 @@ export async function reserveLeaseJob(
 }
 
 /**
- * Inside the spawn lock, holding the name's reservation: make the fixed job path free,
- * so any file seen after the pane opens is this carrier's. A file already there can only
- * be an earlier, released or abandoned, reservation's: it is moved aside (never deleted)
- * and the move is logged. A move that fails throws (before launch). Returns the path.
+ * Inside the spawn lock, holding the name's reservation `r` (as reserved: its token and wire
+ * revision): make the fixed job path free, so any file seen after the pane opens is this
+ * carrier's. A file already there can only be an earlier, released or abandoned,
+ * reservation's: it is moved aside (never deleted) inside the claim's transition
+ * (`claimJobFile`), and the move is logged. A reservation released or replaced meanwhile
+ * throws with nothing moved (the file is its replacement's), as does a move that fails
+ * (before launch). Returns the path and the reservation's new revision.
  */
-export function claimLeaseJobFile(db: Db, workstream: string, name: string): string {
+export function claimLeaseJobFile(
+  db: Db,
+  workstream: string,
+  name: string,
+  r: WireRef,
+): { path: string; rev: number } {
   const path = leaseJobFile(db, workstream, name);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const read = readJobFile(path);
-  if (read.kind === "none") return path;
-  const aside = `${path}.stale-${Date.now()}`;
-  renameSync(path, aside);
-  try {
-    emitEvent(
-      db,
-      workstream,
-      "agent.spawn",
-      `agent spawn ${name}: a job file of an earlier reservation (${describeRead(read)}) moved to ${aside}`,
+  const claimed = claimJobFile(db, r, path);
+  if (claimed === undefined) {
+    throw new Error(
+      `carrier_jobs: the job record of ${workstream}/${name} was released or replaced during the spawn; its job file ${path} is left alone`,
     );
-  } catch {
-    // best-effort
   }
-  return path;
+  if (claimed.moved !== undefined) {
+    try {
+      emitEvent(
+        db,
+        workstream,
+        "agent.spawn",
+        `agent spawn ${name}: a job file of an earlier reservation (${describeRead(claimed.moved.read)}) moved to ${claimed.moved.aside}`,
+      );
+    } catch {
+      // best-effort
+    }
+  }
+  return { path, rev: claimed.rev };
 }
 
 /**
@@ -212,24 +225,28 @@ export async function rollbackLeaseJob(
       if (file && !paneGone) {
         return kept(job.host, handle, "its view is not proven gone");
       }
+      let released: WireRef | undefined;
       if (file) {
-        const p = await proveViewGone(db, job);
+        // The proof's revision is the release's: a reattach that dispatched a view since (it
+        // runs under the agent lock; a rollback does not) wins, and everything is kept.
+        const p = await proveViewGone(job);
         if (p.state !== "gone") return kept(job.host, handle, p.why);
+        const rev = beginRelease(db, job);
+        if (rev === undefined) {
+          return kept(job.host, handle, "its view changed during the rollback (a reattach)");
+        }
+        released = { token: job.token, wireRev: rev };
       }
       try {
         await kind.stop(db, ref);
       } catch (e) {
         return kept(job.host, handle, `stop failed: ${e instanceof Error ? e.message : String(e)}`);
       }
-      if (!file) return "stopped";
-      const now = readJobFile(jobFile);
-      if (now.kind === "handle" && now.job === handle) rmSync(jobFile, { force: true });
-      else if (now.kind !== "none") {
-        return kept(
-          job.host,
-          handle,
-          `stopped, but the job file ${jobFile} is ${describeRead(now)}`,
-        );
+      if (released === undefined) return "stopped";
+      const removed = removeJobFile(db, released, jobFile, handle);
+      if (removed === undefined) return kept(job.host, handle, "stopped, but its record moved");
+      if (typeof removed === "object") {
+        return kept(job.host, handle, `stopped, but the job file ${jobFile} is ${removed.kept}`);
       }
       return "stopped";
     }
@@ -263,10 +280,10 @@ export async function rollbackLeaseJob(
       return kept(job.host, handle, `stop failed: ${e instanceof Error ? e.message : String(e)}`);
     }
     dropStopFailed(jobFile, handle);
-    const now = readJobFile(jobFile);
-    if (now.kind === "handle" && now.job === handle) rmSync(jobFile, { force: true });
-    else if (now.kind !== "none") {
-      return kept(job.host, handle, `stopped, but the job file ${jobFile} is ${describeRead(now)}`);
+    const removed = removeJobFile(db, job, jobFile, handle);
+    if (removed === undefined) return kept(job.host, handle, "stopped, but its record moved");
+    if (typeof removed === "object") {
+      return kept(job.host, handle, `stopped, but the job file ${jobFile} is ${removed.kept}`);
     }
     return "stopped";
   } catch (e) {
@@ -277,7 +294,8 @@ export async function rollbackLeaseJob(
 /**
  * Release the spawn's reservation after the rollback's tree cleanup has run: when nothing
  * was launched ("none": still 'none' and empty) or its job was stopped ("stopped"; the job
- * file is cleaned up). Compare-and-set on token and handle. Never throws.
+ * file is cleaned up). Compare-and-set on token, handle and wire revision (a file kind's record
+ * only from `claimed` or `released`: src/carrier-wire.ts). Never throws.
  */
 export function releaseLeaseReservation(db: Db, token: string, outcome: LeaseRollback): void {
   try {
@@ -465,17 +483,16 @@ export function cleanLeaseJobFile(db: Db, close: LeaseClose): void {
   if (close.action !== "stopped") return;
   const r = close.reservation;
   const jobFile = leaseJobFile(db, r.workstream, r.name);
-  const now = readJobFile(jobFile);
-  if (now.kind === "none") return;
-  if (now.kind === "handle" && now.job === r.job) {
-    rmSync(jobFile, { force: true });
-    return;
-  }
+  // Only the transition owning the record's revision touches the file (src/carrier-wire.ts).
+  const removed = removeJobFile(db, r, jobFile, r.job ?? "");
+  if (removed === "removed" || removed === "absent") return;
   throw new CarrierJobKeptError(
     r.name,
     r.workstream,
     r.host,
-    `job ${r.job} is stopped, but the job file ${jobFile} is ${describeRead(now)}`,
+    removed === undefined
+      ? `job ${r.job} is stopped, but its record changed during the close`
+      : `job ${r.job} is stopped, but the job file ${jobFile} is ${removed.kept}`,
   );
 }
 

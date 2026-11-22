@@ -88,7 +88,9 @@ const close = () => closeAgent(h.db, "w1", { workstream: "ws" });
 /** As if the record were written before view tracking: its view column dropped, then upgraded. */
 function legacyRecord(): void {
   const cols = h.db
-    .prepare("SELECT name FROM pragma_table_info('carrier_jobs') WHERE name LIKE 'view%'")
+    .prepare(
+      "SELECT name FROM pragma_table_info('carrier_jobs') WHERE name IN ('wire_state', 'wire_rev', 'view_server')",
+    )
     .all() as Array<{ name: string }>;
   for (const c of cols) h.db.exec(`ALTER TABLE carrier_jobs DROP COLUMN ${c.name}`);
   h.db.close();
