@@ -564,7 +564,7 @@ export async function teardownWorkstream(
   const strays: string[] = [];
   for (const a of agentsBefore) {
     if (sessionPanes.has(a.paneId)) continue;
-    if (await viewPresent(a.paneId, mux)) strays.push(a.name);
+    if (await viewPresent(a.paneId, mux, a.paneIdentity)) strays.push(a.name);
   }
   if (strays.length > 0) throw new WorkstreamPanesLiveError(opts.workstream, strays);
   const muxAliveBefore = sessionPanes.size > 0;
@@ -588,7 +588,7 @@ export async function teardownWorkstream(
   for (const a of agentsBefore) {
     let reason: "alive" | "unknown" | undefined;
     try {
-      if (await viewPresent(a.paneId, mux)) reason = "alive";
+      if (await viewPresent(a.paneId, mux, a.paneIdentity)) reason = "alive";
     } catch {
       reason = "unknown";
     }
@@ -736,15 +736,20 @@ export async function reinitWorkstream(
 function listAgentPanes(
   db: Db,
   workstream: string,
-): { name: string; paneId: string; incarnation: number }[] {
+): { name: string; paneId: string; paneIdentity: string | null; incarnation: number }[] {
   const rows = db
     .prepare(
-      `SELECT a.name, a.pane_id AS paneId, a.id AS incarnation FROM agents a
+      `SELECT a.name, a.pane_id AS paneId, a.pane_identity AS paneIdentity, a.id AS incarnation FROM agents a
          JOIN workstreams ws ON ws.id = a.workstream_id
         WHERE ws.name = ?
         ORDER BY a.name, a.pane_id`,
     )
-    .all(workstream) as { name: string; paneId: string; incarnation: number }[];
+    .all(workstream) as {
+    name: string;
+    paneId: string;
+    paneIdentity: string | null;
+    incarnation: number;
+  }[];
   return rows;
 }
 

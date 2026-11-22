@@ -165,7 +165,8 @@ import {
 import { getCarrierJobByName } from "./carrier-jobs.js";
 import type { CtlTool } from "./channels/index.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
-import { activeMux, type CaptureOptions, type MuxPane } from "./mux.js";
+import { viewCapture } from "./jobs/view.js";
+import type { CaptureOptions, MuxPane } from "./mux.js";
 import { resolveActorIdentity } from "./tasks/claim.js";
 import { ensureWorkstream, isScratchWorkstream } from "./workstream.js";
 
@@ -216,6 +217,11 @@ export interface AgentRow {
    * (plugins spec D9). Absent for a built-in channel.
    */
   channelPlugin?: string;
+  /**
+   * The tmux server the pane was spawned on (`agents.pane_identity`): the pane is this agent's only on
+   * that server. Absent: a row older than the column, or a backend with no server identity (unverified).
+   */
+  paneIdentity?: string;
   /** ISO 8601 timestamp. */
   createdAt: string;
   /** ISO 8601 timestamp. */
@@ -314,6 +320,8 @@ export interface InsertAgentInput {
   channelPlugin?: string | null;
   /** A remote hook-harness worker's key on its node (`agents.remote_key`, spec D11); null: none. */
   remoteKey?: string | null;
+  /** The tmux server the pane runs on (`agents.pane_identity`); null: none to record. */
+  paneIdentity?: string | null;
   /** The lease spawn's own `carrier_jobs` reservation token: the one the name fence lets through. */
   reservation?: string;
 }
@@ -338,6 +346,7 @@ interface RawAgentRow {
   gate_token: string | null;
   channel: string | null;
   channel_plugin: string | null;
+  pane_identity: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -364,6 +373,7 @@ const SELECT_AGENT_COLS = `
   a.gate_token AS gate_token,
   a.channel AS channel,
   a.channel_plugin AS channel_plugin,
+  a.pane_identity AS pane_identity,
   a.created_at AS created_at,
   a.updated_at AS updated_at
 `;
@@ -396,6 +406,7 @@ function rowFromDb(row: RawAgentRow): AgentRow {
     // Any stored name: a built-in, or a plugin channel the registry resolves (plugins spec D9).
     channel: row.channel === "" ? null : row.channel,
     ...(row.channel_plugin !== null ? { channelPlugin: row.channel_plugin } : {}),
+    ...(row.pane_identity !== null ? { paneIdentity: row.pane_identity } : {}),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -427,10 +438,10 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
     // carrier_jobs reservation other than the caller's own (src/carrier-jobs.ts).
     inserted = db
       .prepare(
-        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, channel, channel_plugin, remote_key, created_at, updated_at)
+        `INSERT INTO agents (name, workstream_id, cli, pane_id, status, role, tab, cwd, base, command, command_source, spawner, host, collected_head, repo, gate_token, host_transport, channel, channel_plugin, remote_key, pane_identity, created_at, updated_at)
        SELECT @name, @workstreamId, COALESCE(@cli, 'pi'), @paneId, 'spawning',
                COALESCE(@role, 'full-access'), @tab, @cwd, @base, @command, @commandSource,
-               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @channel, @channelPlugin, @remoteKey, @now, @now
+               @spawner, @host, @collectedHead, @repo, @gateToken, @hostTransport, @channel, @channelPlugin, @remoteKey, @paneIdentity, @now, @now
        WHERE NOT EXISTS (SELECT 1 FROM carrier_jobs c
                          WHERE c.workstream = @workstream AND c.name = @name AND c.token IS NOT @reservation)`,
       )
@@ -455,6 +466,7 @@ export function insertAgent(db: Db, input: InsertAgentInput): AgentRow {
         channel: input.channel ?? null,
         channelPlugin: input.channelPlugin ?? null,
         remoteKey: input.remoteKey ?? null,
+        paneIdentity: input.paneIdentity ?? null,
         reservation: input.reservation ?? null,
         now,
       }).changes;
@@ -781,7 +793,7 @@ export async function readAgent(
   const agent = getAgent(db, name, opts.workstream);
   if (!agent) throw new AgentNotFoundError(name);
   // Load-bearing: the scrollback IS the output of this verb.
-  return (await activeMux()).capture(agent.paneId, opts);
+  return viewCapture(agent.paneId, agent.paneIdentity, opts);
 }
 
 export interface ListLiveAgentsOptions {

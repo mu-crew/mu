@@ -11,9 +11,12 @@ import { viewRunning } from "./view.js";
  * pane outlives its occupant as a shell). `undefined` when the multiplexer
  * cannot say: unknown, never a death.
  */
-export async function paneUp(paneId: string): Promise<boolean | undefined> {
+export async function paneUp(
+  paneId: string,
+  identity?: string | null,
+): Promise<boolean | undefined> {
   try {
-    return await viewRunning(paneId, { occupied: true });
+    return await viewRunning(paneId, { occupied: true, identity });
   } catch {
     return undefined;
   }
@@ -24,7 +27,7 @@ export const paneKind: JobKind = {
   caps: { view: "bound", handle: "pane" },
   answer: "running",
   async status(_db, job: JobRef): Promise<JobLiveness> {
-    const up = await paneUp(job.viewPaneId);
+    const up = await paneUp(job.viewPaneId, job.paneIdentity);
     if (up === undefined) return { state: "unknown", reason: "the multiplexer cannot say" };
     return up ? { state: "running" } : { state: "lost", reason: "pane gone" };
   },

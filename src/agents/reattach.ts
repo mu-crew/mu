@@ -12,6 +12,7 @@ import type { Db } from "../db.js";
 import { jobRunning } from "../jobs/kinds.js";
 import { leaseJobRef, leaseKind } from "../jobs/lease.js";
 import type { JobRef } from "../jobs/types.js";
+import { viewIdentity } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -116,7 +117,8 @@ export async function reattachAgent(
       const pid = await Promise.race([created, done]);
       await markPaneHost(mux, pid, p.r.host);
       try {
-        const row = install(db, ws, p, pid);
+        const identity = await viewIdentity(mux).catch(() => undefined);
+        const row = install(db, ws, p, pid, identity);
         clearMarker(db, ws, name); // the row and the reservation name the pane now
         return { p, pid, row };
       } catch (e) {
@@ -200,7 +202,7 @@ export type ReattachResult = Awaited<ReturnType<typeof reattachAgent>>;
  * The install, one immediate transaction: the recovery's admission re-checked, then the row,
  * the reservation's rebind, the record's delete.
  */
-function install(db: Db, ws: string, p: Plan, pid: string): number {
+function install(db: Db, ws: string, p: Plan, pid: string, identity?: string): number {
   const { r, rec } = p;
   return db
     .transaction(() => {
@@ -219,6 +221,7 @@ function install(db: Db, ws: string, p: Plan, pid: string): number {
         ...{ command: "pi", commandSource: "cli-key", spawner: spawnerFromEnv() },
         // Reattach is pi only, over the forwarded control socket: recorded, never derived.
         ...{ host: r.host, hostTransport: "lease", channel: "ctl" },
+        ...(identity !== undefined ? { paneIdentity: identity } : {}),
       });
       if (!rebindCarrierJobAgent(db, r, r, { agentId: incarnation, paneId: pid })) {
         throw new Error("the reservation changed");

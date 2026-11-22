@@ -93,7 +93,7 @@ function parseRecord(stdout: string, token: string): Parsed {
 /** What a gate read needs of its agent row. */
 export type GateAgent = Pick<
   AgentRow,
-  "workstreamName" | "name" | "incarnation" | "paneId" | "gateToken" | "host"
+  "workstreamName" | "name" | "incarnation" | "paneId" | "paneIdentity" | "gateToken" | "host"
 >;
 
 /** The row `agent` names right now: same registry id, pane and token, else it was replaced. */
@@ -128,7 +128,7 @@ export async function readGate(db: Db, agent: GateAgent): Promise<GateReading> {
   const token = agent.gateToken;
   const host = agent.host;
   if (token === null || host === null) return unknown("not a remote command gate");
-  const pane = await viewState(agent.paneId);
+  const pane = await viewState(agent.paneId, undefined, agent.paneIdentity);
   if (pane.state === "unknown") return unknown(pane.reason);
   if (pane.state === "running") return { kind: "running" };
   if (pane.state === "absent") return { kind: "dead", reason: "pane gone" };

@@ -34,6 +34,7 @@ export const gateKind: JobKind = {
         name: job.agent.name,
         incarnation: job.agentId,
         paneId: job.viewPaneId,
+        ...(job.paneIdentity !== undefined ? { paneIdentity: job.paneIdentity } : {}),
         gateToken: job.gateToken ?? null,
         host: job.host?.name ?? null,
       }),

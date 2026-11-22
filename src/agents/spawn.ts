@@ -50,7 +50,7 @@ import {
   releaseHostChannel,
 } from "../hosts.js";
 import { awaitLeaseJob } from "../jobs/lease.js";
-import { viewPresent } from "../jobs/view.js";
+import { viewIdentity, viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
 import { attachShellLine, type CommandSource, markPaneHost } from "../mux/types.js";
@@ -911,6 +911,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         if (profile) await markPaneHost(mux, pid, profile.name);
         readiness = done;
         phase = "finalize";
+        const paneIdentity = await viewIdentity(mux).catch(() => undefined);
         const row = finalizeAgentRow(db, {
           opts,
           cli,
@@ -935,6 +936,8 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
             harness !== "pi",
           piHooks,
           ...(hooksKey !== undefined ? { remoteKey: hooksKey } : {}),
+          // Pane ids restart per tmux server: the row owns this pane only on this one.
+          ...(paneIdentity !== undefined ? { paneIdentity } : {}),
         });
         ownedIncarnation = row.incarnation;
         if (carrier && !bindCarrierJobAgent(db, carrier.token, row.incarnation, pid)) {
@@ -1264,6 +1267,8 @@ export function finalizeAgentRow(
     piHooks: boolean;
     /** A remote hook harness worker's key on its node (spec D11). */
     remoteKey?: string;
+    /** The tmux server the pane runs on, recorded on the row (`agents.pane_identity`). */
+    paneIdentity?: string;
     /** An at-start plugin spawn's placeholder with no worktree (plugins spec D8): patched, not inserted. */
     placeholder?: number;
   },
@@ -1304,6 +1309,7 @@ export function finalizeAgentRow(
       channel,
       channelPlugin: args.channelPlugin ?? null,
       remoteKey: args.remoteKey ?? null,
+      paneIdentity: args.paneIdentity ?? null,
     };
     if (host === undefined) return insertAgent(db, row);
     // The remote path admission again, atomic with the row: no remote I/O in here.
@@ -1320,7 +1326,7 @@ export function finalizeAgentRow(
   // pending): a row replaced since is not ours to repoint.
   const patched = db
     .prepare(
-      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, channel_plugin = ?, remote_key = ?, repo = ?, updated_at = ?
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, channel_plugin = ?, remote_key = ?, repo = ?, pane_identity = ?, updated_at = ?
       WHERE id = ? AND pane_id = ?
         AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
@@ -1338,6 +1344,7 @@ export function finalizeAgentRow(
       args.channelPlugin ?? null,
       args.remoteKey ?? null,
       staged?.host !== undefined ? staged.root : null,
+      args.paneIdentity ?? null,
       new Date().toISOString(),
       placeholder,
       pendingPaneIdFor(opts.name),
