@@ -84,10 +84,11 @@ describe("tmux pasteToPane", () => {
 describe("tmux sendKeys", () => {
   it("named keys as keys, text as literal, both after --", async () => {
     await tmuxBackend.sendKeys?.(fakePane("%7"), ["Escape"]);
-    await tmuxBackend.sendKeys?.(fakePane("%7"), ["-1"], { literal: true });
+    const text = "-1\n\t# 'é'";
+    await tmuxBackend.sendKeys?.(fakePane("%7"), [text], { literal: true });
     expect(calls).toEqual([
       ["send-keys", "-t", "%7", "--", "Escape"],
-      ["send-keys", "-t", "%7", "-l", "--", "-1"],
+      ["send-keys", "-t", "%7", "-l", "--", text],
     ]);
   });
 });

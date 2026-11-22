@@ -5,7 +5,7 @@
 //
 // Real tmux on a PRIVATE socket (never the suite's shared server). Each test kills only its own.
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execa } from "execa";
@@ -21,11 +21,14 @@ import { addHost, bindHostChannel, type HostLease, reserveHostChannel } from "..
 import { viewRunning } from "../src/jobs/view.js";
 import { requireVerifiedPane } from "../src/mux/pane-ref.js";
 import { reconcile } from "../src/reconcile.js";
+import { shellWord } from "../src/shell-quote.js";
 import {
   capture,
   ensureSession,
+  PaneNotFoundError,
   paneAlive,
   paneRef,
+  paneResult,
   pasteToPane,
   resetTmuxExecutor,
   sendKeys,
@@ -225,29 +228,49 @@ describeIfTmux(
       expect(await paneAlive(foreign)).toBe(true);
     }, 30_000);
 
-    it("guarded keys and pastes keep their words, and never reach another server", async () => {
+    it.each(["send-keys", "paste-buffer"])(
+      "%s refuses a restart immediately before delivery",
+      async (verb) => {
+        const { pane, identity } = await agentOn("worker");
+        const ref = requireVerifiedPane(paneRef(pane, identity));
+        let foreign: string | undefined;
+        restartBefore(verb, async () => {
+          foreign = await restartServer();
+        });
+        const text = "DO NOT DELIVER\n\tto a different pane";
+        const delivery =
+          verb === "send-keys" ? sendKeys(ref, [text], { literal: true }) : pasteToPane(ref, text);
+        await expect(delivery).rejects.toBeInstanceOf(PaneNotFoundError);
+        resetTmuxExecutor();
+        expect(foreign).toBe(pane);
+        await foreignOutput(pane);
+        expect(await capture(await privatePane(pane))).not.toContain("DO NOT DELIVER");
+      },
+      30_000,
+    );
+
+    it("a guarded retained spawn preserves multiline command and environment arguments", async () => {
       await ensureSession(session);
+      const text = "first\n\tsecond 'é😀'\n  # third";
+      const commandOut = join(dir, "command");
+      const envOut = join(dir, "env");
       const pane = await spawnAgent({
         session,
-        window: "cat",
-        name: "cat",
-        cli: "pi",
-        command: "cat",
+        window: "retained",
+        name: "retained",
+        cli: "sh",
+        command: `printf %s ${shellWord(text)} > ${shellWord(commandOut)}\n  printf %s "$MULTILINE" > ${shellWord(envOut)}`,
         commandSource: "cli-key",
-        env: {},
+        env: { MULTILINE: text },
+        retainOnExit: true,
       });
-      const identity = await serverIdentity();
-      const ref = requireVerifiedPane(paneRef(pane, identity));
-      await sendKeys(ref, ["it's; a\\;"], { literal: true });
-      await pasteToPane(ref, "pasted 'text'; done", {});
-      await pollUntil(async () => (await capture(ref)).includes("pasted 'text'; done"), {
-        description: "paste shown",
+      const ref = await privatePane(pane);
+      await pollUntil(async () => (await paneResult(ref)).state === "exited", {
+        description: "retained command exited",
       });
-      expect(await capture(ref)).toContain("it's; a\\;");
-      await restartServer();
-      await expect(sendKeys(ref, ["x"])).rejects.toThrow();
-      await expect(pasteToPane(ref, "x")).rejects.toThrow();
-    }, 30_000);
+      expect(readFileSync(commandOut, "utf8")).toBe(text);
+      expect(readFileSync(envOut, "utf8")).toBe(text);
+    });
 
     it("pane_dashboard_identity_bypass: an attach plan runs only on the recorded server", async () => {
       const { pane, identity } = await agentOn("worker");

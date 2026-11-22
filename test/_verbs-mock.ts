@@ -269,10 +269,14 @@ function tmuxWords(line: string): string[] {
   let word = "";
   let started = false;
   let quote: string | undefined;
-  for (const ch of line) {
+  for (let i = 0; i < line.length; i++) {
+    const ch = line.charAt(i);
     if (quote !== undefined) {
       if (ch === quote) quote = undefined;
-      else word += ch;
+      else if (quote === '"' && ch === "\\" && line.charAt(i + 1) === "n") {
+        word += "\n";
+        i++;
+      } else word += ch;
     } else if (ch === "'" || ch === '"') {
       quote = ch;
       started = true;
