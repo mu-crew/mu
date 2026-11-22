@@ -26,7 +26,7 @@ import {
   tmux,
 } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 const SLEEP = "sh -c 'echo FOREIGN-PANE; while true; do sleep 60; done'";
@@ -117,7 +117,7 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
 
     // The foreign pane was never touched.
     expect(await paneAlive(foreign)).toBe(true);
-    expect(await capture(foreign)).toContain("FOREIGN-PANE");
+    expect(await capture(await privatePane(foreign))).toContain("FOREIGN-PANE");
   }, 30_000);
 
   it("the same server keeps its row", async () => {

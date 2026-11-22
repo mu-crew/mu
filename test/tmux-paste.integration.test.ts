@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { tmuxBackend } from "../src/mux.js";
 import { resetSleep, resetTmuxExecutor, tmux } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 
@@ -33,7 +33,9 @@ describeIfTmux("tmux pasteToPane on a real pane", () => {
 
   it("clears the pending input, then the whole text arrives and is submitted", async () => {
     await tmux(["send-keys", "-t", pane, "-l", "--", "stale words"]);
-    await tmuxBackend.pasteToPane?.(pane, "first line\nsecond line", { clearKey: "C-u" });
+    await tmuxBackend.pasteToPane?.(await privatePane(pane), "first line\nsecond line", {
+      clearKey: "C-u",
+    });
     let screen = "";
     await pollUntil(
       async () => {
@@ -50,9 +52,9 @@ describeIfTmux("tmux pasteToPane on a real pane", () => {
 
   it("a text ending in ; or \\; arrives as written: tmux does not split on it", async () => {
     for (const text of ["fix the bug;", "a\\;", ";"]) {
-      await tmuxBackend.pasteToPane?.(pane, text, { clearKey: "C-u" });
-      await tmuxBackend.sendKeys?.(pane, [`k${text}`], { literal: true });
-      await tmuxBackend.sendKeys?.(pane, ["Enter"]);
+      await tmuxBackend.pasteToPane?.(await privatePane(pane), text, { clearKey: "C-u" });
+      await tmuxBackend.sendKeys?.(await privatePane(pane), [`k${text}`], { literal: true });
+      await tmuxBackend.sendKeys?.(await privatePane(pane), ["Enter"]);
     }
     let lines: string[] = [];
     await pollUntil(

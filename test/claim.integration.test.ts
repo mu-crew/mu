@@ -11,9 +11,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, claimTask, getTask, TaskNotFoundError } from "../src/tasks.js";
-import { killSession, resetTmuxExecutor } from "../src/tmux.js";
+import { resetTmuxExecutor } from "../src/tmux.js";
 import { freshWorkstream } from "./_fixture.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { killPrivateSession, tmuxIntegrationAvailable } from "./_mux.js";
 
 const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
@@ -43,7 +43,7 @@ describeIfTmux("claim integration (real tmux + real DB)", () => {
       db.close();
     } catch {}
     try {
-      await killSession(session);
+      await killPrivateSession(session);
     } catch {}
     rmSync(tempDir, { recursive: true, force: true });
   });

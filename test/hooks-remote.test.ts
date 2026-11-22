@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getAgent, insertAgent } from "../src/agents.js";
+import { getAgent } from "../src/agents.js";
 import { newRemoteKey, remoteAnchorWrapper } from "../src/anchors.js";
 import {
   type HooksPane,
@@ -38,6 +38,7 @@ import { getTask } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { type FakeRemoteNode, fakeRemoteNode } from "./_fake-remote-node.js";
 import { rmFixtureDir } from "./_fs.js";

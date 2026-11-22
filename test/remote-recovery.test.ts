@@ -18,13 +18,7 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  closeAgent,
-  deleteAgent,
-  getAgent,
-  getAgentForCleanup,
-  insertAgent,
-} from "../src/agents.js";
+import { closeAgent, deleteAgent, getAgent, getAgentForCleanup } from "../src/agents.js";
 import { applyOp, type Op } from "../src/apply.js";
 import { type DbQueryOptions, cmdDbQuery as runDbQuery } from "../src/cli/db-query.js";
 import { type Db, openDb } from "../src/db.js";
@@ -42,6 +36,7 @@ import {
   WorkstreamRevisionMismatchError,
   workstreamRevision,
 } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";

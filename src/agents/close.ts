@@ -39,7 +39,7 @@ import type { Db } from "../db.js";
 import { resolveHost } from "../host-provider.js";
 import { releaseHostChannelsForAgent } from "../hosts.js";
 import { readJobFile } from "../jobs/lease.js";
-import { viewPid, viewPresent, viewRef, viewRunning } from "../jobs/view.js";
+import { killView, viewPid, viewPresent, viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -548,7 +548,7 @@ async function closeLocked(
   // A pane another tmux server holds under the row's id is not the agent's: never killed.
   // The identity rides in the kill itself (one tmux call): no restart can land between check and kill.
   if (getAgentForCleanup(db, name, opts.workstream) !== undefined && mux !== undefined) {
-    await mux.killPane(viewRef(mux, agent.paneId, agent.paneIdentity)).catch(() => {
+    await killView(mux, agent.paneId, agent.paneIdentity).catch(() => {
       /* idempotent — pane may already be gone, or the mux with it */
     });
   }

@@ -16,30 +16,73 @@
 //   viewRunning  does the pane's command still run? Channel admission and a
 //                job's liveness. Throws when the probe fails.
 
+import { foreignBackend } from "../mux/binding.js";
 import { activeMux } from "../mux/detect.js";
-import type {
-  CaptureOptions,
-  MuxBackend,
-  MuxPane,
-  MuxPaneStatus,
-  PaneResult,
+import {
+  type ActionPaneRef,
+  paneRef,
+  requireVerifiedPane,
+  TmuxPaneBirthError,
+  type VerifiedPaneRef,
+} from "../mux/pane-ref.js";
+import {
+  type AttachTarget,
+  type CaptureOptions,
+  type MuxBackend,
+  MuxError,
+  type MuxPane,
+  type MuxPaneStatus,
+  type PaneResult,
 } from "../mux/types.js";
-import { paneRef, tmux } from "../tmux.js";
+import { tmux } from "../tmux.js";
 
 /** A view's state as the multiplexer reports it, or `unknown` with why. */
 export type ViewState = PaneResult | { state: "unknown"; reason: string };
 
-/**
- * The pane as the backend must be asked for it: tmux gets the id with the server it must be on, so
- * the identity is checked inside the tmux call that acts (`paneRef`). Another backend has no server
- * identity: the bare id.
- */
+/** An action is never allowed on a legacy, ID-only tmux row. */
 export function viewRef(
-  m: MuxBackend,
+  mux: MuxBackend,
   paneId: string,
   identity: string | null | undefined,
-): string {
-  return identity && m.serverIdentity !== undefined ? paneRef(paneId, identity) : paneId;
+): ActionPaneRef {
+  return mux.name === "tmux"
+    ? requireVerifiedPane(paneRef(paneId, identity))
+    : { kind: "native", paneId };
+}
+
+/** ID-only fallback for legacy liveness observations, not effects. */
+function probeRef(
+  mux: MuxBackend,
+  paneId: string,
+  identity?: string | null,
+): string | VerifiedPaneRef {
+  if (mux.name !== "tmux") return paneId;
+  const ref = paneRef(paneId, identity);
+  return ref.kind === "verified" ? ref : ref.paneId;
+}
+
+/** Attach both displayed commands and live actions to the exact tmux pane, not its tab name. */
+export function agentAttachTarget(
+  mux: MuxBackend,
+  agent: { paneId: string; paneIdentity?: string | undefined; tab: string | null; name: string },
+  workstream: string,
+): AttachTarget {
+  const backend = foreignBackend(agent.paneId, mux.name);
+  if (backend !== undefined)
+    throw new MuxError(`pane ${agent.paneId} belongs to ${backend}, not ${mux.name}`);
+  const session = `mu-${workstream}`;
+  if (mux.name === "tmux") {
+    return { session, pane: requireVerifiedPane(paneRef(agent.paneId, agent.paneIdentity)) };
+  }
+  return { session, window: agent.tab ?? agent.name };
+}
+
+export async function killView(
+  mux: MuxBackend,
+  paneId: string,
+  identity?: string | null,
+): Promise<void> {
+  await mux.killPane(viewRef(mux, paneId, identity));
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -55,7 +98,7 @@ export async function viewPresent(
   identity?: string | null,
 ): Promise<boolean> {
   const m = mux ?? (await activeMux());
-  return m.paneAlive(viewRef(m, paneId, identity));
+  return m.paneAlive(probeRef(m, paneId, identity));
 }
 
 /**
@@ -98,10 +141,12 @@ export function birthIdentity(
   paneId: string,
   born: string | undefined,
 ): string | undefined {
-  if (born === undefined && mux.serverIdentity !== undefined) {
-    throw new Error(`could not establish which ${mux.name} server holds pane ${paneId}`);
+  if (mux.name !== "tmux") return undefined;
+  try {
+    return requireVerifiedPane(paneRef(paneId, born)).identity;
+  } catch {
+    throw new TmuxPaneBirthError(paneId);
   }
-  return born;
 }
 
 /** The identity to record for a pane spawned now (`agents.pane_identity`); undefined: none to give. */
@@ -156,7 +201,7 @@ export async function viewPid(
   identity?: string | null,
 ): Promise<number | undefined> {
   const m = mux ?? (await activeMux());
-  return m.panePid?.(viewRef(m, paneId, identity));
+  return m.panePid?.(probeRef(m, paneId, identity));
 }
 
 /** One tmux pane in the batched read: absent, or present with murmur's pane options. */
@@ -204,7 +249,7 @@ export async function viewState(
     if (m.paneResult === undefined) {
       return { state: "unknown", reason: "the multiplexer cannot report a pane's exit" };
     }
-    return await m.paneResult(viewRef(m, paneId, identity));
+    return await m.paneResult(probeRef(m, paneId, identity));
   } catch (e) {
     return { state: "unknown", reason: `mux: ${message(e)}` };
   }
@@ -223,10 +268,10 @@ export async function viewRunning(
 ): Promise<boolean> {
   const mux = await activeMux();
   if (mux.paneResult !== undefined) {
-    return (await mux.paneResult(viewRef(mux, paneId, opts.identity))).state === "running";
+    return (await mux.paneResult(probeRef(mux, paneId, opts.identity))).state === "running";
   }
   if (opts.occupied === true && mux.paneOccupied !== undefined) {
     return await mux.paneOccupied(paneId);
   }
-  return await mux.paneAlive(viewRef(mux, paneId, opts.identity));
+  return await mux.paneAlive(probeRef(mux, paneId, opts.identity));
 }

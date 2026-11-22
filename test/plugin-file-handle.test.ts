@@ -22,6 +22,7 @@ import { reconcile } from "../src/reconcile.js";
 import { addTask, claimTask, getTask, listNotes } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { pluginHostFixture } from "./_plugin-host.js";
+import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
 
 const h = pluginHostFixture({ handshakeInProcess: true });
 const FILE = { handle: "file", start: { lookup: true, fenceKey: false } };
@@ -39,7 +40,7 @@ function views(o: { handle?: string; dies?: boolean } = {}): void {
       const id = `%${++n}`;
       if (o.dies !== true) h.panes.set(id, { command: s.command });
       if (o.handle !== undefined) writeFileSync(jobFile(), `${o.handle}\n`);
-      s.onPaneCreated?.(id);
+      s.onPaneCreated?.(id, FAKE_SERVER_IDENTITY);
       return id;
     },
   });
@@ -62,7 +63,7 @@ function survivingView(pane = "%9"): void {
     spawnAgent: async (s) => {
       h.panes.set(pane, { command: s.command });
       writeFileSync(jobFile(), "file-job-1\n");
-      s.onPaneCreated?.(pane);
+      s.onPaneCreated?.(pane, FAKE_SERVER_IDENTITY);
       throw new Error("injected: the view failed after its id");
     },
     killPane: async () => {},
@@ -299,7 +300,7 @@ describe("the view rule", () => {
         opened++;
         h.panes.set("%9", { command: s.command });
         writeFileSync(jobFile(), "file-job-1\n");
-        s.onPaneCreated?.("%9");
+        s.onPaneCreated?.("%9", FAKE_SERVER_IDENTITY);
         return "%9";
       },
     });
@@ -399,7 +400,7 @@ describe("the view rule", () => {
         await detachedWithGoneView();
         survivingView();
         await reattach().catch(() => {});
-        await expect(close()).rejects.toThrow(/%9 \(the job's dispatcher\) is alive/);
+        await expect(close()).rejects.toThrow(/%9 \(the job's dispatcher\) has no provenance/);
       },
     },
     {

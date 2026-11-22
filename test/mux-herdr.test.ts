@@ -240,13 +240,15 @@ describe("herdr sessions (= workspaces, addressed by label)", () => {
       ["workspace list", WORKSPACE_LIST],
       ["workspace close", OK],
     ]);
-    await herdrBackend.killSession("mu-topotest");
+    await herdrBackend.killSession({ backend: "herdr", session: "mu-topotest" });
     expect(calls.argsOf(1)).toEqual(["workspace", "close", "w1"]);
   });
 
   it("killSession is idempotent for a workspace that is already gone", async () => {
     mockHerdr([["workspace list", WORKSPACE_LIST_EMPTY]]);
-    await expect(herdrBackend.killSession("mu-vanished")).resolves.toBeUndefined();
+    await expect(
+      herdrBackend.killSession({ backend: "herdr", session: "mu-vanished" }),
+    ).resolves.toBe(true);
   });
 
   it("killSession tolerates a workspace closing between list and close", async () => {
@@ -254,7 +256,9 @@ describe("herdr sessions (= workspaces, addressed by label)", () => {
       ["workspace list", WORKSPACE_LIST],
       ["workspace close", serverError(WORKSPACE_NOT_FOUND)],
     ]);
-    await expect(herdrBackend.killSession("mu-topotest")).resolves.toBeUndefined();
+    await expect(
+      herdrBackend.killSession({ backend: "herdr", session: "mu-topotest" }),
+    ).resolves.toBe(true);
   });
 
   // herdr 0.9.0: closing a workspace that has linked worktree
@@ -265,9 +269,9 @@ describe("herdr sessions (= workspaces, addressed by label)", () => {
       ["workspace list", WORKSPACE_LIST],
       ["workspace close", serverError(WORKSPACE_GROUP_CLOSE_REQUIRED)],
     ]);
-    await expect(herdrBackend.killSession("mu-topotest")).rejects.toBeInstanceOf(
-      HerdrWorkspaceGroupCloseError,
-    );
+    await expect(
+      herdrBackend.killSession({ backend: "herdr", session: "mu-topotest" }),
+    ).rejects.toBeInstanceOf(HerdrWorkspaceGroupCloseError);
     // Exactly two calls: the list and the ONE refused close. No retry.
     expect(calls.calls.length).toBe(2);
     expect(calls.argsOf(1)).toEqual(["workspace", "close", "w1"]);
@@ -278,7 +282,9 @@ describe("herdr sessions (= workspaces, addressed by label)", () => {
       ["workspace list", WORKSPACE_LIST],
       ["workspace close", serverError(WORKSPACE_GROUP_CLOSE_REQUIRED)],
     ]);
-    const err = await herdrBackend.killSession("mu-topotest").catch((e: unknown) => e);
+    const err = await herdrBackend
+      .killSession({ backend: "herdr", session: "mu-topotest" })
+      .catch((e: unknown) => e);
     if (!(err instanceof HerdrWorkspaceGroupCloseError)) throw new Error("expected the refusal");
     expect(err.workspaceId).toBe("w1");
     expect(err.session).toBe("mu-topotest");
@@ -325,7 +331,9 @@ describe("herdr panes", () => {
 
   it("killPane is idempotent when the pane is already gone", async () => {
     mockHerdr([["pane close", serverError(PANE_NOT_FOUND)]]);
-    await expect(herdrBackend.killPane("w1:p9")).resolves.toBeUndefined();
+    await expect(
+      herdrBackend.killPane({ kind: "native", paneId: "w1:p9" }),
+    ).resolves.toBeUndefined();
   });
 
   it("killPane still propagates unexpected server errors", async () => {
@@ -335,7 +343,9 @@ describe("herdr panes", () => {
         serverError(JSON.stringify({ error: { code: "server_busy", message: "try later" } })),
       ],
     ]);
-    await expect(herdrBackend.killPane("w1:p1")).rejects.toBeInstanceOf(HerdrError);
+    await expect(herdrBackend.killPane({ kind: "native", paneId: "w1:p1" })).rejects.toBeInstanceOf(
+      HerdrError,
+    );
   });
 
   it("paneAlive is true for a live pane and false for a missing one", async () => {

@@ -54,6 +54,7 @@ import { type FakeRemoteNode, fakeRemoteNode } from "./_fake-remote-node.js";
 import { installMux } from "./_mux.js";
 import { fakePlugin, jobSeams, linkSeam } from "./_plugin.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
+import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
 
 const h = pluginHostFixture({ handshakeInProcess: true });
 const git = (cwd: string, ...args: string[]) =>
@@ -148,7 +149,7 @@ function forwardOnView(over: Parameters<typeof h.stubMux>[0] = {}): void {
       const id = `%${++n}`;
       h.panes.set(id, { command: o.command });
       if (o.cli === "pi") await serveExtension(ctlSocketPath("ws", o.name, h.dir));
-      o.onPaneCreated?.(id);
+      o.onPaneCreated?.(id, FAKE_SERVER_IDENTITY);
       return id;
     },
     ...over,
@@ -302,7 +303,7 @@ describe("pi on the built-in ctl (ladder placement §A, R5)", () => {
       // The view opens and exits at once: no forward ever binds.
       h.stubMux({
         spawnAgent: async (o) => {
-          o.onPaneCreated?.("%9");
+          o.onPaneCreated?.("%9", FAKE_SERVER_IDENTITY);
           return "%9";
         },
       });
@@ -388,7 +389,7 @@ describe("reattaching a detached ctl view (review_plugin_reattach_stale_ctl)", (
             });
           });
         }
-        o.onPaneCreated?.(id);
+        o.onPaneCreated?.(id, FAKE_SERVER_IDENTITY);
         return id;
       },
     });
@@ -480,7 +481,7 @@ describe("--no-ctl skips the handshake, never the view's liveness", () => {
       try {
         h.stubMux({
           spawnAgent: async (o) => {
-            o.onPaneCreated?.("%9");
+            o.onPaneCreated?.("%9", FAKE_SERVER_IDENTITY);
             return "%9";
           },
         });
@@ -526,7 +527,7 @@ describe("admission follows the link's slots (§4.2, §I)", () => {
         h.panes.set("%1", { command: o.command });
         await serveExtension(ctlSocketPath("ws", o.name, h.dir));
         writeFileSync(file, "file-job-1\n"); // the view publishes before it dispatches
-        o.onPaneCreated?.("%1");
+        o.onPaneCreated?.("%1", FAKE_SERVER_IDENTITY);
         return "%1";
       },
     });

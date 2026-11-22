@@ -30,11 +30,11 @@ import { LOCAL_ONLY_ENV } from "../src/remote-agent.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask } from "../src/tasks.js";
-import { killSession, tmux } from "../src/tmux.js";
+import { tmux } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { copyGitFixture, gitIn } from "./_git.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { killPrivateSession, tmuxIntegrationAvailable } from "./_mux.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 
@@ -154,7 +154,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   try {
-    await killSession(`mu-${ws}`);
+    await killPrivateSession(`mu-${ws}`);
   } catch {}
   db.close();
   process.chdir(prevCwd);

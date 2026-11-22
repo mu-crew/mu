@@ -8,8 +8,10 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
+import { spawnAgent as spawnRegistered } from "../src/agents/spawn.js";
 import { getAgent, insertAgent, readAgent } from "../src/agents.js";
 import type { CarrierJob } from "../src/carrier-jobs.js";
 import { planAttach, spawnStep } from "../src/cli/tui/commands.js";
@@ -17,6 +19,8 @@ import { type Db, openDb } from "../src/db.js";
 import { proveViewGone } from "../src/host-policy.js";
 import { addHost, bindHostChannel, type HostLease, reserveHostChannel } from "../src/hosts.js";
 import { viewRunning } from "../src/jobs/view.js";
+import { requireVerifiedPane } from "../src/mux/pane-ref.js";
+import { reconcile } from "../src/reconcile.js";
 import {
   capture,
   ensureSession,
@@ -33,7 +37,8 @@ import {
 } from "../src/tmux.js";
 import { ensureWorkstream, teardownWorkstream, workstreamRevision } from "../src/workstream.js";
 import { pollUntil } from "./_env.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { privatePane, tmuxIntegrationAvailable } from "./_mux.js";
+import { runCliJson } from "./_runCli.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 const SLEEP = "sh -c 'echo FOREIGN-PANE; while true; do sleep 60; done'";
@@ -84,7 +89,7 @@ describeIfTmux(
 
     /** The recycled pane still prints its marker: it was neither read into the row nor killed. */
     const foreignOutput = (pane: string): Promise<void> =>
-      pollUntil(async () => (await capture(pane)).includes("FOREIGN-PANE"), {
+      pollUntil(async () => (await capture(await privatePane(pane))).includes("FOREIGN-PANE"), {
         description: "foreign pane output",
       });
 
@@ -147,6 +152,26 @@ describeIfTmux(
       expect(born).not.toBe(await serverIdentity());
     }, 30_000);
 
+    it("a birth with no identity never rolls back a recycled pane", async () => {
+      await ensureSession(session);
+      let foreign: string | undefined;
+      setTmuxExecutor(async (args) => {
+        const result = await real(args);
+        if (foreign === undefined && args.includes("-P")) {
+          setTmuxExecutor(real);
+          foreign = await restartServer();
+          return { ...result, stdout: `${result.stdout.split("|")[0]}\n` };
+        }
+        return result;
+      });
+      await expect(
+        spawnRegistered(db, { name: "worker", workstream: ws, cli: "sh", command: SLEEP }),
+      ).rejects.toThrow(/which tmux server/);
+      expect(getAgent(db, "worker", ws)).toBeUndefined();
+      expect(foreign).toBe("%1");
+      expect(await paneAlive("%1")).toBe(true);
+    }, 30_000);
+
     it("pane_action_identity_race: a restart before capture-pane never reads the recycled pane", async () => {
       const { pane } = await agentOn("worker");
       let foreign: string | undefined;
@@ -187,6 +212,19 @@ describeIfTmux(
       expect(getAgent(db, "worker", ws)).toBeUndefined();
     }, 30_000);
 
+    it("teardown does not kill a replacement session after reconcile prunes the only row", async () => {
+      const { pane } = await agentOn("worker");
+      const foreign = await restartServer();
+      expect(foreign).toBe(pane);
+      expect((await reconcile(db, { workstream: ws })).prunedGhosts).toBe(1);
+      const result = await teardownWorkstream(db, {
+        workstream: ws,
+        ifRevision: workstreamRevision(db, ws),
+      });
+      expect(result.killedMux).toBe(false);
+      expect(await paneAlive(foreign)).toBe(true);
+    }, 30_000);
+
     it("guarded keys and pastes keep their words, and never reach another server", async () => {
       await ensureSession(session);
       const pane = await spawnAgent({
@@ -199,21 +237,27 @@ describeIfTmux(
         env: {},
       });
       const identity = await serverIdentity();
-      const ref = paneRef(pane, identity);
+      const ref = requireVerifiedPane(paneRef(pane, identity));
       await sendKeys(ref, ["it's; a\\;"], { literal: true });
       await pasteToPane(ref, "pasted 'text'; done", {});
-      await pollUntil(async () => (await capture(pane)).includes("pasted 'text'; done"), {
+      await pollUntil(async () => (await capture(ref)).includes("pasted 'text'; done"), {
         description: "paste shown",
       });
-      expect(await capture(pane)).toContain("it's; a\\;");
+      expect(await capture(ref)).toContain("it's; a\\;");
       await restartServer();
       await expect(sendKeys(ref, ["x"])).rejects.toThrow();
       await expect(pasteToPane(ref, "x")).rejects.toThrow();
     }, 30_000);
 
     it("pane_dashboard_identity_bypass: an attach plan runs only on the recorded server", async () => {
-      const { identity } = await agentOn("worker");
-      const subject = { workstream: ws, name: "worker", tab: null, paneIdentity: identity };
+      const { pane, identity } = await agentOn("worker");
+      const subject = {
+        workstream: ws,
+        name: "worker",
+        tab: null,
+        paneId: pane,
+        paneIdentity: identity,
+      };
       await restartServer();
       const plan = await planAttach(subject);
       if (!plan.ok) throw new Error(plan.reason);
@@ -225,6 +269,58 @@ describeIfTmux(
       expect(ran.code).toBe(97);
       expect(plan.line).toContain("if-shell");
     }, 30_000);
+
+    it("a dashboard attach follows the original pane after its window is renamed and split", async () => {
+      const { pane, identity } = await agentOn("worker");
+      const subject = {
+        workstream: ws,
+        name: "worker",
+        tab: null,
+        paneId: pane,
+        paneIdentity: identity,
+      };
+      const plan = await planAttach(subject);
+      if (!plan.ok) throw new Error(plan.reason);
+      const step = plan.steps[0];
+      if (step === undefined) throw new Error("no attach step");
+      await tmux(["rename-window", "-t", pane, "renamed"]);
+      const split = await spawn("renamed");
+      await tmux(["select-pane", "-t", split]);
+      const decoy = await spawn("worker");
+      const result = await execa(step.command, ["-C", ...step.args], {
+        input: 'display-message -p "attached=#{pane_id}"\ndetach-client\n',
+      });
+      expect(result.stdout).toContain(`attached=${pane}`);
+      expect(result.stdout).not.toContain(`attached=${decoy}`);
+    }, 30_000);
+
+    it.each([
+      ["agent spawn", ["agent", "spawn", "worker-1"]],
+      ["orchestrate", ["orchestrate", "--name", "worker-1"]],
+    ])(
+      "the copied %s attach command never attaches after a restart",
+      async (_verb, argv) => {
+        await ensureSession(session);
+        const spawned = await runCliJson<{ attach: string; agent: { pane_id: string } }>(
+          [...argv, "-w", ws, "--cli", "sh", "--command", SLEEP, "--json"],
+          db.name,
+        );
+        const attach = spawned.data?.attach;
+        expect(attach).toMatch(/^tmux -L mu-test-/);
+        if (attach === undefined) throw new Error("no generated attach line");
+        const run = () =>
+          execa("/bin/sh", ["-c", attach.replace(/^tmux /, "exec tmux -C ")], {
+            input: 'display-message -p "attached=#{pane_id}"\ndetach-client\n',
+            reject: false,
+          });
+        expect((await run()).stdout).toContain("attached=%1");
+        expect(await restartServer()).toBe(spawned.data?.agent.pane_id);
+        const refused = await run();
+        expect(refused.exitCode).toBe(97);
+        expect(refused.stdout).not.toContain("attached=");
+      },
+      30_000,
+    );
 
     it("pane_carrier_liveness_bypass: a dead carrier no longer holds a host slot or proves a view alive", async () => {
       const { pane, identity } = await agentOn("worker");

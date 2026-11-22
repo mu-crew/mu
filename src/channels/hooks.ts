@@ -67,6 +67,7 @@ import { isJobGone, type JobGone, jobUp } from "../jobs/kinds.js";
 import { paneUp } from "../jobs/pane.js";
 import { viewRef } from "../jobs/view.js";
 import { say } from "../messages.js";
+import type { ActionPaneRef } from "../mux/pane-ref.js";
 import { activeMux } from "../mux.js";
 import { sleep } from "../tmux.js";
 import { composeChannel } from "./compose.js";
@@ -1114,7 +1115,7 @@ export const ANSWER_KEY_NAMES: readonly string[] = [
 /** Type each key in order: a named key as a key, anything else as literal text. */
 export async function typeKeys(
   sendKeys: NonNullable<Awaited<ReturnType<typeof activeMux>>["sendKeys"]>,
-  paneId: string,
+  paneId: ActionPaneRef,
   keys: readonly string[],
 ): Promise<void> {
   for (const key of keys) {

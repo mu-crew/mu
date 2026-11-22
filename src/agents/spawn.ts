@@ -53,6 +53,7 @@ import { awaitLeaseJob } from "../jobs/lease.js";
 import { birthIdentity, viewPresent, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
+import { TmuxPaneBirthError } from "../mux/pane-ref.js";
 import { attachShellLine, type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode } from "../output.js";
@@ -906,6 +907,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         // Observe a rejection immediately: it is awaited after the lock.
         done.catch(() => {});
         const pid = await Promise.race([createdPane, done]);
+        const paneIdentity = birthIdentity(mux, pid, born);
         // Capture the pane id on the OUTER scope as soon as it exists so a
         // throw later in the lock (finalizeAgentRow INSERT failure) still
         // routes through rollbackSpawn -> killPane. Assigning only via the
@@ -918,7 +920,6 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         if (profile) await markPaneHost(mux, viewRef(mux, pid, born), profile.name);
         readiness = done;
         phase = "finalize";
-        const paneIdentity = birthIdentity(mux, pid, born);
         const row = finalizeAgentRow(db, {
           opts,
           cli,
@@ -1071,6 +1072,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         lease,
         carrier,
         paneBorn,
+        err instanceof TmuxPaneBirthError,
       );
     } catch (cleanupErr) {
       if (err instanceof Error && err.cause === undefined) {

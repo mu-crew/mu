@@ -57,7 +57,9 @@
 import { execFileCapture } from "../exec-file.js";
 import { say } from "../messages.js";
 import { isJsonMode } from "../output.js";
+import { type ActionPaneRef, nativePaneId } from "./pane-ref.js";
 import { sleep } from "./tmux.js";
+import type { SessionKillTarget } from "./types.js";
 import {
   type AttachTarget,
   type CaptureOptions,
@@ -1222,14 +1224,18 @@ export const herdrBackend: MuxBackend = Object.freeze({
   assertValidPaneId,
 
   ensureSession,
-  killSession,
+  killSession: async (target: SessionKillTarget) => {
+    if (target.backend !== "herdr") throw new MuxError("cannot kill another backend's session");
+    await killSession(target.session);
+    return true;
+  },
 
   spawnAgent,
   listPanes,
   paneAlive,
-  killPane,
-  killPaneCommand,
-  capture,
+  killPane: async (pane: ActionPaneRef) => killPane(nativePaneId(pane)),
+  killPaneCommand: (pane: ActionPaneRef) => killPaneCommand(nativePaneId(pane)),
+  capture: async (pane: ActionPaneRef, opts?: CaptureOptions) => capture(nativePaneId(pane), opts),
 
   attachCommands,
 

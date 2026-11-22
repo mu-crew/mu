@@ -19,7 +19,7 @@ import { resetTmuxExecutor, setTmuxExecutor, type TmuxExecutor, tmux } from "../
 import { ensureWorkstream } from "../src/workstream.js";
 import { freshWorkstream } from "./_fixture.js";
 import { rmFixtureDir } from "./_fs.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 import { softTeardown } from "./_teardown.js";
 
 const run = promisify(execFile);
@@ -63,7 +63,8 @@ describeIfTmux("moved panes (real tmux, private socket)", () => {
     await tmux(["new-window", "-t", `=${session}:`, "-n", "w", SLEEP]);
     await tmux(["new-session", "-d", "-s", holding]);
     pane = (await tmux(["list-panes", "-t", `=${session}:w`, "-F", "#{pane_id}"])).trim();
-    insertAgent(db, { name: "mw", workstream: ws, paneId: pane });
+    const { identity } = await privatePane(pane);
+    insertAgent(db, { name: "mw", workstream: ws, paneId: pane, paneIdentity: identity });
   });
 
   afterEach(async () => {
@@ -84,12 +85,13 @@ describeIfTmux("moved panes (real tmux, private socket)", () => {
 
   it("move_during_kill: the pane moves right before kill-session; its row survives, the pane is alive", async () => {
     setTmuxExecutor(async (args) => {
-      if (args[0] === "kill-session") {
+      if (args.some((arg) => arg.includes("kill-session"))) {
         await rawTmux(["move-window", "-s", pane, "-t", `${holding}:`]);
       }
       return rawTmux(args);
     });
     const r = await softTeardown(db, ws);
+    expect(r.killedMux).toBe(false);
     expect(await alive()).toBe(true);
     expect(r.orphanedAgents).toEqual([{ name: "mw", paneId: pane, reason: "alive" }]);
     expect(
@@ -106,7 +108,9 @@ describeIfTmux("moved panes (real tmux, private socket)", () => {
     // A kill-pane that does not stop it (the mux refuses): the pane stays alive.
     const real: TmuxExecutor = async (args) => rawTmux(args);
     setTmuxExecutor(async (args) =>
-      args[0] === "kill-pane" ? { stdout: "", stderr: "", exitCode: 0 } : real(args),
+      args.some((arg) => arg.includes("kill-pane"))
+        ? { stdout: "", stderr: "", exitCode: 0 }
+        : real(args),
     );
     await expect(closeAgent(db, "mw", { workstream: ws })).rejects.toBeInstanceOf(
       AgentPaneStillAliveError,

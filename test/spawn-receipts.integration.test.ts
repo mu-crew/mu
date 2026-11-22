@@ -3,7 +3,7 @@
 // tmux, so every attempt ends UNSENT (exit 4) and must leave nothing behind:
 // the interesting part is that concurrent callers of one attempt are
 // serialised by the strict attempt lock (or refused with exit 4), never
-// interleaved. Needs `npm run build` and $TMUX.
+// interleaved. Needs `npm run build` and a private test tmux socket.
 
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -15,12 +15,12 @@ import { withSpawnAttemptLock } from "../src/agents/lock.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask } from "../src/tasks/edit.js";
 import { taskIdFor } from "../src/tasks.js";
-import { killSession } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { killPrivateSession, tmuxIntegrationAvailable } from "./_mux.js";
 
 const execFileP = promisify(execFile);
 const CLI = join(process.cwd(), "dist", "cli.js");
-const ready = process.env.TMUX !== undefined && process.env.TMUX !== "" && existsSync(CLI);
+const ready = tmuxIntegrationAvailable() && existsSync(CLI);
 const describeIfReady = ready ? describe : describe.skip;
 
 describeIfReady("spawn --task across processes (real tmux)", () => {
@@ -41,7 +41,7 @@ describeIfReady("spawn --task across processes (real tmux)", () => {
   afterEach(async () => {
     db.close();
     try {
-      await killSession(`mu-${ws}`);
+      await killPrivateSession(`mu-${ws}`);
     } catch {}
     rmSync(dir, { recursive: true, force: true });
   });

@@ -28,12 +28,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addTask, claimTask, closeTask, getTask } from "../src/tasks.js";
-import { killPane, killSession, paneAlive, resetTmuxExecutor } from "../src/tmux.js";
+import { killPane, paneAlive, resetTmuxExecutor } from "../src/tmux.js";
 import { setWaitSleepForTests } from "../src/wait.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { killPrivateSession, privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 import { runCli } from "./_runCli.js";
 
 const TMUX_AVAILABLE = tmuxIntegrationAvailable();
@@ -74,7 +74,7 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
       db.close();
     } catch {}
     try {
-      await killSession(session);
+      await killPrivateSession(session);
     } catch {}
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -122,7 +122,7 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
     // multi-agent stress: on a loaded machine the pane could die before
     // cmdTaskWait seeded its prior-state map, turning the expected
     // exit-6 into a timeout.
-    runDuringFirstWaitSleep(() => killPane(agent.paneId));
+    runDuringFirstWaitSleep(async () => killPane(await privatePane(agent.paneId)));
 
     const start = Date.now();
     // Generous --timeout (60s); if exit 6 doesn't fire fast we'd
@@ -167,7 +167,7 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
     });
     await claimTask(db, "deploy", { agentName: "bob", workstream });
 
-    runDuringFirstWaitSleep(() => killPane(agent.paneId));
+    runDuringFirstWaitSleep(async () => killPane(await privatePane(agent.paneId)));
 
     const { exitCode, stdout, error } = await runCli(
       ["task", "wait", "deploy", "-w", workstream, "--status", "OPEN", "--timeout", "60"],
@@ -234,7 +234,7 @@ describeIfTmux("mu task wait — reaper-detection integration", () => {
     // as soon as ONE task reaches CLOSED; here, with neither closing,
     // the reaper-flip on t1 wins and we get exit 6 (suppression rule
     // is target=CLOSED, which is the default).
-    runDuringFirstWaitSleep(() => killPane(a1.paneId));
+    runDuringFirstWaitSleep(async () => killPane(await privatePane(a1.paneId)));
 
     const { exitCode, stdout } = await runCli(
       ["task", "wait", "t1", "t2", "--any", "-w", workstream, "--timeout", "60"],
@@ -291,10 +291,10 @@ describeIfTmux("mu task wait — cross-workstream reaper isolation", () => {
       db.close();
     } catch {}
     try {
-      await killSession(sessionA);
+      await killPrivateSession(sessionA);
     } catch {}
     try {
-      await killSession(sessionB);
+      await killPrivateSession(sessionB);
     } catch {}
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -341,7 +341,7 @@ describeIfTmux("mu task wait — cross-workstream reaper isolation", () => {
     let sleeps = 0;
     setWaitSleepForTests(async (ms) => {
       sleeps += 1;
-      if (sleeps === 1) await killPane(beta.paneId);
+      if (sleeps === 1) await killPane(await privatePane(beta.paneId));
       if (sleeps === 2) closeTask(db, "alphatask", { workstream: wsA, evidence: "test" });
       await new Promise((resolve) => setTimeout(resolve, Math.min(ms, 25)));
     });
@@ -379,7 +379,7 @@ describeIfTmux("mu task wait — cross-workstream reaper isolation", () => {
     addTask(db, { localId: "betatask", workstream: wsB, title: "B", impact: 50, effortDays: 1 });
     await claimTask(db, "betatask", { agentName: "b-worker", workstream: wsB });
 
-    runDuringFirstWaitSleep(() => killPane(beta.paneId));
+    runDuringFirstWaitSleep(async () => killPane(await privatePane(beta.paneId)));
 
     const { exitCode, stdout } = await runCli(
       ["task", "wait", `${wsA}/alphatask`, `${wsB}/betatask`, "--timeout", "30"],

@@ -17,7 +17,7 @@ import {
   AgentRestartedError,
   AgentSendGateError,
 } from "../src/agents/errors.js";
-import { type AgentRow, insertAgent } from "../src/agents.js";
+import type { AgentRow } from "../src/agents.js";
 import {
   readHooksPane,
   setMurmurHookRunnerForTests,
@@ -33,9 +33,11 @@ import { type Db, openDb } from "../src/db.js";
 import { setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { withEnv } from "./_env.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { rmFixtureDir } from "./_fs.js";
+import { withServerIdentity } from "./_verbs-mock.js";
 
 const WS = "hv";
 const SESSION = "sess-1";
@@ -63,15 +65,17 @@ beforeEach(() => {
   setMuxForTests(tmuxBackend);
   paneLive = true;
   setTmuxExecutor(
-    async (args) =>
-      fake.tmux(args) ??
-      (args[0] === "display-message"
-        ? displayMessage(args)
-        : {
-            stdout: args[0] === "list-panes" ? `%3|${fake.option()}|2000\n` : "",
-            stderr: "",
-            exitCode: 0,
-          }),
+    withServerIdentity(
+      async (args) =>
+        fake.tmux(args) ??
+        (args[0] === "display-message"
+          ? displayMessage(args)
+          : {
+              stdout: args[0] === "list-panes" ? `%3|${fake.option()}|2000\n` : "",
+              stderr: "",
+              exitCode: 0,
+            }),
+    ),
   );
   setMurmurRunnerForTests(async () => null);
   setMurmurPaneRunnerForTests(fake.pane);

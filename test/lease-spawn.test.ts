@@ -40,7 +40,6 @@ import {
   closeAgent,
   deleteAgent,
   getAgent,
-  insertAgent,
   resetCommandResolverForTests,
   setCommandResolverForTests,
   spawnAgent,
@@ -70,6 +69,7 @@ import { listLogs } from "../src/logs.js";
 import { listRemoteRecoveries, RemoteRecoveryRefusedError } from "../src/remote-recovery.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { helloReply, withHello } from "./_ctl-ext.js";
 import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -481,14 +481,34 @@ describe("rollback after the handle: stop first, then the worktree", () => {
     writeFileSync(jobFile(), "job-5\n");
     deleteAgent(db, "worker-1", "auth"); // reconcile's prune
     setStopExit(1);
-    await rollbackSpawn(db, "worker-1", "%77", undefined, row.incarnation, "auth", undefined, {
-      token: r.token,
-    });
+    await rollbackSpawn(
+      db,
+      "worker-1",
+      "%77",
+      undefined,
+      row.incarnation,
+      "auth",
+      undefined,
+      {
+        token: r.token,
+      },
+      row.paneIdentity,
+    );
     expect(order()).toEqual(["stop job-5"]);
     expect(getCarrierJobByAgent(db, row.incarnation)).toMatchObject({ job: "job-5", host: "dev" });
     // task-spawn's rollback (no token) finds the reservation by the incarnation it owns.
     setStopExit(0);
-    await rollbackSpawn(db, "worker-1", "%77", undefined, row.incarnation, "auth");
+    await rollbackSpawn(
+      db,
+      "worker-1",
+      "%77",
+      undefined,
+      row.incarnation,
+      "auth",
+      undefined,
+      undefined,
+      row.paneIdentity,
+    );
     expect(order()).toEqual(["stop job-5", "stop job-5"]);
     expect(listCarrierJobs(db)).toEqual([]);
     expect(existsSync(jobFile())).toBe(false);

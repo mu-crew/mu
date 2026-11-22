@@ -27,7 +27,6 @@ import {
   closeAgent,
   deleteAgent,
   getAgent,
-  insertAgent,
   previewClose,
   spawnAgent,
 } from "../src/agents.js";
@@ -56,6 +55,7 @@ import { collectRemoteAgent } from "../src/remote-collect.js";
 import { listRemoteRecoveries, RemoteRecoveryPendingError } from "../src/remote-recovery.js";
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { teardownWorkstream, workstreamRevision } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";

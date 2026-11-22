@@ -26,7 +26,6 @@ import {
   closeAgent,
   deleteAgent,
   getAgent,
-  insertAgent,
   previewClose,
   spawnAgent,
   withAgentLock,
@@ -40,6 +39,7 @@ import { addTask, claimTask, getTask, releaseTask } from "../src/tasks.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { teardownWorkstream, workstreamRevision } from "../src/workstream.js";
 import { registerWorktree } from "../src/worktree.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxExecutor, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";

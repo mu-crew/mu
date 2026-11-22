@@ -12,7 +12,7 @@ import type { Db } from "../db.js";
 import { jobRunning } from "../jobs/kinds.js";
 import { leaseJobRef, leaseKind } from "../jobs/lease.js";
 import type { JobRef } from "../jobs/types.js";
-import { birthIdentity, viewRef } from "../jobs/view.js";
+import { birthIdentity, killView, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -109,7 +109,7 @@ export async function reattachAgent(
       let onPaneCreated: (id: string, identity?: string) => void = () => {};
       const created = new Promise<string>((res) => {
         onPaneCreated = (id, identity) => {
-          born = identity;
+          born = birthIdentity(mux, id, identity);
           markerPane(db, ws, name, p.r.job, id);
           res(id);
         };
@@ -120,9 +120,10 @@ export async function reattachAgent(
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
+      const identity = birthIdentity(mux, pid, born);
       await markPaneHost(mux, viewRef(mux, pid, born), p.r.host);
       try {
-        const row = install(db, ws, p, pid, birthIdentity(mux, pid, born));
+        const row = install(db, ws, p, pid, identity);
         clearMarker(db, ws, name); // the row and the reservation name the pane now
         return { p, pid, row, born };
       } catch (e) {
@@ -139,7 +140,7 @@ export async function reattachAgent(
           }
         };
         let fenced = fence();
-        await mux.killPane(viewRef(mux, pid, born)).catch(() => {});
+        await killView(mux, pid, identity).catch(() => {});
         const gone =
           (await jobRunning(db, carrierRef(p, pid, born)).catch(() => undefined)) === false;
         if (!gone && !fenced) fenced = fence();
