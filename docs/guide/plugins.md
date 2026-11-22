@@ -65,18 +65,44 @@ agent drops whatever is still unresolved.
 ## Try the example
 
 [`examples/plugins/mu-plugin-ssh`](../../examples/plugins/mu-plugin-ssh) is
-a plugin of about 200 lines that gives a host a link over plain ssh. The mu
-host's name is the ssh destination:
+an example plugin over plain ssh. The mu host's name is the ssh destination:
 
 ```bash
 mu plugin add ssh -- "$(npm root -g)/@mu-crew/mu/examples/plugins/mu-plugin-ssh"
 mu host add devbox --plugin ssh
 mu host check devbox
+mu agent spawn w1 --host devbox --worktree      # a pane over ssh
 ```
 
-It declares only the link seam, so no agent spawns on it. If your npm
-install is owned by root, copy the file somewhere you own first: mu refuses
-a plugin someone else can write.
+It gives the host a link (exec, fetch) and an example `pane` job kind. If
+your npm install is owned by root, copy the file somewhere you own first: mu
+refuses a plugin someone else can write.
+
+**It is an example, not the supported path to rung 3.** Session and lease
+templates ([remote.md](remote.md)) are supported. The pane kind has these
+limits (the file header has the rest):
+
+- Its view needs its own ssh connection, so a host where only one
+  connection is practical does not fit.
+- Stop covers only the recorded process group. Descendants that leave it
+  survive.
+- The plugin keeps a state root on the host (`MU_SSH_STATE_DIR`, else
+  `$HOME/.local/state/mu-plugin-ssh`). Keep it intact while jobs or delayed
+  views may exist: if it goes missing, stop fails; if you replace it at the
+  same path, stop can report a live job gone.
+- Use a short root whose components are handle-safe. Trailing newlines are
+  stripped before validation and can select the wrong directory.
+
+## Register the mule plugin
+
+<!-- TODO(plugin_mule_link, plugin_mule_lease): not on main yet. Planned:
+`mule init` registers the plugin (`mule_init_register`); manual
+`mu plugin add mule -- /abs/mu-plugin-mule` stays documented. Document the
+mule link, the lease job kind and its file handle once merged.
+See the ladder's TODO: remote-ladder.md#todo-the-mule-lease-plugin. -->
+
+Until it ships, a capped host uses the lease template
+([Session-capped hosts](remote.md#session-capped-hosts)).
 
 ## Write a plugin
 

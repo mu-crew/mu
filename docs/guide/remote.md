@@ -7,7 +7,10 @@ knows no ssh flags: a host profile holds your own command templates, and
 `mu agent spawn --host` fills them. The full recipe, with collecting and
 the traps, is in
 [skills/mu/recipes/remote-workers.md](../../skills/mu/recipes/remote-workers.md).
-Read it before your first remote spawn.
+Read it before your first remote spawn. Which rung fits (a one-off
+`mu host exec`, a session pane, a lease, a provider host) is in
+[the ladder](remote-ladder.md); this page covers rungs 3 to 5 and the
+shared profile grammar.
 
 ## Prepare the host
 
@@ -27,6 +30,12 @@ Read it before your first remote spawn.
 Use one orchestrator DB on your machine. Do not run a second mu on the
 host for the same work: task ownership points into your local `agents`
 table.
+
+## Run one command without an agent
+
+`mu host exec dev -- <cmd>` runs a single command through the profile's
+`--exec` and returns its exit. No agent, pane or task, so it works on herdr
+too. Details and limits: [rung 1](remote-ladder.md#rung-1-mu-host-exec).
 
 ## Add a profile and check it
 
@@ -81,6 +90,8 @@ EOF
   checks the marker; older versions ignore its contents.
 - The pane is the transport: closing it, or its death, ends the agent
   and frees the slot. tmux and Rex; herdr refuses `--host` in one line.
+  A workstream's panes live on one backend: a spawn refuses while a row names
+  another ([ladder](remote-ladder.md#one-backend-per-workstream)).
 - A spawn without `--worktree` refuses (exit 4, `RemotePathOwnedError`) when
   the cwd its exec resolved (`pwd -P`) is exactly, on that host profile,
   another agent's managed remote worktree (one mu made with `--worktree`, in
@@ -427,5 +438,8 @@ MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh
   mule `--config`. Your mule config, mule state and mu DB are never read. An
   exit trap stops every process it started, on failure too. `SMOKE_KEEP=1`
   keeps the dir for a post-mortem.
+
+<!-- TODO: profile migration (fence on `host add --plugin`) and the mule lease
+plugin; both are tracked in [the ladder](remote-ladder.md#todo-profile-migration). -->
 
 Spec: [lease transport](../specs/2026-10-28-lease-transport.md).
