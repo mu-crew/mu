@@ -31,8 +31,8 @@ table.
 ## Add a profile and check it
 
 ```bash
-mu host init dev --ssh   # prints a starter `mu host add`; runs nothing
-mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
+mu host init dev --ssh --template   # prints a starter `mu host add`; runs nothing
+mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 2
 mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
 ```
 
@@ -243,8 +243,8 @@ runs them with `/bin/sh -c`. `spawn --host` uses them (above); `agent
 collect` runs the `--fetch` template.
 
 ```bash
-mu host init dev --ssh        # prints a starter `mu host add`; runs nothing
-mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 1
+mu host init dev --ssh --template   # prints a starter `mu host add`; runs nothing
+mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 2
 mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
 mu host show dev              # templates and the holders of its channels
 ```
@@ -266,15 +266,17 @@ mu host show dev              # templates and the holders of its channels
   prompt): mu stops with exit 5, `human needed`, and the template's first line.
   Never retried; `host check` reports a `handback` step.
 - A `shell` template must not ride a shared ssh master (keep `-o
-  ControlMaster=no -o ControlPath=none`, as `host init --ssh` prints): a `-L`
-  through a master is bound by the master, outlives the pane, and is never
-  re-bound, so the next spawn of that name gets no socket. `host check` warns
-  when the template lacks either option. On a session-capped host use a
-  lease ([below](#session-capped-hosts)).
+  ControlMaster=no -o ControlPath=none`, as `host init --ssh --template`
+  prints): a `-L` through a master is bound by the master, outlives the
+  pane, and is never re-bound, so the next spawn of that name gets no socket.
+  `host check` warns when the template lacks either option.
 - `mu host show` and `list` print the transport (`session` or `lease`) and,
   for a lease, the `stop` template.
-- `--max-sessions N` counts every channel mu holds to the host. At the cap mu
-  refuses with one line naming the holder.
+- `--max-sessions N` counts every channel mu holds for the profile. At the cap
+  mu refuses with one line naming the holder. The SSH session starter uses
+  `2` so a collect or brief exec fits beside one live pane. The starter's
+  pane and exec each open their own SSH connection; sshd's per-connection
+  `MaxSessions 1` does not require a mu cap of `1`.
 - `host check --agent <name> -w <ws>` also probes that agent's forwarded
   control socket, and on a lease agent reports its recorded job handle.
 - A registered plugin can be a host's link instead of `--shell` and
@@ -318,15 +320,14 @@ resolves it.
 
 ## Session-capped hosts
 
-Some hosts allow one ssh session per connection (`MaxSessions 1`). A
-`session` worker's pane holds it for the worker's whole life, so every other
-`ssh` to the host (the murmur collector, `git fetch`, you) is refused, as a
-misleading `Permission denied`. A `lease` profile fixes that: the pane runs a
-local **carrier** that owns a detached remote job on its own connection, so
-no session is held.
+Some hosts allow one SSH session per connection (`MaxSessions 1`). If
+opening independent connections is impractical (for example, each requires
+an authentication prompt), use a `lease` profile. Its local **carrier**
+owns a detached remote job and forwards the control socket without holding
+an SSH session open.
 
 ```bash
-mu host init dev --mule   # prints the starter below; runs nothing
+mu host init dev --mule --template   # prints the starter below; runs nothing
 mu host add dev --transport lease \
   --shell 'mule run --host dev --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}' \
   --exec  'mule exec --host dev -- sh -c {cmd}' \
@@ -352,11 +353,13 @@ mu host check dev --root '~/repo'
   with a byte-equal `--stop`, so every reservation stays stoppable.
 - `local_sock` determines `remote_sock`: both derive from (workstream, agent),
   so a carrier's forward table never maps one local socket to two remote ones.
-- A lease pane holds no host channel, so `--max-sessions` counts only what mu
-  opens itself (`exec`, `fetch`, `stop`, `check`), and `collect` works while a
-  lease worker runs.
-- Why `--fetch` stays plain ssh: a fetch is a bulk transfer, and the carrier's
-  channel is never lent to one.
+- The mule starter leaves `--max-sessions` unset. A lease pane uses no mu
+  channel slot, and mule serializes SSH commands on its private master, so
+  only one session runs there even with `MaxSessions 1`. If you set a mu
+  cap of `1`, a collect can still run beside the lease pane, but mu refuses
+  a second transient command until the first releases its slot.
+- `--fetch` stays plain SSH: it uses a separate connection from mule's
+  master, so a bulk transfer does not hold up mule's commands.
 - Why a session template must not ride a shared master: a `-L` asked of a
   control master is bound by the master, not by the client, and outlives the
   pane. mu then deletes the socket file but the master keeps the listener; the

@@ -350,7 +350,7 @@ export function cmdHostInit(name: string, opts: HostInitOptions): void {
     ...(s.stop === undefined ? [] : [`--stop ${shellQuote(s.stop)}`]),
     ...(s.attach === undefined ? [] : [`--attach ${shellQuote(s.attach)}`]),
     `--fetch ${shellQuote(s.fetch)}`,
-    ...(lease ? [] : ["--max-sessions 1"]),
+    ...(lease ? [] : ["--max-sessions 2"]),
   ].join(" \\\n  ");
   if (isJsonMode()) {
     emitJson({ host: name, ...(lease ? { transport: "lease" } : {}), ...s, command });

@@ -149,6 +149,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- `mu host init --ssh --template` now prints `--max-sessions 2`, so a collect
+  or a remote task brief write fits beside one live pane. Existing profiles
+  and the mule lease starter are unchanged.
 - Exec templates start without inherited `CDPATH`, including templates that
   use `{cwd}`. For templates without `{cwd}` (including the SSH and mule
   starters), `mu host exec --cwd` treats the directory as a literal path,
