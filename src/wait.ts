@@ -18,8 +18,8 @@
 //            iteration, so graph edits count).
 //   owned    what the caller's registration owes it, plus its in-flight
 //            delegate calls (registered the first time a wait sees them).
-//            Owned refs are observed even while explicit targets are waited
-//            on; another caller's work is never seen.
+//            In targets scope, only targets are observed, but their owned
+//            baselines and cursors still apply.
 //
 // first vs all. `first` returns the best ready event over targets and owned
 // refs. `all` returns once every target is done (no targets: every owned
@@ -173,15 +173,16 @@ export async function waitForEvents(
   const callers = [...new Set(opts.callers ?? [])];
   for (const c of callers) checkCaller(c);
   const all = opts.mode === "all";
-  const ownedScope = opts.eventScope !== "refs";
+  const targetsOnly = opts.eventScope === "targets";
+  const usesRegistration = opts.eventScope !== "refs";
   const stuckExplicit = opts.stuckAfterMs;
   const stuckEnabled =
     stuckExplicit !== 0 && opts.status !== "OPEN" && opts.status !== "IN_PROGRESS";
   const stuckAfter = (viaCtl: boolean): number =>
     stuckExplicit ?? (viaCtl ? DEFAULT_CTL_STUCK_AFTER_MS : DEFAULT_STUCK_AFTER_MS);
-  // A wait that owns events (a caller set, or any owned-scope wait: a plain shell or CI
-  // naming refs) sees an owner die; the refs-scope adapters never did.
-  const watchDeaths = callers.length > 0 || ownedScope;
+  // A caller or a registered-scope wait sees an owner die; the refs-scope
+  // adapters with no caller never did.
+  const watchDeaths = callers.length > 0 || usesRegistration;
   const scope = opts.scope;
   const inScope = (workstream: string): boolean => scope === undefined || workstream === scope;
   /** A delegate call is in scope by its own workstream or the workstream of the task it records on. */
@@ -189,9 +190,8 @@ export async function waitForEvents(
     scope === undefined || c.workstream === scope || c.record?.workstream === scope;
   // Owners of watched tasks are read for death and for stalls.
   const observeOwners = (watchDeaths || stuckEnabled) && opts.readAgents !== undefined;
-  /** The callers consume what they are handed (cursors, registration) only for owned-scope waits. */
-  const consumes = ownedScope && callers.length > 0;
-  /** An owned-scope wait owns what its callers spawned: the provenance discovery. */
+  const consumes = usesRegistration && callers.length > 0;
+  /** Use provenance to discover what the callers spawned. */
   const target: TaskStatus = opts.status ?? "CLOSED";
   const discover = consumes && target === "CLOSED";
   const matcher: TextMatcher | undefined =
@@ -213,6 +213,12 @@ export async function waitForEvents(
   const umbrella = assertWaitRefs(db, input, callers, opts);
   const explicit = new Map<string, WaitRef>();
   for (const r of input) explicit.set(refKey(r), r);
+  const blockerRefs = (): WaitRef[] =>
+    opts.blockersOf !== undefined && umbrella != null
+      ? openBlockers(db, umbrella).map((b) => ({ kind: "task", workstream: b.ws, id: b.id }))
+      : [];
+  const selectedKeys = (blockers: readonly WaitRef[]): ReadonlySet<string> | undefined =>
+    targetsOnly ? new Set([...explicit.keys(), ...blockers.map(refKey)]) : undefined;
 
   // ─── one active wait per caller; cursors read before any await ────
   const begun = new Map<string, NonNullable<ReturnType<typeof beginWait>>>();
@@ -297,7 +303,7 @@ export async function waitForEvents(
    * with a zero run baseline: a worker the caller spawned has no earlier run it must
    * not be handed), so a worker that dies and is reaped is still seen dead.
    */
-  const discoverSpawned = (): void => {
+  const discoverSpawned = (selected: ReadonlySet<string> | undefined): void => {
     if (!discover) return;
     const rows = db
       .prepare(
@@ -336,7 +342,10 @@ export async function waitForEvents(
     for (const [spawner, refs] of bySpawner) {
       const reg = readWaitRegistration(db, spawner);
       const have = new Set((reg?.refs ?? []).map((r) => refKey(r)));
-      const fresh = refs.filter((r) => !have.has(refKey(r)));
+      const fresh = refs.filter((r) => {
+        const key = refKey(r);
+        return !have.has(key) && (selected === undefined || selected.has(key));
+      });
       if (fresh.length === 0) continue;
       try {
         registerOwnedWait(db, spawner, fresh);
@@ -353,7 +362,7 @@ export async function waitForEvents(
       : getTask(db, ref.id, ref.workstream);
 
   /** The callers' registered refs, merged (each ref once); records which caller owes which. */
-  const ownedRefs = (): WaitRef[] => {
+  const ownedRefs = (selected: ReadonlySet<string> | undefined): WaitRef[] => {
     if (!consumes) return [];
     const out = new Map<string, WaitRef>();
     ownedKeys.clear();
@@ -363,17 +372,19 @@ export async function waitForEvents(
       // Owed only while work or a run is owed (src/wait-owed.ts): an agent whose row is gone and
       // which was marked finished is DONE, not dead. Its ref leaves the registration, no event.
       // Into a torn-down or deleted workstream: owed nothing (src/wait-registration.ts deadRefs).
-      const dead = deadRefs(db, reg.refs);
+      const refs =
+        selected === undefined ? reg.refs : reg.refs.filter((r) => selected.has(refKey(r)));
+      const dead = deadRefs(db, refs);
       if (dead.length > 0) opts.onDroppedRefs?.(dead);
       const done = [
         ...dead,
-        ...reg.refs.filter(
+        ...refs.filter(
           (r) =>
             !dead.includes(r) && r.kind === "agent" && !agentExists(db, r) && hasDoneMark(db, c, r),
         ),
       ];
       if (done.length > 0) dropOwnedRefs(db, c, done);
-      for (const r of reg.refs) {
+      for (const r of refs) {
         if (done.includes(r)) continue;
         if (r.kind !== "delegate" && !inScope(r.workstream)) continue;
         const key = refKey(r);
@@ -619,8 +630,9 @@ export async function waitForEvents(
       if (b.lost) return;
     }
     if (opts.sync !== false) await ambientIngest(db, { quiet: true });
-    discoverSpawned();
-    const owned = ownedRefs();
+    const selected = targetsOnly ? selectedKeys(blockerRefs()) : undefined;
+    discoverSpawned(selected);
+    const owned = ownedRefs(selected);
     for (const r of explicit.values()) if (r.kind === "agent") track(r, true);
     for (const r of owned) if (r.kind === "agent") track(r, explicit.has(refKey(r)));
     await setupWatches();
@@ -991,7 +1003,8 @@ export async function waitForEvents(
       byKey.set(it.key, it);
       items.push(it);
     };
-    const owned = ownedRefs();
+    const blockers = blockerRefs();
+    const owned = ownedRefs(selectedKeys(blockers));
     const calls = new Map<string, { call: DelegateRow; target: boolean; suppressible: boolean }>();
     const addCall = (
       c: DelegateRow | undefined,
@@ -1029,7 +1042,7 @@ export async function waitForEvents(
     // Every call the callers made is owed its report; the cursor hides the consumed ones.
     if (consumes) {
       for (const c of listDelegatesOf(db, callers)) {
-        if (!callInScope(c)) continue;
+        if (!callInScope(c) || (targetsOnly && !calls.has(c.callId))) continue;
         addCall(c, false, true);
         ownerOfKey.set(
           refKey({ kind: "delegate", workstream: c.workstream, id: c.callId }),
@@ -1040,12 +1053,10 @@ export async function waitForEvents(
     for (const { call, target: isTarget, suppressible } of calls.values()) {
       push(delegateItem(call, isTarget, suppressible, order++));
     }
-    if (opts.blockersOf !== undefined && umbrella !== undefined && umbrella !== null) {
-      const rows = openBlockers(db, umbrella);
+    if (opts.blockersOf !== undefined && umbrella != null) {
       let open = false;
       let readyBlocker = false;
-      for (const b of rows) {
-        const ref: WaitRef = { kind: "task", workstream: b.ws, id: b.id };
+      for (const ref of blockers) {
         const it = taskItem(ref, "CLOSED", true, !all, order++);
         const okey = urgentKey("open", it.key);
         if (!it.done) {
@@ -1081,11 +1092,13 @@ export async function waitForEvents(
         });
       }
     }
-    for (const r of owned) {
-      if (r.kind === "task") push(taskItem(r, target, false, true, order++));
-    }
-    for (const r of owned) {
-      if (r.kind === "agent") push(agentItem(track(r, false), false, order++));
+    if (!targetsOnly) {
+      for (const r of owned) {
+        if (r.kind === "task") push(taskItem(r, target, false, true, order++));
+      }
+      for (const r of owned) {
+        if (r.kind === "agent") push(agentItem(track(r, false), false, order++));
+      }
     }
     // Remember each task's owner, to tell a reaper flip from a release.
     for (const it of items) {

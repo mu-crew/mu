@@ -21,6 +21,8 @@ import { type WaitRef, WaitRefError } from "./wait-types.js";
 /** What a wait asked for, whatever spelling it came in; a resume replays exactly this. */
 export interface ResumeSpec {
   refs: WaitRef[];
+  /** Named waits stay scoped to targets even if a wave or blockers are all that remain. */
+  eventScope?: "targets";
   mode: "first" | "all" | "ready";
   scope?: string;
   status?: string;

@@ -536,7 +536,7 @@ describe("CLI: mu wait --ready", () => {
     expect(JSON.parse(row.spec_json).mode).toBe("ready");
   });
 
-  it("as a managed claude caller: --ready over 3 answers and 2 closes is one result; an explicit wait returns them at once", async () => {
+  it("a managed caller can batch owned events, or restrict --ready to named refs", async () => {
     const env = {
       PI_SESSION_ID: undefined,
       MU_MANAGED_AGENT: "1",
@@ -558,18 +558,19 @@ describe("CLI: mu wait --ready", () => {
       [...calls.map((c) => `delegate:${c}`), "task:w/c1", "task:w/c2"].sort(),
     );
     expect(d.owed).toBe(0);
-    // A default explicit wait on an open task with answers ready returns at once (no holding)...
-    mk("goal");
+    closes(["goal"], "w/orch");
     const more = [
       mkDelegate(db, "w/orch", { record: { workstream: "w", task: "c1" } }),
       mkDelegate(db, "w/orch", { record: { workstream: "w", task: "c1" } }),
     ];
     for (const c of more) answer(db, c);
-    const exp = doc(await mu(["wait", "task:w/goal", "-w", "w", "--timeout", "1", "--json"], env));
-    expect(exp.data.firing?.ref).toBe(`delegate:${more[0]}`);
-    // ...and its next names the ready batch for the answer it left.
-    expect(exp.data.owed).toBe(1);
-    expect(exp.next?.commands[0]).toBe("mu wait --ready -w w");
+    const named = doc(await mu(["wait", "task:w/goal", "--ready", "-w", "w", "--json"], env));
+    expect(named.data.events?.map((e) => e.ref)).toEqual(["task:w/goal"]);
+    // A bare first wait still returns an answer and suggests the ready batch for the other.
+    const bare = doc(await mu(["wait", "-w", "w", "--timeout", "1", "--json"], env));
+    expect(bare.data.firing?.ref).toBe(`delegate:${more[0]}`);
+    expect(bare.data.owed).toBe(1);
+    expect(bare.next?.commands[0]).toBe("mu wait --ready -w w");
   });
 });
 

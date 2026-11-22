@@ -149,6 +149,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- **`mu wait` with named refs no longer fires on unrelated owned events.**
+  Waiting on a named `--command` gate returns the command's exit status,
+  even if an unrelated task has closed. A wait without refs still sees
+  owned events.
 - `mu host init --ssh --template` now prints `--max-sessions 2`, so a collect
   or a remote task brief write fits beside one live pane. Existing profiles
   and the mule lease starter are unchanged.

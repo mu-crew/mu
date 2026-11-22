@@ -328,7 +328,7 @@ export async function runWait(
     result = await waitWithActions(db, spec.refs, {
       callers,
       mode: spec.mode,
-      eventScope: "owned",
+      eventScope: spec.eventScope ?? "owned",
       ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
       ...(status !== undefined ? { status } : {}),
       ...(spec.untilText !== undefined ? { until: { text: spec.untilText } } : {}),
@@ -383,12 +383,13 @@ export async function runWait(
   const owed = owedRefs(result, spec.refs);
   const resumable =
     owed.length > 0 ||
-    callers.length > 0 ||
+    (spec.eventScope !== "targets" && callers.length > 0) ||
     spec.wave !== undefined ||
     spec.blockersOf !== undefined;
   const resumeId = resumable
     ? saveResume(db, callers, {
         refs: owed,
+        ...(spec.eventScope !== undefined ? { eventScope: spec.eventScope } : {}),
         mode: spec.mode,
         onStall: spec.onStall,
         ...(spec.scope !== undefined ? { scope: spec.scope } : {}),
@@ -440,8 +441,7 @@ export async function runWait(
     resume,
     ...(resume === null
       ? {
-          resumeWhy:
-            "everything named was delivered and no caller owns more: nothing left to wait for",
+          resumeWhy: "nothing left in this wait",
         }
       : {}),
     ...(signal !== undefined ? { signal } : {}),
@@ -586,6 +586,7 @@ export async function cmdWait(
     mode,
     onStall,
     verb: "mu wait",
+    ...(refs.length > 0 ? { eventScope: "targets" } : {}),
     ...(scope !== undefined ? { scope } : {}),
     ...(o.status !== undefined ? { status: o.status } : {}),
     ...(o.untilText !== undefined ? { untilText: o.untilText } : {}),
@@ -664,7 +665,7 @@ export function wireWaitCommand(program: Command): void {
     .command("wait")
     .argument("[refs...]", `typed: ${TYPED_FORMS}; none = what this caller started`)
     .description(
-      "Block until the first event you own, then print ONE JSON result (`--text`: lines): `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (consumed; `cursorCut` = entries dropped to fit), `resume` (run as printed).",
+      "Block until the first event on a named ref (with none, on work you own), then print ONE JSON result (`--text`: lines): `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (consumed; `cursorCut` = entries dropped to fit), `resume` (run as printed).",
     )
     .option(
       "--text",
@@ -674,7 +675,7 @@ export function wireWaitCommand(program: Command): void {
     .option("--first-of", "alias for --first")
     .option(
       "--all",
-      "end when every named ref is done (a named ref that dies counts as done; a stall, input, an unnamed death, or an unnamed delegate result ends it early)",
+      "end when every named ref is done (a named ref that dies counts as done; a stall or input ends it early; without named refs, an owned death or delegate result can too)",
     )
     .option("--all-of", "alias for --all")
     .option(
