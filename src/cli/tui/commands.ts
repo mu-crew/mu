@@ -10,6 +10,7 @@
 //     OSC 52 loses nothing. Control characters are refused: a pasted newline runs.
 
 import { spawn } from "node:child_process";
+import { helperPath } from "../../helper-path.js";
 import { activeMux, attachShellLine, type MuxCommand, tmuxAttachMode } from "../../mux.js";
 import { shellWord } from "../../shell-quote.js";
 import type { DrillTarget } from "./rows.js";
@@ -97,7 +98,14 @@ export const spawnStep: StepRunner = (step) =>
     // A nested client is deliberate: tmux refuses an attach while `$TMUX` is set.
     const env = { ...process.env };
     if (step.nested === true) delete env.TMUX;
-    const child = spawn(step.command, [...step.args], {
+    let executable: string;
+    try {
+      executable = helperPath(step.command);
+    } catch (e) {
+      resolve({ code: null, error: message(e), stderr });
+      return;
+    }
+    const child = spawn(executable, [...step.args], {
       stdio: ["inherit", "inherit", "pipe"],
       env,
     });

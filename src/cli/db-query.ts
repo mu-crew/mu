@@ -57,6 +57,7 @@ import {
 import { emitJson, handle, injectedWorkstream, parseLines } from "../cli.js";
 import { type Db, defaultDbPath, resolveWorkstreamId } from "../db.js";
 import { editDistance } from "../edit-distance.js";
+import { helperPath } from "../helper-path.js";
 import { currentOpContext, withOpContext } from "../op-context.js";
 import { muTable, pc } from "../output.js";
 import { RESULT_BYTES } from "../output-contract.js";
@@ -1036,17 +1037,15 @@ export async function cmdDbShell(db: Db, opts: { workstream?: string } = {}): Pr
   if (ws !== undefined) args.push("-cmd", scopedViewsSql(resolveWorkstreamId(db, ws)));
   args.push(defaultDbPath());
   const code = await new Promise<number>((resolve, reject) => {
-    const child = spawn("sqlite3", args, { stdio: "inherit" });
-    child.once("error", (err) =>
-      reject(
-        (err as NodeJS.ErrnoException).code === "ENOENT"
-          ? new UsageError("sqlite3 is not on PATH: install the sqlite3 CLI (3.42 or newer)", {
-              showHelp: false,
-            })
-          : err,
-      ),
-    );
+    const child = spawn(helperPath("sqlite3"), args, { stdio: "inherit" });
+    child.once("error", reject);
     child.once("close", (c, signal) => resolve(c ?? (signal === null ? 1 : 128)));
+  }).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === "ENOENT")
+      throw new UsageError("sqlite3 is not on PATH: install the sqlite3 CLI (3.42 or newer)", {
+        showHelp: false,
+      });
+    throw err;
   });
   if (code !== 0) throw new CliExitError(code);
 }

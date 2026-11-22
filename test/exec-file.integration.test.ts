@@ -3,15 +3,30 @@
 // numeric-or-null exit codes, no rejection, big output, timeout kill.
 
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { execFileCapture, execGroupCapture } from "../src/exec-file.js";
+import { withEnv } from "./_env.js";
 
 const node = process.execPath;
+const parentArgs = [
+  "--experimental-loader",
+  pathToFileURL(join(__dirname, "fixtures", "exec-file-loader.mjs")).href,
+  "--input-type=module",
+  "-e",
+];
 
 describe("execFileCapture", () => {
   it("captures stdout and strips exactly one trailing newline", async () => {
@@ -35,6 +50,38 @@ describe("execFileCapture", () => {
   it("returns exitCode null when the binary does not exist", async () => {
     const r = await execFileCapture("mu-no-such-binary-xyz", []);
     expect(r.exitCode).toBeNull();
+  });
+
+  it("keeps the first executable match until PATH changes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-exec-path-"));
+    const name = "mu-path-probe";
+    const nonExecutable = join(dir, "blocked");
+    const directory = join(dir, "directory");
+    const first = join(dir, "first");
+    const second = join(dir, "second");
+    try {
+      mkdirSync(nonExecutable);
+      writeFileSync(join(nonExecutable, name), "#!/bin/sh\necho blocked\n", { mode: 0o644 });
+      mkdirSync(join(directory, name), { recursive: true });
+      mkdirSync(first);
+      mkdirSync(second);
+      writeFileSync(join(first, name), "#!/bin/sh\necho first\n", { mode: 0o755 });
+      writeFileSync(join(second, name), "#!/bin/sh\necho second\n", { mode: 0o755 });
+      await withEnv("PATH", [nonExecutable, directory, first, second].join(delimiter), async () => {
+        expect(await execFileCapture(name, [])).toMatchObject({ stdout: "first", exitCode: 0 });
+        chmodSync(join(nonExecutable, name), 0o755);
+        expect(await execFileCapture(name, [])).toMatchObject({ stdout: "first", exitCode: 0 });
+        await withEnv("PATH", [second, first].join(delimiter), async () => {
+          expect(await execFileCapture(name, [])).toMatchObject({ stdout: "second", exitCode: 0 });
+          expect(await execFileCapture(join(first, name), [])).toMatchObject({
+            stdout: "first",
+            exitCode: 0,
+          });
+        });
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("does not truncate output above execFile's 1 MiB default", async () => {
@@ -139,7 +186,7 @@ describe("execGroupCapture", () => {
     const mod = pathToFileURL(join(__dirname, "..", "src", "exec-file.ts")).href;
     const script = `import { execGroupCapture } from ${JSON.stringify(mod)};
       await execGroupCapture("/bin/sh", ["-c", ${JSON.stringify(`sh -c 'echo $$ > ${pidFile}; exec sleep 30' || echo no`)}]);`;
-    const parent = spawn(process.execPath, ["--input-type=module", "-e", script], {
+    const parent = spawn(process.execPath, [...parentArgs, script], {
       stdio: "ignore",
     });
     const closed = new Promise((res) => parent.once("close", res));
@@ -198,7 +245,7 @@ describe("execFileCapture parent-exit cleanup", () => {
       const p = execFileCapture(process.execPath, ["-e", ${JSON.stringify(childScript)}], { timeoutMs: 5000 });
       ${how === "exit" ? `import { existsSync } from "node:fs"; while (!existsSync(${JSON.stringify(pidFile)})) await new Promise((r) => setTimeout(r, 20)); process.exit(0);` : "await p;"}
     `;
-    const parent = spawn(process.execPath, ["--input-type=module", "-e", parentScript], {
+    const parent = spawn(process.execPath, [...parentArgs, parentScript], {
       stdio: "ignore",
       cwd: join(__dirname, ".."),
     });

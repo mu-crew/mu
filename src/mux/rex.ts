@@ -630,7 +630,7 @@ export async function attachCommands(target: AttachTarget): Promise<readonly Mux
     target.window === undefined ? undefined : await findWindow(sessionId, target.window);
   const select = ["do", "session.select", `session_id=${sessionId}`];
   if (windowId !== undefined) select.push(`window_id=${windowId}`);
-  return [{ command: "rex", args: [...rexGlobalFlags(), ...select] }];
+  return [{ command: rexBinary(), args: [...rexGlobalFlags(), ...select] }];
 }
 
 /** The label of the Rex session this process runs in (`$REX_SESSION`), or undefined outside Rex. */

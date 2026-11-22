@@ -52,6 +52,7 @@ import {
   markDelegate,
   TERMINAL_DELEGATE_STATES,
 } from "./delegates.js";
+import { helperPath } from "./helper-path.js";
 import { addWorktree, gitToplevel, headSha, owningRoot } from "./vcs/git.js";
 import {
   getWorktreeAt,
@@ -349,10 +350,19 @@ export async function runDelegateProcess(
     rmSync(p.sock, { force: true });
     if (req.workspace === true) workspace = await stageWorktree(db, call);
     const [cmd = "pi", ...cmdArgs] = resolveCliCommand("pi").trim().split(/\s+/);
+    const cwd = workspace ?? resolve(req.cwd ?? process.cwd());
     const logFd = openSync(p.log, "a");
     try {
+      let executable: string;
+      try {
+        executable = helperPath(cmd, cwd);
+      } catch (e) {
+        return await refuse(
+          `cannot start pi (${cmd}): ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
       child = spawn(
-        cmd,
+        executable,
         [
           ...cmdArgs,
           "--mode",
@@ -364,7 +374,7 @@ export async function runDelegateProcess(
           ...(req.model ? ["--model", req.model] : []),
         ],
         {
-          cwd: workspace ?? resolve(req.cwd ?? process.cwd()),
+          cwd,
           detached: true,
           stdio: ["pipe", logFd, logFd],
           env: delegateChildEnv(process.env, {

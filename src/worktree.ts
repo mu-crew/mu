@@ -17,6 +17,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Db } from "./db.js";
 import { defaultStateDir } from "./db.js";
+import { helperPath } from "./helper-path.js";
 import { say } from "./messages.js";
 import { sleep } from "./tmux.js";
 import {
@@ -483,7 +484,8 @@ export async function worktreeHolders(
   }
   let out: string;
   try {
-    out = (await exec(probe.lsof, ["-w", "-Fpcfan"], { maxBuffer: 256 * 1024 * 1024 })).stdout;
+    out = (await exec(helperPath(probe.lsof), ["-w", "-Fpcfan"], { maxBuffer: 256 * 1024 * 1024 }))
+      .stdout;
   } catch (err) {
     // lsof exits 1 when some files could not be read; its output still counts.
     const o = (err as { stdout?: unknown }).stdout;
@@ -588,10 +590,12 @@ async function readPs(): Promise<
   let out: string;
   let mac = false;
   try {
-    out = (await exec("ps", ["-A", ...cols(["pid=", "ppid=", "sid=", "pgid="])])).stdout;
+    out = (await exec(helperPath("ps"), ["-A", ...cols(["pid=", "ppid=", "sid=", "pgid="])]))
+      .stdout;
   } catch {
     try {
-      out = (await exec("ps", ["-A", ...cols(["pid=", "ppid=", "tty=", "pgid="])])).stdout;
+      out = (await exec(helperPath("ps"), ["-A", ...cols(["pid=", "ppid=", "tty=", "pgid="])]))
+        .stdout;
       mac = true;
     } catch {
       return undefined;

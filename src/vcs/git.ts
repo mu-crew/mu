@@ -8,13 +8,17 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import { execGroupCapture } from "../exec-file.js";
+import { helperPath } from "../helper-path.js";
 
 const exec = promisify(execFile);
 
 /** Run git in `cwd`; stdout trimmed. Throws an Error carrying git's stderr. */
 export async function git(args: readonly string[], cwd: string): Promise<string> {
   try {
-    const { stdout } = await exec("git", [...args], { cwd, maxBuffer: 16 * 1024 * 1024 });
+    const { stdout } = await exec(helperPath("git", cwd), [...args], {
+      cwd,
+      maxBuffer: 16 * 1024 * 1024,
+    });
     return stdout.trim();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -105,7 +109,7 @@ export async function removeWorktreeDir(
 
 /** Dirty paths in `dir` (modified, staged, untracked-not-ignored); empty = clean. Throws on failure. */
 export async function dirtyFiles(dir: string): Promise<string[]> {
-  const { stdout } = await exec("git", ["status", "--porcelain"], { cwd: dir });
+  const { stdout } = await exec(helperPath("git", dir), ["status", "--porcelain"], { cwd: dir });
   return stdout
     .split("\n")
     .filter((l) => l.length > 0)

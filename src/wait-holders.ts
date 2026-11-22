@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { helperPath } from "./helper-path.js";
 import { defaultStateDir } from "./state-dir.js";
 
 /** One live wait's mark. */
@@ -54,7 +55,7 @@ function callerDir(caller: string): string {
 /** `ps -o lstart=` of `pid`, parsed as murmur parses it. */
 const psStart: StartReader = (pid) => {
   try {
-    const out = execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
+    const out = execFileSync(helperPath("ps"), ["-o", "lstart=", "-p", String(pid)], {
       encoding: "utf8",
       timeout: 3000,
       stdio: ["ignore", "pipe", "ignore"],

@@ -34,6 +34,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { anchorDir } from "./anchors.js";
 import { HARNESS_TABLE, HARNESSES, type Harness } from "./harnesses.js";
+import { helperPath } from "./helper-path.js";
 
 export interface ProcessRow {
   pid: number;
@@ -78,7 +79,7 @@ export function setProcessTableReaderForTests(
 export function readProcessTable(): Map<number, ProcessRow> | null {
   if (tableForTests !== null) return tableForTests();
   try {
-    const out = execFileSync("ps", ["-A", "-o", "pid=,ppid=,lstart=,args="], {
+    const out = execFileSync(helperPath("ps"), ["-A", "-o", "pid=,ppid=,lstart=,args="], {
       encoding: "utf8",
       timeout: 3000,
       maxBuffer: 64 * 1024 * 1024,

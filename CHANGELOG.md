@@ -72,6 +72,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- mu resolves local helpers such as tmux, git and ps to absolute paths before
+  spawning, so a long PATH no longer costs a spawn attempt per entry on macOS.
+  The lookup is cached until PATH changes. Configured executable paths and host
+  shell templates are unchanged.
 - mu can accept older plugin schema digests explicitly approved for the
   current schema. Incompatible digests name the schema and digest to rebuild
   against. The published schema is unchanged.
@@ -83,7 +87,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   agents that herdr starts natively and pane-free `mu host exec` still work.
 - The fast test tier honours `MUZZLE_SLOTS`. On macOS test processes use
   the toolchain Git directly, and plugin and eval fixtures launch fewer
-  processes. Production command resolution is unchanged.
+  processes.
 - Both test tiers reuse forks for an allowlist of pure unit files. Plugin
   fixtures use in-process pipes for setup-only handshakes, and the typed
   error matrix shares one real child. Integration Git fixtures copy a

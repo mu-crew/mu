@@ -6,6 +6,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { helperPath } from "../src/helper-path.js";
 
 export type MuResult = { code: number; stdout: string; stderr: string };
 /** Per-call options. `env` is merged over this process's env for that child only
@@ -80,8 +81,15 @@ export function runChild(
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const env = childEnv(opts.env);
+    let executable: string;
+    try {
+      executable = helperPath(cmd, undefined, env);
+    } catch (err) {
+      resolve({ code: 1, stdout: "", stderr: err instanceof Error ? err.message : String(err) });
+      return;
+    }
     const child = execFile(
-      cmd,
+      executable,
       [...argv],
       { maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}) },
       (err, stdout, stderr) => {

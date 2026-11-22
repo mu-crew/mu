@@ -6,6 +6,7 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { onExit } from "signal-exit";
+import { helperPath } from "./helper-path.js";
 
 export interface ExecFileResult {
   stdout: string;
@@ -100,8 +101,15 @@ export function execFileCapture(
   opts: { timeoutMs?: number; input?: string } = {},
 ): Promise<ExecFileResult> {
   return new Promise((resolve) => {
+    let executable: string;
+    try {
+      executable = helperPath(cmd);
+    } catch {
+      resolve({ stdout: "", stderr: "", exitCode: null });
+      return;
+    }
     const child = execFile(
-      cmd,
+      executable,
       [...args],
       {
         encoding: "utf8",
@@ -172,6 +180,13 @@ export function execGroupCapture(
   } = {},
 ): Promise<ExecFileResult> {
   return new Promise((resolve) => {
+    let executable: string;
+    try {
+      executable = helperPath(cmd, opts.cwd);
+    } catch {
+      resolve({ stdout: "", stderr: "", exitCode: null });
+      return;
+    }
     const gated = opts.onSpawn !== undefined;
     const spawnOpts = {
       detached: true,
@@ -179,8 +194,8 @@ export function execGroupCapture(
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
     };
     const child = gated
-      ? spawn("/bin/sh", ["-c", 'IFS= read -r _ && exec "$0" "$@"', cmd, ...args], spawnOpts)
-      : spawn(cmd, [...args], spawnOpts);
+      ? spawn("/bin/sh", ["-c", 'IFS= read -r _ && exec "$0" "$@"', executable, ...args], spawnOpts)
+      : spawn(executable, [...args], spawnOpts);
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let truncated = false;
