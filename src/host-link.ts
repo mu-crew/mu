@@ -106,8 +106,7 @@ export interface HostLink {
   /**
    * Run `script` (a POSIX sh command line: the exec template's `{cmd}`) in the remote `cwd`
    * (`.` is the login directory). Returns once nothing it started locally still runs.
-   * `admitted` runs inside admission, before the command, on the admitted snapshot:
-   * a throw runs nothing.
+   * `admitted` runs before the command, on the admitted snapshot: a throw runs nothing.
    */
   exec(
     host: HostView,
@@ -119,6 +118,8 @@ export interface HostLink {
       once?: true;
       /** Keep at most this many bytes of each stream while the command runs (template link). */
       maxStreamBytes?: number;
+      /** Recheck host exec's admitted identity, and mark only an actual dispatch. */
+      dispatch?: { check: () => void; sent: () => void };
     },
     call: LinkCall,
     admitted?: (h: HostView) => void,
@@ -202,8 +203,9 @@ export function templateLink(db: Db): HostLink {
       return { ok: bytes < EXEC_ARG_MAX_BYTES, bytes, limit: EXEC_ARG_MAX_BYTES };
     },
     exec: (host, req, call, admitted) =>
-      underChannel(db, host, call, admitted, (h, lease) =>
-        runLeasedTemplate(
+      underChannel(db, host, call, admitted, (h, lease) => {
+        req.dispatch?.check();
+        return runLeasedTemplate(
           db,
           lease,
           requireProfile(h),
@@ -212,8 +214,9 @@ export function templateLink(db: Db): HostLink {
           req.timeoutMs,
           undefined,
           req.maxStreamBytes,
-        ),
-      ),
+          req.dispatch?.sent,
+        );
+      }),
     fetch: (host, req, call, admitted) =>
       underChannel(db, host, call, admitted, async (h, lease) => {
         // Under the channel, so a refused fetch touches nothing. A stale FETCH_HEAD must

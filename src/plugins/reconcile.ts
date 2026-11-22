@@ -52,6 +52,7 @@ import {
   PluginCallError,
 } from "./errors.js";
 import {
+  type InitializeResult,
   type MethodReplies,
   narrowWatchEnd,
   type Obj,
@@ -93,8 +94,8 @@ export interface CallOpts {
   plusGrace?: boolean;
   /** Send once: a `retryable` refusal is an error, not a resend. */
   once?: boolean;
-  /** Runs after the session is up, immediately before the request is sent: a throw sends nothing. */
-  beforeSend?: (init: { instance: string }) => void;
+  /** Synchronously guard the pipe write on the handshaken peer. A throw sends nothing. */
+  dispatch?: (init: InitializeResult, write: () => boolean) => boolean;
   /** The caller's `Call` (D6): its deadline caps the budget, its signal cancels. */
   call?: Call;
 }
@@ -116,13 +117,13 @@ export async function pluginCall<M extends PluginMethod>(
   if (f !== undefined && f.instance !== s.init.instance) {
     throw new EffectFencedError(plugin, f.subject, f.instance, s.init.instance, f.why);
   }
-  opts.beforeSend?.(s.init);
   let timeoutMs =
     (opts.timeoutMs ??
       (opts.kind === "effect" ? effectTimeoutMs(method) : PLUGIN_READ_TIMEOUT_MS)) +
     (opts.plusGrace === true ? s.process.graceMs : 0);
   if (opts.call !== undefined)
     timeoutMs = Math.max(1, Math.min(timeoutMs, opts.call.deadline - Date.now()));
+  const dispatch = opts.dispatch;
   return s.call(
     method,
     params,
@@ -130,6 +131,7 @@ export async function pluginCall<M extends PluginMethod>(
       kind: opts.kind,
       timeoutMs,
       ...(opts.once === true ? { once: true } : {}),
+      ...(dispatch === undefined ? {} : { dispatch: (write) => dispatch(s.init, write) }),
       ...(opts.call !== undefined ? { signal: opts.call.signal } : {}),
     },
     replyNarrower(method, params, s.init.seams),

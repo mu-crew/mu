@@ -24,6 +24,7 @@ import {
 import {
   muTerminating,
   PluginProcess,
+  type RequestOptions,
   RpcFailure,
   RpcUnanswered,
   terminatingReason,
@@ -54,11 +55,9 @@ export function pluginEnv(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessE
   return out;
 }
 
-export interface CallOptions {
+export interface CallOptions extends RequestOptions {
   /** `effect`: it may change something outside mu (D4); `read`: it changes nothing. */
   kind: "read" | "effect";
-  timeoutMs: number;
-  signal?: AbortSignal;
   /** Never resend after a `retryable` refusal. */
   once?: boolean;
 }
@@ -143,7 +142,7 @@ function session(name: string, init: InitializeResult, proc: PluginProcess): Plu
           raw = await proc.request(
             method,
             { ...params, deadline: Date.now() + opts.timeoutMs },
-            { timeoutMs: opts.timeoutMs, ...(opts.signal ? { signal: opts.signal } : {}) },
+            opts,
           );
         } catch (e) {
           if (e instanceof RpcFailure) {

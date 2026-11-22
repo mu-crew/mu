@@ -113,11 +113,8 @@ export async function hostExec(
   const cwd = opts.cwd ?? ".";
   const timeoutMs = (opts.timeoutS ?? HOST_EXEC_DEFAULT_TIMEOUT_S) * 1000;
   const bytes = Buffer.byteLength(opts.script);
-  const checkFit = (h: typeof view): void => {
-    const f = h.link.fits(h, opts.script, cwd);
-    if (!f.ok) throw new HostExecTooLargeError(host, f.bytes, f.limit);
-  };
-  checkFit(view);
+  const fit = view.link.fits(view, opts.script, cwd);
+  if (!fit.ok) throw new HostExecTooLargeError(host, fit.bytes, fit.limit);
   // Reject a different profile before counting it, and re-check the same target at dispatch.
   const fence = hostExecFence(db, view);
   const started = Date.now();
@@ -144,13 +141,14 @@ export async function hostExec(
         timeoutMs,
         once: true,
         maxStreamBytes: HOST_EXEC_OUTPUT_MAX_BYTES,
+        dispatch: {
+          check: fence,
+          sent: () => {
+            dispatched = true;
+          },
+        },
       },
       { holder: `exec:${process.pid}`, fence },
-      (admitted) => {
-        fence();
-        checkFit(admitted);
-        dispatched = true;
-      },
     );
     record(
       r.exitCode === null

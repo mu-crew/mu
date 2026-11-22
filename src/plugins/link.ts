@@ -52,13 +52,13 @@ import {
   PluginRefusedError,
 } from "./errors.js";
 import type { WireCheckStep } from "./protocol.js";
-import { pluginCall, pluginGraceMs } from "./reconcile.js";
+import { type CallOpts, pluginCall, pluginGraceMs } from "./reconcile.js";
 import {
+  dispatchPluginSession,
   getPlugin,
   PluginRegistrationChangedError,
   pluginRegistrationMatches,
   pluginSeams,
-  pluginSessionMatches,
 } from "./registry.js";
 
 /**
@@ -143,7 +143,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
     params: Record<string, unknown>,
     timeoutMs: number,
     once = false,
-    beforeSend?: (init: { instance: string }) => void,
+    dispatch?: CallOpts["dispatch"],
   ): Promise<LinkRun> => {
     try {
       // The plugin enforces `timeoutMs` and answers. mu's timer allows one grace on top, so
@@ -160,7 +160,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
           timeoutMs,
           plusGrace: true,
           ...(once ? { once } : {}),
-          ...(beforeSend ? { beforeSend } : {}),
+          ...(dispatch === undefined ? {} : { dispatch }),
           ...fence(host, method),
         },
       );
@@ -171,7 +171,7 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
       }
       return r;
     } catch (e) {
-      if (beforeSend !== undefined && e instanceof PluginRegistrationChangedError) {
+      if (dispatch !== undefined && e instanceof PluginRegistrationChangedError) {
         throw new HostExecChangedError(host.name);
       }
       if (e instanceof PluginCallError && e.kind === "human") {
@@ -207,32 +207,33 @@ export function pluginLink(db: Db, name: string, opts: { provider?: boolean } = 
       return { ok: bytes <= declared.maxScriptBytes, bytes, limit: declared.maxScriptBytes };
     },
     exec: (host, req, call, admitted) => {
-      // Host exec's dispatch callback belongs after initialize and the instance fences,
-      // whether this call took a channel, was self-managed, or used a provider record.
-      const check = "lease" in call ? undefined : call.fence;
+      const guard = req.dispatch;
       const admission =
-        check === undefined
+        guard === undefined || "lease" in call
           ? call
           : {
               ...call,
               fence: (profile: NonNullable<HostView["profile"]>) => {
-                check(profile);
                 if (!pluginRegistrationMatches(db, row)) throw new HostExecChangedError(host.name);
+                call.fence?.(profile);
               },
             };
-      return admit(host, admission, check === undefined ? admitted : undefined, (h) =>
+      return admit(host, admission, admitted, (h) =>
         run(
           h,
           "link.exec",
           { script: req.script, cwd: req.cwd },
           req.timeoutMs,
           req.once === true,
-          check !== undefined
-            ? (init) => {
-                if (!pluginSessionMatches(db, row, init)) throw new HostExecChangedError(host.name);
-                admitted?.(h);
-              }
-            : undefined,
+          guard === undefined
+            ? undefined
+            : (init, write) =>
+                dispatchPluginSession(db, row, init, () => {
+                  guard.check();
+                  const sent = write();
+                  if (sent) guard.sent();
+                  return sent;
+                }),
         ),
       );
     },

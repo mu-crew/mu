@@ -80,6 +80,8 @@ export class RpcUnanswered extends Error {
 export interface RequestOptions {
   timeoutMs: number;
   signal?: AbortSignal;
+  /** Synchronously guard the actual pipe write, after the transport preflight. */
+  dispatch?: (write: () => boolean) => boolean;
 }
 
 export type PluginState = "starting" | "ready" | "stopping" | "gone";
@@ -401,7 +403,14 @@ export class PluginProcess {
       this.refStreams(true);
       opts.signal?.addEventListener("abort", onAbort, { once: true });
       // Written in this same turn, so a stop can never find it registered but unsent.
-      pending.sent = this.write(line);
+      try {
+        pending.sent =
+          opts.dispatch === undefined ? this.write(line) : opts.dispatch(() => this.write(line));
+        if (!pending.sent)
+          pending.reject(new RpcUnanswered("not sent: the plugin's stdin is closed", false));
+      } catch (e) {
+        settle(() => reject(e));
+      }
     });
   }
 

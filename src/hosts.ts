@@ -1056,6 +1056,7 @@ export async function runLeasedTemplate(
   localCwd?: string,
   /** Keep at most this many bytes of each stream (the rest is drained and dropped). */
   maxStreamBytes?: number,
+  onDispatch?: () => void,
 ): Promise<HostRun> {
   const template = profile[field];
   if (template === null || template === "")
@@ -1067,7 +1068,10 @@ export async function runLeasedTemplate(
     graceMs: HOST_GRACE_MS,
     ...(localCwd !== undefined ? { cwd: localCwd } : {}),
     ...(maxStreamBytes !== undefined ? { maxStreamBytes } : {}),
-    onSpawn: (pgid) => recordGroup(db, lease, pgid),
+    onSpawn: (pgid) => {
+      recordGroup(db, lease, pgid);
+      onDispatch?.();
+    },
   });
   if (run.exitCode === 3) {
     throw new HostHandbackError(

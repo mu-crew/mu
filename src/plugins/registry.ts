@@ -31,7 +31,12 @@ import {
   PluginRefusedError,
 } from "./errors.js";
 import { muTerminating, terminatingReason } from "./process.js";
-import { declaredSeams, type PluginSeams, type SeamName } from "./protocol.js";
+import {
+  declaredSeams,
+  type InitializeResult,
+  type PluginSeams,
+  type SeamName,
+} from "./protocol.js";
 
 /** A `plugins` row. */
 export interface PluginRow {
@@ -142,9 +147,7 @@ export async function addPlugin(
     throw new PluginRefusedError(name, [
       "no executable given (mu plugin add <name> -- <path> [args…])",
     ]);
-  const existing = db.prepare("SELECT argv_json FROM plugins WHERE name = ?").get(name) as
-    | { argv_json: string }
-    | undefined;
+  const existing = readPlugin(db, name);
   const argvJson = JSON.stringify(argv);
   if (existing !== undefined && existing.argv_json !== argvJson) throw new PluginExistsError(name);
   const trust = trustProblems(name, path);
@@ -155,38 +158,44 @@ export async function addPlugin(
   // A channel's identity is (plugin, name): a name another plugin's channel holds in this DB
   // refuses, in the insert's own transaction (plugins spec D9; P6e1 review round 2).
   const channel = init.seams.channel?.name;
-  db.transaction(() => {
-    const taken =
-      channel === undefined
-        ? undefined
-        : listPlugins(db).find((p) => p.name !== name && pluginSeams(p).channel?.name === channel);
-    if (taken !== undefined) {
-      throw new PluginRefusedError(name, [
-        `its channel ${channel} is already plugin ${taken.name}'s in this DB: a channel name is one plugin's`,
-      ]);
-    }
-    const now = nextCheckTime(readPlugin(db, name));
-    db.prepare(
-      `INSERT INTO plugins (name, argv_json, protocol, version, instance, seams_json, caps_json, schema_digest, added_at, checked_at)
+  const plugin = db
+    .transaction(() => {
+      const current = readPlugin(db, name);
+      if (current !== undefined && current.argv_json !== argvJson)
+        throw new PluginExistsError(name);
+      if (!sameRegistration(existing, current)) throw new PluginRegistrationChangedError(name);
+      const taken =
+        channel === undefined
+          ? undefined
+          : listPlugins(db).find(
+              (p) => p.name !== name && pluginSeams(p).channel?.name === channel,
+            );
+      if (taken !== undefined) {
+        throw new PluginRefusedError(name, [
+          `its channel ${channel} is already plugin ${taken.name}'s in this DB: a channel name is one plugin's`,
+        ]);
+      }
+      const now = nextCheckTime(current);
+      db.prepare(
+        `INSERT INTO plugins (name, argv_json, protocol, version, instance, seams_json, caps_json, schema_digest, added_at, checked_at)
      VALUES (@name, @argv_json, @protocol, @version, @instance, @seams_json, @caps_json, @schema_digest, @now, @now)
      ON CONFLICT (name) DO UPDATE SET protocol = excluded.protocol, version = excluded.version,
        instance = excluded.instance, seams_json = excluded.seams_json, caps_json = excluded.caps_json,
-       schema_digest = excluded.schema_digest, checked_at = excluded.checked_at
-     WHERE argv_json = excluded.argv_json`,
-    ).run({
-      name,
-      argv_json: argvJson,
-      protocol: init.protocol,
-      version: init.plugin.version,
-      instance: init.instance,
-      seams_json: JSON.stringify(declaredSeams(init.seams)),
-      caps_json: JSON.stringify(init.seams),
-      schema_digest: init.schema,
-      now,
-    });
-  }).immediate();
-  const plugin = getPlugin(db, name);
-  if (plugin.argv_json !== argvJson) throw new PluginExistsError(name); // raced another add
+       schema_digest = excluded.schema_digest, checked_at = excluded.checked_at`,
+      ).run({
+        name,
+        argv_json: argvJson,
+        protocol: init.protocol,
+        version: init.plugin.version,
+        instance: init.instance,
+        seams_json: JSON.stringify(declaredSeams(init.seams)),
+        caps_json: JSON.stringify(init.seams),
+        schema_digest: init.schema,
+        now,
+      });
+      return getPlugin(db, name);
+    })
+    .immediate();
   return { plugin, refreshed: existing !== undefined };
 }
 
@@ -207,7 +216,7 @@ const sessions = new Map<string, Promise<PluginSession>>();
 /** The sessions that started, by the same key: to tell one that has since ended. */
 const started = new Map<string, PluginSession>();
 /** Which registration the session actually loaded, not just its self-reported instance. */
-const sessionRegistrations = new WeakMap<object, PluginRow>();
+const sessionRegistrations = new WeakMap<InitializeResult, PluginRow>();
 
 function nextCheckTime(previous?: PluginRow): string {
   const last = Date.parse(previous?.checked_at ?? "");
@@ -215,7 +224,8 @@ function nextCheckTime(previous?: PluginRow): string {
   return new Date(Math.max(Date.now(), Number.isNaN(last) ? 0 : last + 1)).toISOString();
 }
 
-function sameRegistration(at: PluginRow, now: PluginRow | undefined): boolean {
+function sameRegistration(at: PluginRow | undefined, now: PluginRow | undefined): boolean {
+  if (at === undefined) return now === undefined;
   return (
     now !== undefined &&
     at.name === now.name &&
@@ -230,22 +240,30 @@ export function pluginRegistrationMatches(db: Db, admitted: PluginRow): boolean 
   return sameRegistration(admitted, readPlugin(db, admitted.name));
 }
 
-/** Both the current registry and the handshaken peer must still be the admitted registration. */
-export function pluginSessionMatches(
+/** Check the handshaken peer and its registration in the same transaction as the pipe write. */
+export function dispatchPluginSession(
   db: Db,
   admitted: PluginRow,
-  init: { instance: string },
+  init: InitializeResult,
+  write: () => boolean,
 ): boolean {
-  return (
-    init.instance === admitted.instance &&
-    sameRegistration(admitted, sessionRegistrations.get(init)) &&
-    pluginRegistrationMatches(db, admitted)
-  );
+  return db
+    .transaction(() => {
+      if (
+        init.instance !== admitted.instance ||
+        !sameRegistration(admitted, sessionRegistrations.get(init)) ||
+        !pluginRegistrationMatches(db, admitted)
+      ) {
+        throw new PluginRegistrationChangedError(admitted.name);
+      }
+      return write();
+    })
+    .immediate();
 }
 
 export class PluginRegistrationChangedError extends PluginRefusedError {
   constructor(name: string) {
-    super(name, ["its registration changed during initialize"]);
+    super(name, ["its registration or instance changed; retry against the current registration"]);
   }
 }
 

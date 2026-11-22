@@ -7,7 +7,7 @@ import { EventEmitter, once } from "node:events";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { execScript } from "../src/cli/host.js";
 import { type Db, openDb } from "../src/db.js";
 import { execGroupCapture } from "../src/exec-file.js";
@@ -21,12 +21,13 @@ import {
 import { abandonHost, acquireHost } from "../src/host-lifecycle.js";
 import { withHostView } from "../src/host-provider.js";
 import { addHost, checkHost, HostHandbackError, removeHost } from "../src/hosts.js";
-import { PluginRefusedError } from "../src/plugins/errors.js";
-import { setPluginGraceForTests } from "../src/plugins/process.js";
+import { PluginCallError, PluginRefusedError } from "../src/plugins/errors.js";
+import { PluginProcess, setPluginGraceForTests } from "../src/plugins/process.js";
 import {
   addPlugin,
   closePluginSessions,
   getPlugin,
+  PluginRegistrationChangedError,
   removePlugin,
 } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -433,19 +434,24 @@ describe("host exec follow-ups", () => {
     f.calls().filter((c) => c.method === "link.exec").length;
 
   // Pause only the old peer's real wire handshake, after it has captured its reply. No sleeps.
-  async function duringInitialize(f: FakePlugin, host: string, change: () => void | Promise<void>) {
+  async function duringInitialize(
+    f: FakePlugin,
+    host: string,
+    change: () => void | Promise<void>,
+    run: () => Promise<unknown> = () => hostExec(db, host, { script: "echo old" }),
+  ) {
     const gate = new EventEmitter();
     const entered = once(gate, "entered");
     const release = once(gate, "release");
     return withPluginPipes(
       f,
       async () => {
-        const outcome = hostExec(db, host, { script: "echo old" }).catch((e: unknown) => e);
+        const outcome = run().catch((e: unknown) => e);
         try {
           await Promise.race([
             entered,
             outcome.then(() => {
-              throw new Error("host exec settled before initialize");
+              throw new Error("the call settled before initialize");
             }),
           ]);
           await change();
@@ -523,6 +529,24 @@ describe("host exec follow-ups", () => {
     },
   );
 
+  it("a slow explicit refresh cannot overwrite a newer refresh", async () => {
+    const f = await plugin({ instance: "original" });
+    f.set({ instance: "stale" });
+    const outcome = await duringInitialize(
+      f,
+      "p",
+      async () => {
+        f.set({ instance: "current" });
+        await registerFixturePlugin(db, f);
+      },
+      () => addPlugin(db, f.name, f.argv),
+    );
+    expect({ outcome, instance: getPlugin(db, f.name).instance }).toEqual({
+      outcome: expect.any(PluginRegistrationChangedError),
+      instance: "current",
+    });
+  });
+
   it("refuses an in-flight session even when a refresh reports the same instance", async () => {
     const f = await plugin();
     const outcome = await duringInitialize(f, "p", async () => {
@@ -571,6 +595,27 @@ describe("host exec follow-ups", () => {
     expect(execCalls(f)).toBe(0);
     expect(ops()).toEqual([]);
     expect(db.prepare("SELECT 1 FROM host_channels").get()).toBeUndefined();
+  });
+
+  it("does not audit an exec if the handshaken peer stops before the request is written", async () => {
+    const f = await plugin({}, { slots: "mu" });
+    const request = PluginProcess.prototype.request;
+    const stopBeforeExec = vi
+      .spyOn(PluginProcess.prototype, "request")
+      .mockImplementation(async function (this: PluginProcess, method, params, opts) {
+        if (method === "link.exec") await this.shutdown();
+        return request.call(this, method, params, opts);
+      });
+    try {
+      await withPluginPipes(f, async () => {
+        await expect(hostExec(db, "p", { script: "true" })).rejects.toBeInstanceOf(PluginCallError);
+      });
+      expect(execCalls(f)).toBe(0);
+      expect(ops()).toEqual([]);
+      expect(db.prepare("SELECT 1 FROM host_channels").get()).toBeUndefined();
+    } finally {
+      stopBeforeExec.mockRestore();
+    }
   });
 
   it("host check counting: a template name re-added as slots:self during admission is not counted", async () => {
