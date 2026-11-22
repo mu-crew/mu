@@ -169,6 +169,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   so mise shims no longer cause false prerequisite failures. Failed mu calls
   print the named step, both output streams, and worker pane logs before cleanup.
   The pane path registers the example plugin under its declared name, `ssh`.
+- The loopback lease smoke spawns from a local clone of the fixture repo so
+  both sides share the same base commit. It exposes Git and tmux to the remote
+  fixture without exposing other harnesses installed beside them.
 
 ## [5.2.2] — 2026-11-19
 
