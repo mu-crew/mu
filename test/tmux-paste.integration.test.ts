@@ -2,13 +2,18 @@
 // the clear key erases what sat in the input line, and a multi-line text
 // arrives whole and is submitted.
 
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { tmuxBackend } from "../src/mux.js";
-import { resetSleep, resetTmuxExecutor, tmux } from "../src/tmux.js";
+import { shellWord } from "../src/shell-quote.js";
+import { pasteToPane, resetSleep, resetTmuxExecutor, sendKeys, tmux } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
+const MULTILINE = "if x:\n\treturn 'é😀';\n\n  # \"café\" #{pane_id}\n    done \\\n\t$HOME ~\n";
 
 describeIfTmux("tmux pasteToPane on a real pane", () => {
   let session: string;
@@ -48,6 +53,46 @@ describeIfTmux("tmux pasteToPane on a real pane", () => {
     expect(screen).toContain("first line");
     expect(screen).not.toContain("stale words");
     expect(await tmux(["list-buffers", "-F", "#{buffer_name}"])).not.toContain("mu-paste-");
+  });
+
+  it.each([
+    { method: "paste", text: MULTILINE },
+    { method: "long paste", text: MULTILINE.repeat(400) },
+    { method: "literal keys", text: MULTILINE },
+  ])("$method preserves the original bytes on a guarded send", async ({ method, text }) => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-tmux-bytes-"));
+    try {
+      const output = join(dir, "input");
+      await tmux([
+        "respawn-pane",
+        "-k",
+        "-t",
+        pane,
+        `stty raw -echo && exec cat > ${shellWord(output)}`,
+      ]);
+      await pollUntil(() => existsSync(output), { description: "raw input reader ready" });
+      const ref = await privatePane(pane);
+      const literal = method === "literal keys";
+      if (literal) await sendKeys(ref, [text], { literal: true });
+      else await pasteToPane(ref, text);
+      const end = Buffer.from("[end of send]");
+      await tmux(["send-keys", "-t", pane, "-l", "--", end.toString()]);
+      let received = Buffer.alloc(0);
+      await pollUntil(
+        () => {
+          received = readFileSync(output);
+          return received.subarray(-end.length).equals(end);
+        },
+        { description: "end marker received" },
+      );
+      // The unguarded path on main used tmux's default paste separator (CR)
+      // and submitted Enter. Literal send-keys neither translates nor submits.
+      const expected = Buffer.from(literal ? text : `${text.replaceAll("\n", "\r")}\r`);
+      expect(received.length - end.length).toBe(expected.length);
+      expect(received.subarray(0, -end.length).equals(expected)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("a text ending in ; or \\; arrives as written: tmux does not split on it", async () => {

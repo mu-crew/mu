@@ -15,7 +15,7 @@ import { basename } from "node:path";
 import { execFileCapture } from "../exec-file.js";
 import { insideAgent } from "../harnesses.js";
 import { say } from "../messages.js";
-import { shellWord } from "../shell-quote.js";
+import { shellQuote, shellWord } from "../shell-quote.js";
 import {
   type ActionPaneRef,
   PANE_ID_RE,
@@ -187,6 +187,12 @@ export async function tmux(args: readonly string[]): Promise<string> {
 /** Exit status of the guard's else branch: the server answering is not the recorded one. */
 const FOREIGN_SERVER_EXIT = 97;
 
+/** tmux strips indentation and comments after a physical newline even inside quotes. */
+function tmuxCommandWord(arg: string): string {
+  // Let tmux decode the LF after lexing, without expanding the rest of the word.
+  return arg.includes("\n") ? arg.split("\n").map(shellQuote).join('"\\n"') : shellWord(arg);
+}
+
 /** `args` run only on the server `ref` names; optionally require its pane still in `session`. */
 function guardedArgs(ref: VerifiedPaneRef, args: readonly string[], session?: string): string[] {
   const server = `#{==:#{pid}|#{start_time},${ref.identity}}`;
@@ -196,7 +202,7 @@ function guardedArgs(ref: VerifiedPaneRef, args: readonly string[], session?: st
     "-F",
     ...(session === undefined ? [] : ["-t", ref.paneId]),
     session === undefined ? server : `#{&&:${server},${inSession}}`,
-    args.map(shellWord).join(" "),
+    args.map(tmuxCommandWord).join(" "),
     `run-shell "exit ${FOREIGN_SERVER_EXIT}"`,
   ];
 }
@@ -742,19 +748,22 @@ export async function pasteToPane(
     try {
       for (let at = 0; at < points.length; at += BUFFER_CHUNK) {
         const chunk = points.slice(at, at + BUFFER_CHUNK).join("");
-        await paneTmux(ref, () => [
+        // Staging a private buffer does not target a pane. Pass its bytes in
+        // argv, not through the command parser. tmux splits argv at a final
+        // semicolon unless it is escaped.
+        await tmux([
           "set-buffer",
           ...(at > 0 ? ["-a"] : []),
           "-b",
           buffer,
           "--",
-          chunk,
+          chunk.endsWith(";") ? `${chunk.slice(0, -1)}\\;` : chunk,
         ]);
       }
       await paneTmux(ref, (id) => ["paste-buffer", "-p", "-d", "-b", buffer, "-t", id]);
     } catch (error) {
       try {
-        await paneTmux(ref, () => ["delete-buffer", "-b", buffer]);
+        await tmux(["delete-buffer", "-b", buffer]);
       } catch {
         // already gone, or tmux is: the paste's own error matters more
       }

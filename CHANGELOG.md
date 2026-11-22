@@ -170,6 +170,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   after its window is renamed or split. Workstream teardown leaves a tmux
   session alone unless a verified agent pane still belongs to it; a session
   name alone is not enough, including after reconcile prunes the last row.
+- Guarded tmux pastes and literal keys preserve multiline text, including
+  indentation, tabs, and `#` lines. Retained panes also keep multiline
+  commands and environment values intact.
 - tmux 3.8 no longer makes mu mistake live panes for missing ones. Pane,
   window, and Murmur state queries use a separator tmux preserves.
 - Remote worktree prepare claims the path with an atomic `mkdir` and records

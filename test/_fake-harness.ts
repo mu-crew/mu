@@ -363,7 +363,8 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
       if (verb === "set-buffer") {
         const name = args[args.indexOf("-b") + 1] ?? "";
         if (!name.startsWith("mu-paste-")) return undefined;
-        const data = args[args.indexOf("--") + 1] ?? "";
+        // The tmux argv parser removes one backslash from a final escaped semicolon.
+        const data = (args[args.indexOf("--") + 1] ?? "").replace(/\\;$/, ";");
         fake.calls.push([...args]);
         if (data === "") return { stdout: "", stderr: "no data specified", exitCode: 1 };
         buffers.set(name, (args.includes("-a") ? (buffers.get(name) ?? "") : "") + data);
