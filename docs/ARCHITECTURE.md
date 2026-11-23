@@ -315,7 +315,7 @@ are re-export hubs.
 | `src/output.ts`, `src/shell-quote.ts` | colour, `muTable`/`renderBoxTable`, JSON-mode and verb-argv probes (`isJsonMode`, `isSqlVerbArgv`, `isWaitVerbArgv`), `usageLines`; POSIX quoting for `next` commands |
 | `src/glyphs.ts` | the one glyph vocabulary (single-cell Nerd Font codepoints) |
 | `src/index.ts` | SDK entry point |
-| `skills/mu/` | the skill loaded into an agent's context (`SKILL.md` ≤ 600 words, 12 recipes ≤ 250 each and ≤ 4,000 together, pinned by `test/prose-budget.test.ts`, with failure-backed markers); `mu --help` owns the verb reference |
+| `skills/mu/` | the skill loaded into an agent's context (`SKILL.md` ≤ 600 words, 13 recipes ≤ 250 each and ≤ 4,000 together, pinned by `test/prose-budget.test.ts`, with failure-backed markers); `mu --help` owns the verb reference |
 | `scripts/check-doc-links.mjs` | relative-link and anchor checker for every markdown file, run by `test/doc-links.test.ts` |
 | `scripts/smoke-lease.sh`, `scripts/smoke-fake-pi.mjs` | the lease operator smoke: builds mule and mu, real mule against a loopback `sshd MaxSessions 1`, a ctl-speaking fake pi as the remote job ([remote.md](guide/remote.md#smoke-test-a-lease-end-to-end)); explicitly invoked, never in vitest |
 | `scripts/smoke-ssh.sh` | the loopback operator smoke for SSH session templates and the example pane plugin; reuses fake pi, captures failed steps and pane logs before cleanup, never in vitest |
