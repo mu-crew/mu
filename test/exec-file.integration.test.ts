@@ -84,6 +84,20 @@ describe("execFileCapture", () => {
     }
   });
 
+  it("finds a helper installed after a missed lookup", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "mu-exec-miss-"));
+    const name = "mu-late-probe";
+    try {
+      await withEnv("PATH", dir, async () => {
+        expect((await execFileCapture(name, [])).exitCode).toBeNull();
+        writeFileSync(join(dir, name), "#!/bin/sh\necho late\n", { mode: 0o755 });
+        expect(await execFileCapture(name, [])).toMatchObject({ stdout: "late", exitCode: 0 });
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("does not truncate output above execFile's 1 MiB default", async () => {
     const r = await execFileCapture(node, ["-e", "process.stdout.write('x'.repeat(2*1024*1024))"]);
     expect(r.exitCode).toBe(0);

@@ -118,12 +118,17 @@ the agent's row, tasks, worktree owner and recovery.
    collected to `refs/mu/collect/<ws>/<agent>`, then merged
    (`docs/guide/remote.md:194-200`).
 3. **Base commit on a static host** (Q5; Open 1). D7's static rule holds
-   for template and plugin profiles: `from` (default `HEAD`) resolves in
-   the host's repo inside the prepare exec (`src/remote-worktree.ts:209`;
-   plugins `:733`), and the static path never pushes, whatever the link
-   advertises. A `from` naming no commit exits a dedicated code mapped to
-   `RemoteBaseMissingError` (exit 5, `:44-61`), naming rev, host,
-   repo and SHA. The guard and the remedy are separate: mu never fetches
+   for template and plugin profiles: `from` (default `HEAD`) resolves to a sha in the caller's checkout before
+   any remote call (`resolveStaticBase`, `src/agents/spawn-remote.ts`), and the
+   static path never pushes, whatever the link advertises. A `from`
+   naming no commit there refuses with exit 2 (`RemoteBaseRefError`, nothing
+   run). A host repo without the sha exits a dedicated code mapped to
+   `RemoteBaseMissingError` (exit 5), naming rev, host, repo and SHA.
+   *Amended after approval:* the caller-side resolution replaces the first
+   text's host-side resolution, so a retry names the same sha (`--from <sha>`).
+   Open 1 ("the base must already be in the host's repo") holds either way;
+   the local-resolution step is new text, shipped (CHANGELOG, Changed) and
+   awaiting the human's approval note, as §5 and §7.2 carry theirs. The guard and the remedy are separate: mu never fetches
    or pushes itself, and the caller does the remedy the message names.
    The message gives an actionable fix for both cases. A published commit
    (a remote the host can fetch has it): `mu host exec <h> -- git -C
@@ -156,9 +161,11 @@ the agent's row, tasks, worktree owner and recovery.
 4. **Host tmux is a named stance limit** (Q15). mule needs tmux on the
    host for every job (mule `SPEC.md:45`). On a mule-link host,
    `host check` reports a missing master as the hand-back step (lock-free
-   `-O check`, no unlocked ssh fallback, `:65`) and a missing tmux as a
-   separate failed step (a mule probe that dispatches no job; `host info`
-   reports neither today, `:311`). Only serve's rung-2 ops skip tmux.
+   `-O check`, no unlocked ssh fallback, `:65`; `mule host info` already
+   reports `master=false` with its remedy, mule `src/cli.rs:628-680`) and a
+   missing tmux as a separate failed step (a mule probe that dispatches no
+   job; `host info` does not report tmux). Only serve's rung-2 workspace
+   operations skip tmux, not the diagnostic reads.
 
 ### §5. A dropped master is not host loss (*decided*, Q13)
 
@@ -196,7 +203,7 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
 
 1. **A synchronous link call** (`HostLink.exec`), admitted per §4, with no
    row, task, pane or job record; for workspace commands, not bulk
-   transfer (mule `SPEC.md:49`); v1's only gate on a capped host (Q7).
+   transfer (mule `SPEC.md:49`); v1's only gate on the shared capped connection (Q7); an SSH template gate keeps its own connection (§A).
 2. **Size.** (a) `link.fits` before admission: the template's expanded
    argv (`src/host-link.ts:186-192`) or a plugin's script plus cwd; a
    failure is a typed refusal, exit 2, nothing run. (b) Again in
@@ -228,7 +235,7 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
    3 is only mule's (`SPEC.md:283`), a command's 3 arrives as 8 in n; mu
    reads neither 8 nor stderr. Only `--json` tells a command's 5 from
    mu's. Nothing is retried (`src/cli/handle.ts:745-748`).
-6. **Record** (Q6): one `host` log op with host, link, outcome or exit,
+6. **Record** (Q6): one `host.exec` log op with host, link, outcome or exit,
    duration and command byte length; never the command text or output
    (`src/logs.ts:349-375`). No pane, so every backend runs it, herdr too.
 
@@ -319,7 +326,7 @@ its conditions.
 
 | Rung | Provider · link · job | tmux | Rex | herdr | Loop on host | One session per connection | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0 | none · none · `pane` | pi `ctl`, others `hooks` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
+| 0 | none · none · `pane` | pi `ctl`; known hook harnesses `hooks`, other workers `mux`; pi `hooks` is an opt-in (`src/agents/spawn.ts:823-832,1259-1272`) | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
 | 1 | static · template or plugin · none | no channel | no channel | no channel | not needed | fine over the mule link | `host_exec` |
 | 3 | static · template (session) · `pane` | pi `ctl` forwarded; others remote `hooks` | pi `ctl`; others `mux` | refused | needed | fine: each pane opens its own connection | shipped |
 | 3 | static · ssh plugin · `pane` | built-in `ctl`/`hooks`, if conditions hold | built-in `ctl`; others `mux` | refused | needed | as above | `plugin_ssh_pane`, `job_plugin_builtin_channels` |
@@ -331,7 +338,7 @@ its conditions.
 
 - **Conditions for a built-in channel on a plugin job:**
   `job_plugin_builtin_channels` delivers it; the kind honours `sockets`
-  (for `ctl`) and the env; the view is interactive. Today plugin spawn
+  (for `ctl`) and the env; the view is interactive where the channel needs stdin (`hooks`, `mux`), not for `ctl` over a noninteractive mule carrier. Today plugin spawn
   gives the view stdin `/dev/null`, sets no hooks and hands no socket pair
   (`src/agents/spawn-plugin.ts:104,238-258,413-414`; plugins D3, D8). On
   rung 5 a built-in channel needs `firstTurn: "on-send"`; an at-start kind
@@ -354,7 +361,7 @@ its conditions.
 | --- | --- |
 | One build or test on a host, no agent | rung 1, `mu host exec` |
 | The host runs the loop and takes a new connection per pane | rung 3 |
-| Only one connection is practical (a prompted master) | rung 4 on mule; rung 1 for gates |
+| Only one connection is practical (a prompted master) | rung 4 on mule; rung 1 for single commands |
 | A crew on such a host | rung 4: only polls cross the connection |
 | The host cannot run the loop (no credentials or model API) | rung 2, once it ships |
 | You need a machine on demand | rung 5, a provider host |
@@ -384,8 +391,9 @@ mule jobs; serve runs no bounded exec. The track's units are
 runs one combined acceptance on the final sha (Linux, `MaxSessions 1`,
 the thresholds below). `serve_production` is closed.
 
-**Thresholds** (Q11). p50 is the acceptance metric; observed p95 jitter is
-accepted.
+**Thresholds** (Q11). p50 is the acceptance metric for the four timed
+rows; observed p95 jitter is accepted. Cancel is a zero-leftovers case, not
+a p50 metric.
 
 | Measure | Threshold |
 | --- | --- |
@@ -395,7 +403,7 @@ accepted.
 | 200 KB write | ≤ 3 s |
 | cancel | leaves nothing behind |
 
-The prototype met all five at p50 (§E).
+The prototype met all five (§E).
 
 **First rung-2 release scope** (*brief*): static hosts on the mule link,
 pi only, no rung-2 orchestrator (§8.3), no provider-backed rung 2. Rex
@@ -448,13 +456,12 @@ numbers.
 
 ### §F. Today's code, and why
 
-- **§3.3.** The static prepare resolves `from` remotely and exits 5 when
-  it names no commit, a plain `RemotePrepareError`
-  (`src/remote-worktree.ts:209,248-250`). `RemoteBaseMissingError`'s text
-  today says "push", which suits provider links (`:44-61`). A fetch on
-  the host's behalf needs its credentials and may prompt, and push for
-  static links is roadmap. Resolving `from` on the host keeps template
-  semantics (D7). The static rollbacks that run on a refusal are at
+- **§3.3.** As shipped, `resolveStaticBase` resolves `from` to a sha in
+  the caller's checkout (exit 2, `RemoteBaseRefError`, when it names no
+  commit), and the host's prepare exits 5 (`RemoteBaseMissingError`) when
+  its repo lacks the sha (`src/remote-worktree.ts`). A fetch on the host's
+  behalf needs its credentials and may prompt, and push for static links is
+  roadmap. The static rollbacks that run on a refusal are at
   `src/agents/spawn-remote.ts:180-186` and
   `src/agents/spawn-plugin.ts:299-307`.
 - **§4.2.** Static plugin spawn calls `admitRemoteSpawn`, which always
@@ -548,7 +555,7 @@ edits. Work outside the five D15 units does not block them.
 | Rule | Owner | Required tests |
 | --- | --- | --- |
 | R5, env | `job_plugin_builtin_channels` | template and plugin spawns hand over only `HOST_ENV_KEYS`; CLOSE is applied per channel (`ctl` at wait, remote `hooks` at collect) |
-| §3.3 | `job_plugin_builtin_channels` | the caller's ref differs from the host's; a missing sha; a link that advertises `push`. Assert no push, tree, `job.start`, pane or kept reservation; the missing-base case also asserts the refusal names host, repo and SHA and both fixes (published: fetch on the host; local-only: push, then fetch, or spawn from a published commit) |
+| §3.3 | `job_plugin_builtin_channels` | a `from` that names no commit in the caller's checkout (exit 2); a sha the host lacks (exit 5); a link that advertises `push`. Assert no push, tree, `job.start`, pane or kept reservation; the missing-base case also asserts the refusal names host, repo and SHA and both fixes (published: fetch on the host; local-only: push, then fetch, or spawn from a published commit) |
 | §4.2 spawn prepare | `job_plugin_builtin_channels` | zero `host_channels` rows across a mule prepare |
 | §4.2 host check | `host_exec` | zero rows across mule check and exec; one counted row for a template fetch |
 | §4.4 | `plugin_mule_link` (mule's tmux signal, the link's `checkSteps`) | missing master and missing tmux are separate outcomes, with no unlocked ssh |

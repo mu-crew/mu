@@ -59,9 +59,11 @@ mu does not add these unless one earns its way back under the criteria:
 
 ## Approved: the lease transport (stage b)
 
-A remote worker on a session-capped host (`MaxSessions 1`, e.g. a managed dev VM)
-holds the host's only session channel for its whole life, so every other
-`ssh dev` (murmur's collector, `git fetch`, an operator) is refused. Promotion
+A remote worker on a session-capped host (e.g. a managed dev VM, where one
+shared ssh connection allows `MaxSessions 1`) holds that connection's only
+session for its whole life, so every other command sent over the same
+connection (murmur's collector, `git fetch`, an operator) is refused.
+`MaxSessions` is per network connection: a separate connection is unaffected. Promotion
 met: the friction is the 2026-10-28 session plus the murmur collect starving
 (2026-09-28) and the `t3-dev` workaround, more than twice; the design adds no
 channel kind or recovery column; the source is about 250 LOC. The user asked
@@ -78,8 +80,7 @@ stop contract are released.
 
 Part 1 of the [ladder placement spec](specs/2026-11-20-ladder-placement.md),
 approved by the human 2026-11-20 with its Open items 1-6 as recommended:
-four places, ownership, per-host admission, `mu host exec` <!-- doc-cli-drift:skip -->
-(planned, unit `host_exec`), a dropped
+four places, ownership, per-host admission, `mu host exec`, a dropped
 master is not host loss, the refusals, drain-before-switch migration,
 cross-DB refusal. It gates `job_plugin_builtin_channels`,
 `plugin_mule_link`, `plugin_mule_lease`, `host_exec` and `plugin_ssh_pane`.
@@ -107,6 +108,9 @@ track them; delete the row when one ships.
 | **Delegate answers read elsewhere** (aiv-blog) | Answers read through `mu task notes` are re-announced as "not shown" after an interrupt. | Mark a call delivered when its answer reaches the caller by a `mu wait` result too. | ~30 LOC |
 | **Merges as the serial bottleneck** (vtmux 2026-11) | Past a handful of workers the orchestrator cherry-picks and gates every merge itself, so finished work queues behind it. One sighting, the vtmux run, where the broken settle (fixed) may have been the real cause. | Narrowed and shipped as a recipe line: the merge recipe hands each batch to a short-lived `merge_<n>` task (cherry-pick + gate in a worktree, no push); the orchestrator checks the GATE record and alone pushes. A long-lived merger was refuted: the queue would live in chat and not the DAG, CI fixes would land on main unreviewed, main would have two writers, and the 18 min median already sits near gate + push time. course-correct now splits merge latency into gate/CI time and queue wait. Revisit only if a second run on 4.3.1+ shows queue wait driving latency. | recipe |
 | **mule as an out-of-process plugin** (`mu-plugin-mule`; retire the lease templates) | mu drives mule through the lease profile's `--shell`/`--exec`/`--stop` templates and reads only their exit codes, so a lost dispatch is found by hand, not by key. The plugin system has two real implementations without it (the in-tree fake plugin and an out-of-tree remote backend); deferred from the plugins run, which did not need it. | The [plugins spec](specs/2026-11-09-mu-plugins.md) D15: a `mu-plugin-mule` bin serving the link and the `lease` job kind (`start.lookup: true`, `view: "bound"`), `mu host add <h> --plugin mule` keeping only `--fetch`, and an old reservation stopped by the plugin's `rm`. mule already has the surface (spec/mu-plugins branch, additive: `run --lease --key` dedupe, five-state `poll --json`, `ls --key-prefix`, a non-detaching cancelled `exec`), and the lease templates keep working meanwhile. Left: the bin target, `hostMuleStarter --plugin mule`, and mu's link and job contract suites against it. | ~5 days |
+| **Ladder visibility** (ladder placement spec §D) | The TUI has no placement columns or Hosts tab; murmur has no host dedup or picker routes; host notices are not unified; the pane-option mirror stops at `@mu_host`; there is no host init wizard. | One follow-up: placement in the TUI and murmur, one host-notice path, a wizard over `mu host init`. Deferred so the core ships first. Promote when users cannot tell where an agent runs. | follow-up |
+| **Ladder durability** (spec §D, §3.3, §9.4) | No durable backend binding for a workstream (the one-backend rule is advisory), no push for static links (mu never fetches or pushes for a static host), no durable named gates (`plugin_mule_gate`), no atomic cross-DB claim. | Each needs a schema or a credential decision. Promote on a second real race, lost base or lost gate. | per item |
+| **Ladder reach** (spec §D) | claude and codex on rung 2 (MCP), provider-backed rung 2, a mule batch verb, herdr and Rex parity smokes, `mu_delegate` refused in a remote pi (R5). | Cut from the first release, none ruled out. Promote each when a user hits the gap twice. | per item |
 | **Subscription-based wakeups** | `mu log --tail` polls once a second. | SQLite update hooks or `fs.watch` on the WAL. Lower latency for more machinery. | — |
 
 ## Next breaking release

@@ -25,12 +25,11 @@ mu plugin rm box
 - `rm` refuses while a host, job record or unresolved effect names the
   plugin.
 
-A spawn with `--task` and no `--send` sends the task's brief note, or for a
-task with none, a title line ending in `Read: mu task notes <id> -w <ws>`.
-The host has no mu DB, so it cannot follow that line. The examples below
-pass the whole brief as `--send "$BRIEF"` (or `--send -` on stdin), and the
-spawn still reports the prompt delivered either way. Known issue: mu does
-not drop that line for a remote spawn (task `remote_brief_fallback`).
+A `--host` spawn with `--task` and no `--send` sends the task's authored brief
+note. With no such note it refuses (exit 2): the host has no mu DB, so a
+`Read: mu task notes` pointer would be unrunnable ([Spawn the
+agent](remote.md#spawn-the-agent)). The examples below pass the whole brief as
+`--send "$BRIEF"` (or `--send -` on stdin).
 
 ## Use it as a host's link
 
@@ -88,8 +87,8 @@ It gives the host a link (exec, fetch) and an example `pane` job kind. If
 your npm install is owned by root, copy the file somewhere you own first: mu
 refuses a plugin someone else can write.
 
-**It is an example, not the supported path to rung 3.** Session and lease
-templates ([remote.md](remote.md)) are supported. The pane kind has these
+**It is an example, not the supported path to rung 3.** Session templates
+(rung 3) and lease templates (rung 4) ([remote.md](remote.md)) are supported. The pane kind has these
 limits (the file header has the rest):
 
 - Its view needs its own ssh connection, so a host where only one
@@ -105,8 +104,7 @@ limits (the file header has the rest):
 
 ## Register the mule plugin
 
-<!-- TODO(plugin_mule_link, plugin_mule_lease): not on main yet. Planned:
-`mule init` registers the plugin (`mule_init_register`); manual
+<!-- TODO: planned: `mule init` registers the plugin; manual
 `mu plugin add mule -- /abs/mu-plugin-mule` stays documented. Document the
 mule link, the lease job kind and its file handle once merged.
 See the ladder's TODO: remote-ladder.md#todo-the-mule-lease-plugin. -->

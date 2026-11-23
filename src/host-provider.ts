@@ -152,8 +152,8 @@ export const staticProvider: HostProvider = {
 /**
  * The view of a profile already read: an admitted snapshot (inside `withHostChannel`). A
  * `--plugin` profile's link is the plugin's (src/plugins/link.ts), and so is its job kind
- * when the plugin declares a job seam (src/plugins/job.ts); a link-only plugin's jobs are
- * panes. Spawn refuses a `--plugin` host until P6e drives its spawn path.
+ * when the plugin declares a job seam (src/plugins/job.ts). The `pane` fallback below is
+ * only a default for the view: spawn refuses a link-only plugin host (spawn-remote.ts).
  */
 export function admittedView(db: Db, profile: HostProfile): HostView {
   const plugin = profile.plugin ?? null;

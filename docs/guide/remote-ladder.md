@@ -87,7 +87,9 @@ can race. A Rex terminal may drive a tmux workstream (`MU_MUX=tmux`).
 
 ## Refusals
 
-Each refusal is typed, comes before any effect and names the fix.
+Each refusal is typed and names the fix. A refusal leaves no lasting spawn
+resources; a missing base is found by `remote prepare`'s link `exec`, which
+checks the base before it makes a tree and rolls back.
 
 - **herdr on rungs 3-5:** it runs no per-agent command or view. Use tmux or
   Rex. Rungs 0 and 1 run.
@@ -107,18 +109,16 @@ the master back, take a fresh preview with `mu agent close <name> -w <ws>`
 and repeat with `--if <rev>` (the revision may have changed after
 the interrupted close or a reap); that stops the job by its handle.
 
-<!-- TODO(guide_lease_section): profile migration, after `migrate_profiles`. -->
-
 ## TODO: profile migration
 
 Not written yet. Keep a profile's current behaviour until it lands.
 
 ## TODO: the mule lease plugin
 
-<!-- TODO: fill in once `plugin_mule_link` and `plugin_mule_lease` merge:
+<!-- TODO: fill in once the mule link and lease plugin merge:
 the mule link (exec, `host check` steps for the master and host tmux, size
 caps), the lease job kind and its file handle, `mule init` registration.
-Until then a mule host is a lease template: `host init --mule`. -->
+Until then a mule host is a lease template: `host init --mule --template`. -->
 
 Until the plugin merges, use the lease template in
 [Session-capped hosts](remote.md#session-capped-hosts).

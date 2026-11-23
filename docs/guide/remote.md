@@ -37,8 +37,8 @@ table.
 
 ## Run one command without an agent
 
-`mu host exec dev -- <cmd>` runs a single command through the profile's
-`--exec` and returns its exit. No agent, pane or task, so it works on herdr
+`mu host exec dev -- <cmd>` runs a single command through the host's link
+and returns its exit. No agent, pane or task, so it works on herdr
 too. Details and limits: [rung 1](remote-ladder.md#rung-1-mu-host-exec).
 
 ## Add a profile and check it
@@ -113,7 +113,7 @@ when the task has none, or only the one-line fallback an earlier local spawn pin
   exit 4. Close the tree from its owning DB, or verify it is unused and
   remove it by hand. All DBs sharing the host must run a version that
   checks the marker; older versions ignore its contents.
-- The pane is the transport: closing it, or its death, ends the agent
+- The pane is the connection: closing it, or its death, ends the agent
   and frees the slot. tmux and Rex; herdr refuses `--host` in one line.
   A workstream's panes live on one backend: a spawn refuses while a row names
   another ([ladder](remote-ladder.md#one-backend-per-workstream)).
@@ -148,7 +148,7 @@ when the task has none, or only the one-line fallback an earlier local spawn pin
   `exit` of the result and of the process; 23 stays 23) when the gate's event
   fires. Never a held
   `ssh dev …`. The remote command writes a token-bound completion record that
-  mu reads once the pane has exited; no record, a signal or a lost transport is
+  mu reads once the pane has exited; no record, a signal or a lost connection is
   exit 6, never 0. Close the gate after it fires, since the close removes
   the record. Preview with `mu agent close gate-1 -w auth`, then run
   `mu agent close gate-1 -w auth --if <rev>` to free the pane and remove
@@ -246,7 +246,7 @@ mu agent close worker-1 -w auth --if <rev>
   `refs/mu/collect/<ws>/<agent>` (gc keeps it) and records it as the
   agent's `collected_head`. A fetch that fails, or succeeds without leaving a
   commit, records nothing. Collecting the same HEAD again says so.
-- The pane is the transport, so a live worker holds its host's channel. At
+- The pane is the connection, so a live worker holds its host's channel. At
   `--max-sessions 1`, `collect` is refused with the holder named; raise the
   cap to collect while the worker runs.
 - `close` kills the pane first (that frees the channel), then removes the
@@ -302,7 +302,7 @@ mu host show dev              # templates and the holders of its channels
   braces is refused.
 - A command that times out, or whose caller is killed, takes its whole process
   group with it (TERM, then KILL after 5 s) before its channel is freed, so
-  `--max-sessions` never undercounts a live transport (except a pane a
+  `--max-sessions` never undercounts a live connection (except a pane a
   path-owner refusal could not prove gone: see [Spawn the agent](#spawn-the-agent)).
 - An `exec` or `fetch` template that exits 3 is a hand-back (a hardware key, a
   prompt): mu stops with exit 5, `human needed`, and the template's first line.
@@ -480,6 +480,6 @@ MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh
   keeps the dir for a post-mortem.
 
 <!-- TODO: profile migration (fence on `host add --plugin`) and the mule lease
-plugin; both are tracked in [the ladder](remote-ladder.md#todo-profile-migration). -->
+plugin; see [the ladder](remote-ladder.md#todo-profile-migration). -->
 
 Spec: [lease transport](../specs/2026-10-28-lease-transport.md).
