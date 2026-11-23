@@ -29,7 +29,8 @@ export function helperPath(cmd: string, cwd?: string, env = process.env): string
   let result = cache.get(key);
   if (result === undefined) {
     result = search(cmd, base);
-    cache.set(key, result);
+    // Cache only a hit: a helper installed after a miss must be found.
+    if (typeof result === "string") cache.set(key, result);
   }
   if (typeof result === "string") return result;
   throw Object.assign(new Error(`spawn ${cmd} ${result.code} (PATH lookup)`), {
