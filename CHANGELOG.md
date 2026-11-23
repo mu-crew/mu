@@ -18,6 +18,12 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   mule plugin host and runs pi locally on tmux or Rex with local ctl and DB routing.
   `mu agent collect` fetches from the remote tree as with `--host`.
   Requires pi's mule workspace extension; no remote pi or DB is launched.
+- `scripts/smoke-rung2.sh`: the rung-2 loopback smoke. It packs and installs
+  `@mu-crew/mule` with its pi extension and runs real pi with a scripted model
+  (`scripts/smoke-rung2-pi.mjs`) in a `--mule` worker against one
+  `MaxSessions 1` sshd. It covers a tool chain, a 20-read burst, a 200 KB
+  write, cancel, master loss mid-turn, caller death, collect and close, and
+  fails on any leftover job, tree, row or process.
 
 ### Fixed
 

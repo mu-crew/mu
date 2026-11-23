@@ -99,7 +99,8 @@ uncollected work before killing the pane, then stops the worker's detached
 mule jobs before removing the tree. Use a mule workspace extension that
 honors `MULE_PI_JOB_PREFIX` so close can find those jobs across pi sessions.
 The local pane can run on tmux or Rex. `--host` and `--cwd` conflict with
-`--mule`.
+`--mule`. On Linux, `MU=<mu> MULE=<mule> bash scripts/smoke-rung2.sh` runs
+this path end to end against a loopback `sshd MaxSessions 1`.
 
 ## One backend per workstream
 
