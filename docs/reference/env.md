@@ -68,7 +68,7 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_ORCHESTRATOR` | `1`, only in a pane `mu orchestrate` started. Keeps `mu_delegate` visible to a pi there; turns off what only a worker gets (the close nudge, and `MU_WORKSTREAM` as the implicit `-w`). Never set in a worker or a delegate, and unset in a remote pane. |
 | `MU_DB_PATH`, `MU_STATE_DIR` | The absolute DB path and state dir the spawn used, so the worker's `mu` reads the same DB from any cwd. Local agents only. |
 | `PI_CODING_AGENT_SESSION_DIR` | `<DB dir>/delegate-sessions/<workstream>/<task>`, set when `mu agent spawn --task <id> --send` (what `mu_delegate` and `mu next --refute` run) starts a pi agent for a `delegate`-kind task, so delegate sessions stay out of the caller's pi `/resume` list. Not set by a plain `mu agent spawn`. Local agents only. |
-| `SSH_AUTH_SOCK` | The caller's, when it is a socket (a detached tmux session would otherwise hand the pane a stale one). Local agents only. |
+| `SSH_AUTH_SOCK` | The caller's, when it is a socket (a detached tmux session would otherwise hand the pane a stale one). A Rex shell rc may replace it. It also reaches the local transport pane of a `--host` agent, not its remote `{env}`. |
 | `MU_REMOTE` | `1`, only for an agent spawned with `--host`. Tells its pi extension there is no mu DB on that host: it skips the close nudge (you close the task) and the settle wait. |
 | `MU_REMOTE_KEY` | `<origin host>/<ws>.<agent>.<nonce>`, only for a claude, codex, cursor-agent or muse worker spawned with `--host` (spec D11): the key its hooks on that host report under, in murmur's remote area rather than its inbox. Its anchor holds the same key, for a hook whose env is cleared. Unset in the local pane. |
 
@@ -83,15 +83,17 @@ since a hook may have neither: the wrapper writes only
 `~/.local/state/mu-next/anchors`, which murmur reads first. A murmur older
 than that order, run from a hook whose `XDG_STATE_HOME` is set elsewhere,
 finds no anchor and falls back to the env. pi panes, and herdr and Rex panes,
-start unwrapped.
+do not use that wrapper. On Rex, local launch env is pinned after shell rc,
+including `MU_MUX`, `MU_REX_SERVER` and `MU_SYNC_DIR` (empty means sync off).
 
 A `--host` agent gets exactly `MU_MANAGED_AGENT`, `MU_AGENT_NAME`,
 `MU_WORKSTREAM`, `MU_CTL_SOCK` (the host-side path) and `MU_REMOTE`, written
 into its profile's shell template (`{env}`); a claude, codex, cursor-agent or
 muse worker also gets `MU_AGENT_CLI` and `MU_REMOTE_KEY`, and its remote
 command starts through the same anchor wrapper, writing under the remote
-`$HOME`. It never gets `MU_DB_PATH`, `MU_STATE_DIR` or `MU_SYNC_DIR`; its
-local pane gets none of the vars above.
+`$HOME`. It never gets the local `MU_DB_PATH`, `MU_STATE_DIR`,
+`MU_SYNC_DIR` or `PI_CODING_AGENT_SESSION_DIR`; its local transport pane
+strips these and the other local routing variables before running the template.
 
 ## pi package and `mu pi migrate`
 

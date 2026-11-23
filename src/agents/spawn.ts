@@ -925,6 +925,23 @@ async function spawnPreparedAgent(
         if (carrier && !markCarrierLaunch(db, carrier.token)) {
           throw new Error(`carrier_jobs: reservation of ${opts.workstream}/${opts.name} is gone`);
         }
+        // A Rex login may carry another crew's routing. Local workers use
+        // the selected Rex server and this invocation's sync settings, not rc.
+        const env =
+          mux.name === "rex" && profile === undefined
+            ? {
+                MU_AGENT: "",
+                MU_HOST: "",
+                MU_REMOTE: "",
+                MU_REMOTE_KEY: "",
+                MU_ORCHESTRATOR: "",
+                MU_PI_CHANNEL: "",
+                ...paneEnv,
+                MU_MUX: "rex",
+                MU_REX_SERVER: process.env.MU_REX_SERVER ?? "",
+                MU_SYNC_DIR: process.env.MU_SYNC_DIR ? resolve(process.env.MU_SYNC_DIR) : "",
+              }
+            : paneEnv;
         const done = mux.spawnAgent({
           session,
           window: windowName,
@@ -933,7 +950,7 @@ async function spawnPreparedAgent(
           command: paneCommand,
           commandSource,
           ...(profile ? {} : { cwd: paneCwd }),
-          env: paneEnv,
+          env,
           onPaneCreated: (pid, identity) => {
             born = identity;
             onCreated(pid);

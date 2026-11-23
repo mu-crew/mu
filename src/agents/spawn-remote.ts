@@ -116,8 +116,8 @@ export async function requireMuleWorkspace(
     throw new HostProfileError(`host ${name} has no default repo: pass --root <remote repo path>`);
   }
   const mux = await activeMux();
-  if (mux.name !== "tmux") {
-    throw new HostSpawnUnsupportedError(name, mux.name, "local pi with a mule workspace", true);
+  if (!mux.runsShellCommand) {
+    throw new HostSpawnUnsupportedError(name, mux.name, "local pi with a mule workspace", false);
   }
   return profile;
 }

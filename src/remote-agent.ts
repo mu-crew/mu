@@ -28,16 +28,22 @@ export {
 } from "./remote-worktree.js";
 
 /**
- * The local mu variables a transport pane must not carry: a tmux pane inherits
- * the SERVER's env, which may be another agent's (its DB, sync dir, ctl socket,
- * identity). A template that runs `{cmd}` with the local env (a container exec,
- * `SendEnv MU_*`, a shim) would hand them to the remote pi.
+ * The local mu variables a transport pane must not carry. The server's env
+ * and (on Rex) shell rc may belong to another crew. A template that runs `{cmd}`
+ * with the local env (a container exec, `SendEnv MU_*`, a shim) would hand them
+ * to the remote worker. Strip them after shell startup, before the template.
  */
 export const LOCAL_ONLY_ENV = [
   "MU_DB_PATH",
   "MU_STATE_DIR",
   "MU_SYNC_DIR",
   "MU_CTL_SOCK",
+  "MU_MUX",
+  "MU_REX_SERVER",
+  "MU_TMUX_SOCKET",
+  "MU_HERDR_SESSION",
+  "MU_AGENT",
+  "MU_HOST",
   "MU_AGENT_NAME",
   "MU_WORKSTREAM",
   "MU_MANAGED_AGENT",
@@ -46,6 +52,9 @@ export const LOCAL_ONLY_ENV = [
   "MU_ORCHESTRATOR",
   "MU_AGENT_CLI",
   "MU_REMOTE_KEY",
+  "MU_REMOTE",
+  "MU_PI_CHANNEL",
+  "PI_CODING_AGENT_SESSION_DIR",
 ] as const;
 
 /**

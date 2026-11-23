@@ -1200,7 +1200,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--mule <profile>",
-      "run local pi on tmux with a remote worktree on a static mule plugin profile; implies --worktree and conflicts with --host and --cwd",
+      "run local pi on tmux or Rex with a remote worktree on a static mule plugin profile; implies --worktree and conflicts with --host and --cwd",
     )
     .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
     .option(

@@ -25,6 +25,7 @@ import { constants } from "node:os";
 import { join } from "node:path";
 import { execFileCapture } from "../exec-file.js";
 import { say } from "../messages.js";
+import { shellQuote } from "../shell-quote.js";
 import { type ActionPaneRef, nativePaneId } from "./pane-ref.js";
 import { sleep } from "./tmux.js";
 import type { SessionKillTarget } from "./types.js";
@@ -345,24 +346,24 @@ async function terminalCall(
 }
 
 /**
- * The pane's argv: mu's env pairs, then the command line through the user's
- * shell as an INTERACTIVE shell. Rex runs a block's command in a login
- * environment only (`.zprofile`, not `.zshrc`), while a tab the user opens
- * runs an interactive shell. `-i` gives an agent the environment of the
- * user's own Rex tabs (API keys exported from rc files). The cost: an rc
- * file that execs another program (`exec tmux`) replaces the agent; see
- * docs/guide/backends.md. `$SHELL` is the caller's, which matches the
- * server's account on the local server (the only one `rex` autostarts).
+ * Run the user's interactive shell for PATH and credentials from rc files.
+ * Export launch inputs inside that shell, after rc: a startup file (or the
+ * server's environment) must not reroute a managed worker's state or identity.
+ * The caller's SSH agent socket is only a fallback; rc can select another.
+ * An rc that execs another program still replaces the shell and its command.
  */
 function paneCommand(opts: SpawnAgentPaneOptions): string[] {
   const argv = ["env"];
-  for (const [k, v] of Object.entries(opts.env)) {
-    if (k.length === 0) throw new TypeError("rex env key must be non-empty");
-    if (k.includes("="))
-      throw new TypeError(`rex env key must not contain '=': ${JSON.stringify(k)}`);
-    argv.push(`${k}=${v}`);
+  const pinned: string[] = [];
+  for (const [key, value] of Object.entries(opts.env)) {
+    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+      throw new TypeError(`invalid Rex shell variable: ${JSON.stringify(key)}`);
+    }
+    if (key === "SSH_AUTH_SOCK") argv.push(`${key}=${value}`);
+    else pinned.push(`${key}=${shellQuote(value)}`);
   }
-  argv.push(userShell(), "-ic", opts.command);
+  const prefix = pinned.length > 0 ? `export ${pinned.join(" ")} || exit\n` : "";
+  argv.push(userShell(), "-ic", prefix + opts.command);
   return argv;
 }
 

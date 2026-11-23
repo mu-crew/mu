@@ -524,9 +524,17 @@ describe("spawn control socket", () => {
 
   it("pins the default DB and state dir too: MU_DB_PATH is absolute even for an in-memory db", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
-    db.close();
-    db = openDb({ path: ":memory:" });
-    await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    const cwd = process.cwd();
+    // An in-memory DB has no directory; spawn falls back to cwd for ctl.
+    // Use the fixture dir, not a managed worktree under the real state root.
+    process.chdir(dir);
+    try {
+      db.close();
+      db = openDb({ path: ":memory:" });
+      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+    } finally {
+      process.chdir(cwd);
+    }
     expect(newSessionArgs()).toContain(`MU_DB_PATH=${join(defaultStateDir(), "mu.db")}`);
   });
 

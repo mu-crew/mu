@@ -186,7 +186,7 @@ it("starts local pi on ctl after preparing a remote tree and collects its commit
   expect(getAgent(db, "worker-1", "crew")?.collectedHead).toBe(head);
 });
 
-it.each(["template", "other plugin", "provider", "herdr", "rex", "other harness", "orchestrator"])(
+it.each(["template", "other plugin", "provider", "herdr", "other harness", "orchestrator"])(
   "refuses %s before a tree, pane or reservation",
   async (kind) => {
     let req = spawn;
@@ -209,13 +209,13 @@ it.each(["template", "other plugin", "provider", "herdr", "rex", "other harness"
         await acquireHost(db, { name: "plain", provider: "fake", params: {}, repo: remote });
       else addHost(db, { name: "plain", repo: remote, plugin: "fake", max_sessions: 1 });
       req = { ...req, mule: "plain" };
-    } else if (kind === "herdr" || kind === "rex") {
+    } else if (kind === "herdr") {
       error = HostSpawnUnsupportedError;
       setMuxForTests({
         ...tmuxBackend,
         name: kind,
         spawnAgent: pane,
-        runsShellCommand: kind !== "herdr",
+        runsShellCommand: false,
         carrierViews: false,
       });
     }

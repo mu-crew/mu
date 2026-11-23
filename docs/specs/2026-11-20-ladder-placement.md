@@ -281,8 +281,9 @@ the fix.
    (`src/agents/spawn-remote.ts:129`, `spawn-plugin.ts:100`,
    `reattach-view.ts:92`); `ReattachRefusedError` (exit 4) for lease
    reattach (`reattach-check.ts:119`). The message names the part herdr
-   cannot run and says "use tmux" (a session template adds "or Rex"; a
-   lease or plugin job view says it is tmux-only for now). Rung 0 and host exec run.
+   cannot run and says "use tmux" (local loops and session templates add
+   "or Rex"; a lease or plugin job view says it is tmux-only for now).
+   Rung 0 and host exec run.
 2. **One managed backend per workstream** (Q2; Open 4a). Pane-id shape is
    not authority (`src/mux/types.ts:318-320`), but tmux, herdr and Rex
    shapes are disjoint (`src/mux/tmux.ts:83`, `herdr.ts:233`, `rex.ts:62`).
@@ -340,6 +341,7 @@ its conditions.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0 | none · none · `pane` | pi `ctl`; known hook harnesses `hooks`, other workers `mux`; pi `hooks` is an opt-in (`src/agents/spawn.ts:823-832,1259-1272`) | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
 | 1 | static · template or plugin · none | no channel | no channel | no channel | not needed | fine over the mule link | `host_exec` |
+| 2 | static · mule plugin · local pane | pi `ctl` local | pi `ctl` local | refused | not needed | mule controls admission | unreleased |
 | 3 | static · template (session) · `pane` | pi `ctl` forwarded; others remote `hooks` | pi `ctl`; others `mux` | refused | needed | fine: each pane opens its own connection | shipped |
 | 3 | static · ssh plugin · `pane` | built-in `ctl`/`hooks`, if conditions hold | refused (a plugin job view) | refused | needed | as above | `plugin_ssh_pane`, `job_plugin_builtin_channels` |
 | 4 | static · template (lease) · `lease` | pi `ctl` via the carrier | refused (a lease view) | refused | needed | fine (one master) | shipped, pi only |
@@ -364,8 +366,12 @@ its conditions.
   (`src/hosts.ts:397-405`), so per-connection `MaxSessions 1` does not
   block it. A host where only one connection is practical (a prompted
   master) does. A session pane over a shared master is not supported.
-- Only the rung 3 session template and the gate run on Rex, and those cells are source-reviewed, not smoked. Every lease and plugin job view, the ssh pane and the mule lease included, is refused on Rex (`carrierViews`, `src/agents/spawn-remote.ts:68-100`, `test/carrier-view-rex.test.ts`): the guard is by job seam, not rung or the profile's `transport` label. Rung 2
-  is absent: it is not implemented (§C).
+- Rex runs local loops and session templates. A real private Rex integration
+  test covers their launch inputs after interactive shell startup
+  (`test/rex-ladder-spawn.integration.test.ts`). Every lease and plugin job
+  view, including the ssh pane and mule lease, is still refused on Rex
+  (`carrierViews`): the guard is by job seam, not rung or the profile's
+  `transport` label.
 
 ### §B. When to reach for what
 
@@ -377,7 +383,7 @@ its conditions.
 | A crew on such a host | rung 4: only polls cross the connection |
 | The host cannot run the loop (no credentials or model API) | rung 2, once it ships |
 | You need a machine on demand | rung 5, a provider host |
-| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex only for a session template) |
+| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also supports local loops and session templates) |
 
 Provider host or standing host: weigh capacity (on demand or fixed),
 lifetime (a deadline and idle reclaim, or none), credentials and identity
@@ -418,9 +424,8 @@ a p50 metric.
 The prototype met all five (§E).
 
 **First rung-2 release scope** (*brief*): static hosts on the mule link,
-pi only, no rung-2 orchestrator (§8.3), no provider-backed rung 2. Rex
-waits for `rex_ladder_env` to prove that launch inputs survive `$SHELL -ic`
-(`docs/guide/backends.md:69-73`). herdr is refused.
+pi only, no rung-2 orchestrator (§8.3), no provider-backed rung 2. tmux
+and Rex are supported; herdr is refused.
 
 **The rung-2 spec must settle:** R4 routing for every built-in (`read`,
 `write`, `edit`, `bash`, `grep`, `find`, `ls`, `user_bash`): each tool that

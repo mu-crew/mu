@@ -25,7 +25,7 @@ not a ranking.
 | --- | --- | --- | --- | --- |
 | 0 | pi `ctl`, hook harnesses (claude, codex, cursor-agent, muse) `hooks`, others `mux` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a |
 | 1 | runs (no pane) | runs | runs | fine over a link that serialises itself |
-| 2 | pi `ctl` local | refused for now | refused | mule controls admission |
+| 2 | pi `ctl` local | pi `ctl` local | refused | mule controls admission |
 | 3 | pi `ctl` forwarded, hook harnesses remote `hooks` | session template: pi `ctl`, others `mux`; ssh plugin pane: refused | refused | fine: each pane opens its own connection |
 | 4 | pi `ctl` via the carrier | refused for now | refused | fine: one master |
 | 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | refused for now | refused | the provider's |
@@ -35,9 +35,8 @@ not a ranking.
   Elsewhere a non-pi worker is on `mux`; tmux has no `mux` send and refuses.
 - A lease carrier forwards no stdin, so a non-pi worker has no input path on
   a lease: use pi.
-- The Rex cell for rung 3 is read from source, not smoke-tested. It covers
-  session templates only: an ssh-plugin pane is a plugin job view, so Rex
-  refuses it like rungs 4 and 5.
+- Rex supports rung 3 session templates only: an ssh-plugin pane is a
+  plugin job view, so Rex refuses it like rungs 4 and 5.
 
 ## Reach for what
 
@@ -48,7 +47,7 @@ not a ranking.
 | Only one connection is practical (a prompted master) | rung 4 for a crew; rung 1 for single commands |
 | The host cannot run the loop (no credentials, no model API) | [rung 2](#rung-2-local-pi-with-a-remote-worktree) |
 | You need a machine on demand | rung 5, a [provider host](remote.md#provider-hosts) |
-| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex for a rung 3 session template only) |
+| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also supports rung 2 and rung 3 session templates) |
 
 A provider host or a standing one: weigh capacity (on demand or fixed),
 lifetime (a deadline, or none), whose credentials, which harnesses are
@@ -95,7 +94,7 @@ that commit through the host's link. The pane runs `pi --mule <host>:<tree>`;
 the workspace extension handles tools, while pi, ctl and the task DB stay
 local. The loop has the same DB access as a local worker. Collect uses the
 profile's fetch route; it needs no remote pi or forwarded socket.
-Only workers on tmux are supported. `--host` and `--cwd` conflict with
+The local pane can run on tmux or Rex. `--host` and `--cwd` conflict with
 `--mule`.
 
 ## One backend per workstream

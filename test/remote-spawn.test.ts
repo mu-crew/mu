@@ -360,7 +360,8 @@ describe("the pane is the transport", () => {
   it("a remote pi never gets a local pi session dir, even when one is asked for", async () => {
     await spawn({ piSessionDir: join(dir, "delegate-sessions", "auth") });
     const all = mux.calls.map((c) => c.join(" ")).join("\n");
-    expect(all).not.toContain("PI_CODING_AGENT_SESSION_DIR");
+    expect(all).not.toContain("PI_CODING_AGENT_SESSION_DIR=");
+    expect(paneCommand()).toContain("-u PI_CODING_AGENT_SESSION_DIR ");
   });
 
   it("without --cwd the remote cwd is the profile's repo, resolved remotely", async () => {

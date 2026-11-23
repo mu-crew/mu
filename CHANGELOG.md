@@ -15,7 +15,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 ### Added
 
 - `mu agent spawn --mule <profile>` prepares a managed worktree on a static
-  mule plugin host and runs pi locally on tmux with local ctl and DB routing.
+  mule plugin host and runs pi locally on tmux or Rex with local ctl and DB routing.
   `mu agent collect` fetches from the remote tree as with `--host`.
   Requires pi's mule workspace extension; no remote pi or DB is launched.
 
@@ -24,6 +24,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Recovery hints for `--mule` workers now respawn with `--mule` and the recorded
   repo, not `--host`. The dashboard matches their local pane runtime, and a
   missing local control socket no longer suggests checking a remote forward.
+- Rex pins managed local pane routing after shell startup and strips inherited
+  mu routing from session templates, without dropping rc PATH or credentials.
 
 ## [5.3.0] — 2026-11-23
 

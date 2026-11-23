@@ -42,6 +42,7 @@ copy backend.
 | Other agents' state | murmur | herdr | the program's own OSC 7501 reports |
 | Send to non-pi agents | claude, codex, cursor-agent, muse: a paste confirmed by run count (`hooks`); others refused (exit 4) | one atomic `agent prompt` | a paste event, then Enter |
 | Spawn | one command | bare pane, then `agent start` | one API call |
+| `--mule` (local loop) | yes | refused | yes |
 | `--host` (remote agents) | yes | refused | session templates only; lease and plugin job views refused |
 | Pane borders, layout | set by mu | left to herdr | left to Rex |
 | Test isolation | `MU_TMUX_SOCKET` | `MU_HERDR_SESSION` | `MU_REX_SERVER` |
@@ -57,9 +58,9 @@ Where each agent's state comes from, per backend:
   <cli>`), so spawn refuses `--command` and `MU_<CLI>_COMMAND` with
   exit 2 instead of running a different binary. Unset the variable, or
   spawn with `MU_MUX=tmux`.
-- For remote spawns and reattaches, use tmux (Rex for session
-  templates only): herdr cannot run the managed argv, carrier command, or job
-  view in a pane. `mu host exec`
+- For remote spawns and reattaches, use tmux (Rex also supports local
+  loops and session templates): herdr cannot run the managed argv, carrier
+  command, or job view in a pane. `mu host exec`
   still works because it calls the host's link without opening a pane.
 - herdr creates every workspace detached. Run `herdr workspace focus`
   yourself.
@@ -69,9 +70,12 @@ Where each agent's state comes from, per backend:
 - Attach switches Rex.app, so the app needs **Remote Control** on
   (Settings > Server > Client Info). With several apps connected, set
   `REX_CLIENT` to the one to switch.
-- A pane runs its command through `$SHELL -ic`, so an agent sees the
-  environment of your own Rex tabs (rc files included), not the shell
-  that ran `mu agent spawn`. An rc file that execs another program
+- A pane runs its command through `$SHELL -ic`, preserving the PATH and
+  credentials from your shell rc, including `SSH_AUTH_SOCK`. After rc, mu
+  pins local worker identity, DB, state, sync directory, Rex server, and
+  control socket. A session template instead starts with those local mu
+  settings removed; it receives the remote worker's identity and socket
+  through `{env}`. An rc file that execs another program
   (`[ -z "$TMUX" ] && exec tmux`) replaces the agent: guard it with
   `[[ -o interactive && -z $ZSH_EXECUTION_STRING ]]` or similar.
 - A non-pi agent has a state only if it reports one with OSC 7501

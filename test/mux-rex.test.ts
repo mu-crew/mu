@@ -203,7 +203,7 @@ describe("rex spawnAgent", () => {
         flavor: "com.superlogical.terminal.shell",
         label: "alice",
         options: {
-          command: ["env", "MU_AGENT_NAME=alice", "/bin/zsh", "-ic", "pi --model x"],
+          command: ["env", "/bin/zsh", "-ic", "export MU_AGENT_NAME='alice' || exit\npi --model x"],
           cwd: "/repo",
           size: { columns: 200, rows: 50 },
           exit: { quick_exit_threshold_ms: 0 },
