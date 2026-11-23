@@ -118,12 +118,17 @@ the agent's row, tasks, worktree owner and recovery.
    collected to `refs/mu/collect/<ws>/<agent>`, then merged
    (`docs/guide/remote.md:194-200`).
 3. **Base commit on a static host** (Q5; Open 1). D7's static rule holds
-   for template and plugin profiles: `from` (default `HEAD`) resolves in
-   the host's repo inside the prepare exec (`src/remote-worktree.ts:209`;
-   plugins `:733`), and the static path never pushes, whatever the link
-   advertises. A `from` naming no commit exits a dedicated code mapped to
-   `RemoteBaseMissingError` (exit 5, `:44-61`), naming rev, host,
-   repo and SHA. The guard and the remedy are separate: mu never fetches
+   for template and plugin profiles: `from` (default `HEAD`) resolves to a sha in the caller's checkout before
+   any remote call (`resolveStaticBase`, `src/agents/spawn-remote.ts`), and the
+   static path never pushes, whatever the link advertises. A `from`
+   naming no commit there refuses with exit 2 (`RemoteBaseRefError`, nothing
+   run). A host repo without the sha exits a dedicated code mapped to
+   `RemoteBaseMissingError` (exit 5), naming rev, host, repo and SHA.
+   *Amended after approval:* the caller-side resolution replaces the first
+   text's host-side resolution, so a retry names the same sha (`--from <sha>`).
+   Open 1 ("the base must already be in the host's repo") holds either way;
+   the local-resolution step is new text, shipped (CHANGELOG, Changed) and
+   awaiting the human's approval note, as §5 and §7.2 carry theirs. The guard and the remedy are separate: mu never fetches
    or pushes itself, and the caller does the remedy the message names.
    The message gives an actionable fix for both cases. A published commit
    (a remote the host can fetch has it): `mu host exec <h> -- git -C
@@ -451,13 +456,12 @@ numbers.
 
 ### §F. Today's code, and why
 
-- **§3.3.** The static prepare resolves `from` remotely and exits 5 when
-  it names no commit, a plain `RemotePrepareError`
-  (`src/remote-worktree.ts:209,248-250`). `RemoteBaseMissingError`'s text
-  today says "push", which suits provider links (`:44-61`). A fetch on
-  the host's behalf needs its credentials and may prompt, and push for
-  static links is roadmap. Resolving `from` on the host keeps template
-  semantics (D7). The static rollbacks that run on a refusal are at
+- **§3.3.** As shipped, `resolveStaticBase` resolves `from` to a sha in
+  the caller's checkout (exit 2, `RemoteBaseRefError`, when it names no
+  commit), and the host's prepare exits 5 (`RemoteBaseMissingError`) when
+  its repo lacks the sha (`src/remote-worktree.ts`). A fetch on the host's
+  behalf needs its credentials and may prompt, and push for static links is
+  roadmap. The static rollbacks that run on a refusal are at
   `src/agents/spawn-remote.ts:180-186` and
   `src/agents/spawn-plugin.ts:299-307`.
 - **§4.2.** Static plugin spawn calls `admitRemoteSpawn`, which always
@@ -551,7 +555,7 @@ edits. Work outside the five D15 units does not block them.
 | Rule | Owner | Required tests |
 | --- | --- | --- |
 | R5, env | `job_plugin_builtin_channels` | template and plugin spawns hand over only `HOST_ENV_KEYS`; CLOSE is applied per channel (`ctl` at wait, remote `hooks` at collect) |
-| §3.3 | `job_plugin_builtin_channels` | the caller's ref differs from the host's; a missing sha; a link that advertises `push`. Assert no push, tree, `job.start`, pane or kept reservation; the missing-base case also asserts the refusal names host, repo and SHA and both fixes (published: fetch on the host; local-only: push, then fetch, or spawn from a published commit) |
+| §3.3 | `job_plugin_builtin_channels` | a `from` that names no commit in the caller's checkout (exit 2); a sha the host lacks (exit 5); a link that advertises `push`. Assert no push, tree, `job.start`, pane or kept reservation; the missing-base case also asserts the refusal names host, repo and SHA and both fixes (published: fetch on the host; local-only: push, then fetch, or spawn from a published commit) |
 | §4.2 spawn prepare | `job_plugin_builtin_channels` | zero `host_channels` rows across a mule prepare |
 | §4.2 host check | `host_exec` | zero rows across mule check and exec; one counted row for a template fetch |
 | §4.4 | `plugin_mule_link` (mule's tmux signal, the link's `checkSteps`) | missing master and missing tmux are separate outcomes, with no unlocked ssh |
