@@ -45,6 +45,7 @@ import {
   type CtlRequest,
   INCARNATION_MISMATCH,
 } from "../ctl/protocol.js";
+import { LOCAL_LOOP_TRANSPORT, remoteLoopHost } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
@@ -116,7 +117,7 @@ export async function outdatedRecovery(
  * older than the stored command. An explicit --command is replayed
  * verbatim; an env or cli-key command is replayed as --cli only (the same
  * resolution happens again). A worktree agent respawns with --worktree (a
- * remote one with --root, its recorded repo).
+ * remote one with --root, its recorded repo). --mule implies --worktree.
  */
 export function respawnCommand(agent: AgentRow): string | undefined {
   if (agent.command === null || agent.commandSource === null) return undefined;
@@ -129,11 +130,12 @@ export function respawnCommand(agent: AgentRow): string | undefined {
     shellWord(agent.cli),
   ];
   if (agent.commandSource === "explicit") parts.push("--command", shellWord(agent.command));
-  if (agent.host !== null) parts.push("--host", shellWord(agent.host));
+  const localLoop = agent.hostTransport === LOCAL_LOOP_TRANSPORT;
+  if (agent.host !== null) parts.push(localLoop ? "--mule" : "--host", shellWord(agent.host));
   if (agent.role !== "full-access") parts.push("--role", shellWord(agent.role));
   if (agent.tab !== null) parts.push("--tab", shellWord(agent.tab));
-  if (agent.base !== null) {
-    parts.push("--worktree");
+  if (localLoop || agent.base !== null) {
+    if (!localLoop) parts.push("--worktree");
     // A remote worktree's repo was chosen at spawn: without it the respawn lands in the default.
     if (agent.host !== null && agent.repo !== null) parts.push("--root", shellWord(agent.repo));
   } else if (agent.cwd !== null) parts.push("--cwd", shellWord(agent.cwd));
@@ -286,7 +288,7 @@ async function ctlFailure(
     agent.workstreamName,
     sock,
     errCode(e) === "ENOENT" ? "missing" : "refused",
-    agent.host,
+    remoteLoopHost(agent),
   );
 }
 

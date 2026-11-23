@@ -6,6 +6,7 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { type AgentRuntimeInfo, runtimeKey } from "../src/agent-state.js";
 import { insertAgent } from "../src/agents.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
@@ -13,6 +14,7 @@ import { FRONTIER_MAX_NODES } from "../src/dag.js";
 import { type DashboardSnapshot, loadDashboard, WAVE_MAX } from "../src/dashboard-data.js";
 import { type Db, openDb } from "../src/db.js";
 import { finishDelegate, markDelegate, registerDelegateCall } from "../src/delegates.js";
+import { LOCAL_LOOP_TRANSPORT } from "../src/hosts.js";
 import { recordHumanNeeded } from "../src/human-needed.js";
 import { computeNext } from "../src/next-hints.js";
 import { authorizeTasks } from "../src/task-auto.js";
@@ -337,6 +339,34 @@ describe("agents: registry fields, scratch included, unknown stays unknown", () 
     expect(w1?.state).toBe("unknown"); // no pane state source: never guessed idle or busy
     expect(w1).not.toHaveProperty("tool");
     expect(snap.agents.find((a) => a.key === "scratch/s1")?.task).toBeNull();
+  });
+
+  it("matches a local loop to local pane runtime, not a peer with the same name", async () => {
+    insertAgent(db, {
+      name: "w1",
+      workstream: "ws",
+      paneId: "%1",
+      host: "box",
+      hostTransport: LOCAL_LOOP_TRANSPORT,
+    });
+    const local: AgentRuntimeInfo = {
+      harness: "pi",
+      model: "local-model",
+      provider: null,
+      effort: null,
+      provider_effort: null,
+      context_pct: null,
+      context_tokens: null,
+      context_window: null,
+      cost: null,
+    };
+    const ref = { workstream: "ws", name: "w1", pane_id: "%1" };
+    const agentRuntimes = new Map([
+      [runtimeKey({ ...ref, host: null }), local],
+      [runtimeKey({ ...ref, host: "box" }), { ...local, model: "peer-model" }],
+    ]);
+    const snap = await loadDashboard(db, { caller: null, agentRuntimes });
+    expect(snap.agents).toMatchObject([{ host: "box", runtime: { model: "local-model" } }]);
   });
 
   it("the workstream filter narrows agents; the text filter matches name and task", async () => {

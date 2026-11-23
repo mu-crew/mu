@@ -608,7 +608,9 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
     for (const a of await readLiveAgents(db, ws.name, undefined, opts.agentStates)) {
       const mine = owned.get(a.incarnation) ?? [];
       const out = liveAgentToOutput(a, ws.id);
-      const runtime = opts.agentRuntimes?.get(runtimeKey(out));
+      const runtime = opts.agentRuntimes?.get(
+        runtimeKey({ ...out, hostTransport: a.hostTransport }),
+      );
       everyAgent.push({
         ...out,
         key: keyOf(ws.name, a.name),

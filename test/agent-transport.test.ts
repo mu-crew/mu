@@ -29,6 +29,7 @@ import { setStdinReaderForTests } from "../src/cli/stdin.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
+import { LOCAL_LOOP_TRANSPORT } from "../src/hosts.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { helloReply, INC, withHello } from "./_ctl-ext.js";
@@ -960,6 +961,42 @@ describe("send --fresh", () => {
     expect(err).toBeInstanceOf(AgentExtensionOutdatedError);
     expect(err).toMatchObject({ op: "msgId", extVersion: "3.0.0" });
     expect(pasted()).toBe(false);
+  });
+
+  it("respawns a local loop with --mule and the recorded remote repo", () => {
+    const row = insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%1",
+      cli: "pi",
+      command: "pi",
+      commandSource: "cli-key",
+      host: "box",
+      hostTransport: LOCAL_LOOP_TRANSPORT,
+      cwd: "/srv/tree",
+      base: "abc123",
+      repo: "/srv/remote repo",
+    });
+    expect(respawnCommand(row)).toBe(
+      "mu agent spawn worker-1 -w auth --cli pi --mule box --root '/srv/remote repo'",
+    );
+  });
+
+  it("a missing local-loop ctl socket does not blame the workspace host", async () => {
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%1",
+      cli: "pi",
+      channel: "ctl",
+      host: "box",
+      hostTransport: LOCAL_LOOP_TRANSPORT,
+    });
+    await expect(sendToAgent(db, "worker-1", "x", { workstream: "auth" })).rejects.toMatchObject({
+      name: "AgentCtlUnreachableError",
+      kind: "missing",
+      host: null,
+    });
   });
 
   it("a row with a command but no recorded source is not guessed: no respawn line", () => {

@@ -4,6 +4,7 @@ import { delimiter, join } from "node:path";
 import type { ChannelName, CtlBlocked, CtlTool } from "./channels/types.js";
 import { execFileCapture } from "./exec-file.js";
 import { type Harness, harnessOfCli, hookConfigPath } from "./harnesses.js";
+import { remoteLoopHost } from "./hosts.js";
 import type { JobRef } from "./jobs/types.js";
 import {
   readTmuxViews,
@@ -395,8 +396,9 @@ function runtimeOf(pane: Record<string, unknown>): AgentRuntimeInfo {
 export interface RuntimeAgentRef {
   workstream: string;
   name: string;
-  /** The remote host profile; null = local. */
+  /** The remote process or workspace profile; null when both are local. */
   host: string | null;
+  hostTransport?: string | undefined;
   pane_id: string;
 }
 
@@ -407,7 +409,7 @@ export interface RuntimeAgentRef {
  * `remoteReading` matches it).
  */
 export function runtimeKey(a: RuntimeAgentRef): string {
-  return a.host === null
+  return remoteLoopHost(a) === null
     ? `local\u0000${a.workstream}/${a.name}\u0000${a.pane_id}`
     : `remote\u0000${a.workstream}/${a.name}`;
 }

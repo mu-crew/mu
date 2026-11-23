@@ -199,8 +199,10 @@ export interface AgentRow {
   /** Who spawned it: `<workstream>/<agent>` for a managed caller, else
    *  `pi:<PI_SESSION_ID>`; null when unknown (older rows, no identity). */
   spawner: string | null;
-  /** The remote host profile it runs on; null for a local agent. */
+  /** The remote host profile for the process or workspace; null when both are local. */
   host: string | null;
+  /** Recorded transport; `local-loop` means host names only the workspace. Absent if not recorded. */
+  hostTransport?: string;
   /** HEAD last collected from its remote worktree; null until one is. */
   collectedHead: string | null;
   /** A remote worktree's repo on its host (absolute, chosen at spawn); null otherwise. */
@@ -342,6 +344,7 @@ interface RawAgentRow {
   command_source: string | null;
   spawner: string | null;
   host: string | null;
+  host_transport: string | null;
   collected_head: string | null;
   repo: string | null;
   gate_token: string | null;
@@ -369,6 +372,7 @@ const SELECT_AGENT_COLS = `
   a.command_source AS command_source,
   a.spawner AS spawner,
   a.host AS host,
+  a.host_transport AS host_transport,
   a.collected_head AS collected_head,
   a.repo AS repo,
   a.gate_token AS gate_token,
@@ -401,6 +405,7 @@ function rowFromDb(row: RawAgentRow): AgentRow {
         : null,
     spawner: row.spawner,
     host: row.host,
+    ...(row.host_transport !== null ? { hostTransport: row.host_transport } : {}),
     collectedHead: row.collected_head,
     repo: row.repo,
     gateToken: row.gate_token,

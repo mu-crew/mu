@@ -9,7 +9,7 @@ import type { AgentRow } from "../agents.js";
 import { getCarrierJobByAgent } from "../carrier-jobs.js";
 import type { ChannelObservation, ChannelReading } from "../channels/types.js";
 import type { Db } from "../db.js";
-import { LOCAL_LOOP_TRANSPORT } from "../hosts.js";
+import { remoteLoopHost } from "../hosts.js";
 import { PluginCallError } from "../plugins/errors.js";
 import { pluginJobKind, pluginJobRef } from "../plugins/job.js";
 import { gateKind } from "./gate.js";
@@ -207,15 +207,14 @@ export function agentJobRef(agent: {
   hostTransport: string | null;
 }): JobRef {
   if (agent.gateToken !== null) return gateJobRef(agent);
+  const host = remoteLoopHost(agent);
   return {
     kind: agent.hostTransport === "lease" ? "lease" : "pane",
     viewPaneId: agent.paneId,
     ...(agent.paneIdentity !== undefined ? { paneIdentity: agent.paneIdentity } : {}),
     agentId: agent.incarnation,
     agent: { workstream: agent.workstreamName, name: agent.name },
-    ...(agent.host === null || agent.hostTransport === LOCAL_LOOP_TRANSPORT
-      ? {}
-      : { host: { name: agent.host } }),
+    ...(host !== null ? { host: { name: host } } : {}),
   };
 }
 

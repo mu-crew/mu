@@ -52,6 +52,7 @@ import {
 } from "../cli.js";
 import type { Db } from "../db.js";
 import { harnessOfCli } from "../harnesses.js";
+import { remoteLoopHost } from "../hosts.js";
 import { agentAttachTarget, viewCapture } from "../jobs/view.js";
 import { leftoverLines, listLeftovers } from "../leftovers.js";
 import { say } from "../messages.js";
@@ -267,7 +268,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
       workstream,
       agent.ctlSocket,
       agent.ctl,
-      agent.host,
+      remoteLoopHost(agent),
     );
     warnings.push(warn.message);
     if (!opts.json) console.error(pc.yellow(`warning: ${warn.message}`));
@@ -669,7 +670,7 @@ async function spawnSend(db: Db, agent: SpawnedAgent, text: string): Promise<Spa
         agent.workstreamName,
         agent.ctlSocket,
         agent.ctl,
-        agent.host,
+        remoteLoopHost(agent),
       ),
     );
   let undelivered = false;

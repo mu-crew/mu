@@ -60,7 +60,9 @@ and a pi on the `hooks` fallback:
 each spawned pi. Send, `--fresh`, wait, abort and state for pi agents
 go through it, exactly, with no screen reading and no fallback to
 pasting. Remote pi agents (`spawn --host`) use a socket forward their
-host profile's shell template carries. A pi is pasted to only when it was
+host profile's shell template carries. A local-loop worker (`spawn --mule`)
+uses a local socket and local pane runtime; its recorded host is only for
+workspace operations such as collect. A pi is pasted to only when it was
 spawned on the `hooks` fallback (`MU_PI_CHANNEL=hooks`, recorded on its row),
 never because its socket failed. Non-pi agents are sent to through
 the backend on herdr and Rex (`mux`), and on tmux through the `hooks`

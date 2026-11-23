@@ -54,6 +54,7 @@ import {
 import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
 import { harnessOfCli } from "../harnesses.js";
+import { remoteLoopHost } from "../hosts.js";
 import { say } from "../messages.js";
 import { checkDelivery } from "../plugins/channel.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
@@ -649,7 +650,7 @@ async function drive(
           ws,
           spawned.ctlSocket,
           spawned.ctl,
-          spawned.host,
+          remoteLoopHost(spawned),
         );
       }
       if (spawned.trustDialog === true) throw new SpawnTrustDialogError(spawned.name);

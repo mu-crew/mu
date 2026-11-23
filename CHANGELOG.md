@@ -19,6 +19,12 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   `mu agent collect` fetches from the remote tree as with `--host`.
   Requires pi's mule workspace extension; no remote pi or DB is launched.
 
+### Fixed
+
+- Recovery hints for `--mule` workers now respawn with `--mule` and the recorded
+  repo, not `--host`. The dashboard matches their local pane runtime, and a
+  missing local control socket no longer suggests checking a remote forward.
+
 ## [5.3.0] — 2026-11-23
 
 ### Added

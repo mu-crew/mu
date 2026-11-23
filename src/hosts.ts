@@ -145,6 +145,14 @@ export class HostInUseError extends Error {
 /** agents.host_transport for a locally bound pane whose host names only its workspace. */
 export const LOCAL_LOOP_TRANSPORT = "local-loop";
 
+/** Host of the running loop, not the workspace. Untagged host rows predate --mule. */
+export function remoteLoopHost(agent: {
+  host: string | null;
+  hostTransport?: string | null | undefined;
+}): string | null {
+  return agent.hostTransport === LOCAL_LOOP_TRANSPORT ? null : agent.host;
+}
+
 /** The multiplexer cannot run the remote worker's launch or view. One line, exit 2. */
 export class HostSpawnUnsupportedError extends Error {
   override readonly name = "HostSpawnUnsupportedError";
