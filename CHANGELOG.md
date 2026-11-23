@@ -175,13 +175,15 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   (`agents.pane_identity`, `<pid>|<start time>`; the pane id is unique within a
   server, so the pane's own pid adds nothing); liveness, `mu wait`, reconcile,
   sends, capture and close treat another server as a dead pane for that row and
-  never touch the foreign pane. A legacy row can observe liveness by id but
-  cannot target an action. Spawn reports uncertain creation when tmux does not
-  return the birth identity: rollback never kills or probes the candidate id.
-  Dashboard, spawn and orchestrator attach commands target the exact pane, even
-  after its window is renamed or split. Workstream teardown leaves a tmux
-  session alone unless a verified agent pane still belongs to it; a session
-  name alone is not enough, including after reconcile prunes the last row.
+  never touch the foreign pane. Rows from before the column (agents spawned
+  before the upgrade) stay on the unverified check: mu still captures, sends
+  to, attaches, closes and tears them down by pane id. Spawn reports uncertain
+  creation when tmux does not return the birth identity: rollback never kills
+  or probes the candidate id. Dashboard, spawn and orchestrator attach commands
+  target the exact pane, even after its window is renamed or split. Workstream
+  teardown leaves a tmux session alone unless an agent pane still belongs to it
+  (a legacy row's by id); a session name alone is not enough, including after
+  reconcile prunes the last row.
 - Guarded tmux pastes and literal keys preserve multiline text, including
   indentation, tabs, and `#` lines. Long literal input stays within tmux's
   command-length limit, and a server change stops delivery before the next

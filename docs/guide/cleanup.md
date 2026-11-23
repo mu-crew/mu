@@ -33,7 +33,8 @@ mu workstream teardown auth --if <n>    # apply that preview
 
 Teardown is soft. It closes the mux session first, then deletes dead
 agent rows and marks the workstream torn down. On tmux, it leaves the session
-open (`killedMux: false`) unless a verified agent pane still belongs to it.
+open (`killedMux: false`) unless an agent pane still belongs to it (verified, or
+a legacy row's pane by id).
 If there is no proof (for example, after the last row was pruned), inspect
 and close the session in tmux yourself if it is yours. Teardown refuses (exit 4) while
 a registered pane is still alive outside the session. A pane that comes

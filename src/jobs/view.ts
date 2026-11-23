@@ -39,7 +39,10 @@ import { tmux } from "../tmux.js";
 /** A view's state as the multiplexer reports it, or `unknown` with why. */
 export type ViewState = PaneResult | { state: "unknown"; reason: string };
 
-/** An action is never allowed on a legacy, ID-only tmux row. */
+/**
+ * The action ref for a pane just born: on tmux, the birth identity is required (a birth
+ * without one is uncertain, never a legacy row).
+ */
 export function viewRef(
   mux: MuxBackend,
   paneId: string,
@@ -50,7 +53,20 @@ export function viewRef(
     : { kind: "native", paneId };
 }
 
-/** ID-only fallback for legacy liveness observations, not effects. */
+/**
+ * The action ref for an agent row's pane. A tmux row with a recorded server acts only on
+ * that server; a legacy row (spawned before `agents.pane_identity`) acts on its bare id,
+ * the check mu made before the column.
+ */
+export function rowRef(
+  mux: MuxBackend,
+  paneId: string,
+  identity: string | null | undefined,
+): ActionPaneRef {
+  return mux.name === "tmux" ? paneRef(paneId, identity) : { kind: "native", paneId };
+}
+
+/** ID-only fallback for legacy liveness observations. */
 function probeRef(
   mux: MuxBackend,
   paneId: string,
@@ -72,7 +88,7 @@ export function agentAttachTarget(
     throw new MuxError(`pane ${agent.paneId} belongs to ${backend}, not ${mux.name}`);
   const session = `mu-${workstream}`;
   if (mux.name === "tmux") {
-    return { session, pane: requireVerifiedPane(paneRef(agent.paneId, agent.paneIdentity)) };
+    return { session, pane: paneRef(agent.paneId, agent.paneIdentity) };
   }
   return { session, window: agent.tab ?? agent.name };
 }
@@ -82,7 +98,7 @@ export async function killView(
   paneId: string,
   identity?: string | null,
 ): Promise<void> {
-  await mux.killPane(viewRef(mux, paneId, identity));
+  await mux.killPane(rowRef(mux, paneId, identity));
 }
 
 const message = (e: unknown): string => (e instanceof Error ? e.message : String(e));
@@ -127,7 +143,7 @@ export async function viewCapture(
   mux?: MuxBackend,
 ): Promise<string> {
   const m = mux ?? (await activeMux());
-  return m.capture(viewRef(m, paneId, identity), opts);
+  return m.capture(rowRef(m, paneId, identity), opts);
 }
 
 /**

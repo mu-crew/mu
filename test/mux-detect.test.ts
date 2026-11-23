@@ -348,10 +348,10 @@ describe("attachCommands + attachShellLine", () => {
     expect(attachShellLine(steps)).toBe("tmux switch-client -t =mu-auth:");
   });
 
-  it("refuses an agent window without a verified pane", async () => {
+  it("refuses an agent window without its pane", async () => {
     await expect(
       tmuxBackend.attachCommands({ session: "mu-auth", window: "worker-1" }),
-    ).rejects.toThrow(/verified pane/);
+    ).rejects.toThrow(/needs a pane/);
   });
 
   it("a session-only target attaches to the session", async () => {

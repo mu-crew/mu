@@ -575,11 +575,11 @@ export async function teardownWorkstream(
       killedMux = await mux.killSession({ backend: mux.name, session: muxSession });
     } else {
       // An empty registry (including after reconcile) says nothing about who owns
-      // this tmux session. Only a recorded pane still in it can authorize the kill.
+      // this tmux session. Only a recorded pane still in it can authorize the kill
+      // (a legacy row's, by id alone: the check before `agents.pane_identity`).
       for (const a of agentsBefore) {
         if (!sessionPanes.has(a.paneId)) continue;
         const pane = paneRef(a.paneId, a.paneIdentity);
-        if (pane.kind === "unverified") continue;
         killedMux = await mux.killSession({ backend: "tmux", session: muxSession, pane });
         if (killedMux) break;
       }
