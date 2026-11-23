@@ -1,0 +1,28 @@
+[
+  "RIG-CANARY-f8dc74a2239b",
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn worker-1 -w eval --host build --no-ctl"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu agent spawn worker-2 -w eval --host build --no-ctl"
+      }
+    ]
+  },
+  {
+    "calls": [
+      {
+        "bash": "mu host exec build --timeout 15 -- 'cd \"$HOME/repo\" && sh check.sh'"
+      }
+    ]
+  },
+  {
+    "text": "Both lease workers are still live and the workspace check passed."
+  },
+  "RIG-CANARY-f8dc74a2239b"
+]

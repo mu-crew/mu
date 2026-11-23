@@ -1,0 +1,14 @@
+[
+  "RIG-CANARY-f8dc74a2239b",
+  {
+    "calls": [
+      {
+        "bash": "rev=$(mu agent close worker-1 -w eval --json | jq -er '.data.revision') && mu agent close worker-1 -w eval --if \"$rev\" --json"
+      }
+    ]
+  },
+  {
+    "text": "Please restore the shared master connection to build. The stop did not complete; the job and worktree are kept. Once the master is back, take a fresh close preview and apply that revision."
+  },
+  "RIG-CANARY-f8dc74a2239b"
+]
