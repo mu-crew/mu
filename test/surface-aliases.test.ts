@@ -110,6 +110,23 @@ describe("t_surface round 1", () => {
     ).toEqual([]);
   });
 
+  it("spawn --host --task refuses a fallback pinned by an earlier local spawn, keeping it for local retries", async () => {
+    const local = await runCliJson(
+      ["agent", "spawn", "worker-2", "-w", "auth", "--task", "t2", "--json"],
+      path,
+    );
+    expect(local.exitCode ?? 0).toBe(0);
+    await runCliJson(["agent", "delete", "worker-2", "-w", "auth", "--json"], path);
+    const before = hook.texts.length;
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-3", "-w", "auth", "--host", "box1", "--task", "t2", "--json"],
+      path,
+    );
+    expect(r.exitCode).toBe(2);
+    expect(JSON.stringify(r.doc)).toMatch(/--send/);
+    expect(hook.texts).toHaveLength(before);
+  });
+
   it.each([
     [["tasks"], "unknown command 'tasks' (closest: mu task list); see mu --help"],
     [["show"], "unknown command 'show' (closest: mu task show); see mu --help"],

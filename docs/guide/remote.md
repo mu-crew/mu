@@ -71,6 +71,9 @@ mu agent spawn worker-1 -w auth --host dev --worktree --root '~/repo' --task bui
 EOF
 ```
 
+Without `--send`, `--host --task` sends the task's authored brief note. It refuses (exit 2)
+when the task has none, or only the one-line fallback an earlier local spawn pinned.
+
 - The pane runs the profile's `--shell` template, filled with the remote
   identity (`MU_MANAGED_AGENT`, `MU_AGENT_NAME`, `MU_WORKSTREAM`,
   `MU_CTL_SOCK`, `MU_REMOTE`, never your DB, state or sync dir, which are unset in the pane), your
