@@ -156,9 +156,11 @@ the agent's row, tasks, worktree owner and recovery.
 4. **Host tmux is a named stance limit** (Q15). mule needs tmux on the
    host for every job (mule `SPEC.md:45`). On a mule-link host,
    `host check` reports a missing master as the hand-back step (lock-free
-   `-O check`, no unlocked ssh fallback, `:65`) and a missing tmux as a
-   separate failed step (a mule probe that dispatches no job; `host info`
-   reports neither today, `:311`). Only serve's rung-2 ops skip tmux.
+   `-O check`, no unlocked ssh fallback, `:65`; `mule host info` already
+   reports `master=false` with its remedy, mule `src/cli.rs:628-680`) and a
+   missing tmux as a separate failed step (a mule probe that dispatches no
+   job; `host info` does not report tmux). Only serve's rung-2 workspace
+   operations skip tmux, not the diagnostic reads.
 
 ### §5. A dropped master is not host loss (*decided*, Q13)
 
@@ -196,7 +198,7 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
 
 1. **A synchronous link call** (`HostLink.exec`), admitted per §4, with no
    row, task, pane or job record; for workspace commands, not bulk
-   transfer (mule `SPEC.md:49`); v1's only gate on a capped host (Q7).
+   transfer (mule `SPEC.md:49`); v1's only gate on the shared capped connection (Q7); an SSH template gate keeps its own connection (§A).
 2. **Size.** (a) `link.fits` before admission: the template's expanded
    argv (`src/host-link.ts:186-192`) or a plugin's script plus cwd; a
    failure is a typed refusal, exit 2, nothing run. (b) Again in
@@ -319,7 +321,7 @@ its conditions.
 
 | Rung | Provider · link · job | tmux | Rex | herdr | Loop on host | One session per connection | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0 | none · none · `pane` | pi `ctl`, others `hooks` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
+| 0 | none · none · `pane` | pi `ctl`; known hook harnesses `hooks`, other workers `mux`; pi `hooks` is an opt-in (`src/agents/spawn.ts:823-832,1259-1272`) | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
 | 1 | static · template or plugin · none | no channel | no channel | no channel | not needed | fine over the mule link | `host_exec` |
 | 3 | static · template (session) · `pane` | pi `ctl` forwarded; others remote `hooks` | pi `ctl`; others `mux` | refused | needed | fine: each pane opens its own connection | shipped |
 | 3 | static · ssh plugin · `pane` | built-in `ctl`/`hooks`, if conditions hold | built-in `ctl`; others `mux` | refused | needed | as above | `plugin_ssh_pane`, `job_plugin_builtin_channels` |
@@ -331,7 +333,7 @@ its conditions.
 
 - **Conditions for a built-in channel on a plugin job:**
   `job_plugin_builtin_channels` delivers it; the kind honours `sockets`
-  (for `ctl`) and the env; the view is interactive. Today plugin spawn
+  (for `ctl`) and the env; the view is interactive where the channel needs stdin (`hooks`, `mux`), not for `ctl` over a noninteractive mule carrier. Today plugin spawn
   gives the view stdin `/dev/null`, sets no hooks and hands no socket pair
   (`src/agents/spawn-plugin.ts:104,238-258,413-414`; plugins D3, D8). On
   rung 5 a built-in channel needs `firstTurn: "on-send"`; an at-start kind
@@ -384,8 +386,9 @@ mule jobs; serve runs no bounded exec. The track's units are
 runs one combined acceptance on the final sha (Linux, `MaxSessions 1`,
 the thresholds below). `serve_production` is closed.
 
-**Thresholds** (Q11). p50 is the acceptance metric; observed p95 jitter is
-accepted.
+**Thresholds** (Q11). p50 is the acceptance metric for the four timed
+rows; observed p95 jitter is accepted. Cancel is a zero-leftovers case, not
+a p50 metric.
 
 | Measure | Threshold |
 | --- | --- |
@@ -395,7 +398,7 @@ accepted.
 | 200 KB write | ≤ 3 s |
 | cancel | leaves nothing behind |
 
-The prototype met all five at p50 (§E).
+The prototype met all five (§E).
 
 **First rung-2 release scope** (*brief*): static hosts on the mule link,
 pi only, no rung-2 orchestrator (§8.3), no provider-backed rung 2. Rex
