@@ -39,7 +39,7 @@ import type { Db } from "../db.js";
 import { resolveHost } from "../host-provider.js";
 import { releaseHostChannelsForAgent } from "../hosts.js";
 import { readJobFile } from "../jobs/lease.js";
-import { viewPid, viewPresent, viewRunning } from "../jobs/view.js";
+import { killView, viewPid, viewPresent, viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -401,7 +401,7 @@ async function previewHolders(
 async function paneTree(mux: MuxBackend, agent: AgentRow): Promise<PaneProcesses> {
   const none: PaneProcesses = { tree: new Set(), groups: new Set() };
   try {
-    const pid = await viewPid(agent.paneId, mux);
+    const pid = await viewPid(agent.paneId, mux, agent.paneIdentity);
     return pid === undefined ? none : await paneProcesses(pid);
   } catch {
     return none;
@@ -545,8 +545,10 @@ async function closeLocked(
   // (The mux is resolved first, so nothing is awaited between the checks
   // and the kill.) A row that vanished (pruned as a ghost) has no pane left
   // to name: nothing to kill.
-  if (getAgentForCleanup(db, name, opts.workstream) !== undefined) {
-    await mux?.killPane(agent.paneId).catch(() => {
+  // A pane another tmux server holds under the row's id is not the agent's: never killed.
+  // The identity rides in the kill itself (one tmux call): no restart can land between check and kill.
+  if (getAgentForCleanup(db, name, opts.workstream) !== undefined && mux !== undefined) {
+    await killView(mux, agent.paneId, agent.paneIdentity).catch(() => {
       /* idempotent — pane may already be gone, or the mux with it */
     });
   }
@@ -564,7 +566,7 @@ async function closeLocked(
       why = "no multiplexer answers";
     } else {
       try {
-        alive = await viewPresent(agent.paneId, mux);
+        alive = await viewPresent(agent.paneId, mux, agent.paneIdentity);
       } catch (err) {
         alive = "unknown";
         why = err instanceof Error ? err.message.split("\n")[0] : String(err);

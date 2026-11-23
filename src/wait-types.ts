@@ -264,8 +264,8 @@ export interface WaitOptions {
    * event is not urgent, up to READY_BATCH_MAX (src/wait-select.ts).
    */
   mode?: "first" | "all" | "ready";
-  /** `owned` (default): the callers' owned refs also end the wait. `refs`: only the listed refs do. */
-  eventScope?: "owned" | "refs";
+  /** `owned` (default) includes owned refs; `targets` limits events to the selected targets while retaining their registration and cursors; `refs` does not use either. */
+  eventScope?: "owned" | "targets" | "refs";
   /** Delegate calls of this wave (the callers' only, never narrowed by `scope`) are targets; the result carries their tally. A name none of their calls carry throws WaveNotFoundError. */
   wave?: { workstream?: string; name: string };
   /** The open transitive blockers of this task are targets, re-read each iteration. */

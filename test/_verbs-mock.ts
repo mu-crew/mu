@@ -214,7 +214,7 @@ export function mockTmux(state: MockState): { calls: string[][]; executor: TmuxE
     return fail(`unmocked tmux call: ${args.join(" ")}`);
   };
 
-  return { calls, executor };
+  return { calls, executor: withServerIdentity(executor) };
 }
 
 export const ok = (stdout = ""): TmuxExecResult => ({ stdout, stderr: "", exitCode: 0 });
@@ -256,4 +256,84 @@ export async function withMuSpawnLivenessMs(
     if (original === undefined) delete process.env[key];
     else process.env[key] = original;
   }
+}
+
+// ─── Server identity, as tmux reports it ───────────────────────────────
+
+/** The fake server's `#{pid}|#{start_time}`. */
+export const FAKE_SERVER_IDENTITY = "4242|1700000000";
+
+/** Split a tmux command string the way tmux reads it (single and double quotes, adjacent pieces join). */
+function tmuxWords(line: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let started = false;
+  let quote: string | undefined;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line.charAt(i);
+    if (quote !== undefined) {
+      if (ch === quote) quote = undefined;
+      else if (quote === '"' && ch === "\\" && line.charAt(i + 1) === "n") {
+        word += "\n";
+        i++;
+      } else word += ch;
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      started = true;
+    } else if (/\s/.test(ch)) {
+      if (started) words.push(word);
+      word = "";
+      started = false;
+    } else {
+      word += ch;
+      started = true;
+    }
+  }
+  if (started) words.push(word);
+  return words;
+}
+
+/**
+ * Make a mocked tmux executor speak what the real server does about its identity: pane creation
+ * answers `#{pane_id}|#{pid}|#{start_time}`, `list-sessions` names the server, and a guarded
+ * command (`if-shell -F '#{==:#{pid}|#{start_time},ID}' <command> <else>`) runs its command only
+ * when ID is this fake server. The inner executor sees the plain, unguarded command, so a test's
+ * call log reads as it did before rows carried an identity.
+ */
+export function withServerIdentity(
+  inner: TmuxExecutor,
+  identity: string = FAKE_SERVER_IDENTITY,
+): TmuxExecutor {
+  return async (args) => {
+    if (args[0] === "if-shell" && args[1] === "-F") {
+      const format = args[2] === "-t" ? 4 : 2;
+      const want = /#\{==:#\{pid\}\|#\{start_time\},(\d+\|\d+)\}/.exec(args[format] ?? "")?.[1];
+      if (want !== identity) {
+        return { stdout: "", stderr: "'exit 97' returned 97", exitCode: 97 };
+      }
+      return withServerIdentity(inner, identity)(tmuxWords(args[format + 1] ?? ""));
+    }
+    if (args[0] === "list-sessions" && args.some((a) => a.includes("#{pid}"))) {
+      const result = await inner(args);
+      if (
+        (result.exitCode === 0 && result.stdout === "") ||
+        /unmocked|unrouted/.test(result.stderr)
+      ) {
+        return ok(`${identity}\n`);
+      }
+      return result;
+    }
+    const result = await inner(args);
+    const born = ["new-session", "new-window", "split-window"].includes(args[0] ?? "");
+    const format = args[args.indexOf("-F") + 1] ?? "";
+    if (
+      born &&
+      format.includes("#{pid}") &&
+      result.exitCode === 0 &&
+      /^%\d+$/.test(result.stdout.trim())
+    ) {
+      return { ...result, stdout: `${result.stdout.trim()}|${identity}\n` };
+    }
+    return result;
+  };
 }

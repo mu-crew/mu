@@ -9,7 +9,6 @@ import { createElement } from "react";
 import stringWidth from "string-width";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runtimeKey } from "../src/agent-state.js";
-import { insertAgent } from "../src/agents.js";
 import { App } from "../src/cli/tui/app.js";
 import {
   copyCommand,
@@ -22,10 +21,11 @@ import { clampTop, notesLines, runtimeLine, wrap } from "../src/cli/tui/drill.js
 import { createRuntime, type DashboardRuntime } from "../src/cli/tui/runtime.js";
 import { type Line, lineText } from "../src/cli/tui/text.js";
 import { type Db, openDb } from "../src/db.js";
-import type { MuxCommand } from "../src/mux.js";
+import { attachShellLine, type MuxCommand } from "../src/mux.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { renderApp } from "./_ink-render.js";
@@ -559,7 +559,8 @@ describe("drills in the dashboard", () => {
     for (const k of ["y", "r", "G"]) await ui.press(k);
     await ui.press(ESC);
     expect(opsCount()).toBe(before);
-    for (const c of mux.calls) expect(["capture-pane", "list-panes"]).toContain(c[0] ?? "");
+    for (const c of mux.calls)
+      expect(["capture-pane", "list-panes", "list-sessions"]).toContain(c[0] ?? "");
     ui.unmount();
   });
 
@@ -653,6 +654,15 @@ describe("drills in the dashboard", () => {
 });
 
 describe("attach", () => {
+  const guarded = (verb: string) => [
+    "-L",
+    "mu-private",
+    "if-shell",
+    "-F",
+    "#{==:#{pid}|#{start_time},4242|1700000000}",
+    `${verb} -t %1`,
+    'run-shell "exit 97"',
+  ];
   let tmp: string;
   let db: Db;
   let rt: DashboardRuntime;
@@ -740,9 +750,7 @@ describe("attach", () => {
         before = ui.writes().length;
         await ui.press("a");
         await ui.until(() => ran.length === 1);
-        expect(ran).toEqual([
-          { command: "tmux", args: ["-L", "mu-private", "attach-session", "-t", "mu-ws:w1tab"] },
-        ]);
+        expect(ran).toEqual([{ command: "tmux", args: guarded("attach-session") }]);
         expect(during).toBe(false);
         expect(leftScreen).toBe(true);
         // The terminal is told where it went and how to come back, before the handoff.
@@ -790,7 +798,7 @@ describe("attach", () => {
         await toAgents(ui);
         await ui.press("a");
         await ui.until(() => ran.length === 1);
-        expect(ran[0]?.args).toEqual(["-L", "mu-private", "switch-client", "-t", "mu-ws:w1tab"]);
+        expect(ran[0]?.args).toEqual(guarded("switch-client"));
         expect(ui.writes().join("")).toContain("attaching mu-ws:w1tab · back: C-b L");
         await ui.until((s) => s.includes("a attach (back: C-b L)"));
         ui.unmount();
@@ -813,7 +821,7 @@ describe("attach", () => {
         await ui.until(() => ran.length === 1);
         expect(ran[0]).toEqual({
           command: "tmux",
-          args: ["-L", "mu-private", "attach-session", "-t", "mu-ws:w1tab"],
+          args: guarded("attach-session"),
           nested: true,
         });
         expect(ui.writes().join("")).toContain(
@@ -836,9 +844,7 @@ describe("attach", () => {
         expect(flat(ui)).toContain("(exit 1: no server running)");
         expect(s).toContain("Scrollback  ws/w1");
         expect(s).toContain("pane text");
-        expect(flat(ui)).toContain(
-          "from a shell outside the mux: tmux -L mu-private attach-session -t mu-ws:w1tab",
-        );
+        expect(flat(ui)).toContain("from a shell outside the mux: tmux -L mu-private if-shell -F");
         // The terminal is Ink's again and the drill reads keys.
         expect(ui.rawMode()).toBe(true);
         await ui.press(ESC);
@@ -858,7 +864,7 @@ describe("attach", () => {
         await ui.until((s) => s.includes("could not attach"));
         await ui.press("y");
         await ui.until((s) => s.includes("copied: tmux"));
-        const line = "tmux -L mu-private attach-session -t mu-ws:w1tab";
+        const line = attachShellLine([{ command: "tmux", args: guarded("attach-session") }]);
         const sent = Buffer.from(line).toString("base64");
         expect(ui.writes().some((w) => w.includes(`${ESC}]52;c;${sent}`))).toBe(true);
         ui.unmount();
@@ -888,7 +894,7 @@ describe("attach", () => {
         const f = flat(ui);
         expect(f).toContain("could not attach");
         expect(f).toContain("(exit 1: no server running)");
-        expect(f).toContain("tmux -L mu-private attach-session -t mu-ws:w1tab");
+        expect(f).toContain("tmux -L mu-private if-shell -F");
         expect(f).toContain("output line 70");
         // Scrolling the body never moves the notice.
         await ui.press("");
@@ -911,7 +917,7 @@ describe("attach", () => {
         await ui.press("");
         await ui.press("y");
         await ui.until((s) => s.includes("copied:"));
-        expect(flat(ui)).toContain("copied: tmux -L mu-private attach-session -t mu-ws:w1tab");
+        expect(flat(ui)).toContain("copied: tmux -L mu-private if-shell -F");
         expect(flat(ui)).toContain("output line 70");
         ui.unmount();
       }),
@@ -939,7 +945,12 @@ describe("attach", () => {
               ["workspace list", WORKSPACE_LIST.replace("mu-topotest", "mu-ws")],
               ["tab list --workspace w1", TAB_LIST],
             ]);
-            const plan = await planAttach({ workstream: "ws", name: "w1", tab: "mytab" });
+            const plan = await planAttach({
+              workstream: "ws",
+              name: "w1",
+              tab: "mytab",
+              paneId: "w1:p1",
+            });
             if (!plan.ok) throw new Error(plan.reason);
             // Executed here (inside a client): focus only. Copied: focus, then a client.
             expect(plan.steps).toHaveLength(1);
@@ -981,6 +992,7 @@ describe("attach", () => {
   });
 
   it("herdr: both steps run in order, outside a client", async () => {
+    db.prepare("UPDATE agents SET pane_id = 'w1:p1', pane_identity = NULL WHERE name = 'w1'").run();
     await withEnv("HERDR_ENV", undefined, async () => {
       mux = installMux("herdr", [
         ["workspace list", WORKSPACE_LIST.replace("mu-topotest", "mu-ws")],
@@ -1002,7 +1014,7 @@ describe("attach", () => {
   it("herdr with no workspace for the session: a reason and no line", async () => {
     const empty = JSON.stringify({ id: "x", result: { type: "workspace_list", workspaces: [] } });
     mux = installMux("herdr", [["workspace list", empty]]);
-    const plan = await planAttach({ workstream: "gone", name: "w1", tab: null });
+    const plan = await planAttach({ workstream: "gone", name: "w1", tab: null, paneId: "w1:p1" });
     expect(plan.ok).toBe(false);
     expect(plan.line).toBeNull();
   });

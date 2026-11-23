@@ -42,7 +42,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
-import { installMux, type MuxHarness } from "./_mux.js";
+import { fakePane, installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
@@ -326,7 +326,10 @@ describe("stage b: an owner landing while the pane opens is refused at the inser
     // The exact argv the backend's own kill sends (the executor's), behind tmux's global flags.
     const kill = mux.calls.find((c) => c[0] === "kill-pane");
     expect(kill).toEqual(["kill-pane", "-t", pane]);
-    expect(msg).toMatch(new RegExp(`Kill it: tmux (-L \\S+ -f /dev/null )?kill-pane -t ${pane}$`));
+    // The printed line carries the guard: run by hand later, it kills only on the recorded server.
+    expect(msg).toMatch(
+      /Kill it: tmux (-L \S+ -f \/dev\/null )?if-shell -F .*kill-pane.*%1.*exit 97/,
+    );
     expect(getAgent(db, "worker-1", "auth")).toBeUndefined();
     expect(getAgent(db, "w-9", "other")).toMatchObject({ cwd: P, base: SHA });
     // The pane is not proven gone: the spawn's channel is not released early.
@@ -471,11 +474,16 @@ describe("the refusal's way out", () => {
 
 describe("killPaneCommand: each backend's own kill, on the server mu drives", () => {
   const line = (b: "tmux" | "herdr" | "rex", id: string): string =>
-    attachShellLine([muxByName(b).killPaneCommand(id)]);
+    attachShellLine([
+      muxByName(b).killPaneCommand(b === "tmux" ? fakePane(id) : { kind: "native", paneId: id }),
+    ]);
 
   it("tmux kill-pane, herdr pane close, rex block close, each with its server selector", async () => {
     await withEnv("MU_TMUX_SOCKET", "priv", async () => {
-      expect(line("tmux", "%3")).toBe("tmux -L priv -f /dev/null kill-pane -t %3");
+      const cmd = line("tmux", "%3");
+      expect(cmd).toContain("tmux -L priv -f /dev/null if-shell -F");
+      expect(cmd).toContain("kill-pane");
+      expect(cmd).toContain("%3");
     });
     await withEnv("MU_HERDR_SESSION", "s1", async () => {
       expect(line("herdr", "w1:p2")).toBe("herdr --session s1 pane close w1:p2");

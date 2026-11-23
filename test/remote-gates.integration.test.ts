@@ -13,11 +13,14 @@ import { readGate } from "../src/agents/gate.js";
 import { closeAgent, getAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, listHostChannels } from "../src/hosts.js";
+import { addTask, closeTask } from "../src/tasks.js";
 import { paneResult, tmux } from "../src/tmux.js";
 import { waitForEvents } from "../src/wait.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
+import { registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
+import { runCliJson } from "./_runCli.js";
 
 const haveTmux = ((): boolean => {
   try {
@@ -111,6 +114,31 @@ describeIfTmux("remote command gates (real tmux, private socket)", () => {
     // The pane stays until an explicit close, with its scrollback.
     expect(getAgent(db, "g1", "auth")?.paneId).toBe(a.paneId);
   });
+
+  it("a named gate returns its own exit, leaving an unrelated task close for bare wait", async () => {
+    const caller = "auth/orch";
+    addTask(db, { localId: "build", workstream: "auth", title: "Build" });
+    registerOwnedWait(db, caller, [{ kind: "task", workstream: "auth", id: "build" }]);
+    closeTask(db, "build", { workstream: "auth", evidence: "Build passed" });
+    const a = await gate("gate-1", "sleep 2; exit 23");
+    expect(await paneResult(a.paneId)).toEqual({ state: "running" });
+
+    const cliWait = (...refs: string[]) =>
+      runCliJson(
+        ["wait", ...refs, "--as", caller, "-w", "auth", "--timeout", "5"],
+        join(dir, "mu.db"),
+      );
+    const named = await cliWait("agent:auth/gate-1");
+    expect({ exit: named.exitCode ?? 0, firing: named.data.firing }).toEqual({
+      exit: 23,
+      firing: { kind: "exited", ref: "agent:auth/gate-1" },
+    });
+    expect(named.data).toMatchObject({ resume: null, snapshots: [{ ref: "agent:auth/gate-1" }] });
+
+    const bare = await cliWait();
+    expect(bare.exitCode ?? 0).toBe(0);
+    expect(bare.data.firing).toEqual({ kind: "closed", ref: "task:auth/build" });
+  }, 10_000);
 
   it("a slow gate is running (holding the only channel), then exits 7 and frees it", async () => {
     const a = await gate("g2", "sleep 1; exit 7");

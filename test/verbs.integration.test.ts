@@ -13,10 +13,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent, getAgent, listLiveAgents, readAgent, spawnAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { capture, killSession, resetTmuxExecutor } from "../src/tmux.js";
+import { capture, resetTmuxExecutor } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { killPrivateSession, privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 
 const TMUX_AVAILABLE = tmuxIntegrationAvailable();
 const describeIfTmux = TMUX_AVAILABLE ? describe : describe.skip;
@@ -47,7 +47,7 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
       db.close();
     } catch {}
     try {
-      await killSession(session);
+      await killPrivateSession(session);
     } catch {}
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -136,7 +136,7 @@ describeIfTmux("verbs integration (real tmux + real DB)", () => {
       cli: "sh",
       command: `sh -c 'echo ${marker}; while true; do sleep 60; done'`,
     });
-    await pollUntil(() => capture(a.paneId).then((out) => out.includes(marker)), {
+    await pollUntil(async () => (await capture(await privatePane(a.paneId))).includes(marker), {
       description: "spawned pane scrollback contains echo marker",
     });
     const out = await readAgent(db, "alice", { workstream });

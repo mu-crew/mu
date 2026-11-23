@@ -11,7 +11,7 @@ import {
 } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { type HostLease, releaseHostChannel, releaseHostChannelsForAgent } from "../hosts.js";
-import { viewPresent } from "../jobs/view.js";
+import { killView, viewPresent } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { getWorktreeAt, releaseWorktree } from "../worktree.js";
@@ -71,13 +71,17 @@ export async function rollbackSpawn(
   lease?: HostLease,
   /** A lease spawn's carrier_jobs reservation: the only job this rollback may stop or release. */
   carrier?: { token: string },
+  /** The tmux server the pane was created on: the kill and the proof run only on it. */
+  paneIdentity?: string | null,
+  /** tmux returned without trustworthy birth evidence; never kill or probe a candidate id. */
+  birthUncertain = false,
 ): Promise<{ gone: boolean; heldBy?: string }> {
   // Is the pane (the host transport) proven gone? A channel is freed only on that proof.
   // No pane id is that proof only when no view open was attempted: a backend may open the
   // window and then fail before reporting its id (the record's view is then `opening`).
-  let paneGone = paneId === undefined && !viewOpening(db, carrier);
+  let paneGone = !birthUncertain && paneId === undefined && !viewOpening(db, carrier);
   let heldBy: string | undefined;
-  if (paneId !== undefined) {
+  if (paneId !== undefined && !birthUncertain) {
     // Best-effort: rollback runs on an already-failing path and must not
     // mask the original error, even if the mux itself went away.
     const mux = await activeMux().catch(() => undefined);
@@ -92,10 +96,12 @@ export async function rollbackSpawn(
       )
       .get(paneId, ownedIncarnation ?? null) as { who: string } | undefined;
     heldBy = foreign?.who;
-    if (foreign === undefined) {
-      await mux?.killPane(paneId).catch(() => {});
-      paneGone = mux !== undefined && (await viewPresent(paneId, mux).catch(() => true)) === false;
-    } else {
+    // Without a mux or a tmux birth identity, the default (not proven gone) stands.
+    const canVerify = mux !== undefined && (mux.name !== "tmux" || Boolean(paneIdentity));
+    if (canVerify && foreign === undefined) {
+      await killView(mux, paneId, paneIdentity).catch(() => {});
+      paneGone = (await viewPresent(paneId, mux, paneIdentity).catch(() => true)) === false;
+    } else if (canVerify && foreign !== undefined) {
       paneGone = true; // another agent holds the id: ours is not that pane
 
       try {

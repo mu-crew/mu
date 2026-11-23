@@ -226,7 +226,11 @@ async function watchCtlRun(
       // is a forward that a dropped connection (a lease's mule master) takes
       // down while the pane and the job on the host live on. Only a pane that
       // is gone (or unreadable as alive) is a dead pi.
-      const up = await jobUp({ kind: "pane", viewPaneId: agent.paneId });
+      const up = await jobUp({
+        kind: "pane",
+        viewPaneId: agent.paneId,
+        ...(agent.paneIdentity !== undefined ? { paneIdentity: agent.paneIdentity } : {}),
+      });
       if (up === "unknown") return lost("unknown", "control socket lost; the mux cannot say");
       return isJobGone(up) ? lost(up) : lost("unknown", "control socket lost; the pane is alive");
     },

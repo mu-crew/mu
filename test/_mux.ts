@@ -23,6 +23,7 @@
 // and must gate on `tmuxIntegrationAvailable()`.
 
 import { execa } from "execa";
+import { paneRef, requireVerifiedPane, type VerifiedPaneRef } from "../src/mux/pane-ref.js";
 import {
   type MuxBackend,
   type MuxBackendName,
@@ -31,7 +32,8 @@ import {
   setMuxForTests,
   setRexExecutor,
 } from "../src/mux.js";
-import { setTmuxExecutor } from "../src/tmux.js";
+import { serverIdentity, setTmuxExecutor, tmux } from "../src/tmux.js";
+import { FAKE_SERVER_IDENTITY, withServerIdentity } from "./_verbs-mock.js";
 
 // ─── Shared executor shape ─────────────────────────────────────────────
 //
@@ -119,10 +121,12 @@ export function installMux(
           return { stdout: "", stderr: `unrouted: ${key}`, exitCode: 1 };
         };
 
-  const executor: MuxExecutor = async (args) => {
+  const recording: MuxExecutor = async (args) => {
     calls.push([...args]);
     return await impl(args);
   };
+  // A tmux row carries its server's identity: the fake answers for it, as tmux does.
+  const executor: MuxExecutor = backend === "tmux" ? withServerIdentity(recording) : recording;
 
   const previousBackend = setMuxForTests(muxByName(backend));
   const setExecutor = { herdr: setHerdrExecutor, rex: setRexExecutor, tmux: setTmuxExecutor }[
@@ -209,6 +213,27 @@ export function installNoMux(): { restore(): void } {
  */
 export function tmuxIntegrationAvailable(): boolean {
   return Boolean(process.env.MU_TMUX_SOCKET) || Boolean(process.env.TMUX);
+}
+
+export const fakePane = (paneId: string): VerifiedPaneRef =>
+  requireVerifiedPane(paneRef(paneId, FAKE_SERVER_IDENTITY));
+
+function requirePrivateTmux(): void {
+  if (!process.env.MU_TMUX_SOCKET?.startsWith("mu-test-")) {
+    throw new Error("test fixture requires a private MU_TMUX_SOCKET");
+  }
+}
+
+/** Only for tests that create and own the private pane, not for a persisted row. */
+export async function privatePane(paneId: string): Promise<VerifiedPaneRef> {
+  requirePrivateTmux();
+  return requireVerifiedPane(paneRef(paneId, await serverIdentity()));
+}
+
+/** Clean up a test fixture by name on the suite's private socket. */
+export async function killPrivateSession(session: string): Promise<void> {
+  requirePrivateTmux();
+  await tmux(["kill-session", "-t", `=${session}:`]).catch(() => {});
 }
 
 // ─── The herdr blast shield ────────────────────────────────────────────

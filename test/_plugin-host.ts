@@ -34,6 +34,8 @@ export const CLOUD = {
   },
 };
 
+import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
+
 export interface PluginHost {
   db: Db;
   dir: string;
@@ -61,6 +63,7 @@ export function pluginHostFixture(opts: { handshakeInProcess?: boolean } = {}): 
     let n = 0;
     setMuxForTests({
       ...tmuxBackend,
+      serverIdentity: async () => FAKE_SERVER_IDENTITY,
       runsShellCommand: true,
       spawnAgentWaitsReady: false,
       anchorsPanes: false,
@@ -68,14 +71,17 @@ export function pluginHostFixture(opts: { handshakeInProcess?: boolean } = {}): 
       spawnAgent: async (o) => {
         const id = `%${++n}`;
         h.panes.set(id, { command: o.command });
-        o.onPaneCreated?.(id);
+        o.onPaneCreated?.(id, FAKE_SERVER_IDENTITY);
         return id;
       },
-      paneAlive: async (id) => h.panes.has(id),
-      paneResult: async (id) => (h.panes.has(id) ? { state: "running" } : { state: "absent" }),
+      paneAlive: async (p) => h.panes.has(typeof p === "string" ? p : p.paneId),
+      paneResult: async (p) =>
+        h.panes.has(typeof p === "string" ? p : p.paneId)
+          ? { state: "running" }
+          : { state: "absent" },
       killPane: async (id) => {
         h.stopsAtKill.push(h.f.backend().stops);
-        h.panes.delete(id);
+        h.panes.delete(id.paneId);
       },
       listPanes: async () => [...h.panes.keys()].map((paneId) => ({ paneId, command: "sh" })),
       capture: async () => "",

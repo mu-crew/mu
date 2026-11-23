@@ -25,7 +25,9 @@ import { constants } from "node:os";
 import { join } from "node:path";
 import { execFileCapture } from "../exec-file.js";
 import { say } from "../messages.js";
+import { type ActionPaneRef, nativePaneId } from "./pane-ref.js";
 import { sleep } from "./tmux.js";
+import type { SessionKillTarget } from "./types.js";
 import {
   type AttachTarget,
   type CaptureOptions,
@@ -695,16 +697,20 @@ export const rexBackend: MuxBackend = Object.freeze({
   assertValidPaneId,
 
   ensureSession,
-  killSession,
+  killSession: async (target: SessionKillTarget) => {
+    if (target.backend !== "rex") throw new MuxError("cannot kill another backend's session");
+    await killSession(target.session);
+    return true;
+  },
 
   spawnAgent,
   listPanes,
   paneAlive,
   paneResult,
   panePid,
-  killPane,
-  killPaneCommand,
-  capture,
+  killPane: async (pane: ActionPaneRef) => killPane(nativePaneId(pane)),
+  killPaneCommand: (pane: ActionPaneRef) => killPaneCommand(nativePaneId(pane)),
+  capture: async (pane: ActionPaneRef, opts?: CaptureOptions) => capture(nativePaneId(pane), opts),
 
   attachCommands,
 

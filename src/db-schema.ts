@@ -91,6 +91,9 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   // A remote hook-harness worker's key on its node, `<origin host>/<pane key>` (spec D11, machine-local):
   // `murmur pane --remote <key>` reads its state there.
   ["agents", "remote_key", "TEXT"],
+  // The tmux server a local pane was spawned on, `<server pid>|<start time>`: tmux pane ids restart per
+  // server, so a pane counts as the agent's only on that server. NULL: a row older than the column.
+  ["agents", "pane_identity", "TEXT"],
   // A lease reservation's remote worktree (src/carrier-jobs.ts): which tree it belongs to.
   ["carrier_jobs", "tree_path", "TEXT"],
   ["carrier_jobs", "tree_agent_id", "INTEGER"],
@@ -554,6 +557,7 @@ CREATE TABLE IF NOT EXISTS agents (
   channel       TEXT,                           -- the channel mu reaches it through, 'ctl' | 'hooks' | 'mux' (machine-local), recorded at spawn; NULL: a row older than the column (derived)
   channel_plugin TEXT,                          -- a plugin channel's plugin (plugins D9): with channel, its identity; NULL: a built-in
   remote_key    TEXT,                           -- a remote hook-harness worker's key on its node, '<origin host>/<pane key>' (machine-local, spec D11); NULL: none
+  pane_identity TEXT,                           -- tmux server identity '<pid>|<start time>' the pane was spawned on (machine-local); NULL: a row older than the column (unverified)
   delivery_seq  INTEGER NOT NULL DEFAULT 0,     -- plugins D4: the newest delivery effect written to it (src/effects.ts)
   created_at    TEXT NOT NULL,
   updated_at    TEXT NOT NULL,

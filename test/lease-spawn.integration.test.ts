@@ -32,11 +32,11 @@ import { type Db, openDb } from "../src/db.js";
 import { addHost, HostProfileError, listHostChannels } from "../src/hosts.js";
 import { collectRemoteAgent } from "../src/remote-collect.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
-import { killSession, tmux } from "../src/tmux.js";
+import { tmux } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { copyGitFixture } from "./_git.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { killPrivateSession, tmuxIntegrationAvailable } from "./_mux.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 
@@ -163,7 +163,7 @@ esac
 
 afterEach(async () => {
   try {
-    await killSession(`mu-${ws}`);
+    await killPrivateSession(`mu-${ws}`);
   } catch {}
   db.close();
   rmFixtureDir(dir);

@@ -2,9 +2,10 @@
 // tmux calls, in order, against a recording executor.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { tmuxWord } from "../src/mux/tmux.js";
 import { tmuxBackend } from "../src/mux.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
+import { fakePane } from "./_mux.js";
+import { withServerIdentity } from "./_verbs-mock.js";
 
 let calls: string[][];
 let fail: string | undefined;
@@ -13,12 +14,14 @@ beforeEach(() => {
   calls = [];
   fail = undefined;
   setSleepForTests(async () => {});
-  setTmuxExecutor(async (args) => {
-    calls.push([...args]);
-    return args[0] === fail
-      ? { stdout: "", stderr: "boom", exitCode: 1 }
-      : { stdout: "", stderr: "", exitCode: 0 };
-  });
+  setTmuxExecutor(
+    withServerIdentity(async (args) => {
+      calls.push([...args]);
+      return args[0] === fail
+        ? { stdout: "", stderr: "boom", exitCode: 1 }
+        : { stdout: "", stderr: "", exitCode: 0 };
+    }),
+  );
 });
 afterEach(() => {
   resetTmuxExecutor();
@@ -27,7 +30,7 @@ afterEach(() => {
 
 const paste = (text: string, clearKey?: string | null) => {
   if (!tmuxBackend.pasteToPane) throw new Error("tmux has no pasteToPane");
-  return tmuxBackend.pasteToPane("%7", text, clearKey === undefined ? {} : { clearKey });
+  return tmuxBackend.pasteToPane(fakePane("%7"), text, clearKey === undefined ? {} : { clearKey });
 };
 
 describe("tmux pasteToPane", () => {
@@ -70,45 +73,22 @@ describe("tmux pasteToPane", () => {
     expect(calls.some((c) => c.includes("Enter"))).toBe(false);
   });
 
-  it("a text or chunk ending in ; goes out escaped, so tmux does not split on it", async () => {
-    await paste("fix the bug;");
-    expect(calls.find((c) => c[0] === "set-buffer")?.at(-1)).toBe("fix the bug\\;");
-    calls = [];
-    // A chunk boundary right after a `;`: that chunk is escaped too.
-    await paste(`${"x".repeat(2047)};tail`);
-    const sets = calls.filter((c) => c[0] === "set-buffer");
-    expect(sets.map((c) => c.at(-1))).toEqual([`${"x".repeat(2047)}\\;`, "tail"]);
-  });
-
   it("refuses a pane id that is not tmux's", async () => {
-    await expect(tmuxBackend.pasteToPane?.("w1:p1", "x")).rejects.toThrow();
+    await expect(
+      tmuxBackend.pasteToPane?.({ kind: "native", paneId: "w1:p1" }, "x"),
+    ).rejects.toThrow();
     expect(calls).toEqual([]);
   });
 });
 
 describe("tmux sendKeys", () => {
   it("named keys as keys, text as literal, both after --", async () => {
-    await tmuxBackend.sendKeys?.("%7", ["Escape"]);
-    await tmuxBackend.sendKeys?.("%7", ["-1"], { literal: true });
+    await tmuxBackend.sendKeys?.(fakePane("%7"), ["Escape"]);
+    const text = "-1\n\t# 'é'";
+    await tmuxBackend.sendKeys?.(fakePane("%7"), [text], { literal: true });
     expect(calls).toEqual([
       ["send-keys", "-t", "%7", "--", "Escape"],
-      ["send-keys", "-t", "%7", "-l", "--", "-1"],
+      ["send-keys", "-t", "%7", "-l", "--", text],
     ]);
-  });
-
-  it("a literal key ending in ; goes out escaped", async () => {
-    await tmuxBackend.sendKeys?.("%7", ["yes;"], { literal: true });
-    expect(calls).toEqual([["send-keys", "-t", "%7", "-l", "--", "yes\\;"]]);
-  });
-});
-
-describe("tmuxWord", () => {
-  it("escapes only a final ;, as tmux's argv splitter reads it back", () => {
-    expect(tmuxWord("plain")).toBe("plain");
-    expect(tmuxWord("mid;dle")).toBe("mid;dle");
-    expect(tmuxWord("end;")).toBe("end\\;");
-    expect(tmuxWord(";")).toBe("\\;");
-    expect(tmuxWord("a\\;")).toBe("a\\\\;");
-    expect(tmuxWord("a;;")).toBe("a;\\;");
   });
 });

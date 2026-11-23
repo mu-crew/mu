@@ -19,7 +19,7 @@ import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { proveViewGone } from "../host-policy.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
-import { viewPresent } from "../jobs/view.js";
+import { birthIdentity, killView, viewPresent, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
@@ -40,12 +40,14 @@ export function detachedJob(
   db: Db,
   ws: string,
   name: string,
-): { r: CarrierJob; kind: PluginJobKind; agentId: number; paneId: string } | undefined {
+):
+  | { r: CarrierJob; kind: PluginJobKind; agentId: number; paneId: string; paneIdentity?: string }
+  | undefined {
   const row = getAgent(db, name, ws);
   const r = row === undefined ? undefined : getCarrierJobByAgent(db, row.incarnation);
   const kind = r?.plugin == null ? undefined : pluginJobKind(db, r.plugin);
   if (row === undefined || r === undefined || kind?.caps.view !== "detached") return undefined;
-  return { r, kind, agentId: row.incarnation, paneId: row.paneId };
+  return { r, kind, agentId: row.incarnation, paneId: row.paneId, paneIdentity: row.paneIdentity };
 }
 
 async function detachedViewMux(host: string) {
@@ -73,7 +75,7 @@ export async function previewViewReattach(db: Db, ws: string, name: string) {
   const d = detachedJob(db, ws, name);
   if (d === undefined) return undefined;
   const mux = await detachedViewMux(d.r.host);
-  if (await viewPresent(d.paneId, mux)) refuseOpen(db, ws, name, d.paneId);
+  if (await viewPresent(d.paneId, mux, d.paneIdentity)) refuseOpen(db, ws, name, d.paneId);
   await refuseUnprovenView(db, ws, name, d, mux);
   return { ...facts(ws, d), revision: agentRevision(db, ws, name) };
 }
@@ -90,7 +92,7 @@ async function refuseUnprovenView(
   mux: MuxBackend,
 ): Promise<void> {
   if (d.kind.caps.handle !== "file") return;
-  const p = await proveViewGone(d.r, mux);
+  const p = await proveViewGone(db, d.r, mux);
   if (p.state === "gone") return;
   throw new ReattachRefusedError(
     name,
@@ -124,7 +126,7 @@ export async function reattachView(
   const sock = ctlSocketPath(ws, name, dirname(db.name));
   const row = getAgent(db, name, ws);
   const onCtl = row !== undefined && expectsCtl(row, sock);
-  const { d, pid } = await withAgentLock(db, ws, name, () =>
+  const { d, pid, born } = await withAgentLock(db, ws, name, () =>
     withSpawnLock(session, async () => {
       const d = detachedJob(db, ws, name);
       if (d === undefined) throw new AgentReplacedError(name, ws);
@@ -132,7 +134,7 @@ export async function reattachView(
         subject: `agent ${name}`,
         previewCommand: `mu agent reattach ${shellWord(name)} -w ${shellWord(ws)}`,
       });
-      if (await viewPresent(d.paneId, mux)) refuseOpen(db, ws, name, d.paneId);
+      if (await viewPresent(d.paneId, mux, d.paneIdentity)) refuseOpen(db, ws, name, d.paneId);
       const file = d.kind.caps.handle === "file";
       await refuseUnprovenView(db, ws, name, d, mux);
       // Owner-only (D8): while its spawn runs, the spawn's receipts are its own to move.
@@ -164,6 +166,7 @@ export async function reattachView(
       // Recorded before the mux is asked, in this locked section: a backend may open the view
       // and fail before reporting its id, and until a pane is recorded the view is unknown.
       if (file && !markViewOpening(db, d.r.token)) throw new AgentReplacedError(name, ws);
+      let born: string | undefined;
       let onCreated: (pid: string) => void = () => {};
       const created = new Promise<string>((res) => {
         onCreated = res;
@@ -179,21 +182,27 @@ export async function reattachView(
         commandSource: "explicit",
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
         env: view.env,
-        onPaneCreated: onCreated,
+        onPaneCreated: (id, identity) => {
+          born = identity;
+          onCreated(id);
+        },
       });
       done.catch(() => {});
       const pid = await Promise.race([created, done]);
+      const identity = birthIdentity(mux, pid, born);
       // The attempted view is the record's from here (a file kind): its pane is what a close
       // or the next reattach must prove gone, whatever becomes of the row's pane below.
       if (file) recordViewPane(db, d.r.token, pid);
-      await markPaneHost(mux, pid, d.r.host);
+      await markPaneHost(mux, viewRef(mux, pid, born), d.r.host);
       try {
         // The backend's own completion: a view that failed is never the row's pane.
         await done;
         db.transaction(() => {
           const row = db
-            .prepare("UPDATE agents SET pane_id = ?, updated_at = ? WHERE id = ? AND pane_id = ?")
-            .run(pid, new Date().toISOString(), d.agentId, d.paneId);
+            .prepare(
+              "UPDATE agents SET pane_id = ?, pane_identity = ?, updated_at = ? WHERE id = ? AND pane_id = ?",
+            )
+            .run(pid, identity ?? null, new Date().toISOString(), d.agentId, d.paneId);
           const job = db
             .prepare(
               `UPDATE carrier_jobs SET pane_id = ?${file ? ", view_state = 'open'" : ""} WHERE token = ? AND agent_id = ?`,
@@ -205,18 +214,20 @@ export async function reattachView(
           repointReceipts(db, d.agentId, { pane: d.paneId }, pid, actor);
         }).immediate();
       } catch (e) {
-        await mux.killPane(pid).catch(() => {});
+        await killView(mux, pid, identity).catch(() => {});
         throw e;
       }
-      return { d, pid };
+      return { d, pid, born };
     }),
   );
   let ctl: "skipped" | "ok" | "missing" | "refused" | "unknown" = "skipped";
   if (onCtl) {
     let scrollback: string | undefined;
     const alive = async (): Promise<void> => {
-      scrollback = (await mux.capture(pid, { lines: 50 }).catch(() => undefined)) ?? scrollback;
-      if (!(await viewPresent(pid, mux))) throw new ViewGone();
+      scrollback =
+        (await mux.capture(viewRef(mux, pid, born), { lines: 50 }).catch(() => undefined)) ??
+        scrollback;
+      if (!(await viewPresent(pid, mux, born))) throw new ViewGone();
     };
     try {
       ctl = (await awaitCtlHandshake(sock, alive, opts.signal)).ctl;

@@ -1126,6 +1126,8 @@ describe("mu agent spawn --task (claim + brief, one journaled attempt)", () => {
 });
 
 describe("mu agent spawn: the attach line does not assume a tmux client", () => {
+  const guarded = (verb: string) =>
+    `if-shell -F '#{==:#{pid}|#{start_time},4242|1700000000}' '${verb} -t %1' 'run-shell "exit 97"'`;
   const attach = async (inside: boolean | "other-server") => {
     db.close();
     installPanes("worker-1");
@@ -1150,23 +1152,23 @@ describe("mu agent spawn: the attach line does not assume a tmux client", () => 
     }
   };
 
-  it("outside tmux: one attach on the private socket, targeting the agent's window", async () => {
+  it("outside tmux: one attach on the private socket, targeting the exact pane", async () => {
     const sock = process.env.MU_TMUX_SOCKET;
     const route = sock ? `-L ${sock} ` : "";
-    expect(await attach(false)).toBe(`tmux ${route}attach-session -t mu-auth:worker-1`);
+    expect(await attach(false)).toBe(`tmux ${route}${guarded("attach-session")}`);
   });
 
   it("inside tmux: switch-client", async () => {
     const sock = process.env.MU_TMUX_SOCKET;
     const route = sock ? `-L ${sock} ` : "";
-    expect(await attach(true)).toBe(`tmux ${route}switch-client -t mu-auth:worker-1`);
+    expect(await attach(true)).toBe(`tmux ${route}${guarded("switch-client")}`);
   });
 
   it("inside another tmux server than mu's private one: a deliberately nested attach", async () => {
     const sock = process.env.MU_TMUX_SOCKET;
     if (!sock) return; // without a private socket, tmux follows $TMUX: it is always mu's server
     expect(await attach("other-server")).toBe(
-      `env -u TMUX tmux -L ${sock} attach-session -t mu-auth:worker-1`,
+      `env -u TMUX tmux -L ${sock} ${guarded("attach-session")}`,
     );
   });
 });

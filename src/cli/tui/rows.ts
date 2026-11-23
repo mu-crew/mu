@@ -41,7 +41,15 @@ export const TABS: readonly { id: TabId; label: string }[] = [
 /** What Enter opens on a row (a tagged union). */
 export type DrillTarget =
   | { kind: "notes"; workstream: string; id: string; title: string }
-  | { kind: "scrollback"; workstream: string; name: string; paneId: string; tab: string | null }
+  | {
+      kind: "scrollback";
+      workstream: string;
+      name: string;
+      paneId: string;
+      /** The tmux server the pane was spawned on: capture and attach fence on it. */
+      paneIdentity?: string;
+      tab: string | null;
+    }
   | { kind: "log"; item: DashboardLogItem };
 
 export interface Row {
@@ -139,6 +147,7 @@ const scrollbackOf = (a: DashboardAgent): DrillTarget => ({
   workstream: a.workstream,
   name: a.name,
   paneId: a.pane_id,
+  ...(a.pane_identity !== undefined ? { paneIdentity: a.pane_identity } : {}),
   tab: a.tab,
 });
 

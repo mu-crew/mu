@@ -66,13 +66,6 @@ interface PaneState {
 /** murmur's ATTENTION_PRIORITY: the first kind present is the rendered word, ahead of activity. */
 const ATTENTION_PRIORITY = ["crashed", "error", "blocked", "done"];
 
-/**
- * What tmux makes of one argv word (see tmuxWord): a final `\;` loses its
- * backslash, and a bare final `;` is a command separator, dropped.
- */
-const fromTmuxWord = (w: string): string =>
-  w.endsWith("\\;") ? `${w.slice(0, -2)};` : w.endsWith(";") ? w.slice(0, -1) : w;
-
 export interface FakeHarness {
   readonly paneId: string;
   /** The inbox directory of this pane. */
@@ -370,7 +363,8 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
       if (verb === "set-buffer") {
         const name = args[args.indexOf("-b") + 1] ?? "";
         if (!name.startsWith("mu-paste-")) return undefined;
-        const data = fromTmuxWord(args[args.indexOf("--") + 1] ?? "");
+        // The tmux argv parser removes one backslash from a final escaped semicolon.
+        const data = (args[args.indexOf("--") + 1] ?? "").replace(/\\;$/, ";");
         fake.calls.push([...args]);
         if (data === "") return { stdout: "", stderr: "no data specified", exitCode: 1 };
         buffers.set(name, (args.includes("-a") ? (buffers.get(name) ?? "") : "") + data);
@@ -395,7 +389,6 @@ export function fakeHarness(root: string, paneId: string, sessionId: string): Fa
       const keys = args
         .slice(args.indexOf("-t") + 2)
         .filter((k) => k !== "--" && k !== "-l")
-        .map(fromTmuxWord)
         .filter((k) => k !== "");
       const literal = args.includes("-l");
       drain();

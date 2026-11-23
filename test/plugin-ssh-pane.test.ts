@@ -29,6 +29,7 @@ import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { SSH_EXAMPLE } from "./_plugin.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 import { type CtlServed, type FakeSsh, fakeSsh, PluginWire, serveCtl } from "./_ssh-pane.js";
+import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
 import { agentRef } from "./_wait-fixtures.js";
 
 const h = pluginHostFixture();
@@ -400,12 +401,12 @@ describe("through mu: spawn, close, and the proof a close waits for", () => {
             h.dir,
           );
         }
-        o.onPaneCreated?.(id);
+        o.onPaneCreated?.(id, FAKE_SERVER_IDENTITY);
         return id;
       },
       // The fixture's kill reads the fake plugin's backend: there is none here.
       killPane: async (id) => {
-        h.panes.delete(id);
+        h.panes.delete(id.paneId);
       },
     });
   });

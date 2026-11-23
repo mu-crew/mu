@@ -25,10 +25,10 @@ import { type Db, openDb } from "../src/db.js";
 import { addHost } from "../src/hosts.js";
 import { reconcile } from "../src/reconcile.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
-import { killPane, killSession } from "../src/tmux.js";
+import { killPane } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { killPrivateSession, privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 
@@ -141,7 +141,7 @@ esac
 
 afterEach(async () => {
   try {
-    await killSession(`mu-${ws}`);
+    await killPrivateSession(`mu-${ws}`);
   } catch {}
   db.close();
   rmFixtureDir(dir);
@@ -156,7 +156,7 @@ afterEach(async () => {
 async function reapedLease(): Promise<{ job: string; agentId: number }> {
   const a = await spawnAgent(db, { name: "worker-1", workstream: ws, host: "dev", worktree: true });
   const job = getCarrierJobByName(db, ws, "worker-1")?.job ?? "";
-  await killPane(a.paneId);
+  await killPane(await privatePane(a.paneId));
   await until(() => lines().includes("sighup lease"), "the carrier's SIGHUP");
   await reconcile(db, { workstream: ws });
   expect(getAgent(db, "worker-1", ws)).toBeUndefined();
@@ -177,7 +177,7 @@ describeIfTmux("agent reattach (real tmux, fake carrier script)", () => {
     expect(listRemoteRecoveries(db)).toEqual([]);
     expect(getAgent(db, "worker-1", ws)).toMatchObject({ cwd: WT, base: SHA, host: "dev" });
     // Pane death is agent death again: the new carrier's SIGHUP, the reap, a NEW record.
-    await killPane(r.pane_id);
+    await killPane(await privatePane(r.pane_id));
     await until(() => lines().includes(`sighup ${job}`), "the attached carrier's SIGHUP");
     await reconcile(db, { workstream: ws });
     expect(listRemoteRecoveries(db).map((x) => x.agentId)).toEqual([r.agent_id]);

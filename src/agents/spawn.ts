@@ -50,9 +50,10 @@ import {
   releaseHostChannel,
 } from "../hosts.js";
 import { awaitLeaseJob } from "../jobs/lease.js";
-import { viewPresent } from "../jobs/view.js";
+import { birthIdentity, viewPresent, viewRef } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
+import { TmuxPaneBirthError } from "../mux/pane-ref.js";
 import { attachShellLine, type CommandSource, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { isJsonMode } from "../output.js";
@@ -753,6 +754,8 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
   // (clarity > belt-and-suspenders; rollbackSpawn is idempotent and
   // best-effort regardless).
   let paneId: string | undefined;
+  // The server the pane was created on, from the call that created it (`onPaneCreated`).
+  let paneBorn: string | undefined;
   let agent: AgentRow;
   // Whether the agent row is this spawn's to delete on rollback. A
   // spawn that lost a same-name race must not delete the winner's row.
@@ -874,6 +877,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
           : anchored(launch, mux.anchorsPanes);
         // Resolves with the pane id at creation; `done` settles when the
         // backend considers the agent started.
+        let born: string | undefined;
         let onCreated: (pid: string) => void = () => {};
         const createdPane = new Promise<string>((res) => {
           onCreated = res;
@@ -893,22 +897,27 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
           commandSource,
           ...(profile ? {} : { cwd: paneCwd }),
           env: paneEnv,
-          onPaneCreated: onCreated,
+          onPaneCreated: (pid, identity) => {
+            born = identity;
+            onCreated(pid);
+          },
           // A gate's pane outlives its command: the result is read after it ends.
           ...(gateToken !== undefined ? { retainOnExit: true } : {}),
         });
         // Observe a rejection immediately: it is awaited after the lock.
         done.catch(() => {});
         const pid = await Promise.race([createdPane, done]);
+        const paneIdentity = birthIdentity(mux, pid, born);
         // Capture the pane id on the OUTER scope as soon as it exists so a
         // throw later in the lock (finalizeAgentRow INSERT failure) still
         // routes through rollbackSpawn -> killPane. Assigning only via the
         // returned object meant a finalize failure left paneId undefined
         // and rollbackSpawn skipped killPane, leaking the pane.
         paneId = pid;
+        paneBorn = born;
         if (carrier) recordCarrierPane(db, carrier.token, pid);
         // The pane here holds only the ssh client: name where the worker runs.
-        if (profile) await markPaneHost(mux, pid, profile.name);
+        if (profile) await markPaneHost(mux, viewRef(mux, pid, born), profile.name);
         readiness = done;
         phase = "finalize";
         const row = finalizeAgentRow(db, {
@@ -935,6 +944,8 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
             harness !== "pi",
           piHooks,
           ...(hooksKey !== undefined ? { remoteKey: hooksKey } : {}),
+          // Pane ids restart per tmux server: the row owns this pane only on this one.
+          ...(paneIdentity !== undefined ? { paneIdentity } : {}),
         });
         ownedIncarnation = row.incarnation;
         if (carrier && !bindCarrierJobAgent(db, carrier.token, row.incarnation, pid)) {
@@ -960,6 +971,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         name: opts.name,
         token: carrier.token,
         paneId: created.pid,
+        paneIdentity: paneBorn,
         profile,
         jobFile: created.jobFile,
         command,
@@ -998,9 +1010,11 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
       let lastScrollback: string | undefined;
       const assertPaneAlive = async (): Promise<void> => {
         const mux = await activeMux();
-        const sb = await mux.capture(pid, { lines: 50 }).catch(() => undefined);
+        const sb = await mux
+          .capture(viewRef(mux, pid, paneBorn), { lines: 50 })
+          .catch(() => undefined);
         lastScrollback = sb ?? lastScrollback;
-        if (await viewPresent(pid, mux)) return;
+        if (await viewPresent(pid, mux, paneBorn)) return;
         throw new AgentDiedOnSpawnError(
           opts.name,
           pid,
@@ -1033,10 +1047,11 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
           when,
           ctl === "ok",
           profile?.name,
+          paneBorn,
         );
       }
     } else if (gateToken === undefined) {
-      trustDialog = await awaitSpawnLiveness(paneId, opts.name, command, profile?.name);
+      trustDialog = await awaitSpawnLiveness(paneId, opts.name, command, profile?.name, paneBorn);
     }
     opts.signal?.throwIfAborted();
     // A gate is not scanned for startup errors or liveness: a command that ends at
@@ -1056,6 +1071,8 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         opts.workstream,
         lease,
         carrier,
+        paneBorn,
+        err instanceof TmuxPaneBirthError,
       );
     } catch (cleanupErr) {
       if (err instanceof Error && err.cause === undefined) {
@@ -1069,7 +1086,10 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
     // An owner found at the insert (it landed while the pane opened): name that pane.
     if (err instanceof RemotePathOwnedError && err.pane === undefined && paneId !== undefined) {
       const mux = await activeMux().catch(() => undefined);
-      const kill = mux === undefined ? "" : attachShellLine([mux.killPaneCommand(paneId)]);
+      const kill =
+        mux === undefined
+          ? ""
+          : attachShellLine([mux.killPaneCommand(viewRef(mux, paneId, paneBorn))]);
       const pane = { id: paneId, backend: mux?.name ?? "mux", ...rolled, kill };
       const { workstream, agentName, host, cwd, owner, gate } = err;
       throw new RemotePathOwnedError(workstream, agentName, host, cwd, owner, gate, pane);
@@ -1264,6 +1284,8 @@ export function finalizeAgentRow(
     piHooks: boolean;
     /** A remote hook harness worker's key on its node (spec D11). */
     remoteKey?: string;
+    /** The tmux server the pane runs on, recorded on the row (`agents.pane_identity`). */
+    paneIdentity?: string;
     /** An at-start plugin spawn's placeholder with no worktree (plugins spec D8): patched, not inserted. */
     placeholder?: number;
   },
@@ -1304,6 +1326,7 @@ export function finalizeAgentRow(
       channel,
       channelPlugin: args.channelPlugin ?? null,
       remoteKey: args.remoteKey ?? null,
+      paneIdentity: args.paneIdentity ?? null,
     };
     if (host === undefined) return insertAgent(db, row);
     // The remote path admission again, atomic with the row: no remote I/O in here.
@@ -1320,7 +1343,7 @@ export function finalizeAgentRow(
   // pending): a row replaced since is not ours to repoint.
   const patched = db
     .prepare(
-      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, channel_plugin = ?, remote_key = ?, repo = ?, updated_at = ?
+      `UPDATE agents SET pane_id = ?, cwd = ?, base = ?, command = ?, command_source = ?, spawner = ?, host = ?, host_transport = ?, channel = ?, channel_plugin = ?, remote_key = ?, repo = ?, pane_identity = ?, updated_at = ?
       WHERE id = ? AND pane_id = ?
         AND name = ?
         AND workstream_id = (SELECT id FROM workstreams WHERE name = ?)`,
@@ -1338,6 +1361,7 @@ export function finalizeAgentRow(
       args.channelPlugin ?? null,
       args.remoteKey ?? null,
       staged?.host !== undefined ? staged.root : null,
+      args.paneIdentity ?? null,
       new Date().toISOString(),
       placeholder,
       pendingPaneIdFor(opts.name),

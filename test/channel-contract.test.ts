@@ -28,7 +28,7 @@ import {
   AgentSendUnsupportedError,
   AgentSteerUnsupportedError,
 } from "../src/agents/errors.js";
-import { type AgentRow, getAgent, insertAgent, sendToAgent } from "../src/agents.js";
+import { type AgentRow, getAgent, sendToAgent } from "../src/agents.js";
 import {
   setMurmurHookRunnerForTests,
   setMurmurPaneRunnerForTests,
@@ -54,10 +54,12 @@ import { type Db, openDb } from "../src/db.js";
 import { type MuxBackend, setMuxForTests, tmuxBackend } from "../src/mux.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { withEnv } from "./_env.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { rmFixtureDir } from "./_fs.js";
+import { withServerIdentity } from "./_verbs-mock.js";
 
 const WS = "chan";
 const KNOWN_MSG = "msg-known";
@@ -293,15 +295,17 @@ beforeEach(() => {
   // %1 holds pi (no murmur option: ctl is its source); %2 a non-pi pane murmur reports working;
   // %3 the hook harness, whose option is what murmur's drain of its inbox published.
   setTmuxExecutor(
-    async (args) =>
-      fake.tmux(args) ??
-      (args[0] === "list-panes"
-        ? {
-            stdout: `%1||\n%2|working|1000\n%3|${fake.option()}|2000\n`,
-            stderr: "",
-            exitCode: 0,
-          }
-        : { stdout: "", stderr: "", exitCode: 0 }),
+    withServerIdentity(
+      async (args) =>
+        fake.tmux(args) ??
+        (args[0] === "list-panes"
+          ? {
+              stdout: `%1||\n%2|working|1000\n%3|${fake.option()}|2000\n`,
+              stderr: "",
+              exitCode: 0,
+            }
+          : { stdout: "", stderr: "", exitCode: 0 }),
+    ),
   );
   setMurmurRunnerForTests(async () => null);
   setMurmurPaneRunnerForTests(fake.pane);
@@ -340,7 +344,7 @@ describe.each(CONTRACTS)("AgentChannel contract: $label", (c) => {
 
   it("the agent routes to this channel, which declares its name and fence", () => {
     const ch = agentChannel(target);
-    expect(ch).toBe(c.channel);
+    expect(ch.caps).toEqual(c.channel.caps);
     expect(ch.name).toBe(c.name);
     expect(ch.fence).toBe(c.fence);
   });
@@ -679,10 +683,12 @@ describe.each(DELIVERY)("AgentChannel delivery contract: $label", (c) => {
     if (c.answer === "unconfirmed") {
       // --force types it anyway; nothing reports the dialog, so it stays unconfirmed.
       const keys: string[][] = [];
-      setTmuxExecutor(async (args) => {
-        if (args[0] === "send-keys") keys.push([...args]);
-        return { stdout: "", stderr: "", exitCode: 0 };
-      });
+      setTmuxExecutor(
+        withServerIdentity(async (args) => {
+          if (args[0] === "send-keys") keys.push([...args]);
+          return { stdout: "", stderr: "", exitCode: 0 };
+        }),
+      );
       expect(await ch.answer(target, ["1"], { force: true })).toEqual({
         transport: "mux",
         keys: ["1"],
@@ -964,7 +970,7 @@ describe("the hooks channel never falls back to ctl (D4, D15)", () => {
     async (cli) => {
       const target = channelTarget(db, await liveHooks(cli));
       await serveCtl(target.agent);
-      expect(agentChannel(target)).toBe(hooksChannel);
+      expect(agentChannel(target).name).toBe(hooksChannel.name);
       await deliver(target, "hello", {});
       fake.emit("turn_stopped");
       await agentChannel(target).command(target, { name: "compact" }, {});
@@ -1063,12 +1069,14 @@ describe("the agents row decides the channel", () => {
     insertAgent(db, { name, workstream: WS, paneId: "%2", cli, channel });
   // %2 answers display-message too, so a silent socket on it is unreachable, not a dead pane.
   beforeEach(() => {
-    setTmuxExecutor(async (args) =>
-      args[0] === "list-panes"
-        ? { stdout: "%1||\n%2|working|1000\n", stderr: "", exitCode: 0 }
-        : args[0] === "display-message"
-          ? { stdout: `${args[2] ?? ""}\n`, stderr: "", exitCode: 0 }
-          : { stdout: "", stderr: "", exitCode: 0 },
+    setTmuxExecutor(
+      withServerIdentity(async (args) =>
+        args[0] === "list-panes"
+          ? { stdout: "%1||\n%2|working|1000\n", stderr: "", exitCode: 0 }
+          : args[0] === "display-message"
+            ? { stdout: `${args[2] ?? ""}\n`, stderr: "", exitCode: 0 }
+            : { stdout: "", stderr: "", exitCode: 0 },
+      ),
     );
   });
 
@@ -1093,11 +1101,11 @@ describe("the agents row decides the channel", () => {
 
   it("a `ctl` row of a non-pi cli key is on ctl: its silent socket is unreachable, not a send-unsupported", async () => {
     const legacy = channelTarget(db, rowWith("hn", "helper", null));
-    expect(agentChannel(legacy)).toBe(muxChannel);
+    expect(agentChannel(legacy).name).toBe(muxChannel.name);
     await expect(deliver(legacy, "hi", {})).rejects.toBeInstanceOf(AgentSendUnsupportedError);
 
     const recorded = channelTarget(db, rowWith("hc", "helper", "ctl"));
-    expect(agentChannel(recorded)).toBe(ctlChannel);
+    expect(agentChannel(recorded).name).toBe(ctlChannel.name);
     await expect(deliver(recorded, "hi", {})).rejects.toBeInstanceOf(AgentCtlUnreachableError);
     await expect(sendToAgent(db, "hc", "hi", { workstream: WS })).rejects.toBeInstanceOf(
       AgentCtlUnreachableError,
@@ -1106,10 +1114,10 @@ describe("the agents row decides the channel", () => {
 
   it("a `mux` row is never on ctl because its cli key names pi", async () => {
     const legacy = channelTarget(db, rowWith("pn", "pi", null));
-    expect(agentChannel(legacy)).toBe(ctlChannel);
+    expect(agentChannel(legacy).name).toBe(ctlChannel.name);
 
     const recorded = channelTarget(db, rowWith("pm", "pi", "mux"));
-    expect(agentChannel(recorded)).toBe(muxChannel);
+    expect(agentChannel(recorded).name).toBe(muxChannel.name);
     await expect(deliver(recorded, "hi", {})).rejects.toBeInstanceOf(AgentSendUnsupportedError);
     await expect(
       agentChannel(recorded).interrupt(recorded, "now", { timeoutMs: 100 }),
@@ -1119,8 +1127,12 @@ describe("the agents row decides the channel", () => {
 
   it("the env does not move a recorded row: MU_<KEY>_COMMAND naming pi leaves a `mux` row on mux", async () => {
     await underEnv("MU_HELPER_COMMAND", "pi --flag", async () => {
-      expect(agentChannel(channelTarget(db, rowWith("en", "helper", null)))).toBe(ctlChannel);
-      expect(agentChannel(channelTarget(db, rowWith("em", "helper", "mux")))).toBe(muxChannel);
+      expect(agentChannel(channelTarget(db, rowWith("en", "helper", null))).name).toBe(
+        ctlChannel.name,
+      );
+      expect(agentChannel(channelTarget(db, rowWith("em", "helper", "mux"))).name).toBe(
+        muxChannel.name,
+      );
     });
   });
 
@@ -1128,7 +1140,7 @@ describe("the agents row decides the channel", () => {
     const a = rowWith("wr", "helper", "mux");
     await serveCtl(a);
     const target = channelTarget(db, a);
-    expect(agentChannel(target)).toBe(muxChannel);
+    expect(agentChannel(target).name).toBe(muxChannel.name);
     await expect(deliver(target, "hi", {})).rejects.toBeInstanceOf(AgentSendUnsupportedError);
     expect(ctlReqs).toEqual([]);
   });
@@ -1137,7 +1149,7 @@ describe("the agents row decides the channel", () => {
     const a = rowWith("wl", "helper", null);
     await serveCtl(a);
     const target = channelTarget(db, a);
-    expect(agentChannel(target)).toBe(ctlChannel);
+    expect(agentChannel(target).name).toBe(ctlChannel.name);
     expect((await deliver(target, "hi", {})).transport).toBe("ctl");
   });
 
@@ -1150,6 +1162,6 @@ describe("the agents row decides the channel", () => {
       channel: "ctl",
       gateToken: "tok",
     });
-    expect(agentChannel(channelTarget(db, g))).toBe(muxChannel);
+    expect(agentChannel(channelTarget(db, g)).name).toBe(muxChannel.name);
   });
 });

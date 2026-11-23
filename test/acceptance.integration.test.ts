@@ -29,11 +29,11 @@ import {
   listNotes,
   listReady,
 } from "../src/tasks.js";
-import { killPane, killSession, paneAlive, resetTmuxExecutor } from "../src/tmux.js";
+import { killPane, paneAlive, resetTmuxExecutor } from "../src/tmux.js";
 import { getParallelTracks } from "../src/tracks.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
-import { tmuxIntegrationAvailable } from "./_mux.js";
+import { killPrivateSession, privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 const TMUX_AVAILABLE = tmuxIntegrationAvailable();
@@ -70,7 +70,7 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
       db.close();
     } catch {}
     try {
-      await killSession(session);
+      await killPrivateSession(session);
     } catch {}
     rmSync(tempDir, { recursive: true, force: true });
   });
@@ -246,7 +246,7 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
     expect(view1.agents).toHaveLength(3);
 
     // ── Recovery: bob's pane dies externally ──────────────────────────
-    await killPane(bob.paneId);
+    await killPane(await privatePane(bob.paneId));
     // tmux briefly reports a killed pane as still alive; wait for it
     // to actually disappear from the live pane set before reconcile,
     // otherwise prunedGhosts can be 0 on a loaded runner.
@@ -300,8 +300,8 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
     expect(view5.agents).toEqual([]);
 
     // ── Teardown: preview (writes nothing), then apply with its revision ──
-    // The demo spawned without `init`, so its session died with the last
-    // agent; init brings it back so teardown has a real session to kill.
+    // The demo session died with the last agent. Init leaves an empty
+    // session; without a verified pane, teardown leaves it alone.
     db.close();
     const init = await runCliJson(["workstream", "init", workstream, "--json"], dbPathFor());
     expect(init.error).toBeUndefined();
@@ -315,9 +315,8 @@ describeIfTmux("MVP acceptance — full demo end-to-end", () => {
       dbPathFor(),
     );
     expect(torn.error).toBeUndefined();
-    expect(torn.data).toMatchObject({ tornDown: true, killedMux: true, tasks: 10 });
-    // The session died; the tasks stay but every -w verb says so.
-    expect(await sessionHasPanes(session)).toBe(false);
+    expect(torn.data).toMatchObject({ tornDown: true, killedMux: false, tasks: 10 });
+    expect(await sessionHasPanes(session)).toBe(true);
     const hidden = await runCli(["task", "list", "-w", workstream], dbPathFor());
     expect(hidden.exitCode).toBe(3);
     expect(hidden.stderr).toContain(`workstream ${workstream} is torn down`);

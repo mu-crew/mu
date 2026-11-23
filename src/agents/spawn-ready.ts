@@ -7,7 +7,7 @@
 import { existsSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { type CtlProbe, ctlProbe } from "../ctl/client.js";
-import { viewPresent } from "../jobs/view.js";
+import { viewCapture, viewPresent } from "../jobs/view.js";
 import { activeMux } from "../mux.js";
 // `sleep` is the shared poll-sleep TEST SEAM (setSleepForTests), not a
 // multiplexer operation, so it stays on the tmux module rather than
@@ -209,11 +209,13 @@ export async function awaitSpawnLiveness(
   agentName: string,
   command: string,
   host?: string,
+  /** The tmux server the pane was created on: another server's pane is not this one. */
+  identity?: string | null,
 ): Promise<boolean> {
   const ms = defaultSpawnLivenessMs();
   if (ms === 0) return false;
   await sleep(ms);
-  return checkSpawnHealth(paneId, agentName, command, undefined, false, host);
+  return checkSpawnHealth(paneId, agentName, command, undefined, false, host, identity);
 }
 
 /**
@@ -252,13 +254,14 @@ export async function checkSpawnHealth(
   cliStarted = false,
   /** The host profile the pane's transport reaches, when remote. */
   host?: string,
+  identity?: string | null,
 ): Promise<boolean> {
   // Capture-pane first so we have something to attach to the error if the
   // pane is in the process of being torn down (the buffer survives a beat
   // longer than the pane's existence in some tmux builds).
   const mux = await activeMux();
-  const scrollback = await mux.capture(paneId, { lines: 50 }).catch(() => undefined);
-  if (!(await viewPresent(paneId, mux))) {
+  const scrollback = await viewCapture(paneId, identity, { lines: 50 }, mux).catch(() => undefined);
+  if (!(await viewPresent(paneId, mux, identity))) {
     throw new AgentDiedOnSpawnError(agentName, paneId, scrollback, command, when, host);
   }
   // Pane is alive — but "alive" doesn't mean "working". Scan the tail of

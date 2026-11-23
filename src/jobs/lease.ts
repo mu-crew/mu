@@ -34,7 +34,7 @@ import { say } from "../messages.js";
 import { activeMux } from "../mux.js";
 import { attachCommand } from "../remote-agent.js";
 import type { JobKind, JobLiveness, JobRef } from "./types.js";
-import { viewPresent, viewRunning } from "./view.js";
+import { viewCapture, viewPresent, viewRunning } from "./view.js";
 
 /** The carrier's pane stayed alive and wrote no handle within MU_SPAWN_JOB_MS. Exit 1 (rolled back). */
 export class LeaseJobTimeoutError extends Error {
@@ -142,6 +142,8 @@ export async function awaitLeaseJob(
     name: string;
     token: string;
     paneId: string;
+    /** The tmux server the pane was created on (`agents.pane_identity`). */
+    paneIdentity?: string | null;
     /** The host the job runs on (a lease profile, or a file-handle plugin kind's host). */
     profile: Pick<HostProfile, "name">;
     jobFile: string;
@@ -172,9 +174,13 @@ export async function awaitLeaseJob(
       const mux = await activeMux();
       // Capture every check and keep the last good buffer: a gone pane cannot be captured.
       scrollback =
-        (await mux.capture(a.paneId, { lines: 50 }).catch(() => undefined)) ?? scrollback;
+        (await viewCapture(a.paneId, a.paneIdentity, { lines: 50 }, mux).catch(() => undefined)) ??
+        scrollback;
       // A file written just before the pane ended still wins: re-read before calling it dead.
-      if (!(await viewPresent(a.paneId, mux)) && readJobFile(a.jobFile).kind === "none") {
+      if (
+        !(await viewPresent(a.paneId, mux, a.paneIdentity)) &&
+        readJobFile(a.jobFile).kind === "none"
+      ) {
         throw new AgentDiedOnSpawnError(
           a.name,
           a.paneId,
@@ -310,7 +316,7 @@ export const leaseKind: LeaseJobKind = {
   /** The carrier pane still runs (a retained pane whose command ended does not). */
   async status(_db, job): Promise<JobLiveness> {
     try {
-      return (await viewRunning(job.viewPaneId))
+      return (await viewRunning(job.viewPaneId, { identity: job.paneIdentity }))
         ? { state: "running" }
         : { state: "lost", reason: "carrier pane not running" };
     } catch (e) {

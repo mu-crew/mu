@@ -16,6 +16,7 @@ import { agentToOutput, workstreamIdOf } from "../agent-output.js";
 import { AgentCtlUnreachableError, spawnAgent } from "../agents.js";
 import { emitJson, handle, JSON_OPT, resolveWorkstream, WORKSTREAM_OPT } from "../cli.js";
 import type { Db } from "../db.js";
+import { agentAttachTarget } from "../jobs/view.js";
 import { activeMux, attachShellLine } from "../mux.js";
 import { pc } from "../output.js";
 import { CliExitError } from "./handle.js";
@@ -84,8 +85,7 @@ export async function cmdOrchestrate(
     const mux = await activeMux();
     attach = attachShellLine(
       await mux.attachCommands({
-        session: `mu-${workstream}`,
-        window: agent.tab ?? name,
+        ...agentAttachTarget(mux, agent, workstream),
         inside: Boolean(process.env.TMUX),
       }),
     );

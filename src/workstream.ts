@@ -26,6 +26,7 @@ import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
 import { sessionViews, viewPresent } from "./jobs/view.js";
 import { say } from "./messages.js";
+import { paneRef } from "./mux/pane-ref.js";
 import { activeMux } from "./mux.js";
 import { withOpContext } from "./op-context.js";
 import { listWorktrees } from "./worktree.js";
@@ -453,7 +454,8 @@ export async function listWorkstreams(db: Db): Promise<WorkstreamSummary[]> {
  * DB does not know the session: a run against a throwaway `MU_DB_PATH`
  * sees every real workstream as unregistered, and sweeping them killed
  * a live crew's agent panes. An explicit
- * `mu workstream teardown <name>` still tears one down by name.
+ * `mu workstream teardown <name>` is scoped by name, but tmux also needs
+ * a verified pane in the session before it can kill it.
  *
  * The `scratch` workstream is NEVER returned: its idle session is kept
  * alive on purpose (see mux.ensureSession), so the next delegate
@@ -518,13 +520,13 @@ function isRegistered(db: Db, workstream: string): boolean {
 }
 
 /**
- * Tear down a workstream (soft): kill its mux session, delete its
- * machine-local agent rows and set `torn_down_at`. Worktrees are never
+ * Tear down a workstream (soft): kill its mux session when owned, delete its
+ * dead machine-local agent rows and set `torn_down_at`. Worktrees are never
  * removed. Tasks, edges and notes STAY (a later `init --if` is what
  * hard-deletes them, after a preview). Needs the preview revision.
  *
- * ORDER IS THE GUARANTEE. Nothing is written before the session is known
- * dead: the revision check reads only; the mux probe PROPAGATES ("could
+ * ORDER IS THE GUARANTEE. Nothing is written before session cleanup: the
+ * revision check reads only; the mux probe PROPAGATES ("could
  * not ask" is not "dead"); a registered pane outside the session is asked
  * about by id and blocks the teardown while it lives; the kill comes before
  * any DB change; the DB commit is last, one op group. A failure at any step
@@ -552,8 +554,7 @@ export async function teardownWorkstream(
   // Mux session first: if killSession throws we don't want any DB state
   // changed with panes still running. (killSession is itself idempotent
   // on missing sessions — a real throw here is an unexpected mux error.)
-  // Load-bearing: teardown must actually kill the session, not silently
-  // report success while leaving panes running.
+  // Load-bearing: a session without proof is reported as not killed.
   const mux = await activeMux();
   // The probe PROPAGATES: "could not ask" is not "dead". Swallowing it
   // here would change DB state while panes may still run.
@@ -564,12 +565,25 @@ export async function teardownWorkstream(
   const strays: string[] = [];
   for (const a of agentsBefore) {
     if (sessionPanes.has(a.paneId)) continue;
-    if (await viewPresent(a.paneId, mux)) strays.push(a.name);
+    if (await viewPresent(a.paneId, mux, a.paneIdentity)) strays.push(a.name);
   }
   if (strays.length > 0) throw new WorkstreamPanesLiveError(opts.workstream, strays);
   const muxAliveBefore = sessionPanes.size > 0;
+  let killedMux = false;
   if (muxAliveBefore) {
-    await mux.killSession(muxSession);
+    if (mux.name !== "tmux") {
+      killedMux = await mux.killSession({ backend: mux.name, session: muxSession });
+    } else {
+      // An empty registry (including after reconcile) says nothing about who owns
+      // this tmux session. Only a recorded pane still in it can authorize the kill.
+      for (const a of agentsBefore) {
+        if (!sessionPanes.has(a.paneId)) continue;
+        const pane = paneRef(a.paneId, a.paneIdentity);
+        if (pane.kind === "unverified") continue;
+        killedMux = await mux.killSession({ backend: "tmux", session: muxSession, pane });
+        if (killedMux) break;
+      }
+    }
   }
 
   // Worktrees are NOT touched: teardown never removes one (the registry's
@@ -588,7 +602,7 @@ export async function teardownWorkstream(
   for (const a of agentsBefore) {
     let reason: "alive" | "unknown" | undefined;
     try {
-      if (await viewPresent(a.paneId, mux)) reason = "alive";
+      if (await viewPresent(a.paneId, mux, a.paneIdentity)) reason = "alive";
     } catch {
       reason = "unknown";
     }
@@ -653,7 +667,7 @@ export async function teardownWorkstream(
   // intent='workstream.teardown', payload {torn_down_at}).
 
   return {
-    killedMux: muxAliveBefore,
+    killedMux,
     deletedAgents: dead.length,
     orphanedAgents: orphaned,
     tasks: tasksBefore,
@@ -736,15 +750,20 @@ export async function reinitWorkstream(
 function listAgentPanes(
   db: Db,
   workstream: string,
-): { name: string; paneId: string; incarnation: number }[] {
+): { name: string; paneId: string; paneIdentity: string | null; incarnation: number }[] {
   const rows = db
     .prepare(
-      `SELECT a.name, a.pane_id AS paneId, a.id AS incarnation FROM agents a
+      `SELECT a.name, a.pane_id AS paneId, a.pane_identity AS paneIdentity, a.id AS incarnation FROM agents a
          JOIN workstreams ws ON ws.id = a.workstream_id
         WHERE ws.name = ?
         ORDER BY a.name, a.pane_id`,
     )
-    .all(workstream) as { name: string; paneId: string; incarnation: number }[];
+    .all(workstream) as {
+    name: string;
+    paneId: string;
+    paneIdentity: string | null;
+    incarnation: number;
+  }[];
   return rows;
 }
 

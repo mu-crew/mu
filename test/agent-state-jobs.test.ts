@@ -71,7 +71,7 @@ describe("an agent's mux reading decides presence through a job read", () => {
       const r = (await readAgentStates([worker])).get(key);
       expect(r).toEqual({ state: "busy", source: name, since: null, alive: true });
       expect(view.viewStatus).toHaveBeenCalledTimes(1);
-      expect(view.viewStatus).toHaveBeenCalledWith(paneId, expect.anything());
+      expect(view.viewStatus).toHaveBeenCalledWith(paneId, expect.anything(), undefined);
       expect(probes).toEqual(["paneStatus"]);
     });
 

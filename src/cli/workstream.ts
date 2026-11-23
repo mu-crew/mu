@@ -290,7 +290,7 @@ export async function cmdTeardown(
     }
     console.log(pc.bold(`Workstream ${workstream} (mux session ${summary.muxSession})`));
     console.log(
-      `  mux session  : ${summary.muxAlive ? pc.yellow("alive (will be killed)") : pc.dim("not running")}`,
+      `  mux session  : ${summary.muxAlive ? pc.yellow("alive (ownership checked at apply)") : pc.dim("not running")}`,
     );
     console.log(`  agents       : ${summary.agentCount}`);
     console.log(
@@ -316,7 +316,7 @@ export async function cmdTeardown(
   }
   console.log(pc.bold(`Workstream ${workstream} (mux session ${summary.muxSession})`));
   console.log(
-    `  mux session  : ${summary.muxAlive ? pc.yellow("alive (will be killed)") : pc.dim("not running")}`,
+    `  mux session  : ${result.killedMux ? "killed" : summary.muxAlive ? pc.yellow("left alone (not confirmed owned)") : pc.dim("not running")}`,
   );
   console.log(`  agents       : ${summary.agentCount}`);
   console.log(
@@ -612,7 +612,7 @@ export function wireWorkstreamCommands(program: Command): void {
   workstream
     .command("teardown [name]")
     .description(
-      "Soft teardown: kill the mux session, delete agent rows, mark the workstream torn down (tasks, notes, worktrees stay). Without --if it previews `rev=<n>`; apply with --if <n>. --empty sweeps empty workstreams, never scratch.",
+      "Soft teardown: kill an owned mux session, delete dead agent rows, mark the workstream torn down (tasks, notes, worktrees stay). Without --if it previews `rev=<n>`; apply with --if <n>. --empty sweeps empty workstreams, never scratch.",
     )
     .option(...WORKSTREAM_OPT)
     .option("--if <rev>", "apply the preview with this revision", parseNonNegativeInt)

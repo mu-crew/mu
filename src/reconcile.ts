@@ -14,6 +14,7 @@
 import * as agentSdk from "./agents.js";
 import type { Db } from "./db.js";
 import { detachedJobLives } from "./jobs/kinds.js";
+import { viewIdentity } from "./jobs/view.js";
 import { foreignBackend } from "./mux/binding.js";
 import { activeMux, type MuxPane } from "./mux.js";
 
@@ -118,6 +119,11 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
   const muxPanes = await mux.listPanes(sessionName);
   const paneById = new Map(muxPanes.map((p) => [p.paneId, p]));
 
+  // Pane ids restart per tmux server: a row recorded on another server (`agents.pane_identity`)
+  // does not own the pane that now has its id. Rows with none (older, unverified) keep today's check.
+  const server = dbAgents.some((a) => a.paneIdentity) ? await viewIdentity(mux) : undefined;
+  const owns = (a: agentSdk.AgentRow): boolean => !a.paneIdentity || a.paneIdentity === server;
+
   let prunedGhosts = 0;
   const orphans: MuxPane[] = [];
 
@@ -137,7 +143,7 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
     } else if (foreignBackend(agent.paneId, mux.name) !== undefined) {
       // Another managed backend's pane: this backend cannot list it, so it is not a ghost (spec A §8.2).
       foreign.push(agent);
-    } else if (paneById.has(agent.paneId)) {
+    } else if (paneById.has(agent.paneId) && owns(agent)) {
       survivors.push(agent);
     } else if (await detachedJobLives(db, agent.incarnation)) {
       // Its view is gone, its job is not (plugins spec D3): `mu agent reattach` opens a new view.

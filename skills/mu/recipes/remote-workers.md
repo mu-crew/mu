@@ -1,9 +1,9 @@
 # Remote workers
 
 Pick a [rung](../../../docs/guide/remote-ladder.md). The SSH session starter
-(`mu host init dev --ssh --template`) prints only: change `--max-sessions 1`
-to 2 for one live pane plus collect or hook exec, then run it. If only
-one connection is practical, use a lease.
+(`mu host init dev --ssh --template`) prints `--max-sessions 2` (one live pane plus
+one slot for collect or hook exec); run it as printed. Size larger crews
+per the guide. If only one connection is practical, use a lease.
 
 The host has no mu DB: put the whole brief in `spawn --send`. End it with
 instructions to commit and finish with this unfenced block (no blank line):

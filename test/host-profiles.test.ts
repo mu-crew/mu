@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import {
   addHost,
+  bindHostChannel,
   expandHostTemplate,
   getHost,
   HostExistsError,
@@ -17,9 +18,12 @@ import {
   HostTemplateError,
   hostEnvWords,
   hostStarter,
+  listHostChannels,
   listHosts,
   removeHost,
+  reserveHostChannel,
   validateHostTemplate,
+  withHostChannel,
 } from "../src/hosts.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli, runCliJson } from "./_runCli.js";
@@ -372,6 +376,31 @@ describe("host init --ssh prints a starter and never runs it", () => {
     }
     expect(existsSync(marker)).toBe(false);
     expect(listHosts(db)).toEqual([]);
+  });
+
+  it("the printed session starter admits collect and brief exec beside one live pane", async () => {
+    const starter = await runCli(["host", "init", "dev", "--ssh", "--template"], dbPath);
+    expect(starter.exitCode).toBeNull();
+    // Let the shell split the printed command, without running mu or ssh in it.
+    const argv = sh(`mu() { printf '%s\\0' "$@"; }\n${starter.stdout}`).split("\0").slice(0, -1);
+    expect(argv.slice(0, 3)).toEqual(["host", "add", "dev"]);
+    const added = await runCli(argv, dbPath);
+    expect(added.exitCode).toBeNull();
+    expect(added.error).toBeUndefined();
+
+    const pane = await reserveHostChannel(db, "dev", "spawn:auth/worker-1");
+    expect(bindHostChannel(db, pane, { agentId: 1, paneId: "%1" })).toBe(true);
+    for (const holder of ["collect:auth/worker-1", "brief:auth/worker-1"]) {
+      await withHostChannel(
+        db,
+        "dev",
+        holder,
+        async () => {
+          expect(listHostChannels(db, "dev").map((c) => c.holder)).toEqual([holder, pane.holder]);
+        },
+        { paneAlive: async () => true },
+      );
+    }
   });
 
   it("the starter's fields all pass the grammar, with the host name as the ssh target", () => {

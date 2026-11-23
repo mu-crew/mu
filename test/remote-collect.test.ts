@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentNotFoundError, AgentPaneStillAliveError } from "../src/agents/errors.js";
-import { closeAgent, getAgent, insertAgent, previewClose } from "../src/agents.js";
+import { closeAgent, getAgent, previewClose } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import {
   addHost,
@@ -32,6 +32,7 @@ import { resetMux } from "../src/mux.js";
 import { RemoteCloseRefusedError } from "../src/remote-agent.js";
 import { collectRemoteAgent, RemoteCollectUnsupportedError } from "../src/remote-collect.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";

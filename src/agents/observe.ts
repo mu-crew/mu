@@ -34,6 +34,7 @@ export type ObservedAgent = Pick<
   | "name"
   | "workstreamName"
   | "paneId"
+  | "paneIdentity"
   | "cli"
   | "incarnation"
   | "gateToken"

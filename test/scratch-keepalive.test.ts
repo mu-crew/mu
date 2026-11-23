@@ -174,7 +174,7 @@ describe("teardown --empty leaves the kept-alive scratch session", () => {
     };
   }
 
-  it("the sweep skips an agentless scratch; a named teardown still removes it", async () => {
+  it("the sweep skips scratch; neither path kills a tmux session without proof", async () => {
     ensureWorkstream(db, "scratch");
     ensureWorkstream(db, "bare");
     const sessions = new Set(["mu-scratch", "mu-bare"]);
@@ -191,7 +191,7 @@ describe("teardown --empty leaves the kept-alive scratch session", () => {
     );
     expect(sweep.error).toBeUndefined();
     expect(sweep.data).toMatchObject({ tornDown: 1, failed: [] });
-    expect(killed).toEqual(["mu-bare"]);
+    expect(killed).toEqual([]);
     expect(sessions.has("mu-scratch")).toBe(true);
 
     const namedRev = await previewRevision(dbPath, ["scratch"]);
@@ -200,8 +200,9 @@ describe("teardown --empty leaves the kept-alive scratch session", () => {
       dbPath,
     );
     expect(named.error).toBeUndefined();
-    expect(killed).toEqual(["mu-bare", "mu-scratch"]);
-    expect(sessions.has("mu-scratch")).toBe(false);
+    expect(named.data).toMatchObject({ killedMux: false });
+    expect(killed).toEqual([]);
+    expect(sessions.has("mu-scratch")).toBe(true);
   });
 });
 

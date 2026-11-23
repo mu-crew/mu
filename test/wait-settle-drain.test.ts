@@ -205,16 +205,15 @@ describe("settle -> notes -> wait: no double delivery (F2's alternative reading)
     expect(JSON.parse(bare.stdout)).toMatchObject({ ok: false, error: "WaitNothingError" });
   });
 
-  it("read is not delivery (F2's actual order): notes first, then the next explicit wait returns it ONCE", async () => {
-    mk("t");
+  it("read is not delivery (F2's actual order): notes first, then a bare wait returns it ONCE", async () => {
     const call = mkDelegate(db, "pi:s");
     answer(db, call);
     const task = getDelegateCall(db, call)?.task ?? "";
     expect((await mu("s", ["task", "notes", task, "-w", "scratch"])).stdout).toContain("VERDICT");
     // By design since 42471d22 (a pipe cannot prove a read): the wait still owes it, once.
-    const w = ["wait", "task:w/t", "--timeout", "1", "--json"];
+    const w = ["wait", "--timeout", "1", "--json"];
     expect(fired(await mu("s", w))).toBe(`delegate:delegate:${call}`);
-    expect(fired(await mu("s", w))).toBe("heartbeat");
+    expect(JSON.parse((await mu("s", w)).stdout)).toMatchObject({ error: "WaitNothingError" });
   });
 });
 

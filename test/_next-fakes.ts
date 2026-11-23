@@ -55,10 +55,10 @@ export function spawnFake(actual: SpawnModule): SpawnModule {
   const prepareAgentSpawn: SpawnModule["prepareAgentSpawn"] = async (db, opts) => {
     await actual.prepareAgentSpawn(db, opts);
     return async (journal) => {
-      const { insertAgent } = await import("../src/agents.js");
+      const { insertTestAgent } = await import("./_agent-pane.js");
       hook.spawns.push(opts.name);
       if (hook.spawnFails !== undefined) throw hook.spawnFails();
-      const row = insertAgent(db, {
+      const row = insertTestAgent(db, {
         name: opts.name,
         workstream: opts.workstream,
         paneId: `%${++hook.panes}`,

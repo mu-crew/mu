@@ -11,6 +11,7 @@
 
 import { spawn } from "node:child_process";
 import { helperPath } from "../../helper-path.js";
+import { agentAttachTarget } from "../../jobs/view.js";
 import { activeMux, attachShellLine, type MuxCommand, tmuxAttachMode } from "../../mux.js";
 import { shellWord } from "../../shell-quote.js";
 import type { DrillTarget } from "./rows.js";
@@ -20,6 +21,9 @@ export interface AttachSubject {
   workstream: string;
   name: string;
   tab: string | null;
+  paneId: string;
+  /** The tmux server the pane was spawned on (`agents.pane_identity`): attach only there. */
+  paneIdentity?: string;
 }
 
 export type AttachPlan =
@@ -67,13 +71,13 @@ export async function attachKeyHint(): Promise<string> {
 export async function planAttach(t: AttachSubject): Promise<AttachPlan> {
   try {
     const mux = await activeMux();
-    const target = { session: `mu-${t.workstream}`, window: t.tab ?? t.name };
+    const target = agentAttachTarget(mux, t, t.workstream);
     const inside = insideClient();
     const steps = await mux.attachCommands({ ...target, inside });
     // The copied line is for a shell outside any client, whatever this one is inside of.
     const outside = await mux.attachCommands({ ...target, inside: false, outside: true });
     const { text } = backHint(mux.name);
-    const notice = `attaching ${target.session}:${target.window}${text === "" ? "" : ` · ${text}`}`;
+    const notice = `attaching ${target.session}:${t.tab ?? t.name}${text === "" ? "" : ` · ${text}`}`;
     return { ok: true, steps, line: attachShellLine(outside), notice };
   } catch (e) {
     return { ok: false, reason: message(e), line: null };

@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AgentPaneStillAliveError, closeAgent, insertAgent } from "../src/agents.js";
+import { AgentPaneStillAliveError, closeAgent } from "../src/agents.js";
 import { cmdTeardown } from "../src/cli/workstream.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
@@ -30,6 +30,7 @@ import {
   workstreamRevision,
 } from "../src/workstream.js";
 import { listWorktrees, registerWorktree } from "../src/worktree.js";
+import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { envelopeData } from "./_envelope.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxExecutor, type MuxHarness } from "./_mux.js";
@@ -246,7 +247,7 @@ describe("sweep_toctou: the sweep applies the previewed members, not whatever th
     insertAgent(db, { workstream: "e2", name: "late", paneId: "%9" });
   };
 
-  it("a member that gained a task and an agent while an earlier member was killed is refused", async () => {
+  it("a member that gained a task and an agent while an earlier member was being torn down is refused", async () => {
     ensureWorkstream(db, "e1");
     ensureWorkstream(db, "e2");
     const revision = sweepRevision(
@@ -255,15 +256,12 @@ describe("sweep_toctou: the sweep applies the previewed members, not whatever th
         ["e2", workstreamRevision(db, "e2")],
       ]),
     );
-    use(
-      tmux({
-        session: LIVE_SESSION,
-        // both are "alive"; the change lands while e1's session is being killed
-        onKill: (target) => {
-          if (target.includes("mu-e1")) changeE2();
-        },
-      }),
-    );
+    let probes = 0;
+    use(async (args) => {
+      // The sweep probes e1 while building its summaries, and then at apply.
+      if (args[0] === "list-panes" && args.includes("=mu-e1:") && ++probes === 2) changeE2();
+      return args[0] === "list-panes" ? LIVE_SESSION : GONE_SESSION;
+    });
     // cmdTeardown runs on THIS connection, so the racing writes are visible to it.
     const out = await captureStdout(() =>
       cmdTeardown(db, { empty: true, if: revision, json: true }),
@@ -393,7 +391,7 @@ describe("error_lines: each refusal is one stderr line", () => {
 //   `agent close` acts on rows of torn-down workstreams, or refuses loudly.
 
 /** tmux where `%pane` is alive only AFTER the session kill (moved during it). */
-function movedDuringKill(pane: string, sessionPanes = "@1|%1|_mu\n"): MuxExecutor {
+function movedDuringKill(pane: string, sessionPanes = `@1|${pane}|_mu\n`): MuxExecutor {
   let killed = false;
   return async (args) => {
     if (args[0] === "list-panes") return { ...OK, stdout: sessionPanes };

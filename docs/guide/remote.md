@@ -45,8 +45,18 @@ too. Details and limits: [rung 1](remote-ladder.md#rung-1-mu-host-exec).
 
 ```bash
 mu host init dev --ssh --template   # prints a starter `mu host add`; runs nothing
-# change the printed --max-sessions 1 to 2 for one live worker, then run it
-mu host check dev --root '~/repo'
+```
+
+The starter, as printed (it already sets `--max-sessions 2`: one live worker plus
+one transient slot for collect or hook exec; run it unchanged):
+
+```bash
+mu host add dev \
+  --shell 'ssh -o ControlMaster=no -o ControlPath=none -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L {local_sock}:{remote_sock} dev -t '"'"'cd {cwd:sh} && {env} "$SHELL" -ilc {cmd:sh}'"'"'' \
+  --exec 'ssh -o ControlMaster=no -o ControlPath=none -o BatchMode=yes dev {cmd}' \
+  --fetch 'git fetch ssh://dev{cwd} HEAD' \
+  --max-sessions 2
+mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
 ```
 
 A live session pane uses a slot. Set mu's `--max-sessions` to the number of
@@ -132,11 +142,8 @@ EOF
   fires. Never a held
   `ssh dev …`. The remote command writes a token-bound completion record that
   mu reads once the pane has exited; no record, a signal or a lost transport is
-  exit 6, never 0. Known issue (task `wait_named_ref_other_events`): the
-  wait also ends, exit 0, on any other event this caller owns (a settled worker,
-  a closed task). Trust it only if `data.firing.kind` is `exited` for
-  `agent:auth/gate-1`; otherwise run `data.resume` and check again. Close the
-  gate only after that, since the close removes the record. Preview with `mu agent close gate-1 -w auth`, then run
+  exit 6, never 0. Close the gate after it fires, since the close removes
+  the record. Preview with `mu agent close gate-1 -w auth`, then run
   `mu agent close gate-1 -w auth --if <rev>` to free the pane and remove
   the record. No `--worktree`, no `--task`.
 - If the spawn reports `ctl refused` or `missing`, run
@@ -271,7 +278,10 @@ runs them with `/bin/sh -c`. `spawn --host` uses them (above); `agent
 collect` runs the `--fetch` template.
 
 ```bash
-mu host show dev                   # templates and the holders of its channels
+mu host init dev --ssh --template   # prints a starter `mu host add`; runs nothing
+mu host add dev --shell '<pane cmd>' --exec '<run cmd>' --fetch '<fetch cmd>' --max-sessions 2
+mu host check dev --root '~/repo'   # host answers, repo, harnesses and hooks, pi and mu extension
+mu host show dev              # templates and the holders of its channels
 ```
 
 - Placeholders: `{env}` (the five `MU_*` identity variables only), `{cmd}`,
@@ -298,8 +308,11 @@ mu host show dev                   # templates and the holders of its channels
   lease ([below](#session-capped-hosts)).
 - `mu host show` and `list` print the transport (`session` or `lease`) and,
   for a lease, the `stop` template.
-- `--max-sessions N` counts every channel mu holds to the host. At the cap mu
-  refuses with one line naming the holder.
+- `--max-sessions N` counts every channel mu holds for the profile. At the cap
+  mu refuses with one line naming the holder. The SSH session starter uses
+  `2` so a collect or brief exec fits beside one live pane. The starter's
+  pane and exec each open their own SSH connection; sshd's per-connection
+  `MaxSessions 1` does not require a mu cap of `1`.
 - `host check --agent <name> -w <ws>` also probes that agent's forwarded
   control socket, and on a lease agent reports its recorded job handle.
 - A registered plugin can be a host's link instead of `--shell` and
@@ -334,7 +347,7 @@ and `mu state` lists their collect and close.
 
 ```bash
 mu agent spawn w1 -w auth --host box1 --worktree --cli claude --task t1 --send "$BRIEF"
-mu wait agent:auth/w1@0      # first settle runs an in-life collect
+mu wait agent:auth/w1@0      # fires only for w1; first settle runs an in-life collect
 mu agent close w1 -w auth   # preview; copy its revision
 mu agent close w1 -w auth --if <rev>   # stop, final collect, close the tree
 ```
@@ -378,11 +391,13 @@ mu host check dev --root '~/repo'
   with a byte-equal `--stop`, so every reservation stays stoppable.
 - `local_sock` determines `remote_sock`: both derive from (workstream, agent),
   so a carrier's forward table never maps one local socket to two remote ones.
-- A lease pane holds no host channel, so `--max-sessions` counts only what mu
-  opens itself (`exec`, `fetch`, `stop`, `check`), and `collect` works while a
-  lease worker runs.
-- Why `--fetch` stays plain ssh: a fetch is a bulk transfer, and the carrier's
-  channel is never lent to one.
+- The mule starter leaves `--max-sessions` unset. A lease pane uses no mu
+  channel slot, and mule serializes SSH commands on its private master, so
+  only one session runs there even with `MaxSessions 1`. If you set a mu
+  cap of `1`, a collect can still run beside the lease pane, but mu refuses
+  a second transient command until the first releases its slot.
+- `--fetch` stays plain SSH: it uses a separate connection from mule's
+  master, so a bulk transfer does not hold up mule's commands.
 - Why a session template must not ride a shared master: a `-L` asked of a
   control master is bound by the master, not by the client, and outlives the
   pane. mu then deletes the socket file but the master keeps the listener; the

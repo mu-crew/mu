@@ -27,6 +27,7 @@ import { deleteEffect, effectsOf, refuseLiveOwner } from "./effects.js";
 import { observeHost } from "./host-lifecycle.js";
 import { findHost, type HostRecord } from "./host-provider.js";
 import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-records.js";
+import { paneProvenance } from "./hosts.js";
 import { describeRead, readJobFile } from "./jobs/lease.js";
 import { viewPresent } from "./jobs/view.js";
 import { emitEvent } from "./logs.js";
@@ -227,7 +228,7 @@ export async function closePluginJob(
     // the awaited observation, and a view is only ever opened under that lock.
     const now = getCarrierJob(db, reservation.token);
     if (now === undefined) return undefined;
-    await assertViewGone(now);
+    await assertViewGone(db, now);
     reservation = now;
   }
   // A lost host's job went with the machine, unless its kind outlives it: then only a stop proves it gone.
@@ -282,7 +283,7 @@ export type ViewProof = { state: "gone" } | { state: "alive" | "unknown"; why: s
  * - `open`: gone only when its pane is proven gone; a failing probe is unknown.
  * - null: a record older than the column (an upgrade): unknown.
  */
-export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<ViewProof> {
+export async function proveViewGone(db: Db, r: CarrierJob, mux?: MuxBackend): Promise<ViewProof> {
   const dispatcher = "(the job's dispatcher)";
   switch (r.viewState) {
     case "none":
@@ -291,7 +292,11 @@ export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<Vi
       return { state: "unknown", why: `its view ${dispatcher} opened with no pane id recorded` };
     case "open": {
       if (r.paneId === null) return { state: "unknown", why: `its view ${dispatcher} has no pane` };
-      const alive = await viewPresent(r.paneId, mux).catch(() => undefined);
+      const prov = paneProvenance(db, r.agentId, r.paneId);
+      if (prov === "unknown") {
+        return { state: "unknown", why: `its view ${r.paneId} ${dispatcher} has no provenance` };
+      }
+      const alive = await viewPresent(r.paneId, mux, prov.identity).catch(() => undefined);
       if (alive === false) return { state: "gone" };
       return alive === true
         ? { state: "alive", why: `its view ${r.paneId} ${dispatcher} is alive` }
@@ -306,8 +311,8 @@ export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<Vi
 }
 
 /** `proveViewGone` or `CarrierJobKeptError`, everything kept; `--abandon-job` is the way out. */
-async function assertViewGone(r: CarrierJob): Promise<void> {
-  const p = await proveViewGone(r);
+async function assertViewGone(db: Db, r: CarrierJob): Promise<void> {
+  const p = await proveViewGone(db, r);
   if (p.state !== "gone") throw new CarrierJobKeptError(r.name, r.workstream, r.host, p.why);
 }
 

@@ -152,12 +152,36 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- **`mu wait` with named refs no longer fires on unrelated owned events.**
+  Waiting on a named `--command` gate returns the command's exit status,
+  even if an unrelated task has closed. A wait without refs still sees
+  owned events.
+- `mu host init --ssh --template` now prints `--max-sessions 2`, so a collect
+  or a remote task brief write fits beside one live pane. Existing profiles
+  and the mule lease starter are unchanged.
 - Exec templates start without inherited `CDPATH`, including templates that
   use `{cwd}`. For templates without `{cwd}` (including the SSH and mule
   starters), `mu host exec --cwd` treats the directory as a literal path,
   follows symlinks before resolving `..`, and exits with the `cd` failure
   before running any of the script. Relative repo path handling in
   `mu host check` and remote worktree preparation is unchanged.
+- A tmux server restart no longer hands a worker's row to an unrelated pane that
+  recycled its pane id (`%1` restarts per server). Spawn records the server
+  (`agents.pane_identity`, `<pid>|<start time>`; the pane id is unique within a
+  server, so the pane's own pid adds nothing); liveness, `mu wait`, reconcile,
+  sends, capture and close treat another server as a dead pane for that row and
+  never touch the foreign pane. A legacy row can observe liveness by id but
+  cannot target an action. Spawn reports uncertain creation when tmux does not
+  return the birth identity: rollback never kills or probes the candidate id.
+  Dashboard, spawn and orchestrator attach commands target the exact pane, even
+  after its window is renamed or split. Workstream teardown leaves a tmux
+  session alone unless a verified agent pane still belongs to it; a session
+  name alone is not enough, including after reconcile prunes the last row.
+- Guarded tmux pastes and literal keys preserve multiline text, including
+  indentation, tabs, and `#` lines. Long literal input stays within tmux's
+  command-length limit, and a server change stops delivery before the next
+  chunk. Retained panes also keep multiline commands and environment values
+  intact.
 - tmux 3.8 no longer makes mu mistake live panes for missing ones. Pane,
   window, and Murmur state queries use a separator tmux preserves.
 - Remote worktree prepare claims the path with an atomic `mkdir` and records
@@ -172,6 +196,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   so mise shims no longer cause false prerequisite failures. Failed mu calls
   print the named step, both output streams, and worker pane logs before cleanup.
   The pane path registers the example plugin under its declared name, `ssh`.
+- The loopback lease smoke spawns from a local clone of the fixture repo so
+  both sides share the same base commit. It exposes Git and tmux to the remote
+  fixture without exposing other harnesses installed beside them.
 
 ## [5.2.2] — 2026-11-19
 

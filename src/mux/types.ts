@@ -21,6 +21,7 @@
 
 import { say } from "../messages.js";
 import { shellWord } from "../shell-quote.js";
+import type { ActionPaneRef, VerifiedPaneRef } from "./pane-ref.js";
 
 /** The multiplexers mu can drive. */
 export type MuxBackendName = "herdr" | "rex" | "tmux";
@@ -94,7 +95,7 @@ export interface SpawnAgentPaneOptions {
    * go while a slow readiness wait (herdr: up to 30s) is still running.
    * The returned promise settles when the agent is started.
    */
-  onPaneCreated?: (paneId: string) => void;
+  onPaneCreated?: (paneId: string, identity?: string) => void;
   /**
    * Keep the pane (its row and scrollback) after its command ends, armed
    * BEFORE the command can run, so an immediate exit is still readable with
@@ -127,7 +128,13 @@ export interface AttachTarget {
    *  dashboard copies): they must open a client, whatever the ambient env says.
    *  Wins over `inside` and over a backend's own env detection. */
   outside?: boolean;
+  /** Stable target for an agent attach on tmux. Session-only attaches have no pane. */
+  pane?: VerifiedPaneRef;
 }
+
+export type SessionKillTarget =
+  | { backend: "tmux"; session: string; pane: VerifiedPaneRef }
+  | { backend: "herdr" | "rex"; session: string };
 
 /**
  * The pane option naming the host a remote worker runs on, set on its local
@@ -138,9 +145,13 @@ export const MU_HOST_PANE_OPTION = "@mu_host";
 
 /** Label `paneId` with the host its worker runs on. Best effort: a backend
  *  without pane options, or a failed set, leaves the pane unlabelled. */
-export async function markPaneHost(mux: MuxBackend, paneId: string, host: string): Promise<void> {
+export async function markPaneHost(
+  mux: MuxBackend,
+  pane: ActionPaneRef,
+  host: string,
+): Promise<void> {
   try {
-    await mux.setPaneOption?.(paneId, MU_HOST_PANE_OPTION, host);
+    await mux.setPaneOption?.(pane, MU_HOST_PANE_OPTION, host);
   } catch {
     // presentation only: the worker runs the same without it
   }
@@ -326,8 +337,9 @@ export interface MuxBackend {
   ensureSession(session: string): Promise<EnsureSessionResult>;
   /** Idempotent. herdr closes the workspace and refuses (surfacing
    *  `HerdrWorkspaceGroupCloseError`) when it has linked worktree
-   *  workspaces mu did not create. */
-  killSession(session: string): Promise<void>;
+   *  workspaces mu did not create. tmux requires proof of a recorded pane in the session
+   * and returns false if it refused the kill or the session was already gone. */
+  killSession(target: SessionKillTarget): Promise<boolean>;
 
   // — panes —
   /** Create the agent's pane (new window, or a split of the existing
@@ -344,12 +356,12 @@ export interface MuxBackend {
   listPanes(session: string): Promise<MuxPane[]>;
   /** False only when the mux reports the pane (or server) gone; throws
    *  when the probe itself fails, so liveness gates fail closed. */
-  paneAlive(paneId: string): Promise<boolean>;
-  killPane(paneId: string): Promise<void>;
-  /** The argv an operator runs by hand to do what `killPane(paneId)` does, on the same
-   *  server mu drives (for a diagnostic naming a pane mu could not prove gone). */
-  killPaneCommand(paneId: string): MuxCommand;
-  capture(paneId: string, opts?: CaptureOptions): Promise<string>;
+  paneAlive(pane: string | VerifiedPaneRef): Promise<boolean>;
+  killPane(pane: ActionPaneRef): Promise<void>;
+  /** The argv an operator runs by hand to do the same guarded kill (for a diagnostic
+   *  naming a pane mu could not prove gone). */
+  killPaneCommand(pane: ActionPaneRef): MuxCommand;
+  capture(pane: ActionPaneRef, opts?: CaptureOptions): Promise<string>;
 
   // — attach —
   /** Ordered argv steps that land the user on `target` (some optional,
@@ -361,7 +373,7 @@ export interface MuxBackend {
   // — optional capabilities —
   /** tmux only: set a user option (`@name`) on one pane, for a reader such
    *  as murmur that looks the pane up by id (MU_HOST_PANE_OPTION). */
-  setPaneOption?(paneId: string, name: string, value: string): Promise<void>;
+  setPaneOption?(pane: ActionPaneRef, name: string, value: string): Promise<void>;
   /** The pane's runtime state as the mux itself reports it, or undefined
    *  when the pane is gone or unclassified. herdr (its classifier) and Rex
    *  (the program's OSC 7501 report): for non-pi agents. */
@@ -369,7 +381,7 @@ export interface MuxBackend {
   /** tmux and Rex: whether the pane runs, exited (a retained pane: `retainOnExit`)
    *  or is gone. Unlike `paneAlive` (handle existence), an exited pane is NOT
    *  running here. Throws when the probe itself fails: unknown, never a result. */
-  paneResult?(paneId: string): Promise<PaneResult>;
+  paneResult?(pane: string | VerifiedPaneRef): Promise<PaneResult>;
   /** herdr only: whether an agent still occupies the pane. A herdr pane
    *  outlives its occupant (it falls back to a shell), so existence is not
    *  life. False when the pane is gone or herdr detects no agent in it;
@@ -378,7 +390,11 @@ export interface MuxBackend {
   /** tmux (`#{pane_pid}`) and Rex: the pid of the pane's first process, so a
    *  caller can tell the agent's own processes from others; undefined when
    *  the pane is gone. Throws when the probe itself fails. */
-  panePid?(paneId: string): Promise<number | undefined>;
+  panePid?(pane: string | VerifiedPaneRef): Promise<number | undefined>;
+  /** tmux only: the identity of the server mu drives (`<pid>|<start time>`), or undefined when
+   *  no server runs. Pane ids restart at `%0` per server, so a recorded pane is the agent's
+   *  only while this equals the identity recorded at spawn. Throws when the probe fails. */
+  serverIdentity?(): Promise<string | undefined>;
   /** herdr: atomic `agent prompt`; Rex: a paste event, then Enter. The `mux`
    *  channel's send. tmux has none: its paste is `pasteToPane`, which only the
    *  `hooks` channel uses, because only there does a hook event confirm it.
@@ -389,10 +405,18 @@ export interface MuxBackend {
    *  `C-u`), paste `text` as one bracketed paste, then submit it with Enter.
    *  The paste itself is unconfirmed: the `hooks` channel (src/channels/hooks.ts)
    *  confirms it by the harness's `run_count`, and never resends. */
-  pasteToPane?(paneId: string, text: string, opts?: { clearKey?: string | null }): Promise<void>;
+  pasteToPane?(
+    pane: ActionPaneRef,
+    text: string,
+    opts?: { clearKey?: string | null },
+  ): Promise<void>;
   /** tmux only: type `keys` into the pane, as tmux key names (`Enter`, `Escape`)
    *  or, with `literal`, as text. `mu agent answer` answers a dialog with it. */
-  sendKeys?(paneId: string, keys: readonly string[], opts?: { literal?: boolean }): Promise<void>;
+  sendKeys?(
+    pane: ActionPaneRef,
+    keys: readonly string[],
+    opts?: { literal?: boolean },
+  ): Promise<void>;
   /** The argv steps that type pi's `/reload` into `paneId` from outside, for
    *  an agent whose extension cannot take `/reload` over ctl. herdr only
    *  (its `agent prompt`); tmux omits it (a paste there is confirmed only on
