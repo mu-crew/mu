@@ -37,8 +37,8 @@ table.
 
 ## Run one command without an agent
 
-`mu host exec dev -- <cmd>` runs a single command through the profile's
-`--exec` and returns its exit. No agent, pane or task, so it works on herdr
+`mu host exec dev -- <cmd>` runs a single command through the host's link
+and returns its exit. No agent, pane or task, so it works on herdr
 too. Details and limits: [rung 1](remote-ladder.md#rung-1-mu-host-exec).
 
 ## Add a profile and check it
