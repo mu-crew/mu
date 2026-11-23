@@ -21,7 +21,7 @@
 
 import { say } from "../messages.js";
 import { shellWord } from "../shell-quote.js";
-import type { ActionPaneRef, VerifiedPaneRef } from "./pane-ref.js";
+import type { ActionPaneRef, PaneRef, VerifiedPaneRef } from "./pane-ref.js";
 
 /** The multiplexers mu can drive. */
 export type MuxBackendName = "herdr" | "rex" | "tmux";
@@ -128,12 +128,12 @@ export interface AttachTarget {
    *  dashboard copies): they must open a client, whatever the ambient env says.
    *  Wins over `inside` and over a backend's own env detection. */
   outside?: boolean;
-  /** Stable target for an agent attach on tmux. Session-only attaches have no pane. */
-  pane?: VerifiedPaneRef;
+  /** Stable target for an agent attach on tmux (a legacy row's: unverified). Session-only attaches have no pane. */
+  pane?: PaneRef;
 }
 
 export type SessionKillTarget =
-  | { backend: "tmux"; session: string; pane: VerifiedPaneRef }
+  | { backend: "tmux"; session: string; pane: PaneRef }
   | { backend: "herdr" | "rex"; session: string };
 
 /**

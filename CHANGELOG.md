@@ -14,6 +14,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Added
 
+- [Remote worker ladder guide](docs/guide/remote-ladder.md): choose where to
+  run a command or worker, size session capacity, and collect and close.
+
 - **`examples/plugins/mu-plugin-ssh` gains an example `pane` job kind** over
   plain ssh. Session/lease templates remain the supported rung-3 path.
   The example uses mu's built-in `ctl` (with a per-view `-L` forward),
@@ -172,6 +175,15 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- Failed or interrupted test runs clean up their own tmux and Rex servers.
+  Test teardown never sweeps the user's tmux sessions or earlier runs' servers.
+- **`mu agent spawn --host … --task` with no brief note and no `--send` refuses** (exit 2) instead of
+  delivering `Read: mu task notes …`, which a remote worker cannot run (it has no mu DB; spec A, rungs 3/4).
+  A task with a brief note still sends it in full. Local spawns are unchanged. The one-line fallback a local spawn pins is marked by its author (`mu (generated brief)`), so a later `--host` retry refuses it too. A fallback pinned before the marker (the exact line built from the task's own id, workstream and title, under the ordinary actor) is refused the same; an authored brief that merely starts alike is still sent.
+- **`mu wait` with named refs no longer fires on unrelated owned events.**
+  Waiting on a named `--command` gate returns the command's exit status,
+  even if an unrelated task has closed. A wait without refs still sees
+  owned events.
 - `mu host init --ssh --template` now prints `--max-sessions 2`, so a collect
   or a remote task brief write fits beside one live pane. Existing profiles
   and the mule lease starter are unchanged.
@@ -186,13 +198,15 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   (`agents.pane_identity`, `<pid>|<start time>`; the pane id is unique within a
   server, so the pane's own pid adds nothing); liveness, `mu wait`, reconcile,
   sends, capture and close treat another server as a dead pane for that row and
-  never touch the foreign pane. A legacy row can observe liveness by id but
-  cannot target an action. Spawn reports uncertain creation when tmux does not
-  return the birth identity: rollback never kills or probes the candidate id.
-  Dashboard, spawn and orchestrator attach commands target the exact pane, even
-  after its window is renamed or split. Workstream teardown leaves a tmux
-  session alone unless a verified agent pane still belongs to it; a session
-  name alone is not enough, including after reconcile prunes the last row.
+  never touch the foreign pane. Rows from before the column (agents spawned
+  before the upgrade) stay on the unverified check: mu still captures, sends
+  to, attaches, closes and tears them down by pane id. Spawn reports uncertain
+  creation when tmux does not return the birth identity: rollback never kills
+  or probes the candidate id. Dashboard, spawn and orchestrator attach commands
+  target the exact pane, even after its window is renamed or split. Workstream
+  teardown leaves a tmux session alone unless an agent pane still belongs to it
+  (a legacy row's by id); a session name alone is not enough, including after
+  reconcile prunes the last row.
 - Guarded tmux pastes and literal keys preserve multiline text, including
   indentation, tabs, and `#` lines. Long literal input stays within tmux's
   command-length limit, and a server change stops delivery before the next

@@ -120,7 +120,13 @@ export interface TaskSpawnRequest {
   attempt?: string;
   /** The first prompt; also the task's pinned brief once it is delivered. */
   text: string;
+  /** `text` is mu's generated one-line fallback, not an authored brief: pinned under
+   *  `GENERATED_BRIEF_AUTHOR` so a later `--host` spawn can tell it from a real brief. */
+  generated?: boolean;
 }
+
+/** The author of a pinned generated fallback brief (the structural marker: no text matching). */
+export const GENERATED_BRIEF_AUTHOR = "mu (generated brief)";
 
 export interface TaskSpawnOutcome {
   /** `sent`: delivered (now or by an earlier run). `unknown`: it may have landed; never resent. */
@@ -207,9 +213,10 @@ export async function pinBrief(
   task: string,
   workstream: string,
   text: string,
+  generated = false,
 ): Promise<"recorded" | "kept"> {
   // Resolve the author first: no await may sit between the check and the INSERT.
-  const author = await resolveActorIdentity();
+  const author = generated ? GENERATED_BRIEF_AUTHOR : await resolveActorIdentity();
   // One IMMEDIATE transaction takes the write lock before the check, so two
   // concurrent callers (in-process or separate CLIs) cannot both see "no brief".
   const recorded = db
@@ -230,7 +237,7 @@ async function tryPinBrief(
   req: TaskSpawnRequest,
 ): Promise<"recorded" | "kept" | "pending"> {
   try {
-    return await pinBrief(db, req.task, req.spawn.workstream, req.text);
+    return await pinBrief(db, req.task, req.spawn.workstream, req.text, req.generated === true);
   } catch {
     return "pending";
   }

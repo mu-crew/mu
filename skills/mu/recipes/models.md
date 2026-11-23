@@ -2,13 +2,13 @@
 
 Use when you spawn, delegate or check. Pick model and effort per role.
 
-Take ids from the harness you spawn, latest version only. A family is a lab.
+Take ids from the harness's own list (e.g. `pi --list-models`). Per tier name, take the highest version; skip `-preview`/`-exp` ids unless no other exists, and skip aliases like `-latest`. Take the default-context id unless the job needs the larger window. If a tier is missing, step to the next tier in the same family; never fall back to an older version. A family is a lab.
 
 Tiers frontier/strong/mid/cheap, as of 2026-11-11:
 
 - **anthropic**: fable/opus/sonnet/haiku
 - **openai**: astra/sol/terra/luna
-- **google**: carbon/argon/flash/flash-lite (no Pro: the latest Flash beats it)
+- **google**: carbon/neon/hydrogen/flash
 - **meta**: none/wonder/spark/ember (prefer wonder full)
 - **one family each**, mid: grok, composer, kimi, deepseek, glm, mistral large, qwen max; cheap: glm flash, mistral small, qwen flash
 - **local**: qwen

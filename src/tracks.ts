@@ -41,7 +41,7 @@ export interface Track {
  *
  * Scoping: only goals belonging to `workstream` are considered.
  * Cross-workstream edges are forbidden by addTask, so a goal's
- * prerequisite subgraph is naturally workstream-internal.
+ * prerequisite subgraph stays inside the workstream.
  */
 export function getParallelTracks(db: Db, workstream: string): Track[] {
   // listGoals already filters via the SQL view (status <> CLOSED),

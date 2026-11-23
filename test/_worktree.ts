@@ -12,7 +12,15 @@ import {
 
 export async function seedWorktree(
   db: Db,
-  opts: { root: string; workstream: string; agent: string; paneId?: string; from?: string },
+  opts: {
+    root: string;
+    workstream: string;
+    agent: string;
+    paneId?: string;
+    /** The tmux server spawn recorded (`agents.pane_identity`); absent: a legacy, unverified row. */
+    paneIdentity?: string;
+    from?: string;
+  },
 ): Promise<WorktreeRow> {
   const path = worktreePath(opts.workstream, opts.agent);
   const { base } = await createWorktree({
@@ -25,6 +33,7 @@ export async function seedWorktree(
     name: opts.agent,
     workstream: opts.workstream,
     paneId: opts.paneId ?? "%1",
+    ...(opts.paneIdentity !== undefined ? { paneIdentity: opts.paneIdentity } : {}),
     cwd: path,
     base,
   });

@@ -124,6 +124,7 @@ export {
 } from "./agents/spawn.js";
 export {
   type AutoAttemptRequest,
+  GENERATED_BRIEF_AUTHOR,
   pinBrief,
   spawnAutoAttempt,
   spawnForTask,

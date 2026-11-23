@@ -66,16 +66,13 @@ export function suiteConfig(maxWorkers: number, exclude: string[] = []) {
       exclude: [...configDefaults.exclude, ...exclude, ...pureTests],
       // globalSetup (test/_global-teardown.ts) starts the run's private
       // `tmux -L <socket>` server, builds the DB template, makes the per-run
-      // scratch dir, and after the run removes all of it. It also sweeps
-      // leaked `mu-*` sessions on the default socket, and what a killed
-      // earlier run left behind (its server, socket file and scratch dir).
+      // scratch dir, and after the run removes all of it. The server
+      // watchdog only cleans endpoints this run registered.
       globalSetup: ["./test/_global-teardown.ts"],
       // Per-fork pre-test setup: scrub MU_* env vars inherited from
       // the parent shell so SDK-level overrides (MU_PI_COMMAND,
       // MU_IDLE_THRESHOLD_MS, …) can't silently change behaviour
-      // underneath tests. See test/_setup.ts for the rationale and
-      // the allowlist (MU_TMUX_SOCKET is preserved). Layer "test" of
-      // bug_test_flake_round_2.
+      // underneath tests. See test/_setup.ts for the rationale.
       setupFiles: ["./test/_setup.ts", "./test/_setup-db.ts"],
       // Integration tests spawn real tmux panes + sh subprocesses and poll
       // for state to propagate (reaper flips, pane death, claim CAS). Each

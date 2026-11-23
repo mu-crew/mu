@@ -5,16 +5,18 @@ import { openDb, setMuxForTests, spawnForTask, tmuxBackend } from "../dist/index
 
 setInterval(() => {}, 1000);
 const db = openDb({ path: process.argv[2] });
-// An in-memory fake: no tmux server behind it, so no server identity (bare pane ids).
-const { serverIdentity: _none, ...fake } = tmuxBackend;
+// An in-memory fake standing in for one tmux server: its birth reply names that server, as
+// tmux's does (a tmux birth without one is a spawn failure). FAKE_SERVER_IDENTITY in _verbs-mock.ts.
+const SERVER = "4242|1700000000";
 setMuxForTests({
-  ...fake,
+  ...tmuxBackend,
+  serverIdentity: async () => SERVER,
   runsShellCommand: true,
   spawnAgentWaitsReady: false,
   anchorsPanes: false,
   ensureSession: async () => ({ created: false }),
   spawnAgent: async (o) => {
-    o.onPaneCreated?.("%1");
+    o.onPaneCreated?.("%1", SERVER);
     return new Promise(() => {});
   },
   paneAlive: async () => true,

@@ -17,6 +17,7 @@ import { addBlockEdge } from "../src/tasks/edges.js";
 import { addTask, closeTask } from "../src/tasks.js";
 import type { WaitRef, WaitResult, WaitSnapshot } from "../src/wait.js";
 import { setWaitSleepForTests } from "../src/wait.js";
+import { registerOwnedWait } from "../src/wait-registration.js";
 import {
   loadResume,
   RESUME_KEEP_DAYS,
@@ -369,7 +370,9 @@ describe("mu wait --resume <id>: the stored handle", () => {
     const first = await asCaller("sess1", ["wait", "task:a", "-w", "w", "--timeout", "0.05"]);
     const resume = (first.data as { resume: string }).resume;
     expect(stored(resume).callers).toEqual(["pi:sess1"]);
-    // A plain shell (no identity) runs it: the stored caller, not an empty one.
+    registerOwnedWait(db, "pi:sess1", [{ kind: "task", workstream: "w", id: "b" }]);
+    close("b");
+    // A plain shell resumes with the stored caller, but still only the named ref.
     const again = await asCaller(undefined, ["wait", "--resume", handleOf(first.data)]);
     expect(again.doc.ok).toBe(true);
     expect(again.data).toMatchObject({ timedOut: true, open: 1 });

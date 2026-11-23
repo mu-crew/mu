@@ -234,7 +234,7 @@ describe("herdrTestExec refuses server-fatal verbs", () => {
 });
 
 describe("integration-tier gates", () => {
-  it("tmux gate is open on the private socket, with or without $TMUX", async () => {
+  it("tmux gate requires the run's private socket, not the caller's $TMUX", async () => {
     await withEnv("MU_TMUX_SOCKET", "mu-test-x", async () => {
       await withEnv("TMUX", undefined, async () => {
         expect(tmuxIntegrationAvailable()).toBe(true);
@@ -245,7 +245,7 @@ describe("integration-tier gates", () => {
         expect(tmuxIntegrationAvailable()).toBe(false);
       });
       await withEnv("TMUX", "/tmp/tmux-1000/default,123,0", async () => {
-        expect(tmuxIntegrationAvailable()).toBe(true);
+        expect(tmuxIntegrationAvailable()).toBe(false);
       });
     });
   });

@@ -18,6 +18,7 @@ import { readCursors, recordCursors } from "../src/wait-cursor.js";
 import { readWaitRegistration, registerOwnedWait } from "../src/wait-registration.js";
 import { helloReply, INC } from "./_ctl-ext.js";
 import { installMux, type MuxHarness } from "./_mux.js";
+import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
 import { agentRef, answer, mkDelegate, mkOwnedTask, taskRef, useWaitDb } from "./_wait-fixtures.js";
 
 const env = useWaitDb();
@@ -258,7 +259,13 @@ describe("--until-text reads a pane only where no ctl text exists", () => {
       ["list-panes", "%7||\n%8||\n"],
       ["capture-pane", PANE],
     ]);
-    insertAgent(env.db, { name: "w1", workstream: "w", paneId: "%8", cli: "pi" });
+    insertAgent(env.db, {
+      name: "w1",
+      workstream: "w",
+      paneId: "%8",
+      cli: "pi",
+      paneIdentity: FAKE_SERVER_IDENTITY,
+    });
     await fakePi("w1", "busy");
     const read = await ctlAgentHooks(env.db, { paneText: true }).readAgents(
       [agentRef("w1")],
@@ -275,7 +282,13 @@ describe("--until-text reads a pane only where no ctl text exists", () => {
       ["list-panes", "%7||\n%8||\n"],
       ["capture-pane", PANE],
     ]);
-    insertAgent(env.db, { name: "gate", workstream: "w", paneId: "%7", cli: "sh" });
+    insertAgent(env.db, {
+      name: "gate",
+      workstream: "w",
+      paneId: "%7",
+      cli: "sh",
+      paneIdentity: FAKE_SERVER_IDENTITY,
+    });
     const read = await ctlAgentHooks(env.db, { paneText: true }).readAgents(
       [agentRef("gate")],
       new AbortController().signal,

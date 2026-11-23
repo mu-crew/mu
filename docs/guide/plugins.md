@@ -25,17 +25,26 @@ mu plugin rm box
 - `rm` refuses while a host, job record or unresolved effect names the
   plugin.
 
+A spawn with `--task` and no `--send` sends the task's brief note, or for a
+task with none, a title line ending in `Read: mu task notes <id> -w <ws>`.
+The host has no mu DB, so it cannot follow that line. The examples below
+pass the whole brief as `--send "$BRIEF"` (or `--send -` on stdin), and the
+spawn still reports the prompt delivered either way. Known issue: mu does
+not drop that line for a remote spawn (task `remote_brief_fallback`).
+
 ## Use it as a host's link
 
 A plugin can replace a profile's `--shell` and `--exec` templates:
 
 ```bash
-mu host add dev --plugin box [--fetch '<fetch cmd>']
+mu host add dev --plugin box [--fetch '<fetch cmd>'] [--repo <remote repo>]
 mu host check dev
-mu agent spawn w1 --host dev --worktree --task t1
+mu agent spawn w1 -w <ws> --host dev --worktree --task t1 --send "$BRIEF"
 ```
 
-`--fetch` is needed only when the plugin's link does not fetch. Agents spawn
+`--fetch` is needed only when the plugin's link does not fetch. A spawn with
+`--worktree` needs the host's remote repo: `--repo` on `host add`, or `--root
+<remote repo>` on each spawn (without either it refuses: no default repo). Agents spawn
 there only if the plugin declares a job seam. Otherwise the host is
 link-only. Everything else works as for any remote host:
 [Run a worker on another machine](remote.md).
@@ -46,7 +55,7 @@ A provider plugin provisions machines on demand:
 
 ```bash
 mu host acquire box1 --provider box --param size=large --repo /work/repo
-mu agent spawn w1 --host box1 --worktree --task t1
+mu agent spawn w1 -w <ws> --host box1 --worktree --task t1 --send "$BRIEF"
 mu host drain box1      # no new spawns
 mu host release box1    # once nothing names it
 ```
@@ -59,24 +68,51 @@ a second host. Deadlines, lost hosts and `--abandon` are covered in
 
 If a plugin call that starts a job or delivers a prompt gets no answer, mu
 reports `EffectOutcomeUnknownError` (exit 1) and never resends.
-`mu agent check <agent> <msgId>` asks the plugin and settles it. Closing the
-agent drops whatever is still unresolved.
+`mu agent check <agent> <msgId> -w <ws>` asks the plugin to settle it.
+To close the agent instead, preview with `mu agent close <agent> -w <ws>`,
+then repeat with `--if <rev>`; applying the close drops unresolved delivery.
 
 ## Try the example
 
 [`examples/plugins/mu-plugin-ssh`](../../examples/plugins/mu-plugin-ssh) is
-a plugin of about 200 lines that gives a host a link over plain ssh. The mu
-host's name is the ssh destination:
+an example plugin over plain ssh. The mu host's name is the ssh destination:
 
 ```bash
 mu plugin add ssh -- "$(npm root -g)/@mu-crew/mu/examples/plugins/mu-plugin-ssh"
-mu host add devbox --plugin ssh
+mu host add devbox --plugin ssh --repo /work/repo
 mu host check devbox
+mu agent spawn w1 -w <ws> --host devbox --worktree --task t1 --send "$BRIEF"   # a pane over ssh
 ```
 
-It declares only the link seam, so no agent spawns on it. If your npm
-install is owned by root, copy the file somewhere you own first: mu refuses
-a plugin someone else can write.
+It gives the host a link (exec, fetch) and an example `pane` job kind. If
+your npm install is owned by root, copy the file somewhere you own first: mu
+refuses a plugin someone else can write.
+
+**It is an example, not the supported path to rung 3.** Session and lease
+templates ([remote.md](remote.md)) are supported. The pane kind has these
+limits (the file header has the rest):
+
+- Its view needs its own ssh connection, so a host where only one
+  connection is practical does not fit.
+- Stop covers only the recorded process group. Descendants that leave it
+  survive.
+- The plugin keeps a state root on the host (`MU_SSH_STATE_DIR`, else
+  `$HOME/.local/state/mu-plugin-ssh`). Keep it intact while jobs or delayed
+  views may exist: if it goes missing, stop fails; if you replace it at the
+  same path, stop can report a live job gone.
+- Use a short root whose components are handle-safe. Trailing newlines are
+  stripped before validation and can select the wrong directory.
+
+## Register the mule plugin
+
+<!-- TODO(plugin_mule_link, plugin_mule_lease): not on main yet. Planned:
+`mule init` registers the plugin (`mule_init_register`); manual
+`mu plugin add mule -- /abs/mu-plugin-mule` stays documented. Document the
+mule link, the lease job kind and its file handle once merged.
+See the ladder's TODO: remote-ladder.md#todo-the-mule-lease-plugin. -->
+
+Until it ships, a capped host uses the lease template
+([Session-capped hosts](remote.md#session-capped-hosts)).
 
 ## Write a plugin
 

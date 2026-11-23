@@ -85,7 +85,7 @@ chars, and it gives up with exit 4 when no free name is near).
 for the new agent**, sends the text and pins it as the task's `brief` (kept
 when the task has one), as one attempt. Without `--send` it sends the
 task's own `brief` note (with the CLOSE footer, as `mu task auto` does), or
-with no brief one line from its title that points at `mu task notes`. A journal (`spawn_receipts`) is
+with no brief one line from its title that points at `mu task notes` (a `--host` spawn refuses instead: the host has no DB; pass `--send`). A journal (`spawn_receipts`) is
 written before each step, so the same command never sends a second prompt.
 
 - Same command again = replay: it returns the saved delivery
@@ -181,13 +181,17 @@ mu wait task:auth/build task:auth/docs
 ```
 
 `mu wait` prints ONE JSON document, with no `--json` flag. Refs are typed
-(`task:`, `agent:`, `delegate:`); with none, it waits on what you started.
+(`task:`, `agent:`, `delegate:`). When you name refs, only those refs and any
+explicit `--wave` or `--blockers-of` targets can fire. With no refs, the wait
+also watches what you started, narrowed to `-w` if supplied.
 `--text` prints plain lines instead: the event and resume, each ref's state,
 a task's or delegate's report and any warning above a `---` line, and the
 agent's last words below it. Its resume keeps `--text`.
 
 - `data.firing` is the event: `closed`, `settled`, `input`, `dead`, `stall`,
-  `delegate`, or `heartbeat` on a timeout (`ok:true`, `timedOut`, exit 0).
+  `delegate`, `exited` for a command gate, or `heartbeat` on a timeout
+  (`ok:true`, `timedOut`, exit 0). A named command gate returns its
+  [own exit status](remote.md#spawn-the-agent).
 - `data.snapshots` are the refs' real states; `data.resume` is the command
   that keeps waiting, with every flag you gave. Run it as printed: it takes
   no other flag (only a matching `-w`, or `--text`). When two watched owners

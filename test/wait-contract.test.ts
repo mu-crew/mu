@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { recordHumanNeeded } from "../src/human-needed.js";
+import { addBlockEdge } from "../src/tasks/edges.js";
 import { closeTask } from "../src/tasks.js";
 import {
   type AgentReading,
@@ -146,6 +147,23 @@ describe("eventScope", () => {
     expect(r.event.ref?.id).toBe("listed");
     expect(readWaitRegistration(env.db, "pi:s")?.refs.map((x) => x.id)).toEqual(["a"]);
     expect(env.db.prepare("SELECT COUNT(*) AS n FROM wait_cursors").get()).toEqual({ n: 0 });
+  });
+
+  it("'targets': a blocker keeps its registered caller when delivered", async () => {
+    for (const id of ["listed", "goal", "blocker"]) mkTask(env.db, id);
+    addBlockEdge(env.db, "w", "goal", "blocker");
+    registerOwnedWait(env.db, "pi:s", [taskRef("blocker")]);
+    const r = await waitForEvents(env.db, [taskRef("listed")], {
+      ...base,
+      callers: ["w/orch", "pi:s"],
+      eventScope: "targets",
+      blockersOf: { workstream: "w", id: "goal" },
+      sleep: async () => {
+        closeTask(env.db, "blocker", { workstream: "w", evidence: "e" });
+      },
+    });
+    expect(r.event).toMatchObject({ kind: "closed", ref: { id: "blocker" } });
+    expect(readWaitRegistration(env.db, "pi:s")?.refs).toEqual([]);
   });
 
   it("'owned' (default): the owned delegate ends a wait on an unrelated open task", async () => {

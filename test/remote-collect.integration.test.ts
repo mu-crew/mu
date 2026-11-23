@@ -51,7 +51,7 @@ import { rmFixtureDir } from "./_fs.js";
 import { commitFileIn, copyGitFixture, gitIn, gitSupportsReftable } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
-import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
+import { FAKE_SERVER_IDENTITY, freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 let dir: string;
 let remote: string;
@@ -88,6 +88,8 @@ async function remoteAgent(name: string, o: { host?: string; pane?: boolean } = 
     name,
     workstream: "auth",
     paneId: pane,
+    // The server spawn recorded (the fake tmux's): close kills only a pane it can verify.
+    paneIdentity: FAKE_SERVER_IDENTITY,
     cwd: wtPath(name),
     base,
     host,

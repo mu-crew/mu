@@ -10,11 +10,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readBaseStates } from "../src/agent-state.js";
+import { closeAgent } from "../src/agents/close.js";
 import { AgentPaneDeadError } from "../src/agents/errors.js";
 import { getAgent, insertAgent } from "../src/agents.js";
 import { agentChannel, channelTarget } from "../src/channels/index.js";
 import { type Db, openDb } from "../src/db.js";
-import { viewOwned } from "../src/jobs/view.js";
+import { agentAttachTarget, rowRef, viewCapture, viewOwned } from "../src/jobs/view.js";
+import { tmuxBackend } from "../src/mux.js";
 import { reconcile } from "../src/reconcile.js";
 import {
   capture,
@@ -27,6 +29,8 @@ import {
 } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { privatePane, tmuxIntegrationAvailable } from "./_mux.js";
+import { registerTmuxSocket, stopTestTmux } from "./_server-registry.js";
+import { softTeardown } from "./_teardown.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 const SLEEP = "sh -c 'echo FOREIGN-PANE; while true; do sleep 60; done'";
@@ -35,6 +39,7 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
   let dir: string;
   let db: Db;
   let outer: string | undefined;
+  let socket: string | undefined;
   const ws = "idws";
   const session = `mu-${ws}`;
 
@@ -61,16 +66,18 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
 
   beforeEach(() => {
     outer = process.env.MU_TMUX_SOCKET;
-    process.env.MU_TMUX_SOCKET = `mu-test-pid-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    socket = registerTmuxSocket();
+    process.env.MU_TMUX_SOCKET = socket;
     resetTmuxExecutor();
     dir = mkdtempSync(join(tmpdir(), "mu-pane-identity-"));
     db = openDb({ path: join(dir, "mu.db") });
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     try {
-      await tmux(["kill-server"]);
+      stopTestTmux(socket);
     } catch {}
+    socket = undefined;
     if (outer === undefined) delete process.env.MU_TMUX_SOCKET;
     else process.env.MU_TMUX_SOCKET = outer;
     resetTmuxExecutor();
@@ -131,5 +138,59 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
     });
     expect((await reconcile(db, { workstream: ws })).prunedGhosts).toBe(0);
     expect(getAgent(db, "worker", ws)).toBeDefined();
+  }, 30_000);
+  // An upgrading user's agents were spawned before `agents.pane_identity`: their rows have
+  // none. They keep the check mu made before the column (act on the id), never a refusal.
+  it("a legacy row is still captured, sent to, attached and closed by its id", async () => {
+    await ensureSession(session);
+    const pane = await spawnAgent({
+      session,
+      window: "old",
+      name: "old",
+      cli: "pi",
+      command: "sh -c 'echo LEGACY-PANE; exec cat'",
+      commandSource: "cli-key",
+      env: {},
+    });
+    insertAgent(db, { name: "old", workstream: ws, paneId: pane }); // no identity
+    const row = getAgent(db, "old", ws);
+    if (row === undefined) throw new Error("row missing");
+    expect(row.paneIdentity).toBeUndefined();
+
+    await pollUntil(
+      async () => (await viewCapture(pane, null, {}, tmuxBackend)).includes("LEGACY-PANE"),
+      {
+        description: "legacy pane captured",
+      },
+    );
+    const ref = rowRef(tmuxBackend, pane, row.paneIdentity);
+    await tmuxBackend.pasteToPane?.(ref, "pasted-by-mu");
+    await tmuxBackend.sendKeys?.(ref, ["typed-by-mu"], { literal: true });
+    await pollUntil(
+      async () => {
+        const out = await viewCapture(pane, null, {}, tmuxBackend);
+        return out.includes("pasted-by-mu") && out.includes("typed-by-mu");
+      },
+      { description: "legacy pane received the send" },
+    );
+    const attach = await tmuxBackend.attachCommands({
+      ...agentAttachTarget(tmuxBackend, row, ws),
+      outside: true,
+    });
+    expect(attach[0]?.args).toContain(pane);
+
+    const closed = await closeAgent(db, "old", { workstream: ws });
+    expect(closed).toBeDefined();
+    expect(getAgent(db, "old", ws)).toBeUndefined();
+    expect(await paneAlive(pane)).toBe(false);
+  }, 30_000);
+
+  it("teardown still closes the session of a legacy row's pane", async () => {
+    await ensureSession(session);
+    const pane = await spawn("old");
+    insertAgent(db, { name: "old", workstream: ws, paneId: pane }); // no identity
+    const r = await softTeardown(db, ws);
+    expect(r.killedMux).toBe(true);
+    expect(await paneAlive(pane)).toBe(false);
   }, 30_000);
 });

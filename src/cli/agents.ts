@@ -16,6 +16,7 @@ import {
   AgentSendIndeterminateError,
   abortAgent,
   delegateOutcome,
+  GENERATED_BRIEF_AUTHOR,
   getAgent,
   listLiveAgents,
   readAgent,
@@ -58,8 +59,8 @@ import { activeMux, attachShellLine } from "../mux.js";
 import { pc } from "../output.js";
 import { paneText, tailText } from "../pane-text.js";
 import { checkDelivery } from "../plugins/channel.js";
-import { buildTaskBrief, TaskBriefMissingError } from "../task-brief.js";
-import { getTask } from "../tasks/queries.js";
+import { buildTaskBrief, pinnedNotes, TaskBriefMissingError } from "../task-brief.js";
+import { getTask, getTaskNote } from "../tasks/queries.js";
 import { type WaitSnapshot, waitForEvents } from "../wait.js";
 import { ctlAgentHooks } from "../wait-ctl.js";
 import { wireAnswerCommand } from "./agent-answer.js";
@@ -162,15 +163,45 @@ export async function cmdSpawn(
 }
 
 /** What `--task` sends when `--send` is absent: the task's brief (as `mu task auto` builds it), or,
- *  with no brief note, one line from its title. That line carries no footer: it is pinned as the brief. */
-function taskBriefText(db: Db, workstream: string, task: string): string {
+ *  with no brief note, one line from its title (a `--host` spawn refuses instead: see below). That line carries no footer: it is pinned as the brief. */
+function taskBriefText(
+  db: Db,
+  workstream: string,
+  task: string,
+  host?: string,
+): { text: string; generated: boolean } {
   try {
-    return buildTaskBrief(db, workstream, task).text;
+    // A --host worker has no mu DB: a generated fallback pinned by an earlier local spawn
+    // (marked by its author) points at `mu task notes` and is no brief there.
+    if (host !== undefined && pinnedFallback(db, workstream, task))
+      throw new TaskBriefMissingError(task, workstream, "its brief is a generated fallback");
+    return { text: buildTaskBrief(db, workstream, task).text, generated: false };
   } catch (err) {
     if (!(err instanceof TaskBriefMissingError)) throw err;
+    if (host !== undefined)
+      throw new UsageError(say("agent.spawn_task_remote_nobrief", task, host));
     const title = getTask(db, task, workstream)?.title ?? task;
-    return say("agent.spawn_task_default", task, workstream, title);
+    return { text: say("agent.spawn_task_default", task, workstream, title), generated: true };
   }
+}
+
+/** The task's first brief note is a pinned generated fallback: marked by its author, or (rows
+ *  pinned before the marker, under the ordinary actor) equal to the template built from this
+ *  task's own id, workstream and title. An authored brief that merely starts alike is not. */
+function pinnedFallback(db: Db, workstream: string, task: string): boolean {
+  const { briefN } = pinnedNotes(db, workstream, task);
+  if (briefN < 1) return false;
+  const note = getTaskNote(db, task, workstream, briefN);
+  if (note.author === GENERATED_BRIEF_AUTHOR) return true;
+  // The title is whatever it was at pin time (a later `task update --title` leaves the note).
+  const probe = say("agent.spawn_task_default", task, workstream, "\u0000");
+  const [head = "", tail = ""] = probe.split("\u0000");
+  return (
+    note.content.startsWith(head) &&
+    note.content.endsWith(tail) &&
+    note.content.length >= head.length + tail.length &&
+    !note.content.slice(head.length, note.content.length - tail.length).includes("\n")
+  );
 }
 
 async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
@@ -181,11 +212,16 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
   const workstream = await resolveWorkstream(opts.workstream);
   // Read stdin before any side effect: an empty pipe must not leave a pane.
   // `--task` without `--send` sends the task's own brief (what `mu auto` sends).
+  let generated = false;
   const sendText =
     opts.send === undefined
       ? opts.task === undefined
         ? undefined
-        : taskBriefText(db, workstream, opts.task)
+        : (() => {
+            const b = taskBriefText(db, workstream, opts.task, opts.host);
+            generated = b.generated;
+            return b.text;
+          })()
       : opts.send === STDIN_ARG
         ? await readStdinText("send text")
         : opts.send;
@@ -195,7 +231,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
     throw new UsageError(say("agent.spawn_attempt_task"));
   }
   if (opts.task !== undefined && sendText !== undefined) {
-    return cmdSpawnTask(db, rawName, workstream, opts.task, sendText, opts);
+    return cmdSpawnTask(db, rawName, workstream, opts.task, sendText, opts, generated);
   }
 
   const agent = await spawnAgent(db, {
@@ -400,10 +436,12 @@ async function cmdSpawnTask(
   task: string,
   text: string,
   opts: SpawnOpts,
+  generated = false,
 ): Promise<void> {
   const out = await spawnForTask(db, {
     task,
     text,
+    ...(generated ? { generated } : {}),
     ...(opts.attempt !== undefined ? { attempt: opts.attempt } : {}),
     spawn: {
       name,

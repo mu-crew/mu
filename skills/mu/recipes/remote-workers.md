@@ -1,22 +1,12 @@
 # Remote workers
 
-For an agent on another machine.
+Pick a [rung](../../../docs/guide/remote-ladder.md). The SSH session starter
+(`mu host init dev --ssh --template`) prints `--max-sessions 2` (one live pane plus
+one slot for collect or hook exec); run it as printed. Size larger crews
+per the guide. If only one connection is practical, use a lease.
 
-pi's control socket is forwarded: `send`, `wait`, `abort` work as locally. Other harnesses use `hooks` (`murmur init` there): a send is `ack: sent` until a wait reads the host; `--fresh` is refused. The host has no mu DB: the brief carries everything (no `Read:`); close from its `CLOSE:` block.
-
-```bash
-mu host init dev --ssh   # prints a `host add`
-mu host check dev
-mu agent spawn worker-1 -w <ws> --host dev --worktree --root <remote repo> --task <id> --send - <<'EOF'
-<brief>
-EOF
-mu wait agent:<ws>/worker-1@<runs>   # spawn's next, or task:<ws>/<id>
-mu agent collect worker-1 -w <ws>   # in the local repo
-mu task close <id> -w <ws> --evidence "<the block's evidence>"
-mu agent close worker-1 -w <ws> --if <rev>
-```
-
-The brief ends: commit, then end the final message, unfenced, exactly so (`REPORT:` alone, no blank line):
+The host has no mu DB: put the whole brief in `spawn --send`. End it with
+instructions to commit and finish with this unfenced block (no blank line):
 
 ```text
 CLOSE: task=<id> evidence="<command + result>"
@@ -24,10 +14,18 @@ REPORT:
 <what you did>
 ```
 
-Cherry-pick the collected commits; re-run the evidence before you close.
+Use `mu agent list` for the channel. For session templates, pi uses forwarded
+`ctl`; tmux `hooks` sends return `ack: sent` until a host read confirms.
+Rex session panes on `mux` give no hook receipt or hook-based close.
 
-- A capped host (`--max-sessions 1`): use a lease (`host init --mule`).
-- `close` refuses an uncollected or dirty tree: collect.
-- Host-command exit 3 is a hand-back: stop and ask; never retry or ssh.
-- A dead lease pane's job runs on, tasks parked: run its leftover's `next` (`agent list`), reattach `--task <id>` claims them back, else close then `task unpark <id>`; only `--abandon-job` passes unreachable hosts.
-- A lease shell is non-login: brief or `--command` sets PATH.
+Run `mu agent collect <name> -w <ws>` from the local repo. Cherry-pick and
+re-run the evidence before you close the task if wait hasn't closed it.
+
+Preview with `mu agent close <name> -w <ws>`; repeat with `--if <rev>`.
+Close refuses dirty or uncollected trees. A template's exit 3 is a
+hand-back (mu exits 5): ask a human; never retry.
+
+A dead lease pane's job runs on, tasks parked: run its leftover's `next`;
+reattach `--task <id>` claims them back, else close then `task unpark <id>`;
+only `--abandon-job` passes unreachable hosts. Lease shells are non-login;
+set PATH explicitly.
