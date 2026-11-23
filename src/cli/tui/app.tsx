@@ -63,6 +63,8 @@ export interface AppProps {
   now?: () => number;
   /** Runs one attach step with the terminal handed over (a test seam; default spawns). */
   runStep?: StepRunner;
+  /** Called with the shown workstream (null: none) at start and whenever it changes. */
+  onWorkstream?: (workstream: string | null) => void;
 }
 
 // Every screen line is one row tall (cut by width), so the layout is exactly `rows`
@@ -147,6 +149,7 @@ const scrollInfo = (t: DrillTarget, snap: DashboardSnapshot | null): string | nu
 export function App({
   runtime,
   initialWorkstream,
+  onWorkstream,
   initialTab = "overview",
   pollMs,
   slowMs,
@@ -215,6 +218,10 @@ export function App({
   useEffect(() => {
     if (ws !== null && ws !== chosen) setChosen(ws);
   }, [ws, chosen]);
+
+  useEffect(() => {
+    onWorkstream?.(ws);
+  }, [ws, onWorkstream]);
 
   const view = viewOf(tab, ws);
   const all: Row[] = snap ? tabRows(tab, snap, ws, view.filter, now()) : [];

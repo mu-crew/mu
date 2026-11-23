@@ -105,6 +105,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- The dashboard title (`process.title` and OSC 2) now reads `mu [<workstream>]` for the shown workstream and `mu` otherwise, and follows `[`/`]` switches. The name is stripped of escapes and control characters and capped at 40 characters.
+
 - Every spawn, including a task-bound or plugin spawn, refuses before any
   effects (`MuxBackendMismatchError`, exit 4) if its workstream has an agent
   registered on another managed backend (tmux, herdr, Rex). The error names
