@@ -19,8 +19,13 @@
 #       `mu agent collect` still works over the separate fetch connection, a
 #       close hands back (row and handle kept, job alive), and with the master
 #       back the forward returns, a send works, and a fresh close stops the job
-#   P4. after every close: no stale forward, remote job, tmux session, or row
-#       in carrier_jobs, agents, host_channels or the plugin/recovery tables
+#       and the collect is real: a unique commit made in the remote worker tree
+#       after the first collect is absent locally, then arrives (changed=true, in the
+#       object DB, in refs/mu/collect/<ws>/<agent>, in collected_head) during the loss
+#   P4. after EVERY clean close (and again at the end): no stale forward, remote job,
+#       tmux session, socket, job file, or row in carrier_jobs, agents, host_channels,
+#       effects or remote_recovery. The one exception, mule's documented stale
+#       listener after a SIGKILLed carrier, is named and only allowed there
 #
 # It builds mule (cargo build --release) and mu (npm run build), starts a
 # loopback `sshd MaxSessions 1` (mule SPEC.md § Reproduce the channel cap
@@ -44,6 +49,15 @@
 # sides. The one path outside it is mu's derived remote ctl socket dir
 # /tmp/mu-<uid>/<workstream> (not configurable), under a unique workstream and
 # removed on exit. No host but 127.0.0.1 is contacted.
+#
+# The remote pi is, by default, scripts/smoke-ext-pi.mjs: it loads the REAL built
+# mu ctl extension (dist/extension/mu-pi.js) against a recording pi API, so the
+# extension's registration, ctl server and settle path serve every ctl call and a send
+# is one deterministic tool turn (no model). SMOKE_FAKE_PI=1 selects the old ctl-only
+# stand-in (scripts/smoke-fake-pi.mjs). A last leg runs the built extension in a REAL
+# pi (no model call: hello/status over its ctl socket) when REAL_PI_BIN names one or
+# `pi` is on PATH; REAL_PI_BIN set to something unusable FAILS; with no pi it prints
+# "SKIPPED: no pi binary on host" (it does not count as a pass of that leg).
 #
 # Missing prerequisites FAIL (exit 2); they never count as a pass. Every
 # process it starts (sshd, both masters, both tmux servers, carriers, fake pis)
@@ -90,10 +104,22 @@ for c in ssh ssh-keygen tmux node npm cargo git git-upload-pack lsof; do need_cm
 [ -f "$MU/package.json" ] || missing+=("mu checkout at $MU (no package.json)")
 [ -d "$MU/node_modules" ] || missing+=("$MU/node_modules (run npm install there)")
 [ -f "$FAKE_PI_SRC" ] || missing+=("$FAKE_PI_SRC")
+[ -f "$SCRIPTS/smoke-ext-pi.mjs" ] || missing+=("$SCRIPTS/smoke-ext-pi.mjs")
 if [ ${#missing[@]} -gt 0 ]; then
   for m in "${missing[@]}"; do echo "smoke-lease: PREREQUISITE MISSING: $m" >&2; done
   echo "smoke-lease: FAIL (prerequisites missing; this is not a pass)" >&2
   exit 2
+fi
+# The real pi leg: found before the PATH below is narrowed.
+REAL_PI=""
+if [ -n "${REAL_PI_BIN:-}" ]; then
+  [ -x "$REAL_PI_BIN" ] || {
+    echo "smoke-lease: FAIL (REAL_PI_BIN=$REAL_PI_BIN is not an executable; unset it to skip the real pi leg)" >&2
+    exit 2
+  }
+  REAL_PI=$REAL_PI_BIN
+elif command -v pi >/dev/null 2>&1; then
+  REAL_PI=$(command -v pi)
 fi
 MU=$(cd "$MU" && pwd -P)
 MULE=$(cd "$MULE" && pwd -P)
@@ -106,6 +132,7 @@ say "build mu: npm run build in $MU"
 [ -x "$MULE/target/release/mule" ] || fail "no mule binary after the build"
 [ "$PLUGIN_MODE" = 0 ] || [ -x "$MULE/target/release/mu-plugin-mule" ] || fail "no mu-plugin-mule binary after the build"
 [ -f "$MU/dist/cli.js" ] || fail "no mu dist/cli.js after the build"
+[ -f "$MU/dist/extension/mu-pi.js" ] || fail "no mu dist/extension/mu-pi.js (the ctl extension) after the build"
 say "mule $(git -C "$MULE" rev-parse --short HEAD 2>/dev/null || echo '?') ($("$MULE/target/release/mule" --version)), mu $(git -C "$MU" rev-parse --short HEAD 2>/dev/null || echo '?')"
 
 # ── private world ────────────────────────────────────────────────────────────
@@ -160,6 +187,7 @@ if [ "$PLUGIN_MODE" = 1 ]; then
   chmod 755 "$R/bin/mule" "$R/bin/mu-plugin-mule"
 fi
 cp "$FAKE_PI_SRC" "$R/rbin/smoke-fake-pi.mjs"
+cp "$SCRIPTS/smoke-ext-pi.mjs" "$R/rbin/smoke-ext-pi.mjs"
 # The node binary itself, not a version manager's shim: a shim (mise, asdf) resolves through
 # $HOME, which is private below, and then fails ("node is not a valid shim", seen on Linux).
 NODE=$(node -e 'console.log(process.execPath)')
@@ -228,8 +256,13 @@ chmod 600 "$R/hostkey" "$R/id" "$R/authorized_keys" "$R/sshd_config"
 until_ok 50 "sshd pid file" test -s "$R/sshd.pid"
 SSHD_PID=$(cat "$R/sshd.pid")
 
-# The fake pi, as `pi` on the remote PATH.
-printf '#!/bin/sh\nexec %s %s "$@"\n' "$NODE" "$R/rbin/smoke-fake-pi.mjs" >"$R/rbin/pi"
+# The stand-in pi, as `pi` on the remote PATH: the real built ctl extension in a
+# recording pi API (default), or the ctl-only fake (SMOKE_FAKE_PI=1).
+if [ "${SMOKE_FAKE_PI:-}" = 1 ]; then
+  printf '#!/bin/sh\nexec %s %s "$@"\n' "$NODE" "$R/rbin/smoke-fake-pi.mjs" >"$R/rbin/pi"
+else
+  printf '#!/bin/sh\nSMOKE_EXT=%s exec %s %s "$@"\n' "$MU/dist/extension/mu-pi.js" "$NODE" "$R/rbin/smoke-ext-pi.mjs" >"$R/rbin/pi"
+fi
 chmod 755 "$R/rbin/pi"
 # The ssh every local caller (mule, git fetch, this script) reaches it through.
 cat >"$R/bin/ssh" <<EOF
@@ -425,7 +458,35 @@ spawn() {
   local ctl
   ctl=$(js 'd.data.ctl ?? d.data.agent?.ctl ?? "?"' <"$R/spawn.json")
   [ "$ctl" = ok ] || fail "spawn ctl handshake: $ctl"
+  if [ "${SMOKE_FAKE_PI:-}" != 1 ]; then
+    # The built extension registered itself in the pi it was loaded into (not the fake's own ctl server).
+    until_ok 50 "the extension's registration record" test -s "$REG"
+    js "['session_start','agent_settled','agent_end','tool_execution_start'].every((e)=>d.events.includes(e)) && d.commands.includes('mu-fresh')" <"$REG" >/dev/null ||
+      fail "the built ctl extension did not register its handlers/commands: $(cat "$REG")"
+  fi
   pass "spawn $AGENT: job $JOB running, handle in carrier_jobs and $JOB_FILE, 0 host channels, ctl ok through the forward bound by master $MULE_MASTER, worktree at base"
+}
+
+REG="$R/rhome/smoke-ext-registration.json"
+# stale_check [allow-forward]: fill STALE with whatever a finished close left behind;
+# the forward is exempt only when asked (mule's documented SIGKILL exception).
+STALE=()
+stale_check() {
+  STALE=()
+  [ "$(job_state "$JOB")" = absent ] || STALE+=("job $JOB is $(job_state "$JOB") in mule ls")
+  if [ "${1:-}" != allow-forward ]; then
+    ! forward_held || STALE+=("forward $LOCAL_SOCK still bound by master $MULE_MASTER")
+  fi
+  [ ! -e "$LOCAL_SOCK" ] || STALE+=("local socket $LOCAL_SOCK")
+  [ ! -e "$JOB_FILE" ] || STALE+=("job file $JOB_FILE")
+  [ ! -e "$WT" ] || STALE+=("remote worktree $WT")
+  if git -C "$RREPO" worktree list --porcelain | grep -F "$WT" >/dev/null; then STALE+=("git worktree entry $WT"); fi
+  [ "$(remote_sessions)" = 0 ] || STALE+=("$(remote_sessions) remote tmux session(s)")
+  local t n
+  for t in carrier_jobs agents host_channels effects remote_recovery; do
+    n=$(sql "SELECT count(*) AS n FROM $t" | js 'd[0].n') || fail "counting $t"
+    [ "$n" = 0 ] || STALE+=("$n $t row(s)")
+  done
 }
 
 close_clean() {
@@ -435,23 +496,15 @@ close_clean() {
     cat "$R/close.json"
     fail "mu agent close $AGENT --if $rev ($what)"
   }
-  local leftovers=()
-  [ "$(job_state "$JOB")" = absent ] || leftovers+=("job $JOB is $(job_state "$JOB") in mule ls")
-  ! forward_held || leftovers+=("forward $LOCAL_SOCK still bound by master $MULE_MASTER")
-  [ ! -e "$LOCAL_SOCK" ] || leftovers+=("local socket $LOCAL_SOCK")
-  [ ! -e "$JOB_FILE" ] || leftovers+=("job file $JOB_FILE")
-  [ ! -e "$WT" ] || leftovers+=("remote worktree $WT")
-  if git -C "$RREPO" worktree list --porcelain | grep -F "$WT" >/dev/null; then leftovers+=("git worktree entry $WT"); fi
-  [ "$(reservations)" = 0 ] || leftovers+=("carrier_jobs row")
-  [ "$(agent_rows)" = 0 ] || leftovers+=("agents row")
-  [ "$(channels)" = 0 ] || leftovers+=("host_channels row")
-  if [ ${#leftovers[@]} -gt 0 ]; then
-    printf '  left: %s\n' "${leftovers[@]}"
+  # A clean close allows no exception: not even the stale forward.
+  stale_check
+  if [ ${#STALE[@]} -gt 0 ]; then
+    printf '  left: %s\n' "${STALE[@]}"
     fail "close ($what) left state behind"
   fi
   # The fake pi unlinks its socket once mule rm's SIGHUP reaches it.
   until_ok 30 "remote socket $REMOTE_SOCK removed" test ! -e "$REMOTE_SOCK"
-  pass "close ($what): no job, no forward, no socket, no job file, no worktree, no carrier_jobs row, no agent row"
+  pass "close ($what): no job, no forward, no socket, no job file, no worktree, no remote tmux session, no row in carrier_jobs/agents/host_channels/effects/remote_recovery"
 }
 
 # ── 1. spawn, and the default master stays usable ────────────────────────────
@@ -510,6 +563,11 @@ pass "send runs=$RUNS inc=$INC; wait --after-runs $RUNS: lastText '$GOT', ctl-se
 if [ "$PLUGIN_MODE" = 1 ]; then
   say "P3. master loss under a running worker, then recovery"
   RUNS_NOW=$((RUNS + 1))
+  # A commit that exists only in the worker's tree: the collect below must carry exactly it.
+  git -C "$WT" commit -q --allow-empty -m "smoke collect oracle $$-$RANDOM"
+  NEWC=$(git -C "$WT" rev-parse HEAD)
+  [ "$NEWC" != "$BASE" ] || fail "the worker-tree commit did not move HEAD"
+  ! git -C "$LREPO" cat-file -e "$NEWC^{commit}" 2>/dev/null || fail "commit $NEWC is already in the local repo"
   lose_master
   [ "$(remote_sessions)" -ge 1 ] || fail "the remote job is gone after the master died"
   [ -S "$REMOTE_SOCK" ] || fail "the remote ctl socket $REMOTE_SOCK is gone after the master died"
@@ -522,7 +580,14 @@ if [ "$PLUGIN_MODE" = 1 ]; then
     fail "mu agent collect with no master (the separate fetch connection)"
   }
   [ ! -S "$R/m/mule.sock" ] || fail "mule's master is back by itself"
-  pass "mu agent collect with mule's master down: ok over the separate fetch connection"
+  js "(d.data ?? d).changed === true && (d.data ?? d).head === '$NEWC' && (d.data ?? d).ref === 'refs/mu/collect/$WS/$AGENT'" <"$R/collect2.json" >/dev/null || {
+    cat "$R/collect2.json"
+    fail "collect during master loss did not report changed=true at $NEWC"
+  }
+  git -C "$LREPO" cat-file -e "$NEWC^{commit}" || fail "commit $NEWC is not in the local object DB after the collect"
+  [ "$(git -C "$LREPO" rev-parse "refs/mu/collect/$WS/$AGENT")" = "$NEWC" ] || fail "refs/mu/collect/$WS/$AGENT is not $NEWC"
+  [ "$(sql "SELECT collected_head AS h FROM agents WHERE name='$AGENT'" | js 'd[0].h')" = "$NEWC" ] || fail "collected_head is not $NEWC"
+  pass "mu agent collect with mule's master down: changed=true, the new commit ${NEWC:0:12} (absent before) is in the local repo, refs/mu/collect/$WS/$AGENT and collected_head"
   [ "$(reservations)" = 1 ] && [ "$(job_row)" = "$JOB" ] || fail "master loss lost the carrier_jobs handle"
   reopen_master
   until_ok 300 "the ctl forward to return with the master" forward_held
@@ -570,15 +635,20 @@ mu agent close "$AGENT" -w "$WS" --if "$REV" --json >"$R/close.json" || {
   cat "$R/close.json"
   fail "close by name --if $REV"
 }
-[ "$(job_state "$JOB")" = absent ] || fail "close by name: job $JOB is $(job_state "$JOB")"
-[ "$(reservations)" = 0 ] || fail "close by name kept the carrier_jobs row"
-[ ! -e "$WT" ] || fail "close by name kept the remote worktree"
-[ ! -e "$JOB_FILE" ] || fail "close by name kept the job file"
-[ ! -e "$LOCAL_SOCK" ] || fail "close by name kept the local socket file"
+# Everything but the forward must be clean; the forward is mule's documented exception.
+stale_check allow-forward
+if [ ${#STALE[@]} -gt 0 ]; then
+  printf '  left: %s\n' "${STALE[@]}"
+  fail "close by name left state behind"
+fi
 until_ok 30 "remote socket $REMOTE_SOCK removed" test ! -e "$REMOTE_SOCK"
 pass "close by name (preview kind $KIND): job $JOB stopped, carrier_jobs row, worktree, job file and socket gone"
+STALE_LISTENER=0
 if forward_held; then
-  say "note: the SIGKILLed carrier's forward is still in master $MULE_MASTER (mule spec: the next forward replaces it)"
+  STALE_LISTENER=1
+  say "KNOWN EXCEPTION (not a clean close): the SIGKILLed carrier's forward $LOCAL_SOCK is still bound by master $MULE_MASTER; mule documents it, and only the next forward of the name (step 5) or the master's exit removes it"
+else
+  say "the SIGKILLed carrier's forward is already gone (the documented stale listener did not occur this time)"
 fi
 
 # ── 5. the name respawns over the stale forward; its close is clean ──────────
@@ -607,17 +677,40 @@ pass "no mule process left, mule ls empty"
 
 if [ "$PLUGIN_MODE" = 1 ]; then
   say "P4. nothing stale after every close"
-  stale=()
-  forward_held && stale+=("forward $LOCAL_SOCK in master $MULE_MASTER")
-  [ "$(remote_sessions)" = 0 ] || stale+=("$(remote_sessions) remote tmux session(s)")
-  for t in carrier_jobs agents host_channels effects; do
-    n=$(sql "SELECT count(*) AS n FROM $t" | js 'd[0].n') || fail "counting $t"
-    [ "$n" = 0 ] || stale+=("$n $t row(s)")
-  done
-  [ ! -e "$LOCAL_SOCK" ] && [ ! -e "$REMOTE_SOCK" ] && [ ! -e "$JOB_FILE" ] || stale+=("a ctl socket or job file")
-  if [ ${#stale[@]} -gt 0 ]; then
-    printf '  stale: %s\n' "${stale[@]}"
+  stale_check
+  [ ! -e "$REMOTE_SOCK" ] || STALE+=("remote ctl socket $REMOTE_SOCK")
+  if [ ${#STALE[@]} -gt 0 ]; then
+    printf '  stale: %s\n' "${STALE[@]}"
     fail "state left after the plugin run"
   fi
-  pass "no stale forward, remote job or tmux session, ctl socket, job file, or carrier_jobs/agents/host_channels/effects row"
+  pass "no stale forward, remote job or tmux session, ctl socket, job file, or carrier_jobs/agents/host_channels/effects/remote_recovery row (every close was checked; the one documented exception, the SIGKILL listener: $([ "$STALE_LISTENER" = 1 ] && echo "occurred, replaced by the step 5 respawn" || echo "did not occur"))"
+fi
+
+# ── the built ctl extension inside a REAL pi (no model call) ─────────────────
+if [ -z "$REAL_PI" ]; then
+  say "SKIPPED: no pi binary on host (real pi + built mu ctl extension leg; set REAL_PI_BIN to run it)"
+else
+  say "real pi leg: $REAL_PI with the built ctl extension"
+  RSK="$R/real.sock"
+  TMUX_TMPDIR="$R/ltmux" tmux -L "$MU_TMUX" new-session -d -s realpi -x 120 -y 30 \
+    "env MU_CTL_SOCK=$RSK MU_AGENT_NAME=real-pi MU_WORKSTREAM=$WS PI_OFFLINE=1 $REAL_PI -ne -e $MU/dist/extension/mu-pi.js --no-session --offline; sleep 600" ||
+    fail "could not start the real pi in a private tmux session"
+  real_up() { [ -S "$RSK" ]; }
+  until_ok 300 "the real pi to bind $RSK (the built extension loaded)" real_up
+  "$NODE" -e '
+    const c = require("net").connect(process.argv[1]);
+    let buf = "", n = 0;
+    const out = [];
+    c.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\n")) >= 0) { out.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); if (++n === 2) { console.log(JSON.stringify(out)); c.end(); } } });
+    c.on("error", (e) => { console.error(String(e)); process.exit(1); });
+    c.write(JSON.stringify({ v: 1, op: "hello" }) + "\n" + JSON.stringify({ v: 1, op: "status" }) + "\n");
+    setTimeout(() => { console.error("no reply"); process.exit(1); }, 10000);
+  ' "$RSK" >"$R/real-ctl.json" || fail "real pi: no ctl reply on $RSK"
+  js "d[0].ok === true && d[0].ops.includes('send') && d[0].ops.includes('wait') && typeof d[0].extVersion === 'string' && d[0].agent === 'real-pi' && d[1].ok === true && d[1].state === 'idle'" <"$R/real-ctl.json" >/dev/null || {
+    cat "$R/real-ctl.json"
+    fail "real pi: the built extension's hello/status are not as expected"
+  }
+  pass "real pi ($("$REAL_PI" --version 2>&1 | head -n 1)) loaded the built ctl extension $(js 'd[0].extVersion' <"$R/real-ctl.json"): hello ok (piVersion $(js 'd[0].piVersion ?? "?"' <"$R/real-ctl.json")), status idle; no model turn was run"
+  TMUX_TMPDIR="$R/ltmux" tmux -L "$MU_TMUX" kill-session -t realpi >/dev/null 2>&1
+  pkill -TERM -f "$RSK" >/dev/null 2>&1 || true
 fi
