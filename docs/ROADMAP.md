@@ -59,9 +59,11 @@ mu does not add these unless one earns its way back under the criteria:
 
 ## Approved: the lease transport (stage b)
 
-A remote worker on a session-capped host (`MaxSessions 1`, e.g. a managed dev VM)
-holds the host's only session channel for its whole life, so every other
-`ssh dev` (murmur's collector, `git fetch`, an operator) is refused. Promotion
+A remote worker on a session-capped host (e.g. a managed dev VM, where one
+shared ssh connection allows `MaxSessions 1`) holds that connection's only
+session for its whole life, so every other command sent over the same
+connection (murmur's collector, `git fetch`, an operator) is refused.
+`MaxSessions` is per network connection: a separate connection is unaffected. Promotion
 met: the friction is the 2026-10-28 session plus the murmur collect starving
 (2026-09-28) and the `t3-dev` workaround, more than twice; the design adds no
 channel kind or recovery column; the source is about 250 LOC. The user asked
