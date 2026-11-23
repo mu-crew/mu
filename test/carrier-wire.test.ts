@@ -25,6 +25,7 @@ import {
   bindView,
   claimJobFile,
   dispatchView,
+  markFileJobLaunch,
   removeJobFile,
   unbindView,
 } from "../src/carrier-wire.js";
@@ -244,5 +245,62 @@ describe("the view proof", () => {
     expect((await proveViewGone(bound("herdr"), herdr)).state).toBe("unknown");
     expect((await proveViewGone(bound("rex"), herdr)).state).toBe("unknown");
     expect((await proveViewGone(bound("rex:i-1"), mux("i-1", []))).state).toBe("unknown");
+  });
+});
+
+// wire_rev is nullable: an ADD COLUMN on an old DB (or a copy without the default) may leave
+// NULL. Every read and compare-and-swap takes NULL as revision 0.
+describe("a record whose wire_rev is NULL", () => {
+  const nullRev = (state: WireState | null): CarrierJob => {
+    const r = recordIn(state);
+    db.prepare("UPDATE carrier_jobs SET wire_rev = NULL WHERE token = ?").run(r.token);
+    const raw = db.prepare("SELECT wire_rev FROM carrier_jobs WHERE token = ?").get(r.token);
+    expect(raw).toEqual({ wire_rev: null });
+    const now = getCarrierJob(db, r.token) as CarrierJob;
+    expect(now.wireRev).toBe(0);
+    return now;
+  };
+
+  it("goes through a full lease: claim, start intent, dispatch, bind, release, file, delete", () => {
+    const r = nullRev("claimed");
+    const claim = claimJobFile(db, r, file);
+    expect(claim?.rev).toBe(1);
+    expect(claim?.moved?.read).toMatchObject({ kind: "handle", job: "job-1" });
+    writeFileSync(file, "job-1\n");
+    const stale = { token: r.token, wireRev: 0 };
+    expect(markFileJobLaunch(db, stale, "i-1")).toBeUndefined();
+    const launched = markFileJobLaunch(db, { token: r.token, wireRev: 1 }, "i-1");
+    expect(launched).toBe(2);
+    const dispatched = dispatchView(db, { token: r.token, wireRev: 2 });
+    expect(dispatched).toBe(3);
+    const bound = bindView(db, { token: r.token, wireRev: 3 }, "%1", SERVER);
+    expect(bound).toBe(4);
+    expect(getCarrierJob(db, r.token)).toMatchObject({
+      wireState: "bound",
+      paneId: "%1",
+      viewServer: SERVER,
+      launch: "intent",
+      instance: "i-1",
+    });
+    const released = beginRelease(db, { token: r.token, wireRev: 4 });
+    expect(released).toBe(5);
+    expect(removeJobFile(db, { token: r.token, wireRev: 5 }, file, "job-1")).toBe("removed");
+    expect(existsSync(file)).toBe(false);
+    const done = getCarrierJob(db, r.token) as CarrierJob;
+    expect(releaseCarrierJob(db, done)).toBe(true);
+    expect(getCarrierJob(db, r.token)).toBeUndefined();
+  });
+
+  it("an older record (no state, NULL revision) still releases as a lease", () => {
+    const r = nullRev(null);
+    expect(removeJobFile(db, r, file, "job-1")).toBe("removed");
+    expect(releaseCarrierJob(db, r)).toBe(true);
+    expect(getCarrierJob(db, r.token)).toBeUndefined();
+  });
+
+  it("a released record at NULL resumes its release at revision 0", () => {
+    const r = recordIn("released");
+    db.prepare("UPDATE carrier_jobs SET wire_rev = NULL WHERE token = ?").run(r.token);
+    expect(beginRelease(db, { token: r.token, wireRev: 0 })).toBe(0);
   });
 });

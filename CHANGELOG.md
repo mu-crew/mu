@@ -94,7 +94,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   are recorded together, `released` once its view is proven gone and its
   stop begun), and every transition (the spawn's file claim and view,
   close, rollback, reattach, a recovery's view) is a compare-and-swap on
-  `carrier_jobs.wire_rev`: concurrent paths cannot interleave, and the one
+  `carrier_jobs.wire_rev` (nullable, default 0; NULL reads as 0):
+  concurrent paths cannot interleave, and the one
   whose revision moved keeps everything. The job file is moved aside or
   removed only inside the transition that owns the current revision, so a
   spawn released during its prepare never moves its replacement's file. A

@@ -30,8 +30,9 @@ export const CARRIER_JOBS_DDL = `
 -- 'claimed' (no view: never asked for, or proven gone), 'dispatching' (a view asked for, its
 -- pane id not recorded), 'bound' (its view is 'pane_id' on mux server 'view_server'),
 -- 'released' (its view proven gone and its stop begun: no view opens again). Every
--- transition is a compare-and-swap on 'wire_rev'. NULL is a record older than the column:
--- unknown, never 'claimed'. Release and abandon delete the row.
+-- transition is a compare-and-swap on 'wire_rev' (nullable: NULL reads as 0). A NULL
+-- 'wire_state' is a record older than the column: unknown, never 'claimed'. Release and
+-- abandon delete the row.
 CREATE TABLE IF NOT EXISTS carrier_jobs (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
   token         TEXT NOT NULL UNIQUE,
@@ -65,7 +66,7 @@ CREATE TABLE IF NOT EXISTS carrier_jobs (
   first_inc     TEXT,
   collect_delay_ms INTEGER,
   wire_state    TEXT CHECK (wire_state IN ('claimed', 'dispatching', 'bound', 'released')),
-  wire_rev      INTEGER NOT NULL DEFAULT 0,
+  wire_rev      INTEGER DEFAULT 0,
   view_server   TEXT
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_carrier_jobs_name ON carrier_jobs (workstream, name, ordinal);

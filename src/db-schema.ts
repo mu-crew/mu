@@ -124,9 +124,10 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
       ["collect_delay_ms", "INTEGER"],
       // Ladder placement §10: a file kind's wire state, its revision and its bound view's mux
       // server (src/carrier-wire.ts). No default state on purpose: an older record is unknown
-      // (NULL), never "claimed".
+      // (NULL), never "claimed". wire_rev is nullable (an ADD COLUMN may leave NULL):
+      // every read and compare-and-swap treats NULL as 0 (COALESCE).
       ["wire_state", "TEXT CHECK (wire_state IN ('claimed', 'dispatching', 'bound', 'released'))"],
-      ["wire_rev", "INTEGER NOT NULL DEFAULT 0"],
+      ["wire_rev", "INTEGER DEFAULT 0"],
       ["view_server", "TEXT"],
     ] as const
   ).map(([c, ddl]) => ["carrier_jobs", c, ddl] as const),

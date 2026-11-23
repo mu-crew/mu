@@ -127,7 +127,7 @@ interface Raw {
   first_msg_id: string | null;
   first_inc: string | null;
   wire_state: WireState | null;
-  wire_rev: number;
+  wire_rev: number | null;
   view_server: string | null;
 }
 
@@ -162,7 +162,7 @@ const toJob = (r: Raw): CarrierJob => ({
   firstMsgId: r.first_msg_id,
   firstInc: r.first_inc,
   wireState: r.wire_state,
-  wireRev: r.wire_rev,
+  wireRev: r.wire_rev ?? 0,
   viewServer: r.view_server,
 });
 
@@ -472,7 +472,7 @@ export function releaseCarrierJob(db: Db, job: CarrierJob): boolean {
   return (
     db
       .prepare(
-        "DELETE FROM carrier_jobs WHERE token = ? AND job IS ? AND wire_rev = ? AND (wire_state IS NULL OR wire_state IN ('claimed', 'released'))",
+        "DELETE FROM carrier_jobs WHERE token = ? AND job IS ? AND COALESCE(wire_rev, 0) = ? AND (wire_state IS NULL OR wire_state IN ('claimed', 'released'))",
       )
       .run(job.token, job.job, job.wireRev).changes === 1
   );

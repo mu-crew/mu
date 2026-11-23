@@ -3,7 +3,7 @@
 // view is PROVEN gone, on every path: spawn, close, rollback, reattach, recovery. Those paths
 // run in different processes and await mux probes and plugin calls between deciding and
 // acting, so no snapshot is trusted: each decision names the revision it was made on, and the
-// transition that acts on it is ONE compare-and-swap on that revision (`wire_rev`). A path
+// transition that acts on it is ONE compare-and-swap on that revision (`wire_rev`, NULL read as 0). A path
 // whose revision moved lost the race and retains everything.
 //
 //   claimed ──start intent──▶ claimed (the job.start effect's intent, `markFileJobLaunch`)
@@ -50,8 +50,8 @@ function step(
 ): number | undefined {
   const row = db
     .prepare(
-      `UPDATE carrier_jobs SET wire_state = ?, wire_rev = wire_rev + 1${set}
-       WHERE token = ? AND wire_rev = ? AND wire_state IN (${from.map(() => "?").join(", ")})
+      `UPDATE carrier_jobs SET wire_state = ?, wire_rev = COALESCE(wire_rev, 0) + 1${set}
+       WHERE token = ? AND COALESCE(wire_rev, 0) = ? AND wire_state IN (${from.map(() => "?").join(", ")})
        RETURNING wire_rev`,
     )
     .get(to, ...args, r.token, r.wireRev, ...from) as { wire_rev: number } | undefined;
@@ -155,7 +155,9 @@ export function beginRelease(db: Db, r: WireRef): number | undefined {
   return db
     .transaction(() => {
       const now = db
-        .prepare("SELECT wire_state, wire_rev FROM carrier_jobs WHERE token = ?")
+        .prepare(
+          "SELECT wire_state, COALESCE(wire_rev, 0) AS wire_rev FROM carrier_jobs WHERE token = ?",
+        )
         .get(r.token) as { wire_state: WireState | null; wire_rev: number } | undefined;
       if (now?.wire_state === "released") return now.wire_rev;
       return step(db, r, ["claimed", "bound"], "released");
@@ -182,7 +184,7 @@ export function removeJobFile(
     .transaction((): JobFileRemoval | undefined => {
       const owner = db
         .prepare(
-          "SELECT 1 FROM carrier_jobs WHERE token = ? AND wire_rev = ? AND (wire_state IS NULL OR wire_state IN ('claimed', 'released'))",
+          "SELECT 1 FROM carrier_jobs WHERE token = ? AND COALESCE(wire_rev, 0) = ? AND (wire_state IS NULL OR wire_state IN ('claimed', 'released'))",
         )
         .get(r.token, r.wireRev);
       if (owner === undefined) return undefined;
