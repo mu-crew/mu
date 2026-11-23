@@ -136,8 +136,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   socket could make another server answer a view's birth or absence and let
   close drop a live job's record and file. Rex support awaits instance-bound
   server identity (ROADMAP: Rex carrier views). Session profiles (rung 3) and
-  local workers on Rex are unchanged. A Rex view an earlier build recorded is
-  never proven gone: close keeps it (`--abandon-job` is the way out). One
+  local workers on Rex are unchanged. `mu agent check`'s first-turn recovery
+  and a task replay refuse the same way before they resolve or attach a
+  pending view. A Rex view an earlier build recorded is never proven gone,
+  bound or already released, from any multiplexer: close keeps its record,
+  reservation and job file (`--abandon-job` is the way out). One
   backend flag, `carrierViews`, holds the refusal.
 - The dashboard title (`process.title` and OSC 2) now reads `mu [<workstream>]` for the shown workstream and `mu` otherwise, and follows `[`/`]` switches. The name is stripped of escapes and control characters and capped at 40 characters.
 

@@ -578,6 +578,8 @@ async function openView(
   const row = await withAgentLock(db, opts.workstream, opts.name, () =>
     withSpawnLock(session, async () => {
       const mux = await activeMux();
+      // D15 at THE view boundary: no caller (spawn, replay, check's recovery) opens one on Rex.
+      refuseCarrierViewMux(mux, v.host.name, "a plugin job's view");
       // A file kind's view is its job's dispatcher (ladder placement §10): `dispatching` in this
       // locked section, before the mux is asked, and only from the revision this spawn holds. A
       // close or rollback that moved the record first leaves nothing to dispatch for; one after
@@ -766,6 +768,11 @@ export async function resolveFirstTurn(
       state: "held",
       reason: `its spawn (pid ${rec.creatorPid}) is still running: ask again once it ends (job.start effect ${rec.token})`,
     };
+  }
+  const pending = getAgent(db, row.name, row.workstreamName) ?? row;
+  if (isPendingPaneId(pending.paneId) && pending.host !== null) {
+    // D15: a recovery that may open the view refuses on Rex before it resolves or attaches.
+    refuseCarrierViewMux(await activeMux(), pending.host, "a plugin job's view");
   }
   const kind = pluginJobKind(db, rec.plugin);
   if (kind === undefined) return unresolved(`plugin ${rec.plugin} has no job seam`);

@@ -31,8 +31,8 @@ import { getHostRecord, hostDeadlineMarginMs, hostRecordById } from "./host-reco
 import { describeRead, readJobFile } from "./jobs/lease.js";
 import { viewOnServer } from "./jobs/view.js";
 import { emitEvent } from "./logs.js";
-import type { MuxBackend } from "./mux/types.js";
-import { activeMux } from "./mux.js";
+import type { MuxBackend, MuxBackendName } from "./mux/types.js";
+import { activeMux, muxByName } from "./mux.js";
 import { PluginCallError } from "./plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "./plugins/job.js";
 import { collectInLifeLocked, collectRemoteAgentLocked } from "./remote-collect.js";
@@ -299,20 +299,31 @@ export type ViewProof = { state: "gone" } | { state: "alive" | "unknown"; why: s
  * only through a wire transition on the revision the proof read (src/carrier-wire.ts): close,
  * the spawn's rollback, a reattach (before its view), and a recovery's close. `unknown` always
  * retains, like `alive`. By the record's wire state:
- * - `claimed`: no view: gone. `released`: proven gone on entering, and none opens again.
+ * - `claimed`: no view: gone. `released`: proven gone on entering, and none opens again;
+ *   unless its view server is stamped with a backend without `carrierViews` (an earlier
+ *   build's Rex proof): unknown, from any mux.
  * - `dispatching`: a view asked for, its pane id never recorded: unknown.
  * - `bound`: its pane asked of the mux server recorded with it, and only that one
  *   (`viewOnServer`): another server's answer, no recorded server, or a failing probe is
- *   unknown. The pane and server are written together by the bind, never inferred from an
- *   equal pane id (another server, or a restarted one, reuses `%N`).
+ *   unknown; so is a server stamped with a backend without `carrierViews`. The pane and
+ *   server are written together by the bind, never inferred from an equal pane id (another
+ *   server, or a restarted one, reuses `%N`).
  * - null: a record older than the column (an upgrade): unknown.
  */
 export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<ViewProof> {
   const dispatcher = "(the job's dispatcher)";
   switch (r.wireState) {
     case "claimed":
-    case "released":
       return { state: "gone" };
+    case "released": {
+      // D15: a release an earlier build proved on Rex trusted an absence Rex cannot prove.
+      const on = unprovableOn(r.viewServer);
+      if (on === undefined) return { state: "gone" };
+      return {
+        state: "unknown",
+        why: `its view ${r.paneId ?? "?"} ${dispatcher} was released on ${on}, which cannot prove it gone (lease and plugin job views are tmux-only for now)`,
+      };
+    }
     case "dispatching":
       return { state: "unknown", why: `its view ${dispatcher} opened with no pane id recorded` };
     case "bound": {
@@ -324,13 +335,14 @@ export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<Vi
         };
       }
       // D15: a backend without carrierViews (Rex) cannot tie an absent reply to its server.
-      const m = mux ?? (await activeMux().catch(() => undefined));
-      if (m !== undefined && !m.carrierViews && r.viewServer.startsWith(`${m.name}:`)) {
+      const on = unprovableOn(r.viewServer);
+      if (on !== undefined) {
         return {
           state: "unknown",
-          why: `its view ${r.paneId} ${dispatcher} is on ${m.name}, which cannot prove it gone yet (lease and plugin job views are tmux-only for now)`,
+          why: `its view ${r.paneId} ${dispatcher} is on ${on}, which cannot prove it gone yet (lease and plugin job views are tmux-only for now)`,
         };
       }
+      const m = mux ?? (await activeMux().catch(() => undefined));
       const seen =
         m === undefined
           ? undefined
@@ -353,6 +365,15 @@ export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<Vi
         why: `its view ${dispatcher} is unknown (the record predates view tracking)`,
       };
   }
+}
+
+/**
+ * The backend a view server is stamped with (`birthServer`) when that backend, as registered,
+ * has no `carrierViews`: its proof is never trusted, whichever mux this invocation drives.
+ */
+function unprovableOn(server: string | null): MuxBackendName | undefined {
+  const name = /^(tmux|rex|herdr):/.exec(server ?? "")?.[1] as MuxBackendName | undefined;
+  return name !== undefined && !muxByName(name).carrierViews ? name : undefined;
 }
 
 /** `proveViewGone` or `CarrierJobKeptError`, everything kept; `--abandon-job` is the way out. */

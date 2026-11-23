@@ -249,13 +249,29 @@ describe("the view proof", () => {
 
   // D15 (wire_rex_presence_and_birth_aba): Rex's "absent" is not tied to the server that
   // answered it, so a view on a backend without carrierViews is never proven gone there.
+  // The registered backend's flag rules, not the mux this invocation drives
+  // (rex_legacy_release_trusts_unsafe_proof).
   it("bound on a backend without carrierViews: unknown, even when its server answers absent", async () => {
     const rex = { ...mux("i-1", []), name: "rex", carrierViews: false } as MuxBackend;
     const p = await proveViewGone(bound("rex:i-1"), rex);
     expect(p).toMatchObject({ state: "unknown", why: expect.stringMatching(/tmux-only/) });
-    expect((await proveViewGone(bound("rex:i-1"), { ...rex, carrierViews: true })).state).toBe(
-      "gone",
-    );
+    for (const m of [{ ...rex, carrierViews: true }, mux(`${process.pid}|1`, [])]) {
+      expect((await proveViewGone(bound("rex:i-1"), m)).state).toBe("unknown");
+    }
+  });
+
+  it("released after a Rex bind (an earlier build's proof): unknown from any mux; tmux's is gone", async () => {
+    const released = (server: string) => {
+      const r = bound(server);
+      beginRelease(db, r);
+      return getCarrierJob(db, r.token) as CarrierJob;
+    };
+    const rex = { ...mux("i-1", []), name: "rex", carrierViews: true } as MuxBackend;
+    for (const m of [rex, mux(`${process.pid}|1`, [])]) {
+      const p = await proveViewGone(released("rex:i-1"), m);
+      expect(p).toMatchObject({ state: "unknown", why: expect.stringMatching(/released on rex/) });
+    }
+    expect((await proveViewGone(released(live), mux("1|1", ["%1"]))).state).toBe("gone");
   });
 });
 
