@@ -37,6 +37,9 @@ describe("the plugin adapter's boundary", () => {
         "src/agents/spawn-plugin.ts",
         // A file kind's recovery keeps a lookup's hand-back (PluginCallError human) a hand-back.
         "src/host-policy.ts",
+        // Bound file-kind reattach and job status preserve PluginCallError hand-backs.
+        "src/agents/reattach-view.ts",
+        "src/jobs/kinds.ts",
       ],
       "src/plugins/registry.ts": ["src/cli/handle.ts", "src/cli/plugin.ts"],
       "src/plugins/link.ts": ["src/host-provider.ts"],
