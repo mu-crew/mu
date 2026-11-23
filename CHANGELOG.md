@@ -139,6 +139,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   local workers on Rex are unchanged. A Rex view an earlier build recorded is
   never proven gone: close keeps it (`--abandon-job` is the way out). One
   backend flag, `carrierViews`, holds the refusal.
+- The dashboard title (`process.title` and OSC 2) now reads `mu [<workstream>]` for the shown workstream and `mu` otherwise, and follows `[`/`]` switches. The name is stripped of escapes and control characters and capped at 40 characters.
 
 - Every spawn, including a task-bound or plugin spawn, refuses before any
   effects (`MuxBackendMismatchError`, exit 4) if its workstream has an agent
@@ -189,6 +190,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- When a plugin hands back during agent close, the error names `job.stop`
+  instead of claiming a stop template exited 3.
+- Local control sockets still bind when a long state directory leaves no room
+  for a hashed socket name. In that case mu uses a private per-user directory
+  and includes the state directory in the hash. Existing paths that fit are unchanged.
 - Failed or interrupted test runs clean up their own tmux and Rex servers.
   Test teardown never sweeps the user's tmux sessions or earlier runs' servers.
 - **`mu agent spawn --host … --task` with no brief note and no `--send` refuses** (exit 2) instead of

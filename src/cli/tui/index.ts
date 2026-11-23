@@ -11,6 +11,7 @@ import { resolveMuxSessionWorkstreamName } from "../../workstream.js";
 import type { Shutdown } from "../dashboard-shutdown.js";
 import { App } from "./app.js";
 import { createRuntime } from "./runtime.js";
+import { setTitle } from "./title.js";
 
 export interface RunDashboardOptions {
   dbPath: string;
@@ -38,8 +39,11 @@ export async function runDashboard(opts: RunDashboardOptions): Promise<void> {
   // The terminal's title and tmux's window name show `node` otherwise:
   // process.title renames the process (tmux automatic-rename reads it); OSC 2
   // sets the title, between an XTWINOPS push and pop of the caller's title.
-  process.title = "mu";
-  process.stdout.write("\u001b[22;0t\u001b]2;mu\u0007");
+  // The title follows the shown workstream (App calls onWorkstream on every change).
+  process.stdout.write("\u001b[22;0t");
+  const initialWorkstream =
+    opts.initialWorkstream ?? (await resolveMuxSessionWorkstreamName()) ?? undefined;
+  setTitle(initialWorkstream);
   let app: Instance | undefined;
   // Steps run in order: restore the terminal first, then drain and close.
   opts.shutdown.add(() => app?.unmount());
@@ -50,8 +54,8 @@ export async function runDashboard(opts: RunDashboardOptions): Promise<void> {
   app = render(
     createElement(App, {
       runtime,
-      initialWorkstream:
-        opts.initialWorkstream ?? (await resolveMuxSessionWorkstreamName()) ?? undefined,
+      initialWorkstream,
+      onWorkstream: setTitle,
       pollMs: opts.pollMs ?? 1000,
     }),
     { alternateScreen: true, interactive: true },

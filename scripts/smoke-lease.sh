@@ -121,7 +121,9 @@ mkdir -p "$R"/{bin,rbin,m,tmp,home,config,cache,lstate,ltmux,rtmux,rhome/.local/
 chmod 700 "$R/m" "$R/ltmux" "$R/rtmux"
 cp "$MULE/target/release/mule" "$R/bin/mule"
 cp "$FAKE_PI_SRC" "$R/rbin/smoke-fake-pi.mjs"
-NODE=$(command -v node)
+# The node binary itself, not a version manager's shim: a shim (mise, asdf) resolves through
+# $HOME, which is private below, and then fails ("node is not a valid shim", seen on Linux).
+NODE=$(node -e 'console.log(process.execPath)')
 SSH_KEYGEN=$(command -v ssh-keygen)
 # Expose the tools, not their parent bin directories: those can also contain
 # real harnesses which host check would discover without their hook configs.
@@ -270,7 +272,11 @@ job_state() {
   printf '%s' "$out" | js "(d.items.find((j)=>j.id==='$1')||{}).state ?? 'absent'"
 }
 # No `grep -q` after a pipe: under pipefail an early exit's SIGPIPE reads as "no".
-forward_held() { "$LSOF" -a -p "$MULE_MASTER" -U -Fn 2>/dev/null | grep -xF "n$LOCAL_SOCK" >/dev/null; }
+# lsof's name field is the bare path on macOS but "<path> type=STREAM" on Linux (lsof 4.99).
+forward_held() {
+  "$LSOF" -a -p "$MULE_MASTER" -U -Fn 2>/dev/null |
+    awk -v want="n$LOCAL_SOCK" '$0 == want || index($0, want " ") == 1 { f = 1 } END { exit !f }'
+}
 carrier_pid() {
   local p
   for p in $(pgrep -f -- "--job-file $JOB_FILE" || true); do
@@ -428,7 +434,10 @@ pass "send --wait through the re-bound forward: lastText '$GOT', ctl-settled run
 close_clean "respawned agent"
 
 # Nothing of the carriers outlives them: no lease, no detached `mule rm`.
-until_ok 100 "every mule process of this run to exit" sh -c "! pgrep -f '$R/bin/mule' >/dev/null"
+# A function, not `sh -c`: Linux pgrep -f matches its own parent shell, whose argv names
+# $R/bin/mule, so the check never passed there (BSD pgrep skips ancestors by default).
+no_mule_left() { ! pgrep -f "$R/bin/mule" >/dev/null; }
+until_ok 100 "every mule process of this run to exit" no_mule_left
 LS=$(mule ls --host loop --all --json)
 [ "$(printf '%s' "$LS" | js 'd.items.length + d.unreachable.length')" = 0 ] || fail "mule ls: $LS"
 pass "no mule process left, mule ls empty"

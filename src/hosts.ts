@@ -177,9 +177,9 @@ export class CarrierViewUnsupportedError extends Error {
 }
 
 /**
- * A host template exited 3: the hand-back (a human must act, e.g. a hardware key). Exit 5,
+ * A host operation handed back (a human must act, e.g. a hardware key). Exit 5,
  * label `human needed`. Never retried, and never recorded as `human-needed` here: that record
- * is always a decision (VISION). Thrown for `exec` and `fetch` runs only, never for a pane.
+ * is always a decision (VISION).
  */
 export class HostHandbackError extends Error {
   override readonly name = "HostHandbackError";
@@ -189,8 +189,9 @@ export class HostHandbackError extends Error {
     public readonly field: "exec" | "fetch" | "stop",
     /** The first non-blank line of stderr, else of stdout. */
     public readonly detail: string,
+    pluginOperation?: "job.stop",
   ) {
-    super(say("host.handback", host, field, detail));
+    super(say("host.handback", host, field, detail, pluginOperation));
   }
 }
 
