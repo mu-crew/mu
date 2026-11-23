@@ -7,7 +7,12 @@
 // agent_end with the assistant text "smoke-echo: <text>", agent_settled). No model, no
 // network, no real pi. Needs $SMOKE_EXT (the built extension). It writes what the
 // extension registered to $HOME/smoke-ext-registration.json.
+//
+// A sent text "smoke-sh: <cmd>" (scripts/smoke-hybrid.sh) is the worker's own shell:
+// the turn runs `sh -c <cmd>` in the pi's cwd (its worktree, on its job machine) and
+// replies "smoke-sh exit=<n> cwd=<dir>" plus the command's stdout and stderr.
 
+import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -65,8 +70,16 @@ const pi = {
     void emit("tool_execution_start", { toolCallId: id, toolName: "smoke-tool" });
     setTimeout(async () => {
       await emit("tool_execution_end", { toolCallId: id, toolName: "smoke-tool" });
+      let reply = `smoke-echo: ${text}`;
+      if (text.startsWith("smoke-sh: ")) {
+        const r = spawnSync("sh", ["-c", text.slice("smoke-sh: ".length)], {
+          encoding: "utf8",
+          timeout: 60_000,
+        });
+        reply = `smoke-sh exit=${r.status ?? "signal"} cwd=${process.cwd()}\n${r.stdout ?? ""}${r.stderr ?? ""}`;
+      }
       await emit("agent_end", {
-        messages: [{ role: "assistant", content: [{ type: "text", text: `smoke-echo: ${text}` }] }],
+        messages: [{ role: "assistant", content: [{ type: "text", text: reply }] }],
       });
       busy = false;
       await emit("agent_settled", {});
