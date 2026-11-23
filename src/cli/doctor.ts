@@ -26,6 +26,7 @@ import {
   extensionLive,
   leaseJobHintLine,
   leaseJobHints,
+  muleProfileMigrations,
   murmurDoctorCheck,
 } from "../doctor-summary.js";
 import {
@@ -50,6 +51,7 @@ import {
   type FleetHazard,
   HazardFailError,
 } from "../fleet-hazards.js";
+import { hostProfileReferenceLabel } from "../hosts.js";
 import { checkMuHooks, initHome } from "../mu-init.js";
 import { activeMux, type MuxHealth, NoMultiplexerError } from "../mux.js";
 import { pc } from "../output.js";
@@ -404,6 +406,17 @@ export async function cmdDoctor(
   );
   for (const h of leaseJobs) console.log(pc.dim(`      ${leaseJobHintLine(h)}`));
 
+  for (const m of muleProfileMigrations(db)) {
+    console.log(
+      `  ${m.host}: mule lease template; ${m.blocked ? "switch blocked by:" : "no agent, job or recovery records block switching"}`,
+    );
+    for (const r of m.blockers) {
+      const status = r.kind.endsWith("-job") ? `${r.kind.slice(0, -4)} ` : "";
+      console.log(`      ${status}${hostProfileReferenceLabel(r)}`);
+    }
+    for (const step of m.steps) console.log(`      ${step}`);
+  }
+
   // ─ Disk ↔ DB reconciliation
   //
   // The only section that reads the filesystem. Default tier is readdir
@@ -683,6 +696,7 @@ export async function cmdDoctorJson(
       thresholds: { finishedIdleDays: FINISHED_IDLE_DAYS, abandonedIdleDays: ABANDONED_IDLE_DAYS },
     },
     leaseJobs: leaseJobHints(db),
+    muleProfileMigrations: muleProfileMigrations(db),
     oldDelegates: (() => {
       const h = checkOldDelegates(db);
       return {

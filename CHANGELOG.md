@@ -14,6 +14,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Added
 
+- `mu doctor` identifies legacy mule lease profiles and lists agent, job and
+  recovery records that block a switch to `--plugin mule`. Collect and close
+  under the original profile before switching; SSH session templates are unchanged.
+
 - [Remote worker ladder guide](docs/guide/remote-ladder.md): choose where to
   run a command or worker, size session capacity, and collect and close.
   Offline eval controls cover a credentialless host, a lease crew on a

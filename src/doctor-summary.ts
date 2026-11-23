@@ -15,7 +15,28 @@ import { type CtlProbe, ctlProbe } from "./ctl/client.js";
 import { ctlSocketPath } from "./ctl/path.js";
 import { CTL_OPS } from "./ctl/protocol.js";
 import type { Db } from "./db.js";
+import { hostProfileReferences, muleLeaseTemplateHosts } from "./hosts.js";
 import { goneReservations, readStopFailed } from "./leftovers.js";
+
+/** A hint about switching, not a host probe. `blocked` refers to records, not link health. */
+export function muleProfileMigrations(db: Db) {
+  return muleLeaseTemplateHosts(db).map((host) => {
+    const blockers = hostProfileReferences(db, host);
+    return {
+      host,
+      blocked: blockers.length > 0,
+      blockers,
+      steps: [
+        `Pause new spawns on ${host} in every workstream. Save the original host add command (see mu host show ${host}).`,
+        `Before switching, register or refresh the mule plugin and verify mule targets the same host under the name ${host}.`,
+        "Let active work finish. For each worktree run mu agent collect <name> -w <workstream>. Then run mu agent close <name> -w <workstream> (preview, then --if), including for reaped jobs. Use --recovery <agent id> for a specific recovery record.",
+        `Do not remove ${host} while draining: a worktree reaped without its profile cannot pin the original link.`,
+        `Only once drained: mu host rm ${host}; then mu host add ${host} --plugin mule with the original --fetch, --repo and --max-sessions values. Run mu host check ${host} before spawning.`,
+        "If the plugin check fails before any new work starts, remove the unused plugin profile and restore the original profile byte-for-byte.",
+      ],
+    };
+  });
+}
 
 export type DoctorStatus = "ok" | "warn" | "fail";
 

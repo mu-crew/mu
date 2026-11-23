@@ -285,6 +285,17 @@ export function listHosts(db: Db): HostProfile[] {
   );
 }
 
+// Direct mule invocations (including a path to the binary), not arbitrary shell wrappers.
+const MULE_STOP =
+  /^\s*(?:exec\s+)?(?:(?:[^\s'";|&]+\/)?mule|'[^']*\/mule'|"[^"]*\/mule")\s+rm(?:\s|$)/;
+
+/** Doctor's inventory for the mule lease template migration, without resolving or probing links. */
+export function muleLeaseTemplateHosts(db: Db): string[] {
+  return listHosts(db)
+    .filter((p) => p.plugin == null && p.transport === "lease" && MULE_STOP.test(p.stop ?? ""))
+    .map((p) => p.name);
+}
+
 /** The profiles whose link is plugin `plugin`: `mu plugin rm` refuses while one names it. */
 export function hostsOfPlugin(db: Db, plugin: string): string[] {
   return (
@@ -372,24 +383,43 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
   return getHost(db, p.name);
 }
 
-/** Ladder placement §7.3: match by name, even if a previous profile is already gone. */
-function refuseHostProfileMigration(db: Db, host: string): void {
-  const refs = db
+export interface HostProfileReference {
+  kind: "agent" | "active-job" | "reaped-job" | "unbound-job" | "recovery";
+  workstream: string;
+  name: string;
+  id: number;
+}
+
+/** Ladder §7.3: doctor and the add fence use the same records, even after `host rm`. */
+export function hostProfileReferences(db: Db, host: string): HostProfileReference[] {
+  return db
     .prepare(
-      `SELECT 'agent ' || ws.name || '/' || a.name AS label
+      `SELECT 'agent' AS kind, ws.name AS workstream, a.name AS name, a.id AS id
        FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.host = @host
      UNION ALL
-     SELECT 'job record ' || workstream || '/' || name || ' (id ' || id || ')'
-       FROM carrier_jobs WHERE host = @host
+     SELECT CASE WHEN a.id IS NOT NULL THEN 'active-job'
+                 WHEN j.agent_id IS NOT NULL THEN 'reaped-job' ELSE 'unbound-job' END,
+            j.workstream, j.name, j.id
+       FROM carrier_jobs j LEFT JOIN agents a ON a.id = j.agent_id WHERE j.host = @host
      UNION ALL
-     SELECT 'recovery record ' || workstream || '/' || name || ' (agent id ' || agent_id || ')'
-       FROM remote_recovery WHERE host = @host
-     ORDER BY label`,
+     SELECT 'recovery', workstream, name, agent_id FROM remote_recovery WHERE host = @host
+     ORDER BY workstream, name, kind, id`,
     )
-    .all({ host }) as { label: string }[];
+    .all({ host }) as HostProfileReference[];
+}
+
+export function hostProfileReferenceLabel(r: HostProfileReference): string {
+  const ref = `${r.workstream}/${r.name}`;
+  if (r.kind === "agent") return `agent ${ref}`;
+  if (r.kind === "recovery") return `recovery record ${ref} (agent id ${r.id})`;
+  return `job record ${ref} (id ${r.id})`;
+}
+
+function refuseHostProfileMigration(db: Db, host: string): void {
+  const refs = hostProfileReferences(db, host);
   if (refs.length === 0) return;
   throw new HostProfileError(
-    `host ${host}: cannot add a plugin profile while these records name it: ${refs.map((r) => r.label).join(", ")}. Use the original mu host add command to re-add the previous profile byte-for-byte, collect and close the remaining work, then remove the old profile and retry.`,
+    `host ${host}: cannot add a plugin profile while these records name it: ${refs.map(hostProfileReferenceLabel).sort().join(", ")}. Use the original mu host add command to re-add the previous profile byte-for-byte, collect and close the remaining work, then remove the old profile and retry.`,
   );
 }
 

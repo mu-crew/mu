@@ -244,19 +244,30 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
 1. Templates, session profiles and lease profiles keep today's behaviour
    (`src/host-link.ts:174-190`). New placement features target plugins.
 2. **Drain, collect and close before switching;** no live conversion.
-   Supersedes D15's "a reservation made before the plugin was used is
-   stopped by the plugin's `rm`" (plugins `:1399-1400`). Recipe: keep the
-   old `host add` line; collect and close everything on `h`; `mu host rm
-   h`; `mu host add h --plugin mule --fetch '<old fetch>' --repo <repo>`
-   with the old limits (`src/hosts.ts:369-371`).
+   This migration is from a mule lease template to the mule plugin;
+   SSH session templates stay as they are (human decision 2026-11-22).
+   This supersedes D15's plugin `rm` for old reservations: they are
+   stopped through their original template. Pause new spawns across
+   workstreams and save the original `host add` line. `mu doctor` reports
+   profiles with a direct `mule rm` stop template and the records blocking
+   their switch. Collect each worktree and close every agent, job and
+   recovery record while the old profile is installed. Only then run
+   `mu host rm h` and `mu host add h --plugin mule --fetch '<old fetch>'`
+   with the original repo and limits. Verify the plugin targets the same
+   mule host and run `mu host check h` before resuming spawns. If drain
+   fails, keep the original profile. If the plugin check fails before any
+   new work starts, remove the unused plugin profile and restore the old one.
 3. **Fence** (Open 3a). In its insert transaction, `host add <h> --plugin`
    refuses while an agent row, `carrier_jobs` row or `remote_recovery`
    record names `<h>`, listing them (`host release`'s proof, D1, Host).
-   `host rm` keeps refusing only held channels (`src/hosts.ts:380-388`);
-   a lease spawn past prepare holds none, but the fence sees its
-   reservation. Records left by a `host rm` stay unstoppable until the old
-   profile is re-added byte-equal (`src/carrier-stop.ts:80-88`); the
-   refusal says so.
+   `host rm` still checks only held channels; it is not a drain check.
+   A lease spawn re-reads the transport in the transaction that reserves
+   its job: either the plugin add sees the reservation, or the spawn sees
+   the switch and makes none. If `host rm` was premature, restore the old
+   profile byte-for-byte immediately. This restores access to the original
+   stop and already-pinned recovery records, but cannot reconstruct the link
+   pin for a worktree reaped while the profile was absent. Such a record
+   still blocks the switch.
 
 ### §8. Refusals
 

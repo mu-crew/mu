@@ -33,6 +33,7 @@ import { beginRelease, claimJobFile, removeJobFile, type WireRef } from "../carr
 import { carrierJobFilePath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { closePluginJob, proveViewGone, recoverFileHandle } from "../host-policy.js";
+import { findHost } from "../host-provider.js";
 import { type HostProfile, HostProfileError, pidProvenGone, pidStart } from "../hosts.js";
 import { describeRead, type JobFile, leaseJobRef, leaseKind, readJobFile } from "../jobs/lease.js";
 import { viewPresent } from "../jobs/view.js";
@@ -111,19 +112,30 @@ export async function reserveLeaseJob(
   profile: HostProfile,
 ): Promise<CarrierJob> {
   return withAgentLock(db, workstream, name, async () => {
-    if (getAgent(db, name, workstream) !== undefined) throw new AgentExistsError(name);
-    refuseReserved(db, workstream, name);
-    const r = reserveCarrierJob(db, {
-      workstream,
-      name,
-      host: profile.name,
-      hostStop: profile.stop ?? "",
-      creatorPid: process.pid,
-      creatorStart: pidStart(process.pid),
-    });
-    if (r !== undefined) return r;
-    refuseReserved(db, workstream, name); // a parallel spawn's reservation landed first
-    throw new Error(`carrier_jobs: reservation of ${workstream}/${name} not inserted`);
+    const creatorStart = pidStart(process.pid);
+    // Serialize with the plugin-profile insert: either it sees this reservation, or
+    // this spawn sees the switched profile and leaves no old reservation behind.
+    return db
+      .transaction(() => {
+        if (getAgent(db, name, workstream) !== undefined) throw new AgentExistsError(name);
+        refuseReserved(db, workstream, name);
+        const current = findHost(db, profile.name)?.profile;
+        if (current?.transport !== "lease" || current.stop === null) {
+          throw new HostProfileError(say("carrier.transport_changed", profile.name));
+        }
+        const r = reserveCarrierJob(db, {
+          workstream,
+          name,
+          host: profile.name,
+          hostStop: current.stop,
+          creatorPid: process.pid,
+          creatorStart,
+        });
+        if (r !== undefined) return r;
+        refuseReserved(db, workstream, name);
+        throw new Error(`carrier_jobs: reservation of ${workstream}/${name} not inserted`);
+      })
+      .immediate();
   });
 }
 
