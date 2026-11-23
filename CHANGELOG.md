@@ -12,14 +12,34 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.3.0] — 2026-11-23
+
 ### Added
 
 - `mu doctor` identifies legacy mule lease profiles and lists agent, job and
   recovery records that block a switch to `--plugin mule`. Collect and close
   under the original profile before switching; SSH session templates are unchanged.
+  `mu host add <h> --plugin …` refuses while any agent, job record or
+  recovery record still names the host, and a lease spawn that races the
+  switch refuses instead of reserving under the old profile (ladder placement
+  spec §7.3).
+
+- **`mu host init <h> --ssh` and `--mule` print plugin starters**: the
+  `mu plugin add` registration for `mu-plugin-ssh` or `mu-plugin-mule` and a
+  `mu host add <h> --plugin …` profile. `--template` prints the previous
+  session or lease template. Still print-only: mu runs none of it.
+
+- Loopback smokes for the D15 rungs: `scripts/smoke-lease.sh --plugin mule`
+  runs the lease path through mule's plugin (collect during master loss,
+  per-close cleanup, a SIGKILLed carrier recovered by `mu agent reattach`),
+  and `scripts/smoke-hybrid.sh` runs a local worker, `mu host exec` and
+  `--plugin mule` lease workers in one workstream against one
+  `MaxSessions 1` sshd. Both fail on a leftover process.
 
 - [Remote worker ladder guide](docs/guide/remote-ladder.md): choose where to
   run a command or worker, size session capacity, and collect and close.
+  It covers the mule plugin for rung 4 and the `mu doctor` driven move of a
+  mule lease template to `--plugin mule`.
   Offline eval controls cover a credentialless host, a lease crew on a
   capped link, and a dropped master's hand-back.
 
