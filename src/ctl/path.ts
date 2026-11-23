@@ -4,7 +4,7 @@
  * socket at `$MU_CTL_SOCK`, and mu connects to the same derived path.
  */
 import { createHash } from "node:crypto";
-import { rmSync } from "node:fs";
+import { lstatSync, mkdirSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type Db, defaultStateDir } from "../db.js";
 
@@ -37,7 +37,25 @@ function sockPathUnder(dir: string, workstream: string, agent: string, ext = "so
 export function ctlSocketPath(workstream: string, agent: string, stateDir?: string): string {
   const dbPath = process.env.MU_DB_PATH;
   const base = stateDir ?? (dbPath ? dirname(dbPath) : defaultStateDir());
-  return sockPathUnder(join(resolve(base), "sock"), workstream, agent);
+  const state = resolve(base);
+  const local = sockPathUnder(join(state, "sock"), workstream, agent);
+  if (Buffer.byteLength(local) <= MAX_SOCK_PATH) return local;
+
+  // Use the same short root across invocations, even with a long or different TMPDIR.
+  const uid = process.geteuid?.();
+  if (uid === undefined) throw new Error("Unix control sockets require a user ID");
+  const dir = `/tmp/mu-s-${uid}`;
+  mkdirSync(dir, { mode: 0o700, recursive: true });
+  const st = lstatSync(dir);
+  if (!st.isDirectory() || st.uid !== uid || (st.mode & 0o777) !== 0o700) {
+    throw new Error(
+      `Unsafe control socket directory ${dir}: expected a directory owned by uid ${uid} with mode 0700`,
+    );
+  }
+  const hash = createHash("sha256")
+    .update(JSON.stringify([state, workstream, agent]))
+    .digest("hex");
+  return join(dir, `${hash}.sock`);
 }
 
 /**
