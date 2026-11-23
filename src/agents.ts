@@ -313,7 +313,7 @@ export interface InsertAgentInput {
   collectedHead?: string | null;
   repo?: string | null;
   gateToken?: string | null;
-  /** The transport of the profile `host` names, as spawned (`agents.host_transport`); null: local. */
+  /** Recorded transport (`agents.host_transport`); `local-loop` means host names just the workspace. */
   hostTransport?: string | null;
   /** The channel the agent is reached through (`agents.channel`); null: derived on each read. */
   channel?: ChannelName | null;

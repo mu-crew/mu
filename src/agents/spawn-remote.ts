@@ -19,6 +19,8 @@ import {
   type HostProfile,
   HostProfileError,
   HostSpawnUnsupportedError,
+  isValidHostName,
+  LOCAL_LOOP_TRANSPORT,
   releaseHostChannel,
 } from "../hosts.js";
 import { HONOURS_ALL, type JobKind } from "../jobs/types.js";
@@ -75,6 +77,49 @@ export async function refuseRemoteSpawnMux(db: Db, opts: SpawnAgentOptions): Pro
   // Switching multiplexers cannot make a link-only host spawnable.
   requireHostJobKind(host);
   throw unsupportedSpawnMux(host, opts, mux.name);
+}
+
+function muleWorkspaceProfile(view: HostView): HostProfile {
+  const profile = view.profile;
+  if (profile?.plugin !== "mule" || view.link.caps.slots !== "self" || !view.link.fetch) {
+    throw new HostProfileError(
+      `--mule needs a static --plugin mule profile with a self-admitting link and fetch; configure host ${view.name} with mu host init ${view.name} --mule`,
+    );
+  }
+  return profile;
+}
+
+/** Rung 2 preflight, before receipts, staging cleanup or a remote command. */
+export async function requireMuleWorkspace(
+  db: Db,
+  opts: SpawnAgentOptions,
+  name: string,
+  command: string,
+): Promise<HostProfile> {
+  if (!isValidHostName(name)) {
+    throw new HostProfileError("--mule takes a host profile name; mu chooses the worktree path");
+  }
+  if (opts.host !== undefined || opts.cwd !== undefined) {
+    throw new HostProfileError(
+      "--mule creates a remote worktree; do not combine it with --host or --cwd",
+    );
+  }
+  if (opts.orchestrator === true) {
+    throw new HostProfileError("--mule runs workers only; start the orchestrator locally");
+  }
+  const cli = opts.cli ?? "pi";
+  if (!speaksMuCtl(cli, command) || harnessOfCli(cli, command) !== "pi") {
+    throw new HostProfileError("--mule requires local pi; use --cli pi and a pi launch command");
+  }
+  const profile = muleWorkspaceProfile(resolveHost(db, name));
+  if (opts.root === undefined && profile.repo === null) {
+    throw new HostProfileError(`host ${name} has no default repo: pass --root <remote repo path>`);
+  }
+  const mux = await activeMux();
+  if (mux.name !== "tmux") {
+    throw new HostSpawnUnsupportedError(name, mux.name, "local pi with a mule workspace", true);
+  }
+  return profile;
 }
 
 /** What a host spawn runs as a carrier job's view (D15), or undefined: none. */
@@ -216,7 +261,7 @@ async function prestageRemote(
       cwd: null,
       spawner,
       host: profile.name,
-      hostTransport: profile.transport,
+      hostTransport: opts.mule !== undefined ? LOCAL_LOOP_TRANSPORT : profile.transport,
     });
     try {
       const made = await prepareRemote(db, call, profile, {
@@ -282,6 +327,9 @@ export async function admitRemoteSpawn(
   // A worktree's base, resolved here before any remote call (§3.3): the host gets the sha.
   const rev = opts.worktree ? await resolveStaticBase(profile.name, opts.from) : undefined;
   const view = resolveHost(db, profile.name);
+  // A profile swapped during base resolution must not turn a rung-2 prepare
+  // into a template exec or take a counted channel.
+  if (opts.mule !== undefined) muleWorkspaceProfile(view);
   if (view.link.caps.slots === "self") {
     const current = requireProfile(view);
     admit?.(current);

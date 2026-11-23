@@ -99,12 +99,15 @@ export function requestSha(req: {
   nextFree: boolean;
   text: string;
   host?: string | undefined;
+  mule?: string | undefined;
   root?: string | undefined;
+  from?: string | undefined;
 }): string {
   // A local request hashes exactly as before these fields existed (saved receipts stay valid).
   const parts: unknown[] = [req.name, req.nextFree, req.text];
   if (req.host !== undefined) parts.push(req.host);
   if (req.host !== undefined && req.root !== undefined) parts.push({ root: req.root });
+  if (req.mule !== undefined) parts.push({ mule: req.mule, root: req.root, from: req.from });
   return createHash("sha256").update(JSON.stringify(parts)).digest("hex");
 }
 

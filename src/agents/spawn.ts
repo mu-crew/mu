@@ -47,6 +47,7 @@ import {
   type HostLease,
   type HostProfile,
   HostProfileError,
+  LOCAL_LOOP_TRANSPORT,
   releaseHostChannel,
 } from "../hosts.js";
 import { awaitLeaseJob } from "../jobs/lease.js";
@@ -104,6 +105,7 @@ import {
   pluginKindOf,
   refuseRemoteSpawnMux,
   requireHostSpawn,
+  requireMuleWorkspace,
 } from "./spawn-remote.js";
 import { rollbackSpawn } from "./spawn-rollback.js";
 import { reclaimDeadStagings } from "./staging.js";
@@ -326,6 +328,8 @@ export interface SpawnAgentOptions {
    *  command (herdr). With `host`, `root` is a REMOTE repo (default the
    *  profile's `repo`); a `worktree` needs one of them. */
   host?: string;
+  /** Run local pi with a managed remote worktree on this static mule profile. Implies worktree. */
+  mule?: string;
   /** Run the control-socket handshake for pi agents (default true).
    *  `false` skips it and reports `ctl: "skipped"`. */
   ctl?: boolean;
@@ -467,24 +471,37 @@ export async function spawnAgent(db: Db, opts: SpawnAgentOptions): Promise<Spawn
  *  keeps that one advisory decision through name retries and plugin dispatch. */
 export async function prepareAgentSpawn(db: Db, opts: SpawnAgentOptions) {
   await assertBackendBinding(db, opts.workstream);
+  const muleProfile =
+    opts.mule === undefined
+      ? undefined
+      : await requireMuleWorkspace(
+          db,
+          opts,
+          opts.mule,
+          opts.command ?? resolveCliCommand(opts.cli ?? "pi"),
+        );
   if (opts.host !== undefined) await refuseRemoteSpawnMux(db, opts);
   return async (
     journal?: Pick<SpawnAgentOptions, "firstPrompt" | "firstTurn" | "onIdentity" | "piSessionDir">,
   ): Promise<SpawnedAgent> => {
     // A --worktree spawn that died before its pane (SIGKILL) frees its name here.
     await reclaimDeadStagings(db, opts.workstream);
-    return spawnPreparedAgent(db, { ...opts, ...journal });
+    return spawnPreparedAgent(db, { ...opts, ...journal }, muleProfile);
   };
 }
 
-async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<SpawnedAgent> {
+async function spawnPreparedAgent(
+  db: Db,
+  opts: SpawnAgentOptions,
+  muleProfile: HostProfile | undefined,
+): Promise<SpawnedAgent> {
   if (opts.nextFree === true) {
     // A parallel spawn can take the picked name between the pick and the
     // insert (the in-lock re-check throws before any side effect): pick again.
     for (let attempt = 1; ; attempt++) {
       const name = nextFreeAgentName(db, opts.name, opts.workstream);
       try {
-        return await spawnPreparedAgent(db, { ...opts, name, nextFree: false });
+        return await spawnPreparedAgent(db, { ...opts, name, nextFree: false }, muleProfile);
       } catch (err) {
         if (!(err instanceof AgentExistsError) || attempt >= NEXT_FREE_ATTEMPTS) throw err;
       }
@@ -611,6 +628,14 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
       // The resolved path, before any pane: another agent's managed tree or a recovery's is
       // refused here, and again with the row's insert (an owner may land meanwhile).
       if (site) refuseOwnedRemotePath(db, opts, profile.name, site.cwd, gateToken && opts.command);
+    } else if (muleProfile !== undefined) {
+      ({ staged } = await admitRemoteSpawn(
+        db,
+        { ...opts, worktree: true },
+        cli,
+        spawner,
+        muleProfile,
+      ));
     } else if (opts.worktree) {
       staged = await prestageWorktree(db, opts, cli, spawner);
     }
@@ -624,7 +649,9 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
   // Without a worktree the pane starts in --cwd, else the caller's cwd,
   // and the row records it. A remote agent's cwd is a REMOTE path: the
   // local pane never starts in it.
-  const paneCwd = staged?.path ?? site?.cwd ?? resolve(opts.cwd ?? process.cwd());
+  const localCwd = resolve(opts.cwd ?? process.cwd());
+  const paneCwd = muleProfile !== undefined ? localCwd : (staged?.path ?? site?.cwd ?? localCwd);
+  const workspaceHost = muleProfile?.name ?? profile?.name;
   // A lease pane runs a carrier: it holds no channel, and its handle fills the reservation.
   const carrier = reservation !== undefined ? { token: reservation.token } : undefined;
 
@@ -669,6 +696,8 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         MU_WORKSTREAM: opts.workstream,
         MU_AGENT_CLI: harness ?? cli,
         ...(opts.orchestrator === true ? { MU_ORCHESTRATOR: "1" } : {}),
+        // tmux may inherit a caller's markers. This pane is a worker on the DB's machine.
+        ...(muleProfile !== undefined ? { MU_REMOTE: "", MU_ORCHESTRATOR: "" } : {}),
         [CTL_SOCK_ENV]: ctlSocket,
         MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
         MU_STATE_DIR: resolve(defaultStateDir()),
@@ -735,7 +764,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
       ? command
       : launchCommand(command, harness, opts, {
           remote: profile !== undefined,
-          ...(staged !== undefined ? { worktree: staged.path } : {}),
+          ...(staged !== undefined && muleProfile === undefined ? { worktree: staged.path } : {}),
         });
 
   const hasWorktree = staged !== undefined;
@@ -846,6 +875,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         // gate stay as they were: murmur's walk places events only under a tmux server.
         const piHooks =
           !profile &&
+          muleProfile === undefined &&
           gateToken === undefined &&
           mux.anchorsPanes &&
           mux.pasteToPane !== undefined &&
@@ -857,6 +887,11 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         if (piHooks) paneEnv[PI_CHANNEL_ENV] = "hooks";
         else if (!profile && gateToken === undefined && speaksMuCtl(cli, command)) {
           paneEnv[PI_CHANNEL_ENV] = "";
+        }
+        let localLaunch = launch;
+        if (muleProfile !== undefined) {
+          if (staged === undefined) throw new Error("mule workspace was not staged");
+          localLaunch += ` --mule ${shellQuote(`${muleProfile.name}:${staged.path}`)}`;
         }
         // Built before the launch intent: a template error launches nothing.
         const paneCommand = profile
@@ -876,7 +911,7 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
                 ? { hooks: { cli: harness, key: hooksKey } }
                 : {}),
             })
-          : anchored(launch, mux.anchorsPanes);
+          : anchored(localLaunch, mux.anchorsPanes);
         // Resolves with the pane id at creation; `done` settles when the
         // backend considers the agent started.
         let born: string | undefined;
@@ -918,7 +953,6 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
         paneId = pid;
         paneBorn = born;
         if (carrier) recordCarrierPane(db, carrier.token, pid);
-        // The pane here holds only the ssh client: name where the worker runs.
         if (profile) await markPaneHost(mux, viewRef(mux, pid, born), profile.name);
         readiness = done;
         phase = "finalize";
@@ -932,8 +966,8 @@ async function spawnPreparedAgent(db: Db, opts: SpawnAgentOptions): Promise<Spaw
           command,
           commandSource,
           spawner,
-          host: profile?.name,
-          hostTransport: profile?.transport,
+          host: workspaceHost,
+          hostTransport: muleProfile !== undefined ? LOCAL_LOOP_TRANSPORT : profile?.transport,
           gateToken,
           reservation: carrier?.token,
           // A hook harness on a backend that anchors and pastes (tmux) is on `hooks`:

@@ -89,6 +89,7 @@ interface SpawnOpts {
   nextFree?: boolean;
   /** Run on this host profile (`mu host add`): the pane runs its shell template. */
   host?: string;
+  mule?: string;
   /** Send this text once the agent is up (`-` reads stdin). */
   send?: string;
   /** Bind the spawn to this task: claim it for the new agent and send the text as its brief (default text: the task's brief). */
@@ -103,7 +104,7 @@ interface SpawnOpts {
 // --from / --root only mean something with --worktree; refuse a stray one
 // before any side effect rather than silently ignoring it.
 function assertWorktreeFlags(opts: SpawnOpts): void {
-  if (opts.worktree) {
+  if (opts.worktree || opts.mule !== undefined) {
     if (opts.cwd !== undefined) {
       throw new UsageError(say("agent.spawn_cwd_worktree"));
     }
@@ -248,6 +249,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
     ...(opts.ctl === false ? { ctl: false } : {}),
     ...(opts.nextFree === true ? { nextFree: true } : {}),
     ...(opts.host !== undefined ? { host: opts.host } : {}),
+    ...(opts.mule !== undefined ? { mule: opts.mule } : {}),
     ...(opts.model !== undefined ? { model: opts.model } : {}),
     ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     ...(sendText !== undefined ? { firstPrompt: sendText } : {}),
@@ -457,6 +459,7 @@ async function cmdSpawnTask(
       ...(opts.ctl === false ? { ctl: false } : {}),
       ...(opts.nextFree === true ? { nextFree: true } : {}),
       ...(opts.host !== undefined ? { host: opts.host } : {}),
+      ...(opts.mule !== undefined ? { mule: opts.mule } : {}),
       ...(opts.model !== undefined ? { model: opts.model } : {}),
       ...(opts.signal !== undefined ? { signal: opts.signal } : {}),
     },
@@ -1194,6 +1197,10 @@ export function wireAgentCommands(program: Command): void {
       "--host <profile>",
       "run on this host profile (mu host add): the pane runs its --shell template, which starts the remote pi and forwards its control socket here; --cwd and --worktree name REMOTE paths (the worktree is made by its --exec, under ~/.local/state/mu-next/remote-worktrees/<ws>/<name>); --root names the remote repo; the pane dying is the agent dying. tmux and Rex; herdr refuses",
     )
+    .option(
+      "--mule <profile>",
+      "run local pi on tmux with a remote worktree on a static mule plugin profile; implies --worktree and conflicts with --host and --cwd",
+    )
     .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
     .option(
       "--model <id>",
@@ -1221,6 +1228,7 @@ export function wireAgentCommands(program: Command): void {
       const opts = (this as Command).opts() as {
         nextFree?: boolean;
         host?: string;
+        mule?: string;
         send?: string;
         task?: string;
         attempt?: string;

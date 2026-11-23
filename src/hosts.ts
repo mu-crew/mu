@@ -142,6 +142,9 @@ export class HostInUseError extends Error {
   }
 }
 
+/** agents.host_transport for a locally bound pane whose host names only its workspace. */
+export const LOCAL_LOOP_TRANSPORT = "local-loop";
+
 /** The multiplexer cannot run the remote worker's launch or view. One line, exit 2. */
 export class HostSpawnUnsupportedError extends Error {
   override readonly name = "HostSpawnUnsupportedError";
@@ -152,6 +155,7 @@ export class HostSpawnUnsupportedError extends Error {
       | "managed argv"
       | "command gate"
       | "job view command"
+      | "local pi with a mule workspace"
       | "detached job view command" = "managed argv",
     /** A lease or plugin view (D15): Rex is no fix either. */
     tmuxOnly = part !== "managed argv" && part !== "command gate",

@@ -12,6 +12,13 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Added
+
+- `mu agent spawn --mule <profile>` prepares a managed worktree on a static
+  mule plugin host and runs pi locally on tmux with local ctl and DB routing.
+  `mu agent collect` fetches from the remote tree as with `--host`.
+  Requires pi's mule workspace extension; no remote pi or DB is launched.
+
 ## [5.3.0] — 2026-11-23
 
 ### Added

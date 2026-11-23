@@ -347,7 +347,9 @@ async function run(
     nextFree: req.spawn.nextFree === true,
     text: req.text,
     host: req.spawn.host,
+    mule: req.spawn.mule,
     root: req.spawn.root,
+    from: req.spawn.from,
   });
   const saved = getReceipt(db, taskId, key);
   const auto = guard !== undefined;

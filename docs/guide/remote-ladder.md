@@ -14,12 +14,10 @@ not a ranking.
 | --- | --- | --- | --- |
 | 0 | a local worker | all local | shipped |
 | 1 | `mu host exec`: one command, no agent | shell on the host | shipped |
-| 2 | local loop, remote workspace and shell | split | planned, not shipped |
+| 2 | local pi loop, remote workspace and shell | split | unreleased; requires pi's mule extension |
 | 3 | a session pane (`--transport session`) | all on the host | shipped |
 | 4 | a lease (`--transport lease`) | all on the host | shipped, pi only |
 | 5 | a provider host | all on the host | core shipped |
-
-Rung 2 is approved but not built; nothing below depends on it.
 
 ## Capability matrix
 
@@ -27,6 +25,7 @@ Rung 2 is approved but not built; nothing below depends on it.
 | --- | --- | --- | --- | --- |
 | 0 | pi `ctl`, hook harnesses (claude, codex, cursor-agent, muse) `hooks`, others `mux` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a |
 | 1 | runs (no pane) | runs | runs | fine over a link that serialises itself |
+| 2 | pi `ctl` local | refused for now | refused | mule controls admission |
 | 3 | pi `ctl` forwarded, hook harnesses remote `hooks` | session template: pi `ctl`, others `mux`; ssh plugin pane: refused | refused | fine: each pane opens its own connection |
 | 4 | pi `ctl` via the carrier | refused for now | refused | fine: one master |
 | 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | refused for now | refused | the provider's |
@@ -47,7 +46,7 @@ Rung 2 is approved but not built; nothing below depends on it.
 | One build or test on a host, no agent | rung 1, [`mu host exec`](#rung-1-mu-host-exec) |
 | The host runs the loop and takes a new connection per pane | rung 3 |
 | Only one connection is practical (a prompted master) | rung 4 for a crew; rung 1 for single commands |
-| The host cannot run the loop (no credentials, no model API) | rung 2, once it ships |
+| The host cannot run the loop (no credentials, no model API) | [rung 2](#rung-2-local-pi-with-a-remote-worktree) |
 | You need a machine on demand | rung 5, a [provider host](remote.md#provider-hosts) |
 | herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex for a rung 3 session template only) |
 
@@ -78,6 +77,26 @@ job. It runs on every backend, herdr included.
 - The log keeps metadata only (host, outcome, duration, command length),
   never the command text or output.
 - It is for workspace commands, not bulk transfer: use `agent collect`.
+
+## Rung 2: local pi with a remote worktree
+
+Install the mule workspace extension in local pi. Use a static
+[`--plugin mule` profile](#use-the-mule-plugin-for-rung-4) whose name and
+mule configuration match the extension's. Then, from your checkout:
+
+```bash
+mu agent spawn worker-1 -w crew --mule box --root '~/repo'
+mu agent collect worker-1 -w crew
+```
+
+`--mule` implies a managed worktree and takes the profile name, not a
+path. mu resolves `--from` (default `HEAD`) in your checkout and prepares
+that commit through the host's link. The pane runs `pi --mule <host>:<tree>`;
+the workspace extension handles tools, while pi, ctl and the task DB stay
+local. The loop has the same DB access as a local worker. Collect uses the
+profile's fetch route; it needs no remote pi or forwarded socket.
+Only workers on tmux are supported. `--host` and `--cwd` conflict with
+`--mule`.
 
 ## One backend per workstream
 
