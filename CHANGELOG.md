@@ -200,6 +200,15 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- **`mu agent reattach` recovers a bound file-handle plugin job whose view
+  died while the job ran** (a SIGKILLed mule carrier). Reconcile keeps the
+  row while the job reads running or unknown. Reattach calls `job.attach`
+  with the job file and a rebuilt ctl socket pair, then opens a fresh tmux
+  view and binds the record to the server that created it. It refuses
+  before `job.attach` on Rex or herdr and when the job has ended. A plugin
+  hand-back from `job.attach` is human needed (exit 5). A plugin job with no
+  agent row is refused with "close it". A kept record with no reason no longer
+  prints `kept: null`; the refusal names the remote tree it keeps.
 - When a plugin hands back during agent close, the error names `job.stop`
   instead of claiming a stop template exited 3.
 - Local control sockets still bind when a long state directory leaves no room

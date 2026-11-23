@@ -277,6 +277,10 @@ today.
 
 - **Bound:** the view's death ends the job, or starts its stop. This holds
   for `pane`, `lease`, `gate` and mule (`mule/SPEC.md:102`).
+  A bound `handle: "file"` plugin kind (mule) is the exception: its view
+  is only the job's dispatcher, and a SIGKILLed one leaves the job
+  running. With its handle recorded, it is kept and reattached as a
+  detached view is (`outlivesView`, `src/jobs/kinds.ts`).
 - **Detached** (plugin kinds only): the job outlives its view.
   - reconcile asks liveness before it treats the row as a ghost.
   - `agent close` stops the job first and kills the view after, the

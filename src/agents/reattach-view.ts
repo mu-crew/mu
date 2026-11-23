@@ -1,6 +1,7 @@
-// mu — a detached plugin job's view (plugins spec D3): the job outlives its pane.
-// `agent reattach` on a row whose view is gone asks the kind for a new view
-// (`job.attach`) and compares-and-sets `agents.pane_id`, keeping the
+// mu — a plugin job's view when the job outlives its pane (plugins spec D3): a detached kind,
+// or a bound file kind whose view (its job's dispatcher, ladder placement §10) died while the
+// job runs, as a SIGKILLed mule carrier does. `agent reattach` on a row whose view is gone
+// asks the kind for a new view (`job.attach`) and compares-and-sets `agents.pane_id`, keeping the
 // incarnation and everything else the row holds; the spawn receipts naming the
 // old view follow it (`repoint`), refused while the spawn that made it runs. A no-row leftover of a plugin
 // kind is never reattached: `agent close` stops it.
@@ -15,6 +16,7 @@ import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { proveViewGone } from "../host-policy.js";
 import { HostSpawnUnsupportedError } from "../hosts.js";
+import { jobLiveness, outlivesView } from "../jobs/kinds.js";
 import {
   birthIdentity,
   birthServer,
@@ -39,19 +41,36 @@ import { jobRecordActor, viewLine } from "./spawn-plugin.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
 import { refuseCarrierViewMux } from "./spawn-remote.js";
 
-/** The agent's detached plugin job: its record and kind; undefined for any other agent. */
-export function detachedJob(
-  db: Db,
-  ws: string,
-  name: string,
-):
-  | { r: CarrierJob; kind: PluginJobKind; agentId: number; paneId: string; paneIdentity?: string }
-  | undefined {
+type ViewJob = {
+  r: CarrierJob;
+  kind: PluginJobKind;
+  agentId: number;
+  paneId: string;
+  paneIdentity?: string;
+};
+
+function pluginJobOf(db: Db, ws: string, name: string): ViewJob | undefined {
   const row = getAgent(db, name, ws);
   const r = row === undefined ? undefined : getCarrierJobByAgent(db, row.incarnation);
   const kind = r?.plugin == null ? undefined : pluginJobKind(db, r.plugin);
-  if (row === undefined || r === undefined || kind?.caps.view !== "detached") return undefined;
+  if (row === undefined || r === undefined || kind === undefined) return undefined;
   return { r, kind, agentId: row.incarnation, paneId: row.paneId, paneIdentity: row.paneIdentity };
+}
+
+/** The agent's detached plugin job: its record and kind; undefined for any other agent. */
+export function detachedJob(db: Db, ws: string, name: string): ViewJob | undefined {
+  const d = pluginJobOf(db, ws, name);
+  return d?.kind.caps.view === "detached" ? d : undefined;
+}
+
+/**
+ * The agent's plugin job whose view a reattach may replace (`outlivesView`): a detached kind,
+ * or a bound file kind with its handle recorded (its view is the job's dispatcher, ladder
+ * placement §10). Undefined for any other agent.
+ */
+export function viewJob(db: Db, ws: string, name: string): ViewJob | undefined {
+  const d = pluginJobOf(db, ws, name);
+  return d !== undefined && outlivesView(d.kind.caps, d.r) ? d : undefined;
 }
 
 async function detachedViewMux(host: string) {
@@ -63,7 +82,7 @@ async function detachedViewMux(host: string) {
   return mux;
 }
 
-const facts = (ws: string, d: NonNullable<ReturnType<typeof detachedJob>>) => ({
+const facts = (ws: string, d: ViewJob) => ({
   name: d.r.name,
   workstream: ws,
   host: d.r.host,
@@ -77,12 +96,26 @@ const facts = (ws: string, d: NonNullable<ReturnType<typeof detachedJob>>) => ({
 
 /** The preview: refused while the view is still there. */
 export async function previewViewReattach(db: Db, ws: string, name: string) {
-  const d = detachedJob(db, ws, name);
+  const d = viewJob(db, ws, name);
   if (d === undefined) return undefined;
   const mux = await detachedViewMux(d.r.host);
   if (await viewPresent(d.paneId, mux, d.paneIdentity)) refuseOpen(db, ws, name, d.paneId);
   await refuseUnprovenView(db, ws, name, d, mux);
+  await refuseEnded(db, ws, name, d);
   return { ...facts(ws, d), revision: agentRevision(db, ws, name) };
+}
+
+/** A job that reads ended or lost has no view to open: refused before `job.attach`. */
+async function refuseEnded(db: Db, ws: string, name: string, d: ViewJob): Promise<void> {
+  const ref = pluginJobRef(db, d.r.token);
+  if (ref === undefined) throw new AgentReplacedError(name, ws);
+  const l = await jobLiveness(db, ref);
+  if (l.state !== "ended" && l.state !== "lost") return;
+  throw new ReattachRefusedError(
+    name,
+    [{ code: "carrier", detail: `its job ${d.r.job ?? "?"} on ${d.r.host} is ${l.state}` }],
+    closeCommand(db, ws, name),
+  );
 }
 
 /**
@@ -93,7 +126,7 @@ async function refuseUnprovenView(
   db: Db,
   ws: string,
   name: string,
-  d: NonNullable<ReturnType<typeof detachedJob>>,
+  d: ViewJob,
   mux: MuxBackend,
 ): Promise<void> {
   if (d.kind.caps.handle !== "file") return;
@@ -124,7 +157,7 @@ export async function reattachView(
   name: string,
   opts: { ifRevision: number; signal?: AbortSignal },
 ) {
-  const prior = detachedJob(db, ws, name);
+  const prior = viewJob(db, ws, name);
   if (prior === undefined) throw new AgentReplacedError(name, ws);
   const mux = await detachedViewMux(prior.r.host);
   const session = `mu-${ws}`;
@@ -133,7 +166,7 @@ export async function reattachView(
   const onCtl = row !== undefined && expectsCtl(row, sock);
   const { d, pid, born } = await withAgentLock(db, ws, name, () =>
     withSpawnLock(session, async () => {
-      const d = detachedJob(db, ws, name);
+      const d = viewJob(db, ws, name);
       if (d === undefined) throw new AgentReplacedError(name, ws);
       assertRevision(opts.ifRevision, agentRevision(db, ws, name), {
         subject: `agent ${name}`,
@@ -151,6 +184,7 @@ export async function reattachView(
           closeCommand(db, ws, name),
         );
       }
+      await refuseEnded(db, ws, name, d);
       // The old view is proved gone: a socket file it left (a SIGKILLed forward) is stale, and
       // would refuse the new forward's bind.
       if (onCtl) rmSync(sock, { force: true });

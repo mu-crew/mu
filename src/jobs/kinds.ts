@@ -221,12 +221,27 @@ export function gateJobRef(
 }
 
 /**
- * Whether agent `agentId`'s job outlives its gone view (plugins spec D3): a detached plugin
- * kind whose job reads running or unknown. Reconcile keeps such a row; any other is a ghost.
+ * Whether a plugin job record's job may outlive its view, so a row whose view is gone is kept
+ * for `mu agent reattach` (plugins spec D3): a detached kind, or a bound `handle: "file"` kind
+ * whose handle is recorded. A file kind's view is only its job's dispatcher (ladder placement
+ * §10): a SIGKILLed carrier leaves the job running, and `job.attach` dispatches a new view.
+ * With no handle recorded yet, nothing can attach: the row is reaped and `agent close` finds it.
  */
-export async function detachedJobLives(db: Db, agentId: number): Promise<boolean> {
+export function outlivesView(
+  caps: { view: "bound" | "detached"; handle: string },
+  r: { job: string | null },
+): boolean {
+  return caps.view === "detached" || (caps.handle === "file" && r.job !== null);
+}
+
+/**
+ * Whether agent `agentId`'s job outlives its gone view (`outlivesView`) and reads running or
+ * unknown. Reconcile keeps such a row; any other is a ghost.
+ */
+export async function jobOutlivesView(db: Db, agentId: number): Promise<boolean> {
   const r = getCarrierJobByAgent(db, agentId);
-  if (r?.plugin == null || pluginJobKind(db, r.plugin)?.caps.view !== "detached") return false;
+  const kind = r?.plugin == null ? undefined : pluginJobKind(db, r.plugin);
+  if (r === undefined || kind === undefined || !outlivesView(kind.caps, r)) return false;
   const ref = pluginJobRef(db, r.token);
   if (ref === undefined) return false;
   const l = await jobLiveness(db, ref);

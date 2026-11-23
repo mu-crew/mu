@@ -116,6 +116,33 @@ describe("a plugin job's view on Rex", () => {
     expect(h.panes.size).toBe(0);
     expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
   });
+
+  // bound_plugin_reattach_kept_null: a bound file kind's dead carrier, its job running.
+  it("a bound file view's reattach refuses on Rex, preview and apply, before job.attach", async () => {
+    await h.setup({ handle: "file", start: { lookup: true, fenceKey: false } });
+    const jobFile = leaseJobFile(h.db, "ws", "w1");
+    h.stubMux({
+      spawnAgent: async (o) => {
+        h.panes.set("%1", { command: o.command });
+        writeFileSync(jobFile, "file-job-1\n");
+        o.onPaneCreated?.("%1", FAKE_SERVER_IDENTITY);
+        return "%1";
+      },
+    });
+    const a = await h.spawn();
+    h.panes.delete(a.paneId);
+    const p = await previewReattach(h.db, "ws", "w1");
+    asRex();
+    await expect(previewReattach(h.db, "ws", "w1")).rejects.toBeInstanceOf(
+      CarrierViewUnsupportedError,
+    );
+    await expect(
+      reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision }),
+    ).rejects.toBeInstanceOf(CarrierViewUnsupportedError);
+    expect(h.calls("job.attach")).toEqual([]);
+    expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
+    expect(getCarrierJobByName(h.db, "ws", "w1")).toMatchObject({ job: "file-job-1" });
+  });
 });
 
 describe("a first turn's recovery on Rex (rex_first_turn_recovery_bypasses_refusal)", () => {

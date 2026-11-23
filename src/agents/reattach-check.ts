@@ -112,11 +112,16 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   // The bind stamped the generation its row lived in; NULL predates the column: unknown.
   if (r.workstreamId === null) return no("workstream", `its binding's workstream is unknown`);
   if (r.workstreamId !== w.id) return no("workstream", `${ws} was created again since`);
+  // plugins spec D3: nothing on a plugin job record says how its agent was launched.
+  if (r.plugin !== null) {
+    const kept = r.job === null ? "" : ` (job ${r.job} on ${r.host} may still run)`;
+    return no("reservation", `its plugin job has no agent row to reattach${kept}: close it`);
+  }
   const { job, agentId, paneId } = r;
   if (job === null || r.launch !== "intent" || agentId === null || paneId === null) {
     return no("reservation", "its reservation holds no job handle bound to a spawned agent");
   }
-  if (r.reason !== null || r.treePath !== null) return no("reservation", `kept: ${r.reason}`);
+  if (r.reason !== null || r.treePath !== null) return no("reservation", keptDetail(r));
   const mux = await activeMux();
   if (!mux.runsShellCommand) {
     return no("carrier", `${mux.name} cannot run the lease attach command in a pane; use tmux`);
@@ -148,6 +153,13 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   }
   const staleMarker = marker === "stale";
   return { r: { ...r, job, agentId, paneId }, profile, rec, wsId: w.id, jobFile, staleMarker };
+}
+
+/** Why a kept record refuses: its reason, else the tree it keeps (never a bare null). */
+export function keptDetail(r: Pick<CarrierJob, "reason" | "treePath">): string {
+  if (r.reason !== null && r.reason !== "") return `kept: ${r.reason}`;
+  if (r.treePath !== null) return `its record keeps the remote tree ${r.treePath}: close it`;
+  return "its record is kept";
 }
 
 /** Why (workstream, name) cannot be reattached now; empty when it can. Read only. */

@@ -539,6 +539,9 @@ describe("admission follows the link's slots (§4.2, §I)", () => {
       expect(startSpec()).toHaveProperty("jobFile", file);
       expect(getCarrierJobByName(h.db, "ws", "w1")).toMatchObject({ job: "file-job-1" });
       expect(getCarrierJobByName(h.db, "ws", "w1")?.treePath).toBe(a.cwd);
+      // As if mu died before recording the handle: with none, the reaper takes the row (a
+      // recorded one keeps it for a reattach), and the close reads the job file.
+      h.db.prepare("UPDATE carrier_jobs SET job = NULL").run();
       h.panes.delete(a.paneId);
       await reconcile(h.db, { workstream: "ws" });
       expect(getAgent(h.db, "w1", "ws")).toBeUndefined();

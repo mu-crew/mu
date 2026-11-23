@@ -13,7 +13,7 @@
 
 import * as agentSdk from "./agents.js";
 import type { Db } from "./db.js";
-import { detachedJobLives } from "./jobs/kinds.js";
+import { jobOutlivesView } from "./jobs/kinds.js";
 import { viewIdentity } from "./jobs/view.js";
 import { foreignBackend } from "./mux/binding.js";
 import { activeMux, type MuxPane } from "./mux.js";
@@ -145,8 +145,8 @@ export async function reconcile(db: Db, opts: ReconcileOptions): Promise<Reconci
       foreign.push(agent);
     } else if (paneById.has(agent.paneId) && owns(agent)) {
       survivors.push(agent);
-    } else if (await detachedJobLives(db, agent.incarnation)) {
-      // Its view is gone, its job is not (plugins spec D3): `mu agent reattach` opens a new view.
+    } else if (await jobOutlivesView(db, agent.incarnation)) {
+      // Its view is gone, its job is not (plugins spec D3, a file kind's dispatcher): `mu agent reattach` opens a new view.
       survivors.push(agent);
     } else {
       if (mode !== "full") {

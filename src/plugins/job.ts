@@ -246,12 +246,16 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
     async attach(_db, job, extra = {}) {
       // Only a file kind gets the new fields: an older plugin of another kind may reject them.
       const more = declared.handle === "file" ? extra : {};
-      return ask(
-        "job.attach",
-        { target: jobTarget(job), ...more },
-        job.key ?? "",
-        job.identity ?? null,
-      );
+      try {
+        return await ask(
+          "job.attach",
+          { target: jobTarget(job), ...more },
+          job.key ?? "",
+          job.identity ?? null,
+        );
+      } catch (e) {
+        return handBack(job.host?.name ?? "", "exec", e);
+      }
     },
 
     async resolve(token, call) {

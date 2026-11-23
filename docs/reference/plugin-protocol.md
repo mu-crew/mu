@@ -313,10 +313,14 @@ proven `none` fails the attempt and rolls it back, and the check then asks
 `channel.receipt` as for any msgId.
 
 A `bound` view's death is meant to end the job: `agent close` kills the view,
-then stops the job. That is the kind's contract, not proof: a killed carrier
-can leave the job running, so a view's death or a failed spawn is never
-permission to discard a live job or its record; close stops the job by proof and
-keeps the record otherwise. A `detached` job outlives its view: reconcile keeps a row
+then stops the job. That is the kind's contract, not proof: a bound
+`handle: "file"` kind's view is only its job's dispatcher, so a SIGKILLed
+carrier can leave the job running. A view's death or a failed spawn is never
+permission to discard a live job or its record; close stops the job by proof
+and keeps the record otherwise. While the job file's handle is recorded and
+the job reads `running` or `unknown`, the row is kept and reattached the way a
+detached one is, with the job file and the rebuilt socket pair. A `detached`
+job outlives its view: reconcile keeps a row
 whose view is gone while `job.status` reads `running` or `unknown`, `agent
 close` stops the job before it kills the view, and `agent reattach` opens a
 new view from `job.attach` on the same row (refused before the call on a

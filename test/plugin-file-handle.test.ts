@@ -487,3 +487,73 @@ describe("job.attach", () => {
     expect(Object.keys(attach?.params ?? {}).sort()).toEqual(["deadline", "target"]);
   });
 });
+
+// bound_plugin_reattach_kept_null (lease_linux_lifecycle P5): a bound file kind's view is its
+// job's dispatcher (mule's carrier). SIGKILLed, it leaves the job running: reconcile keeps the
+// row and `agent reattach` opens a new view through `job.attach`, the record bound to it.
+describe("a bound file kind whose view died while its job runs", () => {
+  async function boundWithGoneView() {
+    await h.setup(FILE);
+    views({ handle: "file-job-1" });
+    const a = await h.spawn();
+    h.panes.delete(a.paneId);
+    return a;
+  }
+
+  it("reconcile keeps the row; reattach calls job.attach and binds the record to the new view", async () => {
+    const a = await boundWithGoneView();
+    await reconcile(h.db, { workstream: "ws" });
+    expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
+    const p = await previewReattach(h.db, "ws", "w1");
+    expect(p).toMatchObject({ previous_pane_id: a.paneId, job: "file-job-1" });
+    const r = await reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision });
+    const [attach] = h.calls("job.attach");
+    expect(attach?.params.jobFile).toBe(jobFile());
+    expect(handleOf(attach)).toBe("file-job-1");
+    expect(r.pane_id).not.toBe(a.paneId);
+    expect(getAgent(h.db, "w1", "ws")).toMatchObject({
+      paneId: r.pane_id,
+      incarnation: a.incarnation,
+    });
+    expect(record()).toMatchObject({
+      wireState: "bound",
+      paneId: r.pane_id,
+      viewServer: `tmux:${FAKE_SERVER_IDENTITY}`,
+    });
+    expect(h.f.backend().stops).toBe(0);
+  });
+
+  it("a live view refuses: attach to it", async () => {
+    await h.setup(FILE);
+    views({ handle: "file-job-1" });
+    await h.spawn();
+    await expect(previewReattach(h.db, "ws", "w1")).rejects.toThrow(/is still open: attach to it/);
+    expect(h.calls("job.attach")).toEqual([]);
+  });
+
+  it("an ended job refuses before job.attach; reconcile then reaps, and the no-row refusal names close", async () => {
+    await boundWithGoneView();
+    h.ended();
+    const err = await previewReattach(h.db, "ws", "w1").catch((e: unknown) => e);
+    expect((err as Error).message).toMatch(/its job file-job-1 on box is ended/);
+    await reconcile(h.db, { workstream: "ws" });
+    expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
+    const left = await previewReattach(h.db, "ws", "w1").catch((e: unknown) => e);
+    expect((left as Error).message).toMatch(/its plugin job has no agent row to reattach/);
+    expect((left as Error).message).not.toMatch(/null/);
+    expect(h.calls("job.attach")).toEqual([]);
+  });
+
+  it("a hand-back from job.attach is human needed; the row keeps its pane", async () => {
+    const a = await boundWithGoneView();
+    h.f.set({ faults: { "job.attach": ["human"] } });
+    const p = await previewReattach(h.db, "ws", "w1");
+    const err = await reattachAgent(h.db, "ws", "w1", { ifRevision: p.revision }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({ name: "HostHandbackError", field: "exec" });
+    expect(classifyError(err)).toEqual({ label: "human needed", exitCode: 5 });
+    expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
+    expect(h.f.backend().stops).toBe(0);
+  });
+});

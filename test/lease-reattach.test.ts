@@ -461,6 +461,29 @@ describe("preflight refusals: nothing changed, the close preview named", () => {
       /kept: tree kept/,
       "reservation",
     ));
+  // bound_plugin_reattach_kept_null: a record holding its tree with no reason printed "kept: null".
+  it("a tree with no reason names the tree, never null", async () => {
+    await refuses(
+      () => {
+        reaped();
+        db.prepare("UPDATE carrier_jobs SET tree_path = '/r/tree', reason = NULL").run();
+      },
+      /its record keeps the remote tree \/r\/tree: close it/,
+      "reservation",
+    );
+    const e = await failure(previewReattach(db, "auth", "worker-1"));
+    expect((e as Error).message).not.toMatch(/null/);
+  });
+  it("a plugin job record with no row is closed, never reattached", async () => {
+    await refuses(
+      () => {
+        reaped();
+        db.prepare("UPDATE carrier_jobs SET plugin = 'mule', tree_path = '/r/tree'").run();
+      },
+      /its plugin job has no agent row to reattach \(job \S+ on dev may still run\): close it/,
+      "reservation",
+    );
+  });
   it("unbound reservation", () =>
     refuses(
       () => {
