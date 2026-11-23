@@ -4,7 +4,7 @@
 // local spawn on Rex are not refused. The guard is `refuseCarrierViewMux`, lifted per backend
 // by its `carrierViews` flag.
 
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -22,12 +22,14 @@ import { classifyError } from "../src/cli/handle.js";
 import { type Db, openDb } from "../src/db.js";
 import { addHost, CarrierViewUnsupportedError } from "../src/hosts.js";
 import { rexBackend } from "../src/mux.js";
+import { pluginJobKind } from "../src/plugins/job.js";
 import { RemotePrepareError } from "../src/remote-agent.js";
 import { addTask } from "../src/tasks/edit.js";
 import { taskIdFor } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
+import { registerFixturePlugin } from "./_plugin-handshake.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
 
@@ -157,7 +159,8 @@ describe("a first turn's recovery on Rex (rex_first_turn_recovery_bypasses_refus
 });
 
 describe("a release an earlier build proved on Rex (rex_legacy_release_trusts_unsafe_proof)", () => {
-  it("close from any mux keeps the record, job file, reservation and row; never stops", async () => {
+  /** A file kind's job whose record an earlier build committed to `released` on a Rex proof. */
+  async function seedLegacyRexRelease(): Promise<string> {
     const FILE = { handle: "file", start: { lookup: true, fenceKey: false } };
     await h.setup(FILE);
     const jobFile = leaseJobFile(h.db, "ws", "w1");
@@ -185,6 +188,11 @@ describe("a release an earlier build proved on Rex (rex_legacy_release_trusts_un
     }
     expect(getCarrierJobByName(h.db, "ws", "w1")).toMatchObject({ wireState: "released" });
     h.f.set({ faults: {} });
+    return jobFile;
+  }
+
+  /** Close refuses from tmux and Rex alike; nothing stopped or dropped; `--abandon-job` drops it. */
+  async function expectKeptUntilAbandon(jobFile: string): Promise<void> {
     const stops = h.f.backend().stops;
     // Today's build, on tmux (the active mux need not be Rex) and on Rex.
     for (const mux of [() => h.stubMux(), asRex]) {
@@ -200,6 +208,24 @@ describe("a release an earlier build proved on Rex (rex_legacy_release_trusts_un
     // The operator's way out still drops it.
     await closeAgent(h.db, "w1", { workstream: "ws", abandonJob: true });
     expect(getCarrierJobByName(h.db, "ws", "w1")).toBeUndefined();
+  }
+
+  it("close from any mux keeps the record, job file, reservation and row; never stops", async () => {
+    await expectKeptUntilAbandon(await seedLegacyRexRelease());
+  });
+
+  // rex_legacy_release_skips_proof_after_plugin_refresh: the record's Rex stamp decides, not the
+  // plugin's current registration. A refresh to `handle: "reply"` (same kind, argv, instance)
+  // must not skip the proof and stop the dispatcher's job.
+  it("a plugin refreshed from handle file to reply still refuses the close", async () => {
+    const jobFile = await seedLegacyRexRelease();
+    const cfg = JSON.parse(readFileSync(h.f.configPath, "utf8")) as {
+      seams: { job: Record<string, unknown> };
+    };
+    h.f.set({ seams: { ...cfg.seams, job: { ...cfg.seams.job, handle: "reply" } } });
+    await registerFixturePlugin(h.db, h.f);
+    expect(pluginJobKind(h.db, "fake")?.caps.handle).toBe("reply");
+    await expectKeptUntilAbandon(jobFile);
   });
 });
 

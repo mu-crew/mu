@@ -224,7 +224,10 @@ export async function closePluginJob(
       `plugin ${reservation.plugin} has no job seam to stop it with`,
     );
   }
-  const file = kind.caps.handle === "file";
+  // D15: the record's stamp decides, before the kind's current `handle`: a refresh to `reply`
+  // never skips the proof of a view released or bound on a backend that cannot prove it gone.
+  const stamped = unprovableOn(reservation.viewServer) !== undefined;
+  const file = kind.caps.handle === "file" || stamped;
   if (file) {
     // Proved on the record as it is now: the snapshot predates the awaited observation. The
     // proof's revision is what the release below compares (a rollback runs unlocked).

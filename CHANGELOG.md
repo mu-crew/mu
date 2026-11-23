@@ -140,7 +140,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   and a task replay refuse the same way before they resolve or attach a
   pending view. A Rex view an earlier build recorded is never proven gone,
   bound or already released, from any multiplexer: close keeps its record,
-  reservation and job file (`--abandon-job` is the way out). One
+  reservation and job file (`--abandon-job` is the way out), even after
+  its plugin is refreshed to `handle: "reply"`. One
   backend flag, `carrierViews`, holds the refusal.
 - The dashboard title (`process.title` and OSC 2) now reads `mu [<workstream>]` for the shown workstream and `mu` otherwise, and follows `[`/`]` switches. The name is stripped of escapes and control characters and capped at 40 characters.
 
