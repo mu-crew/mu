@@ -193,8 +193,15 @@ function pinnedFallback(db: Db, workstream: string, task: string): boolean {
   if (briefN < 1) return false;
   const note = getTaskNote(db, task, workstream, briefN);
   if (note.author === GENERATED_BRIEF_AUTHOR) return true;
-  const title = getTask(db, task, workstream)?.title ?? task;
-  return note.content === say("agent.spawn_task_default", task, workstream, title);
+  // The title is whatever it was at pin time (a later `task update --title` leaves the note).
+  const probe = say("agent.spawn_task_default", task, workstream, "\u0000");
+  const [head = "", tail = ""] = probe.split("\u0000");
+  return (
+    note.content.startsWith(head) &&
+    note.content.endsWith(tail) &&
+    note.content.length >= head.length + tail.length &&
+    !note.content.slice(head.length, note.content.length - tail.length).includes("\n")
+  );
 }
 
 async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {

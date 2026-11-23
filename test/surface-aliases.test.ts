@@ -142,6 +142,34 @@ describe("t_surface round 1", () => {
     expect(hook.texts).toEqual([]);
   });
 
+  it("spawn --host --task refuses a legacy generated brief whose title was edited after pinning", async () => {
+    addNote(db, "t2", "Task t2 (workstream auth): Old title. Read: mu task notes t2 -w auth", {
+      workstream: "auth",
+      kind: "brief",
+    });
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-3", "-w", "auth", "--host", "box1", "--task", "t2", "--json"],
+      path,
+    );
+    expect(r.exitCode).toBe(2);
+    expect(JSON.stringify(r.doc)).toMatch(/--send/);
+    expect(hook.texts).toEqual([]);
+  });
+
+  it("spawn --host --task delivers an authored brief that mentions the pointer mid-text", async () => {
+    addNote(
+      db,
+      "t2",
+      "Fix X.\nTask t2 (workstream auth): t2. Read: mu task notes t2 -w auth\nthen Y.",
+      { workstream: "auth", kind: "brief" },
+    );
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-3", "-w", "auth", "--host", "box1", "--task", "t2", "--json"],
+      path,
+    );
+    expect(r.exitCode).toBe(3);
+  });
+
   it("spawn --host --task still delivers an authored brief that starts like the generated line", async () => {
     addNote(
       db,
