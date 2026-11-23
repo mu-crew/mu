@@ -481,7 +481,8 @@ MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh
   exit trap stops every process it started, on failure too. `SMOKE_KEEP=1`
   keeps the dir for a post-mortem.
 
-<!-- TODO: profile migration (fence on `host add --plugin`) and the mule lease
-plugin; see [the ladder](remote-ladder.md#todo-profile-migration). -->
+To use the mule plugin instead of this template, or to move a template host
+to it, see [the ladder](remote-ladder.md#use-the-mule-plugin-for-rung-4) and
+[migration](remote-ladder.md#migrate-a-mule-lease-template-to-the-plugin).
 
 Spec: [lease transport](../specs/2026-10-28-lease-transport.md).

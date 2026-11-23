@@ -113,19 +113,105 @@ the master back, take a fresh preview with `mu agent close <name> -w <ws>`
 and repeat with `--if <rev>` (the revision may have changed after
 the interrupted close or a reap); that stops the job by its handle.
 
-## TODO: profile migration
+## Use the mule plugin for rung 4
 
-Not written yet. Keep a profile's current behaviour until it lands.
+`mu-plugin-mule` ships with mule. It gives a host mule's link (`exec` through
+mule's private SSH master) and the `lease` job kind, a persistent worker
+whose pane is a bound tmux view with a file handle. The plugin has no
+`fetch`: the profile keeps your `--fetch` template.
 
-## TODO: the mule lease plugin
+```bash
+mule init                  # seeds mule's config, prints each master command,
+                           # registers the plugin if mu is on PATH
+mu plugin list             # mule is listed
+mu host add box --plugin mule --fetch '<your fetch command>' --repo ~/repo
+mu host check box
+```
 
-<!-- TODO: fill in once the mule link and lease plugin merge:
-the mule link (exec, `host check` steps for the master and host tmux, size
-caps), the lease job kind and its file handle, `mule init` registration.
-Until then a mule host is a lease template: `host init --mule --template`. -->
+- Open the master `mule init` prints for the host first; it opens none. The
+  mu host name is the mule host name. `mule init` creates no mu profile.
+- A plugin profile takes no `--shell`, `--exec`, `--stop`, `--attach` or
+  `--transport`; mule serves them. `--repo` and `--max-sessions` are as in
+  [remote.md](remote.md).
+- mu requires a plugin you own and others cannot write. If the install is
+  root-owned, follow the copy commands `mule init` prints. Rerun `mule init`
+  after upgrading mule.
+- **tmux only, for now.** On Rex or herdr a spawn refuses before any effect
+  and says lease and plugin job views require tmux for now. Use
+  `MU_MUX=tmux`; this is expected to lift once a Rex reply names its server instance.
 
-Until the plugin merges, use the lease template in
-[Session-capped hosts](remote.md#session-capped-hosts).
+## Migrate a mule lease template to the plugin
+
+Only a profile whose stop template calls `mule rm` directly (a plain path to
+the binary is fine; a shell wrapper is not recognised) counts as a mule lease
+template. **SSH session templates stay as they are**: nothing here applies to
+them, and the `ssh` example plugin is not a migration target.
+
+There is no live conversion. A job keeps the stop template it was reserved
+under, and a reaped worktree's link is pinned to the profile that made it, so
+the old profile stays until the last job and worktree is closed.
+
+`mu doctor` finds these profiles. For each it prints the host and either `no
+agent, job or recovery records block switching` or `switch blocked by:` with
+one line per record, then the steps below. Records are what block, not link
+health: doctor probes nothing. `mu doctor --json` carries the same as
+`muleProfileMigrations`.
+
+```text
+dev: mule lease template; switch blocked by:
+    agent <ws>/<name>
+    reaped job record <ws>/<name> (id 3)
+```
+
+A blocker line is one of:
+
+- `agent <ws>/<name>`: a live or reaped agent row on the host.
+- `active job record <ws>/<name> (id N)`: a job whose agent still exists.
+- `reaped job record <ws>/<name> (id N)`: a job whose agent was reaped; its job may
+  still run.
+- `unbound job record ...`: a reservation no agent took (a spawn that failed
+  after the carrier may have launched).
+- `recovery record <ws>/<name> (agent id N)`: a remote worktree left by a
+  removed agent.
+
+Procedure:
+
+1. Pause new spawns on the host in every workstream. Save the original `mu
+   host add` line (`mu host show <h>`).
+2. Run `mule init`, and open the master. Check that mule has that host under
+   the same name.
+3. Let active work finish. For each worktree, `mu agent collect <name> -w
+   <ws>`, then `mu agent close <name> -w <ws>` (preview) and again with `--if
+   <rev>`. Close reaped agents and job records the same way: close stops the
+   job through its original stop template. For a recovery record add
+   `--recovery <agent id>` when several share a name. Collect never stops a
+   job. A host gone for good needs `--abandon-job`
+   ([remote.md](remote.md#session-capped-hosts)).
+4. Run `mu doctor` until the host reports no blockers.
+5. `mu host rm <h>`, then `mu host add <h> --plugin mule --fetch '<old fetch>'`
+   with the original `--repo` and `--max-sessions`. `host add --plugin`
+   refuses while any agent row, job record or recovery record names the host,
+   listing them, so a missed record stops you here.
+6. `mu host check <h>`, then resume spawns.
+
+What blocks, and why:
+
+- **Active jobs** and **reaped reservations** keep their original `stop`;
+  `host rm` would only check held channels, not these, so do not remove the
+  profile early.
+- **Recovery-only rows** (no agent, no job) still pin the old link. They block
+  the switch until closed.
+- A lease spawn that races the switch re-reads the transport when it reserves:
+  either the plugin add sees its reservation and refuses, or the spawn sees the
+  switch and reserves nothing ("its transport changed while the spawn was
+  admitted"); no job is launched.
+
+Rollback: if you drained, the plugin check fails and no new work has started,
+`mu host rm <h>` the plugin profile and re-add the saved line byte-for-byte. If
+`host rm` was premature, re-add it at once: that restores the stop for jobs and
+recovery records already pinned. It cannot rebuild the pin of a worktree reaped
+while the profile was absent; that record still blocks the switch. If draining
+fails, keep the original profile.
 
 See also: [Run a worker on another machine](remote.md), [Use a
 plugin](plugins.md), [the placement spec](../specs/2026-11-20-ladder-placement.md).

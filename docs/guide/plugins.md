@@ -104,13 +104,11 @@ limits (the file header has the rest):
 
 ## Register the mule plugin
 
-<!-- TODO: planned: `mule init` registers the plugin; manual
-`mu plugin add mule -- /abs/mu-plugin-mule` stays documented. Document the
-mule link, the lease job kind and its file handle once merged.
-See the ladder's TODO: remote-ladder.md#todo-the-mule-lease-plugin. -->
-
-Until it ships, a capped host uses the lease template
-([Session-capped hosts](remote.md#session-capped-hosts)).
+`mule init` registers the bundled `mu-plugin-mule` (manually: `mu plugin add
+mule -- /abs/mu-plugin-mule`). Then `mu host add <h> --plugin mule --fetch
+'...'`. The plugin serves the link and the `lease` job kind, tmux only.
+Setup, migration from a lease template, and refusals:
+[the ladder](remote-ladder.md#use-the-mule-plugin-for-rung-4).
 
 ## Write a plugin
 
