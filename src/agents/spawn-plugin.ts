@@ -94,8 +94,10 @@ import {
 } from "./spawn-ready.js";
 import {
   admitRemoteSpawn,
+  carrierViewOf,
   isCommandGate,
   JobSpecUnsupportedError,
+  refuseCarrierViewMux,
   refuseUnhonoured,
   requireHostSpawn,
 } from "./spawn-remote.js";
@@ -129,6 +131,7 @@ async function refuse(
 ): Promise<BuiltInChannel | undefined> {
   if (host.record === undefined) await requireHostSpawn(db, opts);
   else refuseUnhonoured(host, kind, opts);
+  refuseCarrierViewMux(await activeMux(), host.name, carrierViewOf(host)); // D15
   const { caps } = kind;
   if (caps.firstTurn === "at-start" && caps.channel === undefined) {
     // Its first prompt goes in job.start, so only its own channel can tell its turns (§A).

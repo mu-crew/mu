@@ -251,7 +251,8 @@ host or a `--plugin` profile whose plugin declares `job`) runs in this
 order, each step before the next one's effect:
 
 1. Refusals, before anything is written: a field the kind does not
-   `honours`, a backend that cannot run a command line (herdr), an
+   `honours`, a backend that cannot run a command line (herdr) or cannot
+   bind a reply to its server instance (Rex, for now: views are tmux-only), an
    `at-start` kind without a first prompt (`--send` or `--task`) or without
    its own `channel`, and, on a kind without `channel`, a `--command` that
    runs no harness (a gate needs a session profile). A `--plugin` profile
@@ -312,7 +313,7 @@ stops the job. A `detached` job outlives its view: reconcile keeps a row
 whose view is gone while `job.status` reads `running` or `unknown`, `agent
 close` stops the job before it kills the view, and `agent reattach` opens a
 new view from `job.attach` on the same row (refused before the call on a
-backend that cannot run a command line). A view the backend fails to start,
+backend that cannot run a command line, or on Rex). A view the backend fails to start,
 even after it reported the pane, fails the spawn (the job is stopped) or the
 reattach (the row keeps its pane).
 

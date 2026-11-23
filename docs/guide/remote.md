@@ -5,6 +5,8 @@ forwarded control socket. On tmux, session workers running claude, codex,
 cursor-agent or muse use remote [`hooks`](#a-claude-codex-cursor-agent-or-muse-worker).
 On Rex they use `mux`: no hook receipt or hook-based `CLOSE:` processing.
 For plugin jobs, check `mu agent list`: a plugin can declare its own channel.
+Lease and plugin job views run on tmux only for now; on Rex they refuse
+before any effect ([ladder](remote-ladder.md#refusals)).
 mu never connects and
 knows no ssh flags: a host profile holds your own command templates, and
 `mu agent spawn --host` fills them. The full recipe, with collecting and

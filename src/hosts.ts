@@ -153,8 +153,26 @@ export class HostSpawnUnsupportedError extends Error {
       | "command gate"
       | "job view command"
       | "detached job view command" = "managed argv",
+    /** A lease or plugin view (D15): Rex is no fix either. */
+    tmuxOnly = part !== "managed argv" && part !== "command gate",
   ) {
-    super(say("host.spawn_unsupported", host, mux, part));
+    super(say("host.spawn_unsupported", host, mux, part, tmuxOnly));
+  }
+}
+
+/**
+ * D15: a lease carrier or a plugin job's view on a backend that cannot bind a reply to its
+ * server instance (Rex today). Refused before any effect, one line, exit 2. Lifted per backend
+ * by its `carrierViews` flag (src/mux/types.ts).
+ */
+export class CarrierViewUnsupportedError extends Error {
+  override readonly name = "CarrierViewUnsupportedError";
+  constructor(
+    public readonly host: string,
+    public readonly mux: string,
+    public readonly what: "a lease spawn" | "a plugin job's view" | "a reattach",
+  ) {
+    super(say("host.carrier_view_unsupported", host, mux, what));
   }
 }
 

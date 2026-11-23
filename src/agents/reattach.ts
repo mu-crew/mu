@@ -74,7 +74,7 @@ export async function reattachAgent(
   if (detachedJob(db, ws, name) !== undefined) return reattachView(db, ws, name, opts);
   const mux = await activeMux();
   // Reuse the preview's typed refusal before taking either file lock.
-  if (!mux.runsShellCommand) await plan(db, ws, name);
+  if (!mux.runsShellCommand || !mux.carrierViews) await plan(db, ws, name);
   const sock = ctlSocketPath(ws, name, dirname(db.name));
   const session = `mu-${ws}`;
   const { p, pid, row, born } = await withAgentLock(db, ws, name, () =>

@@ -37,6 +37,7 @@ import { repointReceipts } from "./receipts.js";
 import { withSpawnLock } from "./spawn-lock.js";
 import { jobRecordActor, viewLine } from "./spawn-plugin.js";
 import { awaitCtlHandshake } from "./spawn-ready.js";
+import { refuseCarrierViewMux } from "./spawn-remote.js";
 
 /** The agent's detached plugin job: its record and kind; undefined for any other agent. */
 export function detachedJob(
@@ -58,6 +59,7 @@ async function detachedViewMux(host: string) {
   if (!mux.runsShellCommand) {
     throw new HostSpawnUnsupportedError(host, mux.name, "detached job view command");
   }
+  refuseCarrierViewMux(mux, host, "a reattach");
   return mux;
 }
 

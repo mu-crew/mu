@@ -321,6 +321,13 @@ export interface MuxBackend {
    *  tmux server the pane belongs to, so only tmux panes have a reader. Implies
    *  `runsShellCommand`. A capability flag, never a backend-name check. */
   readonly anchorsPanes: boolean;
+  /** True when a lease carrier or a plugin job's view (a carrier job's dispatcher) may run
+   *  here: the backend binds each reply to the server instance that gave it, so a view's
+   *  birth and absence are proven on its own server (tmux: the acting call reports it).
+   *  Rex is false until its replies carry their instance (rex_plugin_views_instance_bound);
+   *  herdr runs no shell command. Read only by `refuseCarrierViewMux` and `proveViewGone`.
+   *  A capability flag, never a backend-name check. */
+  readonly carrierViews: boolean;
 
   /** True iff this backend can drive panes on this machine right now.
    *  Consulted by `detectMux()` in precedence order. */

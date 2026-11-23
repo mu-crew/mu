@@ -712,6 +712,9 @@ export const rexBackend: MuxBackend = Object.freeze({
   spawnAgentWaitsReady: false,
   runsShellCommand: true,
   anchorsPanes: false,
+  // D15: no lease or plugin views until a reply names the instance that answered it
+  // (rex_plugin_views_instance_bound). Setting this true lifts the refusal.
+  carrierViews: false,
   available: rexAvailable,
 
   isValidPaneId,

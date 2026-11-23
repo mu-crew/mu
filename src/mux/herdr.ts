@@ -1218,6 +1218,7 @@ export const herdrBackend: MuxBackend = Object.freeze({
   spawnAgentWaitsReady: true,
   runsShellCommand: false,
   anchorsPanes: false,
+  carrierViews: false,
   available: herdrAvailable,
 
   isValidPaneId,

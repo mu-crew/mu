@@ -128,6 +128,18 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- **Lease and plugin job views are tmux-only for now.** On Rex, a lease
+  spawn (`--transport lease`), a plugin job kind's spawn, and the reattach
+  of either refuse before any effect (`CarrierViewUnsupportedError`, exit 2):
+  no reservation, `job.start`, job file, Rex window or row. A Rex reply does
+  not name the server instance that answered, so a retargeted `MU_REX_SERVER`
+  socket could make another server answer a view's birth or absence and let
+  close drop a live job's record and file. Rex support awaits instance-bound
+  server identity (ROADMAP: Rex carrier views). Session profiles (rung 3) and
+  local workers on Rex are unchanged. A Rex view an earlier build recorded is
+  never proven gone: close keeps it (`--abandon-job` is the way out). One
+  backend flag, `carrierViews`, holds the refusal.
+
 - Every spawn, including a task-bound or plugin spawn, refuses before any
   effects (`MuxBackendMismatchError`, exit 4) if its workstream has an agent
   registered on another managed backend (tmux, herdr, Rex). The error names

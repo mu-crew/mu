@@ -337,6 +337,7 @@ export {
   addHost,
   admitHostChannel,
   bindHostChannel,
+  CarrierViewUnsupportedError,
   type ChannelOpts,
   checkHost,
   expandHostTemplate,

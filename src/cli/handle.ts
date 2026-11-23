@@ -97,6 +97,7 @@ import {
   HostStateError,
 } from "../host-records.js";
 import {
+  CarrierViewUnsupportedError,
   HostChannelBusyError,
   HostCheckFailedError,
   HostExistsError,
@@ -482,6 +483,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RemoteCollectUnsupportedError ||
     // The active mux cannot run a profile's shell template: refused before any effect.
     err instanceof HostSpawnUnsupportedError ||
+    // D15: a lease or plugin view on a backend without carrierViews (Rex): before any effect.
+    err instanceof CarrierViewUnsupportedError ||
     // The host's recorded probe found no such harness, or a remote brief too large for its
     // exec template: refused before any effect (spec D17).
     err instanceof HostHarnessMissingError ||

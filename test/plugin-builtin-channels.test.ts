@@ -446,7 +446,9 @@ describe("reattaching a detached ctl view (review_plugin_reattach_stale_ctl)", (
         const err = await reattach.catch((e: unknown) => e);
         expect(err).toBeInstanceOf(HostSpawnUnsupportedError);
         expect(classifyError(err).exitCode).toBe(2);
-        expect((err as Error).message).toMatch(/herdr.*detached job view command.*use tmux or Rex/);
+        expect((err as Error).message).toMatch(
+          /herdr.*detached job view command.*use tmux \(lease and plugin job views are tmux-only/,
+        );
         expect(readFileSync(sock, "utf8")).toBe("stale forward");
         expect(h.f.calls()).toEqual(requests);
         expect(mux.calls).toEqual([]);

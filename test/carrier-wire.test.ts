@@ -246,6 +246,17 @@ describe("the view proof", () => {
     expect((await proveViewGone(bound("rex"), herdr)).state).toBe("unknown");
     expect((await proveViewGone(bound("rex:i-1"), mux("i-1", []))).state).toBe("unknown");
   });
+
+  // D15 (wire_rex_presence_and_birth_aba): Rex's "absent" is not tied to the server that
+  // answered it, so a view on a backend without carrierViews is never proven gone there.
+  it("bound on a backend without carrierViews: unknown, even when its server answers absent", async () => {
+    const rex = { ...mux("i-1", []), name: "rex", carrierViews: false } as MuxBackend;
+    const p = await proveViewGone(bound("rex:i-1"), rex);
+    expect(p).toMatchObject({ state: "unknown", why: expect.stringMatching(/tmux-only/) });
+    expect((await proveViewGone(bound("rex:i-1"), { ...rex, carrierViews: true })).state).toBe(
+      "gone",
+    );
+  });
 });
 
 // wire_rev is nullable: an ADD COLUMN on an old DB (or a copy without the default) may leave

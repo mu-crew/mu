@@ -14,6 +14,7 @@ import type { LinkCall } from "../host-link.js";
 import { type HostView, requireProfile, resolveHost } from "../host-provider.js";
 import {
   admitHostChannel,
+  CarrierViewUnsupportedError,
   type HostLease,
   type HostProfile,
   HostProfileError,
@@ -23,6 +24,7 @@ import {
 import { HONOURS_ALL, type JobKind } from "../jobs/types.js";
 import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
+import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { refuseRecoveredWorktree } from "../remote-recovery.js";
 import { prepareRemote, type RemoteSite, removeRemoteWorktree } from "../remote-worktree.js";
@@ -67,11 +69,35 @@ export function pluginKindOf(host: HostView): PluginJobKind | undefined {
 export async function refuseRemoteSpawnMux(db: Db, opts: SpawnAgentOptions): Promise<void> {
   if (opts.host === undefined) return;
   const mux = await activeMux();
-  if (mux.runsShellCommand) return;
+  if (mux.runsShellCommand && mux.carrierViews) return;
   const host = resolveHost(db, opts.host);
+  if (mux.runsShellCommand) return refuseCarrierViewMux(mux, host.name, carrierViewOf(host));
   // Switching multiplexers cannot make a link-only host spawnable.
   requireHostJobKind(host);
   throw unsupportedSpawnMux(host, opts, mux.name);
+}
+
+/** What a host spawn runs as a carrier job's view (D15), or undefined: none. */
+export function carrierViewOf(host: HostView): CarrierViewUnsupportedError["what"] | undefined {
+  if (pluginKindOf(host) !== undefined) return "a plugin job's view";
+  return host.profile?.transport === "lease" ? "a lease spawn" : undefined;
+}
+
+/**
+ * D15: lease and plugin job views are tmux-only for now. THE guard: a lease carrier or a
+ * plugin kind's view on a backend without `carrierViews` (Rex: its replies do not yet name the
+ * server instance that answered, so a view's birth and absence cannot be proven) refuses
+ * before any reservation, job.start, job file, pane or row. Asked by every host spawn's
+ * prepare (`refuseRemoteSpawnMux`), `requireHostSpawn`, the plugin spawn, and both reattaches
+ * (src/agents/reattach-view.ts, reattach-check.ts). Any other host spawn passes.
+ */
+export function refuseCarrierViewMux(
+  mux: Pick<MuxBackend, "name" | "carrierViews">,
+  host: string,
+  what: CarrierViewUnsupportedError["what"] | undefined,
+): void {
+  if (mux.carrierViews || what === undefined) return;
+  throw new CarrierViewUnsupportedError(host, mux.name, what);
 }
 
 function unsupportedSpawnMux(host: HostView, opts: SpawnAgentOptions, mux: string) {
@@ -80,7 +106,7 @@ function unsupportedSpawnMux(host: HostView, opts: SpawnAgentOptions, mux: strin
     : isCommandGate(opts)
       ? "command gate"
       : "managed argv";
-  return new HostSpawnUnsupportedError(host.name, mux, part);
+  return new HostSpawnUnsupportedError(host.name, mux, part, carrierViewOf(host) !== undefined);
 }
 
 /**
@@ -158,6 +184,7 @@ export async function requireHostSpawn(db: Db, opts: SpawnAgentOptions): Promise
   if (opts.worktree) refuseRecoveredWorktree(db, opts.workstream, opts.name, host);
   const mux = await activeMux();
   if (!mux.runsShellCommand) throw unsupportedSpawnMux(view, opts, mux.name);
+  refuseCarrierViewMux(mux, host, carrierViewOf(view));
   return profile;
 }
 

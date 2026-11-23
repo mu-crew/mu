@@ -121,7 +121,9 @@ describe("the plugin spawn path (D8)", () => {
         const err = await spawn({ host }).catch((e: unknown) => e);
         expect(err).toBeInstanceOf(HostSpawnUnsupportedError);
         expect(classifyError(err).exitCode).toBe(2);
-        expect((err as Error).message).toMatch(/herdr.*job view command.*use tmux or Rex/);
+        expect((err as Error).message).toMatch(
+          /herdr.*job view command.*use tmux \(lease and plugin job views are tmux-only/,
+        );
         expect(h.f.calls()).toEqual(requests);
         expect(mux.calls).toEqual([]);
         expect(listCarrierJobs(h.db)).toEqual([]);

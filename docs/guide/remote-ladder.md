@@ -28,15 +28,15 @@ Rung 2 is approved but not built; nothing below depends on it.
 | 0 | pi `ctl`, hook harnesses (claude, codex, cursor-agent, muse) `hooks`, others `mux` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a |
 | 1 | runs (no pane) | runs | runs | fine over a link that serialises itself |
 | 3 | pi `ctl` forwarded, hook harnesses remote `hooks` | pi `ctl`, others `mux` | refused | fine: each pane opens its own connection |
-| 4 | pi `ctl` via the carrier | same | refused | fine: one master |
-| 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | same | refused | the provider's |
+| 4 | pi `ctl` via the carrier | refused for now | refused | fine: one master |
+| 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | refused for now | refused | the provider's |
 | command gate | `mux` | `mux` | refused | as rung 3; lease profiles run no gates |
 
 - Remote `hooks` needs a backend that anchors and pastes: tmux only.
   Elsewhere a non-pi worker is on `mux`; tmux has no `mux` send and refuses.
 - A lease carrier forwards no stdin, so a non-pi worker has no input path on
   a lease: use pi.
-- The Rex cells for rungs 3 and 4 are read from source, not smoke-tested.
+- The Rex cell for rung 3 is read from source, not smoke-tested.
 
 ## Reach for what
 
@@ -47,7 +47,7 @@ Rung 2 is approved but not built; nothing below depends on it.
 | Only one connection is practical (a prompted master) | rung 4 for a crew; rung 1 for single commands |
 | The host cannot run the loop (no credentials, no model API) | rung 2, once it ships |
 | You need a machine on demand | rung 5, a [provider host](remote.md#provider-hosts) |
-| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` or Rex for that workstream |
+| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex for rung 3) |
 
 A provider host or a standing one: weigh capacity (on demand or fixed),
 lifetime (a deadline, or none), whose credentials, which harnesses are
@@ -91,8 +91,12 @@ Each refusal is typed and names the fix. A refusal leaves no lasting spawn
 resources; a missing base is found by `remote prepare`'s link `exec`, which
 checks the base before it makes a tree and rolls back.
 
-- **herdr on rungs 3-5:** it runs no per-agent command or view. Use tmux or
-  Rex. Rungs 0 and 1 run.
+- **herdr on rungs 3-5:** it runs no per-agent command or view. Use tmux
+  (or Rex for rung 3). Rungs 0 and 1 run.
+- **Rex on rungs 4-5:** lease and plugin job views are tmux-only for now. A
+  Rex reply does not yet name the server instance that answered it, so mu
+  cannot prove which server holds a view. Use `MU_MUX=tmux`. Rungs 0, 1 and
+  3 run on Rex.
 - **A base commit the host lacks** (static host): mu neither fetches nor
   pushes. A published commit: `mu host exec <host> -- git -C <repo> fetch
   <remote> <rev>`. A local-only one: push it somewhere the host can fetch,

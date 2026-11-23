@@ -975,6 +975,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   spawnAgentWaitsReady: false,
   runsShellCommand: true,
   anchorsPanes: true,
+  carrierViews: true,
   available: tmuxAvailable,
 
   isValidPaneId,

@@ -286,7 +286,7 @@ it.each(["preview", "apply"] as const)(
     );
     expect(err).toBeInstanceOf(ReattachRefusedError);
     expect(classifyError(err).exitCode).toBe(4);
-    expect((err as Error).message).toMatch(/herdr.*lease attach command.*use tmux or Rex/);
+    expect((err as Error).message).toMatch(/herdr.*lease attach command.*use tmux(?! or)/);
     expect(mux.calls).toEqual([]);
     expect(order()).toEqual([]);
     expect(snapshot()).toEqual(before);

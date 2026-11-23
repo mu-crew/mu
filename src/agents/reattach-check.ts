@@ -7,7 +7,7 @@ import { getAgentForCleanup } from "../agents.js";
 import { type CarrierJob, listCarrierJobsByName } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { findHost } from "../host-provider.js";
-import { type HostProfile, pidProvenGone } from "../hosts.js";
+import { CarrierViewUnsupportedError, type HostProfile, pidProvenGone } from "../hosts.js";
 import { jobRunning } from "../jobs/kinds.js";
 import { describeRead, leaseJobRef, readJobFile } from "../jobs/lease.js";
 import { say } from "../messages.js";
@@ -119,10 +119,10 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   if (r.reason !== null || r.treePath !== null) return no("reservation", `kept: ${r.reason}`);
   const mux = await activeMux();
   if (!mux.runsShellCommand) {
-    return no(
-      "carrier",
-      `${mux.name} cannot run the lease attach command in a pane; use tmux or Rex`,
-    );
+    return no("carrier", `${mux.name} cannot run the lease attach command in a pane; use tmux`);
+  }
+  if (!mux.carrierViews) {
+    return no("carrier", new CarrierViewUnsupportedError(r.host, mux.name, "a reattach").message);
   }
   // A carrier an earlier apply could neither install, fence nor prove gone (or died with).
   const marker = await readMarker(db, ws, name);

@@ -420,8 +420,10 @@ export const MESSAGES = {
     `host profile ${host} already exists: remove it first (mu host rm ${host})`,
   "host.in_use": (host: string, holders: readonly string[]) =>
     `host ${host} still holds channels (${holders.join(", ")}): close those agents first`,
-  "host.spawn_unsupported": (host: string, mux: string, part: string) =>
-    `host ${host}: ${mux} starts agents itself and cannot run the ${part} in a pane; use tmux or Rex`,
+  "host.spawn_unsupported": (host: string, mux: string, part: string, tmuxOnly: boolean) =>
+    `host ${host}: ${mux} starts agents itself and cannot run the ${part} in a pane; use tmux${tmuxOnly ? " (lease and plugin job views are tmux-only for now)" : " or Rex"}`,
+  "host.carrier_view_unsupported": (host: string, mux: string, what: string) =>
+    `host ${host}: ${what} on ${mux} refused before anything ran: lease and plugin job views require tmux for now (${mux} support awaits instance-bound server identity); use MU_MUX=tmux for this workstream`,
   "host.harness_missing": (host: string, harness: string, probedAt: string) =>
     `host ${host} has no ${harness}: mu host check ${host} (${probedAt}) found no ${harness} command in the profile's shell, where a spawn's command runs; nothing was spawned. Install ${harness} there (and log it in), run mu host check ${host} again, or spawn another harness`,
   "host.check_failed": (host: string, failed: readonly string[]) =>

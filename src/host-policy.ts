@@ -32,6 +32,7 @@ import { describeRead, readJobFile } from "./jobs/lease.js";
 import { viewOnServer } from "./jobs/view.js";
 import { emitEvent } from "./logs.js";
 import type { MuxBackend } from "./mux/types.js";
+import { activeMux } from "./mux.js";
 import { PluginCallError } from "./plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "./plugins/job.js";
 import { collectInLifeLocked, collectRemoteAgentLocked } from "./remote-collect.js";
@@ -322,7 +323,18 @@ export async function proveViewGone(r: CarrierJob, mux?: MuxBackend): Promise<Vi
           why: `its view ${r.paneId} ${dispatcher} has no recorded mux server`,
         };
       }
-      const seen = await viewOnServer(r.paneId, r.viewServer, mux).catch(() => undefined);
+      // D15: a backend without carrierViews (Rex) cannot tie an absent reply to its server.
+      const m = mux ?? (await activeMux().catch(() => undefined));
+      if (m !== undefined && !m.carrierViews && r.viewServer.startsWith(`${m.name}:`)) {
+        return {
+          state: "unknown",
+          why: `its view ${r.paneId} ${dispatcher} is on ${m.name}, which cannot prove it gone yet (lease and plugin job views are tmux-only for now)`,
+        };
+      }
+      const seen =
+        m === undefined
+          ? undefined
+          : await viewOnServer(r.paneId, r.viewServer, m).catch(() => undefined);
       if (seen === "absent") return { state: "gone" };
       if (seen === "present") {
         return { state: "alive", why: `its view ${r.paneId} ${dispatcher} is alive` };
