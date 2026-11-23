@@ -127,6 +127,41 @@ describe("t_surface round 1", () => {
     expect(hook.texts).toHaveLength(before);
   });
 
+  // A row pinned before the author marker: the exact generated line under the ordinary actor.
+  it("spawn --host --task refuses the exact legacy generated brief (no author marker)", async () => {
+    addNote(db, "t2", "Task t2 (workstream auth): t2. Read: mu task notes t2 -w auth", {
+      workstream: "auth",
+      kind: "brief",
+    });
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-3", "-w", "auth", "--host", "box1", "--task", "t2", "--json"],
+      path,
+    );
+    expect(r.exitCode).toBe(2);
+    expect(JSON.stringify(r.doc)).toMatch(/--send/);
+    expect(hook.texts).toEqual([]);
+  });
+
+  it("spawn --host --task still delivers an authored brief that starts like the generated line", async () => {
+    addNote(
+      db,
+      "t2",
+      "Task t2 (workstream auth): t2. Read: mu task notes t2 -w auth, then fix X.",
+      {
+        workstream: "auth",
+        kind: "brief",
+      },
+    );
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-3", "-w", "auth", "--host", "box1", "--task", "t2", "--json"],
+      path,
+    );
+    // Not refused as a generated fallback (a usage error, exit 2): it goes on to resolve the
+    // host, which this test never registers (exit 3).
+    expect(r.exitCode).toBe(3);
+    expect(JSON.stringify(r.doc)).toMatch(/HostNotFoundError/);
+  });
+
   it.each([
     [["tasks"], "unknown command 'tasks' (closest: mu task list); see mu --help"],
     [["show"], "unknown command 'show' (closest: mu task show); see mu --help"],

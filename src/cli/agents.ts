@@ -185,10 +185,16 @@ function taskBriefText(
   }
 }
 
-/** The task's first brief note is a pinned generated fallback. */
+/** The task's first brief note is a pinned generated fallback: marked by its author, or (rows
+ *  pinned before the marker, under the ordinary actor) equal to the template built from this
+ *  task's own id, workstream and title. An authored brief that merely starts alike is not. */
 function pinnedFallback(db: Db, workstream: string, task: string): boolean {
   const { briefN } = pinnedNotes(db, workstream, task);
-  return briefN > 0 && getTaskNote(db, task, workstream, briefN).author === GENERATED_BRIEF_AUTHOR;
+  if (briefN < 1) return false;
+  const note = getTaskNote(db, task, workstream, briefN);
+  if (note.author === GENERATED_BRIEF_AUTHOR) return true;
+  const title = getTask(db, task, workstream)?.title ?? task;
+  return note.content === say("agent.spawn_task_default", task, workstream, title);
 }
 
 async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void> {
