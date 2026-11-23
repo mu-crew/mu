@@ -2,7 +2,25 @@
 # Operator smoke for the lease transport (docs/specs/2026-10-28-lease-transport.md
 # § Testing, Smoke). Explicitly invoked, never picked up by vitest:
 #
-#   MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh
+#   MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh [--plugin mule]
+#
+# Without an argument it drives the lease TEMPLATE profile (cases 1-5 below).
+# With `--plugin mule` it drives the D15 plugin instead: the same sshd, the
+# built `mule` and `mu-plugin-mule`, and these cases (P1-P4, then 1-5 through
+# the plugin's lease job kind, with 4's kill -9 of the carrier included):
+#   P1. `mule init` registers the plugin with mu (idempotent on a rerun) and
+#       `mu host add --plugin mule` selects it
+#   P2. rung 1, `mu host exec` through the mule link: a command's exit passes
+#       through, a command's own 3 reads 8 (never mule's handback 3), a command's
+#       own 5 is told from a transport 5 by `--json`; no master is a hand-back
+#       (exit 5, the command did not run) and the next call works once it returns
+#   P3. rung 4 master loss: the master dies under a running worker: a send fails
+#       as unreachable and is not resent, the remote job and its row survive,
+#       `mu agent collect` still works over the separate fetch connection, a
+#       close hands back (row and handle kept, job alive), and with the master
+#       back the forward returns, a send works, and a fresh close stops the job
+#   P4. after every close: no stale forward, remote job, tmux session, or row
+#       in carrier_jobs, agents, host_channels or the plugin/recovery tables
 #
 # It builds mule (cargo build --release) and mu (npm run build), starts a
 # loopback `sshd MaxSessions 1` (mule SPEC.md § Reproduce the channel cap
@@ -38,6 +56,21 @@ MU=${MU:-$(dirname "$SCRIPTS")}
 MULE=${MULE:-}
 SSHD=${SSHD:-/usr/sbin/sshd}
 FAKE_PI_SRC="$SCRIPTS/smoke-fake-pi.mjs"
+PLUGIN_MODE=0
+case "${1:-}" in
+  "") ;;
+  --plugin)
+    [ "${2:-}" = mule ] || {
+      echo "usage: smoke-lease.sh [--plugin mule]" >&2
+      exit 2
+    }
+    PLUGIN_MODE=1
+    ;;
+  *)
+    echo "usage: smoke-lease.sh [--plugin mule]" >&2
+    exit 2
+    ;;
+esac
 
 T0=$(date +%s)
 say() { printf '[%3ss] %s\n' "$(($(date +%s) - T0))" "$*"; }
@@ -71,6 +104,7 @@ say "build mule: cargo build --release in $MULE"
 say "build mu: npm run build in $MU"
 (cd "$MU" && npm run build --silent >/dev/null) || fail "npm run build"
 [ -x "$MULE/target/release/mule" ] || fail "no mule binary after the build"
+[ "$PLUGIN_MODE" = 0 ] || [ -x "$MULE/target/release/mu-plugin-mule" ] || fail "no mu-plugin-mule binary after the build"
 [ -f "$MU/dist/cli.js" ] || fail "no mu dist/cli.js after the build"
 say "mule $(git -C "$MULE" rev-parse --short HEAD 2>/dev/null || echo '?') ($("$MULE/target/release/mule" --version)), mu $(git -C "$MU" rev-parse --short HEAD 2>/dev/null || echo '?')"
 
@@ -120,6 +154,11 @@ trap 'exit 129' HUP
 mkdir -p "$R"/{bin,rbin,m,tmp,home,config,cache,lstate,ltmux,rtmux,rhome/.local/state}
 chmod 700 "$R/m" "$R/ltmux" "$R/rtmux"
 cp "$MULE/target/release/mule" "$R/bin/mule"
+if [ "$PLUGIN_MODE" = 1 ]; then
+  # Both binaries together, mode 0755, user-owned: what `mule init` registers.
+  cp "$MULE/target/release/mu-plugin-mule" "$R/bin/mu-plugin-mule"
+  chmod 755 "$R/bin/mule" "$R/bin/mu-plugin-mule"
+fi
 cp "$FAKE_PI_SRC" "$R/rbin/smoke-fake-pi.mjs"
 # The node binary itself, not a version manager's shim: a shim (mise, asdf) resolves through
 # $HOME, which is private below, and then fails ("node is not a valid shim", seen on Linux).
@@ -144,6 +183,9 @@ export PATH="$R/bin:$PATH"
 mkdir -p "$R/lstate/mu-next"
 
 mu() { "$NODE" "$MU/dist/cli.js" "$@"; }
+# `mule init` finds mu on PATH: a private launcher for this build, never a real install.
+printf '#!/bin/sh\nexec %s %s "$@"\n' "$NODE" "$MU/dist/cli.js" >"$R/bin/mu"
+chmod 755 "$R/bin/mu"
 mule() { "$R/bin/mule" --config "$R/mule.toml" "$@"; }
 # js <expr>: evaluate <expr> over the JSON on stdin as `d`; prints strings raw.
 # Exits 1 on undefined/null/false, so a missing field is never a pass.
@@ -237,20 +279,101 @@ git clone -q "$RREPO" "$LREPO"
 
 M="$R/bin/mule --config $R/mule.toml"
 mu workstream init "$WS" >/dev/null
-mu host add loop --transport lease \
-  --shell "$M run --host loop --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}" \
-  --exec "$M exec --host loop -- sh -c {cmd}" \
-  --stop "$M rm --host loop {job}" \
-  --fetch "git fetch ssh://127.0.0.1{cwd} HEAD" \
-  --max-sessions 1 >/dev/null
-mu host show loop --json | js 'd.data.host.transport' | grep -qx lease ||
-  fail "host show loop: transport is not lease"
-pass "lease profile 'loop' (mule starter adapted to the loopback host, --max-sessions 1)"
+FETCH="git fetch ssh://127.0.0.1{cwd} HEAD"
+if [ "$PLUGIN_MODE" = 1 ]; then
+  say "P1. mule init registers the plugin; mu host add --plugin mule selects it"
+  mule init --quiet >"$R/init.out" 2>"$R/init.err" || {
+    cat "$R/init.out" "$R/init.err"
+    fail "mule init"
+  }
+  grep -q '^registered mule with mu$' "$R/init.out" || {
+    cat "$R/init.out"
+    fail "mule init did not register the plugin"
+  }
+  mu plugin list --json | js "d.data.items.some((p)=>p.name==='mule'&&p.argv[0]==='$R/bin/mu-plugin-mule'&&p.argv.includes('$R/mule.toml'))" >/dev/null ||
+    fail "mu plugin list does not name mule at $R/bin/mu-plugin-mule with --config $R/mule.toml"
+  mule init --quiet >"$R/init2.out" 2>&1 || fail "mule init rerun"
+  ! grep -q registered "$R/init2.out" || fail "a rerun of mule init registered again: $(cat "$R/init2.out")"
+  pass "mule init: plugin 'mule' registered with argv [$R/bin/mu-plugin-mule --config $R/mule.toml]; a rerun leaves it alone"
+  mu host add loop --plugin mule --fetch "$FETCH" --max-sessions 1 >/dev/null || fail "mu host add loop --plugin mule"
+  mu host show loop --json | js "d.data.host.plugin === 'mule' && d.data.host.shell == null" >/dev/null ||
+    fail "host show loop: not a --plugin mule profile"
+  pass "mu host add loop --plugin mule: the plugin is the link (no shell or exec template)"
+else
+  mu host add loop --transport lease \
+    --shell "$M run --host loop --lease --human --cwd {cwd} --job-file {job_file} --forward-unix {local_sock}:{remote_sock} -- env {env} sh -c {cmd}" \
+    --exec "$M exec --host loop -- sh -c {cmd}" \
+    --stop "$M rm --host loop {job}" \
+    --fetch "$FETCH" \
+    --max-sessions 1 >/dev/null
+  mu host show loop --json | js 'd.data.host.transport' | grep -qx lease ||
+    fail "host show loop: transport is not lease"
+  pass "lease profile 'loop' (mule starter adapted to the loopback host, --max-sessions 1)"
+fi
 mu host check loop --root "$RREPO" --json >"$R/check.json" || {
   cat "$R/check.json"
   fail "mu host check loop"
 }
 pass "mu host check loop: $(js 'd.data.steps.map((s)=>s.step+"="+s.ok).join(" ")' <"$R/check.json")"
+
+reopen_master() {
+  ssh -MNf -S "$R/m/mule.sock" -o ControlPersist=8h -o StreamLocalBindUnlink=yes 127.0.0.1 || fail "reopening mule's master"
+  MULE_MASTER=$(master_pid "$R/m/mule.sock")
+  [ -n "$MULE_MASTER" ] || fail "no mule master pid after reopening"
+}
+lose_master() {
+  ssh -S "$R/m/mule.sock" -O exit 127.0.0.1 >/dev/null 2>&1 || fail "ssh -O exit on mule's master"
+  until_ok 50 "mule's master socket to go" test ! -S "$R/m/mule.sock"
+}
+# The "remote" is this host: its mule tmux server is the ground truth for jobs, master or no master.
+remote_sessions() { TMUX_TMPDIR="$R/rtmux" tmux -L "$MULE_TMUX" list-sessions 2>/dev/null | wc -l | tr -d ' '; }
+# hx <cmd...>: `mu host exec loop --json`; HX_RC is its exit, the document is $R/hx.json.
+hx() {
+  HX_RC=0
+  mu host exec loop --json -- "$@" >"$R/hx.json" 2>"$R/hx.err" || HX_RC=$?
+}
+hx_expect() {
+  local what=$1 rc=$2 expr=$3
+  [ "$HX_RC" = "$rc" ] || {
+    cat "$R/hx.json" "$R/hx.err"
+    fail "host exec ($what): exit $HX_RC, expected $rc"
+  }
+  js "$expr" <"$R/hx.json" >/dev/null || {
+    cat "$R/hx.json"
+    fail "host exec ($what): document does not match $expr"
+  }
+}
+
+if [ "$PLUGIN_MODE" = 1 ]; then
+  say "P2. rung 1: mu host exec through the mule link"
+  hx sh -c 'echo out; echo err >&2'
+  hx_expect "success" 0 "d.data.exit === 0 && d.data.stdout.trim() === 'out' && d.data.stderr.trim() === 'err'"
+  hx sh -c 'exit 7'
+  hx_expect "command exit 7" 7 "d.data.exit === 7"
+  hx sh -c 'exit 3'
+  hx_expect "command's own exit 3" 8 "d.data.exit === 8"
+  hx sh -c 'exit 5'
+  hx_expect "command's own exit 5" 5 "d.data.exit === 5 && d.data.stdout !== undefined"
+  pass "exec: 0 -> 0, 7 -> 7, a command's own 3 reads 8 (never mule's handback 3), its own 5 is a result document (exit 5 with data.exit 5)"
+  lose_master
+  rm -f "$R/ran"
+  hx sh -c "touch $R/ran"
+  [ "$HX_RC" = 5 ] || {
+    cat "$R/hx.json" "$R/hx.err"
+    fail "host exec without a master: exit $HX_RC, expected the hand-back 5"
+  }
+  js 'd.data?.exit === undefined' <"$R/hx.json" >/dev/null || {
+    cat "$R/hx.json"
+    fail "a hand-back printed a result document (it must not look like a command's exit 5)"
+  }
+  [ ! -e "$R/ran" ] || fail "the command ran without a master"
+  pass "exec without a master: hand-back (exit 5, no result document, the command did not run): $(js 'd.error?.message ?? d.error' <"$R/hx.json" | head -n 1 | cut -c1-100)"
+  reopen_master
+  hx sh -c "touch $R/ran"
+  hx_expect "after the master returned" 0 "d.data.exit === 0"
+  [ -e "$R/ran" ] || fail "the command did not run once the master returned"
+  pass "exec with the master back: runs (master pid $MULE_MASTER)"
+fi
 
 AGENT=worker-1
 # mu's derived paths (src/ctl/path.ts): both well under the 103-byte hash bound.
@@ -384,8 +507,48 @@ settled_run "$R/settled.json" "$((RUNS + 1))" "$GOT" "mu wait after mu agent wai
 pass "send runs=$RUNS inc=$INC; wait --after-runs $RUNS: lastText '$GOT', ctl-settled run $((RUNS + 1))"
 
 # ── 3. close leaves nothing ──────────────────────────────────────────────────
-say "3. close $AGENT"
-close_clean "live agent"
+if [ "$PLUGIN_MODE" = 1 ]; then
+  say "P3. master loss under a running worker, then recovery"
+  RUNS_NOW=$((RUNS + 1))
+  lose_master
+  [ "$(remote_sessions)" -ge 1 ] || fail "the remote job is gone after the master died"
+  [ -S "$REMOTE_SOCK" ] || fail "the remote ctl socket $REMOTE_SOCK is gone after the master died"
+  LOSS_RC=0
+  mu agent send "$AGENT" -w "$WS" "lost-$$" --json >"$R/lost-send.json" 2>&1 || LOSS_RC=$?
+  [ "$LOSS_RC" != 0 ] || fail "a send with no master reported success"
+  pass "master lost: the remote job and its ctl socket live; a send fails as unreachable (exit $LOSS_RC)"
+  (cd "$LREPO" && mu agent collect "$AGENT" -w "$WS" --json) >"$R/collect2.json" 2>&1 || {
+    cat "$R/collect2.json"
+    fail "mu agent collect with no master (the separate fetch connection)"
+  }
+  [ ! -S "$R/m/mule.sock" ] || fail "mule's master is back by itself"
+  pass "mu agent collect with mule's master down: ok over the separate fetch connection"
+  [ "$(reservations)" = 1 ] && [ "$(job_row)" = "$JOB" ] || fail "master loss lost the carrier_jobs handle"
+  reopen_master
+  until_ok 300 "the ctl forward to return with the master" forward_held
+  [ "$(job_state "$JOB")" = running ] || fail "after the master returned the job is $(job_state "$JOB")"
+  mu agent send "$AGENT" -w "$WS" "back-$$" --wait --json >"$R/back.json" || {
+    cat "$R/back.json"
+    fail "mu agent send --wait after the master returned"
+  }
+  [ "$(js 'd.data.sent.runs' <"$R/back.json")" = "$RUNS_NOW" ] ||
+    fail "the send lost during the master loss was resent (runs $(js 'd.data.sent.runs' <"$R/back.json"), expected $RUNS_NOW)"
+  [ "$(js 'd.data.snapshots[0].lastText' <"$R/back.json")" = "smoke-echo: back-$$" ] || fail "the recovered send is not echoed"
+  pass "master back (pid $MULE_MASTER): forward re-bound, job $JOB running, send settled as run $((RUNS_NOW + 1)); the lost send was not resent"
+  lose_master
+  REV=$(mu agent close "$AGENT" -w "$WS" --json | js 'd.data.revision') || fail "close preview during the loss"
+  LOSS_RC=0
+  mu agent close "$AGENT" -w "$WS" --if "$REV" --json >"$R/lost-close.json" 2>&1 || LOSS_RC=$?
+  [ "$LOSS_RC" != 0 ] || fail "a close with no master reported success"
+  [ "$(reservations)" = 1 ] && [ "$(job_row)" = "$JOB" ] || fail "a handed-back close dropped the carrier_jobs handle"
+  [ "$(remote_sessions)" -ge 1 ] || fail "a handed-back close lost the remote job"
+  pass "close with no master: hands back (exit $LOSS_RC), the handle stays in carrier_jobs, the remote job lives"
+  reopen_master
+  close_clean "after master loss"
+else
+  say "3. close $AGENT"
+  close_clean "live agent"
+fi
 
 # ── 4. kill -9 the carrier, reconcile reaps, close by name stops the job ─────
 say "4. respawn $AGENT, kill -9 its carrier"
@@ -441,3 +604,20 @@ until_ok 100 "every mule process of this run to exit" no_mule_left
 LS=$(mule ls --host loop --all --json)
 [ "$(printf '%s' "$LS" | js 'd.items.length + d.unreachable.length')" = 0 ] || fail "mule ls: $LS"
 pass "no mule process left, mule ls empty"
+
+if [ "$PLUGIN_MODE" = 1 ]; then
+  say "P4. nothing stale after every close"
+  stale=()
+  forward_held && stale+=("forward $LOCAL_SOCK in master $MULE_MASTER")
+  [ "$(remote_sessions)" = 0 ] || stale+=("$(remote_sessions) remote tmux session(s)")
+  for t in carrier_jobs agents host_channels effects; do
+    n=$(sql "SELECT count(*) AS n FROM $t" | js 'd[0].n') || fail "counting $t"
+    [ "$n" = 0 ] || stale+=("$n $t row(s)")
+  done
+  [ ! -e "$LOCAL_SOCK" ] && [ ! -e "$REMOTE_SOCK" ] && [ ! -e "$JOB_FILE" ] || stale+=("a ctl socket or job file")
+  if [ ${#stale[@]} -gt 0 ]; then
+    printf '  stale: %s\n' "${stale[@]}"
+    fail "state left after the plugin run"
+  fi
+  pass "no stale forward, remote job or tmux session, ctl socket, job file, or carrier_jobs/agents/host_channels/effects row"
+fi
