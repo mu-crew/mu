@@ -156,6 +156,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- When a plugin hands back during agent close, the error names `job.stop`
+  instead of claiming a stop template exited 3.
 - Local control sockets still bind when a long state directory leaves no room
   for a hashed socket name. In that case mu uses a private per-user directory
   and includes the state directory in the hash. Existing paths that fit are unchanged.

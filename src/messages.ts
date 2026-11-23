@@ -426,8 +426,13 @@ export const MESSAGES = {
     `host ${host} has no ${harness}: mu host check ${host} (${probedAt}) found no ${harness} command in the profile's shell, where a spawn's command runs; nothing was spawned. Install ${harness} there (and log it in), run mu host check ${host} again, or spawn another harness`,
   "host.check_failed": (host: string, failed: readonly string[]) =>
     `host ${host} check failed: ${failed.join(", ")}`,
-  "host.handback": (host: string, field: string, detail: string) =>
-    `host ${host}: its ${field} template exited 3, a hand-back (a human must act, e.g. a hardware key)${detail === "" ? "" : `: ${detail}`}. Do not retry or ssh yourself: stop and ask`,
+  "host.handback": (host: string, field: string, detail: string, pluginOperation?: "job.stop") => {
+    const cause =
+      pluginOperation === undefined
+        ? `its ${field} template exited 3, a hand-back`
+        : `its plugin's ${pluginOperation} handed back`;
+    return `host ${host}: ${cause} (a human must act, e.g. a hardware key)${detail === "" ? "" : `: ${detail}`}. Do not retry or ssh yourself: stop and ask`;
+  },
   "carrier.stop_refused": (
     host: string,
     handle: string,

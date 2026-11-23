@@ -109,7 +109,12 @@ export function pluginJobKind(db: Db, name: string): PluginJobKind | undefined {
   /** A plugin's `human` answer is the host's hand-back. */
   const handBack = (host: string, field: "exec" | "stop", e: unknown): never => {
     if (e instanceof PluginCallError && e.kind === "human") {
-      throw new HostHandbackError(host, field, e.remedy ?? e.detail);
+      throw new HostHandbackError(
+        host,
+        field,
+        e.remedy ?? e.detail,
+        field === "stop" ? "job.stop" : undefined,
+      );
     }
     throw e;
   };

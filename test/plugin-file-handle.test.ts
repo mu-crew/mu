@@ -16,6 +16,7 @@ import { leaseJobFile } from "../src/agents/lease-carrier.js";
 import { previewReattach, reattachAgent } from "../src/agents/reattach.js";
 import { getAgent } from "../src/agents.js";
 import { getCarrierJobByName } from "../src/carrier-jobs.js";
+import { classifyError } from "../src/cli/handle.js";
 import { openDb } from "../src/db.js";
 import { PluginCallError } from "../src/plugins/errors.js";
 import { reconcile } from "../src/reconcile.js";
@@ -244,6 +245,23 @@ describe("recovery", () => {
     expect(handleOf(stop)).toBe("file-job-1");
     expect(record()).toBeUndefined();
     expect(existsSync(jobFile())).toBe(false);
+  });
+
+  it("names job.stop when a plugin hands back and keeps the job file", async () => {
+    await h.setup(FILE);
+    views({ handle: "file-job-1" });
+    await h.spawn();
+    h.f.set({ faults: { "job.stop": ["human"] } });
+    const err = await closeAgent(h.db, "w1", { workstream: "ws" }).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      name: "HostHandbackError",
+      message: expect.stringContaining("plugin's job.stop handed back"),
+      field: "stop",
+      detail: "touch your security key",
+    });
+    expect(classifyError(err)).toEqual({ label: "human needed", exitCode: 5 });
+    expect(record()).toMatchObject({ job: "file-job-1" });
+    expect(existsSync(jobFile())).toBe(true);
   });
 
   it("death between the view's keyed claim and its publish: a no-row close finds it by key", async () => {
