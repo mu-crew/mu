@@ -152,6 +152,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- Failed or interrupted test runs clean up their own tmux and Rex servers.
+  Test teardown never sweeps the user's tmux sessions or earlier runs' servers.
 - **`mu agent spawn --host … --task` with no brief note and no `--send` refuses** (exit 2) instead of
   delivering `Read: mu task notes …`, which a remote worker cannot run (it has no mu DB; spec A, rungs 3/4).
   A task with a brief note still sends it in full. Local spawns are unchanged. The one-line fallback a local spawn pins is marked by its author (`mu (generated brief)`), so a later `--host` retry refuses it too. A fallback pinned before the marker (the exact line built from the task's own id, workstream and title, under the ordinary actor) is refused the same; an authored brief that merely starts alike is still sent.

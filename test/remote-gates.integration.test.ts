@@ -21,6 +21,7 @@ import { registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCliJson } from "./_runCli.js";
+import { registerTmuxSocket, stopTestTmux } from "./_server-registry.js";
 
 const haveTmux = ((): boolean => {
   try {
@@ -36,7 +37,7 @@ describeIfTmux("remote command gates (real tmux, private socket)", () => {
   let dir: string;
   let home: string;
   let db: Db;
-  let socket: string;
+  let socket: string | undefined;
   const saved: Record<string, string | undefined> = {};
   const KEYS = ["MU_TMUX_SOCKET", "MU_DB_PATH", "MU_STATE_DIR", "MU_SYNC_DIR", "TMUX"];
 
@@ -65,7 +66,7 @@ describeIfTmux("remote command gates (real tmux, private socket)", () => {
     mkdirSync(home);
     mkdirSync(join(dir, "repo"));
     for (const k of KEYS) saved[k] = process.env[k];
-    socket = `mu-test-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    socket = registerTmuxSocket();
     process.env.MU_TMUX_SOCKET = socket;
     delete process.env.TMUX;
     process.env.MU_DB_PATH = join(dir, "mu.db");
@@ -89,10 +90,11 @@ describeIfTmux("remote command gates (real tmux, private socket)", () => {
     }
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     try {
-      await tmux(["kill-server"]);
+      stopTestTmux(socket);
     } catch {}
+    socket = undefined;
     try {
       db.close();
     } catch {}

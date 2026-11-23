@@ -207,12 +207,11 @@ export function installNoMux(): { restore(): void } {
  * drive. Isolation is STRUCTURAL: `test/_global-teardown.ts` starts a private
  * `-L <socket>` server and publishes it as `MU_TMUX_SOCKET`, so the user's
  * sessions are invisible and suite residue dies with `kill-server`. Neither
- * needs the shell to be inside tmux. `$TMUX` still counts (a caller who
- * pointed the run at their own server). When both are absent, global setup
- * failed to start tmux and the tests skip.
+ * needs the shell to be inside tmux. If setup couldn't start the private
+ * server, skip instead of falling back to the user's `$TMUX`.
  */
 export function tmuxIntegrationAvailable(): boolean {
-  return Boolean(process.env.MU_TMUX_SOCKET) || Boolean(process.env.TMUX);
+  return Boolean(process.env.MU_TMUX_SOCKET);
 }
 
 export const fakePane = (paneId: string): VerifiedPaneRef =>
@@ -245,8 +244,7 @@ export async function killPrivateSession(session: string): Promise<void> {
 // ~/.config/herdr/sessions/<name>/), which mu routes to via
 // MU_HERDR_SESSION. That difference matters enormously:
 //
-//   - tmux: worst case, a buggy test kills a session on the wrong
-//     SOCKET, and the DB-rooted sweep in _global-teardown.ts catches it.
+//   - tmux: tests inherit a private socket directory and socket name.
 //   - herdr: worst case, a buggy test talks to the DEFAULT session and
 //     destroys the user's real panes — with the agents and unsaved work
 //     inside them. There is no undo and no sweep that can tell a user

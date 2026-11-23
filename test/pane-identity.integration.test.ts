@@ -27,6 +27,7 @@ import {
 } from "../src/tmux.js";
 import { pollUntil } from "./_env.js";
 import { privatePane, tmuxIntegrationAvailable } from "./_mux.js";
+import { registerTmuxSocket, stopTestTmux } from "./_server-registry.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 const SLEEP = "sh -c 'echo FOREIGN-PANE; while true; do sleep 60; done'";
@@ -35,6 +36,7 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
   let dir: string;
   let db: Db;
   let outer: string | undefined;
+  let socket: string | undefined;
   const ws = "idws";
   const session = `mu-${ws}`;
 
@@ -61,16 +63,18 @@ describeIfTmux("pane identity across a tmux server restart (real tmux, private s
 
   beforeEach(() => {
     outer = process.env.MU_TMUX_SOCKET;
-    process.env.MU_TMUX_SOCKET = `mu-test-pid-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+    socket = registerTmuxSocket();
+    process.env.MU_TMUX_SOCKET = socket;
     resetTmuxExecutor();
     dir = mkdtempSync(join(tmpdir(), "mu-pane-identity-"));
     db = openDb({ path: join(dir, "mu.db") });
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     try {
-      await tmux(["kill-server"]);
+      stopTestTmux(socket);
     } catch {}
+    socket = undefined;
     if (outer === undefined) delete process.env.MU_TMUX_SOCKET;
     else process.env.MU_TMUX_SOCKET = outer;
     resetTmuxExecutor();

@@ -3,13 +3,9 @@
 // Isolation is structural: the suite starts its own private server
 // (`rex server run --listen unix://<tmp>/rex.sock --restore=false`) and points
 // every call at it with MU_REX_SERVER. The user's Rex server, where their real
-// terminals live, is never addressed. The server is stopped through its own
-// socket (`server.stop`), never by pid or name. Skipped when `rex` is absent.
+// terminals live, is never addressed. Skipped when `rex` is absent.
 
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   capture,
@@ -26,45 +22,35 @@ import {
 } from "../src/mux/rex.js";
 import { pollUntil } from "./_env.js";
 import { freshWorkstream } from "./_fixture.js";
+import { startTestRex } from "./_server-registry.js";
 
-const REX_AVAILABLE = spawnSync("rex", ["version"], { stdio: "ignore" }).status === 0;
+const REX_AVAILABLE =
+  spawnSync("rex", ["version"], { stdio: "ignore", timeout: 2000 }).status === 0;
 const describeIfRex = REX_AVAILABLE ? describe : describe.skip;
 
 describeIfRex("rex integration (private Rex server)", () => {
-  let dir: string;
-  let server: ChildProcess | undefined;
-  let address: string;
+  let server: ReturnType<typeof startTestRex> | undefined;
   let session: string;
 
-  const rexCli = (args: readonly string[]) =>
-    spawnSync("rex", ["-S", address, "--autostart=false", ...args], { encoding: "utf8" });
-
   beforeAll(async () => {
-    dir = mkdtempSync(join(tmpdir(), "mu-rex-"));
-    address = `unix://${join(dir, "rex.sock")}`;
-    server = spawn(
-      "rex",
-      ["server", "run", "--listen", address, "--restore=false", "--state-dir", join(dir, "state")],
-      { stdio: "ignore" },
+    server = startTestRex();
+    const { address } = server;
+    await pollUntil(
+      () =>
+        spawnSync(
+          "rex",
+          ["-S", address, "--autostart=false", "api", "call", "server.version", "{}"],
+          { stdio: "ignore", timeout: 1000, killSignal: "SIGKILL" },
+        ).status === 0,
+      { attempts: 100, intervalMs: 50, description: "private rex server did not start" },
     );
-    await pollUntil(() => rexCli(["api", "call", "server.version", "{}"]).status === 0, {
-      attempts: 100,
-      intervalMs: 50,
-      description: "private rex server did not start",
-    });
     process.env.MU_REX_SERVER = address;
   }, 15_000);
 
-  afterAll(() => {
+  afterAll(async () => {
     const key = "MU_REX_SERVER";
     delete process.env[key];
-    try {
-      rexCli(["api", "call", "server.stop", "{}"]);
-    } catch {
-      // best effort
-    }
-    server?.kill();
-    rmSync(dir, { recursive: true, force: true });
+    await server?.stop();
   });
 
   beforeEach(() => {
@@ -73,6 +59,7 @@ describeIfRex("rex integration (private Rex server)", () => {
   });
 
   afterEach(async () => {
+    if (!server || process.env.MU_REX_SERVER !== server.address || !session) return;
     try {
       await killSession(session);
     } catch {
@@ -80,18 +67,20 @@ describeIfRex("rex integration (private Rex server)", () => {
     }
   });
 
-  const spawnIn = (window: string, command: string, extra: { retainOnExit?: boolean } = {}) =>
-    spawnAgent({
+  const spawnIn = (window: string, command: string, extra: { retainOnExit?: boolean } = {}) => {
+    if (!server) throw new Error("private Rex fixture has not started");
+    return spawnAgent({
       session,
       window,
       name: window,
       cli: "sh",
       command,
       commandSource: "explicit",
-      cwd: dir,
+      cwd: server.dir,
       env: { MU_AGENT_NAME: window },
       ...extra,
     });
+  };
 
   it("ensures a session with `_mu`, idempotently, and kills it idempotently", async () => {
     expect(await ensureSession(session)).toEqual({ created: true, repaired: false });

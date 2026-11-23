@@ -26,12 +26,7 @@
 // baseline a known-clean env regardless of the surrounding shell.
 //
 // Allowlist:
-//   MU_TMUX_SOCKET — set by ./_global-teardown.ts in the main
-//     process BEFORE fork spawn (Layer 3 of the prior test-flake
-//     bundle). Forks inherit it intentionally so every tmux call
-//     routes through the private test server. Wiping it here would
-//     drop us back onto the user's default socket and re-introduce
-//     the residue + cross-run contention that Layer 3 fixed.
+//   tmux settings come from this run's global setup, not the parent shell.
 //
 //   MU_HERDR_SESSION — the herdr analogue: it routes every herdr call
 //     through a NAMED server instead of the user's default one. Only
@@ -68,14 +63,11 @@ import { setProcessTableReaderForTests } from "../src/hook-chain.js";
 import { setMuzzleRunnerForTests } from "../src/muzzle-queue.js";
 import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
+import { SERVER_ROOT_KEY, setServerRoot, TMUX_SOCKET_KEY } from "./_server-registry.js";
 
 const ALLOWED: ReadonlySet<string> = new Set([
-  // Layer-3 test-isolation socket (see _global-teardown.ts).
-  "MU_TMUX_SOCKET",
   // The herdr equivalent: an isolated named herdr server.
   "MU_HERDR_SESSION",
-  // The Rex equivalent: a private `rex server run --listen unix://…`.
-  "MU_REX_SERVER",
 ]);
 
 for (const key of Object.keys(process.env)) {
@@ -83,6 +75,13 @@ for (const key of Object.keys(process.env)) {
     delete process.env[key];
   }
 }
+
+const serverRoot = inject(SERVER_ROOT_KEY);
+if (typeof serverRoot === "string") setServerRoot(serverRoot);
+const socket = inject(TMUX_SOCKET_KEY);
+if (typeof socket === "string") process.env.MU_TMUX_SOCKET = socket;
+// A bare tmux command must not follow the parent shell to a foreign socket.
+for (const key of ["TMUX", "TMUX_PANE"]) delete process.env[key];
 
 // A test run from inside a pi session inherits its identity: `mu wait` would own
 // (and spawn would stamp) a real session's work. Tests that need one set it.

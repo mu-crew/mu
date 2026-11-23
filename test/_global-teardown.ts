@@ -1,477 +1,94 @@
-// Global vitest setup/teardown hook.
-//
-// Two layers stacked here, both from bug_test_suite_flake_leaks_isolation:
-//
-//   LAYER 3 (the real fix) — ONE dedicated `tmux -L <socket>` server per
-//   `npm test` invocation. The integration suite never touches the user's
-//   default tmux socket (the one `tmux ls` in their interactive shell
-//   shows). Two concurrent `npm test` runs (orchestrator + worker agent)
-//   pick different sockets and can't possibly contend on session names.
-//   The user's interactive sessions are invisible to the suite, and
-//   suite-residue is invisible to the user.
-//
-//   LAYER 2 (round-4 — DB-rooted allowlist) — a safety net for any
-//   test that bypasses the private socket and accidentally creates a
-//   session on the user's DEFAULT socket. The sweep computes an
-//   allowlist of names we MUST NEVER kill — every workstream name in
-//   the user's real DB plus the orchestrator's own `$MU_SESSION` — and
-//   kills any other `mu-*` session on the default socket.
-//
-//   Round-3 Part B used the same approach but ALSO captured a snapshot
-//   of `mu-*` sessions present at module-load time. That snapshot is
-//   gone (round-4 — bug_test_flake_round_4_self_heal): leftover test
-//   residue from a partially-broken run on the user's default socket
-//   would get "grandfathered in" as protected forever, defeating the
-//   self-healing intent of the sweep. The DB is the only source of
-//   truth for what the user considers a real workstream; an ad-hoc
-//   `tmux new-session -t mu-foo` with no DB row is now killed by the
-//   sweep (the user can `mu workstream init foo` to register it,
-//   which they'd need to do anyway to use it as a workstream).
-//
-// CONTRACT
-//
-// vitest's globalSetup contract: this file exports `setup()` (runs once
-// before the suite) and `teardown()` (runs once after). Both are async.
-// globalSetup runs in vitest's main thread, BEFORE any worker fork is
-// created. Empirically (see `mu-test fork` probe in setup.ts), the env
-// vitest mutates inside setup() IS visible to forks — so `setup()`
-// is a working seam. BUT the contract is fragile: `process.env`
-// mutation in async hooks can race with worker spawn on some
-// vitest pool variants. To eliminate the risk entirely (round-3 fix
-// for bug_test_flake_round_3 — Part A), we set `MU_TMUX_SOCKET` at
-// MODULE LOAD time, before vitest has a chance to do anything else.
-// Module load happens before setup() and unambiguously before any
-// fork pool spins up. The setup() hook then bootstraps the actual
-// tmux server (and reverts the env on bootstrap failure for
-// graceful fallback).
-//
-// The realExecutor in src/tmux.ts reads `MU_TMUX_SOCKET` per-call (see
-// `tmuxSocketArgs`) and prepends `-L <socket>` to every tmux invocation
-// when set. Production code never sets the var; this file is the only
-// caller.
-
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+// Vitest global hooks. Workers get a private tmux namespace and a shared
+// scratch directory via provide/inject; cleanup never probes a user server.
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import Database from "better-sqlite3";
 import { execa } from "execa";
+import type { TestProject } from "vitest/node";
 import { openDb } from "../src/db.js";
 import { DB_TEMPLATE_KEY } from "./_db-template.js";
 import { pinRealGit } from "./_real-git.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
+import {
+  createServerRoot,
+  registerTmuxSocket,
+  SERVER_ROOT_KEY,
+  TMUX_SOCKET_KEY,
+  watchTestServers,
+} from "./_server-registry.js";
 
-// ─── Layer 3: dedicated tmux socket ────────────────────────────────
-
-/**
- * Unique socket name per `npm test` run. tmux derives the socket path
- * from this: on Linux it lands at `/tmp/tmux-<uid>/<name>`, on macOS
- * under `$TMPDIR/tmux-<uid>/<name>`. Using a fresh name per run means
- * concurrent runs on the same machine never share a server.
- *
- * Captured at module-load time so setup() and teardown() agree even if
- * something later mutates `process.env.MU_TMUX_SOCKET`.
- */
-const TEST_SOCKET = `mu-test-${process.pid.toString(36)}-${Date.now().toString(36)}-${Math.floor(
-  Math.random() * 36 ** 6,
-)
-  .toString(36)
-  .padStart(6, "0")}`;
-
-// Round-3 Part A: publish the socket name on process.env at MODULE LOAD
-// time, BEFORE the vitest pool has a chance to spawn workers. This is
-// the belt-and-suspenders fix for the worry that `process.env`
-// mutation inside an async setup() hook races with fork spawn on some
-// vitest pool variants. test/_setup.ts (per-fork) has
-// MU_TMUX_SOCKET on its allowlist, so forks inherit this value as-is.
-// If the actual tmux server bootstrap inside setup() FAILS, we
-// `delete process.env.MU_TMUX_SOCKET` there to fall back gracefully
-// (otherwise forks would route through `-L <socket>` to a non-existent
-// server and every tmux call would error).
-process.env.MU_TMUX_SOCKET = TEST_SOCKET;
-
-// The real git first on PATH (test/_real-git.ts), at module load for the
-// same reason: every fork inherits PATH as it is when the pool starts. A
-// fork importing this file (its unit test) already has it.
-if (process.env.VITEST_WORKER_ID === undefined) pinRealGit();
-
-async function bootstrapPrivateTmuxServer(): Promise<void> {
-  // tmux lazily starts the server on the first command; an explicit
-  // `start-server` is the lightest no-op call that materialises it.
-  // We do this BEFORE setting MU_TMUX_SOCKET on process.env so the
-  // bootstrap call itself goes through the explicit -L (not relying
-  // on the same env-read path the realExecutor uses).
-  //
-  // `-f /dev/null` SKIPS the user's ~/.tmux.conf. This matters: a
-  // typical config uses `run-shell` for status-bar plugins (TPM,
-  // network probes, hostname pills, etc.), each of which adds
-  // ~1–4s to the FIRST `new-session` after server startup. On the
-  // dev box that motivated this task, a single integration test
-  // ballooned 3s→48s before `-f /dev/null` was added. The user's
-  // config has zero relevance to test correctness — the suite drives
-  // tmux through the documented protocol, not through bound keys.
-  //
-  // `set -s exit-empty off` in the SAME invocation is what keeps this
-  // server alive for the whole run, and it fixes a real flake
-  // (flake-tmux-server-exited). tmux's server-level `exit-empty` option
-  // defaults to ON: the server exits as soon as its last session is
-  // killed. Integration tests kill their session in afterEach, so at
-  // every test boundary the server is shutting down while the next
-  // test's `new-session` connects to the socket — the client attaches
-  // to a doomed server and gets `server exited unexpectedly` (exit 1).
-  // Measured: 17/200 raw-tmux new-sessions, and
-  // test/tmux.integration.test.ts failed 5/10 runs.
-  //
-  // With `exit-empty` off the server survives zero sessions, so the
-  // race window never opens. It MUST be spliced into the same command
-  // list as `start-server` (`;` is tmux's command separator): as a
-  // SECOND execa call it is useless, because the freshly-started empty
-  // server has already exited by then — that variant still failed
-  // 23/200 in a raw-tmux probe; the atomic one, 0/200.
-  //
-  // Cost: if teardown() never runs (SIGKILLed runner) an idle empty
-  // server lingers on the private socket instead of self-reaping. The
-  // socket name is per-run, so it can never be reused or contended;
-  // `tmux -L <socket> kill-server` clears it.
-  const r = await execa(
-    "tmux",
-    ["-L", TEST_SOCKET, "-f", "/dev/null", "start-server", ";", "set", "-s", "exit-empty", "off"],
-    { reject: false },
-  );
-  if (r.exitCode !== 0) {
-    // Don't crash the suite — fall back to the user's default socket
-    // and rely on Layer 1+2 (unique names + sweep) for isolation.
-    // Loud warning so a CI failure stays diagnosable.
-    //
-    // Round-3 Part A: undo the module-load env publish so forks don't
-    // route through `-L <bogus-socket>` and turn every tmux call into
-    // a connect-failure.
-    const key = "MU_TMUX_SOCKET";
-    delete process.env[key];
-    console.warn(
-      `[mu-test global-setup] failed to bootstrap private tmux socket "${TEST_SOCKET}": ${r.stderr}; falling back to user's default tmux server`,
-    );
-  }
-  // On success: nothing to do — process.env.MU_TMUX_SOCKET is already
-  // set from the module-load assignment above.
-}
-
-/** The socket file path of a (running) private server, or null. */
-async function socketPathOf(socket: string): Promise<string | null> {
-  const r = await execa("tmux", ["-L", socket, "display-message", "-p", "#{socket_path}"], {
-    reject: false,
-  });
-  const path = r.exitCode === 0 ? String(r.stdout ?? "").trim() : "";
-  return isAbsolute(path) ? path : null;
-}
-
-async function killPrivateTmuxServer(): Promise<void> {
-  if (process.env.MU_TMUX_SOCKET !== TEST_SOCKET) return;
-  // `kill-server` nukes every session/window/pane in one call. No
-  // per-session iteration needed; this is what makes Layer 3 the
-  // "real fix" — there's literally nothing to leak past this point.
-  // It leaves the socket file behind (tmux 3.x), so remember the path first
-  // and unlink it after.
-  const path = await socketPathOf(TEST_SOCKET);
-  await execa("tmux", ["-L", TEST_SOCKET, "kill-server"], { reject: false });
-  if (path !== null) rmSync(path, { force: true });
-  const key = "MU_TMUX_SOCKET";
-  delete process.env[key];
-}
-
-/**
- * A test socket name carries its owner's pid: `mu-test-<pid36>-<time36>-<6>`
- * for a suite run (TEST_SOCKET), `mu-test-<pid10>-<epoch ms>-<6>` for
- * test/remote-gates.integration.test.ts.
- */
-export function socketOwnerPid(name: string): number | null {
-  const run = /^mu-test-([0-9a-z]+)-[0-9a-z]{6,9}-[0-9a-z]{6}$/.exec(name);
-  if (run?.[1] !== undefined) return Number.parseInt(run[1], 36);
-  const gate = /^mu-test-(\d+)-\d{13}-[0-9a-z]{6}$/.exec(name);
-  return gate?.[1] !== undefined ? Number.parseInt(gate[1], 10) : null;
-}
-
-function pidIsGone(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code === "ESRCH";
-  }
-}
-
-/**
- * Reap what an interrupted run (SIGKILL, OOM) left: its private tmux server
- * and socket file, and its scratch dir. Both names carry the owning pid, so
- * only runs whose pid is gone are touched. A name that does not match the
- * pattern (another test's socket) is never touched.
- */
-export async function sweepStaleRuns(
-  socketDir: string | null,
-  scratch: string = tmpdir(),
-): Promise<void> {
-  if (socketDir !== null) {
-    let names: string[] = [];
-    try {
-      names = readdirSync(socketDir);
-    } catch {
-      // no socket dir yet
-    }
-    for (const name of names) {
-      const pid = socketOwnerPid(name);
-      if (pid === null || name === TEST_SOCKET || !pidIsGone(pid)) continue;
-      await execa("tmux", ["-L", name, "kill-server"], { reject: false });
-      rmSync(join(socketDir, name), { force: true });
-    }
-  }
-  let entries: string[] = [];
-  try {
-    entries = readdirSync(scratch);
-  } catch {
-    return;
-  }
-  for (const name of entries) {
-    const m = /^mu-test-run-([0-9a-z]+)-/.exec(name);
-    if (m === null) continue;
-    if (pidIsGone(Number.parseInt(m[1] ?? "", 36))) {
-      rmSync(join(scratch, name), { recursive: true, force: true });
-    }
-  }
-}
-
-// ─── Layer 2 (round-4): DB-rooted default-socket sweep ────────────
-
-/**
- * Round-4 replaced round-3's two-source allowlist (pre-existing
- * snapshot + DB) with a DB-only allowlist. The pre-existing snapshot
- * was a self-locking trap: leftover test residue on the user's
- * default socket at module-load time was "grandfathered in" as
- * protected forever, defeating the self-healing intent of the sweep
- * (see bug_test_flake_round_4_self_heal). The orchestrator had to
- * manually `tmux kill-session` 7 leaked sessions because each new
- * test run snapshotted them as preexisting and protected them.
- *
- * The allowlist approach inverts the question: instead of "does this
- * name look like test fixture residue?" we ask "is this name something
- * we KNOW we must protect?" Anything else is killed.
- *
- * The allowlist has two sources, unioned:
- *
- *   1. USER WORKSTREAMS — every workstream name in the user's REAL
- *      mu DB (every candidate from userDbPaths(): `MU_DB_PATH`,
- *      `MU_STATE_DIR/mu.db`, `$XDG_STATE_HOME/mu/mu.db`).
- *      A `mu-<name>` session matching one of these is the user's
- *      workstream session, even if it was created mid-suite by an
- *      orchestrator agent. We can't open the DB through the SDK
- *      `openDb()` because round-2 added a hard guard that REFUSES to
- *      open the user DB during vitest — so we open via better-sqlite3
- *      directly with `{ readonly: true }`. Reading is metadata-only;
- *      the readonly flag enforces "no writes possible" at the SQLite
- *      layer (and the round-2 guard's intent was to prevent test
- *      WRITES, not metadata reads).
- *
- *   2. THE ORCHESTRATOR'S OWN SESSION — `mu-$MU_SESSION` if
- *      `$MU_SESSION` is set in the parent shell. Belt-and-suspenders
- *      protection for the workstream the orchestrator is actively
- *      running in, in case its row is in a DB we did not read.
- *
- * If no candidate DB exists, or one exists but cannot be read, there
- * is no allowlist and the sweep is skipped (fail OPEN).
- *
- * Anything on the default socket starting with `mu-` and NOT in the
- * union of those two sets is, by elimination, test residue — a
- * session our suite created by accidentally bypassing the private
- * `-L <socket>` (legacy hardcoded-name tests, future tests that spawn
- * `execa("tmux", …)` directly without routing through src/tmux.ts,
- * etc). We kill it.
- *
- * Cost: an ad-hoc `tmux new-session -t mu-foo` with no DB row gets
- * killed by the sweep. Workaround: `mu workstream init foo` first
- * (which the user would need to do anyway to use it as a workstream).
- */
-
-/**
- * Every path the user's REAL DB can live at, resolved the way
- * src/db.ts `defaultDbPath()` does: `MU_DB_PATH`, else
- * `MU_STATE_DIR/mu.db`, else `$XDG_STATE_HOME/mu5/mu.db` (and 4.x's `mu-next/mu.db`, 3.x's `mu/mu.db`). globalSetup
- * runs in vitest's main process with the developer's unscrubbed env
- * (test/_setup.ts only scrubs forks), so these are the user's values.
- * We read EVERY candidate, not just the winner: the user's sessions
- * may belong to a DB the current shell does not point at, and a
- * larger allowlist only means fewer kills. We open via better-sqlite3
- * directly because `openDb()` refuses the user DB under vitest.
- */
-export function userDbPaths(env: NodeJS.ProcessEnv = process.env): readonly string[] {
-  const home = env.HOME ?? homedir();
-  // Mirrors src/db.ts xdgStateHome: an empty or relative value is ignored.
-  const xdg =
-    env.XDG_STATE_HOME !== undefined && isAbsolute(env.XDG_STATE_HOME)
-      ? env.XDG_STATE_HOME
-      : join(home, ".local", "state");
-  const paths = [env.MU_DB_PATH, env.MU_STATE_DIR ? join(env.MU_STATE_DIR, "mu.db") : undefined];
-  // The 5.x default (<state home>/mu5), then 4.x's and 3.x's: a larger allowlist only means fewer kills.
-  paths.push(join(xdg, "mu5", "mu.db"), join(xdg, "mu-next", "mu.db"), join(xdg, "mu", "mu.db"));
-  return [...new Set(paths.filter((p): p is string => p !== undefined && p.length > 0))];
-}
-
-/**
- * Union of workstream names across the candidate DBs, or `null` when
- * the sweep must not run. It fails OPEN: if no candidate DB exists
- * (the user's DB is somewhere we did not look) or any existing one
- * cannot be read (locked, newer schema, corrupt, permission denied),
- * we cannot tell the user's sessions from test residue, and leaving a
- * stray session beats killing a live workstream.
- */
-export function readUserWorkstreams(paths: readonly string[]): ReadonlySet<string> | null {
-  const names = new Set<string>();
-  let found = false;
-  for (const path of paths) {
-    if (!existsSync(path)) continue;
-    found = true;
-    let db: Database.Database | undefined;
-    try {
-      // readonly: true — SQLite refuses every write at the storage
-      //   layer, so even a buggy query can't mutate user state.
-      // fileMustExist: true — don't accidentally CREATE the user DB.
-      db = new Database(path, { readonly: true, fileMustExist: true });
-      const rows = db.prepare("SELECT name FROM workstreams").all() as { name: string }[];
-      for (const r of rows) names.add(r.name);
-    } catch (err) {
-      console.warn(
-        `[mu-test global-setup] could not read user workstreams from ${path}: ${err instanceof Error ? err.message : String(err)}; skipping the default-socket sweep`,
-      );
-      return null;
-    } finally {
-      db?.close();
-    }
-  }
-  return found ? names : null;
-}
-
-/**
- * The protected allowlist of `mu-*` session names that the sweep
- * MUST NEVER kill, or `null` when the user DB is missing or
- * unreadable (see readUserWorkstreams). Computed lazily at sweep time
- * so we always pick up workstreams the user added to their DB DURING
- * the suite (e.g. an orchestrator agent's `mu workstream init` mid-run).
- */
-export function buildAllowlist(
-  paths: readonly string[] = userDbPaths(),
-  orchSession: string | undefined = process.env.MU_SESSION,
-): ReadonlySet<string> | null {
-  const workstreams = readUserWorkstreams(paths);
-  if (workstreams === null) return null;
-  const allowed = new Set<string>();
-  for (const ws of workstreams) {
-    allowed.add(`mu-${ws}`);
-  }
-  if (orchSession !== undefined && orchSession.length > 0) {
-    allowed.add(`mu-${orchSession}`);
-  }
-  return allowed;
-}
-
-/**
- * Pure helper: given a list of `mu-*` sessions on the default socket
- * and the protected allowlist, return the names to kill. Exposed for
- * unit testing of the policy without poking real tmux.
- */
-export function sessionsToKill(
-  allMuSessions: readonly string[],
-  allowlist: ReadonlySet<string>,
-): readonly string[] {
-  return allMuSessions.filter((name) => !allowlist.has(name));
-}
-
-async function sweepLeakedDefaultSocketSessions(phase: "setup" | "teardown"): Promise<void> {
-  // List on the USER's default socket (no -L). Tmux exits 1 with
-  // "no server running" when no daemon is up; treat as no-residue.
-  const ls = await execa("tmux", ["list-sessions", "-F", "#{session_name}"], {
-    reject: false,
-  });
-  if (ls.exitCode !== 0) return;
-
-  const all = (ls.stdout ?? "").split("\n").filter((l) => l.length > 0);
-  const muSessions = all.filter((name) => name.startsWith("mu-"));
-  const allowlist = buildAllowlist();
-  if (allowlist === null) return;
-  const leaked = sessionsToKill(muSessions, allowlist);
-  if (leaked.length === 0) return;
-
-  for (const name of leaked) {
-    await execa("tmux", ["kill-session", "-t", name], { reject: false });
-  }
-  console.warn(
-    `[mu-test global-${phase}] killed ${leaked.length} leaked tmux session(s) on the default socket (allowlist of ${allowlist.size} protected names): ${leaked.join(", ")}`,
-  );
-}
-
-// ─── Hooks ─────────────────────────────────────────────────────────
-
-/**
- * vitest 5 creates `<tmpdir>/<nanoid(21)>` for the root Vitest instance
- * (`vitest._tmpDir`) and fills `<it>/ssr` with a transformed copy of every
- * module the forks pool loads (6-17 MB per run). Project-level tmp dirs are
- * removed on close; this root one never is. On a tmpfs /tmp the leak adds up
- * to an OOM. vitest exposes no option for it, so globalSetup remembers the
- * path and teardown removes it. Both vitest configs share this file.
- */
+// Vitest leaves its root SSR temp dir behind; project-level dirs get removed.
 let vitestTmpDir: string | null = null;
-let dbTemplateDir: string | null = null;
 let runRoot: string | null = null;
+let stopServers: (() => Promise<void>) | undefined;
+
+declare module "vitest" {
+  interface ProvidedContext {
+    [RUN_ROOT_KEY]: string;
+    [DB_TEMPLATE_KEY]: string;
+    [SERVER_ROOT_KEY]: string;
+    [TMUX_SOCKET_KEY]?: string;
+  }
+}
 
 export function leakedVitestTmpDir(project: unknown, tmp: string = tmpdir()): string | null {
   const dir = (project as { vitest?: { _tmpDir?: unknown } } | null)?.vitest?._tmpDir;
   if (typeof dir !== "string" || !isAbsolute(dir)) return null;
-  // Only ever remove a direct child of the temp dir.
   return dirname(dir) === tmp ? dir : null;
 }
 
-export async function setup(project?: unknown): Promise<void> {
+export async function setup(project: TestProject): Promise<void> {
   vitestTmpDir = leakedVitestTmpDir(project);
-  // One scratch dir per run, removed in teardown: forks' XDG roots go inside.
-  runRoot = mkdtempSync(join(tmpdir(), `mu-test-run-${process.pid.toString(36)}-`));
-  // Git fixtures don't need the machine's system config or sample hooks.
-  process.env.GIT_CONFIG_NOSYSTEM = "1";
-  const gitTemplate = mkdtempSync(join(runRoot, "git-template-"));
-  // A few fixtures write their own exclude file or hooks here.
-  for (const dir of ["info", "hooks"]) mkdirSync(join(gitTemplate, dir));
-  process.env.GIT_TEMPLATE_DIR = gitTemplate;
-  (project as { provide?: (k: string, v: unknown) => void } | undefined)?.provide?.(
-    RUN_ROOT_KEY,
-    runRoot,
-  );
-  // One schema-built DB for the whole run; forks copy it (test/_db-template.ts).
-  dbTemplateDir = mkdtempSync(join(runRoot, "dbtpl-"));
-  const template = join(dbTemplateDir, "template.db");
-  const db = openDb({ path: template });
-  db.pragma("wal_checkpoint(TRUNCATE)");
-  db.close();
-  (project as { provide?: (k: string, v: unknown) => void } | undefined)?.provide?.(
-    DB_TEMPLATE_KEY,
-    template,
-  );
-  // Layer 3 first: stand up the private tmux server. If this succeeds
-  // every subsequent test invocation routes through `-L <socket>` and
-  // can't see the user's tmux. If it FAILS we fall back gracefully.
-  await bootstrapPrivateTmuxServer();
-  // Reap runs that were killed before their teardown ran.
-  const ours = process.env.MU_TMUX_SOCKET === TEST_SOCKET ? await socketPathOf(TEST_SOCKET) : null;
-  await sweepStaleRuns(ours === null ? null : dirname(ours));
-  // Layer 2: clean any leftovers on the user's default socket from a
-  // prior non-Layer-3 run.
-  await sweepLeakedDefaultSocketSessions("setup");
+  try {
+    pinRealGit();
+    runRoot = mkdtempSync(join(tmpdir(), "mu-test-run-"));
+    const serverRoot = createServerRoot();
+    try {
+      stopServers = await watchTestServers(serverRoot, runRoot);
+    } catch (err) {
+      rmSync(serverRoot, { recursive: true, force: true });
+      throw err;
+    }
+    project.provide(SERVER_ROOT_KEY, serverRoot);
+    project.provide(RUN_ROOT_KEY, runRoot);
+    // Fixtures don't need the machine's system config or sample hooks.
+    process.env.GIT_CONFIG_NOSYSTEM = "1";
+    const gitTemplate = join(runRoot, "git-template");
+    process.env.GIT_TEMPLATE_DIR = gitTemplate;
+    mkdirSync(join(gitTemplate, "info"), { recursive: true });
+    mkdirSync(join(gitTemplate, "hooks"));
+    const template = join(runRoot, "template.db");
+    const db = openDb({ path: template });
+    try {
+      db.pragma("wal_checkpoint(TRUNCATE)");
+    } finally {
+      db.close();
+    }
+    project.provide(DB_TEMPLATE_KEY, template);
+    const socket = registerTmuxSocket(serverRoot);
+    // Disable exit-empty atomically with start-server; otherwise the last
+    // session exiting can race the next fixture's new-session.
+    const result = await execa(
+      "tmux",
+      ["-L", socket, "-f", "/dev/null", "start-server", ";", "set", "-s", "exit-empty", "off"],
+      { env: { TMUX_TMPDIR: serverRoot }, reject: false, timeout: 5000 },
+    );
+    if (result.exitCode === 0) project.provide(TMUX_SOCKET_KEY, socket);
+    else
+      console.warn(
+        `[mu-test] private tmux unavailable; skipping real-tmux tests: ${result.stderr ?? ""}`,
+      );
+  } catch (err) {
+    await teardown();
+    throw err;
+  }
 }
 
 export async function teardown(): Promise<void> {
-  if (vitestTmpDir) rmSync(vitestTmpDir, { recursive: true, force: true });
-  if (dbTemplateDir) rmSync(dbTemplateDir, { recursive: true, force: true });
-  if (runRoot) rmSync(runRoot, { recursive: true, force: true });
-  // Layer 3: nuke the entire private server in one call. After this,
-  // every session/window/pane the suite ever touched is gone.
-  await killPrivateTmuxServer();
-  // Layer 2: also sweep the default socket in case a test
-  // accidentally bypassed our executor (e.g. a future test spawning
-  // `execa("tmux", ...)` directly without going through src/tmux.ts).
-  await sweepLeakedDefaultSocketSessions("teardown");
+  try {
+    await stopServers?.();
+  } finally {
+    if (vitestTmpDir) rmSync(vitestTmpDir, { recursive: true, force: true });
+    if (runRoot) rmSync(runRoot, { recursive: true, force: true });
+  }
 }

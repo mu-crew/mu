@@ -42,6 +42,7 @@ import { ensureWorkstream, teardownWorkstream, workstreamRevision } from "../src
 import { pollUntil } from "./_env.js";
 import { privatePane, tmuxIntegrationAvailable } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
+import { registerTmuxSocket, stopTestTmux } from "./_server-registry.js";
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 const SLEEP = "sh -c 'echo FOREIGN-PANE; while true; do sleep 60; done'";
@@ -52,6 +53,7 @@ describeIfTmux(
     let dir: string;
     let db: Db;
     let outer: string | undefined;
+    let socket: string | undefined;
     let real: TmuxExecutor;
     const ws = "fencews";
     const session = `mu-${ws}`;
@@ -107,7 +109,8 @@ describeIfTmux(
 
     beforeEach(() => {
       outer = process.env.MU_TMUX_SOCKET;
-      process.env.MU_TMUX_SOCKET = `mu-test-pid-${process.pid}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      socket = registerTmuxSocket();
+      process.env.MU_TMUX_SOCKET = socket;
       resetTmuxExecutor();
       real = setTmuxExecutor(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
       resetTmuxExecutor();
@@ -116,11 +119,12 @@ describeIfTmux(
       ensureWorkstream(db, ws);
     });
 
-    afterEach(async () => {
+    afterEach(() => {
       resetTmuxExecutor();
       try {
-        await tmux(["kill-server"]);
+        stopTestTmux(socket);
       } catch {}
+      socket = undefined;
       if (outer === undefined) delete process.env.MU_TMUX_SOCKET;
       else process.env.MU_TMUX_SOCKET = outer;
       db.close();

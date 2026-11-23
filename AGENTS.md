@@ -98,12 +98,11 @@ first.
   run (`test/_db-template.ts`). A test that pins fresh-file behaviour
   (the DDL, a refusal leaving the file empty) calls
   `vi.unmock("../src/db.js")`.
-- `test/_setup.ts` clears inherited `MU_*` vars except
-  `MU_TMUX_SOCKET`. Opt in per test with `withEnv()` from `test/_env.ts`.
-- Tests use temp DBs. `test/_global-teardown.ts` only reads the real DB
-  to decide which sessions to sweep: it kills every `mu-*` tmux session
-  on the default socket that has no workstream there, and skips the
-  sweep when that DB is missing or unreadable.
+- `test/_setup.ts` clears inherited `MU_*` vars except `MU_HERDR_SESSION`.
+  Opt in per test with `withEnv()` from `test/_env.ts`.
+- Register extra tmux sockets and start private Rex servers through
+  `test/_server-registry.ts` so teardown can stop them after an aborted run.
+  See [mux tests](test/README.md#mux-tests).
 - Workers run fast while iterating and slow for their changed area (see
   [Gates](#gates)); the orchestrator runs fast + slow once per
   merged batch. Tests may run concurrently across workers. A test that fails

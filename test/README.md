@@ -10,7 +10,7 @@ Test conventions. Start with the tiers, then [mux tests](#mux-tests) (which seam
 | integration | `*.integration.test.ts` | `npm run build && npm run test`, one worker | may use real tmux (the run's private `-L` server), herdr (named session), Rex (a private server), VCS fixtures, subprocesses; some need `dist/` |
 
 The tmux integration tests do **not** need `$TMUX`: `globalSetup` starts a
-private server and exports `MU_TMUX_SOCKET`, and `tmuxIntegrationAvailable()`
+private server and provides its socket to workers as `MU_TMUX_SOCKET`, and `tmuxIntegrationAvailable()`
 is true whenever that is set. They skip only if that server failed to start
 (the setup prints a warning). Tests scratch under the per-run dir
 globalSetup `provide`s (`test/_run-root.ts`), removed at the end of the run.
@@ -80,7 +80,14 @@ helpers in `test/_mux.ts`:
 | --- | --- | --- |
 | tmux | `tmuxIntegrationAvailable()` (the private socket is up; `$TMUX` is not needed) | **Structural** — `MU_TMUX_SOCKET` points the suite at a private `-L <socket>` server (see `_global-teardown.ts`) |
 | herdr | none — herdr tests are explicit-only | **Explicit** — `MU_HERDR_SESSION` names a private session; there is no private-socket equivalent |
-| rex | `rex version` runs (`test/mux-rex.integration.test.ts`) | **Structural** — the suite starts its own `rex server run --listen unix://<tmp>` and sets `MU_REX_SERVER`; it stops that server through its own socket, never the user's |
+| rex | `rex version` runs (`test/mux-rex.integration.test.ts`) | **Structural** — `startTestRex()` starts an isolated Rex server and returns its address for `MU_REX_SERVER` |
+
+Register any extra tmux socket with `registerTmuxSocket()` before using it;
+stop it with `stopTestTmux()` in the fixture hook. For Rex, call `stop()` on
+its fixture in the hook. Global teardown uses the same per-run registry
+as a backstop. If a deadline kills Vitest before its hooks run, the cleanup
+process sees the runner's pipe close and stops the registered servers. It
+never scans the user's tmux sockets or stops a Rex server by name alone.
 
 ### ⚠️ The herdr blast shield
 
@@ -110,11 +117,5 @@ These guards are runtime assertions, not comments, and
 `test/mux-test-seam.test.ts` exercises them. That is deliberate: a
 safety rule nobody has executed is a wish.
 
-There is intentionally **no herdr equivalent of the
-`_global-teardown.ts` default-socket sweep.** That sweep's allowlist is
-DB-rooted (`mu-<workstream>` names from the user's real DB), which works
-only because tmux session names are mu's own namespace. herdr workspace
-labels are not: the user labels workspaces by hand, mu-created and
-human-created panes are indistinguishable, and a sweep that guessed
-wrong would kill live user work. Prevention (the guards above) is the
-only safe policy here; a cleanup sweep is not.
+There is no server-wide herdr cleanup. The fixture closes only the
+workspaces it created.

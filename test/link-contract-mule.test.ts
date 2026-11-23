@@ -18,6 +18,7 @@ import { addHost, HostHandbackError } from "../src/hosts.js";
 import { narrowSeams } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { rmFixtureDir } from "./_fs.js";
+import { registerTmuxSocket, stopTestTmux } from "./_server-registry.js";
 
 const BIN = process.env.MULE_PLUGIN_BIN ?? "";
 const have = BIN !== "" && existsSync(BIN) && spawnSync("tmux", ["-V"]).status === 0;
@@ -25,12 +26,14 @@ const have = BIN !== "" && existsSync(BIN) && spawnSync("tmux", ["-V"]).status =
 describe.skipIf(!have)("the link contract: mule", () => {
   let dir: string;
   let home: string;
+  let socket: string | undefined;
   let db: Db;
   let h: HostView;
   const saved = { PATH: process.env.PATH, XDG_STATE_HOME: process.env.XDG_STATE_HOME };
 
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "mlm-"));
+    socket = registerTmuxSocket();
     home = join(dir, "home");
     mkdirSync(join(home, "sub"), { recursive: true });
     mkdirSync(join(dir, "state"));
@@ -51,7 +54,7 @@ cd '${home}' && exec sh -c "$last"
     const config = join(dir, "config.toml");
     writeFileSync(
       config,
-      `[hosts.shim]\ntarget = "shim"\nsocket = "${join(dir, "mule.sock")}"\ntmux_socket = "mlm-${process.pid}"\n`,
+      `[hosts.shim]\ntarget = "shim"\nsocket = "${join(dir, "mule.sock")}"\ntmux_socket = "${socket}"\n`,
     );
     process.env.PATH = `${dir}:${saved.PATH}`;
     process.env.XDG_STATE_HOME = join(dir, "state");
@@ -67,7 +70,8 @@ cd '${home}' && exec sh -c "$last"
     process.env.PATH = saved.PATH;
     if (saved.XDG_STATE_HOME === undefined) delete process.env.XDG_STATE_HOME;
     else process.env.XDG_STATE_HOME = saved.XDG_STATE_HOME;
-    spawnSync("tmux", ["-L", `mlm-${process.pid}`, "kill-server"]);
+    stopTestTmux(socket);
+    socket = undefined;
     rmFixtureDir(dir);
   });
 
