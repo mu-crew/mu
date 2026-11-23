@@ -37,15 +37,17 @@ import { type CarrierJob, getCarrierJobByName, listCarrierJobsByName } from "../
 import { unlinkCtlSocket } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { resolveHost } from "../host-provider.js";
-import { releaseHostChannelsForAgent } from "../hosts.js";
+import { HostHandbackError, releaseHostChannelsForAgent } from "../hosts.js";
 import { readJobFile } from "../jobs/lease.js";
 import { killView, viewPid, viewPresent, viewRunning } from "../jobs/view.js";
+import { awaitMuleDispatchExit, stopMuleJobs, workspaceHost } from "../local-loop.js";
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { selectRemoteRecovery } from "../remote-recovery.js";
-import { closeRemoteWorktree } from "../remote-worktree.js";
+import { assertRemoteWorktreeReleasable, closeRemoteWorktree } from "../remote-worktree.js";
 import { agentRevision, assertRevision } from "../revision.js";
+import { shellWord } from "../shell-quote.js";
 import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
 import {
   assertReleasable,
@@ -523,10 +525,25 @@ async function closeLocked(
   }
   const row = worktreeOf(db, opts.workstream, name, agent);
   if (row !== undefined) await assertReleasable(row, { discard });
+  const muleHost = workspaceHost(agent);
+  let handback: HostHandbackError | undefined;
+  if (muleHost !== undefined && remoteOf(agent) !== null) {
+    try {
+      await assertRemoteWorktreeReleasable(db, agent, opts.keepBranch === true);
+    } catch (err) {
+      if (!(err instanceof HostHandbackError)) throw err;
+      // Close is explicit: the local pane can still be closed, but its remote
+      // tree and outstanding jobs must remain recoverable.
+      handback = err;
+    }
+  }
   const mux = await activeMux().catch(() => undefined);
   // The pane's processes, read before the kill ends them: the tree is removed
   // only once they are gone (below), or they are named as left in it.
-  const pane = row === undefined || mux === undefined ? undefined : await paneTree(mux, agent);
+  const pane =
+    (row === undefined && muleHost === undefined) || mux === undefined
+      ? undefined
+      : await paneTree(mux, agent);
   // The awaits above are where a replacement lands. Nothing below may act
   // on a name that is not the incarnation this close captured.
   const replaced = (): boolean => {
@@ -573,7 +590,7 @@ async function closeLocked(
       }
     }
   }
-  if (alive === true || (alive === "unknown" && opts.force !== true)) {
+  if (alive === true || (alive === "unknown" && (muleHost !== undefined || opts.force !== true))) {
     throw new AgentPaneStillAliveError(name, agent.workstreamName, agent.paneId, alive, why);
   }
   if (replaced()) throw new AgentReplacedError(name, opts.workstream);
@@ -608,14 +625,34 @@ async function closeLocked(
     // Re-read: a plugin job's final collect (its stop, above) recorded the collected head.
     const now =
       lease?.reservation.plugin != null ? getAgentForCleanup(db, name, opts.workstream) : undefined;
-    worktree = await closeRemoteWorktree(db, now ?? agent, {
-      keepBranch: opts.keepBranch === true,
-      force: opts.force === true,
-      paneAlive: viewRunning,
-      beforeRemove: () => {
+    try {
+      if (muleHost !== undefined) {
+        if (pane !== undefined) await awaitMuleDispatchExit(muleHost, pane);
+        if (handback !== undefined) throw handback;
         if (replaced()) throw new AgentReplacedError(name, opts.workstream);
-      },
-    });
+        await stopMuleJobs(db, muleHost, agent.incarnation);
+        if (replaced()) throw new AgentReplacedError(name, opts.workstream);
+      }
+      worktree = await closeRemoteWorktree(db, now ?? agent, {
+        keepBranch: opts.keepBranch === true,
+        force: opts.force === true,
+        paneAlive: viewRunning,
+        beforeRemove: () => {
+          if (replaced()) throw new AgentReplacedError(name, opts.workstream);
+        },
+      });
+    } catch (err) {
+      if (muleHost === undefined || !(err instanceof HostHandbackError)) throw err;
+      // The pane was proven gone. The delete atomically preserves the tree
+      // and original incarnation, which is also the outstanding jobs' key.
+      if (deleteAgent(db, name, opts.workstream, agent))
+        dropClosedAgentRefs(db, opts.workstream, name);
+      throw new HostHandbackError(
+        err.host,
+        err.field,
+        `${err.detail}; local pane closed, remote cleanup not confirmed; preview again: mu agent close ${shellWord(name)} -w ${shellWord(opts.workstream)} --recovery ${agent.incarnation}`,
+      );
+    }
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);
   }
   // A remote command gate: its pane is dead (probed above), so free its channel by id + pane and

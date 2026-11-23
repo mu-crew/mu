@@ -62,7 +62,9 @@ go through it, exactly, with no screen reading and no fallback to
 pasting. Remote pi agents (`spawn --host`) use a socket forward their
 host profile's shell template carries. A local-loop worker (`spawn --mule`)
 uses a local socket and local pane runtime; its recorded host is only for
-workspace operations such as collect. A pi is pasted to only when it was
+workspace operations such as collect. `src/local-loop.ts` probes mule's
+master for send and wait without using a session channel, and stops jobs
+by the original registry incarnation's prefix at close or recovery. A pi is pasted to only when it was
 spawned on the `hooks` fallback (`MU_PI_CHANNEL=hooks`, recorded on its row),
 never because its socket failed. Non-pi agents are sent to through
 the backend on herdr and Rex (`mux`), and on tmux through the `hooks`
@@ -163,6 +165,7 @@ are re-export hubs.
 | `src/agents/spawn-plugin.ts` | the plugin spawn path (plugins spec D8): a host whose job kind is a plugin's; honour or refuse, the job record (`reserveProviderJob` on a provider host), the site, the `job.start` effect, then the view and the row: read-only on the kind's channel, interactive on a built-in one for a kind without a channel (pi on `ctl` with the socket pair in the JobSpec, a hook harness on remote `hooks`, else `mux`); readiness by the channel's baseline (built-in: the ctl handshake or the view's liveness); rollback stops the job by its handle. An `at-start` kind's placeholder comes first and a task spawn claims on it (`firstTurn`); an unknown start is kept (`FirstPromptUnknownError`); `resolveFirstTurn` resolves a first prompt's start by the rule table and opens its view (task replay, `mu agent check`) |
 | `src/agents/reattach-view.ts` | a detached plugin job's view (D3): `detachedJob`, the reattach preview and apply (`job.attach`, then the row's `pane_id` compare-and-set, its incarnation kept); close stops such a job before its view |
 | `src/agents/spawn-remote.ts` | the remote half of `spawn --host` and `spawn --mule`: preflight, admission + remote prepare (`admitRemoteSpawn`, `prestageRemote`), remote-worktree rollback. `--mule` uses the link only for the workspace; `spawn.ts` starts a bound local pi pane on local ctl and pins the local DB env. |
+| `src/local-loop.ts` | local-loop workspace availability and per-incarnation mule job cleanup; neither determines local pane liveness |
 | `src/agents/staging.ts` | dead `--worktree` stagings (a SIGKILLed spawn's placeholder row + unused worktree): `deadStagings` for doctor, `reclaimDeadStagings` at spawn |
 | `src/agents/lease-carrier.ts` | the lease half of `spawn --host` around the lease job kind (`src/jobs/lease.ts`): the name fence every spawn passes (`refuseReserved`), the `carrier_jobs` reservation taken under the agent lock before any effect (`reserveLeaseJob`), the job file claimed in the spawn lock (an earlier one moved aside; `leaseJobFile`), the stop-first rollback on the spawn's own reservation only (`rollbackLeaseJob`, `releaseLeaseReservation`), and the conservative empty-reservation resolution (`resolveEmptyReservation`: released only if never launched and its creator is gone, else `--abandon-job`); the close half: `stopLeaseReservation` (stop, fill from the job file, or refuse), `cleanLeaseJobFile`, `releaseLeaseClose`; `stopFailedPath` / `dropStopFailed` (a job's stop-failure record, removed once a stop or reattach proves it) |
 | `src/agents/spawn-lock.ts` | per-session lock around topology and row insert |

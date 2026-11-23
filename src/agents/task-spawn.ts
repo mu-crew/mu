@@ -55,6 +55,7 @@ import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
 import { harnessOfCli } from "../harnesses.js";
 import { remoteLoopHost } from "../hosts.js";
+import { LocalLoopHandbackError } from "../local-loop.js";
 import { say } from "../messages.js";
 import { checkDelivery } from "../plugins/channel.js";
 import { claimTask, releaseTask, resolveActorIdentity } from "../tasks/claim.js";
@@ -190,6 +191,7 @@ export interface AutoAttemptRequest extends Omit<TaskSpawnRequest, "attempt"> {
 /** Errors raised BEFORE any byte of the prompt could have been written. */
 export function definitelyUnsent(err: unknown): boolean {
   return (
+    err instanceof LocalLoopHandbackError ||
     err instanceof AgentCtlUnreachableError ||
     err instanceof AgentExtensionOutdatedError ||
     err instanceof AgentEmptySendError ||

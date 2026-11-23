@@ -11,10 +11,12 @@ import {
 } from "../carrier-jobs.js";
 import type { Db } from "../db.js";
 import { type HostLease, releaseHostChannel, releaseHostChannelsForAgent } from "../hosts.js";
-import { killView, viewPresent } from "../jobs/view.js";
+import { killView, viewPid, viewPresent } from "../jobs/view.js";
+import { awaitMuleDispatchExit, stopMuleJobs, workspaceHost } from "../local-loop.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
-import { getWorktreeAt, releaseWorktree } from "../worktree.js";
+import { getRemoteRecovery } from "../remote-recovery.js";
+import { getWorktreeAt, type PaneProcesses, paneProcesses, releaseWorktree } from "../worktree.js";
 import { type LeaseRollback, releaseLeaseReservation, rollbackLeaseJob } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
 import type { StagedWorktree } from "./spawn.js";
@@ -81,6 +83,14 @@ export async function rollbackSpawn(
   // window and then fail before reporting its id (the record's view is then `dispatching`).
   let paneGone = !birthUncertain && paneId === undefined && !viewOpening(db, carrier);
   let heldBy: string | undefined;
+  const row = staged?.host === undefined ? undefined : getAgent(db, name, workstream);
+  const host =
+    row !== undefined && row.incarnation === ownedIncarnation
+      ? workspaceHost(row)
+      : staged?.host === undefined
+        ? undefined
+        : workspaceHost(getRemoteRecovery(db, staged.incarnation) ?? {});
+  let pane: PaneProcesses | undefined;
   if (paneId !== undefined && !birthUncertain) {
     // Best-effort: rollback runs on an already-failing path and must not
     // mask the original error, even if the mux itself went away.
@@ -90,18 +100,22 @@ export async function rollbackSpawn(
     // replacement that reused it) means the pane is no longer ours.
     // A pane id registered to ANY other incarnation (any name, any
     // workstream) is not ours either: leave it alone and say so.
-    const foreign = db
-      .prepare(
-        "SELECT ws.name || '/' || a.name AS who FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.pane_id = ? AND a.id IS NOT ? LIMIT 1",
-      )
-      .get(paneId, ownedIncarnation ?? null) as { who: string } | undefined;
-    heldBy = foreign?.who;
+    const owner = db.prepare(
+      "SELECT ws.name || '/' || a.name AS who FROM agents a JOIN workstreams ws ON ws.id = a.workstream_id WHERE a.pane_id = ? AND a.id IS NOT ? LIMIT 1",
+    );
+    const foreignOwner = () =>
+      (owner.get(paneId, ownedIncarnation ?? null) as { who: string } | undefined)?.who;
     // Without a mux or a tmux birth identity, the default (not proven gone) stands.
     const canVerify = mux !== undefined && (mux.name !== "tmux" || Boolean(paneIdentity));
-    if (canVerify && foreign === undefined) {
+    if (canVerify && host !== undefined && foreignOwner() === undefined) {
+      const pid = await viewPid(paneId, mux, paneIdentity).catch(() => undefined);
+      if (pid !== undefined) pane = await paneProcesses(pid);
+    }
+    heldBy = foreignOwner();
+    if (canVerify && heldBy === undefined) {
       await killView(mux, paneId, paneIdentity).catch(() => {});
       paneGone = (await viewPresent(paneId, mux, paneIdentity).catch(() => true)) === false;
-    } else if (canVerify && foreign !== undefined) {
+    } else if (canVerify && heldBy !== undefined) {
       paneGone = true; // another agent holds the id: ours is not that pane
 
       try {
@@ -138,7 +152,26 @@ export async function rollbackSpawn(
   // The remote tree this rollback proved gone: the row's delete then owes no recovery record.
   let remoteGone = false;
   if (staged?.host !== undefined) {
-    if (job !== "kept")
+    let stopped = true;
+    if (host !== undefined && paneGone && paneId !== undefined) {
+      try {
+        if (pane !== undefined) await awaitMuleDispatchExit(host, pane);
+        await stopMuleJobs(db, host, staged.incarnation);
+      } catch (err) {
+        stopped = false;
+        try {
+          emitEvent(
+            db,
+            workstream,
+            "agent.spawn_failed",
+            `agent spawn rollback ${name}: ${String(err)}; recover with mu agent close ${name} -w ${workstream}`,
+          );
+        } catch {
+          // Best effort; still delete the row and preserve recovery below.
+        }
+      }
+    }
+    if (stopped && job !== "kept")
       remoteGone = await rollbackRemoteWorktree(db, name, workstream, staged, paneGone);
   } else if (staged !== undefined && paneGone) {
     // Only once the pane is proven gone: a surviving pane may be running in

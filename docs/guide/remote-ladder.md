@@ -93,7 +93,11 @@ path. mu resolves `--from` (default `HEAD`) in your checkout and prepares
 that commit through the host's link. The pane runs `pi --mule <host>:<tree>`;
 the workspace extension handles tools, while pi, ctl and the task DB stay
 local. The loop has the same DB access as a local worker. Collect uses the
-profile's fetch route; it needs no remote pi or forwarded socket.
+profile's fetch route; it needs no remote pi or forwarded socket. Collect
+brings home commits, not uncommitted files. Close checks for uncommitted or
+uncollected work before killing the pane, then stops the worker's detached
+mule jobs before removing the tree. Use a mule workspace extension that
+honors `MULE_PI_JOB_PREFIX` so close can find those jobs across pi sessions.
 The local pane can run on tmux or Rex. `--host` and `--cwd` conflict with
 `--mule`.
 
@@ -134,6 +138,12 @@ during the loss kills the pane and hands back, keeping row and handle. With
 the master back, take a fresh preview with `mu agent close <name> -w <ws>`
 and repeat with `--if <rev>` (the revision may have changed after
 the interrupted close or a reap); that stops the job by its handle.
+
+For rung 2, send refuses new delivery and wait hands back without consuming
+an unfinished run. Reopen the master and retry; the local pane and its task
+remain. An explicit close can still close the local pane during a hand-back:
+it preserves a recovery record for the tree and any outstanding jobs. Take a
+fresh close preview once the master is back.
 
 ## Use the mule plugin for rung 4
 

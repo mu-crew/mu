@@ -17,6 +17,7 @@
 import type { Db } from "../db.js";
 import { hostLost, observeBeforeClose } from "../host-policy.js";
 import { viewRunning } from "../jobs/view.js";
+import { stopMuleJobs, workspaceHost } from "../local-loop.js";
 import { emitEvent } from "../logs.js";
 import {
   assertRecoveryProfile,
@@ -91,6 +92,12 @@ export async function closeRecovery(
       worktree: { path: rec.cwd, action: "gone" },
       recovery: { id: rec.agentId, deleted },
     };
+  }
+  const muleHost = workspaceHost(rec);
+  if (muleHost !== undefined) {
+    await stopMuleJobs(db, muleHost, rec.agentId);
+    assertRecoveryUnchanged(db, rec);
+    assertRecoveryUsable(db, rec);
   }
   const worktree = await closeRemoteWorktree(
     db,

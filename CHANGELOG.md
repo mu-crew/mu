@@ -26,6 +26,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   missing local control socket no longer suggests checking a remote forward.
 - Rex pins managed local pane routing after shell startup and strips inherited
   mu routing from session templates, without dropping rc PATH or credentials.
+- A `--mule` spawn rolls back when local ctl startup fails. Close checks the
+  remote tree for uncommitted or uncollected work and stops the worker's mule
+  jobs; a hand-back preserves recovery for the original incarnation. Send and
+  wait hand back on a missing master without treating the local pi as dead.
 
 ## [5.3.0] — 2026-11-23
 

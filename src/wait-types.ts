@@ -241,6 +241,8 @@ export interface AgentBaseline {
 
 export interface AgentWatchHandle {
   initial: AgentReading;
+  /** The reader also checks this watch's workspace while the local loop runs. */
+  pollWhileWatching?: boolean;
   afterRuns?: number;
   /** Set when an owed ref had no fence and no cursor: the baseline the watch probed and counted from. */
   unknownBaseline?: AgentBaseline;

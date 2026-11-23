@@ -47,6 +47,7 @@ import {
 } from "../ctl/protocol.js";
 import { LOCAL_LOOP_TRANSPORT, remoteLoopHost } from "../hosts.js";
 import { viewPresent } from "../jobs/view.js";
+import { requireMuleMaster, workspaceHost } from "../local-loop.js";
 import { say } from "../messages.js";
 import { activeMux, attachShellLine } from "../mux.js";
 import { shellWord } from "../shell-quote.js";
@@ -426,6 +427,8 @@ async function ctlWrite(
     guard: opts.ctlGuard,
   });
   const expect = bound.expectIncarnation;
+  const host = workspaceHost(agent);
+  if (host !== undefined) await requireMuleMaster([host], opts.ctlGuard?.signal);
   const sent = await ctlSendWithReceipt(
     agent,
     sock,
@@ -483,6 +486,8 @@ async function ctlCommand(
     needsFence: true,
     ...(expect !== undefined ? { expect } : {}),
   });
+  const host = workspaceHost(agent);
+  if (host !== undefined) await requireMuleMaster([host]);
   const reply = await ctlRequestFor(agent, sock, {
     op: "command",
     name: cmd.name,
@@ -525,6 +530,8 @@ async function ctlInterrupt(
     needsFence: true,
     ...(opts.expectIncarnation !== undefined ? { expect: opts.expectIncarnation } : {}),
   });
+  const host = workspaceHost(agent);
+  if (host !== undefined) await requireMuleMaster([host]);
   const sent = await ctlSendWithReceipt(
     agent,
     sock,

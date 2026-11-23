@@ -608,6 +608,11 @@ describe("a populated DB is completed in place", () => {
       r.exec("ALTER TABLE carrier_jobs DROP COLUMN tree_path");
       r.exec("ALTER TABLE carrier_jobs DROP COLUMN tree_agent_id");
       r.exec("ALTER TABLE carrier_jobs DROP COLUMN workstream_id");
+      // Older files did not have recovery triggers that read the placement pin.
+      r.exec(
+        "DROP TRIGGER remote_recovery_agent_del_v2; DROP TRIGGER remote_recovery_workstream_del_v2",
+      );
+      r.exec("ALTER TABLE remote_recovery DROP COLUMN host_transport");
       r.exec("ALTER TABLE agents DROP COLUMN host_transport");
     });
     expect(columns(p, "carrier_jobs")).not.toContain("tree_path");
@@ -616,6 +621,7 @@ describe("a populated DB is completed in place", () => {
     // Re-added columns land last: the set is the shape, not the order.
     expect([...columns(p, "carrier_jobs")].sort()).toEqual([...CARRIER_JOBS_COLUMNS].sort());
     expect(columns(p, "agents")).toContain("host_transport");
+    expect(columns(p, "remote_recovery")).toContain("host_transport");
     expect(
       db
         .prepare(

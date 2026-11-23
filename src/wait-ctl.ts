@@ -11,6 +11,7 @@ import { getAgent } from "./agents.js";
 import { agentChannel, channelTarget } from "./channels/index.js";
 import type { Db } from "./db.js";
 import { viewCapture } from "./jobs/view.js";
+import { requireMuleMaster, workspaceHost } from "./local-loop.js";
 import { WAIT_TEXT_MAX } from "./wait-regex.js";
 import type { AgentBaseline, AgentReading, WaitOptions } from "./wait-types.js";
 
@@ -25,12 +26,19 @@ export function ctlAgentHooks(
   opts: { paneText?: boolean } = {},
 ): Required<Pick<WaitOptions, "readAgents" | "watchAgent">> {
   return {
-    readAgents: async (refs) => {
+    readAgents: async (refs, signal) => {
       const agents = refs.flatMap((r) => {
         const a = getAgent(db, r.id, r.workstream);
         return a === undefined ? [] : [a];
       });
       const observed = await observeAgentStates(db, agents);
+      const hosts = new Set<string>();
+      for (const a of agents) {
+        const host = workspaceHost(a);
+        if (host !== undefined && observed.get(`${a.workstreamName}/${a.name}`)?.status !== null)
+          hosts.add(host);
+      }
+      if (hosts.size > 0) await requireMuleMaster([...hosts], signal);
       if (opts.paneText !== true) return observed;
       const out = new Map<string, AgentReading>(observed);
       for (const a of agents) {
@@ -112,9 +120,24 @@ export function ctlAgentHooks(
         ...(afterRuns !== undefined ? { afterRuns } : {}),
         ...(ref.incarnation !== undefined ? { inc: ref.incarnation } : {}),
       });
-      return handle !== undefined && unknownBaseline !== undefined
-        ? { ...handle, unknownBaseline }
-        : handle;
+      if (handle === undefined) return undefined;
+      const host = workspaceHost(agent);
+      return {
+        ...handle,
+        ...(unknownBaseline === undefined ? {} : { unknownBaseline }),
+        ...(host === undefined
+          ? {}
+          : {
+              pollWhileWatching: true,
+              settled: handle.settled.then(async (reading) => {
+                // The long poll can win the race with the next workspace check. Do not
+                // consume a settled run (or apply a CLOSE block) during a hand-back.
+                if (reading.status !== null && !signal.aborted)
+                  await requireMuleMaster([host], signal);
+                return reading;
+              }),
+            }),
+      };
     },
   };
 }

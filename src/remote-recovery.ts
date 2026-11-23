@@ -53,6 +53,8 @@ export interface RemoteRecovery {
   preservedAt: string;
   /** The host's identity when the agent was removed (plugins spec D5): what a use compares. Null: none held the name. */
   hostIdentity: string | null;
+  /** Local-loop recoveries also own the outstanding mule jobs of this incarnation. */
+  hostTransport: string | null;
 }
 
 interface RawRow {
@@ -72,6 +74,7 @@ interface RawRow {
   reason: RemoteRecoveryReason;
   preserved_at: string;
   host_identity: string | null;
+  host_transport: string | null;
 }
 
 // ─── Selection: which record a close or collect means ───────────────────────
@@ -116,6 +119,7 @@ const rowToRecovery = (r: RawRow): RemoteRecovery => ({
   reason: r.reason,
   preservedAt: r.preserved_at,
   hostIdentity: r.host_identity,
+  hostTransport: r.host_transport,
 });
 
 /** Every record, oldest incarnation first. */

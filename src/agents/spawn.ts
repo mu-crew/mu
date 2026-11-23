@@ -52,6 +52,7 @@ import {
 } from "../hosts.js";
 import { awaitLeaseJob } from "../jobs/lease.js";
 import { birthIdentity, viewPresent, viewRef } from "../jobs/view.js";
+import { MULE_JOB_PREFIX_ENV, muleJobPrefix } from "../local-loop.js";
 import { emitEvent } from "../logs.js";
 import { say } from "../messages.js";
 import { TmuxPaneBirthError } from "../mux/pane-ref.js";
@@ -73,6 +74,7 @@ import {
 } from "../worktree.js";
 import { assertBackendBinding } from "./backend-binding.js";
 import {
+  AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
   AgentExistsError,
   AgentNameExhaustedError,
@@ -950,7 +952,10 @@ async function spawnPreparedAgent(
           command: paneCommand,
           commandSource,
           ...(profile ? {} : { cwd: paneCwd }),
-          env,
+          env:
+            muleProfile !== undefined && staged !== undefined
+              ? { ...env, [MULE_JOB_PREFIX_ENV]: muleJobPrefix(db, staged.incarnation) }
+              : env,
           onPaneCreated: (pid, identity) => {
             born = identity;
             onCreated(pid);
@@ -1054,6 +1059,8 @@ async function spawnPreparedAgent(
     if ((await activeMux()).spawnAgentWaitsReady) {
       await readiness;
     } else if (wantsCtl) {
+      // A workspace-only worker has no fallback: it must have a working local ctl.
+      if (muleProfile !== undefined) await readiness;
       const pid = paneId;
       const check = defaultSpawnLivenessMs() !== 0;
       const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
@@ -1084,6 +1091,9 @@ async function spawnPreparedAgent(
       );
       ctl = hs.ctl;
       ctlIncarnation = hs.incarnation;
+      if (muleProfile !== undefined && ctl !== "ok") {
+        throw new AgentCtlUnreachableError(opts.name, opts.workstream, ctlSocket, ctl);
+      }
       // Known gap: pi binds the socket in session_start (init), before
       // it renders startup diagnostics, so an ok on the first tick can
       // scan a pane that has not printed its error yet.

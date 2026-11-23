@@ -107,7 +107,14 @@ describe("the link seam", () => {
     for (const [file, text] of all()) {
       if (file === "src/hosts.ts" || file === "src/exec-file.ts") continue;
       for (const c of calls(text, "execGroupCapture")) {
-        if (!/^execGroupCapture\(\s*"git"/.test(c)) out.push(`${file}: ${c.slice(0, 60)}`);
+        if (/^execGroupCapture\(\s*"git"/.test(c)) continue;
+        // Rung 2's local mule CLI, never a remote shell template.
+        if (
+          file === "src/local-loop.ts" &&
+          /^execGroupCapture\(\s*process\.env\.MULE_PI_BIN \|\| "mule",/.test(c)
+        )
+          continue;
+        out.push(`${file}: ${c.slice(0, 60)}`);
       }
     }
     expect(out).toEqual([]);

@@ -546,21 +546,54 @@ export async function closeRemoteWorktree(
     AgentRow,
     "name" | "workstreamName" | "host" | "cwd" | "base" | "collectedHead" | "incarnation" | "repo"
   >,
-  opts: {
-    keepBranch?: boolean;
-    paneAlive?: (paneId: string) => Promise<boolean>;
-    /** Runs between the observation and the removal; throws to stop (an identity re-check). */
-    beforeRemove?: () => void;
-    /** The removed agent's recovery record (src/remote-recovery.ts) when there is no row: refusals name it. */
-    recoveryId?: number;
-    /** Runs on the ADMITTED view before any exec; throws to stop (a recovery pins the host identity it was made for). */
-    checkProfile?: (h: HostView) => void;
-    /** Test seam: where the quiescence scan looks (default /proc, then `lsof`). */
-    probe?: { proc: string; lsof: string };
-    /** Remove past a holder or an unprovable scan (each becomes a warning). Never past dirt or a moved HEAD. */
-    force?: boolean;
-  } = {},
+  opts: CloseRemoteWorktreeOptions = {},
 ): Promise<ReleasedWorktree> {
+  return remoteClose(db, agent, opts);
+}
+
+type RemoteTree = Parameters<typeof closeRemoteWorktree>[1];
+
+interface CloseRemoteWorktreeOptions {
+  keepBranch?: boolean;
+  paneAlive?: (paneId: string) => Promise<boolean>;
+  /** Runs between the observation and the removal; throws to stop (an identity re-check). */
+  beforeRemove?: () => void;
+  /** The removed agent's recovery record (src/remote-recovery.ts) when there is no row: refusals name it. */
+  recoveryId?: number;
+  /** Runs on the ADMITTED view before any exec; throws to stop (a recovery pins the host identity it was made for). */
+  checkProfile?: (h: HostView) => void;
+  /** Test seam: where the quiescence scan looks (default /proc, then `lsof`). */
+  probe?: { proc: string; lsof: string };
+  /** Remove past a holder or an unprovable scan (each becomes a warning). Never past dirt or a moved HEAD. */
+  force?: boolean;
+}
+
+/** A read-only close preflight, available when the loop does not hold a host channel. */
+export async function assertRemoteWorktreeReleasable(
+  db: Db,
+  tree: RemoteTree,
+  keepBranch: boolean,
+): Promise<void> {
+  await remoteClose(db, tree, { keepBranch }, true);
+}
+
+function remoteClose(
+  db: Db,
+  agent: RemoteTree,
+  opts: CloseRemoteWorktreeOptions,
+): Promise<ReleasedWorktree>;
+function remoteClose(
+  db: Db,
+  agent: RemoteTree,
+  opts: CloseRemoteWorktreeOptions,
+  checkOnly: true,
+): Promise<ReleasedWorktree | undefined>;
+async function remoteClose(
+  db: Db,
+  agent: RemoteTree,
+  opts: CloseRemoteWorktreeOptions,
+  checkOnly = false,
+): Promise<ReleasedWorktree | undefined> {
   const { name, workstreamName: ws, host, cwd: path, base, collectedHead, repo } = agent;
   if (host === null || path === null || base === null || repo === null) {
     throw new Error(say("remote.no_worktree", name));
@@ -599,10 +632,12 @@ export async function closeRemoteWorktree(
           `root=${root}`,
           `wt=${wt}`,
           `aside=${aside}`,
-          // A crash after the move leaves the aside: put it back, then judge it as usual.
+          // A crash after the move leaves the aside. Only apply puts it back.
           `if [ -d "$aside" ]; then`,
           `  [ ! -e "$wt" ] || { echo "$aside is parked beside $wt" >&2; exit 9; }`,
-          `  git -C "$root" worktree move "$aside" "$wt" >&2 || { echo "could not move $aside back to $wt" >&2; exit 10; }`,
+          checkOnly
+            ? `  wt="$aside"`
+            : `  git -C "$root" worktree move "$aside" "$wt" >&2 || { echo "could not move $aside back to $wt" >&2; exit 10; }`,
           `fi`,
           `[ -d "$wt" ] || { echo 'MU_STATE gone'; exit 0; }`,
           `[ "$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)" = "$(git -C "$root" rev-parse --path-format=absolute --git-common-dir)" ] || { echo "$wt is not a worktree of $root" >&2; exit 8; }`,
@@ -632,6 +667,7 @@ export async function closeRemoteWorktree(
           `HEAD ${short} was never collected (base ${base.slice(0, 12)}); collect it, or close with --keep-branch`,
         );
       }
+      if (checkOnly) return;
       const branch = known ? undefined : `mu/${ws}/${name}-${short}`;
       // Kept only because a branch of the root held it: that branch may move
       // before the removal, so the removal checks again (fail unmerged).

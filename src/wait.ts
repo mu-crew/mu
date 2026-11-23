@@ -641,7 +641,10 @@ export async function waitForEvents(
     const reads = new Map<string, WaitRef>();
     for (const t of tracks.values()) {
       // A settled latch is read too: a later run supersedes it.
-      if ((t.latched === undefined && t.handle === undefined) || t.latched?.kind === "settled") {
+      if (
+        (t.latched === undefined && (t.handle === undefined || t.handle.pollWhileWatching)) ||
+        t.latched?.kind === "settled"
+      ) {
         reads.set(refKey(t.ref), t.ref);
       }
     }
@@ -1434,7 +1437,9 @@ export async function waitForEvents(
         watchDeaths ||
         observeOwners ||
         items.some((i) => i.ref.kind !== "agent") ||
-        [...tracks.values()].some((t) => t.latched === undefined && t.handle === undefined);
+        [...tracks.values()].some(
+          (t) => t.latched === undefined && (t.handle === undefined || t.handle.pollWhileWatching),
+        );
       // The host deadline is a timer inside this invocation, like --timeout (D10).
       const hostAt = due?.at ?? Number.POSITIVE_INFINITY;
       const left = Math.min(deadline, hostAt) - Date.now();

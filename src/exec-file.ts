@@ -232,6 +232,7 @@ export function execGroupCapture(
     const finish = (code: number | null): void => {
       if (settled) return;
       settled = true;
+      opts.signal?.removeEventListener("abort", onAbort);
       if (timer) clearTimeout(timer);
       const done = (): void => {
         release();
@@ -256,8 +257,9 @@ export function execGroupCapture(
           }, opts.timeoutMs);
     child.once("error", () => finish(null)); // spawn failure (ENOENT): no group to reap
     child.once("exit", (code) => finish(code));
-    if (opts.signal?.aborted) finish(null);
-    else opts.signal?.addEventListener("abort", () => finish(null), { once: true });
+    const onAbort = () => finish(null);
+    if (opts.signal?.aborted) onAbort();
+    else opts.signal?.addEventListener("abort", onAbort, { once: true });
     if (opts.onSpawn !== undefined && child.pid !== undefined) {
       try {
         opts.onSpawn(child.pid);

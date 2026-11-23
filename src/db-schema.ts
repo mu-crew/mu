@@ -134,6 +134,7 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   // Plugins spec D5: the host identity a recovery pins (src/db-recovery.ts); backfilled from
   // host_exec when added.
   ["remote_recovery", "host_identity", "TEXT"],
+  ["remote_recovery", "host_transport", "TEXT"],
   // Plugins spec D10 (review of P6e2): a wait's deadline event fires once per deadline.
   ["hosts", "deadline_fired", "INTEGER"],
 ];

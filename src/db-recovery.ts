@@ -36,7 +36,7 @@ export const OWNED = (a: string): string =>
        AND ${a}.base IS NOT NULL AND ${a}.base <> ''`;
 
 const COLUMNS = `agent_id, workstream, workstream_id, workstream_created_at, name, pane_id, host, cwd,
-       base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity`;
+       base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport`;
 
 /**
  * The host identity a record pins (plugins spec D5), as `link.fingerprint` computes it for
@@ -57,8 +57,7 @@ export const LEGACY_RECOVERY_TRIGGERS = [
   "remote_recovery_workstream_del",
 ];
 
-/** The triggers REMOTE_RECOVERY_DDL creates: their bodies read host_profiles. One whose
- *  stored body does not write `host_identity` is from before it, and is replaced. */
+/** The triggers REMOTE_RECOVERY_DDL creates: their bodies read host_profiles. */
 export const RECOVERY_TRIGGERS = [
   "remote_recovery_agent_del_v2",
   "remote_recovery_workstream_del_v2",
@@ -88,7 +87,8 @@ CREATE TABLE IF NOT EXISTS remote_recovery (
   host_repo            TEXT,
   reason               TEXT NOT NULL CHECK (reason IN ('reap', 'teardown', 'workstream-delete')),
   preserved_at         TEXT NOT NULL,
-  host_identity        TEXT
+  host_identity        TEXT,
+  host_transport       TEXT
 );
 
 CREATE TRIGGER IF NOT EXISTS remote_recovery_agent_del_v2
@@ -101,7 +101,7 @@ BEGIN
          OLD.base, OLD.collected_head, OLD.cwd || '.mu-removing-' || OLD.id,
          (SELECT exec FROM host_profiles WHERE name = OLD.host),
          OLD.repo,
-         ${REASON}, ${NOW}, ${IDENTITY("OLD.host")}
+         ${REASON}, ${NOW}, ${IDENTITY("OLD.host")}, OLD.host_transport
     FROM workstreams ws WHERE ws.id = OLD.workstream_id;
 END;
 
@@ -113,7 +113,7 @@ BEGIN
          a.base, a.collected_head, a.cwd || '.mu-removing-' || a.id,
          (SELECT exec FROM host_profiles WHERE name = a.host),
          a.repo,
-         'workstream-delete', ${NOW}, ${IDENTITY("a.host")}
+         'workstream-delete', ${NOW}, ${IDENTITY("a.host")}, a.host_transport
     FROM agents a
    WHERE a.workstream_id = OLD.id AND ${OWNED("a")};
 END;

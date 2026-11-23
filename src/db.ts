@@ -588,10 +588,10 @@ function rebuildInPlace(db: Db, table: string): void {
 /** The DDL half of upgradeSchema; the caller owns the transaction. */
 function applySchemaDdl(db: Db): void {
   // No migration (the profile names a machine now): an older file's profiles
-  // are dropped, and its recovery triggers replaced by the _v2 ones below.
+  // are dropped, and its recovery triggers replaced below.
   if (hostProfilesRepoRequired(db)) db.exec("DROP TABLE host_profiles");
   for (const t of LEGACY_RECOVERY_TRIGGERS) db.exec(`DROP TRIGGER IF EXISTS ${t}`);
-  // Recovery triggers from before host_identity: replaced by CURRENT_SCHEMA's below.
+  // Older recovery trigger bodies are replaced by CURRENT_SCHEMA's below.
   for (const t of staleRecoveryTriggers(db)) db.exec(`DROP TRIGGER ${t}`);
   const backfillIdentity =
     hasTable(db, "remote_recovery") && !hasColumn(db, "remote_recovery", "host_identity");
@@ -678,14 +678,18 @@ function hasTable(db: Db, table: string): boolean {
   );
 }
 
-/** Recovery triggers whose stored body predates `host_identity` (plugins spec D5). */
+/** Recovery triggers whose stored body predates the host identity or placement pins. */
 function staleRecoveryTriggers(db: Db): string[] {
   const rows = db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'").all() as {
     name: string;
     sql: string | null;
   }[];
   return rows
-    .filter((r) => RECOVERY_TRIGGERS.includes(r.name) && !(r.sql ?? "").includes("host_identity"))
+    .filter(
+      (r) =>
+        RECOVERY_TRIGGERS.includes(r.name) &&
+        (!r.sql?.includes("host_identity") || !r.sql.includes("host_transport")),
+    )
     .map((r) => r.name);
 }
 
