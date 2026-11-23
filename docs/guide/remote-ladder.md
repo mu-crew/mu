@@ -27,7 +27,7 @@ Rung 2 is approved but not built; nothing below depends on it.
 | --- | --- | --- | --- | --- |
 | 0 | pi `ctl`, hook harnesses (claude, codex, cursor-agent, muse) `hooks`, others `mux` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a |
 | 1 | runs (no pane) | runs | runs | fine over a link that serialises itself |
-| 3 | pi `ctl` forwarded, hook harnesses remote `hooks` | pi `ctl`, others `mux` | refused | fine: each pane opens its own connection |
+| 3 | pi `ctl` forwarded, hook harnesses remote `hooks` | session template: pi `ctl`, others `mux`; ssh plugin pane: refused | refused | fine: each pane opens its own connection |
 | 4 | pi `ctl` via the carrier | refused for now | refused | fine: one master |
 | 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | refused for now | refused | the provider's |
 | command gate | `mux` | `mux` | refused | as rung 3; lease profiles run no gates |
@@ -36,7 +36,9 @@ Rung 2 is approved but not built; nothing below depends on it.
   Elsewhere a non-pi worker is on `mux`; tmux has no `mux` send and refuses.
 - A lease carrier forwards no stdin, so a non-pi worker has no input path on
   a lease: use pi.
-- The Rex cell for rung 3 is read from source, not smoke-tested.
+- The Rex cell for rung 3 is read from source, not smoke-tested. It covers
+  session templates only: an ssh-plugin pane is a plugin job view, so Rex
+  refuses it like rungs 4 and 5.
 
 ## Reach for what
 
@@ -47,7 +49,7 @@ Rung 2 is approved but not built; nothing below depends on it.
 | Only one connection is practical (a prompted master) | rung 4 for a crew; rung 1 for single commands |
 | The host cannot run the loop (no credentials, no model API) | rung 2, once it ships |
 | You need a machine on demand | rung 5, a [provider host](remote.md#provider-hosts) |
-| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex for rung 3) |
+| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex for a rung 3 session template only) |
 
 A provider host or a standing one: weigh capacity (on demand or fixed),
 lifetime (a deadline, or none), whose credentials, which harnesses are
@@ -91,12 +93,14 @@ Each refusal is typed and names the fix. A refusal leaves no lasting spawn
 resources; a missing base is found by `remote prepare`'s link `exec`, which
 checks the base before it makes a tree and rolls back.
 
-- **herdr on rungs 3-5:** it runs no per-agent command or view. Use tmux
-  (or Rex for rung 3). Rungs 0 and 1 run.
-- **Rex on rungs 4-5:** lease and plugin job views are tmux-only for now. A
-  Rex reply does not yet name the server instance that answered it, so mu
-  cannot prove which server holds a view. Use `MU_MUX=tmux`. Rungs 0, 1 and
-  3 run on Rex.
+- **herdr on rungs 3-5:** it runs no per-agent command or view, session
+  templates included. Use tmux (or Rex for a session template). Rungs 0 and
+  1 run.
+- **Rex on lease and plugin job views** (rungs 4-5, and a rung 3 ssh plugin
+  pane): tmux-only for now. A Rex reply does not yet name the server
+  instance that answered it, so mu cannot prove which server holds a view.
+  Use `MU_MUX=tmux`. Rungs 0 and 1 and a rung 3 session template run on
+  Rex.
 - **A base commit the host lacks** (static host): mu neither fetches nor
   pushes. A published commit: `mu host exec <host> -- git -C <repo> fetch
   <remote> <rev>`. A local-only one: push it somewhere the host can fetch,
@@ -124,15 +128,19 @@ whose pane is a bound tmux view with a file handle. The plugin has no
 mule init                  # seeds mule's config, prints each master command,
                            # registers the plugin if mu is on PATH
 mu plugin list             # mule is listed
-mu host add box --plugin mule --fetch '<your fetch command>' --repo ~/repo
+mu host add box --plugin mule --fetch '<your fetch command>' --repo '~/repo'
 mu host check box
 ```
 
 - Open the master `mule init` prints for the host first; it opens none. The
   mu host name is the mule host name. `mule init` creates no mu profile.
 - A plugin profile takes no `--shell`, `--exec`, `--stop`, `--attach` or
-  `--transport`; mule serves them. `--repo` and `--max-sessions` are as in
-  [remote.md](remote.md).
+  `--transport`; mule serves them. Quote `--repo '~/repo'` (or give the
+  remote absolute path): an unquoted `~` expands to your local home before mu
+  stores it. `--repo` is as in [remote.md](remote.md). The mule link declares
+  its own admission (`slots: self`): its exec, prepare and lease view take no
+  mu slot, so `--max-sessions` does not cap them; only the `--fetch` template
+  fallback (collect) can take one.
 - mu requires a plugin you own and others cannot write. If the install is
   root-owned, follow the copy commands `mule init` prints. Rerun `mule init`
   after upgrading mule.
@@ -154,8 +162,8 @@ the old profile stays until the last job and worktree is closed.
 `mu doctor` finds these profiles. For each it prints the host and either `no
 agent, job or recovery records block switching` or `switch blocked by:` with
 one line per record, then the steps below. Records are what block, not link
-health: doctor probes nothing. `mu doctor --json` carries the same as
-`muleProfileMigrations`.
+health: this check probes no link (the rest of doctor may). `mu doctor
+--json` carries the same at `data.housekeeping.muleProfileMigrations`.
 
 ```text
 dev: mule lease template; switch blocked by:
@@ -165,7 +173,8 @@ dev: mule lease template; switch blocked by:
 
 A blocker line is one of:
 
-- `agent <ws>/<name>`: a live or reaped agent row on the host.
+- `agent <ws>/<name>`: an existing agent row on the host (live, or reaped but
+  not yet removed).
 - `active job record <ws>/<name> (id N)`: a job whose agent still exists.
 - `reaped job record <ws>/<name> (id N)`: a job whose agent was reaped; its job may
   still run.

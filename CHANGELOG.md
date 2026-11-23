@@ -110,9 +110,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   spawn released during its prepare never moves its replacement's file. A
   bound view is asked about only on the mux server recorded with it
   (`carrier_jobs.view_server`; tmux: `<pid>|<start time>` as the call that
-  created the pane reported it; Rex: its server's `instance_id`, the same
-  before and after the birth; herdr names no server, so its view is
-  unknown): a close from another `MU_TMUX_SOCKET` or `MU_REX_SERVER`, or a
+  created the pane reported it; herdr names no server, so its view is
+  unknown; an earlier build recorded a Rex `instance_id`, which no current
+  path proves, since Rex refuses carrier views below): a close from another `MU_TMUX_SOCKET` or `MU_REX_SERVER`, or a
   restarted server, proves nothing, unless the recorded tmux server's
   process is gone, and a pane id equal to the record's on another server is
   never its view. On tmux the proof checks the server in the same tmux call
@@ -134,13 +134,14 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 - **Lease and plugin job views are tmux-only for now.** On Rex, a lease
   spawn (`--transport lease`), a plugin job kind's spawn, and the reattach
-  of either refuse before any effect (`CarrierViewUnsupportedError`, exit 2):
-  no reservation, `job.start`, job file, Rex window or row. A Rex reply does
+  of either refuse before any effect: no reservation, `job.start`, job file, Rex window or row. A Rex reply does
   not name the server instance that answered, so a retargeted `MU_REX_SERVER`
   socket could make another server answer a view's birth or absence and let
   close drop a live job's record and file. Rex support awaits instance-bound
-  server identity (ROADMAP: Rex carrier views). Session profiles (rung 3) and
-  local workers on Rex are unchanged. `mu agent check`'s first-turn recovery
+  server identity (ROADMAP: Rex carrier views). A lease spawn, a plugin spawn
+  and a plugin job's `agent reattach` exit 2 (`CarrierViewUnsupportedError`);
+  a lease `agent reattach` carries the same text in a `ReattachRefusedError`
+  (exit 4). Session profiles (rung 3) and local workers on Rex are unchanged. `mu agent check`'s first-turn recovery
   and a task replay refuse the same way before they resolve or attach a
   pending view. A Rex view an earlier build recorded is never proven gone,
   bound or already released, from any multiplexer: close keeps its record,
@@ -168,7 +169,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   profile lets a provider claim the name between the conflict check and insert.
 - **herdr refuses remote spawns and reattaches before changing anything.**
   The refusal names what the pane cannot run (managed argv, command gate,
-  job view, or lease attach command) and says to use tmux or Rex. Local
+  job view, or lease attach command) and says to use tmux (a session template
+  adds "or Rex"; a lease or plugin job view is tmux-only). Local
   agents that herdr starts natively and pane-free `mu host exec` still work.
 - The fast test tier honours `MUZZLE_SLOTS`. On macOS test processes use
   the toolchain Git directly, and plugin and eval fixtures launch fewer

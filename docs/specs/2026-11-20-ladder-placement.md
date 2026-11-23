@@ -281,7 +281,8 @@ the fix.
    (`src/agents/spawn-remote.ts:129`, `spawn-plugin.ts:100`,
    `reattach-view.ts:92`); `ReattachRefusedError` (exit 4) for lease
    reattach (`reattach-check.ts:119`). The message names the part herdr
-   cannot run and says "use tmux or Rex". Rung 0 and host exec run.
+   cannot run and says "use tmux" (a session template adds "or Rex"; a
+   lease or plugin job view says it is tmux-only for now). Rung 0 and host exec run.
 2. **One managed backend per workstream** (Q2; Open 4a). Pane-id shape is
    not authority (`src/mux/types.ts:318-320`), but tmux, herdr and Rex
    shapes are disjoint (`src/mux/tmux.ts:83`, `herdr.ts:233`, `rex.ts:62`).
@@ -340,11 +341,11 @@ its conditions.
 | 0 | none · none · `pane` | pi `ctl`; known hook harnesses `hooks`, other workers `mux`; pi `hooks` is an opt-in (`src/agents/spawn.ts:823-832,1259-1272`) | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
 | 1 | static · template or plugin · none | no channel | no channel | no channel | not needed | fine over the mule link | `host_exec` |
 | 3 | static · template (session) · `pane` | pi `ctl` forwarded; others remote `hooks` | pi `ctl`; others `mux` | refused | needed | fine: each pane opens its own connection | shipped |
-| 3 | static · ssh plugin · `pane` | built-in `ctl`/`hooks`, if conditions hold | built-in `ctl`; others `mux` | refused | needed | as above | `plugin_ssh_pane`, `job_plugin_builtin_channels` |
-| 4 | static · template (lease) · `lease` | pi `ctl` via the carrier | pi `ctl` via the carrier | refused | needed | fine (one master) | shipped, pi only |
-| 4 | static · mule plugin · `lease` | built-in `ctl`, if conditions hold | same | refused | needed | fine | `plugin_mule_link`, `plugin_mule_lease`, `job_plugin_builtin_channels` |
-| 5 | provider plugin · plugin · plugin kind | the plugin's channel | same | refused | needed | provider's | core contract shipped (`src/agents/spawn-plugin.ts:86`); real-backend smoke separate |
-| 5 | provider plugin · plugin · plugin kind | built-in `ctl`/`hooks`, if conditions hold | built-in `ctl`; others `mux` | refused | needed | provider's | `job_plugin_builtin_channels` |
+| 3 | static · ssh plugin · `pane` | built-in `ctl`/`hooks`, if conditions hold | refused (a plugin job view) | refused | needed | as above | `plugin_ssh_pane`, `job_plugin_builtin_channels` |
+| 4 | static · template (lease) · `lease` | pi `ctl` via the carrier | refused (a lease view) | refused | needed | fine (one master) | shipped, pi only |
+| 4 | static · mule plugin · `lease` | built-in `ctl`, if conditions hold | refused (a plugin job view) | refused | needed | fine | `plugin_mule_link`, `plugin_mule_lease`, `job_plugin_builtin_channels` |
+| 5 | provider plugin · plugin · plugin kind | the plugin's channel | refused (a plugin job view) | refused | needed | provider's | core contract shipped (`src/agents/spawn-plugin.ts:86`); real-backend smoke separate |
+| 5 | provider plugin · plugin · plugin kind | built-in `ctl`/`hooks`, if conditions hold | refused (a plugin job view) | refused | needed | provider's | `job_plugin_builtin_channels` |
 | gate | static · template (session) · `gate` | `mux` | `mux` | refused | not needed: it runs a command (`docs/guide/remote.md:100-106`) | as rung 3 | shipped; lease profiles run no gates (`:370-371`) |
 
 - **Conditions for a built-in channel on a plugin job:**
@@ -363,7 +364,7 @@ its conditions.
   (`src/hosts.ts:397-405`), so per-connection `MaxSessions 1` does not
   block it. A host where only one connection is practical (a prompted
   master) does. A session pane over a shared master is not supported.
-- The Rex cells for rungs 3 and 4 are source-reviewed, not smoked. Rung 2
+- Only the rung 3 session template and the gate run on Rex, and those cells are source-reviewed, not smoked. Every lease and plugin job view, the ssh pane and the mule lease included, is refused on Rex (`carrierViews`, `src/agents/spawn-remote.ts:68-100`, `test/carrier-view-rex.test.ts`): the guard is by job seam, not rung or the profile's `transport` label. Rung 2
   is absent: it is not implemented (§C).
 
 ### §B. When to reach for what
@@ -372,11 +373,11 @@ its conditions.
 | --- | --- |
 | One build or test on a host, no agent | rung 1, `mu host exec` |
 | The host runs the loop and takes a new connection per pane | rung 3 |
-| Only one connection is practical (a prompted master) | rung 4 on mule; rung 1 for single commands |
+| Only one connection is practical (a prompted master) | rung 4 on mule, on tmux; rung 1 for single commands |
 | A crew on such a host | rung 4: only polls cross the connection |
 | The host cannot run the loop (no credentials or model API) | rung 2, once it ships |
 | You need a machine on demand | rung 5, a provider host |
-| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` or Rex for that workstream |
+| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex only for a session template) |
 
 Provider host or standing host: weigh capacity (on demand or fixed),
 lifetime (a deadline and idle reclaim, or none), credentials and identity

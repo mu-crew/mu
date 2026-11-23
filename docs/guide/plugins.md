@@ -106,7 +106,8 @@ limits (the file header has the rest):
 
 `mule init` registers the bundled `mu-plugin-mule` (manually: `mu plugin add
 mule -- /abs/mu-plugin-mule`). Then `mu host add <h> --plugin mule --fetch
-'...'`. The plugin serves the link and the `lease` job kind, tmux only.
+'...'`. The plugin serves the link and the `lease` job kind; the lease's view needs
+tmux, while the link's `exec` is pane-free and runs on any backend.
 Setup, migration from a lease template, and refusals:
 [the ladder](remote-ladder.md#use-the-mule-plugin-for-rung-4).
 

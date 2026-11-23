@@ -42,7 +42,7 @@ copy backend.
 | Other agents' state | murmur | herdr | the program's own OSC 7501 reports |
 | Send to non-pi agents | claude, codex, cursor-agent, muse: a paste confirmed by run count (`hooks`); others refused (exit 4) | one atomic `agent prompt` | a paste event, then Enter |
 | Spawn | one command | bare pane, then `agent start` | one API call |
-| `--host` (remote agents) | yes | refused | yes |
+| `--host` (remote agents) | yes | refused | session templates only; lease and plugin job views refused |
 | Pane borders, layout | set by mu | left to herdr | left to Rex |
 | Test isolation | `MU_TMUX_SOCKET` | `MU_HERDR_SESSION` | `MU_REX_SERVER` |
 
@@ -58,7 +58,7 @@ Where each agent's state comes from, per backend:
   exit 2 instead of running a different binary. Unset the variable, or
   spawn with `MU_MUX=tmux`.
 - For remote spawns and reattaches, use tmux (Rex for session
-  profiles): herdr cannot run the managed argv, carrier command, or job
+  templates only): herdr cannot run the managed argv, carrier command, or job
   view in a pane. `mu host exec`
   still works because it calls the host's link without opening a pane.
 - herdr creates every workspace detached. Run `herdr workspace focus`
@@ -86,7 +86,9 @@ Where each agent's state comes from, per backend:
 - An agent's window is created with `focus: false`; Rex.app shows it
   only when you attach.
 - Lease and plugin job views are tmux-only for now: a lease or plugin
-  host spawn refuses before any effect. Session profiles run. Rex support
+  host spawn refuses before any effect. Session templates run; a `--plugin`
+  profile does not, even one that stores `transport=session`: it is a plugin
+  job view. Rex support
   awaits replies that name the server instance that answered.
 
 ## Expect loud failures, not silent ones

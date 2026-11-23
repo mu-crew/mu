@@ -5,7 +5,8 @@ forwarded control socket. On tmux, session workers running claude, codex,
 cursor-agent or muse use remote [`hooks`](#a-claude-codex-cursor-agent-or-muse-worker).
 On Rex they use `mux`: no hook receipt or hook-based `CLOSE:` processing.
 For plugin jobs, check `mu agent list`: a plugin can declare its own channel.
-Lease and plugin job views run on tmux only for now; on Rex they refuse
+Lease and plugin job views (any `--plugin` profile, even one that stores
+`transport=session`) run on tmux only for now; on Rex they refuse
 before any effect ([ladder](remote-ladder.md#refusals)).
 mu never connects and
 knows no ssh flags: a host profile holds your own command templates, and
@@ -116,7 +117,8 @@ when the task has none, or only the one-line fallback an earlier local spawn pin
   remove it by hand. All DBs sharing the host must run a version that
   checks the marker; older versions ignore its contents.
 - The pane is the connection: closing it, or its death, ends the agent
-  and frees the slot. tmux and Rex; herdr refuses `--host` in one line.
+  and frees the slot. A session-template pane runs on tmux and Rex; herdr
+  refuses `--host` in one line. Lease and plugin job views need tmux.
   A workstream's panes live on one backend: a spawn refuses while a row names
   another ([ladder](remote-ladder.md#one-backend-per-workstream)).
 - A spawn without `--worktree` refuses (exit 4, `RemotePathOwnedError`) when
@@ -321,7 +323,10 @@ mu host show dev              # templates and the holders of its channels
   mu refuses with one line naming the holder. The SSH session starter uses
   `2` so a collect or brief exec fits beside one live pane. The starter's
   pane and exec each open their own SSH connection; sshd's per-connection
-  `MaxSessions 1` does not require a mu cap of `1`.
+  `MaxSessions 1` does not require a mu cap of `1`. A mule plugin link
+  declares its own admission (`slots: self`): its exec, prepare and lease
+  view take no mu slot, so `--max-sessions` does not cap them. Only the
+  `--fetch` template fallback (collect) can take one.
 - `host check --agent <name> -w <ws>` also probes that agent's forwarded
   control socket, and on a lease agent reports its recorded job handle.
 - A registered plugin can be a host's link instead of `--shell` and

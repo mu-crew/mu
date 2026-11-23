@@ -295,7 +295,11 @@ order, each step before the next one's effect:
    `channel.baseline` answering within `MU_SPAWN_JOB_MS`; on `ctl`, the
    handshake on `local` (a timeout reports ctl missing, the job runs), on
    built-in `hooks` or `mux` the view's liveness window. A failure after
-   the start stops the job (`job.stop`) before the tree and the record go.
+   the start stops the job (`job.stop`) before the tree and the record go,
+   except a **file handle** kind: its rollback stops the job only once its
+   view is proven gone (by the server recorded with it) and the stop is
+   answered; with the view unproven, the handle unresolved or the stop failed,
+   mu keeps the record and job file and the job may still run.
 
 An `at-start` start with no definite answer is never resent and never
 rolled back: the placeholder, the claim and the job record stay, and the
@@ -308,14 +312,18 @@ an unresolved one answers `unreachable` (exit 1) naming the effect key; a
 proven `none` fails the attempt and rolls it back, and the check then asks
 `channel.receipt` as for any msgId.
 
-A `bound` view's death ends the job: `agent close` kills the view, then
-stops the job. A `detached` job outlives its view: reconcile keeps a row
+A `bound` view's death is meant to end the job: `agent close` kills the view,
+then stops the job. That is the kind's contract, not proof: a killed carrier
+can leave the job running, so a view's death or a failed spawn is never
+permission to discard a live job or its record; close stops the job by proof and
+keeps the record otherwise. A `detached` job outlives its view: reconcile keeps a row
 whose view is gone while `job.status` reads `running` or `unknown`, `agent
 close` stops the job before it kills the view, and `agent reattach` opens a
 new view from `job.attach` on the same row (refused before the call on a
 backend that cannot run a command line, or on Rex). A view the backend fails to start,
-even after it reported the pane, fails the spawn (the job is stopped) or the
-reattach (the row keeps its pane).
+even after it reported the pane, fails the spawn or the reattach (the row
+keeps its pane). The spawn then stops the job, unless it is a file handle
+kind whose stop is not proven (above): that keeps the record and job file.
 
 ### The channel
 
