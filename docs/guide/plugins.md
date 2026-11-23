@@ -25,12 +25,11 @@ mu plugin rm box
 - `rm` refuses while a host, job record or unresolved effect names the
   plugin.
 
-A spawn with `--task` and no `--send` sends the task's brief note, or for a
-task with none, a title line ending in `Read: mu task notes <id> -w <ws>`.
-The host has no mu DB, so it cannot follow that line. The examples below
-pass the whole brief as `--send "$BRIEF"` (or `--send -` on stdin), and the
-spawn still reports the prompt delivered either way. Known issue: mu does
-not drop that line for a remote spawn (task `remote_brief_fallback`).
+A `--host` spawn with `--task` and no `--send` sends the task's authored brief
+note. With no such note it refuses (exit 2): the host has no mu DB, so a
+`Read: mu task notes` pointer would be unrunnable ([Spawn the
+agent](remote.md#spawn-the-agent)). The examples below pass the whole brief as
+`--send "$BRIEF"` (or `--send -` on stdin).
 
 ## Use it as a host's link
 
