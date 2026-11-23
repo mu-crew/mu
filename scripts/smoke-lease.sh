@@ -697,15 +697,20 @@ else
     fail "could not start the real pi in a private tmux session"
   real_up() { [ -S "$RSK" ]; }
   until_ok 300 "the real pi to bind $RSK (the built extension loaded)" real_up
+  # One request per connection (the ctl protocol): two calls, hello then status.
   "$NODE" -e '
-    const c = require("net").connect(process.argv[1]);
-    let buf = "", n = 0;
-    const out = [];
-    c.on("data", (d) => { buf += d; let i; while ((i = buf.indexOf("\n")) >= 0) { out.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); if (++n === 2) { console.log(JSON.stringify(out)); c.end(); } } });
-    c.on("error", (e) => { console.error(String(e)); process.exit(1); });
-    c.write(JSON.stringify({ v: 1, op: "hello" }) + "\n" + JSON.stringify({ v: 1, op: "status" }) + "\n");
+    const net = require("net");
+    const ask = (op) => new Promise((ok, no) => {
+      const c = net.connect(process.argv[1]);
+      let b = "";
+      c.on("data", (d) => { b += d; });
+      c.on("end", () => ok(JSON.parse(b)));
+      c.on("error", no);
+      c.write(JSON.stringify({ v: 1, op }) + "\n");
+    });
     setTimeout(() => { console.error("no reply"); process.exit(1); }, 10000);
-  ' "$RSK" >"$R/real-ctl.json" || fail "real pi: no ctl reply on $RSK"
+    (async () => { console.log(JSON.stringify([await ask("hello"), await ask("status")])); process.exit(0); })().catch((e) => { console.error(String(e)); process.exit(1); });
+' "$RSK" >"$R/real-ctl.json" || fail "real pi: no ctl reply on $RSK"
   js "d[0].ok === true && d[0].ops.includes('send') && d[0].ops.includes('wait') && typeof d[0].extVersion === 'string' && d[0].agent === 'real-pi' && d[1].ok === true && d[1].state === 'idle'" <"$R/real-ctl.json" >/dev/null || {
     cat "$R/real-ctl.json"
     fail "real pi: the built extension's hello/status are not as expected"
