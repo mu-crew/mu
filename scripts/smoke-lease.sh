@@ -39,8 +39,11 @@
 #      only for a reply that ended "settled") whose lastText echoes the sent text
 #   3. close: no job, no forward, no socket, no job file, no worktree, no
 #      carrier_jobs row
-#   4. kill -9 the carrier: the job survives, reconcile reaps the row, close by
-#      name stops the job
+#   4. kill -9 the carrier: the job survives. Template profile: reconcile reaps
+#      the row, close by name stops the job. --plugin mule (a bound file job
+#      outlives its view, plugins spec D3): reconcile keeps the row and handle,
+#      `mu agent reattach` opens a new view (ctl ok, a send echoes), and a clean
+#      close leaves nothing
 #   5. a respawn of the name rebinds the stale forward; its close is clean too
 #
 # Everything is private: own dir under /tmp (short, for unix socket paths),
@@ -61,7 +64,9 @@
 #
 # Missing prerequisites FAIL (exit 2); they never count as a pass. Every
 # process it starts (sshd, both masters, both tmux servers, carriers, fake pis)
-# is stopped by the EXIT trap, also on failure. SMOKE_KEEP=1 keeps the dir.
+# is stopped by the EXIT trap, also on failure; a process still naming the
+# private dir in its argv or environ after that sweep fails the run (Linux /proc
+# scan). SMOKE_KEEP=1 keeps the dir.
 
 set -euo pipefail
 
@@ -143,11 +148,38 @@ RSOCK_DIR="/tmp/mu-$UID_/$WS"
 MU_TMUX="mu-smoke-$$"
 MULE_TMUX="mule-smoke-$$"
 SSHD_PID=""
+LEFTOVERS="$R/leftovers"
+# Every process of this run carries "$R/" in its environ (this tag, or the
+# private HOME/TMPDIR exported below; sshd's children get it through SetEnv).
+export SMOKE_RUN="$R/"
+# no_leftovers: false, with each one in $LEFTOVERS (and KILLed), when a live
+# process other than this shell still names "$R/" in its argv or environ after
+# a 3 s grace for the swept ones to exit. Linux (/proc) only.
+no_leftovers() {
+  local p pid _
+  [ -d /proc/self ] || return 0
+  for _ in $(seq 15); do
+    : >"$LEFTOVERS"
+    for p in /proc/[0-9]*; do
+      pid=${p#/proc/}
+      [ "$pid" = "$$" ] && continue
+      grep -qsF "$R/" "$p/cmdline" "$p/environ" 2>/dev/null || continue
+      ps -o pid=,args= -p "$pid" >>"$LEFTOVERS" 2>/dev/null
+    done
+    [ -s "$LEFTOVERS" ] || return 0
+    sleep 0.2
+  done
+  while read -r pid _; do kill -KILL "$pid" >/dev/null 2>&1; done <"$LEFTOVERS"
+  return 1
+}
 
 cleanup() {
   local rc=$?
   set +e
   trap - EXIT INT TERM HUP
+  # A signal's trap runs inside whatever redirection was active (`mu ... >file`):
+  # report on the caller's own stdout and stderr, saved below.
+  exec 1>&3 2>&4
   say "cleanup (exit $rc)"
   if [ "$rc" != 0 ] && [ -d "$R/lstate/mule" ]; then
     say "mule lock state at failure:"
@@ -167,12 +199,18 @@ cleanup() {
   for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$R/" >/dev/null 2>&1 || break; sleep 0.2; done
   pkill -KILL -f "$R/" >/dev/null 2>&1
   [ -n "$SSHD_PID" ] && kill -KILL "$SSHD_PID" >/dev/null 2>&1
+  if ! no_leftovers; then
+    say "FAIL leftover processes after the sweep (killed now):"
+    sed 's/^/  /' "$LEFTOVERS"
+    [ "$rc" != 0 ] || rc=1
+  fi
   rm -rf "$RSOCK_DIR"
   rmdir "/tmp/mu-$UID_" >/dev/null 2>&1
   if [ "${SMOKE_KEEP:-}" = 1 ]; then say "kept $R"; else rm -rf "$R"; fi
   if [ "$rc" = 0 ]; then say "SMOKE PASS"; else say "SMOKE FAIL (exit $rc)"; fi
   exit "$rc"
 }
+exec 3>&1 4>&2
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
@@ -615,7 +653,7 @@ else
   close_clean "live agent"
 fi
 
-# ── 4. kill -9 the carrier, reconcile reaps, close by name stops the job ─────
+# ── 4. kill -9 the carrier: template reaps + close by name; plugin keeps + reattach
 say "4. respawn $AGENT, kill -9 its carrier"
 spawn
 CPID=$(carrier_pid) || fail "no carrier process for $JOB_FILE"
@@ -623,36 +661,81 @@ kill -9 "$CPID"
 until_ok 100 "carrier $CPID to die" sh -c "! kill -0 $CPID 2>/dev/null"
 [ "$(job_state "$JOB")" = running ] || fail "after kill -9 the job is $(job_state "$JOB"), expected it to survive"
 pass "kill -9 carrier pid $CPID: job $JOB still running (SIGKILL cannot stop it)"
-# Reconcile (`mu agent list` runs it) prunes a row whose pane is gone.
-reaped() { mu agent list -w "$WS" >/dev/null && [ "$(agent_rows)" = 0 ]; }
-until_ok 50 "reconcile to reap $AGENT" reaped
-[ "$(job_row)" = "$JOB" ] || fail "reconcile lost the carrier_jobs handle"
-pass "reconcile (mu agent list) reaped the agent row; carrier_jobs still names $JOB"
-PREVIEW=$(mu agent close "$AGENT" -w "$WS" --json) || fail "close-by-name preview"
-KIND=$(printf '%s' "$PREVIEW" | js 'd.data.kind')
-REV=$(printf '%s' "$PREVIEW" | js 'd.data.revision')
-mu agent close "$AGENT" -w "$WS" --if "$REV" --json >"$R/close.json" || {
-  cat "$R/close.json"
-  fail "close by name --if $REV"
-}
-# Everything but the forward must be clean; the forward is mule's documented exception.
-stale_check allow-forward
-if [ ${#STALE[@]} -gt 0 ]; then
-  printf '  left: %s\n' "${STALE[@]}"
-  fail "close by name left state behind"
-fi
-until_ok 30 "remote socket $REMOTE_SOCK removed" test ! -e "$REMOTE_SOCK"
-pass "close by name (preview kind $KIND): job $JOB stopped, carrier_jobs row, worktree, job file and socket gone"
-STALE_LISTENER=0
-if forward_held; then
-  STALE_LISTENER=1
-  say "KNOWN EXCEPTION (not a clean close): the SIGKILLed carrier's forward $LOCAL_SOCK is still bound by master $MULE_MASTER; mule documents it, and only the next forward of the name (step 5) or the master's exit removes it"
+if [ "$PLUGIN_MODE" = 1 ]; then
+  # A bound `handle: "file"` plugin job outlives its view (plugins spec D3, ladder
+  # placement §10): reconcile KEEPS the row and the handle while the job runs, and
+  # `mu agent reattach` opens a new view through job.attach.
+  OLD_PANE=$(sql "SELECT a.pane_id AS p FROM agents a JOIN workstreams w ON w.id=a.workstream_id WHERE w.name='$WS' AND a.name='$AGENT'" | js 'd[0]?.p') ||
+    fail "no pane for $AGENT"
+  view_gone() {
+    TMUX_TMPDIR="$R/ltmux" tmux -L "$MU_TMUX" list-panes -a -F '#{pane_id}' 2>/dev/null |
+      awk -v want="$OLD_PANE" '$0 == want { f = 1 } END { exit f }'
+  }
+  until_ok 100 "the carrier's view $OLD_PANE to go" view_gone
+  for i in 1 2 3; do
+    mu agent list -w "$WS" >/dev/null || fail "mu agent list (reconcile) #$i"
+    [ "$(agent_rows)" = 1 ] || fail "reconcile #$i reaped $AGENT while its job $JOB runs (a bound file job outlives its view)"
+    [ "$(job_row)" = "$JOB" ] || fail "reconcile #$i lost the carrier_jobs handle $JOB"
+    sleep 0.2
+  done
+  [ "$(job_state "$JOB")" = running ] || fail "after reconcile the job is $(job_state "$JOB")"
+  pass "reconcile (mu agent list x3) keeps $AGENT's row (view $OLD_PANE gone) and carrier_jobs names $JOB"
+  REV=$(mu agent reattach "$AGENT" -w "$WS" --json | js 'd.data.revision') || fail "reattach preview"
+  mu agent reattach "$AGENT" -w "$WS" --if "$REV" --json >"$R/reattach.json" || {
+    cat "$R/reattach.json"
+    fail "mu agent reattach $AGENT --if $REV"
+  }
+  js "d.data.ready === true && d.data.ctl === 'ok' && d.data.job === '$JOB' && d.data.pane_id !== '$OLD_PANE'" <"$R/reattach.json" >/dev/null || {
+    cat "$R/reattach.json"
+    fail "reattach: not ready with ctl ok on a new view of job $JOB"
+  }
+  NEW_PANE=$(js 'd.data.pane_id' <"$R/reattach.json")
+  [ "$(agent_rows)" = 1 ] && [ "$(job_row)" = "$JOB" ] && [ "$(reservations)" = 1 ] || fail "reattach changed the row or the handle"
+  [ "$(cat "$JOB_FILE")" = "$JOB" ] || fail "after reattach the job file does not name $JOB"
+  forward_held || fail "after reattach the ctl forward $LOCAL_SOCK is not bound by master $MULE_MASTER"
+  TEXT="smoke-reattached-$$-$RANDOM"
+  mu agent send "$AGENT" -w "$WS" "$TEXT" --wait --json >"$R/reattach-send.json" || {
+    cat "$R/reattach-send.json"
+    fail "mu agent send --wait after reattach"
+  }
+  [ "$(js 'd.data.snapshots?.[0]?.lastText' <"$R/reattach-send.json")" = "smoke-echo: $TEXT" ] ||
+    fail "after reattach the send is not echoed: $(cat "$R/reattach-send.json")"
+  pass "mu agent reattach: new view $NEW_PANE on job $JOB (was $OLD_PANE), ctl ok, forward bound by master $MULE_MASTER, send --wait echoed"
+  close_clean "reattached agent"
 else
-  say "the SIGKILLed carrier's forward is already gone (the documented stale listener did not occur this time)"
+  # Reconcile (`mu agent list` runs it) prunes a row whose pane is gone.
+  reaped() { mu agent list -w "$WS" >/dev/null && [ "$(agent_rows)" = 0 ]; }
+  until_ok 50 "reconcile to reap $AGENT" reaped
+  [ "$(job_row)" = "$JOB" ] || fail "reconcile lost the carrier_jobs handle"
+  pass "reconcile (mu agent list) reaped the agent row; carrier_jobs still names $JOB"
+  PREVIEW=$(mu agent close "$AGENT" -w "$WS" --json) || fail "close-by-name preview"
+  KIND=$(printf '%s' "$PREVIEW" | js 'd.data.kind')
+  REV=$(printf '%s' "$PREVIEW" | js 'd.data.revision')
+  mu agent close "$AGENT" -w "$WS" --if "$REV" --json >"$R/close.json" || {
+    cat "$R/close.json"
+    fail "close by name --if $REV"
+  }
+  # Everything but the forward must be clean; the forward is mule's documented exception.
+  stale_check allow-forward
+  if [ ${#STALE[@]} -gt 0 ]; then
+    printf '  left: %s\n' "${STALE[@]}"
+    fail "close by name left state behind"
+  fi
+  until_ok 30 "remote socket $REMOTE_SOCK removed" test ! -e "$REMOTE_SOCK"
+  pass "close by name (preview kind $KIND): job $JOB stopped, carrier_jobs row, worktree, job file and socket gone"
+  if forward_held; then
+    say "KNOWN EXCEPTION (not a clean close): the SIGKILLed carrier's forward $LOCAL_SOCK is still bound by master $MULE_MASTER; mule documents it, and only the next forward of the name (step 5) or the master's exit removes it"
+  else
+    say "the SIGKILLed carrier's forward is already gone (the documented stale listener did not occur this time)"
+  fi
 fi
 
-# ── 5. the name respawns over the stale forward; its close is clean ──────────
-say "5. respawn $AGENT over the SIGKILLed carrier's forward"
+# ── 5. the name respawns (template: over the stale forward); its close is clean
+if [ "$PLUGIN_MODE" = 1 ]; then
+  say "5. respawn $AGENT after the reattached close"
+else
+  say "5. respawn $AGENT over the SIGKILLed carrier's forward"
+fi
 spawn
 TEXT="smoke-again-$$-$RANDOM"
 mu agent send "$AGENT" -w "$WS" "$TEXT" --wait --json >"$R/sendwait.json" || {
@@ -683,7 +766,7 @@ if [ "$PLUGIN_MODE" = 1 ]; then
     printf '  stale: %s\n' "${STALE[@]}"
     fail "state left after the plugin run"
   fi
-  pass "no stale forward, remote job or tmux session, ctl socket, job file, or carrier_jobs/agents/host_channels/effects/remote_recovery row (every close was checked; the one documented exception, the SIGKILL listener: $([ "$STALE_LISTENER" = 1 ] && echo "occurred, replaced by the step 5 respawn" || echo "did not occur"))"
+  pass "no stale forward, remote job or tmux session, ctl socket, job file, or carrier_jobs/agents/host_channels/effects/remote_recovery row (every close was checked and clean, step 4's close of the reattached view included)"
 fi
 
 # ── the built ctl extension inside a REAL pi (no model call) ─────────────────

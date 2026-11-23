@@ -16,8 +16,9 @@
 #       from the merged HEAD finds the commit and its file in its worktree
 #   H3. rung 1 alongside: concurrent `mu host exec` calls plus a collect while
 #       both workers run: every call exits 0, sshd refuses no session (the cap
-#       is shown real first), mu holds no row for the slots:"self" mule link and
-#       never more than max_sessions (no double count), 0 rows afterwards
+#       is shown real first), no `exec:*` holder ever appears in host_channels
+#       (the slots:"self" mule link owns its slots), the collect's template fetch
+#       holds at most its one row, every sample read succeeds, 0 rows afterwards
 #   H4. local -> remote (spec §3.3): a rung-0 worker commits; merged locally,
 #       its commit is local-only, so a rung-4 spawn from it is refused (exit 5,
 #       RemoteBaseMissingError naming host, repo, sha and both fixes) before any
@@ -38,9 +39,10 @@
 # no model); a "smoke-sh: <cmd>" send runs <cmd> in the worker's own cwd.
 #
 # Missing prerequisites FAIL (exit 2); they never count as a pass. Every
-# process it starts is stopped by the EXIT trap, also on failure, and the
-# whole run is bounded by SMOKE_TIMEOUT seconds (default 900). SMOKE_KEEP=1
-# keeps the dir.
+# process it starts, the timeout watchdog and its sleep included, is stopped by
+# the EXIT trap, also on failure; a process still naming the private dir in its
+# argv or environ after that sweep fails the run (Linux /proc scan). The whole
+# run is bounded by SMOKE_TIMEOUT seconds (default 900). SMOKE_KEEP=1 keeps the dir.
 
 set -euo pipefail
 
@@ -102,13 +104,53 @@ MU_TMUX="mu-hyb-$$"
 MULE_TMUX="mule-hyb-$$"
 SSHD_PID=""
 WATCHDOG=""
+LEFTOVERS="$R/leftovers"
+# Every process of this run carries "$R/" in its environ (this tag, or the
+# private HOME/TMPDIR exported below; sshd's children get it through SetEnv).
+export SMOKE_RUN="$R/"
+
+# reap_watchdog: freeze the watchdog so it can neither fire nor fork, kill its
+# sleep (a direct child), kill it, and reap it. A plain kill of the subshell
+# orphans the sleep, which outlives the run and holds the caller's pipe.
+reap_watchdog() {
+  [ -n "$WATCHDOG" ] || return 0
+  kill -STOP "$WATCHDOG" >/dev/null 2>&1
+  pkill -KILL -P "$WATCHDOG" >/dev/null 2>&1
+  kill -KILL "$WATCHDOG" >/dev/null 2>&1
+  kill -CONT "$WATCHDOG" >/dev/null 2>&1
+  wait "$WATCHDOG" 2>/dev/null
+  WATCHDOG=""
+}
+# no_leftovers: false, with each one in $LEFTOVERS (and KILLed), when a live
+# process other than this shell still names "$R/" in its argv or environ after
+# a 3 s grace for the swept ones to exit. Linux (/proc) only.
+no_leftovers() {
+  local p pid _
+  [ -d /proc/self ] || return 0
+  for _ in $(seq 15); do
+    : >"$LEFTOVERS"
+    for p in /proc/[0-9]*; do
+      pid=${p#/proc/}
+      [ "$pid" = "$$" ] && continue
+      grep -qsF "$R/" "$p/cmdline" "$p/environ" 2>/dev/null || continue
+      ps -o pid=,args= -p "$pid" >>"$LEFTOVERS" 2>/dev/null
+    done
+    [ -s "$LEFTOVERS" ] || return 0
+    sleep 0.2
+  done
+  while read -r pid _; do kill -KILL "$pid" >/dev/null 2>&1; done <"$LEFTOVERS"
+  return 1
+}
 
 cleanup() {
   local rc=$?
   set +e
   trap - EXIT INT TERM HUP
+  # A signal's trap runs inside whatever redirection was active (`mu ... >file`):
+  # report on the caller's own stdout and stderr, saved below.
+  exec 1>&3 2>&4
   say "cleanup (exit $rc)"
-  [ -n "$WATCHDOG" ] && kill "$WATCHDOG" >/dev/null 2>&1
+  reap_watchdog
   TMUX_TMPDIR="$R/ltmux" tmux -L "$MU_TMUX" kill-server >/dev/null 2>&1
   TMUX_TMPDIR="$R/rtmux" tmux -L "$MULE_TMUX" kill-server >/dev/null 2>&1
   for s in "$R/m/mule.sock" "$R/m/default.sock"; do
@@ -120,22 +162,29 @@ cleanup() {
   for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$R/" >/dev/null 2>&1 || break; sleep 0.2; done
   pkill -KILL -f "$R/" >/dev/null 2>&1
   [ -n "$SSHD_PID" ] && kill -KILL "$SSHD_PID" >/dev/null 2>&1
+  if ! no_leftovers; then
+    say "FAIL leftover processes after the sweep (killed now):"
+    sed 's/^/  /' "$LEFTOVERS"
+    [ "$rc" != 0 ] || rc=1
+  fi
   rm -rf "$RSOCK_DIR"
   rmdir "/tmp/mu-$UID_" >/dev/null 2>&1
   if [ "${SMOKE_KEEP:-}" = 1 ]; then say "kept $R"; else rm -rf "$R"; fi
   if [ "$rc" = 0 ]; then say "SMOKE PASS"; else say "SMOKE FAIL (exit $rc)"; fi
   exit "$rc"
 }
+exec 3>&1 4>&2
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 # The whole run is bounded: the watchdog TERMs this shell, whose trap cleans up.
+# Its sleep holds no caller fd open, and cleanup reaps both (reap_watchdog).
 (
-  sleep "$LIMIT"
+  sleep "$LIMIT" 2>/dev/null
   echo "smoke-hybrid: SMOKE_TIMEOUT ($LIMIT s) reached" >&2
   kill -TERM $$
-) &
+) </dev/null >/dev/null 3>&- 4>&- &
 WATCHDOG=$!
 
 mkdir -p "$R"/{bin,rbin,m,tmp,home,config,cache,lstate,ltmux,rtmux,rhome/.local/state}
@@ -418,20 +467,27 @@ pass "rung-0 reviewer r0-review (local pane) verifies ${C1:0:12} and h2.txt in i
 
 # ── H3. rung 1 alongside, under per-host admission ───────────────────────────
 say "H3. mu host exec x4 + a collect, concurrent, while r4-a, r0-a, r0-review run"
-: >"$R/channels.max"
+# The oracle (spec §4): the mule link owns its slots, so no `exec:*` holder may
+# EVER appear in host_channels; the template-fallback collect may hold its one
+# `collect:<ws>/r4-a` row; nothing else. Every exec holds its call for 2 s, so
+# a regression that took mu's gate for an exec would sit in the table across
+# many samples. A failed read fails H3; it never reads as an empty table.
+holders() { mu sql "SELECT holder FROM host_channels ORDER BY holder" | js 'd.data.items.map((r)=>r.holder).join(" ")'; }
+: >"$R/h3.samples"
 (
-  max=0
   while [ ! -e "$R/h3.done" ]; do
-    n=$(count host_channels 2>/dev/null || echo 0)
-    [ "$n" -le "$max" ] || max=$n
-    echo "$max" >"$R/channels.max"
+    h=$(holders) || {
+      echo "READ-FAILED" >>"$R/h3.samples"
+      exit 1
+    }
+    echo "[$h]" >>"$R/h3.samples"
     sleep 0.05
   done
 ) &
 POLLER=$!
 pids=()
 for i in 1 2 3 4; do
-  mu host exec loop --json -- sh -c "sleep 0.3; echo exec-$i" >"$R/hx-$i.json" 2>"$R/hx-$i.err" &
+  mu host exec loop --json -- sh -c "sleep 2; echo exec-$i" >"$R/hx-$i.json" 2>"$R/hx-$i.err" &
   pids+=($!)
 done
 (cd "$LREPO" && mu agent collect r4-a -w "$WS" --json) >"$R/collect-h3.json" 2>&1 &
@@ -443,7 +499,19 @@ for p in "${pids[@]}"; do
   rcs+=("$rc")
 done
 touch "$R/h3.done"
-wait "$POLLER"
+PRC=0
+wait "$POLLER" || PRC=$?
+# The admission oracle first: it names the regression an exit code only hints at.
+if [ "$PRC" != 0 ] || grep -qx READ-FAILED "$R/h3.samples"; then
+  fail "H3's host_channels poll failed a read (samples: $(tr '\n' ' ' <"$R/h3.samples"))"
+fi
+SAMPLES=$(wc -l <"$R/h3.samples" | tr -d ' ')
+[ "$SAMPLES" -ge 5 ] || fail "H3 took only $SAMPLES host_channels sample(s) during ~8 s of held execs"
+if grep -E '[[ ]exec:' "$R/h3.samples" >/dev/null; then
+  fail "a host exec on the slots:\"self\" mule link took a mu admission row: $(grep -E '[[ ]exec:' "$R/h3.samples" | sort -u | tr '\n' ' ')"
+fi
+BAD=$(grep -vxE "\[(collect:$WS/r4-a)?\]" "$R/h3.samples" | sort -u | tr '\n' ' ' || true)
+[ -z "$BAD" ] || fail "host_channels held more than the collect's one row (max_sessions 1): $BAD"
 for i in 1 2 3 4; do
   [ "${rcs[$((i - 1))]}" = 0 ] || {
     cat "$R/hx-$i.json" "$R/hx-$i.err"
@@ -455,13 +523,12 @@ done
   cat "$R/collect-h3.json"
   fail "the concurrent collect exited ${rcs[4]}"
 }
-MAXCH=$(cat "$R/channels.max")
-[ -n "$MAXCH" ] && [ "$MAXCH" -le 1 ] || fail "host_channels reached $MAXCH rows (max_sessions 1): double count"
+COLLECT_SEEN=$(grep -cxF "[collect:$WS/r4-a]" "$R/h3.samples" || true)
 [ "$(count host_channels)" = 0 ] || fail "host_channels rows left after H3"
 [ "$(refusals)" = "$REFUSED0" ] || fail "sshd refused a session during H3: $(grep -i 'no more sessions\|refused\|open failed' "$R/sshd.log" | tail -n 3)"
 if grep -i 'administratively prohibited\|open failed' "$R"/hx-*.err >/dev/null 2>&1; then fail "a host exec saw a refused channel"; fi
 [ "$(job_state "${JOBS[r4-a]}")" = running ] || fail "r4-a's job is not running after H3"
-pass "4 concurrent host execs exit 0 (mule serialises its sessions) beside a collect: sshd refused nothing, host_channels peaked at $MAXCH (<= max_sessions 1), 0 now"
+pass "4 concurrent 2 s host execs exit 0 (mule serialises its sessions) beside a collect: sshd refused nothing; $SAMPLES host_channels samples, 0 exec:* holders, only collect:$WS/r4-a (seen in $COLLECT_SEEN), 0 rows now"
 close_agent r0-review
 close_agent r4-a
 
