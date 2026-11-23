@@ -235,7 +235,7 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
    3 is only mule's (`SPEC.md:283`), a command's 3 arrives as 8 in n; mu
    reads neither 8 nor stderr. Only `--json` tells a command's 5 from
    mu's. Nothing is retried (`src/cli/handle.ts:745-748`).
-6. **Record** (Q6): one `host` log op with host, link, outcome or exit,
+6. **Record** (Q6): one `host.exec` log op with host, link, outcome or exit,
    duration and command byte length; never the command text or output
    (`src/logs.ts:349-375`). No pane, so every backend runs it, herdr too.
 
@@ -361,7 +361,7 @@ its conditions.
 | --- | --- |
 | One build or test on a host, no agent | rung 1, `mu host exec` |
 | The host runs the loop and takes a new connection per pane | rung 3 |
-| Only one connection is practical (a prompted master) | rung 4 on mule; rung 1 for gates |
+| Only one connection is practical (a prompted master) | rung 4 on mule; rung 1 for single commands |
 | A crew on such a host | rung 4: only polls cross the connection |
 | The host cannot run the loop (no credentials or model API) | rung 2, once it ships |
 | You need a machine on demand | rung 5, a provider host |

@@ -18,7 +18,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   run a command or worker, size session capacity, and collect and close.
 
 - **`examples/plugins/mu-plugin-ssh` gains an example `pane` job kind** over
-  plain ssh. Session/lease templates remain the supported rung-3 path.
+  plain ssh. Session templates (rung 3) and lease templates (rung 4) remain the supported paths.
   The example uses mu's built-in `ctl` (with a per-view `-L` forward),
   remote `hooks` or `mux` channels. The view disables SSH multiplexing so
   its forward does not outlive the pane; it needs its own connection.

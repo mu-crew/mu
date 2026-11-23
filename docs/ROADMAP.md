@@ -80,8 +80,7 @@ stop contract are released.
 
 Part 1 of the [ladder placement spec](specs/2026-11-20-ladder-placement.md),
 approved by the human 2026-11-20 with its Open items 1-6 as recommended:
-four places, ownership, per-host admission, `mu host exec` <!-- doc-cli-drift:skip -->
-(planned, unit `host_exec`), a dropped
+four places, ownership, per-host admission, `mu host exec`, a dropped
 master is not host loss, the refusals, drain-before-switch migration,
 cross-DB refusal. It gates `job_plugin_builtin_channels`,
 `plugin_mule_link`, `plugin_mule_lease`, `host_exec` and `plugin_ssh_pane`.

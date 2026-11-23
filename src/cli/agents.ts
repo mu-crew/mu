@@ -1192,7 +1192,7 @@ export function wireAgentCommands(program: Command): void {
     )
     .option(
       "--host <profile>",
-      "run on this host profile (mu host add): the pane runs its --shell template, which starts the remote pi and forwards its control socket here; --cwd and --worktree name REMOTE paths (the worktree is made by its --exec, under ~/.local/state/mu-next/remote-worktrees/<ws>/<name>); --root names the remote repo; the pane dying is the agent dying. tmux only",
+      "run on this host profile (mu host add): the pane runs its --shell template, which starts the remote pi and forwards its control socket here; --cwd and --worktree name REMOTE paths (the worktree is made by its --exec, under ~/.local/state/mu-next/remote-worktrees/<ws>/<name>); --root names the remote repo; the pane dying is the agent dying. tmux and Rex; herdr refuses",
     )
     .option("--no-ctl", "skip the control-socket handshake with the mu pi extension")
     .option(
