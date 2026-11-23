@@ -37,7 +37,7 @@ import type {
 import type { Db } from "../db.js";
 import { type EffectRow, effectsOf } from "../effects.js";
 import { getHostRecord } from "../host-records.js";
-import { jobLiveness } from "../jobs/kinds.js";
+import { jobLivenessOrUnknown } from "../jobs/kinds.js";
 import { pluginJobRef } from "./job.js";
 import { hostTarget } from "./link.js";
 import type {
@@ -228,7 +228,7 @@ export function pluginChannel(
       const { job } = facts(a);
       const ref = job === undefined ? undefined : pluginJobRef(db, job.token);
       if (ref === undefined) return { state: "unknown", reason: "no job record names the agent" };
-      return jobLiveness(db, ref);
+      return jobLivenessOrUnknown(db, ref);
     },
     sendRun: (s) => ({
       channel: name,

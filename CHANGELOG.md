@@ -206,7 +206,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   with the job file and a rebuilt ctl socket pair, then opens a fresh tmux
   view and binds the record to the server that created it. It refuses
   before `job.attach` on Rex or herdr and when the job has ended. A plugin
-  hand-back from `job.attach` is human needed (exit 5). A plugin job with no
+  hand-back from `job.status` or `job.attach` is human needed (exit 5) and
+  carries the plugin's remedy. Reconcile and `mu agent list` read a
+  `job.status` hand-back as unknown liveness: the row is kept and the
+  workstream still lists. A plugin job with no
   agent row is refused with "close it". A kept record with no reason no longer
   prints `kept: null`; the refusal names the remote tree it keeps.
 - When a plugin hands back during agent close, the error names `job.stop`

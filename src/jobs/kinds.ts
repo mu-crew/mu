@@ -9,6 +9,7 @@ import type { AgentRow } from "../agents.js";
 import { getCarrierJobByAgent } from "../carrier-jobs.js";
 import type { ChannelObservation, ChannelReading } from "../channels/types.js";
 import type { Db } from "../db.js";
+import { PluginCallError } from "../plugins/errors.js";
 import { pluginJobKind, pluginJobRef } from "../plugins/job.js";
 import { gateKind } from "./gate.js";
 import { leaseKind } from "./lease.js";
@@ -45,6 +46,19 @@ export function jobLiveness(db: Db, job: JobRef): Promise<JobLiveness> {
     return Promise.resolve({ state: "unknown", reason: `job kind ${job.kind} names no plugin` });
   }
   return jobKind(job.kind).status(db, job);
+}
+
+/**
+ * Liveness for a read that must not fail (reconcile, the agent listing): a throw, such as a
+ * plugin's `human` hand-back (mule's job.status naming the SSH master to open), is unknown with
+ * the hand-back's words and remedy, never a reap and never an abort of the whole read.
+ */
+export function jobLivenessOrUnknown(db: Db, job: JobRef): Promise<JobLiveness> {
+  return jobLiveness(db, job).catch((e: unknown) => {
+    const why = e instanceof Error ? e.message : String(e);
+    const remedy = e instanceof PluginCallError && e.remedy !== undefined ? `: ${e.remedy}` : "";
+    return { state: "unknown", reason: `${why}${remedy}` };
+  });
 }
 
 /**
@@ -236,7 +250,8 @@ export function outlivesView(
 
 /**
  * Whether agent `agentId`'s job outlives its gone view (`outlivesView`) and reads running or
- * unknown. Reconcile keeps such a row; any other is a ghost.
+ * unknown (`jobLivenessOrUnknown`: a hand-back is unknown). Reconcile keeps such a row; any
+ * other is a ghost.
  */
 export async function jobOutlivesView(db: Db, agentId: number): Promise<boolean> {
   const r = getCarrierJobByAgent(db, agentId);
@@ -244,7 +259,7 @@ export async function jobOutlivesView(db: Db, agentId: number): Promise<boolean>
   if (r === undefined || kind === undefined || !outlivesView(kind.caps, r)) return false;
   const ref = pluginJobRef(db, r.token);
   if (ref === undefined) return false;
-  const l = await jobLiveness(db, ref);
+  const l = await jobLivenessOrUnknown(db, ref);
   return l.state === "running" || l.state === "unknown";
 }
 

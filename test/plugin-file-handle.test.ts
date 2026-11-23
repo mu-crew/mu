@@ -14,12 +14,14 @@ import { closeAgent } from "../src/agents/close.js";
 import { CarrierJobKeptError, CarrierJobUnresolvedError } from "../src/agents/errors.js";
 import { leaseJobFile } from "../src/agents/lease-carrier.js";
 import { previewReattach, reattachAgent } from "../src/agents/reattach.js";
-import { getAgent } from "../src/agents.js";
+import { getAgent, listLiveAgents } from "../src/agents.js";
 import { getCarrierJobByName } from "../src/carrier-jobs.js";
 import { classifyError } from "../src/cli/handle.js";
 import { openDb } from "../src/db.js";
+import { listLeftovers } from "../src/leftovers.js";
 import { PluginCallError } from "../src/plugins/errors.js";
 import { reconcile } from "../src/reconcile.js";
+import { agentRevision } from "../src/revision.js";
 import { addTask, claimTask, getTask, listNotes } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { pluginHostFixture } from "./_plugin-host.js";
@@ -553,6 +555,34 @@ describe("a bound file kind whose view died while its job runs", () => {
     );
     expect(err).toMatchObject({ name: "HostHandbackError", field: "exec" });
     expect(classifyError(err)).toEqual({ label: "human needed", exitCode: 5 });
+    expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
+    expect(h.f.backend().stops).toBe(0);
+  });
+
+  // bound_reattach_status_handback: mule's job.status answers human (the SSH master to open)
+  // when the carrier is gone. That read runs before job.attach.
+  it("a hand-back from job.status: reattach surfaces its remedy, agent list keeps the row", async () => {
+    const a = await boundWithGoneView();
+    h.f.set({ faults: { "job.status": Array(50).fill("human") } });
+    await reconcile(h.db, { workstream: "ws" });
+    const live = await listLiveAgents(h.db, { workstream: "ws" });
+    expect(live.agents.map((x) => x.name)).toEqual(["w1"]);
+    await listLeftovers(h.db, "ws");
+    expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
+    for (const run of [
+      () => previewReattach(h.db, "ws", "w1"),
+      () => reattachAgent(h.db, "ws", "w1", { ifRevision: agentRevision(h.db, "ws", "w1") }),
+    ]) {
+      const err = await run().catch((e: unknown) => e);
+      expect(err).toMatchObject({
+        name: "HostHandbackError",
+        host: "box",
+        field: "exec",
+        detail: "touch your security key",
+      });
+      expect(classifyError(err)).toEqual({ label: "human needed", exitCode: 5 });
+    }
+    expect(h.calls("job.attach")).toEqual([]);
     expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
     expect(h.f.backend().stops).toBe(0);
   });

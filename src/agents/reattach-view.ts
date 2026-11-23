@@ -15,7 +15,7 @@ import { expectsCtl } from "../channels/select.js";
 import { ctlSocketPath, remoteCtlSocketPath } from "../ctl/path.js";
 import type { Db } from "../db.js";
 import { proveViewGone } from "../host-policy.js";
-import { HostSpawnUnsupportedError } from "../hosts.js";
+import { HostHandbackError, HostSpawnUnsupportedError } from "../hosts.js";
 import { jobLiveness, outlivesView } from "../jobs/kinds.js";
 import {
   birthIdentity,
@@ -28,6 +28,7 @@ import {
 import { emitEvent } from "../logs.js";
 import { type MuxBackend, markPaneHost } from "../mux/types.js";
 import { activeMux } from "../mux.js";
+import { PluginCallError } from "../plugins/errors.js";
 import { type PluginJobKind, pluginJobKind, pluginJobRef } from "../plugins/job.js";
 import { agentRevision, assertRevision } from "../revision.js";
 import { shellWord } from "../shell-quote.js";
@@ -105,11 +106,20 @@ export async function previewViewReattach(db: Db, ws: string, name: string) {
   return { ...facts(ws, d), revision: agentRevision(db, ws, name) };
 }
 
-/** A job that reads ended or lost has no view to open: refused before `job.attach`. */
+/**
+ * A job that reads ended or lost has no view to open: refused before `job.attach`. A `human`
+ * answer to the read (mule's job.status names the SSH master to open) is the host's hand-back,
+ * as `job.attach`'s is: its remedy reaches the caller.
+ */
 async function refuseEnded(db: Db, ws: string, name: string, d: ViewJob): Promise<void> {
   const ref = pluginJobRef(db, d.r.token);
   if (ref === undefined) throw new AgentReplacedError(name, ws);
-  const l = await jobLiveness(db, ref);
+  const l = await jobLiveness(db, ref).catch((e: unknown) => {
+    if (e instanceof PluginCallError && e.kind === "human") {
+      throw new HostHandbackError(d.r.host, "exec", e.remedy ?? e.detail);
+    }
+    throw e;
+  });
   if (l.state !== "ended" && l.state !== "lost") return;
   throw new ReattachRefusedError(
     name,

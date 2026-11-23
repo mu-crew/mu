@@ -57,11 +57,16 @@ createServer((s) => {
 }).listen(sock);
 `;
 
-beforeEach(() => {
+beforeEach(async () => {
   saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
   cwd = process.cwd();
   socket = registerTmuxSocket();
   process.env.MU_TMUX_SOCKET = socket;
+  // The carrier is the server's only session: with exit-empty on, its SIGKILL races the
+  // server's exit, and a pane probe can read "server exited unexpectedly"
+  // (bound_reattach_tmux_exit_race). Off atomically with start-server, as the shared server.
+  if (tmuxIntegrationAvailable())
+    await tmux(["start-server", ";", "set", "-s", "exit-empty", "off"]);
   process.env.MU_SPAWN_LIVENESS_MS = "0";
   process.env.MU_SPAWN_CTL_MS = "5000";
   process.env.HOME = h.dir;
@@ -121,6 +126,8 @@ describe.skipIf(!tmuxIntegrationAvailable())("a bound file view SIGKILLed, its j
       intervalMs: 50,
       description: "the carrier pane gone",
     });
+    // The server outlived its last pane: the reattach below runs on the server the view's was.
+    expect((await tmux(["show-options", "-s", "-v", "exit-empty"])).trim()).toBe("off");
     await reconcile(h.db, { workstream: "ws" });
     expect(getAgent(h.db, "w1", "ws")?.paneId).toBe(a.paneId);
 
