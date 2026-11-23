@@ -23,7 +23,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   (`scripts/smoke-rung2-pi.mjs`) in a `--mule` worker against one
   `MaxSessions 1` sshd. It covers a tool chain, a 20-read burst, a 200 KB
   write, cancel, master loss mid-turn, caller death, collect and close, and
-  fails on any leftover job, tree, row or process.
+  fails on any leftover job, tree, row or process. A process that outlives
+  the fixture teardown fails the run before it is killed, even with a cleared
+  environment and argv while it holds the run dir; a tmux probe error is
+  never zero sessions; `SMOKE_TIMEOUT` covers the build and stops a stuck
+  foreground command.
 
 ### Fixed
 

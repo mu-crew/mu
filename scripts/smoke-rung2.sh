@@ -45,10 +45,15 @@
 # TMPDIR, HOME, XDG_*, MU_DB_PATH, MU_SYNC_DIR= blank, npm cache and prefix,
 # a private tmux server for mu and one for mule, PI_CODING_AGENT_DIR, no host
 # but 127.0.0.1. Missing prerequisites FAIL (exit 2); they never count as a
-# pass. Every process it starts, the timeout watchdog included, is stopped by
-# the EXIT trap, also on failure; a process still naming the private dir in its
-# argv or environ after that sweep fails the run (Linux /proc scan). The run is
-# bounded by SMOKE_TIMEOUT seconds (default 1200). SMOKE_KEEP=1 keeps the dir.
+# pass. The EXIT trap, also on failure, reaps the watchdog and stops the
+# fixture's own processes by name (both tmux servers, mule's master, sshd); any
+# process that still names the private dir in its argv or environ, or holds it
+# as cwd, exe, root or an open fd, 10 s later (or after the dir's removal) is a
+# leak: it fails the run, then is KILLed (Linux /proc scan). A tmux probe that
+# errors or times out is a failure, never zero sessions. SMOKE_TIMEOUT seconds
+# (default 1200) bound the whole run, build included: at the deadline the
+# watchdog stops the foreground command and the run exits through cleanup.
+# SMOKE_KEEP=1 keeps the dir.
 
 set -euo pipefail
 
@@ -68,9 +73,10 @@ T0=$(date +%s)
 say() { printf '[%3ss] %s\n' "$(($(date +%s) - T0))" "$*"; }
 pass() { say "PASS $*"; }
 fail() {
-  say "FAIL $*"
+  # On fd 3, the run's stdout: a check inside until_ok has its output muted.
+  say "FAIL $*" >&3
   # The run's process table at the failure, for SMOKE_KEEP=1.
-  [ -z "${R:-}" ] || for p in $(procs "$R/"); do ps -o pid=,ppid=,args= -p "$p"; done >"$R/ps-at-fail" 2>/dev/null
+  [ -z "${R:-}" ] || for p in $(procs "$R/"); do "$TO" 5 ps -o pid=,ppid=,args= -p "$p"; done >"$R/ps-at-fail" 2>/dev/null
   exit 1
 }
 
@@ -110,6 +116,180 @@ PLATFORM=$("$NODE" -p 'process.platform + "-" + process.arch')
   exit 2
 }
 
+# ── run dir, EXIT trap and deadline (before the build: SMOKE_TIMEOUT covers it) ─
+R=$(cd "$(mktemp -d /tmp/mu-r2.XXXXXX)" && pwd -P)
+UID_=$(id -u)
+WS="r2-$$"
+MU_TMUX="mu-r2-$$"
+MULE_TMUX="mule-r2-$$"
+SSHD_PID=""
+WATCHDOG=""
+IN_CLEANUP=""
+LEFT=""
+
+# reap_watchdog: freeze the watchdog so it can neither fire nor fork, kill its
+# children, kill it, and reap it.
+reap_watchdog() {
+  [ -n "$WATCHDOG" ] || return 0
+  kill -STOP "$WATCHDOG" >/dev/null 2>&1
+  pkill -KILL -P "$WATCHDOG" >/dev/null 2>&1
+  kill -KILL "$WATCHDOG" >/dev/null 2>&1
+  kill -CONT "$WATCHDOG" >/dev/null 2>&1
+  wait "$WATCHDOG" 2>/dev/null
+  WATCHDOG=""
+}
+# procs <needle>: live pids (not this shell) whose argv or environ names
+# <needle>, or whose cwd, exe, root or an open fd lies under it, removed or not:
+# a process that cleared its environment and argv still belongs to the run
+# while it holds anything in the run dir.
+procs() {
+  local self=$BASHPID
+  {
+    grep -lsF -- "$1" /proc/[0-9]*/cmdline /proc/[0-9]*/environ
+    find /proc/[0-9]*/cwd /proc/[0-9]*/exe /proc/[0-9]*/root /proc/[0-9]*/fd -maxdepth 1 \
+      \( -lname "$1*" -o -lname "${1%/}" -o -lname "${1%/} (deleted)" \) -print
+  } 2>/dev/null | sed -n 's|^/proc/\([0-9]*\)/.*|\1|p' | sort -un | while read -r pid; do
+    [ "$pid" = "$$" ] || [ "$pid" = "$self" ] || [ "$pid" = "$BASHPID" ] || [ ! -d "/proc/$pid" ] || echo "$pid"
+  done
+}
+# scan_leftovers <tries>: true once a scan finds no live process of the run;
+# false after <tries> scans 0.2 s apart, with the survivors in $LEFT.
+scan_leftovers() {
+  local _ pid
+  for _ in $(seq "$1"); do
+    LEFT=$(for pid in $(procs "$R/"); do "$TO" 5 ps -o pid=,args= -p "$pid"; done 2>/dev/null)
+    [ -n "$LEFT" ] || return 0
+    sleep 0.2
+  done
+  return 1
+}
+# kill_left: KILL every process in $LEFT and everything under it (a child may
+# carry no trace of the run), all frozen first so none can fork away.
+kill_left() {
+  local pid all
+  all=$(for pid in $(printf '%s\n' "$LEFT" | awk '{print $1}'); do
+    echo "$pid"
+    descendants "$pid" ""
+  done)
+  for pid in $all; do kill -STOP "$pid" >/dev/null 2>&1; done
+  for pid in $all; do kill -KILL "$pid" >/dev/null 2>&1; done
+}
+# probe_sessions: RSESS = the sessions on mule's tmux server (one per running
+# job). True on a successful enumeration, or on tmux's own one-line "no server
+# running" (RSESS=0); a timeout, a hung or broken server, or any other error is
+# false, with the reason in RSESS_ERR. A failed probe is never zero sessions.
+probe_sessions() {
+  local out err rc=0
+  RSESS="" RSESS_ERR=""
+  out=$(TMUX_TMPDIR="$R/rtmux" "$TO" -k 2 10 tmux -L "$MULE_TMUX" list-sessions -F '#{session_name}' 2>"$R/rsess.err") || rc=$?
+  if [ "$rc" = 0 ]; then
+    RSESS=$(printf '%s\n' "$out" | grep -c . || true)
+    return 0
+  fi
+  err=$(cat "$R/rsess.err" 2>/dev/null)
+  case "$err" in
+    *$'\n'*) ;;
+    "no server running on "*) [ "$rc" != 1 ] || {
+      RSESS=0
+      return 0
+    } ;;
+  esac
+  RSESS_ERR="exit $rc: ${err:-no message}"
+  return 1
+}
+
+cleanup() {
+  local rc=$?
+  set +e
+  IN_CLEANUP=1
+  trap - EXIT
+  reap_watchdog
+  exec 1>&3 2>&4
+  say "cleanup (exit $rc)"
+  # A green run leaves mule's tmux server without a session (job).
+  if [ "$rc" = 0 ]; then
+    if ! probe_sessions; then
+      say "FAIL the final tmux probe of mule's server failed ($RSESS_ERR)"
+      rc=1
+    elif [ "$RSESS" != 0 ]; then
+      say "FAIL $RSESS session(s) left on mule's tmux server"
+      rc=1
+    fi
+  fi
+  # The fixture's own long-lived processes, stopped by name: the two tmux
+  # servers (their panes and jobs go with them), mule's master, sshd.
+  TMUX_TMPDIR="$R/ltmux" "$TO" -k 2 10 tmux -L "$MU_TMUX" kill-server >/dev/null 2>&1
+  TMUX_TMPDIR="$R/rtmux" "$TO" -k 2 10 tmux -L "$MULE_TMUX" kill-server >/dev/null 2>&1
+  [ -S "$R/m/mule.sock" ] && "$TO" -k 2 10 "$R/bin/ssh" -S "$R/m/mule.sock" -O exit 127.0.0.1 >/dev/null 2>&1
+  [ -n "$SSHD_PID" ] && kill "$SSHD_PID" >/dev/null 2>&1
+  # Whatever of the run outlives that teardown by 10 s was never meant to: a
+  # leak. It fails the run and only then is KILLed, never swept silently.
+  if ! scan_leftovers 50; then
+    say "FAIL leftover processes after the fixture teardown (KILLed now):"
+    printf '%s\n' "$LEFT" | sed 's/^/  /'
+    rc=1
+    kill_left
+    scan_leftovers 25 || {
+      say "FAIL still alive after KILL:"
+      printf '%s\n' "$LEFT" | sed 's/^/  /'
+    }
+  fi
+  "$TO" -k 2 30 rm -rf "/tmp/mu-$UID_/$WS"
+  rmdir "/tmp/mu-$UID_" >/dev/null 2>&1
+  if [ "${SMOKE_KEEP:-}" = 1 ]; then
+    say "kept $R"
+  else
+    "$TO" -k 2 30 chmod -R u+w "$R" >/dev/null 2>&1
+    "$TO" -k 2 60 rm -rf "$R"
+    [ ! -e "$R" ] || {
+      say "FAIL $R could not be removed"
+      rc=1
+    }
+    # A process holding the run dir shows it as "(deleted)" after the removal.
+    scan_leftovers 1 || {
+      say "FAIL processes still hold the removed $R (KILLed now):"
+      printf '%s\n' "$LEFT" | sed 's/^/  /'
+      rc=1
+      kill_left
+    }
+  fi
+  if [ "$rc" = 0 ]; then say "SMOKE PASS"; else say "SMOKE FAIL (exit $rc)"; fi
+  exit "$rc"
+}
+# A signal exits through cleanup; inside cleanup it is ignored.
+on_sig() { [ -n "$IN_CLEANUP" ] || exit "$1"; }
+# descendants <pid> <skip>: every process under <pid>, <skip>'s subtree excluded.
+descendants() {
+  local c
+  for c in $(pgrep -P "$1" 2>/dev/null); do
+    [ "$c" = "$2" ] && continue
+    echo "$c"
+    descendants "$c" "$2"
+  done
+}
+# The deadline. bash runs its TERM trap only once the foreground command
+# returns, so the watchdog also stops every process under this shell (TERM,
+# KILL after 5 s), every 0.5 s until cleanup reaps it.
+watchdog() {
+  local me=$BASHPID n=0 sig pid
+  sleep "$LIMIT"
+  echo "smoke-rung2: SMOKE_TIMEOUT ($LIMIT s) reached; stopping the run" >&2
+  while kill -TERM $$ 2>/dev/null; do
+    sig=TERM
+    [ "$n" -lt 10 ] || sig=KILL
+    for pid in $(descendants $$ "$me"); do kill -"$sig" "$pid" 2>/dev/null; done
+    n=$((n + 1))
+    sleep 0.5
+  done
+}
+exec 3>&1 4>&2
+trap cleanup EXIT
+trap 'on_sig 130' INT
+trap 'on_sig 143' TERM
+trap 'on_sig 129' HUP
+watchdog </dev/null >/dev/null 3>&- 4>&- &
+WATCHDOG=$!
+
 # ── build ────────────────────────────────────────────────────────────────────
 say "build mule: cargo build --release in $MULE"
 (cd "$MULE" && "$TO" 1200 cargo build --release --locked --quiet) || fail "cargo build --release"
@@ -124,100 +304,9 @@ done
 say "mule $(git -C "$MULE" rev-parse --short HEAD 2>/dev/null || echo '?'), mu $(git -C "$MU" rev-parse --short HEAD 2>/dev/null || echo '?')"
 
 # ── private world ────────────────────────────────────────────────────────────
-R=$(cd "$(mktemp -d /tmp/mu-r2.XXXXXX)" && pwd -P)
-UID_=$(id -u)
-WS="r2-$$"
-MU_TMUX="mu-r2-$$"
-MULE_TMUX="mule-r2-$$"
-SSHD_PID=""
-WATCHDOG=""
-LEFTOVERS="$R/leftovers"
 # Every process of this run carries "$R/" in its environ (this tag, or the
 # private HOME/TMPDIR exported below; sshd's children get it through SetEnv).
 export SMOKE_RUN="$R/"
-
-# reap_watchdog: freeze the watchdog so it can neither fire nor fork, kill its
-# sleep (a direct child), kill it, and reap it.
-reap_watchdog() {
-  [ -n "$WATCHDOG" ] || return 0
-  kill -STOP "$WATCHDOG" >/dev/null 2>&1
-  pkill -KILL -P "$WATCHDOG" >/dev/null 2>&1
-  kill -KILL "$WATCHDOG" >/dev/null 2>&1
-  kill -CONT "$WATCHDOG" >/dev/null 2>&1
-  wait "$WATCHDOG" 2>/dev/null
-  WATCHDOG=""
-}
-# procs <needle>: pids (not this shell) whose argv or environ names <needle>.
-procs() {
-  local p pid
-  for p in /proc/[0-9]*; do
-    pid=${p#/proc/}
-    [ "$pid" = "$$" ] && continue
-    [ "$pid" = "$BASHPID" ] && continue
-    grep -qsF "$1" "$p/cmdline" "$p/environ" 2>/dev/null && echo "$pid"
-  done
-  return 0
-}
-# no_leftovers: false, with each one in $LEFTOVERS (and KILLed), when a live
-# process other than this shell still names "$R/" after a 3 s grace.
-no_leftovers() {
-  local pid _
-  for _ in $(seq 15); do
-    : >"$LEFTOVERS"
-    for pid in $(procs "$R/"); do ps -o pid=,args= -p "$pid" >>"$LEFTOVERS" 2>/dev/null; done
-    [ -s "$LEFTOVERS" ] || return 0
-    sleep 0.2
-  done
-  while read -r pid _; do kill -KILL "$pid" >/dev/null 2>&1; done <"$LEFTOVERS"
-  return 1
-}
-
-cleanup() {
-  local rc=$?
-  set +e
-  trap - EXIT INT TERM HUP
-  exec 1>&3 2>&4
-  say "cleanup (exit $rc)"
-  reap_watchdog
-  TMUX_TMPDIR="$R/ltmux" tmux -L "$MU_TMUX" kill-server >/dev/null 2>&1
-  TMUX_TMPDIR="$R/rtmux" tmux -L "$MULE_TMUX" kill-server >/dev/null 2>&1
-  [ -S "$R/m/mule.sock" ] && "$R/bin/ssh" -S "$R/m/mule.sock" -O exit 127.0.0.1 >/dev/null 2>&1
-  [ -n "$SSHD_PID" ] && kill "$SSHD_PID" >/dev/null 2>&1
-  pkill -TERM -f "$R/" >/dev/null 2>&1
-  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -f "$R/" >/dev/null 2>&1 || break; sleep 0.2; done
-  pkill -KILL -f "$R/" >/dev/null 2>&1
-  [ -n "$SSHD_PID" ] && kill -KILL "$SSHD_PID" >/dev/null 2>&1
-  if ! no_leftovers; then
-    say "FAIL leftover processes after the sweep (killed now):"
-    sed 's/^/  /' "$LEFTOVERS"
-    [ "$rc" != 0 ] || rc=1
-  fi
-  rm -rf "/tmp/mu-$UID_/$WS"
-  rmdir "/tmp/mu-$UID_" >/dev/null 2>&1
-  if [ "${SMOKE_KEEP:-}" = 1 ]; then
-    say "kept $R"
-  else
-    chmod -R u+w "$R" >/dev/null 2>&1
-    rm -rf "$R"
-    [ ! -e "$R" ] || {
-      say "FAIL $R could not be removed"
-      [ "$rc" != 0 ] || rc=1
-    }
-  fi
-  if [ "$rc" = 0 ]; then say "SMOKE PASS"; else say "SMOKE FAIL (exit $rc)"; fi
-  exit "$rc"
-}
-exec 3>&1 4>&2
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-trap 'exit 129' HUP
-(
-  sleep "$LIMIT" 2>/dev/null
-  echo "smoke-rung2: SMOKE_TIMEOUT ($LIMIT s) reached" >&2
-  kill -TERM $$
-) </dev/null >/dev/null 3>&- 4>&- &
-WATCHDOG=$!
 
 mkdir -p "$R"/{bin,rbin,trip,m,tmp,home,config/mule,cache,lstate,ltmux,rtmux,rhome/.local/state,pack,pkgs,piagent,npm-cache,results}
 chmod 700 "$R/m" "$R/ltmux" "$R/rtmux"
@@ -341,9 +430,9 @@ grep -qF "$MU" "$R/pi-list.out" || fail "pi list does not show $MU: $(cat "$R/pi
 pass "pi $PI_VER: pi install'ed the mu checkout (ctl) and the installed @mu-crew/mule package"
 
 # ── loopback sshd, MaxSessions 1 ─────────────────────────────────────────────
-PORT=$("$NODE" -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
-"$SSH_KEYGEN" -q -t ed25519 -N '' -f "$R/hostkey"
-"$SSH_KEYGEN" -q -t ed25519 -N '' -f "$R/id"
+PORT=$("$TO" 20 "$NODE" -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close()})')
+"$TO" 30 "$SSH_KEYGEN" -q -t ed25519 -N '' -f "$R/hostkey"
+"$TO" 30 "$SSH_KEYGEN" -q -t ed25519 -N '' -f "$R/id"
 cp "$R/id.pub" "$R/authorized_keys"
 cat >"$R/sshd_config" <<EOF
 Port $PORT
@@ -433,7 +522,9 @@ pass "plugin profile loop (installed mu-plugin-mule): host check $(js 'd.data.st
 # ── helpers ──────────────────────────────────────────────────────────────────
 local_sock() { echo "$R/lstate/mu5/sock/$WS/$1.sock"; }
 agent_cwd() { sql "SELECT a.cwd FROM agents a JOIN workstreams w ON w.id=a.workstream_id WHERE w.name='$WS' AND a.name='$1'" | js 'd[0]?.cwd'; }
-remote_sessions() { TMUX_TMPDIR="$R/rtmux" "$TO" 10 tmux -L "$MULE_TMUX" list-sessions 2>/dev/null | wc -l | tr -d ' '; }
+# remote_sessions: RSESS = the session count on mule's tmux server; a failed
+# probe fails the run (probe_sessions).
+remote_sessions() { probe_sessions || fail "the tmux probe of mule's server failed ($RSESS_ERR); that is not zero sessions"; }
 # mule_jobs [ls args...]: the host's job list; an unreachable host fails the run.
 mule_jobs() {
   local out
@@ -531,7 +622,7 @@ spawn_mule() {
   until_ok 100 "the pi loop of $a" loop_pid "$a"
   LOOP=$(loop_pid "$a")
   pane=$(printf '%s' "$row" | js 'd[0].pane_id')
-  start=$(tmux -L "$MU_TMUX" display -p -t "$pane" '#{pane_start_command}') || fail "no pane $pane for $a"
+  start=$("$TO" -k 2 10 tmux -L "$MU_TMUX" display -p -t "$pane" '#{pane_start_command}') || fail "no pane $pane for $a"
   case "$start" in *--mule*"loop:$TREE"*) ;; *) fail "$a's pane command lacks --mule loop:<tree>: $start" ;; esac
   [ "$(readlink "/proc/$LOOP/cwd")" = "$LREPO" ] || fail "$a's pi runs in $(readlink "/proc/$LOOP/cwd"), not the local checkout"
   PREFIX=$(env_of "$LOOP" MULE_PI_JOB_PREFIX)
@@ -564,7 +655,8 @@ close_agent() {
   g -C "$RREPO" worktree list --porcelain | grep -qxF "worktree $tree" && left+=("git worktree entry")
   n=$(running_jobs "$prefix")
   [ "$n" = 0 ] || left+=("$n running mule job(s) under $prefix")
-  [ "$(remote_sessions)" = 0 ] || left+=("$(remote_sessions) remote tmux session(s)")
+  remote_sessions
+  [ "$RSESS" = 0 ] || left+=("$RSESS remote tmux session(s)")
   [ -z "$(loop_pid "$a" || true)" ] || left+=("the pi loop")
   [ -z "$(local_mule)" ] || left+=("local mule process(es) $(local_mule | tr '\n' ' ')")
   if [ ${#left[@]} -gt 0 ]; then
@@ -643,7 +735,7 @@ mu agent abort w1 -w "$WS" --json >"$R/abort.json" || {
   cat "$R/abort.json"
   fail "mu agent abort w1"
 }
-no_cancel_job() { [ "$(running_jobs "$W1_PREFIX")" = 0 ] && [ -z "$(remote_procs 'sleep 301')" ] && [ "$(remote_sessions)" = 0 ]; }
+no_cancel_job() { [ "$(running_jobs "$W1_PREFIX")" = 0 ] && [ -z "$(remote_procs 'sleep 301')" ] && remote_sessions && [ "$RSESS" = 0 ]; }
 until_ok 150 "the aborted job to be gone" no_cancel_job
 js 'd.data.aborted === true && d.data.settled === true && d.data.after === "idle"' <"$R/abort.json" >/dev/null || fail "abort did not settle the turn: $(cat "$R/abort.json")"
 KILLED=$(mule_jobs --key-prefix "$W1_PREFIX" | js "JSON.stringify(d.items.find((j)=>j.id==='$CANCEL_JOB'))")
@@ -685,7 +777,8 @@ handed_back "$RC" "$R/wait-down.json" || {
 mu agent list -w "$WS" --json >"$R/list-down.json" || fail "agent list with the master down"
 kill -0 "$W1_LOOP" 2>/dev/null || fail "the local pi died with the master"
 [ "$(sql "SELECT count(*) AS n FROM agents WHERE name='w1'" | js 'd[0].n')" = 1 ] || fail "the local pane was reaped on master loss"
-[ "$(remote_sessions)" -ge 1 ] || fail "the stopped turn's job did not keep running on the host (no remote tmux session)"
+remote_sessions
+[ "$RSESS" -ge 1 ] || fail "the stopped turn's job did not keep running on the host (no remote tmux session)"
 pass "master gone mid-bash: the loop handed back (state $DOWN_STATE), send and wait hand back (exit 5); pane, pi $W1_LOOP and row kept; the job keeps running remotely"
 open_master || fail "reopen mule's master"
 MULE_MASTER=$(master_pid)
@@ -751,7 +844,8 @@ for t in carrier_jobs agents host_channels effects remote_recovery; do
 done
 n=$(mule_jobs | js "d.items.filter((j)=>j.state!=='done').length")
 [ "$n" = 0 ] || STALE+=("$n mule job(s) not done: $(mule_jobs)")
-[ "$(remote_sessions)" = 0 ] || STALE+=("$(remote_sessions) remote tmux session(s)")
+remote_sessions
+[ "$RSESS" = 0 ] || STALE+=("$RSESS remote tmux session(s)")
 [ -z "$(ls -A "$R/lstate/mu5/sock/$WS" 2>/dev/null)" ] || STALE+=("local sockets: $(ls -A "$R/lstate/mu5/sock/$WS")")
 [ "$(g -C "$RREPO" worktree list | wc -l | tr -d ' ')" = 1 ] || STALE+=("remote git worktrees: $(g -C "$RREPO" worktree list)")
 [ "$(g -C "$LREPO" worktree list | wc -l | tr -d ' ')" = 1 ] || STALE+=("local git worktrees: $(g -C "$LREPO" worktree list)")
