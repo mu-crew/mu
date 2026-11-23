@@ -665,7 +665,7 @@ export function wireWaitCommand(program: Command): void {
     .command("wait")
     .argument("[refs...]", `typed: ${TYPED_FORMS}; none = what this caller started`)
     .description(
-      "Block until the first event on a named ref (with none, on work you own), then print ONE JSON result (`--text`: lines): `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (consumed; `cursorCut` = entries dropped to fit), `resume` (run as printed).",
+      "Block until the first event on a named ref (none: work you own); print ONE JSON result (`--text`: lines): `data.firing`, `exit` (6 owner died, 7 needs you), `snapshots`, `cursor` (`cursorCut` = dropped), `resume`.",
     )
     .option(
       "--text",
