@@ -16,6 +16,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 - [Remote worker ladder guide](docs/guide/remote-ladder.md): choose where to
   run a command or worker, size session capacity, and collect and close.
+  Offline eval controls cover a credentialless host, a lease crew on a
+  capped link, and a dropped master's hand-back.
 
 - **`examples/plugins/mu-plugin-ssh` gains an example `pane` job kind** over
   plain ssh. Session templates (rung 3) and lease templates (rung 4) remain the supported paths.
