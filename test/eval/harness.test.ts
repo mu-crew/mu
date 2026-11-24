@@ -50,7 +50,7 @@ import { parsePaneJson } from "../../tools/eval/runner-pane.ts";
 import { LIVE_DROP, muShim, sandboxEnv } from "../../tools/eval/sandbox.ts";
 import { remoteEnv } from "../../tools/eval/ssh-args.ts";
 import type { RunMetrics, Scenario, Surface } from "../../tools/eval/types.ts";
-import { emptyRun } from "./_judge-sandbox.ts";
+import { emptyRun } from "./_empty-run.ts";
 
 const dirs: string[] = [];
 const tmp = (p: string): string => {

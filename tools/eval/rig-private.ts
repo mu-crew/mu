@@ -4,7 +4,7 @@
 // worktrees and eval rows), and the canary every rig file carries.
 //
 // The canary is a fixed token on the first and last line (or element) of every file under
-// tools/eval, test/eval, docs/eval and docs/specs (test/eval/rig-guard.test.ts checks each). Path
+// tools/eval, test/eval, docs/eval and docs/specs (test/eval/rig-guard-contract.integration.test.ts checks each). Path
 // parsing cannot be complete (`cd` chains, globs, symlinks, `git show HEAD:<path>`); whatever way a
 // tool reached a rig file, its output carries the token, and rigReads marks the run invalid.
 import { join, resolve } from "node:path";

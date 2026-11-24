@@ -19,7 +19,7 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CarrierJobKeptError,
   CarrierJobUnstoppedError,
@@ -78,6 +78,16 @@ import { runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 const SHA = "a".repeat(40);
+
+// Match the remote exec fixture's prepared SHA without reading the caller's checkout.
+vi.mock("../src/vcs/git.js", async (load) => ({
+  ...(await load<typeof import("../src/vcs/git.js")>()),
+  gitToplevel: async (cwd: string) => cwd,
+  git: async (args: string[]) => {
+    expect(args).toEqual(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+    return SHA;
+  },
+}));
 const WT = "/home/u/.local/state/mu-next/remote-worktrees/auth/worker-1";
 const STOP = (script: string) => `/bin/sh ${script} {job}`;
 

@@ -17,7 +17,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Share the CLI override name rule between spawn and herdr; clarify ctl timeout and channel behavior.
 - Test harness: the watchdog owns one short scratch root for servers and workers, independent of inherited temp directories. Eval sandboxes resolve symlinked temp paths and use short tmux socket names.
 - Test seam, no production behaviour change: `PluginProcess.fromTestPipes` (`src/plugins/process.ts`) builds a plugin peer over in-process pipes with no PID, and `pgid` is now a getter that throws for such a peer. A real child takes the same paths as before. Documented under Key seams in `docs/ARCHITECTURE.md`.
-- Test harness: the macOS real-git pin exposes only a `git` symlink ahead of `PATH` (with `GIT_EXEC_PATH`), not the whole CommandLineTools bin. The vitest `pure` project sets `testTimeout: 30000` like the others.
+- Test harness: a guard keeps real-Git fixtures and direct Git launches out of the fast tier. The integration tier's macOS Git pin exposes only Git, not the whole CommandLineTools bin. The vitest `pure` project sets `testTimeout: 30000` like the others.
 ### Added
 
 - `mu host exec` and provider-backed spawns warn on stderr when the provider

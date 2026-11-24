@@ -21,7 +21,7 @@ import {
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { rollbackSpawn } from "../src/agents/spawn.js";
 import {
   AgentCtlUnreachableError,
@@ -64,12 +64,21 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream, teardownWorkstream, workstreamRevision } from "../src/workstream.js";
 import { helloReply, INC, withHello } from "./_ctl-ext.js";
 import { rmFixtureDir } from "./_fs.js";
-import { copyGitFixture, gitIn } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson, runCliWire } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
 const SHA = "a".repeat(40);
+const LOCAL_SHA = "b".repeat(40);
+
+vi.mock("../src/vcs/git.js", async (load) => ({
+  ...(await load<typeof import("../src/vcs/git.js")>()),
+  gitToplevel: async (cwd: string) => cwd,
+  git: async (args: string[]) => {
+    expect(args).toEqual(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+    return LOCAL_SHA;
+  },
+}));
 const WT = "/home/u/.local/state/mu-next/remote-worktrees/auth/worker-1";
 
 let dir: string;
@@ -422,24 +431,12 @@ describe("the pane is the transport", () => {
 
   it("--worktree: one remote exec makes a detached worktree and records host, path and base", async () => {
     // --from resolves in the caller's checkout (ladder placement §3.3): the host gets the sha.
-    // A fixture checkout, not whatever repo the runner sits in.
-    const caller = join(dir, "caller");
-    mkdirSync(caller);
-    copyGitFixture(caller);
-    const local = gitIn(caller, "rev-parse", "HEAD");
-    const prev = process.cwd();
-    process.chdir(caller);
-    let a: Awaited<ReturnType<typeof spawn>>;
-    try {
-      a = await spawn({ worktree: true, from: "HEAD" });
-    } finally {
-      process.chdir(prev);
-    }
+    const a = await spawn({ worktree: true, from: "HEAD" });
     const [only, ...rest] = execCalls();
     expect(rest).toEqual([]);
     expect(only).toContain("worktree add --detach");
     expect(only).toContain("remote-worktrees/auth/worker-1");
-    expect(only).toContain(`base=${local};`);
+    expect(only).toContain(`base=${LOCAL_SHA};`);
     expect(only).toContain("/srv/repo");
     expect(a).toMatchObject({ host: "dev", cwd: WT, base: SHA });
     expect(getAgent(db, "worker-1", "auth")).toMatchObject({ host: "dev", cwd: WT, base: SHA });

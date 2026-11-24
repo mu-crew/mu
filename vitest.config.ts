@@ -41,7 +41,7 @@ const pureTests = [
   "wait-regex",
 ].map((name) => `test/${name}.test.ts`);
 
-export function suiteConfig(maxWorkers: number, exclude: string[] = []) {
+export function suiteConfig(maxWorkers: number, { fast = false } = {}) {
   return defineConfig({
     test: {
       include: ["test/**/*.test.ts"],
@@ -66,12 +66,16 @@ export function suiteConfig(maxWorkers: number, exclude: string[] = []) {
           },
         },
       ],
-      exclude: [...configDefaults.exclude, ...exclude, ...pureTests],
+      exclude: [
+        ...configDefaults.exclude,
+        ...(fast ? ["**/*.integration.test.ts"] : []),
+        ...pureTests,
+      ],
       // globalSetup (test/_global-teardown.ts) starts the run's private
       // `tmux -L <socket>` server, builds the DB template, makes the per-run
       // scratch dir, and after the run removes all of it. The server
       // watchdog only cleans endpoints this run registered.
-      globalSetup: ["./test/_global-teardown.ts"],
+      globalSetup: ["./test/_global-teardown.ts", ...(fast ? [] : ["./test/_git-setup.ts"])],
       // Per-fork pre-test setup: scrub MU_* env vars inherited from
       // the parent shell so SDK-level overrides (MU_PI_COMMAND,
       // MU_IDLE_THRESHOLD_MS, …) can't silently change behaviour

@@ -21,13 +21,13 @@ import { pretrustTargets } from "../../tools/eval/pretrust.ts";
 import { modelLabel } from "../../tools/eval/report.ts";
 import { knownModel, UNKNOWN_FAMILY } from "../../tools/eval/scenarios/e2_cross_family_refuter.ts";
 import type { RunMetrics, Sandbox, Scenario, Verdict } from "../../tools/eval/types.ts";
+import { emptyRun } from "./_empty-run.ts";
 import { makeHarnessWorld, type WorkerSpec, type WorldSpec } from "./_harness-world.ts";
-import { emptyRun } from "./_judge-sandbox.ts";
 
 // Worker mixes (`--workers`), the binding of a case to its AUT and mix, and the sampled live plan:
 // the prompts and judges of E1, E3, E4 and E6 name the bound harnesses, E2 asks an AUT of unknown
 // family for a claude refuter, a Muse AUT is told to keep driving, and a run's result row records
-// its mix. The judges run on synthetic end states (_harness-world.ts), as harness-judges.test.ts.
+// its mix. The judges run on synthetic end states (_harness-world.ts), as harness-judges.integration.test.ts.
 
 const dirs: string[] = [];
 afterAll(() => {

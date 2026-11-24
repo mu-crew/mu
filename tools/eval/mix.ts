@@ -163,7 +163,7 @@ export function planRows(only?: readonly string[]): PlanRow[] {
 /**
  * How often each harness orchestrates and works across `rows`, a worker counted once per run it
  * works in (the bound case's mix, else the base harness of each fixed-crew entry: `pi@dev` is pi).
- * `workersOf` gives a row's workers; mix.test.ts feeds it the bound scenarios.
+ * `workersOf` gives a row's workers; mix.integration.test.ts feeds it the bound scenarios.
  */
 export function planCoverage(
   rows: PlanRow[],

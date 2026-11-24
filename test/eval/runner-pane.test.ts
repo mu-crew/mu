@@ -16,7 +16,7 @@ import {
 } from "../../tools/eval/runner-pane.ts";
 import type { ExecResult } from "../../tools/eval/sandbox.ts";
 import type { Sandbox, Scenario, Surface } from "../../tools/eval/types.ts";
-import { emptyRun } from "./_judge-sandbox.ts";
+import { emptyRun } from "./_empty-run.ts";
 
 const dirs: string[] = [];
 afterAll(() => {

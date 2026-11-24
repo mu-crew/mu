@@ -22,6 +22,11 @@ import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliWire } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
 
+vi.mock("../src/vcs/git.js", async (load) => ({
+  ...(await load<typeof import("../src/vcs/git.js")>()),
+  gitToplevel: async () => undefined,
+}));
+
 /** Leaf verbs and their argv (without --json). `-w probe` is appended when the
  *  verb takes a workstream. A verb missing here fails the coverage test. */
 const ARGS: Record<string, string[]> = {

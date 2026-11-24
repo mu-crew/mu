@@ -1,13 +1,12 @@
 // Vitest global hooks. Workers get a private tmux namespace and a shared
 // scratch directory via provide/inject; cleanup never probes a user server.
-import { mkdirSync, realpathSync, rmSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { execa } from "execa";
 import type { TestProject } from "vitest/node";
 import { openDb } from "../src/db.js";
 import { DB_TEMPLATE_KEY } from "./_db-template.js";
-import { pinRealGit } from "./_real-git.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
 import {
   createServerRoot,
@@ -49,13 +48,6 @@ export async function setup(project: TestProject): Promise<void> {
     runRoot = createServerRoot();
     stopServers = await watchTestServers(runRoot);
     project.provide(RUN_ROOT_KEY, runRoot);
-    pinRealGit(runRoot);
-    // Fixtures don't need the machine's system config or sample hooks.
-    process.env.GIT_CONFIG_NOSYSTEM = "1";
-    const gitTemplate = join(runRoot, "git-template");
-    process.env.GIT_TEMPLATE_DIR = gitTemplate;
-    mkdirSync(join(gitTemplate, "info"), { recursive: true });
-    mkdirSync(join(gitTemplate, "hooks"));
     const template = join(runRoot, "template.db");
     const db = openDb({ path: template });
     try {

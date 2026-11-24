@@ -38,6 +38,7 @@ function surface(): Surface {
   tmp = mkdtempSync(join(tmpdir(), "mu-seed-"));
   mkdirSync(join(tmp, "dist"), { recursive: true });
   writeFileSync(join(tmp, "dist", "cli.js"), "");
+  writeFileSync(join(tmp, ".ref"), "1234567\n");
   return { name: "v", root: tmp, cli: join(tmp, "dist", "cli.js"), extension: "", skillDir: "" };
 }
 

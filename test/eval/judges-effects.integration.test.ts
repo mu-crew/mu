@@ -7,7 +7,8 @@ import { loadScenario, scenarioIds } from "../../tools/eval/commands.ts";
 import { localWrites, verdictFx } from "../../tools/eval/observe.ts";
 import { opsAfter } from "../../tools/eval/ops.ts";
 import type { RunMetrics, Sandbox, ToolCall } from "../../tools/eval/types.ts";
-import { emptyRun, makeJudgeSandbox } from "./_judge-sandbox.ts";
+import { emptyRun } from "./_empty-run.ts";
+import { makeJudgeSandbox } from "./_judge-sandbox.ts";
 
 const dirs: string[] = [];
 afterAll(() => {

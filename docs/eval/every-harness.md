@@ -128,8 +128,8 @@ Without `EVAL_MURMUR`, `check` prints `<id> skipped (...)` for each E case and
 runs the other scenarios.
 
 The fast tier pins the same criteria without tmux:
-`test/eval/harness-judges.test.ts` (synthetic end states for every golden and
-for each bad script's failure), `mix.test.ts` (worker mixes: the bound prompts
+`test/eval/harness-judges.integration.test.ts` (synthetic end states for every golden and
+for each bad script's failure), `mix.integration.test.ts` (worker mixes: the bound prompts
 and judges, E2 under an AUT of unknown family, a Muse AUT's prompts, the result
 row, and the plan's coverage and pre-trust), `runner-pane.test.ts` (the pane
 runner's crash and replacement, the pi AUT's two phases),
@@ -413,7 +413,7 @@ harness orchestrates at least four runs and works in at least two without the
 full cross product: cursor-agent and Muse, which no default mix uses, work under
 each other and under the other's AUT runs. The rows are `EVERY_HARNESS_PLAN` in
 `tools/eval/mix.ts`; `check --plan` proves exactly these at zero cost, and
-`test/eval/mix.test.ts` pins the coverage.
+`test/eval/mix.integration.test.ts` pins the coverage.
 
 | AUT          | Case | Workers                                 |
 | ------------ | ---- | --------------------------------------- |
