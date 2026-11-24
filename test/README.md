@@ -12,8 +12,9 @@ Test conventions. Start with the tiers, then [mux tests](#mux-tests) (which seam
 The tmux integration tests do **not** need `$TMUX`: `globalSetup` starts a
 private server and provides its socket to workers as `MU_TMUX_SOCKET`, and `tmuxIntegrationAvailable()`
 is true whenever that is set. They skip only if that server failed to start
-(the setup prints a warning). Tests scratch under the per-run dir
-globalSetup `provide`s (`test/_run-root.ts`), removed at the end of the run.
+(the setup prints a warning). `test/_setup.ts` points `TMPDIR` into the run's short server root (`/tmp/mus-*`,
+unix socket paths cap at 104 bytes), so every `mkdtemp(tmpdir())` is removed by
+globalSetup even when a fork is killed before `afterEach`.
 
 Both tiers use the same `pure` Vitest project for the allowlist in
 `vitest.config.ts`. Its files share a fork and run without fixture setup:

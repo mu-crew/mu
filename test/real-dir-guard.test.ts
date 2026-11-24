@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { defaultCacheDir, defaultStateDir } from "../src/state-dir.js";
 import { withEnv } from "./_env.js";
@@ -10,8 +10,9 @@ import { withEnv } from "./_env.js";
 // ~/.cache/mu/delegate-answers because test/_setup.ts left XDG_* alone.
 
 describe("test XDG isolation", () => {
-  it("resolves the cache and state dirs under a temp root", async () => {
-    const tmp = tmpdir();
+  it("resolves the cache and state dirs under the per-fork XDG root", async () => {
+    const tmp = dirname(process.env.XDG_CONFIG_HOME ?? "");
+    expect(tmp).toMatch(/\/xdg-\d+$/);
     await withEnv("MU_STATE_DIR", undefined, async () => {
       expect(defaultCacheDir().startsWith(tmp)).toBe(true);
       expect(defaultStateDir().startsWith(tmp)).toBe(true);
