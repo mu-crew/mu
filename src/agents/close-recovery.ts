@@ -16,6 +16,7 @@
 
 import type { Db } from "../db.js";
 import { hostLost, observeBeforeClose } from "../host-policy.js";
+import type { HostView } from "../host-provider.js";
 import { viewRunning } from "../jobs/view.js";
 import { stopMuleJobs, workspaceHost } from "../local-loop.js";
 import { emitEvent } from "../logs.js";
@@ -27,7 +28,11 @@ import {
   type RemoteRecovery,
   RemoteRecoveryRefusedError,
 } from "../remote-recovery.js";
-import { asideOf, closeRemoteWorktree } from "../remote-worktree.js";
+import {
+  asideOf,
+  assertRemoteWorktreeReleasable,
+  closeRemoteWorktree,
+} from "../remote-worktree.js";
 import type { CloseAgentResult, ClosePreview } from "./close.js";
 
 /** Why a close of `rec` would refuse right now, from the registry and the profile alone (no host command); null when it would go on. */
@@ -93,37 +98,40 @@ export async function closeRecovery(
       recovery: { id: rec.agentId, deleted },
     };
   }
+  const tree = {
+    name: rec.name,
+    workstreamName: rec.workstream,
+    host: rec.host,
+    cwd: rec.cwd,
+    base: rec.base,
+    collectedHead: rec.collectedHead,
+    repo: rec.hostRepo,
+    // The ORIGINAL registry incarnation: the aside path derives from it.
+    incarnation: rec.agentId,
+  };
+  const checkProfile = (h: HostView) => assertRecoveryProfile(rec, { exec: h.link.fingerprint(h) });
   const muleHost = workspaceHost(rec);
   if (muleHost !== undefined) {
+    // Refusals (dirty, uncollected, unreadable) come BEFORE any job is stopped.
+    await assertRemoteWorktreeReleasable(db, tree, opts.keepBranch, {
+      checkProfile,
+      recoveryId: rec.agentId,
+    });
     await stopMuleJobs(db, muleHost, rec.agentId);
     assertRecoveryUnchanged(db, rec);
     assertRecoveryUsable(db, rec);
   }
-  const worktree = await closeRemoteWorktree(
-    db,
-    {
-      name: rec.name,
-      workstreamName: rec.workstream,
-      host: rec.host,
-      cwd: rec.cwd,
-      base: rec.base,
-      collectedHead: rec.collectedHead,
-      repo: rec.hostRepo,
-      // The ORIGINAL registry incarnation: the aside path derives from it.
-      incarnation: rec.agentId,
+  const worktree = await closeRemoteWorktree(db, tree, {
+    keepBranch: opts.keepBranch,
+    force: opts.force === true,
+    paneAlive: viewRunning,
+    recoveryId: rec.agentId,
+    checkProfile,
+    beforeRemove: () => {
+      assertRecoveryUnchanged(db, rec);
+      assertRecoveryUsable(db, rec);
     },
-    {
-      keepBranch: opts.keepBranch,
-      force: opts.force === true,
-      paneAlive: viewRunning,
-      recoveryId: rec.agentId,
-      checkProfile: (h) => assertRecoveryProfile(rec, { exec: h.link.fingerprint(h) }),
-      beforeRemove: () => {
-        assertRecoveryUnchanged(db, rec);
-        assertRecoveryUsable(db, rec);
-      },
-    },
-  );
+  });
   // The tree is removed, kept on a branch or gone; only now does the record go,
   // and only this one, as read.
   const deleted = deleteRemoteRecovery(db, rec);

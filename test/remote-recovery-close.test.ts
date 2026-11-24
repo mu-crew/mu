@@ -25,10 +25,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAgent, deleteAgent, getAgent, insertAgent, previewClose } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
-import { addHost, removeHost } from "../src/hosts.js";
+import { addHost, LOCAL_LOOP_TRANSPORT, removeHost } from "../src/hosts.js";
 import { asideOf, RemoteCloseRefusedError } from "../src/remote-agent.js";
 import { collectRemoteAgent } from "../src/remote-collect.js";
 import {
@@ -69,7 +69,13 @@ const records = () => listRemoteRecoveries(db);
 
 /** A finalized remote row, deleted again: leaves one record. Returns its original incarnation. */
 function orphaned(
-  over: { name?: string; workstream?: string; cwd?: string; collectedHead?: string } = {},
+  over: {
+    name?: string;
+    workstream?: string;
+    cwd?: string;
+    collectedHead?: string;
+    localLoop?: boolean;
+  } = {},
 ): number {
   const name = over.name ?? "worker-1";
   const workstream = over.workstream ?? "auth";
@@ -81,6 +87,7 @@ function orphaned(
     base: BASE,
     host: "dev",
     repo: "/srv/repo",
+    ...(over.localLoop === true ? { hostTransport: LOCAL_LOOP_TRANSPORT } : {}),
     ...(over.collectedHead === undefined ? {} : { collectedHead: over.collectedHead }),
   });
   expect(deleteAgent(db, name, workstream)).toBe(true);
@@ -263,6 +270,30 @@ describe("apply", () => {
     await expect(close(over)).rejects.toBeInstanceOf(RemoteCloseRefusedError);
     expect(removals()).toEqual([]);
     expect(records()).toHaveLength(1);
+  });
+
+  it("a local-loop recovery refuses a dirty tree BEFORE it touches any mule job", async () => {
+    const mule = join(dir, "mule.sh");
+    writeFileSync(
+      mule,
+      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${dir}/mule.log'\necho '{"items":[],"unreachable":[]}'\n`,
+    );
+    chmodSync(mule, 0o755);
+    vi.stubEnv("MULE_PI_BIN", mule);
+    try {
+      orphaned({ localLoop: true });
+      answer(`MU_STATE dirty ${BASE}`);
+      await expect(close()).rejects.toBeInstanceOf(RemoteCloseRefusedError);
+      expect(existsSync(join(dir, "mule.log"))).toBe(false);
+      expect(removals()).toEqual([]);
+      expect(records()).toHaveLength(1);
+      // A clean tree still stops jobs (ls) and then removes.
+      answer(`MU_STATE clean ${BASE}`);
+      await close();
+      expect(readFileSync(join(dir, "mule.log"), "utf8")).toContain("ls --host dev");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("every refusal and failure keeps the record", async () => {

@@ -573,8 +573,9 @@ export async function assertRemoteWorktreeReleasable(
   db: Db,
   tree: RemoteTree,
   keepBranch: boolean,
+  extra: Pick<CloseRemoteWorktreeOptions, "checkProfile" | "recoveryId" | "probe"> = {},
 ): Promise<void> {
-  await remoteClose(db, tree, { keepBranch }, true);
+  await remoteClose(db, tree, { ...extra, keepBranch }, true);
 }
 
 function remoteClose(
