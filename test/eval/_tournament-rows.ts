@@ -112,7 +112,6 @@ export function cellRows(o: {
   }
   return out;
 }
-// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 
 /** A minimal NextCase for plan and designer tests. */
 export const fakeCase = (id: string, over: Partial<NextCase> = {}): NextCase =>
@@ -137,3 +136,4 @@ export const fakeCase = (id: string, over: Partial<NextCase> = {}): NextCase =>
     extras: () => [],
     ...over,
   }) as NextCase;
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.

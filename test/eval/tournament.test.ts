@@ -806,3 +806,4 @@ describe("variant patches", () => {
     );
   });
 });
+// RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
