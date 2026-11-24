@@ -92,7 +92,6 @@ export function useSnapshot(
 
   useEffect(() => {
     let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
     const q = JSON.parse(queryKey) as DashboardQuery;
     const loop = async (): Promise<void> => {
       while (!cancelled) {
@@ -130,16 +129,19 @@ export function useSnapshot(
         }
         if (pollMs === null) return;
         await new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, pollMs);
-          wake.current = resolve;
+          const finish = () => {
+            clearTimeout(timer);
+            wake.current = null;
+            resolve();
+          };
+          const timer = setTimeout(finish, pollMs);
+          wake.current = finish;
         });
-        wake.current = null;
       }
     };
     void loop();
     return () => {
       cancelled = true;
-      if (timer !== undefined) clearTimeout(timer);
       wake.current?.();
     };
   }, [runtime, queryKey, pollMs, slowMs]);

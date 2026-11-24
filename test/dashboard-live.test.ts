@@ -74,13 +74,15 @@ afterEach(async () => {
 const add = (id: string, title = `title ${id}`): void => {
   addTask(db, { workstream: "ws", localId: id, title, impact: 50, effortDays: 1 });
 };
-const open = (opts: { tab?: "tasks" | "agents" | "overview" | "log"; slowMs?: number } = {}) => {
+const open = (
+  opts: { tab?: "tasks" | "agents" | "overview" | "log"; slowMs?: number; pollMs?: number } = {},
+) => {
   rt = createRuntime({ dbPath: join(tmp, "a.db"), syncDb: db, caller: null });
   return renderApp(
     createElement(App, {
       runtime: rt,
       initialTab: opts.tab ?? "tasks",
-      pollMs: 20,
+      pollMs: opts.pollMs ?? 20,
       slowMs: opts.slowMs ?? 60_000,
       initialWorkstream: "ws",
       now: () => 0,
@@ -123,6 +125,41 @@ describe("lists are live", () => {
     closeTask(db, "t3", { workstream: "ws", evidence: "test" });
     await ui.until((s) => !s.includes("t3") && /> t2/.test(s)); // the neighbour, not the top
     ui.unmount();
+  });
+
+  it("manual refresh and unmount leave no referenced poll timer", async () => {
+    const pollMs = 9876;
+    const active = new Set<ReturnType<typeof setTimeout>>();
+    const start = globalThis.setTimeout;
+    const stop = globalThis.clearTimeout;
+    const startSpy = vi.spyOn(globalThis, "setTimeout").mockImplementation((fn, ms, ...args) => {
+      const timer = start(fn, ms, ...args);
+      if (ms === pollMs) active.add(timer);
+      return timer;
+    });
+    const stopSpy = vi.spyOn(globalThis, "clearTimeout").mockImplementation((timer) => {
+      if (typeof timer === "object") active.delete(timer);
+      stop(timer);
+    });
+    let ui: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      add("t1");
+      ui = await open({ pollMs });
+      await ui.until((s) => s.includes("t1") && active.size > 0);
+      expect([...active].filter((timer) => timer.hasRef())).toHaveLength(1);
+      add("t2", "visible on refresh");
+      await ui.press("r");
+      await ui.until((s) => s.includes("visible on refresh"));
+      ui.unmount();
+      await ui.exited;
+      ui = undefined;
+      expect([...active].filter((timer) => timer.hasRef())).toHaveLength(0);
+    } finally {
+      ui?.unmount();
+      startSpy.mockRestore();
+      stopSpy.mockRestore();
+      for (const timer of active) stop(timer);
+    }
   });
 
   it("a tick with nothing changed renders nothing (flicker guard A)", async () => {
