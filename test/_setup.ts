@@ -26,7 +26,7 @@ import { setProcessTableReaderForTests } from "../src/hook-chain.js";
 import { setMuzzleRunnerForTests } from "../src/muzzle-queue.js";
 import { installRealDirGuard, realMuDirs } from "./_real-dir-guard.js";
 import { RUN_ROOT_KEY } from "./_run-root.js";
-import { SERVER_ROOT_KEY, setServerRoot, TMUX_SOCKET_KEY } from "./_server-registry.js";
+import { setServerRoot, TMUX_SOCKET_KEY } from "./_server-registry.js";
 
 const ALLOWED: ReadonlySet<string> = new Set([
   // The herdr equivalent: an isolated named herdr server.
@@ -39,8 +39,8 @@ for (const key of Object.keys(process.env)) {
   }
 }
 
-const serverRoot = inject(SERVER_ROOT_KEY);
-if (typeof serverRoot === "string") setServerRoot(serverRoot);
+const runRoot = inject(RUN_ROOT_KEY);
+if (typeof runRoot === "string") setServerRoot(runRoot);
 const socket = inject(TMUX_SOCKET_KEY);
 if (typeof socket === "string") process.env.MU_TMUX_SOCKET = socket;
 // A bare tmux command must not follow the parent shell to a foreign socket.
@@ -96,16 +96,6 @@ setProcessTableReaderForTests(() => null);
 // test/spawn-ctl.test.ts opts back in with a small budget.
 process.env.MU_SPAWN_CTL_MS = "0";
 
-// Baseline: `mu pi migrate` resolves under MU_PI_HOME, never the
-// developer's real ~/.pi and ~/.agents. The path does not exist, so every
-// test sees an empty home unless it builds its own temp one.
-process.env.MU_PI_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-pi-home-${process.pid}`;
-
-// Baseline: `mu init` writes under MU_INIT_HOME, never the developer's real
-// ~/.claude, ~/.codex or ~/.cursor. The path does not exist, so no harness is
-// set up there and a bare `mu init` writes nothing.
-process.env.MU_INIT_HOME = `${process.env.TMPDIR ?? "/tmp"}/mu-test-no-init-home-${process.pid}`;
-
 // Baseline: no moved harness config. `CLAUDE_CONFIG_DIR` and `CODEX_HOME` move
 // where `mu init` writes and `mu doctor` reads, past MU_INIT_HOME, so a
 // developer's own would take a test's writes into their real config. Tests
@@ -116,19 +106,15 @@ for (const key of ["CLAUDE_CONFIG_DIR", "CODEX_HOME"]) {
 
 // Real dirs first (from the inherited env), then redirect, then guard.
 const realDirs = realMuDirs();
-const runRoot = (inject as (key: string) => unknown)(RUN_ROOT_KEY);
 let xdgRoot: string;
 if (typeof runRoot === "string") {
+  // Every mkdtemp(tmpdir()) lands under the watchdog's short run root,
+  // even when a fork dies before afterEach.
+  const scratch = join(runRoot, `t${process.pid}`);
   xdgRoot = join(runRoot, `xdg-${process.pid}`);
+  mkdirSync(scratch, { recursive: true });
   mkdirSync(xdgRoot, { recursive: true });
-  // Every mkdtemp(tmpdir()) lands under the run's short server root (/tmp/mus-*, which
-  // globalSetup removes), so a fork killed before afterEach leaks nothing. It must stay
-  // short: unix socket paths cap at 104 bytes on macOS.
-  if (typeof serverRoot === "string") {
-    const scratch = join(serverRoot, `t${process.pid}`);
-    mkdirSync(scratch, { recursive: true });
-    process.env.TMPDIR = scratch;
-  }
+  process.env.TMPDIR = scratch;
 } else {
   // No globalSetup (a custom config): fall back to a per-fork dir.
   xdgRoot = mkdtempSync(join(tmpdir(), "mu-test-xdg-"));
@@ -140,6 +126,9 @@ if (typeof runRoot === "string") {
     }
   });
 }
+// Neither migration nor init sees the developer's harness config.
+process.env.MU_PI_HOME = join(xdgRoot, "no-pi-home");
+process.env.MU_INIT_HOME = join(xdgRoot, "no-init-home");
 process.env.XDG_CACHE_HOME = join(xdgRoot, "cache");
 process.env.XDG_STATE_HOME = join(xdgRoot, "state");
 process.env.XDG_CONFIG_HOME = join(xdgRoot, "config");

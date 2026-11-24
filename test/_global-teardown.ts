@@ -1,6 +1,6 @@
 // Vitest global hooks. Workers get a private tmux namespace and a shared
 // scratch directory via provide/inject; cleanup never probes a user server.
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { execa } from "execa";
@@ -12,7 +12,6 @@ import { RUN_ROOT_KEY } from "./_run-root.js";
 import {
   createServerRoot,
   registerTmuxSocket,
-  SERVER_ROOT_KEY,
   TMUX_SOCKET_KEY,
   watchTestServers,
 } from "./_server-registry.js";
@@ -26,7 +25,6 @@ declare module "vitest" {
   interface ProvidedContext {
     [RUN_ROOT_KEY]: string;
     [DB_TEMPLATE_KEY]: string;
-    [SERVER_ROOT_KEY]: string;
     [TMUX_SOCKET_KEY]?: string;
   }
 }
@@ -34,23 +32,24 @@ declare module "vitest" {
 export function leakedVitestTmpDir(project: unknown, tmp: string = tmpdir()): string | null {
   const dir = (project as { vitest?: { _tmpDir?: unknown } } | null)?.vitest?._tmpDir;
   if (typeof dir !== "string" || !isAbsolute(dir)) return null;
-  return dirname(dir) === tmp ? dir : null;
+  const parent = dirname(dir);
+  if (parent === tmp) return dir;
+  try {
+    // macOS can spell the same directory /var or /private/var.
+    return realpathSync(parent) === realpathSync(tmp) ? dir : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function setup(project: TestProject): Promise<void> {
   vitestTmpDir = leakedVitestTmpDir(project);
   try {
-    runRoot = mkdtempSync(join(tmpdir(), "mu-test-run-"));
-    pinRealGit(runRoot);
-    const serverRoot = createServerRoot();
-    try {
-      stopServers = await watchTestServers(serverRoot, runRoot);
-    } catch (err) {
-      rmSync(serverRoot, { recursive: true, force: true });
-      throw err;
-    }
-    project.provide(SERVER_ROOT_KEY, serverRoot);
+    stopServers = undefined;
+    runRoot = createServerRoot();
+    stopServers = await watchTestServers(runRoot);
     project.provide(RUN_ROOT_KEY, runRoot);
+    pinRealGit(runRoot);
     // Fixtures don't need the machine's system config or sample hooks.
     process.env.GIT_CONFIG_NOSYSTEM = "1";
     const gitTemplate = join(runRoot, "git-template");
@@ -65,13 +64,13 @@ export async function setup(project: TestProject): Promise<void> {
       db.close();
     }
     project.provide(DB_TEMPLATE_KEY, template);
-    const socket = registerTmuxSocket(serverRoot);
+    const socket = registerTmuxSocket(runRoot);
     // Disable exit-empty atomically with start-server; otherwise the last
     // session exiting can race the next fixture's new-session.
     const result = await execa(
       "tmux",
       ["-L", socket, "-f", "/dev/null", "start-server", ";", "set", "-s", "exit-empty", "off"],
-      { env: { TMUX_TMPDIR: serverRoot }, reject: false, timeout: 5000 },
+      { env: { TMUX_TMPDIR: runRoot }, reject: false, timeout: 5000 },
     );
     if (result.exitCode === 0) project.provide(TMUX_SOCKET_KEY, socket);
     else
@@ -86,9 +85,9 @@ export async function setup(project: TestProject): Promise<void> {
 
 export async function teardown(): Promise<void> {
   try {
-    await stopServers?.();
+    if (stopServers) await stopServers();
+    else if (runRoot) rmSync(runRoot, { recursive: true, force: true });
   } finally {
     if (vitestTmpDir) rmSync(vitestTmpDir, { recursive: true, force: true });
-    if (runRoot) rmSync(runRoot, { recursive: true, force: true });
   }
 }

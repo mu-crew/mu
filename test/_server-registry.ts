@@ -5,20 +5,18 @@ import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { Socket } from "node:net";
-import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
-export const SERVER_ROOT_KEY = "muServerRoot";
 export const TMUX_SOCKET_KEY = "muTmuxSocket";
 const marker = "MU_TEST_SERVER_ROOT";
 const commandTimeout = 2000;
 
 export function createServerRoot(): string {
-  // macOS TMPDIR plus tmux's socket name can exceed sockaddr_un.sun_path.
-  const base = process.env.TMUX_TMPDIR || "/tmp";
-  const dir = mkdtempSync(join(base.startsWith("/") && base.length <= 40 ? base : "/tmp", "mus-"));
+  // Ignore inherited temp roots: both mux and worker sockets need a short
+  // path, and the scratch root must be outside the user's mu directories.
+  const dir = mkdtempSync("/tmp/mus-");
   mkdirSync(join(dir, "tmux-registry"));
   mkdirSync(join(dir, "rex-registry"));
   return dir;
@@ -159,16 +157,10 @@ async function cleanServers(dir: string): Promise<void> {
 // Vitest global teardown closes this pipe and awaits cleanup. A runner killed
 // by an external timeout closes the same pipe by dying; the watchdog is in a
 // different process group so that the timeout can't kill it with the runner.
-export async function watchTestServers(dir: string, scratch: string): Promise<() => Promise<void>> {
+export async function watchTestServers(dir: string): Promise<() => Promise<void>> {
   const child = spawn(
     process.execPath,
-    [
-      "--experimental-strip-types",
-      fileURLToPath(import.meta.url),
-      "--watch-test-servers",
-      dir,
-      scratch,
-    ],
+    ["--experimental-strip-types", fileURLToPath(import.meta.url), "--watch-test-servers", dir],
     {
       detached: true,
       stdio: ["pipe", "pipe", "inherit"],
@@ -205,20 +197,9 @@ if (process.argv[2] === "--watch-test-servers" && watchedDir !== undefined) {
   process.stdout.end("ready\n");
   process.stdin.resume();
   process.stdin.once("end", () => {
-    const scratch = process.argv[4];
-    void cleanServers(watchedDir)
-      .finally(() => {
-        if (
-          scratch &&
-          dirname(scratch) === tmpdir() &&
-          basename(scratch).startsWith("mu-test-run-")
-        ) {
-          rmSync(scratch, { recursive: true, force: true });
-        }
-      })
-      .catch((err: unknown) => {
-        console.error(err);
-        process.exitCode = 1;
-      });
+    void cleanServers(watchedDir).catch((err: unknown) => {
+      console.error(err);
+      process.exitCode = 1;
+    });
   });
 }
