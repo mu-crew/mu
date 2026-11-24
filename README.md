@@ -32,10 +32,8 @@ task DAG in SQLite. Each agent gets its own git worktree.
 Every read path has `--json`, and every change goes through a typed CLI
 verb. See [What mu is not](#what-mu-is-not).
 
-**Status:** 4.0, a breaking rewrite for agent callers with its own DB. It
-never imports a 3.x DB; open work moves one workstream at a time. Coming
-from 3.x? Read [Upgrade from 3.x to 4.0](docs/guide/upgrade.md#upgrade-from-3x-to-40)
-before you install.
+**Status:** 5.x. Upgrading from 4.x or 3.x? Read
+[How to upgrade mu](docs/guide/upgrade.md) before you install.
 
 ## Install
 
@@ -73,7 +71,7 @@ Claude Code, Codex, cursor-agent and Muse Code on tmux need its hook entries
 On herdr, herdr reports state. On Rex, the agent's own OSC 7501 report does
 (claude and codex send one).
 
-Updating, keeping 3.x runnable beside 4.0, and running from a checkout:
+Updating, upgrading from 4.x or 3.x, and running from a checkout:
 [How to upgrade mu](docs/guide/upgrade.md).
 
 ## Quick start

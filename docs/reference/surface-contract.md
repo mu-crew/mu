@@ -1,6 +1,6 @@
 # Surface contract
 
-The contract mu 4.0 is built to: what every result, wait, delegate and
+The contract mu is built to: what every result, wait, delegate and
 CLOSE block promises an agent caller, and the budgets on what it reads.
 Terms are in [VOCABULARY](../VOCABULARY.md), the module map in
 [ARCHITECTURE](../ARCHITECTURE.md), the reasons in

@@ -13,7 +13,7 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_STATE_DIR` | State directory. Also holds `compile-cache/` (V8 code cache for the CLI; `NODE_DISABLE_COMPILE_CACHE=1` turns it off). Set, it turns off the state import from mu 4's `mu-next`. | `$XDG_STATE_HOME/mu5` |
 | `XDG_STATE_HOME` | XDG state base; mu appends `mu5/` (mu 4 owns `mu-next/`, 3.x `mu/`, so no two majors share a DB). An empty or relative value is ignored. | `~/.local/state` |
 | `XDG_CACHE_HOME` | XDG cache base; mu appends `mu/`. Holds only disposable copies. An empty or relative value is ignored. | `~/.cache` |
-| `MU_SYNC_DIR` | Folder holding one segment per machine. This is the whole sync setup; there is no peer list. 4.0 refuses (exit 4, nothing read or written) a folder holding a segment that opens with a v1 line, i.e. a 3.x peer: give it its own folder. | unset: sync off |
+| `MU_SYNC_DIR` | Folder holding one segment per machine. This is the whole sync setup; there is no peer list. mu refuses (exit 4, nothing read or written) a folder holding a segment that opens with a v1 line, i.e. a 3.x peer: give it its own folder. | unset: sync off |
 
 ## Multiplexer
 

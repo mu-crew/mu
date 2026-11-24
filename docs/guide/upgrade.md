@@ -1,7 +1,7 @@
 # How to upgrade mu
 
-Coming from 3.x? Read [Upgrade from 3.x to 4.0](#upgrade-from-3x-to-40)
-first: `npm i -g @mu-crew/mu@latest` replaces your 3.x `mu`.
+Coming from 3.x? Read [Upgrade from 3.x](#upgrade-from-3x) first:
+`npm i -g @mu-crew/mu@latest` replaces your 3.x `mu`.
 
 ## Upgrade the package
 
@@ -79,90 +79,21 @@ Then run mu 5 again. With `MU_STATE_DIR` or `MU_DB_PATH` set, nothing is
 imported. To start fresh instead, create mu 5's DB once with any verb run
 as `MU_DB_PATH=~/.local/state/mu5/mu.db mu state`.
 
-## Upgrade from 3.x to 4.0
+## Upgrade from 3.x
 
-4.0 is a breaking release with its own DB. It does not import a 3.x DB,
-and nothing converts one. 3.x keeps its state in `~/.local/state/mu`
-(`$XDG_STATE_HOME/mu`); 4.0 keeps its state in `~/.local/state/mu-next`
-(`$XDG_STATE_HOME/mu-next`), a name kept so the two never share a DB,
-socket or worktree. The release notes list every breaking change:
-[CHANGELOG](../../CHANGELOG.md).
-
-There is no flag day. Each machine switches when its human decides:
-
-1. Close the 3.x agents you no longer need (`mu agent close`); 4.0 cannot
-   see them.
-2. If you still need the old DB, [keep 3.x runnable](#keep-3x-runnable)
-   before you install: `npm i -g @mu-crew/mu@latest` replaces the `mu` on
-   your `PATH`.
-3. Install 4.0 as above (`npm i -g @mu-crew/mu@latest`, `pi install`,
-   `mu pi migrate --apply`). `mu --version` should print `4.x`.
-4. Give 4.0 its own sync folder, or none. Sync stays off until you set
-   `MU_SYNC_DIR`. If any segment in the folder opens with a 3.x (v1)
-   line, every 4.0 verb exits 4 with `MU_SYNC_DIR holds 3.x segments;
-   give mu 4 its own dir` before it reads or writes anything. Unset
-   or change `MU_SYNC_DIR` in a shell that also runs 3.x.
-5. Move workstreams one at a time, from the machine that holds each one,
-   with [Move a 3.x workstream](#move-a-3x-workstream). Only open tasks
-   move; owners, agents and history stay in the 3.x DB, an archive. Its
-   one 3.x write is the last step: it parks each moved task with
-   `--why "moved to 4.0"`, so nobody works it twice.
-
-Rollback: `pi remove npm:@mu-crew/mu`, `npm i -g @mu-crew/mu@3`, then
-3.x's `link pi` to relink its shim. Nothing needs converting. For each
-moved workstream, run `mu task unpark <id> -w <ws>` on 3.x per task. Work
-done in 4.0 since the move stays in 4.0's DB.
-
-## Keep 3.x runnable
-
-`npm i -g @mu-crew/mu@latest` replaces the `mu` on your `PATH`, so the
-3.x move needs 3.x from somewhere else. Install it into its own
-prefix, or run it once with npx:
-
-```bash
-npm i --prefix ~/.local/share/mu3 @mu-crew/mu@3.13.3
-~/.local/share/mu3/node_modules/.bin/mu --version   # 3.13.3
-
-npx -y @mu-crew/mu@3.13.3 --version                # no install; slower to start
-```
-
-Use that path, or the `npx` command, as `<mu3>` in [Move a 3.x workstream](#move-a-3x-workstream). 3.x reads its own state dir, so
-it finds the old DB with no flags. Use it to read the archive and to park
-moved tasks, not for new work: `mu pi migrate --apply` moved aside the
-shim 3.x's pi agents load. A harness that runs `mu` through your shell rc
-may pick the wrong one; see
+mu 5 never imports a 3.x DB. 3.x keeps its state in `~/.local/state/mu`, mu 5
+in `~/.local/state/mu5`, so the two never share a DB, socket or worktree.
+`npm i -g @mu-crew/mu@latest` replaces the `mu` on your `PATH`: to read the
+old DB or park tasks, install 3.x into its own prefix
+(`npm i --prefix ~/.local/share/mu3 @mu-crew/mu@3.13.3`) and read it with
+`sqlite3 -readonly`. Close the 3.x agents you no longer need, then move open
+work by hand with `mu task add` (briefs, `--blocks` edges, one workstream at
+a time; the old DB stays an archive). Give mu 5 its own `MU_SYNC_DIR`, or
+none: it refuses a folder holding 3.x segments. `mu pi migrate --apply` moves
+aside the shim 3.x's pi agents load. Rollback: `pi remove npm:@mu-crew/mu`,
+`npm i -g @mu-crew/mu@3`, then 3.x's `link pi`. A harness that runs `mu`
+through your shell rc may pick the wrong one: see
 [Pin the mu the harness runs](other-agent-clis.md#pin-the-mu-the-harness-runs).
-
-## Move a 3.x workstream
-
-Run this on the machine holding the 3.x workstream. `mu` is 4.x;
-`<mu3>` is 3.x (see [Keep 3.x runnable](#keep-3x-runnable)). 4.x runs on
-its own state dir and `MU_SYNC_DIR` (or none).
-
-1. Read the old DB with `sqlite3 -readonly -json <old.db> "<query>"`,
-   never through `MU_DB_PATH`.
-2. Finish each IN_PROGRESS task, or `<mu3> task release <id> -w <ws>`
-   (park refuses it).
-3. Select the open tasks (local_id, title, impact, effort_days,
-   substate), each one's first and last note (the brief; the park reason
-   or status), and the `task_edges` with both ends open (`from_task_id`
-   blocks `to_task_id`). A last note that is the brief or
-   `CLAIM: dispatch` is no status: write one.
-4. Script it (argv lists: briefs hold quotes), dependents first, since
-   `--blocks` needs the dependent to exist:
-   `mu task add <id> -t <title> -i <impact> -e <effort> --blocks <dependents> --note - -w <ws>`
-   with the brief on stdin, then
-   `mu task note <id> -w <ws> -` with `moved from 3.x <ws>/<id>; last note: <it, capped 2 KB>`.
-   For a parked task pass that text to `mu task park <id> -w <ws> --why`
-   instead. Keep the ids.
-5. Check that open-task and edge counts match (`mu sql ... --all`) and
-   that `mu task tree <a root> -w <ws>` matches. Fix a mismatch.
-6. Mark the old tasks:
-   `MU_DB_PATH=<old.db> <mu3> task park <id> -w <ws> --why "moved to 4.0"`
-   per moved task.
-
-To move a 4.x workstream between machines, see the
-[move recipe](../../skills/mu/recipes/move.md).
 
 ## Old DBs
 

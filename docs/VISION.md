@@ -64,7 +64,7 @@ answer itself is the delegate task's report.
 ### 2. One DB is canonical
 
 All state lives in `~/.local/state/mu5/mu.db` (SQLite WAL, safe for
-concurrent processes). 3.x's `~/.local/state/mu` is a different DB.
+concurrent processes). Older majors' state dirs are different DBs.
 In-memory state is a cache. The extension and the CLI share the DB, so
 they cannot diverge.
 
@@ -239,7 +239,7 @@ the agent choosing; mu reads none of it.
 Every verb, result, error and line of prose is written for a model to
 read and act on; only the dashboard is for a human. The measure is how
 cheaply an agent reaches the correct next action: tokens read and
-written, and the mistakes it cannot make. 4.0 was rebuilt on these
+written, and the mistakes it cannot make. mu is built on these
 rules:
 
 1. **Guarantees are code.** Atomicity, locking, cross-machine merge,

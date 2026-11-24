@@ -1,6 +1,6 @@
 # Move a workstream to another machine
 
-Use when the human asks to move a 4.x workstream from one machine (source) to another (target). Tasks, edges and notes travel as ops; agents, worktrees and task owners never do. (3.x into 4.x: [upgrade guide](../../../docs/guide/upgrade.md#move-a-3x-workstream).)
+Use when the human asks to move a workstream from one machine (source) to another (target). Tasks, edges and notes travel as ops; agents, worktrees and task owners never do.
 
 1. **Same version**: `mu --version` on both. Never query the source DB over ssh, nor point `MU_DB_PATH` at it: an older file is refused (`Detected v<n> schema`), and the target keeps its own DB and `machine_id`.
 2. **Free the work on the source**: merge or push each worker's branch, then `mu agent close <name> -w <ws>` and apply its `--if <rev>` (this removes the worktree). `mu task release <id> -w <ws>` each IN_PROGRESS task so it is ready on the target.
