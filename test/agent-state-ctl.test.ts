@@ -527,15 +527,26 @@ describe("wait --stuck-after for a pi owner", () => {
   const waitOnPia = async (opts: { stuckAfterMs?: number } = {}) => {
     addTask(db, { localId: "t1", workstream: WS, title: "T", impact: 50, effortDays: 1 });
     await claimTask(db, "t1", { workstream: WS, agentName: "pia" });
+    // End the wait on its own progress, not a wall budget: the second ctl
+    // read starts only after the loop applied the first, so abort there.
+    // `timeoutMs` is a backstop for a hang, not part of the assertion.
+    const hooks = ctlAgentHooks(db);
+    const stop = new AbortController();
+    let reads = 0;
     const res = await waitForEvents(db, [{ kind: "task", workstream: WS, id: "t1" }], {
       callers: [],
       eventScope: "refs",
       onStall: "warn",
       sync: false,
       pollMs: 5,
-      timeoutMs: 100,
+      timeoutMs: 20_000,
+      signal: stop.signal,
       ...opts,
-      ...ctlAgentHooks(db),
+      ...hooks,
+      readAgents: (...args) => {
+        if (++reads === 2) stop.abort();
+        return hooks.readAgents(...args);
+      },
     });
     return res.refs[0];
   };
