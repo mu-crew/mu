@@ -55,6 +55,7 @@ import {
 } from "../src/segments.js";
 import { sha256Initial, sha256Update } from "../src/sha256-resumable.js";
 import { ambientFlush, ambientIngest } from "../src/sync.js";
+import { SyncDirMovedError } from "../src/sync-dir-guard.js";
 import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
@@ -1388,7 +1389,7 @@ describe("segments", () => {
       });
     });
 
-    it("a sync dir replaced while the flush queues defers instead of writing", async () => {
+    it("a sync dir replaced while the flush queues aborts instead of writing", async () => {
       const path = await seedFour();
       const stateDir = join(tempDir, "state");
       await withEnv("MU_STATE_DIR", stateDir, async () => {
@@ -1398,8 +1399,7 @@ describe("segments", () => {
         // taken is the old folder's, not the new one's.
         renameSync(dir, join(tempDir, "moved"));
         mkdirSync(dir);
-        const result = await flushing;
-        expect(result.lockBusy).toBe(true);
+        await expect(flushing).rejects.toBeInstanceOf(SyncDirMovedError);
         expect(readdirSync(dir)).toEqual([]);
         expect(existsSync(path)).toBe(false);
       });

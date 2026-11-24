@@ -170,7 +170,7 @@ import {
   SyncSourceTooNewError,
   syncEnabled,
 } from "../sync.js";
-import { assertSyncDirV2, SyncDirForeignError } from "../sync-dir-guard.js";
+import { assertSyncDirV2, SyncDirForeignError, SyncDirMovedError } from "../sync-dir-guard.js";
 import { TaskAutoArgError, TaskAutoRefusedError } from "../task-auto.js";
 import { TaskBriefMissingError } from "../task-brief.js";
 import { candidateTaskIds } from "../tasks/id.js";
@@ -618,6 +618,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SyncSourceTooNewError ||
     err instanceof DbInsideSyncDirError ||
     err instanceof SyncDirForeignError ||
+    err instanceof SyncDirMovedError ||
     err instanceof WorkstreamExistsError ||
     err instanceof WorkstreamRevisionMismatchError ||
     err instanceof RevisionMismatchError ||

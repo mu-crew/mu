@@ -25,6 +25,19 @@ export class SyncDirForeignError extends Error {
   }
 }
 
+/** The sync dir was renamed or replaced while a flush held its segment
+ *  lock. The lock belongs to the folder that was there, so nothing is
+ *  written through the path; the ops stay in the DB for the next flush.
+ *  Exit 4 (conflict). */
+export class SyncDirMovedError extends Error {
+  override readonly name = "SyncDirMovedError";
+  constructor(readonly dir: string) {
+    super(
+      `MU_SYNC_DIR ${dir} was moved or replaced during the flush; nothing written, the ops publish on the next flush`,
+    );
+  }
+}
+
 /** Every writer emits `{"v":N,` first (`encodeSegmentLine`), so the first
  *  bytes are enough: no line is parsed, so a segment still being copied in
  *  does not block the dir. */

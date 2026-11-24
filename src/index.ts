@@ -601,7 +601,7 @@ export {
   SyncSourceTooNewError,
   syncEnabled,
 } from "./sync.js";
-export { assertSyncDirV2, SyncDirForeignError } from "./sync-dir-guard.js";
+export { assertSyncDirV2, SyncDirForeignError, SyncDirMovedError } from "./sync-dir-guard.js";
 export {
   type AuthorisedTask,
   type AuthorizeTasksOptions,

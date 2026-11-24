@@ -44,7 +44,10 @@ appends without that lock: if another process still holds it after
 pending in `ops`, and the next invocation appends them. The lock is
 keyed on the sync dir's device and inode, not a spelling of it, and
 held while its holder lives; only a dead holder's lock older than 30 s
-is reclaimed.
+is reclaimed. Under the lock the flush reads and writes relative to the locked
+folder (it borrows the cwd: Node has no openat), so a folder renamed or
+replaced mid-flush never receives the append; it aborts with
+`SyncDirMovedError`.
 
 **Only `SYNCED_ENTITIES` and only this machine's ops are flushed.**
 Pane ids and absolute paths never leave the machine, and peers never

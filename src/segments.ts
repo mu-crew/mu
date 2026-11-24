@@ -71,7 +71,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { applyOp, type Op, OpEntityNotSyncedError } from "./apply.js";
 import { compareStrings } from "./compare.js";
 import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
@@ -101,7 +101,7 @@ import {
   usableShaState,
 } from "./segment-resume.js";
 import { type Sha256State, sha256Digest, sha256Initial, sha256Update } from "./sha256-resumable.js";
-import { assertSyncDirV2 } from "./sync-dir-guard.js";
+import { assertSyncDirV2, SyncDirMovedError } from "./sync-dir-guard.js";
 
 export {
   type DecodeResult,
@@ -378,14 +378,13 @@ export async function flushSegment(
   return withFileLock(
     lockPathFor(identity, machineId),
     `segment:${machineId}`,
-    // `real` was replaced by another folder while we queued: we hold the
-    // old one's lock, not its successor's. Defer, as for a busy lock.
     () =>
-      Promise.resolve(
-        dirIdentity(real) === identity
-          ? { ...flushLocked(db, path, machineId, verify), segmentPath: shown }
-          : busy(),
-      ),
+      Promise.resolve({
+        ...inLockedDir(real, identity, (guard) =>
+          flushLocked(db, basename(path), machineId, verify, guard),
+        ),
+        segmentPath: shown,
+      }),
     {
       acquireTimeoutMs:
         opts?.lockWaitMs ?? (verify ? VERIFY_FLUSH_LOCK_WAIT_MS : AMBIENT_FLUSH_LOCK_WAIT_MS),
@@ -395,7 +394,44 @@ export async function flushSegment(
   );
 }
 
-function flushLocked(db: Db, path: string, machineId: string, verify: boolean): FlushResult {
+/**
+ * Run `fn` with the working directory set to the folder whose lock is held,
+ * so every path `fn` uses is relative to that folder itself, not to a
+ * spelling of it: Node has no openat, and a directory fd cannot be walked
+ * on macOS (`/dev/fd/N/x` is ENOENT). `fn` is synchronous, so no other JS
+ * observes the borrowed cwd. If `real` no longer names `identity` (moved or
+ * replaced while the flush queued), nothing runs.
+ *
+ * `guard` re-checks that `real` still names the locked folder; `fn` calls
+ * it before each write, so a folder renamed mid-flush aborts with
+ * SyncDirMovedError. A rename after the guard is harmless: the write lands
+ * in the locked folder (the cwd) wherever it now lives, never at its path.
+ */
+function inLockedDir<T>(real: string, identity: string, fn: (guard: () => void) => T): T {
+  const guard = (): void => {
+    if (dirIdentity(real) !== identity) throw new SyncDirMovedError(real);
+  };
+  const home = process.cwd();
+  try {
+    process.chdir(real);
+  } catch {
+    throw new SyncDirMovedError(real);
+  }
+  try {
+    if (dirIdentity(".") !== identity) throw new SyncDirMovedError(real);
+    return fn(guard);
+  } finally {
+    process.chdir(home);
+  }
+}
+
+function flushLocked(
+  db: Db,
+  path: string,
+  machineId: string,
+  verify: boolean,
+  guard: () => void,
+): FlushResult {
   // Fast path: our own manifest still describes the file (same size and
   // mtime, last line decodes to its lastHlc), so count and high-water
   // mark come from it and nothing before the tail is read.
@@ -426,6 +462,7 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
     // manifest so the fast path cannot vouch for the file. The ops stay
     // pending in SQLite until mu is upgraded on this machine.
     if (existing.foreign !== null) {
+      guard();
       rmSync(manifestPath(path), { force: true });
       return {
         segmentPath: path,
@@ -441,6 +478,7 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
       selfRepaired = existing.defect;
       // Truncate back to the last verified-good line; everything after
       // is regenerated from `ops`.
+      guard();
       writeFileSync(
         path,
         existing.goodLines.length > 0 ? `${existing.goodLines.join("\n")}\n` : "",
@@ -455,10 +493,12 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
     // NO fsync. The segment is derived from `ops`; a lost tail costs one
     // re-flush, so paying for durability here would buy nothing.
     appended = Buffer.from(`${pending.lines.join("\n")}\n`, "utf8");
+    guard();
     appendFileSync(path, appended);
   } else if (!existsSync(path)) {
     // Create the file even with nothing to say, so peers can discover
     // this machine before its first change.
+    guard();
     writeFileSync(path, "", "utf8");
   }
 
@@ -475,6 +515,7 @@ function flushLocked(db: Db, path: string, machineId: string, verify: boolean): 
   // Nothing changed and the manifest already says so: leave it alone,
   // so a read-only verb does not hand the sync tool a file to ship.
   if (trusted !== null && appended === null) return result;
+  guard();
   writeManifest(
     path,
     machineId,
