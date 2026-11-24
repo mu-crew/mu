@@ -49,12 +49,13 @@ describe("cycle path", () => {
     expect(findCyclePath(db, c, a)).toEqual(["a", "b", "c"]);
   });
 
-  it("stays fast on a wide layered DAG with a direct return edge", () => {
-    // 7 layers x 7 tasks, every task blocks every task in the next layer:
-    // ~7^6 simple paths that never reach the goal. A per-path walk
-    // enumerates all of them before picking the shortest.
+  it("finds the cycle on a wide layered DAG with a direct return edge", () => {
+    // 13 layers x 7 tasks, every task blocks every task in the next layer:
+    // ~7^12 simple paths that never reach the goal. A per-path walk
+    // enumerates all of them and never finishes (the test times out); no
+    // wall-clock bound is asserted.
     const layers: string[][] = [];
-    for (let l = 0; l < 7; l++) {
+    for (let l = 0; l < 13; l++) {
       layers.push([]);
       for (let i = 0; i < 7; i++) {
         const id = `l${l}_${i}`;
@@ -69,12 +70,11 @@ describe("cycle path", () => {
     );
     const id = (n: string): number => taskIdFor(db, n, WS) as number;
     db.transaction(() => {
-      for (let l = 0; l < 6; l++)
+      for (let l = 0; l < 12; l++)
         for (const from of layers[l] ?? [])
           for (const to of layers[l + 1] ?? []) ins.run(id(from), id(to), "x");
       for (const first of layers[0] ?? []) ins.run(id("c"), id(first), "x"); // c blocks layer 0
     })();
-    const t0 = Date.now();
     let err: unknown;
     try {
       addBlockEdge(db, WS, "a", "c"); // c blocks a: closes directly via a -> b -> c
@@ -85,8 +85,6 @@ describe("cycle path", () => {
     expect((err as CycleError).message).toBe(
       "adding edge c -> a would create a cycle: c -> a -> b -> c",
     );
-    const ms = Date.now() - t0;
-    expect(ms, `cycle check took ${ms}ms`).toBeLessThan(150);
   });
 
   it("returns the shortest path when a longer route also closes the cycle", () => {

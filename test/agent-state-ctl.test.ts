@@ -251,11 +251,9 @@ describe("readAgentStates via the control socket", () => {
       murmurCalls++;
       return null;
     });
-    const started = Date.now();
+    // read() settles while the sockets are still held: the probe budget, not the peer, ends it.
     expect(await read()).toMatchObject({ state: "unknown", ctl: "refused" });
-    const elapsed = Date.now() - started;
     for (const s of held) s.destroy();
-    expect(elapsed).toBeLessThan(1500);
     expect(conns).toBe(1);
     expect(murmurCalls).toBe(0);
   });

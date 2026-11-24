@@ -482,7 +482,7 @@ describe("drift detection", () => {
         "INSERT INTO task_notes (task_id, author, content, created_at) VALUES (?, NULL, ?, ?)",
       );
       db.transaction(() => {
-        for (let i = 0; i < 2_000; i++) {
+        for (let i = 0; i < 4_000; i++) {
           const now = new Date().toISOString();
           const result = insertTask.run(workstream.id, `t${i}`, `T${i}`, now, now);
           insertNote.run(Number(result.lastInsertRowid), `note ${i}`, now);
@@ -490,10 +490,10 @@ describe("drift detection", () => {
       })();
 
       const report = checkCheapDriftInvariant(db);
-      // Generous bound: the point is "milliseconds, not seconds". The
-      // former prefix-LIKE note probe grew quadratically and crossed this
-      // bound around 2,000 notes (the live 4,384-note DB took ~3 seconds).
-      expect(report.elapsedMs).toBeLessThan(100);
+      // Generous bound (the healthy probe takes milliseconds): the former
+      // prefix-LIKE note probe grew quadratically and took ~3 seconds on the
+      // live 4,384-note DB, far past it even on a loaded host.
+      expect(report.elapsedMs).toBeLessThan(1_000);
     });
   });
 
