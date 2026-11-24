@@ -112,18 +112,14 @@ can race. A Rex terminal may drive a tmux workstream (`MU_MUX=tmux`).
 
 ## Refusals
 
-Each refusal is typed and names the fix. A refusal leaves no lasting spawn
-resources; a missing base is found by the spawn's preflight over the link, which
-checks the base before it makes a tree and rolls back.
+Backend refusals happen before spawn effects.
 
-- **herdr on rungs 3-5:** it runs no per-agent command or view, session
-  templates included. Use tmux (or Rex for a session template). Rungs 0 and
-  1 run.
+- **herdr on rungs 2-5:** it cannot run the required per-agent command or
+  view. Use tmux (or Rex for rung 2 or a session template). Rungs 0 and 1 run.
 - **Rex on lease and plugin job views** (rungs 4-5, and a rung 3 ssh plugin
   pane): tmux-only: a Rex reply does not name the server instance that
   answered it, so mu cannot prove which server holds a view ([roadmap](../ROADMAP.md)).
-  Use `MU_MUX=tmux`. Rungs 0 and 1 and a rung 3 session template run on
-  Rex.
+  Use `MU_MUX=tmux` for those views.
 - **A base commit the host lacks** (static host): mu neither fetches nor
   pushes. A published commit: `mu host exec <host> -- git -C <repo> fetch
   <remote> <rev>`. A local-only one: push it somewhere the host can fetch,
@@ -173,8 +169,6 @@ mu host check box
 - mu requires a plugin you own and others cannot write. If the install is
   root-owned, follow the copy commands `mule init` prints. Rerun `mule init`
   after upgrading mule.
-- **tmux only.** On Rex or herdr a spawn refuses before any effect and
-  says lease and plugin job views require tmux. Use `MU_MUX=tmux`.
 
 ## Migrate a mule lease template to the plugin
 

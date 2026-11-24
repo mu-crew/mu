@@ -94,13 +94,10 @@ written before each step, so the same command never sends a second prompt.
   reopened work needs a new key. A replay whose agent is gone (a worker
   that died and was closed) exits 4 and names the next key: re-dispatch
   with `--attempt <task>-2`.
-- Fails **before** the prompt could be written (no ctl, Claude's trust
-  dialog, a claim that lost the task, the extension refused): its own pane,
-  claim and worktree are rolled back, the key is reusable.
-- Delivery **unknown** (written, no reply; the pane died after the write):
-  exit 1, the pane and the claim stay, `task.state` is `unknown`, and a
-  replay asks the extension once. Never reaped, never resent. Check it
-  with `mu agent check`, read the pane, then decide.
+- Provably **unsent**: mu tries to roll back the attempt's own pane,
+  claim and worktree; the key is reusable.
+- [Delivery **unknown**](../VOCABULARY.md#agents): exit 1,
+  `task.state` is `unknown`. No rollback or resend; read the pane.
 - A replay whose agent was deleted, or whose name another agent now
   holds, exits 4 (`SpawnAttemptEndedError`) naming the next key; the
   replacement is never claimed or sent to. Only a delivery-**unknown**
