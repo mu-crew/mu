@@ -80,7 +80,12 @@ export function suiteConfig(maxWorkers: number, { fast = false } = {}) {
       // the parent shell so SDK-level overrides (MU_PI_COMMAND,
       // MU_IDLE_THRESHOLD_MS, …) can't silently change behaviour
       // underneath tests. See test/_setup.ts for the rationale.
-      setupFiles: ["./test/_setup.ts", "./test/_setup-db.ts"],
+      setupFiles: [
+        "./test/_setup.ts",
+        "./test/_setup-db.ts",
+        // Fast tier: a test that starts git fails (test/_setup-no-git.ts).
+        ...(fast ? ["./test/_setup-no-git.ts"] : []),
+      ],
       // 30s is ~15x the isolated cost of a tmux/subprocess test: a real hang
       // still fails fast, transient load does not. A test that needs longer
       // sets `{ timeout: N }`.

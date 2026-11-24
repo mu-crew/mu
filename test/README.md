@@ -16,8 +16,9 @@ is true whenever that is set. They skip only if that server failed to start
 unix socket paths cap at 104 bytes), so the watchdog removes worker scratch
 even when a fork is killed before `afterEach`.
 
-`fast-no-git.test.ts` rejects imports of real-Git helpers and direct launches
-of Git in fast tests. Use a VCS mock or move the test to integration.
+`_setup-no-git.ts` (fast tier only) puts a `git` shim first on PATH: any fast
+test that starts git, by any route, fails with the argv. Use a VCS mock or move
+the test to integration.
 
 Both tiers use the same `pure` Vitest project for the allowlist in
 `vitest.config.ts`. Its files share a fork and run without fixture setup:
