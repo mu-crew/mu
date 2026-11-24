@@ -17,8 +17,7 @@ const ROOT = join(import.meta.dirname, "..");
  *  Deliberately excludes CHANGELOG.md: it is a historical record and
  *  MUST keep naming removed verbs, so a skip region per release entry
  *  would be pure noise. ROADMAP.md IS checked — its live sections are
- *  instructions — with its one superseded section bracketed by the
- *  skip markers. */
+ *  instructions — with inline skip markers on rejected-verb names. */
 const DOC_FILES = [
   "README.md",
   "AGENTS.md",
@@ -28,6 +27,8 @@ const DOC_FILES = [
   "docs/guide/stop-a-worker.md",
   "docs/guide/delegate.md",
   "docs/guide/remote.md",
+  "docs/guide/remote-ladder.md",
+  "docs/guide/plugins.md",
   "docs/guide/recovery.md",
   "docs/guide/sync.md",
   "docs/guide/sql.md",
@@ -37,6 +38,7 @@ const DOC_FILES = [
   "docs/guide/other-agent-clis.md",
   "docs/VOCABULARY.md",
   "docs/reference/env.md",
+  "docs/reference/plugin-protocol.md",
   "docs/reference/naming.md",
   "docs/reference/surface-contract.md",
   "docs/ARCHITECTURE.md",
