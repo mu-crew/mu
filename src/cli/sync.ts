@@ -53,6 +53,7 @@ import {
   repairPeer,
 } from "../sync.js";
 import { relTime } from "./format.js";
+import { UsageError } from "./handle.js";
 
 export interface SyncCmdOptions {
   json?: boolean;
@@ -122,6 +123,12 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
   }
 
   if (dir === null) {
+    // A repair has no peer to reset: a success here would read as done.
+    if (opts.repair !== undefined) {
+      throw new UsageError("--repair needs a sync dir: set MU_SYNC_DIR to the shared folder", {
+        showHelp: false,
+      });
+    }
     if (opts.json === true) {
       emitJson({
         syncDir: null,

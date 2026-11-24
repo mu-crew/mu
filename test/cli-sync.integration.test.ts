@@ -244,6 +244,19 @@ describe("mu sync (CLI)", () => {
       expect(parsed.peers).toEqual([]);
     });
 
+    it("--repair is a usage error (exit 2), never a disabled success", async () => {
+      delete process.env[SYNC_DIR_KEY];
+      for (const argv of [
+        ["sync", "--repair", "missing", "--json"],
+        ["sync", "--repair", "missing"],
+      ]) {
+        const { stdout, stderr, exitCode } = await runCli(argv, lap);
+        expect(exitCode).toBe(2);
+        expect(stdout + stderr).toContain("--repair needs a sync dir");
+        expect(stdout).not.toContain('"ok":true');
+      }
+    });
+
     it("an unrelated verb still works normally", async () => {
       delete process.env[SYNC_DIR_KEY];
       const { exitCode } = await runCli(["workstream", "init", "demo"], lap);
