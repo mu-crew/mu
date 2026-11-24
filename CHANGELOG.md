@@ -14,6 +14,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Changed
 
+- Test harness: wait, lock and cycle checks assert protocol order and work instead of elapsed wall time.
 - Test harness: the watchdog owns one short scratch root for servers and workers, independent of inherited temp directories. Eval sandboxes resolve symlinked temp paths and use short tmux socket names.
 - Test seam, no production behaviour change: `PluginProcess.fromTestPipes` (`src/plugins/process.ts`) builds a plugin peer over in-process pipes with no PID, and `pgid` is now a getter that throws for such a peer. A real child takes the same paths as before. Documented under Key seams in `docs/ARCHITECTURE.md`.
 - Test harness: a guard keeps real-Git fixtures and direct Git launches out of the fast tier. The integration tier's macOS Git pin exposes only Git, not the whole CommandLineTools bin. The vitest `pure` project sets `testTimeout: 30000` like the others.

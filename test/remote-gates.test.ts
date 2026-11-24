@@ -348,10 +348,14 @@ describe("a result read that hands back (exec exits 3)", () => {
   it("wait ends with the hand-back after exactly one template call, never polling it again", async () => {
     await spawnGate({ command: "exit 0" });
     const calls = handBack();
+    let polls = 0;
     const outcome = await waitForEvents(
       db,
       [ref()],
-      waitOpts({ timeoutMs: 150, pollMs: 20 }),
+      waitOpts({
+        timeoutMs: undefined,
+        beforePoll: async () => expect(++polls, "hand-back must not be retried").toBe(1),
+      }),
     ).catch((e: unknown) => e);
     expect(outcome).toBeInstanceOf(HostHandbackError);
     expect((outcome as HostHandbackError).message).toContain("touch your key");

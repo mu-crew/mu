@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import { taskIdFor } from "../src/tasks/core.js";
 import { findCyclePath } from "../src/tasks/edges.js";
@@ -49,32 +49,49 @@ describe("cycle path", () => {
     expect(findCyclePath(db, c, a)).toEqual(["a", "b", "c"]);
   });
 
-  it("finds the cycle on a wide layered DAG with a direct return edge", () => {
-    // 13 layers x 7 tasks, every task blocks every task in the next layer:
-    // ~7^12 simple paths that never reach the goal. A per-path walk
-    // enumerates all of them and never finishes (the test times out); no
-    // wall-clock bound is asserted.
-    const layers: string[][] = [];
-    for (let l = 0; l < 13; l++) {
-      layers.push([]);
-      for (let i = 0; i < 7; i++) {
-        const id = `l${l}_${i}`;
-        addTask(db, { localId: id, title: id, workstream: WS, impact: 50, effortDays: 1 });
-        layers[l]?.push(id);
-      }
-    }
-    // Raw inserts in one transaction: addBlockEdge runs a cycle check per edge
-    // (~4ms each, 1.3s for ~300), and only the path search under test matters.
+  it("expands each shared descendant once on a wide layered DAG and finds the direct return edge", () => {
+    // A small DAG suffices: every pair of layers has shared descendants. A
+    // per-path walk revisits a node, even without a graph wide enough to hang.
+    const layers = Array.from({ length: 5 }, (_, l) =>
+      Array.from({ length: 3 }, (_, i) => `l${l}_${i}`),
+    );
+    for (const id of layers.flat())
+      addTask(db, { localId: id, title: id, workstream: WS, impact: 50, effortDays: 1 });
+    // Build the fixture without running a cycle check per edge.
     const ins = db.prepare(
       "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, ?)",
     );
     const id = (n: string): number => taskIdFor(db, n, WS) as number;
     db.transaction(() => {
-      for (let l = 0; l < 12; l++)
+      for (let l = 0; l < layers.length - 1; l++)
         for (const from of layers[l] ?? [])
           for (const to of layers[l + 1] ?? []) ins.run(id(from), id(to), "x");
       for (const first of layers[0] ?? []) ins.run(id("c"), id(first), "x"); // c blocks layer 0
     })();
+
+    const visited = new Set<unknown>();
+    const prepare = db.prepare.bind(db);
+    const queries = vi.spyOn(db, "prepare").mockImplementation((sql) => {
+      const stmt = prepare(sql);
+      if (sql.includes("FROM task_edges WHERE from_task_id = ?")) {
+        const all = stmt.all.bind(stmt);
+        vi.spyOn(stmt, "all").mockImplementation((node) => {
+          expect(visited.has(node), `revisited node ${node}`).toBe(false);
+          visited.add(node);
+          return all(node);
+        });
+      }
+      return stmt;
+    });
+    try {
+      const path = findCyclePath(db, id("l4_0"), id("c"));
+      expect(path).toHaveLength(6);
+      expect(path?.[0]).toBe("c");
+      expect(path?.at(-1)).toBe("l4_0");
+      expect(visited.size).toBe(1 + layers.slice(0, -1).flat().length);
+    } finally {
+      queries.mockRestore();
+    }
     let err: unknown;
     try {
       addBlockEdge(db, WS, "a", "c"); // c blocks a: closes directly via a -> b -> c

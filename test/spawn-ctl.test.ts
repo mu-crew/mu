@@ -14,6 +14,7 @@ import {
   AgentSpawnStartupError,
 } from "../src/agents/errors.js";
 import { resetHandshakeClockForTests, setHandshakeClockForTests } from "../src/agents/spawn.js";
+import { awaitCtlHandshake } from "../src/agents/spawn-ready.js";
 import {
   getAgent,
   insertAgent,
@@ -763,34 +764,38 @@ describe("spawn liveness for ctl agents (tmux)", () => {
     process.env.MU_SPAWN_CTL_MS = "5000";
     mux.restore();
     const fake = mockTmux(freshMockState()).executor;
-    let boundAt = 0;
-    mux = installMux("tmux", async (args) => {
-      const res = await fake(args);
-      if (args[0] === "new-session") {
-        setTimeout(() => {
-          boundAt = Date.now();
-          void serveExtension(sockFor("worker-1"));
-        }, 60);
-      }
-      return res;
+    mux = installMux("tmux", fake);
+    let t = 0;
+    const delays: number[] = [];
+    setHandshakeClockForTests({
+      now: () => t,
+      async delay(ms) {
+        delays.push(ms);
+        const bound = t < 60 && t + ms >= 60;
+        t += ms;
+        if (bound) await serveExtension(sockFor("worker-1"));
+      },
     });
     const agent = await spawnAgent(db, { name: "worker-1", workstream: "auth" });
-    const seenAfter = Date.now() - boundAt;
     expect(agent.ctl).toBe("ok");
-    // 250 ms polling (the old cadence) sees a socket bound at 60 ms at
-    // ~250 ms, i.e. ~190 ms late; 50 ms stat polling sees it within ~50 ms.
-    expect(seenAfter).toBeLessThan(120);
+    // Available at virtual 60 ms; probe at 100 ms, before the next pane check.
+    expect(delays).toEqual([50, 50]);
   });
 
   it("keeps the pane-alive check at its 250 ms cadence, plus one final check at the deadline", async () => {
     process.env.MU_SPAWN_CTL_MS = "400";
-    installLivePanes();
-    await spawnAgent(db, { name: "worker-1", workstream: "auth" }).catch(() => {});
-    const checks = mux.calls.filter((c) => c[0] === "display-message" && c.includes("#{pane_id}"));
-    // Checks at ~0, ~250 and the 400 ms deadline (+1 from the post-handshake
-    // health check). A 50 ms cadence would make ~9; no deadline check, 3.
-    expect(checks.length).toBeGreaterThanOrEqual(4);
-    expect(checks.length).toBeLessThanOrEqual(5);
+    let t = 0;
+    setHandshakeClockForTests({
+      now: () => t,
+      delay: async (ms) => {
+        t += ms;
+      },
+    });
+    const checks: number[] = [];
+    await awaitCtlHandshake(sockFor("worker-1"), async () => {
+      checks.push(t);
+    });
+    expect(checks).toEqual([0, 250, 400]);
   });
 
   it("a pane dying in the last 250 ms of the budget keeps the scrollback from the final check", async () => {

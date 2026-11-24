@@ -336,12 +336,10 @@ describe("mu agent wait on a pi agent", () => {
   it("--after-runs <runs-1> on an idle pi returns the last run's lastText at once", async () => {
     const ext = await fakeExtension({ state: "busy", since: 1, runs: 0 });
     ext.settle("the answer"); // runs 1, idle; no waiter held
-    const started = Date.now();
     const res = await runCliJson(
       ["agent", "wait", "pia", "-w", WS, "--after-runs", "0", "--timeout", "5", "--json"],
       dbPath,
     );
-    expect(Date.now() - started).toBeLessThan(2000);
     expect(res.exitCode).toBeNull();
     const a = (res.data as { agents: Array<{ fired: boolean; lastText?: string }> }).agents[0];
     expect(a).toMatchObject({ fired: true, lastText: "the answer" });
