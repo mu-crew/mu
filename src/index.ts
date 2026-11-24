@@ -177,6 +177,7 @@ export {
   recordCheckVerdict,
   unansweredChecksOn,
 } from "./checks.js";
+export { ForgetPlanChangedError } from "./compact.js";
 export {
   FRONTIER_CLOSED_PER_NODE,
   FRONTIER_MAX_DEPTH,

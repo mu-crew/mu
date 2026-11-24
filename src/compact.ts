@@ -16,6 +16,7 @@
 
 import type { Db } from "./db.js";
 import { OPS_ENTITIES_SQL } from "./logs.js";
+import { say } from "./messages.js";
 
 /** Note tombstones whose payload is redundant: the newest earlier put under
  *  the same key describes the same note (author, content, created_at). A
@@ -88,27 +89,39 @@ export interface ForgetPlan {
   refused: { name: string; why: ForgetRefusal }[];
 }
 
-/** Every torn-down workstream that is not live again, largest first. */
-export function listForgetCandidates(db: Db): ForgetCandidate[] {
-  const names = db
-    .prepare(
-      `SELECT key AS name, MAX(created_at) AS at
-         FROM ops
-        WHERE entity = 'workstream' AND op = 'del'
-          AND intent = 'workstream.teardown'
-          AND key NOT IN (SELECT name FROM workstreams)
-        GROUP BY key`,
-    )
-    .all() as { name: string; at: string }[];
+/** A forget plan went stale before its apply: another connection recreated,
+ *  wrote to or tore down again a planned workstream. Nothing was deleted.
+ *  Exit 4. */
+export class ForgetPlanChangedError extends Error {
+  override readonly name = "ForgetPlanChangedError";
+  constructor(public readonly workstream: string) {
+    super(say("forget.changed", workstream));
+  }
+}
+
+const TORN_DOWN_SQL = `SELECT key AS name, MAX(created_at) AS at
+   FROM ops
+  WHERE entity = 'workstream' AND op = 'del'
+    AND intent = 'workstream.teardown'
+    AND key NOT IN (SELECT name FROM workstreams)`;
+
+function costOf(db: Db): (r: { name: string; at: string }) => ForgetCandidate {
   const cost = db.prepare(
     `SELECT COUNT(*) AS n, COALESCE(SUM(length(payload)), 0) AS b FROM ops WHERE ${WORKSTREAM_OPS_WHERE}`,
   );
-  return names
-    .map((r) => {
-      const c = cost.get({ ws: r.name }) as { n: number; b: number };
-      return { name: r.name, tornDownAt: r.at, ops: c.n, bytes: c.b };
-    })
-    .sort((a, b) => b.bytes - a.bytes);
+  return (r) => {
+    const c = cost.get({ ws: r.name }) as { n: number; b: number };
+    return { name: r.name, tornDownAt: r.at, ops: c.n, bytes: c.b };
+  };
+}
+
+/** Every torn-down workstream that is not live again, largest first. */
+export function listForgetCandidates(db: Db): ForgetCandidate[] {
+  const names = db.prepare(`${TORN_DOWN_SQL} GROUP BY key`).all() as {
+    name: string;
+    at: string;
+  }[];
+  return names.map(costOf(db)).sort((a, b) => b.bytes - a.bytes);
 }
 
 export function planForget(db: Db, names: readonly string[]): ForgetPlan {
@@ -125,12 +138,24 @@ export function planForget(db: Db, names: readonly string[]): ForgetPlan {
   return plan;
 }
 
-/** Delete every op of the plan's candidates, in one transaction. Irreversible. */
+/** Delete every op of the plan's candidates, in one transaction. Irreversible.
+ *  The plan is re-checked under the same write lock that deletes: a
+ *  candidate that is live again, torn down again or holds other ops than
+ *  planned throws ForgetPlanChangedError and nothing is deleted. A check
+ *  outside the lock would let a recreate land between it and the delete. */
 export function forget(db: Db, plan: ForgetPlan): { ops: number } {
   const del = db.prepare(`DELETE FROM ops WHERE ${WORKSTREAM_OPS_WHERE}`);
+  const tornDown = db.prepare(`${TORN_DOWN_SQL} AND key = ? GROUP BY key`);
+  const cost = costOf(db);
   let ops = 0;
   db.transaction(() => {
-    for (const c of plan.candidates) ops += del.run({ ws: c.name }).changes;
+    for (const c of plan.candidates) {
+      const r = tornDown.get(c.name) as { name: string; at: string } | undefined;
+      const now = r === undefined ? undefined : cost(r);
+      if (now?.tornDownAt !== c.tornDownAt || now.ops !== c.ops || now.bytes !== c.bytes)
+        throw new ForgetPlanChangedError(c.name);
+      ops += del.run({ ws: c.name }).changes;
+    }
   }).immediate();
   return { ops };
 }

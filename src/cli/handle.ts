@@ -70,6 +70,7 @@ import {
 import { CarrierStopFailedError, CarrierStopRefusedError } from "../carrier-stop.js";
 import { ChannelUnknownError } from "../channels/registry.js";
 import { CheckArgError, CheckNotFoundError } from "../checks.js";
+import { ForgetPlanChangedError } from "../compact.js";
 import {
   type Db,
   defaultDbPath,
@@ -627,6 +628,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // the source DB: both are name/state collisions, not usage errors.
     err instanceof RebuildTargetExistsError ||
     err instanceof RebuildTargetIsSourceError ||
+    // A `db forget` plan another connection made stale before its apply.
+    err instanceof ForgetPlanChangedError ||
     // An abbreviated group id matching several groups: the operator must
     // disambiguate. Guessing could pick the wrong group.
     err instanceof GroupIdAmbiguousError

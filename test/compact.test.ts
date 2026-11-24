@@ -7,7 +7,14 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cmdDbForget } from "../src/cli/db.js";
-import { compact, forget, listForgetCandidates, planCompact, planForget } from "../src/compact.js";
+import {
+  compact,
+  ForgetPlanChangedError,
+  forget,
+  listForgetCandidates,
+  planCompact,
+  planForget,
+} from "../src/compact.js";
 import { type Db, openDb } from "../src/db.js";
 import { checkDrift } from "../src/drift.js";
 import { addNote, addTask } from "../src/tasks/edit.js";
@@ -155,6 +162,36 @@ describe("forget", () => {
     expect(notesIn("kept")).toEqual(["z"]);
     expect(checkDrift(db).clean).toBe(true);
     expect(listForgetCandidates(db).map((c) => c.name)).toEqual(["gone-too"]);
+  });
+
+  it("a stale plan refuses atomically when another connection recreated the name", async () => {
+    seed("again", ["x"]);
+    legacyHardTeardown(db, "again");
+    const plan = planForget(db, ["again"]);
+    expect(plan.candidates.map((c) => c.name)).toEqual(["again"]);
+    // The window between plan and apply (cmdDbForget backs up in it): a
+    // second connection recreates the name and adds work.
+    const other = openDb({ path: db.name });
+    try {
+      ensureWorkstream(other, "again");
+      addTask(other, { workstream: "again", localId: "b", title: "B", impact: 50, effortDays: 1 });
+    } finally {
+      other.close();
+    }
+    const before = (db.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n;
+    expect(() => forget(db, plan)).toThrow(ForgetPlanChangedError);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM ops").get() as { n: number }).n).toBe(before);
+    expect(checkDrift(db).clean).toBe(true);
+  });
+
+  it("a stale plan refuses when the name was recreated and torn down again", async () => {
+    seed("again", ["x"]);
+    legacyHardTeardown(db, "again");
+    const plan = planForget(db, ["again"]);
+    seed("again", ["y"]);
+    legacyHardTeardown(db, "again");
+    expect(() => forget(db, plan)).toThrow(ForgetPlanChangedError);
+    expect(forget(db, planForget(db, ["again"])).ops).toBeGreaterThan(0);
   });
 
   it("counts only its own key range: '0', '-' and '_' siblings are not swept in", async () => {

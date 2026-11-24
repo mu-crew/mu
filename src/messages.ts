@@ -347,6 +347,8 @@ export const MESSAGES = {
     `workstream name ${JSON.stringify(attempted)} is reserved: it is the off-the-cuff bucket and auto-creates on first spawn. Don't 'init' it.`,
   "workstream.changed": (ws: string, expected: number, actual: number, preview: string) =>
     `workstream ${ws} changed since preview (rev ${expected} → ${actual}); preview again: ${preview}`,
+  "forget.changed": (ws: string) =>
+    `workstream ${ws} changed since the forget plan (recreated, written or torn down again); nothing was deleted. Plan again: mu db forget ${ws}`,
   "workstream.has_agents": (ws: string, agents: readonly string[]) =>
     `torn-down workstream ${ws} still has ${agents.length} local agent row${agents.length === 1 ? "" : "s"} (${agents.join(", ")}); close each once its pane is gone (preview, then apply with --if): mu agent close ${agents[0]} -w ${ws}`,
   "workstream.panes_live": (ws: string, agents: readonly string[]) =>
