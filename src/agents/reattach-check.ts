@@ -198,7 +198,6 @@ export const factsOf = (ws: string, { r, rec }: Plan) => ({
   cwd: rec?.cwd ?? null,
   base: rec?.base ?? null,
 });
-export type ReattachFacts = ReturnType<typeof factsOf>;
 
 /**
  * The plan and the revision of ONE snapshot. The plan awaits a mux probe, so the name may be

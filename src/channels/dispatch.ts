@@ -142,12 +142,9 @@ function channelFor(
 }
 
 /**
- * Read the runtime state of each agent. Order per agent: control socket
- * (pi agents) → murmur pane option → murmur remote → herdr. A pi agent
- * whose socket does not answer reads `unknown` with reason `ctl missing`
- * or `ctl refused`, never a murmur reading, so the gap stays visible.
- * `stateDir` roots the derived socket path (spawn uses the DB's directory).
- * A remote command gate has neither: it reads from its pane (see `readGatePanes`).
+ * Read agents by their recorded channel. If ctl does not answer, the pane
+ * supplies liveness only; the turn stays unknown. A gate reads its pane.
+ * `stateDir` roots the derived socket path.
  */
 export async function readAgentStates(
   agents: readonly StateAgentRef[],

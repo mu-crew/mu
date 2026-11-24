@@ -1,11 +1,8 @@
 // mu — a started plugin: the handshake, the load rules and one call
 // (spec 2026-11-09-mu-plugins.md, D13, D14).
 //
-// The plugin gets mu's environment minus every local-only mu variable
-// (`LOCAL_ONLY_ENV`, which covers MU_DB_PATH, MU_STATE_DIR and MU_SYNC_DIR):
-// it reaches nothing of mu's but its own stdin, and every call's `target`
-// carries all the identity it needs. A plugin only reports facts: mu records
-// them; the plugin never writes mu's DB, state or log.
+// mu filters local routing variables (`LOCAL_ONLY_ENV`) and sends
+// identity in each call's `target` on stdio. This is not a sandbox.
 //
 // Errors by `data.kind`: `retryable` is retried, at most three times, with the
 // same params under a fresh id and deadline; `permanent` and `human` throw

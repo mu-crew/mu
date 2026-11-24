@@ -40,7 +40,7 @@ import {
   tornDownAtOf,
   WorkstreamTornDownError,
 } from "../db.js";
-import { harnessOfCli, speaksMuCtl } from "../harnesses.js";
+import { envVarNameForCli, harnessOfCli, speaksMuCtl } from "../harnesses.js";
 import { resolveHost } from "../host-provider.js";
 import {
   bindHostChannel,
@@ -162,21 +162,10 @@ function maybeWarnNonConventionalAgentName(name: string): void {
  * are still recognised as agents.
  */
 export function resolveCliCommand(cli: string): string {
-  const envName = envVarNameForCli(cli);
-  const override = process.env[envName];
-  return override && override.trim() !== "" ? override : cli;
+  return resolveCliCommandWithSource(cli).command;
 }
 
-/**
- * Compute the `MU_<UPPER_CLI>_COMMAND` env var name mu consults when
- * resolving `--cli <key>`. Hyphens in the cli key become underscores
- * (env var names can't contain `-`); this matches the operator-aliases
- * convention documented in the mu skill (e.g. `--cli pi-meta` →
- * `MU_PI_META_COMMAND`).
- */
-export function envVarNameForCli(cli: string): string {
-  return `MU_${cli.toUpperCase().replace(/-/g, "_")}_COMMAND`;
-}
+export { envVarNameForCli };
 
 /**
  * Resolve `--cli <key>` to its actual command string AND tell the
@@ -198,21 +187,8 @@ export function resolveCliCommandWithSource(cli: string): {
   return { command: cli, envVar, resolvedFromEnv: false };
 }
 
-// ─── Pre-flight PATH check ──
-//
-// Operator typo'd `mu agent spawn worker-1 --cli pi-meta` on a host
-// where `pi-meta` wasn't on PATH; the spawn appeared to succeed but
-// the pane died with `command not found` and the existing 1.5s
-// liveness check sometimes missed it (shells stay alive past a failed
-// exec). Pre-flight the PATH resolution so a typo never:
-//   1. creates an orphan worktree
-//   2. creates an orphan tmux pane
-//   3. inserts a half-spawned DB row
-// The check fires AFTER `resolveCliCommand` so `MU_<UPPER>_COMMAND`
-// overrides are honoured AND the diagnostic mentions the env var by
-// name. Hookable via `setCommandResolverForTests` so the test suite
-// can simulate "binary present" / "binary absent" without polluting
-// the real PATH.
+// Check the resolved binary before staging: the pane's shell can stay
+// alive after a failed exec, so liveness alone cannot catch a typo.
 
 export interface CommandResolutionResult {
   ok: boolean;
@@ -581,7 +557,7 @@ async function spawnPreparedAgent(
   if (opts.command === undefined && !profile) {
     const check = await checkCommandResolvable(command);
     if (!check.ok) {
-      throw new AgentSpawnCliNotFoundError(cli, check.binary, envVarNameForCli(cli));
+      throw new AgentSpawnCliNotFoundError(cli, check.binary, resolved.envVar);
     }
   }
 

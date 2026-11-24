@@ -19,7 +19,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  envVarNameForCli,
   resetCommandResolverForTests,
   setCommandResolverForTests,
   spawnAgent,
@@ -624,17 +623,6 @@ describe("decision 2: a command override mu cannot honour is REFUSED", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("the env-var name matches src/agents/spawn.ts exactly", () => {
-    // herdr.ts recomputes it rather than importing (mux may not depend
-    // on the agent layer). If the two ever diverge the error would name
-    // a variable that does nothing — assert them equal instead.
-    for (const cli of ["pi", "claude", "pi-meta", "codex"]) {
-      const err = new HerdrCommandOverrideError(cli, "x", envVarNameForCli(cli));
-      expect(String(err)).toContain(envVarNameForCli(cli));
-    }
-    expect(envVarNameForCli("pi-meta")).toBe("MU_PI_META_COMMAND");
-  });
-
   it("an explicit --command is refused too, and does NOT name an env var", async () => {
     // "unset MU_PI_COMMAND" is useless advice to someone who typed
     // --command, so the two overrides carry different remediation.
@@ -664,7 +652,10 @@ describe("decision 2: a command override mu cannot honour is REFUSED", () => {
     expect(keys(calls).at(-1)).toBe("agent start worker-1 --kind pi --pane w1:p1");
   });
 
-  it("end-to-end: spawn under MU_PI_COMMAND refuses before any pane exists", async () => {
+  it.each([
+    ["pi", "MU_PI_COMMAND"],
+    ["pi-meta", "MU_PI_META_COMMAND"],
+  ])("refuses the env override for --cli %s before any pane exists", async (cli, key) => {
     const calls = mockHerdr([
       ["workspace list", ok(WORKSPACE_LIST_EMPTY)],
       ["workspace create", ok(WORKSPACE_CREATED)],
@@ -672,13 +663,15 @@ describe("decision 2: a command override mu cannot honour is REFUSED", () => {
       ["pane close", ok(OK_PANE_CLOSE)],
     ]);
     ensureWorkstream(db, "spawntest");
-    process.env.MU_PI_COMMAND = "pi-alt";
+    process.env[key] = "pi-alt";
     try {
-      await expect(
-        spawnAgent(db, { name: "worker-1", workstream: "spawntest" }),
-      ).rejects.toBeInstanceOf(HerdrCommandOverrideError);
+      const err = await spawnAgent(db, { name: "worker-1", workstream: "spawntest", cli }).catch(
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(HerdrCommandOverrideError);
+      expect(err).toMatchObject({ envVar: key });
+      expect(String(err)).toContain(key);
     } finally {
-      const key = "MU_PI_COMMAND";
       delete process.env[key];
     }
     expect(getAgent(db, "worker-1", "spawntest")).toBeUndefined();

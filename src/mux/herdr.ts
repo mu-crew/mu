@@ -55,6 +55,7 @@
 // halves.
 
 import { execFileCapture } from "../exec-file.js";
+import { envVarNameForCli } from "../harnesses.js";
 import { say } from "../messages.js";
 import { isJsonMode } from "../output.js";
 import { type ActionPaneRef, nativePaneId } from "./pane-ref.js";
@@ -828,17 +829,6 @@ async function startAgent(paneId: string, opts: SpawnAgentPaneOptions): Promise<
       await sleep(PANE_READY_RETRY_INTERVAL_MS);
     }
   }
-}
-
-/**
- * `MU_<UPPER_CLI>_COMMAND`, mirroring `envVarNameForCli` in
- * src/agents/spawn.ts. Duplicated rather than imported because the mux
- * cluster may not depend on the agent layer (imports run cluster →
- * root, never sideways into another feature); it is one string join and
- * `test/mux-herdr-spawn.test.ts` asserts the two stay identical.
- */
-function envVarNameForCli(cli: string): string {
-  return `MU_${cli.toUpperCase().replace(/-/g, "_")}_COMMAND`;
 }
 
 // ─── IO (owned by mux-herdr-io) ────────────────────────────────────────

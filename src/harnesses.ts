@@ -14,6 +14,11 @@
 import { basename, join, resolve } from "node:path";
 import { shellWord } from "./shell-quote.js";
 
+/** The command override for a CLI key, including dashed aliases. */
+export function envVarNameForCli(cli: string): string {
+  return `MU_${cli.toUpperCase().replace(/-/g, "_")}_COMMAND`;
+}
+
 /** The agent CLIs mu treats as first-class. */
 export const HARNESSES = ["claude", "codex", "cursor-agent", "muse", "pi"] as const;
 export type Harness = (typeof HARNESSES)[number];
