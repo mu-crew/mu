@@ -70,6 +70,7 @@ function fakeSandbox(): Sandbox {
   };
   for (const d of ["bin", "home", "workers/mu-out", "repo"])
     mkdirSync(join(dir, d), { recursive: true });
+  writeFileSync(join(dir, ".ref"), "1234567\n"); // exported fixture, no checkout needed
   const cli = join(dir, "cli.mjs");
   writeFileSync(
     cli,
@@ -821,6 +822,7 @@ describe("the help arms", () => {
     const root = join(dir, name);
     mkdirSync(join(root, "skills", "mu"), { recursive: true });
     writeFileSync(join(root, "skills", "mu", "SKILL.md"), `---\nname: mu\n---\nSKILL ${name}\n`);
+    writeFileSync(join(root, ".ref"), "1234567\n");
     const cli = join(root, "cli.mjs");
     writeFileSync(
       cli,

@@ -2,7 +2,7 @@ import { cpus } from "node:os";
 import { suiteConfig } from "./vitest.config.js";
 
 /**
- * The pre-commit suite: everything that does NOT drive a real tmux server.
+ * The pre-commit suite: no tests requiring a real mux or Git.
  *
  * Runs in PARALLEL. The base config pins `maxWorkers: 1` for the
  * `*.integration.test.ts` files that share the run's private tmux server; the
@@ -23,4 +23,4 @@ const workers = Number.isFinite(slots)
   ? Math.max(1, Math.floor(slots))
   : Math.max(2, Math.min(8, Math.floor((cpus().length || 4) / 2)));
 
-export default suiteConfig(workers, ["**/*.integration.test.ts"]);
+export default suiteConfig(workers, { fast: true });

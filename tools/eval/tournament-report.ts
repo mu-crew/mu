@@ -45,7 +45,7 @@ export const committedControl = (repo: string, group: Group): string =>
 
 // ---- publishing: what the committed report and control copy must pass ---------------------------
 
-/** The canary line a committed report carries first and last (test/eval/rig-guard.test.ts). */
+/** The canary line a committed report carries first and last (test/eval/rig-guard-contract.integration.test.ts). */
 export const CANARY_LINE = `<!-- ${RIG_CANARY}: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->`;
 /** The canary row the committed control copy carries first and last. */
 export const CANARY_ROW = JSON.stringify({
@@ -53,7 +53,7 @@ export const CANARY_ROW = JSON.stringify({
   note: `${RIG_CANARY}: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.`,
 });
 
-/** `home` spelled `~` (test/public-tree.test.ts refuses a real home path in the tree). */
+/** `home` spelled `~` (test/public-tree.integration.test.ts refuses a real home path in the tree). */
 export const tildeHome = (text: string, home = homedir()): string =>
   home === "" || home === "/"
     ? text

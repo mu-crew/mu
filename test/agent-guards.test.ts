@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentLockPath } from "../src/agents/lock.js";
 import {
   AgentLockBusyError,
@@ -44,6 +44,16 @@ import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxExecutor, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 import { freshMockState, mockTmux } from "./_verbs-mock.js";
+
+// These fixtures contain directories and registry rows, not repositories.
+vi.mock("../src/vcs/git.js", async (load) => ({
+  ...(await load<typeof import("../src/vcs/git.js")>()),
+  gitToplevel: async () => undefined,
+  owningRoot: async () => undefined,
+  dirtyFiles: async () => {
+    throw new Error("not a repository");
+  },
+}));
 
 const OK = { stdout: "", stderr: "", exitCode: 0 };
 const GONE_PANE = { stdout: "", stderr: "can't find pane", exitCode: 1 };

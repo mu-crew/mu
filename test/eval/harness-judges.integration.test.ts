@@ -3,8 +3,8 @@ import { rmSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vitest";
 import { loadScenario } from "../../tools/eval/commands.ts";
 import type { RunMetrics, Sandbox, Verdict } from "../../tools/eval/types.ts";
+import { emptyRun } from "./_empty-run.ts";
 import { makeHarnessWorld, type WorkerSpec, type WorldSpec } from "./_harness-world.ts";
-import { emptyRun } from "./_judge-sandbox.ts";
 
 // Every hook-harness case's written pass criterion, pinned on synthetic end states: the golden
 // world passes clean and each bad world is flagged for the reason the criterion names. The same

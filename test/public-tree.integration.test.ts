@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // Tracked files carry no real home path, and no term from the local term
@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 // that at a scratch dir. Without the file only home paths are checked.
 
 const ROOT = join(import.meta.dirname, "..");
-const SELF = "test/public-tree.test.ts";
+const SELF = `test/${basename(import.meta.filename)}`;
 
 /** Placeholder user names that may appear in /Users/<name>/ or /home/<name>/. */
 const PLACEHOLDER_USERS = new Set(["u", "someone", "x", "alice", "real", "me"]);

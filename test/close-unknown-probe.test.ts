@@ -8,7 +8,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AgentPaneStillAliveError,
   closeAgent,
@@ -27,6 +27,12 @@ import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, installNoMux, type MuxExecutor, type MuxHarness } from "./_mux.js";
 import { runCli } from "./_runCli.js";
+
+vi.mock("../src/vcs/git.js", async (load) => ({
+  ...(await load<typeof import("../src/vcs/git.js")>()),
+  gitToplevel: async () => undefined,
+  owningRoot: async () => undefined,
+}));
 
 const OK = { stdout: "", stderr: "", exitCode: 0 };
 const DENIED = { stdout: "", stderr: "permission denied", exitCode: 1 };

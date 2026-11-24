@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentNotFoundError, AgentPaneStillAliveError } from "../src/agents/errors.js";
 import { closeAgent, getAgent, previewClose } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
@@ -37,6 +37,11 @@ import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
+
+vi.mock("../src/vcs/git.js", async (load) => ({
+  ...(await load<typeof import("../src/vcs/git.js")>()),
+  gitToplevel: async () => dir,
+}));
 
 const BASE = "b".repeat(40);
 const COLLECTED = "c".repeat(40);
