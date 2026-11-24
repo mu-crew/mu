@@ -15,7 +15,6 @@
 //
 // Fast tier: in-process runCli, per-test temp DBs and sync dir.
 
-import { createHash } from "node:crypto";
 import {
   existsSync,
   lstatSync,
@@ -38,7 +37,7 @@ import { checkDrift } from "../src/drift.js";
 import { checkUnpublishedOps } from "../src/fleet-hazards.js";
 import { formatHlc } from "../src/hlc.js";
 import { withCaptureSuppressed } from "../src/op-context.js";
-import { applyIncomingOp, flushSegment, localMachineId } from "../src/segments.js";
+import { applyIncomingOp, flushSegment, localMachineId, segmentLockPath } from "../src/segments.js";
 import { ambientFlush } from "../src/sync.js";
 import { addTask } from "../src/tasks.js";
 import { withEnv } from "./_env.js";
@@ -402,16 +401,13 @@ describe("apply is order-independent: live == rebuild for EVERY arrival order", 
 // ─── (2) a busy segment lock is reported ──────────────────────────────
 
 describe("a busy segment lock is never silent", () => {
-  const holdSegmentLock = (stateDir: string, db: ReturnType<typeof openDb>): void => {
-    const lockName = createHash("sha256")
-      .update(`${syncDir}\u001f${localMachineId(db)}`)
-      .digest("hex")
-      .slice(0, 16);
-    const lockPath = join(stateDir, "locks", `segment-${lockName}.lock`);
+  /** Call under MU_STATE_DIR: the lock lives in its locks dir. */
+  const holdSegmentLock = (db: ReturnType<typeof openDb>): void => {
+    const lockPath = segmentLockPath(syncDir, localMachineId(db));
     mkdirSync(lockPath, { recursive: true });
     writeFileSync(
       join(lockPath, "meta.json"),
-      JSON.stringify({ pid: process.pid + 1, label: "other", acquiredAt: "" }),
+      JSON.stringify({ pid: process.pid, label: "other", acquiredAt: "", token: "other" }),
     );
   };
 
@@ -422,7 +418,7 @@ describe("a busy segment lock is never silent", () => {
       const stateDir = join(tempDir, "state");
       const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       await withEnv("MU_STATE_DIR", stateDir, async () => {
-        holdSegmentLock(stateDir, db);
+        holdSegmentLock(db);
         const r = await ambientFlush(db, { lockWaitMs: 0 });
         expect(r?.lockBusy).toBe(true);
       });
@@ -442,7 +438,7 @@ describe("a busy segment lock is never silent", () => {
       const stateDir = join(tempDir, "state");
       const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       await withEnv("MU_STATE_DIR", stateDir, async () => {
-        holdSegmentLock(stateDir, db);
+        holdSegmentLock(db);
         await ambientFlush(db, { lockWaitMs: 0, quiet: true });
       });
       expect(err).not.toHaveBeenCalled();

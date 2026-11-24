@@ -20,7 +20,7 @@
 // segment flush does, because an unlocked append can interleave partial
 // lines or race another flush's self-repair truncate.
 //
-// STRICT MODE (`strict: true`, the agent lock) is a different protocol, and
+// STRICT MODE (`strict: true`, the agent and segment locks) is a different protocol, and
 // fails closed on every error:
 //   - PUBLISH. The lock dir is built complete (meta.json inside) under a
 //     private name and `rename`d onto the lock path: it appears whole or

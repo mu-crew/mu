@@ -65,6 +65,7 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  realpathSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -180,6 +181,23 @@ export function localMachineId(db: Db): string {
     | undefined;
   if (row === undefined) throw new Error("machine_identity row missing; not a mu DB");
   return row.machine_id;
+}
+
+/** The lock dir serialising writers of one machine's segment in `dir`.
+ *  Keyed on the CANONICAL dir: two spellings of one folder (a symlink, a
+ *  relative path) name one file, so they must name one lock. */
+export function segmentLockPath(dir: string, machineId: string): string {
+  let canonical: string;
+  try {
+    canonical = realpathSync(dir);
+  } catch {
+    canonical = resolve(dir);
+  }
+  const lockName = createHash("sha256")
+    .update(`${canonical}\u001f${machineId}`)
+    .digest("hex")
+    .slice(0, 16);
+  return join(locksDir(), `segment-${lockName}.lock`);
 }
 
 /** Path of a machine's own segment inside `dir`. */
@@ -321,19 +339,20 @@ export async function flushSegment(
   // NEVER UNLOCKED. If the lock is still held at the deadline, write
   // nothing: an unlocked append can splice lines into another writer's,
   // or land after its self-repair truncate, and the ops are safe in the
-  // DB anyway. The next invocation's flush appends them. A stale lock
-  // (crashed holder) is still broken inside withFileLock.
-  const lockName = createHash("sha256")
-    .update(`${dir}\u001f${machineId}`)
-    .digest("hex")
-    .slice(0, 16);
+  // DB anyway. The next invocation's flush appends them.
+  //
+  // STRICT: a holder keeps the lock for as long as its pid lives, however
+  // long a verify scan or rebuild takes; only a dead holder's aged lock is
+  // reclaimed (src/file-lock.ts). An age-only steal let a second writer in
+  // under a live one.
   return withFileLock(
-    join(locksDir(), `segment-${lockName}.lock`),
+    segmentLockPath(dir, machineId),
     `segment:${machineId}`,
     () => Promise.resolve(flushLocked(db, path, machineId, verify)),
     {
       acquireTimeoutMs:
         opts?.lockWaitMs ?? (verify ? VERIFY_FLUSH_LOCK_WAIT_MS : AMBIENT_FLUSH_LOCK_WAIT_MS),
+      strict: true,
       onUnavailable: () => ({
         segmentPath: path,
         appended: 0,

@@ -14,6 +14,7 @@ import {
   mkdtempSync,
   readFileSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -42,6 +43,7 @@ import {
   readManifest,
   resetWatermark,
   SEGMENT_FORMAT_VERSION,
+  segmentLockPath,
   segmentPath,
   setWatermark,
   syncDir,
@@ -54,8 +56,11 @@ import { addBlockEdge } from "../src/tasks/edges.js";
 import { addNote, addTask, deleteTask, updateTask } from "../src/tasks/edit.js";
 import { closeTask } from "../src/tasks/lifecycle.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
+
+const deadPid = cachedDeadPid();
 
 describe("segments", () => {
   let tempDir: string;
@@ -1175,11 +1180,7 @@ describe("segments", () => {
       await seedFour();
       const stateDir = join(tempDir, "state");
       await withEnv("MU_STATE_DIR", stateDir, async () => {
-        const lockName = createHash("sha256")
-          .update(`${dir}\u001f${localMachineId(a)}`)
-          .digest("hex")
-          .slice(0, 16);
-        mkdirSync(join(stateDir, "locks", `segment-${lockName}.lock`), { recursive: true });
+        mkdirSync(segmentLockPath(dir, localMachineId(a)), { recursive: true });
         const started = Date.now();
         const result = await flushSegment(a, dir);
         expect(result.appended).toBe(0);
@@ -1188,18 +1189,14 @@ describe("segments", () => {
       });
     });
 
-    /** Create the segment lock as a live holder would: a fresh lock dir
-     *  whose meta names another pid. Staleness is by age, so it holds. */
-    const holdSegmentLock = (stateDir: string, ageMs = 0): string => {
-      const lockName = createHash("sha256")
-        .update(`${dir}\u001f${localMachineId(a)}`)
-        .digest("hex")
-        .slice(0, 16);
-      const lockPath = join(stateDir, "locks", `segment-${lockName}.lock`);
+    /** Create the segment lock as another holder would: a lock dir whose
+     *  meta names `pid` (default: this live process), `ageMs` old. */
+    const holdSegmentLock = (ageMs = 0, pid = process.pid): string => {
+      const lockPath = segmentLockPath(dir, localMachineId(a));
       mkdirSync(lockPath, { recursive: true });
       writeFileSync(
         join(lockPath, "meta.json"),
-        JSON.stringify({ pid: process.pid + 1, label: "other", acquiredAt: "" }),
+        JSON.stringify({ pid, label: "other", acquiredAt: "", token: "other" }),
       );
       if (ageMs > 0) {
         const t = new Date(Date.now() - ageMs);
@@ -1212,7 +1209,7 @@ describe("segments", () => {
       const path = await seedFour();
       const stateDir = join(tempDir, "state");
       await withEnv("MU_STATE_DIR", stateDir, async () => {
-        const lockPath = holdSegmentLock(stateDir);
+        const lockPath = holdSegmentLock();
         const bytes = readFileSync(path);
         const before = linesOf(path).length;
         const manifestFile = path.replace(/\.jsonl$/, ".manifest");
@@ -1245,7 +1242,7 @@ describe("segments", () => {
       const stateDir = join(tempDir, "state");
       await withEnv("MU_STATE_DIR", stateDir, async () => {
         await withEnv("MU_SYNC_DIR", dir, async () => {
-          holdSegmentLock(stateDir);
+          holdSegmentLock();
           seedTask(a, "pending");
           const started = Date.now();
           const busy = await ambientFlush(a, { lockWaitMs: 0 });
@@ -1256,11 +1253,42 @@ describe("segments", () => {
       });
     });
 
-    it("a stale segment lock is still broken and the flush appends", async () => {
+    it("a writer through a symlinked spelling of the sync dir waits on the same lock", async () => {
+      const path = await seedFour();
+      const alias = join(tempDir, "alias");
+      symlinkSync(dir, alias);
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        holdSegmentLock();
+        const bytes = readFileSync(path);
+        seedTask(a, "pending");
+        const busy = await flushSegment(a, alias, { lockWaitMs: 30 });
+        expect(busy.lockBusy).toBe(true);
+        expect(readFileSync(path).equals(bytes)).toBe(true);
+      });
+    });
+
+    it("a live holder keeps the lock however old it is", async () => {
       const path = await seedFour();
       const stateDir = join(tempDir, "state");
       await withEnv("MU_STATE_DIR", stateDir, async () => {
-        const lockPath = holdSegmentLock(stateDir, 60_000);
+        // A verify scan that has held the lock for over the 30 s age
+        // threshold, and is still running.
+        const lockPath = holdSegmentLock(31_000);
+        const bytes = readFileSync(path);
+        seedTask(a, "pending");
+        const busy = await flushSegment(a, dir, { lockWaitMs: 30 });
+        expect(busy.lockBusy).toBe(true);
+        expect(readFileSync(path).equals(bytes)).toBe(true);
+        expect(existsSync(lockPath)).toBe(true);
+      });
+    });
+
+    it("a dead holder's aged lock is reclaimed and the flush appends", async () => {
+      const path = await seedFour();
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        const lockPath = holdSegmentLock(60_000, deadPid());
         const before = linesOf(path).length;
         seedTask(a, "pending");
         const result = await flushSegment(a, dir, { lockWaitMs: 30 });

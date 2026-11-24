@@ -9,7 +9,6 @@
 //   single-DB test would pass while missing the entire point.
 
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -22,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { segmentLockPath } from "../src/segments.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { opCount as opCountOf } from "./_ro.js";
@@ -134,20 +134,19 @@ describe("mu sync (CLI)", () => {
     const machineId = idRows.items[0]?.id ?? "";
     const segment = join(dir, `${machineId}.jsonl`);
     const stateDir = join(tempDir, "state");
-    const lockName = createHash("sha256")
-      .update(`${dir}\u001f${machineId}`)
-      .digest("hex")
-      .slice(0, 16);
-    const lockPath = join(stateDir, "locks", `segment-${lockName}.lock`);
+    let lockPath = "";
+    await withEnv("MU_STATE_DIR", stateDir, async () => {
+      lockPath = segmentLockPath(dir, machineId);
+    });
     mkdirSync(join(stateDir, "locks"), { recursive: true });
 
-    // Another live process takes the lock the way withFileLock does and
-    // keeps it until killed.
+    // Another live process takes the lock the way strict withFileLock
+    // does (the dir with its owner record) and keeps it until killed.
     const holder = spawn(
       process.execPath,
       [
         "-e",
-        `require("fs").mkdirSync(${JSON.stringify(lockPath)}); process.stdout.write("held\\n"); setInterval(() => {}, 1000);`,
+        `const fs = require("fs"); const p = ${JSON.stringify(lockPath)}; fs.mkdirSync(p); fs.writeFileSync(p + "/meta.json", JSON.stringify({ pid: process.pid, label: "other", acquiredAt: "", token: "other" })); process.stdout.write("held\\n"); setInterval(() => {}, 1000);`,
       ],
       { stdio: ["ignore", "pipe", "inherit"] },
     );
