@@ -21,6 +21,7 @@ import { readdirSync, rmdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { crc32 } from "node:zlib";
 import { reapAgentRow } from "./agents/reap.js";
+import { withSpawnLock } from "./agents/spawn-lock.js";
 import { WORKSTREAM_OPS_WHERE } from "./compact.js";
 import { unlinkCtlSocket } from "./ctl/path.js";
 import { type Db, tornDownAtOf } from "./db.js";
@@ -519,6 +520,13 @@ function isRegistered(db: Db, workstream: string): boolean {
   return row !== undefined;
 }
 
+function checkTeardownRevision(db: Db, opts: TeardownWorkstreamOptions): void {
+  const revision = workstreamRevision(db, opts.workstream);
+  if (revision !== opts.ifRevision) {
+    throw new WorkstreamRevisionMismatchError(opts.workstream, opts.ifRevision, revision);
+  }
+}
+
 /**
  * Tear down a workstream (soft): kill its mux session when owned, delete its
  * dead machine-local agent rows and set `torn_down_at`. Worktrees are never
@@ -540,10 +548,7 @@ export async function teardownWorkstream(
 ): Promise<TeardownResult> {
   const muxSession = opts.muxSession ?? `mu-${opts.workstream}`;
 
-  const revision = workstreamRevision(db, opts.workstream);
-  if (revision !== opts.ifRevision) {
-    throw new WorkstreamRevisionMismatchError(opts.workstream, opts.ifRevision, revision);
-  }
+  checkTeardownRevision(db, opts);
 
   const agentsBefore = listAgentPanes(db, opts.workstream);
   const tasksBefore = countTasks(db, opts.workstream);
@@ -551,40 +556,41 @@ export async function teardownWorkstream(
   const edgesBefore = countEdges(db, opts.workstream);
   const worktreesBefore = listWorktrees(db, opts.workstream);
 
-  // Mux session first: if killSession throws we don't want any DB state
-  // changed with panes still running. (killSession is itself idempotent
-  // on missing sessions — a real throw here is an unexpected mux error.)
-  // Load-bearing: a session without proof is reported as not killed.
   const mux = await activeMux();
-  // The probe PROPAGATES: "could not ask" is not "dead". Swallowing it
-  // here would change DB state while panes may still run.
-  const sessionPanes = new Set((await sessionViews(muxSession, mux)).map((p) => p.paneId));
-  // The session kill covers the panes in it. A registered pane that is NOT
-  // in it (moved to another session by hand) survives the kill, so it is
-  // asked about by its own id; failing to ask propagates too.
-  const strays: string[] = [];
-  for (const a of agentsBefore) {
-    if (sessionPanes.has(a.paneId)) continue;
-    if (await viewPresent(a.paneId, mux, a.paneIdentity)) strays.push(a.name);
-  }
-  if (strays.length > 0) throw new WorkstreamPanesLiveError(opts.workstream, strays);
-  const muxAliveBefore = sessionPanes.size > 0;
-  let killedMux = false;
-  if (muxAliveBefore) {
-    if (mux.name !== "tmux") {
-      killedMux = await mux.killSession({ backend: mux.name, session: muxSession });
-    } else {
-      // An empty registry (including after reconcile) says nothing about who owns
-      // this tmux session. Only a recorded pane still in it can authorize the kill
-      // (a legacy row's, by id alone: the check before `agents.pane_identity`).
-      for (const a of agentsBefore) {
-        if (!sessionPanes.has(a.paneId)) continue;
-        const pane = paneRef(a.paneId, a.paneIdentity);
-        killedMux = await mux.killSession({ backend: "tmux", session: muxSession, pane });
-        if (killedMux) break;
+  // Managed pane creation and row finalization use this same session lock.
+  // Keep it through the kill; a revision check alone only protects the DB.
+  const killedMux = await withSpawnLock(muxSession, async () => {
+    // The probe PROPAGATES: "could not ask" is not "dead". Swallowing it
+    // here would change DB state while panes may still run.
+    const sessionPanes = new Set((await sessionViews(muxSession, mux)).map((p) => p.paneId));
+    // The session kill covers the panes in it. A registered pane that is NOT
+    // in it (moved to another session by hand) survives the kill, so it is
+    // asked about by its own id; failing to ask propagates too.
+    const strays: string[] = [];
+    for (const a of agentsBefore) {
+      if (sessionPanes.has(a.paneId)) continue;
+      if (await viewPresent(a.paneId, mux, a.paneIdentity)) strays.push(a.name);
+    }
+    if (strays.length > 0) throw new WorkstreamPanesLiveError(opts.workstream, strays);
+    checkTeardownRevision(db, opts);
+    let killedMux = false;
+    if (sessionPanes.size > 0) {
+      if (mux.name !== "tmux") {
+        killedMux = await mux.killSession({ backend: mux.name, session: muxSession });
+      } else {
+        // An empty registry (including after reconcile) says nothing about who owns
+        // this tmux session. Only a recorded pane still in it can authorize the kill
+        // (a legacy row's, by id alone: the check before `agents.pane_identity`).
+        for (const a of agentsBefore) {
+          if (!sessionPanes.has(a.paneId)) continue;
+          const pane = paneRef(a.paneId, a.paneIdentity);
+          killedMux = await mux.killSession({ backend: "tmux", session: muxSession, pane });
+          if (killedMux) break;
+        }
       }
     }
-  }
+    return killedMux;
+  });
 
   // Worktrees are NOT touched: teardown never removes one (the registry's
   // close rule belongs to `mu agent close`). They stay registered and on
@@ -646,10 +652,7 @@ export async function teardownWorkstream(
   withOpContext(db, { intent: "workstream.teardown", group: "new" }, () =>
     db
       .transaction(() => {
-        const now = workstreamRevision(db, opts.workstream);
-        if (now !== opts.ifRevision) {
-          throw new WorkstreamRevisionMismatchError(opts.workstream, opts.ifRevision, now);
-        }
+        checkTeardownRevision(db, opts);
         // Each dead row goes through THE reaper step (src/agents/reap.ts), in
         // this transaction and group: its remote worktree is recorded and
         // what it owned reopens, exactly as a pane that died on its own.

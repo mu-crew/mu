@@ -1,5 +1,4 @@
-// Cross-process advisory lock for the tmux-topology critical section of
-// a spawn.
+// Cross-process mux topology lock for managed pane creation and session teardown.
 //
 // Why this exists: every `mu` invocation is a separate short-lived
 // process, so there is no in-process mutex to lean on. When an operator
@@ -14,7 +13,7 @@
 // row. Net effect: agents silently dropped (and sometimes duplicated as
 // windows race).
 //
-// The fix is a filesystem advisory lock keyed on the tmux SESSION name
+// The lock is keyed on the mux SESSION name
 // (the shared resource — two spawns into different sessions never
 // contend). It wraps ONLY the fast topology + DB-insert section, NOT the
 // slow liveness/readiness wait, so genuine parallelism (the whole point
@@ -22,13 +21,11 @@
 // row, releases, then waits for liveness while process B is already
 // creating its own window.
 //
-// Mechanism: `fs.mkdir` is atomic and fails with EEXIST if the directory
-// exists — the classic lockfile primitive, no extra dependency (honors
-// the ROADMAP anti-feature pledge). A `meta.json` inside records pid +
-// acquisition time for stale-lock diagnostics and breaking.
+// An unavailable lock refuses the operation; age alone never evicts a live holder.
 
 import { join } from "node:path";
-import { type FileLockOptions, locksDir, withFileLock } from "../file-lock.js";
+import { locksDir, withFileLock } from "../file-lock.js";
+import { MuxError } from "../mux/types.js";
 
 /** Lock directory path for a given tmux session name. The session name
  *  is already validated ([a-z0-9_-] plus the `mu-` prefix), so it is a
@@ -43,9 +40,7 @@ export function lockPathForSession(session: string): string {
  *  parallel fan-out queued behind one slow tmux server. */
 const DEFAULT_ACQUIRE_TIMEOUT_MS = 15_000;
 
-/** A held lock older than this is presumed abandoned (a crashed `mu`
- *  process that never released) and force-broken. Must comfortably
- *  exceed the critical section's real duration. */
+/** Minimum age for reclaiming a lock whose holder is proven gone. */
 const STALE_LOCK_MS = 30_000;
 
 export interface SpawnLockOptions {
@@ -53,23 +48,19 @@ export interface SpawnLockOptions {
   staleLockMs?: number;
 }
 
-/**
- * Run `fn` while holding the per-session spawn lock.
- *
- * The mechanism (atomic mkdir, stale-lock breaking, release-in-finally,
- * proceed-unlocked-on-non-contention) lives in src/file-lock.ts so
- * segments can reuse it without a second copy. This wrapper owns the
- * session-keyed path and the spawn-specific timeouts.
- */
+/** Run `fn` under the per-session topology lock, or fail without running it. */
 export async function withSpawnLock<T>(
   session: string,
   fn: () => Promise<T>,
   opts?: SpawnLockOptions,
 ): Promise<T> {
-  const lockOpts: FileLockOptions<T> = {
+  return withFileLock(lockPathForSession(session), session, fn, {
+    strict: true,
     acquireTimeoutMs: opts?.acquireTimeoutMs ?? DEFAULT_ACQUIRE_TIMEOUT_MS,
     staleLockMs: opts?.staleLockMs ?? STALE_LOCK_MS,
     timeoutEnvVar: "MU_SPAWN_LOCK_TIMEOUT_MS",
-  };
-  return withFileLock(lockPathForSession(session), session, fn, lockOpts);
+    onUnavailable: () => {
+      throw new MuxError(`cannot lock mux session ${session}; retry when it is available`);
+    },
+  });
 }

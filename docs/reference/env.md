@@ -45,7 +45,7 @@ milliseconds; `0` disables a wait unless noted.
 | `MU_SPAWN_JOB_MS` | Lease profiles and plugin job kinds. For a plugin kind: how long a spawn waits for the agent's channel to answer `baseline` (its readiness; an `at-start` kind's start reply is its baseline), else the job is stopped and the spawn rolled back (`PluginJobNotReadyError`). For a lease profile: how long `agent spawn --host` waits for the carrier to write its job handle to `{job_file}`. Runs even with `--no-ctl` or `MU_SPAWN_CTL_MS=0`. A pane that dies first throws `AgentDiedOnSpawnError` with its scrollback. A live pane with no handle by the deadline is rolled back (`LeaseJobTimeoutError`). `0` or an invalid value means the default: a lease spawn always waits. | `30000` |
 | `MU_HOST_DEADLINE_MARGIN_MS` | Provider hosts only. Inside this margin of a host's deadline, spawns on it refuse (`HostDeadlineError`, exit 4) and the host drains. `0` refuses only past the deadline. | `600000` |
 | `MU_SPAWN_LIVENESS_MS` | tmux only. Wait this long, then check the pane is alive and its scrollback has no startup error (auth failure, `command not found`). Failure rolls back the row and throws `AgentDiedOnSpawnError` or `AgentSpawnStartupError`. A pi agent skips the wait: the pane is checked on each ctl handshake tick and scanned when it ends. | `1500` |
-| `MU_SPAWN_LOCK_TIMEOUT_MS` | How long a spawn waits for the per-workstream spawn lock. | `15000` |
+| `MU_SPAWN_LOCK_TIMEOUT_MS` | How long spawn and teardown wait for the same mux session lock. | `15000` |
 | `MU_AGENT_LOCK_TIMEOUT_MS` | How long `agent close` and `--worktree` staging wait for the per-agent lock before exit 4 (`AgentLockBusyError`, nothing done). | `15000` |
 
 ## Agents and timing

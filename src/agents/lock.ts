@@ -56,8 +56,7 @@ export async function withAgentLock<T>(
  * The spawn-attempt lock: one cross-process lock per (task, attempt key),
  * held for a whole `agent spawn --task` attempt (reservation to outcome), so
  * two callers of the same attempt never both spawn or send. Strict like the
- * agent lock (fails closed, stolen only from a dead holder), and unlike the
- * advisory spawn lock, which runs unlocked when it cannot lock. A long DB
+ * agent lock (fails closed, stolen only from a dead holder). A long DB
  * transaction is not the mechanism: the attempt spans panes and sockets.
  */
 export function spawnAttemptLockPath(db: Db, taskId: number, attemptKey: string): string {

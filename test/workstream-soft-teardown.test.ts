@@ -15,6 +15,7 @@ import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { withSpawnLock } from "../src/agents/spawn-lock.js";
 import { applyOp, type Op } from "../src/apply.js";
 import { type Db, openDb, WorkstreamTornDownError } from "../src/db.js";
 import { finishDelegate, registerDelegateCall } from "../src/delegates.js";
@@ -40,6 +41,7 @@ import {
 import { registerWorktree } from "../src/worktree.js";
 import { insertTestAgent as insertAgent } from "./_agent-pane.js";
 import { rmFixtureDir } from "./_fs.js";
+import { latch } from "./_latch.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { asJson, runCli } from "./_runCli.js";
 import { softTeardown } from "./_teardown.js";
@@ -275,6 +277,87 @@ describe("order: the session dies before any DB change", () => {
     expect(opCount()).toBe(before);
     expect(tornDownAt("ws")).toBeNull();
     expect((db.prepare("SELECT COUNT(*) AS n FROM agents").get() as { n: number }).n).toBe(1);
+  });
+
+  it("an agent registered during the session probe invalidates the kill", async () => {
+    seed("ws");
+    insertAgent(db, { name: "anchor", workstream: "ws", paneId: "%1" });
+    const rev = workstreamRevision(db, "ws");
+    const probing = latch();
+    const resume = latch();
+    const killed: string[] = [];
+    mux?.restore();
+    mux = installMux("tmux", async (args) => {
+      if (args[0] === "list-panes") {
+        probing.resolve();
+        await resume.promise;
+        return { stdout: "@1|%1|_mu\n@2|%7|racer\n", stderr: "", exitCode: 0 };
+      }
+      if (args[0] === "kill-session") {
+        killed.push(...args);
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "can't find pane", exitCode: 1 };
+    });
+    const pending = teardownWorkstream(db, { workstream: "ws", ifRevision: rev }).catch(
+      (err: unknown) => err,
+    );
+    try {
+      await Promise.race([
+        probing.promise,
+        pending.then(() => {
+          throw new Error("no probe barrier");
+        }),
+      ]);
+      insertAgent(db, { name: "racer", workstream: "ws", paneId: "%7" });
+      resume.resolve();
+      expect(await pending).toBeInstanceOf(WorkstreamRevisionMismatchError);
+      expect(killed).toEqual([]);
+      expect(tornDownAt("ws")).toBeNull();
+    } finally {
+      resume.resolve();
+      await pending;
+    }
+  });
+
+  it("excludes managed pane creation until the session kill returns", async () => {
+    seed("ws");
+    insertAgent(db, { name: "anchor", workstream: "ws", paneId: "%1" });
+    const killing = latch();
+    const resume = latch();
+    mux?.restore();
+    mux = installMux("tmux", async (args) => {
+      if (args[0] === "list-panes") return { stdout: "@1|%1|_mu\n", stderr: "", exitCode: 0 };
+      if (args[0] === "kill-session") {
+        killing.resolve();
+        await resume.promise;
+        return { stdout: "", stderr: "", exitCode: 0 };
+      }
+      return { stdout: "", stderr: "can't find pane", exitCode: 1 };
+    });
+    const pending = softTeardown(db, "ws");
+    try {
+      await Promise.race([
+        killing.promise,
+        pending.then(() => {
+          throw new Error("no kill barrier");
+        }),
+      ]);
+      let spawned = false;
+      const contender = withSpawnLock(
+        "mu-ws",
+        async () => {
+          spawned = true;
+        },
+        { acquireTimeoutMs: 0 },
+      );
+      await expect(contender).rejects.toThrow(/cannot lock mux session/);
+      expect(spawned).toBe(false);
+    } finally {
+      resume.resolve();
+      await pending;
+    }
+    expect(await pending).toMatchObject({ killedMux: true });
   });
 
   it("an agent that appears while the session is being killed aborts the commit", async () => {

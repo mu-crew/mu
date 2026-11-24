@@ -33,7 +33,7 @@
 // `stale`, never swapped for the replacement. A manual DELIVERED attempt whose
 // agent is stale has ended: the replay refuses (`SpawnAttemptEndedError`,
 // naming the next free key) instead of re-reporting the old delivery. The attempt lock is strict
-// (fails closed); the advisory spawn lock stays inside spawnAgent.
+// (fails closed); the per-session lock stays inside spawnAgent.
 
 import { type AgentRow, getAgentForCleanup, isPendingPaneId } from "../agents.js";
 import { getCarrierJobByName } from "../carrier-jobs.js";

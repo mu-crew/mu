@@ -540,10 +540,17 @@ describe("spawn control socket", () => {
 
   it("resolves a relative MU_STATE_DIR against the caller's cwd", async () => {
     process.env.MU_SPAWN_CTL_MS = "0";
-    await withEnv("MU_STATE_DIR", "rel-state", async () => {
-      await spawnAgent(db, { name: "worker-1", workstream: "auth" });
-    });
-    expect(newSessionArgs()).toContain(`MU_STATE_DIR=${join(process.cwd(), "rel-state")}`);
+    const cwd = process.cwd();
+    // The topology lock now requires a writable state dir even in managed worktrees.
+    process.chdir(dir);
+    try {
+      await withEnv("MU_STATE_DIR", "rel-state", async () => {
+        await spawnAgent(db, { name: "worker-1", workstream: "auth" });
+      });
+      expect(newSessionArgs()).toContain(`MU_STATE_DIR=${join(process.cwd(), "rel-state")}`);
+    } finally {
+      process.chdir(cwd);
+    }
   });
 
   describe("SSH_AUTH_SOCK forwarding", () => {

@@ -91,20 +91,14 @@ describe("withSpawnLock", () => {
     expect(await readFileLockMeta(lockPathForSession("mu-scratch"))).toBeNull();
   });
 
-  it("breaks a stale lock from a dead process (staleLockMs=0)", async () => {
-    // Hold the lock, then \u2014 while held \u2014 a second caller with
-    // staleLockMs=0 should treat it as stale and break in. We assert the
-    // second caller completes rather than timing out.
-    let innerRan = false;
+  it("does not evict a live lock holder, even with no minimum stale age", async () => {
     await withSpawnLock("mu-scratch", async () => {
-      await withSpawnLock(
-        "mu-scratch",
-        async () => {
-          innerRan = true;
-        },
-        { staleLockMs: 0, acquireTimeoutMs: 2000 },
-      );
+      await expect(
+        withSpawnLock("mu-scratch", async () => "unlocked", {
+          staleLockMs: 0,
+          acquireTimeoutMs: 0,
+        }),
+      ).rejects.toThrow(/cannot lock mux session/);
     });
-    expect(innerRan).toBe(true);
   });
 });
