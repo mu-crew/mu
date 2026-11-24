@@ -12,34 +12,34 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.4.0] — 2026-11-24
+
+Rung 2 of the remote worker ladder. Needs `@mu-crew/mule` >= 0.7.0.
+
 ### Added
 
-- `mu agent spawn --mule <profile>` prepares a managed worktree on a static
-  mule plugin host and runs pi locally on tmux or Rex with local ctl and DB routing.
-  `mu agent collect` fetches from the remote tree as with `--host`.
-  Requires pi's mule workspace extension; no remote pi or DB is launched.
-- `scripts/smoke-rung2.sh`: the rung-2 loopback smoke. It packs and installs
-  `@mu-crew/mule` with its pi extension and runs real pi with a scripted model
-  (`scripts/smoke-rung2-pi.mjs`) in a `--mule` worker against one
-  `MaxSessions 1` sshd. It covers a tool chain, a 20-read burst, a 200 KB
-  write, cancel, master loss mid-turn, caller death, collect and close, and
-  fails on any leftover job, tree, row or process. A process that outlives
-  the fixture teardown fails the run before it is killed, even with a cleared
-  environment and argv while it holds the run dir; a tmux probe error is
-  never zero sessions; `SMOKE_TIMEOUT` covers the build and stops a stuck
-  foreground command.
+- `mu agent spawn --mule <host>` runs pi locally on tmux or Rex against a
+  remote mule workspace, with local ctl and DB; no remote pi or DB is
+  launched. Needs mule >= 0.7.0 (its pi extension). `mu agent collect` fetches
+  from the remote tree as with `--host`. Close stops the worker's outstanding
+  mule jobs (`MULE_PI_JOB_PREFIX`).
+- `scripts/smoke-rung2.sh`: loopback smoke for `--mule` workers (tool chain,
+  read burst, large write, cancel, master loss, collect, close) against one
+  `MaxSessions 1` sshd. It fails on any leftover job, tree, row or process.
 
 ### Fixed
 
-- Recovery hints for `--mule` workers now respawn with `--mule` and the recorded
-  repo, not `--host`. The dashboard matches their local pane runtime, and a
-  missing local control socket no longer suggests checking a remote forward.
-- Rex pins managed local pane routing after shell startup and strips inherited
-  mu routing from session templates, without dropping rc PATH or credentials.
-- A `--mule` spawn rolls back when local ctl startup fails. Close checks the
-  remote tree for uncommitted or uncollected work and stops the worker's mule
-  jobs; a hand-back preserves recovery for the original incarnation. Send and
-  wait hand back on a missing master without treating the local pi as dead.
+- A `--mule` spawn rolls back when local ctl startup fails.
+- Master loss is not pane death: send and wait hand back on a missing master
+  without treating the local pi as dead, and delivery is refused while the
+  host is unavailable. Close checks the remote tree for uncommitted or
+  uncollected work; a hand-back preserves recovery for the original
+  incarnation.
+- Recovery hints for `--mule` workers respawn with `--mule` and the recorded
+  repo; the dashboard matches their local pane runtime.
+- Rex pins managed local pane routing after interactive shell startup and
+  strips inherited mu routing from session templates, keeping rc PATH and
+  credentials.
 
 ## [5.3.0] — 2026-11-23
 
