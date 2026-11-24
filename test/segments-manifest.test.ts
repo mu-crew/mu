@@ -23,8 +23,9 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type Db, openDb } from "../src/db.js";
+import { withFileLock } from "../src/file-lock.js";
 import { formatHlc } from "../src/hlc.js";
 import {
   decodeFingerprint,
@@ -56,6 +57,8 @@ import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 
 const deadPid = cachedDeadPid();
+
+vi.mock("../src/file-lock.js", { spy: true });
 
 describe("segments", () => {
   let tempDir: string;
@@ -395,16 +398,15 @@ describe("segments", () => {
       expect(linesOf(path)).toEqual(lines);
     });
 
-    it("a no-op flush does not wait on a held segment lock", async () => {
+    it("a no-op flush never attempts to acquire the held segment lock", async () => {
       await seedFour();
       const stateDir = join(tempDir, "state");
       await withEnv("MU_STATE_DIR", stateDir, async () => {
-        mkdirSync(segmentLockPath(dir, localMachineId(a)), { recursive: true });
-        const started = Date.now();
-        const result = await flushSegment(a, dir);
+        holdSegmentLock();
+        vi.mocked(withFileLock).mockClear();
+        const result = await flushSegment(a, dir, { lockWaitMs: 0 });
         expect(result.appended).toBe(0);
-        // The locked path would spin until the 15s acquire timeout.
-        expect(Date.now() - started).toBeLessThan(1000);
+        expect(withFileLock).not.toHaveBeenCalled();
       });
     });
 
@@ -456,18 +458,22 @@ describe("segments", () => {
       });
     });
 
-    it("ambientFlush lockWaitMs: 0 gives up on a held lock at once", async () => {
+    it("ambientFlush lockWaitMs: 0 tries the held lock without a retry budget", async () => {
       await seedFour();
       const stateDir = join(tempDir, "state");
       await withEnv("MU_STATE_DIR", stateDir, async () => {
         await withEnv("MU_SYNC_DIR", dir, async () => {
-          holdSegmentLock();
+          const lockPath = holdSegmentLock();
           seedTask(a, "pending");
-          const started = Date.now();
+          vi.mocked(withFileLock).mockClear();
           const busy = await ambientFlush(a, { lockWaitMs: 0 });
           expect(busy?.lockBusy).toBe(true);
-          // The default wait (AMBIENT_FLUSH_LOCK_WAIT_MS) is 2s.
-          expect(Date.now() - started).toBeLessThan(500);
+          expect(withFileLock).toHaveBeenCalledExactlyOnceWith(
+            lockPath,
+            expect.any(String),
+            expect.any(Function),
+            expect.objectContaining({ acquireTimeoutMs: 0 }),
+          );
         });
       });
     });

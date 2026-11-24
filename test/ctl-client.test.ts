@@ -138,13 +138,23 @@ describe("ctlProbe", () => {
   it("bounds hello + a hung status by one overall timeout", async () => {
     const p = await serve((line, sock) => {
       const req = JSON.parse(line) as { op: string };
-      // hello answers late; status never answers.
-      if (req.op === "hello") setTimeout(() => sock.end(encode({ v: 1, ok: true })), 60);
+      if (req.op === "hello") {
+        vi.advanceTimersByTime(60);
+        sock.end(encode({ v: 1, ok: true }));
+      } else if (req.op === "status") {
+        // No reply: let either a shared or a fresh budget expire.
+        vi.advanceTimersByTime(100);
+      }
     });
-    const started = Date.now();
-    const r = await ctlProbe(p, 100);
-    expect(r.kind).toBe("refused");
-    expect(Date.now() - started).toBeLessThan(160);
+    vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
+    try {
+      expect(await ctlProbe(p, 100)).toMatchObject({
+        kind: "refused",
+        error: expect.stringContaining("40ms"),
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports refused when the server never replies", async () => {
