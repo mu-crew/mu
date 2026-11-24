@@ -2,7 +2,7 @@
 // unit P5): the template link owns `reach` (reachable, repo), the lease kind `template`
 // (shell, stop, attach) and `agent` (job); checkHost keeps only mu's own steps and reaches
 // the seams' through `caps.checks` and `checkSteps`. The output itself is pinned by
-// test/host-check-golden.integration.test.ts.
+// test/host-check-golden.test.ts.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
