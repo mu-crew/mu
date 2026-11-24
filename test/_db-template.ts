@@ -1,4 +1,4 @@
-// Template DB for tests: build the v13 schema once per run, copy it per test.
+// Template DB for tests: build the current schema once per run, copy it per test.
 //
 // A fresh `openDb` runs the whole DDL plus the capture triggers (~44 ms an
 // idle core); 6000 of them were 48% of the fast tier's file time

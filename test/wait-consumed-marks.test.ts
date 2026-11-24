@@ -1,14 +1,7 @@
-// Characterisation for a7_wait_drain_rca_3 (the round-2 refutation, delegate_refute-a7b in
-// scratch). Pins TODAY's behaviour, not the wanted one, on three gaps the round-2 proposal left:
-//   1. snapshots cannot tell "consumed by this result" from "terminal, still owed" (RC3): the
-//      engine knows (WaitResult.delivered, src/wait.ts build) but the output never prints it.
-//   2. a superseded generation (src/wait.ts commit: `!ended.applied` skips recordCursors) still
-//      returns its events, and the settle and the Stop hook present them as consumed, so the
-//      newer wait prints them a second time. Single and batch (`--all`).
-//   3. a settle that meets delegates of two waves.
-// a7_ready_engine (unit A: engine, output, Stop hook) flipped the marks and superseded pins to the
-// new behaviour, and a7_ready_settle (unit B: the pi settle, nudge.ts) the settle halves (NOW).
-// Real SQLite; no agents.
+// Wait consumed-marks: what a wait result says it consumed. Snapshots tell "consumed by this
+// result" from "terminal, still owed"; a superseded generation delivers nothing of its own
+// (engine, Stop hook and settle), so the newer wait prints each event once; a settle over
+// delegates of two waves runs one union loop. Real SQLite; no agents.
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -125,7 +118,7 @@ function settle(waitOut: (args: readonly string[], sid: string) => Promise<MuRes
   return { emit, waits, delivered };
 }
 
-describe("RC3: snapshots say what this result consumed (NOW, every mode)", () => {
+describe("RC3: snapshots say what this result consumed (every mode)", () => {
   it("first mode over 3 owned closes: 1 delivered, 2 owed, and the result says so", async () => {
     for (const id of ["a", "b", "c"]) mk(id);
     registerOwnedWait(
@@ -168,7 +161,7 @@ describe("RC3: snapshots say what this result consumed (NOW, every mode)", () =>
     const d = data(out) as Data & Record<string, unknown>;
     expect(d.firing?.kind).toBe("heartbeat");
     const t1 = d.snapshots?.find((s) => s.ref === "task:w/t1");
-    // NOW: the heartbeat consumed nothing, so t1 reads owed (never delivered).
+    // the heartbeat consumed nothing, so t1 reads owed (never delivered).
     expect(t1).toMatchObject({ status: "CLOSED", fired: true, owed: true });
     expect(t1).not.toHaveProperty("delivered");
     expect(d.owed).toBe(1);
@@ -192,7 +185,7 @@ describe("RC3: snapshots say what this result consumed (NOW, every mode)", () =>
   });
 });
 
-describe("superseded generations deliver nothing of theirs (NOW: engine, Stop hook and settle)", () => {
+describe("superseded generations deliver nothing of theirs (engine, Stop hook and settle)", () => {
   // A newer wait of the same caller begins.
   const supersede = async (): Promise<void> => {
     beginWait(db, "pi:s");
@@ -217,7 +210,7 @@ describe("superseded generations deliver nothing of theirs (NOW: engine, Stop ho
     // The Stop hook reads it as superseded: nothing consumed, so it lets the turn end.
     const hook = parseStopWait(json);
     expect(hook.kind).toBe("superseded");
-    // NOW (unit B): the settle shows one line, does not continue, waits no more, delivers nothing.
+    // the settle shows one line, does not continue, waits no more, delivers nothing.
     const s = settle(async () => ({ code: 0, stdout: json, stderr: "" }));
     const turn = await s.emit();
     expect(turn?.continue).toBeUndefined();
@@ -246,7 +239,7 @@ describe("superseded generations deliver nothing of theirs (NOW: engine, Stop ho
   });
 });
 
-describe("a superseded result can be partly consumed (NOW: narrowed, two callers)", () => {
+describe("a superseded result can be partly consumed (narrowed, two callers)", () => {
   it("--all as two callers, only one superseded: `delivered` names only the consumed member", async () => {
     for (const id of ["a", "b"]) mk(id);
     registerOwnedWait(db, "pi:s", [taskRef("a")]);
@@ -286,7 +279,7 @@ describe("a superseded result can be partly consumed (NOW: narrowed, two callers
   });
 });
 
-describe("a settle over delegates of two waves (NOW: one union loop)", () => {
+describe("a settle over delegates of two waves (one union loop)", () => {
   it("interleaved waves A and B, all answered: 1 turn, each wave summarised once, 4 bodies", async () => {
     const a1 = mkDelegate(db, "pi:s", { wave: "A" });
     const b1 = mkDelegate(db, "pi:s", { wave: "B" });

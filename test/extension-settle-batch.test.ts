@@ -1,7 +1,7 @@
 // The pi settle over a `mu wait --ready` result (extension/settle-events.ts via registerNudge):
 // one line per consumed event, the answer blocks, the owed line, the superseded paths, and the
 // single-event text kept byte for byte. The wait and the delegate reads are faked; the real
-// engine and CLI are covered in wait-settle-drain and wait-drain-r3.
+// engine and CLI are covered in wait-settle-drain and wait-consumed-marks.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";

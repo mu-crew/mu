@@ -3,7 +3,7 @@
 
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -34,10 +34,10 @@ describe("openDb", () => {
     const nested = join(tempDir, "nested", "deeper", "mu.db");
     const db = openDb({ path: nested });
     db.close();
-    // No throw = parent dirs created.
+    expect(existsSync(dirname(nested))).toBe(true);
   });
 
-  it("applies exactly the 27 v13 tables", () => {
+  it("applies exactly the 32 v14 tables", () => {
     const db = openDb({ path: dbPath });
     const tables = (
       db
@@ -82,7 +82,7 @@ describe("openDb", () => {
     ]);
     expect(tables).toHaveLength(32);
     expect([...tables].sort()).toEqual(tables);
-    // schema_version stamped to current (v14).
+    // The literal 14 is a deliberate pin: bumping the schema must touch this test.
     const v = (
       db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as { version: number }
     ).version;

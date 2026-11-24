@@ -1,5 +1,5 @@
-// Schema v12 (k_schema_v12): the new columns, task_auto, the blockers view,
-// the ready order, the note-kind guard, capture/apply of the new fields, the
+// Task fields on the v14 schema (introduced at v12): the new columns, task_auto, the blockers
+// view, the ready order, the note-kind guard, capture/apply of the new fields, the
 // torn-down filter, and the rule that new fields only ride v2 segment lines.
 
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
@@ -46,7 +46,7 @@ let dbPath: string;
 let db: Db;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), "mu-schema-v12-"));
+  tempDir = mkdtempSync(join(tmpdir(), "mu-schema-task-fields-"));
   dbPath = join(tempDir, "mu.db");
   db = openDb({ path: dbPath });
 });
