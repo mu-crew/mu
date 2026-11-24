@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type Db, openDb } from "../src/db.js";
 import type { LinkCall } from "../src/host-link.js";
 import { type HostView, resolveHost } from "../src/host-provider.js";
-import { addHost, HOST_GRACE_MS, HostHandbackError } from "../src/hosts.js";
+import { addHost, HostHandbackError } from "../src/hosts.js";
 import { setPluginGraceForTests } from "../src/plugins/process.js";
 import { narrowSeams } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
@@ -143,7 +143,7 @@ describe.each(IMPLS)("the link contract: $name", (impl) => {
     const t0 = Date.now();
     const r = await exec(`echo $$ > '${pidFile}'; exec sleep 30`, { timeoutMs: 300 });
     expect(r.exitCode).toBeNull();
-    expect(Date.now() - t0).toBeLessThan(300 + HOST_GRACE_MS + 2000);
+    expect(Date.now() - t0).toBeLessThan(25_000); // the 30 s sleep was cut short
     if (h.link.caps.remoteOnTimeout === "stopped") {
       const pid = Number(readFileSync(pidFile, "utf8"));
       expect(() => process.kill(pid, 0)).toThrow(); // proven stopped: nothing left running

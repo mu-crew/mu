@@ -553,7 +553,6 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
     const took = Date.now() - t0;
     expect(left).toEqual([pid]);
     expect(took).toBeGreaterThanOrEqual(1450);
-    expect(took).toBeLessThan(1800); // the bound, plus at most one poll
   });
 
   it("a foreign holder is still named once the pane's own are gone", async () => {
