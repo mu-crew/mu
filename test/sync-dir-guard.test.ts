@@ -25,7 +25,7 @@ import { ensureWorkstream } from "../src/workstream.js";
 import { runCli, runCliWire } from "./_runCli.js";
 
 const SYNC_KEY = "MU_SYNC_DIR";
-const MESSAGE = "MU_SYNC_DIR holds 3.x segments; give mu 4 its own dir";
+const MESSAGE = "MU_SYNC_DIR holds 3.x segments; give mu its own dir";
 
 let tempDir: string;
 let dir: string;

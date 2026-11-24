@@ -1,44 +1,22 @@
-// mu — `mu sync`: ONE verb, whose bare form is a PEER STATUS REPORT.
+// mu — `mu sync`: a PEER STATUS REPORT (who are my peers, how far behind
+// am I, when did I last hear from them). Every mu invocation already
+// flushes and ingests via the ambient hook in src/cli/handle.ts, so the
+// verb adds only the report, plus two flags nothing else can express:
 //
-// The sync itself is incidental. Every mu invocation already flushes and
-// ingests (the ambient hook in src/cli/handle.ts), so a verb that only
-// did that would exist for reassurance. What no other command answers is
-// "who are my peers, how far behind am I, and when did I last hear from
-// them" — so that is what the bare form prints:
-//
-//   $ mu sync
-//   flushed 14 ops · ingested 22 from 1 peer
-//   machine   last seen   behind
-//   devbox    2m ago      0
-//   desktop   3d ago      47   ← stale
-//
-// It keeps its bare form for scripting ergonomics too: `rsync ... && mu
-// sync` reads correctly where `rsync ... && mu state` reads like an
-// accident.
-//
-// TWO FLAGS, AND ONLY TWO, because nothing else can express them:
-//
-//   --from <path>    a DIFFERENT READER — a peer's `mu.db` ops table via
-//                    SQLite rather than a JSONL segment. For an sshfs
-//                    mount or a copied file.
+//   --from <path>    a different reader: a peer's `mu.db` ops table via
+//                    SQLite rather than a JSONL segment (sshfs mount or a
+//                    copied file).
 //   --repair <peer>  reset that peer's watermark and re-read its segment
-//                    from zero. Safe because ingest is idempotent via
+//                    from zero. Safe: ingest is idempotent via
 //                    UNIQUE (machine_id, hlc).
 //
-// DELIBERATELY ABSENT: `mu peers` (folded into the bare form here), and
-// `--to <dir>` / `--from <dir>`. A one-off directory needs no flag —
-// `MU_SYNC_DIR=/mnt/usb mu state` already ingests from the USB stick
-// using the repo's existing env-var-override idiom, and adding a flag for
-// it would be a second way to say the same thing.
+// No `--push` / `--pull`: mu reads and writes files; the operator owns
+// transport (a standing ROADMAP pledge). A one-off directory needs no flag:
+// `MU_SYNC_DIR=/mnt/usb mu state`.
 //
-// ALSO ABSENT, permanently: `--push` / `--pull <host>`. mu reads and
-// writes FILES; the operator owns transport (a standing ROADMAP pledge).
-// When a peer is stale we PRINT an rsync line and let them paste it.
-//
-// This verb opts OUT of the ambient hook (`ambientSync: false`) and runs
-// the pass itself. Not to skip work — to report honest numbers. If the
-// hook ran first, its ingest would have consumed everything and the
-// report would print "ingested 0" immediately after doing the opposite.
+// The verb opts OUT of the ambient hook (`ambientSync: false`) and runs the
+// pass itself, for honest counts: a hook pass first would consume everything
+// and the report would print "ingested 0" right after doing the opposite.
 
 import { emitJson, handle, JSON_OPT } from "../cli.js";
 import type { Db } from "../db.js";
@@ -114,9 +92,7 @@ export async function cmdSync(db: Db, opts: SyncCmdOptions = {}): Promise<void> 
   // it names its source outright, so there is no dir to need.
   if (opts.from !== undefined) {
     const result = ingestFromDb(db, opts.from);
-    // Flush afterwards so the ops we just took on are in our own segment
-    // for any peer sharing the dir — that is how a laptop relays the
-    // devserver's work to a third machine (gossip, for free).
+    // Flush afterwards, as a normal pass does.
     const flushed = dir === null ? null : await syncPass(db, dir);
     emitFrom(db, result, flushed?.flushed.appended ?? 0, dir, opts);
     return;

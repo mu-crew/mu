@@ -256,10 +256,8 @@ function refusals(db: Db, previous: string | null, dir: string | null): string[]
 }
 
 /**
- * The 13 -> 14 step (spec D5), inside the check's transaction. Today it is
- * the stamp: schema 14 is the v13 shape. The plugin units add their
- * column-list rebuilds here (carrier_jobs, spawn_receipts, remote_recovery,
- * host_profiles) and their tables to CURRENT_SCHEMA.
+ * The 13 -> 14 step (spec D5), inside the check's transaction: the stamp
+ * alone. The table and column changes live in `upgradeSchema`.
  */
 export function step13To14(db: Db): void {
   const changed = db

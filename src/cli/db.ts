@@ -1,14 +1,8 @@
 // mu — `mu db backup | compact | forget`: whole-DB file commands.
 //
-// mu once had `mu db export / import / replay` — a whole-DB sync
-// mechanism with manifests, per-workstream drift detection, and
-// divergence sidecars (1500+ LOC). All three are gone: sync is ambient over
-// segments, and disaster recovery is `mu rebuild`.
-//
-// `backup` survives for the one case those verbs were actually used for
-// — "give me one file I can scp" — which SQLite already implements as a
-// single `VACUUM INTO`, so it has no SDK module. A backup file is a
-// convenience copy that starts going stale the moment it is written.
+// `backup` is "give me one file I can scp": a single `VACUUM INTO`, so it
+// has no SDK module. The copy goes stale the moment it is written.
+// Disaster recovery is `mu rebuild`.
 //
 // `compact` and `forget` shrink mu.db. Their policy lives in the SDK
 // (src/compact.ts); this file adds the dry run, the backup beside the
@@ -34,9 +28,8 @@ import { BackupTargetExistsError, UsageError } from "./handle.js";
 
 export function cmdDbBackup(db: Db, file: string, opts: { json?: boolean } = {}): void {
   const target = resolve(file);
-  // VACUUM INTO refuses an existing target itself, but its error is a
-  // raw SQLite string; a typed UsageError gets the operator an exit code
-  // and a next step instead.
+  // VACUUM INTO refuses an existing target itself, but with a raw SQLite
+  // string; the typed error gives an exit code (4) and a next step.
   if (existsSync(target)) {
     throw new BackupTargetExistsError(target);
   }

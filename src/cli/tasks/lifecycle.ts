@@ -15,9 +15,7 @@ import { pc } from "../../output.js";
 import { formatPair, type TaskPair } from "../../tasks/status.js";
 import {
   acceptTask,
-  CloseNeedsEvidenceError,
   type CloseSubstate,
-  closeReadiness,
   closeTask,
   getTask,
   openTask,
@@ -67,42 +65,14 @@ export async function cmdTaskClose(
   if (opts.why !== undefined) sdkOpts.why = opts.why;
   // The reason note is attributed like the evidence note.
   if (opts.why !== undefined && opts.why !== "") sdkOpts.author = actor;
-  // mufeedback task_close_evidence_does_not_append_the: closeTask
-  // auto-inserts a `CLOSE: <evidence>` note when --evidence is
-  // non-empty. Resolve the actor identity once per close so the note is
-  // attributed to the closing worker (mu-spawned worker via
-  // MU_AGENT_NAME, adopted pane via title, otherwise $USER /
-  // 'orchestrator') and so the dirty-worktree warning can inspect that
-  // actor's worktree without resolving identity a second time.
+  // The CLOSE note is attributed to the closing actor; resolved once so the
+  // dirty-worktree warning inspects that actor's worktree.
   if (opts.evidence !== undefined && opts.evidence !== "") {
     sdkOpts.author = actor;
   }
-  // Capture the owner BEFORE closeTask so we can refresh their title
-  // even though closeTask doesn't return owner info. owner won't
-  // change as a result of close (FK SET NULL only fires on delete).
+  // Read once for the dirty-worktree hint. The SDK owns the evidence guard
+  // and the --if-ready skip (src/tasks/lifecycle.ts).
   const taskRow = getTask(db, localId, ws);
-  // A close to done needs --evidence. Refuse before any write, with one
-  // line naming the flag. A no-op retry of an already-CLOSED task needs
-  // none; with --if-ready the SDK decides (a skip writes nothing).
-  const closeAs = sdkOpts.as ?? (taskRow?.status === "CLOSED" ? taskRow.substate : "done");
-  const retry = taskRow?.status === "CLOSED" && taskRow.substate === closeAs;
-  // The --if-ready skip (a blocker not CLOSED, or a check on one without a
-  // verdict) is the one case left to the SDK.
-  const readiness =
-    opts.ifReady === true && taskRow !== undefined ? closeReadiness(db, localId, ws) : undefined;
-  const wouldSkip =
-    readiness !== undefined &&
-    (readiness.blockingIds.length > 0 || readiness.pendingChecks.length > 0);
-  if (
-    taskRow &&
-    !retry &&
-    !wouldSkip &&
-    closeAs === "done" &&
-    (opts.evidence ?? "").trim() === ""
-  ) {
-    // The same typed error the SDK and `mu sql` raise: one guard, one class, one exit (2).
-    throw new CloseNeedsEvidenceError(localId, ws);
-  }
   // Read before the close: the warning is about the finding as it was.
   const warnings = decisionWarnings(db, localId, ws, sdkOpts.as ?? "done", opts.why);
   const r = closeTask(db, localId, sdkOpts);

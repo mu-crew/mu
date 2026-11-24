@@ -1,9 +1,8 @@
 // mu — `mu rebuild <file>`: the disaster-recovery verb.
 //
 // Thin wrapper over `rebuildInto` (src/rebuild.ts). All the human-facing
-// reporting lives here, and none of it lives in the SDK, so the
-// forthcoming doctor drift check can rebuild into a temp DB and diff
-// without a human-shaped summary getting in the way.
+// reporting lives here, and none of it lives in the SDK, so the doctor
+// drift check can rebuild into a temp DB and diff without it.
 
 import { type Db, defaultDbPath } from "../db.js";
 import { pc } from "../output.js";
