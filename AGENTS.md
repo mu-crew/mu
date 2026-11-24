@@ -67,7 +67,9 @@ first.
   Never add `--unsafe`: it rewrites `delete process.env.X` into
   `process.env.X = undefined`, which sets the string `"undefined"`.
   Delete env vars as `const key = "FOO"; delete process.env[key];`.
-- Files cap at 1500 LOC. Refactor at 800.
+- Files: aim under 800 LOC, and split a file over 1500 when you next touch
+  it (not enforced; `extension/delegate.ts`, `src/cli/agents.ts` and
+  `src/hosts.ts` are over today). Do not grow them.
 - Layout is flat at the `src/` root. One level of subdirectory is
   allowed for a cohesive cluster: one theme, imports only from the
   cluster to root files, and a row in the ARCHITECTURE module map.
