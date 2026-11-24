@@ -2,7 +2,6 @@
 // per visible op, a result bounded on its FINAL bytes, every cut counted and
 // recoverable, SQL column names at the CLI edge, and `--tail` as an NDJSON stream.
 
-import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,18 +71,21 @@ interface Page {
   retrieve?: string;
 }
 
-/** Run a printed `mu ...` hint exactly as a shell would, against the built CLI and this DB. */
-function runHint(cmd: string, extraEnv: Record<string, string> = {}): string {
-  return execFileSync("sh", ["-c", `mu() { node "${process.cwd()}/dist/cli.js" "$@"; }; ${cmd}`], {
-    encoding: "utf8",
-    env: {
-      PATH: process.env.PATH ?? "",
-      HOME: dir,
-      MU_DB_PATH: dbPath,
-      MU_SYNC_DIR: "",
-      ...extraEnv,
-    },
-  });
+/** Run a printed `mu ...` hint in-process (leading `mu` dropped, argv split on spaces) against this DB. */
+async function runHint(cmd: string, extraEnv: Record<string, string> = {}): Promise<string> {
+  const argv = cmd.trim().replace(/^mu /, "").split(/\s+/);
+  const saved = Object.keys(extraEnv).map((k) => [k, process.env[k]] as const);
+  Object.assign(process.env, extraEnv);
+  try {
+    const r = await runCli(argv, dbPath);
+    expect(r.error).toBeUndefined();
+    return r.stdout;
+  } finally {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
 }
 
 interface Whole {
@@ -119,7 +121,7 @@ describe("text: one record per visible op", () => {
     expect(lines[0]).toMatch(/…$/);
     // The retrieval is a real command: run it as a shell would and get the payload whole.
     const next = m?.[2] ?? "";
-    const rows = JSON.parse(runHint(`${next} --json`)) as {
+    const rows = JSON.parse(await runHint(`${next} --json`)) as {
       data: { items: { payload: string }[] };
     };
     expect(rows.data.items[0]?.payload).toBe("y".repeat(900));
@@ -212,7 +214,7 @@ describe("json: canonical keys and a bounded final envelope", () => {
     for (let i = 0; i < 30; i++) say(`${i}:${"w".repeat(300)}`);
     const first = await runCliJson<Page>(["log", "-w", "demo", "-n", "30", "--json"], dbPath);
     expect(first.data.more).toBeGreaterThan(0);
-    const next = JSON.parse(runHint(first.data.resume ?? "")) as { data: Page };
+    const next = JSON.parse(await runHint(first.data.resume ?? "")) as { data: Page };
     // latest-N window: the page holds the NEWEST; resume reads the displaced older ones,
     // oldest first, with no overlap and none skipped at the seam, each whole.
     const window = listLogs(db, { workstream: "demo", limit: 30 }).map((x) => x.seq);
@@ -223,7 +225,7 @@ describe("json: canonical keys and a bounded final envelope", () => {
 
     const cursor = await runCliJson<Page>(["log", "-w", "demo", "--since", "0", "--json"], dbPath);
     expect(cursor.data.items[0]?.seq).toBe(1);
-    const rest = JSON.parse(runHint(cursor.data.resume ?? "")) as { data: Page };
+    const rest = JSON.parse(await runHint(cursor.data.resume ?? "")) as { data: Page };
     expect(rest.data.items[0]?.seq).toBe((cursor.data.items.at(-1)?.seq ?? 0) + 1);
     expect(cursor.data.count + cursor.data.more).toBe(31);
   });
@@ -502,7 +504,7 @@ describe("workstream list is capped, live and torn down", () => {
     expect(capped.data.cut).toBeGreaterThan(400);
     const hint = capped.data.retrieve ?? "";
     expect(hint).toBe("mu workstream list --all --json");
-    const all = JSON.parse(runHint(hint)) as { data: Whole };
+    const all = JSON.parse(await runHint(hint)) as { data: Whole };
     expect(all.data.items.map((i) => i.name)).toContain(longName);
     expect(all.data.cut).toBeUndefined();
     expect(all.data.retrieve).toBeUndefined();
@@ -516,7 +518,7 @@ describe("workstream list is capped, live and torn down", () => {
     legacyHardTeardown(db, longName);
     const capped = await runCliJson<Page>(["workstream", "list", "--torn-down", "--json"], dbPath);
     expect(capped.data.cut).toBeGreaterThan(400);
-    const all = JSON.parse(runHint(capped.data.retrieve ?? "")) as { data: Whole };
+    const all = JSON.parse(await runHint(capped.data.retrieve ?? "")) as { data: Whole };
     expect(all.data.items[0]?.name).toBe(longName);
     expect(all.data.cut).toBeUndefined();
     const text = await runCli(["workstream", "list", "--torn-down", "--all"], dbPath);
@@ -595,7 +597,7 @@ describe("hints name seqs, never filters, and run as printed", () => {
     expect(r.data.more).toBeGreaterThan(0);
     const hint = r.data.resume ?? "";
     expect(hint).toMatch(/^mu log --seq \d+\.\.\d+ --json$/);
-    const rest = JSON.parse(runHint(hint, foreign)) as {
+    const rest = JSON.parse(await runHint(hint, foreign)) as {
       data: { items: { seq: number; payload: string }[] };
     };
     const shown = new Set(r.data.items.map((i) => i.seq));
@@ -619,7 +621,7 @@ describe("hints name seqs, never filters, and run as printed", () => {
     // Too scattered to name as a few exact runs: an explicit whole-log cursor, no filter echoed.
     expect(hint).toMatch(/^mu log --after \d+ --json$/);
     expect(bytesOf(hint)).toBeLessThan(64);
-    const rest = JSON.parse(runHint(hint)) as { data: Page };
+    const rest = JSON.parse(await runHint(hint)) as { data: Page };
     const omitted = listLogs(db, { workstream: "demo", kind, limit: 70 })
       .map((x) => x.seq)
       .filter((x) => !r.data.items.some((i) => i.seq === x));
@@ -645,7 +647,7 @@ describe("hints name seqs, never filters, and run as printed", () => {
       expect(r.data.more).toBeGreaterThan(0);
       expect(r.data.resume).not.toMatch(/printf|group|;/);
       // An injected `printf` would put bare text before the JSON document and break the parse.
-      const out = runHint(r.data.resume ?? "");
+      const out = await runHint(r.data.resume ?? "");
       expect((JSON.parse(out) as { ok: boolean }).ok).toBe(true);
     }
   });
@@ -663,7 +665,7 @@ describe("hints name seqs, never filters, and run as printed", () => {
       expect(r.data.items[0]?.cut).toBeGreaterThan(0);
       const hint = r.data.retrieve ?? "";
       expect(hint).toBe(`mu log --seq ${r.data.items[0]?.seq} --json`);
-      const back = JSON.parse(runHint(hint, foreign)) as {
+      const back = JSON.parse(await runHint(hint, foreign)) as {
         ok: boolean;
         data: { items: { actor: string; entity: string; key: string; cut?: number }[] };
       };
@@ -679,7 +681,7 @@ describe("hints name seqs, never filters, and run as printed", () => {
     say("three");
     const all = listLogs(db, { workstream: "demo" }).map((x) => x.seq);
     const [a, b, c] = all.slice(-3);
-    const r = JSON.parse(runHint(`mu log --seq ${a},${c} --json`, foreign)) as { data: Page };
+    const r = JSON.parse(await runHint(`mu log --seq ${a},${c} --json`, foreign)) as { data: Page };
     expect(r.data.items.map((i) => i.payload)).toEqual(["one", "three"]);
     expect(r.data.items.some((i) => i.seq === b)).toBe(false);
     const range = await runCliJson<Page>(["log", "--seq", `${a}..${c}`, "--json"], dbPath);
@@ -692,7 +694,7 @@ describe("hints name seqs, never filters, and run as printed", () => {
 
   it("--after pages the whole log, strictly after the seq, with no scope", async () => {
     say("one");
-    const r = JSON.parse(runHint("mu log --after 0 -n 2 --json", foreign)) as { data: Page };
+    const r = JSON.parse(await runHint("mu log --after 0 -n 2 --json", foreign)) as { data: Page };
     expect(r.data.items.map((i) => i.seq)).toEqual([1, 2]);
   });
 
@@ -726,7 +728,7 @@ describe("hints name seqs, never filters, and run as printed", () => {
       dbPath,
     );
     expect(w.data.retrieve).toBe(`mu log --seq ${w.data.seq} --json`);
-    const back = JSON.parse(runHint(w.data.retrieve ?? "", foreign)) as {
+    const back = JSON.parse(await runHint(w.data.retrieve ?? "", foreign)) as {
       data: { items: { payload: string }[] };
     };
     expect(back.data.items[0]?.payload).toBe("x".repeat(6000));
