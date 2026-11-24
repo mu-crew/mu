@@ -546,7 +546,7 @@ CREATE TABLE IF NOT EXISTS agents (
   name          TEXT NOT NULL,                  -- per-workstream unique
   cli           TEXT NOT NULL DEFAULT 'pi',
   pane_id       TEXT NOT NULL,
-  status        TEXT NOT NULL,                    -- DEPRECATED (2.0): always 'spawning'; runtime state lives in murmur. Drop at the first v11 migration.
+  status        TEXT NOT NULL,                    -- DEPRECATED (2.0): always 'spawning'; runtime state lives in murmur. Drop at the next breaking release (ROADMAP).
   role          TEXT NOT NULL DEFAULT 'full-access',
   tab           TEXT,
   cwd           TEXT,                           -- worktree path the pane runs in (machine-local)

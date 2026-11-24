@@ -35,19 +35,14 @@ TS 7.0 lacks. Revisit at TS 7.1.
 
 ## Gates
 
-Measured 2026-10-23 on linux-host (16 cores, warm cache, shared host);
-see [the record](docs/test-health/2026-10-23-surface.md). Both gates are
-over budget today.
+Both gates run over budget on a shared host; measurements are in
+[the test-health record](docs/test-health/2026-10-23-surface.md).
 
-| Gate | Command | Budget | Today |
-|---|---|---|---|
-| fast | `npm run typecheck && npm run lint && npm run test:fast` | 30 s | ~50 s |
-| slow | `npm run build && npm run test` | 5 min | 4.5 to 8.5 min |
-| targeted slow | `npm run build && npx vitest run <files>` | — | — |
-
-The "Today" column is stale: on a shared box the RC measured fast 22–39 s
-(4850 tests) and slow 307–486 s (5835 tests), over budget. Re-measure on an
-idle host before the release and rewrite the column.
+| Gate | Command | Budget |
+|---|---|---|
+| fast | `npm run typecheck && npm run lint && npm run test:fast` | 30 s |
+| slow | `npm run build && npm run test` | 5 min |
+| targeted slow | `npm run build && npx vitest run <files>` | — |
 
 Workers run fast while iterating, then targeted slow for the changed area,
 and fast on the final commit. The orchestrator runs fast + slow once per

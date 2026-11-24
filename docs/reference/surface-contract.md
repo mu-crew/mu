@@ -189,8 +189,7 @@ report + close in one op group; malformed writes "no close (malformed)".
 only for a caller-scoped human-needed task or when nothing it owns runs.
 
 **Budgets (pinned by tests).** SKILL 600 words, each recipe 250, all
-recipes 4,000 (`test/prose-budget.test.ts`; the remote recipe's separate
-200-word target is not met and not tested); per-verb `--help` description at most 3 lines at 80 columns
+recipes 4,000 (`test/prose-budget.test.ts`); per-verb `--help` description at most 3 lines at 80 columns
 (`test/help-budget.test.ts`); each `next` and error one line
 (`src/messages.ts`). They do not cap canonical docs such as this page.
 

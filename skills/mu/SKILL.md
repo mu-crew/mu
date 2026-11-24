@@ -57,7 +57,7 @@ Read [orchestrator-loop](recipes/orchestrator-loop.md) before you dispatch. Alwa
 - **Findings are tasks** ([findings](recipes/findings.md)); each shipping unit gets a
   [review gate](recipes/adversarial-review.md).
 - **Stop rule on the umbrella first.**
-- **`course check due` stops dispatch**: finish merging, then
+- **A `course check due` notice stops dispatch**: finish merging, then
   [course-correct](recipes/course-correct.md); resume only after it.
 - **Edit or build: `--worktree`.** Never make your own.
 
