@@ -40,8 +40,8 @@ export function leakedVitestTmpDir(project: unknown, tmp: string = tmpdir()): st
 export async function setup(project: TestProject): Promise<void> {
   vitestTmpDir = leakedVitestTmpDir(project);
   try {
-    pinRealGit();
     runRoot = mkdtempSync(join(tmpdir(), "mu-test-run-"));
+    pinRealGit(runRoot);
     const serverRoot = createServerRoot();
     try {
       stopServers = await watchTestServers(serverRoot, runRoot);
