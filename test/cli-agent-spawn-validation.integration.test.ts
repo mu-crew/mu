@@ -22,9 +22,9 @@
 //             when the CLI was resolved via env var, so config issues
 //             are visible without `mu agent show`.
 
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentSpawnCliNotFoundError,
@@ -37,6 +37,7 @@ import {
   setCommandResolverForTests,
   spawnAgent,
 } from "../src/agents.js";
+import { ctlSocketPath } from "../src/ctl/path.js";
 import { type Db, openDb } from "../src/db.js";
 import { resetSleep, resetTmuxExecutor, setSleepForTests, setTmuxExecutor } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
@@ -96,7 +97,7 @@ let state: MockState;
 let originalMuPiCommand: string | undefined;
 
 beforeEach(() => {
-  tempDir = mkdtempSync(join(tmpdir(), "mu-spawn-validation-"));
+  tempDir = mkdtempSync(join(tmpdir(), "msv-"));
   dbPath = join(tempDir, "mu.db");
   db = openDb({ path: dbPath });
   state = freshMockState();
@@ -120,6 +121,31 @@ afterEach(() => {
   const piKey = "MU_PI_COMMAND";
   if (originalMuPiCommand === undefined) delete process.env[piKey];
   else process.env[piKey] = originalMuPiCommand;
+});
+
+it("rolls back a staged worktree when the ctl socket directory cannot be made", async () => {
+  const name = "worker-1";
+  const workstream = "auth";
+  const root = join(tempDir, "repo");
+  mkdirSync(root);
+  copyGitFixture(root);
+  const { executor, calls } = mockTmux(state);
+  setTmuxExecutor(executor);
+  const socketDir = dirname(ctlSocketPath(workstream, name, tempDir));
+  const sockRoot = join(tempDir, "sock");
+  expect(socketDir.startsWith(`${sockRoot}/`)).toBe(true);
+  writeFileSync(sockRoot, "not a directory");
+
+  await withEnv("MU_STATE_DIR", join(tempDir, "state"), async () => {
+    const path = worktreePath(workstream, name);
+    await expect(
+      spawnAgent(db, { name, workstream, command: "sh", root, worktree: true }),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+    expect(calls).toEqual([]);
+    expect(getAgent(db, name, workstream)).toBeUndefined();
+    expect(listWorktrees(db)).toEqual([]);
+    expect(existsSync(path)).toBe(false);
+  });
 });
 
 // ─── Pure helper: envVarNameForCli ───────────────────────────────────

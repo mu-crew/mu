@@ -24,6 +24,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- Spawn rolls back staged resources when pane setup fails before launch.
 - Expired spawn placeholders no longer authorize deletion of unregistered worktree paths.
 - Rex spawns under csh or tcsh fail before launching a pane and tell you how
   to select a supported shell, instead of returning a pane that dies at startup.

@@ -48,7 +48,6 @@ import {
   type HostProfile,
   HostProfileError,
   LOCAL_LOOP_TRANSPORT,
-  releaseHostChannel,
 } from "../hosts.js";
 import { awaitLeaseJob } from "../jobs/lease.js";
 import { birthIdentity, viewPresent, viewRef } from "../jobs/view.js";
@@ -86,7 +85,6 @@ import {
   assertLeaseSpawnable,
   claimLeaseJobFile,
   refuseReserved,
-  releaseLeaseReservation,
   reserveLeaseJob,
 } from "./lease-carrier.js";
 import { withAgentLock } from "./lock.js";
@@ -557,21 +555,6 @@ async function spawnPreparedAgent(
     );
   }
   if (profile) assertLeaseSpawnable(profile, gateToken !== undefined);
-  // A lease spawn reserves the name in carrier_jobs BEFORE any effect: from here until a
-  // stop (or an abandon) the reservation is the durable pointer to whatever job its
-  // carrier may dispatch, and every other spawn of the name refuses.
-  const reservation =
-    profile?.transport === "lease"
-      ? await reserveLeaseJob(db, opts.workstream, opts.name, profile)
-      : undefined;
-  // The ADMITTED snapshot is checked again: a lease spawn runs from a lease profile only.
-  const leaseCheck = (p: HostProfile): void => {
-    assertLeaseSpawnable(p, gateToken !== undefined);
-    if ((p.transport === "lease") !== (reservation !== undefined)) {
-      throw new HostProfileError(say("carrier.transport_changed", p.name));
-    }
-    if (reservation !== undefined) setCarrierJobStop(db, reservation.token, p.stop ?? "");
-  };
   const command = opts.command ?? (profile ? cli : resolved.command);
   // Where `command` came from. Backends that resolve the executable
   // themselves may not silently ignore an operator's choice, and need to
@@ -607,16 +590,45 @@ async function spawnPreparedAgent(
   // and finalize). Never guessed from task ownership.
   const spawner = spawnerFromEnv();
 
-  // Worktree pre-stage. See `prestageWorktree` for the ordering
-  // rationale. Yields the worktree (its path is the pane's cwd) or
-  // undefined when --worktree wasn't requested.
+  const localCwd = resolve(opts.cwd ?? process.cwd());
+  let paneId: string | undefined;
+  // The server the pane was created on, from the call that created it (`onPaneCreated`).
+  let paneBorn: string | undefined;
+  let agent: AgentRow;
+  // Whether the agent row is this spawn's to delete on rollback. A
+  // spawn that lost a same-name race must not delete the winner's row.
+  let ownedIncarnation: number | undefined;
+  const wantsCtl =
+    gateToken === undefined &&
+    opts.ctl !== false &&
+    speaksMuCtl(cli, command) &&
+    defaultSpawnCtlMs() !== 0;
+  let ctl: SpawnCtl | undefined;
+  let ctlIncarnation: string | undefined;
+  // Last phase entered, recorded in agent.spawn_failed if we roll back.
+  let phase: SpawnPhase = "worktree";
+  let trustDialog = false;
+  // Settles when the backend considers the agent started (see spawnAgentWaitsReady).
+  let readiness: Promise<unknown> = Promise.resolve();
   let staged: StagedWorktree | undefined;
-  // A remote spawn holds its channel lease from here until the pane dies
-  // (bound to the agent's id + pane when the row exists): reserved BEFORE any
-  // remote command, so every exec below rides it and a full host refuses now.
   let lease: HostLease | undefined;
-  let site: RemoteSite | undefined;
+  let carrier: { token: string } | undefined;
   try {
+    // A lease reserves the name before any carrier effect. Rollback owns only this token.
+    const reservation =
+      profile?.transport === "lease"
+        ? await reserveLeaseJob(db, opts.workstream, opts.name, profile)
+        : undefined;
+    if (reservation !== undefined) carrier = { token: reservation.token };
+    // The ADMITTED snapshot is checked again: a lease spawn runs from a lease profile only.
+    const leaseCheck = (p: HostProfile): void => {
+      assertLeaseSpawnable(p, gateToken !== undefined);
+      if ((p.transport === "lease") !== (reservation !== undefined)) {
+        throw new HostProfileError(say("carrier.transport_changed", p.name));
+      }
+      if (reservation !== undefined) setCarrierJobStop(db, reservation.token, p.stop ?? "");
+    };
+    let site: RemoteSite | undefined;
     if (profile) {
       ({ lease, profile, staged, site } = await admitRemoteSpawn(
         db,
@@ -627,9 +639,6 @@ async function spawnPreparedAgent(
         leaseCheck,
         reservation?.token,
       ));
-      // The resolved path, before any pane: another agent's managed tree or a recovery's is
-      // refused here, and again with the row's insert (an owner may land meanwhile).
-      if (site) refuseOwnedRemotePath(db, opts, profile.name, site.cwd, gateToken && opts.command);
     } else if (muleProfile !== undefined) {
       ({ staged } = await admitRemoteSpawn(
         db,
@@ -641,169 +650,132 @@ async function spawnPreparedAgent(
     } else if (opts.worktree) {
       staged = await prestageWorktree(db, opts, cli, spawner);
     }
-  } catch (err) {
-    if (lease !== undefined) releaseHostChannel(db, lease); // no pane was ever opened under it
-    // Nothing was launched under the reservation: its creator releases it.
-    if (reservation !== undefined) releaseLeaseReservation(db, reservation.token, "none");
-    emitSpawnFailed(db, opts, "worktree", err);
-    throw err;
-  }
-  // Without a worktree the pane starts in --cwd, else the caller's cwd,
-  // and the row records it. A remote agent's cwd is a REMOTE path: the
-  // local pane never starts in it.
-  const localCwd = resolve(opts.cwd ?? process.cwd());
-  const paneCwd = muleProfile !== undefined ? localCwd : (staged?.path ?? site?.cwd ?? localCwd);
-  const workspaceHost = muleProfile?.name ?? profile?.name;
-  // A lease pane runs a carrier: it holds no channel, and its handle fills the reservation.
-  const carrier = reservation !== undefined ? { token: reservation.token } : undefined;
-
-  // Inject identity env vars into the pane so anything running inside
-  // (pi extensions, claim-protocol scripts, status segments) can branch
-  // on 'I am a mu-managed worker' without scraping pane titles or DB
-  // lookups. Set via tmux `-e KEY=VALUE` (per-pane; doesn't pollute the
-  // tmux server's global env).
-  //
-  // These are NOT exposed via SpawnAgentOptions — mu identity is not
-  // user-tunable. Adding more keys here means every spawned pane sees
-  // them automatically.
-  //
-  // MU_CTL_SOCK goes to every CLI (harmless for non-pi). Its directory
-  // must exist before the pane starts: for a remote agent, ssh's
-  // `-L <local>:<remote>` binds the LOCAL path and does not mkdir. A
-  // socket file left by a previous agent of this name is removed inside
-  // the spawn lock below, once this spawn owns the name, since ssh
-  // refuses to bind over it.
-  //
-  // The base is the DB's directory: in production that is exactly
-  // ctlSocketPath's own default (MU_DB_PATH dir or the state dir), and
-  // a test DB in a temp dir keeps its sockets there too.
-  const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
-  mkdirSync(dirname(ctlSocket), { recursive: true, mode: 0o700 });
-  // Exactly these (plus SSH_AUTH_SOCK and piSessionDir below). tmux
-  // panes inherit the tmux server's env, not ours: pin the DB and state dir this spawn used,
-  // absolute and always (the default ones too), so the worker's `mu` hits
-  // the same taskgraph from any cwd.
-  // A remote agent's identity travels in the filled shell template (`{env}`:
-  // five whitelisted variables, never the local DB, state or sync dir); the
-  // local pane (the transport) is given none of it.
-  // MU_AGENT_CLI names the harness the pane runs (the cli key outside the
-  // blessed five); MU_ORCHESTRATOR marks an orchestrator (spec D9). Neither
-  // is inherited by anything the agent spawns: every pane's env is built here.
-  const harness = harnessOfCli(cli, command);
-  const paneEnv: Record<string, string> = profile
-    ? {}
-    : {
-        MU_MANAGED_AGENT: "1",
-        MU_AGENT_NAME: opts.name,
-        MU_WORKSTREAM: opts.workstream,
-        MU_AGENT_CLI: harness ?? cli,
-        ...(opts.orchestrator === true ? { MU_ORCHESTRATOR: "1" } : {}),
-        // tmux may inherit a caller's markers. This pane is a worker on the DB's machine.
-        ...(muleProfile !== undefined ? { MU_REMOTE: "", MU_ORCHESTRATOR: "" } : {}),
-        [CTL_SOCK_ENV]: ctlSocket,
-        MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
-        MU_STATE_DIR: resolve(defaultStateDir()),
-      };
-  // pi reads its session dir from this env (its --session-dir still wins).
-  // Local pi only: a remote pi has no business with a local path.
-  if (!profile && opts.piSessionDir !== undefined && speaksMuCtl(cli, command)) {
-    paneEnv.PI_CODING_AGENT_SESSION_DIR = resolve(opts.piSessionDir);
-  }
-  // mu sessions are created detached and may never be attached, so tmux's
-  // update-environment never refreshes them and a pane would inherit a
-  // stale SSH_AUTH_SOCK. Forward the caller's. File-type check only (is it
-  // a socket?), not a liveness probe: mu stays ssh-free. Best-effort.
-  const sshSock = process.env.SSH_AUTH_SOCK;
-  if (sshSock) {
-    try {
-      if (statSync(sshSock).isSocket()) paneEnv.SSH_AUTH_SOCK = sshSock;
-    } catch {
-      // missing or unreadable: skip forwarding
+    ownedIncarnation = staged?.incarnation;
+    // Check again at row insert: another owner may land while the pane opens.
+    if (site && profile) {
+      refuseOwnedRemotePath(db, opts, profile.name, site.cwd, gateToken && opts.command);
     }
-  }
+    phase = "pane";
+    // Without a worktree the pane starts in --cwd, else the caller's cwd,
+    // and the row records it. A remote agent's cwd is a REMOTE path: the
+    // local pane never starts in it.
+    const paneCwd = muleProfile !== undefined ? localCwd : (staged?.path ?? site?.cwd ?? localCwd);
+    const workspaceHost = muleProfile?.name ?? profile?.name;
 
-  // A local hook harness on tmux starts through the anchor wrapper
-  // (src/anchors.ts), so its hooks find the agent without mu's env (spec D3).
-  // pi keeps its plain command: its extensions read the env in-process. Other
-  // backends keep it too: herdr starts the agent kind itself, and murmur's
-  // hooks have no tmux server to place a Rex pane's event through (Rex keeps
-  // its `$SHELL -ic` launch).
-  const anchored = (cmd: string, anchorsPanes: boolean): string => {
-    if (!anchorsPanes || harness === undefined || harness === "pi") return cmd;
-    pruneAnchors();
-    const orchestrator = opts.orchestrator === true;
-    return anchorWrapper(cmd, {
-      agent_name: opts.name,
-      workstream: opts.workstream,
-      role: orchestrator ? "orchestrator" : "worker",
-      cli: harness,
-      orchestrator,
-      remote_key: null,
-    });
-  };
-  // A hook harness worker on a host (spec D11): its hooks on that node write to
-  // murmur's remote area under this key (in its anchor and its env), and mu
-  // reads them there through the profile's exec template (src/channels/hooks-remote.ts).
-  // Fixed before the pane exists: it travels in the launch command. pi keeps ctl,
-  // a command gate runs no harness.
-  const remoteKey =
-    profile !== undefined && gateToken === undefined && harness !== undefined && harness !== "pi"
-      ? newRemoteKey(opts.workstream, opts.name)
-      : undefined;
-  const remoteAnchored = (cmd: string, key: string): string =>
-    remoteAnchorWrapper(cmd, {
-      agent_name: opts.name,
-      workstream: opts.workstream,
-      role: "worker",
-      cli: harness ?? cli,
-      orchestrator: false,
-      remote_key: key,
-    });
+    // Inject identity env vars into the pane so anything running inside
+    // (pi extensions, claim-protocol scripts, status segments) can branch
+    // on 'I am a mu-managed worker' without scraping pane titles or DB
+    // lookups. Set via tmux `-e KEY=VALUE` (per-pane; doesn't pollute the
+    // tmux server's global env).
+    //
+    // These are NOT exposed via SpawnAgentOptions — mu identity is not
+    // user-tunable. Adding more keys here means every spawned pane sees
+    // them automatically.
+    //
+    // MU_CTL_SOCK goes to every CLI (harmless for non-pi). Its directory
+    // must exist before the pane starts: for a remote agent, ssh's
+    // `-L <local>:<remote>` binds the LOCAL path and does not mkdir. A
+    // socket file left by a previous agent of this name is removed inside
+    // the spawn lock below, once this spawn owns the name, since ssh
+    // refuses to bind over it.
+    //
+    // The base is the DB's directory: in production that is exactly
+    // ctlSocketPath's own default (MU_DB_PATH dir or the state dir), and
+    // a test DB in a temp dir keeps its sockets there too.
+    const ctlSocket = ctlSocketPath(opts.workstream, opts.name, dirname(db.name));
+    mkdirSync(dirname(ctlSocket), { recursive: true, mode: 0o700 });
+    // Exactly these (plus SSH_AUTH_SOCK and piSessionDir below). tmux
+    // panes inherit the tmux server's env, not ours: pin the DB and state dir this spawn used,
+    // absolute and always (the default ones too), so the worker's `mu` hits
+    // the same taskgraph from any cwd.
+    // A remote agent's identity travels in the filled shell template (`{env}`:
+    // five whitelisted variables, never the local DB, state or sync dir); the
+    // local pane (the transport) is given none of it.
+    // MU_AGENT_CLI names the harness the pane runs (the cli key outside the
+    // blessed five); MU_ORCHESTRATOR marks an orchestrator (spec D9). Neither
+    // is inherited by anything the agent spawns: every pane's env is built here.
+    const harness = harnessOfCli(cli, command);
+    const paneEnv: Record<string, string> = profile
+      ? {}
+      : {
+          MU_MANAGED_AGENT: "1",
+          MU_AGENT_NAME: opts.name,
+          MU_WORKSTREAM: opts.workstream,
+          MU_AGENT_CLI: harness ?? cli,
+          ...(opts.orchestrator === true ? { MU_ORCHESTRATOR: "1" } : {}),
+          // tmux may inherit a caller's markers. This pane is a worker on the DB's machine.
+          ...(muleProfile !== undefined ? { MU_REMOTE: "", MU_ORCHESTRATOR: "" } : {}),
+          [CTL_SOCK_ENV]: ctlSocket,
+          MU_DB_PATH: resolve(db.name !== "" && db.name !== ":memory:" ? db.name : defaultDbPath()),
+          MU_STATE_DIR: resolve(defaultStateDir()),
+        };
+    // pi reads its session dir from this env (its --session-dir still wins).
+    // Local pi only: a remote pi has no business with a local path.
+    if (!profile && opts.piSessionDir !== undefined && speaksMuCtl(cli, command)) {
+      paneEnv.PI_CODING_AGENT_SESSION_DIR = resolve(opts.piSessionDir);
+    }
+    // mu sessions are created detached and may never be attached, so tmux's
+    // update-environment never refreshes them and a pane would inherit a
+    // stale SSH_AUTH_SOCK. Forward the caller's. File-type check only (is it
+    // a socket?), not a liveness probe: mu stays ssh-free. Best-effort.
+    const sshSock = process.env.SSH_AUTH_SOCK;
+    if (sshSock) {
+      try {
+        if (statSync(sshSock).isSocket()) paneEnv.SSH_AUTH_SOCK = sshSock;
+      } catch {
+        // missing or unreadable: skip forwarding
+      }
+    }
 
-  // Spawn presets (spec D6, D17; ./spawn-presets.ts). The argv0 is untouched.
-  const launch =
-    gateToken !== undefined
-      ? command
-      : launchCommand(command, harness, opts, {
-          remote: profile !== undefined,
-          ...(staged !== undefined && muleProfile === undefined ? { worktree: staged.path } : {}),
-        });
+    // A local hook harness on tmux starts through the anchor wrapper
+    // (src/anchors.ts), so its hooks find the agent without mu's env (spec D3).
+    // pi keeps its plain command: its extensions read the env in-process. Other
+    // backends keep it too: herdr starts the agent kind itself, and murmur's
+    // hooks have no tmux server to place a Rex pane's event through (Rex keeps
+    // its `$SHELL -ic` launch).
+    const anchored = (cmd: string, anchorsPanes: boolean): string => {
+      if (!anchorsPanes || harness === undefined || harness === "pi") return cmd;
+      pruneAnchors();
+      const orchestrator = opts.orchestrator === true;
+      return anchorWrapper(cmd, {
+        agent_name: opts.name,
+        workstream: opts.workstream,
+        role: orchestrator ? "orchestrator" : "worker",
+        cli: harness,
+        orchestrator,
+        remote_key: null,
+      });
+    };
+    // A hook harness worker on a host (spec D11): its hooks on that node write to
+    // murmur's remote area under this key (in its anchor and its env), and mu
+    // reads them there through the profile's exec template (src/channels/hooks-remote.ts).
+    // Fixed before the pane exists: it travels in the launch command. pi keeps ctl,
+    // a command gate runs no harness.
+    const remoteKey =
+      profile !== undefined && gateToken === undefined && harness !== undefined && harness !== "pi"
+        ? newRemoteKey(opts.workstream, opts.name)
+        : undefined;
+    const remoteAnchored = (cmd: string, key: string): string =>
+      remoteAnchorWrapper(cmd, {
+        agent_name: opts.name,
+        workstream: opts.workstream,
+        role: "worker",
+        cli: harness ?? cli,
+        orchestrator: false,
+        remote_key: key,
+      });
 
-  const hasWorktree = staged !== undefined;
+    // Spawn presets (spec D6, D17; ./spawn-presets.ts). The argv0 is untouched.
+    const launch =
+      gateToken !== undefined
+        ? command
+        : launchCommand(command, harness, opts, {
+            remote: profile !== undefined,
+            ...(staged !== undefined && muleProfile === undefined ? { worktree: staged.path } : {}),
+          });
 
-  // Single outer try wrapping every step that can throw AFTER the
-  // worktree has been prestaged: pane create/reuse,
-  // agent-row finalize, liveness check. Earlier shape had pane creation
-  // outside the try, so a tmux failure (e.g. no
-  // workstream session and tmux refusing to create one) left the
-  // prestaged worktree + placeholder agent row behind as an
-  // orphan.
-  //
-  // paneId is undefined until spawnAgent creates the pane; rollbackSpawn
-  // skips killPane in that case. The inner try/catches that previously
-  // wrapped finalize and liveness were folded into this single catch
-  // (clarity > belt-and-suspenders; rollbackSpawn is idempotent and
-  // best-effort regardless).
-  let paneId: string | undefined;
-  // The server the pane was created on, from the call that created it (`onPaneCreated`).
-  let paneBorn: string | undefined;
-  let agent: AgentRow;
-  // Whether the agent row is this spawn's to delete on rollback. A
-  // spawn that lost a same-name race must not delete the winner's row.
-  let ownedIncarnation: number | undefined = staged?.incarnation;
-  const wantsCtl =
-    gateToken === undefined &&
-    opts.ctl !== false &&
-    speaksMuCtl(cli, command) &&
-    defaultSpawnCtlMs() !== 0;
-  let ctl: SpawnCtl | undefined;
-  let ctlIncarnation: string | undefined;
-  // Last phase entered, recorded in agent.spawn_failed if we roll back.
-  let phase: SpawnPhase = "pane";
-  let trustDialog = false;
-  // Settles when the backend considers the agent started (see spawnAgentWaitsReady).
-  let readiness: Promise<unknown> = Promise.resolve();
-  try {
+    const hasWorktree = staged !== undefined;
+
     opts.signal?.throwIfAborted();
     // Cross-process critical section: the topology check-then-act inside
     // `ensureSession` / `spawnAgent` (session exists? window exists? →
@@ -1119,6 +1091,34 @@ async function spawnPreparedAgent(
     opts.signal?.throwIfAborted();
     // A gate is not scanned for startup errors or liveness: a command that ends at
     // once is a result (the retained pane), and a dead transport reads as exit-less.
+    // Backends that wait for pane readiness still need a separate ctl handshake.
+    // A normal timeout is reported without rolling back an ordinary worker.
+    if (ctl === undefined) {
+      if (wantsCtl) {
+        const hs = await awaitCtlHandshake(ctlSocket);
+        ctl = hs.ctl;
+        ctlIncarnation = hs.incarnation;
+      } else ctl = "skipped";
+    }
+    // `agents` is machine-local (it holds pane_id), so no capture trigger
+    // covers it and this emit is the ONLY record. Typed intent so it
+    // renders through the same formatter as captured ops.
+    emitEvent(
+      db,
+      opts.workstream,
+      "agent.spawn",
+      `agent spawn ${opts.name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${paneId}, ctl=${ctl}${profile ? `, host=${profile.name}` : ""})`,
+      await resolveActorIdentity(),
+    );
+    // Only nudge after the pane passed readiness and the spawn was recorded.
+    maybeWarnNonConventionalAgentName(opts.name);
+    return {
+      ...agent,
+      ctl,
+      ctlSocket,
+      ...(ctlIncarnation !== undefined ? { ctlIncarnation } : {}),
+      ...(trustDialog ? { trustDialog: true as const } : {}),
+    };
   } catch (err) {
     // Record first: a throwing cleanup must neither skip the record nor
     // mask the original error.
@@ -1159,40 +1159,6 @@ async function spawnPreparedAgent(
     }
     throw err;
   }
-  // Control-socket handshake when the tmux path above did not run it.
-  // Outside the rollback: a timeout means only control is missing; the
-  // pane and pi are fine. The caller reports it (see
-  // AgentCtlUnreachableError).
-  if (ctl === undefined) {
-    if (wantsCtl) {
-      const hs = await awaitCtlHandshake(ctlSocket);
-      ctl = hs.ctl;
-      ctlIncarnation = hs.incarnation;
-    } else ctl = "skipped";
-  }
-  // `agents` is machine-local (it holds pane_id), so no capture trigger
-  // covers it and this emit is the ONLY record. Typed intent so it
-  // renders through the same formatter as captured ops.
-  emitEvent(
-    db,
-    opts.workstream,
-    "agent.spawn",
-    `agent spawn ${opts.name} (cli=${cli}, role=${opts.role ?? "full-access"}, pane=${paneId}, ctl=${ctl}${profile ? `, host=${profile.name}` : ""})`,
-    await resolveActorIdentity(),
-  );
-  // Lint-grade stderr nudge when the operator picked a name that
-  // doesn't fit the <role>-<n> smallest-unused-suffix convention. The
-  // spawn already succeeded; this is advice, not an error. Done LAST
-  // so the hint trails the spawn's own stdout output and so a partial
-  // failure (rolled back above) never emits it.
-  maybeWarnNonConventionalAgentName(opts.name);
-  return {
-    ...agent,
-    ctl,
-    ctlSocket,
-    ...(ctlIncarnation !== undefined ? { ctlIncarnation } : {}),
-    ...(trustDialog ? { trustDialog: true as const } : {}),
-  };
 }
 
 /** A worktree spawn has made and registered. */
