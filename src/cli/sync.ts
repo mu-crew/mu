@@ -233,7 +233,7 @@ function emitFrom(
 
 // ─── commander wiring ────────────────────────────────────────────────
 
-import type { Command } from "commander";
+import { type Command, Option } from "commander";
 
 export function wireSyncCommand(program: Command): void {
   program
@@ -241,7 +241,13 @@ export function wireSyncCommand(program: Command): void {
     .description("Report peer status (flush + ingest happen on every mu invocation anyway)")
     .option(...JSON_OPT)
     .option("--from <path>", "ingest from a peer's mu.db directly (sshfs mount or copied file)")
-    .option("--repair <peer>", "reset that peer's watermark and re-read its segment from zero")
+    // --from returns before a repair would run: together, one is dropped.
+    .addOption(
+      new Option(
+        "--repair <peer>",
+        "reset that peer's watermark and re-read its segment from zero",
+      ).conflicts("from"),
+    )
     .action(function () {
       const opts = (this as Command).opts() as SyncCmdOptions;
       // ambientSync: false — this verb IS the pass, and running it twice

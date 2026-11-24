@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { segmentLockPath } from "../src/segments.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
-import { opCount as opCountOf } from "./_ro.js";
+import { opCount as opCountOf, readRows } from "./_ro.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 const SYNC_DIR_KEY = "MU_SYNC_DIR";
@@ -370,6 +370,21 @@ describe("mu sync (CLI)", () => {
       if (peer === undefined) throw new Error("expected one peer");
       const { exitCode } = await runCli(["sync", "--repair", peer.short.slice(0, 4)], dev);
       expect(exitCode).toBeNull();
+    });
+
+    it("--repair with --from is a usage error (exit 2): nothing ingested, no watermark moved", async () => {
+      await runCli(["workstream", "init", "demo"], lap);
+      await runCli(["sync"], dev);
+      await seedTask(lap, "t1"); // new ops --from would ingest
+      const watermarks = () => readRows(dev, "SELECT * FROM sync_peers ORDER BY 1");
+      const before = { ops: await opCount(dev), peers: watermarks() };
+      const { stdout, exitCode } = await runCli(
+        ["sync", "--from", lap, "--repair", "missing", "--json"],
+        dev,
+      );
+      expect(exitCode).toBe(2);
+      expect(stdout).toContain("'--repair <peer>' cannot be used with option '--from <path>'");
+      expect({ ops: await opCount(dev), peers: watermarks() }).toEqual(before);
     });
 
     it("exits 3 (not found) for a peer that does not exist", async () => {
