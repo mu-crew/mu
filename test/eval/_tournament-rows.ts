@@ -1,7 +1,7 @@
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Synthetic probe rows for the tournament scoring tests (tournament.test.ts, tournament-fast.test.ts).
 import type { ExposureSpec } from "../../tools/eval/exposure.ts";
-import type { ProbeRow } from "../../tools/eval/nextstep.ts";
+import type { NextCase, ProbeRow } from "../../tools/eval/nextstep.ts";
 import { BASE } from "../../tools/eval/tournament-score.ts";
 
 export const HAIKU = "claude-haiku-5-5";
@@ -113,3 +113,27 @@ export function cellRows(o: {
   return out;
 }
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
+
+/** A minimal NextCase for plan and designer tests. */
+export const fakeCase = (id: string, over: Partial<NextCase> = {}): NextCase =>
+  ({
+    id,
+    group: "c1_wait",
+    role: "headline",
+    arms: ["none", "skill", "recipe:orchestrator-loop"],
+    shell: "bash",
+    expectedRowMs: 30_000,
+    paraphrases: Array.from({ length: 10 }, (_, i) => ({
+      id: `p${i + 1}`,
+      leadIn: "a",
+      goal: `Goal number ${i + 1} about worker results.`,
+    })),
+    leadInVerbs: ["wait"],
+    seed: async () => ({}),
+    leadIn: (_sb, st) => [{ cmd: `mu wait agent:auth/worker-1@${st.runs} --json | jq -c .data` }],
+    judge: async () => ({ hit: false, why: [] }),
+    golden: () => ["true"],
+    bad: () => ["true"],
+    extras: () => [],
+    ...over,
+  }) as NextCase;
