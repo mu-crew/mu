@@ -12,6 +12,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Changed
+
+- Test seam, no production behaviour change: `PluginProcess.fromTestPipes` (`src/plugins/process.ts`) builds a plugin peer over in-process pipes with no PID, and `pgid` is now a getter that throws for such a peer. A real child takes the same paths as before. Documented under Key seams in `docs/ARCHITECTURE.md`.
+- Test harness: the macOS real-git pin exposes only a `git` symlink ahead of `PATH` (with `GIT_EXEC_PATH`), not the whole CommandLineTools bin. The vitest `pure` project sets `testTimeout: 30000` like the others.
+
 ### Fixed
 
 - Rex spawns under csh or tcsh fail before launching a pane and tell you how

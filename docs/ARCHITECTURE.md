@@ -349,4 +349,5 @@ A new implementation of each is small.
 | typed verb | an SDK function; a `cmd<Verb>` in `src/cli/<namespace>.ts`; one Commander block in `buildProgram()` wrapped in `handle()`; the verb declares what it did (`setNextOutcome`) and `next` is computed for it |
 | schema change | bump `CURRENT_SCHEMA_VERSION` in `src/db.ts` and mirror `CURRENT_SCHEMA`; startup stays migration-free |
 | syncable field | add the column to a portable table, extend the UPDATE trigger's changed-column comparison, confirm apply writes it; a full-row payload regresses merge to row-level LWW |
+| plugin process (test seam) | `PluginProcess.fromTestPipes(child)` in `src/plugins/process.ts` wraps a pipe-only `ChildProcess` (no pid) so protocol tests run without spawning. It owns no OS process: it is not in `live`, never signals a group, records no `pgidStart`, and `pgid` throws. The kill sweep, `live` tracking and stop trace run only for a child with a pid, which every `PluginProcess.start` child has. Production code never calls it |
 | cross-machine sync | nothing: every invocation already flushes and ingests |
