@@ -64,6 +64,7 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream, teardownWorkstream, workstreamRevision } from "../src/workstream.js";
 import { helloReply, INC, withHello } from "./_ctl-ext.js";
 import { rmFixtureDir } from "./_fs.js";
+import { copyGitFixture, gitIn } from "./_git.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson, runCliWire } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
@@ -421,8 +422,19 @@ describe("the pane is the transport", () => {
 
   it("--worktree: one remote exec makes a detached worktree and records host, path and base", async () => {
     // --from resolves in the caller's checkout (ladder placement §3.3): the host gets the sha.
-    const local = execFileSync("git", ["rev-parse", "HEAD^{commit}"], { encoding: "utf8" }).trim();
-    const a = await spawn({ worktree: true, from: "HEAD" });
+    // A fixture checkout, not whatever repo the runner sits in.
+    const caller = join(dir, "caller");
+    mkdirSync(caller);
+    copyGitFixture(caller);
+    const local = gitIn(caller, "rev-parse", "HEAD");
+    const prev = process.cwd();
+    process.chdir(caller);
+    let a: Awaited<ReturnType<typeof spawn>>;
+    try {
+      a = await spawn({ worktree: true, from: "HEAD" });
+    } finally {
+      process.chdir(prev);
+    }
     const [only, ...rest] = execCalls();
     expect(rest).toEqual([]);
     expect(only).toContain("worktree add --detach");

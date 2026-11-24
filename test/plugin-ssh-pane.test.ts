@@ -26,6 +26,7 @@ import { addHost } from "../src/hosts.js";
 import { addPlugin } from "../src/plugins/registry.js";
 import { waitForEvents } from "../src/wait.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
+import { copyGitFixture } from "./_git.js";
 import { SSH_EXAMPLE } from "./_plugin.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 import { type CtlServed, type FakeSsh, fakeSsh, PluginWire, serveCtl } from "./_ssh-pane.js";
@@ -34,11 +35,6 @@ import { agentRef } from "./_wait-fixtures.js";
 
 const h = pluginHostFixture();
 const idOf = (handle: string) => handle.split("@")[0] ?? "";
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-    cwd,
-    encoding: "utf8",
-  }).trim();
 
 let ssh: FakeSsh;
 let wire: PluginWire | undefined;
@@ -380,8 +376,7 @@ describe("through mu: spawn, close, and the proof a close waits for", () => {
     remote = join(h.dir, "remote");
     mkdirSync(remote);
     remote = realpathSync(remote);
-    git(remote, "init", "-q");
-    git(remote, "commit", "-q", "--allow-empty", "-m", "one");
+    copyGitFixture(remote);
     // The caller's checkout IS the host's repo: --from HEAD names a commit the host has.
     cwd = process.cwd();
     process.chdir(remote);

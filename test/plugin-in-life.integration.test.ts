@@ -8,7 +8,6 @@
 //   - mu wait prints its result and saves its resume before it collects: a kill
 //     while the collect's fetch is in flight loses no consumed event.
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -16,14 +15,10 @@ import { bumpStopGen, getCarrierJobByAgent } from "../src/carrier-jobs.js";
 import { cmdWait } from "../src/cli/wait.js";
 import { collectAtSettles } from "../src/host-policy.js";
 import type { WaitResult } from "../src/wait.js";
+import { gitIn as git } from "./_git.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
 const h = pluginHostFixture();
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-    cwd,
-    encoding: "utf8",
-  }).trim();
 const MARGIN = "MU_HOST_DEADLINE_MARGIN_MS";
 const REF = { kind: "agent" as const, workstream: "ws", id: "w1" };
 const settle = (kind: "settled" | "deadline" = "settled"): Pick<WaitResult, "event" | "refs"> => ({
