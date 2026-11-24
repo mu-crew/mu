@@ -2,6 +2,11 @@ import { configDefaults, defineConfig } from "vitest/config";
 
 // Explicit allowlist: no DB/mux setup, module mocks, env/cwd mutations or
 // subprocesses. Reuse forks here only; everything else stays file-isolated.
+// The pure project is `extends: false`, so it intentionally omits the isolated
+// project's guards: no globalSetup (private tmux server, DB template), no
+// setupFiles (`_setup.ts` MU_* scrub, `_setup-db.ts`) and no per-file isolation.
+// Allowlisted files must not need any of them. It does set the same
+// testTimeout, so a cold import on a loaded host cannot trip the 5s default.
 const pureTests = [
   "channel-imports",
   "channel-names",
@@ -60,7 +65,14 @@ export function suiteConfig(maxWorkers: number, exclude: string[] = []) {
         { extends: true, test: { name: "isolated" } },
         {
           extends: false,
-          test: { name: "pure", include: pureTests, isolate: false, pool: "forks", maxWorkers },
+          test: {
+            name: "pure",
+            include: pureTests,
+            isolate: false,
+            pool: "forks",
+            maxWorkers,
+            testTimeout: 30000,
+          },
         },
       ],
       exclude: [...configDefaults.exclude, ...exclude, ...pureTests],
