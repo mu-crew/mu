@@ -131,15 +131,25 @@ async function liveWatch(
   // A job gone before the watch began: its initial state is dead, and so is its end.
   if (initial.status === null) return { initial, settled: Promise.resolve(initial) };
   const died = new Promise<AgentObservation>((resolve) => {
+    // One stop for settle, death and abort: a poll still in flight when it runs never rearms.
+    let stopped = false;
+    const stop = (): void => {
+      stopped = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", stop);
+    };
     const tick = async (): Promise<void> => {
-      if (signal.aborted) return;
+      if (stopped) return;
       const o = await liveObservation(w.initial, live, target);
-      if (o.status === null) resolve(o);
-      else timer = setTimeout(tick, livenessPollMs);
+      if (stopped) return;
+      if (o.status === null) {
+        stop();
+        resolve(o);
+      } else timer = setTimeout(tick, livenessPollMs);
     };
     let timer = setTimeout(tick, livenessPollMs);
-    const stop = (): void => clearTimeout(timer);
-    signal.addEventListener("abort", stop, { once: true });
+    if (signal.aborted) stop();
+    else signal.addEventListener("abort", stop, { once: true });
     void w.settled.finally(stop).catch(() => {});
   });
   return {

@@ -11,9 +11,10 @@ import { mkdirSync, mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentKey, type StateAgentRef, type StateReading } from "../src/agent-state.js";
-import { composedStates } from "../src/channels/compose.js";
+import type { ObservedAgent } from "../src/agents/observe.js";
+import { composedStates, setLivenessPollForTests } from "../src/channels/compose.js";
 import {
   type AgentChannel,
   type ChannelImpl,
@@ -208,5 +209,66 @@ describe("at run time, `alive` is the job's alone", () => {
     expect(await jobUp({ kind: "pane", viewPaneId: "%1" })).toBe("up");
     expect(isJobGone(null)).toBe(false);
     expect(isJobGone({})).toBe(false);
+  });
+});
+
+describe("a plugin channel's open watch polls liveness only while open", () => {
+  afterEach(() => setLivenessPollForTests(undefined));
+
+  it("a settle during an in-flight poll stops polling and drops the abort listener", async () => {
+    setLivenessPollForTests(1);
+    const obs = {
+      workstream: "w",
+      name: "a",
+      agentId: 1,
+      paneId: "%1",
+      source: "plugin:fake",
+      since: null,
+      settled: false,
+      status: "busy",
+    } as const;
+    let reads = 0;
+    let held: (() => void) | undefined;
+    const polled = new Promise<void>((r) => {
+      held = r;
+    });
+    let release: () => void = () => {};
+    const liveness: ChannelImpl["liveness"] = () => {
+      reads++;
+      if (reads !== 2) return Promise.resolve({ state: "running" });
+      held?.();
+      return new Promise((r) => {
+        release = () => r({ state: "running" });
+      });
+    };
+    let settle: (o: ChannelObservation) => void = () => {};
+    const settled = new Promise<ChannelObservation>((r) => {
+      settle = r;
+    });
+    const ch = composeChannel({
+      ...ctlChannel,
+      name: "plugin",
+      liveness,
+      watch: async () => ({ initial: obs, settled }),
+      lastRun: async () => undefined,
+    });
+    const signal = new AbortController().signal;
+    const removed = vi.spyOn(signal, "removeEventListener");
+    const agent = {
+      name: "a",
+      workstreamName: "w",
+      paneId: "%1",
+      cli: "pi",
+      channel: "plugin",
+      incarnation: 1,
+    } as ObservedAgent;
+    const w = await ch.watch({ agent }, signal, {});
+    await polled; // the second read is in flight
+    settle({ ...obs, settled: true, status: "needs_input" });
+    expect(await w?.settled).toMatchObject({ settled: true });
+    release();
+    await new Promise((r) => setTimeout(r, 30));
+    expect(reads).toBe(3); // the initial, the held poll, the end
+    expect(removed).toHaveBeenCalledWith("abort", expect.any(Function));
   });
 });
