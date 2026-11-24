@@ -23,15 +23,13 @@ import { insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { addNote, addTask, claimTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { sleep } from "./_env.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 // Sleep helper: SQLite created_at is ISO with ms precision; rapid
 // successive INSERTs can land in the same ms. The filter is `>`
 // (strict), so we space inserts by ~5ms to keep timestamps strictly
 // ordered without slowing the suite materially.
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 describe("mu task notes — filters", () => {
   let tempDir: string;

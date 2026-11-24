@@ -12,7 +12,7 @@ import {
 
 let nextPid = 900_000;
 
-export class FakeHolder extends EventEmitter {
+class FakeHolder extends EventEmitter {
   pid = nextPid++;
   stdout = new EventEmitter();
   stderr = new EventEmitter();
@@ -34,7 +34,7 @@ export interface FakeMuzzle {
   live: Set<FakeHolder>;
 }
 
-export interface FakeMuzzleOpts {
+interface FakeMuzzleOpts {
   /** Every holder exits with this code before admission. */
   failCode?: number;
   /** Holders run nested: admitted, but `muzzle status` never lists them. */

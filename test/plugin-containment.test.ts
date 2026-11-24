@@ -22,6 +22,7 @@ import {
 } from "../src/plugins/process.js";
 import { encodeMessage, narrowLinkRun } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions, pluginSession } from "../src/plugins/registry.js";
+import { sleep } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
@@ -61,7 +62,6 @@ const alive = (pid: number): boolean => {
   }
 };
 const groupGone = (pgid: number): boolean => !alive(-pgid);
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function until(fn: () => boolean, ms = 3000): Promise<void> {
   for (const t0 = Date.now(); !fn(); await sleep(20)) {
     if (Date.now() - t0 > ms) throw new Error("timed out waiting");

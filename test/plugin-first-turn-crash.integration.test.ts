@@ -12,7 +12,7 @@
 // nothing new; an on-send kind's start reply (a baseline, no prompt) never
 // counts as the first delivery, so a replay after a SIGKILL still sends it.
 
-import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,7 +23,10 @@ import { getCarrierJobByName } from "../src/carrier-jobs.js";
 import { cmdAgentCheck } from "../src/cli/agents.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask, taskIdFor } from "../src/tasks.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { pluginHostFixture } from "./_plugin-host.js";
+
+const deadPid = cachedDeadPid();
 
 const h = pluginHostFixture();
 const REQUEST = {
@@ -95,7 +98,7 @@ describe("a SIGKILLed at-start --task spawn converges on replay, never deliverin
     h.f.set({ faults: { "job.start": ["effectThenExit"] } });
     expect((await spawnForTask(h.db, REQUEST)).state).toBe("unknown");
     // That first spawn crashed (its process is gone): only then may another resolve (D8).
-    const dead = spawnSync("true").pid;
+    const dead = deadPid();
     h.db.prepare("UPDATE carrier_jobs SET creator_pid = ?, creator_start = NULL").run(dead);
     await spawnAndKill(); // the child's run is a replay: lookup found, the view opening
     const out = await spawnForTask(h.db, REQUEST);

@@ -25,6 +25,7 @@ import { resetTmuxExecutor, setTmuxExecutor } from "../src/tmux.js";
 import { waitForEvents } from "../src/wait.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { helloReply, INC } from "./_ctl-ext.js";
+import { pollUntil } from "./_env.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 const WS = "cs";
@@ -371,7 +372,7 @@ describe("mu agent wait on a pi agent", () => {
       ["agent", "wait", "pia", "-w", WS, "--timeout", "10", "--json"],
       dbPath,
     );
-    await new Promise((r) => setTimeout(r, 100));
+    await pollUntil(() => ext.ops.length > 0, { description: "the wait reached the extension" });
     ext.settle(`Done.\n\nCLOSE: task=t1 evidence="npm test: ok"\nREPORT:\nFILES: a.ts\nDONE`);
     const res = await pending;
     expect((res.data as { agents: { fired: boolean }[] }).agents[0]?.fired).toBe(true);

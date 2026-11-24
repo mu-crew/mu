@@ -1,4 +1,5 @@
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
+import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,6 +37,9 @@ function fakeSurface(name: string): string {
   }
   return root;
 }
+
+/** The eval-worker driver is a shell script over the sqlite3 CLI. */
+const HAS_SQLITE3 = spawnSync("sqlite3", ["--version"]).status === 0;
 
 describe("surface spec", () => {
   it("parses dir, family and root; absent parts stay undefined", () => {
@@ -183,7 +187,7 @@ describe("writeWorkerDriver reads the sandbox family", () => {
   });
 });
 
-describe("eval-worker as a delegate", () => {
+describe.skipIf(!HAS_SQLITE3)("eval-worker as a delegate", () => {
   const ask = async (prompt: string, answers: Record<string, string>): Promise<string> => {
     const { execFileSync } = await import("node:child_process");
     const dir = join(tmp, `del-${Math.random().toString(36).slice(2)}`);
@@ -224,7 +228,7 @@ describe("eval-worker as a delegate", () => {
   });
 });
 
-describe("eval-worker in block mode", () => {
+describe.skipIf(!HAS_SQLITE3)("eval-worker in block mode", () => {
   it("prints a CLOSE block that parses even when the task script prints nothing", async () => {
     const { execFileSync } = await import("node:child_process");
     const { parseCloseBlock } = await import("../../src/close-block.ts");

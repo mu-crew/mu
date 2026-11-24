@@ -39,6 +39,7 @@ import {
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { cachedDeadPid } from "./_dead-pid.js";
+import { sleep } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin, jobSeams, providerSeams } from "./_plugin.js";
 import { registerFixturePlugin, withPluginPipes } from "./_plugin-handshake.js";
@@ -62,7 +63,6 @@ let token: string;
 
 /** A pid that existed and is gone now. */
 const deadPid = cachedDeadPid();
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function setup(patch: Record<string, unknown> = {}, extra: Record<string, unknown> = {}) {
   f = fakePlugin(dir, { seams: { ...jobSeams(patch), ...extra } });

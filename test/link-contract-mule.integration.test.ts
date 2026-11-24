@@ -5,7 +5,7 @@
 // answers `-O check` as a live master (or none, while `<dir>/master-down` exists) and runs the
 // script under sh, as mule's own shim tests do.
 //
-//   MULE_PLUGIN_BIN=/abs/mule/target/debug/mu-plugin-mule npx vitest run test/link-contract-mule.test.ts
+//   MULE_PLUGIN_BIN=/abs/mule/target/debug/mu-plugin-mule npx vitest run test/link-contract-mule.integration.test.ts
 
 import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";

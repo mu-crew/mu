@@ -4,7 +4,6 @@
 // profile's attach template opens a new carrier that holds (binds the ctl socket and serves
 // a stub ctl) or exits with mule's `not running` line. No real host, and no mule.
 
-import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -27,8 +26,11 @@ import { reconcile } from "../src/reconcile.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { killPane } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 import { killPrivateSession, privatePane, tmuxIntegrationAvailable } from "./_mux.js";
+
+const deadPid = cachedDeadPid();
 
 const describeIfTmux = tmuxIntegrationAvailable() ? describe : describe.skip;
 
@@ -161,7 +163,7 @@ async function reapedLease(): Promise<{ job: string; agentId: number }> {
   await reconcile(db, { workstream: ws });
   expect(getAgent(db, "worker-1", ws)).toBeUndefined();
   // The CLI process that spawned it has exited (here: the test process stands in; point it at a dead pid).
-  db.prepare("UPDATE carrier_jobs SET creator_pid = ?").run(spawnSync("true").pid);
+  db.prepare("UPDATE carrier_jobs SET creator_pid = ?").run(deadPid());
   return { job, agentId: a.incarnation };
 }
 

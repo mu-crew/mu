@@ -5,7 +5,7 @@
 // `~/.pi/agent/skills`), so pi still lists exactly one `mu` skill. Every case
 // runs in a temp HOME.
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -33,9 +33,12 @@ import {
   SKILL_MARKER,
   setInitBeforeCommitForTests,
 } from "../src/mu-init.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { withEnv } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { runCli, runCliJson } from "./_runCli.js";
+
+const deadPid = cachedDeadPid();
 
 const root = join(import.meta.dirname, "..");
 const shippedSkill = readFileSync(join(root, "skills", "mu", "SKILL.md"), "utf8");
@@ -405,7 +408,7 @@ describe("mu init: the skill", () => {
   });
 
   it("clears staging copies a dead init left beside the skill", () => {
-    const dead = spawnSync("true").pid;
+    const dead = deadPid();
     mkdirSync(at(".claude"));
     for (const kind of ["tmp", "old"]) {
       write([".claude", "skills", `.mu.mu-${dead}.${kind}`, "SKILL.md"], "---\nname: mu\n---\n");

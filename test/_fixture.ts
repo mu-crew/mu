@@ -1,33 +1,12 @@
-// Shared fixture-name helpers for tests.
+// Unique fixture names for tests. A static name like `mu-alpha` collides when two
+// `npm test` runs share a tmux server (`duplicate session` / `can't find session`),
+// so a name encodes pid + timestamp + random base36 under a short prefix
+// (workstream names cap at 32 chars):
 //
-// Why this exists: every test that touches the SAME entity-namespace
-// risks colliding with another concurrent test run. The big-ticket
-// hazard is the tmux session namespace, which is shared across every
-// process talking to the same tmux server: two `npm test` runs (e.g.
-// orchestrator + worker agent in mu-tui-impl) racing on the same
-// fixture name `mu-alpha` produces spurious `duplicate session` /
-// `can't find session` errors mid-suite.
+//   workstream = freshWorkstream("wait");   // -> "wait-l8z-mwj1k7-7d2"
+//   session = `mu-${workstream}`;
 //
-// The fix is a per-test-execution unique name. The shape is bounded
-// (workstream names cap at 32 chars in the schema) so we encode
-// pid + monotonic timestamp + 6 base36-random chars under a short
-// caller-chosen prefix. base36 keeps 4-byte randomness in 6 chars.
-//
-// Usage:
-//
-//   import { freshWorkstream } from "./_fixture.js";
-//
-//   beforeEach(() => {
-//     workstream = freshWorkstream("wait");   // → "wait-l8z-mwj1k7-7d2"
-//     session = `mu-${workstream}`;            // → "mu-wait-l8z-mwj1k7-7d2"
-//   });
-//
-// The companion test/_env.ts pollUntil() pairs with this — together
-// they replace the older "static fixture name + fixed sleep" pattern
-// the suite grew from.
-//
-// Rationale lives in the bug_test_suite_flake_leaks_isolation task
-// notes (Layer 1 of the three-layer fix).
+// Pair it with pollUntil() from ./_env.js instead of fixed sleeps.
 
 /**
  * Produce a workstream name that's unique across:

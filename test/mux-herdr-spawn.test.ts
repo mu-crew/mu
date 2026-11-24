@@ -42,6 +42,7 @@ import type { MuxBackend } from "../src/mux/types.js";
 import { resetMux, setMuxForTests } from "../src/mux.js";
 import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ensureWorkstream } from "../src/workstream.js";
+import { pollUntil } from "./_env.js";
 
 // ─── Recorded fixtures ─────────────────────────────────────────────────
 
@@ -745,8 +746,10 @@ describe("herdr readiness runs outside the spawn lock", () => {
     let lockHeldDuringStart: boolean | undefined;
     setHerdrExecutor(async (args) => {
       if (args[0] === "agent") {
-        // A real start takes seconds; give the lock holder time to finalize and release.
-        await new Promise((r) => setTimeout(r, 100));
+        // A real start takes seconds: the lock holder finalizes and releases meanwhile.
+        await pollUntil(() => !existsSync(lockPathForSession("mu-spawntest")), {
+          description: "the spawn lock released",
+        });
         lockHeldDuringStart = existsSync(lockPathForSession("mu-spawntest"));
         return ok(AGENT_STARTED);
       }

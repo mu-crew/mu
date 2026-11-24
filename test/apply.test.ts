@@ -504,10 +504,8 @@ describe("applyOp", () => {
     });
 
     it("the same text written at two different times is two notes", () => {
-      // Observed on a real fleet: the reaper wrote "[reaper] previous owner
-      // integrator gone ..." on 2026-09-28 and again, byte-identical, on
-      // 2026-09-30. The origin had two rows; the peer kept one, so its note
-      // count drifted by one per repeat.
+      // The reaper can write a byte-identical note twice. The origin has two
+      // rows; a peer that kept one would drift by one note per repeat.
       seedLocalTask("t1");
       const at = (wall: number, key: string, createdAt: string) =>
         makeOp({

@@ -3,7 +3,7 @@
 // (engine, Stop hook and settle), so the newer wait prints each event once; a settle over
 // delegates of two waves runs one union loop. Real SQLite; no agents.
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -22,9 +22,8 @@ import { beginWait, registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { runCliWire } from "./_runCli.js";
+import { SKILL } from "./_skill.js";
 import { answer, mkDelegate, taskRef } from "./_wait-fixtures.js";
-
-const SKILL = readFileSync(join(import.meta.dirname, "..", "skills", "mu", "SKILL.md"), "utf8");
 
 let dir: string;
 let dbPath: string;

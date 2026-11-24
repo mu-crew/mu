@@ -429,7 +429,7 @@ gitDescribe("spawn --worktree", () => {
 
   it("a root outside a git repo throws WorktreeVcsRequiredError and leaves nothing", async () => {
     const plain = join(tmp, "plain");
-    execFileSync("mkdir", ["-p", plain]);
+    mkdirSync(plain, { recursive: true });
     await expect(spawn("worker-1", { root: plain })).rejects.toBeInstanceOf(
       WorktreeVcsRequiredError,
     );
@@ -496,7 +496,7 @@ gitDescribe("spawn --worktree", () => {
       // for the other process replacing the placeholder at that moment. Creation then fails
       // (the worktrees dir is a file), and the placeholder rollback must leave the new row.
       const path = worktreePath("auth", "worker-1");
-      execFileSync("mkdir", ["-p", stateDir]);
+      mkdirSync(stateDir, { recursive: true });
       writeFileSync(join(stateDir, "worktrees"), "not a dir");
       registerWorktree(db, {
         path,

@@ -4,7 +4,6 @@
 // liveness probe of the agent's pane there too, so the close order is read from it.
 // No real host, no real git, no mule.
 
-import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -56,10 +55,13 @@ import { listRemoteRecoveries, RemoteRecoveryPendingError } from "../src/remote-
 import { agentRevision, RevisionMismatchError } from "../src/revision.js";
 import { teardownWorkstream, workstreamRevision } from "../src/workstream.js";
 import { insertTestAgent as insertAgent } from "./_agent-pane.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
 import { runCliJson } from "./_runCli.js";
 import { freshMockState, type MockState, mockTmux } from "./_verbs-mock.js";
+
+const deadPid = cachedDeadPid();
 
 const BASE = "b".repeat(40);
 const WT = "/home/u/.local/state/mu-next/remote-worktrees/auth/worker-1";
@@ -696,7 +698,7 @@ describe("every deletion path keeps the handle; close-by-name then stops it", ()
 
 describe("close-by-name of a reservation with no handle", () => {
   it("never launched, creator proven gone: released without a stop or --abandon-job", async () => {
-    const dead = spawnSync("true").pid ?? 999_999;
+    const dead = deadPid();
     reserveCarrierJob(db, {
       workstream: "auth",
       name: "worker-1",
@@ -826,9 +828,9 @@ describe("a reservation kept for a tree its never-launched rollback could not re
   });
 });
 
-// fix2 (2026-11-04 aiv-blog incident): `mule rm` exited 0 for a job already gone, but the
-// recovery tree was dirty, the close threw, and the reservation it had proven stopped was
-// kept: every later spawn of the name refused "has an unstopped job".
+// `mule rm` exits 0 for a job already gone; if the recovery tree is dirty the close throws,
+// and the reservation it had proven stopped must still be released, or every later spawn
+// of the name refuses "has an unstopped job".
 describe("no agent row: a stopped reservation is released before the recovery tree's close", () => {
   const dirty = (): void => writeFileSync(join(dir, "tree-dirty"), "1");
   /** A --worktree lease agent whose row the reaper removed: reservation + recovery left. */

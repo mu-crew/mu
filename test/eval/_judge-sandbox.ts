@@ -22,7 +22,7 @@ export const emptyRun = (): RunMetrics => ({
   events: [],
 });
 
-export interface JudgeWorld {
+interface JudgeWorld {
   /** Tasks (workstream eval) created and closed through the SDK by "orchestrator": real task.close ops, stamped now. */
   closed?: string[];
   /** With `closed`: each closed task gets a worker `block` run record at now + this many ms (negative: before the close). */

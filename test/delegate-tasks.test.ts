@@ -258,7 +258,7 @@ describe("finish: record before report and close", () => {
   });
 
   it("a pasted CONFIRMED|REFUTED|UNVERIFIED template is skipped: the label after it counts, none after is UNVERIFIED", () => {
-    // The 2026-11-09 answer (delegate_rv-fast_907974bb): mu recorded CONFIRMED, its first token.
+    // An answer that echoes the template: mu used to record CONFIRMED, its first token.
     const echoed =
       "VERDICT: review_f_fast_mode CONFIRMED|REFUTED|UNVERIFIED REFUTED the fast tier still forks tmux";
     expect(parseVerdict(`${echoed}\nEVIDENCE: test/x.test.ts:12`)).toBe("REFUTED");

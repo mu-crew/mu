@@ -3,7 +3,7 @@
 // templates through /bin/sh, never ssh.
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -358,7 +358,7 @@ describe("host init --ssh prints a starter and never runs it", () => {
   it("--template prints templates and never calls ssh on PATH", async () => {
     const bin = join(dir, "bin");
     const marker = join(dir, "ssh-ran");
-    execFileSync("mkdir", ["-p", bin]);
+    mkdirSync(bin, { recursive: true });
     writeFileSync(join(bin, "ssh"), `#!/bin/sh\ntouch ${marker}\n`);
     chmodSync(join(bin, "ssh"), 0o755);
     const oldPath = process.env.PATH;
@@ -412,7 +412,7 @@ describe("host init --ssh prints a starter and never runs it", () => {
 
   it("the expanded starter, run through a local ssh stand-in, hands the remote shell the cd, whitelisted env and command", () => {
     const fake = join(dir, "bin2");
-    execFileSync("mkdir", ["-p", fake]);
+    mkdirSync(fake, { recursive: true });
     // Not ssh: skips every option and the host, then runs the last argument in a clean environment, as a remote login shell would (ssh forwards no local variables).
     writeFileSync(
       join(fake, "ssh"),
@@ -420,7 +420,7 @@ describe("host init --ssh prints a starter and never runs it", () => {
     );
     chmodSync(join(fake, "ssh"), 0o755);
     const work = join(dir, "work dir");
-    execFileSync("mkdir", ["-p", work]);
+    mkdirSync(work, { recursive: true });
     const env = hostEnvWords({
       MU_MANAGED_AGENT: "1",
       MU_AGENT_NAME: "w-1",

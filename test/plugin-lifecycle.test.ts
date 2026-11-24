@@ -33,6 +33,7 @@ import {
 } from "../src/plugins/process.js";
 import { narrowLinkRun } from "../src/plugins/protocol.js";
 import { addPlugin, closePluginSessions, pluginSession } from "../src/plugins/registry.js";
+import { sleep } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
@@ -74,7 +75,6 @@ const CELLS: Array<[Phase, Behaviour]> = PHASES.flatMap((p) =>
   (Object.keys(PLUGINS) as Behaviour[]).map((b) => [p, b] as [Phase, Behaviour]),
 );
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function until(fn: () => boolean, ms = 5000): Promise<void> {
   for (const t0 = Date.now(); !fn(); await sleep(10)) {
     if (Date.now() - t0 > ms) throw new Error("timed out waiting");

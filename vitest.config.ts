@@ -47,19 +47,10 @@ export function suiteConfig(maxWorkers: number, exclude: string[] = []) {
       include: ["test/**/*.test.ts"],
       environment: "node",
       pool: "forks",
-      // vitest 4 removed poolOptions; the pool-specific knobs are top-level
-      // now. singleFork:true becomes a one-worker cap.
-      // One worker for the full run (`npm run test`). The integration files
-      // drive real tmux panes and git; they share the run's one private tmux
-      // server (test/_global-teardown.ts) and a loaded box stalls
-      // it for tens of seconds when several forks hit it at once (the
-      // cross-workstream reaper test took 431ms alone, 30s+ in parallel).
-      // The fast tier (vitest.fast.config.ts) has no real mux and runs in
-      // parallel. `--maxWorkers=2` was measured green
-      // (docs/test-health/2026-10-23-surface.md §3); serial is kept for
-      // determinism, and it is why the slow tier is near its budget.
-      // MUZZLE_SLOTS is not read here: one worker already fits any admission
-      // (muzzle grants at least one slot).
+      // Serial for the full run (`npm run test`): the integration files share
+      // the run's one private tmux server (test/_global-teardown.ts), which
+      // stalls under parallel forks. The fast tier runs in parallel.
+      // MUZZLE_SLOTS is not read here: one worker fits any admission.
       maxWorkers,
       projects: [
         { extends: true, test: { name: "isolated" } },
@@ -86,12 +77,9 @@ export function suiteConfig(maxWorkers: number, exclude: string[] = []) {
       // MU_IDLE_THRESHOLD_MS, …) can't silently change behaviour
       // underneath tests. See test/_setup.ts for the rationale.
       setupFiles: ["./test/_setup.ts", "./test/_setup-db.ts"],
-      // Integration tests spawn real tmux panes + sh subprocesses and poll
-      // for state to propagate (reaper flips, pane death, claim CAS). Each
-      // takes <2s alone, but a loaded box can push one past vitest's 5000ms
-      // default (testreview_wait_5s_default_timeout_flake). 30000ms is ~15x
-      // the isolated cost: a real hang still fails fast, transient load does
-      // not. A test that needs longer sets `{ timeout: N }`.
+      // 30s is ~15x the isolated cost of a tmux/subprocess test: a real hang
+      // still fails fast, transient load does not. A test that needs longer
+      // sets `{ timeout: N }`.
       testTimeout: 30000,
     },
   });

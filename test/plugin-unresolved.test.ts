@@ -9,7 +9,6 @@
 //      delivery (seq 1): a newer delivery bars its deduped resend, and a new
 //      delivery refuses while it is being resolved (D4, K8).
 
-import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
 import { previewReattach, reattachAgent } from "../src/agents/reattach.js";
@@ -26,7 +25,10 @@ import { EffectOutcomeUnknownError } from "../src/plugins/errors.js";
 import { removePlugin } from "../src/plugins/registry.js";
 import { addTask } from "../src/tasks/edit.js";
 import { taskIdFor } from "../src/tasks.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { pluginHostFixture } from "./_plugin-host.js";
+
+const deadPid = cachedDeadPid();
 
 const h = pluginHostFixture({ handshakeInProcess: true });
 const effects = () =>
@@ -38,7 +40,7 @@ const effects = () =>
   }>;
 /** The effect rows' writer and plugin group are gone (a crashed creator). */
 const writerGone = () => {
-  const dead = spawnSync("true").pid;
+  const dead = deadPid();
   h.db
     .prepare("UPDATE effects SET creator_pid = ?, creator_start = NULL, plugin_pgid = ?")
     .run(dead, dead);
