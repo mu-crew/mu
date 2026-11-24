@@ -99,7 +99,7 @@ only a fresh copy of the file clears it:
 | `JSON.parse` | a torn write (line lacks its trailing `,"crc"…}` framing) or a malformed shape (framing present). Same failure, different remediation: a cut transfer vs a writer bug |
 | crc32 per line | bit rot |
 | monotonic HLC | reorder, duplicate, truncation |
-| `.manifest` sidecar | truncation exactly on a line boundary |
+| `.manifest` sidecar | truncation exactly on a line boundary, or valid lines rewritten (a grown file passes only if the prefix the manifest covers still hashes to its sha256) |
 
 **Damage halts; refusal skips.** Halting is right for damage, where a
 gap looks the same as reordering. It is wrong for a well-formed line

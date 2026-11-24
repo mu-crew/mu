@@ -634,6 +634,77 @@ describe("segments", () => {
       expect(verifyAgainstManifest(path).ok).toBe(true);
     });
 
+    /** Re-encode the line holding `from` with `to` in its payload: a
+     *  different record that is valid (fresh crc) and, for an equal-length
+     *  `to`, the same byte length. */
+    const forgeLine = (path: string, from: string, to: string): void => {
+      const lines = linesOf(path);
+      const at = lines.findIndex((l) => l.includes(from));
+      const raw = lines[at];
+      if (raw === undefined) throw new Error(`no line holds ${from}`);
+      const l = JSON.parse(raw) as {
+        hlc: string;
+        machine: string;
+        group: string;
+        intent: string | null;
+        actor: string | null;
+        entity: string;
+        key: string;
+        op: "put" | "del";
+      };
+      lines[at] = encodeSegmentLine({
+        ...l,
+        machineId: l.machine,
+        groupId: l.group,
+        payload: raw
+          .slice(raw.indexOf('"payload":') + 10, raw.lastIndexOf(',"crc":'))
+          .replace(from, to),
+      });
+      writeFileSync(path, `${lines.join("\n")}\n`);
+    };
+    const manifestFileOf = (path: string): string => path.replace(/\.jsonl$/, ".manifest");
+    const dropSize = (path: string): void => {
+      const m = JSON.parse(readFileSync(manifestFileOf(path), "utf8")) as Record<string, unknown>;
+      for (const k of ["size", "mtimeMs", "shaState", "seal"]) delete m[k];
+      writeFileSync(manifestFileOf(path), `${JSON.stringify(m, null, 2)}\n`);
+    };
+
+    it("LAYER 4: a valid same-length rewrite under an unchanged manifest is a mismatch", async () => {
+      const path = await seedFour();
+      const size = statSync(path).size;
+      forgeLine(path, '"title":"T1"', '"title":"X1"');
+      expect(statSync(path).size).toBe(size);
+      expect(verifyAgainstManifest(path).ok).toBe(false);
+      const peer = peersFor(b)[0];
+      if (peer === undefined) throw new Error("expected a peer");
+      const result = ingestSegment(b, peer, { verify: true });
+      expect(result.defects.map((d) => d.kind)).toContain("manifest-mismatch");
+    });
+
+    it("LAYER 4: a rewrite plus growth is a mismatch, a real append is not", async () => {
+      const path = await seedFour();
+      const stale = readFileSync(manifestFileOf(path), "utf8");
+      seedTask(a, "grown");
+      await flushSegment(a, dir);
+      writeFileSync(manifestFileOf(path), stale);
+      // Control: an honest append past a stale manifest.
+      expect(verifyAgainstManifest(path).ok).toBe(true);
+      forgeLine(path, '"title":"T1"', '"title":"X1"');
+      expect(verifyAgainstManifest(path).ok).toBe(false);
+    });
+
+    it("LAYER 4: an older build's manifest (no size) bounds the prefix by its record count", async () => {
+      const path = await seedFour();
+      dropSize(path);
+      const stale = readFileSync(manifestFileOf(path), "utf8");
+      seedTask(a, "grown");
+      await flushSegment(a, dir);
+      writeFileSync(manifestFileOf(path), stale);
+      expect(verifyAgainstManifest(path).ok).toBe(true);
+      forgeLine(path, '"title":"T1"', '"title":"X1"');
+      expect(verifyAgainstManifest(path).ok).toBe(false);
+    });
+
     it("refuses a segment line from an unknown format version", async () => {
       const path = await seedFour();
       const lines = linesOf(path);

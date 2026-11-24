@@ -787,29 +787,53 @@ export function verifyAgainstManifest(
   const manifest = readManifest(segment);
   if (manifest === null) return { ok: true }; // no manifest: nothing to check
   if (!existsSync(segment)) return { ok: false, reason: "segment missing but manifest present" };
-  return checkBytesAgainstManifest(segment, manifest, readFileSync(segment));
+  return checkBytesAgainstManifest(manifest, readFileSync(segment));
 }
 
 /** `verifyAgainstManifest` over bytes the caller already read, so ingest
  *  reads the segment once. `exact` is true when the bytes hash to the
  *  manifest's sha256 (the manifest covers exactly this file). */
 function checkBytesAgainstManifest(
-  segment: string,
   manifest: SegmentManifest,
   bytes: Buffer,
 ): { ok: true; exact: boolean } | { ok: false; reason: string } {
   const sha = createHash("sha256").update(bytes).digest("hex");
   if (sha === manifest.sha256) return { ok: true, exact: true };
   // A GROWN file is expected: the peer appended after writing the
-  // manifest we have, or our copy is mid-transfer. That is not damage.
-  const tail = readSegmentTail(segment);
-  if (tail.count >= manifest.count) {
+  // manifest we have, or our copy is mid-transfer. That is not damage,
+  // but only when it is PROVEN an append: the bytes the manifest covered
+  // must still hash to its sha256. A record count alone let a rewrite
+  // (valid lines, fresh crcs) pass whenever the file did not shrink.
+  const covered = coveredBytes(manifest, bytes);
+  if (covered === null) {
+    return {
+      ok: false,
+      reason: `sha mismatch and file is shorter than the manifest covers (${manifest.count} records): truncated`,
+    };
+  }
+  if (createHash("sha256").update(bytes.subarray(0, covered)).digest("hex") === manifest.sha256) {
     return { ok: true, exact: false };
   }
   return {
     ok: false,
-    reason: `sha mismatch and file has FEWER records than the manifest (${tail.count} < ${manifest.count}): truncated`,
+    reason: `sha mismatch in the first ${manifest.count} records the manifest covers: rewritten, not appended`,
   };
+}
+
+/** Bytes of `bytes` the manifest's sha256 covered, or null when the file
+ *  is shorter. A manifest from an older build has no `size`: the prefix
+ *  ends after its `count`-th line. */
+function coveredBytes(manifest: SegmentManifest, bytes: Buffer): number | null {
+  const { size, count } = manifest;
+  if (typeof size === "number" && Number.isSafeInteger(size) && size >= 0)
+    return size <= bytes.length ? size : null;
+  let end = 0;
+  for (let n = 0; n < count; n++) {
+    const nl = bytes.indexOf(0x0a, end);
+    if (nl === -1) return null;
+    end = nl + 1;
+  }
+  return end;
 }
 
 // ─── peer discovery ───────────────────────────────────────────────────
@@ -1049,7 +1073,7 @@ export function ingestSegment(
     const manifest = readManifest(peer.path);
     const bytes = readFileSync(peer.path);
     if (manifest !== null) {
-      const verified = checkBytesAgainstManifest(peer.path, manifest, bytes);
+      const verified = checkBytesAgainstManifest(manifest, bytes);
       if (!verified.ok) {
         // Whole-file damage, distinct from a torn line: every remaining
         // record may be individually valid (truncation exactly on a line

@@ -37,6 +37,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   to select a supported shell, instead of returning a pane that dies at startup.
 - `mu db forget --yes` re-checks its plan under the delete's write lock: a workstream recreated, written or torn down again by another connection after the plan refuses with `ForgetPlanChangedError` (exit 4) and deletes nothing, instead of erasing the new workstream's log.
 - The segment writer lock is keyed on the sync dir's real path, so writers reaching one folder through a symlink or another spelling serialise on one lock, and it uses the strict lock mode: a live holder (a long verify scan) keeps it however old it is; only a dead holder's aged lock is reclaimed.
+- Segment verification excuses a sha256 mismatch only as a proven append: the bytes the manifest covers (its `size`, or its record count for an older build's manifest) must still hash to its sha256. A rewrite of valid lines, with or without growth, is now reported as `manifest-mismatch` instead of passing.
 - `mu agent close` of a local-loop recovery record runs the dirty/uncollected checks before stopping the worker's mule jobs, so a refusal leaves job state and logs untouched.
 - Corrected the docs on Rex rung 2 support, stall authorisation and unknown delivery.
 - A plugin watch whose reply and `watch/settled` arrive in one read reports the settled turn instead of failing with a `ReferenceError`. The watch's end is read from the process that answered it.
