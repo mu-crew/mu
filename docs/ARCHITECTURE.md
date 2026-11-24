@@ -29,7 +29,7 @@ Terms: [VOCABULARY.md](VOCABULARY.md) (source of truth). Principles:
 ## Subsystems
 
 **The ops log.** Every write to a portable table (`workstreams`,
-`tasks`, `task_edges`, `task_notes`) is recorded as an op by a SQLite
+`tasks`, `task_edges`, `task_notes`, `checks`) is recorded as an op by a SQLite
 trigger in the same transaction. The tables are the materialized view
 reads hit; the log is the record. History (`mu log`), sync,
 rebuild and drift checks are all queries or replays over it. Ops carry
@@ -97,7 +97,7 @@ are re-export hubs.
 
 | Module | Responsibility |
 | --- | --- |
-| `src/db.ts` | better-sqlite3 connection (WAL); schema 14: `upgradeSchema` brings a new or incomplete v14 file current (`{ v13: true }`: the state import's v13 completion of its copy) in ONE transaction (DDL, `ADDED_COLUMNS`, schema stamp, capture triggers and capture stamp together; both stamps re-read under the lock); 29 tables (`schema_version`, `machine_identity`, `op_ctx`, `op_dying`, `ops`, `workstreams`, `agents`, `worktrees`, `tasks`, `task_edges`, `task_notes`, `checks`, `task_substates`, `task_auto`, `sync_peers`, `sync_fingerprints`, and the machine-local `delegate_calls`, `wait_cursors`, `agent_settles`, `host_profiles`, `host_channels`, `spawn_receipts`, `human_needs`, `wait_registrations`, `wait_action_receipts`, `wait_resumes`, `remote_recovery`, `carrier_jobs`, `keep_driving`) and 4 views (`ready`, `blocked`, `blockers`, `goals`), defined in `src/db-schema.ts`; `SqliteTooOldError` below 3.42; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
+| `src/db.ts` | better-sqlite3 connection (WAL); schema 14: `upgradeSchema` brings a new or incomplete v14 file current (`{ v13: true }`: the state import's v13 completion of its copy) in ONE transaction (DDL, `ADDED_COLUMNS`, schema stamp, capture triggers and capture stamp together; both stamps re-read under the lock); tables and views are defined in `src/db-schema.ts`, their portable/machine-local classification pinned by `test/entities.test.ts`; `SqliteTooOldError` below 3.42; refuses older (`SchemaTooOldError`) or newer (`SchemaTooNewError`) DBs, exit 4 |
 | `src/db-schema.ts` | the schema as data, re-exported by `db.ts`: `CURRENT_SCHEMA_VERSION`, `CURRENT_SCHEMA` and the view SQL, `ADDED_COLUMNS`, `EXPECTED_TABLES`, `PORTABLE_TABLES` / `MACHINE_LOCAL_TABLES`, `SYNCED_ENTITIES`, the state and kind enums; no runtime import back into `db.ts` |
 | `src/compare.ts` | code-unit string compare; replaces `localeCompare` so ICU is never initialised |
 | `src/hlc.ts` | hybrid logical clock, serialized as sortable TEXT |
