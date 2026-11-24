@@ -1,9 +1,7 @@
-// Characterisation for a7_wait_drain_rca_2 (live repro crew-hill2 2026-11-07: 7 task closes took
-// 7 orchestrator settle turns; dogfood-switch F2). Pins TODAY's behaviour through the real CLI
-// (`mu wait ... --json`, in-process) and the real pi settle (extension/nudge.ts registerNudge),
-// not the wanted one. A fire-all-ready fix flips the expectations marked CURRENT; every event
-// must still be delivered exactly once. a7_ready_settle flipped the settle pin (NOW: the settle
-// runs `mu wait --ready`). Real SQLite; no agents, no mux.
+// `mu wait` over N owned task closes, through the real CLI (`mu wait ... --json`, in-process)
+// and the real pi settle (extension/nudge.ts registerNudge): a bare wait delivers one ready
+// event per call, the settle runs `mu wait --ready` and delivers a batch per turn, and an
+// event is delivered exactly once however it was read. Real SQLite; no agents, no mux.
 
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -70,7 +68,7 @@ const fired = (r: MuResult): string => {
   return d.firing?.ref ? `${d.firing.kind}:${d.firing.ref}` : `${d.firing?.kind}`;
 };
 
-describe("N owned task closes through a bare `mu wait` (CURRENT: one per call)", () => {
+describe("N owned task closes through a bare `mu wait` (one per call)", () => {
   it("7 closes take 7 waits; the first result already prints the other 6 CLOSED+fired, unconsumed", async () => {
     for (const id of [...CLOSES, "a3"]) mk(id);
     registerOwnedWait(
@@ -85,7 +83,7 @@ describe("N owned task closes through a bare `mu wait` (CURRENT: one per call)",
     for (let i = 0; i < CLOSES.length; i++) {
       got.push(fired(await mu("s", ["wait", "--first", "--timeout", "1", "--json"])));
     }
-    // CURRENT: src/wait.ts select (first mode) fires ready[0] only; a3 still open -> heartbeat.
+    // src/wait.ts select (first mode) fires ready[0] only; a3 still open -> heartbeat.
     expect(got).toEqual([...CLOSES.map((id) => `closed:task:w/${id}`), "heartbeat"]);
     // The reading trap (orchestrator session 2026-11-07 l.282 then l.290): the first result's
     // snapshots show every ready close as CLOSED, fired:true, but only one cursor was written.
@@ -104,14 +102,14 @@ describe("N owned task closes through a bare `mu wait` (CURRENT: one per call)",
     );
     for (const id of CLOSES) close(id);
     const r = await mu("s", ["wait", "--all", "--timeout", "1", "--json"]);
-    // CURRENT: no targets -> targets = every item, and `every(done)` fails on a3: a heartbeat
+    // no targets -> targets = every item, and `every(done)` fails on a3: a heartbeat
     // that consumed nothing (no exactly-once "every ready event now" shape exists).
     expect(data(r).timedOut).toBe(true);
     expect(Object.keys(data(r).cursor ?? {})).toEqual([]);
   });
 });
 
-describe("the pi settle over the real `mu wait --ready` (NOW: one batch per settle turn)", () => {
+describe("the pi settle over the real `mu wait --ready` (one batch per settle turn)", () => {
   const SESSION: MuNudgeCtx = { sessionManager: { getSessionId: () => "s1" } };
   const state: MuResult = {
     code: 0,
@@ -168,7 +166,7 @@ describe("the pi settle over the real `mu wait --ready` (NOW: one batch per sett
       texts.push(text);
       turns.push([...text.matchAll(/^- task w\/(\w+) CLOSED$/gm)].map((m) => m[1] ?? "?"));
     }
-    // NOW (`mu wait --ready`): READY_BATCH_MAX (5) closes, one line each, then the other 2.
+    // (`mu wait --ready`): READY_BATCH_MAX (5) closes, one line each, then the other 2.
     expect(turns).toEqual([CLOSES.slice(0, 5), CLOSES.slice(5)]);
     expect(texts[0]).toContain("`mu wait --ready --on-stall exit --json` for you. 5 events:\n");
     // The first turn names the 2 it did not deliver; the second owes nothing.
@@ -218,7 +216,7 @@ describe("settle -> notes -> wait: no double delivery (F2's alternative reading)
 });
 
 describe("the printed result names what it consumed (the exactly-once printing rule)", () => {
-  it("--wave --all over 12 long answers consumes 12 but pages some out of `snapshots` (CURRENT)", async () => {
+  it("--wave --all over 12 long answers consumes 12 but pages some out of `snapshots`", async () => {
     const calls = Array.from({ length: 12 }, () => mkDelegate(db, "pi:s", { wave: "big" }));
     for (const c of calls) answer(db, c, `VERDICT: CONFIRMED\n${"x".repeat(3000)}`);
     const r = await mu("s", ["wait", "--wave", "big", "--all", "--timeout", "1", "--json"]);
@@ -229,7 +227,7 @@ describe("the printed result names what it consumed (the exactly-once printing r
       )
       .get() as { n: number };
     expect(consumed.n).toBe(12);
-    // CURRENT: src/cli/wait-output.ts orders the firing ref, then open refs, then the fired ones,
+    // src/cli/wait-output.ts orders the firing ref, then open refs, then the fired ones,
     // so the 4096-byte page cuts consumed calls first (only `snapshotsCut` + `retrieve` say so).
     // A batch fix must never page out a delivered member.
     expect(d.snapshots?.length).toBeLessThan(12);

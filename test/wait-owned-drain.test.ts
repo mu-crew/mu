@@ -1,10 +1,7 @@
-// Characterisation for a7_wait_drain_rca (dogfood-switch F2; linux-host crew-mu 2026-11-04).
-// Pins TODAY's behaviour, not the wanted one: every wait delivers exactly ONE ready owned
-// delegate report, also when it names an explicit target that is not ready, so N finished
-// answers take N waits before the wait reaches the thing it was asked about. The `--wave
-// --all` case pins the one path that already drains a wave in one result. A fix that changes
-// the one-per-call rule must flip the marked expectations, never lose an answer (every call
-// is still delivered exactly once). Real SQLite; no agents.
+// Owned delegate reports: every wait delivers exactly ONE ready owned report, also when it
+// names an explicit target that is not ready, so N finished answers take N waits before the
+// wait reaches the thing it was asked about. `--wave --all` drains a wave in one result.
+// Whatever the batching rule, every call is delivered exactly once. Real SQLite; no agents.
 
 import { describe, expect, it } from "vitest";
 import { type WaitResult, waitForEvents } from "../src/wait.js";
@@ -15,14 +12,14 @@ const base = { pollMs: 1, sync: false, callers: ["pi:s"], timeoutMs: 30 } as con
 const label = (r: WaitResult): string =>
   r.event.ref === null ? r.event.kind : `${r.event.kind}:${r.event.ref.id}`;
 
-describe("owned delegate reports come one per wait (current behaviour, a7_wait_drain_rca)", () => {
+describe("owned delegate reports come one per wait", () => {
   it("an explicit wait on an open task returns each finished owned answer first, one per call", async () => {
     mkTask(env.db, "t");
     const calls = [1, 2, 3].map(() => mkDelegate(env.db, "pi:s"));
     for (const c of calls) answer(env.db, c);
     const got: string[] = [];
     for (let i = 0; i < 4; i++) got.push(label(await waitForEvents(env.db, [taskRef("t")], base)));
-    // CURRENT: three waits on task:w/t end on unrelated answers before the target is even
+    // three waits on task:w/t end on unrelated answers before the target is even
     // considered (src/wait.ts select: urgency(delegate)=3 outranks target-ness; first = ready[0]).
     expect(got).toEqual([...calls.map((c) => `delegate:${c}`), "heartbeat"]);
   });
@@ -34,7 +31,7 @@ describe("owned delegate reports come one per wait (current behaviour, a7_wait_d
     const opts = { ...base, mode: "all" } as const;
     const got: string[] = [];
     for (let i = 0; i < 3; i++) got.push(label(await waitForEvents(env.db, [taskRef("t")], opts)));
-    // CURRENT: src/wait.ts select, `urgent` = a non-target delegate ends --all early.
+    // src/wait.ts select, `urgent` = a non-target delegate ends --all early.
     expect(got).toEqual([...calls.map((c) => `delegate:${c}`), "heartbeat"]);
   });
 
@@ -44,7 +41,7 @@ describe("owned delegate reports come one per wait (current behaviour, a7_wait_d
     const opts = { ...base, wave: { name: "rv" } } as const;
     const got: WaitResult[] = [];
     for (let i = 0; i < 4; i++) got.push(await waitForEvents(env.db, [], opts));
-    // CURRENT: the linux-host `for i in 1..5; mu wait --wave refute-adopt` loop.
+    // the linux-host `for i in 1..5; mu wait --wave refute-adopt` loop.
     expect(got.map(label)).toEqual([...calls.map((c) => `delegate:${c}`), "heartbeat"]);
     expect(got[0]?.delivered.map((r) => r.id)).toEqual([calls[0]]);
   });
@@ -71,7 +68,7 @@ describe("owned delegate reports come one per wait (current behaviour, a7_wait_d
     for (const c of calls) answer(env.db, c);
     const opts = { ...base, wave: { name: "rv" }, mode: "all" } as const;
     const first = await waitForEvents(env.db, [], opts);
-    // CURRENT: the non-target owned delegate is `urgent` under --all and fires alone.
+    // the non-target owned delegate is `urgent` under --all and fires alone.
     expect(label(first)).toBe(`delegate:${other}`);
     expect(first.delivered.map((d) => d.id)).toEqual([other]);
     const second = await waitForEvents(env.db, [], opts);

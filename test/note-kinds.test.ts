@@ -1,7 +1,7 @@
 // Note kinds are set once at INSERT (v_task_mutations): addNote/closeTask
 // writers, the `inherit` group option, and the CLI/extension surfaces that
 // choose a kind. The append-only refusal of a kind UPDATE itself is proven
-// in schema-v12.test.ts; here we prove every WRITER picks the right kind.
+// in schema-task-fields.test.ts; here we prove every WRITER picks the right kind.
 
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
