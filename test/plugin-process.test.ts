@@ -300,6 +300,15 @@ describe("process rules", () => {
     expect(groupGone(p.process.pgid)).toBe(true);
   });
 
+  it("a cooperative plugin's shutdown leaves no timer keeping mu alive", async () => {
+    // What keeps the event loop (a CLI call, an SDK caller) from draining.
+    const timers = () => process.getActiveResourcesInfo().filter((r) => r === "Timeout").length;
+    const before = timers();
+    const p = await start();
+    await p.shutdown();
+    expect(timers()).toBeLessThanOrEqual(before);
+  });
+
   it("a plugin that ignores EOF is killed after the grace", async () => {
     const p = await start({ ignoreEof: true });
     const t0 = Date.now();

@@ -34,6 +34,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Corrected the docs on Rex rung 2 support, stall authorisation and unknown delivery.
 - A plugin watch whose reply and `watch/settled` arrive in one read reports the settled turn instead of failing with a `ReferenceError`. The watch's end is read from the process that answered it.
 - A plugin channel's watch stops asking the job's liveness once it settles or is aborted, even when a poll was in flight, and removes its abort listener.
+- A plugin that exits promptly at shutdown no longer keeps a `mu` invocation or SDK caller alive for the rest of its grace (up to 5 s): the stop sequence clears its losing timers.
 
 ## [5.4.0] — 2026-11-24
 

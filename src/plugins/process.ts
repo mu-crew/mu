@@ -140,6 +140,19 @@ function signalGroup(pgid: number, sig: NodeJS.Signals | 0): boolean {
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+/** `p` or `ms`, whichever comes first; the losing timer is cleared, so it never holds mu open. */
+async function raceTimeout<T, U>(p: Promise<T>, ms: number, timedOut: U): Promise<T | U> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p,
+      new Promise<U>((r) => (timer = setTimeout(() => r(timedOut), ms))),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── The terminating latch ──────────────────────────────────────────────
 
 const SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
@@ -467,10 +480,11 @@ export class PluginProcess {
       begin = r;
     }).then(async () => {
       const graceFrom = Date.now();
-      const by = await Promise.race([
+      const by = await raceTimeout(
         this.leaderGone.then(() => "leader" as const),
-        sleep(this.graceMs).then(() => "grace" as const),
-      ]);
+        this.graceMs,
+        "grace" as const,
+      );
       const graceTo = Date.now();
       const pid = this.child.pid;
       if (pid !== undefined) {
@@ -479,7 +493,7 @@ export class PluginProcess {
       await this.leaderGone;
       // With the group gone the pipe drains and closes; a helper that left the group may
       // still hold it, so mu stops reading after a moment.
-      await Promise.race([this.stdoutClosed, sleep(200)]);
+      await raceTimeout(this.stdoutClosed, 200, undefined);
       this.child.stdout?.destroy();
       this.child.stderr?.destroy();
       this.child.stdin?.destroy();
