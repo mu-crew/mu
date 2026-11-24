@@ -5,13 +5,23 @@
 
 import { randomUUID } from "node:crypto";
 import type { Db } from "../db.js";
-import { effectsOf, getEffect } from "../effects.js";
-import type { Call, HostFacts, HostProvider, HostStatus, KeyLookup } from "../host-provider.js";
+import { effectsOf } from "../effects.js";
+import type {
+  Call,
+  HostFacts,
+  HostProvider,
+  HostRecord,
+  HostStatus,
+  KeyLookup,
+} from "../host-provider.js";
 import {
   beginHostRelease,
+  claimHostReleaseReplay,
   deleteHostRecord,
   fillHostRecord,
   getHostRecord,
+  HostStateError,
+  hostRecordById,
   insertHostRecord,
 } from "../host-records.js";
 import {
@@ -20,7 +30,6 @@ import {
   PluginAnswerUnknownError,
   PluginCallError,
 } from "./errors.js";
-import { hostTarget } from "./link.js";
 import type { PluginMethod } from "./protocol.js";
 import { pluginCall, type Resolution, resolveEffect, runEffect } from "./reconcile.js";
 import { getPlugin, pluginSeams } from "./registry.js";
@@ -42,37 +51,46 @@ export function pluginProvider(
   db: Db,
   plugin: string,
   host: string,
-  opts: { repo?: string | null } = {},
+  opts: { repo?: string | null; record?: HostRecord } = {},
 ): PluginHostProvider {
   const record = () => getHostRecord(db, host);
-  /** The record's target, with the handle the caller names (D6: the call is about that handle). */
-  const target = (handle?: string) => {
-    const t = hostTarget(db, host);
-    return handle === undefined ? t : { host: { ...t.host, handle } };
-  };
-  const read = async <M extends PluginMethod>(m: M, p: Record<string, unknown>, call: Call) =>
+  const snapshot = () => opts.record ?? record();
+  /** The record's target, with the handle the caller names (D6). */
+  const target = (rec: HostRecord | undefined, handle = rec?.handle ?? undefined) => ({
+    host: {
+      name: host,
+      ...(handle !== undefined ? { handle } : {}),
+      ...(rec?.instance != null ? { instance: rec.instance } : {}),
+    },
+  });
+  const read = async <M extends PluginMethod>(
+    m: M,
+    p: Record<string, unknown>,
+    rec: HostRecord | undefined,
+    call: Call,
+  ) =>
     pluginCall(db, plugin, m, p, {
       kind: "read",
       needs: ["host"],
       call,
       fence: {
-        instance: record()?.instance ?? "",
+        instance: rec?.instance ?? "",
         subject: `${m} of host ${host}`,
         why: "instance-changed",
       },
     });
-  const settleHooks = {
+  const settleHooks = (id: number) => ({
     record: (r: { result: unknown }) => {
-      const rec = record();
+      const rec = hostRecordById(db, id);
       if (rec === undefined) return;
       if (rec.state === "acquiring") fillHostRecord(db, rec.id, r.result as HostFacts);
       else if (rec.state === "releasing") deleteHostRecord(db, rec.id);
     },
     none: () => {
-      const rec = record();
+      const rec = hostRecordById(db, id);
       if (rec?.state === "acquiring") deleteHostRecord(db, rec.id);
     },
-  };
+  });
 
   return {
     name: plugin,
@@ -112,7 +130,8 @@ export function pluginProvider(
 
     async lookup(key, o, call): Promise<KeyLookup<HostFacts>> {
       try {
-        return await read("host.lookup", { target: target(), key, fence: o.fence }, call);
+        const rec = snapshot();
+        return await read("host.lookup", { target: target(rec), key, fence: o.fence }, rec, call);
       } catch (e) {
         if (e instanceof PluginAnswerUnknownError) return { unknown: e.reason };
         throw e;
@@ -121,7 +140,8 @@ export function pluginProvider(
 
     async status(handle, call): Promise<HostStatus> {
       try {
-        return await read("host.status", { target: target(handle) }, call);
+        const rec = snapshot();
+        return await read("host.status", { target: target(rec, handle) }, rec, call);
       } catch (e) {
         // Cannot tell, or not asked (another instance): unknown, never a throw.
         if (e instanceof PluginCallError && e.kind === "human") {
@@ -139,11 +159,20 @@ export function pluginProvider(
     },
 
     async release(handle, key, call) {
-      const rec = record();
+      const rec = snapshot();
       if (rec === undefined) return;
-      if (getEffect(db, key) !== undefined) {
-        // A crashed or unanswered release: reissued (idempotent by contract, D4).
-        const r = await resolveEffect(db, key, settleHooks, call);
+      if ((rec.handle ?? "") !== handle) {
+        throw new HostStateError(
+          host,
+          rec.state,
+          "its release handle changed; inspect it and retry",
+        );
+      }
+      const replay = claimHostReleaseReplay(db, rec, key, () =>
+        resolveEffect(db, key, settleHooks(rec.id), call),
+      );
+      if (replay !== undefined) {
+        const r = await replay.result;
         if (r?.state === "unknown")
           throw new EffectOutcomeUnknownError(plugin, "host.release", r.reason);
         return;
@@ -154,19 +183,19 @@ export function pluginProvider(
         subject: { kind: "host", id: String(rec.id) },
         plugin,
         method: "host.release",
-        params: { target: target(handle), key },
+        params: { target: target(rec, handle), key },
         fence: rec.instance ?? "",
-        alongside: () => beginHostRelease(db, rec.id),
+        alongside: () => beginHostRelease(db, rec),
         record: () => deleteHostRecord(db, rec.id),
       });
     },
 
     async resolve(call) {
-      const rec = record();
+      const rec = snapshot();
       if (rec === undefined) return [];
       const out: Resolution[] = [];
       for (const row of effectsOf(db, "host", String(rec.id))) {
-        const r = await resolveEffect(db, row.key, settleHooks, call);
+        const r = await resolveEffect(db, row.key, settleHooks(rec.id), call);
         if (r !== undefined) out.push(r);
       }
       return out;

@@ -177,7 +177,7 @@ export function recordView(db: Db, record: HostRecord): HostView {
   return {
     name: record.name,
     link: pluginLink(db, record.provider, { provider: true }),
-    provider: pluginProvider(db, record.provider, record.name),
+    provider: pluginProvider(db, record.provider, record.name, { record }),
     ...(kind !== undefined ? { jobKind: kind } : {}),
     record,
   };

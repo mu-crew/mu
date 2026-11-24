@@ -5,6 +5,7 @@
 
 import { type CarrierJob, getCarrierJob, reserveCarrierJob } from "./carrier-jobs.js";
 import type { Db } from "./db.js";
+import { getEffect } from "./effects.js";
 import {
   findHost,
   type HostFacts,
@@ -119,6 +120,29 @@ export function getHostRecord(db: Db, name: string): HostRecord | undefined {
 
 export function hostRecordById(db: Db, id: number): HostRecord | undefined {
   return db.prepare("SELECT * FROM hosts WHERE id = ?").get(id) as HostRecord | undefined;
+}
+
+/** Match the original effect target, ignoring state and provider facts that status may change. */
+export function matchingHostRecord(db: Db, expected: HostRecord): HostRecord | undefined {
+  const rec = hostRecordById(db, expected.id);
+  return rec?.name === expected.name &&
+    rec.provider === expected.provider &&
+    rec.instance === expected.instance &&
+    rec.handle === expected.handle
+    ? rec
+    : undefined;
+}
+
+export function requireMatchingHostRecord(db: Db, expected: HostRecord): HostRecord {
+  const rec = matchingHostRecord(db, expected);
+  if (rec === undefined) {
+    throw new HostStateError(
+      expected.name,
+      expected.state,
+      "its record changed; inspect it and retry",
+    );
+  }
+  return rec;
 }
 
 /** Advisory only: a job that may have started counts until a stop is proven. */
@@ -268,9 +292,8 @@ export function hostReferences(db: Db, rec: HostRecord): HostReferences {
 }
 
 /** The release proof (D1), in the caller's transaction: nothing names the host, then `releasing`. */
-export function beginHostRelease(db: Db, id: number): void {
-  const rec = hostRecordById(db, id);
-  if (rec === undefined) throw new Error(`host record ${id} is gone`);
+export function beginHostRelease(db: Db, expected: HostRecord): void {
+  const rec = requireMatchingHostRecord(db, expected);
   if (!["draining", "lost", "releasing"].includes(rec.state)) {
     throw new HostStateError(rec.name, rec.state, "drain it first (mu host drain)");
   }
@@ -278,7 +301,34 @@ export function beginHostRelease(db: Db, id: number): void {
   if (refs.agents.length + refs.jobs.length + refs.recoveries.length > 0) {
     throw new HostReferencedError(rec.name, refs);
   }
-  setHostState(db, id, ["draining", "lost", "releasing"], "releasing");
+  setHostState(db, rec.id, ["draining", "lost", "releasing"], "releasing");
+}
+
+/** Check the release identity and claim the saved intent in the same transaction. */
+export function claimHostReleaseReplay<T>(
+  db: Db,
+  rec: HostRecord,
+  key: string,
+  resolve: () => Promise<T>,
+): { result: Promise<T> } | undefined {
+  return db
+    .transaction(() => {
+      const effect = getEffect(db, key);
+      if (effect === undefined) return undefined;
+      requireMatchingHostRecord(db, rec);
+      if (
+        effect.subject_kind !== "host" ||
+        effect.subject_id !== String(rec.id) ||
+        effect.method !== "host.release" ||
+        effect.plugin !== rec.provider ||
+        effect.instance !== rec.instance
+      ) {
+        throw new HostStateError(rec.name, rec.state, "the release key names another effect");
+      }
+      // The resolver claims synchronously; the RPC runs after the transaction commits.
+      return { result: resolve() };
+    })
+    .immediate();
 }
 
 /** Where the deadline stands (D10): inside the margin, spawns refuse and the host drains. */

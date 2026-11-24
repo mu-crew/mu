@@ -14,7 +14,9 @@ import {
   HostStateError,
   hostReferences,
   inDeadlineMargin,
+  matchingHostRecord,
   refreshHostFacts,
+  requireMatchingHostRecord,
   setHostState,
 } from "./host-records.js";
 import { HostExistsError, HostNotFoundError } from "./hosts.js";
@@ -90,35 +92,47 @@ const logAcquired = (db: Db, name: string, provider: string, handle: string | nu
 /** Ask host `name`'s status once (D1): `gone` makes it `lost`; `up` refreshes its facts. */
 export async function observeHost(db: Db, name: string): Promise<HostStatus | undefined> {
   const rec = getHostRecord(db, name);
-  if (rec === undefined || rec.handle === null) return undefined;
-  if (rec.state !== "ready" && rec.state !== "draining") return undefined;
+  return rec === undefined ? undefined : observeRecord(db, rec);
+}
+
+async function observeRecord(db: Db, rec: HostRecord): Promise<HostStatus | undefined> {
+  if (rec.handle === null || (rec.state !== "ready" && rec.state !== "draining")) return undefined;
   const st = await providerOf(db, rec).status(rec.handle, callFor("host.status"));
-  if (st.state === "gone") {
-    setHostState(db, rec.id, ["ready", "draining"], "lost", st.reason);
-  } else if (st.state === "up") {
-    refreshHostFacts(db, rec.id, st);
-    const now = getHostRecord(db, name);
-    if (now !== undefined && inDeadlineMargin(now)) setHostState(db, rec.id, ["ready"], "draining");
-  }
+  if (st.state !== "gone" && st.state !== "up") return st;
+  db.transaction(() => {
+    if (matchingHostRecord(db, rec) === undefined) return;
+    if (st.state === "gone") {
+      setHostState(db, rec.id, ["ready", "draining"], "lost", st.reason);
+    } else {
+      refreshHostFacts(db, rec.id, st);
+      const now = matchingHostRecord(db, rec);
+      if (now !== undefined && inDeadlineMargin(now))
+        setHostState(db, rec.id, ["ready"], "draining");
+    }
+  }).immediate();
   return st;
 }
 
 /** `mu host drain`: no new jobs (D1). A lost host stays lost. */
 export async function drainHost(db: Db, name: string): Promise<HostRecord> {
-  requireRecord(db, name);
-  await observeHost(db, name);
-  const rec = requireRecord(db, name);
-  if (rec.state === "acquiring" || rec.state === "releasing") {
-    throw new HostStateError(name, rec.state, "only a ready host drains");
-  }
-  setHostState(db, rec.id, ["ready"], "draining");
-  return requireRecord(db, name);
+  const expected = requireRecord(db, name);
+  await observeRecord(db, expected);
+  return db
+    .transaction(() => {
+      const rec = requireMatchingHostRecord(db, expected);
+      if (rec.state === "acquiring" || rec.state === "releasing") {
+        throw new HostStateError(name, rec.state, "only a ready host drains");
+      }
+      setHostState(db, rec.id, ["ready"], "draining");
+      return requireMatchingHostRecord(db, expected);
+    })
+    .immediate();
 }
 
 /** `mu host release` (D1): the proof and the `host.release` effect, reissued after a crash. */
 export async function releaseHost(db: Db, name: string): Promise<void> {
   const rec = requireRecord(db, name);
-  await observeHost(db, name);
+  await observeRecord(db, rec);
   if (rec.state === "acquiring") {
     throw new HostStateError(
       name,
@@ -126,11 +140,7 @@ export async function releaseHost(db: Db, name: string): Promise<void> {
       "its acquire is unresolved (mu host acquire again, or --abandon)",
     );
   }
-  await providerOf(db, requireRecord(db, name)).release(
-    rec.handle ?? "",
-    releaseKey(rec.id),
-    callFor("host.release"),
-  );
+  await providerOf(db, rec).release(rec.handle ?? "", releaseKey(rec.id), callFor("host.release"));
   if (getHostRecord(db, name) === undefined) {
     emitEvent(
       db,

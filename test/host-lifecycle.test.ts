@@ -7,7 +7,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { requireHostSpawn } from "../src/agents/spawn-remote.js";
 import { deleteAgent, insertAgent } from "../src/agents.js";
 import { getCarrierJob } from "../src/carrier-jobs.js";
@@ -35,6 +35,8 @@ import { addHost, checkHost, getHost, HostExistsError } from "../src/hosts.js";
 import { listLogs } from "../src/logs.js";
 import { EffectFencedError, EffectOutcomeUnknownError } from "../src/plugins/errors.js";
 import { type PluginJobKind, pluginJobRef } from "../src/plugins/job.js";
+import { PluginProcess } from "../src/plugins/process.js";
+import * as registry from "../src/plugins/registry.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { collectRemoteAgent } from "../src/remote-collect.js";
 import {
@@ -46,6 +48,7 @@ import { prepareProviderWorktree, RemoteBaseMissingError } from "../src/remote-w
 import { ensureWorkstream } from "../src/workstream.js";
 import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
+import { latch } from "./_latch.js";
 import { type FakePlugin, fakePlugin, providerSeams } from "./_plugin.js";
 import { registerFixturePlugin } from "./_plugin-handshake.js";
 import { runCli, runCliJson } from "./_runCli.js";
@@ -214,6 +217,91 @@ describe("mu host release (D1)", () => {
     expect(err).toBeInstanceOf(HostReferencedError);
     expect(String(err)).toMatch(/agents ws\/a1; job records ws\/w; final collect owed by ws\/w/);
     expect(f.backend().releases ?? 0).toBe(0);
+  });
+
+  it.each(["release", "drain"] as const)(
+    "a paused %s cannot act on a replacement host",
+    async (verb) => {
+      await setup();
+      await acquire();
+      if (verb === "release") await drainHost(db, "box");
+      const observed = latch();
+      const resume = latch();
+      const request = PluginProcess.prototype.request;
+      const gate = vi
+        .spyOn(PluginProcess.prototype, "request")
+        .mockImplementationOnce(async function (this: PluginProcess, method, params, opts) {
+          const reply = await request.call(this, method, params, opts);
+          expect(method).toBe("host.status");
+          observed.resolve();
+          await resume.promise;
+          return reply;
+        });
+      const pending = (verb === "release" ? releaseHost : drainHost)(db, "box").catch(
+        (err: unknown) => err,
+      );
+      try {
+        await Promise.race([
+          observed.promise,
+          pending.then(() => {
+            throw new Error("no status barrier");
+          }),
+        ]);
+        await drainHost(db, "box");
+        await releaseHost(db, "box");
+        const replacement = await acquire();
+        if (verb === "release") await drainHost(db, "box");
+        resume.resolve();
+        const outcome = await pending;
+        expect(getHostRecord(db, "box")).toMatchObject({
+          id: replacement?.id,
+          handle: "host-2",
+          state: verb === "release" ? "draining" : "ready",
+        });
+        expect(f.calls().filter((c) => c.method === "host.release")).toHaveLength(1);
+        expect(outcome).toBeInstanceOf(HostStateError);
+      } finally {
+        resume.resolve();
+        await pending;
+        gate.mockRestore();
+      }
+    },
+  );
+
+  it("checks the release target after the plugin session is ready, at intent reservation", async () => {
+    await setup();
+    await acquire();
+    f.set({ hostGone: "reclaimed" });
+    await observeHost(db, "box"); // A lost host skips the status read on release.
+    const handshaken = latch();
+    const resume = latch();
+    const session = registry.pluginSession;
+    const gate = vi.spyOn(registry, "pluginSession").mockImplementationOnce(async (...args) => {
+      const plugin = await session(...args);
+      handshaken.resolve();
+      await resume.promise;
+      return plugin;
+    });
+    const pending = releaseHost(db, "box").catch((err: unknown) => err);
+    try {
+      await Promise.race([
+        handshaken.promise,
+        pending.then(() => {
+          throw new Error("no handshake barrier");
+        }),
+      ]);
+      // Keep the id so a fence on the row id alone would still let the effect through.
+      db.prepare("UPDATE hosts SET handle = 'another-handle' WHERE name = 'box'").run();
+      resume.resolve();
+      const outcome = await pending;
+      expect(f.calls().filter((c) => c.method === "host.release")).toEqual([]);
+      expect(outcome).toBeInstanceOf(HostStateError);
+      expect(getHostRecord(db, "box")).toMatchObject({ handle: "another-handle", state: "lost" });
+    } finally {
+      resume.resolve();
+      await pending;
+      gate.mockRestore();
+    }
   });
 
   it("a crash after the release intent is reissued and converges: one release", async () => {
