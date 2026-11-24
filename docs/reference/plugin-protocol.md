@@ -409,8 +409,12 @@ it was recorded under; under another, mu sends nothing.
 
 ### Host facts in mu's reads
 
-A provider host's `deadlineAt` and `idleReclaimMs` are facts; mu runs no
-daemon. Inside `MU_HOST_DEADLINE_MARGIN_MS` (default 10 minutes) of
+A provider host's `deadlineAt` and `idleReclaimMs` are optional facts.
+`idleReclaimMs` is the provider's idle window in milliseconds, not a
+countdown; the provider defines what counts as activity. With a known
+window, `mu host exec` and provider-backed spawns warn before acting if
+mu has no active job recorded. An unresolved launch counts as potentially
+active; there is no extra status probe or keepalive. Inside `MU_HOST_DEADLINE_MARGIN_MS` (default 10 minutes) of
 `deadlineAt`, spawns on the host refuse (`HostDeadlineError`) and it drains;
 `mu wait` caps its sleep at the earliest margin of the agents it watches
 and fires an urgent `deadline` event (exit 7) naming the agent, once per

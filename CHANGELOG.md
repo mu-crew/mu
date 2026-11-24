@@ -16,6 +16,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 - Test seam, no production behaviour change: `PluginProcess.fromTestPipes` (`src/plugins/process.ts`) builds a plugin peer over in-process pipes with no PID, and `pgid` is now a getter that throws for such a peer. A real child takes the same paths as before. Documented under Key seams in `docs/ARCHITECTURE.md`.
 - Test harness: the macOS real-git pin exposes only a `git` symlink ahead of `PATH` (with `GIT_EXEC_PATH`), not the whole CommandLineTools bin. The vitest `pure` project sets `testTimeout: 30000` like the others.
+### Added
+
+- `mu host exec` and provider-backed spawns warn on stderr when the provider
+  reports an idle-reclaim window and mu has no active job recorded. The
+  warning gives the window and suggests a standing host; no keepalive.
 
 ### Fixed
 

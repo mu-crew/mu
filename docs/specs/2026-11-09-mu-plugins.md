@@ -611,9 +611,9 @@ fake backend. D1's `lost` close relies on it.
 
 **Idle reclaim.** `idleReclaimMs` is the provider's policy: how long the
 host may sit idle, by whatever activity the provider counts, before it
-may be reclaimed. It is not measured from anything mu observes. Since R8
-mu runs no timer from it: a host that reports it gets in-life collects
-(D10), and nothing reads its value.
+may be reclaimed. It is not measured from anything mu observes. mu runs
+no timer from it: a host that reports it gets in-life collects (D10), and
+exec and spawn warn before acting when no job is recorded as active.
 
 **Atomic admission.** A spawn on a provider host reserves inside one
 immediate transaction, the agent lock held. That transaction re-reads the
@@ -1182,7 +1182,7 @@ enforcement point:
 | job `honours` | the `JobSpec` fields the kind enforces: `command`, `env`, `sockets`, `roles` | `requireHostSpawn` refuses a requested field the kind lacks, before any effect; at load, `env: false` needs `channel` (D8) |
 | link `fetch`, `push`, `slots`, `fits` | brings commits home; seeds the host's repo with the base; who counts slots; the script size limit | collect; a `--worktree` spawn on a provider host (D7); admission; every script before the call |
 | link `remoteOnTimeout`, `quiescence` | what a timeout leaves behind; whether a scan sees the job's processes | timeouts are unknown outcomes; `unprovable` refuses removal without `--force` |
-| host `deadlineAt`, `idleReclaimMs`, `maxJobs` | provider facts. `idleReclaimMs` is the provider's own idle window: mu runs no timer from it (D6). | atomic admission; D10 (`idleReclaimMs` only turns in-life collects on) |
+| host `deadlineAt`, `idleReclaimMs`, `maxJobs` | provider facts. `idleReclaimMs` is the provider's own idle window: mu runs no timer from it (D6). | atomic admission; D10; idle-reclaim warning before exec or spawn |
 
 ### D13. The plugin protocol
 

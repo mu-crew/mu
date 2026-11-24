@@ -121,6 +121,23 @@ export function hostRecordById(db: Db, id: number): HostRecord | undefined {
   return db.prepare("SELECT * FROM hosts WHERE id = ?").get(id) as HostRecord | undefined;
 }
 
+/** Advisory only: a job that may have started counts until a stop is proven. */
+export function warnProviderIdleReclaim(db: Db, hostId: number | null | undefined): void {
+  if (hostId == null) return;
+  const idle = db
+    .prepare(
+      `SELECT name, idle_reclaim_ms FROM hosts WHERE id = ?
+       AND state IN ('ready', 'draining') AND idle_reclaim_ms IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM carrier_jobs WHERE host_id = hosts.id
+                       AND stop_gen IS NULL AND (launch <> 'none' OR job IS NOT NULL))`,
+    )
+    .get(hostId) as { name: string; idle_reclaim_ms: number } | undefined;
+  if (idle === undefined) return;
+  process.stderr.write(
+    `warning: host ${JSON.stringify(idle.name)}: no active job recorded; the provider may reclaim it after ${idle.idle_reclaim_ms / 1000} s idle; use a standing host for work that must survive reclaim\n`,
+  );
+}
+
 export function listHostRecords(db: Db): HostRecord[] {
   return db.prepare("SELECT * FROM hosts ORDER BY name").all() as HostRecord[];
 }

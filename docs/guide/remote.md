@@ -359,6 +359,11 @@ it without asking the provider, and logs what was lost. Inside
 and the host drains, `mu wait` fires `deadline` (exit 7) for its agents,
 and `mu state` lists their collect and close.
 
+If the provider reports an idle-reclaim window and mu has no active job
+recorded, `mu host exec` and `mu agent spawn --host` warn on stderr before
+acting. The window is not time remaining, and mu does not keep the host
+alive. Use a standing host for work that must survive reclaim.
+
 ```bash
 mu agent spawn w1 -w auth --host box1 --worktree --cli claude --task t1 --send "$BRIEF"
 mu wait agent:auth/w1@0      # fires only for w1; first settle runs an in-life collect

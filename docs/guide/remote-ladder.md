@@ -50,8 +50,8 @@ not a ranking.
 | herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also supports rung 2 and rung 3 session templates) |
 
 A provider host or a standing one: weigh capacity (on demand or fixed),
-lifetime (a deadline, or none), whose credentials, which harnesses are
-installed and how long setup takes. Do not assume a provisioned host has mu
+lifetime ([deadline or idle reclaim](remote.md#provider-hosts)), credentials,
+installed harnesses and setup time. Do not assume a provisioned host has mu
 or a git identity.
 
 ## Rung 1: `mu host exec`

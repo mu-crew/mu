@@ -15,6 +15,7 @@
 
 import type { Db } from "./db.js";
 import { hostExecFence, resolveHost } from "./host-provider.js";
+import { warnProviderIdleReclaim } from "./host-records.js";
 import { HostExecChangedError, HostHandbackError, HostProfileError } from "./hosts.js";
 
 export { HostExecChangedError };
@@ -143,7 +144,10 @@ export async function hostExec(
         once: true,
         maxStreamBytes: HOST_EXEC_OUTPUT_MAX_BYTES,
         dispatch: {
-          check: fence,
+          check: () => {
+            fence();
+            warnProviderIdleReclaim(db, view.record?.id);
+          },
           sent: () => {
             dispatched = true;
           },

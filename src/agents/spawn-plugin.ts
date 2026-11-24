@@ -49,7 +49,7 @@ import type { Db } from "../db.js";
 import { effectOwner } from "../effects.js";
 import { harnessOfCli } from "../harnesses.js";
 import { type HostView, resolveHost } from "../host-provider.js";
-import { reserveProviderJob } from "../host-records.js";
+import { reserveProviderJob, warnProviderIdleReclaim } from "../host-records.js";
 import { HostProfileError, pidProvenGone, releaseHostChannel } from "../hosts.js";
 import { awaitLeaseJob, defaultSpawnJobMs } from "../jobs/lease.js";
 import type { JobSpec, JobStart, PaneCommand } from "../jobs/types.js";
@@ -259,6 +259,7 @@ export async function spawnPluginAgent(
       }),
     );
   try {
+    warnProviderIdleReclaim(db, job.hostId);
     if (opts.worktree && provider && localRepo !== undefined) {
       const row = await placeholder();
       owned = row.incarnation;
