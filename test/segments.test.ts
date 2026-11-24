@@ -12,7 +12,10 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
   statSync,
   symlinkSync,
   utimesSync,
@@ -1336,6 +1339,69 @@ describe("segments", () => {
         const busy = await flushSegment(a, alias, { lockWaitMs: 30 });
         expect(busy.lockBusy).toBe(true);
         expect(readFileSync(path).equals(bytes)).toBe(true);
+      });
+    });
+
+    // realpath keeps the caller's case, so only the folder's identity
+    // makes `SYNC` and `sync` one lock. Needs a case-insensitive volume
+    // (the macOS default); a case-sensitive one has no second spelling.
+    const caseFolds = (): boolean => existsSync(dir.toUpperCase());
+    it("a writer through another case of the sync dir waits on the same lock", async (ctx) => {
+      if (!caseFolds()) ctx.skip();
+      const path = await seedFour();
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        holdSegmentLock();
+        const bytes = readFileSync(path);
+        seedTask(a, "pending");
+        const busy = await flushSegment(a, join(tempDir, "SYNC"), { lockWaitMs: 30 });
+        expect(busy.lockBusy).toBe(true);
+        expect(readFileSync(path).equals(bytes)).toBe(true);
+      });
+    });
+
+    it("a symlink retargeted while the flush queues writes where it locked", async () => {
+      const path = await seedFour();
+      const other = join(tempDir, "other");
+      mkdirSync(other);
+      const alias = join(tempDir, "alias");
+      symlinkSync(dir, alias);
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        // A live holder of `other`'s lock: nothing may append there.
+        const held = segmentLockPath(other, localMachineId(a));
+        mkdirSync(held, { recursive: true });
+        writeFileSync(
+          join(held, "meta.json"),
+          JSON.stringify({ pid: process.pid, label: "other", acquiredAt: "", token: "other" }),
+        );
+        const before = linesOf(path).length;
+        seedTask(a, "pending");
+        const flushing = flushSegment(a, alias, { lockWaitMs: 30 });
+        // Retarget before the flush's lock acquisition completes.
+        rmSync(alias);
+        symlinkSync(other, alias);
+        const result = await flushing;
+        expect(result.appended).toBe(1);
+        expect(linesOf(path)).toHaveLength(before + 1);
+        expect(readdirSync(other)).toEqual([]);
+      });
+    });
+
+    it("a sync dir replaced while the flush queues defers instead of writing", async () => {
+      const path = await seedFour();
+      const stateDir = join(tempDir, "state");
+      await withEnv("MU_STATE_DIR", stateDir, async () => {
+        seedTask(a, "pending");
+        const flushing = flushSegment(a, dir, { lockWaitMs: 30 });
+        // The folder moves away and a new one takes its path: the lock
+        // taken is the old folder's, not the new one's.
+        renameSync(dir, join(tempDir, "moved"));
+        mkdirSync(dir);
+        const result = await flushing;
+        expect(result.lockBusy).toBe(true);
+        expect(readdirSync(dir)).toEqual([]);
+        expect(existsSync(path)).toBe(false);
       });
     });
 

@@ -42,8 +42,9 @@ local `mu` processes from interleaving partial lines. A flush never
 appends without that lock: if another process still holds it after
 2 s (15 s for `mu sync`), the flush writes nothing, the ops stay
 pending in `ops`, and the next invocation appends them. The lock is
-keyed on the sync dir's real path and held while its holder lives; only
-a dead holder's lock older than 30 s is reclaimed.
+keyed on the sync dir's device and inode, not a spelling of it, and
+held while its holder lives; only a dead holder's lock older than 30 s
+is reclaimed.
 
 **Only `SYNCED_ENTITIES` and only this machine's ops are flushed.**
 Pane ids and absolute paths never leave the machine, and peers never

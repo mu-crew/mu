@@ -183,21 +183,33 @@ export function localMachineId(db: Db): string {
   return row.machine_id;
 }
 
-/** The lock dir serialising writers of one machine's segment in `dir`.
- *  Keyed on the CANONICAL dir: two spellings of one folder (a symlink, a
- *  relative path) name one file, so they must name one lock. */
-export function segmentLockPath(dir: string, machineId: string): string {
-  let canonical: string;
+/** The directory itself (device + inode), not a spelling of it. A path
+ *  string is not an identity: realpath keeps the caller's case on a
+ *  case-insensitive volume, so `Sync` and `sync` resolve to two strings
+ *  naming one folder. Null when `dir` does not exist. */
+function dirIdentity(dir: string): string | null {
   try {
-    canonical = realpathSync(dir);
+    const s = statSync(dir, { bigint: true });
+    return `${s.dev}:${s.ino}`;
   } catch {
-    canonical = resolve(dir);
+    return null;
   }
+}
+
+function lockPathFor(identity: string, machineId: string): string {
   const lockName = createHash("sha256")
-    .update(`${canonical}\u001f${machineId}`)
+    .update(`${identity}\u001f${machineId}`)
     .digest("hex")
     .slice(0, 16);
   return join(locksDir(), `segment-${lockName}.lock`);
+}
+
+/** The lock dir serialising writers of one machine's segment in `dir`.
+ *  Keyed on the directory's identity: every spelling of one folder (a
+ *  symlink, a relative path, another case) names one file, so it must
+ *  name one lock. */
+export function segmentLockPath(dir: string, machineId: string): string {
+  return lockPathFor(dirIdentity(dir) ?? resolve(dir), machineId);
 }
 
 /** Path of a machine's own segment inside `dir`. */
@@ -303,7 +315,15 @@ export async function flushSegment(
   assertSyncDirV2(dir);
   const machineId = localMachineId(db);
   mkdirSync(dir, { recursive: true });
-  const path = segmentPath(dir, machineId);
+  // ONE DESTINATION, resolved once, before any await: the file written is
+  // in `real`, and the lock is keyed on `real`'s identity. Re-resolving a
+  // symlink after queueing for the lock could land in a folder whose
+  // lock someone else holds. Results name the file in the caller's
+  // spelling, the one the operator configured.
+  const real = realpathSync(dir);
+  const identity = dirIdentity(real) ?? resolve(real);
+  const path = segmentPath(real, machineId);
+  const shown = segmentPath(dir, machineId);
 
   // LOCK-FREE NO-OP. Most verbs write no synced op, and every mu
   // process used to queue on the lock below just to learn that, so N
@@ -321,7 +341,7 @@ export async function flushSegment(
     const pending = pendingLines(db, machineId, pre.lastHlc, false);
     if (pending.lines.length === 0) {
       return {
-        segmentPath: path,
+        segmentPath: shown,
         appended: 0,
         total: pre.count,
         skippedLocal: pending.skippedLocal,
@@ -345,24 +365,32 @@ export async function flushSegment(
   // long a verify scan or rebuild takes; only a dead holder's aged lock is
   // reclaimed (src/file-lock.ts). An age-only steal let a second writer in
   // under a live one.
+  const busy = (): FlushResult => ({
+    segmentPath: shown,
+    appended: 0,
+    total: pre?.count ?? 0,
+    skippedLocal: 0,
+    selfRepaired: null,
+    foreignVersionAt: null,
+    foreignVersion: null,
+    lockBusy: true,
+  });
   return withFileLock(
-    segmentLockPath(dir, machineId),
+    lockPathFor(identity, machineId),
     `segment:${machineId}`,
-    () => Promise.resolve(flushLocked(db, path, machineId, verify)),
+    // `real` was replaced by another folder while we queued: we hold the
+    // old one's lock, not its successor's. Defer, as for a busy lock.
+    () =>
+      Promise.resolve(
+        dirIdentity(real) === identity
+          ? { ...flushLocked(db, path, machineId, verify), segmentPath: shown }
+          : busy(),
+      ),
     {
       acquireTimeoutMs:
         opts?.lockWaitMs ?? (verify ? VERIFY_FLUSH_LOCK_WAIT_MS : AMBIENT_FLUSH_LOCK_WAIT_MS),
       strict: true,
-      onUnavailable: () => ({
-        segmentPath: path,
-        appended: 0,
-        total: pre?.count ?? 0,
-        skippedLocal: 0,
-        selfRepaired: null,
-        foreignVersionAt: null,
-        foreignVersion: null,
-        lockBusy: true,
-      }),
+      onUnavailable: busy,
     },
   );
 }
