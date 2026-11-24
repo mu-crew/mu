@@ -344,7 +344,7 @@ export function App({
         const back = key.leftArrow || (key.tab && key.shift);
         setTab((cycle(ids, tab, back ? -1 : 1) ?? tab) as TabId);
         setAttentionFrom(null); // moved sideways: back from Attention is the Overview again
-        state.refresh(); // 3.x: a tab switch fetches eagerly, agent states included
+        state.refresh(); // Re-probe agent states without waiting for the slow tick.
       } else if (input === "[" || input === "]") {
         const next = cycle(
           names.map((w) => w.name),

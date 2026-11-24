@@ -1,26 +1,13 @@
-// The dashboard's ONE poll loop (3.x `useDashboardSnapshot`, v3.13.3 state.ts), owned
-// by <App> and kept running while a drill is open so every view shares its cadence:
-//
-//   FAST tier   every `tickMs` (default 1 s, +/- live: 100 ms .. 10 s): SQL only, agent
-//               states from the slow tier's cache (runtime.ts).
-//   SLOW tier   every SLOW_TICK_MS (10 s): the same read, re-probing every agent's state
-//               (control socket, gate pane). `refresh()` (r / F5) runs it now.
-//
-// Flicker guard, as 3.x:
-//   (A) a snapshot whose key (its visible content, `snapshotKey`) equals the published
-//       one is dropped: no setState, the same data reference, no re-render;
-//   (B) `nonce` moves ONLY when that key changes: drills depend on it to re-read;
-//       `slowNonce` moves after every slow read (pane captures ride on it);
-//   (C) nothing else is preloaded on the fast tick.
-//
-// Ticks never overlap: the next one is scheduled after the previous settled (the
-// runtime is single-flight too). `pollMs: null` loads once (tests, a static render).
+// The dashboard and its drills share one poll loop. Fast ticks query SQL and
+// reuse cached agent states; slow ticks and refresh re-probe those states.
+// Equal snapshot keys retain the published data to avoid repainting. Drills
+// follow the change nonce, while pane captures follow the slow tick.
+// Each tick waits for the previous read to settle; pollMs: null loads once.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DashboardSnapshot } from "../../dashboard-data.js";
 import type { DashboardQuery, DashboardRuntime } from "./runtime.js";
 
-/** The slow tier's gap (3.x SLOW_TICK_MS). */
 export const SLOW_TICK_MS = 10_000;
 export const TICK_FLOOR_MS = 100;
 export const TICK_CEILING_MS = 10_000;
@@ -50,7 +37,7 @@ export interface SnapshotState {
   snapshot: DashboardSnapshot | null;
   /** The snapshot was read for an older query than the current one (a filter just changed). */
   stale: boolean;
-  /** Moves only when the published snapshot's key changes (flicker guard B). */
+  /** Moves only when the published snapshot's key changes. */
   nonce: number;
   /** Moves after every slow-tier read (agent state re-probed): pane captures follow it. */
   slowNonce: number;
