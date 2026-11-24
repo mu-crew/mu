@@ -291,6 +291,35 @@ it.each(["launch", "ctl", "handback"])("rolls back after failed %s", async (fail
   } else expect(listRemoteRecoveries(db)).toEqual([]);
 });
 
+it("keeps the tree and records recovery when ctl rollback cannot verify the jobs stopped", async () => {
+  vi.stubEnv("MU_SPAWN_CTL_MS", "80");
+  let saved = "";
+  pane.mockImplementationOnce(async (opts) => {
+    const job = {
+      key: `${opts.env.MULE_PI_JOB_PREFIX}session.call`,
+      id: "123abc",
+      host: "box",
+      state: "running",
+    };
+    saved = JSON.stringify([job]);
+    writeFileSync(join(dir, "jobs"), saved);
+    down(); // master drops: mule ls/rm fail during rollback
+    paneLive = true;
+    opts.onPaneCreated?.("%1", FAKE_SERVER_IDENTITY);
+    return "%1";
+  });
+  await expect(spawnAgent(db, spawn)).rejects.toThrow();
+  expect(paneLive).toBe(false);
+  expect(getAgent(db, "worker-1", "crew")).toBeUndefined();
+  expect(existsSync(tree)).toBe(true);
+  expect(readFileSync(join(dir, "jobs"), "utf8")).toBe(saved);
+  expect(listRemoteRecoveries(db)).toEqual([expect.objectContaining({ cwd: tree, host: "box" })]);
+  up();
+  await expect(close()).resolves.toMatchObject({ recovery: { deleted: true } });
+  expect(readFileSync(join(dir, "jobs"), "utf8")).toBe("[]");
+  expect(existsSync(tree)).toBe(false);
+});
+
 it("refuses dirty or uncollected work without killing local pi, then collects and closes", async () => {
   await spawnAgent(db, spawn);
   writeFileSync(join(tree, "work.txt"), "new work");
