@@ -72,6 +72,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { isMainThread } from "node:worker_threads";
 import { applyOp, type Op, OpEntityNotSyncedError } from "./apply.js";
 import { compareStrings } from "./compare.js";
 import { type Db, prepareCached, SYNCED_ENTITIES } from "./db.js";
@@ -380,8 +381,8 @@ export async function flushSegment(
     `segment:${machineId}`,
     () =>
       Promise.resolve({
-        ...inLockedDir(real, identity, (guard) =>
-          flushLocked(db, basename(path), machineId, verify, guard),
+        ...inLockedDir(real, identity, (guard, dir) =>
+          flushLocked(db, join(dir, basename(path)), machineId, verify, guard),
         ),
         segmentPath: shown,
       }),
@@ -407,11 +408,26 @@ export async function flushSegment(
  * SyncDirMovedError. A rename after the guard is harmless: the write lands
  * in the locked folder (the cwd) wherever it now lives, never at its path.
  */
-function inLockedDir<T>(real: string, identity: string, fn: (guard: () => void) => T): T {
+function inLockedDir<T>(
+  real: string,
+  identity: string,
+  fn: (guard: () => void, dir: string) => T,
+): T {
   const guard = (): void => {
     if (dirIdentity(real) !== identity) throw new SyncDirMovedError(real);
   };
-  const home = process.cwd();
+  // No cwd to borrow (a worker thread cannot chdir; a deleted cwd cannot be
+  // restored): write by path, and let the guard refuse a moved folder.
+  let home: string | undefined;
+  try {
+    home = isMainThread ? process.cwd() : undefined;
+  } catch {
+    home = undefined;
+  }
+  if (home === undefined) {
+    guard();
+    return fn(guard, real);
+  }
   try {
     process.chdir(real);
   } catch {
@@ -419,7 +435,7 @@ function inLockedDir<T>(real: string, identity: string, fn: (guard: () => void) 
   }
   try {
     if (dirIdentity(".") !== identity) throw new SyncDirMovedError(real);
-    return fn(guard);
+    return fn(guard, ".");
   } finally {
     process.chdir(home);
   }
