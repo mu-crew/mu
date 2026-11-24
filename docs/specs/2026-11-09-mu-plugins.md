@@ -2,7 +2,7 @@
 
 # mu plugins: hosts, jobs, links, channels
 
-Status: draft 7, refuted six rounds, pending final check. Written
+Status: shipped by 5.3.0; this text is the design record (draft 7, refuted six rounds). Written
 2026-11-09. P1–P6a are built on `spec/mu-plugins`, and P6b (in review)
 on its own branch. Draft 7's amendments name the built code each one
 changes ([Refutation round 6](#refutation-round-6-backend-mapping)).

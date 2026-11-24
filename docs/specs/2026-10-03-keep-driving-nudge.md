@@ -2,7 +2,7 @@
 
 # Keep-driving nudge: one prompt when an orchestrator stops early
 
-Status: shipped (unreleased). Implemented 2026-10-03; see [Deviations](#deviations-during-implementation)
+Status: shipped (released before 5.0); this text is the design record. Implemented 2026-10-03; see [Deviations](#deviations-during-implementation)
 Date: 2026-10-03
 
 ## Problem

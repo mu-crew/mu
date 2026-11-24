@@ -2,7 +2,7 @@
 
 # hill-r2 tournament rig: next-step probe, tournament driver, exposure-gated scoring
 
-Status: revision 3, for a fresh refutation (task `b1_rig_spec_3`, workstream `crew-hill2`). Revision 1 was refuted by `scratch/delegate_refute-spec_55f96588` and revision 2 by `scratch/delegate_refute-spec2_34abfd81`; the revision log at the end lists every change. It binds B2 (`nextstep_probe`), B3a (`exposure_scoring`), B3b (`tournament_driver`), B3c (`tournament_gate`), B4a (`intents_scenarios`) and B4b (`nextstep_cases`). Plan of record: `mu task notes hill2 -w crew-hill2` (brief plus REVISION 1). Every REVISION 1 Phase-B requirement maps to a section here; §8 checks each one off.
+Status: executed; results are in `docs/eval/hill-r2`, this text is the design record (revision 3; task `b1_rig_spec_3`, workstream `crew-hill2`). Revision 1 was refuted by `scratch/delegate_refute-spec_55f96588` and revision 2 by `scratch/delegate_refute-spec2_34abfd81`; the revision log at the end lists every change. It binds B2 (`nextstep_probe`), B3a (`exposure_scoring`), B3b (`tournament_driver`), B3c (`tournament_gate`), B4a (`intents_scenarios`) and B4b (`nextstep_cases`). Plan of record: `mu task notes hill2 -w crew-hill2` (brief plus REVISION 1). Every REVISION 1 Phase-B requirement maps to a section here; §8 checks each one off.
 
 ## 0. Why this rig, and what it must not repeat
 

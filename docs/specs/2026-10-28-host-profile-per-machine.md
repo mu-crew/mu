@@ -2,7 +2,7 @@
 
 # Host profiles name a machine; the repo is chosen at spawn
 
-Status: implemented (unreleased). See [Resolved questions](#resolved-questions).
+Status: shipped (released before 5.0); this text is the design record. See [Resolved questions](#resolved-questions).
 Date: 2026-10-28
 
 ## Problem
