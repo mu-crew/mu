@@ -20,7 +20,7 @@ Both tiers use the same `pure` Vitest project for the allowlist in
 keep module mocks, DBs, subprocesses and env/cwd mutations in `isolated`.
 
 `registerFixturePlugin` runs setup-only handshakes over pipes in process.
-`withPluginPipes` can also supply a scripted read reply with no process group.
+`withPluginPipes` can also script read replies, with notifications in the same chunk.
 Keep real children for effect dispatch, child I/O, startup and shutdown.
 
 ## Mux tests

@@ -23,6 +23,8 @@ import {
   readAgentStates,
   sentRun,
 } from "../src/channels/index.js";
+import { closePluginSessions } from "../src/plugins/registry.js";
+import { withPluginPipes } from "./_plugin-handshake.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
 
 const h = pluginHostFixture({ handshakeInProcess: true });
@@ -98,6 +100,27 @@ describe("the fake plugin's channel: the contract", () => {
     expect(await again?.settled).toMatchObject({ settled: true, runs: 3 });
     expect((await ch.lastRun(t, { afterRuns: 2, ms: 2000 }))?.lastText).toBe("done: three");
     expect(await ch.lastRun(t, { afterRuns: 3, ms: 2000 })).toBeUndefined();
+  });
+
+  it("a watch reply and its settle in one read: the settled turn, not a throw", async () => {
+    const { t } = await live();
+    await closePluginSessions();
+    const obs = { status: "idle", since: null, runs: 1, incarnation: "inc-1" };
+    const settle = {
+      jsonrpc: "2.0",
+      method: "watch/settled",
+      params: { watchId: "w-1", observation: { ...obs, settled: true, lastText: "done: one" } },
+    };
+    const watched = { watchId: "w-1", initial: { ...obs, settled: false }, afterRuns: 0 };
+    const w = await withPluginPipes(
+      h.f,
+      () => agentChannel(t).watch(t, new AbortController().signal, { afterRuns: 0 }),
+      [
+        { method: "channel.watch", result: watched, notes: [settle] },
+        { method: "job.status", result: { state: "running" } },
+      ],
+    );
+    expect(await w?.settled).toMatchObject({ settled: true, runs: 1, lastText: "done: one" });
   });
 
   it("an aborted watch ends unknown and sends $/cancel {watchId}", async () => {

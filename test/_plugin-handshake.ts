@@ -8,11 +8,18 @@ import { addPlugin } from "../src/plugins/registry.js";
 import type { FakePlugin } from "./_plugin.js";
 import { initializeReply } from "./_plugin-initialize.mjs";
 
-/** Setup or a scripted read over pipes, with the actual JSON-RPC parser and load rules. */
+/** A scripted reply; `notes` go out in the same write, so the parser reads them in one chunk. */
+export interface ScriptedRead {
+  method: string;
+  result: unknown;
+  notes?: readonly unknown[];
+}
+
+/** Setup or scripted reads over pipes, with the actual JSON-RPC parser and load rules. */
 export async function withPluginPipes<T>(
   fake: FakePlugin,
   run: () => Promise<T>,
-  read?: { method: string; result: unknown },
+  read?: ScriptedRead | readonly ScriptedRead[],
   beforeInitializeReply?: () => Promise<void>,
 ): Promise<T> {
   const start = vi.spyOn(PluginProcess, "start").mockImplementationOnce(async (argv, _, grace) => {
@@ -27,6 +34,8 @@ export async function withPluginPipes<T>(
     child.stdout = stdout;
     child.stderr = stderr;
     const proc = PluginProcess.fromTestPipes(child, grace);
+    const reads: readonly ScriptedRead[] =
+      read === undefined ? [] : "method" in read ? [read] : read;
     stdin.on("data", (chunk: Buffer) => {
       // PluginProcess writes one complete request at a time. A peer replies after
       // that write returns, just as a separate process would.
@@ -36,13 +45,15 @@ export async function withPluginPipes<T>(
         params: unknown;
       };
       appendFileSync(`${configPath}.log`, `${JSON.stringify({ method, params })}\n`);
+      const scripted = reads.find((r) => r.method === method);
       let reply: unknown;
       if (method === "initialize") reply = initializeReply(config, id, params);
-      else if (method === "shutdown" || method === read?.method) {
-        reply = { jsonrpc: "2.0", id, result: method === "shutdown" ? null : read?.result };
-      } else throw new Error(`pipe fixture cannot answer ${method}`);
+      else if (method === "shutdown") reply = { jsonrpc: "2.0", id, result: null };
+      else if (scripted !== undefined) reply = { jsonrpc: "2.0", id, result: scripted.result };
+      else throw new Error(`pipe fixture cannot answer ${method}`);
+      const lines = [reply, ...(scripted?.notes ?? [])].map((m) => `${JSON.stringify(m)}\n`);
       const send = () => {
-        if (!stdout.destroyed) stdout.write(`${JSON.stringify(reply)}\n`);
+        if (!stdout.destroyed) stdout.write(lines.join(""));
       };
       if (method === "initialize" && beforeInitializeReply !== undefined) {
         void beforeInitializeReply().then(send);

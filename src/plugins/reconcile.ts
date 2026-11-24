@@ -112,7 +112,17 @@ export async function pluginCall<M extends PluginMethod>(
   params: Obj,
   opts: CallOpts,
 ): Promise<MethodReplies[M]> {
-  const s = await pluginSession(db, plugin, opts.needs);
+  return callOn(await pluginSession(db, plugin, opts.needs), plugin, method, params, opts);
+}
+
+/** `pluginCall` on a session already in hand: a watch then reads its end from the same process. */
+function callOn<M extends PluginMethod>(
+  s: Awaited<ReturnType<typeof pluginSession>>,
+  plugin: string,
+  method: M,
+  params: Obj,
+  opts: CallOpts,
+): Promise<MethodReplies[M]> {
   const f = opts.fence;
   if (f !== undefined && f.instance !== s.init.instance) {
     throw new EffectFencedError(plugin, f.subject, f.instance, s.init.instance, f.why);
@@ -152,15 +162,24 @@ export async function pluginWatch(
   fence: Fence | undefined,
   signal: AbortSignal,
 ): Promise<{ start: WireWatch; end: Promise<WatchOutcome> }> {
-  const start = await pluginCall(db, plugin, "channel.watch", params, {
+  const s = await pluginSession(db, plugin, ["channel"]);
+  // Not the watch's signal: an abort before the reply would stop the plugin; after it, it cancels the watch.
+  const start = await callOn(s, plugin, "channel.watch", params, {
     kind: "read",
     ...(fence !== undefined ? { fence } : {}),
-    // Not the watch's signal: an abort before the reply would stop the plugin; after it, it cancels the watch.
-    needs: ["channel"],
   });
-  const proc = (await pluginSession(db, plugin)).process;
+  // The process that answered: a session restarted since knows nothing of this watch.
+  const proc = s.process;
   const end = new Promise<WatchOutcome>((resolve) => {
-    const cancel = proc.watch(start.watchId, (n) => {
+    // Set up before `proc.watch`, which ends at once for an early end or a stopping peer.
+    let done = false;
+    let cancel = (): void => {};
+    const onAbort = (): void => {
+      cancel();
+      resolve({ gone: "cancelled" });
+    };
+    cancel = proc.watch(start.watchId, (n) => {
+      done = true;
       signal.removeEventListener("abort", onAbort);
       if (n.method === "gone") return resolve({ gone: String(n.params) });
       const r = narrowWatchEnd(n.method, n.params);
@@ -168,10 +187,7 @@ export async function pluginWatch(
       proc.poison(`an invalid ${n.method} notification (${r.ok ? "another watch" : r.reason})`);
       resolve({ gone: "an invalid notification" });
     });
-    const onAbort = (): void => {
-      cancel();
-      resolve({ gone: "cancelled" });
-    };
+    if (done) return;
     if (signal.aborted) onAbort();
     else signal.addEventListener("abort", onAbort, { once: true });
   });

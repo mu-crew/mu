@@ -32,6 +32,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   to select a supported shell, instead of returning a pane that dies at startup.
 - `mu agent close` of a local-loop recovery record runs the dirty/uncollected checks before stopping the worker's mule jobs, so a refusal leaves job state and logs untouched.
 - Corrected the docs on Rex rung 2 support, stall authorisation and unknown delivery.
+- A plugin watch whose reply and `watch/settled` arrive in one read reports the settled turn instead of failing with a `ReferenceError`. The watch's end is read from the process that answered it.
 
 ## [5.4.0] — 2026-11-24
 
