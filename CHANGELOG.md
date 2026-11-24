@@ -24,6 +24,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- Expired spawn placeholders no longer authorize deletion of unregistered worktree paths.
 - Rex spawns under csh or tcsh fail before launching a pane and tell you how
   to select a supported shell, instead of returning a pane that dies at startup.
 - `mu agent close` of a local-loop recovery record runs the dirty/uncollected checks before stopping the worker's mule jobs, so a refusal leaves job state and logs untouched.

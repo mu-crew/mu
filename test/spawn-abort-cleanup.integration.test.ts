@@ -1,8 +1,7 @@
 // bug_spawn_worktree_abort_cleanup: a `mu agent spawn --worktree` killed
 // while `git worktree add` runs (a delegate abort, a SIGTERM) must roll back
 // like a thrown error: no placeholder row, no partial worktree, no live git
-// child, and the name spawnable again. A SIGKILL leftover is listed by
-// `mu doctor` and reclaimed by the next spawn of that name.
+// child. A SIGKILL placeholder is listed by `mu doctor`; its unregistered tree is kept.
 //
 // Real subprocess + real git (a post-checkout hook holds the create open).
 // Needs `npm run build` (dist/cli.js). No tmux: the kill lands before the pane.
@@ -118,7 +117,7 @@ describeIfBuilt("spawn --worktree killed mid-create", () => {
     expect(gitWorktrees()).toHaveLength(1);
   }, 20_000);
 
-  it("a SIGKILL leftover is listed by doctor and reclaimed by the next spawn of the name", async () => {
+  it("doctor lists a SIGKILL staging; the next spawn reclaims only its placeholder", async () => {
     const child = startSpawn();
     expect(await poll(() => existsSync(hookPid))).toBe(true);
     const exit = new Promise((r) => child.once("exit", r));
@@ -144,8 +143,7 @@ describeIfBuilt("spawn --worktree killed mid-create", () => {
     ).data.disk.find((h) => h.name === "ws-staging");
     expect(staging?.severity).toBe("warn");
     expect(staging?.remediation.join("\n")).toContain(`ab/a1  ${wt}`);
-    // The next spawn in the workstream reclaims it before anything else; an
-    // unresolvable --cli then stops it before any worktree or pane.
+    // Sweep the placeholder, then stop before creating any new tree or pane.
     const r = await execFileP(
       process.execPath,
       [CLI, "agent", "spawn", "a1", "-w", "ab", "--worktree", "--cli", "no-such-cli-mu", "--json"],
@@ -153,7 +151,7 @@ describeIfBuilt("spawn --worktree killed mid-create", () => {
     ).catch((e: { stdout: string }) => e);
     expect(r.stdout).toContain("AgentSpawnCliNotFoundError");
     expect(rows()).toEqual({ agents: 0, worktrees: 0 });
-    expect(existsSync(wt)).toBe(false);
-    expect(gitWorktrees()).toHaveLength(1);
+    expect(existsSync(wt)).toBe(true);
+    expect(gitWorktrees()).toHaveLength(2);
   }, 20_000);
 });

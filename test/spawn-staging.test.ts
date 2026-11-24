@@ -1,10 +1,10 @@
 // deadStagings: which placeholder rows count as a dead --worktree spawn.
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { deadStagings } from "../src/agents/staging.js";
-import { insertAgent } from "../src/agents.js";
+import { deadStagings, reclaimDeadStagings } from "../src/agents/staging.js";
+import { getAgent, insertAgent } from "../src/agents.js";
 import { type Db, openDb } from "../src/db.js";
 import { registerWorktree } from "../src/worktree.js";
 import { rmFixtureDir } from "./_fs.js";
@@ -22,6 +22,19 @@ afterEach(() => {
 
 const age = (name: string, iso: string) =>
   db.prepare("UPDATE agents SET updated_at = ? WHERE name = ?").run(iso, name);
+
+it("reclaims an expired placeholder without deleting an unregistered directory", async () => {
+  const cwd = join(dir, "worktrees", "w", "worker-1");
+  mkdirSync(cwd, { recursive: true });
+  const sentinel = join(cwd, "keep.txt");
+  writeFileSync(sentinel, "pre-existing work");
+  insertAgent(db, { name: "worker-1", workstream: "w", paneId: "%pending-worker-1", cwd });
+  age("worker-1", "2026-01-01T00:00:00.000Z");
+
+  expect(await reclaimDeadStagings(db, "w")).toEqual(["worker-1"]);
+  expect(getAgent(db, "worker-1", "w")).toBeUndefined();
+  expect(readFileSync(sentinel, "utf8")).toBe("pre-existing work");
+});
 
 describe("deadStagings", () => {
   it("lists only local placeholders past the window, measured from the latest of row and registration", () => {

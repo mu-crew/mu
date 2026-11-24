@@ -131,9 +131,9 @@ export function checkDeadStagings(db: Db): FleetHazard {
     severity: "warn",
     detail: `${dead.length} --worktree spawn(s) died before their pane`,
     remediation: [
-      "A placeholder row (and maybe a half-made worktree) no pane ever ran in:",
+      "An expired placeholder and its intended worktree path:",
       ...dead.map((a) => `  ${a.workstreamName}/${a.name}  ${a.cwd ?? ""}`),
-      "The next `mu agent spawn` in that workstream removes them.",
+      "The next `mu agent spawn` sweeps the placeholder; unregistered paths are left alone.",
     ],
   };
 }
