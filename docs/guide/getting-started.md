@@ -125,8 +125,8 @@ The exit code tells you what happened:
 To keep waiting, run `data.resume` as printed (`mu wait --resume <id> -w auth`):
 it replays the stored wait whole, and refuses any other flag. With
 `--on-stall warn`, a stalled worker only prints a warning and the wait
-keeps running. `--on-stall steer|release` act on a worker you spawned;
-see [dispatch](dispatch.md).
+keeps running. `--on-stall steer|release` act only under conditions
+(a hand-spawned worker gets `refused`); see [dispatch](dispatch.md).
 
 A pi worker that ends its turn while it still owns an `IN_PROGRESS`
 task gets one reminder to close it or say why not, so exit 7 mostly

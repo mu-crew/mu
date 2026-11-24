@@ -143,8 +143,8 @@ and exit 0; dead 6, stall 7, deadline 7, interrupt 130. Heartbeat cap 1500 s.
 `--until-idle`, `--until-text <re>` (bounded RegExp over authoritative
 ctl `lastText` or the task report, never pane text for a settle; an agent
 with no answering ctl socket matches its pane tail and ends the wait as the
-distinct `pane-text` event, never `settled`; invalid or oversized rejects), `--status`, `--stuck-after`, `--on-stall exit|steer|release`
-(steer and release only on `auto` tasks on this `dispatch_host`;
+distinct `pane-text` event, never `settled`; invalid or oversized rejects), `--status`, `--stuck-after`, `--on-stall exit|warn|steer|release`
+(steer and release only on a worker this caller spawned, for a task authorised with `mu task auto` on this `dispatch_host`;
 release reopens, never closes). SIGINT/SIGTERM emit one final snapshot;
 **SIGKILL cannot, and no output is promised.** Unknown is never idle.
 `send --wait` / `claim --for <w> --and-wait` enter the wait (one JSON document, the producer's
