@@ -109,7 +109,7 @@ mule -- /abs/mu-plugin-mule`). Then `mu host add <h> --plugin mule --fetch
 '...'`. The plugin serves the link and the `lease` job kind; the lease's view needs
 tmux, while the link's `exec` is pane-free and runs on any backend.
 Setup, migration from a lease template, and refusals:
-[the ladder](remote-ladder.md#use-the-mule-plugin-for-rung-4).
+[the ladder](remote-ladder.md#use-the-mule-plugin-rungs-2-and-4).
 
 ## Write a plugin
 

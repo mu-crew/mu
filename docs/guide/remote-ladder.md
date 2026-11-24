@@ -14,7 +14,7 @@ not a ranking.
 | --- | --- | --- | --- |
 | 0 | a local worker | all local | shipped |
 | 1 | `mu host exec`: one command, no agent | shell on the host | shipped |
-| 2 | local pi loop, remote workspace and shell | split | unreleased; requires pi's mule extension |
+| 2 | local pi loop, remote workspace and shell | split | shipped; needs mule >= 0.7.0 and its pi extension |
 | 3 | a session pane (`--transport session`) | all on the host | shipped |
 | 4 | a lease (`--transport lease`) | all on the host | shipped, pi only |
 | 5 | a provider host | all on the host | core shipped |
@@ -27,8 +27,8 @@ not a ranking.
 | 1 | runs (no pane) | runs | runs | fine over a link that serialises itself |
 | 2 | pi `ctl` local | pi `ctl` local | refused | mule controls admission |
 | 3 | pi `ctl` forwarded, hook harnesses remote `hooks` | session template: pi `ctl`, others `mux`; ssh plugin pane: refused | refused | fine: each pane opens its own connection |
-| 4 | pi `ctl` via the carrier | refused for now | refused | fine: one master |
-| 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | refused for now | refused | the provider's |
+| 4 | pi `ctl` via the carrier | refused | refused | fine: one master |
+| 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | refused | refused | the provider's |
 | command gate | `mux` | `mux` | refused | as rung 3; lease profiles run no gates |
 
 - Remote `hooks` needs a backend that anchors and pastes: tmux only.
@@ -80,7 +80,7 @@ job. It runs on every backend, herdr included.
 ## Rung 2: local pi with a remote worktree
 
 Install the mule workspace extension in local pi. Use a static
-[`--plugin mule` profile](#use-the-mule-plugin-for-rung-4) whose name and
+[`--plugin mule` profile](#use-the-mule-plugin-rungs-2-and-4) whose name and
 mule configuration match the extension's. Then, from your checkout:
 
 ```bash
@@ -113,15 +113,15 @@ can race. A Rex terminal may drive a tmux workstream (`MU_MUX=tmux`).
 ## Refusals
 
 Each refusal is typed and names the fix. A refusal leaves no lasting spawn
-resources; a missing base is found by `remote prepare`'s link `exec`, which
+resources; a missing base is found by the spawn's preflight over the link, which
 checks the base before it makes a tree and rolls back.
 
 - **herdr on rungs 3-5:** it runs no per-agent command or view, session
   templates included. Use tmux (or Rex for a session template). Rungs 0 and
   1 run.
 - **Rex on lease and plugin job views** (rungs 4-5, and a rung 3 ssh plugin
-  pane): tmux-only for now. A Rex reply does not yet name the server
-  instance that answered it, so mu cannot prove which server holds a view.
+  pane): tmux-only: a Rex reply does not name the server instance that
+  answered it, so mu cannot prove which server holds a view ([roadmap](../ROADMAP.md)).
   Use `MU_MUX=tmux`. Rungs 0 and 1 and a rung 3 session template run on
   Rex.
 - **A base commit the host lacks** (static host): mu neither fetches nor
@@ -146,7 +146,7 @@ remain. An explicit close can still close the local pane during a hand-back:
 it preserves a recovery record for the tree and any outstanding jobs. Take a
 fresh close preview once the master is back.
 
-## Use the mule plugin for rung 4
+## Use the mule plugin (rungs 2 and 4)
 
 `mu-plugin-mule` ships with mule. It gives a host mule's link (`exec` through
 mule's private SSH master) and the `lease` job kind, a persistent worker
@@ -173,9 +173,8 @@ mu host check box
 - mu requires a plugin you own and others cannot write. If the install is
   root-owned, follow the copy commands `mule init` prints. Rerun `mule init`
   after upgrading mule.
-- **tmux only, for now.** On Rex or herdr a spawn refuses before any effect
-  and says lease and plugin job views require tmux for now. Use
-  `MU_MUX=tmux`; this is expected to lift once a Rex reply names its server instance.
+- **tmux only.** On Rex or herdr a spawn refuses before any effect and
+  says lease and plugin job views require tmux. Use `MU_MUX=tmux`.
 
 ## Migrate a mule lease template to the plugin
 

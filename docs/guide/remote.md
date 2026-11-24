@@ -6,8 +6,7 @@ cursor-agent or muse use remote [`hooks`](#a-claude-codex-cursor-agent-or-muse-w
 On Rex they use `mux`: no hook receipt or hook-based `CLOSE:` processing.
 For plugin jobs, check `mu agent list`: a plugin can declare its own channel.
 Lease and plugin job views (any `--plugin` profile, even one that stores
-`transport=session`) run on tmux only for now; on Rex they refuse
-before any effect ([ladder](remote-ladder.md#refusals)).
+`transport=session`) run on tmux only ([ladder](remote-ladder.md#refusals)).
 mu never connects and
 knows no ssh flags: a host profile holds your own command templates, and
 `mu agent spawn --host` fills them. The full recipe, with collecting and
@@ -492,7 +491,7 @@ MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh
   keeps the dir for a post-mortem.
 
 To use the mule plugin instead of this template, or to move a template host
-to it, see [the ladder](remote-ladder.md#use-the-mule-plugin-for-rung-4) and
+to it, see [the ladder](remote-ladder.md#use-the-mule-plugin-rungs-2-and-4) and
 [migration](remote-ladder.md#migrate-a-mule-lease-template-to-the-plugin).
 
 Spec: [lease transport](../specs/2026-10-28-lease-transport.md).

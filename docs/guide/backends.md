@@ -92,11 +92,8 @@ Where each agent's state comes from, per backend:
   to paste it from a shell outside Rex.
 - An agent's window is created with `focus: false`; Rex.app shows it
   only when you attach.
-- Lease and plugin job views are tmux-only for now: a lease or plugin
-  host spawn refuses before any effect. Session templates run; a `--plugin`
-  profile does not, even one that stores `transport=session`: it is a plugin
-  job view. Rex support
-  awaits replies that name the server instance that answered.
+- Lease and plugin job views are tmux-only; session templates run. See
+  [the ladder](remote-ladder.md#refusals).
 
 ## Expect loud failures, not silent ones
 
