@@ -227,6 +227,17 @@ describe.skipIf(!available)("ladder spawn through a real Rex shell rc", () => {
     expect(getAgent(db, name, ws)).toMatchObject({ hostTransport: "local-loop" });
   });
 
+  it.skipIf(!existsSync("/bin/tcsh"))("refuses tcsh before launching a worker", async () => {
+    if (!db) throw new Error("missing test DB");
+    vi.stubEnv("SHELL", "/bin/tcsh");
+
+    await expect(
+      spawnAgent(db, { name, workstream: ws, cli: "pi", command: `exec ${command} pi` }),
+    ).rejects.toThrow(/Rex.*\/bin\/tcsh.*SHELL=\/bin\/sh/);
+    expect(getAgent(db, name, ws)).toBeUndefined();
+    expect(existsSync(join(dir, "pi.json"))).toBe(false);
+  });
+
   it("runs a session template with clean local routing and the selected remote identity and sockets", async () => {
     if (!db) throw new Error("missing test DB");
     addHost(db, {

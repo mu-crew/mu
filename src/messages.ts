@@ -403,6 +403,8 @@ export const MESSAGES = {
     `spawnAgent: tab ${tab} in session ${session} has no panes to split (it vanished mid-spawn?)`,
   "mux.rex_failed": (args: readonly string[], exit: number | null, detail: string) =>
     `rex ${args.join(" ")} failed (exit ${exit}): ${detail}`,
+  "mux.rex_unsupported_shell": (shell: string) =>
+    `Rex cannot launch a managed pane with SHELL=${JSON.stringify(shell)}. Retry the spawn with SHELL=/bin/sh or another supported shell path, such as /bin/zsh, to load that shell's startup files instead.`,
   "mux.rex_no_bracketed_paste": (pane: string) =>
     `rex pane ${pane} has not turned on bracketed paste, so a multi-line send would submit line by line; send one line, or start the agent with a CLI that reads pastes`,
   "mux.unknown_backend": (name: string) => `unknown mux backend: ${name}`,

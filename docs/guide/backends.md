@@ -75,7 +75,10 @@ Where each agent's state comes from, per backend:
   pins local worker identity, DB, state, sync directory, Rex server, and
   control socket. A session template instead starts with those local mu
   settings removed; it receives the remote worker's identity and socket
-  through `{env}`. An rc file that execs another program
+  through `{env}`. Rex spawns refuse csh and tcsh before launching the worker.
+  Set `SHELL=/bin/sh` or another supported shell path (such as `/bin/zsh`)
+  for the spawn; mu will load that shell's startup files instead.
+  An rc file that execs another program
   (`[ -z "$TMUX" ] && exec tmux`) replaces the agent: guard it with
   `[[ -o interactive && -z $ZSH_EXECUTION_STRING ]]` or similar.
 - A non-pi agent has a state only if it reports one with OSC 7501

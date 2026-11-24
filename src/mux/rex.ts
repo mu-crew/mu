@@ -22,7 +22,7 @@
 // inside Rex.app already; it needs Remote Control on in the app's settings.
 
 import { constants } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { execFileCapture } from "../exec-file.js";
 import { say } from "../messages.js";
 import { shellQuote } from "../shell-quote.js";
@@ -353,6 +353,12 @@ async function terminalCall(
  * An rc that execs another program still replaces the shell and its command.
  */
 function paneCommand(opts: SpawnAgentPaneOptions): string[] {
+  const shell = userShell();
+  // csh has no export, and the launch command can itself contain POSIX syntax.
+  const name = basename(shell);
+  if (name === "csh" || name === "tcsh") {
+    throw new MuxError(say("mux.rex_unsupported_shell", shell));
+  }
   const argv = ["env"];
   const pinned: string[] = [];
   for (const [key, value] of Object.entries(opts.env)) {
@@ -363,7 +369,7 @@ function paneCommand(opts: SpawnAgentPaneOptions): string[] {
     else pinned.push(`${key}=${shellQuote(value)}`);
   }
   const prefix = pinned.length > 0 ? `export ${pinned.join(" ")} || exit\n` : "";
-  argv.push(userShell(), "-ic", prefix + opts.command);
+  argv.push(shell, "-ic", prefix + opts.command);
   return argv;
 }
 
@@ -380,12 +386,13 @@ function userShell(): string {
  * `retainOnExit` keeps it for `paneResult`.
  */
 export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
+  const command = paneCommand(opts);
   const { id: sessionId } = await ensureSessionId(opts.session);
   const block = {
     flavor: TERMINAL_FLAVOR,
     label: opts.name,
     options: {
-      command: paneCommand(opts),
+      command,
       ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
       size: DETACHED_SIZE,
       exit: opts.retainOnExit === true ? { on_completion: false } : { quick_exit_threshold_ms: 0 },

@@ -12,6 +12,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Fixed
+
+- Rex spawns under csh or tcsh fail before launching a pane and tell you how
+  to select a supported shell, instead of returning a pane that dies at startup.
+
 ## [5.4.0] — 2026-11-24
 
 Rung 2 of the remote worker ladder. Needs `@mu-crew/mule` >= 0.7.0.
