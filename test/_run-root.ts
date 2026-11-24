@@ -1,6 +1,5 @@
 // `provide`/`inject` key the per-run scratch dir travels under.
 //
-// globalSetup (test/_global-teardown.ts) creates it once under tmpdir()
-// and teardown removes it. Forks put their XDG roots inside it
-// (test/_setup.ts). Keep this key independent of the global setup hook.
+// The global setup creates one short root for both workers and test servers.
+// The server watchdog removes it even if the runner is killed.
 export const RUN_ROOT_KEY = "muRunRoot";

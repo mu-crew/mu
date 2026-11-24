@@ -13,6 +13,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -635,13 +636,15 @@ export interface SandboxOptions {
 export async function createSandbox(surface: Surface, opts: SandboxOptions = {}): Promise<Sandbox> {
   assertInRow("createSandbox");
   const tmuxBin = realTmux(); // fail before creating anything on disk
-  const id = `mu-eval-${process.pid}-${Date.now()}-${randomBytes(3).toString("hex")}`;
-  const dir = join(tmpdir(), id);
-  const tmuxSocket = id;
-  if (tmuxSocketPath(dir, tmuxSocket).length > SOCKET_PATH_MAX) {
-    throw new Error(
-      `tmux socket path too long (${tmuxSocketPath(dir, tmuxSocket).length}); set TMPDIR shorter`,
-    );
+  const nonce = randomBytes(3).toString("hex");
+  const id = `mu-eval-${process.pid}-${Date.now()}-${nonce}`;
+  // Shells report the real cwd, and the private directory already namespaces
+  // the socket. Repeating the whole sandbox id would exhaust sun_path.
+  const dir = join(realpathSync(tmpdir()), id);
+  const tmuxSocket = `eval-${nonce}`;
+  const socketBytes = Buffer.byteLength(tmuxSocketPath(dir, tmuxSocket));
+  if (socketBytes >= SOCKET_PATH_MAX) {
+    throw new Error(`tmux socket path too long (${socketBytes}); set TMPDIR shorter`);
   }
   const isLive = opts.live === true;
   const env = {

@@ -9,6 +9,7 @@ import {
   realpathSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { spawnAgent } from "../src/agents/spawn.js";
@@ -81,7 +82,7 @@ describe.skipIf(!available)("ladder spawn through a real Rex shell rc", () => {
 
   beforeEach(async () => {
     prevCwd = process.cwd();
-    dir = realpathSync(mkdtempSync("/tmp/mu-rex-ladder space-"));
+    dir = realpathSync(mkdtempSync(join(tmpdir(), "mu-rex-ladder space-")));
     state = join(dir, "state 'local'");
     ws = freshWorkstream("rex");
     const hostile = {

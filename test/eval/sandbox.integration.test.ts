@@ -1,7 +1,15 @@
 // RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig.
 // Real tmux: no tmux invocation from inside a sandbox may reach the default server.
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -57,6 +65,12 @@ describe.skipIf(!hasTmux())("sandbox tmux isolation", () => {
       await sb?.close();
     } catch {}
     sb = undefined;
+  });
+
+  it("keeps a short socket path even under a fork's canonical scratch directory", async () => {
+    sb = await createSandbox(surface);
+    expect(sb.dir).toBe(realpathSync(sb.dir));
+    expect(Buffer.byteLength(tmuxSocketPath(sb.dir, sb.tmuxSocket))).toBeLessThan(104);
   });
 
   it("close sweeps the dir again after a late hook brings murmur state back", {

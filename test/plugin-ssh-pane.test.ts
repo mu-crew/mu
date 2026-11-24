@@ -16,6 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import type { Server } from "node:net";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
@@ -252,7 +253,7 @@ describe("job.stop answers only on proof", () => {
   describe("the state root is resolved on the host at start", () => {
     // A handle carries at most 128 bytes: the real root must be short.
     const shortDir = () => {
-      const d = mkdtempSync(join(realpathSync("/tmp"), "sp-"));
+      const d = mkdtempSync(join(realpathSync(tmpdir()), "sp-"));
       cleanup.push(d);
       return d;
     };
