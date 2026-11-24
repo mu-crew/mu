@@ -14,7 +14,7 @@ export const spec: ExposureSpec = {
   newNames: [],
   changedCalls: [],
 };
-export const PROMPTS: Record<string, string> = { exposed: `x ${MARK} y`, plain: "x y" };
+const PROMPTS: Record<string, string> = { exposed: `x ${MARK} y`, plain: "x y" };
 export const prompt = (sha: string): string => PROMPTS[sha] ?? "";
 
 /** mulberry32 */

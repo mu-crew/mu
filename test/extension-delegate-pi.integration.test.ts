@@ -21,6 +21,7 @@ import { parallelSettle, registerNudge, withQueuedInput } from "../extension/nud
 import { openDb } from "../src/db.js";
 import { listDelegates } from "../src/delegates.js";
 import { addTask } from "../src/tasks/edit.js";
+import { sleep } from "./_env.js";
 
 function piRoot(): string | undefined {
   try {
@@ -38,7 +39,6 @@ function piRoot(): string | undefined {
 const root = piRoot();
 const CLI = join(import.meta.dirname, "..", "dist", "cli.js");
 const SKILL = readFileSync(join(import.meta.dirname, "..", "skills", "mu", "SKILL.md"), "utf8");
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** Poll (50ms) until `fn` holds; a real `mu` child answers in ~0.2s, a wait polls each 1s. */
 const until = async (fn: () => boolean, what: string) => {
   for (let n = 0; n < 300; n++) {

@@ -4,38 +4,23 @@ import { suiteConfig } from "./vitest.config.js";
 /**
  * The pre-commit suite: everything that does NOT drive a real tmux server.
  *
- * Runs in PARALLEL, and that is the whole point of this file. The base config
- * pins `maxWorkers: 1` because the integration tests share one user tmux server
- * and contend on its socket -- a real constraint, but one that belongs to the
- * `*.integration.test.ts` files, not to the fast tier. Inheriting the cap here
- * made the fast suite serial for a reason none of its tests have.
- *
- * Measured when the fast suite was 1998 tests in 130 files:
- *
- *   maxWorkers: 1   255s   (import 135s -- ~1039ms per file, paid one at a time)
- *   maxWorkers: 8    44s   (import 181s, but overlapped)
- *
- * 5.8x, same 1998 passing. The cost was never the tests -- `tests` was 86s of
- * the 255 -- it was module loading serialised behind a one-worker cap. A slow
- * gate is a gate people skip, and this one is run before every commit.
- *
- * Derived from the machine rather than pinned: 8 was the measurement, not a
- * tuned optimum, and a hard-coded worker count is how a config stops matching
- * the box it runs on. Pass a real numeric cap to both projects: an undefined
- * override used to leave the full suite's inherited cap in place. (Vitest 4+
- * has no `minWorkers`; only `maxWorkers` sizes the pool.)
+ * Runs in PARALLEL. The base config pins `maxWorkers: 1` for the
+ * `*.integration.test.ts` files that share the run's private tmux server; the
+ * fast tier has no such constraint. Module loading serialised behind a
+ * one-worker cap was most of the cost (import time is paid per file), so the
+ * pool is sized from the machine rather than pinned. Pass a real numeric cap
+ * to both projects: an undefined override leaves the full suite's inherited
+ * cap in place.
  *
  * Under muzzle the admitted slot count wins: `MUZZLE_SLOTS` (min 1) is the
- * share of the host muzzle granted this run, and each fork is a process
- * tree (a node, plus the git, sh and node children its tests start). On a
- * host where every exec goes through endpoint-security agents the
- * bottleneck is process starts, not CPU: eight forks under a two-slot
- * admission starved the machine while muzzle reported it mostly idle. It
- * is still a real number, for the reason above.
+ * share of the host muzzle granted this run, and each fork is a process tree.
+ * Where every exec goes through endpoint-security agents the bottleneck is
+ * process starts, not CPU, so eight forks under a two-slot admission starved
+ * the machine.
  */
 const slots = Number(process.env.MUZZLE_SLOTS || Number.NaN);
 const workers = Number.isFinite(slots)
   ? Math.max(1, Math.floor(slots))
   : Math.max(2, Math.min(8, Math.floor((cpus().length || 4) / 2)));
 
-export default suiteConfig(workers, ["**/*.integration.test.ts", "**/*.smoke.test.ts"]);
+export default suiteConfig(workers, ["**/*.integration.test.ts"]);

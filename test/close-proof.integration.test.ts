@@ -728,12 +728,8 @@ describe("rr_r3_local_close_no_quiescence: a local close removes no tree a proce
       agent: "worker-1",
     });
     const proc = join(tmp, "proc");
-    execFileSync("mkdir", [
-      "-p",
-      join(proc, "self"),
-      join(proc, String(process.pid)),
-      join(proc, "4242"),
-    ]);
+    for (const d of ["self", String(process.pid), "4242"])
+      mkdirSync(join(proc, d), { recursive: true });
     symlinkSync(tmp, join(proc, String(process.pid), "cwd"));
     symlinkSync(wt.path, join(proc, "4242", "cwd"));
     writeFileSync(join(proc, "4242", "comm"), "secretive\n");

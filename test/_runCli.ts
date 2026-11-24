@@ -2,11 +2,6 @@
 // parseAsync(), capturing stdout / stderr / exit code without spawning
 // subprocesses.
 //
-// Three test files were each carrying a near-identical copy of this
-// logic before extraction (test/json-output.test.ts, test/sql-multi-
-// statement.test.ts, test/cli-task-add-blocked-by.test.ts). Centralised
-// here so a fix to the shimming logic lands once.
-//
 // Usage:
 //
 //   import { runCli, runCliJson } from "./_runCli.js";
@@ -57,7 +52,7 @@ export interface Capture {
    *  shim. Tests should assert `error === undefined` when they
    *  expect success — a thrown TypeError mid-render would
    *  otherwise look identical to a clean exit (both stdout='',
-   *  exitCode=null). Surfaced by review_test_runcli_silently_swallows_throws. */
+   *  exitCode=null). */
   error?: Error;
 }
 
@@ -75,7 +70,6 @@ export async function runCliWire(argv: readonly string[], dbPath: string): Promi
   // every verb wrapper would be invasive). Mirror the argv we pass to
   // parseAsync onto process.argv for the duration of this call so tests
   // can assert --json error envelopes without per-test argv shims.
-  // Surfaced by testreview_runcli_isjsonmode_argv_seam.
   const originalArgv = process.argv;
 
   let stdout = "";

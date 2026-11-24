@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { HOST_GRACE_MS } from "../src/hosts.js";
+import { sleep } from "./_env.js";
 import { rmFixtureDir } from "./_fs.js";
 import { type FakePlugin, fakePlugin } from "./_plugin.js";
 
@@ -35,7 +36,6 @@ afterEach(() => {
 
 const mu = (...args: string[]) =>
   spawnSync(process.execPath, [BIN, ...args], { env, encoding: "utf8" });
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("mu under SIGINT with a plugin call in flight", () => {
   it.each([false, true])(

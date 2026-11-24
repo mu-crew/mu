@@ -1,16 +1,9 @@
-// The pi settle over a `mu wait --ready` result (extension/settle-events.ts via registerNudge):
-// one line per consumed event, the answer blocks, the owed line, the superseded paths, and the
-// single-event text kept byte for byte. The wait and the delegate reads are faked; the real
-// engine and CLI are covered in wait-settle-drain and wait-consumed-marks.
-
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { MuResult } from "../extension/mu-run.js";
 import { keepDrivingRule, type MuNudgeCtx, registerNudge } from "../extension/nudge.js";
 import { REPORT_CAP, SUPERSEDED_LINE, WAVE_REPORT_CAP } from "../extension/settle-events.js";
+import { SKILL } from "./_skill.js";
 
-const SKILL = readFileSync(join(import.meta.dirname, "..", "skills", "mu", "SKILL.md"), "utf8");
 const RULE = keepDrivingRule(SKILL) ?? "unreachable";
 const RAN =
   "Work you own is still running, so the settle ran `mu wait --ready --on-stall exit --json` for you.";

@@ -3,7 +3,7 @@
 // event per call, the settle runs `mu wait --ready` and delivers a batch per turn, and an
 // event is delivered exactly once however it was read. Real SQLite; no agents, no mux.
 
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -17,9 +17,9 @@ import { registerOwnedWait } from "../src/wait-registration.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { withEnv } from "./_env.js";
 import { runCliWire } from "./_runCli.js";
+import { SKILL } from "./_skill.js";
 import { answer, mkDelegate, taskRef } from "./_wait-fixtures.js";
 
-const SKILL = readFileSync(join(import.meta.dirname, "..", "skills", "mu", "SKILL.md"), "utf8");
 const CLOSES = ["a2", "a4n", "a6", "a7", "b2", "b3a", "b4a"];
 
 let dir: string;

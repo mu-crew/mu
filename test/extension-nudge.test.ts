@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MuResult, MuRunOpts } from "../extension/mu-run.js";
 import {
@@ -13,8 +11,7 @@ import {
   SETTLE_WAIT_ARGS,
   type SettleDelivered,
 } from "../extension/nudge.js";
-
-const SKILL = readFileSync(join(import.meta.dirname, "..", "skills", "mu", "SKILL.md"), "utf8");
+import { SKILL } from "./_skill.js";
 
 type Handler = (event: unknown, ctx: MuNudgeCtx) => unknown;
 
@@ -190,8 +187,8 @@ describe("the settle wait", () => {
     expect(mu.waits().map((w) => w.args)).toEqual([[...SETTLE_WAIT_ARGS]]);
   });
 
-  // muzzle-v1 (2026-10-30): an open stop froze the loop, so workers dispatched before it
-  // finished unseen and their results sat unmerged until the human typed.
+  // An open stop must not freeze the loop: workers dispatched before it finish unseen and
+  // their results would sit unmerged until the human typed.
   it("an open human stop still collects owned work: each event continues, led by the drain rule", async () => {
     const fire = (id: string) => okWait({ firing: { kind: "delegate", ref: `delegate:${id}` } });
     const mu = fakeMu([fire("c1"), fire("c2"), NOTHING], 1);

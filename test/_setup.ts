@@ -1,54 +1,17 @@
-// Global per-fork test setup: scrub MU_* env vars at startup.
+// Global per-fork test setup. Every fork starts from a known-clean env:
 //
-// Why this exists (bug_test_flake_round_2 — Layer "test"):
-//
-// vitest forks inherit the parent shell's environment. When a
-// developer (or the orchestrator agent) runs `npm test` from a
-// shell that exports SDK-level env overrides — e.g.
-// `MU_PI_COMMAND=pi-meta` (a pi wrapper),
-// `MU_IDLE_THRESHOLD_MS=60000`, `MU_SPAWN_LIVENESS_MS=0`, etc. —
-// those values silently change SDK behaviour underneath every test.
-//
-// Concrete failure that motivated this: 5 cli-agent-spawn-validation
-// tests deterministically failed with
-// `AgentSpawnCliNotFoundError: --cli pi resolved to binary
-//  "pi-meta" which is not on PATH` because MU_PI_COMMAND=pi-meta
-// leaked from the orchestrator's shell into vitest. The tests
-// themselves are correct — they assume `--cli pi` resolves to bare
-// `pi`, which is the documented default — and adding a one-off
-// withEnv() to each is fragile (the next env var leaks the same
-// way next month).
-//
-// Belt-and-suspenders solution: nuke EVERY MU_* env var at the
-// start of every fork. Tests that genuinely need a specific value
-// (`MU_SPAWN_LIVENESS_MS=0`, `MU_STATE_DIR=...`, etc.) opt IN via
-// per-test `process.env.X = "..."` or `withEnv()`. This makes the
-// baseline a known-clean env regardless of the surrounding shell.
-//
-// Allowlist:
-//   tmux settings come from this run's global setup, not the parent shell.
-//
-//   MU_HERDR_SESSION — the herdr analogue: it routes every herdr call
-//     through a NAMED server instead of the user's default one. Only
-//     `*.integration.test.ts` reads it, and only to self-skip when it
-//     is absent, so wiping it here would make herdr integration tests
-//     unrunnable while ALSO being the thing that would let a stray
-//     call reach the user's real panes.
-//
-// Anything else starting with MU_ goes.
-//
-// XDG redirect (bug_tests_write_real_cache): mu resolves its cache dir,
-// state dir and config from $XDG_CACHE_HOME / $XDG_STATE_HOME /
-// $XDG_CONFIG_HOME, else the user's home. Left alone, a test that never set
-// them wrote fixture answers into the real ~/.cache/mu/delegate-answers and
-// recreated ~/.local/state/mu-next/locks. Every fork gets its own temp XDG
-// root, and test/_real-dir-guard.ts throws on a write that still targets the
-// real dirs.
-//
-// The XDG roots live under one per-run scratch dir that globalSetup creates
-// and removes (test/_global-teardown.ts, `provide`d like the DB template).
-// Forks are killed without their "exit" handlers, so a per-fork mkdtemp +
-// exit cleanup leaked one dir per fork (rr_r6_test_tmp_leaks).
+// - Every MU_* var is deleted (a developer's shell exporting MU_PI_COMMAND or
+//   MU_IDLE_THRESHOLD_MS would silently change SDK behaviour under every
+//   test). Tests that need one opt IN with `process.env.X = ...` or
+//   `withEnv()`. MU_HERDR_SESSION is allowlisted: it routes herdr calls to a
+//   NAMED server, and wiping it would make herdr integration tests
+//   unrunnable and let a stray call reach the user's real panes. tmux
+//   settings come from this run's global setup, not the parent shell.
+// - XDG_CACHE_HOME / XDG_STATE_HOME / XDG_CONFIG_HOME point at a per-fork dir
+//   under the per-run scratch dir that globalSetup creates and removes
+//   (test/_global-teardown.ts): forks are killed without their "exit"
+//   handlers, so a per-fork mkdtemp + exit cleanup leaked a dir per fork.
+//   test/_real-dir-guard.ts throws on a write that still targets the real dirs.
 
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

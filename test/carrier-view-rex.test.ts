@@ -1,5 +1,4 @@
-// D15: lease and plugin job views are tmux-only for now (human decision 2026-11-23,
-// wire_rex_presence_and_birth_aba). On Rex a spawn of either refuses before any effect: no
+// D15: lease and plugin job views are tmux-only for now. On Rex a spawn of either refuses before any effect: no
 // reservation, no job.start, no job file, no Rex call, no row. A session profile and a
 // local spawn on Rex are not refused. The guard is `refuseCarrierViewMux`, lifted per backend
 // by its `carrierViews` flag.

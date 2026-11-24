@@ -9,7 +9,6 @@
 //     receipt, a proven none fails the attempt and rolls everything back;
 //   - `mu agent check` on the first prompt's msgId answers from the job record.
 
-import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SpawnAttemptFailedError } from "../src/agents/errors.js";
 import { getReceipt } from "../src/agents/receipts.js";
@@ -20,7 +19,10 @@ import { getCarrierJobByName, listCarrierJobs } from "../src/carrier-jobs.js";
 import { cmdAgentCheck } from "../src/cli/agents.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask, taskIdFor } from "../src/tasks.js";
+import { cachedDeadPid } from "./_dead-pid.js";
 import { pluginHostFixture } from "./_plugin-host.js";
+
+const deadPid = cachedDeadPid();
 
 const h = pluginHostFixture({ handshakeInProcess: true });
 const BRIEF = "do the t1 work";
@@ -36,7 +38,7 @@ const owner = () => getTask(h.db, "t1", "ws")?.ownerId ?? null;
 const job = () => getCarrierJobByName(h.db, "ws", "w1");
 /** The effect rows' writer is gone (a crashed spawn): a gated `none` then counts (D4). */
 const writerGone = () => {
-  const dead = spawnSync("true").pid;
+  const dead = deadPid();
   h.db
     .prepare("UPDATE effects SET creator_pid = ?, creator_start = NULL, plugin_pgid = ?")
     .run(dead, dead);
