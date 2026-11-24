@@ -74,6 +74,7 @@ say() { printf '[%3ss] %s\n' "$(($(date +%s) - T0))" "$*"; }
 pass() { say "PASS $*"; }
 fail() {
   # On fd 3, the run's stdout: a check inside until_ok has its output muted.
+  [ ! -e "${R:-/nonexistent}/deadline" ] || exit 143
   say "FAIL $*" >&3
   # The run's process table at the failure, for SMOKE_KEEP=1.
   [ -z "${R:-}" ] || for p in $(procs "$R/"); do "$TO" 5 ps -o pid=,ppid=,args= -p "$p"; done >"$R/ps-at-fail" 2>/dev/null
@@ -98,26 +99,13 @@ if [ ${#missing[@]} -gt 0 ]; then
   echo "smoke-rung2: FAIL (prerequisites missing; this is not a pass)" >&2
   exit 2
 fi
-MU=$(cd "$MU" && pwd -P)
-MULE=$(cd "$MULE" && pwd -P)
 TO=$(command -v timeout)
-# The node binary itself, not a version manager's shim (a shim resolves through $HOME).
-NODE=$(node -e 'console.log(process.execPath)')
-NODE_DIR=$(dirname "$NODE")
-NPM_JS=$("$NODE" -e 'console.log(require("path").resolve(process.argv[1], "../lib/node_modules/npm/bin/npm-cli.js"))' "$NODE_DIR")
-[ -f "$NPM_JS" ] || NPM_JS=$(cd "$(dirname "$(readlink -f "$(command -v npm)")")" && pwd -P)/npm-cli.js
-[ -f "$NPM_JS" ] || {
-  echo "smoke-rung2: PREREQUISITE MISSING: npm-cli.js beside $NODE" >&2
-  exit 2
-}
-PLATFORM=$("$NODE" -p 'process.platform + "-" + process.arch')
-[ -f "$MULE/npm/mule-$PLATFORM/package.json" ] || {
-  echo "smoke-rung2: PREREQUISITE MISSING: mule has no platform package for $PLATFORM" >&2
-  exit 2
-}
-
-# ── run dir, EXIT trap and deadline (before the build: SMOKE_TIMEOUT covers it) ─
+# ── run dir, EXIT trap and deadline (before the first node call and the build: SMOKE_TIMEOUT covers them) ─
 R=$(cd "$(mktemp -d /tmp/mu-r2.XXXXXX)" && pwd -P)
+# Every process of this run carries "$R/" in its environ from here on (this tag,
+# or the private HOME/TMPDIR exported later; sshd's children get it through
+# SetEnv): the deadline and the cleanup find a reparented build by it.
+export SMOKE_RUN="$R/"
 UID_=$(id -u)
 WS="r2-$$"
 MU_TMUX="mu-r2-$$"
@@ -199,11 +187,23 @@ probe_sessions() {
 }
 
 cleanup() {
-  local rc=$?
+  local rc=$? pid _ all
   set +e
   IN_CLEANUP=1
   trap - EXIT
   reap_watchdog
+  # After a deadline: the build and any child it reparented are stopped here,
+  # TERM then KILL, until none is left (not a leak, so not a failure).
+  if [ -e "$R/deadline" ]; then
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+      # Pids from the scan's own (already gone) subshells are filtered out.
+      all=$(procs "$R/")
+      LEFT=$(for pid in $all; do [ ! -d "/proc/$pid" ] || echo "$pid"; done)
+      [ -n "$LEFT" ] || break
+      kill_left
+      sleep 0.2
+    done
+  fi
   exec 1>&3 2>&4
   say "cleanup (exit $rc)"
   # A green run leaves mule's tmux server without a session (job).
@@ -271,13 +271,19 @@ descendants() {
 # returns, so the watchdog also stops every process under this shell (TERM,
 # KILL after 5 s), every 0.5 s until cleanup reaps it.
 watchdog() {
-  local me=$BASHPID n=0 sig pid
+  local me=$BASHPID n=0 sig pid mine
   sleep "$LIMIT"
   echo "smoke-rung2: SMOKE_TIMEOUT ($LIMIT s) reached; stopping the run" >&2
+  : >"$R/deadline"
   while kill -TERM $$ 2>/dev/null; do
     sig=TERM
     [ "$n" -lt 10 ] || sig=KILL
-    for pid in $(descendants $$ "$me"); do kill -"$sig" "$pid" 2>/dev/null; done
+    mine=" $me $(descendants "$me" "") "
+    # Under this shell, and anything tagged with the run (a reparented child).
+    for pid in $(descendants $$ "$me") $(procs "$R/"); do
+      case "$mine" in *" $pid "*) continue ;; esac
+      kill -"$sig" "$pid" 2>/dev/null
+    done
     n=$((n + 1))
     sleep 0.5
   done
@@ -289,6 +295,23 @@ trap 'on_sig 143' TERM
 trap 'on_sig 129' HUP
 watchdog </dev/null >/dev/null 3>&- 4>&- &
 WATCHDOG=$!
+
+MU=$(cd "$MU" && pwd -P)
+MULE=$(cd "$MULE" && pwd -P)
+# The node binary itself, not a version manager's shim (a shim resolves through $HOME).
+NODE=$(node -e 'console.log(process.execPath)')
+NODE_DIR=$(dirname "$NODE")
+NPM_JS=$("$NODE" -e 'console.log(require("path").resolve(process.argv[1], "../lib/node_modules/npm/bin/npm-cli.js"))' "$NODE_DIR")
+[ -f "$NPM_JS" ] || NPM_JS=$(cd "$(dirname "$(readlink -f "$(command -v npm)")")" && pwd -P)/npm-cli.js
+[ -f "$NPM_JS" ] || {
+  echo "smoke-rung2: PREREQUISITE MISSING: npm-cli.js beside $NODE" >&2
+  exit 2
+}
+PLATFORM=$("$NODE" -p 'process.platform + "-" + process.arch')
+[ -f "$MULE/npm/mule-$PLATFORM/package.json" ] || {
+  echo "smoke-rung2: PREREQUISITE MISSING: mule has no platform package for $PLATFORM" >&2
+  exit 2
+}
 
 # ── build ────────────────────────────────────────────────────────────────────
 say "build mule: cargo build --release in $MULE"
@@ -304,9 +327,6 @@ done
 say "mule $(git -C "$MULE" rev-parse --short HEAD 2>/dev/null || echo '?'), mu $(git -C "$MU" rev-parse --short HEAD 2>/dev/null || echo '?')"
 
 # ── private world ────────────────────────────────────────────────────────────
-# Every process of this run carries "$R/" in its environ (this tag, or the
-# private HOME/TMPDIR exported below; sshd's children get it through SetEnv).
-export SMOKE_RUN="$R/"
 
 mkdir -p "$R"/{bin,rbin,trip,m,tmp,home,config/mule,cache,lstate,ltmux,rtmux,rhome/.local/state,pack,pkgs,piagent,npm-cache,results}
 chmod 700 "$R/m" "$R/ltmux" "$R/rtmux"
