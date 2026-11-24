@@ -10,7 +10,6 @@
 // multiplexer is a stub (test/_plugin-host.ts); the "forward" is a fake pi extension bound at
 // the derived local socket when the view opens. Nothing reaches a real host or sshd.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { dirname, join } from "node:path";
@@ -51,17 +50,13 @@ import { getTask, taskIdFor } from "../src/tasks.js";
 import { INC, withHello } from "./_ctl-ext.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { type FakeRemoteNode, fakeRemoteNode } from "./_fake-remote-node.js";
+import { copyGitFixture, gitIn as git } from "./_git.js";
 import { installMux } from "./_mux.js";
 import { fakePlugin, jobSeams, linkSeam } from "./_plugin.js";
 import { CLOUD, pluginHostFixture } from "./_plugin-host.js";
 import { FAKE_SERVER_IDENTITY } from "./_verbs-mock.js";
 
 const h = pluginHostFixture({ handshakeInProcess: true });
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-    cwd,
-    encoding: "utf8",
-  }).trim();
 
 let home: string | undefined;
 let cwd: string;
@@ -79,8 +74,7 @@ beforeEach(() => {
   remote = join(h.dir, "remote");
   mkdirSync(remote);
   remote = realpathSync(remote);
-  git(remote, "init", "-q");
-  git(remote, "commit", "-q", "--allow-empty", "-m", "one");
+  copyGitFixture(remote);
   // The caller's checkout IS the host's repo here: a --from resolves to a commit the host has.
   process.chdir(remote);
   servers = [];

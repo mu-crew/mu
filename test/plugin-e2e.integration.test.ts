@@ -16,7 +16,6 @@
 // unknown outcome (plugin-channel), the in-life backoff through a wait
 // (plugin-in-life), and the lost-host close (plugin-faults F11).
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,14 +30,10 @@ import { getHostRecord, HostDeadlineError } from "../src/host-records.js";
 import { computeNotices } from "../src/next-hints.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask, taskIdFor } from "../src/tasks.js";
+import { gitIn as git } from "./_git.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
 const h = pluginHostFixture();
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-    cwd,
-    encoding: "utf8",
-  }).trim();
 const BRIEF = "build t1";
 const MARGIN = "MU_HOST_DEADLINE_MARGIN_MS";
 

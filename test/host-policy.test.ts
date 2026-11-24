@@ -2,7 +2,6 @@
 // provider: the final-collect flag and its stop-generation compare-and-clear
 // (F13 included), the in-life collect's backoff, and the deadline notice.
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,6 +26,7 @@ import { collectRemoteAgent } from "../src/remote-collect.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { rmFixtureDir } from "./_fs.js";
+import { copyGitFixture, gitIn as git } from "./_git.js";
 import { type FakePlugin, fakePlugin, providerSeams } from "./_plugin.js";
 
 const SPEC: JobSpec = {
@@ -43,12 +43,6 @@ const SPEC: JobSpec = {
 let dir: string;
 let db: Db;
 let f: FakePlugin;
-
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-    cwd,
-    encoding: "utf8",
-  }).trim();
 
 async function provider(config: Record<string, unknown> = {}) {
   f = fakePlugin(dir, { seams: providerSeams(), ...config });
@@ -110,14 +104,13 @@ describe("the final-collect flag (D10, R8)", () => {
       await provider();
       const rr = join(dir, "rr");
       mkdirSync(rr);
-      git(rr, "init", "-q");
-      git(rr, "commit", "-q", "--allow-empty", "-m", "base");
+      copyGitFixture(rr);
       const base = git(rr, "rev-parse", "HEAD");
       wt = join(dir, "wt");
       git(rr, "worktree", "add", "-q", "--detach", wt, base);
       local = join(dir, "local");
       mkdirSync(local);
-      git(local, "init", "-q");
+      copyGitFixture(local);
       token = reserve();
       const view = resolveHost(db, "box");
       await (view.jobKind as PluginJobKind).start(view, SPEC, token);

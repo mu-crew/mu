@@ -9,7 +9,6 @@
 // failed spawn made stays as a SIGKILL would leave it. The "restart" closes the plugin sessions
 // and reopens the DB file. The fake plugin's link runs here under HOME (a temp dir).
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,6 +20,7 @@ import { addHost } from "../src/hosts.js";
 import { HONOURS_ALL } from "../src/jobs/types.js";
 import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
+import { copyGitFixture, gitIn as git } from "./_git.js";
 import { fakePlugin, jobSeams } from "./_plugin.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
@@ -31,11 +31,6 @@ vi.mock("../src/agents/spawn-rollback.js", async (orig) => ({
 }));
 
 const h = pluginHostFixture();
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-    cwd,
-    encoding: "utf8",
-  }).trim();
 
 let home: string | undefined;
 let cwd: string;
@@ -49,8 +44,7 @@ beforeEach(async () => {
   remote = join(h.dir, "remote");
   mkdirSync(remote);
   remote = realpathSync(remote);
-  git(remote, "init", "-q");
-  git(remote, "commit", "-q", "--allow-empty", "-m", "one");
+  copyGitFixture(remote);
   sha = git(remote, "rev-parse", "HEAD");
   process.chdir(remote);
   h.f = fakePlugin(h.dir, { seams: jobSeams({ honours: HONOURS_ALL }) });

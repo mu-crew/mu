@@ -8,7 +8,6 @@
 //   (the agent's commit reaches the local repo), then the tree; the record goes,
 //   and the host can be released.
 
-import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,14 +17,10 @@ import { getAgent, insertAgent } from "../src/agents.js";
 import { getCarrierJobByAgent, listCarrierJobs } from "../src/carrier-jobs.js";
 import { drainHost, releaseHost } from "../src/host-lifecycle.js";
 import { getHostRecord } from "../src/host-records.js";
+import { gitIn as git } from "./_git.js";
 import { pluginHostFixture } from "./_plugin-host.js";
 
 const h = pluginHostFixture();
-const git = (cwd: string, ...args: string[]) =>
-  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
-    cwd,
-    encoding: "utf8",
-  }).trim();
 
 let local: string;
 let remote: string;

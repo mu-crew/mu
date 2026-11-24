@@ -3,7 +3,6 @@
 // the release proof, the host identity a recovery pins, and the provider-host
 // base rule (`link.push`, `RemoteBaseMissingError`).
 
-import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,6 +45,7 @@ import { prepareProviderWorktree, RemoteBaseMissingError } from "../src/remote-w
 import { ensureWorkstream } from "../src/workstream.js";
 import { cachedDeadPid } from "./_dead-pid.js";
 import { rmFixtureDir } from "./_fs.js";
+import { copyGitFixture, gitIn as git } from "./_git.js";
 import { type FakePlugin, fakePlugin, providerSeams } from "./_plugin.js";
 import { registerFixturePlugin } from "./_plugin-handshake.js";
 import { runCli, runCliJson } from "./_runCli.js";
@@ -452,8 +452,6 @@ describe("the host identity a recovery pins (D5)", () => {
 describe("the provider-host base (D7 G3)", () => {
   let local: string;
   let remote: string;
-  const git = (cwd: string, ...args: string[]) =>
-    execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
   let home: string | undefined;
 
   beforeEach(() => {
@@ -462,19 +460,7 @@ describe("the provider-host base (D7 G3)", () => {
     local = join(dir, "local");
     remote = join(dir, "remote");
     mkdirSync(local);
-    git(local, "init", "-q");
-    git(
-      local,
-      "-c",
-      "user.name=t",
-      "-c",
-      "user.email=t@t",
-      "commit",
-      "-q",
-      "--allow-empty",
-      "-m",
-      "one",
-    );
+    copyGitFixture(local);
   });
 
   afterEach(() => {
@@ -714,12 +700,7 @@ describe("review fixes (p6d_fix)", () => {
       await acquire();
       const local = join(dir, "local");
       mkdirSync(local);
-      execFileSync("git", ["init", "-q"], { cwd: local });
-      execFileSync(
-        "git",
-        ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"],
-        { cwd: local },
-      );
+      copyGitFixture(local);
       const err = await prepareProviderWorktree(db, resolveHost(db, "box"), {
         workstream: "ws",
         name: "w",
@@ -749,7 +730,7 @@ describe("review fixes (p6d_fix)", () => {
     f.set({ hostGone: "reclaimed" });
     const local = join(dir, "local");
     mkdirSync(local);
-    execFileSync("git", ["init", "-q"], { cwd: local });
+    copyGitFixture(local);
     await expect(
       collectRemoteAgent(db, { workstream: "ws", name: "r1", repo: local }),
     ).rejects.toThrow(/host is lost/);
