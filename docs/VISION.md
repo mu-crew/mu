@@ -185,9 +185,8 @@ There is no DSL, no workflow engine, and no verb registry. The commander
 wiring in `src/cli.ts` is the verb surface. A new verb is one SDK function
 plus one commander block.
 
-Until 2026-11-09 this said "no plugin system". The
-[plugins spec](specs/2026-11-09-mu-plugins.md) amends that, with the
-user's approval, for remote and elastic agent backends. A **plugin** is an
+The [plugins spec](specs/2026-11-09-mu-plugins.md) allows one plugin
+system, for remote and elastic agent backends. A **plugin** is an
 executable that the user registers by path and mu never discovers. mu runs
 it as a child and talks to it over a versioned stdio protocol. A plugin
 implements one of four seams: host provider, link, job kind or agent

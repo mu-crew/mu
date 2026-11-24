@@ -38,7 +38,7 @@ mu does not add these unless one earns its way back under the criteria:
   system, or a workflow engine.** A prior internal runtime collected all
   of these. Not inheriting them is the point.
 
-  Amended 2026-11-09, with the user's approval, by the
+  Amended by the
   [plugins spec](specs/2026-11-09-mu-plugins.md). Remote and elastic agent
   backends need host, job and channel facts that mu cannot hold in code,
   so mu may now drive a **plugin**. A plugin is an executable
@@ -57,37 +57,6 @@ mu does not add these unless one earns its way back under the criteria:
   - any RPC into mu;
   - a seam with fewer than two real implementations.
 
-## Approved: the lease transport (stage b)
-
-A remote worker on a session-capped host (e.g. a managed dev VM, where one
-shared ssh connection allows `MaxSessions 1`) holds that connection's only
-session for its whole life, so every other command sent over the same
-connection (murmur's collector, `git fetch`, an operator) is refused.
-`MaxSessions` is per network connection: a separate connection is unaffected. Promotion
-met: the friction is the 2026-10-28 session plus the murmur collect starving
-(2026-09-28) and the `t3-dev` workaround, more than twice; the design adds no
-channel kind or recovery column; the source is about 250 LOC. The user asked
-for both specs to be implemented, which is the human decision that promotes it
-([spec](specs/2026-10-28-lease-transport.md)).
-
-Built in units: the profile (`--transport lease`, `--stop`, `{job_file}`,
-`carrier_jobs`, `runStop`; done), the spawn handshake (done), then close and
-`doctor`. It merges to `main` as it lands but does not ship (release,
-publish, announce) before mule's `--lease`, `forward`, `exec` and the `rm`
-stop contract are released.
-
-## Approved: ladder placement core (D15 path)
-
-Part 1 of the [ladder placement spec](specs/2026-11-20-ladder-placement.md),
-approved by the human 2026-11-20 with its Open items 1-6 as recommended:
-four places, ownership, per-host admission, `mu host exec`, a dropped
-master is not host loss, the refusals, drain-before-switch migration,
-cross-DB refusal. It gates `job_plugin_builtin_channels`,
-`plugin_mule_link`, `plugin_mule_lease`, `host_exec` and `plugin_ssh_pane`.
-Rung 2 is a separate track (GO on mule serve, paused until this approval;
-serve runs fixed read, stat and write ops only). The first release is D15
-only: no serve, no pi extension.
-
 ## Candidates
 
 Each has a design but no proven friction yet. Most come from the prior
@@ -98,16 +67,12 @@ track them; delete the row when one ships.
 | --- | --- | --- | --- |
 | **Tag mux sessions with their DB** | `teardown --empty` never removes a `mu-*` session that has no DB row, because another DB may own it. | Set `@mu_db=<abs path>` at session creation. Remove unregistered sessions whose tag matches this DB, and keep foreign or untagged ones. Optional mux method, since herdr may have no equivalent. | ~60 LOC |
 | **Token usage per run** | Orchestrators cannot budget a fan-out. | The extension reports pi's usage for the run, and `wait --json` carries it. Unknown stays unknown, never 0. No dollar estimates. | ~80 LOC |
-| **Global delegate cap** | `MU_DELEGATE_MAX` applies per pi session; several orchestrators on one box can each fill their slots. | Shipped outside mu as [muzzle](https://github.com/mu-crew/muzzle) 0.1.0 (2026-10-29), scoped to the resource that hurt: CPU and RAM per machine. It gates heavy commands, not agents or delegates. The evidence was museum gate timings and load 21-46 during the swayward fan-out. mu host integration (placement across hosts using `muzzle status --json`) is the next spec. A per-account rate-limit cap is still open, with no evidence yet. | moved to muzzle |
 | **Design-doc review angles** | [adversarial-review](../skills/mu/recipes/adversarial-review.md) reviews diffs, not design docs. | Add rollout and back-compat, alternatives, and integration angles. Synthesize into unanimous findings, tensions, and the strongest objection. | recipe |
 | **Sender framing on sends** | The receiving agent cannot tell a peer's message from its human's. | Prefix text sent by a mu agent with `[mu: from <agent>]`. This touches prompts, so it follows logging the sender. | ~20 LOC |
 | **CLI surface nits** (`rr_r4_p3_batch`) | `mu task --json` (bare namespace) is an unknown option while bare `mu task` prints help. `cli.ts`/`output.ts` export a few helpers used only in-file and by tests (`resolveSelfOptional`, `assertEntityInWorkstream`, `colorEnabled`, `isSqlVerbArgv`, `isWaitVerbArgv`). About 70 error literals are still built inline instead of in `messages.ts` (`delegates.ts`, `hosts.ts`, `wait-registration.ts`). | Accept `--json` on a bare namespace or leave it. Unexport when next touched. Migrate a file when its wording is next hill-climbed. | ~30 LOC |
-| **Remote agent's last message** (aiv-blog 2026-11-01) | A lease agent's `agent read` shows a stale screen (the forward, not the job); `lastText` is cut at ~2,500 chars; the orchestrator read the session JSONL through `mule exec` each time. Rung 2 already covers this need: pi's session JSONL is local. | For leases, an `agent last <name> [--full]` verb <!-- doc-cli-drift:skip -->: the ctl's last assistant text uncut, or the screen's age when it is all there is. | ~80 LOC |
 | **Known-idle stalls** (aiv-blog 2026-11-01) | A worker deliberately idle on another task re-fires `--on-stall exit` on every settle. | Fire a stall once per (incarnation, runs), or a waiting-on substate that `--on-stall exit` skips. | ~60 LOC |
 | **Remote close preview runs no host command** (aiv-blog) | A remote preview cannot see an uncollected HEAD until apply (a HEAD already on a branch no longer refuses). | Say "HEAD unknown until apply; a refusal names --keep-branch", or probe when the host has a spare channel. | ~20 LOC |
 | **Delegate answers read elsewhere** (aiv-blog) | Answers read through `mu task notes` are re-announced as "not shown" after an interrupt. | Mark a call delivered when its answer reaches the caller by a `mu wait` result too. | ~30 LOC |
-| **Merges as the serial bottleneck** (vtmux 2026-11) | Past a handful of workers the orchestrator cherry-picks and gates every merge itself, so finished work queues behind it. One sighting, the vtmux run, where the broken settle (fixed) may have been the real cause. | Narrowed and shipped as a recipe line: the merge recipe hands each batch to a short-lived `merge_<n>` task (cherry-pick + gate in a worktree, no push); the orchestrator checks the GATE record and alone pushes. A long-lived merger was refuted: the queue would live in chat and not the DAG, CI fixes would land on main unreviewed, main would have two writers, and the 18 min median already sits near gate + push time. course-correct now splits merge latency into gate/CI time and queue wait. Revisit only if a second run on 4.3.1+ shows queue wait driving latency. | recipe |
-| **mule as an out-of-process plugin** (`mu-plugin-mule`; retire the lease templates) | mu drives mule through the lease profile's `--shell`/`--exec`/`--stop` templates and reads only their exit codes, so a lost dispatch is found by hand, not by key. The plugin system has two real implementations without it (the in-tree fake plugin and an out-of-tree remote backend); deferred from the plugins run, which did not need it. | The [plugins spec](specs/2026-11-09-mu-plugins.md) D15: a `mu-plugin-mule` bin serving the link and the `lease` job kind (`start.lookup: true`, `view: "bound"`), `mu host add <h> --plugin mule` keeping only `--fetch`, and an old reservation drained through its original stop template (the plugin never stops it). mule already has the surface (spec/mu-plugins branch, additive: `run --lease --key` dedupe, five-state `poll --json`, `ls --key-prefix`, a non-detaching cancelled `exec`), and the lease templates keep working meanwhile. Shipped: the `mu-plugin-mule` binary (built in the mule repo), `host add --plugin mule` and the migration check. Draining is by the original stop template, and the switch is rejected while any such record remains. Left: mu's link and job contract suites against the real binary. | ~5 days |
 | **Ladder visibility** (ladder placement spec §D) | The TUI has no placement columns or Hosts tab; murmur has no host dedup or picker routes; host notices are not unified; the pane-option mirror stops at `@mu_host`; there is no host init wizard. | One follow-up: placement in the TUI and murmur, one host-notice path, a wizard over `mu host init`. Deferred so the core ships first. Promote when users cannot tell where an agent runs. | follow-up |
 | **Ladder durability** (spec §D, §3.3, §9.4) | No durable backend binding for a workstream (the one-backend rule is advisory), no push for static links (mu never fetches or pushes for a static host), no durable named gates (`plugin_mule_gate`), no atomic cross-DB claim. | Each needs a schema or a credential decision. Promote on a second real race, lost base or lost gate. | per item |
 | **Ladder reach** (spec §D) | claude and codex on rung 2 (MCP), provider-backed rung 2, a mule batch verb, herdr and Rex parity smokes, `mu_delegate` refused in a remote pi (R5). | Cut from the first release, none ruled out. Promote each when a user hits the gap twice. | per item |
@@ -116,10 +81,10 @@ track them; delete the row when one ships.
 
 ## Next breaking release
 
-- **Drop `agents.status`.** Schema 13 still carries it for
+- **Drop `agents.status`.** Schema 14 still carries it for
   compatibility; it always holds `spawning` and nothing reads it.
 - **`mu agent list --json` becomes `{items, count}`.** It emits
-  `{workstreamName, agents, orphans}`, the one collection off the
+  `{workstreamName, agents, orphans, leftovers}`, the one collection off the
   documented shape. Conforming breaks `.agents` readers, `mu_delegate` among them.
 
 ## Open questions
