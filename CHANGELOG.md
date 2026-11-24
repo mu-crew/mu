@@ -24,6 +24,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ### Fixed
 
+- Unsent task spawns stop their mule jobs and roll back the implicit remote worktree, including on replay.
 - Spawn rolls back staged resources when pane setup fails before launch.
 - Expired spawn placeholders no longer authorize deletion of unregistered worktree paths.
 - Rex spawns under csh or tcsh fail before launching a pane and tell you how

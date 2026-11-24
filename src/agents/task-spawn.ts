@@ -54,7 +54,7 @@ import {
 import type { Db } from "../db.js";
 import { delegateSessionDir } from "../delegates.js";
 import { harnessOfCli } from "../harnesses.js";
-import { remoteLoopHost } from "../hosts.js";
+import { LOCAL_LOOP_TRANSPORT, remoteLoopHost } from "../hosts.js";
 import { LocalLoopHandbackError } from "../local-loop.js";
 import { say } from "../messages.js";
 import { checkDelivery } from "../plugins/channel.js";
@@ -484,8 +484,12 @@ async function drive(
   let rec = start;
   let agent: SpawnedAgent | AgentRow | undefined;
   let claimed = rec.state === "claimed";
-  let staged: StagedWorktree | undefined =
-    resumed !== undefined && req.spawn.worktree === true ? stagedOf(db, resumed) : undefined;
+  // A local loop stages a remote tree even without an explicit --worktree.
+  const stagedFor = (row: AgentRow): StagedWorktree | undefined =>
+    req.spawn.worktree === true || row.hostTransport === LOCAL_LOOP_TRANSPORT
+      ? stagedOf(db, row)
+      : undefined;
+  let staged = resumed === undefined ? undefined : stagedFor(resumed);
   let sending = false;
   // spawnAgent rolls its own pane, row and worktree back when it throws.
   let spawnThrew = false;
@@ -634,7 +638,7 @@ async function drive(
             agentId: r.incarnation,
             paneId: r.paneId,
           });
-          if (req.spawn.worktree === true) staged = stagedOf(db, r);
+          staged = stagedFor(r);
           agent = r;
         },
       });

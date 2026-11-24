@@ -14,7 +14,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { closeAgent } from "../src/agents/close.js";
+import {
+  getReceipt,
+  requestSha,
+  reserveReceipt,
+  transitionReceipt,
+} from "../src/agents/receipts.js";
 import { spawnAgent } from "../src/agents/spawn.js";
+import { spawnForTask } from "../src/agents/task-spawn.js";
 import { getAgent, sendToAgent } from "../src/agents.js";
 import { listCarrierJobs } from "../src/carrier-jobs.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
@@ -33,6 +40,9 @@ import { addPlugin, closePluginSessions } from "../src/plugins/registry.js";
 import { reconcile } from "../src/reconcile.js";
 import { collectRemoteAgent } from "../src/remote-collect.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
+import { taskIdFor } from "../src/tasks/core.js";
+import { addTask } from "../src/tasks/edit.js";
+import { closeTask } from "../src/tasks/lifecycle.js";
 import { waitForEvents } from "../src/wait.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { withHello } from "./_ctl-ext.js";
@@ -386,6 +396,59 @@ it("waits for an in-flight local dispatch before scanning jobs during ctl rollba
   expect(readFileSync(join(dir, "jobs"), "utf8")).toBe("[]");
   expect(existsSync(tree)).toBe(false);
 });
+
+it.each(["fresh", "replayed"])(
+  "rolls back the implicit mule tree and jobs for a %s unsent task spawn",
+  async (mode) => {
+    const task = "t1";
+    const text = "Do the task";
+    const key = "manual:t1";
+    addTask(db, { ...workstream, localId: task, title: text });
+    const taskId = taskIdFor(db, task, spawn.workstream);
+    if (taskId === null) throw new Error("missing task fixture");
+    const closeBeforeClaim = () =>
+      closeTask(db, task, { ...workstream, evidence: "completed elsewhere" });
+    let onlyUnrelated: (() => void) | undefined;
+    if (mode === "replayed") {
+      // A worker and its journal survived, but the task closed before claim.
+      const agent = await spawnAgent(db, spawn);
+      onlyUnrelated = queueJobs();
+      reserveReceipt(db, {
+        ...workstream,
+        taskId,
+        attemptKey: key,
+        name: agent.name,
+        requestSha: requestSha({ ...spawn, text, nextFree: false }),
+        msgId: "test-msg",
+      });
+      transitionReceipt(db, taskId, key, "pane", {
+        agentId: agent.incarnation,
+        paneId: agent.paneId,
+      });
+      closeBeforeClaim();
+    } else {
+      const launch = pane.getMockImplementation();
+      if (launch === undefined) throw new Error("missing pane fixture");
+      pane.mockImplementationOnce(async (opts) => {
+        const id = await launch(opts);
+        onlyUnrelated = queueJobs();
+        closeBeforeClaim();
+        return id;
+      });
+    }
+
+    await expect(spawnForTask(db, { task, text, spawn })).rejects.toThrow(/closed/i);
+    expect(requests).not.toContain("send");
+    expect(getReceipt(db, taskId, key)?.state).toBe("failed");
+    expect(pane).toHaveBeenCalledOnce();
+    expect(paneLive).toBe(false);
+    expect(getAgent(db, spawn.name, spawn.workstream)).toBeUndefined();
+    expect(onlyUnrelated).toBeDefined();
+    onlyUnrelated?.();
+    expect(existsSync(tree)).toBe(false);
+    expect(listRemoteRecoveries(db)).toEqual([]);
+  },
+);
 
 it("stops only the worker's outstanding jobs before removing its tree", async () => {
   await spawnAgent(db, spawn);
