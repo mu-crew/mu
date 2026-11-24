@@ -158,6 +158,14 @@ let xdgRoot: string;
 if (typeof runRoot === "string") {
   xdgRoot = join(runRoot, `xdg-${process.pid}`);
   mkdirSync(xdgRoot, { recursive: true });
+  // Every mkdtemp(tmpdir()) lands under the run's short server root (/tmp/mus-*, which
+  // globalSetup removes), so a fork killed before afterEach leaks nothing. It must stay
+  // short: unix socket paths cap at 104 bytes on macOS.
+  if (typeof serverRoot === "string") {
+    const scratch = join(serverRoot, `t${process.pid}`);
+    mkdirSync(scratch, { recursive: true });
+    process.env.TMPDIR = scratch;
+  }
 } else {
   // No globalSetup (a custom config): fall back to a per-fork dir.
   xdgRoot = mkdtempSync(join(tmpdir(), "mu-test-xdg-"));
