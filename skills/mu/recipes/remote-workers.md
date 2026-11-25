@@ -25,7 +25,9 @@ Preview with `mu agent close <name> -w <ws>`; repeat with `--if <rev>`.
 Close refuses dirty or uncollected trees. A template's exit 3 is a
 hand-back (mu exits 5): ask a human; never retry.
 
-A dead lease pane's job runs on, tasks parked: run its leftover's `next`;
-reattach `--task <id>` claims them back, else close then `task unpark <id>`;
+Killing a lease pane stops its job. A carrier lost to `kill -9`, a crash
+or a stop that cannot reach the host leaves it running, tasks parked: run
+its leftover's `next`; reattach `--task <id>` claims them back,
+else close then `task unpark <id>`;
 only `--abandon-job` passes unreachable hosts. Lease shells are non-login;
 set PATH explicitly.

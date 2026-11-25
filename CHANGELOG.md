@@ -13,6 +13,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 ## [Unreleased]
 
 ### Fixed
+- Lease docs no longer say a dead lease pane's job runs on. Killing a mule
+  lease pane (`tmux kill-pane`, a tmux restart) hangs up the carrier, which
+  stops its job. Only a `kill -9`, a crash or a stop that cannot reach the host
+  leaves a job to reattach. The remote guide shows how to rehearse that loss.
 - `mu agent reattach` on a plugin job with no agent row no longer says the job
   "may still run". Reconcile keeps that row while the job runs, so the refusal
   now says the job was found not running or the row was removed.
