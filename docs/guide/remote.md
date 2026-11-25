@@ -410,8 +410,8 @@ mu host check dev --root '~/repo'
 - `--attach` is optional: it opens a new carrier for a job that still runs
   (reattaching a reaped lease agent). It must contain `{job}` and `{job_file}`
   once each, `{local_sock}` and `{remote_sock}`; `{cmd}` and `{env}` are refused
-  (nothing is dispatched). There is no `host update`: `host rm`, then `host add`
-  with a byte-equal `--stop`, so every reservation stays stoppable.
+  (nothing is dispatched). There is no `host update`: `host add --replace`
+  (or `host rm`, then `host add`) with a byte-equal `--stop`, so every reservation stays stoppable.
 - `local_sock` determines `remote_sock`: both derive from (workstream, agent),
   so a carrier's forward table never maps one local socket to two remote ones.
 - The mule starter leaves `--max-sessions` unset. A lease pane uses no mu

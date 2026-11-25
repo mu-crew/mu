@@ -82,18 +82,22 @@ function channelLine(c: HostChannel): string {
 }
 
 export function cmdHostAdd(db: Db, name: string, opts: HostAddOptions): void {
-  const host = addHost(db, {
-    name,
-    ...(opts.shell !== undefined ? { shell: opts.shell } : {}),
-    ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
-    ...(opts.plugin !== undefined ? { plugin: opts.plugin } : {}),
-    ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
-    repo: opts.repo ?? null,
-    max_sessions: opts.maxSessions ?? null,
-    transport: (opts.transport ?? "session") as HostTransport,
-    stop: opts.stop ?? null,
-    attach: opts.attach ?? null,
-  });
+  const host = addHost(
+    db,
+    {
+      name,
+      ...(opts.shell !== undefined ? { shell: opts.shell } : {}),
+      ...(opts.exec !== undefined ? { exec: opts.exec } : {}),
+      ...(opts.plugin !== undefined ? { plugin: opts.plugin } : {}),
+      ...(opts.fetch !== undefined ? { fetch: opts.fetch } : {}),
+      repo: opts.repo ?? null,
+      max_sessions: opts.maxSessions ?? null,
+      transport: (opts.transport ?? "session") as HostTransport,
+      stop: opts.stop ?? null,
+      attach: opts.attach ?? null,
+    },
+    { replace: opts.replace === true },
+  );
   if (isJsonMode()) {
     emitJson({ host: hostJson(host) });
     return;
@@ -467,6 +471,7 @@ export interface HostAddOptions {
   transport?: string;
   stop?: string;
   attach?: string;
+  replace?: boolean;
 }
 
 export function wireHostCommands(program: Command): void {
@@ -516,6 +521,10 @@ export function wireHostCommands(program: Command): void {
       "--max-sessions <n>",
       "cap on channels mu holds to this host at once (panes, --exec, --fetch)",
       parseNonNegativeInt,
+    )
+    .option(
+      "--replace",
+      "replace the existing profile of this name in one step; every refusal of `host add` and `host rm` runs first, so a refusal keeps the old profile",
     )
     .option(...JSON_OPT)
     .action(function (name: string) {

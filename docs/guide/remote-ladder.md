@@ -224,10 +224,12 @@ Procedure:
    job. A host gone for good needs `--abandon-job`
    ([remote.md](remote.md#session-capped-hosts)).
 4. Run `mu doctor` until the host reports no blockers.
-5. `mu host rm <h>`, then `mu host add <h> --plugin mule --fetch '<old fetch>'`
-   with the original `--repo` and `--max-sessions`. `host add --plugin`
-   refuses while any agent row, job record or recovery record names the host,
-   listing them, so a missed record stops you here.
+5. `mu host add <h> --plugin mule --replace --fetch '<old fetch>'` with the
+   original `--repo` and `--max-sessions`. It checks first and removes the old
+   profile only if the add can go through: it refuses while any agent row, job
+   record or recovery record names the host, listing them, and a refusal keeps
+   the old profile. (`mu host rm <h>` then `host add` has the same refusal
+   but runs it after the profile is gone.)
 6. `mu host check <h>`, then resume spawns.
 
 What blocks, and why:

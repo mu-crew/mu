@@ -318,7 +318,11 @@ export function hostsOfPlugin(db: Db, plugin: string): string[] {
 }
 
 /** Store a profile. Validates the name, cap, default repo, transport and every template first; stores nothing on refusal. */
-export function addHost(db: Db, input: NewHostProfile): HostProfile {
+export function addHost(
+  db: Db,
+  input: NewHostProfile,
+  opts: { replace?: boolean } = {},
+): HostProfile {
   const p: HostProfile = {
     name: input.name,
     shell: input.shell ?? null,
@@ -383,8 +387,15 @@ export function addHost(db: Db, input: NewHostProfile): HostProfile {
         "SELECT 1 FROM hosts WHERE name = @name UNION ALL SELECT 1 FROM host_profiles WHERE name = @name LIMIT 1",
       )
       .get({ name: p.name });
-    if (taken !== undefined) throw new HostExistsError(p.name);
-    if (p.plugin !== null) refuseHostProfileMigration(db, p.name);
+    if (taken !== undefined) {
+      const isProfile =
+        db.prepare("SELECT 1 FROM host_profiles WHERE name = ?").get(p.name) !== undefined;
+      if (!(opts.replace === true && isProfile)) throw new HostExistsError(p.name);
+      // `--replace`: the same refusals as `host add` and `host rm`, all BEFORE the delete, in
+      // this one transaction, so a refusal leaves the old profile in place.
+      if (p.plugin !== null) refuseHostProfileMigration(db, p.name);
+      deleteProfile(db, p.name);
+    } else if (p.plugin !== null) refuseHostProfileMigration(db, p.name);
     // A template profile's row is the one it always was: `plugin` is written only when given.
     db.prepare(
       p.plugin === null
@@ -470,14 +481,15 @@ function refusePluginProfile(db: Db, p: HostProfile): void {
  * freed by closing its agent, never here.
  */
 export function removeHost(db: Db, name: string): boolean {
-  return db
-    .transaction(() => {
-      reclaim(db, name, []);
-      const held = listHostChannels(db, name).map((c) => c.holder);
-      if (held.length > 0) throw new HostInUseError(name, held);
-      return db.prepare("DELETE FROM host_profiles WHERE name = ?").run(name).changes > 0;
-    })
-    .immediate();
+  return db.transaction(() => deleteProfile(db, name)).immediate();
+}
+
+/** `removeHost`'s body, for a caller already in a transaction. */
+function deleteProfile(db: Db, name: string): boolean {
+  reclaim(db, name, []);
+  const held = listHostChannels(db, name).map((c) => c.holder);
+  if (held.length > 0) throw new HostInUseError(name, held);
+  return db.prepare("DELETE FROM host_profiles WHERE name = ?").run(name).changes > 0;
 }
 
 /** The local fetch template for a host reachable by ssh. */

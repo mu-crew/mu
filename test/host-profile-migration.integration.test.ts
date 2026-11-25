@@ -289,3 +289,17 @@ it("a legacy spawner that read the profile before the switch cannot reserve afte
   );
   expect(job("late")).toBeUndefined();
 });
+
+it("host add --replace refuses before removing: a blocked switch keeps the old profile", () => {
+  agent("active", "%1");
+  expect(() => addHost(db, plugin, { replace: true })).toThrow(/cannot add a plugin profile/);
+  expect(getHost(db, "box").plugin ?? null).toBeNull();
+  expect(getHost(db, "box").exec).toBe(legacy.exec);
+});
+
+it("host add --replace swaps a profile with no blockers in one step", () => {
+  const next = addHost(db, plugin, { replace: true });
+  expect(next).toMatchObject({ name: "box", plugin: "mule", exec: null });
+  expect(getHost(db, "box")).toMatchObject({ plugin: "mule" });
+  expect(() => addHost(db, plugin)).toThrow(/already/i);
+});
