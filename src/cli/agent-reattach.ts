@@ -12,7 +12,7 @@ export function wireReattachCommand(agent: Command): void {
   agent
     .command("reattach <name>")
     .description(
-      "Open a new carrier pane for a reaped lease agent whose job still runs (pi only; the host needs an attach template): previews without --if; --if <rev> applies",
+      "Open a new carrier pane for a job that still runs: a reaped template lease agent's (pi only; the host needs an attach template) or a plugin agent's kept row: previews without --if; --if <rev> applies",
     )
     .option("--if <rev>", "apply the preview with this revision", cli.parseNonNegativeInt)
     .option(

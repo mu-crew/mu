@@ -241,6 +241,10 @@ describe("recovery", () => {
     expect(listNotes(h.db, "t1", "ws").at(-1)?.content).toMatch(
       /its job \(no handle recorded yet\) on box may still run/,
     );
+    // reattach refuses a no-row plugin job, so the note offers only close then unpark.
+    expect(listNotes(h.db, "t1", "ws").at(-1)?.content).toMatch(
+      /resume with mu agent close w1 -w ws then mu task unpark t1$/,
+    );
     // The master is down: any lookup hands back. The local file needs none.
     h.f.set({ faults: { "job.lookup": ["human", "human"] } });
     await closeAgent(h.db, "w1", { workstream: "ws" });
@@ -535,16 +539,22 @@ describe("a bound file kind whose view died while its job runs", () => {
 
   it("an ended job refuses before job.attach; reconcile then reaps, and the no-row refusal names close", async () => {
     await boundWithGoneView();
+    addTask(h.db, { localId: "t1", workstream: "ws", title: "T1", impact: 50, effortDays: 1 });
+    await claimTask(h.db, "t1", { agentName: "w1", workstream: "ws" });
     h.ended();
     const err = await previewReattach(h.db, "ws", "w1").catch((e: unknown) => e);
     expect((err as Error).message).toMatch(/its job file-job-1 on box is ended/);
     await reconcile(h.db, { workstream: "ws" });
     expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
     const left = await previewReattach(h.db, "ws", "w1").catch((e: unknown) => e);
-    expect((left as Error).message).toMatch(/its plugin job has no agent row to reattach/);
-    // Found ended, not "may still run" (bug 14: a hung-up carrier had stopped its job).
-    expect((left as Error).message).toMatch(/so it was found not running or the row was removed/);
+    expect((left as Error).message).toMatch(
+      /its plugin job has no agent row to reattach \(a plugin reattach needs the row and its launch metadata\): close it, which stops what its record still names/,
+    );
     expect((left as Error).message).not.toMatch(/may still run|null/);
+    // The reaper's note must not send the operator to that refusal.
+    const note = listNotes(h.db, "t1", "ws").at(-1)?.content ?? "";
+    expect(note).toMatch(/resume with mu agent close w1 -w ws then mu task unpark t1$/);
+    expect(note).not.toMatch(/reattach/);
     expect(h.calls("job.attach")).toEqual([]);
   });
 

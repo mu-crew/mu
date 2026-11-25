@@ -480,7 +480,7 @@ describe("preflight refusals: nothing changed, the close preview named", () => {
         reaped();
         db.prepare("UPDATE carrier_jobs SET plugin = 'mule', tree_path = '/r/tree'").run();
       },
-      /its plugin job has no agent row to reattach \(reconcile keeps the row while job \S+ on dev runs, so it was found not running or the row was removed\): close it/,
+      /its plugin job has no agent row to reattach \(a plugin reattach needs the row and its launch metadata\): close it, which stops what its record still names/,
       "reservation",
     );
   });

@@ -61,9 +61,9 @@ export function reapAgentRow(
       ? undefined
       : (db
           .prepare(
-            "SELECT job, host FROM carrier_jobs WHERE agent_id = ? AND (job IS NOT NULL OR (plugin IS NOT NULL AND launch = 'intent')) ORDER BY id LIMIT 1",
+            "SELECT job, host, plugin FROM carrier_jobs WHERE agent_id = ? AND (job IS NOT NULL OR (plugin IS NOT NULL AND launch = 'intent')) ORDER BY id LIMIT 1",
           )
-          .get(agentId) as { job: string | null; host: string } | undefined);
+          .get(agentId) as { job: string | null; host: string; plugin: string | null } | undefined);
   // The row's AFTER DELETE trigger writes its remote recovery record (src/db-recovery.ts).
   if (db.prepare("DELETE FROM agents WHERE id = ?").run(agentId).changes === 0) return false;
   // A close that has itself removed (or found gone) the tree owes no record.
@@ -95,7 +95,7 @@ export function reapAgentRow(
     const content =
       lease === undefined
         ? `[reaper] previous owner ${name} gone (agent removed); status reverted IN_PROGRESS → OPEN, owner cleared`
-        : `[reaper] previous owner ${name} gone (pane died); its ${lease.job === null ? "job (no handle recorded yet)" : `lease job ${lease.job}`} on ${lease.host} may still run, so the task is parked: resume with ${resumeHint(name, pane.ws, t.localId, t.ws)}`;
+        : `[reaper] previous owner ${name} gone (pane died); its ${lease.job === null ? "job (no handle recorded yet)" : `lease job ${lease.job}`} on ${lease.host} may still run, so the task is parked: resume with ${resumeHint(name, pane.ws, t.localId, t.ws, lease.plugin !== null)}`;
     // The note keeps its own intent (as `addNote` gave it) inside the caller's group.
     withOpContext(db, { intent: "task.note", actor: "reaper" }, () =>
       note.run(t.taskId, content, now),
@@ -107,9 +107,13 @@ export function reapAgentRow(
 /**
  * The two ways out of a parked task, as shell words. `reattach --task` resolves its ids in the
  * agent's workstream, so a task owned across workstreams is claimed back in a second step.
+ * A plugin job record has one: reattach needs its row, so close then unpark.
  */
-function resumeHint(name: string, aws: string, id: string, tws: string): string {
+function resumeHint(name: string, aws: string, id: string, tws: string, plugin: boolean): string {
   const [n, a, i, t] = [name, aws, id, tws].map(shellWord);
+  // A reattach refuses a plugin job with no row (reattach-check.ts): only the close remains.
+  if (plugin)
+    return `mu agent close ${n} -w ${a} then mu task unpark ${i}${aws === tws ? "" : ` -w ${t}`}`;
   if (aws === tws)
     return `mu agent reattach ${n} -w ${a} --task ${i}, or mu agent close ${n} -w ${a} then mu task unpark ${i}`;
   return `mu agent reattach ${n} -w ${a} then mu task claim ${i} -w ${t} --for ${shellWord(`${aws}/${name}`)} --force, or mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
