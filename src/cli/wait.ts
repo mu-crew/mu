@@ -20,6 +20,7 @@
 
 import type { Command } from "commander";
 import { agentKey } from "../agent-state.js";
+import { NO_HOOK_EVENT } from "../channels/hooks.js";
 import {
   asCaller,
   checkQualifiedPrefix,
@@ -188,6 +189,9 @@ function eventReason(result: WaitResult, signal: string | undefined, open: numbe
     case "pane-text":
       return `${who}'s pane printed the awaited text (no control socket: this is pane output, not a finished run)`;
     case "input":
+      if (snap?.blocked?.kind === NO_HOOK_EVENT && snap.blocked.title !== undefined) {
+        return `${who}: ${snap.blocked.title}`;
+      }
       return `${who} is blocked on a dialog${snap?.blocked !== undefined ? ` (${snap.blocked.kind})` : ""}; its run is not finished`;
     case "dead":
       // A task's owner died before it closed: that work is not done. An agent ref says only that it is gone.

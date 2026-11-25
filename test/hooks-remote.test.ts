@@ -39,11 +39,12 @@ import { resetSleep, setSleepForTests } from "../src/tmux.js";
 import { ctlAgentHooks } from "../src/wait-ctl.js";
 import { ensureWorkstream } from "../src/workstream.js";
 import { insertTestAgent as insertAgent } from "./_agent-pane.js";
+import { withEnv } from "./_env.js";
 import { type FakeHarness, fakeHarness } from "./_fake-harness.js";
 import { type FakeRemoteNode, fakeRemoteNode } from "./_fake-remote-node.js";
 import { rmFixtureDir } from "./_fs.js";
 import { installMux, type MuxHarness } from "./_mux.js";
-import { runCliJson } from "./_runCli.js";
+import { runCli, runCliJson } from "./_runCli.js";
 
 const KEY = "origin/auth.cw.0123456789ab";
 
@@ -714,6 +715,68 @@ describe("a wait on a remote hooks worker whose pane has no row yet", () => {
     node.emit("prompt_submitted");
     node.emit("turn_stopped", { text: "late" });
     expect(await watch?.settled).toMatchObject({ settled: true, runs: 1, lastText: "late" });
+  });
+});
+
+describe("a send that drew no hook event (a dialog took it)", () => {
+  const DIALOG = [
+    "  Hooks need review",
+    "  10 hooks are new or changed.",
+    "",
+    "› 1. Trust all and continue",
+    "  2. Review hooks",
+  ].join("\n");
+
+  beforeEach(() => {
+    // codex on the node runs no hook (untrusted): nothing ever reaches its area.
+    for (const f of readdirSync(join(node.dir, "events"))) rmSync(join(node.dir, "events", f));
+    db.prepare("UPDATE agents SET cli = 'codex' WHERE name = 'cw'").run();
+    fake.onSubmit = () => {};
+  });
+
+  it("a wait after the send ends as input once the silence passes MU_HOOK_SILENCE_MS, naming the pane tail and the fix", async () => {
+    const sent = await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
+    expect(sent.data).toMatchObject({ transport: "hooks", ack: "sent" });
+    fake.screen = () => DIALOG;
+    await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
+      const { data, exitCode } = await runCliJson(
+        ["wait", "agent:auth/cw", "--timeout", "10", "--json"],
+        dbPath,
+      );
+      expect(exitCode).toBe(7);
+      expect(data).toMatchObject({
+        firing: { kind: "input", ref: "agent:auth/cw" },
+        snapshots: [{ blocked: { kind: "no_hook_event" } }],
+      });
+      const title = JSON.stringify(data);
+      expect(title).toContain("Hooks need review");
+      expect(title).toContain("1. Trust all and continue");
+      expect(title).toContain("mu agent answer cw");
+      // Text mode says it too, not just "blocked on a dialog".
+      const text = await runCli(["wait", "agent:auth/cw", "--timeout", "10"], dbPath);
+      expect(text.exitCode).toBe(7);
+      expect(text.stdout + text.stderr).toContain("no hook event from agent cw");
+      expect(text.stdout + text.stderr).toContain("Trust all and continue");
+    });
+  });
+
+  it("a turn that started is never silent: its hooks fired; nor is a worker mu sent nothing", async () => {
+    await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
+      // Nothing sent since spawn: no send to have drawn an event.
+      const idle = await runCliJson(
+        ["wait", "agent:auth/cw", "--timeout", "0.3", "--json"],
+        dbPath,
+      );
+      expect(JSON.stringify(idle.data)).not.toContain("no_hook_event");
+      fake.onSubmit = () => node.emit("prompt_submitted");
+      await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
+      const busy = await runCliJson(
+        ["wait", "agent:auth/cw", "--timeout", "0.3", "--json"],
+        dbPath,
+      );
+      expect(JSON.stringify(busy.data)).not.toContain("no_hook_event");
+      expect(busy.data).toMatchObject({ firing: { kind: "heartbeat" } });
+    });
   });
 });
 

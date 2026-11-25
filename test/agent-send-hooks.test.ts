@@ -270,6 +270,29 @@ describe("a check sent to a just-spawned codex pane (tasks-or-calls: another fam
     expect(fake.calls.filter((c) => c[0] === "paste-buffer")).toHaveLength(1);
   });
 
+  it("an unconfirmed first send to a pane a dialog holds: the wait ends as input with the pane tail, not busy", async () => {
+    beforeFirstPrompt();
+    fake.onSubmit = null;
+    fake.acks = false;
+    await withEnv("MU_SEND_ACK_MS", "50", async () => {
+      await runCliJson(["agent", "send", "cdx", "hi", "-w", "auth", "--json"], dbPath);
+    });
+    fake.screen = () =>
+      "  Do you trust the contents of this directory?\n› 1. Yes, continue\n  2. No, quit\n";
+    await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
+      const { data, exitCode } = await runCliJson(
+        ["wait", "agent:auth/cdx", "--timeout", "10", "--json"],
+        dbPath,
+      );
+      expect(exitCode).toBe(7);
+      expect(data).toMatchObject({
+        firing: { kind: "input", ref: "agent:auth/cdx" },
+        snapshots: [{ blocked: { kind: "no_hook_event" } }],
+      });
+      expect(JSON.stringify(data)).toContain("1. Yes, continue");
+    });
+  });
+
   it("a launcher slow to start codex: the first send waits MU_FIRST_SEND_ACK_MS, later ones MU_SEND_ACK_MS", async () => {
     beforeFirstPrompt();
     // The harness reads the paste only after 10 more pane reads (a launcher installing plugins).

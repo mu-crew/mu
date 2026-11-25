@@ -87,6 +87,12 @@ export interface ChannelTarget {
    */
   remote?: RemoteReader;
   /**
+   * When mu last sent the agent a prompt since its spawn (epoch ms), filled by
+   * `channelTarget` for a `hooks` row: a watch that sees no hook event that
+   * long after it says so (`MU_HOOK_SILENCE_MS`). Absent: nothing sent.
+   */
+  sentAt?: number;
+  /**
    * The agent's job as its row records it (plugins spec D9, D13), filled by
    * `channelTarget`: its kind and view pane, and its host. A lease job's
    * handle lives in its carrier's job file, not the row, so it is absent here.

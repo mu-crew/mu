@@ -43,10 +43,11 @@ export function channelTarget<A extends ObservedAgent>(
 ): ChannelTarget & { agent: A } {
   const row = db
     .prepare(
-      "SELECT host, remote_key, command, host_transport FROM agents WHERE id = ? AND pane_id = ?",
+      "SELECT host, remote_key, command, host_transport, created_at FROM agents WHERE id = ? AND pane_id = ?",
     )
     .get(agent.incarnation, agent.paneId) as AgentFacts | undefined;
   const remote = agent.channel === "hooks" ? remoteOf(db, agent, row) : undefined;
+  const sentAt = agent.channel === "hooks" && row !== undefined ? lastSendAt(db, agent, row) : null;
   // A plugin job's ref is its job record's (its kind, key, handle and instance).
   const record = getCarrierJobByAgent(db, agent.incarnation);
   const pluginJob = record?.plugin != null ? pluginJobRef(db, record.token) : undefined;
@@ -56,6 +57,7 @@ export function channelTarget<A extends ObservedAgent>(
     stateDir: dirname(db.name),
     ...(socket !== undefined ? { socket } : {}),
     ...(remote !== undefined ? { remote } : {}),
+    ...(sentAt !== null ? { sentAt } : {}),
     job:
       pluginJob ??
       agentJobRef({
@@ -71,6 +73,25 @@ interface AgentFacts {
   remote_key: string | null;
   command: string | null;
   host_transport: string | null;
+  created_at: string;
+}
+
+/**
+ * When mu last sent this incarnation a prompt (its latest `agent.send` op,
+ * as `recordSend` writes it, since the row was made), epoch ms; null: never.
+ */
+function lastSendAt(db: Db, agent: ObservedAgent, row: AgentFacts): number | null {
+  const prefix = `agent send ${agent.name} (`;
+  const hit = db
+    .prepare(
+      `SELECT MAX(created_at) AS at FROM ops WHERE entity = 'agent' AND key = ?
+         AND intent = 'agent.send' AND created_at >= ? AND substr(payload, 1, ?) = ?`,
+    )
+    .get(agent.workstreamName, row.created_at, prefix.length, prefix) as
+    | { at: string | null }
+    | undefined;
+  const at = hit?.at == null ? Number.NaN : Date.parse(hit.at);
+  return Number.isNaN(at) ? null : at;
 }
 
 /** The remote reader of a `hooks` row spawned on a host, from its row; undefined for a local one. */

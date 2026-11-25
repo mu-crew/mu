@@ -277,6 +277,15 @@ export function firstSendAckMs(): number {
   return envMs("MU_FIRST_SEND_ACK_MS", 60_000);
 }
 
+/**
+ * How long after mu's last send a pane with no hook event since is reported
+ * (`MU_HOOK_SILENCE_MS`, default 60 s; 0: never): a dialog took the paste
+ * (a folder-trust or hooks review screen), or the harness runs no hook.
+ */
+export function hookSilenceMs(): number {
+  return envMs("MU_HOOK_SILENCE_MS", 60_000);
+}
+
 /** A `running` pane with no event for this long reads unknown: `MU_STALE_MS`, default 10 min. */
 export function staleMs(): number {
   return envMs("MU_STALE_MS", 600_000);

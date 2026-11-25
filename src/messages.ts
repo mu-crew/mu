@@ -202,6 +202,8 @@ export const MESSAGES = {
     `agent ${name} has no pending permission dialog (state ${state}): nothing was sent; read the pane (mu agent read ${name} -w ${ws}), or type the keys anyway with --force`,
   "agent.answer_keys": () =>
     "give the answer as one or more keys, each one line (e.g. mu agent answer worker-1 1)",
+  "agent.no_hook_event": (name: string, ws: string, secs: number, tail: string | undefined) =>
+    `no hook event from agent ${name} in ${secs}s since mu's last send: a dialog may hold the prompt (folder trust, a hooks review), or its harness runs no hook (mu host check). Pane: ${tail === undefined ? "(unreadable)" : JSON.stringify(tail)}. Read it (mu agent read ${name} -w ${ws}), answer a dialog (mu agent answer ${name} <key> --force -w ${ws}), then wait again`,
   "agent.answer_unconfirmed": (name: string, ws: string) =>
     `no event confirmed the answer: read the pane (mu agent read ${name} -w ${ws}) before answering again`,
   "agent.answer_unsupported": (name: string, channel: string, noAnswerPath: boolean) =>

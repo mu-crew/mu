@@ -85,6 +85,26 @@ async function readScreen(paneId: string, identity?: string | null): Promise<str
   }
 }
 
+/**
+ * The last `n` non-blank lines of the visible pane, trimmed and joined with
+ * ` | `, at most `max` characters (its end kept); undefined when it cannot
+ * be read.
+ */
+export async function paneTail(
+  paneId: string,
+  identity?: string | null,
+  n = 6,
+  max = 400,
+): Promise<string | undefined> {
+  const screen = await readScreen(paneId, identity);
+  if (screen === undefined) return undefined;
+  const tail = screenLines(screen)
+    .slice(-n)
+    .map((l) => l.trim())
+    .join(" | ");
+  return tail.length > max ? `…${tail.slice(-(max - 1))}` : tail;
+}
+
 /** How the ready wait ended: the screen showed, `ms` passed, or the pane could not be read. */
 export type ReadyWait = "ready" | "timeout" | "unread";
 
