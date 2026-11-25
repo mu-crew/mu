@@ -255,7 +255,7 @@ describe("host exec: the outcome table", () => {
         { exitCode: 5 },
       );
       expect(err.mock.calls.map((c) => String(c[0])).join("")).toMatch(
-        /host p: no exit code \(deadline or no answer\); the remote command was stopped\n/,
+        /HostExecNoExit: host p: no exit code \(deadline or no answer\); the remote command was stopped\n/,
       );
     } finally {
       err.mockRestore();

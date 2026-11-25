@@ -171,7 +171,7 @@ describe("mu host add --plugin", () => {
       const r = await runCli([...migrate, "--json"], dbPath);
       expect(r.exitCode).toBe(2);
       expect(r.stdout + r.stderr).toContain(record);
-      expect(r.stdout + r.stderr).toMatch(/re-add the previous profile.*byte-for-byte/);
+      expect(r.stdout + r.stderr).toMatch(/profile stays as it is until the add succeeds/);
       expect(db.prepare("SELECT name FROM host_profiles WHERE name = 'box'").get()).toBeUndefined();
     };
     addHost(db, old);

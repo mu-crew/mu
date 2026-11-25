@@ -321,10 +321,13 @@ mu host show dev              # templates and the holders of its channels
   lease ([below](#session-capped-hosts)).
 - Where a fresh ssh connection from the agent's process tree is impossible
   (the OS blocks a new connection or the key file from that tree, so `ssh -o
-  ControlMaster=no` fails inside the pane but works in your terminal), a
+  ControlMaster=no -o ControlPath=none` fails inside the pane but works in your terminal), a
   session template cannot work and must not borrow your master. Use the
   [mule plugin](plugins.md#register-the-mule-plugin): you open mule's private
-  master from your own terminal, and every command rides it.
+  master from your own terminal, and exec and the pane ride it. The plugin has
+  no fetch: `collect` needs its own working `--fetch` (the default is git over
+  ssh, which hits the same block), so give `host add` a `--fetch` command that
+  works from the agent's tree, or commits stay stranded on the host.
 - `mu host show` and `list` print the transport (`session` or `lease`) and,
   for a lease, the `stop` template.
 - `--max-sessions N` counts every channel mu holds for the profile. At the cap

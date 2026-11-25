@@ -368,7 +368,7 @@ export function cmdHostInit(name: string, opts: HostInitOptions): void {
   );
   if (!lease) {
     console.log(
-      "# No fresh ssh from the agent's tree? Use the mule plugin: mu host init --mule (docs/guide/remote.md).",
+      `# No fresh ssh from the agent's tree? Use the mule plugin: open its private master from your terminal, then mu host add ${name} --plugin mule --fetch <cmd> (docs/guide/plugins.md#register-the-mule-plugin).`,
     );
   }
   console.log(command);
@@ -448,7 +448,7 @@ export async function cmdHostExec(
     }
     process.stdout.write(r.stdout);
     process.stderr.write(endLine(r.stderr));
-    process.stderr.write(`${msg}\n`);
+    process.stderr.write(`HostExecNoExit: ${msg}\n`);
     throw new CliExitError(5);
   }
   if (isJsonMode()) emitJson(data);

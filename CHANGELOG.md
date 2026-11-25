@@ -19,6 +19,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Docs and the `host init --ssh --template` starter now say what to do where fresh ssh connections from the agent's process tree are impossible: use the mule plugin (its master is opened from your terminal), not a session template over a shared master.
 
 ### Fixed
+- `mu host check` on a `--plugin mule` profile with no remote harness no longer fails: the `harnesses` step is advice (only `--host` spawns need one), so a rung-2-only host passes.
+- `mu doctor`'s plugin-migration recipe uses `mu host add --plugin mule --replace` (never `host rm` first, which loses the profile on a refusal); the refusal text no longer tells a `--replace` caller to remove the old profile.
+- The fresh-ssh starter hint names a runnable route (open mule's private master, then `host add --plugin mule`), and the guide adds `ControlPath=none` to the diagnostic and notes mule has no fetch, so `--fetch` needs its own route.
+- `mu host exec` text mode names `HostExecNoExit` on the deadline line, as `--json` does.
 - `mu host check` on a `--plugin mule` profile whose host has no pi now says the pi and extension steps are "not needed for --mule (rung 2)" instead of a bare skip.
 - `mu host exec` in text mode now prints the `no exit code (deadline or no answer)` line on stderr (exit 5), as `--json` already did; before, a deadline exit was silent.
 

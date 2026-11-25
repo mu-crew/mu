@@ -108,6 +108,18 @@ describe("the harness probe in host check", () => {
     expect(stepOf(r, "extension")?.ok).toBeNull();
   });
 
+  it("a mule plugin profile with no remote harness still passes: harnesses are for --host spawns", async () => {
+    const f = fakePlugin(dir, { home, seams: linkSeam() }, "mule");
+    await registerFixturePlugin(db, f);
+    addHost(db, { name: "m", plugin: "mule", fetch: "true", repo: null, max_sessions: null });
+    const r = await checkHost(db, "m");
+    expect(r.ok).toBe(true);
+    expect(stepOf(r, "harnesses")).toMatchObject({
+      ok: null,
+      detail: expect.stringContaining("not needed for --mule (rung 2)"),
+    });
+  });
+
   it("a claude-only host passes: pi steps skipped, claude and its hooks found, the probe recorded", async () => {
     shim("claude", "exit 0");
     config(".claude/settings.json", ["murmur hook claude", "mu hook stop claude --timeout 600"]);

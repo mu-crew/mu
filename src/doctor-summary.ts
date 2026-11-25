@@ -31,8 +31,8 @@ export function muleProfileMigrations(db: Db) {
         `Before switching, register or refresh the mule plugin and verify mule targets the same host under the name ${host}.`,
         "Let active work finish. For each worktree run mu agent collect <name> -w <workstream>. Then run mu agent close <name> -w <workstream> (preview, then --if), including for reaped jobs. Use --recovery <agent id> for a specific recovery record.",
         `Do not remove ${host} while draining: a worktree reaped without its profile cannot pin the original link.`,
-        `Only once drained: mu host rm ${host}; then mu host add ${host} --plugin mule with the original --fetch, --repo and --max-sessions values. Run mu host check ${host} before spawning.`,
-        "If the plugin check fails before any new work starts, remove the unused plugin profile and restore the original profile byte-for-byte.",
+        `Only once drained: mu host add ${host} --plugin mule --replace with the original --fetch, --repo and --max-sessions values (--replace keeps the old profile if the add is refused; never mu host rm first). Run mu host check ${host} before spawning.`,
+        "If the plugin check fails before any new work starts, restore the original profile byte-for-byte with its original mu host add command and --replace.",
       ],
     };
   });

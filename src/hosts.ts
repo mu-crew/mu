@@ -442,7 +442,7 @@ function refuseHostProfileMigration(db: Db, host: string): void {
   const refs = hostProfileReferences(db, host);
   if (refs.length === 0) return;
   throw new HostProfileError(
-    `host ${host}: cannot add a plugin profile while these records name it: ${refs.map(hostProfileReferenceLabel).sort().join(", ")}. Use the original mu host add command to re-add the previous profile byte-for-byte, collect and close the remaining work, then remove the old profile and retry.`,
+    `host ${host}: cannot add a plugin profile while these records name it: ${refs.map(hostProfileReferenceLabel).sort().join(", ")}. Collect and close the remaining work (mu agent collect, then mu agent close), then retry; the profile stays as it is until the add succeeds. Without --replace, re-add the previous profile with its original mu host add command instead.`,
   );
 }
 
@@ -1412,6 +1412,13 @@ export async function checkHost(
           },
           () => noHarnessDetail(capabilities),
         );
+        // A mule profile serves rung 2 (--mule) with pi running locally: the host's harnesses
+        // matter only to a --host spawn, so none found is advice there, not a failure.
+        const hs = steps[steps.length - 1];
+        if (profile?.plugin === "mule" && capabilities !== undefined && hs?.ok === false) {
+          hs.ok = null;
+          hs.detail = `${hs.detail}; not needed for --mule (rung 2), only for --host spawns`;
+        }
         if (capabilities !== undefined) {
           // A provider host has no profile to record the probe on: the report carries it.
           if (profile !== undefined) recordHostCapabilities(db, profile, capabilities);
