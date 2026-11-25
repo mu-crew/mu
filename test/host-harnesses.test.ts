@@ -94,8 +94,8 @@ afterEach(() => {
 
 describe("the harness probe in host check", () => {
   it("a mule plugin profile without pi says pi is not needed for --mule (rung 2)", async () => {
-    shim("claude", "exit 0");
-    config(".claude/settings.json", ["murmur hook claude", "mu hook stop claude --timeout 600"]);
+    // No harness shim: the fake plugin's link.exec runs with this process's HOME, so a hooks
+    // step would read the machine's real harness config.
     const f = fakePlugin(dir, { home, seams: linkSeam() }, "mule");
     await registerFixturePlugin(db, f);
     addHost(db, { name: "m", plugin: "mule", fetch: "true", repo: null, max_sessions: null });
