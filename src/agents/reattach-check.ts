@@ -112,9 +112,14 @@ async function preflight(db: Db, ws: string, name: string): Promise<Blocker | Pl
   // The bind stamped the generation its row lived in; NULL predates the column: unknown.
   if (r.workstreamId === null) return no("workstream", `its binding's workstream is unknown`);
   if (r.workstreamId !== w.id) return no("workstream", `${ws} was created again since`);
-  // plugins spec D3: nothing on a plugin job record says how its agent was launched.
+  // plugins spec D3: nothing on a plugin job record says how its agent was launched. A view
+  // reattach needs the row, and reconcile keeps it while the job runs (`jobOutlivesView`), so
+  // with a handle the job was found not running: a hung-up mule carrier stops its own job.
   if (r.plugin !== null) {
-    const kept = r.job === null ? "" : ` (job ${r.job} on ${r.host} may still run)`;
+    const kept =
+      r.job === null
+        ? ""
+        : ` (reconcile keeps the row while job ${r.job} on ${r.host} runs, so it was found not running or the row was removed)`;
     return no("reservation", `its plugin job has no agent row to reattach${kept}: close it`);
   }
   const { job, agentId, paneId } = r;

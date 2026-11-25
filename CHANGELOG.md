@@ -12,6 +12,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Fixed
+- `mu agent reattach` on a plugin job with no agent row no longer says the job
+  "may still run". Reconcile keeps that row while the job runs, so the refusal
+  now says the job was found not running or the row was removed.
+
 ## [5.4.2] — 2026-11-25
 
 5.4.1 was tagged but never published (Spec B was missing the eval rig-canary line); its notes below ship with 5.4.2.
