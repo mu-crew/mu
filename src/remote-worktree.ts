@@ -22,6 +22,7 @@ import { HOST_COMMAND_TIMEOUT_MS, type HostProfile, remotePathWord } from "./hos
 import { say } from "./messages.js";
 import { localMachineId } from "./segments.js";
 import { shellQuote, shellWord } from "./shell-quote.js";
+import { PEER_SHORT_LEN } from "./sync.js";
 import { git } from "./vcs/git.js";
 import type { ReleasedWorktree } from "./worktree.js";
 
@@ -43,13 +44,15 @@ export class RemoteWorktreeConflictError extends Error {
   constructor(
     public readonly host: string,
     detail: string,
+    peerPrefix?: string,
   ) {
+    const peer = peerPrefix === undefined ? "" : ` (sync peer ${peerPrefix})`;
     super(
       say(
         "remote.prepare",
         host,
         "creating the remote worktree refused",
-        `${detail}; close it from the owning DB, or verify it is unused and remove it by hand`,
+        `${detail}; close it from the owning DB${peer}, or verify it is unused and remove it by hand`,
       ),
     );
   }
@@ -329,7 +332,14 @@ async function prepareOn(
       lastMatch(r.stderr, PREPARE_CONFLICT_RE)?.[1] ??
       lastMatch(r.stdout, PREPARE_CONFLICT_RE)?.[1] ??
       `remote worktree ${opts.workstream}/${opts.name} already exists; owner unknown`;
-    throw new RemoteWorktreeConflictError(h.name, detail);
+    const owner = /; owner ([a-zA-Z0-9-]+)$/.exec(detail)?.[1];
+    const peerPrefix =
+      owner !== undefined &&
+      owner !== "unknown" &&
+      db.prepare("SELECT 1 FROM sync_peers WHERE machine_id = ?").get(owner) !== undefined
+        ? owner.slice(0, PEER_SHORT_LEN)
+        : undefined;
+    throw new RemoteWorktreeConflictError(h.name, detail, peerPrefix);
   }
   if (r.exitCode !== 0) {
     const why = firstLine(r.stderr) || firstLine(r.stdout);

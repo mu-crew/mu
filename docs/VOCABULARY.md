@@ -175,7 +175,7 @@ agent names, and file paths are in [reference/naming.md](reference/naming.md).
 | **HLC** | Hybrid logical clock `(wall_ms, counter, machine_id)`; orders every op. Never regresses. | "timestamp", "version" |
 | **machine_id** | Per-state-dir uuid naming this DB's **peer** and **segment**. | "device id", "host id" |
 | **segment** | `<sync-dir>/<machine_id>.jsonl`: one machine's ops, single writer. | "replica", "shard" |
-| **peer** | Another machine, found by its segment; named by `machine_id` prefix. **Stale** after 24h unchanged. | "node", "remote" |
+| **peer** | Another DB, found by its segment; displayed by its eight-character `machine_id` prefix. **Stale** after 24h unchanged. | "node", "remote" |
 | **watermark** | `sync_peers.last_applied_seq`: how many lines of a peer's segment file have been applied. A conflict copy has its own, keyed by its file stem. | "offset", "cursor" |
 | **flush** / **ingest** | Write my ops to my segment; apply peers' from their watermarks. Every invocation, when `MU_SYNC_DIR` is set. | "push", "pull" |
 | **fold** | The pure function from the ops of one key (and its tombstone horizon) to that row's state (`src/fold.ts`). Live apply and rebuild both use it, so live == rebuild for any arrival order. | "merge", "reprojection", "retry queue" |

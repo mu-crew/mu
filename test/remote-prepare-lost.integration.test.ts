@@ -214,6 +214,26 @@ describe("remote worktree ownership across DBs", () => {
     }
   });
 
+  it("names the owning DB by its sync peer prefix only after an exact match", async () => {
+    const peer = addPeer();
+    try {
+      await prepare();
+      const owner = machineId(db);
+      const prefix = owner.slice(0, 8);
+      const seed = peer.prepare("INSERT INTO sync_peers (machine_id) VALUES (?)");
+      seed.run(`${owner}-different`);
+      await expect(prepare(true, peer)).rejects.toThrow("close it from the owning DB, or");
+
+      seed.run(owner);
+      await expect(prepare(true, peer)).rejects.toThrow(
+        `close it from the owning DB (sync peer ${prefix}), or`,
+      );
+      expect(readFileSync(marker(), "utf8").trim()).toBe(owner);
+    } finally {
+      peer.close();
+    }
+  });
+
   it.each(["empty", "missing"])("refuses a marker that is %s as an unknown owner", async (kind) => {
     mkdirSync(join(wt(), ".."), { recursive: true });
     gitIn(repo, "worktree", "add", "--detach", wt());

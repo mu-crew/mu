@@ -112,9 +112,10 @@ when the task has none, or only the one-line fallback an earlier local spawn pin
   timeout), spawning the same name again takes that tree over only if its
   prepare marker names this DB and the tree is clean, at its base and unused.
   A different DB or an unknown owner (empty or missing marker) refuses with
-  exit 4. Close the tree from its owning DB, or verify it is unused and
-  remove it by hand. All DBs sharing the host must run a version that
-  checks the marker; older versions ignore its contents.
+  exit 4. If the owning DB is a known sync peer, the refusal shows the same
+  prefix as `mu sync`. Close the tree from its owning DB, or verify it is
+  unused and remove it by hand. All DBs sharing the host must run a version
+  that checks the marker; older versions ignore its contents.
 - The pane is the connection: closing it, or its death, ends the agent
   and frees the slot. A session-template pane runs on tmux and Rex; herdr
   refuses `--host` in one line. Lease and plugin job views need tmux.
