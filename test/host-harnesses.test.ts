@@ -7,7 +7,15 @@
 // Fake templates through /bin/sh; the "host" is a temp HOME and a bin of shims.
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -48,6 +56,18 @@ function config(rel: string, commands: string[]): void {
   mkdirSync(join(path, ".."), { recursive: true });
   const hooks = { Stop: [{ hooks: commands.map((command) => ({ type: "command", command })) }] };
   writeFileSync(path, JSON.stringify({ hooks }, null, 2));
+}
+
+/**
+ * codex's own record that it trusts hooks: one `[hooks.state."<codex home>/hooks.json:<event>:<group>:<handler>"]`
+ * table with a `trusted_hash` per handler, in config.toml beside hooks.json (codex 0.150+).
+ */
+function trust(codexHome: string, keys: string[], file = join(codexHome, "config.toml")): void {
+  mkdirSync(codexHome, { recursive: true });
+  const tables = keys.map(
+    (k) => `[hooks.state."${codexHome}/hooks.json:${k}"]\ntrusted_hash = "sha256:00"\n`,
+  );
+  writeFileSync(file, `model = "x"\n\n[hooks.state]\n\n${tables.join("\n")}`);
 }
 
 type Step = { step: string; ok: boolean | null; detail: string };
@@ -170,6 +190,64 @@ describe("the harness probe in host check", () => {
     );
     expect(stepOf(r, "hooks")?.detail).not.toContain("claude:");
     expect(r.warnings).toEqual([expect.stringContaining("claude: no `mu hook stop claude` entry")]);
+  });
+
+  it("codex hooks it has not trusted fail the hooks step with the fix: codex skips an untrusted hook", async () => {
+    shim("codex", "exit 0");
+    config(".codex/hooks.json", ["murmur hook codex", "mu hook stop codex"]);
+    // The folder trust got written, the hook trust did not (bug 7: "Trust all" left no hashes).
+    writeFileSync(
+      join(home, ".codex", "config.toml"),
+      '[projects."/w"]\ntrust_level = "trusted"\n',
+    );
+    const r = await checkHost(db, "dev");
+    expect(r.ok).toBe(false);
+    const detail = stepOf(r, "hooks")?.detail ?? "";
+    expect(stepOf(r, "hooks")?.ok).toBe(false);
+    expect(detail).toMatch(
+      /codex trusts 0 of the 2 hooks in \$\{CODEX_HOME:-~\/\.codex\}\/hooks\.json/,
+    );
+    expect(detail).toContain("codex --no-daemon");
+    expect(detail).toContain("/hooks");
+    expect(hostCapabilities(getHost(db, "dev"))?.harnesses.codex.hookTrust).toEqual({
+      trusted: 0,
+      total: 2,
+    });
+    // One of two trusted is still a skipped hook.
+    trust(join(home, ".codex"), ["stop:0:0"]);
+    expect(stepOf(await checkHost(db, "dev"), "hooks")?.detail).toContain(
+      "codex trusts 1 of the 2",
+    );
+    trust(join(home, ".codex"), ["stop:0:0", "stop:0:1"]);
+    const ok = await checkHost(db, "dev");
+    expect(stepOf(ok, "hooks")).toMatchObject({ ok: true });
+    expect(ok.ok).toBe(true);
+  });
+
+  it("codex's trust keys name its home as codex resolves it: a canonical CODEX_HOME, else $HOME/.codex as is", () => {
+    const probe = (env: Record<string, string>, path = `${bin}:/usr/bin:/bin`) =>
+      parseHarnessProbe(
+        execFileSync("/bin/sh", ["-c", harnessProbeScript()], {
+          env: { HOME: home, PATH: path, ...env },
+          encoding: "utf8",
+        }),
+        "sh",
+      )?.harnesses.codex.hookTrust;
+    shim("codex", "exit 0");
+    config("real-codex/hooks.json", ["murmur hook codex"]);
+    symlinkSync(join(home, "real-codex"), join(home, "link-codex"));
+    // Keys under the link's path are not codex's: it canonicalizes CODEX_HOME.
+    trust(join(home, "link-codex"), ["stop:0:0"]);
+    expect(probe({ CODEX_HOME: join(home, "link-codex") })).toEqual({ trusted: 0, total: 1 });
+    trust(
+      realpathSync(join(home, "real-codex")),
+      ["stop:0:0"],
+      join(home, "real-codex", "config.toml"),
+    );
+    expect(probe({ CODEX_HOME: join(home, "link-codex") })).toEqual({ trusted: 1, total: 1 });
+    // No hooks.json: nothing to trust. No codex: no trust line at all.
+    expect(probe({})).toEqual({ trusted: 0, total: 0 });
+    expect(probe({}, "/usr/bin:/bin")).toBeUndefined();
   });
 
   it("a longer harness name in a config is not the harness's entry; muse is never asked for mu's", async () => {

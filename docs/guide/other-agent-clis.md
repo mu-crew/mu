@@ -121,7 +121,8 @@ own. codex gets none: it has no verified way to keep a skill from its model.
   `projects` override for the worktree it made (on a host, its physical
   path there). Hook trust is per hook
   definition: trust mu's and murmur's entries once (`/hooks`), and every
-  worktree keeps it. `--disable hooks` turns them all off.
+  worktree keeps it. `--disable hooks` turns them all off. `mu host check`
+  fails a host whose codex has fewer trusted hooks than it has hooks.
 - mu launches codex with `--no-daemon` (codex 0.157 or later), a literal
   `--command` excepted. Without it codex attaches to a shared background
   app-server that runs the hooks with the env of whichever session started

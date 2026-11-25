@@ -40,6 +40,13 @@ export interface HarnessProbe {
   murmurHooks: boolean | null;
   /** mu's `mu hook stop <harness>` entry; null where mu installs none (muse cannot block a stop, pi has its nudge). */
   muHooks: boolean | null;
+  /**
+   * codex only: how many of the hook handlers in its hooks.json codex has
+   * trusted (a `trusted_hash` under that file's key in config.toml) of how
+   * many there are. codex skips a hook it has not trusted. Absent: not codex,
+   * or a record from before the probe read it.
+   */
+  hookTrust?: { trusted: number; total: number };
 }
 
 /** What `host check` recorded for a host (`host_profiles.capabilities`). */
@@ -65,6 +72,28 @@ export class HostHarnessMissingError extends Error {
 
 /** The line each harness's answer starts with (a login shell may print rc noise first). */
 const MARK = "MU_HARNESS";
+/** The line of codex's hook trust: `MU_HOOK_TRUST codex <trusted> <handlers>`. */
+const TRUST_MARK = "MU_HOOK_TRUST";
+
+/**
+ * codex's hook trust, read the way codex keys it (codex 0.150+): a hook runs
+ * only while config.toml holds a `trusted_hash` for it under
+ * `[hooks.state."<codex home>/hooks.json:<event>:<group>:<handler>"]`, the
+ * home being `$CODEX_HOME` canonicalized, else `$HOME/.codex` as it is (a
+ * `/home` that links to `/var/home` stays `/home`). The script counts the
+ * handlers (`"command":` entries) in hooks.json and the trusted keys under
+ * that exact file. Fewer trusted than handlers is a hook codex skips. A hash
+ * that no longer matches an edited hook is not seen: codex hashes its own
+ * TOML form of the hook, which sh cannot.
+ */
+const CODEX_TRUST_LINES = [
+  'if [ -n "$CODEX_HOME" ]; then d=$(cd "$CODEX_HOME" 2>/dev/null && pwd -P) || d=$CODEX_HOME; else d=$HOME/.codex; fi',
+  `n=$(awk '{ n += gsub(/"command"[[:space:]]*:/, "") } END { print n + 0 }' "$d/hooks.json" 2>/dev/null) || n=0`,
+  // A table per key (`[hooks.state."<key>"]` then `trusted_hash = ...`), or an inline
+  // `"<key>" = { trusted_hash = ... }` under `[hooks.state]`.
+  String.raw`t=$(K="[hooks.state.\"$d/hooks.json:" Q="\"$d/hooks.json:" awk 'index($0, ENVIRON["K"]) == 1 { s = 1; next } /^[[:space:]]*\[/ { s = 0 } s && /^[[:space:]]*trusted_hash[[:space:]]*=/ { c++; s = 0 } index($0, ENVIRON["Q"]) == 1 && /trusted_hash/ { c++ } END { print c + 0 }' "$d/config.toml" 2>/dev/null) || t=0`,
+  `printf '${TRUST_MARK} codex %s %s\\n' "\${t:-0}" "\${n:-0}"`,
+];
 
 /** An ERE matching `<words> <harness>` as one command, not a longer harness name. */
 function commandRe(words: string, h: Harness): string {
@@ -108,6 +137,8 @@ export function harnessProbeScript(): string {
         : "u=-",
     );
     lines.push(`printf '${MARK} %s %s %s %s\\n' ${shellQuote(h)} "$m" "$u" "$p"`);
+    // Only where codex runs: a host without it has no trust to report.
+    if (h === "codex") lines.push('if [ -n "$p" ]; then', ...CODEX_TRUST_LINES, "fi");
   }
   return lines.join("\n");
 }
@@ -136,11 +167,19 @@ export function parseHarnessProbe(
       muHooks: flag(m[3] ?? "-"),
     });
   }
+  const trustRe = new RegExp(`^${TRUST_MARK} codex (\\d+) (\\d+)$`);
+  const trustLine = stdout
+    .split("\n")
+    .map((l) => trustRe.exec(l.trim()))
+    .find((m) => m !== null);
   const harnesses = {} as Record<Harness, HarnessProbe>;
   for (const h of HARNESSES) {
     const p = found.get(h);
     if (p === undefined) return undefined;
     harnesses[h] = p;
+  }
+  if (trustLine != null) {
+    harnesses.codex.hookTrust = { trusted: Number(trustLine[1]), total: Number(trustLine[2]) };
   }
   return { probedAt: now.toISOString(), shell, harnesses };
 }
@@ -186,6 +225,11 @@ export function hooksStep(caps: HostCapabilities): { step: HostCheckStep; warnin
     const p = caps.harnesses[h];
     const cfg = hookConfigLabel(h);
     if (p.murmurHooks !== true) missing.push(`${h}: no \`murmur hook ${h}\` entry in ${cfg}`);
+    else if (p.hookTrust !== undefined && p.hookTrust.trusted < p.hookTrust.total) {
+      missing.push(
+        `${h}: codex trusts ${p.hookTrust.trusted} of the ${p.hookTrust.total} hooks in ${cfg} and skips the rest, so its workers would sit at a "Hooks need review" dialog and report no state (fix: on the host run \`codex --no-daemon\` once and trust them at its review, or with /hooks)`,
+      );
+    }
     if (p.muHooks === false) {
       warnings.push(
         `${h}: no \`mu hook stop ${h}\` entry in ${cfg}: an orchestrator started on this host gets no keep-driving (a remote worker never uses it; run mu init on the host)`,
@@ -256,10 +300,14 @@ export function hostCapabilities(
     const p = doc.harnesses[h];
     if (!isDoc(p)) return undefined;
     const bool = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null);
+    const t = p.hookTrust;
     harnesses[h] = {
       command: typeof p.command === "string" ? p.command : null,
       murmurHooks: bool(p.murmurHooks),
       muHooks: bool(p.muHooks),
+      ...(isDoc(t) && typeof t.trusted === "number" && typeof t.total === "number"
+        ? { hookTrust: { trusted: t.trusted, total: t.total } }
+        : {}),
     };
   }
   return { probedAt: doc.probedAt, shell: doc.shell, harnesses };

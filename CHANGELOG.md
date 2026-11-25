@@ -21,6 +21,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 ### Fixed
 - A codex worker no longer joins codex's shared background app-server: mu launches every codex it resolves (worker or orchestrator, local or `--host`; a literal `--command` excepted) with `--no-daemon` (codex 0.157+). The daemon ran the hooks with the env of the session that started it, so a later worker's events could report under another worker's `MU_REMOTE_KEY`, and it outlived the pane with its cwd in the worktree, so `mu agent close` refused until it was killed by hand.
 - A `--host --worktree` codex worker gets the folder-trust flag on the host's physical worktree path, as a local one does, so it no longer opens on "Trust this folder?", which took the first prompt.
+- `mu host check` fails the `hooks` step when the host's codex has trusted fewer of its hooks.json hooks than it has (`[hooks.state]` `trusted_hash` entries in its `config.toml`, keyed as codex keys them): codex skips untrusted hooks, so the worker reported no state. The detail names the fix (`codex --no-daemon` once on the host, then trust them at its review or with `/hooks`).
 - Lease docs no longer say a dead lease pane's job runs on. Any hangup of a
   mule lease carrier stops its job: `tmux kill-pane`, closing the window,
   `tmux kill-server`, or the local tmux server crashing. Only a `kill -9` of
