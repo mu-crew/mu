@@ -1031,7 +1031,8 @@ async function spawnPreparedAgent(
       const assertPaneAlive = async (): Promise<void> => {
         const mux = await activeMux();
         const sb = await mux
-          .capture(viewRef(mux, pid, paneBorn), { lines: 50 })
+          // Deep enough that ssh's per-probe forward noise cannot push the last real line out.
+          .capture(viewRef(mux, pid, paneBorn), { lines: 2000 })
           .catch(() => undefined);
         lastScrollback = sb ?? lastScrollback;
         if (await viewPresent(pid, mux, paneBorn)) return;
@@ -1055,7 +1056,8 @@ async function spawnPreparedAgent(
       if (profile !== undefined && ctl !== "ok") {
         const mux = await activeMux();
         const sb = await mux
-          .capture(viewRef(mux, pid, paneBorn), { lines: 50 })
+          // Deep enough that ssh's per-probe forward noise cannot push the last real line out.
+          .capture(viewRef(mux, pid, paneBorn), { lines: 2000 })
           .catch(() => undefined);
         const line = lastPaneLine(sb ?? lastScrollback);
         // A prompt is evidence only with the pane alive and the forward up (refused).

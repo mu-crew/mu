@@ -83,7 +83,9 @@ fs.mkdirSync(path.dirname(local), { recursive: true });
 fs.rmSync(local, { force: true });
 net.createServer((c) => {
   const up = net.connect(remote);
-  up.on("error", () => c.destroy());
+  // As OpenSSH does: a refused forward probe is echoed on the pane, with no leading newline,
+  // so it lands on the end of an unterminated prompt.
+  up.on("error", () => { process.stderr.write("channel 3: open failed: connect failed: No such file or directory\\r\\n"); c.destroy(); });
   c.on("error", () => up.destroy());
   c.pipe(up); up.pipe(c);
 }).listen(local);

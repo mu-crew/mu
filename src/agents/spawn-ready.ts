@@ -116,15 +116,17 @@ export async function awaitCtlHandshake(
  * No such file or directory`): the handshake's own probes echoed by the pane's ssh, never
  * what the harness is doing.
  */
-const isSshForwardNoise = (line: string): boolean => /^channel \d+: open failed\b/.test(line);
+const SSH_FORWARD_NOISE = /\s*channel \d+: open failed\b.*$/;
+/** A line with ssh's forward noise cut off, which may start anywhere (an unterminated prompt gets it appended). */
+const stripSshForwardNoise = (line: string): string => line.replace(SSH_FORWARD_NOISE, "");
 
 /** The last line a remote pane shows, for a handshake that ended without ok; ssh's forward noise skipped. */
 export function lastPaneLine(scrollback: string | undefined): string | undefined {
   if (scrollback === undefined) return undefined;
   const lines = scrollback
     .split(/\r?\n/)
-    .map((l) => l.trimEnd())
-    .filter((l) => l !== "" && !isSshForwardNoise(l));
+    .map((l) => stripSshForwardNoise(l).trimEnd())
+    .filter((l) => l !== "");
   return lines.at(-1);
 }
 
@@ -240,11 +242,14 @@ export function detectSpawnStartupError(
   const patterns = cliStarted
     ? AUTH_ERROR_PATTERNS
     : [...AUTH_ERROR_PATTERNS, EXEC_FAILURE_PATTERN];
-  const lines = scrollback.split(/\r?\n/);
+  // ssh's echo of a refused forward probe ends in `No such file or directory` too: cut it
+  // before matching, and before counting the tail, so a probe flood cannot hide the real line.
+  const lines = scrollback
+    .split(/\r?\n/)
+    .map(stripSshForwardNoise)
+    .filter((l) => l.trim() !== "");
   const tail = lines.slice(Math.max(0, lines.length - STARTUP_ERROR_TAIL_LINES));
   for (const line of tail) {
-    // ssh's echo of a refused forward probe ends in `No such file or directory` too.
-    if (isSshForwardNoise(line)) continue;
     for (const pattern of patterns) {
       if (pattern.test(line)) return line;
     }

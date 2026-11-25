@@ -2,7 +2,11 @@
 // shell prompt (strong evidence pi never started), and how the warning words either case.
 import { describe, expect, it } from "vitest";
 import { AgentCtlUnreachableError } from "../src/agents/errors.js";
-import { lastPaneLine, looksLikeShellPrompt } from "../src/agents/spawn-ready.js";
+import {
+  detectSpawnStartupError,
+  lastPaneLine,
+  looksLikeShellPrompt,
+} from "../src/agents/spawn-ready.js";
 
 const PROMPTS = [
   "user@dev0 ~ %",
@@ -46,5 +50,21 @@ describe("the ctl warning on a remote pane", () => {
       `the pane's last line (not enough to tell whether pi started): ${JSON.stringify(line)}`,
     );
     expect(msg).not.toMatch(/shell prompt|likely never started|in the template/);
+  });
+});
+
+describe("ssh forward noise in the pane", () => {
+  const NOISE = "channel 3: open failed: connect failed: No such file or directory";
+  it("cuts noise appended to an unterminated prompt, so the prompt still reads as one", () => {
+    const sb = `Last login: today\nsh-3.2$ ${NOISE}${NOISE}\r\n${NOISE}\n`;
+    expect(lastPaneLine(sb)).toBe("sh-3.2$");
+    expect(looksLikeShellPrompt(lastPaneLine(sb) ?? "")).toBe(true);
+  });
+  it("a flood of probe lines does not hide the last real line", () => {
+    const sb = `user@dev0 ~ %${"\n".concat(NOISE).repeat(500)}\n`;
+    expect(lastPaneLine(sb)).toBe("user@dev0 ~ %");
+  });
+  it("noise on a prompt line is not a startup error", () => {
+    expect(detectSpawnStartupError(`sh-3.2$ ${NOISE}\n${NOISE}\n`)).toBeUndefined();
   });
 });
