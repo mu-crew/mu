@@ -542,7 +542,9 @@ describe("a bound file kind whose view died while its job runs", () => {
     expect(getAgent(h.db, "w1", "ws")).toBeUndefined();
     const left = await previewReattach(h.db, "ws", "w1").catch((e: unknown) => e);
     expect((left as Error).message).toMatch(/its plugin job has no agent row to reattach/);
-    expect((left as Error).message).not.toMatch(/null/);
+    // Found ended, not "may still run" (bug 14: a hung-up carrier had stopped its job).
+    expect((left as Error).message).toMatch(/so it was found not running or the row was removed/);
+    expect((left as Error).message).not.toMatch(/may still run|null/);
     expect(h.calls("job.attach")).toEqual([]);
   });
 
