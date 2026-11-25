@@ -165,11 +165,15 @@ mu host add box --plugin mule --fetch '<your fetch command>' --repo '~/repo'
 mu host check box
 ```
 
-- The view is mule's carrier, so killing the pane stops the job, as on a
-  [lease profile](remote.md#session-capped-hosts). Reconcile keeps the row only
-  while the job runs: after a `kill -9` of the carrier (or a hangup whose stop
-  could not reach the host), `mu agent reattach <name> -w <ws>` opens a new
-  view. Once the row is reaped, close it.
+- The view is mule's carrier, so a hangup (killing the pane, or the local
+  tmux server exiting or crashing) stops the job, as on a
+  [lease profile](remote.md#session-capped-hosts). Reconcile keeps the row
+  while the job reads running or unknown: after a `kill -9` of the carrier
+  (or a hangup whose stop could not reach the host), there is no leftover and
+  the task stays the agent's. Preview `mu agent reattach <name> -w <ws>`,
+  then apply it with `--if <rev>`: a new view on the same row (open the
+  master first). Once the job ends, reconcile reaps the row and parks its
+  task: collect if needed, close, then `mu task unpark <id>`.
 - Open the master `mule init` prints for the host first; it opens none. The
   mu host name is the mule host name. `mule init` creates no mu profile.
 - A plugin profile takes no `--shell`, `--exec`, `--stop`, `--attach` or

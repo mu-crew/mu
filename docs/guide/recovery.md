@@ -21,7 +21,10 @@ with the multiplexer:
   its `IN_PROGRESS` task returns to `OPEN`. A `mu wait` on that
   task exits 6. A lease agent whose job may still run leaves its task
   `OPEN/parked`: its `[reaper]` note names `mu agent reattach --task` and
-  the close-then-unpark way out.
+  the close-then-unpark way out (only the latter for a plugin job, which
+  reattach needs the row for). A plugin agent whose job outlives its view
+  (the mule plugin's after a `kill -9`) is not reaped while the job runs:
+  `mu agent reattach <name>` opens a new view on the same row.
 - What a reaped agent left behind is a leftover (`data.leftovers`;
   `--table` prints a `Leftovers` section): a lease job whose agent is gone,
   or a remote recovery record. Each names one `next` to run, a preview:

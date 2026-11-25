@@ -19,10 +19,18 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Docs and the `host init --ssh --template` starter now say what to do where fresh ssh connections from the agent's process tree are impossible: use the mule plugin (its master is opened from your terminal), not a session template over a shared master.
 
 ### Fixed
-- Lease docs no longer say a dead lease pane's job runs on. Killing a mule
-  lease pane (`tmux kill-pane`, a tmux restart) hangs up the carrier, which
-  stops its job. Only a `kill -9`, a crash or a stop that cannot reach the host
-  leaves a job to reattach. The remote guide shows how to rehearse that loss.
+- Lease docs no longer say a dead lease pane's job runs on. Any hangup of a
+  mule lease carrier stops its job: `tmux kill-pane`, closing the window,
+  `tmux kill-server`, or the local tmux server crashing. Only a `kill -9` of
+  the carrier's process group skips the stop, and a stop that cannot reach the
+  host can leave the job running: check it once the host answers, then
+  reattach or close. The remote guide shows how to rehearse a loss.
+- The lease recovery docs split template from plugin. A rung-4 mule plugin
+  agent whose job survives keeps its row (no leftover): reattach it by name.
+  A reaped plugin row is closed, then its task unparked.
+- The reaper's note on a reaped plugin agent's parked task no longer names
+  `mu agent reattach --task`, which refuses a plugin job with no row; it names
+  close then `mu task unpark`.
 - `mu agent reattach` on a plugin job with no agent row no longer says the job
 - Closing a `--mule` worker whose local dispatch processes are still exiting now refuses with exit 4 and a retry hint, not a human hand-back. Recovery waits for those processes before checking remote jobs or removing the worktree.
 - `mu host check` on a `--plugin mule` profile with no remote harness no longer fails: the `harnesses` step is advice (only `--host` spawns need one), so a rung-2-only host passes.
