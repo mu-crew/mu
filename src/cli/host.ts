@@ -438,7 +438,8 @@ export async function cmdHostExec(
       });
     }
     process.stdout.write(r.stdout);
-    process.stderr.write(r.stderr);
+    process.stderr.write(endLine(r.stderr));
+    process.stderr.write(`${msg}\n`);
     throw new CliExitError(5);
   }
   if (isJsonMode()) emitJson(data);

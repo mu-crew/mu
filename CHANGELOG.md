@@ -12,6 +12,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Fixed
+- `mu host exec` in text mode now prints the `no exit code (deadline or no answer)` line on stderr (exit 5), as `--json` already did; before, a deadline exit was silent.
+
 ## [5.4.2] — 2026-11-25
 
 5.4.1 was tagged but never published (Spec B was missing the eval rig-canary line); its notes below ship with 5.4.2.

@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, symlinkSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { execScript } from "../src/cli/host.js";
+import { cmdHostExec, execScript } from "../src/cli/host.js";
 import { type Db, openDb } from "../src/db.js";
 import { execGroupCapture } from "../src/exec-file.js";
 import {
@@ -244,6 +244,22 @@ describe("host exec: the outcome table", () => {
     await plugin();
     const r = await hostExec(db, "p", { script: "exec sleep 30", timeoutS: 1 });
     expect(r).toMatchObject({ exit: null, remote: "stopped" });
+  });
+
+  it("text mode prints the no-exit line on stderr (not a silent exit 5)", async () => {
+    setPluginGraceForTests(3000);
+    await plugin();
+    const err = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      await expect(cmdHostExec(db, "p", ["exec sleep 30"], { timeout: "1" })).rejects.toMatchObject(
+        { exitCode: 5 },
+      );
+      expect(err.mock.calls.map((c) => String(c[0])).join("")).toMatch(
+        /host p: no exit code \(deadline or no answer\); the remote command was stopped\n/,
+      );
+    } finally {
+      err.mockRestore();
+    }
   });
 
   it("a template's no-exit says the remote command may still run", async () => {
