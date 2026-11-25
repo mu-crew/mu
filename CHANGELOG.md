@@ -12,6 +12,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.4.1] — 2026-11-25
+
 ### Changed
 - Clarified per-agent placement and the boundary between mu, the harness,
   and the user's transport in the top-level docs.
