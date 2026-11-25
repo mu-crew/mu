@@ -28,7 +28,7 @@ import { viewRunning } from "../jobs/view.js";
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
-import { refuseRecoveredWorktree } from "../remote-recovery.js";
+import { recoveriesFor, refuseRecoveredWorktree } from "../remote-recovery.js";
 import { prepareRemote, type RemoteSite, removeRemoteWorktree } from "../remote-worktree.js";
 import { git, gitToplevel } from "../vcs/git.js";
 import { withAgentLock } from "./lock.js";
@@ -270,9 +270,9 @@ async function prestageRemote(
         worktree: true,
         ...(opts.from !== undefined ? { from: opts.from } : {}),
         ...remoteRoot(opts, profile),
-        // Only this DB's unused lost-answer leftover can be taken over. No recovery
-        // record names a tree there (checked above, under the lock).
-        reclaim: true,
+        // Profiles can share a machine. A recovery on another profile forbids
+        // reclaim, not creation: prepare still claims a free path on a different machine.
+        reclaim: recoveriesFor(db, opts.workstream, opts.name).length === 0,
         ...(rev !== undefined ? { rev } : {}),
       });
       // The placeholder names its tree before anything else can fail: a mu that dies from

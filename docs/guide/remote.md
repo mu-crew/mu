@@ -278,8 +278,10 @@ mu agent close worker-1 -w auth --if <rev>
   it. Several records of one name need `--recovery <id>` (on preview and
   apply). A current agent of the name or path, a newer record of the same
   path, or a changed `--exec` refuses (a changed default repo does not).
-  While a record exists, a `--worktree` spawn of that name on that host
-  refuses (exit 4): collect, then close the record first.
+  While a record exists, a `--worktree` spawn of that name on the recorded
+  profile refuses (exit 4): collect, then close the record first. Another
+  profile cannot reclaim an existing tree of that name either, but can
+  create a tree if the path is free.
 
 ## Host profiles
 
@@ -320,7 +322,9 @@ mu host show dev              # templates and the holders of its channels
 - `mu host show` and `list` print the transport (`session` or `lease`) and,
   for a lease, the `stop` template.
 - `--max-sessions N` counts every channel mu holds for the profile. At the cap
-  mu refuses with one line naming the holder. The SSH session starter uses
+  mu refuses with one line naming the holder. Use one mu-counted profile per
+  machine for admission caps: two profiles count separately even if they
+  reach the same machine. The SSH session starter uses
   `2` so a collect or brief exec fits beside one live pane. The starter's
   pane and exec each open their own SSH connection; sshd's per-connection
   `MaxSessions 1` does not require a mu cap of `1`. A mule plugin link

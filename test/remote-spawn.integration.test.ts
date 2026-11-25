@@ -19,15 +19,20 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   AgentCtlUnreachableError,
   closeAgent,
+  deleteAgent,
   getAgent,
+  insertAgent,
   spawnAgent,
   spawnForTask,
 } from "../src/agents.js";
+import { classifyError } from "../src/cli/handle.js";
 import { CTL_FEATURES, CTL_OPS } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
-import { addHost, HostChannelBusyError, listHostChannels } from "../src/hosts.js";
+import { addHost, HostChannelBusyError, listHostChannels, withHostChannel } from "../src/hosts.js";
 import { LOCAL_ONLY_ENV } from "../src/remote-agent.js";
 import { listRemoteRecoveries } from "../src/remote-recovery.js";
+import { prepareRemote } from "../src/remote-worktree.js";
+import { localMachineId } from "../src/segments.js";
 import { addTask } from "../src/tasks/edit.js";
 import { getTask } from "../src/tasks.js";
 import { tmux } from "../src/tmux.js";
@@ -114,12 +119,16 @@ async function until(cond: () => boolean, what: string): Promise<void> {
 }
 const wtRoot = () => join(home, ".local", "state", "mu-next", "remote-worktrees", ws);
 
-function addDevHost(piCommand = `node ${join(dir, "pishim.js")}`): { command: string } {
+function addDevHost(
+  piCommand = `node ${join(dir, "pishim.js")}`,
+  name = "dev",
+  remoteHome = home,
+): { command: string } {
   addHost(db, {
-    name: "dev",
+    name,
     // The pane gets the tmux SERVER's env, so the fake remote's HOME is spelled in the template.
-    shell: `exec env HOME=${home} SEEN=${join(dir, "seen.json")} PANE_SEEN=${join(dir, "pane-seen.json")} ${process.execPath} ${join(dir, "fakessh.js")} {local_sock} {remote_sock} {cwd} -- {env} {cmd}`,
-    exec: "sh -c {cmd}",
+    shell: `exec env HOME=${remoteHome} SEEN=${join(dir, "seen.json")} PANE_SEEN=${join(dir, "pane-seen.json")} ${process.execPath} ${join(dir, "fakessh.js")} {local_sock} {remote_sock} {cwd} -- {env} {cmd}`,
+    exec: `env HOME=${remoteHome} sh -c {cmd}`,
     fetch: "true",
     repo,
     max_sessions: 1,
@@ -171,6 +180,56 @@ const req = (command: string) => ({
   text: "do the thing",
   // An opaque wrapper around pi names its CLI: an omitted --cli with a non-pi command is a gate.
   spawn: { name: "worker-1", workstream: ws, host: "dev", cli: "pi", worktree: true, command },
+});
+
+describeIfTmux("remote recovery across host profiles", () => {
+  async function recoverBoxWorktree() {
+    addDevHost(undefined, "box");
+    const name = "worker-1";
+    const site = await withHostChannel(db, "box", "test:prepare", (profile, lease) =>
+      prepareRemote(db, { lease }, profile, { workstream: ws, name, worktree: true, root: repo }),
+    );
+    // A finalized row with no live pane: deleting it records recovery without removing the tree.
+    const row = insertAgent(db, {
+      name,
+      workstream: ws,
+      paneId: "%99999",
+      host: "box",
+      ...site,
+    });
+    expect(deleteAgent(db, name, ws)).toBe(true);
+    const record = { agentId: row.incarnation, host: "box", cwd: site.cwd };
+    expect(listRemoteRecoveries(db)).toEqual([expect.objectContaining(record)]);
+    return record;
+  }
+
+  it("refuses to reclaim this DB's tree through another profile of the same machine", async () => {
+    const record = await recoverBoxWorktree();
+    const { command } = addDevHost(undefined, "box-mule");
+    const err = await spawnAgent(db, { ...req(command).spawn, host: "box-mule" }).catch(
+      (e: unknown) => e,
+    );
+    expect(String(err)).toContain(`${record.cwd} already exists (reclaim not allowed)`);
+    expect(String(err)).toContain(`owner ${localMachineId(db)}`);
+    expect(classifyError(err).exitCode).toBe(4);
+    expect(getAgent(db, "worker-1", ws)).toBeUndefined();
+    expect(listRemoteRecoveries(db)).toEqual([expect.objectContaining(record)]);
+    expect(existsSync(record.cwd)).toBe(true);
+  });
+
+  it("can still spawn on another machine with a free path", async () => {
+    const record = await recoverBoxWorktree();
+    const otherHome = join(dir, "other-home");
+    mkdirSync(otherHome);
+    const { command } = addDevHost(undefined, "box-mule", otherHome);
+    const cwd = join(otherHome, ".local", "state", "mu-next", "remote-worktrees", ws, "worker-1");
+    expect(existsSync(cwd)).toBe(false);
+    await spawnAgent(db, { ...req(command).spawn, host: "box-mule" });
+    expect(getAgent(db, "worker-1", ws)).toMatchObject({ host: "box-mule", cwd });
+    expect(existsSync(cwd)).toBe(true);
+    expect(existsSync(record.cwd)).toBe(true);
+    expect(listRemoteRecoveries(db)).toEqual([expect.objectContaining(record)]);
+  });
 });
 
 describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {

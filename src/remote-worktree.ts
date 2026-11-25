@@ -167,7 +167,7 @@ interface PrepareOpts {
   worktree: boolean;
   from?: string;
   cwd?: string;
-  /** May a leftover at the path be reclaimed (spawn refuses first while a recovery record names the name on this host). */
+  /** May this DB take over its unused leftover at the path rather than just create a new tree? */
   reclaim?: boolean;
   /** The remote repo: the worktree is added to it, and it is the default cwd without one. */
   root?: string;
@@ -314,10 +314,11 @@ async function prepareOn(
   const what = opts.worktree
     ? "creating the remote worktree failed"
     : "the remote cwd is unreachable";
-  // No answer after the exec may have made the tree: say how a retry takes it over.
-  const lost = opts.worktree
-    ? `; if it made the worktree, spawning ${opts.name} again reclaims it while it is unused and marked by this DB`
-    : "";
+  // No answer after the exec may have made the tree: mention retry only when reclaim is allowed.
+  const lost =
+    opts.worktree && opts.reclaim === true
+      ? `; if it made the worktree, spawning ${opts.name} again reclaims it while it is unused and marked by this DB`
+      : "";
   if (r.exitCode === null) {
     throw new RemotePrepareError(
       h.name,

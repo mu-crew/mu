@@ -30,6 +30,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 ### Fixed
 
 - A remote worktree refusal names the owning DB by its `mu sync` peer prefix when the DB is a known peer.
+- Remote worktree spawn no longer reclaims a path while a recovery record
+  names the worker on another profile. A free path on another machine
+  still works.
 - Unsent task spawns stop their mule jobs and roll back the implicit remote worktree, including on replay.
 - Spawn rolls back staged resources when pane setup fails before launch.
 - Expired spawn placeholders no longer authorize deletion of unregistered worktree paths.
