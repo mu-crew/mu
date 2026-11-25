@@ -22,7 +22,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Test seam, no production behaviour change: `PluginProcess.fromTestPipes` (`src/plugins/process.ts`) builds a plugin peer over in-process pipes with no PID, and `pgid` is now a getter that throws for such a peer. A real child takes the same paths as before. Documented under Key seams in `docs/ARCHITECTURE.md`.
 - Test harness: a fast-tier setup file fails any test that starts `git` (a PATH shim, not a source scan), and the `wait --stuck-after` ctl tests end on the loop's second ctl read, not a 100 ms budget. The integration tier's macOS Git pin exposes only Git, not the whole CommandLineTools bin. The vitest `pure` project sets `testTimeout: 30000` like the others.
 ### Added
-- `MU_REMOTE_WORKSPACE=1`, the rung 2 remote-command marker (Spec B D1.2c): `openDb` refuses the default DB (exit 4) when it is set without `MU_DB_PATH`, so a `mu` run on the host from a remote shell cannot open the host's DB. Rungs 3-5 never set it.
+- `MU_REMOTE_WORKSPACE=1`, the rung 2 remote-command marker (Spec B D1.2c): `openDb` and the state import refuse the default DB (exit 4, before any import) when it is set without `MU_DB_PATH`, so a `mu` run on the host from a remote shell cannot open the host's DB. Rungs 3-5 never set it.
 
 - `mu host exec` and provider-backed spawns warn on stderr when the provider
   reports an idle-reclaim window and mu has no active job recorded. The
