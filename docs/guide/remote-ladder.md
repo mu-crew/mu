@@ -145,7 +145,10 @@ For rung 2, send refuses new delivery and wait hands back without consuming
 an unfinished run. Reopen the master and retry; the local pane and its task
 remain. An explicit close can still close the local pane during a hand-back:
 it preserves a recovery record for the tree and any outstanding jobs. Take a
-fresh close preview once the master is back.
+fresh close preview once the master is back. If local dispatch processes
+are still exiting after the pane closes, close instead exits 4. Retry from
+the recovery preview it names; mu checks those processes again before
+listing remote jobs.
 
 ## Use the mule plugin (rungs 2 and 4)
 

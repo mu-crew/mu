@@ -33,6 +33,7 @@ import { type Db, resolveWorkstreamId, tryResolveWorkstreamId } from "./db.js";
 import type { CommandSource } from "./mux/types.js";
 import { withOpContext } from "./op-context.js";
 import { type ReconcileMode, type ReconcileReport, reconcile } from "./reconcile.js";
+import { recordRecoveryDispatchProbes } from "./remote-recovery.js";
 
 // Re-export the cluster modules so external callers continue to
 // `import { AgentNotFoundError, spawnAgent, ... } from "./agents.js"`.
@@ -620,10 +621,24 @@ export function deleteAgent(
    * deleter keeps what the row says about it (src/remote-recovery.ts).
    * `leaseSettled: true` (a close that stopped or abandoned the lease job)
    * reopens its tasks as todo, not parked (src/agents/reap.ts).
+   * `dispatchProbes` pins surviving local dispatchers to the recovery of
+   * the explicitly expected incarnation, including when already reaped.
    */
-  opts: { preserve?: boolean; leaseSettled?: boolean } = {},
+  opts: { preserve?: boolean; leaseSettled?: boolean; dispatchProbes?: readonly number[] } = {},
 ): boolean {
-  const deleted = deleteAgentRow(db, name, workstream, expected, opts);
+  const remove = () => deleteAgentRow(db, name, workstream, expected, opts);
+  const incarnation = typeof expected === "object" ? expected.incarnation : undefined;
+  const probes = opts.dispatchProbes;
+  const deleted =
+    probes === undefined || incarnation === undefined
+      ? remove()
+      : db
+          .transaction(() => {
+            const removed = remove();
+            recordRecoveryDispatchProbes(db, incarnation, probes);
+            return removed;
+          })
+          .immediate();
   if (deleted) unlinkCtlSocket(db, name, workstream);
   return deleted;
 }

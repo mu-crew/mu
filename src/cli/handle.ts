@@ -110,6 +110,7 @@ import {
   HostSpawnUnsupportedError,
 } from "../hosts.js";
 import { HumanNeededInvalidError } from "../human-needed.js";
+import { MuleDispatchStillExitingError } from "../local-loop.js";
 import { GroupIdAmbiguousError, GroupNotFoundError, LogKindReservedError } from "../logs.js";
 import {
   HerdrCommandOverrideError,
@@ -727,8 +728,8 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     // Another live process waits as this caller: let it return, or stop it.
     return { label: "conflict", exitCode: 4 };
   }
-  if (err instanceof AgentPaneStillAliveError) {
-    // The pane outlived the kill: a state conflict the operator resolves.
+  if (err instanceof AgentPaneStillAliveError || err instanceof MuleDispatchStillExitingError) {
+    // The pane or its local processes outlived the kill.
     return { label: "conflict", exitCode: 4 };
   }
   if (err instanceof AgentRestartedError) {

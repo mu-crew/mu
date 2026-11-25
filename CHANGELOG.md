@@ -12,6 +12,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing a `--mule` worker whose local dispatch processes are still exiting now refuses with exit 4 and a retry hint, not a human hand-back. Recovery waits for those processes before checking remote jobs or removing the worktree.
+
 ## [5.4.2] — 2026-11-25
 
 5.4.1 was tagged but never published (Spec B was missing the eval rig-canary line); its notes below ship with 5.4.2.

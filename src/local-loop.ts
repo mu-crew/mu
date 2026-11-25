@@ -62,18 +62,36 @@ export async function requireMuleMaster(
   }
 }
 
-/** The pane's hangup does not prove its local dispatchers have exited. */
-export async function awaitMuleDispatchExit(host: string, pane: PaneProcesses): Promise<void> {
-  // A reparented helper still holds its process group. Probe groups too, without
-  // signalling or killing anything: a pid may have been reused since the snapshot.
-  const remaining = await awaitExit([...pane.tree, ...[...pane.groups].map((g) => -g)], 5000);
-  if (remaining.length > 0) {
-    throw new HostHandbackError(
-      host,
-      "stop",
-      `wait for local dispatch processes to exit (PID/group: ${remaining.join(", ")}); mule jobs were not checked`,
+/** A local close conflict, not a host hand-back. Exit 4. */
+export class MuleDispatchStillExitingError extends Error {
+  override readonly name = "MuleDispatchStillExitingError";
+  constructor(
+    public readonly remaining: readonly number[],
+    retry?: string,
+  ) {
+    super(
+      `local dispatch processes are still exiting (PID/group: ${remaining.join(", ")}); mule jobs were not checked${retry === undefined ? "" : `; retry after a fresh preview: ${retry}`}`,
     );
   }
+}
+
+export function muleDispatchProbes(pane: PaneProcesses): number[] {
+  return [...pane.tree, ...[...pane.groups].map((g) => -g)];
+}
+
+/** Wait at most five seconds after the pane kill, before listing mule jobs. */
+export async function awaitMuleDispatchExit(
+  probes: Iterable<number>,
+  retry?: string,
+): Promise<void> {
+  // A reparented helper still holds its process group. Probe groups too, without
+  // signalling or killing anything: a pid may have been reused since the snapshot.
+  const remaining = await awaitExit(probes, 5000);
+  if (remaining.length > 0) throw new MuleDispatchStillExitingError(remaining, retry);
+}
+
+export function muleClosePreview(workstream: string, name: string, recoveryId: number): string {
+  return `mu agent close ${shellWord(name)} -w ${shellWord(workstream)} --recovery ${recoveryId}`;
 }
 
 /** List after the local pane and its dispatchers are gone. Remove only positively identified outstanding jobs. */
