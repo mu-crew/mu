@@ -114,8 +114,7 @@ export function reapAgentRow(
 function resumeHint(name: string, aws: string, id: string, tws: string, plugin: boolean): string {
   const [n, a, i, t] = [name, aws, id, tws].map(shellWord);
   // A reattach refuses a plugin job with no row (reattach-check.ts): only the close remains.
-  if (plugin)
-    return `mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
+  if (plugin) return `mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
   if (aws === tws)
     return `mu agent reattach ${n} -w ${a} --task ${i}, or mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
   return `mu agent reattach ${n} -w ${a} then mu task claim ${i} -w ${t} --for ${shellWord(`${aws}/${name}`)} --force, or mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
