@@ -23,15 +23,20 @@ export function probeToSpawnCtl(kind: CtlProbe["kind"]): Exclude<SpawnCtl, "skip
   return kind === "ok" ? "ok" : kind === "missing" ? "missing" : "refused";
 }
 
+/** The default handshake budget of a `--host` worker. Still bounded: a pane at a shell prompt never answers. */
+const REMOTE_SPAWN_CTL_MS = 90_000;
+
 /**
- * Handshake budget in ms after the agent is live. 0 disables. Override
- * via `MU_SPAWN_CTL_MS`.
+ * Handshake budget in ms after the agent is live. 0 disables. Override via `MU_SPAWN_CTL_MS`.
+ * A `--host` worker (`remote`) defaults to REMOTE_SPAWN_CTL_MS: its pi starts cold over ssh
+ * (extension installs, provider loading) and has been seen to answer after the local 30 s.
  */
-export function defaultSpawnCtlMs(): number {
+export function defaultSpawnCtlMs(remote = false): number {
+  const fallback = remote ? REMOTE_SPAWN_CTL_MS : 30_000;
   const raw = process.env.MU_SPAWN_CTL_MS;
-  if (raw === undefined) return 30_000;
+  if (raw === undefined) return fallback;
   const parsed = Number.parseInt(raw, 10);
-  if (Number.isNaN(parsed) || parsed < 0) return 30_000;
+  if (Number.isNaN(parsed) || parsed < 0) return fallback;
   return parsed;
 }
 
@@ -57,7 +62,7 @@ export function resetHandshakeClockForTests(): void {
 }
 
 /**
- * Poll the control socket until the extension answers or the budget
+ * Poll the control socket until the extension answers or `budgetMs`
  * runs out. Returns the last probe outcome. The socket path is stat'd
  * every ~50 ms and probed as soon as it exists, so readiness is seen
  * within ~50 ms of pi binding it. `onMiss` (the pane-alive check) keeps
@@ -70,8 +75,8 @@ export async function awaitCtlHandshake(
   sock: string,
   onMiss?: () => Promise<void>,
   signal?: AbortSignal,
+  budgetMs = defaultSpawnCtlMs(),
 ): Promise<{ ctl: Exclude<SpawnCtl, "skipped">; incarnation?: string }> {
-  const budgetMs = defaultSpawnCtlMs();
   const deadline = handshakeClock.now() + budgetMs;
   let last: Exclude<SpawnCtl, "skipped"> = "missing";
   let lastMissAt = Number.NEGATIVE_INFINITY;

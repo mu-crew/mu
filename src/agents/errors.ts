@@ -330,7 +330,7 @@ export class AgentCtlUnreachableError extends Error {
   ) {
     // A remote agent's two ends fail apart: no local forward (missing), or no pi behind it (refused).
     const remote =
-      host == null ? "" : say("agent.ctl_unreachable_remote", kind, host, defaultSpawnCtlMs());
+      host == null ? "" : say("agent.ctl_unreachable_remote", kind, host, defaultSpawnCtlMs(true));
     const pane = host == null || paneLine === undefined ? "" : say("agent.ctl_pane_line", paneLine);
     super(say("agent.ctl_unreachable", agentName, kind, socket) + remote + pane);
   }

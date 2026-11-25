@@ -24,7 +24,11 @@ import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { rollbackSpawn } from "../src/agents/spawn.js";
+import {
+  resetHandshakeClockForTests,
+  rollbackSpawn,
+  setHandshakeClockForTests,
+} from "../src/agents/spawn.js";
 import {
   AgentCtlUnreachableError,
   AgentDiedOnSpawnError,
@@ -189,6 +193,7 @@ esac
 afterEach(async () => {
   mux.restore();
   resetSleep();
+  resetHandshakeClockForTests();
   resetCommandResolverForTests();
   await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
   db.close();
@@ -200,15 +205,24 @@ afterEach(async () => {
   }
 });
 
-async function serveExtension(path: string): Promise<void> {
+/** `ready`: until it says true, ssh's forward drops each connection (pi not listening yet). */
+async function serveExtension(
+  path: string,
+  { ready = () => true, ops = [] }: { ready?: () => boolean; ops?: string[] } = {},
+): Promise<void> {
   mkdirSync(dirname(path), { recursive: true });
   const server = createServer((sock) => {
+    if (!ready()) {
+      sock.destroy();
+      return;
+    }
     const dec = new LineDecoder();
     sock.setEncoding("utf8");
     sock.on("error", () => {});
     sock.on("data", (chunk: string) => {
       for (const line of dec.push(chunk)) {
         const req = JSON.parse(line) as { op: string };
+        ops.push(req.op);
         sock.end(
           encode(
             withHello(
@@ -1151,6 +1165,75 @@ describe("the CLI", () => {
     expect(w).toContain("(ctl: refused)");
     expect(w).toContain("the forward to host dev is up, but pi did not answer there within 0.3 s");
     expect(w).toContain("raise MU_SPAWN_CTL_MS");
+  });
+
+  describe("a cold remote pi", () => {
+    /** Virtual ms: the handshake's clock, advanced only by its own sleeps. */
+    let t: number;
+    /** The pane is gone from this virtual time on. */
+    let diesAt: number;
+    let ops: string[];
+    beforeEach(() => {
+      t = 0;
+      diesAt = Number.POSITIVE_INFINITY;
+      ops = [];
+      const key = "MU_SPAWN_CTL_MS";
+      delete process.env[key]; // the default budget
+      process.env.MU_SPAWN_LIVENESS_MS = "1500"; // the pane check rides on the handshake ticks
+      setHandshakeClockForTests({
+        now: () => t,
+        delay: async (ms) => {
+          t += ms;
+          if (t >= diesAt) state.panes.clear();
+        },
+      });
+    });
+    /** The forward binds at once; pi on the host answers from virtual `at` ms. */
+    function piAnswersAt(at: number): void {
+      mux.restore();
+      const fake = mockTmux(state).executor;
+      mux = installMux("tmux", async (args) => {
+        const res = await fake(args);
+        const forward = isPaneCall(args) ? forwardOf(args) : undefined;
+        if (forward !== undefined) await serveExtension(forward, { ready: () => t >= at, ops });
+        return res;
+      });
+    }
+
+    it("answering at 31 s still gets ctl: ok and the first --send delivered", async () => {
+      piAnswersAt(31_000);
+      const r = await runCliJson(
+        ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--send", "hi", "--json"],
+        dbPath(),
+      );
+      expect(r.error).toBeUndefined();
+      const out = r.data as { ctl: string; send: { ok: boolean; transport: string } };
+      expect(out.ctl).toBe("ok");
+      expect(out.send).toMatchObject({ ok: true, transport: "ctl" });
+      expect(ops).toContain("send");
+      expect(t).toBeGreaterThanOrEqual(31_000);
+      expect(t).toBeLessThan(31_100);
+    });
+
+    it("the budget is still bounded: no answer ends at 90 s with ctl: refused", async () => {
+      piAnswersAt(Number.POSITIVE_INFINITY);
+      expect((await spawn()).ctl).toBe("refused");
+      expect(t).toBe(90_000);
+    });
+
+    it("MU_SPAWN_CTL_MS still overrides it", async () => {
+      process.env.MU_SPAWN_CTL_MS = "45000";
+      piAnswersAt(Number.POSITIVE_INFINITY);
+      expect((await spawn()).ctl).toBe("refused");
+      expect(t).toBe(45_000);
+    });
+
+    it("a pane that dies aborts at the next pane check, not the deadline", async () => {
+      piAnswersAt(Number.POSITIVE_INFINITY);
+      diesAt = 1_234;
+      await expect(spawn()).rejects.toBeInstanceOf(AgentDiedOnSpawnError);
+      expect(t).toBeLessThanOrEqual(1_500);
+    });
   });
 
   it("--root without --worktree is still refused for a local agent", async () => {

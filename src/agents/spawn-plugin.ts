@@ -925,12 +925,13 @@ async function builtInReadiness(
     return { ctl: "skipped", trustDialog };
   }
   const check = defaultSpawnLivenessMs() !== 0;
-  const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
+  const budgetMs = defaultSpawnCtlMs(true); // the job's pi runs on the host
+  const when = `during the ctl handshake (up to ${budgetMs}ms after spawn)`;
   // Each tick: the view gone, or parked at a fatal startup error, ends the wait.
   const health = async (): Promise<void> => {
     await checkSpawnHealth(row.paneId, row.name, command, when, false, host, row.paneIdentity);
   };
-  const hs = await awaitCtlHandshake(localSock, check ? health : undefined, opts.signal);
+  const hs = await awaitCtlHandshake(localSock, check ? health : undefined, opts.signal, budgetMs);
   // The final check: an ok handshake proves pi ran, so only provider/auth patterns apply.
   const trustDialog = check
     ? await checkSpawnHealth(

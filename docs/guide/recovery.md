@@ -61,7 +61,7 @@ against an outdated extension fails with exit 4 and prints the fix.
 
 pi asks whether to trust a project folder on first start. It asks
 before it loads extensions, so the agent has no control socket yet:
-mu shows `unknown (ctl missing)` and spawn warns after 30 s. A pi
+mu shows `unknown (ctl missing)` and spawn warns after 30 s (90 s for `--host`). A pi
 launched through a wrapper whose name is not `pi` or `pi-meta` shows
 `needs_input` instead. Run
 `/trust` in the pane once, or spawn with

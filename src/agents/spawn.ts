@@ -1022,7 +1022,9 @@ async function spawnPreparedAgent(
       if (muleProfile !== undefined) await readiness;
       const pid = paneId;
       const check = defaultSpawnLivenessMs() !== 0;
-      const when = `during the ctl handshake (up to ${defaultSpawnCtlMs()}ms after spawn)`;
+      // A --host worker's pi starts cold over ssh: a longer default budget, still bounded.
+      const budgetMs = defaultSpawnCtlMs(profile !== undefined);
+      const when = `during the ctl handshake (up to ${budgetMs}ms after spawn)`;
       // Capture every tick and keep the last good buffer: on real tmux
       // capture-pane fails once the pane is gone, so a capture taken
       // after the death check would always come back empty.
@@ -1047,6 +1049,7 @@ async function spawnPreparedAgent(
         ctlSocket,
         check ? assertPaneAlive : undefined,
         opts.signal,
+        budgetMs,
       );
       ctl = hs.ctl;
       ctlIncarnation = hs.incarnation;
