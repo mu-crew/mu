@@ -252,37 +252,12 @@ describe("mu host check", () => {
     ]);
   });
 
-  it("warns, never fails, when a session shell template can ride a shared master", async () => {
-    const warned = (r: { data: { warnings: string[] } }) => r.data.warnings.join("\n");
-    // dev's `sh -c {cmd}` names neither option.
+  it("a session shell template that can ride a shared master is not warned about", async () => {
+    // dev's `sh -c {cmd}` names neither option: each spawn forwards a fresh path, so a master is fine.
     const a = await runCliJson(["host", "check", "dev", "--json"], dbPath);
     expect(a.exitCode).toBeNull();
     expect(a.data.ok).toBe(true);
-    expect(warned(a)).toContain("ControlMaster=no and ControlPath=none");
-    const human = await runCli(["host", "check", "dev"], dbPath);
-    expect(human.stdout).toContain("warn");
-    addHost(db, {
-      name: "good",
-      shell: "ssh -o ControlMaster=no -o ControlPath=none h",
-      exec: "sh -c {cmd}",
-      fetch: "f",
-      repo: dir,
-      max_sessions: null,
-    });
-    expect((await runCliJson(["host", "check", "good", "--json"], dbPath)).data.warnings).toEqual(
-      [],
-    );
-    addHost(db, {
-      name: "half",
-      shell: "ssh -o ControlMaster=no h",
-      exec: "sh -c {cmd}",
-      fetch: "f",
-      repo: dir,
-      max_sessions: null,
-    });
-    const half = await runCliJson(["host", "check", "half", "--json"], dbPath);
-    expect(warned(half)).toContain("lacks ControlPath=none");
-    expect(warned(half)).not.toContain("ControlMaster");
+    expect(a.data.warnings).toEqual([]);
   });
 
   it("a missing repo and a missing pi are each named", async () => {

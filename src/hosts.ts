@@ -505,10 +505,9 @@ export function hostFetchStarter(host: string): string {
 export function hostStarter(host: string): { shell: string; exec: string; fetch: string } {
   const ssh = "ssh -o ControlMaster=no -o ControlPath=none";
   return {
-    // ControlMaster=no ControlPath=none: a `-L` through a shared control master is bound by the
-    // master, not by this client. The listener outlives the pane, and a later ssh asking for
-    // the same forward exits 0 with no socket file (the master never re-binds it). Each pane
-    // keeps its own connection, so its forward dies with it.
+    // ControlMaster=no ControlPath=none: each pane keeps its own connection, so its forward
+    // dies with it. A shared master works too (each spawn forwards a fresh local path, see
+    // linkForwardSocket); its old forwards stay bound until it exits.
     shell: `${ssh} -o StreamLocalBindUnlink=yes -o ExitOnForwardFailure=yes -L {local_sock}:{remote_sock} ${host} -t 'cd {cwd:sh} && {env} "$SHELL" -ilc {cmd:sh}'`,
     exec: `${ssh} -o BatchMode=yes ${host} {cmd}`,
     fetch: hostFetchStarter(host),
@@ -1351,7 +1350,7 @@ export async function checkHost(
   const holder = `check:${process.pid}`;
   const timeoutMs = opts.timeoutMs ?? HOST_COMMAND_TIMEOUT_MS;
   const steps: HostCheckStep[] = [];
-  let warnings: string[] = [];
+  const warnings: string[] = [];
   let capabilities: HostCapabilities | undefined;
 
   await withHostView(
@@ -1383,7 +1382,6 @@ export async function checkHost(
           ? await view.jobKind.checkSteps(ctx(p))
           : []),
       ];
-      warnings = profile === undefined ? [] : sessionShellWarnings(profile);
       steps.push(...(await phase("template")));
       const reach = await phase("reach");
       steps.push(...reach);
@@ -1506,23 +1504,4 @@ export async function checkHost(
     warnings,
     ...(capabilities !== undefined ? { capabilities } : {}),
   };
-}
-
-/**
- * A session `shell` template that can ride a shared ssh master: the master, not the pane,
- * binds a `-L` and keeps it past the pane. A heuristic on the template text, never a failure.
- * Every profile is a session profile today.
- */
-function sessionShellWarnings(profile: HostProfile): string[] {
-  if (profile.transport !== "session" || profile.shell === null) return [];
-  const noMaster = /ControlMaster[= ]+no\b/i.test(profile.shell);
-  const noPath = /ControlPath[= ]+none\b/i.test(profile.shell);
-  if (noMaster && noPath) return [];
-  const lacks = [
-    ...(noMaster ? [] : ["ControlMaster=no"]),
-    ...(noPath ? [] : ["ControlPath=none"]),
-  ];
-  return [
-    `shell template lacks ${lacks.join(" and ")}: a forward that rides a shared ssh master is bound by the master and outlives the pane (heuristic; see mu host init <name> --ssh --template)`,
-  ];
 }

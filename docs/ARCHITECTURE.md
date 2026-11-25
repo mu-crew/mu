@@ -231,7 +231,7 @@ are re-export hubs.
 | `src/mux/herdr.ts` | herdr backend: JSON socket API, atomic send, native pane status, `spawnAgent` (bare pane, `agent start`) |
 | `src/mux/rex.ts` | Rex backend: the `rex()` wrapper over the server API (`rex api call`), one-call `spawnAgent` with launch env pinned after interactive shell startup, OSC 7501 pane status, paste send, attach as the app's `session.select` |
 | `src/tmux.ts` | tmux-only re-exports: `MU_TMUX_SOCKET` seam, `sleep` / `setSleepForTests` |
-| `src/ctl/path.ts` | `ctlSocketPath` keeps readable and hashed local paths under the state dir when they fit in 103 bytes; otherwise it hashes the resolved state dir, workstream and agent into a private per-uid directory. `remoteCtlSocketPath`, `carrierJobFilePath` and `MU_CTL_SOCK` are unchanged by the local fallback |
+| `src/ctl/path.ts` | `ctlSocketPath` keeps readable and hashed local paths under the state dir when they fit in 103 bytes; otherwise it hashes the resolved state dir, workstream and agent into a private per-uid directory. `remoteCtlSocketPath`, `carrierJobFilePath` and `MU_CTL_SOCK` are unchanged by the local fallback. `linkForwardSocket` gives a session spawn a fresh forward path linked from the derived one; `removeCtlSocket` removes both |
 | `src/ctl/protocol.ts` | protocol v1 types, `CTL_OPS`, line framing; imports nothing from mu |
 | `src/ctl/client.ts` | `ctlRequest` (opt-in synchronous `beforeWrite` fence: `CtlWriteVetoedError`, nothing written; an abort after the write of a side-effecting op is `CtlDeliveryUnknownError`), `ctlProbe`, version and unknown-op errors |
 | `extension/mu-pi.ts` | pi extension, child side: serves `$MU_CTL_SOCK`; built to `dist/extension/mu-pi.js` |

@@ -109,7 +109,7 @@ const CTL_IMPORTS: Record<string, readonly string[]> = {
   "src/doctor-summary.ts": ["CTL_OPS", "CtlProbe", "ctlProbe", "ctlSocketPath"],
   "src/hosts.ts": ["ctlProbe", "ctlSocketPath"],
   // the spawn handshake, the lease carrier and remote socket plumbing
-  "src/agents/spawn.ts": ["CTL_SOCK_ENV", "ctlSocketPath"],
+  "src/agents/spawn.ts": ["CTL_SOCK_ENV", "ctlSocketPath", "linkForwardSocket", "removeCtlSocket"],
   "src/agents/spawn-ready.ts": ["CtlProbe", "ctlProbe"],
   "src/agents/lease-carrier.ts": ["carrierJobFilePath"],
   // reattach: a new lease carrier forwards the reaped pi's control socket

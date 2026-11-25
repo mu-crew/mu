@@ -314,16 +314,14 @@ mu host show dev              # templates and the holders of its channels
 - An `exec` or `fetch` template that exits 3 is a hand-back (a hardware key, a
   prompt): mu stops with exit 5, `human needed`, and the template's first line.
   Never retried; `host check` reports a `handback` step.
-- A `shell` template must not ride a shared ssh master (keep `-o
-  ControlMaster=no -o ControlPath=none`, as `host init --ssh --template` prints): a `-L`
-  through a master is bound by the master, outlives the pane, and is never
-  re-bound, so the next spawn of that name gets no socket. `host check` warns
-  when the template lacks either option. On a session-capped host use a
+- A `shell` template may ride a shared ssh master. The starter keeps `-o
+  ControlMaster=no -o ControlPath=none` so each pane's forward dies with it;
+  where only master reuse connects, drop both. On a session-capped host use a
   lease ([below](#session-capped-hosts)).
 - Where a fresh ssh connection from the agent's process tree is impossible
   (the OS blocks a new connection or the key file from that tree, so `ssh -o
-  ControlMaster=no -o ControlPath=none` fails inside the pane but works in your terminal), a
-  session template cannot work and must not borrow your master. Use the
+  ControlMaster=no -o ControlPath=none` fails inside the pane but works in your terminal),
+  drop both options so the templates ride your master, or use the
   [mule plugin](plugins.md#register-the-mule-plugin): you open mule's private
   master from your own terminal, and exec and the pane ride it. The plugin has
   no fetch: `collect` needs its own working `--fetch` (the default is git over
@@ -431,13 +429,11 @@ mu host check dev --root '~/repo'
   a second transient command until the first releases its slot.
 - `--fetch` stays plain SSH: it uses a separate connection from mule's
   master, so a bulk transfer does not hold up mule's commands.
-- Why a session template must not ride a shared master: a `-L` asked of a
-  control master is bound by the master, not by the client, and outlives the
-  pane. mu then deletes the socket file but the master keeps the listener; the
-  next spawn of that name asks for the same forward, ssh exits 0 and no file
-  appears (`ctl: missing`, for that name, for good). A lease carrier binds and
-  verifies its own forward; a session template keeps `ControlMaster=no
-  ControlPath=none`.
+- A `-L` asked of a control master is bound by the master, not by the
+  client, and outlives the pane; a second request for the same forward binds
+  nothing. So each session spawn forwards a fresh local path
+  (`{local_sock}`), which the agent's derived socket links to. The master's
+  old forwards stay bound, to removed paths, until it exits.
 - mule jobs run in a non-login shell: a host that finds `pi` only through login
   files edits `sh -c` to `zsh -ilc`, or fixes `PATH` in `.bashrc`. `host check`
   runs `pi` without a login shell on a lease profile for that reason.

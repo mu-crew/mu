@@ -261,7 +261,6 @@ describe("host check follows the ADMITTED profile", () => {
     const handed = readFileSync(cmds, "utf8");
     expect(handed).toContain("pi --version");
     expect(handed).not.toMatch(/-ilc/);
-    // The admitted profile is a lease: the session shell's missing ControlMaster flags don't warn.
     expect(r.warnings).toEqual([]);
   });
 
@@ -271,10 +270,6 @@ describe("host check follows the ADMITTED profile", () => {
     const r = await checkHost(db, "flip", { paneAlive: switchDuringProbe("session") });
     expect(r.steps.map((s) => s.step)).not.toContain("stop");
     expect(readFileSync(cmds, "utf8")).toMatch(/-ilc/);
-    // The admitted profile is a session whose shell lacks both flags: its warning is reported.
-    expect(r.warnings).toEqual([
-      expect.stringContaining("lacks ControlMaster=no and ControlPath=none"),
-    ]);
   });
 });
 

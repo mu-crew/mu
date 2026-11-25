@@ -5,7 +5,14 @@
 // (test/_fake-remote-node.ts) whose exec runs each command here; the local
 // pane is the fake harness (test/_fake-harness.ts) on the mock tmux's %1.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+} from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -242,7 +249,8 @@ describe("a remote claude worker and a remote pi worker on one host (spec D17)",
     mux = installMux("tmux", async (args) => {
       const res = fake.tmux(args) ?? (await tmux(args));
       if (["new-session", "new-window"].includes(args[0] ?? "") && args.includes("pi-1")) {
-        const sock = ctlSocketPath("auth", "pi-1", dir);
+        // The session template's forward binds the fresh path the derived socket links to.
+        const sock = readlinkSync(ctlSocketPath("auth", "pi-1", dir));
         mkdirSync(dirname(sock), { recursive: true });
         await new Promise<void>((r) => server.listen(sock, () => r()));
       }

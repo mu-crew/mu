@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -259,7 +260,9 @@ describe.skipIf(!available)("ladder spawn through a real Rex shell rc", () => {
     const local = ctlSocketPath(ws, name, dirname(db.name));
     const remote = remoteCtlSocketPath(ws, name, process.getuid?.() ?? 0);
     const transport = read("transport");
-    expect(transport.args).toEqual([local, remote, dir]);
+    // {local_sock} is a fresh forward path the derived socket links to.
+    expect(transport.args).toEqual([readlinkSync(local), remote, dir]);
+    expect(readlinkSync(local)).toMatch(/[.-][0-9a-f]{12}\.sock$/);
     expect(transport.seen).toMatchObject({
       LOGIN_MARKER: "from-rc",
       SSH_AUTH_SOCK: join(dir, "login.sock"),

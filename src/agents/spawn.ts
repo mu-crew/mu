@@ -10,7 +10,7 @@
 // see prestageWorktree.
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -32,7 +32,7 @@ import {
   setCarrierJobStop,
 } from "../carrier-jobs.js";
 import type { ChannelName, SendResult } from "../channels/types.js";
-import { CTL_SOCK_ENV, ctlSocketPath } from "../ctl/path.js";
+import { CTL_SOCK_ENV, ctlSocketPath, linkForwardSocket, removeCtlSocket } from "../ctl/path.js";
 import {
   type Db,
   defaultDbPath,
@@ -804,7 +804,11 @@ async function spawnPreparedAgent(
         refuseReserved(db, opts.workstream, opts.name, carrier?.token);
         // The name is ours: no live agent owns a socket at this path (nor, holding the
         // reservation, a job file: an earlier one's is moved aside, never deleted).
-        rmSync(ctlSocket, { force: true });
+        // A session template forwards to a fresh path the derived one links to.
+        let localSock = ctlSocket;
+        if (profile?.transport === "session" && profile.shell !== null)
+          localSock = linkForwardSocket(ctlSocket);
+        else removeCtlSocket(ctlSocket);
         const jobFile = reservation
           ? claimLeaseJobFile(db, opts.workstream, opts.name, reservation).path
           : undefined;
@@ -854,7 +858,7 @@ async function spawnPreparedAgent(
                   : hooksKey !== undefined
                     ? remoteAnchored(launch, hooksKey)
                     : launch,
-              localSock: ctlSocket,
+              localSock,
               cwd: paneCwd,
               ...(jobFile !== undefined ? { jobFile } : {}),
               ...(hooksKey !== undefined && harness !== undefined

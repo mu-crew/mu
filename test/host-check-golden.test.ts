@@ -168,11 +168,6 @@ describe("host check golden output", () => {
     await golden("session-pass", ["dev"]);
   });
 
-  it("session: a shell that can ride a shared master warns", async () => {
-    session("dev", { shell: "ssh h {local_sock}:{remote_sock}" });
-    await golden("session-master-warning", ["dev"]);
-  });
-
   it("session --agent: no forwarded socket fails ctl", async () => {
     session("dev");
     await golden("session-agent-no-socket", ["dev", ...agent]);

@@ -11,10 +11,12 @@ import {
   chmodSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -233,12 +235,22 @@ function installTmux(): void {
     const res = await fake(args);
     if (isPaneCall(args)) {
       atPane = channels().map((c) => [c.holder, c.kind]);
-      // The window is named after the agent.
-      const name = args[args.indexOf("-n") + 1];
-      if (extensionOn && name !== undefined) await serveExtension(ctlSocketPath("auth", name, dir));
+      // The template's forward binds {local_sock}, the path the derived socket links to.
+      const forward = forwardOf(args);
+      if (extensionOn && forward !== undefined) await serveExtension(forward);
     }
     return res;
   });
+}
+
+/** The `L=` ({local_sock}) a pane's filled template forwards. */
+function forwardOf(args: readonly string[]): string | undefined {
+  const cmd = args.at(-1) ?? "";
+  const word = cmd.slice(cmd.indexOf("/bin/sh"));
+  const text = execFileSync("/bin/sh", ["-c", `f() { printf %s "$3"; }; f ${word}`], {
+    encoding: "utf8",
+  });
+  return /L=(\S+) R=/.exec(text)?.[1]?.replace(/^'|'$/g, "");
 }
 
 const paneCall = (): readonly string[] => {
@@ -330,7 +342,11 @@ describe("the pane is the transport", () => {
     const local = ctlSocketPath("auth", "worker-1", dir);
     const remote = remoteCtlSocketPath("auth", "worker-1", process.getuid?.() ?? 0);
     const cmd = filled();
-    expect(cmd).toContain(`L='${local}'`);
+    // A fresh forward path beside the derived one, which links to it (a shared master's
+    // old forward of the same path is never asked for again).
+    const forward = readlinkSync(local);
+    expect(forward).toMatch(new RegExp(`^${local.replace(/\.sock$/, "")}\\.[0-9a-f]{12}\\.sock$`));
+    expect(cmd).toContain(`L='${forward}'`);
     expect(cmd).toContain(`R='${remote}'`);
     // The cwd is the one the exec step resolved on the remote, not what was typed.
     expect(cmd).toContain("C='/srv/repo/sub'");
@@ -348,7 +364,7 @@ describe("the pane is the transport", () => {
     const all = mux.calls
       .map((c) => c.join(" "))
       .join("\n")
-      .replaceAll(local, "")
+      .replaceAll(forward, "")
       .replace(/ -u MU_[A-Z_]+/g, ""); // the `env -u` words only UNSET them
     for (const k of ["MU_DB_PATH", "MU_STATE_DIR", "MU_SYNC_DIR", dir]) {
       expect(all).not.toContain(k);
@@ -1142,6 +1158,42 @@ describe("the CLI", () => {
       dbPath(),
     );
     expect(r.exitCode).toBe(5);
+  });
+});
+
+describe("a session template over a shared ssh master", () => {
+  /** The master's forwards, by local path: they outlive every pane (a client's -L is the master's). */
+  let master: Map<string, Server>;
+  const masterForwards = (): string[] => [...master.keys()];
+  beforeEach(() => {
+    master = new Map();
+    mux.restore();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) => {
+      const res = await fake(args);
+      if (!isPaneCall(args)) return res;
+      const local = forwardOf(args);
+      if (local === undefined) throw new Error("no {local_sock} in the filled template");
+      // ssh's mux: a forward the master already has is answered ok and bound again by nobody.
+      if (master.has(local)) return res;
+      await serveExtension(local);
+      const s = servers.at(-1);
+      if (s !== undefined) master.set(local, s);
+      return res;
+    });
+  });
+
+  it("a respawn of a closed name gets its own forward, so its socket answers", async () => {
+    expect((await spawn()).ctl).toBe("ok");
+    await closeAgent(db, "worker-1", { workstream: "auth" });
+    // The pane is gone; the master still holds the first forward. Close removed both files.
+    expect(masterForwards()).toHaveLength(1);
+    const [first] = masterForwards();
+    expect(existsSync(first ?? "")).toBe(false);
+    expect(() => lstatSync(ctlSocketPath("auth", "worker-1", dir))).toThrow(/ENOENT/);
+    expect((await spawn()).ctl).toBe("ok");
+    expect(masterForwards()).toHaveLength(2);
+    expect((await ctlProbe(ctlSocketPath("auth", "worker-1", dir), 500)).kind).toBe("ok");
   });
 });
 

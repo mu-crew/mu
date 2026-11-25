@@ -1,11 +1,13 @@
 /**
  * Per-agent control socket path. Derived from (state dir, workstream,
  * agent) on every call; never stored. The mu pi extension serves the
- * socket at `$MU_CTL_SOCK`, and mu connects to the same derived path.
+ * socket at `$MU_CTL_SOCK`, and mu connects to the same derived path. A
+ * session template's forward binds a fresh path the derived one links to
+ * (linkForwardSocket).
  */
-import { createHash } from "node:crypto";
-import { lstatSync, mkdirSync, rmSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { lstatSync, mkdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { type Db, defaultStateDir } from "../db.js";
 
 /** Env var spawn injects so the pi extension knows where to listen. */
@@ -40,8 +42,14 @@ export function ctlSocketPath(workstream: string, agent: string, stateDir?: stri
   const state = resolve(base);
   const local = sockPathUnder(join(state, "sock"), workstream, agent);
   if (Buffer.byteLength(local) <= MAX_SOCK_PATH) return local;
+  const hash = createHash("sha256")
+    .update(JSON.stringify([state, workstream, agent]))
+    .digest("hex");
+  return join(shortSockRoot(), `${hash}.sock`);
+}
 
-  // Use the same short root across invocations, even with a long or different TMPDIR.
+/** The same short root across invocations, even with a long or different TMPDIR. */
+function shortSockRoot(): string {
   const uid = process.geteuid?.();
   if (uid === undefined) throw new Error("Unix control sockets require a user ID");
   const dir = `/tmp/mu-s-${uid}`;
@@ -52,10 +60,46 @@ export function ctlSocketPath(workstream: string, agent: string, stateDir?: stri
       `Unsafe control socket directory ${dir}: expected a directory owned by uid ${uid} with mode 0700`,
     );
   }
-  const hash = createHash("sha256")
-    .update(JSON.stringify([state, workstream, agent]))
-    .digest("hex");
-  return join(dir, `${hash}.sock`);
+  return dir;
+}
+
+/**
+ * Remove the ctl socket at `sock`: the file, or, when it is a session forward's link
+ * (linkForwardSocket), the link and the forward path it names.
+ */
+export function removeCtlSocket(sock: string): void {
+  let target: string | undefined;
+  try {
+    if (lstatSync(sock).isSymbolicLink()) target = resolve(dirname(sock), readlinkSync(sock));
+  } catch {
+    return; // nothing there
+  }
+  if (target !== undefined) rmSync(target, { force: true });
+  rmSync(sock, { force: true });
+}
+
+/**
+ * A fresh local path for a session template's `-L` forward, linked from `sock` (the derived
+ * path every reader connects to; connect follows the link). Over a shared ssh master the
+ * master, not the pane's client, binds a `-L` and keeps it after the pane dies, and it answers
+ * a second request for the same forward without binding it again: a respawn of the name on
+ * the derived path got no socket (`ctl: missing`). A new path per spawn is a new forward. The
+ * master's old ones stay until it exits, bound to paths mu has removed. Removes whatever
+ * `sock` held first; the caller owns the name.
+ */
+export function linkForwardSocket(sock: string): string {
+  removeCtlSocket(sock);
+  const nonce = randomBytes(6).toString("hex");
+  const beside = join(dirname(sock), `${basename(sock, ".sock")}.${nonce}.sock`);
+  const forward =
+    Buffer.byteLength(beside) <= MAX_SOCK_PATH
+      ? beside
+      : join(
+          shortSockRoot(),
+          `f-${createHash("sha256").update(sock).digest("hex").slice(0, 16)}-${nonce}.sock`,
+        );
+  symlinkSync(forward, sock);
+  return forward;
 }
 
 /**
@@ -82,7 +126,7 @@ export function carrierJobFilePath(workstream: string, agent: string, stateDir?:
 export function unlinkCtlSocket(db: Db, name: string, workstream: string): void {
   if (db.memory) return;
   try {
-    rmSync(ctlSocketPath(workstream, name, dirname(db.name)), { force: true });
+    removeCtlSocket(ctlSocketPath(workstream, name, dirname(db.name)));
   } catch {
     /* best-effort */
   }
