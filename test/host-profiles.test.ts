@@ -371,6 +371,8 @@ describe("host init --ssh prints a starter and never runs it", () => {
       expect(r.stdout).toContain("ssh");
       // A profile names a machine: the starter picks no repo.
       expect(r.stdout).not.toContain("--repo");
+      // Where fresh ssh is impossible the starter points at the mule plugin.
+      expect(r.stdout).toContain("No fresh ssh from the agent's tree? Use the mule plugin");
     } finally {
       process.env.PATH = oldPath;
     }

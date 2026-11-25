@@ -366,6 +366,11 @@ export function cmdHostInit(name: string, opts: HostInitOptions): void {
       ? `# ${name} is mule's host; a lease worker holds no ssh session (docs/guide/remote.md).`
       : `# ${name} is the ssh target; ~/.ssh/config decides the rest.`,
   );
+  if (!lease) {
+    console.log(
+      "# No fresh ssh from the agent's tree? Use the mule plugin: mu host init --mule (docs/guide/remote.md).",
+    );
+  }
   console.log(command);
 }
 

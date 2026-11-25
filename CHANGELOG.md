@@ -15,6 +15,9 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 ### Added
 - `mu host add --replace` swaps an existing profile in one transaction. It runs the `--plugin` blocker check (agent, job and recovery records naming the host) and the held-channel check before deleting, so a refusal keeps the old profile; `host rm` then `host add` removed it first.
 
+### Changed
+- Docs and the `host init --ssh --template` starter now say what to do where fresh ssh connections from the agent's process tree are impossible: use the mule plugin (its master is opened from your terminal), not a session template over a shared master.
+
 ### Fixed
 - `mu host check` on a `--plugin mule` profile whose host has no pi now says the pi and extension steps are "not needed for --mule (rung 2)" instead of a bare skip.
 - `mu host exec` in text mode now prints the `no exit code (deadline or no answer)` line on stderr (exit 5), as `--json` already did; before, a deadline exit was silent.
