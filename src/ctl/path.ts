@@ -64,8 +64,10 @@ function shortSockRoot(): string {
 }
 
 /**
- * Remove the ctl socket at `sock`: the file, or, when it is a session forward's link
- * (linkForwardSocket), the link and the forward path it names.
+ * Remove the ctl socket at `sock`. When it is a link, the target goes too only if it is
+ * provably the forward path linkForwardSocket generated for this name (`<name>.<nonce>.sock`
+ * beside it, or `f-<hash of sock>-<nonce>.sock` under the short root) and a socket: the link
+ * is never followed to anything else (a user's file, another agent's forward). Then the name.
  */
 export function removeCtlSocket(sock: string): void {
   let target: string | undefined;
@@ -74,9 +76,33 @@ export function removeCtlSocket(sock: string): void {
   } catch {
     return; // nothing there
   }
-  if (target !== undefined) rmSync(target, { force: true });
+  if (target !== undefined && isForwardOf(sock, target)) {
+    try {
+      if (lstatSync(target).isSocket()) rmSync(target, { force: true });
+    } catch {
+      /* already gone */
+    }
+  }
   rmSync(sock, { force: true });
 }
+
+const NONCE_HEX = 12; // randomBytes(6)
+
+/** `target` has one of the two shapes linkForwardSocket gives `sock`'s forward path. */
+function isForwardOf(sock: string, target: string): boolean {
+  const uid = process.geteuid?.();
+  const prefixes = [
+    `${join(dirname(sock), basename(sock, ".sock"))}.`,
+    ...(uid === undefined ? [] : [join(`/tmp/mu-s-${uid}`, `f-${forwardHash(sock)}-`)]),
+  ];
+  return prefixes.some((p) => {
+    if (!target.startsWith(p) || !target.endsWith(".sock")) return false;
+    return new RegExp(`^[0-9a-f]{${NONCE_HEX}}$`).test(target.slice(p.length, -".sock".length));
+  });
+}
+
+const forwardHash = (sock: string): string =>
+  createHash("sha256").update(sock).digest("hex").slice(0, 16);
 
 /**
  * A fresh local path for a session template's `-L` forward, linked from `sock` (the derived
@@ -89,15 +115,12 @@ export function removeCtlSocket(sock: string): void {
  */
 export function linkForwardSocket(sock: string): string {
   removeCtlSocket(sock);
-  const nonce = randomBytes(6).toString("hex");
+  const nonce = randomBytes(NONCE_HEX / 2).toString("hex");
   const beside = join(dirname(sock), `${basename(sock, ".sock")}.${nonce}.sock`);
   const forward =
     Buffer.byteLength(beside) <= MAX_SOCK_PATH
       ? beside
-      : join(
-          shortSockRoot(),
-          `f-${createHash("sha256").update(sock).digest("hex").slice(0, 16)}-${nonce}.sock`,
-        );
+      : join(shortSockRoot(), `f-${forwardHash(sock)}-${nonce}.sock`);
   symlinkSync(forward, sock);
   return forward;
 }
