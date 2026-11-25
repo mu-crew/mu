@@ -24,6 +24,8 @@ import {
 } from "../src/host-harnesses.js";
 import { addHost, checkHost, getHost, listHostChannels } from "../src/hosts.js";
 import { rmFixtureDir } from "./_fs.js";
+import { fakePlugin, linkSeam } from "./_plugin.js";
+import { registerFixturePlugin } from "./_plugin-handshake.js";
 import { runCli, runCliJson } from "./_runCli.js";
 
 let dir: string;
@@ -91,6 +93,21 @@ afterEach(() => {
 });
 
 describe("the harness probe in host check", () => {
+  it("a mule plugin profile without pi says pi is not needed for --mule (rung 2)", async () => {
+    shim("claude", "exit 0");
+    config(".claude/settings.json", ["murmur hook claude", "mu hook stop claude --timeout 600"]);
+    const f = fakePlugin(dir, { home, seams: linkSeam() }, "mule");
+    await registerFixturePlugin(db, f);
+    addHost(db, { name: "m", plugin: "mule", fetch: "true", repo: null, max_sessions: null });
+    const r = await checkHost(db, "m");
+    expect(r.ok).toBe(true);
+    expect(stepOf(r, "pi")).toMatchObject({
+      ok: null,
+      detail: expect.stringContaining("not needed for --mule (rung 2)"),
+    });
+    expect(stepOf(r, "extension")?.ok).toBeNull();
+  });
+
   it("a claude-only host passes: pi steps skipped, claude and its hooks found, the probe recorded", async () => {
     shim("claude", "exit 0");
     config(".claude/settings.json", ["murmur hook claude", "mu hook stop claude --timeout 600"]);

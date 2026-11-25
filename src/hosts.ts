@@ -1415,7 +1415,14 @@ export async function checkHost(
         }
         if (capabilities !== undefined && capabilities.harnesses.pi.command === null) {
           for (const s of ["pi", "extension"] as const) {
-            steps.push({ step: s, ok: null, detail: "skipped: the host has no pi" });
+            steps.push({
+              step: s,
+              ok: null,
+              detail:
+                profile?.plugin === "mule"
+                  ? "skipped: the host has no pi (not needed for --mule (rung 2): pi runs locally)"
+                  : "skipped: the host has no pi",
+            });
           }
         } else {
           await runner.step(

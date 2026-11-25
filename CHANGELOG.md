@@ -13,6 +13,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 ## [Unreleased]
 
 ### Fixed
+- `mu host check` on a `--plugin mule` profile whose host has no pi now says the pi and extension steps are "not needed for --mule (rung 2)" instead of a bare skip.
 - `mu host exec` in text mode now prints the `no exit code (deadline or no answer)` line on stderr (exit 5), as `--json` already did; before, a deadline exit was silent.
 
 ## [5.4.2] — 2026-11-25
