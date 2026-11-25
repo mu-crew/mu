@@ -193,9 +193,9 @@ and put `murmur` on the PATH the profile's `--exec` sees.
   (`idle`) once it reaches the host; otherwise mu records the interrupt on
   the host (`idle?`). `--fresh` is refused: send the harness's fresh command,
   then the text.
-- A worker with no hook event `MU_HOOK_SILENCE_MS` (60 s) after mu's last
-  send ends `mu wait` as `input` (blocked kind `no_hook_event`) with its
-  pane's last lines: a dialog took the prompt, or its hooks never run.
+- A `mu wait` that times out on a worker with no hook event
+  `MU_HOOK_SILENCE_MS` (60 s) after mu's last send adds a notice with its
+  pane's last lines: a dialog may hold the prompt, or its hooks never run.
   Answer a dialog with `mu agent answer <name> <key> --force`.
 - `mu wait` applies the worker's `CLOSE:` block when it sees the turn end;
   `collect` applies it too, once its commits are pinned, but only from the

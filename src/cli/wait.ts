@@ -20,7 +20,9 @@
 
 import type { Command } from "commander";
 import { agentKey } from "../agent-state.js";
-import { NO_HOOK_EVENT } from "../channels/hooks.js";
+import { getAgent } from "../agents.js";
+import { hookSilence } from "../channels/hooks-silence.js";
+import { channelTarget } from "../channels/index.js";
 import {
   asCaller,
   checkQualifiedPrefix,
@@ -189,9 +191,6 @@ function eventReason(result: WaitResult, signal: string | undefined, open: numbe
     case "pane-text":
       return `${who}'s pane printed the awaited text (no control socket: this is pane output, not a finished run)`;
     case "input":
-      if (snap?.blocked?.kind === NO_HOOK_EVENT && snap.blocked.title !== undefined) {
-        return `${who}: ${snap.blocked.title}`;
-      }
       return `${who} is blocked on a dialog${snap?.blocked !== undefined ? ` (${snap.blocked.kind})` : ""}; its run is not finished`;
     case "dead":
       // A task's owner died before it closed: that work is not done. An agent ref says only that it is gone.
@@ -439,6 +438,7 @@ export async function runWait(
       ? `--timeout ${spec.timeout} is below the ${WAIT_DEFAULT_TIMEOUT_S}s default: the wait ended at your deadline, not on an event; run the resume command`
       : undefined;
 
+  const silent = result.timedOut ? await silenceNotices(db, result.refs) : [];
   const input: WaitDataInput = {
     result,
     exit,
@@ -458,6 +458,7 @@ export async function runWait(
         spec.scope !== undefined ? [spec.scope] : result.refs.map((s) => s.ref.workstream),
       ),
       owedNow > 0 ? `${owedNow} owed: ${renderArgv(readyArgv)}` : undefined,
+      silent,
     ),
     ...(opts.extraData !== undefined ? { extra: opts.extraData } : {}),
   };
@@ -470,13 +471,36 @@ export async function runWait(
   if (exit !== 0) throw new CliExitError(exit);
 }
 
-/** `notices` with the owed line first (never cut, unlike `next`). */
+/** `notices` with the owed line first (never cut, unlike `next`), then the silence advisories. */
 function withOwedNotice(
   f: { notices?: string[] },
   line: string | undefined,
+  silent: readonly string[] = [],
 ): { notices?: string[] } {
-  if (line === undefined) return f;
-  return { notices: [line, ...(f.notices ?? [])] };
+  const all = [...(line !== undefined ? [line] : []), ...(f.notices ?? []), ...silent];
+  return all.length === 0 ? {} : { notices: all };
+}
+
+/**
+ * A timed-out wait's advice on each open hooks agent that drew no hook event
+ * since mu's send (`hookSilence`: a dialog may hold it). Best-effort: a
+ * failed read says nothing.
+ */
+async function silenceNotices(db: Db, snaps: readonly WaitSnapshot[]): Promise<string[]> {
+  const out: string[] = [];
+  for (const s of snaps) {
+    if (s.ref.kind !== "agent" || s.fired || s.dead) continue;
+    // Only a hooks row's target carries `sent`: any other reads as nothing to say.
+    const agent = getAgent(db, s.ref.id, s.ref.workstream);
+    if (agent === undefined) continue;
+    try {
+      const line = await hookSilence(channelTarget(db, agent));
+      if (line !== undefined) out.push(line);
+    } catch {
+      // advice only
+    }
+  }
+  return out;
 }
 
 // ─── commander wiring ──────────────────────────────────────────────

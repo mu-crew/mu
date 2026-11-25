@@ -27,6 +27,7 @@ import {
   textTied,
   textTurnAfter,
 } from "../src/channels/hooks-remote.js";
+import { hookSilence } from "../src/channels/hooks-silence.js";
 import { channelTarget, hooksChannel } from "../src/channels/index.js";
 import type { RemoteSnapshot } from "../src/channels/types.js";
 import { type Db, openDb } from "../src/db.js";
@@ -734,29 +735,66 @@ describe("a send that drew no hook event (a dialog took it)", () => {
     fake.onSubmit = () => {};
   });
 
-  it("a wait after the send ends as input once the silence passes MU_HOOK_SILENCE_MS, naming the pane tail and the fix", async () => {
+  const notices = (data: unknown): string =>
+    ((data as { notices?: string[] }).notices ?? []).join("\n");
+
+  it("a timed-out wait after the send names the silence, the pane tail and the fix; it never ends as input", async () => {
     const sent = await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
     expect(sent.data).toMatchObject({ transport: "hooks", ack: "sent" });
     fake.screen = () => DIALOG;
     await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
       const { data, exitCode } = await runCliJson(
-        ["wait", "agent:auth/cw", "--timeout", "10", "--json"],
+        ["wait", "agent:auth/cw", "--timeout", "0.3", "--json"],
         dbPath,
       );
-      expect(exitCode).toBe(7);
-      expect(data).toMatchObject({
-        firing: { kind: "input", ref: "agent:auth/cw" },
-        snapshots: [{ blocked: { kind: "no_hook_event" } }],
-      });
-      const title = JSON.stringify(data);
-      expect(title).toContain("Hooks need review");
-      expect(title).toContain("1. Trust all and continue");
-      expect(title).toContain("mu agent answer cw");
-      // Text mode says it too, not just "blocked on a dialog".
-      const text = await runCli(["wait", "agent:auth/cw", "--timeout", "10"], dbPath);
-      expect(text.exitCode).toBe(7);
-      expect(text.stdout + text.stderr).toContain("no hook event from agent cw");
-      expect(text.stdout + text.stderr).toContain("Trust all and continue");
+      expect(exitCode).toBeNull();
+      expect(data).toMatchObject({ firing: { kind: "heartbeat" } });
+      expect(notices(data)).toContain("agent cw has sent no hook event");
+      expect(notices(data)).toContain("1. Trust all and continue");
+      expect(notices(data)).toContain("mu agent answer cw <key> --force");
+      // Text mode says it too.
+      const text = await runCli(["wait", "agent:auth/cw", "--timeout", "0.3", "--text"], dbPath);
+      expect(text.exitCode).toBeNull();
+      expect(text.stdout).toContain("notice: agent cw has sent no hook event");
+    });
+  });
+
+  it("hooks that reached the node after the watch's last read: the decision's fresh read relays them, no advisory (review repro)", async () => {
+    const target = async () =>
+      channelTarget(db, getAgent(db, "cw", "auth") ?? expect.fail("no row"));
+    fake.screen = () => "  Working on your request";
+    await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
+      // codex, no row before its first prompt: the prompt's events are still on the node.
+      await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
+      const later = Date.now() + 60_000;
+      expect(await hookSilence(await target(), later)).toContain("no hook event");
+      node.emit("session_start", { source: "startup" });
+      node.emit("prompt_submitted");
+      expect(node.pending()).toBe(2);
+      expect(await hookSilence(await target(), later)).toBeUndefined();
+      expect(node.pending()).toBe(0);
+      // claude, a stopped row from its last turn: the next prompt's event is still on the node.
+      node.emit("turn_stopped", { text: "done" });
+      await (await target()).remote?.read();
+      db.prepare("UPDATE agents SET cli = 'claude' WHERE name = 'cw'").run();
+      await runCliJson(["agent", "send", "cw", "again", "-w", "auth", "--force", "--json"], dbPath);
+      expect(await hookSilence(await target(), Date.now() + 60_000)).toContain("no hook event");
+      node.emit("prompt_submitted");
+      expect(await hookSilence(await target(), Date.now() + 60_000)).toBeUndefined();
+    });
+  });
+
+  it("a node read that fails is unknown, not silence: no advisory", async () => {
+    await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
+    fake.screen = () => DIALOG;
+    node.failReads(true);
+    await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
+      const { data, exitCode } = await runCliJson(
+        ["wait", "agent:auth/cw", "--timeout", "0.3", "--json"],
+        dbPath,
+      );
+      expect(exitCode).not.toBe(7);
+      expect(JSON.stringify(data)).not.toContain("no hook event");
     });
   });
 
@@ -767,14 +805,14 @@ describe("a send that drew no hook event (a dialog took it)", () => {
         ["wait", "agent:auth/cw", "--timeout", "0.3", "--json"],
         dbPath,
       );
-      expect(JSON.stringify(idle.data)).not.toContain("no_hook_event");
+      expect(JSON.stringify(idle.data)).not.toContain("no hook event");
       fake.onSubmit = () => node.emit("prompt_submitted");
       await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
       const busy = await runCliJson(
         ["wait", "agent:auth/cw", "--timeout", "0.3", "--json"],
         dbPath,
       );
-      expect(JSON.stringify(busy.data)).not.toContain("no_hook_event");
+      expect(JSON.stringify(busy.data)).not.toContain("no hook event");
       expect(busy.data).toMatchObject({ firing: { kind: "heartbeat" } });
     });
   });

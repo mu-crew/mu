@@ -68,6 +68,20 @@ export function recordSend(
 }
 
 /**
+ * A hooks delivery's fields for its `agent.send` op: its ack, the run count
+ * it read, and `at`, the time taken before the paste (ISO), which a later
+ * wait's silence advisory counts from (`ChannelTarget.sent`). Empty on any
+ * other channel (only `hooks` reports an `ack`).
+ */
+export function hooksSendFields(
+  sent: Pick<SendResult, "ack" | "runCount">,
+  at: Date,
+): Record<string, string | number | undefined> {
+  if (sent.ack === undefined) return {};
+  return { ack: sent.ack, runs: sent.runCount, at: at.toISOString() };
+}
+
+/**
  * True when an `agent.send` op (any mode, as `recordSend` writes it) names
  * `agent` since its row was created: mu has told this incarnation something.
  * The `hooks` gate's first-prompt exemption needs the opposite (spec D4).

@@ -270,26 +270,46 @@ describe("a check sent to a just-spawned codex pane (tasks-or-calls: another fam
     expect(fake.calls.filter((c) => c[0] === "paste-buffer")).toHaveLength(1);
   });
 
-  it("an unconfirmed first send to a pane a dialog holds: the wait ends as input with the pane tail, not busy", async () => {
+  it("an unconfirmed first send to a pane a dialog holds: the timed-out wait says so with the pane tail, never ends as input", async () => {
     beforeFirstPrompt();
     fake.onSubmit = null;
     fake.acks = false;
     await withEnv("MU_SEND_ACK_MS", "50", async () => {
       await runCliJson(["agent", "send", "cdx", "hi", "-w", "auth", "--json"], dbPath);
     });
+    expect(sendOps().at(-1)).toMatch(/ ack=unknown at=\d{4}-\d\d-\d\dT[^ ,]+Z/);
     fake.screen = () =>
       "  Do you trust the contents of this directory?\n› 1. Yes, continue\n  2. No, quit\n";
     await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
       const { data, exitCode } = await runCliJson(
-        ["wait", "agent:auth/cdx", "--timeout", "10", "--json"],
+        ["wait", "agent:auth/cdx", "--timeout", "0.3", "--json"],
         dbPath,
       );
-      expect(exitCode).toBe(7);
-      expect(data).toMatchObject({
-        firing: { kind: "input", ref: "agent:auth/cdx" },
-        snapshots: [{ blocked: { kind: "no_hook_event" } }],
-      });
-      expect(JSON.stringify(data)).toContain("1. Yes, continue");
+      expect(exitCode).toBeNull();
+      expect(data).toMatchObject({ firing: { kind: "heartbeat" } });
+      const notices = (data as { notices?: string[] }).notices ?? [];
+      expect(notices.join("\n")).toContain("agent cdx has sent no hook event");
+      expect(notices.join("\n")).toContain("1. Yes, continue");
+    });
+  });
+
+  it("a confirmed turn that started and stopped before the send's op was written is no silence (review repro)", async () => {
+    beforeFirstPrompt();
+    // The whole turn runs inside the send's ack wait: prompt and stop both precede recordSend.
+    fake.onSubmit = () => {
+      fake.emit("session_start", { source: "startup" });
+      fake.emit("prompt_submitted");
+      fake.emit("turn_stopped", { text: "All done" });
+    };
+    const sent = await runCliJson(["agent", "send", "cdx", "go", "-w", "auth", "--json"], dbPath);
+    expect(sent.data).toMatchObject({ ack: "confirmed" });
+    await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
+      const { data, exitCode } = await runCliJson(
+        ["wait", "agent:auth/cdx", "--timeout", "0.3", "--json"],
+        dbPath,
+      );
+      expect(exitCode).not.toBe(7);
+      expect(JSON.stringify(data)).not.toContain("no hook event");
     });
   });
 

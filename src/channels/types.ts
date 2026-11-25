@@ -87,11 +87,14 @@ export interface ChannelTarget {
    */
   remote?: RemoteReader;
   /**
-   * When mu last sent the agent a prompt since its spawn (epoch ms), filled by
-   * `channelTarget` for a `hooks` row: a watch that sees no hook event that
-   * long after it says so (`MU_HOOK_SILENCE_MS`). Absent: nothing sent.
+   * mu's last prompt to the agent since its spawn (its latest `agent.send` op
+   * other than an answer), filled by `channelTarget` for a `hooks` row whose
+   * op recorded it: `at`, epoch ms taken before the paste; the delivery's ack;
+   * the run count the send read. `mu wait`'s timeout reads it for the
+   * silence advisory (`hookSilence`). Absent: nothing sent, or an op that did
+   * not record the time.
    */
-  sentAt?: number;
+  sent?: LastSend;
   /**
    * The agent's job as its row records it (plugins spec D9, D13), filled by
    * `channelTarget`: its kind and view pane, and its host. A lease job's
@@ -163,6 +166,13 @@ export interface RemoteReader {
    * --remote`, an interrupt it sent) in the same exec.
    */
   read(opts?: { maxAgeMs?: number; write?: Record<string, unknown> }): Promise<RemoteReadResult>;
+}
+
+/** See ChannelTarget.sent. */
+export interface LastSend {
+  at: number;
+  ack?: string;
+  runs?: number;
 }
 
 /** A delivery's target: the whole agents row, which the typed errors and recovery hints name. */

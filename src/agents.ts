@@ -159,6 +159,7 @@ import {
   CarrierJobUnstoppedError,
 } from "./agents/errors.js";
 import {
+  hooksSendFields,
   recordSend,
   type SendResult,
   sentSinceSpawn,
@@ -750,6 +751,7 @@ export async function sendToAgent(
   // A first send since spawn: the hooks gate's evidence that a codex or muse pane murmur
   // has no row for has had no turn yet (spec D4). Any recorded send, of any mode, voids it.
   const firstPrompt = opts.force !== true && !sentSinceSpawn(db, agent);
+  const at = new Date();
   const sent = await deliver(channelTarget(db, agent, opts.socket), text, {
     ...opts,
     ...(firstPrompt ? { firstPrompt: true } : {}),
@@ -765,6 +767,7 @@ export async function sendToAgent(
       command: sent.command,
       state: sent.state,
       since: sent.since,
+      ...hooksSendFields(sent, at),
     },
     source,
   );

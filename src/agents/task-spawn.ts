@@ -111,7 +111,7 @@ import {
 } from "./spawn.js";
 import { FirstPromptUnknownError, resolveFirstTurn } from "./spawn-plugin.js";
 import { refuseRemoteSpawnMux } from "./spawn-remote.js";
-import { recordSend } from "./transport.js";
+import { hooksSendFields, recordSend } from "./transport.js";
 
 export interface TaskSpawnRequest {
   /** The spawn itself (name, workstream, cli, worktree, ...). `onIdentity` is this module's. */
@@ -718,6 +718,7 @@ async function drive(
   const onUndelivered = (w: { message: string }): void => {
     undelivered = w.message;
   };
+  const at = new Date();
   try {
     sent =
       firstSent ??
@@ -794,7 +795,13 @@ async function drive(
       row,
       "plain",
       Buffer.byteLength(hooksText ?? req.text),
-      { transport: sent.transport, state: sent.state, since: sent.since },
+      {
+        transport: sent.transport,
+        state: sent.state,
+        since: sent.since,
+        // job.start's own delivery carried no time taken before its paste.
+        ...(firstSent === undefined ? hooksSendFields(sent, at) : {}),
+      },
       await resolveActorIdentity(),
     );
   } catch {

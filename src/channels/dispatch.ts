@@ -27,7 +27,7 @@ import { composedStates } from "./compose.js";
 import { remoteReader } from "./hooks-remote.js";
 import { ChannelUnknownError, channelNamed } from "./registry.js";
 import { channelOf } from "./select.js";
-import type { AgentChannel, ChannelTarget, RemoteReader } from "./types.js";
+import type { AgentChannel, ChannelTarget, LastSend, RemoteReader } from "./types.js";
 
 /**
  * `agent` as a channel target: its control socket is rooted at the DB's
@@ -47,7 +47,7 @@ export function channelTarget<A extends ObservedAgent>(
     )
     .get(agent.incarnation, agent.paneId) as AgentFacts | undefined;
   const remote = agent.channel === "hooks" ? remoteOf(db, agent, row) : undefined;
-  const sentAt = agent.channel === "hooks" && row !== undefined ? lastSendAt(db, agent, row) : null;
+  const sent = agent.channel === "hooks" && row !== undefined ? lastSend(db, agent, row) : null;
   // A plugin job's ref is its job record's (its kind, key, handle and instance).
   const record = getCarrierJobByAgent(db, agent.incarnation);
   const pluginJob = record?.plugin != null ? pluginJobRef(db, record.token) : undefined;
@@ -57,7 +57,7 @@ export function channelTarget<A extends ObservedAgent>(
     stateDir: dirname(db.name),
     ...(socket !== undefined ? { socket } : {}),
     ...(remote !== undefined ? { remote } : {}),
-    ...(sentAt !== null ? { sentAt } : {}),
+    ...(sent !== null ? { sent } : {}),
     job:
       pluginJob ??
       agentJobRef({
@@ -77,21 +77,35 @@ interface AgentFacts {
 }
 
 /**
- * When mu last sent this incarnation a prompt (its latest `agent.send` op,
- * as `recordSend` writes it, since the row was made), epoch ms; null: never.
+ * mu's last prompt to this incarnation since the row was made: its latest
+ * `agent.send` op that is not an answer (typed keys are no prompt), as
+ * `recordSend` writes it. null: none, or an op without its `at=` time (an
+ * interrupt, a send an older mu recorded): then nothing is known.
  */
-function lastSendAt(db: Db, agent: ObservedAgent, row: AgentFacts): number | null {
+function lastSend(db: Db, agent: ObservedAgent, row: AgentFacts): LastSend | null {
   const prefix = `agent send ${agent.name} (`;
   const hit = db
     .prepare(
-      `SELECT MAX(created_at) AS at FROM ops WHERE entity = 'agent' AND key = ?
-         AND intent = 'agent.send' AND created_at >= ? AND substr(payload, 1, ?) = ?`,
+      `SELECT payload FROM ops WHERE entity = 'agent' AND key = ?
+         AND intent = 'agent.send' AND created_at >= ? AND substr(payload, 1, ?) = ?
+         AND substr(payload, ?, 11) <> 'mode=answer'
+       ORDER BY seq DESC LIMIT 1`,
     )
-    .get(agent.workstreamName, row.created_at, prefix.length, prefix) as
-    | { at: string | null }
+    .get(agent.workstreamName, row.created_at, prefix.length, prefix, prefix.length + 1) as
+    | { payload: string }
     | undefined;
-  const at = hit?.at == null ? Number.NaN : Date.parse(hit.at);
-  return Number.isNaN(at) ? null : at;
+  if (hit === undefined) return null;
+  const field = (k: string): string | undefined =>
+    new RegExp(`[ (]${k}=([^ ,)]+)`).exec(hit.payload)?.[1];
+  const at = Date.parse(field("at") ?? "");
+  if (Number.isNaN(at)) return null;
+  const ack = field("ack");
+  const runs = Number(field("runs") ?? Number.NaN);
+  return {
+    at,
+    ...(ack !== undefined ? { ack } : {}),
+    ...(Number.isInteger(runs) ? { runs } : {}),
+  };
 }
 
 /** The remote reader of a `hooks` row spawned on a host, from its row; undefined for a local one. */

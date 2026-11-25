@@ -76,7 +76,6 @@ import {
   firstSendAckMs,
   freshStarted,
   type HooksPane,
-  hookSilenceMs,
   pollPane,
   readHooksPane,
   runInNewSession,
@@ -89,7 +88,6 @@ import {
 } from "./hooks-pane.js";
 import {
   awaitReadyScreen,
-  paneTail,
   pasteUnsubmitted,
   type ReadyWait,
   SUBMIT_GRACE_MS,
@@ -692,42 +690,6 @@ function lostObservation(
   };
 }
 
-/** The `blocked` kind of a pane that drew no hook event after mu's send (silentObservation). */
-export const NO_HOOK_EVENT = "no_hook_event";
-
-/**
- * The watch's end for a pane that has had no hook event for
- * `MU_HOOK_SILENCE_MS` since mu's last send (`t.sentAt`): no row at all
- * (`pane` absent or rowless), or a row not running whose last event predates
- * the send. A paste a dialog took (codex's folder trust or hooks review) and
- * a harness whose hooks never run read the same; either way a human must
- * look, so it ends as a dialog (the wait's `input`), the pane's tail in its
- * title, never as busy until the wait's deadline. undefined: not silent.
- */
-async function silentObservation(
-  t: ChannelTarget,
-  pane: HooksPane | undefined,
-): Promise<ChannelObservation | undefined> {
-  const { agent, sentAt } = t;
-  const ms = hookSilenceMs();
-  if (sentAt === undefined || ms === 0 || Date.now() - sentAt < ms) return undefined;
-  if (pane !== undefined && pane.activity !== null) {
-    if (pane.activity === "running" || pane.blocked !== null) return undefined;
-    if (pane.updatedAt === null || pane.updatedAt >= sentAt) return undefined;
-  }
-  const secs = Math.round((Date.now() - sentAt) / 1000);
-  const tail = await paneTail(agent.paneId, agent.paneIdentity);
-  const title = say("agent.no_hook_event", agent.name, agent.workstreamName, secs, tail);
-  const base = pane !== undefined ? paneObservation(agent, pane) : lostObservation(agent);
-  return {
-    ...base,
-    status: "needs_permission",
-    reason: title,
-    blocked: { kind: NO_HOOK_EVENT, title, since: sentAt },
-    settled: false,
-  };
-}
-
 /**
  * Watch the agent's current or next turn end past `afterRuns` (spec D4
  * `settle`): poll `murmur pane` until a turn past it has stopped, a dialog
@@ -758,11 +720,7 @@ async function watchHooks(
   const first = await readHooksPane(agent.paneId);
   if (first === undefined) return undefined;
   if (settledRuns(first) === undefined) {
-    // A local pane with no row is polled by the caller, unless mu sent it
-    // something: then it is watched for its row or its silence.
-    return remote === undefined && t.sentAt === undefined
-      ? undefined
-      : awaitRow(t, remote, signal, opts);
+    return remote === undefined ? undefined : awaitRow(t, remote, signal, opts);
   }
   const unseen = before !== undefined && settledRuns(before) === undefined;
   return follow(t, signal, opts, first, before, unseen ? null : first.sessionId);
@@ -771,17 +729,15 @@ async function watchHooks(
 /**
  * A remote worker whose local pane has no row yet: just spawned, its harness
  * not yet started, or its node not read yet (no admission slot, an ssh
- * hiccup); or a local pane mu sent a prompt that has no row yet. Poll the
- * pane, reading a remote node every few polls, until a row appears, then
- * watch from it (`follow`, the session new to the watch), or until the pane
- * has been silent too long since mu's send (silentObservation).
+ * hiccup). Poll the pane, reading the node every few polls, until a row
+ * appears, then watch from it (`follow`, the session new to the watch).
  * Reported busy meanwhile; `afterRuns` stands as given, and without one the
  * baseline is fixed at the first row (so a turn the node ran before mu could
  * read it never counts as this one).
  */
 function awaitRow(
   t: ChannelTarget,
-  remote: RemoteReader | undefined,
+  remote: RemoteReader,
   signal: AbortSignal,
   opts: { afterRuns?: number; inc?: string },
 ): ChannelWatch {
@@ -804,7 +760,7 @@ function awaitRow(
         if (isJobGone(up)) return lostObservation(agent, "the pane is gone", up);
       }
       polls += 1;
-      if (remote !== undefined && polls % REMOTE_WATCH_POLLS === 0) {
+      if (polls % REMOTE_WATCH_POLLS === 0) {
         await remote.read();
         if (signal.aborted) return lostObservation(agent);
       }
@@ -815,22 +771,12 @@ function awaitRow(
         continue;
       }
       misses = 0;
-      if (settledRuns(pane) === undefined) {
-        const silent = await silentObservation(t, pane);
-        if (silent !== undefined) return silent;
-        continue;
-      }
+      if (settledRuns(pane) === undefined) continue;
       return await follow(t, signal, opts, pane, undefined, null).settled;
     }
   })();
   return {
-    initial: lostObservation(
-      agent,
-      remote === undefined
-        ? "its pane has reported no session yet"
-        : "its node has reported no session yet",
-      "busy",
-    ),
+    initial: lostObservation(agent, "its node has reported no session yet", "busy"),
     ...(opts.afterRuns !== undefined ? { afterRuns: opts.afterRuns } : {}),
     settled,
   };
@@ -898,11 +844,7 @@ function follow(
               : undefined;
           return settledObservation(agent, late ?? pane, witness, textSession);
         }
-        if (!past(pane)) {
-          witness = witnessOf(pane);
-          const silent = await silentObservation(t, pane);
-          if (silent !== undefined) return silent;
-        }
+        if (!past(pane)) witness = witnessOf(pane);
       }
       await sleep(WATCH_POLL_MS);
       await yieldTurn();
