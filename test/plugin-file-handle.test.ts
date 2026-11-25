@@ -243,7 +243,7 @@ describe("recovery", () => {
     );
     // reattach refuses a no-row plugin job, so the note offers only close then unpark.
     expect(listNotes(h.db, "t1", "ws").at(-1)?.content).toMatch(
-      /resume with mu agent close w1 -w ws then mu task unpark t1$/,
+      /resume with mu agent close w1 -w ws then mu task unpark t1 -w ws$/,
     );
     // The master is down: any lookup hands back. The local file needs none.
     h.f.set({ faults: { "job.lookup": ["human", "human"] } });
@@ -553,7 +553,7 @@ describe("a bound file kind whose view died while its job runs", () => {
     expect((left as Error).message).not.toMatch(/may still run|null/);
     // The reaper's note must not send the operator to that refusal.
     const note = listNotes(h.db, "t1", "ws").at(-1)?.content ?? "";
-    expect(note).toMatch(/resume with mu agent close w1 -w ws then mu task unpark t1$/);
+    expect(note).toMatch(/resume with mu agent close w1 -w ws then mu task unpark t1 -w ws$/);
     expect(note).not.toMatch(/reattach/);
     expect(h.calls("job.attach")).toEqual([]);
   });

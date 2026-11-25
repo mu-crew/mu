@@ -72,7 +72,7 @@ describe("reconcile reaps a lease row", () => {
       ownerName: null,
     });
     expect(lastNote()).toBe(
-      "[reaper] previous owner w1 gone (pane died); its lease job job-7 on dev may still run, so the task is parked: resume with mu agent reattach w1 -w auth --task t1, or mu agent close w1 -w auth then mu task unpark t1",
+      "[reaper] previous owner w1 gone (pane died); its lease job job-7 on dev may still run, so the task is parked: resume with mu agent reattach w1 -w auth --task t1, or mu agent close w1 -w auth then mu task unpark t1 -w auth",
     );
     expect(listReady(db, "auth").map((t) => t.name)).not.toContain("t1");
     insertAgent(db, { name: "w2", workstream: "auth", paneId: "%91" });

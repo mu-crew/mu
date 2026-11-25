@@ -108,13 +108,15 @@ export function reapAgentRow(
  * The two ways out of a parked task, as shell words. `reattach --task` resolves its ids in the
  * agent's workstream, so a task owned across workstreams is claimed back in a second step.
  * A plugin job record has one: reattach needs its row, so close then unpark.
+ * Every unpark names its workstream: a bare one resolves in the caller's, which may hold
+ * another task of the same id.
  */
 function resumeHint(name: string, aws: string, id: string, tws: string, plugin: boolean): string {
   const [n, a, i, t] = [name, aws, id, tws].map(shellWord);
   // A reattach refuses a plugin job with no row (reattach-check.ts): only the close remains.
   if (plugin)
-    return `mu agent close ${n} -w ${a} then mu task unpark ${i}${aws === tws ? "" : ` -w ${t}`}`;
+    return `mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
   if (aws === tws)
-    return `mu agent reattach ${n} -w ${a} --task ${i}, or mu agent close ${n} -w ${a} then mu task unpark ${i}`;
+    return `mu agent reattach ${n} -w ${a} --task ${i}, or mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
   return `mu agent reattach ${n} -w ${a} then mu task claim ${i} -w ${t} --for ${shellWord(`${aws}/${name}`)} --force, or mu agent close ${n} -w ${a} then mu task unpark ${i} -w ${t}`;
 }

@@ -32,6 +32,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   `mu agent reattach --task`, which refuses a plugin job with no row; it names
   close then `mu task unpark`.
 - `mu agent reattach` on a plugin job with no agent row no longer says the job
+  "may still run". It says a plugin reattach needs the row and its launch
+  metadata, and that close stops what the record still names.
 - Closing a `--mule` worker whose local dispatch processes are still exiting now refuses with exit 4 and a retry hint, not a human hand-back. Recovery waits for those processes before checking remote jobs or removing the worktree.
 - `mu host check` on a `--plugin mule` profile with no remote harness no longer fails: the `harnesses` step is advice (only `--host` spawns need one), so a rung-2-only host passes.
 - `mu doctor`'s plugin-migration recipe uses `mu host add --plugin mule --replace` (never `host rm` first, which loses the profile on a refusal); the refusal text no longer tells a `--replace` caller to remove the old profile.
