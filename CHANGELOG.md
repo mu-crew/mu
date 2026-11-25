@@ -29,6 +29,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - `mu agent close` of a remote worker no longer leaves a recovery record for the worktree it just removed when another mu process pruned the row (its pane already gone) during the close; the next spawn of the name is no longer refused.
 - `mu agent close` of a remote worker waits up to 30 s (was 5 s) for a process to leave the worktree before it refuses, so a harness helper that lingers after the pane dies no longer turns the close into two steps.
 - A session template that rides a shared ssh master no longer breaks the next spawn of a closed name (`ctl: missing`, `--send failed`): each spawn forwards a fresh `{local_sock}`, which the agent's derived socket links to, so the master's old forward of the name is never asked for again. `mu host check` no longer warns when a session template lacks `ControlMaster=no` / `ControlPath=none`, and where fresh ssh from the agent's tree is blocked the guide offers riding your master beside the mule plugin.
+- A `--host` worker whose control socket never answered says which end failed: `ctl: missing` that nothing bound the forward's local end, `ctl: refused` that the forward is up but pi did not answer on the host within the handshake budget (still starting: raise `MU_SPAWN_CTL_MS`; or never started).
 
 ## [5.4.2] — 2026-11-25
 

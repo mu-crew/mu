@@ -32,7 +32,7 @@
 import type { CarrierJob } from "../carrier-jobs.js";
 import type { ChannelName } from "../channels/types.js";
 import { say } from "../messages.js";
-import { defaultSpawnLivenessMs } from "./spawn.js";
+import { defaultSpawnCtlMs, defaultSpawnLivenessMs } from "./spawn.js";
 
 /**
  * Pre-flight failure: the command mu would have spawned in the new
@@ -326,7 +326,10 @@ export class AgentCtlUnreachableError extends Error {
     /** The host profile the agent runs on, when remote: its forward is the usual cause. */
     public readonly host?: string | null,
   ) {
-    super(say("agent.ctl_unreachable", agentName, kind, socket));
+    // A remote agent's two ends fail apart: no local forward (missing), or no pi behind it (refused).
+    const remote =
+      host == null ? "" : say("agent.ctl_unreachable_remote", kind, host, defaultSpawnCtlMs());
+    super(say("agent.ctl_unreachable", agentName, kind, socket) + remote);
   }
 }
 

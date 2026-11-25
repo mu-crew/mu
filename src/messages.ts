@@ -99,6 +99,10 @@ export const MESSAGES = {
     `agent ${name} reported a startup error ${when} (pane ${pane}). The pane is alive but the spawned CLI parked at an error prompt instead of becoming a working agent.\n\nMatched line: ${line}${scroll}`,
   "agent.ctl_unreachable": (name: string, kind: string, socket: string) =>
     `agent ${name} has no control socket (ctl: ${kind}) at ${socket}; mu cannot send to or wait on it exactly`,
+  "agent.ctl_unreachable_remote": (kind: "missing" | "refused", host: string, budgetMs: number) =>
+    kind === "missing"
+      ? `: its pane on host ${host} is up, but nothing bound the local end of its forward (does the shell template forward -L {local_sock}:{remote_sock}?)`
+      : `: the forward to host ${host} is up, but pi did not answer there within ${Number((budgetMs / 1000).toFixed(1))} s: still starting (a slow cold start: raise MU_SPAWN_CTL_MS) or never started`,
   "agent.send_indeterminate": (name: string, op: string, reason: string, msgId?: string) =>
     `agent ${name}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown${msgId === undefined ? "" : `, msgId ${msgId}`}. Never resend blindly`,
   "agent.restarted": (name: string, expected: string, actual: string | undefined) =>

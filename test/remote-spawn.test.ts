@@ -1086,6 +1086,45 @@ describe("the CLI", () => {
     expect(only).toContain("/srv/b");
   });
 
+  const spawnWarnings = async (): Promise<string> => {
+    const r = await runCliJson(
+      ["agent", "spawn", "worker-1", "-w", "auth", "--host", "dev", "--json"],
+      dbPath(),
+    );
+    expect(r.error).toBeUndefined();
+    return ((r.data as { warnings?: string[] }).warnings ?? []).join("\n");
+  };
+
+  it("ctl: missing on a remote worker says the local end of the forward never bound", async () => {
+    extensionOn = false;
+    const w = await spawnWarnings();
+    expect(w).toContain("(ctl: missing)");
+    expect(w).toContain(
+      "its pane on host dev is up, but nothing bound the local end of its forward",
+    );
+  });
+
+  it("ctl: refused on a remote worker says the forward is up but pi did not answer, and names the knob", async () => {
+    // The forward is bound, nothing listens on the host: ssh accepts, then drops the connection.
+    extensionOn = false;
+    mux.restore();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) => {
+      const res = await fake(args);
+      const forward = isPaneCall(args) ? forwardOf(args) : undefined;
+      if (forward !== undefined) {
+        const s = createServer((sock) => sock.destroy());
+        servers.push(s);
+        await new Promise<void>((r) => s.listen(forward, () => r()));
+      }
+      return res;
+    });
+    const w = await spawnWarnings();
+    expect(w).toContain("(ctl: refused)");
+    expect(w).toContain("the forward to host dev is up, but pi did not answer there within 0.3 s");
+    expect(w).toContain("raise MU_SPAWN_CTL_MS");
+  });
+
   it("--root without --worktree is still refused for a local agent", async () => {
     const r = await runCliJson(
       ["agent", "spawn", "worker-1", "-w", "auth", "--root", "/srv/b", "--json"],
