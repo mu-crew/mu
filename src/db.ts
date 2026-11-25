@@ -420,7 +420,7 @@ export class RemoteWorkspaceDbError extends Error {
   }
 }
 
-function refuseRemoteWorkspace(): void {
+export function refuseRemoteWorkspace(): void {
   if (process.env.MU_REMOTE_WORKSPACE !== "1" || process.env.MU_DB_PATH) return;
   throw new RemoteWorkspaceDbError();
 }

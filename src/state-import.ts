@@ -32,7 +32,14 @@ import { existsSync, linkSync, rmSync } from "node:fs";
 import { hostname } from "node:os";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
-import { type Db, SchemaTooNewError, SchemaTooOldError, upgradeSchema, V13 } from "./db.js";
+import {
+  type Db,
+  refuseRemoteWorkspace,
+  SchemaTooNewError,
+  SchemaTooOldError,
+  upgradeSchema,
+  V13,
+} from "./db.js";
 import { TERMINAL_DELEGATE_STATES } from "./delegates.js";
 import { withFileLock } from "./file-lock.js";
 import { countUnpublishedOps, syncDir } from "./segments.js";
@@ -90,6 +97,7 @@ export class StateImportBusyError extends Error {
 /** Run the import when it is due (spec D5); null when it is not. One stderr
  *  line when it imported, so `--json` stdout stays clean. */
 export async function importStateIfDue(): Promise<ImportResult | null> {
+  refuseRemoteWorkspace(); // a marked remote shell never touches the host's state (Spec B D1.2c)
   const due = dueStateImport();
   if (due === null) return null;
   const result = await importState(due.source, due.target);

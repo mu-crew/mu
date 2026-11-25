@@ -21,7 +21,13 @@ import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CURRENT_SCHEMA_VERSION, openDb, SchemaTooNewError, SchemaTooOldError } from "../src/db.js";
+import {
+  CURRENT_SCHEMA_VERSION,
+  openDb,
+  RemoteWorkspaceDbError,
+  SchemaTooNewError,
+  SchemaTooOldError,
+} from "../src/db.js";
 import { CARRIER_JOBS_DDL } from "../src/db-carrier.js";
 import { checkDrift } from "../src/drift.js";
 import { flushSegment } from "../src/segments.js";
@@ -166,6 +172,16 @@ describe("a successful import", () => {
     });
     expect(existsSync(target)).toBe(true);
     expectSourceUntouched();
+  });
+
+  it("MU_REMOTE_WORKSPACE=1 refuses before the import: no copy, lock or mu5 dir", async () => {
+    await withEnv("XDG_STATE_HOME", root, async () => {
+      await withEnv("MU_REMOTE_WORKSPACE", "1", async () => {
+        await expect(importStateIfDue()).rejects.toBeInstanceOf(RemoteWorkspaceDbError);
+      });
+    });
+    expect(existsSync(join(root, "mu5"))).toBe(false);
+    expectNothingImported();
   });
 
   it("openDb refuses mu 5's default DB while the import is due, so nothing creates an empty one", async () => {
