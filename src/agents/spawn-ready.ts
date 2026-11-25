@@ -138,9 +138,18 @@ export interface CtlPane {
   shellPrompt: boolean;
 }
 
-/** `line` ends like an interactive shell's prompt. */
+/**
+ * `line` ends like an interactive shell's prompt: the prompt mark as its own word
+ * (`user@dev0 ~ %`, `~/repo ❯`), or ending a user@host, `[...]`, host or shell-version
+ * token (`user@host:~$`, `[u@h repo]$`, `dev0%`, `sh-3.2$`). Startup output is not: a
+ * percentage (`64%`), a mark glued to text (`<anthropic>`, `[===>`). A heuristic, so spawn
+ * acts on it only with the rest of the evidence (CtlPane).
+ */
 export function looksLikeShellPrompt(line: string): boolean {
-  return /[$#%>❯»]$/.test(line);
+  const l = line.trim();
+  if (l.length > 120 || /(?:^|[^\w.])\d+(?:\.\d+)?\s*%$/.test(l)) return false;
+  if (/(?:^|\s)[$#%>❯»➜]$/.test(l)) return true;
+  return /^(?:[\w.-]+@[\w.-]+(?::\S*)?|\[[^\]]+\]|[\w.-]+)[$#%]$/.test(l);
 }
 
 /**

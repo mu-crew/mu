@@ -1167,15 +1167,20 @@ describe("the CLI", () => {
     });
     const w = await spawnWarnings();
     expect(w).toContain("(ctl: missing)");
-    expect(w).toContain(`the pane's last line: "user@dev0 ~ %"`);
+    expect(w).toContain(
+      `the pane's last line (not enough to tell whether pi started): "user@dev0 ~ %"`,
+    );
     expect(w).not.toContain("shell prompt");
   });
 
-  it("ctl: refused with pi still printing shows the pane's last line", async () => {
-    forwardWithNoPi('Warning: No models match pattern "some-model"\n');
+  it("ctl: refused with pi still printing progress shows the last line with uncertainty", async () => {
+    process.env.MU_SPAWN_LIVENESS_MS = "1500";
+    forwardWithNoPi(
+      "Downloading extension bundle: 64%\nchannel 3: open failed: connect failed: No such file or directory\n",
+    );
     const w = await spawnWarnings();
     expect(w).toContain(
-      `the pane's last line: "Warning: No models match pattern \\"some-model\\""`,
+      `the pane's last line (not enough to tell whether pi started): "Downloading extension bundle: 64%"`,
     );
     expect(w).not.toContain("shell prompt");
   });
