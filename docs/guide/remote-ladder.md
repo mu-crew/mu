@@ -165,6 +165,11 @@ mu host add box --plugin mule --fetch '<your fetch command>' --repo '~/repo'
 mu host check box
 ```
 
+- The view is mule's carrier, so killing the pane stops the job, as on a
+  [lease profile](remote.md#session-capped-hosts). Reconcile keeps the row only
+  while the job runs: after a `kill -9` of the carrier (or a hangup whose stop
+  could not reach the host), `mu agent reattach <name> -w <ws>` opens a new
+  view. Once the row is reaped, close it.
 - Open the master `mule init` prints for the host first; it opens none. The
   mu host name is the mule host name. `mule init` creates no mu profile.
 - A plugin profile takes no `--shell`, `--exec`, `--stop`, `--attach` or

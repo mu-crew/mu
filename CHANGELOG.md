@@ -19,6 +19,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Docs and the `host init --ssh --template` starter now say what to do where fresh ssh connections from the agent's process tree are impossible: use the mule plugin (its master is opened from your terminal), not a session template over a shared master.
 
 ### Fixed
+- Lease docs no longer say a dead lease pane's job runs on. Killing a mule
+  lease pane (`tmux kill-pane`, a tmux restart) hangs up the carrier, which
+  stops its job. Only a `kill -9`, a crash or a stop that cannot reach the host
+  leaves a job to reattach. The remote guide shows how to rehearse that loss.
 - `mu agent reattach` on a plugin job with no agent row no longer says the job
 - Closing a `--mule` worker whose local dispatch processes are still exiting now refuses with exit 4 and a retry hint, not a human hand-back. Recovery waits for those processes before checking remote jobs or removing the worktree.
 - `mu host check` on a `--plugin mule` profile with no remote harness no longer fails: the `harnesses` step is advice (only `--host` spawns need one), so a rung-2-only host passes.

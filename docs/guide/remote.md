@@ -463,13 +463,20 @@ mu host check dev --root '~/repo'
   then close again. `--force` never skips the stop. A handle the spawn had not
   recorded yet is read from the job file; with neither, close refuses (`spawn in
   progress`).
+- Killing a lease pane (`tmux kill-pane`, closing its window, a tmux restart)
+  hangs up the mule carrier, which stops its job: `mule rm`, retried for up
+  to 10 minutes, a failure recorded in `<job_file>.<job>.stop-failed`. That is
+  a stop, not a carrier loss, and leaves nothing to reattach. To rehearse a
+  loss, `kill -9` the carrier's process group:
+  `kill -9 -- -"$(tmux display -p -t <pane> '#{pane_pid}')"`.
 - With no agent row left (the carrier was `kill -9`ed and reconcile reaped it,
   a teardown, a raw delete), preview with `mu agent close <name> -w <ws>`,
   then repeat with `--if <rev>` to stop the job and drop its handle first,
   then close the recovery worktree, if any. A
   tree that refuses (dirty, uncollected) no longer keeps the name fenced: the
   retry only closes the tree. `agent collect` never stops a job.
-- A reaped lease agent whose job still runs (a tmux restart, a `kill -9`)
+- A reaped lease agent whose job still runs (a `kill -9`, or a hangup whose
+  stop could not reach the host)
   shows in `mu agent list` as a leftover whose `next` is the reattach or the
   close preview. `mu agent reattach <name> -w <ws>` previews, `--if <rev>` opens a new carrier
   on the job through the profile's `--attach`. It refuses while the old pane or
