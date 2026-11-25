@@ -51,7 +51,7 @@ import {
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
-import { selectRemoteRecovery } from "../remote-recovery.js";
+import { deleteRecoveryById, selectRemoteRecovery } from "../remote-recovery.js";
 import { assertRemoteWorktreeReleasable, closeRemoteWorktree } from "../remote-worktree.js";
 import { agentRevision, assertRevision } from "../revision.js";
 import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
@@ -693,6 +693,10 @@ async function closeLocked(
     // Its lease job is stopped (or abandoned on purpose): the tasks reopen as todo.
     { preserve: !remoteHandled, leaseSettled: true },
   );
+  // A ghost prune by another mu process (the pane is gone since the kill) may have reaped the
+  // row while the host was removing the tree, recording that very tree: this close handled it,
+  // so its incarnation's record goes too.
+  if (remoteHandled && !deletedRow) deleteRecoveryById(db, agent.incarnation);
   if (!deletedRow && replaced()) throw new AgentReplacedError(name, opts.workstream);
   // Last: the reservation, once its job is stopped and its job file and tree are dealt with.
   if (lease !== undefined) releaseLeaseClose(db, lease);

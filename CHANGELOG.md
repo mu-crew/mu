@@ -26,6 +26,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - `mu host exec` text mode names `HostExecNoExit` on the deadline line, as `--json` does.
 - `mu host check` on a `--plugin mule` profile whose host has no pi now says the pi and extension steps are "not needed for --mule (rung 2)" instead of a bare skip.
 - `mu host exec` in text mode now prints the `no exit code (deadline or no answer)` line on stderr (exit 5), as `--json` already did; before, a deadline exit was silent.
+- `mu agent close` of a remote worker no longer leaves a recovery record for the worktree it just removed when another mu process pruned the row (its pane already gone) during the close; the next spawn of the name is no longer refused.
 
 ## [5.4.2] — 2026-11-25
 

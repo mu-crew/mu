@@ -422,6 +422,27 @@ describe("races during the slow step", () => {
     expect(records()).toHaveLength(1);
   });
 
+  it("a ghost prune that reaps the row mid-close leaves no record of the tree the close removed", async () => {
+    // Another mu process (list, wait, a status segment) prunes the row once the kill
+    // left its pane gone, while the close is still on the host: the reap records the tree.
+    insertAgent(db, {
+      name: "worker-1",
+      workstream: "auth",
+      paneId: "%5",
+      cwd: WT,
+      base: BASE,
+      host: "dev",
+      repo: "/srv/repo",
+    });
+    const out = await during(
+      () => expect(deleteAgent(db, "worker-1", "auth")).toBe(true),
+      () => close(),
+    );
+    expect(out).toMatchObject({ worktree: { action: "removed" } });
+    expect(removals()).toHaveLength(1);
+    expect(records()).toEqual([]);
+  });
+
   it("a record deleted mid-close stops the removal", async () => {
     orphaned();
     const err = await during(
