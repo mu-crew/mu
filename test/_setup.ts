@@ -17,6 +17,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { inject } from "vitest";
+import { setLocalLaunchFlagsForTests } from "../src/agents/spawn-presets.js";
 import {
   setMurmurHookRunnerForTests,
   setMurmurPaneRunnerForTests,
@@ -78,6 +79,11 @@ process.env.MU_MUX = "tmux";
 // and a developer's own queue must not leak in. test/muzzle-queue.test.ts
 // scripts it.
 setMuzzleRunnerForTests(async () => null);
+
+// Baseline: no local launcher takes a launch flag (codex's `--no-daemon`), so no
+// test runs the machine's own `codex --help`. test/spawn-presets.test.ts probes
+// fake launchers on PATH.
+setLocalLaunchFlagsForTests(() => []);
 
 // Baseline: no real murmur pane. The hooks channel's send gate and ack ask
 // `murmur pane <pane> --json`, which drains the developer's real inbox; the

@@ -3,10 +3,16 @@
 // gets the model flag only (its --approve is folder trust). `mu agent list`
 // shows each agent's harness and channel.
 
-import { mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  launchCommand,
+  localLaunchFlags,
+  setLocalLaunchFlagsForTests,
+} from "../src/agents/spawn-presets.js";
 import {
   getAgent,
   resetCommandResolverForTests,
@@ -41,10 +47,13 @@ beforeEach(() => {
   ensureWorkstream(db, "auth");
   state = freshMockState();
   mux = installMux("tmux", mockTmux(state).executor);
+  // A codex whose --help lists --no-daemon (0.156+); the probe itself is tested below.
+  setLocalLaunchFlagsForTests((_, h) => (h === "codex" ? ["--no-daemon"] : []));
 });
 
 afterEach(() => {
   mux.restore();
+  setLocalLaunchFlagsForTests(() => []);
   resetSleep();
   resetCommandResolverForTests();
   db.close();
@@ -113,6 +122,14 @@ describe("spawn presets", () => {
     expect(launched("worker-1")).toBe("codex");
   });
 
+  it("a codex whose --help does not list --no-daemon (0.155) launches exactly as before", async () => {
+    setLocalLaunchFlagsForTests(() => []);
+    await spawnAgent(db, { name: "orch-1", workstream: "auth", cli: "codex", orchestrator: true });
+    await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "codex" });
+    expect(launched("orch-1")).toBe("codex");
+    expect(launched("worker-1")).toBe("codex --dangerously-bypass-approvals-and-sandbox");
+  });
+
   it("--model on the CLI reaches the pane; a remote command gate refuses it", async () => {
     const r = await runCliJson(
       [
@@ -171,6 +188,77 @@ describe("spawn presets", () => {
     expect(launched("worker-2")).toBe(
       "codex --dangerously-bypass-approvals-and-sandbox --no-daemon --model x",
     );
+  });
+});
+
+describe("the local launch-flag probe: a real launcher's --help, cached per binary", () => {
+  /** A fake codex that parses its argv like clap: an unknown flag exits 2 before it starts. */
+  const fakeCodex = (sub: string, takesNoDaemon: boolean): string => {
+    const bin = join(dir, sub);
+    mkdirSync(bin, { recursive: true });
+    const help = takesNoDaemon
+      ? "Usage: codex [OPTIONS] [PROMPT]\\n  -m, --model <MODEL>\\n      --no-daemon  Run the TUI in-process\\n"
+      : "Usage: codex [OPTIONS] [PROMPT]\\n  -m, --model <MODEL>\\n";
+    const known = takesNoDaemon ? "--no-daemon|" : "";
+    writeFileSync(
+      join(bin, "codex"),
+      [
+        "#!/bin/sh",
+        'for a in "$@"; do',
+        '  case "$a" in',
+        `    --help) printf '${help}'; exit 0 ;;`,
+        `    ${known}--dangerously-bypass-approvals-and-sandbox) ;;`,
+        "    -*) echo \"error: unexpected argument '$a' found\" >&2; exit 2 ;;",
+        "  esac",
+        "done",
+        "exit 0",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(join(bin, "codex"), 0o755);
+    return bin;
+  };
+  /** Run the launch line the way a pane's shell does, with `bin` first on PATH. */
+  const runs = (line: string, bin: string): boolean => {
+    try {
+      execFileSync("/bin/sh", ["-c", line], {
+        env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+        stdio: "ignore",
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  it("an old codex gets no --no-daemon and starts; a new one gets it and starts; a literal --no-daemon fails on the old", async () => {
+    setLocalLaunchFlagsForTests(null);
+    const oldBin = fakeCodex("old", false);
+    const newBin = fakeCodex("new", true);
+    expect(runs("codex --no-daemon", oldBin)).toBe(false);
+    const launch = async (bin: string): Promise<string> => {
+      let line = "";
+      await withEnv("PATH", `${bin}:/usr/bin:/bin`, async () => {
+        line = launchCommand("codex", "codex", {}, { remote: false });
+      });
+      return line;
+    };
+    const oldLine = await launch(oldBin);
+    const newLine = await launch(newBin);
+    expect(oldLine).toBe("codex --dangerously-bypass-approvals-and-sandbox");
+    expect(newLine).toBe("codex --dangerously-bypass-approvals-and-sandbox --no-daemon");
+    expect(runs(oldLine, oldBin)).toBe(true);
+    expect(runs(newLine, newBin)).toBe(true);
+    // Cached per binary: a second probe of the same file does not run it again.
+    chmodSync(join(newBin, "codex"), 0o644);
+    await withEnv("PATH", `${newBin}:/usr/bin:/bin`, async () => {
+      expect(localLaunchFlags("codex", "codex")).toEqual(["--no-daemon"]);
+    });
+    // A launcher not on PATH, or another harness: none.
+    await withEnv("PATH", "/nonexistent", async () => {
+      expect(localLaunchFlags("codex", "codex")).toEqual([]);
+    });
+    expect(localLaunchFlags("claude", "claude")).toEqual([]);
   });
 });
 

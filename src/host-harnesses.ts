@@ -22,6 +22,7 @@
 import type { Db } from "./db.js";
 import {
   CONFIG_DIR_ENV,
+  HARNESS_TABLE,
   HARNESSES,
   type Harness,
   homeHookConfig,
@@ -41,12 +42,21 @@ export interface HarnessProbe {
   /** mu's `mu hook stop <harness>` entry; null where mu installs none (muse cannot block a stop, pi has its nudge). */
   muHooks: boolean | null;
   /**
-   * codex only: how many of the hook handlers in its hooks.json codex has
-   * trusted (a `trusted_hash` under that file's key in config.toml) of how
-   * many there are. codex skips a hook it has not trusted. Absent: not codex,
-   * or a record from before the probe read it.
+   * codex only: how many `trusted_hash` lines its config.toml holds (where
+   * codex records each hook it trusts, under `[hooks.state]`). 0 means codex
+   * has trusted no hook, so it skips murmur's; more proves nothing per hook
+   * (codex compares a hash of its own form of each hook, which mu cannot
+   * recompute), so it is advice, never a failure. Absent: not codex, or a
+   * record from before the probe read it.
    */
-  hookTrust?: { trusted: number; total: number };
+  trustedHashes?: number;
+  /**
+   * The harness row's launch flags (`launchFlags`, codex's `--no-daemon`)
+   * that the found launcher's `--help` lists: a spawn on the host adds only
+   * these (an older codex rejects an unknown flag before it starts). Absent:
+   * a row with none, or a record from before the probe read it: none added.
+   */
+  launchFlags?: string[];
 }
 
 /** What `host check` recorded for a host (`host_profiles.capabilities`). */
@@ -72,27 +82,36 @@ export class HostHarnessMissingError extends Error {
 
 /** The line each harness's answer starts with (a login shell may print rc noise first). */
 const MARK = "MU_HARNESS";
-/** The line of codex's hook trust: `MU_HOOK_TRUST codex <trusted> <handlers>`. */
+/** The line of codex's hook trust: `MU_HOOK_TRUST codex <trusted_hash lines>`. */
 const TRUST_MARK = "MU_HOOK_TRUST";
+/** The line of a harness's supported launch flags: `MU_LAUNCH_FLAGS <harness>[ <flag>...]`. */
+const FLAGS_MARK = "MU_LAUNCH_FLAGS";
 
 /**
- * codex's hook trust, read the way codex keys it (codex 0.150+): a hook runs
- * only while config.toml holds a `trusted_hash` for it under
- * `[hooks.state."<codex home>/hooks.json:<event>:<group>:<handler>"]`, the
- * home being `$CODEX_HOME` canonicalized, else `$HOME/.codex` as it is (a
- * `/home` that links to `/var/home` stays `/home`). The script counts the
- * handlers (`"command":` entries) in hooks.json and the trusted keys under
- * that exact file. Fewer trusted than handlers is a hook codex skips. A hash
- * that no longer matches an edited hook is not seen: codex hashes its own
- * TOML form of the hook, which sh cannot.
+ * The lines that print which of `h`'s launch flags its found launcher (`$p`)
+ * lists in `--help`, as its own word, the way a local spawn checks them
+ * (src/agents/spawn-presets.ts).
  */
+function launchFlagLines(h: Harness): string[] {
+  const flags = HARNESS_TABLE[h].launchFlags;
+  if (flags.length === 0) return [];
+  return [
+    'if [ -n "$p" ]; then',
+    'hp=$("$p" --help </dev/null 2>/dev/null) || hp=; f=',
+    ...flags.map(
+      (x) =>
+        `printf '%s\n' "$hp" | grep -Eq -- ${shellQuote(`(^|[^A-Za-z0-9_-])${x}([^A-Za-z0-9_-]|$)`)} && f="$f ${x}"`,
+    ),
+    `printf '${FLAGS_MARK} %s%s\n' ${shellQuote(h)} "$f"`,
+    "fi",
+  ];
+}
+
+/** codex's config.toml (`$CODEX_HOME`, else `~/.codex`) and its `trusted_hash` lines. */
 const CODEX_TRUST_LINES = [
-  'if [ -n "$CODEX_HOME" ]; then d=$(cd "$CODEX_HOME" 2>/dev/null && pwd -P) || d=$CODEX_HOME; else d=$HOME/.codex; fi',
-  `n=$(awk '{ n += gsub(/"command"[[:space:]]*:/, "") } END { print n + 0 }' "$d/hooks.json" 2>/dev/null) || n=0`,
-  // A table per key (`[hooks.state."<key>"]` then `trusted_hash = ...`), or an inline
-  // `"<key>" = { trusted_hash = ... }` under `[hooks.state]`.
-  String.raw`t=$(K="[hooks.state.\"$d/hooks.json:" Q="\"$d/hooks.json:" awk 'index($0, ENVIRON["K"]) == 1 { s = 1; next } /^[[:space:]]*\[/ { s = 0 } s && /^[[:space:]]*trusted_hash[[:space:]]*=/ { c++; s = 0 } index($0, ENVIRON["Q"]) == 1 && /trusted_hash/ { c++ } END { print c + 0 }' "$d/config.toml" 2>/dev/null) || t=0`,
-  `printf '${TRUST_MARK} codex %s %s\\n' "\${t:-0}" "\${n:-0}"`,
+  `d=\${CODEX_HOME:-$HOME/.codex}`,
+  't=$(grep -c trusted_hash "$d/config.toml" 2>/dev/null) || t=0',
+  `printf '${TRUST_MARK} codex %s\\n' "\${t:-0}"`,
 ];
 
 /** An ERE matching `<words> <harness>` as one command, not a longer harness name. */
@@ -122,6 +141,7 @@ export function harnessProbeScript(): string {
   const lines: string[] = [];
   for (const h of HARNESSES) {
     lines.push(`p=$(command -v ${shellQuote(h)} 2>/dev/null) || p=`);
+    lines.push(...launchFlagLines(h));
     const cfg = homeHookConfig(h);
     if (cfg === undefined) {
       lines.push(`printf '${MARK} %s - - %s\\n' ${shellQuote(h)} "$p"`);
@@ -167,7 +187,7 @@ export function parseHarnessProbe(
       muHooks: flag(m[3] ?? "-"),
     });
   }
-  const trustRe = new RegExp(`^${TRUST_MARK} codex (\\d+) (\\d+)$`);
+  const trustRe = new RegExp(`^${TRUST_MARK} codex (\\d+)$`);
   const trustLine = stdout
     .split("\n")
     .map((l) => trustRe.exec(l.trim()))
@@ -178,8 +198,16 @@ export function parseHarnessProbe(
     if (p === undefined) return undefined;
     harnesses[h] = p;
   }
+  const flagsRe = new RegExp(`^${FLAGS_MARK} (\\S+)(.*)$`);
+  for (const line of stdout.split("\n")) {
+    const m = flagsRe.exec(line.trim());
+    const h = HARNESSES.find((x) => x === m?.[1]);
+    if (m === null || h === undefined) continue;
+    const listed = (m[2] ?? "").trim().split(/\s+/);
+    harnesses[h].launchFlags = HARNESS_TABLE[h].launchFlags.filter((f) => listed.includes(f));
+  }
   if (trustLine != null) {
-    harnesses.codex.hookTrust = { trusted: Number(trustLine[1]), total: Number(trustLine[2]) };
+    harnesses.codex.trustedHashes = Number(trustLine[1]);
   }
   return { probedAt: now.toISOString(), shell, harnesses };
 }
@@ -225,9 +253,9 @@ export function hooksStep(caps: HostCapabilities): { step: HostCheckStep; warnin
     const p = caps.harnesses[h];
     const cfg = hookConfigLabel(h);
     if (p.murmurHooks !== true) missing.push(`${h}: no \`murmur hook ${h}\` entry in ${cfg}`);
-    else if (p.hookTrust !== undefined && p.hookTrust.trusted < p.hookTrust.total) {
-      missing.push(
-        `${h}: codex trusts ${p.hookTrust.trusted} of the ${p.hookTrust.total} hooks in ${cfg} and skips the rest, so its workers would sit at a "Hooks need review" dialog and report no state (fix: on the host run \`codex --no-daemon\` once and trust them at its review, or with /hooks)`,
+    else if (p.trustedHashes === 0) {
+      warnings.push(
+        `${h}: its config.toml records no trusted hook (no \`trusted_hash\` under [hooks.state]), so codex likely skips murmur's hooks: a worker would sit at a "Hooks need review" dialog and report no state. Fix: on the host run \`codex\` once in a terminal and trust them at its review (or with /hooks). mu cannot check each hook's trust, only that some exists`,
       );
     }
     if (p.muHooks === false) {
@@ -300,17 +328,34 @@ export function hostCapabilities(
     const p = doc.harnesses[h];
     if (!isDoc(p)) return undefined;
     const bool = (v: unknown): boolean | null => (typeof v === "boolean" ? v : null);
-    const t = p.hookTrust;
     harnesses[h] = {
       command: typeof p.command === "string" ? p.command : null,
       murmurHooks: bool(p.murmurHooks),
       muHooks: bool(p.muHooks),
-      ...(isDoc(t) && typeof t.trusted === "number" && typeof t.total === "number"
-        ? { hookTrust: { trusted: t.trusted, total: t.total } }
+      ...(typeof p.trustedHashes === "number" ? { trustedHashes: p.trustedHashes } : {}),
+      ...(Array.isArray(p.launchFlags)
+        ? { launchFlags: p.launchFlags.filter((f): f is string => typeof f === "string") }
         : {}),
     };
   }
   return { probedAt: doc.probedAt, shell: doc.shell, harnesses };
+}
+
+/**
+ * The launch flags a spawn of `harness` by `command` on a host may add: the
+ * ones its recorded probe found the launcher lists, when `command`'s argv0 is
+ * that launcher by name (what the probe resolved). Else none: an unprobed
+ * host, an older record, or a wrapper the probe did not try keep launching
+ * as they did.
+ */
+export function hostLaunchFlags(
+  profile: Pick<HostProfile, "capabilities"> | undefined,
+  harness: Harness,
+  command: string,
+): readonly string[] {
+  if (profile === undefined) return [];
+  if ((command.trim().split(/\s+/)[0] ?? "") !== harness) return [];
+  return hostCapabilities(profile)?.harnesses[harness].launchFlags ?? [];
 }
 
 /**

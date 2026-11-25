@@ -753,6 +753,7 @@ async function spawnPreparedAgent(
         ? command
         : launchCommand(command, harness, opts, {
             remote: profile !== undefined,
+            ...(profile !== undefined ? { profile } : {}),
             ...(staged !== undefined && muleProfile === undefined ? { worktree: staged.path } : {}),
           });
 

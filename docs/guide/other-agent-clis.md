@@ -87,7 +87,7 @@ provider, key or proxy for it.
 | fresh command | `/clear` | `/new` | `/new-chat` | `/new` |
 | worker preset | `--permission-mode acceptEdits` | `--dangerously-bypass-approvals-and-sandbox` (see Codex below) | `--sandbox enabled` | `--approval-mode never` |
 | a worktree mu made | inherits the repo's trust | `-c 'projects={"<path>"={trust_level="trusted"}}'` | `--trust` | `--trust-workspace` |
-| every launch mu resolves | | `--no-daemon` | | |
+| every launch mu resolves | | `--no-daemon`, if its `--help` lists it | | |
 | mu's skill | `~/.claude/skills/mu` | `~/.codex/skills/mu` | Claude Code's or Codex's, else `~/.cursor/skills/mu` | `muse skills` |
 | failed turn under `mu task auto` | retried once in place | not reported | retried once in place | parked as a human need |
 
@@ -122,9 +122,10 @@ own. codex gets none: it has no verified way to keep a skill from its model.
   path there). Hook trust is per hook
   definition: trust mu's and murmur's entries once (`/hooks`), and every
   worktree keeps it. `--disable hooks` turns them all off. `mu host check`
-  fails a host whose codex has fewer trusted hooks than it has hooks.
-- mu launches codex with `--no-daemon` (codex 0.157 or later), a literal
-  `--command` excepted. Without it codex attaches to a shared background
+  warns on a host whose codex records no hook trust.
+- mu launches codex with `--no-daemon` when that codex's `--help` lists it
+  (0.156 or later; locally probed once per binary, on a host by `mu host
+  check`), a literal `--command` excepted. Without it codex attaches to a shared background
   app-server that runs the hooks with the env of whichever session started
   it (another worker's) and outlives the pane, keeping its worktree busy.
 - Drop `notify` (`murmur notify`) from `~/.codex/config.toml`: murmur's hook

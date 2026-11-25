@@ -136,7 +136,8 @@ export interface HarnessRow {
   /** argv that skips the folder-trust dialog in a new worktree (`<realpath>` is filled in, escaped for a TOML or JSON string). Empty: none needed. */
   trustFlag: readonly string[];
   /**
-   * argv every launch from a command mu resolved gets, worker or orchestrator:
+   * argv every launch from a command mu resolved gets, worker or orchestrator,
+   * when the launcher's `--help` lists it:
    * codex's `--no-daemon`, so the TUI runs its turns and hooks in the pane's own
    * process tree, never in the shared app-server daemon that keeps the first
    * session's env and outlives the pane. Empty: none.
@@ -255,11 +256,13 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     // still shows (observed 2026-11-06, a fresh worktree under /private/tmp). The worktree's own
     // real path is the one checked; `/tmp/...` for `/private/tmp/...` is not.
     trustFlag: ["-c", 'projects={"<realpath>"={trust_level="trusted"}}'],
-    // codex 0.157+ attaches an interactive session to a shared `app-server --managed-daemon`
+    // A recent codex attaches an interactive session to a shared `app-server --managed-daemon`
     // that runs its hooks with the env and cwd of the session that started it (another
     // worker's MU_REMOTE_KEY and pane) and outlives the pane, holding its worktree
     // (openai/codex#48195, #37537). Any `-c` override also keeps codex in-process; a spawn
-    // with no worktree has none, so the flag says it.
+    // with no worktree has none, so the flag says it. codex 0.155 and older have no such
+    // flag and refuse to start with it: it is added only where the launcher's `--help`
+    // lists it (src/agents/spawn-presets.ts, and `mu host check` for a host).
     launchFlags: ["--no-daemon"],
     modelFlag: "--model",
     // Not `-s workspace-write -a never`: codex's seatbelt cannot start under a launcher that
@@ -558,8 +561,11 @@ export interface SpawnPresets {
   model?: string;
   /** Add the row's auto-approve flags (a worker, from a command mu resolved). */
   approve: boolean;
-  /** Add the row's launch flags (a command mu resolved, not a literal `--command`). */
-  resolved?: boolean;
+  /**
+   * The row's launch flags to add, the ones the launcher is known to take
+   * (a command mu resolved, not a literal `--command`). Absent: none.
+   */
+  launchFlags?: readonly string[];
   /** A worktree mu created for this spawn: its real path, for the row's trust flag. */
   trustPath?: string;
 }
@@ -569,7 +575,7 @@ export interface SpawnPresets {
  * (spec D6, D17): the model flag with `model`; with `approve`, the
  * auto-approve flags, unless the command already picks its approval or
  * sandbox mode (any of the row's `approvalOptions`; pi has none: its
- * `--approve` is folder trust); with `resolved`, the launch flags the command
+ * `--approve` is folder trust); the given `launchFlags` of the row the command
  * does not already carry; with `trustPath`, the trust flag, `<realpath>`
  * filled in. A command outside the blessed five is returned as it is (the
  * spawn refuses `--model` for one).
@@ -585,8 +591,8 @@ export function withSpawnPresets(
   const extra: string[] = [];
   const choosesApproval = words.some((w) => row.approvalOptions.some((o) => usesOption(w, o)));
   if (presets.approve && !choosesApproval) extra.push(...row.autoApproveFlags);
-  if (presets.resolved === true) {
-    extra.push(...row.launchFlags.filter((f) => !words.some((w) => usesOption(w, f))));
+  for (const f of presets.launchFlags ?? []) {
+    if (row.launchFlags.includes(f) && !words.some((w) => usesOption(w, f))) extra.push(f);
   }
   if (presets.trustPath !== undefined) {
     const path = presets.trustPath;

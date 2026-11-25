@@ -7,15 +7,7 @@
 // Fake templates through /bin/sh; the "host" is a temp HOME and a bin of shims.
 
 import { execFileSync } from "node:child_process";
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -192,7 +184,7 @@ describe("the harness probe in host check", () => {
     expect(r.warnings).toEqual([expect.stringContaining("claude: no `mu hook stop claude` entry")]);
   });
 
-  it("codex hooks it has not trusted fail the hooks step with the fix: codex skips an untrusted hook", async () => {
+  it("codex with no hook trust recorded warns with a fix that runs on any codex; it never fails the step", async () => {
     shim("codex", "exit 0");
     config(".codex/hooks.json", ["murmur hook codex", "mu hook stop codex"]);
     // The folder trust got written, the hook trust did not (bug 7: "Trust all" left no hashes).
@@ -201,30 +193,31 @@ describe("the harness probe in host check", () => {
       '[projects."/w"]\ntrust_level = "trusted"\n',
     );
     const r = await checkHost(db, "dev");
-    expect(r.ok).toBe(false);
-    const detail = stepOf(r, "hooks")?.detail ?? "";
-    expect(stepOf(r, "hooks")?.ok).toBe(false);
-    expect(detail).toMatch(
-      /codex trusts 0 of the 2 hooks in \$\{CODEX_HOME:-~\/\.codex\}\/hooks\.json/,
-    );
-    expect(detail).toContain("codex --no-daemon");
-    expect(detail).toContain("/hooks");
-    expect(hostCapabilities(getHost(db, "dev"))?.harnesses.codex.hookTrust).toEqual({
-      trusted: 0,
-      total: 2,
-    });
-    // One of two trusted is still a skipped hook.
-    trust(join(home, ".codex"), ["stop:0:0"]);
-    expect(stepOf(await checkHost(db, "dev"), "hooks")?.detail).toContain(
-      "codex trusts 1 of the 2",
-    );
-    trust(join(home, ".codex"), ["stop:0:0", "stop:0:1"]);
-    const ok = await checkHost(db, "dev");
-    expect(stepOf(ok, "hooks")).toMatchObject({ ok: true });
-    expect(ok.ok).toBe(true);
+    expect(stepOf(r, "hooks")).toMatchObject({ ok: true });
+    const warning = r.warnings.find((w) => w.includes("trusted hook")) ?? "";
+    expect(warning).toContain("records no trusted hook");
+    expect(warning).toContain("run `codex` once");
+    expect(warning).not.toContain("--no-daemon");
+    expect(warning).toContain("mu cannot check each hook's trust");
+    expect(hostCapabilities(getHost(db, "dev"))?.harnesses.codex.trustedHashes).toBe(0);
   });
 
-  it("codex's trust keys name its home as codex resolves it: a canonical CODEX_HOME, else $HOME/.codex as is", () => {
+  it("any recorded trust is no warning, whatever its TOML quoting (review repro): mu does not judge per hook", async () => {
+    shim("codex", "exit 0");
+    config(".codex/hooks.json", ["murmur hook codex"]);
+    const codexHome = join(home, ".codex");
+    for (const key of [
+      `[hooks.state."${codexHome}/hooks.json:stop:0:0"]`,
+      `[hooks.state.'${codexHome}/hooks.json:stop:0:0']`,
+    ]) {
+      writeFileSync(join(codexHome, "config.toml"), `${key}\ntrusted_hash = "sha256:00"\n`);
+      const r = await checkHost(db, "dev");
+      expect(stepOf(r, "hooks")).toMatchObject({ ok: true });
+      expect(r.warnings.filter((w) => w.includes("trusted hook"))).toEqual([]);
+    }
+  });
+
+  it("reads codex's config.toml where CODEX_HOME moves it; no codex, no trust line", () => {
     const probe = (env: Record<string, string>, path = `${bin}:/usr/bin:/bin`) =>
       parseHarnessProbe(
         execFileSync("/bin/sh", ["-c", harnessProbeScript()], {
@@ -232,22 +225,34 @@ describe("the harness probe in host check", () => {
           encoding: "utf8",
         }),
         "sh",
-      )?.harnesses.codex.hookTrust;
+      )?.harnesses.codex.trustedHashes;
     shim("codex", "exit 0");
-    config("real-codex/hooks.json", ["murmur hook codex"]);
-    symlinkSync(join(home, "real-codex"), join(home, "link-codex"));
-    // Keys under the link's path are not codex's: it canonicalizes CODEX_HOME.
-    trust(join(home, "link-codex"), ["stop:0:0"]);
-    expect(probe({ CODEX_HOME: join(home, "link-codex") })).toEqual({ trusted: 0, total: 1 });
-    trust(
-      realpathSync(join(home, "real-codex")),
-      ["stop:0:0"],
-      join(home, "real-codex", "config.toml"),
-    );
-    expect(probe({ CODEX_HOME: join(home, "link-codex") })).toEqual({ trusted: 1, total: 1 });
-    // No hooks.json: nothing to trust. No codex: no trust line at all.
-    expect(probe({})).toEqual({ trusted: 0, total: 0 });
+    trust(join(home, "moved"), ["stop:0:0", "stop:0:1"]);
+    expect(probe({ CODEX_HOME: join(home, "moved") })).toBe(2);
+    expect(probe({})).toBe(0);
     expect(probe({}, "/usr/bin:/bin")).toBeUndefined();
+  });
+
+  it("records --no-daemon only for a codex whose --help lists it (0.155 has none and refuses it)", () => {
+    const probe = () =>
+      parseHarnessProbe(
+        execFileSync("/bin/sh", ["-c", harnessProbeScript()], {
+          env: { HOME: home, PATH: `${bin}:/usr/bin:/bin` },
+          encoding: "utf8",
+        }),
+        "sh",
+      )?.harnesses;
+    shim("codex", '[ "$1" = --help ] && printf "Usage: codex\\n  -m, --model <MODEL>\\n"; exit 0');
+    expect(probe()?.codex.launchFlags).toEqual([]);
+    shim(
+      "codex",
+      '[ "$1" = --help ] && printf "Usage: codex\\n      --no-daemon  Run in-process\\n"; exit 0',
+    );
+    expect(probe()?.codex.launchFlags).toEqual(["--no-daemon"]);
+    // A longer flag is not the flag; no codex, no line; other rows have none to probe.
+    shim("codex", '[ "$1" = --help ] && printf "      --no-daemon-x\\n"; exit 0');
+    expect(probe()?.codex.launchFlags).toEqual([]);
+    expect(probe()?.claude.launchFlags).toBeUndefined();
   });
 
   it("a longer harness name in a config is not the harness's entry; muse is never asked for mu's", async () => {

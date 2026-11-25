@@ -333,7 +333,12 @@ export async function spawnPluginAgent(
     // On a built-in channel mu launches the harness as on a template host: its spawn presets,
     // and a hook harness's remote anchor. The row keeps the command as given.
     const launch =
-      builtIn === undefined ? command : launchCommand(command, harnessRow, opts, { remote: true });
+      builtIn === undefined
+        ? command
+        : launchCommand(command, harnessRow, opts, {
+            remote: true,
+            ...(host.profile !== undefined ? { profile: host.profile } : {}),
+          });
     const cmd =
       remoteKey === undefined
         ? launch

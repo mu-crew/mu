@@ -236,10 +236,11 @@ the likely cause. Start that shell by its absolute path in the template
   The `hooks` step needs murmur's `murmur hook <harness>` entries in each found
   hook harness's own config (`murmur init` on the host); a missing
   `mu hook stop` entry is a warning (it never acts for a remote worker).
-  For codex it also counts the hooks codex trusts (`[hooks.state]` in its
-  `config.toml`): codex skips an untrusted one, so fewer trusted than
-  configured fails the step. Run `codex --no-daemon` once on the host and
-  trust them at its review. A hash gone stale after a hook edit is not seen.
+  For codex it warns when its `config.toml` records no hook trust at all
+  (no `trusted_hash`): codex skips an untrusted hook. Run `codex` once on
+  the host and trust them at its review. mu does not check each hook's
+  trust. The check also records whether the host's codex takes
+  `--no-daemon`; a spawn adds the flag only then.
 - The pi and `extension` steps run only when the host has pi, so a
   claude-only host passes.
 - The result and its time are recorded on the profile (`host show`, the

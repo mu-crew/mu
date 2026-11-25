@@ -521,12 +521,38 @@ describe("the pane is the transport", () => {
     expect(getAgent(db, "worker-1", "auth")?.command).toBe("claude");
   });
 
-  it("a remote codex worker in a worktree trusts the host's physical path and runs in-process (no daemon)", async () => {
+  it("a remote codex worker in a worktree trusts the host's physical path; no --no-daemon on an unprobed host", async () => {
     extensionOn = false;
     await spawn({ cli: "codex", worktree: true });
     // The path the host's `pwd -P` answered: codex checks folder trust on the exact path.
     expect(filled()).toContain(`projects={"${WT}"={trust_level="trusted"}}`);
-    expect(filled()).toContain("--no-daemon");
+    // Nothing says the host's codex takes it (0.155 refuses to start with it).
+    expect(filled()).not.toContain("--no-daemon");
+  });
+
+  it("a remote codex worker runs in-process (--no-daemon) where host check found its codex lists the flag", async () => {
+    extensionOn = false;
+    const probe = (flags: string[]) =>
+      JSON.stringify({
+        probedAt: "2026-11-25T00:00:00.000Z",
+        shell: "login",
+        harnesses: Object.fromEntries(
+          ["claude", "codex", "cursor-agent", "muse", "pi"].map((h) => [
+            h,
+            {
+              command: `/usr/bin/${h}`,
+              murmurHooks: true,
+              muHooks: true,
+              ...(h === "codex" ? { launchFlags: flags } : {}),
+            },
+          ]),
+        ),
+      });
+    db.prepare("UPDATE host_profiles SET capabilities = ? WHERE name = 'dev'").run(
+      probe(["--no-daemon"]),
+    );
+    await spawn({ cli: "codex" });
+    expect(filled()).toContain("codex --dangerously-bypass-approvals-and-sandbox --no-daemon");
   });
 
   it("a remote worker from a literal --command gets no approval preset", async () => {
