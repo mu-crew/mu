@@ -1137,17 +1137,38 @@ describe("the CLI", () => {
     });
   }
 
-  it("ctl: refused with the pane at a shell prompt says pi never started and names the login-profile exec", async () => {
-    // A login profile's `exec zsh -l` replaced the template's `$SHELL -ilc pi`.
-    forwardWithNoPi(
-      "Last login: Tue Nov 25 15:01:02 2026\nuser@dev0 ~ % \nchannel 3: open failed: connect failed: No such file or directory\n\n",
-    );
+  /** What a login profile's `exec zsh -l` leaves: a prompt, then ssh's echo of each refused probe. */
+  const AT_PROMPT =
+    "Last login: Tue Nov 25 15:01:02 2026\nuser@dev0 ~ % \nchannel 3: open failed: connect failed: No such file or directory\n\n";
+
+  it("ctl: refused with the pane alive at a shell prompt names the login-profile exec and the workaround", async () => {
+    process.env.MU_SPAWN_LIVENESS_MS = "1500"; // normal settings: the startup scan runs
+    forwardWithNoPi(AT_PROMPT);
     const w = await spawnWarnings();
     expect(w).toContain("(ctl: refused)");
     expect(w).toContain(
-      'the pane is at a shell prompt ("user@dev0 ~ %"), so pi never started on the host',
+      'the pane is alive and its last line looks like a shell prompt ("user@dev0 ~ %"), so pi likely never started on the host',
     );
-    expect(w).toContain("exec zsh -l");
+    expect(w).toContain("a login profile that execs another shell on a tty");
+    expect(w).toContain("absolute path in the template (`/usr/bin/zsh -ilc`)");
+    expect(getAgent(db, "worker-1", "auth")).toBeDefined(); // kept: the pane is usable by hand
+  });
+
+  it("ctl: missing at a shell prompt is not called a prompt: nothing bound the forward", async () => {
+    process.env.MU_SPAWN_LIVENESS_MS = "1500";
+    extensionOn = false;
+    mux.restore();
+    const fake = mockTmux(state).executor;
+    mux = installMux("tmux", async (args) => {
+      const res = await fake(args);
+      const pane = isPaneCall(args) ? [...state.panes.values()].at(-1) : undefined;
+      if (pane !== undefined) pane.scrollback = AT_PROMPT;
+      return res;
+    });
+    const w = await spawnWarnings();
+    expect(w).toContain("(ctl: missing)");
+    expect(w).toContain(`the pane's last line: "user@dev0 ~ %"`);
+    expect(w).not.toContain("shell prompt");
   });
 
   it("ctl: refused with pi still printing shows the pane's last line", async () => {

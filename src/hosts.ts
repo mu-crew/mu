@@ -501,6 +501,8 @@ export function hostFetchStarter(host: string): string {
  * The starter for `host init <name> --ssh --template`: printed for the user to edit,
  * never run. The shell template is a command for the remote login shell
  * (inside quotes, so each value asks for `:sh`, quoting for that shell): cd, env, `$SHELL -ilc`.
+ * A login profile that execs another shell on a tty replaces `$SHELL` before its `-c` runs,
+ * whatever the flags; the fix is that shell's absolute path in place of `"$SHELL"`.
  */
 export function hostStarter(host: string): { shell: string; exec: string; fetch: string } {
   const ssh = "ssh -o ControlMaster=no -o ControlPath=none";

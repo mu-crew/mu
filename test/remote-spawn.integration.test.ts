@@ -87,7 +87,9 @@ net.createServer((c) => {
   c.on("error", () => up.destroy());
   c.pipe(up); up.pipe(c);
 }).listen(local);
-const child = spawn("/bin/sh", ["-c", cmd], { cwd, env, stdio: "inherit" });
+// REMOTE_SHELL: the login shell argv a starter template runs the command with ("$SHELL" -ilc).
+const [shell, ...flags] = JSON.parse(process.env.REMOTE_SHELL || '["/bin/sh", "-c"]');
+const child = spawn(shell, [...flags, cmd], { cwd, env, stdio: "inherit" });
 child.on("exit", (code) => process.exit(code ?? 1));
 `;
 
@@ -123,11 +125,13 @@ function addDevHost(
   piCommand = `node ${join(dir, "pishim.js")}`,
   name = "dev",
   remoteHome = home,
+  remoteShell?: string[],
 ): { command: string } {
+  const login = remoteShell === undefined ? "" : `REMOTE_SHELL='${JSON.stringify(remoteShell)}' `;
   addHost(db, {
     name,
     // The pane gets the tmux SERVER's env, so the fake remote's HOME is spelled in the template.
-    shell: `exec env HOME=${remoteHome} SEEN=${join(dir, "seen.json")} PANE_SEEN=${join(dir, "pane-seen.json")} ${process.execPath} ${join(dir, "fakessh.js")} {local_sock} {remote_sock} {cwd} -- {env} {cmd}`,
+    shell: `exec env ${login}HOME=${remoteHome} SEEN=${join(dir, "seen.json")} PANE_SEEN=${join(dir, "pane-seen.json")} ${process.execPath} ${join(dir, "fakessh.js")} {local_sock} {remote_sock} {cwd} -- {env} {cmd}`,
     exec: `env HOME=${remoteHome} sh -c {cmd}`,
     fetch: "true",
     repo,
@@ -380,5 +384,51 @@ describeIfTmux("remote spawn (real tmux, real git, fake ssh)", () => {
     expect(channels()).toEqual([]);
     // The first worktree is untouched.
     expect(existsSync(join(wtRoot(), "worker-1"))).toBe(true);
+  }, 30_000);
+});
+
+describeIfTmux("a login profile that execs another shell on a tty (real tmux)", () => {
+  /** A remote HOME whose ~/.bash_profile replaces bash with sh on a tty, as `exec zsh -l` does. */
+  function execingHome(): string {
+    const h = join(dir, "exec-home");
+    mkdirSync(h);
+    writeFileSync(join(h, ".bash_profile"), "[ -t 1 ] && exec /bin/sh -i\n");
+    return h;
+  }
+  const spawnWith = (remoteShell: string[]) => {
+    const { command } = addDevHost(
+      `${process.execPath} ${join(dir, "pishim.js")}`,
+      "dev",
+      execingHome(),
+      remoteShell,
+    );
+    return spawnAgent(db, { name: "worker-1", workstream: ws, host: "dev", cli: "pi", command });
+  };
+
+  it.each([
+    ["the starter's -ilc", ["bash", "-ilc"]],
+    ["-lc", ["bash", "-lc"]],
+  ])(
+    "%s never runs pi, and spawn reads the live pane's prompt as the likely cause",
+    async (_, sh) => {
+      process.env.MU_SPAWN_LIVENESS_MS = "1500"; // normal: the startup scan runs
+      const a = await spawnWith(sh);
+      expect(existsSync(join(dir, "seen.json"))).toBe(false); // pi never started
+      expect(a.ctl).toBe("refused"); // the forward is up, nothing behind it
+      expect(a.ctlPane).toMatchObject({ shellPrompt: true });
+      const msg = new AgentCtlUnreachableError(a.name, ws, a.ctlSocket, "refused", "dev", a.ctlPane)
+        .message;
+      expect(msg).toContain("looks like a shell prompt");
+      expect(msg).toContain("a login profile that execs another shell on a tty");
+    },
+    30_000,
+  );
+
+  it("naming the shell the profile execs, by absolute path, runs pi", async () => {
+    process.env.MU_SPAWN_LIVENESS_MS = "1500";
+    const a = await spawnWith(["/bin/sh", "-lc"]);
+    expect(a.ctl).toBe("ok");
+    expect(a.ctlPane).toBeUndefined();
+    expect(existsSync(join(dir, "seen.json"))).toBe(true);
   }, 30_000);
 });

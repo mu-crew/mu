@@ -221,9 +221,12 @@ profile's login shell (`$SHELL -ilc`), a lease job's bare `sh -c` (no rc
 files, so a `MU_<KEY>_COMMAND` set in a shell rc there proves nothing). A
 remote spawn runs its literal command and never reads your local
 `MU_<KEY>_COMMAND`. A login profile that execs another shell on a tty
-(`exec zsh -l` in `~/.bash_profile`) drops the template's `-c`: `host check`
-can pass (it has no tty), the pane sits at a prompt, and spawn says so. Name
-that shell in the template (`/usr/bin/zsh -ilc`).
+(`exec zsh -l` in `~/.bash_profile`) replaces the template's shell before it
+runs pi, and no flag in the template stops that. `host check` can pass (it
+has no tty) while the pane sits at a prompt. When the forward is up, pi never
+answers and the live pane's last line looks like a prompt, spawn names this as
+the likely cause. Start that shell by its absolute path in the template
+(`/usr/bin/zsh -ilc`).
 
 - The `harnesses` step lists what it found; it fails only when it found none.
   The `hooks` step needs murmur's `murmur hook <harness>` entries in each found

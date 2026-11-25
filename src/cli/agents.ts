@@ -269,7 +269,7 @@ async function spawnOnce(db: Db, rawName: string, opts: SpawnOpts): Promise<void
       agent.ctlSocket,
       agent.ctl,
       remoteLoopHost(agent),
-      agent.ctlPaneLine,
+      agent.ctlPane,
     );
     warnings.push(warn.message);
     if (!opts.json) console.error(pc.yellow(`warning: ${warn.message}`));

@@ -103,9 +103,9 @@ export const MESSAGES = {
     kind === "missing"
       ? `: its pane on host ${host} is up, but nothing bound the local end of its forward (does the shell template forward -L {local_sock}:{remote_sock}?)`
       : `: the forward to host ${host} is up, but pi did not answer there within ${Number((budgetMs / 1000).toFixed(1))} s: still starting (a slow cold start: raise MU_SPAWN_CTL_MS) or never started`,
-  "agent.ctl_pane_line": (line: string) =>
-    /[$#%>❯»]$/.test(line)
-      ? `; the pane is at a shell prompt (${JSON.stringify(line)}), so pi never started on the host: a login profile that execs another shell (\`exec zsh -l\` in ~/.bash_profile) drops the template's -c; start that shell in the template instead (\`/usr/bin/zsh -ilc\`)`
+  "agent.ctl_pane": (line: string, shellPrompt: boolean) =>
+    shellPrompt
+      ? `; the pane is alive and its last line looks like a shell prompt (${JSON.stringify(line)}), so pi likely never started on the host. A likely cause: a login profile that execs another shell on a tty (\`exec zsh -l\` in ~/.bash_profile) replaces the template's shell before it runs pi, whatever its flags. Start that shell by its absolute path in the template (\`/usr/bin/zsh -ilc\`)`
       : `; the pane's last line: ${JSON.stringify(line)}`,
   "agent.send_indeterminate": (name: string, op: string, reason: string, msgId?: string) =>
     `agent ${name}: ${op} was written to its control socket but no reply arrived (${reason}); delivery unknown${msgId === undefined ? "" : `, msgId ${msgId}`}. Never resend blindly`,

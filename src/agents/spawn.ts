@@ -94,10 +94,12 @@ import { launchCommand } from "./spawn-presets.js";
 import {
   awaitCtlHandshake,
   awaitSpawnLiveness,
+  type CtlPane,
   checkSpawnHealth,
   defaultSpawnCtlMs,
   defaultSpawnLivenessMs,
   lastPaneLine,
+  looksLikeShellPrompt,
   type SpawnCtl,
 } from "./spawn-ready.js";
 import {
@@ -397,11 +399,8 @@ export type SpawnedAgent = AgentRow & {
    * when the handshake did not run or the extension predates incarnations.
    */
   ctlIncarnation?: string;
-  /**
-   * A remote worker whose handshake ended without ok: its pane's last line then (a bare
-   * shell prompt says the harness never started on the host).
-   */
-  ctlPaneLine?: string;
+  /** A remote worker whose handshake ended without ok: its pane then (see CtlPane). */
+  ctlPane?: CtlPane;
   /** Set when the startup scan saw a Claude trust dialog parked in the pane. */
   trustDialog?: true;
   /** An at-start plugin kind's first prompt, delivered by its job.start (plugins spec D8). */
@@ -587,7 +586,7 @@ async function spawnPreparedAgent(
     defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
   let ctlIncarnation: string | undefined;
-  let ctlPaneLine: string | undefined;
+  let ctlPane: CtlPane | undefined;
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
   let phase: SpawnPhase = "worktree";
   let trustDialog = false;
@@ -1058,7 +1057,15 @@ async function spawnPreparedAgent(
         const sb = await mux
           .capture(viewRef(mux, pid, paneBorn), { lines: 50 })
           .catch(() => undefined);
-        ctlPaneLine = lastPaneLine(sb ?? lastScrollback);
+        const line = lastPaneLine(sb ?? lastScrollback);
+        // A prompt is evidence only with the pane alive and the forward up (refused).
+        if (line !== undefined) {
+          const shellPrompt =
+            ctl === "refused" &&
+            looksLikeShellPrompt(line) &&
+            (await viewPresent(pid, mux, paneBorn));
+          ctlPane = { line, shellPrompt };
+        }
       }
       if (muleProfile !== undefined && ctl !== "ok") {
         throw new AgentCtlUnreachableError(opts.name, opts.workstream, ctlSocket, ctl);
@@ -1114,7 +1121,7 @@ async function spawnPreparedAgent(
       ctl,
       ctlSocket,
       ...(ctlIncarnation !== undefined ? { ctlIncarnation } : {}),
-      ...(ctlPaneLine !== undefined ? { ctlPaneLine } : {}),
+      ...(ctlPane !== undefined ? { ctlPane } : {}),
       ...(trustDialog ? { trustDialog: true as const } : {}),
     };
   } catch (err) {

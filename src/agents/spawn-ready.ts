@@ -112,17 +112,35 @@ export async function awaitCtlHandshake(
 }
 
 /**
- * The last line a remote pane shows, for a handshake that ended without ok. Skips the
- * lines ssh prints per refused forward connection (`channel 3: open failed: ...`): they
- * are the probes' own echo, not what the pane is doing.
+ * A line ssh prints per refused forward connection (`channel 3: open failed: connect failed:
+ * No such file or directory`): the handshake's own probes echoed by the pane's ssh, never
+ * what the harness is doing.
  */
+const isSshForwardNoise = (line: string): boolean => /^channel \d+: open failed\b/.test(line);
+
+/** The last line a remote pane shows, for a handshake that ended without ok; ssh's forward noise skipped. */
 export function lastPaneLine(scrollback: string | undefined): string | undefined {
   if (scrollback === undefined) return undefined;
   const lines = scrollback
     .split(/\r?\n/)
     .map((l) => l.trimEnd())
-    .filter((l) => l !== "" && !/^channel \d+: open failed\b/.test(l));
+    .filter((l) => l !== "" && !isSshForwardNoise(l));
   return lines.at(-1);
+}
+
+/**
+ * A remote pane's state when its handshake ended without ok: its last line, and whether
+ * that is strong evidence pi never started on the host (the pane alive, the forward up but
+ * nothing answering behind it, `refused`, and the line a shell prompt).
+ */
+export interface CtlPane {
+  line: string;
+  shellPrompt: boolean;
+}
+
+/** `line` ends like an interactive shell's prompt. */
+export function looksLikeShellPrompt(line: string): boolean {
+  return /[$#%>❯»]$/.test(line);
 }
 
 /**
@@ -216,6 +234,8 @@ export function detectSpawnStartupError(
   const lines = scrollback.split(/\r?\n/);
   const tail = lines.slice(Math.max(0, lines.length - STARTUP_ERROR_TAIL_LINES));
   for (const line of tail) {
+    // ssh's echo of a refused forward probe ends in `No such file or directory` too.
+    if (isSshForwardNoise(line)) continue;
     for (const pattern of patterns) {
       if (pattern.test(line)) return line;
     }
