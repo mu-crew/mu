@@ -325,11 +325,14 @@ export class AgentCtlUnreachableError extends Error {
     public readonly kind: "missing" | "refused",
     /** The host profile the agent runs on, when remote: its forward is the usual cause. */
     public readonly host?: string | null,
+    /** A remote spawn's pane's last line when the handshake ended (spawn's `ctlPaneLine`). */
+    public readonly paneLine?: string,
   ) {
     // A remote agent's two ends fail apart: no local forward (missing), or no pi behind it (refused).
     const remote =
       host == null ? "" : say("agent.ctl_unreachable_remote", kind, host, defaultSpawnCtlMs());
-    super(say("agent.ctl_unreachable", agentName, kind, socket) + remote);
+    const pane = host == null || paneLine === undefined ? "" : say("agent.ctl_pane_line", paneLine);
+    super(say("agent.ctl_unreachable", agentName, kind, socket) + remote + pane);
   }
 }
 

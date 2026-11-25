@@ -97,6 +97,7 @@ import {
   checkSpawnHealth,
   defaultSpawnCtlMs,
   defaultSpawnLivenessMs,
+  lastPaneLine,
   type SpawnCtl,
 } from "./spawn-ready.js";
 import {
@@ -396,6 +397,11 @@ export type SpawnedAgent = AgentRow & {
    * when the handshake did not run or the extension predates incarnations.
    */
   ctlIncarnation?: string;
+  /**
+   * A remote worker whose handshake ended without ok: its pane's last line then (a bare
+   * shell prompt says the harness never started on the host).
+   */
+  ctlPaneLine?: string;
   /** Set when the startup scan saw a Claude trust dialog parked in the pane. */
   trustDialog?: true;
   /** An at-start plugin kind's first prompt, delivered by its job.start (plugins spec D8). */
@@ -581,6 +587,7 @@ async function spawnPreparedAgent(
     defaultSpawnCtlMs() !== 0;
   let ctl: SpawnCtl | undefined;
   let ctlIncarnation: string | undefined;
+  let ctlPaneLine: string | undefined;
   // Last phase entered, recorded in agent.spawn_failed if we roll back.
   let phase: SpawnPhase = "worktree";
   let trustDialog = false;
@@ -1043,6 +1050,13 @@ async function spawnPreparedAgent(
       );
       ctl = hs.ctl;
       ctlIncarnation = hs.incarnation;
+      if (profile !== undefined && ctl !== "ok") {
+        const mux = await activeMux();
+        const sb = await mux
+          .capture(viewRef(mux, pid, paneBorn), { lines: 50 })
+          .catch(() => undefined);
+        ctlPaneLine = lastPaneLine(sb ?? lastScrollback);
+      }
       if (muleProfile !== undefined && ctl !== "ok") {
         throw new AgentCtlUnreachableError(opts.name, opts.workstream, ctlSocket, ctl);
       }
@@ -1097,6 +1111,7 @@ async function spawnPreparedAgent(
       ctl,
       ctlSocket,
       ...(ctlIncarnation !== undefined ? { ctlIncarnation } : {}),
+      ...(ctlPaneLine !== undefined ? { ctlPaneLine } : {}),
       ...(trustDialog ? { trustDialog: true as const } : {}),
     };
   } catch (err) {

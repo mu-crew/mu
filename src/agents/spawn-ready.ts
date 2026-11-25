@@ -107,6 +107,20 @@ export async function awaitCtlHandshake(
 }
 
 /**
+ * The last line a remote pane shows, for a handshake that ended without ok. Skips the
+ * lines ssh prints per refused forward connection (`channel 3: open failed: ...`): they
+ * are the probes' own echo, not what the pane is doing.
+ */
+export function lastPaneLine(scrollback: string | undefined): string | undefined {
+  if (scrollback === undefined) return undefined;
+  const lines = scrollback
+    .split(/\r?\n/)
+    .map((l) => l.trimEnd())
+    .filter((l) => l !== "" && !/^channel \d+: open failed\b/.test(l));
+  return lines.at(-1);
+}
+
+/**
  * Default liveness window in milliseconds. 0 disables the check (useful
  * for fast tests that don't want to wait). Override via env var
  * `MU_SPAWN_LIVENESS_MS`.

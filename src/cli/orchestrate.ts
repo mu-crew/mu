@@ -76,6 +76,7 @@ export async function cmdOrchestrate(
       agent.ctlSocket,
       agent.ctl,
       agent.host,
+      agent.ctlPaneLine,
     );
     warnings.push(warn.message);
     if (!opts.json) console.error(pc.yellow(`warning: ${warn.message}`));

@@ -1104,8 +1104,8 @@ describe("the CLI", () => {
     );
   });
 
-  it("ctl: refused on a remote worker says the forward is up but pi did not answer, and names the knob", async () => {
-    // The forward is bound, nothing listens on the host: ssh accepts, then drops the connection.
+  /** The forward is bound, nothing listens on the host: ssh accepts, then drops the connection. */
+  function forwardWithNoPi(scrollback?: string): void {
     extensionOn = false;
     mux.restore();
     const fake = mockTmux(state).executor;
@@ -1116,9 +1116,37 @@ describe("the CLI", () => {
         const s = createServer((sock) => sock.destroy());
         servers.push(s);
         await new Promise<void>((r) => s.listen(forward, () => r()));
+        const pane = [...state.panes.values()].at(-1);
+        if (pane !== undefined && scrollback !== undefined) pane.scrollback = scrollback;
       }
       return res;
     });
+  }
+
+  it("ctl: refused with the pane at a shell prompt says pi never started and names the login-profile exec", async () => {
+    // A login profile's `exec zsh -l` replaced the template's `$SHELL -ilc pi`.
+    forwardWithNoPi(
+      "Last login: Tue Nov 25 15:01:02 2026\nuser@dev0 ~ % \nchannel 3: open failed: connect failed: No such file or directory\n\n",
+    );
+    const w = await spawnWarnings();
+    expect(w).toContain("(ctl: refused)");
+    expect(w).toContain(
+      'the pane is at a shell prompt ("user@dev0 ~ %"), so pi never started on the host',
+    );
+    expect(w).toContain("exec zsh -l");
+  });
+
+  it("ctl: refused with pi still printing shows the pane's last line", async () => {
+    forwardWithNoPi('Warning: No models match pattern "some-model"\n');
+    const w = await spawnWarnings();
+    expect(w).toContain(
+      `the pane's last line: "Warning: No models match pattern \\"some-model\\""`,
+    );
+    expect(w).not.toContain("shell prompt");
+  });
+
+  it("ctl: refused on a remote worker says the forward is up but pi did not answer, and names the knob", async () => {
+    forwardWithNoPi();
     const w = await spawnWarnings();
     expect(w).toContain("(ctl: refused)");
     expect(w).toContain("the forward to host dev is up, but pi did not answer there within 0.3 s");

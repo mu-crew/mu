@@ -657,6 +657,7 @@ async function drive(
           spawned.ctlSocket,
           spawned.ctl,
           remoteLoopHost(spawned),
+          spawned.ctlPaneLine,
         );
       }
       if (spawned.trustDialog === true) throw new SpawnTrustDialogError(spawned.name);
