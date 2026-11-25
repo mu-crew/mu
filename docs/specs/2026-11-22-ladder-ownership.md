@@ -1,3 +1,5 @@
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
+
 # Ladder ownership: DB capability, CLOSE, delegates, host identity, cross-DB
 
 Status: **Approved** (2026-11-25 — human approved all recommendations:
@@ -374,3 +376,5 @@ and D2a go to `local_loop_placement`, as tests that the route pins the DB
 and the loop has no `MU_REMOTE`. D1.2c, D3a and D4b each become a small
 unit with a regression that fails today. D5b joins the §9 owner. This list
 is a proposal, not an approval.
+
+<!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->

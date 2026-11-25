@@ -12,6 +12,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.4.2] — 2026-11-25
+
+5.4.1 was tagged but never published (Spec B was missing the eval rig-canary line); its notes below ship with 5.4.2.
+
 ## [5.4.1] — 2026-11-25
 
 ### Changed
