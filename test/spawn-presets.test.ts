@@ -71,7 +71,7 @@ describe("spawn presets", () => {
     await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "codex", model: "gpt-5" });
     await spawnAgent(db, { name: "worker-2", workstream: "auth", cli: "muse" });
     expect(launched("worker-1")).toBe(
-      "codex --dangerously-bypass-approvals-and-sandbox --model gpt-5",
+      "codex --dangerously-bypass-approvals-and-sandbox --no-daemon --model gpt-5",
     );
     expect(launched("worker-2")).toBe("muse --approval-mode never");
     expect(getAgent(db, "worker-1", "auth")?.command).toBe("codex");
@@ -104,6 +104,13 @@ describe("spawn presets", () => {
     expect(launched("worker-1")).toBe("claude --verbose --permission-mode acceptEdits");
     expect(launched("worker-2")).toBe("claude --dangerously-skip-permissions --model opus");
     expect(launched("orch-1")).toBe("cursor-agent");
+  });
+
+  it("a codex orchestrator gets --no-daemon but no approval flag; a literal --command gets neither", async () => {
+    await spawnAgent(db, { name: "orch-1", workstream: "auth", cli: "codex", orchestrator: true });
+    await spawnAgent(db, { name: "worker-1", workstream: "auth", cli: "codex", command: "codex" });
+    expect(launched("orch-1")).toBe("codex --no-daemon");
+    expect(launched("worker-1")).toBe("codex");
   });
 
   it("--model on the CLI reaches the pane; a remote command gate refuses it", async () => {
@@ -161,7 +168,9 @@ describe("spawn presets", () => {
       );
       expect(ok.exitCode).toBeNull();
     });
-    expect(launched("worker-2")).toBe("codex --dangerously-bypass-approvals-and-sandbox --model x");
+    expect(launched("worker-2")).toBe(
+      "codex --dangerously-bypass-approvals-and-sandbox --no-daemon --model x",
+    );
   });
 });
 

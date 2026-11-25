@@ -192,7 +192,7 @@ describe("anchors: a hook harness starts through the wrapper (spec D3)", () => {
     });
     const cmd = paneCommand("orchestrator-1");
     expect(cmd).toContain('"role":"orchestrator","cli":"codex","orchestrator":true');
-    expect(cmd.endsWith(" mu-anchor 'codex -m fast'")).toBe(true);
+    expect(cmd.endsWith(" mu-anchor 'codex -m fast --no-daemon'")).toBe(true);
     expect(paneEnv("orchestrator-1")).toMatchObject({
       MU_AGENT_CLI: "codex",
       MU_ORCHESTRATOR: "1",

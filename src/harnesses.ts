@@ -135,6 +135,13 @@ export interface HarnessRow {
   sessionsBackedUp: boolean;
   /** argv that skips the folder-trust dialog in a new worktree (`<realpath>` is filled in, escaped for a TOML or JSON string). Empty: none needed. */
   trustFlag: readonly string[];
+  /**
+   * argv every launch from a command mu resolved gets, worker or orchestrator:
+   * codex's `--no-daemon`, so the TUI runs its turns and hooks in the pane's own
+   * process tree, never in the shared app-server daemon that keeps the first
+   * session's env and outlives the pane. Empty: none.
+   */
+  launchFlags: readonly string[];
   modelFlag: string;
   /** argv for the auto-approve mode a spawn preset uses (in the harness's sandbox, or its launcher's). Empty: none. */
   autoApproveFlags: readonly string[];
@@ -201,6 +208,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     sessions: "~/.claude/projects/<slug>/<uuid>.jsonl",
     sessionsBackedUp: true,
     trustFlag: [],
+    launchFlags: [],
     modelFlag: "--model",
     autoApproveFlags: ["--permission-mode", "acceptEdits"],
     approvalOptions: ["--permission-mode", "--dangerously-skip-permissions"],
@@ -247,6 +255,12 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     // still shows (observed 2026-11-06, a fresh worktree under /private/tmp). The worktree's own
     // real path is the one checked; `/tmp/...` for `/private/tmp/...` is not.
     trustFlag: ["-c", 'projects={"<realpath>"={trust_level="trusted"}}'],
+    // codex 0.157+ attaches an interactive session to a shared `app-server --managed-daemon`
+    // that runs its hooks with the env and cwd of the session that started it (another
+    // worker's MU_REMOTE_KEY and pane) and outlives the pane, holding its worktree
+    // (openai/codex#48195, #37537). Any `-c` override also keeps codex in-process; a spawn
+    // with no worktree has none, so the flag says it.
+    launchFlags: ["--no-daemon"],
     modelFlag: "--model",
     // Not `-s workspace-write -a never`: codex's seatbelt cannot start under a launcher that
     // already runs codex inside its own sandbox-exec profile (every command failed with
@@ -306,6 +320,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     sessions: "~/.cursor/projects/*/agent-transcripts/ (not SQLite chats)",
     sessionsBackedUp: true,
     trustFlag: ["--trust"],
+    launchFlags: [],
     modelFlag: "--model",
     // `--sandbox` takes a value (`enabled` or `disabled`): bare, cursor-agent refuses to start.
     autoApproveFlags: ["--sandbox", "enabled"],
@@ -351,6 +366,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     sessions: null,
     sessionsBackedUp: false,
     trustFlag: ["--trust-workspace"],
+    launchFlags: [],
     modelFlag: "--model",
     autoApproveFlags: ["--approval-mode", "never"],
     approvalOptions: ["--approval-mode", "--yolo", "--disable-approval"],
@@ -392,6 +408,7 @@ export const HARNESS_TABLE: Readonly<Record<Harness, HarnessRow>> = deepFreeze({
     sessions: "~/.pi/agent/sessions/**/*.jsonl",
     sessionsBackedUp: true,
     trustFlag: [],
+    launchFlags: [],
     modelFlag: "--model",
     autoApproveFlags: [],
     approvalOptions: [],
@@ -541,6 +558,8 @@ export interface SpawnPresets {
   model?: string;
   /** Add the row's auto-approve flags (a worker, from a command mu resolved). */
   approve: boolean;
+  /** Add the row's launch flags (a command mu resolved, not a literal `--command`). */
+  resolved?: boolean;
   /** A worktree mu created for this spawn: its real path, for the row's trust flag. */
   trustPath?: string;
 }
@@ -550,7 +569,8 @@ export interface SpawnPresets {
  * (spec D6, D17): the model flag with `model`; with `approve`, the
  * auto-approve flags, unless the command already picks its approval or
  * sandbox mode (any of the row's `approvalOptions`; pi has none: its
- * `--approve` is folder trust); with `trustPath`, the trust flag, `<realpath>`
+ * `--approve` is folder trust); with `resolved`, the launch flags the command
+ * does not already carry; with `trustPath`, the trust flag, `<realpath>`
  * filled in. A command outside the blessed five is returned as it is (the
  * spawn refuses `--model` for one).
  */
@@ -565,6 +585,9 @@ export function withSpawnPresets(
   const extra: string[] = [];
   const choosesApproval = words.some((w) => row.approvalOptions.some((o) => usesOption(w, o)));
   if (presets.approve && !choosesApproval) extra.push(...row.autoApproveFlags);
+  if (presets.resolved === true) {
+    extra.push(...row.launchFlags.filter((f) => !words.some((w) => usesOption(w, f))));
+  }
   if (presets.trustPath !== undefined) {
     const path = presets.trustPath;
     // the placeholder sits inside a TOML basic string (codex's `-c` value)

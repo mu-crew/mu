@@ -521,6 +521,14 @@ describe("the pane is the transport", () => {
     expect(getAgent(db, "worker-1", "auth")?.command).toBe("claude");
   });
 
+  it("a remote codex worker in a worktree trusts the host's physical path and runs in-process (no daemon)", async () => {
+    extensionOn = false;
+    await spawn({ cli: "codex", worktree: true });
+    // The path the host's `pwd -P` answered: codex checks folder trust on the exact path.
+    expect(filled()).toContain(`projects={"${WT}"={trust_level="trusted"}}`);
+    expect(filled()).toContain("--no-daemon");
+  });
+
   it("a remote worker from a literal --command gets no approval preset", async () => {
     extensionOn = false;
     await spawn({ cli: "claude", command: "claude --verbose" });

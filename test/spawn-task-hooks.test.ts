@@ -175,7 +175,9 @@ describe("a hooks worker's task brief: a file and a one-line pointer (spec D17)"
       incarnation: "sess-1",
       runs: 0,
     });
-    expect(paneCmd("%1")).toMatch(/ mu-anchor 'codex --dangerously-bypass-approvals-and-sandbox'$/);
+    expect(paneCmd("%1")).toMatch(
+      / mu-anchor 'codex --dangerously-bypass-approvals-and-sandbox --no-daemon'$/,
+    );
   });
 
   it("killed between pane and claim: the replay claims, writes and pastes once; a second replay sends nothing", async () => {

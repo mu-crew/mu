@@ -218,6 +218,25 @@ describe("withSpawnPresets (spec D6, D17)", () => {
   });
 });
 
+describe("launch flags: a codex mu launches never joins the shared app-server daemon", () => {
+  it("adds --no-daemon to a codex launch from a command mu resolved, once, and nothing to the others", () => {
+    expect(withSpawnPresets("codex", "codex", { approve: false, resolved: true })).toBe(
+      "codex --no-daemon",
+    );
+    expect(withSpawnPresets("codex", "codex", { approve: true, resolved: true })).toBe(
+      "codex --dangerously-bypass-approvals-and-sandbox --no-daemon",
+    );
+    // A command that already says it keeps it; a literal command (not resolved) gets none.
+    expect(withSpawnPresets("codex --no-daemon", "codex", { approve: false, resolved: true })).toBe(
+      "codex --no-daemon",
+    );
+    expect(withSpawnPresets("codex", "codex", { approve: false })).toBe("codex");
+    for (const h of HARNESSES.filter((x) => x !== "codex")) {
+      expect(withSpawnPresets(h, h, { approve: false, resolved: true })).toBe(h);
+    }
+  });
+});
+
 describe("CLAUDE_CONFIG_DIR and CODEX_HOME move claude's and codex's config", () => {
   const env = { CLAUDE_CONFIG_DIR: "/c/claude", CODEX_HOME: "/c/codex" };
   it("hook files and skill dirs follow the variable; the others stay under home", () => {

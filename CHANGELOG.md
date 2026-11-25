@@ -19,6 +19,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Docs and the `host init --ssh --template` starter now say what to do where fresh ssh connections from the agent's process tree are impossible: use the mule plugin (its master is opened from your terminal), not a session template over a shared master.
 
 ### Fixed
+- A codex worker no longer joins codex's shared background app-server: mu launches every codex it resolves (worker or orchestrator, local or `--host`; a literal `--command` excepted) with `--no-daemon` (codex 0.157+). The daemon ran the hooks with the env of the session that started it, so a later worker's events could report under another worker's `MU_REMOTE_KEY`, and it outlived the pane with its cwd in the worktree, so `mu agent close` refused until it was killed by hand.
+- A `--host --worktree` codex worker gets the folder-trust flag on the host's physical worktree path, as a local one does, so it no longer opens on "Trust this folder?", which took the first prompt.
 - Lease docs no longer say a dead lease pane's job runs on. Any hangup of a
   mule lease carrier stops its job: `tmux kill-pane`, closing the window,
   `tmux kill-server`, or the local tmux server crashing. Only a `kill -9` of
