@@ -44,10 +44,15 @@ mu joins the first three without becoming the fourth.
 
 ### 1. The CLI is the product
 
-Everything mu does works from a shell with no pi extension loaded. A
-feature that needs the extension does not ship. The pi extension
-(the pi package) serves the control socket and the `mu_delegate` tool, and
-three rules keep it thin:
+Everything mu does works from a shell without the caller loading mu's
+own pi extension. A feature that requires the caller to load it does not
+ship. A harness capability supplied by another tool, such as
+mule's pi extension for rung 2, belongs in
+[STANCE's limits table](https://github.com/mu-crew/.github/blob/main/STANCE.md),
+not in mu.
+
+mu's pi extension serves the control socket and the `mu_delegate` tool,
+and three rules keep it thin:
 
 1. **The DB is canonical.** The extension reads and writes through the
    same modules as the CLI. It keeps no state of its own.
@@ -89,6 +94,11 @@ and any file mover works (Syncthing, rsync, scp, git, a USB stick). mu
 reads and writes files. The user owns transport. mu has no network
 code, no daemon, and no membership config: peers are found from the
 segment files present.
+
+Of an agent's [four places](guide/remote-ladder.md), the loop, workspace
+and shell may be on a host, but the DB stays local and every host hop goes
+through the user's link (a stored template or a registered plugin), never
+mu's own SSH.
 
 ### 3. Reality wins reconciliation
 
@@ -278,6 +288,8 @@ previous surface on the same scenarios ([reports](eval/README.md)).
   spawn, what to assign, when to free) is yours: bash, `jq` over
   `--json`, or an LLM following the bundled skill. There is no workflow
   engine and no `mu run script.ts`. <!-- doc-cli-drift:skip -->
+- **Not a remote runtime.** mu records where an agent's places are;
+  the link and the harness run the work there.
 - **Not a chat protocol.** Agents communicate through notes, claims, and
   the ops log.
 - **Not a hidden-subagent runner.** A delegate is an ordinary agent in a
@@ -349,10 +361,12 @@ the work, pi plus manual tmux is more transparent than mu.
 Two lessons back the orchestrator-pull remote design. The runtime built
 multiplexing, flow control, keepalive and retries above a transport that
 already provided them, then deleted them: don't rebuild what the
-transport gives. A child never dials its parent; the parent pulls.
-Tasks injected as prompts and read back through sentinel markers broke
-on line wrapping and lost notes: state belongs in the DB, not in pane
-text.
+transport gives. For a local-loop worker, mule's per-caller `serve --stdio`
+child coalesces bounded operations from the pi extension, without a
+separate batch verb or a shared daemon. A child never dials its parent;
+the parent pulls. Tasks injected as prompts and read back through
+sentinel markers broke on line wrapping and lost notes: state belongs in
+the DB, not in pane text.
 
 Known gaps, none promoted yet: `--evidence` grounds but does not verify,
 mutations have no declared idempotency keys except plugin effects (each is

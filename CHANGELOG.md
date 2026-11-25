@@ -13,6 +13,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 ## [Unreleased]
 
 ### Changed
+- Clarified per-agent placement and the boundary between mu, the harness,
+  and the user's transport in the top-level docs.
 - The sync-dir guard message no longer names a mu version ("give mu its own dir"). Stale CLI/storage comments trimmed; `mu task close` no longer repeats the SDK's evidence/readiness check.
 - Share the CLI override name rule between spawn and herdr; clarify ctl timeout and channel behavior.
 - Test harness: wait, lock and cycle checks assert protocol order and work instead of elapsed wall time.
