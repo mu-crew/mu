@@ -92,7 +92,7 @@ mu agent collect worker-1 -w crew
 path. mu resolves `--from` (default `HEAD`) in your checkout and prepares
 that commit through the host's link. The pane runs `pi --mule <host>:<tree>`;
 the workspace extension handles tools, while pi, ctl and the task DB stay
-local. The loop has the same DB access as a local worker. Collect uses the
+local. The loop has the same DB access as a local worker. Like any worker, it has no `mu_delegate`. Collect uses the
 profile's fetch route; it needs no remote pi or forwarded socket. Collect
 brings home commits, not uncommitted files. Close checks for uncommitted or
 uncollected work before killing the pane, then stops the worker's detached

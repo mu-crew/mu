@@ -261,6 +261,13 @@ Refuse `workspace: true` with a message until the rung-2 prepare can be
 called for a delegate. The delegate-process fallback (no multiplexer)
 follows the same rule. Ownership stays with the parent row (R2).
 
+**Finding (2026-11-25, unit `spec_b_d3_rung2_delegate`):** D3 does not
+arise today. The `--mule` pane env is a worker's (`MU_MANAGED_AGENT=1`,
+`MU_ORCHESTRATOR` blank), and `delegateEnabled` hides `mu_delegate` from
+every worker (U7). So rung 2 is option (c) by construction, as rung 0 is.
+D3a needs U7 reopened for rung 2 first; `test/extension-delegate.test.ts`
+pins the current behaviour.
+
 ### D4. Host identity across profiles
 
 One machine can be reached through two profiles, for example `box` (a
