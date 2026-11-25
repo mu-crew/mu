@@ -258,7 +258,8 @@ mu agent close worker-1 -w auth --if <rev>
   collected HEAD or on a branch (or remote-tracking ref) of the root repo
   (checked again just before the removal), and no process on the host is
   inside it. Its `git worktree
-  remove` never uses git's `--force`. A process inside it, or a host with
+  remove` never uses git's `--force`. A process still inside it after a
+  30 s wait, or a host with
   neither /proc nor lsof to check, refuses naming `close --force`, which
   removes past either with a warning. A newer HEAD refuses with one line:
   `collect` again, or preview with `--keep-branch` and apply with

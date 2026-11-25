@@ -27,7 +27,7 @@ import {
   releaseHostChannel,
   reserveHostChannel,
 } from "../src/hosts.js";
-import { prepareRemote, RemotePrepareError } from "../src/remote-agent.js";
+import { prepareRemote, RemotePrepareError, setRemoteSettleForTests } from "../src/remote-agent.js";
 import { rmFixtureDir } from "./_fs.js";
 import { commitFileIn, copyGitFixture, gitIn } from "./_git.js";
 
@@ -146,10 +146,12 @@ describe("a lost prepare answer", () => {
     await prepare().catch(() => undefined);
     answer();
     const holder = spawnChild("sleep", ["30"], { cwd: wt(), stdio: "ignore" });
+    setRemoteSettleForTests(0);
     try {
       // `held <pid> [<etime> <args>]`: ps adds the holder's age and command when it can.
       await expect(prepare()).rejects.toThrow(/\(held \d+( [^)]*)?\)/);
     } finally {
+      setRemoteSettleForTests(null);
       holder.kill("SIGKILL");
     }
   });

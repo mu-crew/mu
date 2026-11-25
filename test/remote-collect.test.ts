@@ -315,7 +315,7 @@ describe("agent close of a remote worktree row", () => {
     await expect(close()).rejects.toBeInstanceOf(RemoteCloseRefusedError);
     const calls = execCalls();
     expect(calls).toHaveLength(2);
-    expect(calls[1]).toMatch(/while :; do[\s\S]*-lt 5 \] \|\| break[\s\S]*sleep 1[\s\S]*done/);
+    expect(calls[1]).toMatch(/while :; do[\s\S]*-lt 30 \] \|\| break[\s\S]*sleep 1[\s\S]*done/);
     expect(calls[1]).toContain("ps -o etime= -o args=");
     db.prepare("DELETE FROM agents").run();
     db.prepare("DELETE FROM host_channels").run();

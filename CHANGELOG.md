@@ -27,6 +27,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - `mu host check` on a `--plugin mule` profile whose host has no pi now says the pi and extension steps are "not needed for --mule (rung 2)" instead of a bare skip.
 - `mu host exec` in text mode now prints the `no exit code (deadline or no answer)` line on stderr (exit 5), as `--json` already did; before, a deadline exit was silent.
 - `mu agent close` of a remote worker no longer leaves a recovery record for the worktree it just removed when another mu process pruned the row (its pane already gone) during the close; the next spawn of the name is no longer refused.
+- `mu agent close` of a remote worker waits up to 30 s (was 5 s) for a process to leave the worktree before it refuses, so a harness helper that lingers after the pane dies no longer turns the close into two steps.
 
 ## [5.4.2] — 2026-11-25
 

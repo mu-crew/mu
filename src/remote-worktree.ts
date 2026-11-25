@@ -458,12 +458,15 @@ export const asideOf = (path: string, incarnation: number): string =>
 
 /**
  * How long a refusing scan re-checks a holder (seconds, one scan a second)
- * before naming it: short-lived tools (a guardrail spool drain) step into a
- * tree for a few seconds. The loop runs inside the same exec (one lease).
+ * before naming it: short-lived tools (a harness's guardrail helper draining
+ * its spool) stay in a tree for up to about half a minute after the pane dies,
+ * and a refusal then turns every close into two. The loop runs inside the same
+ * exec (one lease), well inside REMOTE_PREPARE_TIMEOUT_MS.
  */
-let settleSeconds = 5;
+const SETTLE_SECONDS = 30;
+let settleSeconds = SETTLE_SECONDS;
 export function setRemoteSettleForTests(seconds: number | null): void {
-  settleSeconds = seconds ?? 5;
+  settleSeconds = seconds ?? SETTLE_SECONDS;
 }
 
 /**
