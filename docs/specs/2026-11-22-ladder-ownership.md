@@ -1,9 +1,8 @@
 # Ladder ownership: DB capability, CLOSE, delegates, host identity, cross-DB
 
-Status: **DRAFT**, not approved. Spec B of the ladder work. It is not on
-the D15 path, and nothing in it ships before the human approves it. The
-review rounds and the approval come later. Do not add an approved section
-to this draft.
+Status: **Approved** (2026-11-25 — human approved all recommendations:
+D1.1a, D1.2c, D2a, D3a with `workspace: false`, D4b plus D4a's cap
+documentation, and D5a+b). Spec B of the ladder work.
 
 Builds on the approved [ladder placement spec](2026-11-20-ladder-placement.md)
 (Spec A), Part 1: §1 (the four places), §2 (R1-R5), §8.2 and §8.3 (the
@@ -13,9 +12,9 @@ left to rung 2 (§C "The rung-2 spec must settle") or to "Spec B" (§I, the
 `sync_ownership` row). See also the [sync guide](../guide/sync.md) and the
 [remote guide](../guide/remote.md).
 
-Every claim about today cites code at commit `9e4a9a81` (this branch's
-base). Every decision below is **open**: each lists options and a
-recommendation, and none is decided.
+Every claim about "today" below was written against `9e4a9a81`; D1.1a and
+D2a already shipped in mu 5.4.0, and D1.2c, D3a, D4b and D5b are the
+follow-up units implementing the remaining decisions.
 
 ## 1. Today's storage model
 
