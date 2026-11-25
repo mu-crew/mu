@@ -563,7 +563,7 @@ describe("preflight refusals: nothing changed, the close preview named", () => {
       () => {
         const { agentId } = reaped();
         db.prepare(
-          "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, 'worker-2', pane_id, host, cwd, base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport FROM remote_recovery WHERE agent_id = ?",
+          "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, 'worker-2', pane_id, host, cwd, base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport, dispatch_probes FROM remote_recovery WHERE agent_id = ?",
         ).run(agentId);
       },
       /newer recovery/,
@@ -581,7 +581,7 @@ describe("preflight refusals: nothing changed, the close preview named", () => {
   it("several records name --recovery in the close preview", async () => {
     const { agentId } = reaped();
     db.prepare(
-      "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, name, pane_id, host, cwd || '-x', base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport FROM remote_recovery WHERE agent_id = ?",
+      "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, name, pane_id, host, cwd || '-x', base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport, dispatch_probes FROM remote_recovery WHERE agent_id = ?",
     ).run(agentId);
     db.prepare("UPDATE host_profiles SET attach = NULL").run();
     const e = (await failure(previewReattach(db, "auth", "worker-1"))) as ReattachRefusedError;
@@ -590,7 +590,7 @@ describe("preflight refusals: nothing changed, the close preview named", () => {
   it("the printed close and preview commands paste into /bin/sh as their argv", async () => {
     const { agentId } = reaped();
     db.prepare(
-      "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, name, pane_id, host, cwd || '-x', base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport FROM remote_recovery WHERE agent_id = ?",
+      "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, name, pane_id, host, cwd || '-x', base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport, dispatch_probes FROM remote_recovery WHERE agent_id = ?",
     ).run(agentId);
     db.prepare("UPDATE host_profiles SET attach = NULL").run();
     const refused = (await failure(
@@ -1160,7 +1160,7 @@ describe("finding reattach_snapshot_recovery_owner: install re-checks the recove
   /** A newer record of the same host and path, under another name. */
   const newer = (): void => {
     db.prepare(
-      "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, 'worker-2', pane_id, host, cwd, base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport FROM remote_recovery",
+      "INSERT INTO remote_recovery SELECT agent_id + 50, workstream, workstream_id, workstream_created_at, 'worker-2', pane_id, host, cwd, base, collected_head, aside, host_exec, host_repo, reason, preserved_at, host_identity, host_transport, dispatch_probes FROM remote_recovery",
     ).run();
   };
   /** The apply's pane creation (mux.spawnAgent's I/O), after the snapshot and the --if. */

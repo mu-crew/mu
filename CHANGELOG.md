@@ -19,6 +19,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - Docs and the `host init --ssh --template` starter now say what to do where fresh ssh connections from the agent's process tree are impossible: use the mule plugin (its master is opened from your terminal), not a session template over a shared master.
 
 ### Fixed
+- Closing a `--mule` worker whose local dispatch processes are still exiting now refuses with exit 4 and a retry hint, not a human hand-back. Recovery waits for those processes before checking remote jobs or removing the worktree.
 - `mu host check` on a `--plugin mule` profile with no remote harness no longer fails: the `harnesses` step is advice (only `--host` spawns need one), so a rung-2-only host passes.
 - `mu doctor`'s plugin-migration recipe uses `mu host add --plugin mule --replace` (never `host rm` first, which loses the profile on a refusal); the refusal text no longer tells a `--replace` caller to remove the old profile.
 - The fresh-ssh starter hint names a runnable route (open mule's private master, then `host add --plugin mule`), and the guide adds `ControlPath=none` to the diagnostic and notes mule has no fetch, so `--fetch` needs its own route.

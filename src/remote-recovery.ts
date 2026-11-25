@@ -55,6 +55,8 @@ export interface RemoteRecovery {
   hostIdentity: string | null;
   /** Local-loop recoveries also own the outstanding mule jobs of this incarnation. */
   hostTransport: string | null;
+  /** JSON array of signed local PIDs (negative for groups) left by a close refusal. */
+  dispatchProbes: string | null;
 }
 
 interface RawRow {
@@ -75,6 +77,7 @@ interface RawRow {
   preserved_at: string;
   host_identity: string | null;
   host_transport: string | null;
+  dispatch_probes: string | null;
 }
 
 // ─── Selection: which record a close or collect means ───────────────────────
@@ -120,6 +123,7 @@ const rowToRecovery = (r: RawRow): RemoteRecovery => ({
   preservedAt: r.preserved_at,
   hostIdentity: r.host_identity,
   hostTransport: r.host_transport,
+  dispatchProbes: r.dispatch_probes,
 });
 
 /** Every record, oldest incarnation first. */
@@ -456,6 +460,18 @@ const sameArgs = (r: RemoteRecovery): (string | number | null)[] => [
 export function deleteRemoteRecovery(db: Db, rec: RemoteRecovery): boolean {
   return (
     db.prepare(`DELETE FROM remote_recovery WHERE ${SAME}`).run(...sameArgs(rec)).changes === 1
+  );
+}
+
+/** Keep the surviving probes on the original incarnation's recovery, in the row deletion transaction. */
+export function recordRecoveryDispatchProbes(
+  db: Db,
+  agentId: number,
+  probes: readonly number[],
+): void {
+  db.prepare("UPDATE remote_recovery SET dispatch_probes = ? WHERE agent_id = ?").run(
+    JSON.stringify(probes),
+    agentId,
   );
 }
 

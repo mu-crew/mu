@@ -40,14 +40,20 @@ import { resolveHost } from "../host-provider.js";
 import { HostHandbackError, releaseHostChannelsForAgent } from "../hosts.js";
 import { readJobFile } from "../jobs/lease.js";
 import { killView, viewPid, viewPresent, viewRunning } from "../jobs/view.js";
-import { awaitMuleDispatchExit, stopMuleJobs, workspaceHost } from "../local-loop.js";
+import {
+  awaitMuleDispatchExit,
+  MuleDispatchStillExitingError,
+  muleClosePreview,
+  muleDispatchProbes,
+  stopMuleJobs,
+  workspaceHost,
+} from "../local-loop.js";
 import { emitEvent } from "../logs.js";
 import type { MuxBackend } from "../mux/types.js";
 import { activeMux } from "../mux.js";
 import { selectRemoteRecovery } from "../remote-recovery.js";
 import { assertRemoteWorktreeReleasable, closeRemoteWorktree } from "../remote-worktree.js";
 import { agentRevision, assertRevision } from "../revision.js";
-import { shellWord } from "../shell-quote.js";
 import { callersOwing, dropOwnedRefs } from "../wait-registration.js";
 import {
   assertReleasable,
@@ -627,7 +633,12 @@ async function closeLocked(
       lease?.reservation.plugin != null ? getAgentForCleanup(db, name, opts.workstream) : undefined;
     try {
       if (muleHost !== undefined) {
-        if (pane !== undefined) await awaitMuleDispatchExit(muleHost, pane);
+        if (pane !== undefined) {
+          await awaitMuleDispatchExit(
+            muleDispatchProbes(pane),
+            muleClosePreview(opts.workstream, name, agent.incarnation),
+          );
+        }
         if (handback !== undefined) throw handback;
         if (replaced()) throw new AgentReplacedError(name, opts.workstream);
         await stopMuleJobs(db, muleHost, agent.incarnation);
@@ -642,15 +653,26 @@ async function closeLocked(
         },
       });
     } catch (err) {
-      if (muleHost === undefined || !(err instanceof HostHandbackError)) throw err;
-      // The pane was proven gone. The delete atomically preserves the tree
-      // and original incarnation, which is also the outstanding jobs' key.
-      if (deleteAgent(db, name, opts.workstream, agent))
-        dropClosedAgentRefs(db, opts.workstream, name);
+      if (muleHost === undefined) throw err;
+      if (!(err instanceof HostHandbackError || err instanceof MuleDispatchStillExitingError)) {
+        throw err;
+      }
+      // The pane was proven gone. Preserve its tree and job key. On timeout,
+      // keep the remaining probes in the same transaction: a retry has no pane
+      // from which to reconstruct them.
+      const deleted = deleteAgent(
+        db,
+        name,
+        opts.workstream,
+        agent,
+        err instanceof MuleDispatchStillExitingError ? { dispatchProbes: err.remaining } : {},
+      );
+      if (deleted) dropClosedAgentRefs(db, opts.workstream, name);
+      if (err instanceof MuleDispatchStillExitingError) throw err;
       throw new HostHandbackError(
         err.host,
         err.field,
-        `${err.detail}; local pane closed, remote cleanup not confirmed; preview again: mu agent close ${shellWord(name)} -w ${shellWord(opts.workstream)} --recovery ${agent.incarnation}`,
+        `${err.detail}; local pane closed, remote cleanup not confirmed; preview again: ${muleClosePreview(opts.workstream, name, agent.incarnation)}`,
       );
     }
     if (replaced()) throw new AgentReplacedError(name, opts.workstream);

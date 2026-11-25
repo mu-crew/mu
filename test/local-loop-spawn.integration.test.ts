@@ -24,6 +24,7 @@ import { spawnAgent } from "../src/agents/spawn.js";
 import { spawnForTask } from "../src/agents/task-spawn.js";
 import { getAgent, sendToAgent } from "../src/agents.js";
 import { listCarrierJobs } from "../src/carrier-jobs.js";
+import { classifyError } from "../src/cli/handle.js";
 import { ctlSocketPath } from "../src/ctl/path.js";
 import { encode, LineDecoder } from "../src/ctl/protocol.js";
 import { type Db, openDb } from "../src/db.js";
@@ -450,13 +451,72 @@ it.each(["fresh", "replayed"])(
   },
 );
 
-it("stops only the worker's outstanding jobs before removing its tree", async () => {
+it("waits for a slow local dispatch before stopping only the worker's jobs", async () => {
   await spawnAgent(db, spawn);
-  const onlyUnrelated = queueJobs();
+  dispatch = spawnChild(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+    detached: true,
+    stdio: "ignore",
+  });
+  const child = dispatch;
+  let onlyUnrelated: (() => void) | undefined;
+  onKill = () => {
+    setTimeout(() => {
+      onlyUnrelated = queueJobs();
+      child.kill();
+    }, 450);
+  };
   await close();
-  onlyUnrelated();
+  expect(onlyUnrelated).toBeDefined();
+  onlyUnrelated?.();
   expect(existsSync(tree)).toBe(false);
 });
+
+it.each(["close", "rollback"])(
+  "refuses recovery after %s while the local dispatch group is still exiting",
+  async (mode) => {
+    dispatch = spawnChild(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      detached: true,
+      stdio: "ignore",
+    });
+    const child = dispatch;
+    await once(child, "spawn");
+    const pid = child.pid;
+    if (pid === undefined) throw new Error("missing dispatch PID");
+    if (mode === "rollback") {
+      vi.stubEnv("MU_SPAWN_CTL_MS", "80");
+      pane.mockImplementationOnce(async (opts) => {
+        paneLive = true;
+        opts.onPaneCreated?.("%1", FAKE_SERVER_IDENTITY);
+        return "%1";
+      });
+      await expect(spawnAgent(db, spawn)).rejects.toThrow(/ctl|control socket/i);
+    } else {
+      await spawnAgent(db, spawn);
+    }
+    const onlyUnrelated = queueJobs();
+    const saved = readFileSync(join(dir, "jobs"), "utf8");
+    const expectRetry = async () => {
+      const err: unknown = await close().catch((err: unknown) => err);
+      expect(classifyError(err)).toEqual({ label: "conflict", exitCode: 4 });
+      expect(err).toMatchObject({
+        message: /still exiting.*retry/i,
+        remaining: expect.arrayContaining([-pid]),
+      });
+      expect(paneLive).toBe(false);
+      expect(existsSync(tree)).toBe(true);
+      expect(readFileSync(join(dir, "jobs"), "utf8")).toBe(saved);
+    };
+    if (mode === "close") await expectRetry();
+    expect(getAgent(db, spawn.name, spawn.workstream)).toBeUndefined();
+    await expectRetry();
+    const exited = once(child, "exit");
+    child.kill();
+    await exited;
+    await expect(close()).resolves.toMatchObject({ recovery: { deleted: true } });
+    onlyUnrelated();
+    expect(existsSync(tree)).toBe(false);
+  },
+);
 
 it("hands back close on a dropped master and later stops the jobs from recovery", async () => {
   await spawnAgent(db, spawn);

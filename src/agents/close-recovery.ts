@@ -18,7 +18,12 @@ import type { Db } from "../db.js";
 import { hostLost, observeBeforeClose } from "../host-policy.js";
 import type { HostView } from "../host-provider.js";
 import { viewRunning } from "../jobs/view.js";
-import { stopMuleJobs, workspaceHost } from "../local-loop.js";
+import {
+  awaitMuleDispatchExit,
+  muleClosePreview,
+  stopMuleJobs,
+  workspaceHost,
+} from "../local-loop.js";
 import { emitEvent } from "../logs.js";
 import {
   assertRecoveryProfile,
@@ -112,6 +117,14 @@ export async function closeRecovery(
   const checkProfile = (h: HostView) => assertRecoveryProfile(rec, { exec: h.link.fingerprint(h) });
   const muleHost = workspaceHost(rec);
   if (muleHost !== undefined) {
+    if (rec.dispatchProbes !== null) {
+      await awaitMuleDispatchExit(
+        JSON.parse(rec.dispatchProbes) as number[],
+        muleClosePreview(rec.workstream, rec.name, rec.agentId),
+      );
+      assertRecoveryUnchanged(db, rec);
+      assertRecoveryUsable(db, rec);
+    }
     // Refusals (dirty, uncollected, unreadable) come BEFORE any job is stopped.
     await assertRemoteWorktreeReleasable(db, tree, opts.keepBranch, {
       checkProfile,

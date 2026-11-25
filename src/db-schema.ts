@@ -135,6 +135,7 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   // host_exec when added.
   ["remote_recovery", "host_identity", "TEXT"],
   ["remote_recovery", "host_transport", "TEXT"],
+  ["remote_recovery", "dispatch_probes", "TEXT"],
   // Plugins spec D10 (review of P6e2): a wait's deadline event fires once per deadline.
   ["hosts", "deadline_fired", "INTEGER"],
 ];

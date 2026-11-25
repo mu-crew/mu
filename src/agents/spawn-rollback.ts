@@ -12,7 +12,13 @@ import {
 import type { Db } from "../db.js";
 import { type HostLease, releaseHostChannel, releaseHostChannelsForAgent } from "../hosts.js";
 import { killView, viewPid, viewPresent } from "../jobs/view.js";
-import { awaitMuleDispatchExit, stopMuleJobs, workspaceHost } from "../local-loop.js";
+import {
+  awaitMuleDispatchExit,
+  MuleDispatchStillExitingError,
+  muleDispatchProbes,
+  stopMuleJobs,
+  workspaceHost,
+} from "../local-loop.js";
 import { emitEvent } from "../logs.js";
 import { activeMux } from "../mux.js";
 import { getRemoteRecovery } from "../remote-recovery.js";
@@ -151,14 +157,16 @@ export async function rollbackSpawn(
     : undefined;
   // The remote tree this rollback proved gone: the row's delete then owes no recovery record.
   let remoteGone = false;
+  let dispatchProbes: readonly number[] | undefined;
   if (staged?.host !== undefined) {
     let stopped = true;
     if (host !== undefined && paneGone && paneId !== undefined) {
       try {
-        if (pane !== undefined) await awaitMuleDispatchExit(host, pane);
+        if (pane !== undefined) await awaitMuleDispatchExit(muleDispatchProbes(pane));
         await stopMuleJobs(db, host, staged.incarnation);
       } catch (err) {
         stopped = false;
+        if (err instanceof MuleDispatchStillExitingError) dispatchProbes = err.remaining;
         try {
           emitEvent(
             db,
@@ -233,7 +241,16 @@ export async function rollbackSpawn(
   // tree this rollback removed (or found gone) leaves no `remote_recovery` record:
   // the record is for a worktree someone must still deal with.
   if (ownedIncarnation !== undefined)
-    deleteAgent(db, name, workstream, { incarnation: ownedIncarnation }, { preserve: !remoteGone });
+    deleteAgent(
+      db,
+      name,
+      workstream,
+      { incarnation: ownedIncarnation },
+      {
+        preserve: !remoteGone,
+        ...(dispatchProbes === undefined ? {} : { dispatchProbes }),
+      },
+    );
   // Last: the reservation goes only once nothing was launched, or its job is stopped and
   // its job file and tree are dealt with. Until then the name stays fenced.
   // A stopped job whose remote tree was not removed keeps its reservation: the close

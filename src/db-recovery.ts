@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS remote_recovery (
   reason               TEXT NOT NULL CHECK (reason IN ('reap', 'teardown', 'workstream-delete')),
   preserved_at         TEXT NOT NULL,
   host_identity        TEXT,
-  host_transport       TEXT
+  host_transport       TEXT,
+  dispatch_probes      TEXT -- local-loop PIDs/groups still exiting after a close
 );
 
 CREATE TRIGGER IF NOT EXISTS remote_recovery_agent_del_v2

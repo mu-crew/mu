@@ -392,6 +392,7 @@ export {
   LeaseJobTimeoutError,
   LeaseJobUnreadableError,
 } from "./jobs/lease.js";
+export { MuleDispatchStillExitingError } from "./local-loop.js";
 export {
   type CaptureIntent,
   KNOWN_INTENTS,
