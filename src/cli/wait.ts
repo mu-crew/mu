@@ -487,20 +487,22 @@ function withOwedNotice(
  * failed read says nothing.
  */
 async function silenceNotices(db: Db, snaps: readonly WaitSnapshot[]): Promise<string[]> {
-  const out: string[] = [];
-  for (const s of snaps) {
-    if (s.ref.kind !== "agent" || s.fired || s.dead) continue;
-    // Only a hooks row's target carries `sent`: any other reads as nothing to say.
-    const agent = getAgent(db, s.ref.id, s.ref.workstream);
-    if (agent === undefined) continue;
-    try {
-      const line = await hookSilence(channelTarget(db, agent));
-      if (line !== undefined) out.push(line);
-    } catch {
-      // advice only
-    }
-  }
-  return out;
+  // In parallel, each node read capped by hookSilence's budget: the wait's deadline has passed,
+  // so its heartbeat may run late by one budget, never by one budget per agent.
+  const lines = await Promise.all(
+    snaps.map(async (s) => {
+      if (s.ref.kind !== "agent" || s.fired || s.dead) return undefined;
+      // Only a hooks row's target carries `sent`: any other reads as nothing to say.
+      const agent = getAgent(db, s.ref.id, s.ref.workstream);
+      if (agent === undefined) return undefined;
+      try {
+        return await hookSilence(channelTarget(db, agent));
+      } catch {
+        return undefined; // advice only
+      }
+    }),
+  );
+  return lines.filter((l): l is string => l !== undefined);
 }
 
 // ─── commander wiring ──────────────────────────────────────────────

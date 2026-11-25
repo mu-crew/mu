@@ -163,9 +163,15 @@ export interface RemoteReader {
   /**
    * Read now, or reuse a successful read younger than `maxAgeMs`. `write`
    * first records one of mu's own events on the node (`murmur hook mu
-   * --remote`, an interrupt it sent) in the same exec.
+   * --remote`, an interrupt it sent) in the same exec. `budgetMs` caps both
+   * the wait for the node's read lock and the exec (an advisory read that
+   * must not outlive its caller).
    */
-  read(opts?: { maxAgeMs?: number; write?: Record<string, unknown> }): Promise<RemoteReadResult>;
+  read(opts?: {
+    maxAgeMs?: number;
+    write?: Record<string, unknown>;
+    budgetMs?: number;
+  }): Promise<RemoteReadResult>;
 }
 
 /** See ChannelTarget.sent. */

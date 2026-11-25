@@ -784,6 +784,29 @@ describe("a send that drew no hook event (a dialog took it)", () => {
     });
   });
 
+  it("a node read that stalls cannot hold the timed-out wait's heartbeat past the advisory's budget (review repro)", async () => {
+    await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
+    fake.screen = () => DIALOG;
+    node.slowReads(5);
+    try {
+      await withEnv("MU_HOOK_SILENCE_MS", "1", async () => {
+        const t0 = Date.now();
+        const { data, exitCode } = await runCliJson(
+          ["wait", "agent:auth/cw", "--timeout", "0.4", "--json"],
+          dbPath,
+        );
+        const took = Date.now() - t0;
+        expect(exitCode).toBeNull();
+        expect(data).toMatchObject({ firing: { kind: "heartbeat" } });
+        expect(JSON.stringify(data)).not.toContain("no hook event"); // the read never answered
+        // 0.4 s wait + one advisory budget (1 s), with slack; the stalled read sleeps 5 s.
+        expect(took).toBeLessThan(3500);
+      });
+    } finally {
+      node.slowReads(0);
+    }
+  }, 20_000);
+
   it("a node read that fails is unknown, not silence: no advisory", async () => {
     await runCliJson(["agent", "send", "cw", "do it", "-w", "auth", "--json"], dbPath);
     fake.screen = () => DIALOG;

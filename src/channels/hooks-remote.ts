@@ -426,8 +426,10 @@ export async function readRemoteHooks(
   db: Db,
   agent: RemoteHooksAgent,
   write?: Record<string, unknown>,
+  budgetMs?: number,
 ): Promise<RemoteReadResult> {
   const fail = (reason: string): RemoteReadResult => ({ ok: false, reason });
+  const execMs = Math.min(HOST_COMMAND_TIMEOUT_MS, budgetMs ?? HOST_COMMAND_TIMEOUT_MS);
   return withFileLock(
     keyPath(db, agent.key, "lock"),
     `remote read ${agent.key}`,
@@ -440,7 +442,7 @@ export async function readRemoteHooks(
           {
             script: remotePaneScript(agent.key, write),
             cwd: ".",
-            timeoutMs: HOST_COMMAND_TIMEOUT_MS,
+            timeoutMs: execMs,
           },
           { holder: `read:${agent.workstreamName}/${agent.name}`, paneAlive: viewRunning },
         );
@@ -448,7 +450,7 @@ export async function readRemoteHooks(
         return fail(`host ${agent.host}: ${e instanceof Error ? e.message : String(e)}`);
       }
       if (run.exitCode === null) {
-        return fail(`host ${agent.host} timed out after ${HOST_COMMAND_TIMEOUT_MS}ms`);
+        return fail(`host ${agent.host} timed out after ${execMs}ms`);
       }
       if (run.exitCode !== 0) {
         const why = firstLine(run.stderr) || firstLine(run.stdout);
@@ -496,7 +498,7 @@ export async function readRemoteHooks(
     },
     {
       strict: true,
-      acquireTimeoutMs: LOCK_WAIT_MS,
+      acquireTimeoutMs: Math.min(LOCK_WAIT_MS, budgetMs ?? LOCK_WAIT_MS),
       onUnavailable: () => fail("another mu process is reading this worker's node"),
     },
   );
@@ -518,7 +520,7 @@ export function remoteReader(db: Db, agent: RemoteHooksAgent): RemoteReader {
       if (opts.write === undefined && lastOk !== undefined && Date.now() - lastOk.at < maxAge) {
         return lastOk.result;
       }
-      const result = await readRemoteHooks(db, agent, opts.write);
+      const result = await readRemoteHooks(db, agent, opts.write, opts.budgetMs);
       if (result.ok) lastOk = { at: Date.now(), result };
       return result;
     },

@@ -34,6 +34,8 @@ export interface FakeRemoteNode {
   pending(): number;
   /** Make the next reads fail (exit 1), or succeed again. */
   failReads(on: boolean): void;
+  /** Make the next reads sleep `seconds` before answering (0: answer at once again). */
+  slowReads(seconds: number): void;
   /** Make mu's writes fail, or succeed again. */
   failWrites(on: boolean): void;
 }
@@ -80,6 +82,8 @@ const word = (st) => {
 };
 if (args[0] === "pane" && args.includes("--remote")) {
   if (fs.existsSync(path.join(dir, "pane-fail"))) { process.stderr.write("murmur: boom\n"); process.exit(1); }
+  const slow = path.join(dir, "pane-slow");
+  if (fs.existsSync(slow)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(fs.readFileSync(slow, "utf8")) * 1000);
   const key = at("--remote");
   const st = readState(key);
   fs.mkdirSync(eventsDir, { recursive: true });
@@ -186,6 +190,10 @@ exec /bin/sh -c "$1"
     failReads(on) {
       if (on) writeFileSync(join(dir, "pane-fail"), "");
       else rmSync(join(dir, "pane-fail"), { force: true });
+    },
+    slowReads(seconds) {
+      if (seconds > 0) writeFileSync(join(dir, "pane-slow"), String(seconds));
+      else rmSync(join(dir, "pane-slow"), { force: true });
     },
     failWrites(on) {
       if (on) writeFileSync(join(dir, "hook-fail"), "");

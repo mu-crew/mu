@@ -21,14 +21,21 @@ import type { ChannelTarget } from "./types.js";
  * (a row that is running or blocked, changed after the send, or counts
  * another run than the send read).
  */
-export async function hookSilence(t: ChannelTarget, now = Date.now()): Promise<string | undefined> {
+/** How long the advisory's fresh node read may take: it runs after the wait's own deadline. */
+export const HOOK_SILENCE_READ_BUDGET_MS = 1000;
+
+export async function hookSilence(
+  t: ChannelTarget,
+  now = Date.now(),
+  budgetMs = HOOK_SILENCE_READ_BUDGET_MS,
+): Promise<string | undefined> {
   const { sent, agent } = t;
   const ms = hookSilenceMs();
   if (sent === undefined || sent.ack === "confirmed" || ms === 0 || now - sent.at < ms) {
     return undefined;
   }
   if (t.remote !== undefined) {
-    const read = await t.remote.read();
+    const read = await t.remote.read({ budgetMs });
     if (!read.ok) return undefined;
   }
   const pane = await readHooksPane(agent.paneId);
