@@ -330,6 +330,8 @@ export const MESSAGES = {
       : `DB's capture triggers are revision ${detected}; this mu understands up to ${supported}. Upgrade mu.`,
   "db.sqlite_old": (version: string) =>
     `SQLite ${version} is too old; mu needs >= 3.42 (unixepoch('subsec') for the op clock). The DB was not touched.`,
+  "db.remote_workspace": () =>
+    "this shell is a remote workspace (MU_REMOTE_WORKSPACE=1): the host's mu DB is not this agent's. Use the local loop's mu route, or set MU_DB_PATH to open a DB on purpose.",
   "workstream.not_found": (ws: string, near: readonly string[] = [], init = false) =>
     `no such workstream: ${ws}${near.length > 0 ? ` (did you mean ${near.join(", ")}?)` : ""}${
       init ? `; \`mu workstream init ${ws}\` creates it` : ""

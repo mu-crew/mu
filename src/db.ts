@@ -166,6 +166,7 @@ export function defaultDbPath(): string {
  * concurrently — WAL mode handles cross-process writes.
  */
 export function openDb(options: OpenDbOptions = {}): Db {
+  if (options.path === undefined) refuseRemoteWorkspace();
   const path = options.path ?? defaultDbPath();
   refuseUserDbDuringTests(path);
   refusePendingStateImport(path);
@@ -405,6 +406,23 @@ export class SqliteTooOldError extends Error {
   constructor(public readonly sqliteVersion: string) {
     super(say("db.sqlite_old", sqliteVersion));
   }
+}
+
+/**
+ * Thrown by openDb when `MU_REMOTE_WORKSPACE=1` (a rung-2 remote command
+ * env) is set and no `MU_DB_PATH` names a DB: the host's default DB belongs
+ * to someone else. Exit 4 (conflict). Nothing was opened.
+ */
+export class RemoteWorkspaceDbError extends Error {
+  override readonly name = "RemoteWorkspaceDbError";
+  constructor() {
+    super(say("db.remote_workspace"));
+  }
+}
+
+function refuseRemoteWorkspace(): void {
+  if (process.env.MU_REMOTE_WORKSPACE !== "1" || process.env.MU_DB_PATH) return;
+  throw new RemoteWorkspaceDbError();
 }
 
 /** How long openDb retries the switch to WAL while another process holds the lock. */

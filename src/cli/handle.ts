@@ -75,6 +75,7 @@ import {
   type Db,
   defaultDbPath,
   openDb,
+  RemoteWorkspaceDbError,
   SchemaTooNewError,
   SchemaTooOldError,
   SqliteTooOldError,
@@ -612,6 +613,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof SchemaTooOldError ||
     err instanceof SchemaTooNewError ||
     err instanceof SqliteTooOldError ||
+    err instanceof RemoteWorkspaceDbError ||
     err instanceof StateImportPendingError ||
     err instanceof StateImportRefusedError ||
     err instanceof StateImportBusyError ||

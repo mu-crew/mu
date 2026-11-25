@@ -70,6 +70,7 @@ milliseconds; `0` disables a wait unless noted.
 | `PI_CODING_AGENT_SESSION_DIR` | `<DB dir>/delegate-sessions/<workstream>/<task>`, set when `mu agent spawn --task <id> --send` (what `mu_delegate` and `mu next --refute` run) starts a pi agent for a `delegate`-kind task, so delegate sessions stay out of the caller's pi `/resume` list. Not set by a plain `mu agent spawn`. Local agents only. |
 | `SSH_AUTH_SOCK` | The caller's, when it is a socket (a detached tmux session would otherwise hand the pane a stale one). A Rex shell rc may replace it. It also reaches the local transport pane of a `--host` agent, not its remote `{env}`. |
 | `MU_REMOTE` | `1`, only for an agent spawned with `--host`. Tells its pi extension there is no mu DB on that host: it skips the close nudge (you close the task) and the settle wait. |
+| `MU_REMOTE_WORKSPACE` | `1`, set by the mule pi extension in the env of every remote command of a rung-2 agent (a local pi loop with a remote workspace). A `mu` run there without `MU_DB_PATH` refuses (exit 4) instead of opening the host's default DB, which is not the agent's. An explicit `MU_DB_PATH` still opens. Rungs 3-5 never set it. |
 | `MU_REMOTE_KEY` | `<origin host>/<ws>.<agent>.<nonce>`, only for a claude, codex, cursor-agent or muse worker spawned with `--host` (spec D11): the key its hooks on that host report under, in murmur's remote area rather than its inbox. Its anchor holds the same key, for a hook whose env is cleared. Unset in the local pane. |
 
 A local `claude`, `codex`, `cursor-agent` or `muse` pane on tmux starts

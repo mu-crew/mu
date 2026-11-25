@@ -221,6 +221,7 @@ export {
   openDb,
   PORTABLE_TABLES,
   type PortableTable,
+  RemoteWorkspaceDbError,
   SchemaTooNewError,
   SchemaTooOldError,
   SqliteTooOldError,

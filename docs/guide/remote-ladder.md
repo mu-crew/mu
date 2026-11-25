@@ -102,6 +102,11 @@ The local pane can run on tmux or Rex. `--host` and `--cwd` conflict with
 `--mule`. On Linux, `MU=<mu> MULE=<mule> bash scripts/smoke-rung2.sh` runs
 this path end to end against a loopback `sshd MaxSessions 1`.
 
+A `mu` called from a remote command (a script, `bash -c`) would open the
+host's default DB, someone else's. The mule extension sets
+`MU_REMOTE_WORKSPACE=1` in those commands, and mu then refuses (exit 4)
+unless `MU_DB_PATH` names a DB. Use the local loop's `mu` route instead.
+
 ## One backend per workstream
 
 A workstream's panes live on one multiplexer. A spawn refuses before any
