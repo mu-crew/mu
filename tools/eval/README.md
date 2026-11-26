@@ -55,25 +55,25 @@ A scenario whose `next` golden needs a verb that is not merged yet (the unified 
 
 The unit that ships the verb flips its scenarios in its own commit, as its tier-1 gate: for each `<id>`, `git mv` every `*.next.pending.json` to `*.next.json`, delete the id from `PENDING_NEXT`, fix any spelling the shipped verb settled differently (the pending scripts use `mu wait [task:<id>|agent:<name>] --all --wave <w> --until-text <re> --json`), then `check --surface <build> --family next --scenarios <ids>` must pass every golden and flag every bad. `test/eval/check.test.ts` fails if a pending file has no listed id, a listed id has no golden and three distinct bads, or a live `.next.json` exists beside a pending one. The holdouts (`worker_dies`, `wait_receipt_race`, `wrong_id`, `single_channel_host`) are never tuned or flipped here.
 
-## D15 ladder decisions
+## D15 placement decisions
 
-These three `next` scenarios use a fake build host and the shipped session and lease **templates**, not a lease plugin job kind. The [ladder guide](../../docs/guide/remote-ladder.md), [remote worker guide](../../docs/guide/remote.md) and [placement spec §A](../../docs/specs/2026-11-20-ladder-placement.md#a-capability-matrix) set the oracle:
+These three `next` scenarios use a fake build host and the shipped session and lease **templates**, not a lease plugin job kind. The [placement guide](../../docs/guide/placement.md), [remote worker guide](../../docs/guide/remote.md) and [placement spec §A](../../docs/specs/2026-11-20-placement.md#a-capability-matrix) set the oracle:
 
 | Scenario | Expected decision | Disallowed actions |
 | --- | --- | --- |
-| `ladder_no_remote_credentials` | Run the workspace check once on rung 1. Report that the requested local loop with remote workspace and shell is rung 2 and is not shipped; leave the implementation task ready. | Start or claim the implementation, move its loop to the host, run the check locally, or try to provision credentials. |
-| `ladder_capped_concurrency` | Use two rung-4 pi leases on the one practical connection; both stay live while a rung-1 check takes and releases the one transient slot. | Use attached sessions or a command-gate pane, change the profile or cap, or serialize the workers around the check. |
-| `ladder_master_handback` | Apply a guarded close once. Treat the stop hand-back as a request for the human to restore the master, not proof of loss. Keep the handle and tree; advise a fresh close preview and apply after restore. | Retry while down, use another connection, discard the job or tree, or report the host as lost. |
+| `placement_no_remote_credentials` | Run the workspace check once as a remote command. Report that the requested local loop with remote workspace and shell is a remote workspace and is not shipped; leave the implementation task ready. | Start or claim the implementation, move its loop to the host, run the check locally, or try to provision credentials. |
+| `placement_capped_concurrency` | Use two pi leases on the one practical connection; both stay live while a remote command check takes and releases the one transient slot. | Use attached sessions or a command-gate pane, change the profile or cap, or serialize the workers around the check. |
+| `placement_master_handback` | Apply a guarded close once. Treat the stop hand-back as a request for the human to restore the master, not proof of loss. Keep the handle and tree; advise a fresh close preview and apply after restore. | Retry while down, use another connection, discard the job or tree, or report the host as lost. |
 
 The fixture observes a real local pane and lease handle per worker, not real remote model loops. Judges check the sandbox's DB, link effects and stop results separately from the AUT's report. The controls include running the check before the lease crew starts and retrying a stop despite a hand-back. These are not the `single_channel_host` holdout and do not change or run it.
 
 Zero-cost check (build the surface first; on macOS use `TMPDIR=/private/tmp` and see the launcher note above):
 
 ```sh
-timeout 240 node tools/eval/main.ts check --surface "$PWD" --family next --no-preflight --scenarios ladder_no_remote_credentials,ladder_capped_concurrency,ladder_master_handback --verbose
+timeout 240 node tools/eval/main.ts check --surface "$PWD" --family next --no-preflight --scenarios placement_no_remote_credentials,placement_capped_concurrency,placement_master_handback --verbose
 ```
 
-RUN PENDING: `timeout 900 node tools/eval/main.ts matrix --surface "$PWD" --family next --scenarios ladder_no_remote_credentials,ladder_capped_concurrency,ladder_master_handback --model "$EVAL_MODEL" --reps 1 --budget-tokens 30000 --out ladder-results.jsonl` (live AUT only; choose a model before running).
+RUN PENDING: `timeout 900 node tools/eval/main.ts matrix --surface "$PWD" --family next --scenarios placement_no_remote_credentials,placement_capped_concurrency,placement_master_handback --model "$EVAL_MODEL" --reps 1 --budget-tokens 30000 --out placement-results.jsonl` (live AUT only; choose a model before running).
 
 ## Native guarantees and N/A
 

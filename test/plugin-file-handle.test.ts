@@ -1,4 +1,4 @@
-// The D15 file handle (ladder placement spec §10, §5; spec A round 2's lease-recovery and
+// The D15 file handle (placement spec §10, §5; spec A round 2's lease-recovery and
 // self-admit-close findings), over the fake plugin's `handle: "file"` kind. mu claims the job
 // file before `job.start`, `JobSpec.jobFile` names it, and mu reads it from the local file
 // before the spawn returns; lookup by key comes second and `none` never acts. Every later path
@@ -312,7 +312,7 @@ describe("recovery", () => {
   });
 });
 
-// The one rule (ladder placement §10): a file kind's record and job file are retained until its
+// The one rule (placement spec §10): a file kind's record and job file are retained until its
 // view, the job's dispatcher, is PROVEN gone (proveViewGone); unknown always retains.
 describe("the view rule", () => {
   // wire_close_spawn_stale_view: close snapshotted the record before its awaited host.status and

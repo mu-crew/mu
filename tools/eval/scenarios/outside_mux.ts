@@ -2,7 +2,7 @@
 // Outside a multiplexer: the caller is a plain shell (t3code, an IDE terminal, CI): TMUX, TMUX_PANE
 // and HERDR_ENV are unset and MU_MUX is blank (setup asserts it; the sandbox env is a whitelist, and
 // the sandbox's own MU_MUX=tmux override is blanked so mu runs the detection a plain shell runs,
-// down to the "tmux is installed" rung). mu still has tmux on
+// down to the "tmux is installed" step). mu still has tmux on
 // PATH and starts its own detached server, so a worker and a delegate wave must run to completion
 // with no pane the caller can see, no tmux client and no prod.
 //

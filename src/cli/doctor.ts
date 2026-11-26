@@ -205,7 +205,7 @@ export async function cmdDoctor(
     }
     // Schema version: openDb refuses any DB older or newer than
     // CURRENT_SCHEMA_VERSION (SchemaTooOldError / SchemaTooNewError,
-    // exit 4; there is no migration ladder). A mismatch here means the
+    // exit 4; there is no migration chain). A mismatch here means the
     // row changed after open, e.g. an external SQLite client.
     try {
       const row = db.prepare("SELECT version FROM schema_version WHERE id = 1").get() as

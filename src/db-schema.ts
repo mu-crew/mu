@@ -122,7 +122,7 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
       ["first_inc", "TEXT"],
       // P6d: the in-life collect's current backoff, doubled per failure (D10).
       ["collect_delay_ms", "INTEGER"],
-      // Ladder placement §10: a file kind's wire state, its revision and its bound view's mux
+      // Placement spec §10: a file kind's wire state, its revision and its bound view's mux
       // server (src/carrier-wire.ts). No default state on purpose: an older record is unknown
       // (NULL), never "claimed". wire_rev is nullable (an ADD COLUMN may leave NULL):
       // every read and compare-and-swap treats NULL as 0 (COALESCE).
@@ -150,7 +150,7 @@ export const CURRENT_SCHEMA_VERSION = 14;
 /** mu 4's schema: the state import's source (src/state-import.ts). */
 export const V13 = 13;
 
-/** The lowest schema version `openDb` will accept. There is no ladder:
+/** The lowest schema version `openDb` will accept. There is no upgrade chain:
  *  anything older throws `SchemaTooOldError` (exit 4) and is left
  *  untouched on disk. */
 export const MIN_ACCEPTED_SCHEMA_VERSION = 14;

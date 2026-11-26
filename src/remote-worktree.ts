@@ -60,7 +60,7 @@ export class RemoteWorktreeConflictError extends Error {
 
 /**
  * The host's repo lacks a `--worktree` spawn's base commit: a provider host's after its push
- * (D7 G3), or a static host's, which mu never pushes to (ladder placement spec §3.3). Exit 5;
+ * (D7 G3), or a static host's, which mu never pushes to (placement spec §3.3). Exit 5;
  * names host, repo and the sha, and the fix. `rev` is the sha; `from`, the ref it resolved from.
  */
 export class RemoteBaseMissingError extends RemotePrepareError {

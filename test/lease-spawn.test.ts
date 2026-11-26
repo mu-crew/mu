@@ -557,7 +557,7 @@ describe("reviewer probes: the job file is never an ownerless pointer", () => {
     deleteAgent(db, "worker-1", "auth");
     expect(reservation()).toMatchObject({ job: "new-job", treePath: WT });
     expect(reservation()?.reason).toContain(WT);
-    // The stamped placeholder left the new tree its own record (ladder placement R2), beside the older one.
+    // The stamped placeholder left the new tree its own record (placement spec R2), beside the older one.
     const recs = listRemoteRecoveries(db);
     const mine = recs.find((r) => r.cwd === WT)?.agentId;
     expect(recs.map((r) => r.agentId).sort()).toEqual([mine, prior.incarnation].sort());

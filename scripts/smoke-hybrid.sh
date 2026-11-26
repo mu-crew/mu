@@ -1,30 +1,30 @@
 #!/usr/bin/env bash
-# Operator smoke for a mixed crew (docs/specs/2026-11-20-ladder-placement.md,
-# the D15 rungs only): ONE orchestrator, ONE loopback `sshd MaxSessions 1`, and
-# at once a rung-0 worker (local tmux pane), rung-1 calls (`mu host exec`
-# through the mule link) and a rung-4 worker (`--plugin mule` lease job).
+# Operator smoke for a mixed crew (docs/specs/2026-11-20-placement.md,
+# the D15 placements only): ONE orchestrator, ONE loopback `sshd MaxSessions 1`,
+# and at once a local worker (local tmux pane), remote commands (`mu host exec`
+# through the mule link) and a lease worker (`--plugin mule` lease job).
 # Explicitly invoked, never picked up by vitest; Linux only (it runs sshd):
 #
 #   MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-hybrid.sh
 #
 # Cases:
-#   H1. both rungs at once: a rung-4 worker (job on the "remote") and a rung-0
-#       worker (local pane) run side by side in one workstream, one DB
-#   H2. remote -> local: the rung-4 worker commits in its remote tree (its own
+#   H1. both placements at once: a lease worker (job on the "remote") and a
+#       local worker (local pane) run side by side in one workstream, one DB
+#   H2. remote -> local: the lease worker commits in its remote tree (its own
 #       shell, through a send), `mu agent collect` pins it, the orchestrator
-#       merges refs/mu/collect/<ws>/<agent>, and a rung-0 reviewer spawned
+#       merges refs/mu/collect/<ws>/<agent>, and a local reviewer spawned
 #       from the merged HEAD finds the commit and its file in its worktree
-#   H3. rung 1 alongside: concurrent `mu host exec` calls plus a collect while
+#   H3. remote commands alongside: concurrent `mu host exec` calls plus a collect while
 #       both workers run: every call exits 0, sshd refuses no session (the cap
 #       is shown real first), no `exec:*` holder ever appears in host_channels
 #       (the slots:"self" mule link owns its slots), the collect's template fetch
 #       holds at most its one row, every sample read succeeds, 0 rows afterwards
-#   H4. local -> remote (spec §3.3): a rung-0 worker commits; merged locally,
-#       its commit is local-only, so a rung-4 spawn from it is refused (exit 5,
+#   H4. local -> remote (spec §3.3): a local worker commits; merged locally,
+#       its commit is local-only, so a lease spawn from it is refused (exit 5,
 #       RemoteBaseMissingError naming host, repo, sha and both fixes) before any
 #       effect; the caller does the named remedy (push to a remote the host can
 #       fetch, then `mu host exec <h> -- git -C <repo> fetch <remote> <sha>`),
-#       the spawn then works, the rung-4 worker sees that base, commits on top,
+#       the spawn then works, the lease worker sees that base, commits on top,
 #       and the collect merges fast-forward into the orchestrator's checkout
 #   H5. orchestrator mu verbs never run remotely: the remote PATH's `mu` is a
 #       tripwire that records any call, and no mu.db appears on the remote side
@@ -341,14 +341,14 @@ forward_held() {
 }
 declare -A JOBS=()
 
-# spawn_remote <name> [extra spawn args...]: a rung-4 lease job through the plugin.
+# spawn_remote <name> [extra spawn args...]: a lease job through the plugin.
 spawn_remote() {
   local a=$1 job wt
   shift
   wt=$(remote_wt "$a")
   (cd "$LREPO" && mu agent spawn "$a" -w "$WS" --host loop --worktree --root "$RREPO" --json "$@") >"$R/spawn-$a.json" || {
     cat "$R/spawn-$a.json"
-    fail "rung-4 spawn $a"
+    fail "lease spawn $a"
   }
   job=$(sql "SELECT job FROM carrier_jobs WHERE workstream='$WS' AND name='$a'" | js 'd[0]?.job') || fail "no carrier_jobs handle for $a"
   [[ "$job" =~ ^[0-9a-f]{6}$ ]] || fail "job handle '$job' is not a mule id"
@@ -357,23 +357,23 @@ spawn_remote() {
   forward_held "$(local_sock "$a")" || fail "the ctl forward of $a is not bound by mule's master"
   [ "$(js 'd.data.ctl ?? d.data.agent?.ctl ?? "?"' <"$R/spawn-$a.json")" = ok ] || fail "spawn $a: ctl handshake not ok"
   JOBS[$a]=$job
-  pass "rung 4: $a spawned as mule job $job (remote tree \$R${wt#"$R"}, ctl ok through master $MULE_MASTER)"
+  pass "lease: $a spawned as mule job $job (remote tree \$R${wt#"$R"}, ctl ok through master $MULE_MASTER)"
 }
-# spawn_local <name> [--from <ref>]: a rung-0 worker in a local pane and worktree.
+# spawn_local <name> [--from <ref>]: a local worker in a local pane and worktree.
 spawn_local() {
   local a=$1 cwd
   shift
   (cd "$LREPO" && mu agent spawn "$a" -w "$WS" --worktree --json "$@") >"$R/spawn-$a.json" || {
     cat "$R/spawn-$a.json"
-    fail "rung-0 spawn $a"
+    fail "local spawn $a"
   }
   [ "$(js 'd.data.ctl ?? d.data.agent?.ctl ?? "?"' <"$R/spawn-$a.json")" = ok ] || fail "spawn $a: ctl handshake not ok"
   cwd=$(agent_cwd "$a") || fail "no cwd for $a"
   [ -d "$cwd" ] || fail "local worktree $cwd of $a missing"
-  case "$cwd" in "$R/rhome"/*) fail "rung-0 worker $a runs in the remote area ($cwd)" ;; esac
+  case "$cwd" in "$R/rhome"/*) fail "local worker $a runs in the remote area ($cwd)" ;; esac
   [ "$(sql "SELECT count(*) AS n FROM agents WHERE name='$a' AND host IS NULL" | js 'd[0].n')" = 1 ] ||
-    fail "rung-0 worker $a has a host"
-  pass "rung 0: $a spawned in a local pane, worktree \$R${cwd#"$R"}"
+    fail "local worker $a has a host"
+  pass "local: $a spawned in a local pane, worktree \$R${cwd#"$R"}"
 }
 
 # ask <name> <cmd>: run <cmd> in the worker's own shell (a smoke-sh send), wait
@@ -428,48 +428,48 @@ close_agent() {
   fi
   unset "JOBS[$a]"
   [ "$(remote_sessions)" = "${#JOBS[@]}" ] || fail "after closing $a: $(remote_sessions) remote tmux session(s), ${#JOBS[@]} live job(s)"
-  pass "close $a: no forward, job, tree, socket, job file, agent/carrier_jobs/remote_recovery row, effects or host_channels row ($(remote_sessions) remote session(s) left = live rung-4 workers)"
+  pass "close $a: no forward, job, tree, socket, job file, agent/carrier_jobs/remote_recovery row, effects or host_channels row ($(remote_sessions) remote session(s) left = live lease workers)"
 }
 
-# ── H1. a rung-4 and a rung-0 worker at once ─────────────────────────────────
-say "H1. rung 4 and rung 0 side by side"
-spawn_remote r4-a
-spawn_local r0-a
+# ── H1. a lease and a local worker at once ───────────────────────────────────
+say "H1. a lease and a local worker side by side"
+spawn_remote lease-a
+spawn_local local-a
 LIST=$(sql "SELECT a.name, a.host FROM agents a JOIN workstreams w ON w.id=a.workstream_id WHERE w.name='$WS' ORDER BY a.name")
-printf '%s' "$LIST" | js "d.length === 2 && d[0].name === 'r0-a' && d[0].host == null && d[1].name === 'r4-a' && d[1].host === 'loop'" >/dev/null ||
+printf '%s' "$LIST" | js "d.length === 2 && d[0].name === 'lease-a' && d[0].host === 'loop' && d[1].name === 'local-a' && d[1].host == null" >/dev/null ||
   fail "agents: $LIST"
-ask r4-a 'pwd; git rev-parse HEAD'
-case "$REPLY" in *"cwd=$(remote_wt r4-a)"*"$BASE"*) ;; *) fail "r4-a's shell is not its remote tree at base: $REPLY" ;; esac
-ask r0-a 'pwd; git rev-parse HEAD'
-case "$REPLY" in *"cwd=$(agent_cwd r0-a)"*"$BASE"*) ;; *) fail "r0-a's shell is not its local tree at base: $REPLY" ;; esac
-pass "one workstream, one DB: r4-a (host loop) and r0-a (local) both answer from their own trees at ${BASE:0:12}"
+ask lease-a 'pwd; git rev-parse HEAD'
+case "$REPLY" in *"cwd=$(remote_wt lease-a)"*"$BASE"*) ;; *) fail "lease-a's shell is not its remote tree at base: $REPLY" ;; esac
+ask local-a 'pwd; git rev-parse HEAD'
+case "$REPLY" in *"cwd=$(agent_cwd local-a)"*"$BASE"*) ;; *) fail "local-a's shell is not its local tree at base: $REPLY" ;; esac
+pass "one workstream, one DB: lease-a (host loop) and local-a (local) both answer from their own trees at ${BASE:0:12}"
 
 # ── H2. remote -> local ──────────────────────────────────────────────────────
-say "H2. rung-4 worker commits; collect, merge, rung-0 reviewer verifies"
-ask r4-a "echo from-rung-4 >h2.txt && git add h2.txt && $COMMIT_C -m 'h2: from rung 4' && git rev-parse HEAD"
-C1=$(printf '%s\n' "$REPLY" | grep -E '^[0-9a-f]{40}$' | tail -n 1) || fail "r4-a printed no commit: $REPLY"
+say "H2. lease worker commits; collect, merge, local reviewer verifies"
+ask lease-a "echo from-lease >h2.txt && git add h2.txt && $COMMIT_C -m 'h2: from the lease' && git rev-parse HEAD"
+C1=$(printf '%s\n' "$REPLY" | grep -E '^[0-9a-f]{40}$' | tail -n 1) || fail "lease-a printed no commit: $REPLY"
 ! g -C "$LREPO" cat-file -e "$C1^{commit}" 2>/dev/null || fail "$C1 is local before the collect"
-(cd "$LREPO" && mu agent collect r4-a -w "$WS" --json) >"$R/collect1.json" || {
+(cd "$LREPO" && mu agent collect lease-a -w "$WS" --json) >"$R/collect1.json" || {
   cat "$R/collect1.json"
-  fail "collect r4-a"
+  fail "collect lease-a"
 }
-js "d.data.changed === true && d.data.head === '$C1' && d.data.ref === 'refs/mu/collect/$WS/r4-a'" <"$R/collect1.json" >/dev/null || {
+js "d.data.changed === true && d.data.head === '$C1' && d.data.ref === 'refs/mu/collect/$WS/lease-a'" <"$R/collect1.json" >/dev/null || {
   cat "$R/collect1.json"
-  fail "collect r4-a did not pin $C1"
+  fail "collect lease-a did not pin $C1"
 }
-g -C "$LREPO" merge -q --ff-only "refs/mu/collect/$WS/r4-a" || fail "merge refs/mu/collect/$WS/r4-a"
+g -C "$LREPO" merge -q --ff-only "refs/mu/collect/$WS/lease-a" || fail "merge refs/mu/collect/$WS/lease-a"
 [ "$(g -C "$LREPO" rev-parse HEAD)" = "$C1" ] || fail "orchestrator HEAD is not $C1 after the merge"
-pass "collect pinned ${C1:0:12} at refs/mu/collect/$WS/r4-a; merged fast-forward into the orchestrator's checkout"
-spawn_local r0-review
-ask r0-review "git cat-file -e $C1^{commit} && git merge-base --is-ancestor $C1 HEAD && cat h2.txt"
-case "$REPLY" in *from-rung-4*) ;; *) fail "the reviewer did not see h2.txt: $REPLY" ;; esac
-pass "rung-0 reviewer r0-review (local pane) verifies ${C1:0:12} and h2.txt in its worktree"
+pass "collect pinned ${C1:0:12} at refs/mu/collect/$WS/lease-a; merged fast-forward into the orchestrator's checkout"
+spawn_local local-review
+ask local-review "git cat-file -e $C1^{commit} && git merge-base --is-ancestor $C1 HEAD && cat h2.txt"
+case "$REPLY" in *from-lease*) ;; *) fail "the reviewer did not see h2.txt: $REPLY" ;; esac
+pass "local reviewer local-review (local pane) verifies ${C1:0:12} and h2.txt in its worktree"
 
-# ── H3. rung 1 alongside, under per-host admission ───────────────────────────
-say "H3. mu host exec x4 + a collect, concurrent, while r4-a, r0-a, r0-review run"
+# ── H3. remote commands alongside, under per-host admission ─────────────────
+say "H3. mu host exec x4 + a collect, concurrent, while lease-a, local-a, local-review run"
 # The oracle (spec §4): the mule link owns its slots, so no `exec:*` holder may
 # EVER appear in host_channels; the template-fallback collect may hold its one
-# `collect:<ws>/r4-a` row; nothing else. Every exec holds its call for 2 s, so
+# `collect:<ws>/lease-a` row; nothing else. Every exec holds its call for 2 s, so
 # a regression that took mu's gate for an exec would sit in the table across
 # many samples. A failed read fails H3; it never reads as an empty table.
 holders() { mu sql "SELECT holder FROM host_channels ORDER BY holder" | js 'd.data.items.map((r)=>r.holder).join(" ")'; }
@@ -490,7 +490,7 @@ for i in 1 2 3 4; do
   mu host exec loop --json -- sh -c "sleep 2; echo exec-$i" >"$R/hx-$i.json" 2>"$R/hx-$i.err" &
   pids+=($!)
 done
-(cd "$LREPO" && mu agent collect r4-a -w "$WS" --json) >"$R/collect-h3.json" 2>&1 &
+(cd "$LREPO" && mu agent collect lease-a -w "$WS" --json) >"$R/collect-h3.json" 2>&1 &
 pids+=($!)
 rcs=()
 for p in "${pids[@]}"; do
@@ -510,7 +510,7 @@ SAMPLES=$(wc -l <"$R/h3.samples" | tr -d ' ')
 if grep -E '[[ ]exec:' "$R/h3.samples" >/dev/null; then
   fail "a host exec on the slots:\"self\" mule link took a mu admission row: $(grep -E '[[ ]exec:' "$R/h3.samples" | sort -u | tr '\n' ' ')"
 fi
-BAD=$(grep -vxE "\[(collect:$WS/r4-a)?\]" "$R/h3.samples" | sort -u | tr '\n' ' ' || true)
+BAD=$(grep -vxE "\[(collect:$WS/lease-a)?\]" "$R/h3.samples" | sort -u | tr '\n' ' ' || true)
 [ -z "$BAD" ] || fail "host_channels held more than the collect's one row (max_sessions 1): $BAD"
 for i in 1 2 3 4; do
   [ "${rcs[$((i - 1))]}" = 0 ] || {
@@ -523,41 +523,41 @@ done
   cat "$R/collect-h3.json"
   fail "the concurrent collect exited ${rcs[4]}"
 }
-COLLECT_SEEN=$(grep -cxF "[collect:$WS/r4-a]" "$R/h3.samples" || true)
+COLLECT_SEEN=$(grep -cxF "[collect:$WS/lease-a]" "$R/h3.samples" || true)
 [ "$(count host_channels)" = 0 ] || fail "host_channels rows left after H3"
 [ "$(refusals)" = "$REFUSED0" ] || fail "sshd refused a session during H3: $(grep -i 'no more sessions\|refused\|open failed' "$R/sshd.log" | tail -n 3)"
 if grep -i 'administratively prohibited\|open failed' "$R"/hx-*.err >/dev/null 2>&1; then fail "a host exec saw a refused channel"; fi
-[ "$(job_state "${JOBS[r4-a]}")" = running ] || fail "r4-a's job is not running after H3"
-pass "4 concurrent 2 s host execs exit 0 (mule serialises its sessions) beside a collect: sshd refused nothing; $SAMPLES host_channels samples, 0 exec:* holders, only collect:$WS/r4-a (seen in $COLLECT_SEEN), 0 rows now"
-close_agent r0-review
-close_agent r4-a
+[ "$(job_state "${JOBS[lease-a]}")" = running ] || fail "lease-a's job is not running after H3"
+pass "4 concurrent 2 s host execs exit 0 (mule serialises its sessions) beside a collect: sshd refused nothing; $SAMPLES host_channels samples, 0 exec:* holders, only collect:$WS/lease-a (seen in $COLLECT_SEEN), 0 rows now"
+close_agent local-review
+close_agent lease-a
 
 # ── H4. local -> remote ──────────────────────────────────────────────────────
-say "H4. rung-0 worker commits; the base reaches the host per spec §3.3; rung-4 builds on it"
-ask r0-a "git merge -q --ff-only $C1 && echo from-rung-0 >h4.txt && git add h4.txt && $COMMIT_C -m 'h4: from rung 0' && git rev-parse HEAD"
-C2=$(printf '%s\n' "$REPLY" | grep -E '^[0-9a-f]{40}$' | tail -n 1) || fail "r0-a printed no commit: $REPLY"
-g -C "$LREPO" merge -q --ff-only "$C2" || fail "merge $C2 (rung-0 commit) into the orchestrator's checkout"
+say "H4. local worker commits; the base reaches the host per spec §3.3; a lease builds on it"
+ask local-a "git merge -q --ff-only $C1 && echo from-local >h4.txt && git add h4.txt && $COMMIT_C -m 'h4: from local' && git rev-parse HEAD"
+C2=$(printf '%s\n' "$REPLY" | grep -E '^[0-9a-f]{40}$' | tail -n 1) || fail "local-a printed no commit: $REPLY"
+g -C "$LREPO" merge -q --ff-only "$C2" || fail "merge $C2 (local commit) into the orchestrator's checkout"
 [ "$(g -C "$LREPO" rev-parse HEAD)" = "$C2" ] || fail "orchestrator HEAD is not $C2"
 ! g -C "$RREPO" cat-file -e "$C2^{commit}" 2>/dev/null || fail "$C2 is already on the host"
-pass "r0-a committed ${C2:0:12} locally; merged fast-forward into the orchestrator's checkout"
+pass "local-a committed ${C2:0:12} locally; merged fast-forward into the orchestrator's checkout"
 RC=0
-(cd "$LREPO" && mu agent spawn r4-b -w "$WS" --host loop --worktree --root "$RREPO" --json) >"$R/refused.json" 2>&1 || RC=$?
+(cd "$LREPO" && mu agent spawn lease-b -w "$WS" --host loop --worktree --root "$RREPO" --json) >"$R/refused.json" 2>&1 || RC=$?
 [ "$RC" = 5 ] || {
   cat "$R/refused.json"
-  fail "rung-4 spawn from a local-only base: exit $RC, expected 5"
+  fail "lease spawn from a local-only base: exit $RC, expected 5"
 }
 js "JSON.stringify(d).includes('RemoteBaseMissingError') && ['loop', '$RREPO', '$C2', 'mu host exec loop -- git -C', 'push it to a remote the host can fetch'].every((s)=>JSON.stringify(d).includes(s))" <"$R/refused.json" >/dev/null || {
   cat "$R/refused.json"
   fail "the missing-base refusal does not name host, repo, sha and both fixes"
 }
-[ "$(sql "SELECT count(*) AS n FROM agents WHERE name='r4-b'" | js 'd[0].n')" = 0 ] || fail "the refused spawn kept an agent row"
-[ "$(sql "SELECT count(*) AS n FROM carrier_jobs WHERE name='r4-b'" | js 'd[0].n')" = 0 ] || fail "the refused spawn kept a reservation"
+[ "$(sql "SELECT count(*) AS n FROM agents WHERE name='lease-b'" | js 'd[0].n')" = 0 ] || fail "the refused spawn kept an agent row"
+[ "$(sql "SELECT count(*) AS n FROM carrier_jobs WHERE name='lease-b'" | js 'd[0].n')" = 0 ] || fail "the refused spawn kept a reservation"
 [ "$(count effects)" = 0 ] || fail "the refused spawn kept an effect"
-[ ! -e "$(remote_wt r4-b)" ] || fail "the refused spawn made a remote tree"
-[ ! -e "$(job_file r4-b)" ] || fail "the refused spawn left a job file"
+[ ! -e "$(remote_wt lease-b)" ] || fail "the refused spawn made a remote tree"
+[ ! -e "$(job_file lease-b)" ] || fail "the refused spawn left a job file"
 [ "$(remote_sessions)" = 0 ] || fail "the refused spawn started a remote job"
 pass "spawn from local-only ${C2:0:12}: RemoteBaseMissingError (exit 5) naming host, repo, sha and both fixes; no row, reservation, effect, tree, job file or job"
-# The named remedy for a local-only commit: push it to a remote the host can fetch, then that fetch on the host (rung 1).
+# The named remedy for a local-only commit: push it to a remote the host can fetch, then that fetch on the host (a remote command).
 g -C "$LREPO" push -q "$PUB" "HEAD:refs/heads/hybrid" || fail "push to the published remote"
 mu host exec loop --json -- git -C "$RREPO" fetch -q "$PUB" "$C2" >"$R/fetch.json" || {
   cat "$R/fetch.json"
@@ -566,22 +566,22 @@ mu host exec loop --json -- git -C "$RREPO" fetch -q "$PUB" "$C2" >"$R/fetch.jso
 js 'd.data.exit === 0' <"$R/fetch.json" >/dev/null || fail "host-side fetch: $(cat "$R/fetch.json")"
 g -C "$RREPO" cat-file -e "$C2^{commit}" || fail "$C2 is not on the host after the remedy"
 pass "remedy: pushed to the published remote, mu host exec loop -- git -C <repo> fetch <remote> ${C2:0:12}"
-spawn_remote r4-b --from "$C2"
-ask r4-b "git rev-parse HEAD && cat h4.txt h2.txt"
-case "$REPLY" in *"$C2"*from-rung-0*from-rung-4*) ;; *) fail "r4-b does not start at ${C2:0:12}: $REPLY" ;; esac
-ask r4-b "echo on-top >h4b.txt && git add h4b.txt && $COMMIT_C -m 'h4: rung 4 on top of rung 0' && git rev-parse HEAD"
-C3=$(printf '%s\n' "$REPLY" | grep -E '^[0-9a-f]{40}$' | tail -n 1) || fail "r4-b printed no commit: $REPLY"
-(cd "$LREPO" && mu agent collect r4-b -w "$WS" --json) >"$R/collect2.json" || {
+spawn_remote lease-b --from "$C2"
+ask lease-b "git rev-parse HEAD && cat h4.txt h2.txt"
+case "$REPLY" in *"$C2"*from-local*from-lease*) ;; *) fail "lease-b does not start at ${C2:0:12}: $REPLY" ;; esac
+ask lease-b "echo on-top >h4b.txt && git add h4b.txt && $COMMIT_C -m 'h4: lease on top of local' && git rev-parse HEAD"
+C3=$(printf '%s\n' "$REPLY" | grep -E '^[0-9a-f]{40}$' | tail -n 1) || fail "lease-b printed no commit: $REPLY"
+(cd "$LREPO" && mu agent collect lease-b -w "$WS" --json) >"$R/collect2.json" || {
   cat "$R/collect2.json"
-  fail "collect r4-b"
+  fail "collect lease-b"
 }
-js "d.data.changed === true && d.data.head === '$C3'" <"$R/collect2.json" >/dev/null || fail "collect r4-b: $(cat "$R/collect2.json")"
-g -C "$LREPO" merge -q --ff-only "refs/mu/collect/$WS/r4-b" || fail "merge refs/mu/collect/$WS/r4-b"
+js "d.data.changed === true && d.data.head === '$C3'" <"$R/collect2.json" >/dev/null || fail "collect lease-b: $(cat "$R/collect2.json")"
+g -C "$LREPO" merge -q --ff-only "refs/mu/collect/$WS/lease-b" || fail "merge refs/mu/collect/$WS/lease-b"
 [ "$(g -C "$LREPO" rev-parse HEAD)" = "$C3" ] && [ "$(g -C "$LREPO" rev-parse HEAD^)" = "$C2" ] ||
   fail "orchestrator HEAD is not $C3 on top of $C2"
-pass "r4-b started at ${C2:0:12}, committed ${C3:0:12} on top; collected and merged fast-forward (HEAD^ = the rung-0 commit)"
-close_agent r4-b
-close_agent r0-a
+pass "lease-b started at ${C2:0:12}, committed ${C3:0:12} on top; collected and merged fast-forward (HEAD^ = the local commit)"
+close_agent lease-b
+close_agent local-a
 
 # ── H5, H6. nothing ran remotely; nothing left ───────────────────────────────
 say "H5/H6. orchestrator verbs stayed local; nothing stale"

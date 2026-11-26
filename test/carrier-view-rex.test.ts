@@ -302,7 +302,7 @@ describe("a host profile on Rex", () => {
     expect(readdirSync(dir).filter((f) => !f.startsWith("mu.db"))).toEqual([]);
   });
 
-  it("a session profile passes both guards (rung 3 on Rex is not refused)", async () => {
+  it("a session profile passes both guards (a session template on Rex is not refused)", async () => {
     const opts = { name: "worker-1", workstream: "auth", host: "session" };
     await expect(refuseRemoteSpawnMux(db, opts)).resolves.toBeUndefined();
     await expect(requireHostSpawn(db, opts)).resolves.toMatchObject({ name: "session" });

@@ -1,4 +1,4 @@
-// A scripted model for scripts/smoke-rung2.sh: a pi extension that registers
+// A scripted model for scripts/smoke-remote-workspace.sh: a pi extension that registers
 // pi-ai's faux provider as "smoke/scripted". Real pi runs the turn: it calls
 // the tools the active extensions registered (the mule workspace extension's
 // read/write/edit/bash), so every tool call goes through the real stack. No
@@ -21,10 +21,10 @@ import { fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@ear
 
 const TEXT_CAP = 4000;
 
-/** n bytes of ASCII, the same as smoke-rung2.sh's expected content. */
+/** n bytes of ASCII, the same as smoke-remote-workspace.sh's expected content. */
 export function fillText(n) {
   let s = "";
-  for (let i = 0; s.length < n; i++) s += `rung2 line ${i}\n`;
+  for (let i = 0; s.length < n; i++) s += `remote-workspace line ${i}\n`;
   return s.slice(0, n);
 }
 

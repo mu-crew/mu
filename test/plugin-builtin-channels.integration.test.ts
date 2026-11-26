@@ -1,4 +1,4 @@
-// A plugin job kind with no channel of its own (ladder placement spec §A, §I): its agents use
+// A plugin job kind with no channel of its own (placement spec §A, §I): its agents use
 // mu's built-in channels, as on a template host. pi is on `ctl` (the JobSpec hands the kind the
 // socket pair and MU_CTL_SOCK; its view forwards the local socket), a hook harness on remote
 // `hooks` read through the plugin's link, any other harness on `mux`; the view is interactive.
@@ -186,7 +186,7 @@ const channelPlugin = (): string | null =>
   )?.channel_plugin ?? null;
 const treeOf = (name: string) => join(h.dir, ".local/state/mu-next/remote-worktrees/ws", name);
 
-describe("pi on the built-in ctl (ladder placement §A, R5)", () => {
+describe("pi on the built-in ctl (placement spec §A, R5)", () => {
   it("the JobSpec carries the socket pair and MU_CTL_SOCK, only HOST_ENV_KEYS; the view is interactive; the handshake answers", async () => {
     await staticPlugin();
     forwardOnView();

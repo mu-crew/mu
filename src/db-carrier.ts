@@ -26,7 +26,7 @@ export const CARRIER_JOBS_DDL = `
 -- repo collects fetch into), the final-collect flag and its generation (D10), and an
 -- at-start kind's first delivery ('first_msg_id', 'first_inc': D8). 'collect_delay_ms': the
 -- in-life collect's backoff behind 'collect_next_at'. 'wire_state', 'wire_rev', 'view_server':
--- a file kind's record as ONE state machine (ladder placement §10, src/carrier-wire.ts):
+-- a file kind's record as ONE state machine (placement spec §10, src/carrier-wire.ts):
 -- 'claimed' (no view: never asked for, or proven gone), 'dispatching' (a view asked for, its
 -- pane id not recorded), 'bound' (its view is 'pane_id' on mux server 'view_server'),
 -- 'released' (its view proven gone and its stop begun: no view opens again). Every

@@ -83,7 +83,7 @@ export interface CarrierJob {
   firstMsgId: string | null;
   firstInc: string | null;
   /**
-   * A file kind's record in its wire state machine (ladder placement §10, src/carrier-wire.ts):
+   * A file kind's record in its wire state machine (placement spec §10, src/carrier-wire.ts):
    * `claimed` (no view), `dispatching` (a view asked for, no pane id recorded), `bound` (its
    * view is `paneId` on `viewServer`), `released` (proven gone, its stop begun); null on a record
    * older than the column (unknown). Moved only by src/carrier-wire.ts; its view is read

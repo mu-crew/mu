@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { hostProfile, makeRepo, seedViaMu, shq, sshShim } from "./fixtures.ts";
 import type { Sandbox } from "./types.ts";
 
-export async function ladderHost(sb: Sandbox): Promise<string> {
+export async function placementHost(sb: Sandbox): Promise<string> {
   await makeRepo(sb, {
     "check.sh":
       '#!/bin/sh\nprintf \'%s\\n\' "$HOME" >> "$HOME/check-runs"\necho check >> "$HOME/job-events"\necho workspace-check-ok\n',
@@ -16,7 +16,7 @@ export async function ladderHost(sb: Sandbox): Promise<string> {
 }
 
 /** Shipped template transport only: a pane publishes a handle and stays live, without model calls. */
-export async function ladderLease(sb: Sandbox, home: string): Promise<void> {
+export async function placementLease(sb: Sandbox, home: string): Promise<void> {
   const carrier = join(home, "carrier.sh");
   const stop = join(home, "stop.sh");
   const exec = join(home, "exec.sh");
@@ -72,16 +72,16 @@ fi
   ]);
 }
 
-export const ladderSession = (sb: Sandbox): Promise<void> =>
+export const placementSession = (sb: Sandbox): Promise<void> =>
   hostProfile(sb, "build", { maxSessions: 1 });
-export const ladderHome = (sb: Sandbox): string => join(sb.dir, "hosts", "build", "home");
+export const placementHome = (sb: Sandbox): string => join(sb.dir, "hosts", "build", "home");
 
 export function fixtureLines(sb: Sandbox, name: string): string[] {
-  const file = join(ladderHome(sb), name);
+  const file = join(placementHome(sb), name);
   return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean) : [];
 }
 
-export function ladderRows<T>(sb: Sandbox, query: string): T[] {
+export function placementRows<T>(sb: Sandbox, query: string): T[] {
   const db = new Database(sb.dbPath, { readonly: true, fileMustExist: true });
   try {
     return db.prepare(query).all() as T[];

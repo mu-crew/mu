@@ -30,7 +30,7 @@ const KNOWN_NAMES: readonly string[] = BACKENDS.map((b) => b.name);
 /**
  * Resolve the active multiplexer backend.
  *
- * The ladder, in order:
+ * The detection order:
  *
  *   1. `MU_MUX=<name>`  — explicit override. Also the test seam. An
  *      unknown value throws rather than silently falling through: a
@@ -45,10 +45,10 @@ const KNOWN_NAMES: readonly string[] = BACKENDS.map((b) => b.name);
  *      Ties break in BACKENDS order (tmux is the incumbent).
  *   4. Throw `NoMultiplexerError`.
  *
- * Note rungs 2 and 3 are separate on purpose. `$TMUX` says "the caller
+ * Note steps 2 and 3 are separate on purpose. `$TMUX` says "the caller
  * is in a tmux pane"; `tmux -V` says "tmux works here". mu can spawn a
- * detached session from a plain shell, so rung 3 alone is sufficient to
- * operate — rung 2 exists only to pick the RIGHT mux when several are
+ * detached session from a plain shell, so step 3 alone is sufficient to
+ * operate — step 2 exists only to pick the RIGHT mux when several are
  * installed.
  */
 export async function detectMux(): Promise<MuxBackend> {
@@ -67,7 +67,7 @@ export async function detectMux(): Promise<MuxBackend> {
   // Both vars, not just $TMUX: tmux sets $TMUX_PANE in every pane too,
   // and some setups (sudo -E, direnv, ssh with a restrictive SendEnv)
   // pass one through but not the other. Either one proves we are in a
-  // tmux pane, which is what this rung is asking.
+  // tmux pane, which is what this step is asking.
   if (process.env.TMUX || process.env.TMUX_PANE) return tmuxBackend;
 
   // A Rex terminal, last: tmux or herdr run inside Rex, never the reverse,

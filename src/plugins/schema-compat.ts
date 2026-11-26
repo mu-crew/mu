@@ -6,7 +6,7 @@ export const PLUGIN_SCHEMA_DIGEST: string =
   "sha256:54d56d9a865c4e9302f2b63158cb595010ecbb0b59037550609a54d79392ac36";
 
 /**
- * The digest before the D15 file handle (ladder placement spec §10): it added the optional
+ * The digest before the D15 file handle (placement spec §10): it added the optional
  * `jobSpec.jobFile` and `jobAttachParams` (`jobFile`, `sockets`). mu sends them only to a
  * `handle: "file"` kind, which that schema gave no job file to write (its jobs never got a
  * handle), so every kind a plugin built against it could serve gets the same requests.

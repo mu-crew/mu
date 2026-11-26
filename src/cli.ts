@@ -321,7 +321,7 @@ export function findEntityWorkstreams(db: Db, kind: EntityKind, name: string): s
  *   1. Parse `<ws>/<name>` (qualified form) — sets opts.workstream
  *      from the prefix and returns the bare name.
  *   2. Resolve the workstream: -w, else the injected worker scope
- *      (the ladder in resolveWorkstream). An invalid -w is an error,
+ *      (the fallback order in resolveWorkstream). An invalid -w is an error,
  *      never a reason to guess.
  *   3. When no scope exists and the bare name lives in ≥2 workstreams:
  *      throw NameAmbiguousError listing the candidates. Otherwise throw

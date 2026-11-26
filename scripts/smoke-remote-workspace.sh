@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Operator smoke for rung 2 (docs/guide/remote-ladder.md#rung-2-local-pi-with-a-remote-worktree):
+# Operator smoke for a remote workspace (docs/guide/placement.md#remote-workspace):
 # a LOCAL pi loop in a local tmux pane, with its workspace and shell in a
 # remote worktree through the PACKAGED @mu-crew/mule pi extension and
 # `mule serve --stdio`, against ONE loopback `sshd MaxSessions 1`.
 # Explicitly invoked, never picked up by vitest; Linux only (it runs sshd):
 #
-#   MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-rung2.sh
+#   MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-remote-workspace.sh
 #
 # The pi is REAL pi (PI=<standalone pi executable>, else
 # @earendil-works/pi-coding-agent@$PI_VERSION installed from the registry into
-# the private dir) with a scripted model (scripts/smoke-rung2-pi.mjs, pi-ai's
+# the private dir) with a scripted model (scripts/smoke-remote-workspace-pi.mjs, pi-ai's
 # faux provider): every tool call is a real pi tool call through the mule
 # extension; no network after the install, no credentials.
 #
@@ -65,7 +65,7 @@ PI_VERSION=${PI_VERSION:-1.6.0}
 SSHD=${SSHD:-/usr/sbin/sshd}
 LIMIT=${SMOKE_TIMEOUT:-1200}
 [ $# = 0 ] || {
-  echo "usage: smoke-rung2.sh (no arguments; MU, MULE, PI, PI_VERSION, SSHD, SMOKE_TIMEOUT, SMOKE_KEEP from the env)" >&2
+  echo "usage: smoke-remote-workspace.sh (no arguments; MU, MULE, PI, PI_VERSION, SSHD, SMOKE_TIMEOUT, SMOKE_KEEP from the env)" >&2
   exit 2
 }
 
@@ -92,11 +92,11 @@ for c in ssh ssh-keygen tmux node npm cargo git git-upload-pack bash tar timeout
 [ -z "$MULE" ] || [ -f "$MULE/npm/mule/package.json" ] || missing+=("$MULE/npm/mule (the npm package)")
 [ -f "$MU/package.json" ] || missing+=("mu checkout at $MU (no package.json)")
 [ -d "$MU/node_modules" ] || missing+=("$MU/node_modules (run npm install there)")
-[ -f "$SCRIPTS/smoke-rung2-pi.mjs" ] || missing+=("$SCRIPTS/smoke-rung2-pi.mjs")
+[ -f "$SCRIPTS/smoke-remote-workspace-pi.mjs" ] || missing+=("$SCRIPTS/smoke-remote-workspace-pi.mjs")
 [ -z "$PI" ] || [ -x "$PI" ] || missing+=("PI=$PI is not executable")
 if [ ${#missing[@]} -gt 0 ]; then
-  for m in "${missing[@]}"; do echo "smoke-rung2: PREREQUISITE MISSING: $m" >&2; done
-  echo "smoke-rung2: FAIL (prerequisites missing; this is not a pass)" >&2
+  for m in "${missing[@]}"; do echo "smoke-remote-workspace: PREREQUISITE MISSING: $m" >&2; done
+  echo "smoke-remote-workspace: FAIL (prerequisites missing; this is not a pass)" >&2
   exit 2
 fi
 TO=$(command -v timeout)
@@ -273,7 +273,7 @@ descendants() {
 watchdog() {
   local me=$BASHPID n=0 sig pid mine
   sleep "$LIMIT"
-  echo "smoke-rung2: SMOKE_TIMEOUT ($LIMIT s) reached; stopping the run" >&2
+  echo "smoke-remote-workspace: SMOKE_TIMEOUT ($LIMIT s) reached; stopping the run" >&2
   : >"$R/deadline"
   while kill -TERM $$ 2>/dev/null; do
     sig=TERM
@@ -304,12 +304,12 @@ NODE_DIR=$(dirname "$NODE")
 NPM_JS=$("$NODE" -e 'console.log(require("path").resolve(process.argv[1], "../lib/node_modules/npm/bin/npm-cli.js"))' "$NODE_DIR")
 [ -f "$NPM_JS" ] || NPM_JS=$(cd "$(dirname "$(readlink -f "$(command -v npm)")")" && pwd -P)/npm-cli.js
 [ -f "$NPM_JS" ] || {
-  echo "smoke-rung2: PREREQUISITE MISSING: npm-cli.js beside $NODE" >&2
+  echo "smoke-remote-workspace: PREREQUISITE MISSING: npm-cli.js beside $NODE" >&2
   exit 2
 }
 PLATFORM=$("$NODE" -p 'process.platform + "-" + process.arch')
 [ -f "$MULE/npm/mule-$PLATFORM/package.json" ] || {
-  echo "smoke-rung2: PREREQUISITE MISSING: mule has no platform package for $PLATFORM" >&2
+  echo "smoke-remote-workspace: PREREQUISITE MISSING: mule has no platform package for $PLATFORM" >&2
   exit 2
 }
 
@@ -394,7 +394,7 @@ grep -qx package/bin/mule "$R/pack/platform.list" || fail "$(basename "$PLAT_TGZ
 # A project install: the local platform tarball satisfies the root's optional
 # dependency, so no registry copy can stand in for this build. --offline: the
 # other platforms' optional packages are skipped, never fetched.
-printf '{"name":"smoke-rung2-pkgs","private":true}\n' >"$R/pkgs/package.json"
+printf '{"name":"smoke-remote-workspace-pkgs","private":true}\n' >"$R/pkgs/package.json"
 (cd "$R/pkgs" && npmx install --offline --no-package-lock --silent "$ROOT_TGZ" "$PLAT_TGZ") >"$R/pkgs/install.log" 2>&1 || {
   cat "$R/pkgs/install.log"
   fail "npm install of the mule tarballs"
@@ -413,16 +413,16 @@ pass "packed $(basename "$ROOT_TGZ") ($(grep -c '^package/pi/' "$R/pack/root.lis
 if [ -z "$PI" ]; then
   say "P. installing @earendil-works/pi-coding-agent@$PI_VERSION from the registry into the private prefix"
   mkdir -p "$R/pi"
-  printf '{"name":"smoke-rung2-pi","private":true}\n' >"$R/pi/package.json"
+  printf '{"name":"smoke-remote-workspace-pi","private":true}\n' >"$R/pi/package.json"
   (cd "$R/pi" && npmx install --no-package-lock --ignore-scripts --silent "@earendil-works/pi-coding-agent@$PI_VERSION") >"$R/pi/install.log" 2>&1 || {
     tail -n 20 "$R/pi/install.log"
-    echo "smoke-rung2: PREREQUISITE MISSING: pi from the registry (set PI=<standalone pi> offline)" >&2
+    echo "smoke-remote-workspace: PREREQUISITE MISSING: pi from the registry (set PI=<standalone pi> offline)" >&2
     exit 2
   }
   PI="$R/pi/node_modules/.bin/pi"
 fi
 PI_JS=$(readlink -f "$PI")
-cp "$SCRIPTS/smoke-rung2-pi.mjs" "$R/smoke-rung2-pi.mjs"
+cp "$SCRIPTS/smoke-remote-workspace-pi.mjs" "$R/smoke-remote-workspace-pi.mjs"
 # The pane's pi: real pi, the scripted model, the private agent dir, a PATH whose
 # first `mule` is the tripwire, and no MULE_PI_BIN. A subcommand runs plain.
 cat >"$R/bin/pi" <<EOF
@@ -432,7 +432,7 @@ export PATH="$R/trip:\$PATH" PI_CODING_AGENT_DIR="$R/piagent" PI_OFFLINE=1 PI_SK
 case "\${1:-}" in
   install|remove|uninstall|update|list|config|--version|-v|--help|-h) exec "$NODE" "$PI_JS" "\$@" ;;
 esac
-exec "$NODE" "$PI_JS" --provider smoke --model scripted -e "$R/smoke-rung2-pi.mjs" "\$@"
+exec "$NODE" "$PI_JS" --provider smoke --model scripted -e "$R/smoke-remote-workspace-pi.mjs" "\$@"
 EOF
 chmod 755 "$R/bin/pi"
 PI_VER=$("$TO" 60 pi --version 2>&1 | tail -n 1) || fail "pi --version"
@@ -517,7 +517,7 @@ LREPO="$R/local"
 g init -q "$RREPO"
 echo base >"$RREPO/base.txt"
 g -C "$RREPO" add base.txt
-g -C "$RREPO" commit -q -m "rung2 base"
+g -C "$RREPO" commit -q -m "remote workspace base"
 BASE=$(g -C "$RREPO" rev-parse HEAD)
 g clone -q "$RREPO" "$LREPO"
 
@@ -530,7 +530,7 @@ mu plugin list --json >"$R/plugins.json" || fail "mu plugin list"
 js "JSON.stringify(d).includes('$R/pkgs/')" <"$R/plugins.json" >/dev/null || fail "mule init did not register the installed package's plugin: $(cat "$R/plugins.json")"
 mu host add loop --plugin mule --fetch "git fetch ssh://127.0.0.1{cwd} HEAD" --max-sessions 1 >/dev/null ||
   fail "mu host add loop --plugin mule"
-# Rung 2's premise: the host cannot run the loop. The check fails on harnesses
+# The remote workspace's premise: the host cannot run the loop. The check fails on harnesses
 # (no pi there) and on nothing else; the mule master and tmux steps pass.
 mu host check loop --root "$RREPO" --json >"$R/check.json" || true
 js "d.data.steps.every((s)=>s.ok !== false || s.step === 'harnesses') && d.data.steps.some((s)=>s.step === 'mule:master' && s.ok) && d.data.capabilities.harnesses.pi.command === null" <"$R/check.json" >/dev/null || {
@@ -618,15 +618,15 @@ send_async() {
   }
 }
 # shellcheck disable=SC2016 # node source, not shell
-fill_sha() { "$NODE" -e 'let s="";for(let i=0;s.length<+process.argv[1];i++)s+=`rung2 line ${i}\n`;console.log(require("crypto").createHash("sha256").update(s.slice(0,+process.argv[1])).digest("hex"))' "$1"; }
+fill_sha() { "$NODE" -e 'let s="";for(let i=0;s.length<+process.argv[1];i++)s+=`remote-workspace line ${i}\n`;console.log(require("crypto").createHash("sha256").update(s.slice(0,+process.argv[1])).digest("hex"))' "$1"; }
 sha_of() { "$NODE" -e 'console.log(require("crypto").createHash("sha256").update(require("fs").readFileSync(process.argv[1])).digest("hex"))' "$1"; }
 
-# spawn_mule <name>: a rung-2 worker; sets TREE, LOOP, PREFIX.
+# spawn_mule <name>: a remote workspace worker; sets TREE, LOOP, PREFIX.
 spawn_mule() {
   local a=$1 row pane start
   (cd "$LREPO" && mu agent spawn "$a" -w "$WS" --mule loop --root "$RREPO" --json) >"$R/spawn-$a.json" || {
     cat "$R/spawn-$a.json"
-    fail "rung-2 spawn $a"
+    fail "remote workspace spawn $a"
   }
   [ "$(js 'd.data.ctl ?? d.data.agent?.ctl ?? "?"' <"$R/spawn-$a.json")" = ok ] || {
     cat "$R/spawn-$a.json"
@@ -638,7 +638,7 @@ spawn_mule() {
   TREE=$(printf '%s' "$row" | js 'd[0].cwd')
   case "$TREE" in "$R/rhome"/*) ;; *) fail "$a's workspace $TREE is not a remote tree" ;; esac
   [ "$(g -C "$TREE" rev-parse HEAD)" = "$BASE" ] || fail "$a's remote tree is not at base"
-  [ "$(sql "SELECT count(*) AS n FROM carrier_jobs WHERE name='$a'" | js 'd[0].n')" = 0 ] || fail "rung-2 spawn $a took a carrier job"
+  [ "$(sql "SELECT count(*) AS n FROM carrier_jobs WHERE name='$a'" | js 'd[0].n')" = 0 ] || fail "remote workspace spawn $a took a carrier job"
   until_ok 100 "the pi loop of $a" loop_pid "$a"
   LOOP=$(loop_pid "$a")
   pane=$(printf '%s' "$row" | js 'd[0].pane_id')
@@ -649,7 +649,7 @@ spawn_mule() {
   [[ "$PREFIX" =~ ^mu\.[A-Za-z0-9_-]+\.[0-9]+\.$ ]] || fail "$a's loop has MULE_PI_JOB_PREFIX='$PREFIX'"
   [ -z "$(env_of "$LOOP" MULE_PI_BIN)" ] || fail "$a's loop has MULE_PI_BIN set"
   [ -S "$(local_sock "$a")" ] || fail "no local ctl socket for $a"
-  pass "rung 2: $a spawned: local pane, pi $LOOP in the local checkout, ctl ok on a local socket, remote tree \$R${TREE#"$R"} at ${BASE:0:12}, job prefix $PREFIX"
+  pass "remote workspace: $a spawned: local pane, pi $LOOP in the local checkout, ctl ok on a local socket, remote tree \$R${TREE#"$R"} at ${BASE:0:12}, job prefix $PREFIX"
 }
 
 # close_agent <name> <tree> <prefix>: preview + --if close, then C for that agent.
@@ -817,7 +817,7 @@ pass "master $MULE_MASTER back: the released job $LOSS_JOB ended 0; the same pi 
 
 # ── R6. collect ──────────────────────────────────────────────────────────────
 say "R6. the loop commits in the remote tree; mu agent collect brings it home"
-turn w1 '{"steps":[[{"tool":"bash","args":{"command":"git add -A && git -c user.name=smoke -c user.email=smoke@localhost commit -q -m \"rung2: from the remote tree\" && git rev-parse HEAD"}}]]}'
+turn w1 '{"steps":[[{"tool":"bash","args":{"command":"git add -A && git -c user.name=smoke -c user.email=smoke@localhost commit -q -m \"remote workspace: from the remote tree\" && git rev-parse HEAD"}}]]}'
 all_ok 1
 C1=$(res 'd[0].text' | grep -E '^[0-9a-f]{40}$' | tail -n 1) || fail "the loop printed no commit: $(cat "$RES")"
 [ "$(g -C "$W1_TREE" rev-parse HEAD)" = "$C1" ] || fail "remote tree HEAD is not $C1"
@@ -874,6 +874,6 @@ remote_sessions
 [ "$(refusals)" = "$REFUSED0" ] || STALE+=("sshd refused $(($(refusals) - REFUSED0)) session(s) during the run")
 if [ ${#STALE[@]} -gt 0 ]; then
   printf '  stale: %s\n' "${STALE[@]}"
-  fail "state left after the rung-2 run"
+  fail "state left after the remote workspace run"
 fi
 pass "end: 0 rows in carrier_jobs/agents/host_channels/effects/remote_recovery, no live mule job, remote session, socket, worktree or mule process; the PATH tripwire never fired; sshd refused nothing after the cap test"

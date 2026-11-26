@@ -1,4 +1,4 @@
-// mu — the wire state machine of a `handle: "file"` job record (ladder placement §10). The
+// mu — the wire state machine of a `handle: "file"` job record (placement spec §10). The
 // record's view is its job's dispatcher, so its record and job file are retained until that
 // view is PROVEN gone, on every path: spawn, close, rollback, reattach, recovery. Those paths
 // run in different processes and await mux probes and plugin calls between deciding and

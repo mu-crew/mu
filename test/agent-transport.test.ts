@@ -944,7 +944,7 @@ describe("send --fresh", () => {
       ? { v: 1, ok: true, agent: "worker-1", extVersion: "3.0.0", ops: ["hello", "send"] }
       : { v: 1, ok: false, error: `unknown op: ${String(req.op)}`, ops: ["hello", "send"] };
 
-  it("no ctl command op, no mux reload (tmux): the ladder is close, then the respawn line rebuilt from the row", async () => {
+  it("no ctl command op, no mux reload (tmux): the remedy is close, then the respawn line rebuilt from the row", async () => {
     insertAgent(db, {
       name: "worker-1",
       workstream: "auth",
@@ -1010,7 +1010,7 @@ describe("send --fresh", () => {
     expect(respawnCommand(row)).toBeUndefined();
   });
 
-  it("CLI: the outdated-extension error exits 4 with the ladder in --json", async () => {
+  it("CLI: the outdated-extension error exits 4 with the remedy in --json", async () => {
     insertAgent(db, {
       name: "worker-1",
       workstream: "auth",

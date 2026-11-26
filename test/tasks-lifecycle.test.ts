@@ -67,7 +67,7 @@ describe("claimTask", () => {
     expect(getTask(db, "auth", "test")?.status).toBe("IN_PROGRESS");
   });
 
-  // ─ Worker-claim identity: the SAME env-first ladder as --self ─
+  // ─ Worker-claim identity: the SAME env-first order as --self ─
   //
   // A worker running `mu task claim <id>` with no --for must identify
   // itself the same way resolveActorIdentity() does. Before
@@ -774,7 +774,7 @@ describe("resolveActorIdentity", () => {
     // Attribution is best-effort and must never fail a verb. `mu task
     // note` on a box with no tmux wants a name, not a
     // NoMultiplexerError. Regression: routing identity through
-    // activeMux() made the whole ladder throw before reaching $USER.
+    // activeMux() made the whole identity chain throw before reaching $USER.
     setTmuxExecutor(async () => ({ stdout: "", stderr: "no server", exitCode: 1 }));
     await withCleanIdentityEnv(async () => {
       await withEnv("USER", "martin", async () => {

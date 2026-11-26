@@ -239,7 +239,7 @@ export function gateJobRef(
 /**
  * Whether a plugin job record's job may outlive its view, so a row whose view is gone is kept
  * for `mu agent reattach` (plugins spec D3): a detached kind, or a bound `handle: "file"` kind
- * whose handle is recorded. A file kind's view is only its job's dispatcher (ladder placement
+ * whose handle is recorded. A file kind's view is only its job's dispatcher (placement spec
  * §10): a SIGKILLed carrier leaves the job running, and `job.attach` dispatches a new view.
  * With no handle recorded yet, nothing can attach: the row is reaped and `agent close` finds it.
  */

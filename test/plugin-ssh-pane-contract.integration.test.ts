@@ -1,4 +1,4 @@
-// The ssh example plugin's `pane` job kind (ladder placement spec §A, rung 3 over plain ssh):
+// The ssh example plugin's `pane` job kind (placement spec §A, a remote loop over plain ssh):
 // the view it builds (the session traps), and its close proof: a stop that cannot prove the
 // remote job gone fails, so mu keeps the tree and the job record; a proof lets the close finish.
 // The wire tests talk to the plugin directly; the contract tests run spawn and close through mu

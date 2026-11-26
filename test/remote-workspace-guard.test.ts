@@ -1,4 +1,4 @@
-// MU_REMOTE_WORKSPACE=1 (a rung-2 remote command env, Spec B D1.2c): a `mu`
+// MU_REMOTE_WORKSPACE=1 (a remote workspace's remote command env, Spec B D1.2c): a `mu`
 // there must not open the host's default DB. Refused before anything opens.
 
 import { existsSync, mkdtempSync, rmSync } from "node:fs";

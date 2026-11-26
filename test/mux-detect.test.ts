@@ -1,4 +1,4 @@
-// Detection ladder for the mux backend: MU_MUX → ambient signal →
+// Detection order for the mux backend: MU_MUX → ambient signal →
 // availability → throw.
 //
 // These tests drive `detectMux()` rather than `activeMux()` because the

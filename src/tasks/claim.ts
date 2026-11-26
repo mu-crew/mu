@@ -466,7 +466,7 @@ export async function resolveActorIdentity(): Promise<string> {
 }
 
 /**
- * The AGENT-identity half of the ladder, shared by `resolveActorIdentity`
+ * The AGENT-identity half of the identity chain, shared by `resolveActorIdentity`
  * and the bare worker-claim path. Returns undefined when the caller
  * isn't identifiable as a specific agent — the two callers disagree
  * about what to do then, which is why this stops short rather than

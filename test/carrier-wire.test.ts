@@ -1,4 +1,4 @@
-// The wire state machine of a file kind's job record (src/carrier-wire.ts, ladder placement
+// The wire state machine of a file kind's job record (src/carrier-wire.ts, placement spec
 // §10), driven on a real SQLite record with a deterministic schedule: two paths decide on the
 // SAME snapshot (one revision), then commit in a fixed order. Every ordered pair of
 // transitions legal from a state is run both ways; the second always lost when the first

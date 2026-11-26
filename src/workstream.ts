@@ -89,7 +89,7 @@ export function isScratchWorkstream(name: string): boolean {
 
 /**
  * The workstream implied by the mux session the caller sits in, or
- * null. Best-effort: this is one rung of the -w resolution ladder, so
+ * null. Best-effort: this is one step of the -w resolution order, so
  * an unreachable mux means "no ambient answer", never a thrown verb.
  */
 export async function resolveMuxSessionWorkstreamName(): Promise<string | null> {

@@ -10,7 +10,7 @@ import { installMux, type MuxHarness } from "./_mux.js";
 
 const KEYS = ["MU_SESSION", "MU_WORKSTREAM", "MU_MANAGED_AGENT", "MU_AGENT_NAME", "TMUX"] as const;
 
-describe("resolveWorkstream env ladder", () => {
+describe("resolveWorkstream env fallback order", () => {
   let mux: MuxHarness;
   const saved: Record<string, string | undefined> = {};
 

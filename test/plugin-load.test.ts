@@ -88,7 +88,7 @@ describe("load rules", () => {
     );
   });
 
-  it("a plugin built before the D15 job file (ladder placement §10) still loads", async () => {
+  it("a plugin built before the D15 job file (placement spec §10) still loads", async () => {
     const f = fakePlugin(dir, {
       schema: "sha256:6ea6e13cabf6baebe44e961e21370a66ddf523082bfd73bcf169ec627fc71a25",
     });

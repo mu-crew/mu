@@ -67,7 +67,7 @@ export interface PluginJobKind extends JobKind {
   stop(db: Db, job: JobRef, call?: Call): Promise<void>;
   /**
    * A new view of a running job. `extra` goes on the wire only to a `handle: "file"` kind
-   * (ladder placement §10): the job file again, and the socket pair rebuilt for the new view.
+   * (placement spec §10): the job file again, and the socket pair rebuilt for the new view.
    */
   attach(db: Db, job: JobRef, extra?: AttachExtra): Promise<PaneCommand>;
   /** Every unresolved effect of job record `token`, by the rule table (D4). */

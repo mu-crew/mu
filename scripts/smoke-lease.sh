@@ -10,11 +10,11 @@
 # the plugin's lease job kind, with 4's kill -9 of the carrier included):
 #   P1. `mule init` registers the plugin with mu (idempotent on a rerun) and
 #       `mu host add --plugin mule` selects it
-#   P2. rung 1, `mu host exec` through the mule link: a command's exit passes
+#   P2. a remote command, `mu host exec` through the mule link: a command's exit passes
 #       through, a command's own 3 reads 8 (never mule's handback 3), a command's
 #       own 5 is told from a transport 5 by `--json`; no master is a hand-back
 #       (exit 5, the command did not run) and the next call works once it returns
-#   P3. rung 4 master loss: the master dies under a running worker: a send fails
+#   P3. lease master loss: the master dies under a running worker: a send fails
 #       as unreachable and is not resent, the remote job and its row survive,
 #       `mu agent collect` still works over the separate fetch connection, a
 #       close hands back (row and handle kept, job alive), and with the master
@@ -416,7 +416,7 @@ hx_expect() {
 }
 
 if [ "$PLUGIN_MODE" = 1 ]; then
-  say "P2. rung 1: mu host exec through the mule link"
+  say "P2. remote command: mu host exec through the mule link"
   hx sh -c 'echo out; echo err >&2'
   hx_expect "success" 0 "d.data.exit === 0 && d.data.stdout.trim() === 'out' && d.data.stderr.trim() === 'err'"
   hx sh -c 'exit 7'
@@ -662,8 +662,8 @@ until_ok 100 "carrier $CPID to die" sh -c "! kill -0 $CPID 2>/dev/null"
 [ "$(job_state "$JOB")" = running ] || fail "after kill -9 the job is $(job_state "$JOB"), expected it to survive"
 pass "kill -9 carrier pid $CPID: job $JOB still running (SIGKILL cannot stop it)"
 if [ "$PLUGIN_MODE" = 1 ]; then
-  # A bound `handle: "file"` plugin job outlives its view (plugins spec D3, ladder
-  # placement §10): reconcile KEEPS the row and the handle while the job runs, and
+  # A bound `handle: "file"` plugin job outlives its view (plugins spec D3,
+  # placement spec §10): reconcile KEEPS the row and the handle while the job runs, and
   # `mu agent reattach` opens a new view through job.attach.
   OLD_PANE=$(sql "SELECT a.pane_id AS p FROM agents a JOIN workstreams w ON w.id=a.workstream_id WHERE w.name='$WS' AND a.name='$AGENT'" | js 'd[0]?.p') ||
     fail "no pane for $AGENT"

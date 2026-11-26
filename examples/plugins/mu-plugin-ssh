@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // mu-plugin-ssh: an example mu plugin over plain ssh. It provides a host link
-// (exec and fetch) and an example `pane` job kind. Session templates (rung 3)
-// and lease templates (rung 4) remain the supported paths. Read this example next to
+// (exec and fetch) and an example `pane` job kind. Session templates and
+// lease templates remain the supported paths to a remote loop. Read this example next to
 // docs/reference/plugin-protocol.md.
 //
 //   mu plugin add ssh -- /abs/path/mu-plugin-ssh [ssh command…]

@@ -296,7 +296,7 @@ export async function closePluginJob(
 export type ViewProof = { state: "gone" } | { state: "alive" | "unknown"; why: string };
 
 /**
- * THE rule of a `handle: "file"` kind's view (ladder placement §10): the view is its job's
+ * THE rule of a `handle: "file"` kind's view (placement spec §10): the view is its job's
  * dispatcher, so its record and job file are retained until the view's absence is PROVEN.
  * Every path that would stop the job, drop the record or remove the file asks this, and acts
  * only through a wire transition on the revision the proof read (src/carrier-wire.ts): close,
@@ -387,7 +387,7 @@ async function assertViewGone(r: CarrierJob): Promise<void> {
 
 /**
  * The handle of a `handle: "file"` plugin job record that may have launched and holds none
- * (ladder placement §10). The local job file first, which needs no master; then the unresolved
+ * (placement spec §10). The local job file first, which needs no master; then the unresolved
  * `job.start` by the rule table; then `job.lookup` by key, which finds a claim the view made
  * before it published the file. A found handle fills the record, token-guarded. An absent file
  * and a lookup's `none`, `pending` or `unknown` never act: the view is the dispatcher, and it

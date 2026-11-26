@@ -1,5 +1,5 @@
 // mu — a plugin job's view when the job outlives its pane (plugins spec D3): a detached kind,
-// or a bound file kind whose view (its job's dispatcher, ladder placement §10) died while the
+// or a bound file kind whose view (its job's dispatcher, placement spec §10) died while the
 // job runs, as a SIGKILLed mule carrier does. `agent reattach` on a row whose view is gone
 // asks the kind for a new view (`job.attach`) and compares-and-sets `agents.pane_id`, keeping the
 // incarnation and everything else the row holds; the spawn receipts naming the
@@ -66,8 +66,8 @@ export function detachedJob(db: Db, ws: string, name: string): ViewJob | undefin
 
 /**
  * The agent's plugin job whose view a reattach may replace (`outlivesView`): a detached kind,
- * or a bound file kind with its handle recorded (its view is the job's dispatcher, ladder
- * placement §10). Undefined for any other agent.
+ * or a bound file kind with its handle recorded (its view is the job's dispatcher, placement
+ * spec §10). Undefined for any other agent.
  */
 export function viewJob(db: Db, ws: string, name: string): ViewJob | undefined {
   const d = pluginJobOf(db, ws, name);
@@ -129,7 +129,7 @@ async function refuseEnded(db: Db, ws: string, name: string, d: ViewJob): Promis
 }
 
 /**
- * A file kind's view is its job's dispatcher (ladder placement §10): a replacement only once
+ * A file kind's view is its job's dispatcher (placement spec §10): a replacement only once
  * every view its record knows of (a failed attempt's included) is proven gone.
  */
 async function refuseUnprovenView(

@@ -1,4 +1,4 @@
-// The routed test of spec_a_r2_tree_recovery (ladder placement spec R2, §10.4): a static plugin
+// The routed test of spec_a_r2_tree_recovery (placement spec R2, §10.4): a static plugin
 // spawn's remote tree, prepared but never finalized, survives mu's death with a durable owner.
 // The prepare stamps its placeholder row with the tree (host, path, base, repo) the moment it
 // answers, so after a restart `mu agent close <name>` closes exactly that tree, and a deleted

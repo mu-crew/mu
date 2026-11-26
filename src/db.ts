@@ -34,7 +34,7 @@
 // (<scope_id>, <name>). `ops` is the exception: `ops.key` holds the NATURAL
 // key (`ws/local_id`), never a surrogate id, so keys don't collide across machines.
 //
-// IMPORTANT: there is no migration ladder. openDb accepts only
+// IMPORTANT: there is no migration chain. openDb accepts only
 // CURRENT_SCHEMA_VERSION (14) and completes a v14 file that lacks later
 // additions in ONE transaction (upgradeSchema: columns, tables, triggers
 // and both stamps together). Every older DB is rejected with
@@ -367,7 +367,7 @@ export function tryResolveLiveWorkstreamId(db: Db, workstream: string): number |
 
 /**
  * Thrown by openDb when the on-disk DB is older than the current
- * schema. There is no in-place migration ladder; the old DB is left
+ * schema. There is no in-place migration chain; the old DB is left
  * untouched. Maps to exit code 4 (conflict) in cli.ts handle().
  */
 export class SchemaTooOldError extends Error {
@@ -409,7 +409,7 @@ export class SqliteTooOldError extends Error {
 }
 
 /**
- * Thrown by openDb when `MU_REMOTE_WORKSPACE=1` (a rung-2 remote command
+ * Thrown by openDb when `MU_REMOTE_WORKSPACE=1` (a remote workspace's remote command
  * env) is set and no `MU_DB_PATH` names a DB: the host's default DB belongs
  * to someone else. Exit 4 (conflict). Nothing was opened.
  */

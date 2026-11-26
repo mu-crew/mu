@@ -63,10 +63,15 @@ describe("registration guards", () => {
     );
   });
 
-  it("is hidden in a rung-2 loop (--mule): its pane env is a worker's (Spec B D3)", () => {
-    // The env the --mule spawn pins (test/rex-ladder-spawn.integration.test.ts).
-    const rung2 = { MU_MANAGED_AGENT: "1", MU_ORCHESTRATOR: "", MU_REMOTE: "", MU_HOST: "" };
-    expect(delegateEnabled(rung2)).toBe(false);
+  it("is hidden in a remote workspace loop (--mule): its pane env is a worker's (Spec B D3)", () => {
+    // The env the --mule spawn pins (test/rex-placement-spawn.integration.test.ts).
+    const remoteWorkspace = {
+      MU_MANAGED_AGENT: "1",
+      MU_ORCHESTRATOR: "",
+      MU_REMOTE: "",
+      MU_HOST: "",
+    };
+    expect(delegateEnabled(remoteWorkspace)).toBe(false);
   });
 
   it("is hidden by the MU_DELEGATE=0 kill switch", () => {

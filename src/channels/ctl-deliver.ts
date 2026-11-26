@@ -173,7 +173,7 @@ async function extensionOutdated(
  * Before a verb relies on `feature` (msgId for send/fresh/interrupt,
  * incarnation for `wait --inc`): ask the extension's `hello` which features
  * it serves. A pi that loaded an older mu build lacks them: refuse before
- * anything is written, with the reload/respawn ladder. One hello per verb
+ * anything is written, with the reload/respawn remedy. One hello per verb
  * per agent; the hello's incarnation is returned for the caller.
  */
 export async function requireFeature(

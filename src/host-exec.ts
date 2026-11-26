@@ -1,4 +1,4 @@
-// mu — `mu host exec` (spec 2026-11-20-ladder-placement.md §6): one synchronous call through
+// mu — `mu host exec` (spec 2026-11-20-placement.md §6): one synchronous call through
 // the host's link, with no row, task, pane or job record.
 //
 // Admission is the link's: a `slots: "mu"` link (the template) holds one transient channel for

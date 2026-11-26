@@ -1024,7 +1024,7 @@ export async function cmdAgentWait(
 
   // --inc pins the pi process the run belongs to: it needs an extension that
   // reports incarnations (else AgentExtensionOutdatedError with the reload
-  // ladder), and it only makes sense for pi agents.
+  // remedy), and it only makes sense for pi agents.
   if (opts.inc !== undefined) {
     if (rawNames.length > 1) {
       throw new UsageError(say("agent.wait_inc_one"));

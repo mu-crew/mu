@@ -71,7 +71,7 @@ export async function reattachAgent(
   opts: { ifRevision: number; signal?: AbortSignal; tasks?: readonly string[] },
 ) {
   // A plugin job's row whose view is gone and whose job outlives it: a new view, the row kept
-  // (plugins spec D3; a bound file kind's dispatcher, ladder placement §10).
+  // (plugins spec D3; a bound file kind's dispatcher, placement spec §10).
   if (viewJob(db, ws, name) !== undefined) return reattachView(db, ws, name, opts);
   const mux = await activeMux();
   // Reuse the preview's typed refusal before taking either file lock.

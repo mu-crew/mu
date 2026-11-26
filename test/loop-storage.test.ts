@@ -172,7 +172,7 @@ const CARRIER_JOBS_COLUMNS = [
   "first_inc",
   // P6d.
   "collect_delay_ms",
-  // Ladder placement §10.
+  // Placement spec §10.
   "wire_state",
   "wire_rev",
   "view_server",

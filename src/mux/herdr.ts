@@ -659,7 +659,7 @@ async function getPane(paneId: string): Promise<MuxPane | undefined> {
 
 /**
  * Label of the workspace the CALLER is running inside, or undefined
- * outside a managed pane. Backs the `mu-<name>` rung of workstream
+ * outside a managed pane. Backs the `mu-<name>` step of workstream
  * auto-detection.
  *
  * herdr injects `$HERDR_WORKSPACE_ID` into every pane it manages, so

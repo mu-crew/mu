@@ -89,7 +89,7 @@ function muleWorkspaceProfile(view: HostView): HostProfile {
   return profile;
 }
 
-/** Rung 2 preflight, before receipts, staging cleanup or a remote command. */
+/** Remote workspace preflight, before receipts, staging cleanup or a remote command. */
 export async function requireMuleWorkspace(
   db: Db,
   opts: SpawnAgentOptions,
@@ -302,7 +302,7 @@ async function prestageRemote(
  * The remote half of admission: reserve the host channel (a full host refuses
  * here), then prepare the remote worktree (`--worktree`) or the remote site.
  * A plugin link with `slots: "self"` arbitrates its own connection: mu takes no
- * channel at all (ladder §4.2, §I), and the lease returned is undefined.
+ * channel at all (placement spec §4.2, §I), and the lease returned is undefined.
  * Returns the lease and the ADMITTED profile snapshot every template runs from.
  * A failure after admission frees the channel here (no pane was opened under it).
  * A lease profile's channel is transient: released once prepare ends, so the
@@ -327,7 +327,7 @@ export async function admitRemoteSpawn(
   // A worktree's base, resolved here before any remote call (§3.3): the host gets the sha.
   const rev = opts.worktree ? await resolveStaticBase(profile.name, opts.from) : undefined;
   const view = resolveHost(db, profile.name);
-  // A profile swapped during base resolution must not turn a rung-2 prepare
+  // A profile swapped during base resolution must not turn a remote workspace prepare
   // into a template exec or take a counted channel.
   if (opts.mule !== undefined) muleWorkspaceProfile(view);
   if (view.link.caps.slots === "self") {
@@ -412,7 +412,7 @@ export class RemoteBaseRefError extends HostProfileError {
 }
 
 /**
- * The base of a `--worktree` spawn on a static host (ladder placement spec §3.3): `from`
+ * The base of a `--worktree` spawn on a static host (placement spec §3.3): `from`
  * (default `HEAD`) resolved to a sha in the caller's checkout, before any remote call, so the
  * host is asked for exactly that commit and a retry names the same one. mu never fetches or
  * pushes for it: a host that lacks it refuses with the sha (`RemoteBaseMissingError`).

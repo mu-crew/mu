@@ -460,7 +460,7 @@ describe("the pane is the transport", () => {
   });
 
   it("--worktree: one remote exec makes a detached worktree and records host, path and base", async () => {
-    // --from resolves in the caller's checkout (ladder placement §3.3): the host gets the sha.
+    // --from resolves in the caller's checkout (placement spec §3.3): the host gets the sha.
     const a = await spawn({ worktree: true, from: "HEAD" });
     const [only, ...rest] = execCalls();
     expect(rest).toEqual([]);

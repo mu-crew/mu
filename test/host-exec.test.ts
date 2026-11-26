@@ -1,4 +1,4 @@
-// `mu host exec` (spec 2026-11-20-ladder-placement.md §6, §4.2): the outcome table, admission,
+// `mu host exec` (spec 2026-11-20-placement.md §6, §4.2): the outcome table, admission,
 // the hand-back mapping, the output and deadline bounds and the metadata-only log op. Runs
 // against the template link and the fake plugin's `slots: "self"` link. A real mule link and
 // a real sshd are the orchestrator's (Linux) checks, not this file's.

@@ -67,7 +67,7 @@ if (mode === 'pi') {
 }
 `;
 
-describe.skipIf(!available)("ladder spawn through a real Rex shell rc", () => {
+describe.skipIf(!available)("placement spawn through a real Rex shell rc", () => {
   let dir: string;
   let prevCwd: string;
   let db: Db | undefined;
@@ -83,7 +83,7 @@ describe.skipIf(!available)("ladder spawn through a real Rex shell rc", () => {
 
   beforeEach(async () => {
     prevCwd = process.cwd();
-    dir = realpathSync(mkdtempSync(join(tmpdir(), "mu-rex-ladder space-")));
+    dir = realpathSync(mkdtempSync(join(tmpdir(), "mu-rex-placement space-")));
     state = join(dir, "state 'local'");
     ws = freshWorkstream("rex");
     const hostile = {

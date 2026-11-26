@@ -72,7 +72,7 @@ export interface JobSpec {
   env: Record<string, string>;
   sockets?: { local: string; remote: string };
   /**
-   * Exactly for a `handle: "file"` kind (ladder placement §10): the local path mu claimed
+   * Exactly for a `handle: "file"` kind (placement spec §10): the local path mu claimed
    * before `job.start`, where the view writes the job's handle before dispatch.
    */
   jobFile?: string;

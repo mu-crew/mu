@@ -104,7 +104,7 @@ import {
 import { rollbackSpawn } from "./spawn-rollback.js";
 
 /**
- * The built-in channel an agent of a kind without a channel of its own is on (ladder placement
+ * The built-in channel an agent of a kind without a channel of its own is on (placement spec
  * spec §A): its harness's, as on a template host. pi is on `ctl` (the kind forwards the socket
  * pair); a hook harness on a backend that anchors and pastes (tmux) on remote `hooks`, read
  * through the host's link; any other harness on `mux`.
@@ -350,7 +350,7 @@ export async function spawnPluginAgent(
             orchestrator: false,
             remote_key: remoteKey,
           });
-    // A file kind's view writes the handle to the job file (ladder placement §10): claimed
+    // A file kind's view writes the handle to the job file (placement spec §10): claimed
     // before job.start, holding the reservation, so any handle seen there is this job's.
     // A reservation released meanwhile (a close of this unlaunched spawn) refuses with nothing
     // moved: by then the file may be a replacement's (src/carrier-wire.ts).
@@ -559,7 +559,7 @@ interface ViewOf {
   /** A remote hook harness's key. */
   remoteKey?: string;
   /**
-   * A `handle: "file"` kind: the view is the job's dispatcher (ladder placement §10), and its
+   * A `handle: "file"` kind: the view is the job's dispatcher (placement spec §10), and its
    * record moves by wire transitions from this revision (src/carrier-wire.ts).
    */
   wire?: WireRef;
@@ -586,7 +586,7 @@ async function openView(
       const mux = await activeMux();
       // D15 at THE view boundary: no caller (spawn, replay, check's recovery) opens one on Rex.
       refuseCarrierViewMux(mux, v.host.name, "a plugin job's view");
-      // A file kind's view is its job's dispatcher (ladder placement §10): `dispatching` in this
+      // A file kind's view is its job's dispatcher (placement spec §10): `dispatching` in this
       // locked section, before the mux is asked, and only from the revision this spawn holds. A
       // close or rollback that moved the record first leaves nothing to dispatch for; one after
       // this finds the view dispatching (unknown) or bound.

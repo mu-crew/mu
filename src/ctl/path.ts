@@ -128,7 +128,7 @@ export function linkForwardSocket(sock: string): string {
 /**
  * The file a lease carrier writes its job handle to: `<state dir>/carrier/<ws>/<agent>.job`,
  * hashed past the same bound as a ctl socket (`carrier/_h/<hash>.job`). Derived, never stored.
- * Always absolute (the wire's `jobFile`, ladder placement §10): a relative MU_DB_PATH or SDK
+ * Always absolute (the wire's `jobFile`, placement spec §10): a relative MU_DB_PATH or SDK
  * `openDb` path leaves the state dir relative, and spawn, reattach and recovery derive one path.
  * The hash is decided on the spelling given, then resolved: a file has no sun_path bound, and a
  * template lease published before the wire went absolute keeps its name (deciding on the

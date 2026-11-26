@@ -216,7 +216,7 @@ export async function rollbackLeaseJob(
     let job = getCarrierJob(db, a.token);
     if (job === undefined) return kept("?", null, "its reservation is gone");
     // A plugin job (D8): started by its reply, stopped by its kind; an unresolved start stays.
-    // A file kind (ladder placement §10) reads its job file first, then looks up by key, and
+    // A file kind (placement spec §10) reads its job file first, then looks up by key, and
     // like a lease stops only once its view, the dispatcher, is proven gone.
     if (job.plugin !== null) {
       const kind = pluginJobKind(db, job.plugin);

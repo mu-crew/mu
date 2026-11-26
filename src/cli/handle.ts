@@ -553,7 +553,7 @@ export function classifyError(err: unknown): { label: string; exitCode: number }
     err instanceof RemoteRecoveryPendingError ||
     // A remote spawn into another agent's managed worktree or a recovery's path.
     err instanceof RemotePathOwnedError ||
-    // Prepare found an existing path it cannot claim or reclaim (ladder placement §9).
+    // Prepare found an existing path it cannot claim or reclaim (placement spec §9).
     err instanceof RemoteWorktreeConflictError ||
     // A recorded job handle whose stop template changed, or whose profile is gone: nothing ran.
     err instanceof CarrierStopRefusedError ||

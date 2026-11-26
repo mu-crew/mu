@@ -1,4 +1,4 @@
-// Ladder §7: real DB, collect refs and worktrees, with a local mule stop shim
+// Placement spec §7: real DB, collect refs and worktrees, with a local mule stop shim
 // and a fake mux. The migration itself uses the existing host/agent verbs.
 import {
   chmodSync,
