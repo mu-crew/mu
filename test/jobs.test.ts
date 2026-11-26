@@ -104,8 +104,14 @@ describe("view reads", () => {
         state: "present",
         murmurState: "working",
         murmurSince: "1700000000",
+        vtmuxStatus: false,
       });
-      expect(view("%2")).toEqual({ state: "present", murmurState: "", murmurSince: "" });
+      expect(view("%2")).toEqual({
+        state: "present",
+        murmurState: "",
+        murmurSince: "",
+        vtmuxStatus: false,
+      });
       expect(view("%3")).toEqual({ state: "absent" });
       expect(mux.calls.filter((c) => c.includes("list-panes"))).toHaveLength(1);
     } finally {

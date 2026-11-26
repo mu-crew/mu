@@ -101,8 +101,14 @@ describeIfTmux("tmux integration (real tmux server)", () => {
       state: "present",
       murmurState: "working",
       murmurSince: "1700000000000",
+      vtmuxStatus: false,
     });
-    expect(lookup(other)).toEqual({ state: "present", murmurState: "", murmurSince: "" });
+    expect(lookup(other)).toEqual({
+      state: "present",
+      murmurState: "",
+      murmurSince: "",
+      vtmuxStatus: false,
+    });
   });
 
   it("spawnAgent passes env to the pane", async () => {
