@@ -12,6 +12,10 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Added
+
+- `DashboardAgent.sessionFile?: string | null`: the pi session file from the ctl status reply already read for state (no extra socket round-trip); absent when ctl does not report it.
+
 ## [5.5.0] — 2026-11-26
 
 ### Added

@@ -157,6 +157,8 @@ export interface DashboardAgent extends AgentOutput {
   tool?: AgentTool | null;
   /** Model, effort, context and cost as murmur reports them; absent = unknown (no murmur row). */
   runtime?: AgentRuntimeInfo;
+  /** The pi session file from the ctl status (no extra round-trip); absent = ctl did not report it. */
+  sessionFile?: string | null;
 }
 
 /** An op of the canonical log, rendered by the one formatter (`logItem`), plus its workstream. */
@@ -617,6 +619,7 @@ export async function loadDashboard(db: Db, opts: DashboardOptions): Promise<Das
         tasks: mine,
         task: mine[0] ?? null,
         ...toolOf(a.tool, now),
+        ...(a.sessionFile !== undefined ? { sessionFile: a.sessionFile } : {}),
         ...(runtime !== undefined ? { runtime } : {}),
       });
     }

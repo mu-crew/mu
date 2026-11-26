@@ -80,6 +80,9 @@ async function readCtlTurns(
         runs: probe.status.runs,
         ...(probe.incarnation !== undefined ? { incarnation: probe.incarnation } : {}),
         ...(probe.status.tool !== undefined ? { tool: probe.status.tool } : {}),
+        ...(probe.status.sessionFile !== undefined
+          ? { sessionFile: probe.status.sessionFile }
+          : {}),
       });
     } else {
       const ctl = probe?.kind === "missing" ? "missing" : "refused";

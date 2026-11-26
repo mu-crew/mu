@@ -244,6 +244,8 @@ export interface LiveAgent extends AgentRow {
   idle?: boolean;
   /** The running tool of a pi agent (ctl read); null = none, absent = unknown. Not in `AgentOutput`. */
   tool?: CtlTool | null;
+  /** The pi session file the ctl status reported; absent = not reported. Not in `AgentOutput`. */
+  sessionFile?: string;
   /** Off ctl: a muzzle run in the pane waits for slots (spec D14): waiting, not stalled. */
   queued?: boolean;
 }
@@ -917,6 +919,7 @@ export async function readLiveAgents(
       since: reading.since === null ? null : new Date(reading.since).toISOString(),
       ...(reading.reason !== undefined ? { reason: reading.reason } : {}),
       ...(reading.tool !== undefined ? { tool: reading.tool } : {}),
+      ...(reading.sessionFile !== undefined ? { sessionFile: reading.sessionFile } : {}),
       ...(reading.queued === true ? { queued: true } : {}),
     };
     return computeAgentIdle(db, live, now) ? { ...live, idle: true } : live;

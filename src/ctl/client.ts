@@ -233,7 +233,7 @@ export async function ctlProbe(
     const left = Math.max(1, deadline - Date.now());
     const st = await ctlRequest(sock, { op: "status" }, { timeoutMs: left });
     if (!st.ok) return { kind: "refused", error: st.error };
-    const { state, since, runs, pending, blocked, tool } = st;
+    const { state, since, runs, pending, blocked, tool, sessionFile } = st;
     if (state === undefined || since === undefined || runs === undefined || pending === undefined) {
       return { kind: "refused", error: "status reply is missing fields" };
     }
@@ -246,6 +246,7 @@ export async function ctlProbe(
         pending,
         ...(blocked !== undefined ? { blocked } : {}),
         ...(tool !== undefined ? { tool } : {}),
+        ...(sessionFile !== undefined ? { sessionFile } : {}),
       },
       ...(hello?.ok && hello.ops !== undefined ? { ops: hello.ops } : {}),
       ...(hello?.ok && hello.extVersion !== undefined ? { extVersion: hello.extVersion } : {}),

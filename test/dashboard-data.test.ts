@@ -535,6 +535,44 @@ describe("tool: the ctl status field, elapsed at read, old extension unknown", (
   });
 });
 
+describe("sessionFile: the ctl status field, absent when ctl does not report it", () => {
+  const servers: Server[] = [];
+  afterEach(() => {
+    for (const s of servers.splice(0)) s.close();
+  });
+  function serve(name: string, status: Record<string, unknown>): Promise<void> {
+    const path = ctlSocketPath("ws", name, dir);
+    mkdirSync(dirname(path), { recursive: true });
+    const server = createServer((sock) => {
+      const dec = new LineDecoder();
+      sock.setEncoding("utf8");
+      sock.on("error", () => {});
+      sock.on("data", (chunk: string) => {
+        for (const _ of dec.push(chunk)) {
+          sock.end(
+            encode({ v: 1, ok: true, state: "idle", since: 1, runs: 0, pending: false, ...status }),
+          );
+        }
+      });
+    });
+    servers.push(server);
+    return new Promise((r) => server.listen(path, () => r()));
+  }
+  const agent = async (name: string) =>
+    (await loadDashboard(db, { caller: null })).agents.find((a) => a.name === name);
+
+  it("is populated from ctl status; absent for an ephemeral pi or unreachable ctl", async () => {
+    insertAgent(db, { name: "has", workstream: "ws", paneId: "%1", cli: "pi" });
+    insertAgent(db, { name: "none", workstream: "ws", paneId: "%2", cli: "pi" });
+    insertAgent(db, { name: "gone", workstream: "ws", paneId: "%3", cli: "pi" });
+    await serve("has", { sessionFile: "/tmp/s/abc.jsonl" });
+    await serve("none", {});
+    expect((await agent("has"))?.sessionFile).toBe("/tmp/s/abc.jsonl");
+    expect(await agent("none")).not.toHaveProperty("sessionFile");
+    expect(await agent("gone")).not.toHaveProperty("sessionFile");
+  });
+});
+
 describe("human needs and delegates are the CALLER's, never global", () => {
   it("a caller sees its own needs and unfinished calls; another caller's and a null caller's see none", async () => {
     ensureWorkstream(db, "other");
