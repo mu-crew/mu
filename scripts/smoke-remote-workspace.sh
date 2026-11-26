@@ -101,15 +101,15 @@ if [ ${#missing[@]} -gt 0 ]; then
 fi
 TO=$(command -v timeout)
 # ── run dir, EXIT trap and deadline (before the first node call and the build: SMOKE_TIMEOUT covers them) ─
-R=$(cd "$(mktemp -d /tmp/mu-r2.XXXXXX)" && pwd -P)
+R=$(cd "$(mktemp -d /tmp/mu-rw.XXXXXX)" && pwd -P)
 # Every process of this run carries "$R/" in its environ from here on (this tag,
 # or the private HOME/TMPDIR exported later; sshd's children get it through
 # SetEnv): the deadline and the cleanup find a reparented build by it.
 export SMOKE_RUN="$R/"
 UID_=$(id -u)
-WS="r2-$$"
-MU_TMUX="mu-r2-$$"
-MULE_TMUX="mule-r2-$$"
+WS="rw-$$"
+MU_TMUX="mu-rw-$$"
+MULE_TMUX="mule-rw-$$"
 SSHD_PID=""
 WATCHDOG=""
 IN_CLEANUP=""
