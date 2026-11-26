@@ -12,6 +12,8 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.5.0] — 2026-11-26
+
 ### Added
 - SDK: `listWorkstreamEdges(db, workstream)` returns every raw `blocks` edge of a workstream (`{ from, to }` local ids, `from` closes first) in one indexed query, tasks of any status included. Both ends must be in the workstream, so a stored cross-workstream edge is left out.
 - `mu host add --replace` swaps an existing profile in one transaction. It runs the `--plugin` blocker check (agent, job and recovery records naming the host) and the held-channel check before deleting, so a refusal keeps the old profile; `host rm` then `host add` removed it first.
