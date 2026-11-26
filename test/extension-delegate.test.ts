@@ -9,7 +9,7 @@ import {
   PENDING_CHANNEL,
   registerDelegate,
 } from "../extension/delegate.js";
-import { delegatesOsc, setTtyWriterForTests } from "../extension/delegate-osc.js";
+import { delegatesOsc, setTtyWriterForTests, writeAll } from "../extension/delegate-osc.js";
 import muPi from "../extension/mu-pi.js";
 import { listDelegates } from "../src/delegates.js";
 import {
@@ -939,5 +939,47 @@ describe("errors and corner cases", () => {
     await cancel;
     await flush();
     expect(p.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("writeAll (short writes to the tty)", () => {
+  const noWait = () => {};
+
+  it("loops until every byte is written", () => {
+    const got: string[] = [];
+    const write = (_fd: number, buf: Buffer, off: number) => {
+      const n = Math.min(3, buf.length - off);
+      got.push(buf.subarray(off, off + n).toString());
+      return n;
+    };
+    expect(writeAll(1, "\x1b]7501;state=clear\x1b\\", write, noWait)).toBe(true);
+    expect(got.join("")).toBe("\x1b]7501;state=clear\x1b\\");
+    expect(got.length).toBeGreaterThan(1);
+  });
+
+  it("retries EAGAIN a bounded number of times, then gives up", () => {
+    let calls = 0;
+    const write = () => {
+      calls++;
+      throw Object.assign(new Error("again"), { code: "EAGAIN" });
+    };
+    expect(writeAll(1, "abc", write, noWait)).toBe(false);
+    expect(calls).toBeLessThan(100);
+    let first = true;
+    const flaky = (_fd: number, buf: Buffer, off: number) => {
+      if (first) {
+        first = false;
+        throw Object.assign(new Error("again"), { code: "EAGAIN" });
+      }
+      return buf.length - off;
+    };
+    expect(writeAll(1, "abc", flaky, noWait)).toBe(true);
+  });
+
+  it("returns false on a persistent error", () => {
+    const write = () => {
+      throw Object.assign(new Error("io"), { code: "EIO" });
+    };
+    expect(writeAll(1, "abc", write, noWait)).toBe(false);
   });
 });

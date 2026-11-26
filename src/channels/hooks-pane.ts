@@ -7,6 +7,8 @@
 // `undefined`: unknown, never idle.
 
 import { execFileCapture } from "../exec-file.js";
+import { vtmuxPaneStatus } from "../jobs/view.js";
+import { activeMux } from "../mux/detect.js";
 import { sleep } from "../tmux.js";
 
 /** One pane as murmur reports it after a drain. */
@@ -251,7 +253,36 @@ export async function readHooksPane(paneId: string): Promise<HooksPane | undefin
   } catch {
     stdout = null;
   }
-  return stdout === null ? undefined : parseHooksPane(stdout);
+  if (stdout !== null) return parseHooksPane(stdout);
+  return await vtmuxHooksPane(paneId);
+}
+
+/**
+ * With no murmur answer, a pane on vtmux with `vtmux-program-status on` still reports its state
+ * natively (OSC 7501): enough for the send gate (blocked / running / sendable). It carries no
+ * session or run count, so no paste is ever confirmed (it reports `unknown`, never resent).
+ */
+async function vtmuxHooksPane(paneId: string): Promise<HooksPane | undefined> {
+  let status: Awaited<ReturnType<typeof vtmuxPaneStatus>>;
+  try {
+    status = await vtmuxPaneStatus(await activeMux(), paneId);
+  } catch {
+    return undefined;
+  }
+  if (status === undefined) return undefined;
+  return {
+    state: status === "busy" ? "working" : status === "needs_permission" ? "blocked" : "idle",
+    activity: status === "busy" ? "running" : "stopped",
+    attention: status === "needs_permission" ? ["blocked"] : [],
+    sessionId: null,
+    runCount: null,
+    updatedAt: null,
+    blocked: status === "needs_permission" ? "a permission dialog" : null,
+    error: null,
+    errorAt: null,
+    lastText: null,
+    confirmed: true,
+  };
 }
 
 /** A non-negative integer env value in ms, else `fallback`. */

@@ -489,9 +489,21 @@ export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
     }
     // Crew identity for murmur 3.0 (@mu_agent, @mu_workstream, @mu_role), beside the MU_* env.
     // Best effort: a tag that fails to set must not cost the agent its pane.
-    for (const [name, value] of Object.entries(opts.paneOptions ?? {})) {
+    // One tmux invocation (`;`-chained), so the tags land together or not at all.
+    const tags = Object.entries(opts.paneOptions ?? {});
+    if (tags.length > 0) {
       try {
-        await setPaneOption(ref, name, value);
+        await paneTmux(ref, (id) =>
+          tags.flatMap(([name, value], i) => [
+            ...(i === 0 ? [] : [";"]),
+            "set-option",
+            "-p",
+            "-t",
+            id,
+            name,
+            value,
+          ]),
+        );
       } catch {
         // untagged is still a working pane
       }
@@ -699,9 +711,13 @@ export async function paneStatus(paneId: string): Promise<MuxPaneStatus | undefi
   }
   const [version, enabled, state, kind, id, rootState] = result.stdout.trim().split("|");
   if (!version || (enabled !== "on" && enabled !== "1")) return undefined;
+  // A permission prompt is a blocked sub-record while the root keeps working (Claude, Codex):
+  // it outranks the root, as in Rex. mu's own delegates record is only a "waiting" hint.
+  if (state === "blocked" && kind === "permission" && id !== "mu/delegates") {
+    return "needs_permission";
+  }
   const root = id === "" ? state : rootState;
-  if (root === "blocked")
-    return id === "" && kind === "permission" ? "needs_permission" : "needs_input";
+  if (root === "blocked") return "needs_input";
   if (root === "working") return "busy";
   if (root === "idle" || root === "done" || root === "error") return "needs_input";
   return undefined;

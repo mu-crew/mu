@@ -612,6 +612,11 @@ async function openView(
         command: viewLine(view.command, v.builtIn !== undefined),
         // mu's own command line, never the harness's: a backend that starts its agent kinds itself refuses it.
         commandSource: "explicit",
+        paneOptions: {
+          "@mu_agent": opts.name,
+          "@mu_workstream": opts.workstream,
+          "@mu_role": "worker",
+        },
         ...(view.cwd !== undefined ? { cwd: view.cwd } : {}),
         env: view.env,
         onPaneCreated: (pid, identity) => {

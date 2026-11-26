@@ -557,7 +557,10 @@ export async function readBaseStates(
   // vtmux's OSC 7501 report, for panes that are there and not liveness-only.
   const vtmuxReadings = new Map<string, StateReading>();
   for (const agent of agents) {
-    if (livenessOnly.has(agentKey(agent)) || view(agent.paneId).state === "absent") continue;
+    const seen = view(agent.paneId);
+    // Stock tmux (and vtmux with the status off) never pays the per-pane probe.
+    if (livenessOnly.has(agentKey(agent)) || seen.state !== "present" || !seen.vtmuxStatus)
+      continue;
     const state = await vtmuxPaneStatus(mux, agent.paneId);
     if (state !== undefined) {
       vtmuxReadings.set(agentKey(agent), { state, source: "tmux", since: null, alive: true });

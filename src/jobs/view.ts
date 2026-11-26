@@ -306,7 +306,13 @@ export async function viewPid(
 /** One tmux pane in the batched read: absent, or present with murmur's pane options. */
 export type TmuxView =
   | { state: "absent" }
-  | { state: "present"; murmurState: string; murmurSince: string | undefined };
+  | {
+      state: "present";
+      murmurState: string;
+      murmurSince: string | undefined;
+      /** The server is vtmux with `vtmux-program-status` on: worth a `paneStatus` read. */
+      vtmuxStatus: boolean;
+    };
 
 /**
  * View presence for every tmux pane, in one read (`list-panes -a`), carrying
@@ -322,13 +328,18 @@ export async function readTmuxViews(): Promise<(paneId: string) => TmuxView> {
     "-F",
     // tmux 3.8 turns literal tabs into `_`. Pane IDs, Murmur state tokens
     // and timestamps contain no `|`.
-    "#{pane_id}|#{@murmur_pane_state}|#{@murmur_pane_since}",
+    // `#{vtmux-program-status}` expands empty on stock tmux, so it pays no per-pane probe.
+    "#{pane_id}|#{@murmur_pane_state}|#{@murmur_pane_since}|#{vtmux_version}|#{vtmux-program-status}",
   ]);
   const present = new Map<string, TmuxView>();
   for (const line of stdout.split("\n")) {
     if (line.length === 0) continue;
-    const [paneId, murmurState = "", murmurSince] = line.split("|");
-    if (paneId !== undefined) present.set(paneId, { state: "present", murmurState, murmurSince });
+    const [paneId, murmurState = "", murmurSince, vtmuxVersion = "", vtmuxOn = ""] =
+      line.split("|");
+    if (paneId !== undefined) {
+      const vtmuxStatus = vtmuxVersion !== "" && (vtmuxOn === "on" || vtmuxOn === "1");
+      present.set(paneId, { state: "present", murmurState, murmurSince, vtmuxStatus });
+    }
   }
   return (paneId) => present.get(paneId) ?? { state: "absent" };
 }

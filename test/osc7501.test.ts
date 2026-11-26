@@ -8,6 +8,11 @@ import {
   setTtyWriterForTests,
 } from "../extension/delegate-osc.js";
 import { resetAgentStateCacheForTests } from "../src/agent-state.js";
+import {
+  readHooksPane,
+  sendGate,
+  setMurmurPaneRunnerForTests,
+} from "../src/channels/hooks-pane.js";
 import { readAgentStates } from "../src/channels/index.js";
 import { murmurDoctorCheck } from "../src/doctor-summary.js";
 import { setMuxForTests, tmuxBackend } from "../src/mux.js";
@@ -75,12 +80,25 @@ describe("tmux paneStatus (vtmux OSC 7501)", () => {
   });
 
   it("ignores a child sub-tool record: the root state speaks, its kind is not used", async () => {
-    expect(await status(row({ s: "blocked", k: "permission", id: "cargo", r: "idle" }))).toBe(
+    expect(await status(row({ s: "blocked", k: "question", id: "cargo", r: "idle" }))).toBe(
       "needs_input",
     );
     expect(await status(row({ s: "working", id: "cargo", r: "idle" }))).toBe("needs_input");
     expect(await status(row({ s: "working", id: "cargo", r: "working" }))).toBe("busy");
     expect(await status(row({ s: "working", id: "cargo", r: "" }))).toBeUndefined();
+  });
+
+  it("a permission sub-record outranks a working root, but not mu's delegates record", async () => {
+    expect(await status(row({ s: "blocked", k: "permission", id: "claude", r: "working" }))).toBe(
+      "needs_permission",
+    );
+    expect(
+      await status(row({ s: "blocked", k: "permission", id: "mu/delegates", r: "working" })),
+    ).toBe("busy");
+    // A non-permission child still leaves the root to speak.
+    expect(await status(row({ s: "blocked", k: "question", id: "cargo", r: "working" }))).toBe(
+      "busy",
+    );
   });
 
   it("is undefined on plain tmux or with vtmux-program-status off", async () => {
@@ -151,6 +169,103 @@ describe("spawn tagging", () => {
   });
 });
 
+describe("spawn tag atomicity", () => {
+  it("sets the three tags in one ;-chained tmux invocation", async () => {
+    const calls: string[][] = [];
+    setTmuxExecutor(
+      withServerIdentity(async (args) => {
+        calls.push([...args]);
+        if (args[0] === "has-session") return { stdout: "", stderr: "no", exitCode: 1 };
+        return args[0] === "new-session" ? ok("%7\n") : ok();
+      }),
+    );
+    await spawnAgent({
+      session: "mu-x",
+      window: "w1",
+      name: "w1",
+      cli: "pi",
+      command: "pi",
+      commandSource: "cli-key",
+      env: {},
+      paneOptions: { "@mu_agent": "w1", "@mu_workstream": "ws", "@mu_role": "worker" },
+    });
+    const sets = calls.filter((a) => a.includes("set-option"));
+    expect(sets).toHaveLength(1);
+    expect(sets[0]?.filter((a) => a === ";")).toHaveLength(2);
+    expect(sets[0]?.filter((a) => a === "set-option")).toHaveLength(3);
+  });
+});
+
+describe("batched state read on tmux", () => {
+  const agents = [
+    { name: "a", workstreamName: "ws", paneId: "%3" },
+    { name: "b", workstreamName: "ws", paneId: "%4" },
+  ];
+
+  it("stock tmux pays no display-message per pane", async () => {
+    setMuxForTests(tmuxBackend);
+    const calls: string[] = [];
+    setTmuxExecutor(
+      withServerIdentity(async (args) => {
+        calls.push(args[0] ?? "");
+        if (args[0] === "list-panes") return ok("%3|working|1700||\n%4|idle|1700||\n");
+        return ok();
+      }),
+    );
+    const r = await readAgentStates(agents);
+    expect(calls).not.toContain("display-message");
+    expect(r.get("ws/a")).toMatchObject({ state: "busy" });
+  });
+
+  it("vtmux with status off pays none either; on, it reads each pane", async () => {
+    setMuxForTests(tmuxBackend);
+    let probes = 0;
+    const run = (on: string) =>
+      setTmuxExecutor(
+        withServerIdentity(async (args) => {
+          if (args[0] === "list-panes") {
+            return ok(`%3|working|1700|vtmux 1|${on}\n%4|working|1700|vtmux 1|${on}\n`);
+          }
+          if (args[0] === "display-message") {
+            probes++;
+            return ok(`${row({ s: "idle" })}\n`);
+          }
+          return ok();
+        }),
+      );
+    run("off");
+    await readAgentStates(agents);
+    expect(probes).toBe(0);
+    resetAgentStateCacheForTests();
+    run("on");
+    await readAgentStates(agents);
+    expect(probes).toBe(2);
+  });
+});
+
+describe("hooks channel on vtmux without murmur", () => {
+  afterEach(() => setMurmurPaneRunnerForTests(null));
+  const read = async (fields: string) => {
+    setMuxForTests(tmuxBackend);
+    setMurmurPaneRunnerForTests(async () => null);
+    setTmuxExecutor(async () => ok(`${fields}\n`));
+    return readHooksPane("%3");
+  };
+
+  it("reads the native state when murmur does not answer, so the send gate decides", async () => {
+    const idle = await read(row({ s: "idle" }));
+    expect(sendGate(idle, Date.now(), 600_000)).toEqual({ ok: true });
+    const busy = await read(row({ s: "working", r: "working" }));
+    expect(sendGate(busy, Date.now(), 600_000)).toMatchObject({ ok: false, state: "running" });
+    const perm = await read(row({ s: "blocked", k: "permission" }));
+    expect(sendGate(perm, Date.now(), 600_000)).toMatchObject({ ok: false, state: "blocked" });
+  });
+
+  it("stays unanswered on stock tmux", async () => {
+    expect(await read(row({ v: "", s: "idle" }))).toBeUndefined();
+  });
+});
+
 describe("state precedence on tmux", () => {
   const agent = { name: "w1", workstreamName: "ws", paneId: "%3" };
 
@@ -158,7 +273,7 @@ describe("state precedence on tmux", () => {
     setMuxForTests(tmuxBackend);
     setTmuxExecutor(
       withServerIdentity(async (args) => {
-        if (args[0] === "list-panes") return ok("%3|0|||\n");
+        if (args[0] === "list-panes") return ok("%3|||vtmux 1|on\n");
         if (args[0] === "display-message") return ok(`${row({ s: "working", r: "working" })}\n`);
         return ok();
       }),
