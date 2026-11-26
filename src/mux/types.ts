@@ -87,6 +87,8 @@ export interface SpawnAgentPaneOptions {
   commandSource: CommandSource;
   /** Initial working directory for the pane. */
   cwd?: string;
+  /** Pane-scoped user options (`@mu_agent`, ...) to set on the new pane. tmux only. */
+  paneOptions?: Record<string, string>;
   /** Identity and state env for the pane (tmux `-e`, herdr `--env`). */
   env: Record<string, string>;
   /**
@@ -183,6 +185,8 @@ export interface MuxHealth {
   ok: boolean;
   /** Version string as the backend reports it, or null when unreachable. */
   version: string | null;
+  /** tmux only: set when the server is vtmux (OSC 7501 pane state). */
+  vtmux?: { version: string; programStatus: boolean };
   /** Ambient env facts this backend cares about, in display order
    *  (tmux: $TMUX / $TMUX_PANE). Values are null when unset. */
   env: readonly { name: string; value: string | null }[];

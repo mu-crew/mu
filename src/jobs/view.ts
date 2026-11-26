@@ -251,7 +251,20 @@ export async function sessionViews(session: string, mux?: MuxBackend): Promise<M
 
 /** Whether the backend classifies its panes itself (herdr's classifier, Rex's OSC 7501 report). */
 export function viewsReportStatus(mux: MuxBackend): boolean {
-  return mux.paneStatus !== undefined;
+  // tmux has paneStatus for vtmux only: plain tmux still reads murmur, so it never takes this path.
+  return mux.paneStatus !== undefined && mux.name !== "tmux";
+}
+
+/** vtmux's OSC 7501 status for a tmux pane (ahead of murmur); undefined on plain tmux or any probe failure. */
+export async function vtmuxPaneStatus(
+  mux: MuxBackend,
+  paneId: string,
+): Promise<MuxPaneStatus | undefined> {
+  try {
+    return await mux.paneStatus?.(paneId);
+  } catch {
+    return undefined;
+  }
 }
 
 /** A view as a classifying backend sees it: its reported agent state, or present with none, or absent. */

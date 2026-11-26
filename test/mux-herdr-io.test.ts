@@ -390,9 +390,9 @@ describe("herdr status mapping: the mux already knows", () => {
     expect(await paneStatus("%15")).toBeUndefined();
   });
 
-  it("the backend record exposes paneStatus; tmux deliberately does not", async () => {
+  it("the backend record exposes paneStatus; tmux too (vtmux OSC 7501 only)", async () => {
     const { tmuxBackend } = await import("../src/mux/tmux.js");
     expect(typeof herdrBackend.paneStatus).toBe("function");
-    expect(tmuxBackend.paneStatus).toBeUndefined();
+    expect(typeof tmuxBackend.paneStatus).toBe("function");
   });
 });

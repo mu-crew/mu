@@ -9,6 +9,7 @@ import {
   PENDING_CHANNEL,
   registerDelegate,
 } from "../extension/delegate.js";
+import { delegatesOsc, setTtyWriterForTests } from "../extension/delegate-osc.js";
 import muPi from "../extension/mu-pi.js";
 import { listDelegates } from "../src/delegates.js";
 import {
@@ -30,6 +31,25 @@ const pendingCounts = (p: ReturnType<typeof fakePi>) =>
   p.emitted
     .filter((e) => e.channel === PENDING_CHANNEL)
     .map((e) => (e.data as { source: string; count: number }).count);
+
+describe("OSC 7501 waiting record", () => {
+  it("writes working while delegates are pending and clear when none are, to the tty only", async () => {
+    const seen: string[] = [];
+    setTtyWriterForTests((d) => seen.push(d));
+    try {
+      const mu = fakeMu();
+      const p = fakePi();
+      registerDelegate(p.pi, mu.run);
+      await tool(p).execute("t", { task: "x" });
+      mu.waits.get("delegate-2")?.resolve(ok({ agents: [{ outcome: "error", lastError: "x" }] }));
+      await flush();
+      await flush();
+      expect(seen).toEqual([delegatesOsc(1), delegatesOsc(0)]);
+    } finally {
+      setTtyWriterForTests(() => {});
+    }
+  });
+});
 
 describe("registration guards", () => {
   it("registers mu_delegate, mu_delegate_reissue and mu_delegate_cancel in an unmanaged pi", () => {

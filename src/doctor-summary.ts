@@ -104,9 +104,23 @@ export const MURMUR_NOT_NEEDED_DETAIL =
  * pi agents report state over their control socket and a missing murmur only affects other CLIs.
  */
 export function murmurDoctorCheck(
-  agentStateSource: "murmur" | "herdr" | "rex",
-  opts: { muExtOk?: boolean } = {},
+  agentStateSource: "murmur" | "herdr" | "rex" | "vtmux",
+  opts: { muExtOk?: boolean; vtmuxProgramStatus?: boolean } = {},
 ): DoctorCheck {
+  if (agentStateSource === "vtmux") {
+    return opts.vtmuxProgramStatus === true
+      ? {
+          name: "murmur",
+          status: "ok",
+          detail: "agent state from vtmux (OSC 7501); murmur hooks not needed",
+        }
+      : {
+          name: "murmur",
+          status: "warn",
+          detail:
+            "vtmux-program-status is off: agent state shows unknown (set -g vtmux-program-status on)",
+        };
+  }
   if (agentStateSource !== "murmur") {
     return { name: "murmur", status: "ok", detail: `agent state from ${agentStateSource}` };
   }

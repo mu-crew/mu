@@ -37,6 +37,7 @@ import {
   MuxError,
   type MuxHealth,
   type MuxPane,
+  type MuxPaneStatus,
   PaneNotFoundError,
   type PaneResult,
   type SessionKillTarget,
@@ -486,6 +487,15 @@ export async function spawnAgent(opts: SpawnAgentPaneOptions): Promise<string> {
         throw err;
       }
     }
+    // Crew identity for murmur 3.0 (@mu_agent, @mu_workstream, @mu_role), beside the MU_* env.
+    // Best effort: a tag that fails to set must not cost the agent its pane.
+    for (const [name, value] of Object.entries(opts.paneOptions ?? {})) {
+      try {
+        await setPaneOption(ref, name, value);
+      } catch {
+        // untagged is still a working pane
+      }
+    }
     opts.onPaneCreated?.(paneId, identity);
     return paneId;
   };
@@ -663,6 +673,38 @@ export async function paneResult(ref: string | VerifiedPaneRef): Promise<PaneRes
   const num = (s: string | undefined): number | null =>
     s !== undefined && /^\d+$/.test(s) ? Number(s) : null;
   return { state: "exited", code: num(status), signal: num(signal) };
+}
+
+/**
+ * The agent's state as OSC 7501 reports it through vtmux (`#{pane_program_*}`),
+ * mapped as Rex's `paneStatus` is. Undefined on a tmux without vtmux, with
+ * `vtmux-program-status` off, for a pane that reported nothing, or when the
+ * pane or server is gone. Only the root record speaks for the agent: when a
+ * sub-tool's record wins the summary (`pane_program_id` set), the root's own
+ * state is read and its kind is unknown.
+ */
+export async function paneStatus(paneId: string): Promise<MuxPaneStatus | undefined> {
+  if (!isValidPaneId(paneId)) return undefined;
+  const result = await execOnPane(paneId, (id) => [
+    "display-message",
+    "-t",
+    id,
+    "-p",
+    "#{vtmux_version}|#{vtmux-program-status}|#{pane_program_state}|#{pane_program_kind}|#{pane_program_id}|#{pane_program_root_state}|#{pane_program_state_time}",
+  ]);
+  if (result.exitCode !== 0) {
+    if (/can't find pane|pane not found|no current target/i.test(result.stderr)) return undefined;
+    if (NO_SERVER_RE.test(result.stderr)) return undefined;
+    throw new TmuxError(result.args, result.stderr, result.stdout, result.exitCode);
+  }
+  const [version, enabled, state, kind, id, rootState] = result.stdout.trim().split("|");
+  if (!version || (enabled !== "on" && enabled !== "1")) return undefined;
+  const root = id === "" ? state : rootState;
+  if (root === "blocked")
+    return id === "" && kind === "permission" ? "needs_permission" : "needs_input";
+  if (root === "working") return "busy";
+  if (root === "idle" || root === "done" || root === "error") return "needs_input";
+  return undefined;
 }
 
 /** The pid of the pane's first process; undefined when the pane or server is gone. */
@@ -946,6 +988,18 @@ export async function attachCommands(target: TmuxAttachTarget): Promise<readonly
  * `mu doctor` owns every string the user sees, so a second backend
  * reporting different env vars needs no doctor change.
  */
+/** vtmux (OSC 7501 capable tmux) and whether `vtmux-program-status` is on; {} on plain tmux or no server. */
+async function vtmuxProbe(): Promise<Pick<MuxHealth, "vtmux">> {
+  try {
+    const out = await tmux(["list-sessions", "-F", "#{vtmux_version}|#{vtmux-program-status}"]);
+    const [version, status] = (out.split("\n")[0] ?? "").trim().split("|");
+    if (!version) return {};
+    return { vtmux: { version, programStatus: status === "on" || status === "1" } };
+  } catch {
+    return {};
+  }
+}
+
 export async function healthCheck(): Promise<MuxHealth> {
   let version: string | null = null;
   try {
@@ -957,6 +1011,7 @@ export async function healthCheck(): Promise<MuxHealth> {
     name: "tmux",
     ok: version !== null,
     version,
+    ...(await vtmuxProbe()),
     env: [
       { name: "$TMUX", value: process.env.TMUX ?? null },
       { name: "$TMUX_PANE", value: process.env.TMUX_PANE ?? null },
@@ -992,6 +1047,7 @@ export const tmuxBackend: MuxBackend = Object.freeze({
   paneAlive,
   paneResult,
   panePid,
+  paneStatus,
   serverIdentity,
   paneOnServer,
   killPane: async (pane: ActionPaneRef) => killPane(tmuxPaneTarget(pane)),

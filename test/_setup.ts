@@ -17,6 +17,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:f
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { inject } from "vitest";
+import { setTtyWriterForTests } from "../extension/delegate-osc.js";
 import { setLocalLaunchFlagsForTests } from "../src/agents/spawn-presets.js";
 import {
   setMurmurHookRunnerForTests,
@@ -79,6 +80,8 @@ process.env.MU_MUX = "tmux";
 // and a developer's own queue must not leak in. test/muzzle-queue.test.ts
 // scripts it.
 setMuzzleRunnerForTests(async () => null);
+// Delegate OSC 7501 records must not reach the developer's terminal.
+setTtyWriterForTests(() => {});
 
 // Baseline: no local launcher takes a launch flag (codex's `--no-daemon`), so no
 // test runs the machine's own `codex --help`. test/spawn-presets.test.ts probes

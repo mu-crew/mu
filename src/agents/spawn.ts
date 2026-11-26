@@ -911,6 +911,11 @@ async function spawnPreparedAgent(
           command: paneCommand,
           commandSource,
           ...(profile ? {} : { cwd: paneCwd }),
+          paneOptions: {
+            "@mu_agent": opts.name,
+            "@mu_workstream": opts.workstream,
+            "@mu_role": opts.orchestrator === true ? "orchestrator" : "worker",
+          },
           env:
             muleProfile !== undefined && staged !== undefined
               ? { ...env, [MULE_JOB_PREFIX_ENV]: muleJobPrefix(db, staged.incarnation) }

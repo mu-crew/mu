@@ -46,6 +46,7 @@ import {
   type WakeAnswer,
   wakeText,
 } from "./delegate-format.js";
+import { emitDelegatesStatus } from "./delegate-osc.js";
 import { type ProcessRun, processFailedText, processStarted } from "./delegate-process-format.js";
 import { delegateTraceOn, TRACE_EVENTS, trace, traceFields } from "./delegate-trace.js";
 import {
@@ -301,6 +302,7 @@ export function registerDelegate(
     const count = inflight.size + starting + queue.length;
     if (count === lastPending) return;
     lastPending = count;
+    emitDelegatesStatus(count);
     try {
       pi.events.emit(PENDING_CHANNEL, { source: DELEGATE_TOOL, count });
     } catch {

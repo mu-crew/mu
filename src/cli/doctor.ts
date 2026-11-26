@@ -93,6 +93,9 @@ const pad = (s: string): string => s.padEnd(LABEL_WIDTH);
 /** Where agent state comes from: the mux itself on herdr and Rex, murmur on tmux. A
  *  live mu extension makes murmur optional for pi agents. */
 function agentStateCheck(health: MuxHealth | undefined, muExtLive: boolean): DoctorCheck {
+  if (health?.vtmux !== undefined) {
+    return murmurDoctorCheck("vtmux", { vtmuxProgramStatus: health.vtmux.programStatus });
+  }
   return murmurDoctorCheck(
     health === undefined || health.name === "tmux" ? "murmur" : health.name,
     {

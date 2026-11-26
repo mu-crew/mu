@@ -13,6 +13,7 @@ import {
   viewState,
   viewStatus,
   viewsReportStatus,
+  vtmuxPaneStatus,
 } from "./jobs/view.js";
 import { activeMux } from "./mux/detect.js";
 import type { MuxBackendName } from "./mux/types.js";
@@ -553,6 +554,15 @@ export async function readBaseStates(
   }
 
   const remoteCandidates: StateAgentRef[] = [];
+  // vtmux's OSC 7501 report, for panes that are there and not liveness-only.
+  const vtmuxReadings = new Map<string, StateReading>();
+  for (const agent of agents) {
+    if (livenessOnly.has(agentKey(agent)) || view(agent.paneId).state === "absent") continue;
+    const state = await vtmuxPaneStatus(mux, agent.paneId);
+    if (state !== undefined) {
+      vtmuxReadings.set(agentKey(agent), { state, source: "tmux", since: null, alive: true });
+    }
+  }
   for (const agent of agents) {
     const pane = view(agent.paneId);
     if (agent.paneIdentity && serverError !== undefined) {
@@ -563,6 +573,8 @@ export async function readBaseStates(
       readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.paneGone, false));
     } else if (livenessOnly.has(agentKey(agent))) {
       readings.set(agentKey(agent), unknownReading(UNKNOWN_REASON.noRow));
+    } else if (vtmuxReadings.has(agentKey(agent))) {
+      readings.set(agentKey(agent), vtmuxReadings.get(agentKey(agent)) as StateReading);
     } else if (pane.murmurState.length > 0) {
       readings.set(agentKey(agent), mapMurmurState(pane.murmurState, parseSince(pane.murmurSince)));
     } else {
