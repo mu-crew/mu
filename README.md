@@ -68,11 +68,18 @@ You need:
 - git on `PATH` for `--worktree`.
 
 [murmur](https://github.com/mu-crew/murmur) is optional for pi agents.
-Claude Code, Codex, cursor-agent and Muse Code on tmux need its hook entries
-(`murmur init`): without them their state is `unknown`, so a send needs
-`--force`, a wait never sees them finish and stall detection never fires.
-On herdr, herdr reports state. On Rex, the agent's own OSC 7501 report does
-(claude and codex send one).
+On **vtmux >= 3.8-rc3** with `set -s vtmux-program-status on` and
+`set -s vtmux-program-resume on`, mu reads each pane's own OSC 7501 report
+natively (`paneStatus()`): Claude Code and Codex send one, pi too, and
+Cursor is bridged by a small hook. No murmur hooks are needed. On Rex it is the
+same report. On herdr, herdr reports state.
+
+**Vanilla tmux 3.8** drops OSC 7501 and OSC 7577. pi workers still work fully
+through pi's `ctl` socket (only the `mu/delegates` window-tab glyph is absent).
+Claude Code, Codex, cursor-agent and Muse Code degrade to `state: unknown`
+(a send needs `--force`, a wait never sees them finish, stall detection never
+fires) unless you run murmur 2.x (branch `release/2.x`) and its hook entries
+(`murmur init`), or switch to vtmux or Rex.
 
 Updating, upgrading from 4.x or 3.x, and running from a checkout:
 [How to upgrade mu](docs/guide/upgrade.md).

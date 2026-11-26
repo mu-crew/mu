@@ -6,6 +6,20 @@ mu drives one multiplexer per command: tmux,
 state work on all three; on Rex, a non-pi agent's state needs it to
 report OSC 7501 (see below).
 
+## tmux: vtmux or vanilla
+
+mu on tmux wants **vtmux >= 3.8-rc3** with `set -s vtmux-program-status on` and
+`set -s vtmux-program-resume on`. vtmux keeps the OSC 7501 (program status) and
+OSC 7577 (program resume) records that pi, Claude Code and Codex emit, and mu
+reads them natively through `paneStatus()`, as it does on Rex. No murmur hooks
+are needed.
+
+On **vanilla tmux 3.8**, which drops both sequences, pi workers still work
+fully via the `ctl` socket (only the `mu/delegates` window-tab glyph is
+absent). Other harnesses report `state: unknown` unless you use murmur 2.x
+(`release/2.x`) hooks, or switch to vtmux or Rex. `mule` and `muzzle` are
+unaffected apart from missing 7501 glyphs on TUI jobs.
+
 ## See which backend is active
 
 ```bash
@@ -39,7 +53,7 @@ copy backend.
 | Pane id | `%15` | `w1:p1` | `block:<uuid>` |
 | Attach | `tmux attach -t mu-<ws>` (a spawn prints `attach-session -t mu-<ws>:<agent>`, `-L <socket>` on a private socket, `switch-client` inside tmux) | `herdr workspace focus <id>`, then `herdr` outside a herdr pane | `rex do session.select session_id=… window_id=…`: Rex.app switches to it |
 | pi agent state | control socket | control socket | control socket |
-| Other agents' state | murmur | herdr | the program's own OSC 7501 reports |
+| Other agents' state | the program's own OSC 7501 reports on vtmux (murmur 2.x hooks on vanilla tmux) | herdr | the program's own OSC 7501 reports |
 | Send to non-pi agents | claude, codex, cursor-agent, muse: a paste confirmed by run count (`hooks`); others refused (exit 4) | one atomic `agent prompt` | a paste event, then Enter |
 | Spawn | one command | bare pane, then `agent start` | one API call |
 | `--mule` (remote workspace) | yes | refused | yes |

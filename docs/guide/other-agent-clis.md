@@ -15,6 +15,12 @@ on remote hosts. Each worker's harness and channel are on its agents row
   send confirmed by the turn count rather than exactly, and no
   `mu_delegate` (their own subagents check, recorded by mu).
 
+On **vtmux >= 3.8-rc3** (`set -s vtmux-program-status on`) mu reads the
+harness's own OSC 7501 report natively, so the `murmur init` hook entries below
+are not needed there. On **vanilla tmux 3.8**, which drops OSC 7501, they are:
+use murmur 2.x (branch `release/2.x`), or switch to vtmux or Rex. Without
+either, non-pi harnesses are `state: unknown`.
+
 This page sets each one up, then says what changes when one is a worker or
 the orchestrator.
 
@@ -39,7 +45,8 @@ skills) for every `init`, `doctor` and `mu host check`, as they do for the
 harnesses. `mu doctor`'s `hooks` section reports a missing, drifted or
 foreign `mu hook stop` entry for claude, codex and cursor-agent.
 
-Without murmur's entries a `hooks` agent's state is `unknown`: sends are
+On vtmux the entries are not needed for state (the pane's OSC 7501 report
+supplies it). Without them on vanilla tmux, a `hooks` agent's state is `unknown`: sends are
 refused without `--force`, waits never see a turn end, and stall detection
 never fires.
 
