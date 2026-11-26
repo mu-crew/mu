@@ -603,6 +603,14 @@ function rebuildInPlace(db: Db, table: string): void {
   db.exec(`DROP TABLE ${table}_pre_plugin`);
 }
 
+/** A task_notes whose kind CHECK predates `review`: SQLite cannot widen a CHECK in place. */
+function taskNotesLacksReview(db: Db): boolean {
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'task_notes'")
+    .get() as { sql: string | null } | undefined;
+  return row?.sql != null && !row.sql.includes("'review'");
+}
+
 /** The DDL half of upgradeSchema; the caller owns the transaction. */
 function applySchemaDdl(db: Db): void {
   // No migration (the profile names a machine now): an older file's profiles
@@ -621,11 +629,31 @@ function applySchemaDdl(db: Db): void {
   // spawn_receipts with a transport CHECK (before `hooks`, or before plugin channels): set
   // aside and copied by its column list into the unchecked shape below, in this one transaction.
   const oldReceipts = spawnReceiptsChecked(db);
+  // task_notes before the `review` kind: set aside (its index and capture triggers dropped, the
+  // triggers come back with the capture stamp) and copied whole into the widened CHECK below.
+  const oldNotes = taskNotesLacksReview(db);
+  if (oldNotes) {
+    for (const t of db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '\\_cap\\_%' ESCAPE '\\'",
+      )
+      .all() as { name: string }[])
+      db.exec(`DROP TRIGGER IF EXISTS "${t.name}"`);
+    db.exec("DROP INDEX IF EXISTS idx_task_notes_task");
+    db.exec("ALTER TABLE task_notes RENAME TO task_notes_pre_review");
+  }
   if (oldReceipts) db.exec("ALTER TABLE spawn_receipts RENAME TO spawn_receipts_pre_plugin");
   db.exec(CURRENT_SCHEMA);
   if (oldCarrierJobs) {
     db.exec(CARRIER_JOBS_REBUILD);
     db.exec("DROP TABLE carrier_jobs_pre_reservation");
+  }
+  if (oldNotes) {
+    const cols = "id, task_id, author, content, created_at, kind";
+    db.exec(`INSERT INTO task_notes (${cols}) SELECT ${cols} FROM task_notes_pre_review`);
+    db.exec("DROP TABLE task_notes_pre_review");
+    // The dropped triggers must come back: force the capture stamp to be re-applied.
+    db.exec("UPDATE schema_version SET capture_version = 0 WHERE capture_version IS NOT NULL");
   }
   if (oldReceipts) {
     db.exec(SPAWN_RECEIPTS_REBUILD);
@@ -740,6 +768,7 @@ function schemaIsCurrent(db: Db): boolean {
   if (carrierJobsPreReservation(db)) return false;
   if (carrierJobsStopRequired(db)) return false;
   if (spawnReceiptsChecked(db)) return false;
+  if (taskNotesLacksReview(db)) return false;
   if (expected.indexes.some((i) => !have.has(`index:${i}`))) return false;
   for (const [name, sql] of expected.views) {
     if (have.get(`view:${name}`) !== sql) return false;

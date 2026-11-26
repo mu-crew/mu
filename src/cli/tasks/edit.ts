@@ -457,10 +457,12 @@ export async function cmdTaskNote(
     json?: boolean;
     author?: string;
     report?: boolean;
+    review?: boolean;
     kind?: NoteKind;
   } = {},
 ): Promise<void> {
-  if (opts.report === true && opts.kind !== undefined) {
+  const flagged = [opts.report === true, opts.review === true, opts.kind !== undefined];
+  if (flagged.filter(Boolean).length > 1) {
     throw new UsageError(say("task.note_kind_twice"), { showHelp: false });
   }
   const { name: localId } = await resolveEntityRef(db, rawId, opts, "task");
@@ -475,7 +477,8 @@ export async function cmdTaskNote(
   const author = opts.author ?? (await resolveActorIdentity());
   const text = content === STDIN_ARG ? await readStdinText("note text") : unescapeNoteText(content);
   const warnings = suspiciousNoteWarnings(text);
-  const kind: NoteKind = opts.report === true ? "report" : (opts.kind ?? "note");
+  const kind: NoteKind =
+    opts.report === true ? "report" : opts.review === true ? "review" : (opts.kind ?? "note");
   const note = addNote(db, localId, text, { author, workstream: ws, kind });
   // A worker reads notes at dispatch, not while it runs: a note on its
   // IN_PROGRESS task reaches it only through a send.

@@ -18,6 +18,7 @@ import { randomUUID } from "node:crypto";
 import { type Db, SYNCED_ENTITIES } from "./db.js";
 import { nextHlc } from "./hlc.js";
 import { say } from "./messages.js";
+import { resolveProvenance } from "./provenance.js";
 import { singleLinePayload } from "./segment-line.js";
 
 export type LogKind = "message" | "event" | "broadcast" | string;
@@ -25,6 +26,8 @@ export type LogKind = "message" | "event" | "broadcast" | string;
 export interface LogRow {
   /** Monotonic AUTOINCREMENT id. Use as the cursor for `--since`. */
   seq: number;
+  /** `ops.key` verbatim: the natural key ('' = machine-wide, 'ws/task', 'ws/task#12', ...). */
+  key: string;
   /** Workstream this entry belongs to, or `null` for machine-wide. */
   workstreamName: string | null;
   /** Free TEXT: agent name, "system", "user", or anything a caller picks.
@@ -47,6 +50,10 @@ export interface LogRow {
   kind: LogKind;
   /** Free utf-8 string. May be JSON if the kind suggests structure. */
   payload: string;
+  /** Harness session behind the op (`pi:<id>`), or null when none was known. */
+  actorSession: string | null;
+  /** Assistant turn (`<entry id>[:<toolCallId>]`) that ran the verb, or null. */
+  actorAnchor: string | null;
   /** ISO 8601 timestamp set at insert time. */
   createdAt: string;
 }
@@ -63,6 +70,8 @@ interface RawLogRow {
   op: string;
   kind: string;
   payload: string;
+  actor_session: string | null;
+  actor_anchor: string | null;
   created_at: string;
 }
 
@@ -79,6 +88,8 @@ const SELECT_LOG_COLS = `
   l.op AS op,
   l.entity AS kind,
   l.payload AS payload,
+  l.actor_session AS actor_session,
+  l.actor_anchor AS actor_anchor,
   l.created_at AS created_at
 `;
 
@@ -285,6 +296,7 @@ function machineId(db: Db): string {
 function rowFromDb(row: RawLogRow): LogRow {
   return {
     seq: row.seq,
+    key: row.workstream ?? MACHINE_WIDE_KEY,
     workstreamName: row.workstream === MACHINE_WIDE_KEY ? null : row.workstream,
     source: row.source ?? "system",
     intent: row.intent,
@@ -292,6 +304,8 @@ function rowFromDb(row: RawLogRow): LogRow {
     op: row.op,
     kind: row.kind,
     payload: row.payload,
+    actorSession: row.actor_session,
+    actorAnchor: row.actor_anchor,
     createdAt: row.created_at,
   };
 }
@@ -355,12 +369,13 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   // workstream is destroyed (which is the point of an ops log).
   const key = opts.workstream ?? MACHINE_WIDE_KEY;
   const group = randomUUID();
+  const prov = resolveProvenance();
   const payload = singleLinePayload(opts.payload);
   const run = () =>
     db
       .prepare(
-        `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, entity, key, op, payload, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'put', ?, ?)`,
+        `INSERT INTO ops (hlc, machine_id, group_id, actor, intent, actor_session, actor_anchor, entity, key, op, payload, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'put', ?, ?)`,
       )
       .run(
         nextHlc(db),
@@ -368,6 +383,8 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
         group,
         opts.source,
         opts.intent ?? null,
+        prov.actorSession,
+        prov.actorAnchor,
         kind,
         key,
         payload,
@@ -377,6 +394,7 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
   const result = db.inTransaction ? run() : db.transaction(run).immediate();
   return {
     seq: Number(result.lastInsertRowid),
+    key,
     workstreamName: opts.workstream,
     source: opts.source,
     intent: opts.intent ?? null,
@@ -384,6 +402,8 @@ export function appendLog(db: Db, opts: AppendLogOptions): LogRow {
     op: "put",
     kind,
     payload,
+    actorSession: prov.actorSession,
+    actorAnchor: prov.actorAnchor,
     createdAt,
   };
 }

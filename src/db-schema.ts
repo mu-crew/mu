@@ -138,6 +138,10 @@ export const ADDED_COLUMNS: readonly (readonly [table: string, column: string, d
   ["remote_recovery", "dispatch_probes", "TEXT"],
   // Plugins spec D10 (review of P6e2): a wait's deadline event fires once per deadline.
   ["hosts", "deadline_fired", "INTEGER"],
+  // Provenance: the session and assistant turn behind an op (src/provenance.ts), machine-local.
+  ...["op_ctx", "ops"].flatMap((t) =>
+    ["actor_session", "actor_anchor"].map((c) => [t, c, "TEXT"] as const),
+  ),
 ];
 
 /** The schema version a fresh DB starts at. v12 adds the kernel columns
@@ -157,7 +161,7 @@ export const MIN_ACCEPTED_SCHEMA_VERSION = 14;
 
 /** The note kinds (`task_notes.kind`). Set once at INSERT, never changed:
  *  a local UPDATE of it raises, and a peer's update cannot match a row. */
-export const NOTE_KINDS = ["brief", "report", "verdict", "close", "note"] as const;
+export const NOTE_KINDS = ["brief", "report", "review", "verdict", "close", "note"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 
 /** Impact and effort a task gets when its creator gave neither (and the
@@ -495,7 +499,9 @@ CREATE TABLE IF NOT EXISTS op_ctx (
   actor    TEXT,
   intent   TEXT,
   applying INTEGER NOT NULL DEFAULT 0,
-  now_ms   INTEGER NOT NULL DEFAULT 0
+  now_ms   INTEGER NOT NULL DEFAULT 0,
+  actor_session TEXT,  -- provenance (src/provenance.ts); also in ADDED_COLUMNS
+  actor_anchor  TEXT
 );
 
 -- op_dying: natural keys of workstream/task rows mid-DELETE, so cascaded
@@ -647,7 +653,7 @@ CREATE TABLE IF NOT EXISTS task_notes (
   created_at TEXT NOT NULL,
   -- Set once at INSERT (a local UPDATE raises: src/capture.ts).
   kind       TEXT NOT NULL DEFAULT 'note'
-             CHECK (kind IN ('brief', 'report', 'verdict', 'close', 'note'))
+             CHECK (kind IN ('brief', 'report', 'review', 'verdict', 'close', 'note'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_notes_task ON task_notes (task_id);
@@ -936,6 +942,8 @@ CREATE TABLE IF NOT EXISTS ops (
   op         TEXT NOT NULL CHECK (op IN ('put','del')),
   payload    TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  actor_session TEXT,  -- provenance (src/provenance.ts); also in ADDED_COLUMNS
+  actor_anchor  TEXT,
   UNIQUE (machine_id, hlc)
 );
 

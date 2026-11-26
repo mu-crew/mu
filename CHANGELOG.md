@@ -12,6 +12,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+### Added
+
+- **Op provenance:** every op now carries nullable `actor_session` and `actor_anchor` (`ops` and `op_ctx`, added in place; capture revision 6 → 7). They default from `MU_ACTOR_SESSION` / `MU_ACTOR_ANCHOR`, else `pi:$PI_SESSION_ID` and the latest assistant entry (`<id>[:<toolCallId>]`) in the tail of `$PI_SESSION_FILE`; `null` when unknown. `withOpContext` takes `actorSession` / `actorAnchor`; `listLogs()` rows expose `key`, `actorSession` and `actorAnchor`.
+- `mu task note --review` files a note of the new `review` kind. An existing DB's `task_notes` is rebuilt once on open to admit it, rows kept.
+
 ## [5.6.0] — 2026-11-26
 
 ### Added

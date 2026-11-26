@@ -120,6 +120,8 @@ describe("openDb", () => {
       "op",
       "payload",
       "created_at",
+      "actor_session",
+      "actor_anchor",
     ]);
 
     const insert = (op: string, hlc: string): void => {

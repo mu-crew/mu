@@ -205,6 +205,10 @@ export function wireTaskCommands(program: Command): void {
       "--report",
       "file the note as the task's report (kind report, never edited; the last report wins, earlier ones stay in `mu task notes <id> --all`)",
     )
+    .option(
+      "--review",
+      "file the note as a review of the task (kind review: a reviewer's finding, never edited)",
+    )
     .addOption(
       new Option("--kind <kind>", "note kind (internal: delegates write verdicts)")
         .choices(NOTE_KINDS)
@@ -222,6 +226,7 @@ export function wireTaskCommands(program: Command): void {
         note?: string;
         text?: string;
         report?: boolean;
+        review?: boolean;
         kind?: NoteKind;
       };
       // resolveNoteText throws UsageError; call it INSIDE the handle()
