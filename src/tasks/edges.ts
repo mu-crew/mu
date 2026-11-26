@@ -1,6 +1,6 @@
 // mu — task edge reads and mutations.
 
-import type { Db } from "../db.js";
+import { type Db, resolveWorkstreamId } from "../db.js";
 import { withOpContext } from "../op-context.js";
 import { lookupTaskAnyWorkstream, taskIdFor, touchTask } from "./core.js";
 import { CrossWorkstreamEdgeError, CycleError, TaskNotFoundError } from "./errors.js";
@@ -83,6 +83,30 @@ export function getTaskEdges(db: Db, taskLocalId: string, workstream: string): T
       .all(taskId) as { id: string }[]
   ).map((r) => r.id);
   return { blockers, dependents };
+}
+
+/** One raw `blocks` edge: `from` must close before `to` (local ids). */
+export interface WorkstreamEdge {
+  from: string;
+  to: string;
+}
+
+/**
+ * Every raw `blocks` edge in a workstream in one query (closed tasks
+ * included), ordered by `from` then `to`. Read-only; replaces per-task
+ * `getTaskEdges` loops. Throws WorkstreamNotFoundError on a missing workstream.
+ */
+export function listWorkstreamEdges(db: Db, workstream: string): WorkstreamEdge[] {
+  const wsId = resolveWorkstreamId(db, workstream);
+  return db
+    .prepare(
+      `SELECT f.local_id AS "from", t.local_id AS "to" FROM task_edges e
+         JOIN tasks f ON f.id = e.from_task_id
+         JOIN tasks t ON t.id = e.to_task_id
+        WHERE f.workstream_id = ? AND t.workstream_id = ?
+        ORDER BY f.local_id, t.local_id`,
+    )
+    .all(wsId, wsId) as WorkstreamEdge[];
 }
 
 /**

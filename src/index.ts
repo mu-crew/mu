@@ -672,6 +672,7 @@ export {
   listRecentClosed,
   listTasks,
   listTasksByOwner,
+  listWorkstreamEdges,
   mapLegacyStatus,
   openTask,
   type ParkTaskOptions,
@@ -721,6 +722,7 @@ export {
   type UpdateTaskResult,
   unparkTask,
   updateTask,
+  type WorkstreamEdge,
 } from "./tasks.js";
 export * as tmux from "./tmux.js";
 export {

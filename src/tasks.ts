@@ -34,6 +34,7 @@ export {
   getPrerequisites,
   getTaskEdges,
   getTaskEdgesWithStatus,
+  listWorkstreamEdges,
   type RemoveBlockEdgeResult,
   type ReparentTaskResult,
   removeBlockEdge,
@@ -41,6 +42,7 @@ export {
   type TaskEdges,
   type TaskEdgesWithStatus,
   type TaskEdgeWithStatus,
+  type WorkstreamEdge,
   wouldCreateCycle,
 } from "./tasks/edges.js";
 export {
