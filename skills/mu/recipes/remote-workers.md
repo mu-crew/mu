@@ -1,6 +1,6 @@
 # Remote workers
 
-Pick a [rung](../../../docs/guide/remote-ladder.md). The SSH session starter
+Pick a [placement](../../../docs/guide/placement.md). The SSH session starter
 (`mu host init dev --ssh --template`) prints `--max-sessions 2` (one live pane plus
 one slot for collect or hook exec); run it as printed. Size larger crews
 per the guide. If only one connection is practical, use a lease.

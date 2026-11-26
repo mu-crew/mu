@@ -27,7 +27,7 @@ const DOC_FILES = [
   "docs/guide/stop-a-worker.md",
   "docs/guide/delegate.md",
   "docs/guide/remote.md",
-  "docs/guide/remote-ladder.md",
+  "docs/guide/placement.md",
   "docs/guide/plugins.md",
   "docs/guide/recovery.md",
   "docs/guide/sync.md",

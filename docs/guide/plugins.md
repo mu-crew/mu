@@ -87,8 +87,8 @@ It gives the host a link (exec, fetch) and an example `pane` job kind. If
 your npm install is owned by root, copy the file somewhere you own first: mu
 refuses a plugin someone else can write.
 
-**It is an example, not the supported path to rung 3.** Session templates
-(rung 3) and lease templates (rung 4) ([remote.md](remote.md)) are supported. The pane kind has these
+**It is an example, not the supported path to a remote loop.** Session
+templates and lease templates ([remote.md](remote.md)) are supported. The pane kind has these
 limits (the file header has the rest):
 
 - Its view needs its own ssh connection, so a host where only one
@@ -109,7 +109,7 @@ mule -- /abs/mu-plugin-mule`). Then `mu host add <h> --plugin mule --fetch
 '...'`. The plugin serves the link and the `lease` job kind; the lease's view needs
 tmux, while the link's `exec` is pane-free and runs on any backend.
 Setup, migration from a lease template, and refusals:
-[the ladder](remote-ladder.md#use-the-mule-plugin-rungs-2-and-4).
+[placement](placement.md#use-the-mule-plugin).
 
 ## Write a plugin
 

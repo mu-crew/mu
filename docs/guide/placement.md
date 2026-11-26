@@ -1,4 +1,4 @@
-# Where a worker runs: the ladder
+# Where a worker runs: placement
 
 An agent has four **places**: the **loop** (the harness process, with its
 model calls, credentials and control socket), the **workspace** (the
@@ -7,54 +7,83 @@ worktree), the **shell** (where bash, git and make run) and the **DB** (the
 machine. Placement is per agent: one workstream can mix placements, as long
 as every pane lives on one multiplexer.
 
-A **rung** names one combination of the four places. The numbers are names,
-not a ranking.
+**Placement** says which places are remote. The DB always stays here, and so
+does your pane: every placement opens its pane in your multiplexer, and for a
+remote loop that pane holds ssh, a carrier or a plugin view.
 
-| Rung | What it is | Loop, workspace, shell | Status |
+| Placement | Loop | Workspace and shell | Spawn |
 | --- | --- | --- | --- |
-| 0 | a local worker | all local | shipped |
-| 1 | `mu host exec`: one command, no agent | shell on the host | shipped |
-| 2 | local pi loop, remote workspace and shell | split | shipped; needs mule >= 0.7.0 and its pi extension |
-| 3 | a session pane (`--transport session`) | all on the host | shipped |
-| 4 | a lease (`--transport lease`) | all on the host | shipped, pi only |
-| 5 | a provider host | all on the host | core shipped |
+| **local** | here | here | `mu agent spawn` |
+| **remote workspace** | here | there | `mu agent spawn --mule <host>` (the pane runs `pi --mule <host>:<tree>`) |
+| **remote loop** | there | there | `mu agent spawn --host <host>` |
 
-## Capability matrix
+`--mule <host>` gives a remote workspace; `--host <host>` gives a remote
+loop, even through mule's lease. A remote workspace needs mule >= 0.7.0 and
+its pi extension.
 
-| Rung | tmux | Rex | herdr | One session per connection |
-| --- | --- | --- | --- | --- |
-| 0 | pi `ctl`, hook harnesses (claude, codex, cursor-agent, muse) `hooks`, others `mux` | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a |
-| 1 | runs (no pane) | runs | runs | fine over a link that serialises itself |
-| 2 | pi `ctl` local | pi `ctl` local | refused | mule controls admission |
-| 3 | pi `ctl` forwarded, hook harnesses remote `hooks` | session template: pi `ctl`, others `mux`; ssh plugin pane: refused | refused | fine: each pane opens its own connection |
-| 4 | pi `ctl` via the carrier | refused | refused | fine: one master |
-| 5 | the plugin's own channel if it declares one, else the built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must declare one) | refused | refused | the provider's |
-| command gate | `mux` | `mux` | refused | as rung 3; lease profiles run no gates |
+A remote loop is reached over one of three **transports**: a **session** (a
+`session` template; each pane opens its own connection), a **lease** (a
+`--transport lease` template or the mule plugin's `lease` job kind: a job on
+the host behind one master), or a **plugin job** (a provider plugin's job
+kind). The **host** is either **your host** (a profile you added) or a
+**provisioned host** (a provider plugin makes it and releases it).
 
-- Remote `hooks` needs a backend that anchors and pastes: tmux only.
-  Elsewhere a non-pi worker is on `mux`; tmux has no `mux` send and refuses.
-- A lease carrier forwards no stdin, so a non-pi worker has no input path on
-  a lease: use pi.
-- Rex supports rung 3 session templates only: an ssh-plugin pane is a
-  plugin job view, so Rex refuses it like rungs 4 and 5.
+A **remote command** is not a placement, because no agent runs:
+`mu host exec <host> -- <cmd>` runs one command on the host.
 
-## Reach for what
+## Pick by need
 
 | Situation | Reach for |
 | --- | --- |
-| One build or test on a host, no agent | rung 1, [`mu host exec`](#rung-1-mu-host-exec) |
-| The host runs the loop and takes a new connection per pane | rung 3 |
-| Only one connection is practical (a prompted master) | rung 4 for a crew; rung 1 for single commands |
-| The host cannot run the loop (no credentials, no model API) | [rung 2](#rung-2-local-pi-with-a-remote-worktree) |
-| You need a machine on demand | rung 5, a [provider host](remote.md#provider-hosts) |
-| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also supports rung 2 and rung 3 session templates) |
+| Nothing forces you off this machine | **local** |
+| The code, data or hardware is on the host, and you want your session, UI and extensions here; or the host cannot run the loop (no credentials, no model API) | [**remote workspace**](#remote-workspace) |
+| The host runs the harness, and the agent should run there | **remote loop**: a lease if the link is flaky (the job survives a dropped link or a sleeping laptop) or sessions are capped (only one connection is practical, such as a prompted master); a session otherwise (each pane opens its own connection, and the agent ends with it) |
+| No suitable machine | **remote loop** on a [provisioned host](remote.md#provider-hosts) |
+| One build or test on a host, no agent | [**remote command**](#remote-command-mu-host-exec) |
+| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also runs a remote workspace and session templates) |
 
-A provider host or a standing one: weigh capacity (on demand or fixed),
+A provisioned host or your own: weigh capacity (on demand or fixed),
 lifetime ([deadline or idle reclaim](remote.md#provider-hosts)), credentials,
 installed harnesses and setup time. Do not assume a provisioned host has mu
 or a git identity.
 
-## Rung 1: `mu host exec`
+## Support matrix
+
+Support depends on the placement and the transport, never on a name.
+
+| Placement | Transport | Harnesses | Mux (your pane) | One session per connection |
+| --- | --- | --- | --- | --- |
+| local | none | all five | tmux, Rex, herdr | n/a |
+| remote workspace | mule | pi only (today) | tmux, Rex; herdr refused | mule controls admission |
+| remote loop | session | pi; the other four via remote hook events on tmux, via `mux` on Rex | tmux, Rex (session templates); herdr refused | fine: each pane opens its own connection |
+| remote loop | lease | pi only (a lease carrier forwards no stdin) | tmux | fine: one master |
+| remote loop | plugin job (provisioned host) | what the provider's plugin and host offer | tmux | the provider's |
+| remote command | the host's link | none (no agent) | any (no pane) | fine over a link that serialises itself |
+
+Channels:
+
+- **local:** pi on `ctl`. On tmux the hook harnesses (claude, codex,
+  cursor-agent, muse) are on `hooks` and other CLIs on `mux`; on Rex and
+  herdr every non-pi worker is on `mux`.
+- **remote workspace:** pi on a local `ctl`.
+- **session:** pi on a forwarded `ctl`; on tmux the hook harnesses are on
+  remote `hooks`, on Rex they are on `mux`.
+- **lease:** pi on `ctl` through the carrier.
+- **plugin job:** the plugin's own channel if it declares one, else the
+  built-in `ctl`/`hooks`/`mux` its inputs support (an `at-start` kind must
+  declare one).
+- **a command gate** on a host: `mux` on tmux or Rex, herdr refused; its
+  connections are a session's, and lease profiles run no gates.
+
+Limits:
+
+- Remote `hooks` needs a backend that anchors and pastes: tmux only.
+  Elsewhere a non-pi worker is on `mux`; tmux has no `mux` send and refuses.
+- For a remote loop, Rex runs session templates only. The `pane` job kind of
+  the ssh example plugin runs on your host but is a plugin job view, so Rex
+  refuses it like a lease or a provisioned host's job.
+
+## Remote command: `mu host exec`
 
 ```bash
 mu host exec dev --cwd /path/to/repo -- make test
@@ -77,10 +106,10 @@ job. It runs on every backend, herdr included.
   never the command text or output.
 - It is for workspace commands, not bulk transfer: use `agent collect`.
 
-## Rung 2: local pi with a remote worktree
+## Remote workspace
 
 Install the mule workspace extension in local pi. Use a static
-[`--plugin mule` profile](#use-the-mule-plugin-rungs-2-and-4) whose name and
+[`--plugin mule` profile](#use-the-mule-plugin) whose name and
 mule configuration match the extension's. Then, from your checkout:
 
 ```bash
@@ -98,9 +127,9 @@ brings home commits, not uncommitted files. Close checks for uncommitted or
 uncollected work before killing the pane, then stops the worker's detached
 mule jobs before removing the tree. Use a mule workspace extension that
 honors `MULE_PI_JOB_PREFIX` so close can find those jobs across pi sessions.
-The local pane can run on tmux or Rex. `--host` and `--cwd` conflict with
-`--mule`. On Linux, `MU=<mu> MULE=<mule> bash scripts/smoke-rung2.sh` runs
-this path end to end against a loopback `sshd MaxSessions 1`.
+`--host` and `--cwd` conflict with `--mule`. On Linux,
+`MU=<mu> MULE=<mule> bash scripts/smoke-remote-workspace.sh` runs this path
+end to end against a loopback `sshd MaxSessions 1`.
 
 A `mu` called from a remote command (a script, `bash -c`) would open the
 host's default DB, someone else's. The mule extension sets
@@ -119,9 +148,10 @@ can race. A Rex terminal may drive a tmux workstream (`MU_MUX=tmux`).
 
 Backend refusals happen before spawn effects.
 
-- **herdr on rungs 2-5:** it cannot run the required per-agent command or
-  view. Use tmux (or Rex for rung 2 or a session template). Rungs 0 and 1 run.
-- **Rex on lease and plugin job views** (rungs 4-5, and a rung 3 ssh plugin
+- **herdr for a remote workspace or a remote loop:** it cannot run the
+  required per-agent command or view. Use tmux (or Rex for a remote
+  workspace or a session template). Local workers and remote commands run.
+- **Rex on lease and plugin job views** (including the ssh example plugin's
   pane): tmux-only: a Rex reply does not name the server instance that
   answered it, so mu cannot prove which server holds a view ([roadmap](../ROADMAP.md)).
   Use `MU_MUX=tmux` for those views.
@@ -141,19 +171,20 @@ the master back, take a fresh preview with `mu agent close <name> -w <ws>`
 and repeat with `--if <rev>` (the revision may have changed after
 the interrupted close or a reap); that stops the job by its handle.
 
-For rung 2, send refuses new delivery and wait hands back without consuming
-an unfinished run. Reopen the master and retry; the local pane and its task
-remain. An explicit close can still close the local pane during a hand-back:
+For a remote workspace, send refuses new delivery and wait hands back
+without consuming an unfinished run. Reopen the master and retry; the local
+pane and its task remain. An explicit close can still close the local pane during a hand-back:
 it preserves a recovery record for the tree and any outstanding jobs. Take a
 fresh close preview once the master is back. If local dispatch processes
 are still exiting after the pane closes, close instead exits 4. Retry from
 the recovery preview it names; mu checks those processes again before
 listing remote jobs.
 
-## Use the mule plugin (rungs 2 and 4)
+## Use the mule plugin
 
-`mu-plugin-mule` ships with mule. It gives a host mule's link (`exec` through
-mule's private SSH master) and the `lease` job kind, a persistent worker
+`mu-plugin-mule` ships with mule and serves both a remote workspace and a
+lease. It gives a host mule's link (`exec` through mule's private SSH
+master) and the `lease` job kind, a persistent worker
 whose pane is a bound tmux view with a file handle. The plugin has no
 `fetch`: the profile keeps your `--fetch` template.
 
@@ -264,4 +295,4 @@ while the profile was absent; that record still blocks the switch. If draining
 fails, keep the original profile.
 
 See also: [Run a worker on another machine](remote.md), [Use a
-plugin](plugins.md), [the placement spec](../specs/2026-11-20-ladder-placement.md).
+plugin](plugins.md), [the placement spec](../specs/2026-11-20-placement.md).

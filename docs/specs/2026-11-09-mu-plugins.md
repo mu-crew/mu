@@ -114,8 +114,8 @@ Three state machines. mu alone moves them. Implementations report the
 facts that move them.
 
 A dropped master or any other hand-back is not host loss: where this
-section and D8 differ on it, [ladder placement
-§5](2026-11-20-ladder-placement.md#5-a-dropped-master-is-not-host-loss-decided-q13)
+section and D8 differ on it, [placement spec
+§5](2026-11-20-placement.md#5-a-dropped-master-is-not-host-loss-decided-q13)
 (approved 2026-11-20) supersedes them. In particular, no `host.status`
 ask follows a provider hand-back (that spec's Open item 5a).
 
@@ -754,8 +754,8 @@ written to be re-run (reclaim, marks, the aside).
 
 ### D8. Seam: job kind
 
-D8 on a dropped master or any other provider hand-back: [ladder placement
-§5](2026-11-20-ladder-placement.md#5-a-dropped-master-is-not-host-loss-decided-q13)
+D8 on a dropped master or any other provider hand-back: [placement spec
+§5](2026-11-20-placement.md#5-a-dropped-master-is-not-host-loss-decided-q13)
 supersedes this section. In particular §5.5 and its Open item 5a: mu does
 not ask the provider for `host.status` after a hand-back.
 
@@ -1403,8 +1403,8 @@ The gaps, which no shim can close:
 - job: `view: "bound"`, `handle: "file"`, `start.lookup: true`, and
   `honours` with every field and both roles: its view runs the command mu
   builds, as the lease template does today. How mu allocates, passes and
-  reads that file handle is [ladder placement
-  §10](2026-11-20-ladder-placement.md#10-the-d15-file-handle).
+  reads that file handle is [placement spec
+  §10](2026-11-20-placement.md#10-the-d15-file-handle).
 
 The view stays interactive, and there is no detached lease (D18).
 
@@ -1414,8 +1414,8 @@ The view stays interactive, and there is no detached lease (D18).
   one seam mule does not implement. The view command comes from the
   plugin's `job.start`, with `--key <token>` in it.
 - ~~A reservation made before the plugin was used is stopped by the
-  plugin's `rm` on the same handle.~~ Superseded by [ladder placement
-  §7.2](2026-11-20-ladder-placement.md#7-templates-and-migration-decided-q8)
+  plugin's `rm` on the same handle.~~ Superseded by [placement spec
+  §7.2](2026-11-20-placement.md#7-templates-and-migration-decided-q8)
   (approved 2026-11-20): drain, collect and close before switching; no
   live conversion.
 

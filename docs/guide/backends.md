@@ -42,8 +42,8 @@ copy backend.
 | Other agents' state | murmur | herdr | the program's own OSC 7501 reports |
 | Send to non-pi agents | claude, codex, cursor-agent, muse: a paste confirmed by run count (`hooks`); others refused (exit 4) | one atomic `agent prompt` | a paste event, then Enter |
 | Spawn | one command | bare pane, then `agent start` | one API call |
-| `--mule` (local loop) | yes | refused | yes |
-| `--host` (remote agents) | yes | refused | session templates only; lease and plugin job views refused |
+| `--mule` (remote workspace) | yes | refused | yes |
+| `--host` (remote loop) | yes | refused | session templates only; lease and plugin job views refused |
 | Pane borders, layout | set by mu | left to herdr | left to Rex |
 | Test isolation | `MU_TMUX_SOCKET` | `MU_HERDR_SESSION` | `MU_REX_SERVER` |
 
@@ -93,7 +93,7 @@ Where each agent's state comes from, per backend:
 - An agent's window is created with `focus: false`; Rex.app shows it
   only when you attach.
 - Lease and plugin job views are tmux-only; session templates run. See
-  [the ladder](remote-ladder.md#refusals).
+  [placement](placement.md#refusals).
 
 ## Expect loud failures, not silent ones
 

@@ -471,7 +471,7 @@ on hosts that ran the unreleased wave-1 build. `pi_session` stays.
   columns never reach it. Nothing here reads the new fields from a peer:
   remote state goes through `murmur pane --remote` (D11).
 
-**mu.** mu has no migration ladder: `openDb` accepts only schema 13 and
+**mu.** mu has no migration chain: `openDb` accepts only schema 13 and
 completes a v13 file in place through `upgradeSchema`. So everything here is
 an `upgradeSchema` addition at schema 13, not a version bump, and mu's state
 stays in `mu-next`:
@@ -1120,7 +1120,7 @@ is reflected above.
   | The nested rule had no concrete root, matched by process name, and would drop launcher-wrapped harnesses   | high     | D3: walk to the tmux server pid, match argv, collapse launcher chains              |
   | "pi always wins" undoes the nested-agent refusal and deletes live attention                                | high     | D3: replace only a dead or non-ancestor incumbent; keep attention                  |
   | murmur store columns force a reset that silences older pi extensions                                       | high     | D8: release rule, compatible-since stamp                                           |
-  | mu has no migration ladder for a "v14"                                                                     | high     | D8: `upgradeSchema` additions at schema 13; re-fold in the same transaction        |
+  | mu has no migration chain for a "v14"                                                                      | high     | D8: `upgradeSchema` additions at schema 13; re-fold in the same transaction        |
   | `MU_ORCHESTRATOR` leaks into helpers and remote env                                                        | high     | D9: stripped in `delegate-process` and `LOCAL_ONLY_ENV`                            |
   | A managed pi orchestrator loses its delegates in `mu state`                                                | high     | D9: `currentCallers()` union                                                       |
   | A shared `.mu/brief.md` without a worktree; untracked `.mu/` dirties worktrees                             | high     | D17: per-attempt name, `.mu/.gitignore`                                            |

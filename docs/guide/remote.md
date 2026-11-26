@@ -6,16 +6,16 @@ cursor-agent or muse use remote [`hooks`](#a-claude-codex-cursor-agent-or-muse-w
 On Rex they use `mux`: no hook receipt or hook-based `CLOSE:` processing.
 For plugin jobs, check `mu agent list`: a plugin can declare its own channel.
 Lease and plugin job views (any `--plugin` profile, even one that stores
-`transport=session`) run on tmux only ([ladder](remote-ladder.md#refusals)).
+`transport=session`) run on tmux only ([placement](placement.md#refusals)).
 mu never connects and
 knows no ssh flags: a host profile holds your own command templates, and
 `mu agent spawn --host` fills them. The full recipe, with collecting and
 the traps, is in
 [skills/mu/recipes/remote-workers.md](../../skills/mu/recipes/remote-workers.md).
-Read it before your first remote spawn. Which rung fits (a one-off
-`mu host exec`, a session pane, a lease, a provider host) is in
-[the ladder](remote-ladder.md); this page covers rungs 3 to 5 and the
-shared profile grammar.
+Read it before your first remote spawn. Which placement fits (a remote
+workspace, or a remote loop over a session, a lease or a provisioned host;
+or a one-off `mu host exec`) is in [placement](placement.md); this page
+covers the remote loop and the shared profile grammar.
 
 ## Prepare the host
 
@@ -41,7 +41,7 @@ table.
 
 `mu host exec dev -- <cmd>` runs a single command through the host's link
 and returns its exit. No agent, pane or task, so it works on herdr
-too. Details and limits: [rung 1](remote-ladder.md#rung-1-mu-host-exec).
+too. Details and limits: [remote command](placement.md#remote-command-mu-host-exec).
 
 ## Add a profile and check it
 
@@ -120,7 +120,7 @@ when the task has none, or only the one-line fallback an earlier local spawn pin
   and frees the slot. A session-template pane runs on tmux and Rex; herdr
   refuses `--host` in one line. Lease and plugin job views need tmux.
   A workstream's panes live on one backend: a spawn refuses while a row names
-  another ([ladder](remote-ladder.md#one-backend-per-workstream)).
+  another ([placement](placement.md#one-backend-per-workstream)).
 - A spawn without `--worktree` refuses (exit 4, `RemotePathOwnedError`) when
   the cwd its exec resolved (`pwd -P`) is exactly, on that host profile,
   another agent's managed remote worktree (one mu made with `--worktree`, in
@@ -527,7 +527,7 @@ MU=/path/to/mu MULE=/path/to/mule bash scripts/smoke-lease.sh
   keeps the dir for a post-mortem.
 
 To use the mule plugin instead of this template, or to move a template host
-to it, see [the ladder](remote-ladder.md#use-the-mule-plugin-rungs-2-and-4) and
-[migration](remote-ladder.md#migrate-a-mule-lease-template-to-the-plugin).
+to it, see [placement](placement.md#use-the-mule-plugin) and
+[migration](placement.md#migrate-a-mule-lease-template-to-the-plugin).
 
 Spec: [lease transport](../specs/2026-10-28-lease-transport.md).

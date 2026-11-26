@@ -17,9 +17,9 @@ task DAG in SQLite. Each agent gets its own git worktree.
   and abort are exact, locally and over ssh. The other four are driven by
   paste and read from their own hook events, confirmed by the turn count.
   Each pane stays the agent's normal TUI.
-- **Placement per agent.** One crew can mix local workers, remote loops,
-  and local pi loops with remote worktrees. The DB stays local. See
-  [the placement ladder](docs/guide/remote-ladder.md).
+- **Placement per agent.** One crew can mix local workers, remote
+  workspaces and remote loops. The DB stays local. See
+  [placement](docs/guide/placement.md).
 - **One wait.** `mu wait` blocks until the first event you own (closed,
   settled, needs you, dead, stalled) and prints one JSON result with a
   `resume` command. In pi, the extension runs it for you, and in Claude

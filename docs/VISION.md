@@ -47,7 +47,7 @@ mu joins the first three without becoming the fourth.
 Everything mu does works from a shell without the caller loading mu's
 own pi extension. A feature that requires the caller to load it does not
 ship. A harness capability supplied by another tool, such as
-mule's pi extension for rung 2, belongs in
+mule's pi extension for a remote workspace, belongs in
 [STANCE's limits table](https://github.com/mu-crew/.github/blob/main/STANCE.md),
 not in mu.
 
@@ -95,7 +95,7 @@ reads and writes files. The user owns transport. mu has no network
 code, no daemon, and no membership config: peers are found from the
 segment files present.
 
-Of an agent's [four places](guide/remote-ladder.md), the loop, workspace
+Of an agent's [four places](guide/placement.md), the loop, workspace
 and shell may be on a host, but the DB stays local and every host hop goes
 through the user's link (a stored template or a registered plugin), never
 mu's own SSH.

@@ -13,7 +13,7 @@ How-to guides:
 - [Stop a worker](stop-a-worker.md)
 - [Delegate a task (mu_delegate)](delegate.md)
 - [Run a worker on another machine](remote.md)
-- [Where a worker runs: the ladder](remote-ladder.md)
+- [Where a worker runs: placement](placement.md)
 - [Use a plugin](plugins.md)
 - [Recover from a broken state](recovery.md)
 - [Sync between machines](sync.md)

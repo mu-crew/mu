@@ -1,6 +1,6 @@
 <!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
 
-# Ladder placement: where an agent's loop, workspace, shell and DB live
+# Placement: where an agent's loop, workspace, shell and DB live
 
 Status: approved 2026-11-20 (Part 1 + Open items 1-6). Draft 1 was
 refuted (round 1, 13 findings; disposition in §H); round 2's five D15
@@ -61,7 +61,7 @@ recorded after the item.
    **Decided:** (a).
 6. **Proposed mechanisms, not Qn decisions:** the §7.3 guard, the §8.2
    shape check, the §8.3 `MU_ORCHESTRATOR` check, the §9 marker, `mkdir`
-   claim and exit 4, and R4 as a rung-2 rule.
+   claim and exit 4, and R4 as a remote workspace rule.
    **Decided:** all approved.
 
 ### §1. The four places (*decided*, Q1)
@@ -74,10 +74,12 @@ the agent's row, tasks, worktree owner and recovery.
 1. **Local** means the DB's machine (Q3). Placement is per agent: one
    orchestrator mixes placements in one workstream under one managed
    backend (§8.2) (*brief*).
-2. Rungs name combinations, not an order (§A) (*brief*): **0** a local
-   worker, **1** `mu host exec`, **2** a local loop with a remote workspace
-   and shell (§C), **3** a session pane, **4** a lease, **5** a provider
-   host. On rungs 0 and 3-5, all three share the job's machine.
+2. Placements name combinations, not an order (§A) (*brief*): **local**
+   (a local worker), **remote workspace** (a local loop with a remote
+   workspace and shell, §C) and **remote loop** (over a session pane, a
+   lease or a provider host's plugin job). `mu host exec` is a **remote
+   command**, not a placement. Local and remote loop agents keep all three
+   on the job's machine.
 3. **The DB holds placement** (Q16): `agents.host`, `cwd`,
    `host_transport` (null for plugin agents, `src/agents/spawn-plugin.ts:410`),
    `carrier_jobs`, `host_profiles`, `hosts`. The shipped mirror, tmux's
@@ -95,9 +97,10 @@ the agent's row, tasks, worktree owner and recovery.
   checkouts have none (`docs/guide/remote.md:75-89`). Across DBs: §9.
 - **R3.** Workspace commands run in the job or through host exec, except
   collect's fetch (in the orchestrator's checkout) and loop operations.
-- **R4.** Rung-2 track only, not a shell ban: the extension routes `mu`,
-  `mu_delegate`, skills and credentials to the loop's machine (§C). On
-  rungs 0 and 3-5 a mu verb run from bash reaches the job machine's mu.
+- **R4.** Remote workspace track only, not a shell ban: the extension routes
+  `mu`, `mu_delegate`, skills and credentials to the loop's machine (§C).
+  For a local agent or a remote loop a mu verb run from bash reaches the job
+  machine's mu.
 - **R5.** A remote worker reports only by its `CLOSE:` block
   (`src/close-block.ts:5-52`): for pi on `ctl`, applied at the
   orchestrator's wait on a settled run (`src/wait.ts:503`,
@@ -139,7 +142,7 @@ the agent's row, tasks, worktree owner and recovery.
    acceptance test (§I) checks this message. The check precedes `git worktree add`, so the rollbacks
    leave no tree, job, pane, placeholder or reservation. A timeout is not
    a definite refusal.
-4. **Cross-rung review.** Local to remote: fetch the commit on the host,
+4. **Cross-placement review.** Local to remote: fetch the commit on the host,
    `--from <sha>`. Remote to local: collect, `--from refs/mu/collect/…`.
 
 ### §4. Per-host admission
@@ -164,7 +167,7 @@ the agent's row, tasks, worktree owner and recovery.
    `-O check`, no unlocked ssh fallback, `:65`; `mule host info` already
    reports `master=false` with its remedy, mule `src/cli.rs:628-680`) and a
    missing tmux as a separate failed step (a mule probe that dispatches no
-   job; `host info` does not report tmux). Only serve's rung-2 workspace
+   job; `host info` does not report tmux). Only serve's remote workspace
    operations skip tmux, not the diagnostic reads.
 
 ### §5. A dropped master is not host loss (*decided*, Q13)
@@ -195,9 +198,9 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
    provider after a hand-back (Open 5a): a hand-back, dropped master or
    otherwise, is not host loss and triggers no `host.status` ask, whatever
    D1's ask-after-failed-call row says. The rest of D1/D8 (process
-   host versus workspace host) waits for rung 2.
+   host versus workspace host) waits for the remote workspace.
 
-### §6. `mu host exec` (rung 1; *decided*, Q6, Q7; surface: Open 2)
+### §6. `mu host exec` (remote command; *decided*, Q6, Q7; surface: Open 2)
 
 `mu host exec <host> [--cwd <dir>] [--timeout <s>] [--json] -- <cmd>…`
 
@@ -274,16 +277,16 @@ Where plugins D1 and D8 differ, this section supersedes them (§G).
 Each refusal is typed, happens before any mu effect (§3.3), and names
 the fix.
 
-1. **herdr on rungs 2-5** (Q14). herdr runs no per-agent command or view
+1. **herdr for a remote workspace or a remote loop** (Q14). herdr runs no per-agent command or view
    (`src/mux/herdr.ts:1217`). **New:** each path checks the backend before
    any remote call and keeps its type: `HostSpawnUnsupportedError` (exit
    2) for template spawn, plugin spawn and detached-view reattach
    (`src/agents/spawn-remote.ts:129`, `spawn-plugin.ts:100`,
    `reattach-view.ts:92`); `ReattachRefusedError` (exit 4) for lease
    reattach (`reattach-check.ts:119`). The message names the part herdr
-   cannot run and says "use tmux" (local loops and session templates add
+   cannot run and says "use tmux" (remote workspaces and session templates add
    "or Rex"; a lease or plugin job view says it is tmux-only for now).
-   Rung 0 and host exec run.
+   Local agents and host exec run.
 2. **One managed backend per workstream** (Q2; Open 4a). Pane-id shape is
    not authority (`src/mux/types.ts:318-320`), but tmux, herdr and Rex
    shapes are disjoint (`src/mux/tmux.ts:83`, `herdr.ts:233`, `rex.ts:62`).
@@ -292,7 +295,8 @@ the fix.
    one exists, naming its backend; advisory, since two first spawns can
    race. Same-backend servers look alike. A Rex terminal may drive a tmux
    workstream (`MU_MUX=tmux`).
-3. **A rung-2 orchestrator** (Q3; Open 6). Rung 2 refuses a session
+3. **An orchestrator with a remote workspace** (Q3; Open 6). A remote
+   workspace refuses a session
    marked `MU_ORCHESTRATOR`, a variable that never reaches a remote job
    (`src/remote-agent.ts:46`).
 4. Others: §3.3, §6.2, §7.3, §9.
@@ -337,25 +341,25 @@ counts per profile); **provisioning** (static or provider); **harness**.
 A cell is **shipped**, or **planned** with the units that deliver it and
 its conditions.
 
-| Rung | Provider · link · job | tmux | Rex | herdr | Loop on host | One session per connection | Status |
+| Placement | Provider · link · job | tmux | Rex | herdr | Loop on host | One session per connection | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0 | none · none · `pane` | pi `ctl`; known hook harnesses `hooks`, other workers `mux`; pi `hooks` is an opt-in (`src/agents/spawn.ts:823-832,1259-1272`) | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
-| 1 | static · template or plugin · none | no channel | no channel | no channel | not needed | fine over the mule link | `host_exec` |
-| 2 | static · mule plugin · local pane | pi `ctl` local | pi `ctl` local | refused | not needed | mule controls admission | unreleased |
-| 3 | static · template (session) · `pane` | pi `ctl` forwarded; others remote `hooks` | pi `ctl`; others `mux` | refused | needed | fine: each pane opens its own connection | shipped |
-| 3 | static · ssh plugin · `pane` | built-in `ctl`/`hooks`, if conditions hold | refused (a plugin job view) | refused | needed | as above | `plugin_ssh_pane`, `job_plugin_builtin_channels` |
-| 4 | static · template (lease) · `lease` | pi `ctl` via the carrier | refused (a lease view) | refused | needed | fine (one master) | shipped, pi only |
-| 4 | static · mule plugin · `lease` | built-in `ctl`, if conditions hold | refused (a plugin job view) | refused | needed | fine | `plugin_mule_link`, `plugin_mule_lease`, `job_plugin_builtin_channels` |
-| 5 | provider plugin · plugin · plugin kind | the plugin's channel | refused (a plugin job view) | refused | needed | provider's | core contract shipped (`src/agents/spawn-plugin.ts:86`); real-backend smoke separate |
-| 5 | provider plugin · plugin · plugin kind | built-in `ctl`/`hooks`, if conditions hold | refused (a plugin job view) | refused | needed | provider's | `job_plugin_builtin_channels` |
-| gate | static · template (session) · `gate` | `mux` | `mux` | refused | not needed: it runs a command (`docs/guide/remote.md:100-106`) | as rung 3 | shipped; lease profiles run no gates (`:370-371`) |
+| local | none · none · `pane` | pi `ctl`; known hook harnesses `hooks`, other workers `mux`; pi `hooks` is an opt-in (`src/agents/spawn.ts:823-832,1259-1272`) | pi `ctl`, others `mux` | pi `ctl`, others `mux` | n/a | n/a | shipped |
+| remote command | static · template or plugin · none | no channel | no channel | no channel | not needed | fine over the mule link | `host_exec` |
+| remote workspace | static · mule plugin · local pane | pi `ctl` local | pi `ctl` local | refused | not needed | mule controls admission | unreleased |
+| remote loop (session) | static · template (session) · `pane` | pi `ctl` forwarded; others remote `hooks` | pi `ctl`; others `mux` | refused | needed | fine: each pane opens its own connection | shipped |
+| remote loop (plugin job) | static · ssh plugin · `pane` | built-in `ctl`/`hooks`, if conditions hold | refused (a plugin job view) | refused | needed | as above | `plugin_ssh_pane`, `job_plugin_builtin_channels` |
+| remote loop (lease) | static · template (lease) · `lease` | pi `ctl` via the carrier | refused (a lease view) | refused | needed | fine (one master) | shipped, pi only |
+| remote loop (lease) | static · mule plugin · `lease` | built-in `ctl`, if conditions hold | refused (a plugin job view) | refused | needed | fine | `plugin_mule_link`, `plugin_mule_lease`, `job_plugin_builtin_channels` |
+| remote loop (plugin job) | provider plugin · plugin · plugin kind | the plugin's channel | refused (a plugin job view) | refused | needed | provider's | core contract shipped (`src/agents/spawn-plugin.ts:86`); real-backend smoke separate |
+| remote loop (plugin job) | provider plugin · plugin · plugin kind | built-in `ctl`/`hooks`, if conditions hold | refused (a plugin job view) | refused | needed | provider's | `job_plugin_builtin_channels` |
+| gate | static · template (session) · `gate` | `mux` | `mux` | refused | not needed: it runs a command (`docs/guide/remote.md:100-106`) | as a session | shipped; lease profiles run no gates (`:370-371`) |
 
 - **Conditions for a built-in channel on a plugin job:**
   `job_plugin_builtin_channels` delivers it; the kind honours `sockets`
   (for `ctl`) and the env; the view is interactive where the channel needs stdin (`hooks`, `mux`), not for `ctl` over a noninteractive mule carrier. Today plugin spawn
   gives the view stdin `/dev/null`, sets no hooks and hands no socket pair
   (`src/agents/spawn-plugin.ts:104,238-258,413-414`; plugins D3, D8). On
-  rung 5 a built-in channel needs `firstTurn: "on-send"`; an at-start kind
+  a provider host a built-in channel needs `firstTurn: "on-send"`; an at-start kind
   needs its own channel and a reply baseline (`:86-90,273-275`).
 - Remote `hooks` needs a backend that anchors and pastes, and a remote key
   (`src/agents/spawn.ts:817-822,914-923`): tmux only. Elsewhere a non-pi
@@ -366,24 +370,24 @@ its conditions.
   (`src/hosts.ts:397-405`), so per-connection `MaxSessions 1` does not
   block it. A host where only one connection is practical (a prompted
   master) does. A session pane over a shared master is not supported.
-- Rex runs local loops and session templates. A real private Rex integration
+- Rex runs remote workspaces and session templates. A real private Rex integration
   test covers their launch inputs after interactive shell startup
-  (`test/rex-ladder-spawn.integration.test.ts`). Every lease and plugin job
+  (`test/rex-placement-spawn.integration.test.ts`). Every lease and plugin job
   view, including the ssh pane and mule lease, is still refused on Rex
-  (`carrierViews`): the guard is by job seam, not rung or the profile's
+  (`carrierViews`): the guard is by job seam, not placement or the profile's
   `transport` label.
 
 ### §B. When to reach for what
 
 | Situation | Reach for |
 | --- | --- |
-| One build or test on a host, no agent | rung 1, `mu host exec` |
-| The host runs the loop and takes a new connection per pane | rung 3 |
-| Only one connection is practical (a prompted master) | rung 4 on mule, on tmux; rung 1 for single commands |
-| A crew on such a host | rung 4: only polls cross the connection |
-| The host cannot run the loop (no credentials or model API) | rung 2, once it ships |
-| You need a machine on demand | rung 5, a provider host |
-| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also supports local loops and session templates) |
+| One build or test on a host, no agent | a remote command, `mu host exec` |
+| The host runs the loop and takes a new connection per pane | a remote loop over a session |
+| Only one connection is practical (a prompted master) | a remote loop over a mule lease, on tmux; a remote command for single commands |
+| A crew on such a host | a lease: only polls cross the connection |
+| The host cannot run the loop (no credentials or model API) | a remote workspace, once it ships |
+| You need a machine on demand | a remote loop on a provider host |
+| herdr is your multiplexer and you need a remote worker | `MU_MUX=tmux` for that workstream (Rex also supports remote workspaces and session templates) |
 
 Provider host or standing host: weigh capacity (on demand or fixed),
 lifetime (a deadline and idle reclaim, or none), credentials and identity
@@ -391,7 +395,7 @@ lifetime (a deadline and idle reclaim, or none), credentials and identity
 state, and setup cost per job. Do not assume a provisioned host has mu or a
 git identity: R5 needs neither, commits need an identity.
 
-### §C. Rung 2 (stub)
+### §C. Remote workspace (stub)
 
 **GO on mule serve** (*decided*, Q17), with the invariant-3 amendment: a
 third ssh use class of bounded synchronous ops (a remote timeout of at most
@@ -423,18 +427,19 @@ a p50 metric.
 
 The prototype met all five (§E).
 
-**First rung-2 release scope** (*brief*): static hosts on the mule link,
-pi only, no rung-2 orchestrator (§8.3), no provider-backed rung 2. tmux
+**First remote workspace release scope** (*brief*): static hosts on the
+mule link, pi only, no orchestrator with a remote workspace (§8.3), no
+remote workspace on a provider host. tmux
 and Rex are supported; herdr is refused.
 
-**The rung-2 spec must settle:** R4 routing for every built-in (`read`,
+**The remote workspace spec must settle:** R4 routing for every built-in (`read`,
 `write`, `edit`, `bash`, `grep`, `find`, `ls`, `user_bash`): each tool that
 touches the workspace is remote or hidden, none local by accident
 (codemode's `grep` and `find` stay local unless overridden); `mu`,
 `mu_delegate`, skills and credentials stay with the loop. Also: path
-routing and the remote `AGENTS.md`; a rung-2 agent's delegates; a master
-drop mid-turn and the rest of D1/D8 (§5.5); the rung-2 herdr and
-orchestrator refusals (§8.1, §8.3).
+routing and the remote `AGENTS.md`; the delegates of an agent with a remote workspace; a master
+drop mid-turn and the rest of D1/D8 (§5.5); the remote workspace's herdr
+and orchestrator refusals (§8.1, §8.3).
 
 ### §D. Out of scope, deferred
 
@@ -445,7 +450,8 @@ widening the pane-option mirror beyond `@mu_host` (§1.3).
 Also deferred: the host init wizard, satellite docs, herdr and Rex parity
 smokes, a durable backend binding (Open 4), push for static links (§3.3),
 durable named gates (`plugin_mule_gate`), an atomic cross-DB claim (§9.4),
-claude and codex on rung 2 (MCP), and provider-backed rung 2. The mule
+claude and codex in a remote workspace (MCP), and a remote workspace on a
+provider host. The mule
 batch verb is cut from this release, not ruled out later. mule's fast path
 and daemon stay triage. Refusing `mu_delegate` in a remote pi is a
 candidate (R5).
@@ -534,13 +540,13 @@ numbers.
 The pasted entry adds the approval date, the serve scope (§C) and the
 D15-only first release.
 
-> **Approved: ladder placement core (D15 path).** Part 1 of the ladder
-> placement spec (`specs/2026-11-20-ladder-placement.md`): four places,
+> **Approved: placement core (D15 path).** Part 1 of the placement spec
+> (`specs/2026-11-20-placement.md`): four places,
 > ownership, per-host admission, `mu host exec`, a dropped master is not
 > host loss, the refusals, drain-before-switch migration, cross-DB
 > refusal. It gates `job_plugin_builtin_channels`, `plugin_mule_link`,
-> `plugin_mule_lease`, `host_exec` and `plugin_ssh_pane`. Rung 2 is a
-> separate track (GO on mule serve, paused until this approval).
+> `plugin_mule_lease`, `host_exec` and `plugin_ssh_pane`. The remote
+> workspace is a separate track (GO on mule serve, paused until this approval).
 
 The approval commit also edits the plugins spec (done): D1 and D8 point at §5,
 D15's migration bullet at §7.2, D15's job capabilities at §10's file
@@ -581,7 +587,7 @@ edits. Work outside the five D15 units does not block them.
 | §7 | `migrate_profiles` (fence, recipe, doctor detection); `host_cli_wiring` (CLI) | agent-only, job-only and recovery-only records each refuse; rm then add refuses and names the restore; a lease spawn racing the switch |
 | §8.1 | `herdr_refusal_message` | type, code and message, and no remote exec, job or pane, on template spawn, plugin spawn, lease reattach (preview and apply) and detached-view reattach |
 | §8.2 | `mux_backend_guard` (to add to the DAG) | `mu state` on the wrong backend with a live row (no row, task or pane lost or made); two first spawns on two backends |
-| §8.3, R4 | rung-2 track | — |
+| §8.3, R4 | remote workspace track | — |
 | §9 | `sync_ownership` (Spec B gate) | two DBs racing one path (the loser exits 4 and the winner's tree stays); a foreign, an empty and a missing marker each refuse |
 | §10 | mu half: `job_plugin_builtin_channels`; mule half: `plugin_mule_lease` | a lost `job.start` answer; ctl ready, then immediate master loss; close by the right handle and tree after a restart; no unproven dispatch called absent |
 

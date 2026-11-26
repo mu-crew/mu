@@ -16,6 +16,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 - `mu host add --replace` swaps an existing profile in one transaction. It runs the `--plugin` blocker check (agent, job and recovery records naming the host) and the held-channel check before deleting, so a refusal keeps the old profile; `host rm` then `host add` removed it first.
 
 ### Changed
+- Vocabulary: placement replaces the remote worker "ladder" and its numbered "rungs". An agent is **local**, has a **remote workspace** (`--mule`) or a **remote loop** (`--host`, over a session, a lease or a plugin job); `mu host exec` is a **remote command**. The guide moved to [docs/guide/placement.md](docs/guide/placement.md) with a support matrix by placement and transport, the placement specs to `docs/specs/2026-11-20-placement.md` and `docs/specs/2026-11-22-placement-ownership.md`, and the smoke to `scripts/smoke-remote-workspace.sh`. `mu host check` says "not needed for a remote workspace (--mule)". No behaviour, schema or env var changes: `host_transport = 'local-loop'` and `MU_REMOTE_WORKSPACE` keep their names.
 - Docs and the `host init --ssh --template` starter now say what to do where fresh ssh connections from the agent's process tree are impossible: use the mule plugin (its master is opened from your terminal), not a session template over a shared master.
 
 ### Fixed
@@ -29,7 +30,7 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   the carrier's process group skips the stop, and a stop that cannot reach the
   host can leave the job running: check it once the host answers, then
   reattach or close. The remote guide shows how to rehearse a loss.
-- The lease recovery docs split template from plugin. A rung-4 mule plugin
+- The lease recovery docs split template from plugin. A mule plugin lease
   agent whose job survives keeps its row (no leftover): reattach it by name.
   A reaped plugin row is closed, then its task unparked.
 - The reaper's note on a reaped plugin agent's parked task no longer names
@@ -39,11 +40,11 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
   "may still run". It says a plugin reattach needs the row and its launch
   metadata, and that close stops what the record still names.
 - Closing a `--mule` worker whose local dispatch processes are still exiting now refuses with exit 4 and a retry hint, not a human hand-back. Recovery waits for those processes before checking remote jobs or removing the worktree.
-- `mu host check` on a `--plugin mule` profile with no remote harness no longer fails: the `harnesses` step is advice (only `--host` spawns need one), so a rung-2-only host passes.
+- `mu host check` on a `--plugin mule` profile with no remote harness no longer fails: the `harnesses` step is advice (only `--host` spawns need one), so a host used only for a remote workspace (`--mule`) passes.
 - `mu doctor`'s plugin-migration recipe uses `mu host add --plugin mule --replace` (never `host rm` first, which loses the profile on a refusal); the refusal text no longer tells a `--replace` caller to remove the old profile.
 - The fresh-ssh starter hint names a runnable route (open mule's private master, then `host add --plugin mule`), and the guide adds `ControlPath=none` to the diagnostic and notes mule has no fetch, so `--fetch` needs its own route.
 - `mu host exec` text mode names `HostExecNoExit` on the deadline line, as `--json` does.
-- `mu host check` on a `--plugin mule` profile whose host has no pi now says the pi and extension steps are "not needed for --mule (rung 2)" instead of a bare skip.
+- `mu host check` on a `--plugin mule` profile whose host has no pi now says the pi and extension steps are "not needed for a remote workspace (--mule)" instead of a bare skip.
 - `mu host exec` in text mode now prints the `no exit code (deadline or no answer)` line on stderr (exit 5), as `--json` already did; before, a deadline exit was silent.
 - `mu agent close` of a remote worker no longer leaves a recovery record for the worktree it just removed when another mu process pruned the row (its pane already gone) during the close; the next spawn of the name is no longer refused.
 - `mu agent close` of a remote worker waits up to 30 s (was 5 s) for a process to leave the worktree before it refuses, so a harness helper that lingers after the pane dies no longer turns the close into two steps.
@@ -155,7 +156,7 @@ Rung 2 of the remote worker ladder. Needs `@mu-crew/mule` >= 0.7.0.
   `--plugin mule` lease workers in one workstream against one
   `MaxSessions 1` sshd. Both fail on a leftover process.
 
-- [Remote worker ladder guide](docs/guide/remote-ladder.md): choose where to
+- [Remote worker ladder guide](https://github.com/mu-crew/mu/blob/v5.3.0/docs/guide/remote-ladder.md): choose where to
   run a command or worker, size session capacity, and collect and close.
   It covers the mule plugin for rung 4 and the `mu doctor` driven move of a
   mule lease template to `--plugin mule`.

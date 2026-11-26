@@ -1,16 +1,16 @@
 <!-- RIG-CANARY-f8dc74a2239b: a rig file (tools/eval/rig-guard.ts); an AUT that prints this line read the rig. -->
 
-# Ladder ownership: DB capability, CLOSE, delegates, host identity, cross-DB
+# Placement ownership: DB capability, CLOSE, delegates, host identity, cross-DB
 
 Status: **Approved** (2026-11-25 — human approved all recommendations:
 D1.1a, D1.2c, D2a, D3a with `workspace: false`, D4b plus D4a's cap
-documentation, and D5a+b). Spec B of the ladder work.
+documentation, and D5a+b). Spec B of the placement work.
 
-Builds on the approved [ladder placement spec](2026-11-20-ladder-placement.md)
+Builds on the approved [placement spec](2026-11-20-placement.md)
 (Spec A), Part 1: §1 (the four places), §2 (R1-R5), §8.2 and §8.3 (the
 refusals) and §9 (cross-DB refusal and no reclaim). Spec A decided those
 rules. This spec does not reopen them. It settles the questions that Spec A
-left to rung 2 (§C "The rung-2 spec must settle") or to "Spec B" (§I, the
+left to the remote workspace (§C "The remote workspace spec must settle") or to "Spec B" (§I, the
 `sync_ownership` row). See also the [sync guide](../guide/sync.md) and the
 [remote guide](../guide/remote.md).
 
@@ -97,7 +97,7 @@ follow-up units implementing the remaining decisions.
 
 ### 1.4 What a worker can reach today
 
-- **A rung-0 worker has the orchestrator's whole DB.** Spawn pins
+- **A local worker has the orchestrator's whole DB.** Spawn pins
   `MU_DB_PATH` and `MU_STATE_DIR` into the pane, absolute, so the worker's
   `mu` reaches the same task graph from any cwd
   (`src/agents/spawn.ts:652-674`). No verb refuses a worker by identity.
@@ -128,28 +128,30 @@ follow-up units implementing the remaining decisions.
 - **Shipped:** the §9 claim, marker and exit 4 (`sync_ownership`, above),
   and the §8.2 backend guard (`c6731ea0`, `9e4a9a81`). The guard is an
   advisory spawn refusal while a row of another managed backend exists,
-  and reconcile keeps such rows. A rung-2 loop's local pane is a managed
-  pane, so the guard covers it without change.
+  and reconcile keeps such rows. The local pane of a remote-workspace loop is a
+  managed pane, so the guard covers it without change.
 - **In progress, not merged into this branch:** pane identity
   (`agents.pane_identity`, the tmux server that a pane was born on, as an
   added column). It decides when a local pane is still the agent's. A
-  rung-2 row's local pane depends on it the same way a rung-0 row's does.
+  remote-workspace row's local pane depends on it the same way a local
+  row's does.
   The owner row of a remote tree is reaped only on proof that its pane is
   dead. This spec assumes that work lands as reviewed and does not
   design it.
-- **Rung 2 itself is not built** (Spec A §C; unit `local_loop_placement`).
+- **The remote workspace itself is not built** (Spec A §C; unit `local_loop_placement`).
   The rows it will write reuse `host`, `cwd`, `base` and `repo`
   (Spec A §1.3). So R2, recovery and §9 apply to it without a new table.
 
 ## 2. Decisions (open)
 
-Each decision is scoped to rung 2 unless it says otherwise. The rung-2
-first release is static mule hosts, pi only, with no rung-2 orchestrator
+Each decision is scoped to the remote workspace unless it says otherwise.
+Its first release is static mule hosts, pi only, with no remote-workspace
+orchestrator
 (Spec A §C, §8.3).
 
-### D1. DB capability of a rung-2 agent
+### D1. DB capability of a remote-workspace agent
 
-A rung-2 loop is a local pi process of the same user, on the DB's machine.
+A remote-workspace loop is a local pi process of the same user, on the DB's machine.
 Under R4 (decided) its workspace tools go to the host, while `mu`,
 `mu_delegate`, skills and credentials stay with the loop. The remote shell
 is therefore not a capability boundary. The pi process, its extensions and
@@ -157,15 +159,15 @@ the routed `mu` all run where the DB is (§1.4).
 
 **D1.1 What the loop's `mu` may do on the orchestration's DB.**
 
-- **(a) Rung-0 parity, with the risk accepted explicitly.** The R4 `mu`
+- **(a) Local parity, with the risk accepted explicitly.** The R4 `mu`
   route runs the local mu with `MU_DB_PATH` and `MU_STATE_DIR` pinned, as
-  rung 0 does (`src/agents/spawn.ts:672-673`). It can run every verb a
-  rung-0 worker can. This adds no mechanism, and the exposure equals rung
-  0's, which has seen no incident.
+  for a local worker (`src/agents/spawn.ts:672-673`). It can run every verb
+  a local worker can. This adds no mechanism, and the exposure equals a
+  local worker's, which has seen no incident.
 - **(b) Refuse in-worker verbs by identity.** mu reads `MU_MANAGED_AGENT`
   and the row's placement, and refuses verbs outside a set (spawn, close
   of others, `host`, `sync`). This is advisory: the model can unset the
-  env, and the rung-0 worker next to it has no such check. It adds a
+  env, and the local worker next to it has no such check. It adds a
   policy table that every new verb must update.
 - **(c) An allowlist at the R4 `mu` route.** The extension forwards only
   a fixed verb set (task note, close and show, `state --me`, read verbs).
@@ -173,18 +175,18 @@ the routed `mu` all run where the DB is (§1.4).
   workspace tool remote or hidden, so the route is the model's only local
   reach. Against the model, that makes this a real boundary. It is not a
   boundary against the user or the extension. Its cost is a second verb
-  list beside `--help`, and it diverges from rung 0.
+  list beside `--help`, and it diverges from a local worker.
 - **(d) No DB.** The agent reports only by CLOSE (R5-like), and the route
-  refuses `mu`. A rung-2 worker then cannot take notes, and
+  refuses `mu`. A remote-workspace worker then cannot take notes, and
   `mu_delegate`, which runs the CLI, breaks (see D3).
 - **Rejected: withhold `MU_DB_PATH`.** That is not a capability. A local
   mu falls back to the default DB, which can be a different DB from the
   orchestration's and can trigger the state import (§1.4).
 
-**Recommendation: (a).** State the accepted risk in the rung-2 guide: a
-rung-2 worker can do what a rung-0 worker can. Keep (c) as the upgrade
-if a user hits a rung-2 worker misusing the DB twice (the roadmap
-promotion rule). The rung-2 tests assert that the route pins both
+**Recommendation: (a).** State the accepted risk in the remote workspace
+guide: a remote-workspace worker can do what a local worker can. Keep (c) as the upgrade
+if a user hits a remote-workspace worker misusing the DB twice (the roadmap
+promotion rule). The remote workspace tests assert that the route pins both
 variables, so `mu` never falls back to the default DB.
 
 **D1.2 A `mu` run on the host from the remote shell.** A script or a
@@ -194,30 +196,30 @@ installed there.
 
 - **(a) Accept it and document it.**
 - **(b) mu refuses to open any DB under `MU_REMOTE=1`, on every remote
-  rung.** This also covers rungs 3-5, where Spec A R4 describes the
+  placement.** This also covers a remote loop, where Spec A R4 describes the
   host's mu as reachable. It breaks `mu_delegate` in a remote pi, which
   today runs against the host's DB, so it would decide Spec A §D's
   candidate ("refusing `mu_delegate` in a remote pi"). It needs its own
   Spec A amendment.
-- **(c) A rung-2-only marker in the remote command env.** mu refuses,
+- **(c) A remote-workspace-only marker in the remote command env.** mu refuses,
   before it opens anything (like the sync-dir refusal), when it sees the
   marker without an explicit `MU_DB_PATH`. The marker is one new env var
   (a reference entry and a VOCABULARY row).
 
 **Recommendation: (c).** It is a real mechanism, it is small, and it
-leaves rungs 3-5 and Spec A untouched. (b) stays with Spec A §D's
+leaves the remote loop and Spec A untouched. (b) stays with Spec A §D's
 candidate.
 
-### D2. CLOSE on rung 2
+### D2. CLOSE in a remote workspace
 
 The loop is local and on `ctl`, so `closeSettledRun` already applies a
 CLOSE block at the orchestrator's wait (§1.4). The open part is whether
 anything else closes.
 
-- **(a) As on rung 0.** The CLOSE block is applied at wait. The loop's env
+- **(a) As for a local worker.** The CLOSE block is applied at wait. The loop's env
   has no `MU_REMOTE=1`, so the close nudge runs, and the worker may also
   run `mu task close` through the route (D1.1a). The work sits in the
-  remote tree until `mu agent collect`. Rung 0's work also sits unmerged in
+  remote tree until `mu agent collect`. A local worker's work also sits unmerged in
   a local tree, so closing before collect is the same as closing before
   merge.
 - **(b) CLOSE only, as R5.** The loop gets `MU_REMOTE=1`. That skips both
@@ -230,16 +232,16 @@ anything else closes.
   to an explicit collect.
 
 **Recommendation: (a).** It is consistent with D1.1a and adds no new path.
-The rung-2 spawn must not set `MU_REMOTE=1` in the loop's env. The
+The remote-workspace spawn must not set `MU_REMOTE=1` in the loop's env. The
 remote command env (D1.2c) is a separate env.
 
-### D3. Delegates of a rung-2 agent
+### D3. Delegates of a remote-workspace agent
 
-`mu_delegate` starts its delegate in the caller's cwd (§1.4). A rung-2
+`mu_delegate` starts its delegate in the caller's cwd (§1.4). A remote-workspace
 agent's files are in the remote tree.
 
-- **(a) Inherit the placement.** The delegate is a rung-2 agent on the same
-  host. Without `workspace` it shares the parent's tree (inherits
+- **(a) Inherit the placement.** The delegate is a remote-workspace agent on
+  the same host. Without `workspace` it shares the parent's tree (inherits
   `--mule <host>:<tree>`) as a **non-owner**: its row records no `base`,
   so it is not `OWNED`, writes no recovery record, and is never collected
   or closed as a tree. That needs one exception to the shipped refusal of
@@ -250,31 +252,31 @@ agent's files are in the remote tree.
   in the host's repo, so §3.3's missing-base refusal cannot fire. Each
   delegate's remote calls queue on mule's per-connection lock (Spec A
   §4.3), so a fan-out of N costs about N round trips per step.
-- **(b) Local delegates.** The delegate runs at rung 0 in the loop's local
+- **(b) Local delegates.** The delegate runs locally in the loop's local
   cwd, which is not the workspace. It suits only research that never
   reads the tree. A review or a check of the code would read the wrong
   files without saying so.
-- **(c) Refuse `mu_delegate` in a rung-2 agent** in the first release. This
-  is safe and small, but it costs rung-2 workers the fresh-context checks
+- **(c) Refuse `mu_delegate` in a remote-workspace agent** in the first release. This
+  is safe and small, but it costs remote-workspace workers the fresh-context checks
   the mu skill asks for.
 
 **Recommendation: (a)** with `workspace: false` in the first release.
-Refuse `workspace: true` with a message until the rung-2 prepare can be
+Refuse `workspace: true` with a message until the remote-workspace prepare can be
 called for a delegate. The delegate-process fallback (no multiplexer)
 follows the same rule. Ownership stays with the parent row (R2).
 
-**Finding (2026-11-25, unit `spec_b_d3_rung2_delegate`):** D3 does not
+**Finding (2026-11-25, the Spec B D3 delegate unit):** D3 does not
 arise today. The `--mule` pane env is a worker's (`MU_MANAGED_AGENT=1`,
 `MU_ORCHESTRATOR` blank), and `delegateEnabled` hides `mu_delegate` from
-every worker (U7). So rung 2 is option (c) by construction, as rung 0 is.
-D3a needs U7 reopened for rung 2 first; `test/extension-delegate.test.ts`
+every worker (U7). So a remote workspace is option (c) by construction, as a
+local worker is. D3a needs U7 reopened for the remote workspace first; `test/extension-delegate.test.ts`
 pins the current behaviour.
 
 ### D4. Host identity across profiles
 
 One machine can be reached through two profiles, for example `box` (a
-session template for rung 3) and `box-mule` (the mule plugin for rungs 2
-and 4). The host-profile spec says a profile names a machine, but
+session template for a remote loop) and `box-mule` (the mule plugin for a
+remote workspace and a lease). The host-profile spec says a profile names a machine, but
 nothing enforces that, and Spec A §7.1 keeps templates while new features
 target plugins. Today's identity is the profile (§1.3), so across two
 profiles of one machine:
@@ -354,14 +356,14 @@ one-writer-per-segment rule, so it needs no rule of its own.
 ## 3. Out of scope
 
 - R4's routing of each built-in tool, path routing, the remote
-  `AGENTS.md`, a master drop mid-turn, and the rest of D1/D8: the rung-2
-  spec (Spec A §C).
+  `AGENTS.md`, a master drop mid-turn, and the rest of D1/D8: the remote
+  workspace spec (Spec A §C).
 - mule serve and its ops, thresholds and acceptance (Spec A §C).
 - The pane identity design, beyond relying on it (§1.5).
 - Anything Spec A decided: R1-R5, §8.2's advisory guard, §8.3's
   orchestrator refusal, §9's claim and marker.
-- A durable per-workstream backend binding (Spec A Open 4b), provider-backed
-  rung 2, and claude and codex on rung 2.
+- A durable per-workstream backend binding (Spec A Open 4b), a remote
+  workspace on a provider host, and claude and codex in a remote workspace.
 - A schema bump. D4c's column would be additive (`ADDED_COLUMNS`), and it
   is not recommended.
 - The remote root's `mu-next` path segment (`src/remote-worktree.ts:117`).
