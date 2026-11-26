@@ -12,8 +12,14 @@ Older releases, one file per major: [4](docs/history/CHANGELOG-4.md),
 
 ## [Unreleased]
 
+## [5.6.0] — 2026-11-26
+
 ### Added
 
+- **Native vtmux OSC 7501 pane status:** `tmuxBackend.paneStatus()` reads `#{pane_program_*}` directly when running on vtmux >= 3.8-rc3 with `vtmux-program-status on`, matching the Rex backend (blocked permission sub-records outrank a working root; other states read the root record). Ranked ahead of murmur in `agent-state.ts` and used as a fallback in `readHooksPane`, so non-pi workers (Claude Code, Codex, Cursor, Muse) need no murmur hooks on vtmux. Stock tmux pays zero extra subprocesses and keeps the murmur 2.x fallback.
+- **Crew pane tags:** spawned tmux panes (including plugin-backed views) are tagged atomically with `@mu_agent`, `@mu_workstream`, and `@mu_role` so murmur 3.0 identifies crew panes directly in `list-panes`.
+- **Delegate waiting status (OSC 7501):** `mu`'s pi extension emits `state=working:id=mu/delegates` while delegates are in flight and clears it at zero, so vtmux window tabs, pane borders, murmur 3.0, and Rex show waiting state natively.
+- `mu doctor` checks `vtmux-program-status` when running on vtmux.
 - `DashboardAgent.sessionFile?: string | null`: the pi session file from the ctl status reply already read for state (no extra socket round-trip); absent when ctl does not report it.
 
 ## [5.5.0] — 2026-11-26
