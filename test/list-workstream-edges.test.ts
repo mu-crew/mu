@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { type Db, openDb, WorkstreamNotFoundError } from "../src/db.js";
 import { listWorkstreamEdges } from "../src/index.js";
-import { addTask, closeTask } from "../src/tasks.js";
+import { addTask, closeTask, parkTask } from "../src/tasks.js";
 import { ensureWorkstream } from "../src/workstream.js";
 
 let openDbs: Db[] = [];
@@ -67,6 +67,31 @@ describe("listWorkstreamEdges", () => {
     add(db, "demo", "b", ["a"]);
     closeTask(db, "a", { workstream: "demo", evidence: "test" });
     expect(listWorkstreamEdges(db, "demo")).toEqual([{ from: "a", to: "b" }]);
+  });
+
+  it("keeps only edges with both ends in the workstream, parked ends included, same local ids elsewhere ignored", () => {
+    const db = fixtureDb();
+    add(db, "demo", "a");
+    add(db, "demo", "b", ["a"]);
+    add(db, "other", "a");
+    add(db, "other", "b", ["a"]);
+    parkTask(db, "b", { workstream: "demo", why: "test" });
+    const id = (ws: string, local: string): number =>
+      (
+        db
+          .prepare(
+            "SELECT t.id FROM tasks t JOIN workstreams w ON w.id = t.workstream_id WHERE w.name = ? AND t.local_id = ?",
+          )
+          .get(ws, local) as { id: number }
+      ).id;
+    // Stored cross-workstream edges in both directions (the schema allows them; sync can apply one).
+    const edge = db.prepare(
+      "INSERT INTO task_edges (from_task_id, to_task_id, created_at) VALUES (?, ?, 'now')",
+    );
+    edge.run(id("demo", "a"), id("other", "b"));
+    edge.run(id("other", "a"), id("demo", "b"));
+    expect(listWorkstreamEdges(db, "demo")).toEqual([{ from: "a", to: "b" }]);
+    expect(listWorkstreamEdges(db, "other")).toEqual([{ from: "a", to: "b" }]);
   });
 
   it("throws WorkstreamNotFoundError for a missing workstream", () => {

@@ -92,17 +92,23 @@ export interface WorkstreamEdge {
 }
 
 /**
- * Every raw `blocks` edge in a workstream in one query (closed tasks
- * included), ordered by `from` then `to`. Read-only; replaces per-task
- * `getTaskEdges` loops. Throws WorkstreamNotFoundError on a missing workstream.
+ * Every raw `blocks` edge in a workstream in one query, ordered by `from`
+ * then `to`: `from` must close before `to`. Both ends must be in the
+ * workstream: a stored cross-workstream edge (sync can apply one) is left
+ * out, so this is not a drop-in for a `getTaskEdges` loop that would show it.
+ * Tasks of any status or substate (closed, parked) are included. Read-only.
+ * Throws WorkstreamNotFoundError on a missing workstream.
  */
 export function listWorkstreamEdges(db: Db, workstream: string): WorkstreamEdge[] {
   const wsId = resolveWorkstreamId(db, workstream);
   return db
     .prepare(
-      `SELECT f.local_id AS "from", t.local_id AS "to" FROM task_edges e
-         JOIN tasks f ON f.id = e.from_task_id
-         JOIN tasks t ON t.id = e.to_task_id
+      // CROSS JOIN pins the order: the workstream's tasks (idx_tasks_workstream), then each one's
+      // edges by the PK's from_task_id prefix, then the other end by id. Left to the planner on a
+      // DB with no ANALYZE stats, it scanned both endpoints' index and probed every pair (N²).
+      `SELECT f.local_id AS "from", t.local_id AS "to" FROM tasks f
+         CROSS JOIN task_edges e ON e.from_task_id = f.id
+         CROSS JOIN tasks t ON t.id = e.to_task_id
         WHERE f.workstream_id = ? AND t.workstream_id = ?
         ORDER BY f.local_id, t.local_id`,
     )
